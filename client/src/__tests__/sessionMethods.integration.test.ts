@@ -34,8 +34,7 @@ describe('session methods (integration)', () => {
   });
 
   const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
-  const exec = (code: string): string =>
-    browserQueries.executeFetchString(session(), 'sessionMethods-it', code);
+  const exec = (code: string): string => browserQueries.executeFetchString(session(), code);
 
   const isSystemProfile = (): boolean =>
     exec('System myUserProfile isSystemProfile printString').trim() === 'true';

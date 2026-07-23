@@ -15,7 +15,7 @@ describe('full logical backup queries', () => {
       const held = hasFileControlPrivilege(execute);
 
       expect(held).toBe(true);
-      expect(execute.mock.calls[0][1]).toContain('privileges includes: #FileControl');
+      expect(execute.mock.calls[0][0]).toContain('privileges includes: #FileControl');
     });
 
     it('reports the privilege is missing for any non-true answer', () => {
@@ -32,7 +32,7 @@ describe('full logical backup queries', () => {
       const dirty = sessionNeedsCommit(execute);
 
       expect(dirty).toBe(true);
-      expect(execute.mock.calls[0][1]).toContain('System needsCommit');
+      expect(execute.mock.calls[0][0]).toContain('System needsCommit');
     });
 
     it('reports a clean session as having nothing to lose', () => {
@@ -48,7 +48,7 @@ describe('full logical backup queries', () => {
 
       abortTransaction(execute);
 
-      expect(execute.mock.calls[0][1]).toContain('System abortTransaction');
+      expect(execute.mock.calls[0][0]).toContain('System abortTransaction');
     });
   });
 

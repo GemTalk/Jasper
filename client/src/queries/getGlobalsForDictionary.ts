@@ -20,7 +20,7 @@ dict keysAndValuesDo: [:k :v |
        nextPutAll: ps; lf]].
 ws contents`;
 
-  const raw = execute(`getGlobalsForDictionary(dictIndex: ${dictIndex})`, code);
+  const raw = execute(code);
 
   const results: GlobalEntry[] = [];
   for (const line of raw.split('\n')) {

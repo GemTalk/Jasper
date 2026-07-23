@@ -47,7 +47,7 @@ function loginSystemUser(): SysSession {
   }
   const handle = r.session;
   const utf8 = gci.GciTsResolveSymbol(handle, 'Utf8', OOP_NIL).result;
-  const exec: QueryExecutor = (_label, code) => {
+  const exec: QueryExecutor = (code) => {
     const { data, err } = gci.GciTsExecuteFetchBytes(
       handle,
       code,
@@ -146,22 +146,19 @@ describe('Rowan export is a deterministic reload-faithful fixpoint', () => {
       const targetA = path.join(dirA, PROJECT);
       const targetC = path.join(dirC, PROJECT);
 
-      expect(sys.exec('create', createCode(home)).trim()).toBe('ok');
+      expect(sys.exec(createCode(home)).trim()).toBe('ok');
 
       const a = exportRowanProject(sys.exec, PROJECT, targetA);
       expect(a.success, a.detail).toBe(true);
 
       expect(
-        sys
-          .exec('unload', `Rowan gemstoneTools topaz unloadProjectNamed: '${PROJECT}'. 'ok'`)
-          .trim(),
+        sys.exec(`Rowan gemstoneTools topaz unloadProjectNamed: '${PROJECT}'. 'ok'`).trim(),
       ).toBe('ok');
       expect(listRowanProjects(sys.exec).projects.some((p) => p.name === PROJECT)).toBe(false);
 
       expect(
         sys
           .exec(
-            'reload',
             `(Rowan projectFromUrl: 'file:${targetA}/rowan/specs/${PROJECT}.ston' projectsHome: '${targetA}') load. 'ok'`,
           )
           .trim(),

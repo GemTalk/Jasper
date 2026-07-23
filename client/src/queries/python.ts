@@ -22,7 +22,7 @@ const GRAIL_HINT =
 // inline as `Error: <class> — <messageText>` so the agent can act on it.
 export function evalPython(execute: QueryExecutor, source: string): string {
   const code = buildPythonQuery('(dispatcher evaluateSource: src) printString', source);
-  return execute('evalPython', code);
+  return execute(code);
 }
 
 // Like evalPython, but with REPL semantics: globals persist across calls
@@ -43,7 +43,7 @@ export function evalPythonInScope(execute: QueryExecutor, source: string, scopeI
        scope := scopes at: '${escScope}' ifAbsentPut: [SymbolDictionary new].
        (dispatcher evaluateSource: src usingModuleScope: scope) printString`;
   const code = buildPythonQuery(expr, source);
-  return execute('evalPythonInScope', code);
+  return execute(code);
 }
 
 // Drop the persistent module scope for scopeId so the next evalPythonInScope
@@ -56,7 +56,7 @@ export function resetPythonScope(execute: QueryExecutor, scopeId: string): strin
 scopes := SessionTemps current at: #'__vscGrailScopes' ifAbsent: [nil].
 scopes ifNotNil: [scopes removeKey: '${escScope}' ifAbsent: []].
 'scope reset' encodeAsUTF8`;
-  return execute('resetPythonScope', code);
+  return execute(code);
 }
 
 // Transpile a Python source string to Smalltalk via Grail and return the
@@ -65,7 +65,7 @@ scopes ifNotNil: [scopes removeKey: '${escScope}' ifAbsent: []].
 // codegen pipeline). Errors are reported inline, same shape as evalPython.
 export function compilePython(execute: QueryExecutor, source: string): string {
   const code = buildPythonQuery('(dispatcher parseSource: src) smalltalkSource', source);
-  return execute('compilePython', code);
+  return execute(code);
 }
 
 function buildPythonQuery(grailExpression: string, pythonSource: string): string {

@@ -44,7 +44,7 @@ patches do: [:assoc | | pkg |
        nextPutAll: ([op definition printString] on: Error do: [:e | '?']); lf]].
 ws contents`;
 
-  const raw = execute(`diffRowanProject(${projectName})`, code);
+  const raw = execute(code);
   const trimmed = raw.trimStart();
   if (trimmed.startsWith(NO_ROWAN))
     return { ok: false, error: 'Rowan is not installed in this image.', operations: [] };

@@ -24,5 +24,5 @@ cls isNil ifTrue: [^ 'Class not found: ${escapeString(className)}'].
   class: cls
   renameInstVar: '${escapeString(oldName)}'
   to: '${escapeString(newName)}') previewJsonString`;
-  return execute(`previewRenameInstVar(${className}, '${oldName}' -> '${newName}')`, code);
+  return execute(code);
 }

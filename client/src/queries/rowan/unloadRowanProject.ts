@@ -24,7 +24,7 @@ r isNil ifTrue: [^'ERR' , sep , 'Rowan is not installed in this image'].
   on: Error do: [:e | System abortTransaction. ^'ERR' , sep , e messageText].
 'OK' , sep , '${esc}'`;
 
-  const raw = execute(`unloadRowanProject(${projectName})`, code);
+  const raw = execute(code);
   const tab = raw.indexOf('\t');
   const status = tab === -1 ? raw.trim() : raw.slice(0, tab);
   const detail = tab === -1 ? '' : raw.slice(tab + 1).trim();

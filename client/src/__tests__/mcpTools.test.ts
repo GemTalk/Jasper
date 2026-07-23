@@ -185,7 +185,7 @@ describe('registerMcpTools', () => {
 
       expect(result.isError).toBeUndefined();
       expect(result.content[0].text).toBe('42');
-      const codeArg = vi.mocked(queries.executeFetchString).mock.calls[0][2];
+      const codeArg = vi.mocked(queries.executeFetchString).mock.calls[0][1];
       expect(codeArg).toContain('6 * 7');
       expect(codeArg).toContain('printString');
     });
@@ -198,7 +198,7 @@ describe('registerMcpTools', () => {
       vi.mocked(queries.executeFetchString).mockReturnValue('43');
       await server.getTool('execute_code')!.handler({ code: '| x | x := 42. x + 1' });
 
-      const codeArg = vi.mocked(queries.executeFetchString).mock.calls[0][2];
+      const codeArg = vi.mocked(queries.executeFetchString).mock.calls[0][1];
       expect(codeArg).toContain('[| x | x := 42. x + 1] value printString');
     });
 
@@ -210,7 +210,7 @@ describe('registerMcpTools', () => {
       vi.mocked(queries.executeFetchString).mockReturnValue('ok');
       await server.getTool('execute_code')!.handler({ code: '1 + 1' });
 
-      const codeArg = vi.mocked(queries.executeFetchString).mock.calls[0][2];
+      const codeArg = vi.mocked(queries.executeFetchString).mock.calls[0][1];
       expect(codeArg).toContain('on: AlmostOutOfStack');
     });
 
@@ -218,7 +218,7 @@ describe('registerMcpTools', () => {
       vi.mocked(queries.executeFetchString).mockReturnValue('ok');
       await server.getTool('execute_code')!.handler({ code: '1 + 1' });
 
-      const codeArg = vi.mocked(queries.executeFetchString).mock.calls[0][2];
+      const codeArg = vi.mocked(queries.executeFetchString).mock.calls[0][1];
       expect(codeArg).toContain('on: AbstractException');
     });
 
@@ -419,7 +419,7 @@ describe('registerMcpTools', () => {
       vi.mocked(queries.executeFetchString).mockReturnValue('Transaction aborted');
       const result = await server.getTool('abort')!.handler({});
 
-      const code = vi.mocked(queries.executeFetchString).mock.calls[0][2];
+      const code = vi.mocked(queries.executeFetchString).mock.calls[0][1];
       expect(code).toContain('abortTransaction');
       expect(result.content[0].text).toBe('Transaction aborted');
     });
@@ -428,7 +428,7 @@ describe('registerMcpTools', () => {
       vi.mocked(queries.executeFetchString).mockReturnValue('Transaction committed');
       const result = await server.getTool('commit')!.handler({});
 
-      const code = vi.mocked(queries.executeFetchString).mock.calls[0][2];
+      const code = vi.mocked(queries.executeFetchString).mock.calls[0][1];
       expect(code).toContain('commitTransaction');
       expect(result.content[0].text).toBe('Transaction committed');
     });
@@ -550,7 +550,7 @@ describe('registerMcpTools', () => {
         selector: 'testSize',
       });
 
-      const refreshCall = vi.mocked(queries.executeFetchString).mock.calls[0][2];
+      const refreshCall = vi.mocked(queries.executeFetchString).mock.calls[0][1];
       expect(refreshCall).toContain('System needsCommit ifFalse:');
       expect(refreshCall).toContain('System abortTransaction');
     });
@@ -610,7 +610,7 @@ describe('registerMcpTools', () => {
       vi.mocked(sunit.runTestClass).mockReturnValue([]);
       await server.getTool('run_test_class')!.handler({ className: 'ArrayTest' });
 
-      const refreshCall = vi.mocked(queries.executeFetchString).mock.calls[0][2];
+      const refreshCall = vi.mocked(queries.executeFetchString).mock.calls[0][1];
       expect(refreshCall).toContain('System needsCommit ifFalse:');
       expect(refreshCall).toContain('System abortTransaction');
     });
@@ -673,7 +673,7 @@ describe('registerMcpTools', () => {
       vi.mocked(sunit.runFailingTests).mockReturnValue([]);
       await server.getTool('list_failing_tests')!.handler({});
 
-      const refreshCall = vi.mocked(queries.executeFetchString).mock.calls[0][2];
+      const refreshCall = vi.mocked(queries.executeFetchString).mock.calls[0][1];
       expect(refreshCall).toContain('System needsCommit ifFalse:');
       expect(refreshCall).toContain('System abortTransaction');
     });
@@ -793,7 +793,7 @@ describe('registerMcpTools', () => {
       vi.mocked(queries.executeFetchString).mockReturnValue('refreshed');
       const result = await server.getTool('refresh')!.handler({});
 
-      const code = vi.mocked(queries.executeFetchString).mock.calls[0][2];
+      const code = vi.mocked(queries.executeFetchString).mock.calls[0][1];
       expect(code).toContain('System needsCommit');
       expect(code).toContain('System abortTransaction');
       expect(result.content[0].text).toBe('refreshed');
@@ -803,7 +803,7 @@ describe('registerMcpTools', () => {
       vi.mocked(queries.executeFetchString).mockReturnValue('User: DataCurator\n...');
       const result = await server.getTool('status')!.handler({});
 
-      const code = vi.mocked(queries.executeFetchString).mock.calls[0][2];
+      const code = vi.mocked(queries.executeFetchString).mock.calls[0][1];
       expect(code).toContain('myUserProfile');
       expect(code).toContain('stoneName');
       expect(code).toContain('inTransaction');
@@ -820,7 +820,7 @@ describe('registerMcpTools', () => {
       vi.mocked(queries.executeFetchString).mockReturnValue('');
       await server.getTool('status')!.handler({});
 
-      const code = vi.mocked(queries.executeFetchString).mock.calls[0][2];
+      const code = vi.mocked(queries.executeFetchString).mock.calls[0][1];
       expect(code).toContain('System needsCommit');
       expect(code).toContain('System abortTransaction');
       expect(code).toContain('View: ');
@@ -835,7 +835,7 @@ describe('registerMcpTools', () => {
     it('coerces every value streamed in status to a CharacterCollection', async () => {
       vi.mocked(queries.executeFetchString).mockReturnValue('');
       await server.getTool('status')!.handler({});
-      const code = vi.mocked(queries.executeFetchString).mock.calls[0][2];
+      const code = vi.mocked(queries.executeFetchString).mock.calls[0][1];
 
       expect(code).toMatch(/myUserProfile userId (asString|printString)/);
       expect(code).toMatch(/stoneName (asString|printString)/);

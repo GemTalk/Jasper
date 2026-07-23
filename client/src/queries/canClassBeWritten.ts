@@ -17,8 +17,6 @@ export function canClassBeWritten(
 cls := ${classLookupExpr(className, dict)}.
 cls ifNil: [^ 'false'].
 cls canBeWritten printString`;
-  const label =
-    dict === undefined ? `canBeWritten(${className})` : `canBeWritten(${className}, dict: ${dict})`;
-  const result = execute(label, code);
+  const result = execute(code);
   return result.trim() === 'true';
 }

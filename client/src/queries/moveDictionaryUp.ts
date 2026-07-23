@@ -10,5 +10,5 @@ ${dictIndex} > 1 ifTrue: [
   sl at: ${dictIndex} put: (sl at: ${dictIndex} - 1).
   sl at: ${dictIndex} - 1 put: temp].
 'ok'`;
-  return execute(`moveDictionaryUp(${dictIndex})`, code);
+  return execute(code);
 }

@@ -10,5 +10,5 @@ ${dictIndex} < sl size ifTrue: [
   sl at: ${dictIndex} put: (sl at: ${dictIndex} + 1).
   sl at: ${dictIndex} + 1 put: temp].
 'ok'`;
-  return execute(`moveDictionaryDown(${dictIndex})`, code);
+  return execute(code);
 }

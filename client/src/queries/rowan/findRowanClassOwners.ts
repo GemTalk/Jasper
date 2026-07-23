@@ -33,7 +33,7 @@ ws := WriteStream on: Unicode7 new.
   on: Error do: [:e | nil].
 ws contents`;
 
-  const raw = execute(`findRowanClassOwners(${className})`, code);
+  const raw = execute(code);
 
   const owners: RowanClassOwners = { defined: [], extended: [] };
   for (const line of raw.split('\n')) {

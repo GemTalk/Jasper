@@ -2,9 +2,9 @@ import { describe, it, expect, vi } from 'vitest';
 import { forkGemRunning } from '../forkGem';
 
 /** Captures the code a query builds, answering a canned result. */
-function capture(): { execute: (label: string, code: string) => string; code: () => string } {
+function capture(): { execute: (code: string) => string; code: () => string } {
   const execute = vi.fn().mockReturnValue('42');
-  return { execute, code: () => execute.mock.calls[0][1] as string };
+  return { execute, code: () => execute.mock.calls[0][0] as string };
 }
 
 const NRS = '!tcp@localhost#netldi:jasper-ldi#task!gemnetobject';

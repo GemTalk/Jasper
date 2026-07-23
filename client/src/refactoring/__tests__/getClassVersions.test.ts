@@ -25,7 +25,7 @@ describe('getClassVersions query', () => {
 
     getClassVersions(execute, 3);
 
-    const code = execute.mock.calls[0][1];
+    const code = execute.mock.calls[0][0];
     expect(code).toContain('classHistory');
     expect(code).toContain('hist size > 1');
     expect(code).toContain('hist indexOf: v');
@@ -37,7 +37,7 @@ describe('getClassVersions query', () => {
 
     getClassVersions(execute, 3);
 
-    const code = execute.mock.calls[0][1];
+    const code = execute.mock.calls[0][0];
     expect(code).toContain('System myUserProfile symbolList at: 3');
   });
 
@@ -46,7 +46,7 @@ describe('getClassVersions query', () => {
 
     getClassVersions(execute, 'UserGlobals');
 
-    const code = execute.mock.calls[0][1];
+    const code = execute.mock.calls[0][0];
     expect(code).toContain("objectNamed: #'UserGlobals'");
   });
 

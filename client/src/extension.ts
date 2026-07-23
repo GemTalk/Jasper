@@ -3578,7 +3578,7 @@ export function activate(context: vscode.ExtensionContext) {
           .getDatabases()
           .find((d) => d.config.stoneName === session.login.stone);
         const backedUp = await runLogicalBackup({
-          execute: (label, code) => queries.executeFetchString(session, label, code),
+          execute: (code) => queries.executeFetchString(session, code),
           runBackup: (code) =>
             queries.executeFetchStringNb(
               session,
@@ -3636,7 +3636,7 @@ export function activate(context: vscode.ExtensionContext) {
           return;
         }
         const backedUp = await runOnlineExtentBackup({
-          execute: (label, code) => queries.executeFetchString(session, label, code),
+          execute: (code) => queries.executeFetchString(session, code),
           stoneName: session.login.stone,
           dbPath: db.path,
           dataDir: path.join(db.path, 'data'),
@@ -3724,9 +3724,7 @@ export function activate(context: vscode.ExtensionContext) {
           dbPath: managed.path,
           backupFile,
           hasFileControl: () =>
-            hasFileControlPrivilege((label, code) =>
-              queries.executeFetchString(session, label, code),
-            ),
+            hasFileControlPrivilege((code) => queries.executeFetchString(session, code)),
           closeCurrentSession: async () => {
             sessionManager.logout(sessionId);
           },

@@ -51,7 +51,7 @@ describe('searchMethodSource', () => {
   it('passes ignoreCase flag and escaped term to Smalltalk', () => {
     const execute = vi.fn<QueryExecutor>(() => '');
     searchMethodSource(execute, "foo's", false);
-    const code = execute.mock.calls[0][1];
+    const code = execute.mock.calls[0][0];
     expect(code).toContain("substringSearch: 'foo''s' ignoreCase: false");
   });
 });
@@ -60,7 +60,7 @@ describe('sendersOf', () => {
   it('uses sendersOf: and "at: 1" to unwrap the result array', () => {
     const execute = vi.fn<QueryExecutor>(() => '');
     sendersOf(execute, 'size');
-    const code = execute.mock.calls[0][1];
+    const code = execute.mock.calls[0][0];
     expect(code).toContain("sendersOf: #'size'");
     expect(code).toMatch(/sendersOf: #'size'\) at: 1/s);
   });
@@ -68,7 +68,7 @@ describe('sendersOf', () => {
   it('propagates environmentId to both the query and the serialization', () => {
     const execute = vi.fn<QueryExecutor>(() => '');
     sendersOf(execute, 'x', 3);
-    const code = execute.mock.calls[0][1];
+    const code = execute.mock.calls[0][0];
     expect(code).toContain('environmentId: 3');
     expect(code).toContain('categoryOfSelector: each selector environmentId: 3');
   });
@@ -78,7 +78,7 @@ describe('implementorsOf', () => {
   it('uses implementorsOf: and asArray to normalize the collection', () => {
     const execute = vi.fn<QueryExecutor>(() => '');
     implementorsOf(execute, 'size');
-    const code = execute.mock.calls[0][1];
+    const code = execute.mock.calls[0][0];
     expect(code).toContain("implementorsOf: #'size'");
     expect(code).toContain('asArray');
   });
@@ -88,7 +88,7 @@ describe('referencesToObject', () => {
   it('uses ClassOrganizer referencesToObject: with objectNamed: lookup', () => {
     const execute = vi.fn<QueryExecutor>(() => '');
     referencesToObject(execute, 'MyGlobal');
-    const code = execute.mock.calls[0][1];
+    const code = execute.mock.calls[0][0];
     expect(code).toContain('referencesToObject:');
     expect(code).toContain("objectNamed: #'MyGlobal'");
   });
@@ -100,7 +100,7 @@ describe('methodSerialization home-dictionary resolution', () => {
   it('only treats a dict as a class home when keyed by the class name', () => {
     const execute = vi.fn<QueryExecutor>(() => '');
     implementorsOf(execute, 'size');
-    const code = execute.mock.calls[0][1];
+    const code = execute.mock.calls[0][0];
     expect(code).toContain('k = v name asSymbol');
   });
 });
@@ -109,7 +109,7 @@ describe('hierarchyImplementorsOf', () => {
   it('walks the full superclass chain for direction up', () => {
     const execute = vi.fn<QueryExecutor>(() => '');
     hierarchyImplementorsOf(execute, 1, 'Array', 'at:', false, 'up');
-    const code = execute.mock.calls[0][1];
+    const code = execute.mock.calls[0][0];
     expect(code).toContain('superclass');
     expect(code).toContain('[cur notNil] whileTrue:');
     expect(code).toContain("includesSelector: #'at:'");
@@ -119,7 +119,7 @@ describe('hierarchyImplementorsOf', () => {
   it('walks all subclasses for direction down', () => {
     const execute = vi.fn<QueryExecutor>(() => '');
     hierarchyImplementorsOf(execute, 1, 'Array', 'at:', false, 'down');
-    const code = execute.mock.calls[0][1];
+    const code = execute.mock.calls[0][0];
     expect(code).toContain('allSubclasses do:');
     expect(code).toContain("includesSelector: #'at:'");
     expect(code).not.toContain('whileTrue:');
@@ -128,21 +128,21 @@ describe('hierarchyImplementorsOf', () => {
   it('targets the metaclass side when isMeta is true (up)', () => {
     const execute = vi.fn<QueryExecutor>(() => '');
     hierarchyImplementorsOf(execute, 1, 'Array', 'new', true, 'up');
-    const code = execute.mock.calls[0][1];
+    const code = execute.mock.calls[0][0];
     expect(code).toContain('(class class) superclass');
   });
 
   it('targets each subclass metaclass when isMeta is true (down)', () => {
     const execute = vi.fn<QueryExecutor>(() => '');
     hierarchyImplementorsOf(execute, 1, 'Array', 'new', true, 'down');
-    const code = execute.mock.calls[0][1];
+    const code = execute.mock.calls[0][0];
     expect(code).toContain('tgt := sub class');
   });
 
   it('uses the instance side (class / sub) when isMeta is false', () => {
     const execute = vi.fn<QueryExecutor>(() => '');
     hierarchyImplementorsOf(execute, 1, 'Array', 'at:', false, 'down');
-    const code = execute.mock.calls[0][1];
+    const code = execute.mock.calls[0][0];
     expect(code).toContain('tgt := sub.');
     expect(code).not.toContain('sub class');
   });
@@ -150,7 +150,7 @@ describe('hierarchyImplementorsOf', () => {
   it('embeds the dictIndex and escapes class name and selector', () => {
     const execute = vi.fn<QueryExecutor>(() => '');
     hierarchyImplementorsOf(execute, 7, "Foo'Bar", "o'clock", false, 'up');
-    const code = execute.mock.calls[0][1];
+    const code = execute.mock.calls[0][0];
     expect(code).toContain('symbolList at: 7');
     expect(code).toContain("#'Foo''Bar'");
     expect(code).toContain("#'o''clock'");

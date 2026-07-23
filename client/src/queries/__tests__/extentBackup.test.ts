@@ -24,7 +24,7 @@ describe('fullLoggingEnabled', () => {
     const exec = vi.fn<QueryExecutor>(() => 'true');
     fullLoggingEnabled(exec);
 
-    expect(exec.mock.calls[0][1]).toContain('STN_TRAN_FULL_LOGGING');
+    expect(exec.mock.calls[0][0]).toContain('STN_TRAN_FULL_LOGGING');
   });
 });
 
@@ -43,7 +43,7 @@ describe('extentFileNames', () => {
     const exec = vi.fn<QueryExecutor>(() => '');
     extentFileNames(exec);
 
-    expect(exec.mock.calls[0][1]).toContain('SystemRepository fileNames');
+    expect(exec.mock.calls[0][0]).toContain('SystemRepository fileNames');
   });
 });
 
@@ -70,7 +70,7 @@ describe('suspendCheckpoints', () => {
     const exec = vi.fn<QueryExecutor>(() => 'OK');
     suspendCheckpoints(exec, 45);
 
-    expect(exec.mock.calls[0][1]).toContain('suspendCheckpointsForMinutes: 45');
+    expect(exec.mock.calls[0][0]).toContain('suspendCheckpointsForMinutes: 45');
   });
 });
 

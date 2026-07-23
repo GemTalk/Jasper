@@ -54,7 +54,7 @@ export function login(): HarnessSession {
   }
   const utf8Oop = utf8Class.result;
 
-  const exec: QueryExecutor = (_label, code) => {
+  const exec: QueryExecutor = (code) => {
     const { data, err } = gci.GciTsExecuteFetchBytes(
       handle,
       code,
@@ -98,5 +98,5 @@ export function selectorExists(
 ): boolean {
   const receiver = meta ? `${className} class` : className;
   const code = `(${receiver} canUnderstand: #'${selector.replace(/'/g, "''")}') printString`;
-  return exec('selectorExists', code).trim() === 'true';
+  return exec(code).trim() === 'true';
 }

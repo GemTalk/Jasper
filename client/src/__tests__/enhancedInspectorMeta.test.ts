@@ -32,7 +32,7 @@ describe('fetchObjectMeta', () => {
     expect.assertions(1);
     const execute = vi.fn(() => '{}');
     fetchObjectMeta(execute, 99999n);
-    const code = (execute as ReturnType<typeof vi.fn>).mock.calls[0][1] as string;
+    const code = (execute as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
     expect(code).toContain('99999');
   });
 });
@@ -81,7 +81,7 @@ describe('fetchMethodBrowseLocation', () => {
     expect.assertions(1);
     const execute = vi.fn(() => '{}');
     fetchMethodBrowseLocation(execute, 1000n, 'size', isClassSide);
-    const code = (execute as ReturnType<typeof vi.fn>).mock.calls[0][1] as string;
+    const code = (execute as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
     expect(code).toContain(expected);
   });
 
@@ -89,7 +89,7 @@ describe('fetchMethodBrowseLocation', () => {
     expect.assertions(2);
     const execute = vi.fn(() => '{}');
     fetchMethodBrowseLocation(execute, 99999n, 'size', false);
-    const code = (execute as ReturnType<typeof vi.fn>).mock.calls[0][1] as string;
+    const code = (execute as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
     expect(code).toContain('99999');
     expect(code).toContain('size');
   });
@@ -130,7 +130,7 @@ describe('fetchMethodSource', () => {
     expect.assertions(1);
     const execute = vi.fn(() => 'source');
     fetchMethodSource(execute, 1000n, 'size', isClassSide);
-    const code = (execute as ReturnType<typeof vi.fn>).mock.calls[0][1] as string;
+    const code = (execute as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
     expect(code).toContain(expected);
   });
 
@@ -138,7 +138,7 @@ describe('fetchMethodSource', () => {
     expect.assertions(2);
     const execute = vi.fn(() => 'source');
     fetchMethodSource(execute, 99999n, 'size', false);
-    const code = (execute as ReturnType<typeof vi.fn>).mock.calls[0][1] as string;
+    const code = (execute as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
     expect(code).toContain('99999');
     expect(code).toContain('size');
   });

@@ -42,9 +42,9 @@ export const PROBE_FAILING_SELECTOR = 'testFails';
 export const PROBE_ERRORING_SELECTOR = 'testErrors';
 
 export function installProbeFixture(exec: QueryExecutor): void {
-  exec('installProbeFixture', SETUP_SOURCE);
+  exec(SETUP_SOURCE);
 }
 
 export function uninstallProbeFixture(exec: QueryExecutor): void {
-  exec('uninstallProbeFixture', TEARDOWN_SOURCE);
+  exec(TEARDOWN_SOURCE);
 }

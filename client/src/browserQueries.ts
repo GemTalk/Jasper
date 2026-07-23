@@ -180,7 +180,7 @@ function resolveClassUtf8(session: ActiveSession): bigint {
 // result as UTF-8 in Smalltalk before paging it out, so results decode
 // correctly regardless of their original encoding and are not capped at a
 // single fixed-size buffer.
-export function executeFetchString(session: ActiveSession, label: string, code: string): string {
+export function executeFetchString(session: ActiveSession, code: string): string {
   // Check if session is busy with an async operation (e.g., Display It)
   const { result: inProgress } = session.gci.GciTsCallInProgress(session.handle);
   if (inProgress !== 0) {
@@ -296,7 +296,6 @@ export function checkEnhancedInspectorAvailable(session: ActiveSession): boolean
   try {
     const result = executeFetchString(
       session,
-      'checkEnhancedInspectorAvailable',
       "[GtRemotePhlowViewedObject notNil printString] on: Error do: [:e | 'false']",
     );
     return result.trim() === 'true';
@@ -321,7 +320,6 @@ export function checkRefactoringSupportAvailable(session: ActiveSession): boolea
   try {
     const result = executeFetchString(
       session,
-      'checkRefactoringSupportAvailable',
       "(System myUserProfile symbolList objectNamed: 'GsRenameInstanceVariableRefactoring') notNil printString",
     );
     return result.trim() === 'true';
@@ -340,11 +338,7 @@ export function checkRefactoringSupportAvailable(session: ActiveSession): boolea
  */
 export function sessionNeedsCommit(session: ActiveSession): boolean | undefined {
   try {
-    const result = executeFetchString(
-      session,
-      'sessionNeedsCommit',
-      'System needsCommit printString',
-    ).trim();
+    const result = executeFetchString(session, 'System needsCommit printString').trim();
     if (result === 'true') return true;
     if (result === 'false') return false;
     return undefined;
@@ -365,7 +359,7 @@ export function sessionNeedsCommit(session: ActiveSession): boolean | undefined 
  * compile or execute, or the result cannot be resolved to a String.
  */
 export function defaultQueryExecutorUsing(activeSession: ActiveSession): QueryExecutor {
-  return (label, code) => executeFetchString(activeSession, label, code);
+  return (code) => executeFetchString(activeSession, code);
 }
 
 // ── Read-only queries (thin delegates to client/src/queries/) ─────────────

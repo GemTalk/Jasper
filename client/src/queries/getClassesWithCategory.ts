@@ -30,11 +30,7 @@ dict keysAndValuesDo: [:k :v |
     (cat isNil or: [cat isEmpty]) ifTrue: [cat := 'as yet unclassified'].
     ws nextPutAll: cat asString; tab; nextPutAll: k; lf]].
 ws contents`;
-  const label =
-    typeof dict === 'number'
-      ? `getClassesWithCategory(dictIndex: ${dict})`
-      : `getClassesWithCategory(dictName: ${dict})`;
-  return splitLines(execute(label, code)).map((line) => {
+  return splitLines(execute(code)).map((line) => {
     const tab = line.indexOf('\t');
     return {
       category: line.slice(0, tab),

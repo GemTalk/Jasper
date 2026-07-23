@@ -30,7 +30,6 @@ function refreshIfClean(session: ActiveSession): void {
   try {
     queries.executeFetchString(
       session,
-      'mcpRefreshIfClean',
       "System needsCommit ifFalse: [System abortTransaction]. 'ok'",
     );
   } catch {
@@ -844,5 +843,5 @@ function formatTestResults(results: TestRunResult[]): string {
 }
 
 function executeString(session: ActiveSession, code: string): string {
-  return queries.executeFetchString(session, 'mcpTool', code);
+  return queries.executeFetchString(session, code);
 }

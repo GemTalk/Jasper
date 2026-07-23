@@ -7,5 +7,5 @@ ws := WriteStream on: Unicode7 new.
 ${className} allSelectors asSortedCollection do: [:each |
   ws nextPutAll: each; lf].
 ws contents`;
-  return splitLines(execute(`getAllSelectors(${className})`, code));
+  return splitLines(execute(code));
 }

@@ -34,8 +34,7 @@ describe('explorer queries (integration)', () => {
   });
 
   const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
-  const exec = (code: string): string =>
-    q.executeFetchString(session(), 'explorerQueries-it', code);
+  const exec = (code: string): string => q.executeFetchString(session(), code);
 
   const isSystemProfile = (): boolean =>
     exec('System myUserProfile isSystemProfile printString').trim() === 'true';

@@ -31,8 +31,7 @@ describe('forking a gem (integration)', () => {
   });
 
   const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
-  const execute = (label: string, code: string): string =>
-    browserQueries.executeFetchString(session(), label, code);
+  const execute = (code: string): string => browserQueries.executeFetchString(session(), code);
 
   // The NetLDI this stone actually uses, as the harness itself connects through.
   const gemNrs = (): string => process.env.VITE_GEMSTONE_GEM_NRS!;
@@ -53,7 +52,7 @@ describe('forking a gem (integration)', () => {
   it('gives the new gem a session distinct from this one', (ctx) => {
     if (!supported()) return ctx.skip();
 
-    const mine = execute('mySession', 'GsCurrentSession currentSession serialNumber printString');
+    const mine = execute('GsCurrentSession currentSession serialNumber printString');
 
     const id = forkGemRunning(execute, 'System sleep: 1', gemNrs());
 
@@ -63,7 +62,7 @@ describe('forking a gem (integration)', () => {
   it('runs the gem as the user who asked, never SystemUser', (ctx) => {
     if (!supported()) return ctx.skip();
 
-    const me = execute('me', 'System myUserProfile userId').trim();
+    const me = execute('System myUserProfile userId').trim();
 
     // The gem logs in with a one-time password minted for this same user, so a
     // successful fork is itself the evidence — minting for anyone else would
