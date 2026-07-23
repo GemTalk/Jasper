@@ -10,6 +10,7 @@ import {
   buildMethodUri,
   parseUri,
   listOpenGemstoneTabs,
+  tabInputUri,
 } from './gemstoneFileSystemProvider';
 import { filterMatches } from './explorerFilter';
 import { DoubleClickDetector } from './explorerDoubleClick';
@@ -79,7 +80,8 @@ const EXPLORER_VIEWS = [VIEW_DICTS, VIEW_CATEGORIES, VIEW_CLASSES, VIEW_METHODS]
 // across a few of OUR groups instead of clumping. `placement` scopes the
 // balancing to editors this Explorer opened, so it doesn't invade the System
 // Browser's group (see sourceEditorPlacement.ts).
-async function openGemstoneDocument(
+// Exported for unit testing the open-to-side placement (reveal-if-already-open).
+export async function openGemstoneDocument(
   doc: vscode.TextDocument,
   toSide: boolean,
   placement: SourceEditorPlacement,
@@ -92,6 +94,22 @@ async function openGemstoneDocument(
     });
     placement.remember(doc.uri);
     return;
+  }
+  // Already open somewhere? Reveal that editor instead of opening a second copy.
+  // Opening the same method to the side repeatedly used to pile up duplicate
+  // same-URI editors across balanced groups, which don't track cleanly in the
+  // Open Editors view (and comparing a method against itself isn't useful).
+  const uriStr = doc.uri.toString();
+  for (const group of vscode.window.tabGroups.all) {
+    if (group.tabs.some((tab) => tabInputUri(tab)?.toString() === uriStr)) {
+      await vscode.window.showTextDocument(doc, {
+        viewColumn: group.viewColumn,
+        preview: false,
+        preserveFocus: false,
+      });
+      placement.remember(doc.uri);
+      return;
+    }
   }
   const target = placement.balancedColumn();
   if (target === 'new') {
