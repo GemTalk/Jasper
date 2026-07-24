@@ -7,10 +7,14 @@ vi.mock('vscode', () => import('../../__mocks__/vscode'));
 import { useIntegrationTest } from '../../__tests__/useIntegrationTest';
 import { GciLibrary } from '../../gciLibrary';
 import * as q from '../../browserQueries';
+import { BrowserQueryError } from '../../browserQueries';
 import { previewRenameInstVar } from '../queries/previewRenameInstVar';
 import { parseRenameChanges, RenameChange } from '../renameInstVarPreview';
 import type { ActiveSession } from '../../sessionManager';
-import { requireServerPluginFeature } from '../../__tests__/requireServerPluginFeature';
+import {
+  requireServerPluginFeature,
+  requireServerPluginFeatureAbsent,
+} from '../../__tests__/requireServerPluginFeature';
 
 /**
  * Automatic GCI integration test for the rename-instance-variable round trip:
@@ -130,5 +134,19 @@ describe('rename instance variable (integration)', () => {
     previewRenameInstVar(exec, COUNTER, 'count', 'tally', userIndex());
 
     expect(exec('System needsCommit printString').trim()).toBe(needsCommitBefore);
+  });
+
+  // Degradation assertion: without the engine loaded, the preview query references
+  // a class that doesn't exist, so it must surface a clear error rather than
+  // silently no-op-ing or returning a malformed change-set the client would
+  // mis-render.
+  it('surfaces a clear error instead of a malformed preview when the engine is not loaded', (ctx) => {
+    requireServerPluginFeatureAbsent('refactoring', ctx, session());
+
+    defineCounterHierarchy();
+
+    expect(() => previewRenameInstVar(exec, COUNTER, 'count', 'tally', userIndex())).toThrow(
+      BrowserQueryError,
+    );
   });
 });
