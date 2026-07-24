@@ -14,6 +14,7 @@ import {
 } from '../queries/previewRenameMethod';
 import { parseStartPreview, parsePage, parseApplyResult } from '../renameMethodPreview';
 import type { ActiveSession } from '../../sessionManager';
+import { requireServerPluginFeature } from '../../__tests__/requireServerPluginFeature';
 
 /**
  * Automatic GCI integration tests for the rename-method (R2) refactoring, over
@@ -60,7 +61,7 @@ describe('rename method (integration)', () => {
   });
 
   it('runs the engine GS SUnit suites in-stone with zero failures', (ctx) => {
-    if (!rbEnginePresent()) ctx.skip('refactoring engine not loaded in this stone');
+    requireServerPluginFeature('refactoring', ctx, session());
 
     // File in the test classes (in-image compile — robust) then run every engine
     // suite, answering the total failure+error count across all of them.
@@ -79,7 +80,7 @@ failuresAndErrors printString`;
   });
 
   it('runs the rename-method suite alone and reports its test count', (ctx) => {
-    if (!rbEnginePresent()) ctx.skip('refactoring engine not loaded in this stone');
+    requireServerPluginFeature('refactoring', ctx, session());
 
     const p = escapeString(engineTestsPayload());
     // The class isn't defined at this doit's compile time (it is filed in at run
@@ -113,7 +114,7 @@ r runCount printString, ' ', (r failures size + r errors size) printString`;
   };
 
   it('previews a keyword rename+reorder through the paginated query, then applies it server-side', async (ctx) => {
-    if (!rbEnginePresent()) ctx.skip('refactoring engine not loaded in this stone');
+    requireServerPluginFeature('refactoring', ctx, session());
 
     defineFixture();
     const token = `rmit-${BASE}`;
@@ -158,7 +159,7 @@ r runCount printString, ' ', (r failures size + r errors size) printString`;
   });
 
   it('pages a preview and honours a deselected change on apply', async (ctx) => {
-    if (!rbEnginePresent()) ctx.skip('refactoring engine not loaded in this stone');
+    requireServerPluginFeature('refactoring', ctx, session());
 
     defineFixture();
     const token = `rmit-page-${BASE}`;

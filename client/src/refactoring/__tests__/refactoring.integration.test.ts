@@ -10,6 +10,7 @@ import * as q from '../../browserQueries';
 import { previewRenameInstVar } from '../queries/previewRenameInstVar';
 import { parseRenameChanges, RenameChange } from '../renameInstVarPreview';
 import type { ActiveSession } from '../../sessionManager';
+import { requireServerPluginFeature } from '../../__tests__/requireServerPluginFeature';
 
 /**
  * Automatic GCI integration test for the rename-instance-variable round trip:
@@ -92,7 +93,7 @@ describe('rename instance variable (integration)', () => {
   });
 
   it('rewrites references across the defining class and its subclass', (ctx) => {
-    if (!engineLoaded()) ctx.skip('refactoring engine not loaded in this stone');
+    requireServerPluginFeature('refactoring', ctx, session());
 
     defineCounterHierarchy();
 
@@ -106,7 +107,7 @@ describe('rename instance variable (integration)', () => {
   });
 
   it('rewrites the instance-variable list in the class definition', (ctx) => {
-    if (!engineLoaded()) ctx.skip('refactoring engine not loaded in this stone');
+    requireServerPluginFeature('refactoring', ctx, session());
 
     defineCounterHierarchy();
 
@@ -121,7 +122,7 @@ describe('rename instance variable (integration)', () => {
   });
 
   it('builds the preview without committing', (ctx) => {
-    if (!engineLoaded()) ctx.skip('refactoring engine not loaded in this stone');
+    requireServerPluginFeature('refactoring', ctx, session());
 
     defineCounterHierarchy();
     const needsCommitBefore = exec('System needsCommit printString').trim();

@@ -10,6 +10,7 @@ import { startRenameClassVarPreview, applyRenameClassVar } from '../queries/prev
 import { PREVIEW_PAGE_BYTES } from '../queries/previewRenameMethod';
 import { parseStartPreview, parseApplyResult } from '../renameClassVarPreview';
 import type { ActiveSession } from '../../sessionManager';
+import { requireServerPluginFeature } from '../../__tests__/requireServerPluginFeature';
 
 /**
  * Automatic GCI integration test for the rename-class-variable (R4) refactoring,
@@ -93,7 +94,7 @@ describe('rename class variable (integration)', () => {
   });
 
   it('runs the rename-class-variable GS SUnit suite in-stone with zero failures', (ctx) => {
-    if (!rbEnginePresent()) ctx.skip('refactoring engine not loaded in this stone');
+    requireServerPluginFeature('refactoring', ctx, session());
 
     const code = `| r |
 ${fileInTests()}
@@ -104,7 +105,7 @@ r := (System myUserProfile symbolList objectNamed: #GsRenameClassVariableRefacto
   });
 
   it('previews the rename across both sides and the subclass, and stages the class-def edit', async (ctx) => {
-    if (!rbEnginePresent()) ctx.skip('refactoring engine not loaded in this stone');
+    requireServerPluginFeature('refactoring', ctx, session());
 
     defineFixture();
 
@@ -134,7 +135,7 @@ r := (System myUserProfile symbolList objectNamed: #GsRenameClassVariableRefacto
   });
 
   it('applies the rename server-side, preserving the value and creating no new version', async (ctx) => {
-    if (!rbEnginePresent()) ctx.skip('refactoring engine not loaded in this stone');
+    requireServerPluginFeature('refactoring', ctx, session());
 
     defineFixture();
     const token = `rcvit-apply-${BASE}`;
