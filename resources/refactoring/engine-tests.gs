@@ -41,6 +41,101 @@ removeallclassmethods GsClassHistoryTest
 
 doit
 | cls |
+cls := TestCase subclass: 'GsExtractMethodRefactoringTest'
+  instVarNames: #()
+  classVars: #()
+  classInstVars: #()
+  poolDictionaries: #()
+  inDictionary: UserGlobals.
+cls category: 'Refactoring-Tests-Core'.
+cls comment: '
+Correctness of the extract-method refactoring (M1). Extract turns a selected run
+of statements (or a single expression) into a NEW method and replaces the
+selection with a send to it, staging exactly two core changes -- a #methodAdd for
+the extracted method and a #methodRecompile for the rewritten original -- plus,
+when replaceSimilar is on and the extraction is a safe void shape, one deselectable
+#methodRecompile per structurally-equivalent run found in the class + hierarchy.
+
+This suite pins down:
+
+  - a void statement run with no external reads extracts to a unary method + a
+    ''self <sel>'' call;
+  - statements that read outer locals extract to a keyword method taking those as
+    arguments (source order), and a single variable assigned inside and used after
+    becomes the return value (call site: ''var := self <sel> ...'');
+  - a single expression extracts to a ''^expression'' method, the call substituted
+    for the expression in place;
+  - a temporary used only inside the selection is declared in the new method and
+    dropped from the original;
+  - the selection is DECLINED (empty change set + a reason) when it contains a ^
+    return, sends to super, uses thisContext, assigns more than one variable used
+    later, is not a whole-statement / single-expression selection, or the selector
+    arity does not match the argument count;
+  - a new selector already in the hierarchy is a SOFT collision warning that does
+    not block (the change set is still built);
+  - the replace-similar pass finds equivalent runs in the class + hierarchy (arg
+    positions mapped consistently), skips near-misses, is off by default, and is
+    skipped for value-returning extractions;
+  - building the change set compiles nothing and commits nothing; apply creates the
+    new method and rewrites the original (honouring duplicate deselection but never
+    the two core changes) without committing.
+
+setUp builds a throwaway two-class hierarchy in UserGlobals; tearDown removes it.
+'.
+true.
+%
+
+removeallmethods GsExtractMethodRefactoringTest
+removeallclassmethods GsExtractMethodRefactoringTest
+
+doit
+| cls |
+cls := TestCase subclass: 'GsInlineMethodRefactoringTest'
+  instVarNames: #()
+  classVars: #()
+  classInstVars: #()
+  poolDictionaries: #()
+  inDictionary: UserGlobals.
+cls category: 'Refactoring-Tests-Core'.
+cls comment: '
+Correctness of the inline-method refactoring (M2). Inline replaces ONE self/super
+message send at the cursor with the called method''s body (arguments substituted),
+staging a single #methodRecompile for the rewritten caller. The called method is
+KEPT -- EXCEPT when the inlined call was its last remaining sender, in which case a
+second, deselectable #methodRemove is staged to delete the now-unused method.
+
+This suite pins down:
+
+  - a self send of a void one-liner used as a statement inlines the body at the
+    site; the target is kept (it has other senders); one #methodRecompile;
+  - a self send whose value is used (target is ^expr) is replaced by the expression,
+    parenthesised only where precedence requires it;
+  - a send with arguments substitutes each argument''s source for the parameter, a
+    non-atomic argument parenthesised, an atomic one bare (even used twice);
+  - a super send resolves the target from the superclass and inlines its body;
+  - the inline is DECLINED (empty change set + a reason) for a non-self/super
+    receiver, no implementor in the hierarchy, a multi-statement / temp-declaring /
+    inner-return target, a target sending super, a side-effecting argument used more
+    than once, a value used where the target returns self, a cascaded send, and a
+    caret that is not on a send;
+  - inlining the LAST sender stages a second #methodRemove for the target, and it is
+    SUPPRESSED when another method (or a second send in the same method) still sends
+    it;
+  - building compiles nothing and commits nothing; apply recompiles the caller
+    (always) and removes the target (only when kept), never committing.
+
+setUp builds a throwaway two-class hierarchy in UserGlobals; tearDown removes it.
+Target selectors that must be the LAST sender in a test use image-unique names
+(gsim...) so no unrelated sender in the image perturbs the count.
+'.
+true.
+%
+
+removeallmethods GsInlineMethodRefactoringTest
+removeallclassmethods GsInlineMethodRefactoringTest
+
+doit
+| cls |
 cls := TestCase subclass: 'GsRefactoringChangeSetTest'
   instVarNames: #()
   classVars: #()
@@ -527,6 +622,1153 @@ method: GsClassHistoryTest
 testRevertOutOfRangeIsError
 	self assert: (GsClassHistory revertClassNamed: 'GsCHFixture' toIndex: 99)
 		includesSubstring: '"error"'
+%
+
+category: 'asserting'
+method: GsExtractMethodRefactoringTest
+assert: aString includesSubstring: aSubstring
+	self assert: (aString indexOfSubCollection: aSubstring) > 0
+%
+
+category: 'fixture'
+method: GsExtractMethodRefactoringTest
+baseFixture
+	^UserGlobals at: #GsEMBase
+%
+
+category: 'fixture'
+method: GsExtractMethodRefactoringTest
+compile: aSource in: aClass
+	[aClass
+		compileMethod: aSource
+		dictionaries: System myUserProfile symbolList
+		category: 'fixture']
+		on: CompileWarning
+		do: [:ex | ex resume: nil]
+%
+
+category: 'asserting'
+method: GsExtractMethodRefactoringTest
+deny: aString includesSubstring: aSubstring
+	self assert: (aString indexOfSubCollection: aSubstring) = 0
+%
+
+category: 'fixture'
+method: GsExtractMethodRefactoringTest
+extractFrom: aClass selector: aSelector select: aSubstring newSelector: newSel
+	"A refactoring extracting the occurrence of aSubstring in aClass>>aSelector into a
+	 new method named newSel."
+	| start |
+	start := (aClass compiledMethodAt: aSelector) sourceString indexOfSubCollection: aSubstring.
+	^GsExtractMethodRefactoring
+		class: aClass
+		selector: aSelector
+		meta: false
+		selStart: start
+		selStop: start + aSubstring size - 1
+		newSelector: newSel
+%
+
+category: 'fixture'
+method: GsExtractMethodRefactoringTest
+addChangeIn: aChangeSet
+	^aChangeSet changes detect: [:c | c kind = #methodAdd] ifNone: [nil]
+%
+
+category: 'fixture'
+method: GsExtractMethodRefactoringTest
+recompileFor: aSelector in: aChangeSet
+	^aChangeSet changes
+		detect: [:c | c kind = #methodRecompile and: [c selector = aSelector]]
+		ifNone: [nil]
+%
+
+category: 'fixture'
+method: GsExtractMethodRefactoringTest
+recompileSelectorsIn: aChangeSet
+	^(aChangeSet changes select: [:c | c kind = #methodRecompile])
+		collect: [:c | c selector]
+%
+
+category: 'fixture'
+method: GsExtractMethodRefactoringTest
+subFixture
+	^UserGlobals at: #GsEMSub
+%
+
+category: 'running'
+method: GsExtractMethodRefactoringTest
+setUp
+	| base sub |
+	super setUp.
+	base := Object
+		subclass: 'GsEMBase'
+		instVarNames: #('count')
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	sub := base
+		subclass: 'GsEMSub'
+		instVarNames: #()
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	"void run, no external reads, no return"
+	self compile: 'doStuff self yourself. self hash. ^count' in: base.
+	"reads two outer arguments + one return variable"
+	self compile: 'combine: a with: b | r | r := a + b. r := r * a. ^r' in: base.
+	"single-expression extract (no arg / one arg)"
+	self compile: 'computeArea ^count * count' in: base.
+	self compile: 'scaleBy: factor ^count * factor' in: base.
+	"an expression extract that is a SUB-expression (a binary operand): parens kept"
+	self compile: 'subExprArg: n ^1 + (n * n)' in: base.
+	"temporary used only inside the selection"
+	self compile: 'report | tmp | tmp := self hash. tmp printString. ^count' in: base.
+	"hard declines"
+	self compile: 'guard self yourself. true ifTrue: [^1]. ^2' in: base.
+	self compile: 'callsSuper ^super hash' in: base.
+	self compile: 'twoOut | a b | a := 1. b := 2. ^a + b' in: base.
+	"replace-similar fixtures (void run 'self yourself. self hash')"
+	self compile: 'helperA self yourself. self hash. ^1' in: base.
+	self compile: 'helperB self yourself. self hash. ^2' in: base.
+	self compile: 'helperX self yourself. self identityHash. ^3' in: base.
+	self compile: 'helperC self yourself. self hash. ^9' in: sub.
+	"replace-similar with an argument mapped across sites"
+	self compile: 'scaleSrc: n self yourself. n printString. ^count' in: base.
+	self compile: 'scaleA: n self yourself. n printString. ^1' in: base.
+	self compile: 'scaleB: m self yourself. m printString. ^2' in: base
+%
+
+category: 'running'
+method: GsExtractMethodRefactoringTest
+tearDown
+	#('GsEMSub' 'GsEMBase')
+		do: [:nm | UserGlobals removeKey: nm asSymbol ifAbsent: []]
+%
+
+category: 'tests - staging'
+method: GsExtractMethodRefactoringTest
+testExtractsVoidRunToUnaryMethod
+	| cs add recompile |
+	cs := (self extractFrom: self baseFixture selector: #doStuff
+		select: 'self yourself. self hash' newSelector: 'sideEffects') changeSet.
+	add := self addChangeIn: cs.
+	recompile := self recompileFor: #doStuff in: cs.
+
+	self assert: add notNil.
+	self assert: add selector equals: #sideEffects.
+	self assert: add newSource includesSubstring: 'sideEffects'.
+	"The extracted method is reformatted (one statement per line), so assert each."
+	self assert: add newSource includesSubstring: 'self yourself'.
+	self assert: add newSource includesSubstring: 'self hash'.
+	self assert: recompile newSource includesSubstring: 'self sideEffects'.
+	self assert: recompile newSource includesSubstring: '^count'.
+	self deny: recompile newSource includesSubstring: 'self yourself'
+%
+
+category: 'tests - staging'
+method: GsExtractMethodRefactoringTest
+testExtractsArgumentsAndReturnValue
+	| ref cs add recompile |
+	ref := self extractFrom: self baseFixture selector: #combine:with:
+		select: 'r := a + b. r := r * a' newSelector: 'sumScaledA:b:'.
+	cs := ref changeSet.
+	add := self addChangeIn: cs.
+	recompile := self recompileFor: #combine:with: in: cs.
+
+	self assert: (ref argNames asArray) equals: #('a' 'b').
+	self assert: ref returnVar equals: 'r'.
+	"new method takes the two read arguments and declares + returns r"
+	self assert: add newSource includesSubstring: 'sumScaledA: a b: b'.
+	self assert: add newSource includesSubstring: '| r |'.
+	self assert: add newSource includesSubstring: 'r := a + b'.
+	self assert: add newSource includesSubstring: '^ r'.
+	"call site assigns the return to r"
+	self assert: recompile newSource includesSubstring: 'r := self sumScaledA: a b: b'.
+	self assert: recompile newSource includesSubstring: '^r'
+%
+
+category: 'tests - staging'
+method: GsExtractMethodRefactoringTest
+testExtractsSingleExpressionWithNoArguments
+	| cs add recompile |
+	cs := (self extractFrom: self baseFixture selector: #computeArea
+		select: 'count * count' newSelector: 'areaValue') changeSet.
+	add := self addChangeIn: cs.
+	recompile := self recompileFor: #computeArea in: cs.
+
+	self assert: add newSource includesSubstring: '^ count * count'.
+	"The send replaces a whole return value, so no parentheses are added."
+	self assert: recompile newSource includesSubstring: '^self areaValue'.
+	self deny: recompile newSource includesSubstring: '(self areaValue)'
+%
+
+category: 'tests - staging'
+method: GsExtractMethodRefactoringTest
+testExtractsSingleExpressionWithAnArgument
+	| ref cs add |
+	ref := self extractFrom: self baseFixture selector: #scaleBy:
+		select: 'count * factor' newSelector: 'scaled:'.
+	cs := ref changeSet.
+	add := self addChangeIn: cs.
+
+	self assert: (ref argNames asArray) equals: #('factor').
+	self assert: add newSource includesSubstring: 'scaled: factor'.
+	self assert: add newSource includesSubstring: '^ count * factor'.
+	"A keyword send replacing a whole return value needs no parentheses."
+	self assert: (self recompileFor: #scaleBy: in: cs) newSource includesSubstring: '^self scaled: factor'.
+	self deny: (self recompileFor: #scaleBy: in: cs) newSource includesSubstring: '(self scaled: factor)'
+%
+
+category: 'tests - staging'
+method: GsExtractMethodRefactoringTest
+testExpressionThatIsASubExpressionKeepsParentheses
+	"Extracting a sub-expression (a binary operand) into a keyword send DOES need
+	 parentheses to preserve precedence: 1 + (n * n) -> 1 + (self squared: n)."
+	| cs |
+	cs := (self extractFrom: self baseFixture selector: #subExprArg:
+		select: 'n * n' newSelector: 'squared:') changeSet.
+
+	self assert: (self recompileFor: #subExprArg: in: cs) newSource includesSubstring: '(self squared: n)'
+%
+
+category: 'tests - staging'
+method: GsExtractMethodRefactoringTest
+testTemporaryUsedOnlyInsideIsMovedIntoNewMethod
+	| cs add recompile |
+	cs := (self extractFrom: self baseFixture selector: #report
+		select: 'tmp := self hash. tmp printString' newSelector: 'doReport') changeSet.
+	add := self addChangeIn: cs.
+	recompile := self recompileFor: #report in: cs.
+
+	self assert: add newSource includesSubstring: '| tmp |'.
+	self assert: add newSource includesSubstring: 'tmp := self hash'.
+	"the temporary is gone from the original method"
+	self deny: recompile newSource includesSubstring: 'tmp'.
+	self assert: recompile newSource includesSubstring: 'self doReport'
+%
+
+category: 'tests - staging'
+method: GsExtractMethodRefactoringTest
+testSelectionIncludingLeadingWhitespaceStillResolves
+	"A selection that starts in the whitespace before the first statement (e.g. the
+	 user dragged from column 0) must still extract -- only whole-statement containment
+	 matters, not where the selection begins relative to the sequence."
+	| cs |
+	cs := (self extractFrom: self baseFixture selector: #doStuff
+		select: ' self yourself. self hash' newSelector: 'sideEffects') changeSet.
+
+	self assert: cs size equals: 2.
+	self assert: (self addChangeIn: cs) notNil
+%
+
+category: 'tests - staging'
+method: GsExtractMethodRefactoringTest
+testStagesMethodAddThenRecompileForTwoCoreChanges
+	| cs |
+	cs := (self extractFrom: self baseFixture selector: #doStuff
+		select: 'self yourself. self hash' newSelector: 'sideEffects') changeSet.
+
+	self assert: cs size equals: 2.
+	self assert: (cs changes at: 1) kind equals: #methodAdd.
+	self assert: (cs changes at: 2) kind equals: #methodRecompile
+%
+
+category: 'tests - staging'
+method: GsExtractMethodRefactoringTest
+testBuildingTheChangeSetChangesNoSourceAndDoesNotCommit
+	| before |
+	before := System needsCommit.
+	(self extractFrom: self baseFixture selector: #doStuff
+		select: 'self yourself. self hash' newSelector: 'sideEffects') changeSet.
+
+	"the stored source is untouched: building the preview compiles nothing"
+	self assert: (self baseFixture compiledMethodAt: #doStuff) sourceString
+		includesSubstring: 'self yourself. self hash'.
+	self assert: System needsCommit equals: before
+%
+
+category: 'tests - decline'
+method: GsExtractMethodRefactoringTest
+testSelectionContainingReturnIsDeclined
+	| ref |
+	ref := self extractFrom: self baseFixture selector: #guard
+		select: 'self yourself. true ifTrue: [^1]' newSelector: 'checkGuard'.
+
+	self assert: ref declineReason notNil.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - decline'
+method: GsExtractMethodRefactoringTest
+testSelectionSendingToSuperIsDeclined
+	| ref |
+	ref := self extractFrom: self baseFixture selector: #callsSuper
+		select: 'super hash' newSelector: 'superHashValue'.
+
+	self assert: ref declineReason notNil.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - decline'
+method: GsExtractMethodRefactoringTest
+testSelectionAssigningTwoVariablesUsedLaterIsDeclined
+	| ref |
+	ref := self extractFrom: self baseFixture selector: #twoOut
+		select: 'a := 1. b := 2' newSelector: 'initAB'.
+
+	self assert: ref declineReason notNil.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - decline'
+method: GsExtractMethodRefactoringTest
+testSelectionNotOnWholeStatementsIsDeclined
+	| ref |
+	ref := GsExtractMethodRefactoring
+		class: self baseFixture selector: #doStuff meta: false
+		selStart: 1 selStop: 1 newSelector: 'nope'.
+
+	self assert: ref declineReason notNil.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - decline'
+method: GsExtractMethodRefactoringTest
+testSelectorArityMismatchIsDeclined
+	"combine's selection needs two arguments; a unary selector cannot host it."
+	| ref |
+	ref := self extractFrom: self baseFixture selector: #combine:with:
+		select: 'r := a + b. r := r * a' newSelector: 'oneWord'.
+
+	self assert: ref declineReason notNil.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - decline'
+method: GsExtractMethodRefactoringTest
+testNewSelectorSameAsSourceMethodIsDeclined
+	"Naming the extracted method after the method being extracted from would make the
+	 rewritten original call itself -- a hard decline, not the soft collision warning."
+	| ref |
+	ref := self extractFrom: self baseFixture selector: #doStuff
+		select: 'self yourself. self hash' newSelector: 'doStuff'.
+
+	self assert: ref declineReason notNil.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - collision'
+method: GsExtractMethodRefactoringTest
+testSelectorAlreadyInHierarchyIsASoftWarningNotADecline
+	"hash is implemented by Object (a superclass); extracting to it warns but is still
+	 offered -- the change set is built."
+	| ref |
+	ref := self extractFrom: self baseFixture selector: #doStuff
+		select: 'self yourself. self hash' newSelector: 'hash'.
+
+	self assert: ref collisionWarning notNil.
+	self assert: ref declineReason isNil.
+	self assert: ref changeSet size equals: 2
+%
+
+category: 'tests - similar'
+method: GsExtractMethodRefactoringTest
+testReplaceSimilarFindsEquivalentRunsInHierarchy
+	| ref cs selectors |
+	ref := self extractFrom: self baseFixture selector: #doStuff
+		select: 'self yourself. self hash' newSelector: 'sideEffects'.
+	ref replaceSimilar: true.
+	cs := ref changeSet.
+	selectors := self recompileSelectorsIn: cs.
+
+	self assert: (selectors includes: #helperA).
+	self assert: (selectors includes: #helperB).
+	self assert: (selectors includes: #helperC).
+	"a near-miss (self identityHash) is NOT rewritten"
+	self deny: (selectors includes: #helperX).
+	"...and the new method + the original rewrite are still there"
+	self assert: (self addChangeIn: cs) notNil.
+	self assert: (selectors includes: #doStuff)
+%
+
+category: 'tests - similar'
+method: GsExtractMethodRefactoringTest
+testReplaceSimilarMapsArgumentsPerSite
+	| ref cs |
+	ref := self extractFrom: self baseFixture selector: #scaleSrc:
+		select: 'self yourself. n printString' newSelector: 'doScale:'.
+	ref replaceSimilar: true.
+	cs := ref changeSet.
+
+	self assert: (self recompileFor: #scaleA: in: cs) newSource includesSubstring: 'self doScale: n'.
+	self assert: (self recompileFor: #scaleB: in: cs) newSource includesSubstring: 'self doScale: m'
+%
+
+category: 'tests - similar'
+method: GsExtractMethodRefactoringTest
+testReplaceSimilarIsOffByDefault
+	| cs |
+	cs := (self extractFrom: self baseFixture selector: #doStuff
+		select: 'self yourself. self hash' newSelector: 'sideEffects') changeSet.
+
+	self assert: cs size equals: 2
+%
+
+category: 'tests - similar'
+method: GsExtractMethodRefactoringTest
+testReplaceSimilarSkippedForValueReturningExtraction
+	"combine returns a value, so it is not a safe void shape -- no duplicate pass."
+	| ref cs |
+	ref := self extractFrom: self baseFixture selector: #combine:with:
+		select: 'r := a + b. r := r * a' newSelector: 'sumScaledA:b:'.
+	ref replaceSimilar: true.
+	cs := ref changeSet.
+
+	self assert: cs size equals: 2
+%
+
+category: 'tests - preview'
+method: GsExtractMethodRefactoringTest
+testPreviewJsonSerializesBothCoreChanges
+	| json |
+	json := (self extractFrom: self baseFixture selector: #doStuff
+		select: 'self yourself. self hash' newSelector: 'sideEffects') previewJsonString.
+
+	self assert: json includesSubstring: 'methodAdd'.
+	self assert: json includesSubstring: 'methodRecompile'
+%
+
+category: 'tests - preview'
+method: GsExtractMethodRefactoringTest
+testStartPreviewCarriesTotalsAndSelectorAndFirstPage
+	| json |
+	json := (self extractFrom: self baseFixture selector: #doStuff
+		select: 'self yourself. self hash' newSelector: 'sideEffects')
+		startPreviewToken: 'm1Tok' maxBytes: 100000.
+	[self assert: json includesSubstring: '"newSelector":"sideEffects"'.
+	 self assert: json includesSubstring: '"total":2'.
+	 self assert: json includesSubstring: '"changes":']
+		ensure: [GsExtractMethodRefactoring clearToken: 'm1Tok']
+%
+
+category: 'tests - preview'
+method: GsExtractMethodRefactoringTest
+testAnalysisPreflightReportsArgumentsAndSafeShape
+	| json |
+	json := GsExtractMethodRefactoring
+		analyzeSelectionForClass: self baseFixture selector: #doStuff meta: false
+		selStart: ((self baseFixture compiledMethodAt: #doStuff) sourceString
+			indexOfSubCollection: 'self yourself. self hash')
+		selStop: ((self baseFixture compiledMethodAt: #doStuff) sourceString
+			indexOfSubCollection: 'self yourself. self hash') + 'self yourself. self hash' size - 1.
+
+	self assert: json includesSubstring: '"argCount":0'.
+	self assert: json includesSubstring: '"safeVoidShape":true'.
+	self assert: json includesSubstring: '"decline":null'
+%
+
+category: 'tests - apply'
+method: GsExtractMethodRefactoringTest
+testApplyCreatesNewMethodAndRewritesOriginal
+	(self extractFrom: self baseFixture selector: #doStuff
+		select: 'self yourself. self hash' newSelector: 'sideEffects') applyDeselected: #().
+
+	self assert: (self baseFixture includesSelector: #sideEffects).
+	self assert: (self baseFixture compiledMethodAt: #sideEffects) sourceString
+		includesSubstring: 'self yourself'.
+	self assert: (self baseFixture compiledMethodAt: #sideEffects) sourceString
+		includesSubstring: 'self hash'.
+	self assert: (self baseFixture compiledMethodAt: #doStuff) sourceString
+		includesSubstring: 'self sideEffects'
+%
+
+category: 'tests - apply'
+method: GsExtractMethodRefactoringTest
+testTokenRoundTripStartThenApplyRecompilesBothMethods
+	"The client path: startPreviewToken stashes the refactoring under a token; a later
+	 applyForToken:deselected: retrieves and applies it. No commit."
+	| ref json before |
+	before := System needsCommit.
+	ref := self extractFrom: self baseFixture selector: #doStuff
+		select: 'self yourself. self hash' newSelector: 'sideEffects'.
+	ref startPreviewToken: 'm1rt' maxBytes: 100000.
+	[json := GsExtractMethodRefactoring applyForToken: 'm1rt' deselected: #().
+	 self assert: json includesSubstring: '"applied":2'.
+	 self assert: (self baseFixture includesSelector: #sideEffects).
+	 self assert: System needsCommit equals: before]
+		ensure: [GsExtractMethodRefactoring clearToken: 'm1rt']
+%
+
+category: 'tests - apply'
+method: GsExtractMethodRefactoringTest
+testPageForTokenReturnsAPageForALiveSession
+	| ref json |
+	ref := self extractFrom: self baseFixture selector: #doStuff
+		select: 'self yourself. self hash' newSelector: 'sideEffects'.
+	ref startPreviewToken: 'm1pg' maxBytes: 100000.
+	[json := GsExtractMethodRefactoring pageForToken: 'm1pg' from: 1 maxBytes: 100000.
+	 self assert: json includesSubstring: '"changes":']
+		ensure: [GsExtractMethodRefactoring clearToken: 'm1pg']
+%
+
+category: 'tests - apply'
+method: GsExtractMethodRefactoringTest
+testPageForTokenOnAnExpiredSessionAnswersAnError
+	self assert: (GsExtractMethodRefactoring pageForToken: 'nope' from: 1 maxBytes: 100)
+		includesSubstring: 'expired'
+%
+
+category: 'tests - apply'
+method: GsExtractMethodRefactoringTest
+testApplyForTokenOnAnExpiredSessionAnswersAnError
+	self assert: (GsExtractMethodRefactoring applyForToken: 'nope' deselected: #())
+		includesSubstring: 'expired'
+%
+
+category: 'tests - apply'
+method: GsExtractMethodRefactoringTest
+testApplyReturnsAppliedCountAndNoFailures
+	| json |
+	json := (self extractFrom: self baseFixture selector: #doStuff
+		select: 'self yourself. self hash' newSelector: 'sideEffects') applyDeselected: #().
+
+	self assert: json includesSubstring: '"applied":2'.
+	self assert: json includesSubstring: '"failed":[]'
+%
+
+category: 'tests - apply'
+method: GsExtractMethodRefactoringTest
+testApplyDoesNotCommit
+	| before |
+	before := System needsCommit.
+	(self extractFrom: self baseFixture selector: #doStuff
+		select: 'self yourself. self hash' newSelector: 'sideEffects') applyDeselected: #().
+
+	self assert: System needsCommit equals: before
+%
+
+category: 'tests - apply'
+method: GsExtractMethodRefactoringTest
+testApplyHonoursDuplicateDeselectionButNotCoreChanges
+	"Deselecting a duplicate-replacement change skips only that site; the two core
+	 changes always apply."
+	| ref cs dupId |
+	ref := self extractFrom: self baseFixture selector: #doStuff
+		select: 'self yourself. self hash' newSelector: 'sideEffects'.
+	ref replaceSimilar: true.
+	cs := ref changeSet.
+	dupId := (cs changes detect: [:c | c kind = #methodRecompile and: [c selector = #helperA]]) id.
+	ref applyDeselected: (Array with: dupId).
+
+	"core changes applied"
+	self assert: (self baseFixture includesSelector: #sideEffects).
+	self assert: (self baseFixture compiledMethodAt: #doStuff) sourceString
+		includesSubstring: 'self sideEffects'.
+	"the deselected duplicate is untouched"
+	self assert: (self baseFixture compiledMethodAt: #helperA) sourceString
+		includesSubstring: 'self yourself. self hash'.
+	"a non-deselected duplicate WAS rewritten"
+	self assert: (self baseFixture compiledMethodAt: #helperB) sourceString
+		includesSubstring: 'self sideEffects'
+%
+
+category: 'asserting'
+method: GsInlineMethodRefactoringTest
+assert: aString includesSubstring: aSubstring
+	self assert: (aString indexOfSubCollection: aSubstring) > 0
+%
+
+category: 'asserting'
+method: GsInlineMethodRefactoringTest
+deny: aString includesSubstring: aSubstring
+	self assert: (aString indexOfSubCollection: aSubstring) = 0
+%
+
+category: 'fixture'
+method: GsInlineMethodRefactoringTest
+baseFixture
+	^UserGlobals at: #GsIMBase
+%
+
+category: 'fixture'
+method: GsInlineMethodRefactoringTest
+subFixture
+	^UserGlobals at: #GsIMSub
+%
+
+category: 'fixture'
+method: GsInlineMethodRefactoringTest
+compile: aSource in: aClass
+	[aClass
+		compileMethod: aSource
+		dictionaries: System myUserProfile symbolList
+		category: 'fixture']
+		on: CompileWarning
+		do: [:ex | ex resume: nil]
+%
+
+category: 'fixture'
+method: GsInlineMethodRefactoringTest
+inlineIn: aClass selector: aSelector atSendOf: aSubstring
+	"A refactoring inlining the send whose text begins at aSubstring in
+	 aClass>>aSelector (1-based source offset)."
+	| start |
+	start := (aClass compiledMethodAt: aSelector) sourceString indexOfSubCollection: aSubstring.
+	^GsInlineMethodRefactoring
+		class: aClass
+		selector: aSelector
+		meta: false
+		atOffset: start
+%
+
+category: 'fixture'
+method: GsInlineMethodRefactoringTest
+recompileFor: aSelector in: aChangeSet
+	^aChangeSet changes
+		detect: [:c | c kind = #methodRecompile and: [c selector = aSelector]]
+		ifNone: [nil]
+%
+
+category: 'fixture'
+method: GsInlineMethodRefactoringTest
+removeChangeIn: aChangeSet
+	^aChangeSet changes detect: [:c | c kind = #methodRemove] ifNone: [nil]
+%
+
+category: 'running'
+method: GsInlineMethodRefactoringTest
+setUp
+	| base sub |
+	super setUp.
+	base := Object
+		subclass: 'GsIMBase'
+		instVarNames: #('count')
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	sub := base
+		subclass: 'GsIMSub'
+		instVarNames: #()
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	"--- target methods (the ones inlined) ---"
+	self compile: 'bump count := count + 1' in: base.
+	self compile: 'doubled ^ count * 2' in: base.
+	self compile: 'scaled: f ^ count * f' in: base.
+	self compile: 'addTwice: x ^ x + x' in: base.
+	self compile: 'gsimSolo ^ count' in: base.
+	self compile: 'gsimPair ^ count' in: base.
+	self compile: 'gsimTwice ^ count' in: base.
+	self compile: 'callsSuper ^ super hash' in: base.
+	self compile: 'multiStmt count := 1. ^ count' in: base.
+	self compile: 'withTemp | t | t := count. ^ t' in: base.
+	self compile: 'guarded (count > 0) ifTrue: [^count]' in: base.
+	self compile: 'greet ^ ''hi''' in: base.
+	"--- caller methods (hold the send being inlined) ---"
+	self compile: 'runBump self bump. ^ count' in: base.
+	self compile: 'bumpAgain self bump. ^ 1' in: base.
+	self compile: 'useDoubledSub ^ 1 + self doubled' in: base.
+	self compile: 'justDoubled ^ self doubled' in: base.
+	self compile: 'useScaled ^ self scaled: 3' in: base.
+	self compile: 'useScaledExpr ^ self scaled: 1 + 1' in: base.
+	self compile: 'useSolo ^ self gsimSolo' in: base.
+	self compile: 'callA ^ self gsimPair' in: base.
+	self compile: 'callB ^ self gsimPair' in: base.
+	self compile: 'callsTwice ^ self gsimTwice + self gsimTwice' in: base.
+	self compile: 'useTwiceAtom ^ self addTwice: count' in: base.
+	self compile: 'useTwiceExpr ^ self addTwice: self hash' in: base.
+	self compile: 'useReturnsSelf ^ 1 + self bump' in: base.
+	self compile: 'callOnArg: x ^ x doubled' in: base.
+	self compile: 'doCascade self doubled; yourself' in: base.
+	self compile: 'useMulti ^ self multiStmt' in: base.
+	self compile: 'useTemp ^ self withTemp' in: base.
+	self compile: 'useGuarded self guarded. ^ count' in: base.
+	self compile: 'useSuper self callsSuper. ^ count' in: base.
+	self compile: 'useNoImpl self gsimNoSuchThing. ^ count' in: base.
+	"atomic-bodied target + a send DEEP inside nested blocks + a same-named selector
+	 overridden in the subclass (two implementors in the hierarchy)."
+	self compile: 'val ^ count' in: base.
+	self compile: 'keepVal ^ self val' in: base.
+	self compile: 'receiverUse ^ self val printString' in: base.
+	self compile: 'nestedDeep #(1) do: [:x | x > 0 ifTrue: [ #(2) do: [:y | y + self doubled ] ] ]' in: base.
+	self compile: 'label ^ ''base''' in: base.
+	"--- subclass ---"
+	self compile: 'greetLoud ^ super greet' in: sub.
+	self compile: 'plainGreet ^ self greet' in: sub.
+	self compile: 'label ^ ''sub''' in: sub.
+	self compile: 'announceSelf ^ self label' in: sub.
+	self compile: 'announceSuper2 ^ super label' in: sub.
+	self compile: 'useInherited ^ self val' in: sub
+%
+
+category: 'running'
+method: GsInlineMethodRefactoringTest
+tearDown
+	#('GsIMSub' 'GsIMBase')
+		do: [:nm | UserGlobals removeKey: nm asSymbol ifAbsent: []]
+%
+
+category: 'tests - inline'
+method: GsInlineMethodRefactoringTest
+testInlinesVoidOneLinerAsStatement
+	| cs recompile |
+	cs := (self inlineIn: self baseFixture selector: #runBump atSendOf: 'bump') changeSet.
+	recompile := self recompileFor: #runBump in: cs.
+
+	self assert: cs size equals: 1.
+	self assert: recompile notNil.
+	self assert: recompile newSource includesSubstring: 'count := count + 1'.
+	self deny: recompile newSource includesSubstring: 'self bump'.
+	"the target method is left in place (it has other senders)"
+	self assert: (self removeChangeIn: cs) isNil
+%
+
+category: 'tests - inline'
+method: GsInlineMethodRefactoringTest
+testInlinesValueReturningSendInBinaryOperandKeepsParens
+	"1 + self doubled -> 1 + (count * 2): the send is a sub-expression, so parens."
+	| recompile |
+	recompile := self recompileFor: #useDoubledSub
+		in: (self inlineIn: self baseFixture selector: #useDoubledSub atSendOf: 'doubled') changeSet.
+
+	self assert: recompile newSource includesSubstring: '1 + (count * 2)'
+%
+
+category: 'tests - inline'
+method: GsInlineMethodRefactoringTest
+testInlinesValueReturningSendInReturnPositionNoParens
+	"^ self doubled -> ^ count * 2: replacing a whole return value needs no parens."
+	| recompile |
+	recompile := self recompileFor: #justDoubled
+		in: (self inlineIn: self baseFixture selector: #justDoubled atSendOf: 'doubled') changeSet.
+
+	self assert: recompile newSource includesSubstring: 'count * 2'.
+	self deny: recompile newSource includesSubstring: '(count * 2)'
+%
+
+category: 'tests - inline'
+method: GsInlineMethodRefactoringTest
+testInlinesSendWithLiteralArgument
+	| recompile |
+	recompile := self recompileFor: #useScaled
+		in: (self inlineIn: self baseFixture selector: #useScaled atSendOf: 'scaled:') changeSet.
+
+	self assert: recompile newSource includesSubstring: 'count * 3'
+%
+
+category: 'tests - inline'
+method: GsInlineMethodRefactoringTest
+testInlinesSendWithNonAtomicArgumentParenthesised
+	"self scaled: 1 + 1 -> count * (1 + 1): a compound argument is parenthesised."
+	| recompile |
+	recompile := self recompileFor: #useScaledExpr
+		in: (self inlineIn: self baseFixture selector: #useScaledExpr atSendOf: 'scaled:') changeSet.
+
+	self assert: recompile newSource includesSubstring: 'count * (1 + 1)'
+%
+
+category: 'tests - inline'
+method: GsInlineMethodRefactoringTest
+testInlinesAtomicArgumentUsedTwiceWithoutDecline
+	"addTwice: uses x twice; an atomic argument (count) may be duplicated safely."
+	| ref recompile |
+	ref := self inlineIn: self baseFixture selector: #useTwiceAtom atSendOf: 'addTwice:'.
+	recompile := self recompileFor: #useTwiceAtom in: ref changeSet.
+
+	self assert: ref declineReason isNil.
+	self assert: recompile newSource includesSubstring: 'count + count'
+%
+
+category: 'tests - inline'
+method: GsInlineMethodRefactoringTest
+testInlinesSuperSendResolvingTargetFromSuperclass
+	| recompile |
+	recompile := self recompileFor: #greetLoud
+		in: (self inlineIn: self subFixture selector: #greetLoud atSendOf: 'super greet') changeSet.
+
+	self assert: recompile notNil.
+	self assert: recompile newSource includesSubstring: '''hi'''.
+	self deny: recompile newSource includesSubstring: 'super greet'
+%
+
+category: 'tests - inline'
+method: GsInlineMethodRefactoringTest
+testInlinesSendDeepInsideNestedBlocks
+	"A send buried inside do:/ifTrue:/do: blocks inlines in place regardless of nesting."
+	| recompile |
+	recompile := self recompileFor: #nestedDeep
+		in: (self inlineIn: self baseFixture selector: #nestedDeep atSendOf: 'doubled') changeSet.
+
+	self assert: recompile notNil.
+	self assert: recompile newSource includesSubstring: '(count * 2)'.
+	self deny: recompile newSource includesSubstring: 'self doubled'
+%
+
+category: 'tests - inline'
+method: GsInlineMethodRefactoringTest
+testAtomicResultAsSubExpressionReceiverNeedsNoParens
+	"self val printString -> count printString: an atomic inlined result needs no
+	 parentheses even as a message receiver."
+	| recompile |
+	recompile := self recompileFor: #receiverUse
+		in: (self inlineIn: self baseFixture selector: #receiverUse atSendOf: 'val') changeSet.
+
+	self assert: recompile newSource includesSubstring: 'count printString'.
+	self deny: recompile newSource includesSubstring: '(count'
+%
+
+category: 'tests - hierarchy'
+method: GsInlineMethodRefactoringTest
+testSelfSendResolvesToNearestOverridingImplementor
+	"#label is implemented by BOTH classes; a self send in the subclass resolves to the
+	 subclass's override, not the superclass's."
+	| recompile |
+	recompile := self recompileFor: #announceSelf
+		in: (self inlineIn: self subFixture selector: #announceSelf atSendOf: 'label') changeSet.
+
+	self assert: recompile newSource includesSubstring: '''sub'''.
+	self deny: recompile newSource includesSubstring: '''base'''
+%
+
+category: 'tests - hierarchy'
+method: GsInlineMethodRefactoringTest
+testSuperSendResolvesPastAnOverrideToTheSuperclass
+	"A super send resolves past the subclass's override to the superclass implementor."
+	| recompile |
+	recompile := self recompileFor: #announceSuper2
+		in: (self inlineIn: self subFixture selector: #announceSuper2 atSendOf: 'super label') changeSet.
+
+	self assert: recompile newSource includesSubstring: '''base'''.
+	self deny: recompile newSource includesSubstring: '''sub'''
+%
+
+category: 'tests - hierarchy'
+method: GsInlineMethodRefactoringTest
+testInlinesInheritedMethodViaSelfSend
+	"A self send in the subclass resolves UP to an inherited implementor in the
+	 superclass and inlines its body."
+	| recompile |
+	recompile := self recompileFor: #useInherited
+		in: (self inlineIn: self subFixture selector: #useInherited atSendOf: 'val') changeSet.
+
+	self assert: recompile notNil.
+	self assert: recompile newSource includesSubstring: 'count'.
+	self deny: recompile newSource includesSubstring: 'self val'
+%
+
+category: 'tests - decline'
+method: GsInlineMethodRefactoringTest
+testNonSelfSuperReceiverIsDeclined
+	| ref |
+	ref := self inlineIn: self baseFixture selector: #callOnArg: atSendOf: 'doubled'.
+
+	self assert: ref declineReason notNil.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - decline'
+method: GsInlineMethodRefactoringTest
+testNoImplementorInHierarchyIsDeclined
+	| ref |
+	ref := self inlineIn: self baseFixture selector: #useNoImpl atSendOf: 'gsimNoSuchThing'.
+
+	self assert: ref declineReason notNil.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - decline'
+method: GsInlineMethodRefactoringTest
+testMultiStatementTargetIsDeclined
+	| ref |
+	ref := self inlineIn: self baseFixture selector: #useMulti atSendOf: 'multiStmt'.
+
+	self assert: ref declineReason notNil.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - decline'
+method: GsInlineMethodRefactoringTest
+testTempDeclaringTargetIsDeclined
+	| ref |
+	ref := self inlineIn: self baseFixture selector: #useTemp atSendOf: 'withTemp'.
+
+	self assert: ref declineReason notNil.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - decline'
+method: GsInlineMethodRefactoringTest
+testInnerReturnTargetIsDeclined
+	| ref |
+	ref := self inlineIn: self baseFixture selector: #useGuarded atSendOf: 'guarded'.
+
+	self assert: ref declineReason notNil.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - decline'
+method: GsInlineMethodRefactoringTest
+testTargetSendingSuperIsDeclined
+	| ref |
+	ref := self inlineIn: self baseFixture selector: #useSuper atSendOf: 'callsSuper'.
+
+	self assert: ref declineReason notNil.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - decline'
+method: GsInlineMethodRefactoringTest
+testSideEffectingArgumentUsedTwiceIsDeclined
+	| ref |
+	ref := self inlineIn: self baseFixture selector: #useTwiceExpr atSendOf: 'addTwice:'.
+
+	self assert: ref declineReason notNil.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - decline'
+method: GsInlineMethodRefactoringTest
+testValueUsedButTargetReturnsSelfIsDeclined
+	| ref |
+	ref := self inlineIn: self baseFixture selector: #useReturnsSelf atSendOf: 'bump'.
+
+	self assert: ref declineReason notNil.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - decline'
+method: GsInlineMethodRefactoringTest
+testCascadedSendIsDeclined
+	| ref |
+	ref := self inlineIn: self baseFixture selector: #doCascade atSendOf: 'doubled'.
+
+	self assert: ref declineReason notNil.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - decline'
+method: GsInlineMethodRefactoringTest
+testCaretNotOnASendIsDeclined
+	| ref |
+	ref := GsInlineMethodRefactoring
+		class: self baseFixture selector: #runBump meta: false atOffset: 1.
+
+	self assert: ref declineReason notNil.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - last sender'
+method: GsInlineMethodRefactoringTest
+testLastSenderOffersRemoval
+	| ref cs remove |
+	ref := self inlineIn: self baseFixture selector: #useSolo atSendOf: 'gsimSolo'.
+	cs := ref changeSet.
+	remove := self removeChangeIn: cs.
+
+	self assert: ref isLastSender.
+	self assert: cs size equals: 2.
+	self assert: (self recompileFor: #useSolo in: cs) notNil.
+	self assert: remove notNil.
+	self assert: remove selector equals: #gsimSolo
+%
+
+category: 'tests - last sender'
+method: GsInlineMethodRefactoringTest
+testRemovalSuppressedWhenAnotherMethodSends
+	| ref cs |
+	ref := self inlineIn: self baseFixture selector: #callA atSendOf: 'gsimPair'.
+	cs := ref changeSet.
+
+	self deny: ref isLastSender.
+	self assert: cs size equals: 1.
+	self assert: (self removeChangeIn: cs) isNil
+%
+
+category: 'tests - last sender'
+method: GsInlineMethodRefactoringTest
+testRemovalSuppressedWhenSameMethodSendsTwice
+	| ref cs |
+	ref := self inlineIn: self baseFixture selector: #callsTwice atSendOf: 'gsimTwice'.
+	cs := ref changeSet.
+
+	self deny: ref isLastSender.
+	self assert: cs size equals: 1.
+	self assert: (self removeChangeIn: cs) isNil
+%
+
+category: 'tests - staging'
+method: GsInlineMethodRefactoringTest
+testBuildingTheChangeSetChangesNoSourceAndDoesNotCommit
+	| before |
+	before := System needsCommit.
+	(self inlineIn: self baseFixture selector: #runBump atSendOf: 'bump') changeSet.
+
+	"the stored source is untouched: building the preview compiles nothing"
+	self assert: (self baseFixture compiledMethodAt: #runBump) sourceString
+		includesSubstring: 'self bump'.
+	self assert: System needsCommit equals: before
+%
+
+category: 'tests - preview'
+method: GsInlineMethodRefactoringTest
+testPreviewJsonSerializesRecompileAndRemoveWhenLastSender
+	| json |
+	json := (self inlineIn: self baseFixture selector: #useSolo atSendOf: 'gsimSolo')
+		previewJsonString.
+
+	self assert: json includesSubstring: 'methodRecompile'.
+	self assert: json includesSubstring: 'methodRemove'
+%
+
+category: 'tests - preview'
+method: GsInlineMethodRefactoringTest
+testPreviewJsonHasNoRemoveWhenNotLastSender
+	| json |
+	json := (self inlineIn: self baseFixture selector: #callA atSendOf: 'gsimPair')
+		previewJsonString.
+
+	self assert: json includesSubstring: 'methodRecompile'.
+	self deny: json includesSubstring: 'methodRemove'
+%
+
+category: 'tests - preview'
+method: GsInlineMethodRefactoringTest
+testStartPreviewCarriesTotalsSelectorLastSenderAndPage
+	| json |
+	json := (self inlineIn: self baseFixture selector: #useSolo atSendOf: 'gsimSolo')
+		startPreviewToken: 'm2Tok' maxBytes: 100000.
+	[self assert: json includesSubstring: '"targetSelector":"gsimSolo"'.
+	 self assert: json includesSubstring: '"total":2'.
+	 self assert: json includesSubstring: '"lastSender":true'.
+	 self assert: json includesSubstring: '"changes":']
+		ensure: [GsInlineMethodRefactoring clearToken: 'm2Tok']
+%
+
+category: 'tests - preview'
+method: GsInlineMethodRefactoringTest
+testAnalysisPreflightReportsTargetAndLastSender
+	| src off json |
+	src := (self baseFixture compiledMethodAt: #useSolo) sourceString.
+	off := src indexOfSubCollection: 'gsimSolo'.
+	json := GsInlineMethodRefactoring
+		analyzeSendForClass: self baseFixture selector: #useSolo meta: false atOffset: off.
+
+	self assert: json includesSubstring: '"targetSelector":"gsimSolo"'.
+	self assert: json includesSubstring: '"lastSender":true'.
+	self assert: json includesSubstring: '"decline":null'
+%
+
+category: 'tests - preview'
+method: GsInlineMethodRefactoringTest
+testAnalysisPreflightReportsDeclineForBadSend
+	| src off json |
+	src := (self baseFixture compiledMethodAt: #callOnArg:) sourceString.
+	off := src indexOfSubCollection: 'doubled'.
+	json := GsInlineMethodRefactoring
+		analyzeSendForClass: self baseFixture selector: #callOnArg: meta: false atOffset: off.
+
+	self deny: json includesSubstring: '"decline":null'
+%
+
+category: 'tests - apply'
+method: GsInlineMethodRefactoringTest
+testApplyInlinesAndKeepsTargetWhenNotLastSender
+	| json |
+	json := (self inlineIn: self baseFixture selector: #runBump atSendOf: 'bump')
+		applyDeselected: #().
+
+	self assert: json includesSubstring: '"applied":1'.
+	self assert: json includesSubstring: '"failed":[]'.
+	self assert: (self baseFixture compiledMethodAt: #runBump) sourceString
+		includesSubstring: 'count := count + 1'.
+	"target kept"
+	self assert: (self baseFixture includesSelector: #bump)
+%
+
+category: 'tests - apply'
+method: GsInlineMethodRefactoringTest
+testApplyRemovesTargetWhenLastSenderAndRemovalKept
+	| json |
+	json := (self inlineIn: self baseFixture selector: #useSolo atSendOf: 'gsimSolo')
+		applyDeselected: #().
+
+	self assert: json includesSubstring: '"applied":2'.
+	self assert: (self baseFixture compiledMethodAt: #useSolo) sourceString
+		includesSubstring: 'count'.
+	"the now-unused target is gone"
+	self deny: (self baseFixture includesSelector: #gsimSolo)
+%
+
+category: 'tests - apply'
+method: GsInlineMethodRefactoringTest
+testApplyKeepsTargetWhenRemovalDeselected
+	| ref cs removeId json |
+	ref := self inlineIn: self baseFixture selector: #useSolo atSendOf: 'gsimSolo'.
+	cs := ref changeSet.
+	removeId := (self removeChangeIn: cs) id.
+	json := ref applyDeselected: (Array with: removeId).
+
+	self assert: json includesSubstring: '"applied":1'.
+	"the caller is still inlined, but the target is left in place"
+	self assert: (self baseFixture compiledMethodAt: #useSolo) sourceString
+		includesSubstring: 'count'.
+	self assert: (self baseFixture includesSelector: #gsimSolo)
+%
+
+category: 'tests - apply'
+method: GsInlineMethodRefactoringTest
+testApplyDoesNotCommit
+	| before |
+	before := System needsCommit.
+	(self inlineIn: self baseFixture selector: #runBump atSendOf: 'bump') applyDeselected: #().
+
+	self assert: System needsCommit equals: before
+%
+
+category: 'tests - apply'
+method: GsInlineMethodRefactoringTest
+testTokenRoundTripStartThenApplyRecompilesCaller
+	| ref json before |
+	before := System needsCommit.
+	ref := self inlineIn: self baseFixture selector: #runBump atSendOf: 'bump'.
+	ref startPreviewToken: 'm2rt' maxBytes: 100000.
+	[json := GsInlineMethodRefactoring applyForToken: 'm2rt' deselected: #().
+	 self assert: json includesSubstring: '"applied":1'.
+	 self assert: (self baseFixture compiledMethodAt: #runBump) sourceString
+		includesSubstring: 'count := count + 1'.
+	 self assert: System needsCommit equals: before]
+		ensure: [GsInlineMethodRefactoring clearToken: 'm2rt']
+%
+
+category: 'tests - apply'
+method: GsInlineMethodRefactoringTest
+testPageForTokenReturnsAPageForALiveSession
+	| ref json |
+	ref := self inlineIn: self baseFixture selector: #runBump atSendOf: 'bump'.
+	ref startPreviewToken: 'm2pg' maxBytes: 100000.
+	[json := GsInlineMethodRefactoring pageForToken: 'm2pg' from: 1 maxBytes: 100000.
+	 self assert: json includesSubstring: '"changes":']
+		ensure: [GsInlineMethodRefactoring clearToken: 'm2pg']
+%
+
+category: 'tests - apply'
+method: GsInlineMethodRefactoringTest
+testPageForTokenOnAnExpiredSessionAnswersAnError
+	self assert: (GsInlineMethodRefactoring pageForToken: 'nope' from: 1 maxBytes: 100)
+		includesSubstring: 'expired'
+%
+
+category: 'tests - apply'
+method: GsInlineMethodRefactoringTest
+testApplyForTokenOnAnExpiredSessionAnswersAnError
+	self assert: (GsInlineMethodRefactoring applyForToken: 'nope' deselected: #())
+		includesSubstring: 'expired'
 %
 
 category: 'tests'

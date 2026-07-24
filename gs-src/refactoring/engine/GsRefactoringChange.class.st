@@ -42,6 +42,27 @@ GsRefactoringChange class >> methodRecompileId: anId dictName: dn className: cn 
 ]
 
 { #category : 'instance creation' }
+GsRefactoringChange class >> methodAddId: anId dictName: dn className: cn isMeta: aBool selector: sel category: cat newSource: ns [
+	"A brand-new method to compile (it does not yet exist in the class): apply =
+	 compile newSource, exactly like a recompile. oldSource is nil so the before/after
+	 diff renders as an all-added method. Used by extract-method for the extracted
+	 method."
+	^self new
+		setId: anId kind: #methodAdd dictName: dn className: cn
+		isMeta: aBool selector: sel category: cat oldSource: nil newSource: ns
+]
+
+{ #category : 'instance creation' }
+GsRefactoringChange class >> methodRemoveId: anId dictName: dn className: cn isMeta: aBool selector: sel category: cat oldSource: os [
+	"A method to REMOVE (inline-method deletes a now-unused target after inlining its
+	 last sender): apply = removeSelector:. newSource is nil so the before/after diff
+	 renders as an all-removed method."
+	^self new
+		setId: anId kind: #methodRemove dictName: dn className: cn
+		isMeta: aBool selector: sel category: cat oldSource: os newSource: nil
+]
+
+{ #category : 'instance creation' }
 GsRefactoringChange class >> methodRenameId: anId dictName: dn className: cn isMeta: aBool oldSelector: oldSel newSelector: newSel category: cat oldSource: os newSource: ns [
 	"A method whose selector changes: apply = compile newSource (under newSel),
 	 then remove the old-selector method. `selector` holds the old selector."

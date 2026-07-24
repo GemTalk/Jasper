@@ -144,7 +144,16 @@ describe('deriveRepoName', () => {
 });
 
 describe('updateGitRepo', () => {
-  const g = (args: string[], cwd: string) => execFileSync('git', args, { cwd, stdio: 'pipe' });
+  // Strip GIT_* from the env so the test's own git commands operate on its temp
+  // repos, not on whatever repo the ambient environment points at — critical when
+  // this suite runs inside a git hook (e.g. the pre-push hook exports GIT_DIR).
+  const gitEnv = (): NodeJS.ProcessEnv => {
+    const env: NodeJS.ProcessEnv = { ...process.env };
+    for (const k of Object.keys(env)) if (k.startsWith('GIT_')) delete env[k];
+    return env;
+  };
+  const g = (args: string[], cwd: string) =>
+    execFileSync('git', args, { cwd, stdio: 'pipe', env: gitEnv() });
 
   // A bare remote, plus a clone of it. Advancing the remote is done through a
   // throwaway second clone so the first clone genuinely lags behind.

@@ -158,6 +158,8 @@ class DictItem extends vscode.TreeItem {
     // Stable id so TreeView.reveal (used by Find Class) can locate this row.
     this.id = `d:${dictIndex}:${dictName}`;
     this.iconPath = new vscode.ThemeIcon('symbol-namespace');
+    // Hosts the row's context menu (e.g. Remove Dictionary).
+    this.contextValue = 'explorerDict';
   }
 }
 
@@ -434,7 +436,7 @@ interface ExplorerViews {
 
 // ── Controller ───────────────────────────────────────────────────────────────
 
-class ExplorerController {
+export class ExplorerController {
   readonly state: ExplorerState = {};
   // className → category for the current dictionary; fetched once per dict.
   private classCategoryEntries: queries.ClassCategoryEntry[] = [];
@@ -2324,6 +2326,34 @@ class ExplorerController {
     }
   }
 
+  async removeDictionary(node: DictItem): Promise<void> {
+    const session = this.session();
+    if (!session) return;
+    const confirmed = await vscode.window.showWarningMessage(
+      `Remove dictionary "${node.dictName}" from the symbol list?`,
+      {
+        modal: true,
+        detail:
+          'Removes it from this session’s symbol list. Classes it holds are not deleted, and ' +
+          'nothing is committed until you commit the session.',
+      },
+      'Remove',
+    );
+    if (confirmed !== 'Remove') return;
+    try {
+      queries.removeDictionary(session, node.dictIndex);
+    } catch (e: unknown) {
+      void vscode.window.showErrorMessage(
+        `Could not remove "${node.dictName}": ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return;
+    }
+    // Indices have shifted and the selection may be gone; rebuild from scratch and
+    // auto-select a default dictionary.
+    this.reset();
+    void vscode.window.setStatusBarMessage(`Removed dictionary ${node.dictName}`, 4000);
+  }
+
   async newClassCategory(): Promise<void> {
     if (this.state.dictName === undefined) {
       void vscode.window.showWarningMessage('Select a dictionary first.');
@@ -3064,6 +3094,9 @@ export function registerGemStoneExplorer(
         });
       },
     ),
+    vscode.commands.registerCommand('gemstone.explorer.removeDictionary', (node?: unknown) => {
+      if (node instanceof DictItem) void ctl.removeDictionary(node);
+    }),
     // New (+) actions, one per pane.
     vscode.commands.registerCommand('gemstone.explorer.newDictionary', () => ctl.newDictionary()),
     vscode.commands.registerCommand('gemstone.explorer.newClassCategory', () =>

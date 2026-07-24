@@ -1067,6 +1067,11 @@
         "icon": "$(add)"
       },
       {
+        "command": "gemstone.explorer.removeDictionary",
+        "title": "Remove Dictionary",
+        "category": "GemStone"
+      },
+      {
         "command": "gemstone.explorer.newClassCategory",
         "title": "New Class Category",
         "category": "GemStone",
@@ -1160,6 +1165,18 @@
       {
         "command": "gemstone.renameTemporary",
         "title": "Rename Temporary/Argument…",
+        "category": "GemStone",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "gemstone.explorer.extractMethod",
+        "title": "Extract Method…",
+        "category": "GemStone",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "gemstone.explorer.inlineMethod",
+        "title": "Inline Method…",
         "category": "GemStone",
         "icon": "$(edit)"
       },
@@ -1422,6 +1439,10 @@
           "when": "false"
         },
         {
+          "command": "gemstone.explorer.removeDictionary",
+          "when": "false"
+        },
+        {
           "command": "gemstone.explorer.renameIvar",
           "when": "false"
         },
@@ -1653,6 +1674,11 @@
         }
       ],
       "view/item/context": [
+        {
+          "command": "gemstone.explorer.removeDictionary",
+          "when": "view == gemstoneExplorerDicts && viewItem == explorerDict",
+          "group": "9_danger@0"
+        },
         {
           "command": "gemstone.explorer.openMethodToSide",
           "when": "view == gemstoneExplorerMethods && viewItem =~ /^explorerMethod/",
@@ -2016,6 +2042,16 @@
           "command": "gemstone.implementorsOf",
           "when": "editorTextFocus && resourceLangId == gemstone-smalltalk",
           "group": "2_navigation@1"
+        },
+        {
+          "command": "gemstone.explorer.extractMethod",
+          "when": "editorTextFocus && resourceScheme == gemstone && resourceLangId == gemstone-smalltalk && editorHasSelection",
+          "group": "2_navigation@2"
+        },
+        {
+          "command": "gemstone.explorer.inlineMethod",
+          "when": "editorTextFocus && resourceScheme == gemstone && resourceLangId == gemstone-smalltalk",
+          "group": "2_navigation@3"
         },
         {
           "command": "gemstone.toggleSelectorBreakpoint",
