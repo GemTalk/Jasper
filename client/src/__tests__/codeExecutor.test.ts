@@ -63,13 +63,16 @@ function makeGci(overrides: Record<string, unknown> = {}) {
       err: { number: 0, message: '', context: OOP_NIL },
     })),
     GciTsPerformFetchBytes: vi.fn(() => ({ data: '42', err: { number: 0 } })),
-    GciTsExecuteFetchBytes: vi.fn(() => ({ data: '', err: { number: 0 } })),
-    executeAndFetchString: vi.fn(() =>
-      expect.unreachable(
+    // Transcript sink toggle/drain calls (see transcriptSink.ts) also go through
+    // executeAndFetchString; default them to an empty buffer so tests that don't
+    // care about transcript output don't have to configure this mock at all.
+    executeAndFetchString: vi.fn((_handle: unknown, code: string) => {
+      if (code.includes('jasperLive:') || code.includes('jasperDrain')) return '';
+      return expect.unreachable(
         'executeAndFetchString mock not configured for this test -- call ' +
           '(gci.executeAndFetchString as Mock).mockReturnValue(...) before triggering Display It.',
-      ),
-    ),
+      );
+    }),
     GciTsClearStack: vi.fn(),
     GciTsObjExists: vi.fn(() => false),
     GciTsFetchClass: vi.fn(() => ({ result: 0n, err: { number: 0 } })),
@@ -406,7 +409,7 @@ describe('CodeExecutor', () => {
 
       await executor.executeIt();
 
-      const sinkCalls = (gci.GciTsExecuteFetchBytes as Mock).mock.calls
+      const sinkCalls = (gci.executeAndFetchString as Mock).mock.calls
         .map((c) => c[1] as string)
         .filter((code) => code.includes('jasperLive:'));
       expect(sinkCalls.some((code) => code.includes('jasperLive: true'))).toBe(true);
@@ -426,7 +429,7 @@ describe('CodeExecutor', () => {
 
       await executor.executeIt();
 
-      const sinkCalls = (gci.GciTsExecuteFetchBytes as Mock).mock.calls.map((c) => c[1] as string);
+      const sinkCalls = (gci.executeAndFetchString as Mock).mock.calls.map((c) => c[1] as string);
       expect(sinkCalls.some((code) => code.includes('jasperLive: false'))).toBe(true);
     });
 

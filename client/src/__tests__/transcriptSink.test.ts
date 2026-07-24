@@ -55,7 +55,6 @@ function makeGci(overrides: Record<string, unknown> = {}) {
         : { data: 'hello world', err: { number: 0 } },
     ),
     GciTsFetchOops: vi.fn(() => ({ result: 1, oops: [0x77n], err: { number: 0 } })),
-    GciTsExecuteFetchBytes: vi.fn(() => ({ data: '', err: { number: 0 } })),
     executeAndFetchString: vi.fn(() => ''),
     GciTsNbResult: vi.fn(() => ({ result: 42n, err: { number: 0, context: 0n } })),
     GciTsContinueWithAsync: vi.fn(async () => ({ result: 42n, err: { number: 0, context: 0n } })),
@@ -138,7 +137,7 @@ describe('transcriptSink', () => {
   describe('setTranscriptLive / drainTranscript', () => {
     it('returns the text drained during a mode switch', () => {
       const gci = makeGci({
-        GciTsExecuteFetchBytes: vi.fn(() => ({ data: 'buffered output', err: { number: 0 } })),
+        executeAndFetchString: vi.fn(() => 'buffered output'),
       });
 
       expect(setTranscriptLive(makeSession(gci), true)).toBe('buffered output');
@@ -151,7 +150,7 @@ describe('transcriptSink', () => {
       setTranscriptLive(session, true);
       setTranscriptLive(session, false);
 
-      const codes = (gci.GciTsExecuteFetchBytes as ReturnType<typeof vi.fn>).mock.calls.map(
+      const codes = (gci.executeAndFetchString as ReturnType<typeof vi.fn>).mock.calls.map(
         (c) => c[1] as string,
       );
       expect(codes[0]).toContain('jasperLive: true');
@@ -162,14 +161,16 @@ describe('transcriptSink', () => {
       const gci = makeGci();
 
       expect(drainTranscript(makeSession(gci))).toBe('');
-      const code = (gci.GciTsExecuteFetchBytes as ReturnType<typeof vi.fn>).mock
+      const code = (gci.executeAndFetchString as ReturnType<typeof vi.fn>).mock
         .calls[0][1] as string;
       expect(code).toContain('jasperDrain');
     });
 
     it('returns empty (not an exception) when the sink call fails', () => {
       const gci = makeGci({
-        GciTsExecuteFetchBytes: vi.fn(() => ({ data: '', err: { number: 4100, message: 'busy' } })),
+        executeAndFetchString: vi.fn(() => {
+          throw GciLibraryError.withMessage('busy');
+        }),
       });
 
       expect(drainTranscript(makeSession(gci))).toBe('');
