@@ -313,7 +313,10 @@ export const window = {
   showOpenDialog: vi.fn(),
   showSaveDialog: vi.fn(),
   tabGroups: {
-    all: [] as { viewColumn?: number; tabs: { input: unknown; isDirty?: boolean }[] }[],
+    all: [] as {
+      viewColumn?: number;
+      tabs: { input: unknown; isDirty?: boolean; isPinned?: boolean }[];
+    }[],
     close: vi.fn(),
     onDidChangeTabs: vi.fn(() => ({ dispose: vi.fn() })),
   },

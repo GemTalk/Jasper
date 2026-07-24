@@ -87,12 +87,23 @@ export async function openGemstoneDocument(
   placement: SourceEditorPlacement,
 ): Promise<void> {
   if (!toSide) {
+    // A preview tab (preview: true) would be the natural "one throwaway editor"
+    // for single-click navigation, but opening a preview makes VS Code's tree list
+    // re-reveal its focused row — the in-place preview swap briefly pulls focus off
+    // the tree — which scrolls the pane out from under the click (worse the more
+    // you've scrolled). So open a normal tab with focus kept in the tree, and keep
+    // just ONE such tab: the next single-click closes the previous one, unless it's
+    // pinned or has unsaved edits (exactly when a preview would have promoted itself
+    // to a permanent tab). Same "no pileup", no scroll jump.
+    const previous = placement.reusableTab;
     await vscode.window.showTextDocument(doc, {
       viewColumn: vscode.ViewColumn.Active,
-      preview: true,
+      preview: false,
       preserveFocus: true,
     });
     placement.remember(doc.uri);
+    placement.reusableTab = doc.uri.toString();
+    if (previous && previous !== doc.uri.toString()) closeDisposableTab(previous);
     return;
   }
   // Already open somewhere? Reveal that editor instead of opening a second copy.
@@ -130,6 +141,21 @@ export async function openGemstoneDocument(
     });
   }
   placement.remember(doc.uri);
+}
+
+// Close the single reusable source tab a prior single-click opened, but only if
+// the user isn't working in it: a dirty tab has unsaved edits and a pinned tab was
+// deliberately kept — both are cases where a preview tab would likewise have
+// promoted itself to permanent rather than being replaced.
+function closeDisposableTab(uriStr: string): void {
+  for (const group of vscode.window.tabGroups.all) {
+    for (const tab of group.tabs) {
+      if (tabInputUri(tab)?.toString() !== uriStr) continue;
+      if (tab.isDirty || tab.isPinned) return;
+      void vscode.window.tabGroups.close(tab);
+      return;
+    }
+  }
 }
 
 // ── GemStone Explorer ───────────────────────────────────────────────────────
@@ -483,9 +509,14 @@ class ExplorerController {
   // Freshly-created method categories, per side, that hold no method yet.
   // Cleared on class change.
   private readonly newMethodCategories = { instance: new Set<string>(), meta: new Set<string>() };
-  // URI of an editor we opened ourselves (method/definition click); syncToEditor
-  // ignores its own open so a tree click doesn't bounce the selection.
-  private selfOpenedUri?: string;
+  // URIs of editors we opened ourselves (method/definition clicks); syncToEditor
+  // ignores its own opens so a tree click doesn't bounce the selection. A Set (not
+  // a single value) because opens can overlap — clicking through methods faster
+  // than each preview settles — and each open must match its own later
+  // onDidChangeActiveTextEditor event; a scalar got overwritten by the next click,
+  // letting the earlier open's event slip past the guard and re-reveal (scroll) the
+  // Methods pane.
+  private readonly selfOpenedUris = new Set<string>();
   // Owns where our source editors land. Balances "open to the side" across only
   // our own groups, so we neither clump nor invade the System Browser's group.
   readonly placement = new SourceEditorPlacement();
@@ -1052,7 +1083,7 @@ class ExplorerController {
     const session = this.session();
     if (!session) return;
     const uri = buildClassDefinitionUri(session.id, dictName, className, dictIndex);
-    this.selfOpenedUri = uri.toString();
+    this.selfOpenedUris.add(uri.toString());
     const doc = await vscode.workspace.openTextDocument(uri);
     await openGemstoneDocument(doc, toSide, this.placement);
   }
@@ -2101,11 +2132,11 @@ class ExplorerController {
     // This open will fire onDidChangeActiveTextEditor; mark it so syncToEditor
     // doesn't then re-reveal the row under ALL METHODS and steal the selection
     // from the category the user actually clicked.
-    this.selfOpenedUri = uri.toString();
+    this.selfOpenedUris.add(uri.toString());
     const doc = await vscode.workspace.openTextDocument(uri);
-    // Single-click swaps in place (preview, focus stays in the tree so
-    // type-to-filter / arrow-nav keep working); open-to-side pins a real tab in
-    // a balanced neighbouring group so methods can be compared.
+    // Single-click reuses one source tab (focus stays in the tree so type-to-filter
+    // / arrow-nav keep working); open-to-side pins a real tab in a balanced
+    // neighbouring group so methods can be compared.
     await openGemstoneDocument(doc, toSide, this.placement);
   }
 
@@ -2265,8 +2296,9 @@ class ExplorerController {
     if (uri.scheme !== 'gemstone') return;
     // We opened this editor ourselves from a tree click — the tree selection is
     // already correct, so don't bounce it (e.g. onto the ALL METHODS node).
-    if (this.selfOpenedUri === uri.toString()) {
-      this.selfOpenedUri = undefined;
+    // delete() consumes just this URI's mark, leaving any other in-flight self-open
+    // to still match its own event.
+    if (this.selfOpenedUris.delete(uri.toString())) {
       return;
     }
     const session = this.session();
@@ -2290,6 +2322,25 @@ class ExplorerController {
     // Already showing this class: just (re)reveal the method row / refresh title.
     if (this.state.className === className && this.state.dictName === dictName) {
       if (revealMethod) {
+        // If the Methods pane already has this selector selected — which is exactly
+        // the case when the user just clicked it in the tree (that click is what
+        // opened this editor) — don't re-reveal it. reveal() re-selects the ALL
+        // METHODS copy and scrolls the pane, knocking the just-clicked row out of
+        // view (and stealing selection from the category the user clicked). Only
+        // sync when the tree is genuinely elsewhere, e.g. the user focused an
+        // editor tab for a method that isn't the current selection. This is the
+        // reliable guard; the self-opened-URI check above can miss when the editor
+        // reports a normalized URI that no longer string-matches what we stored.
+        const alreadySelected = this.views?.method.selection.some(
+          (n) =>
+            n instanceof MethodItem &&
+            n.isMeta === revealMethod.isMeta &&
+            n.info.selector === revealMethod.selector,
+        );
+        if (alreadySelected) {
+          this.syncTitles();
+          return;
+        }
         const info = this.selectorsFor(revealMethod.isMeta, ALL_METHODS_CATEGORY).find(
           (i) => i.selector === revealMethod.selector,
         );

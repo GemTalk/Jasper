@@ -29,6 +29,9 @@ function openTabInGroup(uriString: string, viewColumn: number): void {
 
 const showTextDocument = window.showTextDocument as ReturnType<typeof vi.fn>;
 const executeCommand = commands.executeCommand as ReturnType<typeof vi.fn>;
+const closeTab = window.tabGroups.close as ReturnType<typeof vi.fn>;
+
+const OTHER = 'gemstone://1/UserGlobals/M2Demo/instance/inline-demos/other';
 
 describe('openGemstoneDocument — open to side', () => {
   beforeEach(() => {
@@ -82,15 +85,62 @@ describe('openGemstoneDocument — open to side', () => {
     );
   });
 
-  it('opens a single-click method as a preview in the active column, not to the side', async () => {
-    openTabInGroup(SOURCE, ViewColumn.Two);
+  it('opens a single-click method as a reusable non-preview tab in the active column, keeping focus in the tree', async () => {
     const placement = stubPlacement('new');
 
     await openGemstoneDocument(methodDoc(), false, placement);
 
     expect(showTextDocument).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ viewColumn: ViewColumn.Active, preview: true }),
+      expect.objectContaining({
+        viewColumn: ViewColumn.Active,
+        preview: false,
+        preserveFocus: true,
+      }),
     );
+    expect(placement.reusableTab).toBe(SOURCE);
+  });
+
+  it('closes the previous single-click tab when navigating to another method, so tabs do not pile up', async () => {
+    window.tabGroups.all = [
+      { viewColumn: ViewColumn.Two, tabs: [{ input: new TabInputText(Uri.parse(OTHER)) }] },
+    ];
+    const placement = stubPlacement('new');
+    placement.reusableTab = OTHER;
+
+    await openGemstoneDocument(methodDoc(), false, placement);
+
+    expect(closeTab).toHaveBeenCalledTimes(1);
+    expect(placement.reusableTab).toBe(SOURCE);
+  });
+
+  it('keeps the previous single-click tab open when it has unsaved edits', async () => {
+    window.tabGroups.all = [
+      {
+        viewColumn: ViewColumn.Two,
+        tabs: [{ input: new TabInputText(Uri.parse(OTHER)), isDirty: true }],
+      },
+    ];
+    const placement = stubPlacement('new');
+    placement.reusableTab = OTHER;
+
+    await openGemstoneDocument(methodDoc(), false, placement);
+
+    expect(closeTab).not.toHaveBeenCalled();
+  });
+
+  it('keeps the previous single-click tab open when the user pinned it', async () => {
+    window.tabGroups.all = [
+      {
+        viewColumn: ViewColumn.Two,
+        tabs: [{ input: new TabInputText(Uri.parse(OTHER)), isPinned: true }],
+      },
+    ];
+    const placement = stubPlacement('new');
+    placement.reusableTab = OTHER;
+
+    await openGemstoneDocument(methodDoc(), false, placement);
+
+    expect(closeTab).not.toHaveBeenCalled();
   });
 });

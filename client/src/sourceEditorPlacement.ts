@@ -18,6 +18,13 @@ import { tabInputUri } from './gemstoneFileSystemProvider';
 export class SourceEditorPlacement {
   private readonly owned = new Set<string>();
 
+  // URI (string) of the one reusable, non-preview source tab this browser keeps
+  // for single-click navigation, if any. The next single-click closes it instead
+  // of piling up tabs. We can't use a real preview tab for this — opening one
+  // scrolls the navigator tree (see openGemstoneDocument) — so we mimic its
+  // "single throwaway editor" behavior ourselves.
+  reusableTab?: string;
+
   // `createHome` builds this browser's source region from scratch (e.g. a group
   // below its webview) and returns the column to open into. Required only when
   // homeColumn() is used.
