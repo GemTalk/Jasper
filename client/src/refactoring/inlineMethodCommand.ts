@@ -49,7 +49,7 @@ export async function inlineMethodCommand(
   logInfo('[inlineMethod] invoked');
   const target = resolveMethodEditor(sessions, position, 'the message send to inline');
   if (!target) return;
-  if (!(await ensureRbSupport(target.session.rbSupportAvailable, 'Inlining a method'))) {
+  if (!(await ensureRbSupport(target.session, 'Inlining a method'))) {
     logInfo('[inlineMethod] refactoring engine unavailable; user declined install');
     return;
   }
