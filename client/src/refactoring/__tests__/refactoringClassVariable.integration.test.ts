@@ -66,6 +66,7 @@ describe('rename class variable (integration)', () => {
 
   const BASE = 'RCVItBase';
   const SUB = 'RCVItSub';
+  const SHADOW_BASE = 'RCVItShadowBase';
 
   // A base class owning the `Rate` class variable, referenced from an instance
   // method, a class-side method, and a subclass method — so the rename must reach
@@ -87,6 +88,29 @@ describe('rename class variable (integration)', () => {
     // End with a byte-object (String) result: executeFetchString fetches the result
     // as bytes, and `value: 42` answers the association, which is not a byte object.
     exec(`(${BASE} _classVars associationAt: #Rate) value: 42. 'ok'`);
+  };
+
+  // A separate fixture proving the SHADOWING exclusion: a class owning `Counter`
+  // with a genuine reference (`bump`) and a method whose only occurrence is
+  // captured by a same-named method temporary (`shadow`) — which must NOT be
+  // rewritten. A non-nil shared value is set so an apply can be checked to leave
+  // the shadowing method's source untouched.
+  const defineShadowFixture = (): void => {
+    exec(
+      `Object subclass: '${SHADOW_BASE}' instVarNames: #() classVars: #(Counter) ` +
+        'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals. true printString',
+    );
+    exec(
+      `${SHADOW_BASE} compileMethod: 'bump Counter := (Counter ifNil: [0]) + 1' ` +
+        "dictionaries: System myUserProfile symbolList category: 'accessing'. true printString",
+    );
+    // Resume the shadow warning so the fixture still installs.
+    exec(
+      `[${SHADOW_BASE} compileMethod: 'shadow | Counter | Counter := 5. ^Counter' ` +
+        "dictionaries: System myUserProfile symbolList category: 'accessing'] " +
+        'on: CompileWarning do: [:ex | ex resume: nil]. true printString',
+    );
+    exec(`(${SHADOW_BASE} _classVars associationAt: #Counter) value: 7. true printString`);
   };
 
   it('reports rename-class-variable engine availability matching the shared refactoring probe', () => {
@@ -168,5 +192,54 @@ r := (System myUserProfile symbolList objectNamed: #GsRenameClassVariableRefacto
     expect(
       exec(`(${SUB} compiledMethodAt: #useRate environmentId: 0 otherwise: nil) sourceString`),
     ).toContain('Multiplier');
+  });
+
+  it('rewrites a genuine reference but leaves a shadowing method temporary unstaged in the preview', async (ctx) => {
+    requireServerPluginFeature('refactoring', ctx, session());
+
+    defineShadowFixture();
+
+    const start = parseStartPreview(
+      await startRenameClassVarPreview(
+        asyncExec,
+        SHADOW_BASE,
+        'Counter',
+        'Tally',
+        `rcvit-shadow-${SHADOW_BASE}`,
+        PREVIEW_PAGE_BYTES,
+        userIndex(),
+      ),
+    );
+
+    const bump = start.page.changes.find((c) => c.selector === 'bump');
+    expect(bump?.newSource).toContain('Tally :=');
+    // The fully-shadowed method accesses no class variable, so it is not staged.
+    expect(start.page.changes.some((c) => c.selector === 'shadow')).toBe(false);
+  });
+
+  it('leaves the shadowing method source unchanged after applying the rename', async (ctx) => {
+    requireServerPluginFeature('refactoring', ctx, session());
+
+    defineShadowFixture();
+    const token = `rcvit-shadow-apply-${SHADOW_BASE}`;
+
+    await startRenameClassVarPreview(
+      asyncExec,
+      SHADOW_BASE,
+      'Counter',
+      'Tally',
+      token,
+      PREVIEW_PAGE_BYTES,
+      userIndex(),
+    );
+    const result = parseApplyResult(await applyRenameClassVar(asyncExec, token));
+
+    expect(result.failed).toEqual([]);
+    // The shadowing method was never rewritten, so it still names its own temporary.
+    expect(
+      exec(
+        `(${SHADOW_BASE} compiledMethodAt: #shadow environmentId: 0 otherwise: nil) sourceString`,
+      ),
+    ).toContain('Counter');
   });
 });
