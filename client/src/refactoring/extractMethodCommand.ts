@@ -33,16 +33,8 @@ import {
   refuse,
   reloadMethodEditor,
   saveIfDirty,
+  codePointsBefore,
 } from './renameAtCursorShared';
-
-/** 1-based count of code points before `position` in `document`. The engine indexes
- *  the stored source by CHARACTER (a GemStone Character is a full code point) while
- *  VS Code offsets count UTF-16 code units — they differ once a non-BMP character
- *  appears before the position, so count code points (`Array.from`). */
-function codePointsBefore(document: vscode.TextDocument, position: vscode.Position): number {
-  const prefix = document.getText(new vscode.Range(new vscode.Position(0, 0), position));
-  return Array.from(prefix).length;
-}
 
 /** Suggest a starting selector matching the required arity: unary for no args, else
  *  a keyword selector built from the argument names. The user edits it. */

@@ -436,7 +436,7 @@ interface ExplorerViews {
 
 // ── Controller ───────────────────────────────────────────────────────────────
 
-class ExplorerController {
+export class ExplorerController {
   readonly state: ExplorerState = {};
   // className → category for the current dictionary; fetched once per dict.
   private classCategoryEntries: queries.ClassCategoryEntry[] = [];
