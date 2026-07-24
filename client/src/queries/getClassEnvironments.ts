@@ -82,7 +82,7 @@ stream := WriteStream on: Unicode7 new.
 ].
 stream contents`;
 
-  const raw = execute(`getClassEnvironments(${className}, ${maxEnv})`, code);
+  const raw = execute(code);
 
   const results: EnvCategoryLine[] = [];
   for (const line of raw.split('\n')) {

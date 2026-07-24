@@ -17,7 +17,5 @@ export function fileOutClass(
 cls := ${classLookupExpr(className, dict)}.
 cls ifNil: [^ 'Class not found: ${escapeString(className)}'].
 cls fileOutClass`;
-  const label =
-    dict === undefined ? `fileOutClass(${className})` : `fileOutClass(${className}, dict: ${dict})`;
-  return execute(label, code);
+  return execute(code);
 }

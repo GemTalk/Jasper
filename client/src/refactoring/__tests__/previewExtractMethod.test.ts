@@ -94,7 +94,7 @@ describe('previewExtractMethod query builders', () => {
 
   it('clearExtractMethodPreview drops the token', () => {
     let captured = '';
-    clearExtractMethodPreview((_label, code) => {
+    clearExtractMethodPreview((code) => {
       captured = code;
       return '';
     }, 'tok');

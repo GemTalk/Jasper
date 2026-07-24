@@ -40,9 +40,5 @@ cls class categoryNames asSortedCollection do: [:cat |
   (cls class sortedSelectorsIn: cat) do: [:sel |
     ws nextPutAll: '  '; nextPutAll: sel; lf]].
 ws contents`;
-  const label =
-    dict === undefined
-      ? `describeClass(${className})`
-      : `describeClass(${className}, dict: ${dict})`;
-  return execute(label, code);
+  return execute(code);
 }

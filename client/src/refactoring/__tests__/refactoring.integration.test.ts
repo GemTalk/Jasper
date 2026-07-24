@@ -36,13 +36,7 @@ describe('rename instance variable (integration)', () => {
   });
 
   const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
-  const exec = (code: string): string => q.executeFetchString(session(), 'refactoring-it', code);
-  // previewRenameInstVar wants a QueryExecutor `(label, code) => string` and calls it
-  // as `execute(label, code)`. Adapt to the two-arg shape (a single-arg `exec` would
-  // send the label as code), forwarding the descriptive label so query logging matches
-  // production.
-  const execQuery = (label: string, code: string): string =>
-    q.executeFetchString(session(), label, code);
+  const exec = (code: string): string => q.executeFetchString(session(), code);
 
   const engineLoaded = (): boolean => q.checkRefactoringSupportAvailable(session());
   const rbEnginePresent = (): boolean =>
@@ -103,7 +97,7 @@ describe('rename instance variable (integration)', () => {
     defineCounterHierarchy();
 
     const changes = parseRenameChanges(
-      previewRenameInstVar(execQuery, COUNTER, 'count', 'tally', userIndex()),
+      previewRenameInstVar(exec, COUNTER, 'count', 'tally', userIndex()),
     );
 
     expect(changeFor(changes, COUNTER, 'increment')?.newSource).toContain('tally := tally + 1');
@@ -117,7 +111,7 @@ describe('rename instance variable (integration)', () => {
     defineCounterHierarchy();
 
     const changes = parseRenameChanges(
-      previewRenameInstVar(execQuery, COUNTER, 'count', 'tally', userIndex()),
+      previewRenameInstVar(exec, COUNTER, 'count', 'tally', userIndex()),
     );
 
     const classDef = changes.find((c) => c.kind === 'classDefinitionEdit');
@@ -132,7 +126,7 @@ describe('rename instance variable (integration)', () => {
     defineCounterHierarchy();
     const needsCommitBefore = exec('System needsCommit printString').trim();
 
-    previewRenameInstVar(execQuery, COUNTER, 'count', 'tally', userIndex());
+    previewRenameInstVar(exec, COUNTER, 'count', 'tally', userIndex());
 
     expect(exec('System needsCommit printString').trim()).toBe(needsCommitBefore);
   });

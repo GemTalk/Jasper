@@ -65,7 +65,7 @@ cls instVarNames do: [:iv |
 ws nextPutAll: '===COMMENT==='; lf.
 ws nextPutAll: (cls comment ifNil: ['']).
 ws contents`;
-  return parseGrailStubReflection(execute(`getGrailStubReflection(${className})`, code));
+  return parseGrailStubReflection(execute(code));
 }
 
 export function parseGrailStubReflection(raw: string): GrailStubReflection {

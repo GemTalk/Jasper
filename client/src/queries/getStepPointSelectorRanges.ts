@@ -1,5 +1,5 @@
 import { QueryExecutor } from './types';
-import { compiledMethodExpr, receiver } from './util';
+import { compiledMethodExpr } from './util';
 
 export interface StepPointSelectorInfo {
   stepPoint: number;
@@ -41,10 +41,7 @@ ws := WriteStream on: String new.
          nextPutAll: (source copyFrom: offset1 to: end - 1); lf]]].
 ws contents`;
 
-  const raw = execute(
-    `getStepPointSelectorRanges(${receiver(className, isMeta)}>>#${selector})`,
-    code,
-  );
+  const raw = execute(code);
 
   const results: StepPointSelectorInfo[] = [];
   for (const line of raw.split('\n')) {

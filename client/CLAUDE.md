@@ -6,7 +6,7 @@ Run a single test file: `cd client && npx vitest run src/__tests__/extension.tes
 
 ## Conventions (non-standard — read before editing these areas)
 
-- **Queries** (`client/src/queries/`) are pure functions `(execute: QueryExecutor, ...args) => string` that build a Smalltalk snippet and call `execute(label, code)`. `QueryExecutor` is `(label: string, code: string) => string`, supplied by the caller, so the same query runs in the extension (executor wraps `gciLibrary`) and in the MCP server (its own session). Shared helpers live in `util.ts` (`escapeString`, `classLookupExpr`, …).
+- **Queries** (`client/src/queries/`) are pure functions `(execute: QueryExecutor, ...args) => string` that build a Smalltalk snippet and call `execute(code)`. `QueryExecutor` is `(code: string) => string`, supplied by the caller, so the same query runs in the extension (executor wraps `gciLibrary`) and in the MCP server (its own session). Shared helpers live in `util.ts` (`escapeString`, `classLookupExpr`, …).
 - **Webview scripts** (`debuggerView.js`, `listFilter.js`, `methodListView.js`, `enhancedInspectorColumns.js`) are plain JS that runs in the webview DOM, **not** compiled into the extension bundle. They are read at runtime via `fs.readFileSync` and injected as `<script>` tags, and live in separate files so they can be unit-tested in jsdom. Follow this pattern for new webview behavior.
 
 ## Architecture

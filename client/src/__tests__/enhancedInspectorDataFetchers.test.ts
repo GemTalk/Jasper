@@ -56,7 +56,7 @@ describe('fetchEnhancedInspectorListTotal', () => {
     expect.assertions(2);
     const execute = vi.fn(() => '0');
     fetchEnhancedInspectorListTotal(execute, 99999n, 'gtItemsFor:');
-    const code = (execute as ReturnType<typeof vi.fn>).mock.calls[0][1] as string;
+    const code = (execute as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
     expect(code).toContain('99999');
     expect(code).toContain('gtItemsFor:');
   });
@@ -88,7 +88,7 @@ describe('fetchEnhancedInspectorListData', () => {
     expect.assertions(4);
     const execute = vi.fn(() => '[]');
     fetchEnhancedInspectorListData(execute, 99999n, 'gtItemsFor:', 1, 50);
-    const code = (execute as ReturnType<typeof vi.fn>).mock.calls[0][1] as string;
+    const code = (execute as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
     expect(code).toContain('99999');
     expect(code).toContain('gtItemsFor:');
     expect(code).toContain('1');
@@ -178,7 +178,7 @@ describe('fetchEnhancedInspectorTextData', () => {
     expect.assertions(2);
     const execute = vi.fn(() => '{}');
     fetchEnhancedInspectorTextData(execute, 99999n, 'gtTextFor:');
-    const code = (execute as ReturnType<typeof vi.fn>).mock.calls[0][1] as string;
+    const code = (execute as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
     expect(code).toContain('99999');
     expect(code).toContain('gtTextFor:');
   });
@@ -242,7 +242,7 @@ describe('fetchEnhancedInspectorPrintTabData', () => {
     expect.assertions(2);
     const execute = vi.fn(() => '{}');
     fetchEnhancedInspectorPrintTabData(execute, 99999n, 'gtPrintTabFor:');
-    const code = (execute as ReturnType<typeof vi.fn>).mock.calls[0][1] as string;
+    const code = (execute as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
     expect(code).toContain('99999');
     expect(code).toContain('gtPrintTabFor:');
   });
@@ -334,7 +334,7 @@ describe('fetchEnhancedInspectorForwardListData', () => {
     expect.assertions(4);
     const execute = vi.fn(() => '[]');
     fetchEnhancedInspectorForwardListData(execute, 99999n, 'gtForwardFor:', 1, 50);
-    const code = (execute as ReturnType<typeof vi.fn>).mock.calls[0][1] as string;
+    const code = (execute as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
     expect(code).toContain('99999');
     expect(code).toContain('gtForwardFor:');
     expect(code).toContain('1');
@@ -389,7 +389,7 @@ describe('fetchEnhancedInspectorForwardListTotal', () => {
     expect.assertions(2);
     const execute = vi.fn(() => '0');
     fetchEnhancedInspectorForwardListTotal(execute, 99999n, 'gtForwardFor:');
-    const code = (execute as ReturnType<typeof vi.fn>).mock.calls[0][1] as string;
+    const code = (execute as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
     expect(code).toContain('99999');
     expect(code).toContain('gtForwardFor:');
   });
@@ -427,7 +427,7 @@ describe('fetchEnhancedInspectorTreeChildren', () => {
     expect.assertions(1);
     const execute = vi.fn(() => '[]');
     fetchEnhancedInspectorTreeChildren(execute, 1000n, 'gtTreeFor:', []);
-    const code = (execute as ReturnType<typeof vi.fn>).mock.calls[0][1] as string;
+    const code = (execute as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
     expect(code).toContain('{}');
   });
 
@@ -435,7 +435,7 @@ describe('fetchEnhancedInspectorTreeChildren', () => {
     expect.assertions(1);
     const execute = vi.fn(() => '[]');
     fetchEnhancedInspectorTreeChildren(execute, 1000n, 'gtTreeFor:', [1]);
-    const code = (execute as ReturnType<typeof vi.fn>).mock.calls[0][1] as string;
+    const code = (execute as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
     expect(code).toContain('{1}');
   });
 
@@ -443,7 +443,7 @@ describe('fetchEnhancedInspectorTreeChildren', () => {
     expect.assertions(1);
     const execute = vi.fn(() => '[]');
     fetchEnhancedInspectorTreeChildren(execute, 1000n, 'gtTreeFor:', [1, 2, 3]);
-    const code = (execute as ReturnType<typeof vi.fn>).mock.calls[0][1] as string;
+    const code = (execute as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
     expect(code).toContain('{1. 2. 3}');
   });
 
@@ -451,7 +451,7 @@ describe('fetchEnhancedInspectorTreeChildren', () => {
     expect.assertions(2);
     const execute = vi.fn(() => '[]');
     fetchEnhancedInspectorTreeChildren(execute, 99999n, 'gtTreeFor:', [1]);
-    const code = (execute as ReturnType<typeof vi.fn>).mock.calls[0][1] as string;
+    const code = (execute as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
     expect(code).toContain('99999');
     expect(code).toContain('gtTreeFor:');
   });

@@ -23,7 +23,7 @@ const executeFetchStringMock = executeFetchString as ReturnType<typeof vi.fn>;
 const PAYLOAD_DIR = '/payload/enhancedInspector';
 
 // Default: gem can read everything, every file-in succeeds, verification passes.
-function happyPath(_s: unknown, _label: string, code: string): string {
+function happyPath(_s: unknown, code: string): string {
   if (code.includes('existsOnServer')) return 'true';
   if (code.includes('gtViewsInCurrentContext')) return 'true';
   if (code.includes('GsFileIn fromPath')) return 'true';
@@ -112,10 +112,10 @@ describe('installEnhancedInspectorSupport', () => {
   it('files the payload in the loader dependency order', async () => {
     const { session } = createMockSession();
     const order: string[] = [];
-    executeFetchStringMock.mockImplementation((s, label, code: string) => {
+    executeFetchStringMock.mockImplementation((s, code: string) => {
       const f = filedInFileFrom(code);
       if (f) order.push(f);
-      return happyPath(s, label, code);
+      return happyPath(s, code);
     });
 
     await installEnhancedInspectorSupport(session, PAYLOAD_DIR);
@@ -129,7 +129,7 @@ describe('installEnhancedInspectorSupport', () => {
     await installEnhancedInspectorSupport(session, PAYLOAD_DIR);
 
     const fileInCalls = executeFetchStringMock.mock.calls.filter((c) =>
-      String(c[2]).includes('GsFileIn fromPath'),
+      String(c[1]).includes('GsFileIn fromPath'),
     );
     expect(fileInCalls).toHaveLength(ENHANCED_INSPECTOR_FILES.length);
   });
@@ -144,7 +144,7 @@ describe('installEnhancedInspectorSupport', () => {
     await installEnhancedInspectorSupport(session, PAYLOAD_DIR);
 
     const fileInCalls = executeFetchStringMock.mock.calls
-      .map((c) => String(c[2]))
+      .map((c) => String(c[1]))
       .filter((code) => code.includes('GsFileIn fromPath'));
     expect(fileInCalls).toHaveLength(ENHANCED_INSPECTOR_FILES.length);
     for (const code of fileInCalls) {
@@ -154,9 +154,9 @@ describe('installEnhancedInspectorSupport', () => {
 
   it('fails clearly without committing when the gem cannot read the payload', async () => {
     const { session, commit, abort } = createMockSession();
-    executeFetchStringMock.mockImplementation((s, label, code: string) => {
+    executeFetchStringMock.mockImplementation((s, code: string) => {
       if (code.includes('existsOnServer')) return 'false';
-      return happyPath(s, label, code);
+      return happyPath(s, code);
     });
 
     const result = await installEnhancedInspectorSupport(session, PAYLOAD_DIR);
@@ -170,11 +170,11 @@ describe('installEnhancedInspectorSupport', () => {
   it('stops at the first failing file, aborts, and commits nothing', async () => {
     const { session, commit, abort } = createMockSession();
     const failing = ENHANCED_INSPECTOR_FILES[1];
-    executeFetchStringMock.mockImplementation((s, label, code: string) => {
+    executeFetchStringMock.mockImplementation((s, code: string) => {
       if (code.includes('GsFileIn fromPath') && code.includes(failing)) {
         throw new Error('compile failed');
       }
-      return happyPath(s, label, code);
+      return happyPath(s, code);
     });
 
     const result = await installEnhancedInspectorSupport(session, PAYLOAD_DIR);
@@ -203,9 +203,9 @@ describe('installEnhancedInspectorSupport', () => {
 
   it('flags an incomplete install when verification fails after commit', async () => {
     const { session } = createMockSession();
-    executeFetchStringMock.mockImplementation((s, label, code: string) => {
+    executeFetchStringMock.mockImplementation((s, code: string) => {
       if (code.includes('gtViewsInCurrentContext')) return 'false';
-      return happyPath(s, label, code);
+      return happyPath(s, code);
     });
 
     const result = await installEnhancedInspectorSupport(session, PAYLOAD_DIR);

@@ -102,8 +102,5 @@ export function applyExtractMethod(
 
 /** Drop a finished preview from SessionTemps. */
 export function clearExtractMethodPreview(execute: QueryExecutor, token: string): string {
-  return execute(
-    `clearExtractMethodPreview(${token})`,
-    `GsExtractMethodRefactoring clearToken: '${escapeString(token)}'`,
-  );
+  return execute(`GsExtractMethodRefactoring clearToken: '${escapeString(token)}'`);
 }

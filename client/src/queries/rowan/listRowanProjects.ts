@@ -40,7 +40,7 @@ names do: [:projName | | proj dirty url builtin |
      nextPutAll: builtin printString; lf].
 ws contents`;
 
-  const raw = execute('listRowanProjects', code);
+  const raw = execute(code);
   if (raw.trim() === NO_ROWAN) return { available: false, projects: [] };
 
   const projects: RowanProject[] = [];

@@ -39,7 +39,7 @@ describe('inline method (integration)', () => {
   });
 
   const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
-  const exec = (code: string): string => q.executeFetchString(session(), 'inline-it', code);
+  const exec = (code: string): string => q.executeFetchString(session(), code);
   const asyncExec = (_label: string, code: string): Promise<string> => Promise.resolve(exec(code));
 
   const enginePresent = (): boolean =>

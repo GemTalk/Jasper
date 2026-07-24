@@ -32,8 +32,7 @@ describe('full logical backup (integration)', () => {
   });
 
   const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
-  const exec = (label: string, code: string): string =>
-    q.executeFetchString(session(), label, code);
+  const exec = (code: string): string => q.executeFetchString(session(), code);
 
   it('confirms the connected user holds the FileControl privilege backups require', () => {
     expect(hasFileControlPrivilege(exec)).toBe(true);
@@ -66,16 +65,16 @@ describe('full logical backup (integration)', () => {
       };
 
       try {
-        const modeBefore = exec('mode', 'System transactionMode printString').trim();
+        const modeBefore = exec('System transactionMode printString').trim();
 
-        const result = exec('full backup', fullBackupCode(dest)).trim();
+        const result = exec(fullBackupCode(dest)).trim();
 
         expect(result).toBe('OK');
         expect(fs.existsSync(dest)).toBe(true);
         expect(fs.statSync(dest).size).toBeGreaterThan(0);
         // fullBackupTo: leaves the session in manualBegin; the ensure: block in
         // fullBackupCode must put the transaction mode back where it was.
-        expect(exec('mode', 'System transactionMode printString').trim()).toBe(modeBefore);
+        expect(exec('System transactionMode printString').trim()).toBe(modeBefore);
 
         // The produced file is discovered by the real (unmocked) tree provider.
         const provider = new DatabaseTreeProvider(

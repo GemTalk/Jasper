@@ -9,7 +9,7 @@ describe('enhancedInspectorExecute error isolation', () => {
     expect.assertions(2);
     const execute = vi.fn(() => '{}');
     fetchObjectMeta(execute, 1000n);
-    const code = (execute as ReturnType<typeof vi.fn>).mock.calls[0][1] as string;
+    const code = (execute as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
     expect(code).toContain('on: AbstractException do:');
     expect(code).toContain("'EIError:'");
   });

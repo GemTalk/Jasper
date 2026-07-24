@@ -23,5 +23,5 @@ ws := WriteStream on: String new.
 (cls ifNil: [#()] ifNotNil: [:c | c classVarNames]) do: [:each |
   ws nextPutAll: each asString; lf].
 ws contents`;
-  return splitLines(execute(`getDefinedClassVarNames(${className})`, code));
+  return splitLines(execute(code));
 }

@@ -24,12 +24,8 @@ dict keysAndValuesDo: [:k :v |
     n := [v instVarNames size] on: Error do: [:e | 0].
     ws nextPutAll: k; tab; print: n; lf]].
 ws contents`;
-  const label =
-    typeof dict === 'number'
-      ? `getDefinedInstVarCounts(dictIndex: ${dict})`
-      : `getDefinedInstVarCounts(dictName: ${dict})`;
   const map = new Map<string, number>();
-  for (const line of splitLines(execute(label, code))) {
+  for (const line of splitLines(execute(code))) {
     const tab = line.indexOf('\t');
     if (tab < 0) continue;
     map.set(line.slice(0, tab), parseInt(line.slice(tab + 1), 10) || 0);

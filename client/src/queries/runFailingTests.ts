@@ -106,7 +106,7 @@ classes do: [:cls |
       nextPutAll: 'error'; tab;
       nextPutAll: (captureMessage value: e); lf]].
 ws contents encodeAsUTF8`;
-  const data = execute('runFailingTests', code);
+  const data = execute(code);
   return splitLines(data).map((line) => {
     const parts = line.split('\t');
     return {

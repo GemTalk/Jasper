@@ -8,7 +8,6 @@ import { escapeString } from '../../queries/util';
 export function globalNameInUse(execute: QueryExecutor, name: string): boolean {
   return (
     execute(
-      `globalNameInUse(${name})`,
       `(System myUserProfile symbolList objectNamed: #'${escapeString(name)}') notNil printString`,
     ).trim() === 'true'
   );

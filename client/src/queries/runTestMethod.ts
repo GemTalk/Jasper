@@ -54,7 +54,7 @@ captured isNil
     ws tab].
 ws nextPutAll: (endMs - startMs) printString.
 ws contents encodeAsUTF8`;
-  const data = execute(`runTestMethod(${className}>>#${selector})`, code);
+  const data = execute(code);
   const parts = data.split('\t');
   return {
     className,
