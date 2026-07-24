@@ -154,5 +154,9 @@ jobs:
         env:
           GEMSTONE_VERSION: ${{ matrix.gemstone-version }}
         run: npm run test:server:start -- "$GEMSTONE_VERSION"
-      - name: Run tests
+      - name: Run tests (without server plugin)
+        run: npm test
+      - name: Install server plugin
+        run: node client/bin/install-server-plugin.mjs
+      - name: Run tests (with server plugin)
         run: npm test
