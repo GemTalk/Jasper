@@ -16,9 +16,5 @@ ws := WriteStream on: String new.
 dict keysAndValuesDo: [:k :v |
   v isBehavior ifTrue: [ws nextPutAll: k; lf]].
 ws contents`;
-  const label =
-    typeof dict === 'number'
-      ? `getClassNames(dictIndex: ${dict})`
-      : `getClassNames(dictName: ${dict})`;
-  return splitLines(execute(label, code)).sort();
+  return splitLines(execute(code)).sort();
 }

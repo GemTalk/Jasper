@@ -7,5 +7,5 @@ ws := WriteStream on: String new.
 ${className} allInstVarNames do: [:each |
   ws nextPutAll: each; lf].
 ws contents`;
-  return splitLines(execute(`getInstVarNames(${className})`, code));
+  return splitLines(execute(code));
 }

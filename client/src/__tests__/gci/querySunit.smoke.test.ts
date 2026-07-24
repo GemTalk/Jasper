@@ -43,7 +43,7 @@ ws := WriteStream on: Unicode7 new.
 classes do: [:c |
   ws nextPutAll: c name; tab; nextPutAll: c isAbstract printString; lf].
 ws contents encodeAsUTF8`;
-  return splitLines(exec('discoverAllTestClasses', code)).map((line) => {
+  return splitLines(exec(code)).map((line) => {
     const [name, isAbstract] = line.split('\t');
     return { name: name || '', isAbstract: isAbstract === 'true' };
   });

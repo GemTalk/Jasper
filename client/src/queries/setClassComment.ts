@@ -16,9 +16,5 @@ cls ifNil: [^ 'Class not found: ${esc}'].
 cls isBehavior ifFalse: [^ 'Not a class: ${esc}'].
 cls comment: '${escapeString(comment)}'.
 'Comment set: ' , cls name`;
-  const label =
-    dict === undefined
-      ? `setClassComment(${className})`
-      : `setClassComment(${className}, dict: ${dict})`;
-  return execute(label, code);
+  return execute(code);
 }

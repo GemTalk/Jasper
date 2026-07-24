@@ -117,7 +117,7 @@ captured isNil ifTrue: [
     ws nextPutAll: s]].
 ws contents`;
 
-  const data = execute('describeTestFailure', code);
+  const data = execute(code);
   return parseDetails(data);
 }
 

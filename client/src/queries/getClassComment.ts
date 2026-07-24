@@ -11,11 +11,11 @@ export function getClassComment(
   dict?: number | string,
 ): string {
   if (dict === undefined) {
-    return execute(`getClassComment(${className})`, `${className} comment`);
+    return execute(`${className} comment`);
   }
   const code = `| cls |
 cls := ${classLookupExpr(className, dict)}.
 cls ifNil: [^ ''].
 cls comment`;
-  return execute(`getClassComment(${className}, dict: ${dict})`, code);
+  return execute(code);
 }

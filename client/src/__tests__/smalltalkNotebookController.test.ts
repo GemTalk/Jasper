@@ -18,7 +18,7 @@ import { SessionManager } from '../sessionManager';
 // Cells run on the non-blocking execute path (live transcript). The mock gci
 // covers that path: NbExecute starts the doit, NbPoll reports ready, NbResult
 // yields the result oop, FetchUtf8 reads its string. The transcript sink's
-// live-toggle/drain calls go through GciTsExecuteFetchBytes.
+// live-toggle/drain calls go through executeAndFetchString.
 function makeGci(overrides: Record<string, unknown> = {}) {
   return {
     GciTsCallInProgress: vi.fn(() => ({ result: 0, err: { number: 0 } })),
@@ -31,7 +31,7 @@ function makeGci(overrides: Record<string, unknown> = {}) {
     GciTsNbPoll: vi.fn(() => ({ result: 1, err: { number: 0 } })),
     GciTsNbResult: vi.fn(() => ({ result: 200n, err: { number: 0, message: '', context: 0x14n } })),
     GciTsFetchUtf8: vi.fn(() => ({ data: '7', err: { number: 0 } })),
-    GciTsExecuteFetchBytes: vi.fn((..._args: unknown[]) => ({ data: '', err: { number: 0 } })),
+    executeAndFetchString: vi.fn((..._args: unknown[]) => ''),
     ...overrides,
   };
 }
@@ -119,7 +119,7 @@ describe('SmalltalkNotebookController', () => {
 
     await runCells([makeCell('3 + 4')]);
 
-    const sinkCalls = gci.GciTsExecuteFetchBytes.mock.calls
+    const sinkCalls = gci.executeAndFetchString.mock.calls
       .map((c) => c[1] as string)
       .filter((code) => code.includes('jasperLive:'));
     expect(sinkCalls.some((code) => code.includes('jasperLive: true'))).toBe(true);

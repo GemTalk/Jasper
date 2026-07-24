@@ -1,5 +1,5 @@
 import { QueryExecutor } from './types';
-import { compiledMethodExpr, receiver } from './util';
+import { compiledMethodExpr } from './util';
 
 export function clearAllBreaks(
   execute: QueryExecutor,
@@ -11,5 +11,5 @@ export function clearAllBreaks(
 ): string {
   const method = compiledMethodExpr(className, isMeta, selector, environmentId, dict);
   const code = `${method} clearAllBreaks. 'ok'`;
-  return execute(`clearAllBreaks(${receiver(className, isMeta)}>>#${selector})`, code);
+  return execute(code);
 }

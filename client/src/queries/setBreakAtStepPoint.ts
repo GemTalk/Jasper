@@ -1,5 +1,5 @@
 import { QueryExecutor } from './types';
-import { compiledMethodExpr, receiver } from './util';
+import { compiledMethodExpr } from './util';
 
 export function setBreakAtStepPoint(
   execute: QueryExecutor,
@@ -12,5 +12,5 @@ export function setBreakAtStepPoint(
 ): string {
   const method = compiledMethodExpr(className, isMeta, selector, environmentId, dict);
   const code = `${method} setBreakAtStepPoint: ${stepPoint}. 'ok'`;
-  return execute(`setBreak(${receiver(className, isMeta)}>>#${selector}, step:${stepPoint})`, code);
+  return execute(code);
 }

@@ -42,7 +42,7 @@ describe('rename method (integration)', () => {
   });
 
   const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
-  const exec = (code: string): string => q.executeFetchString(session(), 'rename-method-it', code);
+  const exec = (code: string): string => q.executeFetchString(session(), code);
   // The paginated query builders take an async executor; the GCI sync path is
   // fine here (small fixture), so wrap it in a resolved promise.
   const asyncExec = (_label: string, code: string): Promise<string> => Promise.resolve(exec(code));

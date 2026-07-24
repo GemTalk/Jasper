@@ -69,7 +69,7 @@ describe('findRowanClassOwners', () => {
   it('scans by includesKey so classes outside the symbolList are still found', () => {
     const execute = executor('');
     findRowanClassOwners(execute, 'STONReader');
-    const code = execute.mock.calls[0][1];
+    const code = execute.mock.calls[0][0];
     expect(code).toContain("loadedClasses includesKey: 'STONReader'");
     expect(code).toContain("loadedClassExtensions includesKey: 'STONReader'");
   });
@@ -118,7 +118,7 @@ describe('unloadRowanProject', () => {
 
     unloadRowanProject(execute, 'STON');
 
-    const code = execute.mock.calls[0][1];
+    const code = execute.mock.calls[0][0];
     expect(code).toContain("gemstoneTools topaz unloadProjectNamed: 'STON'");
     expect(code).toContain('System commitTransaction');
     expect(code).toContain('System abortTransaction');
@@ -204,7 +204,7 @@ describe('exportRowanProject', () => {
 
     exportRowanProject(execute, 'Cypress', '/out/Cypress');
 
-    const code = execute.mock.calls[0][1];
+    const code = execute.mock.calls[0][0];
     expect(code).toContain('writeResolvedProject:');
     expect(code).toContain('exportLoadSpecification');
     expect(code).toContain("diskRepositoryRoot: '/out/Cypress'");
@@ -219,8 +219,8 @@ describe('getGemCacheKB', () => {
   it('queries GemTempObjCacheSize in KB units', () => {
     const execute = executor('0');
     getGemCacheKB(execute);
-    expect(execute.mock.calls[0][1]).toContain('GemTempObjCacheSize');
-    expect(execute.mock.calls[0][1]).toContain('// 1024');
+    expect(execute.mock.calls[0][0]).toContain('GemTempObjCacheSize');
+    expect(execute.mock.calls[0][0]).toContain('// 1024');
   });
 
   it('returns undefined when the value is not a positive number', () => {

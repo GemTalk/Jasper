@@ -90,8 +90,7 @@ export async function refreshWorkingSession(
 ): Promise<boolean> {
   let needsCommit: boolean | undefined;
   try {
-    needsCommit =
-      executeFetchString(base, 'needsCommit', 'System needsCommit printString').trim() === 'true';
+    needsCommit = executeFetchString(base, 'System needsCommit printString').trim() === 'true';
   } catch {
     needsCommit = undefined;
   }

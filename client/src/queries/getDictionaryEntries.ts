@@ -24,11 +24,7 @@ dict keysAndValuesDo: [:k :v |
     ifFalse: [ws nextPutAll: '0'; tab; tab; nextPutAll: k asString; lf]].
 ws contents`;
 
-  const label =
-    typeof dict === 'number'
-      ? `getDictionaryEntries(dictIndex: ${dict})`
-      : `getDictionaryEntries(dictName: ${dict})`;
-  const raw = execute(label, code);
+  const raw = execute(code);
 
   const results: DictEntry[] = [];
   for (const line of raw.split('\n')) {

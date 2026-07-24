@@ -24,7 +24,6 @@ describe('class-variable Explorer queries (live GCI)', () => {
     s = login();
     userIndex = parseInt(
       s.exec(
-        'user-index',
         '| sl d | sl := System myUserProfile symbolList. ' +
           "d := sl detect: [:x | x name = #'UserGlobals'] ifNone: [nil]. " +
           '(d ifNil: [0] ifNotNil: [sl indexOf: d]) printString',
@@ -34,12 +33,10 @@ describe('class-variable Explorer queries (live GCI)', () => {
     // A base class with two class variables and a subclass declaring none, so the
     // "defined here, not inherited" semantics are observable.
     s.exec(
-      'define-base',
       `Object subclass: '${BASE}' instVarNames: #() classVars: #(Alpha Beta) ` +
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals. true printString',
     );
     s.exec(
-      'define-sub',
       `${BASE} subclass: '${SUB}' instVarNames: #() classVars: #() ` +
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals. true printString',
     );
@@ -47,7 +44,7 @@ describe('class-variable Explorer queries (live GCI)', () => {
 
   afterAll(() => {
     try {
-      s?.exec('cleanup', 'System abortTransaction. true printString');
+      s?.exec('System abortTransaction. true printString');
     } catch {
       /* best-effort — logout discards the uncommitted fixture regardless */
     }
@@ -76,11 +73,11 @@ describe('class-variable Explorer queries (live GCI)', () => {
   });
 
   it('reads class-variable names as strings, never leaving the transaction dirtier than found', () => {
-    const before = s.exec('needs-commit', 'System needsCommit printString').trim();
+    const before = s.exec('System needsCommit printString').trim();
 
     getDefinedClassVarNames(s.exec, BASE);
     getDefinedClassVarCounts(s.exec, userIndex);
 
-    expect(s.exec('needs-commit', 'System needsCommit printString').trim()).toBe(before);
+    expect(s.exec('System needsCommit printString').trim()).toBe(before);
   });
 });

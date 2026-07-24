@@ -413,7 +413,7 @@ export class EnhancedInspector {
   }
 
   private makeExecutor(): QueryExecutor {
-    return (label, code) => executeFetchString(this.session, label, code);
+    return (code) => executeFetchString(this.session, code);
   }
 
   private fetchEnhancedInspectorViewData(

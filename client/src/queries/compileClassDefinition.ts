@@ -7,5 +7,5 @@ export function compileClassDefinition(execute: QueryExecutor, source: string): 
   // Wrap so the result is a String (the class name) — GciTsExecuteFetchBytes
   // requires a byte-object result, but class definitions return a Class.
   const code = `(${source}) name`;
-  return execute('compileClassDefinition', code);
+  return execute(code);
 }

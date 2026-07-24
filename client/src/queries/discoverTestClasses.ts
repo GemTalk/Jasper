@@ -39,7 +39,7 @@ classDict keysAndValuesDo: [:cls :dictName |
     nextPutAll: cls name; tab;
     nextPutAll: cls testSelectors size printString; lf].
 ws contents`;
-  const data = execute('discoverTestClasses', code);
+  const data = execute(code);
   return splitLines(data).map((line) => {
     const [dictName, className, count] = line.split('\t');
     return { dictName, className, testCount: parseTestCount(count) };

@@ -62,8 +62,5 @@ export function applyRenameClassVar(execute: AsyncQueryExecutor, token: string):
 
 // Drop a finished preview from SessionTemps.
 export function clearRenameClassVarPreview(execute: QueryExecutor, token: string): string {
-  return execute(
-    `clearRenameClassVarPreview(${token})`,
-    `GsRenameClassVariableRefactoring clearToken: '${escapeString(token)}'`,
-  );
+  return execute(`GsRenameClassVariableRefactoring clearToken: '${escapeString(token)}'`);
 }

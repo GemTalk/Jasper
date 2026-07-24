@@ -20,7 +20,7 @@ describe('getDefinedClassVarNames', () => {
 
     getDefinedClassVarNames(execute, 'Account', 5);
 
-    const code = execute.mock.calls[0][1];
+    const code = execute.mock.calls[0][0];
     expect(code).toContain('symbolList at: 5');
     expect(code).toContain('ifNil: [#()]');
     expect(code).toContain('classVarNames');
@@ -31,7 +31,7 @@ describe('getDefinedClassVarNames', () => {
 
     getDefinedClassVarNames(execute, 'Account');
 
-    expect(execute.mock.calls[0][1]).toContain("objectNamed: #'Account'");
+    expect(execute.mock.calls[0][0]).toContain("objectNamed: #'Account'");
   });
 });
 
@@ -64,10 +64,10 @@ describe('getDefinedClassVarCounts', () => {
   it('scopes by index or by name in the generated query', () => {
     const byIndex = vi.fn().mockReturnValue('');
     getDefinedClassVarCounts(byIndex, 4);
-    expect(byIndex.mock.calls[0][1]).toContain('symbolList at: 4');
+    expect(byIndex.mock.calls[0][0]).toContain('symbolList at: 4');
 
     const byName = vi.fn().mockReturnValue('');
     getDefinedClassVarCounts(byName, 'MyDict');
-    expect(byName.mock.calls[0][1]).toContain("objectNamed: #'MyDict'");
+    expect(byName.mock.calls[0][0]).toContain("objectNamed: #'MyDict'");
   });
 });

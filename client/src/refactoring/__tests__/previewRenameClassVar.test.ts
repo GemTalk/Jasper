@@ -53,7 +53,7 @@ describe('previewRenameClassVar queries', () => {
 
     clearRenameClassVarPreview(execute, 'tok');
 
-    const code = execute.mock.calls[0][1];
+    const code = execute.mock.calls[0][0];
     expect(code).toContain("clearToken: 'tok'");
   });
 });

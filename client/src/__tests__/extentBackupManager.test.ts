@@ -25,7 +25,7 @@ function makeExecutor(
     resume: 'OK',
     ...over,
   };
-  return vi.fn<QueryExecutor>((_label, code) => {
+  return vi.fn<QueryExecutor>((code) => {
     if (code.includes('FULL_LOGGING')) return r.fullLogging;
     if (code.includes('SystemRepository fileNames')) return r.extents;
     if (code.includes('suspendCheckpointsForMinutes')) return r.suspend;
@@ -51,9 +51,9 @@ function makeDeps(execute: QueryExecutor, over: Partial<ExtentBackupDeps> = {}):
 // The order index of the execute() call whose Smalltalk contains `needle`.
 function callOrder(execute: QueryExecutor, needle: string): number {
   const spy = execute as unknown as {
-    mock: { calls: [string, string][]; invocationCallOrder: number[] };
+    mock: { calls: [string][]; invocationCallOrder: number[] };
   };
-  const i = spy.mock.calls.findIndex(([, code]) => code.includes(needle));
+  const i = spy.mock.calls.findIndex(([code]) => code.includes(needle));
   return i === -1 ? -1 : spy.mock.invocationCallOrder[i];
 }
 

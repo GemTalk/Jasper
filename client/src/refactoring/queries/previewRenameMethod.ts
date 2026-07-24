@@ -94,8 +94,5 @@ export function applyRenameMethod(
 
 // Drop a finished preview from SessionTemps.
 export function clearRenameMethodPreview(execute: QueryExecutor, token: string): string {
-  return execute(
-    `clearRenameMethodPreview(${token})`,
-    `GsRenameMethodRefactoring clearToken: '${escapeString(token)}'`,
-  );
+  return execute(`GsRenameMethodRefactoring clearToken: '${escapeString(token)}'`);
 }

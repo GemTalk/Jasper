@@ -123,7 +123,7 @@ describe('getEnhancedInspectorViewSpecs', () => {
     expect.assertions(2);
     const execute = vi.fn(() => '[]');
     getEnhancedInspectorViewSpecs(execute, 99999n);
-    const code = (execute as ReturnType<typeof vi.fn>).mock.calls[0][1] as string;
+    const code = (execute as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
     expect(code).toContain('99999');
     expect(code).toContain('GtRemotePhlowViewedObject');
   });

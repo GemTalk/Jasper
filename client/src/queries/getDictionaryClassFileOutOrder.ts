@@ -27,11 +27,7 @@ dict keysAndValuesDo: [:k :v |
     [sc notNil] whileTrue: [depth := depth + 1. sc := sc superclass].
     ws nextPutAll: depth printString; tab; nextPutAll: k; lf]].
 ws contents`;
-  const label =
-    typeof dict === 'number'
-      ? `getDictionaryClassFileOutOrder(dictIndex: ${dict})`
-      : `getDictionaryClassFileOutOrder(dictName: ${dict})`;
-  return splitLines(execute(label, code))
+  return splitLines(execute(code))
     .map((line) => {
       const tab = line.indexOf('\t');
       return { depth: parseInt(line.slice(0, tab), 10), name: line.slice(tab + 1) };

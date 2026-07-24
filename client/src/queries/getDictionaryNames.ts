@@ -7,5 +7,5 @@ ws := WriteStream on: String new.
 System myUserProfile symbolList names do: [:each |
   ws nextPutAll: each; lf].
 ws contents`;
-  return splitLines(execute('getDictionaryNames', code));
+  return splitLines(execute(code));
 }
