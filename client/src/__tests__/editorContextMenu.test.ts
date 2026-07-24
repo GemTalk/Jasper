@@ -29,8 +29,22 @@ describe('editor/context menu', () => {
       'gemstone.runInNewGem',
       'gemstone.sendersOf',
       'gemstone.implementorsOf',
+      'gemstone.explorer.extractMethod',
+      'gemstone.explorer.inlineMethod',
       'gemstone.toggleSelectorBreakpoint',
     ]);
+  });
+
+  it('shows "Extract Method" only for a gemstone method editor with a selection', () => {
+    expect(getMenuItem('gemstone.explorer.extractMethod')?.when).toBe(
+      `editorTextFocus && resourceScheme == gemstone && resourceLangId == gemstone-smalltalk && editorHasSelection`,
+    );
+  });
+
+  it('shows "Inline Method" for any gemstone method editor (cursor-based, no selection needed)', () => {
+    expect(getMenuItem('gemstone.explorer.inlineMethod')?.when).toBe(
+      `editorTextFocus && resourceScheme == gemstone && resourceLangId == gemstone-smalltalk`,
+    );
   });
 
   it('shows "Display It" in gemstone documents when code execution is available', () => {
