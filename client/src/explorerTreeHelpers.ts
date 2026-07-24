@@ -15,16 +15,17 @@ export interface VariableSide {
 
 /**
  * The variable-side nodes to show under a class row, mirroring the Methods pane's
- * instance/class split: an "instance" side when the class defines instance
- * variables, then a "class" side when it defines class variables. A side with no
- * variables is omitted (so a class with only instance variables shows just the
- * "instance" side, and a class with neither shows nothing).
+ * instance/class split: the "instance" side then the "class" side. When a class
+ * defines any variables at all, BOTH sides are returned (a side that happens to be
+ * empty carries an empty `names` list, so the caller can render its header grayed
+ * and non-expandable). A class that defines neither kind shows nothing.
  */
 export function variableSides(ivarNames: string[], classVarNames: string[]): VariableSide[] {
-  const sides: VariableSide[] = [];
-  if (ivarNames.length > 0) sides.push({ isMeta: false, names: ivarNames });
-  if (classVarNames.length > 0) sides.push({ isMeta: true, names: classVarNames });
-  return sides;
+  if (ivarNames.length === 0 && classVarNames.length === 0) return [];
+  return [
+    { isMeta: false, names: ivarNames },
+    { isMeta: true, names: classVarNames },
+  ];
 }
 
 /**

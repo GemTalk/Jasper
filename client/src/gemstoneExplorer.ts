@@ -60,6 +60,7 @@ import {
 } from './refactoring/renameClassVarPreview';
 import { showRenameClassVarPanel } from './refactoring/renameClassVarPanel';
 import { variableSides, defaultDictionaryIndex } from './explorerTreeHelpers';
+import { emptyVarSideUri } from './explorerVarDecorations';
 import {
   parseClassHistory,
   parseRevertResult,
@@ -298,14 +299,28 @@ class VarSideItem extends vscode.TreeItem {
   constructor(
     public readonly className: string,
     public readonly isMeta: boolean,
+    // When the class defines no variables on this side we still show its header,
+    // grayed and non-expandable, so the instance/class structure stays consistent.
+    isEmpty = false,
   ) {
-    super(isMeta ? 'class' : 'instance', vscode.TreeItemCollapsibleState.Expanded);
+    super(
+      isMeta ? 'class variables' : 'instance variables',
+      isEmpty ? vscode.TreeItemCollapsibleState.None : vscode.TreeItemCollapsibleState.Expanded,
+    );
     this.id = `k:${className}/vside:${isMeta}`;
     this.contextValue = 'explorerVarSide';
     this.iconPath = new vscode.ThemeIcon('symbol-class');
-    this.tooltip = isMeta
-      ? `Class variables of ${className}`
-      : `Instance variables of ${className}`;
+    if (isEmpty) {
+      // Synthetic resourceUri → FileDecorationProvider grays the header label.
+      this.resourceUri = emptyVarSideUri(className, isMeta);
+      this.tooltip = isMeta
+        ? `${className} defines no class variables`
+        : `${className} defines no instance variables`;
+    } else {
+      this.tooltip = isMeta
+        ? `Class variables of ${className}`
+        : `Instance variables of ${className}`;
+    }
   }
 }
 
@@ -2793,7 +2808,7 @@ class ClassProvider extends RefreshableProvider<ClassNode> {
       return variableSides(
         this.ctl.definedIvarNames(element.className),
         this.ctl.definedClassVarNames(element.className),
-      ).map((side) => new VarSideItem(element.className, side.isMeta));
+      ).map((side) => new VarSideItem(element.className, side.isMeta, side.names.length === 0));
     }
     // A side node expands to its variable rows (each with an inline rename pencil).
     if (element instanceof VarSideItem) {

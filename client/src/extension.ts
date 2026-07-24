@@ -65,6 +65,7 @@ import {
 } from './rowanDependency';
 import { shouldLoadAfterAddingDependency } from './rowanLoadPrompt';
 import { RowanDecorationProvider } from './rowanDecorations';
+import { ExplorerEmptyVarDecorationProvider } from './explorerVarDecorations';
 import { findMethodInClass } from './commands/findMethodInClass';
 import { loadClassPickItems } from './commands/classPicker';
 import { GlobalsBrowser } from './globalsBrowser';
@@ -2761,6 +2762,9 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     // Git-view-style M/A/D badges + label tinting for Rowan rows.
     vscode.window.registerFileDecorationProvider(new RowanDecorationProvider()),
+    // Grays the "instance/class variables" header the Explorer shows for an empty
+    // variable side.
+    vscode.window.registerFileDecorationProvider(new ExplorerEmptyVarDecorationProvider()),
     // Loaded-projects section tracks the connected stone; so does whether each
     // dependency is marked as being in the image.
     sessionManager.onDidChangeSelection(() => {
