@@ -29,11 +29,7 @@
  */
 import * as vscode from 'vscode';
 import { ActiveSession, SessionManager } from './sessionManager';
-import { checkRefactoringSupportAvailable } from './browserQueries';
-import {
-  supportsEnhancedInspector,
-  isEnhancedInspectorInstalled,
-} from './enhancedInspectorInstall';
+import { pluginFeature } from './serverPlugin/pluginFeatures';
 import { installEnhancedInspectorFeature } from './enhancedInspectorCommand';
 import { installRefactoringFeature } from './refactoring/refactoringInstallCommand';
 
@@ -78,17 +74,17 @@ export const SERVER_SUPPORT_FEATURES: readonly ServerSupportFeature[] = [
   {
     id: 'enhancedInspector',
     label: 'Enhanced Inspector',
-    isApplicable: (b) => supportsEnhancedInspector(b.stoneVersion),
+    isApplicable: (b) => pluginFeature('enhancedInspector').isApplicable(b.stoneVersion),
     isMissing: (b) => !b.enhancedInspectorAvailable,
-    probe: isEnhancedInspectorInstalled,
+    probe: pluginFeature('enhancedInspector').probe,
     install: installEnhancedInspectorFeature,
   },
   {
     id: 'refactoring',
     label: 'Refactoring engine',
-    isApplicable: () => true,
+    isApplicable: (b) => pluginFeature('refactoring').isApplicable(b.stoneVersion),
     isMissing: (b) => !b.rbSupportAvailable,
-    probe: checkRefactoringSupportAvailable,
+    probe: pluginFeature('refactoring').probe,
     install: installRefactoringFeature,
   },
 ];

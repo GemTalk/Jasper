@@ -32,6 +32,9 @@ vi.mock('fs', () => ({ existsSync: mocks.existsSync }));
 vi.mock('../browserQueries', () => ({
   sessionNeedsCommit: mocks.sessionNeedsCommit,
   checkEnhancedInspectorAvailable: mocks.checkEnhancedInspectorAvailable,
+  // Read at load time by the shared feature registry (pluginFeatures) as
+  // the refactoring feature's live probe; never invoked in these command tests.
+  checkRefactoringSupportAvailable: vi.fn(() => false),
 }));
 
 // Partial mock: stub the GCI-touching install pipeline, keep everything else.

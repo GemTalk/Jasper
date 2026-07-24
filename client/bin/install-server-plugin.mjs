@@ -8,16 +8,16 @@
 // compiled client output under `client/out/`, not the TS source).
 //
 // Logs in as `VITE_GEMSTONE_USER` (from .env.test), elevates to a transient
-// SystemUser session on the same connection — install requires write access
-// to kernel classes — and files in each feature. Enhanced Inspector is
-// skipped on stones below its minimum version, exactly like the client's own
-// auto-install path.
+// SystemUser session on the same connection — install requires write access to
+// kernel classes — and delegates to `installServerPlugin`, which files in every
+// plugin feature applicable to this stone's version and then re-verifies the
+// version→feature contract. Version-gated features (Enhanced Inspector) are
+// skipped below their minimum, exactly like the client's own auto-install path.
 //
-// Finally it re-verifies the version→feature contract
-// (`isRefactoringSupportInstalled` / `isEnhancedInspectorInstalled` vs.
-// `supportsEnhancedInspector`) and exits non-zero on any mismatch. This is
-// the regression guard the two-pass CI workflow relies on: a silently-broken
-// install must fail here, loudly, rather than surface downstream as an
+// The contract check is the regression guard the two-pass CI workflow relies
+// on: `installServerPlugin` throws on any mismatch between a feature's live
+// presence and whether its version supports it, so this script exits non-zero
+// rather than letting a silently-broken install surface downstream as an
 // indistinguishable "feature not installed" skip in the second test pass.
 //
 //   node client/bin/install-server-plugin.mjs
@@ -51,14 +51,9 @@ Module._load = function (request, parent, isMain) {
 };
 
 const { GciLibrary } = require(path.join(clientOutDir, 'gciLibrary.js'));
-const { installRefactoringSupport, isRefactoringSupportInstalled } = require(
-  path.join(clientOutDir, 'refactoring', 'refactoringInstall.js'),
+const { installServerPlugin } = require(
+  path.join(clientOutDir, 'serverPlugin', 'installServerPlugin.js'),
 );
-const {
-  installEnhancedInspectorSupport,
-  isEnhancedInspectorInstalled,
-  supportsEnhancedInspector,
-} = require(path.join(clientOutDir, 'enhancedInspectorInstall.js'));
 const { loginAsSystemUser, DEFAULT_SYSTEMUSER_PW } = require(
   path.join(clientOutDir, 'serverPlugin', 'installHelpers.js'),
 );
@@ -140,46 +135,13 @@ async function main() {
     const sys = loginAsSystemUser(base, DEFAULT_SYSTEMUSER_PW);
     sysHandle = sys.handle;
 
-    console.log(`Installing refactoring support (stone version ${version})…`);
-    const refactoringResult = await installRefactoringSupport(
-      sys,
-      path.join(repoRoot, 'resources', 'refactoring'),
-      (message) => console.log(`  ${message}`),
-    );
-    if (refactoringResult.report) console.log(refactoringResult.report);
-    if (!refactoringResult.success) {
-      throw new Error(`Refactoring install failed: ${refactoringResult.message}`);
-    }
+    console.log(`Installing server plugin (stone version ${version})…`);
 
-    const inspectorExpected = supportsEnhancedInspector(version);
-    if (inspectorExpected) {
-      console.log('Installing Enhanced Inspector support…');
-      const inspectorResult = await installEnhancedInspectorSupport(
-        sys,
-        path.join(repoRoot, 'resources', 'enhancedInspector'),
-        (message) => console.log(`  ${message}`),
-      );
-      if (!inspectorResult.success) {
-        throw new Error(`Enhanced Inspector install failed: ${inspectorResult.message}`);
-      }
-    } else {
-      console.log(`Stone version ${version} does not support Enhanced Inspector — skipping.`);
-    }
-
-    const refactoringInstalled = isRefactoringSupportInstalled(sys);
-    const inspectorInstalled = isEnhancedInspectorInstalled(sys);
-    const problems = [];
-    if (!refactoringInstalled) {
-      problems.push('refactoring support did not verify as installed');
-    }
-    if (inspectorInstalled !== inspectorExpected) {
-      problems.push(
-        `Enhanced Inspector installed=${inspectorInstalled} but version ${version} expects installed=${inspectorExpected}`,
-      );
-    }
-    if (problems.length > 0) {
-      throw new Error(`Version→feature contract violated: ${problems.join('; ')}`);
-    }
+    // Files in every applicable feature and re-verifies the version→feature
+    // contract, throwing on a failed install or a contract mismatch. The shared
+    // registry (client/src/serverPlugin/pluginFeatures.ts) is the single source
+    // of truth for the feature list, so this script stays feature-agnostic.
+    await installServerPlugin(sys, repoRoot, (m) => console.log(m));
 
     console.log('Server plugin installed and verified.');
   } finally {

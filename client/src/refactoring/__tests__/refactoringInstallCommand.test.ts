@@ -35,7 +35,12 @@ vi.mock('vscode', () => ({
 
 vi.mock('fs', () => ({ existsSync: mocks.existsSync }));
 
-vi.mock('../../browserQueries', () => ({ sessionNeedsCommit: mocks.sessionNeedsCommit }));
+vi.mock('../../browserQueries', () => ({
+  sessionNeedsCommit: mocks.sessionNeedsCommit,
+  // Read at load time by the shared feature registry (pluginFeatures) as
+  // the refactoring feature's live probe; never invoked in these command tests.
+  checkRefactoringSupportAvailable: vi.fn(() => false),
+}));
 
 vi.mock('../refactoringAvailability', () => ({
   refreshRefactoringSupportAvailable: mocks.refreshAvailable,
