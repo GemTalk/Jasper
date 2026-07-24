@@ -15,9 +15,8 @@
  *
  * The entry point is `installRefactoringFeature`, called by the unified
  * optional-support offer (optionalSupportOffer.ts) as one leg of the bundle
- * install. The SystemUser-session helpers mirror enhancedInspectorCommand.ts;
- * they are duplicated rather than shared to keep the two install paths
- * independent (a later cleanup could extract them).
+ * install. The SystemUser-session helpers are shared with
+ * enhancedInspectorCommand.ts via serverPlugin/systemUserAuth.ts.
  */
 import * as vscode from 'vscode';
 import * as path from 'path';
@@ -29,13 +28,8 @@ import {
   installRefactoringSupport,
   isRefactoringSupportInstalled,
   REFACTORING_PAYLOAD_FILES,
-  messageOf,
 } from './refactoringInstall';
-
-// GemStone's default SystemUser password. Tried first so a stock stone installs
-// in one step; on failure we prompt. See the note in enhancedInspectorCommand.ts
-// about why this is not written as `password = '...'` (secret-scan false hit).
-const DEFAULT_SYSTEMUSER_PW = 'swordfish';
+import { obtainSystemUserSession } from '../serverPlugin/systemUserAuth';
 
 // Payload location relative to the extension root. `resources/` ships in the
 // packaged VSIX (unlike `gs-src/`, which is .vscodeignore'd), so the same path
@@ -49,68 +43,6 @@ function getReportChannel(): vscode.OutputChannel {
     reportChannel = vscode.window.createOutputChannel('GemStone Refactoring');
   }
   return reportChannel;
-}
-
-/**
- * Open a transient SystemUser session on the SAME GciLibrary as `base`, reusing
- * its connection coordinates and overriding only the GemStone user. Deliberately
- * NOT registered with the SessionManager. Caller logs it out.
- */
-function loginAsSystemUser(base: ActiveSession, password: string): ActiveSession {
-  const { login } = base;
-  const stoneNrs = `!tcp@${login.gem_host}#server!${login.stone}`;
-  const gemNrs = `!tcp@${login.gem_host}#netldi:${login.netldi}#task!gemnetobject`;
-  const result = base.gci.GciTsLogin(
-    stoneNrs,
-    login.host_user || null,
-    login.host_password || null,
-    false,
-    gemNrs,
-    'SystemUser',
-    password,
-    0,
-    0,
-  );
-  if (!result.session) {
-    throw new Error(result.err.message || `SystemUser login failed (error ${result.err.number})`);
-  }
-  return {
-    id: -1,
-    gci: base.gci,
-    handle: result.session,
-    login: { ...login, gs_user: 'SystemUser', gs_password: password },
-    stoneVersion: base.stoneVersion,
-  };
-}
-
-/**
- * Obtain a SystemUser session on `base`'s connection. Tries the stock default
- * password first. When `interactive` is false (the auto-install path), a rejected
- * default is a silent miss — the caller decides how to surface it — rather than a
- * password prompt the user never asked for.
- */
-async function obtainSystemUserSession(
-  base: ActiveSession,
-  interactive: boolean,
-): Promise<ActiveSession | undefined> {
-  try {
-    return loginAsSystemUser(base, DEFAULT_SYSTEMUSER_PW);
-  } catch {
-    // Default password rejected — fall through and ask for it.
-  }
-  if (!interactive) return undefined;
-  const password = await vscode.window.showInputBox({
-    prompt: `SystemUser password for "${base.login.stone}" (required to install the refactoring engine)`,
-    password: true,
-    ignoreFocusOut: true,
-  });
-  if (password === undefined) return undefined; // user cancelled
-  try {
-    return loginAsSystemUser(base, password);
-  } catch (e: unknown) {
-    vscode.window.showErrorMessage(`Could not log in as SystemUser: ${messageOf(e)}`);
-    return undefined;
-  }
 }
 
 /**
@@ -181,7 +113,7 @@ async function performInstall(
 
   const reinstall = isRefactoringSupportInstalled(base);
 
-  const sys = await obtainSystemUserSession(base, interactive);
+  const sys = await obtainSystemUserSession(base, interactive, 'the refactoring engine');
   if (!sys) {
     // Interactive: the user cancelled or the failure was already reported.
     // Auto: the default password was not accepted — explain how to proceed

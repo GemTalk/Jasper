@@ -36,8 +36,8 @@ const clientOutDir = path.join(repoRoot, 'client', 'out');
 // (transitively, gciLog.ts) `require('vscode')` at load time to get an output
 // channel for incidental logging we don't care about here. There's no real
 // `vscode` module outside the extension host, so stub it in for the one thing
-// these modules use it for, rather than dragging the whole shared-helpers
-// question into this PR's scope.
+// these modules use it for. (installHelpers.js, which this script also loads,
+// is deliberately `vscode`-free — see its header — so it doesn't need this.)
 const originalModuleLoad = Module._load;
 Module._load = function (request, parent, isMain) {
   if (request === 'vscode') {
@@ -59,11 +59,9 @@ const {
   isEnhancedInspectorInstalled,
   supportsEnhancedInspector,
 } = require(path.join(clientOutDir, 'enhancedInspectorInstall.js'));
-
-// GemStone's default SystemUser password on a fresh stone. Not written as
-// `...PASSWORD`/`password = '...'` — see the same note in
-// refactoringInstallCommand.ts about Open VSX's secret-scan false hit.
-const DEFAULT_SYSTEMUSER_PW = 'swordfish';
+const { loginAsSystemUser, DEFAULT_SYSTEMUSER_PW } = require(
+  path.join(clientOutDir, 'serverPlugin', 'installHelpers.js'),
+);
 
 // Loads `client/.env.test` into process.env (vite/vitest do this automatically;
 // a plain Node script has to do it itself). Missing file is fine — requireEnv
@@ -97,38 +95,6 @@ function parseLoginFromNrs(stoneNrs, gemNrs) {
     throw new Error(`Could not parse netldi name from VITE_GEMSTONE_GEM_NRS: ${gemNrs}`);
   }
   return { gem_host: stoneMatch[1], stone: stoneMatch[2], netldi: netldiMatch[1] };
-}
-
-// Opens a transient SystemUser session on `base`'s connection, overriding
-// only the GemStone user. Mirrors refactoringInstallCommand.ts /
-// enhancedInspectorCommand.ts's `loginAsSystemUser` — duplicated rather than
-// imported, since those modules are VS Code plumbing (import `vscode`) and
-// this script runs outside the extension host.
-function loginAsSystemUser(base, password) {
-  const { login } = base;
-  const stoneNrs = `!tcp@${login.gem_host}#server!${login.stone}`;
-  const gemNrs = `!tcp@${login.gem_host}#netldi:${login.netldi}#task!gemnetobject`;
-  const result = base.gci.GciTsLogin(
-    stoneNrs,
-    login.host_user || null,
-    login.host_password || null,
-    false,
-    gemNrs,
-    'SystemUser',
-    password,
-    0,
-    0,
-  );
-  if (!result.session) {
-    throw new Error(result.err.message || `SystemUser login failed (error ${result.err.number})`);
-  }
-  return {
-    id: -1,
-    gci: base.gci,
-    handle: result.session,
-    login: { ...login, gs_user: 'SystemUser', gs_password: password },
-    stoneVersion: base.stoneVersion,
-  };
 }
 
 async function main() {

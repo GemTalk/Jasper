@@ -11,99 +11,27 @@
  * The entry point is `installEnhancedInspectorFeature`, called by the unified
  * optional-support offer (optionalSupportOffer.ts) as one leg of the bundle
  * install. The Enhanced Inspector feature itself (views, availability latch,
- * payload) lives elsewhere and is unaffected.
+ * payload) lives elsewhere and is unaffected. The SystemUser-session helpers
+ * are shared with refactoringInstallCommand.ts via
+ * serverPlugin/systemUserAuth.ts.
  */
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { ActiveSession, SessionManager } from './sessionManager';
-import { gemNrsFor } from './loginTypes';
 import { sessionNeedsCommit } from './browserQueries';
 import { refreshEnhancedInspectorAvailable } from './enhancedInspectorAvailability';
 import {
   installEnhancedInspectorSupport,
   isEnhancedInspectorInstalled,
   ENHANCED_INSPECTOR_FILES,
-  messageOf,
 } from './enhancedInspectorInstall';
-
-// GemStone's default SystemUser password ('swordfish'). Tried first so a stock
-// stone installs in one step; on failure we prompt.
-//
-// NOTE: do not rename this to `...PASSWORD` or write it as `password = '...'`.
-// esbuild normalizes the bundled literal to double quotes, and Open VSX's
-// server-side secret scan rejects any `password = "<7-20 chars>"` (gitleaks
-// rule hashicorp-tf-password), even though 'swordfish' is GemStone's public
-// default — that block silently fails only the ovsx publish step.
-const DEFAULT_SYSTEMUSER_PW = 'swordfish';
+import { obtainSystemUserSession } from './serverPlugin/systemUserAuth';
 
 // Payload location relative to the extension root. `resources/` ships in the
 // packaged VSIX (unlike `docs/`, which is .vscodeignore'd), so the same path
 // resolves in both the F5 dev host and an installed extension.
 const PAYLOAD_SUBDIR = path.join('resources', 'enhancedInspector');
-
-/**
- * Open a transient SystemUser session on the SAME GciLibrary as `base`,
- * reusing its connection coordinates and overriding only the GemStone user.
- * Deliberately NOT registered with the SessionManager: it bypasses the
- * single-session policy and never shows in the session UI. Caller logs it out.
- */
-function loginAsSystemUser(base: ActiveSession, password: string): ActiveSession {
-  const { login } = base;
-  const stoneNrs = `!tcp@${login.gem_host}#server!${login.stone}`;
-  const gemNrs = gemNrsFor(login);
-  const result = base.gci.GciTsLogin(
-    stoneNrs,
-    login.host_user || null,
-    login.host_password || null,
-    false,
-    gemNrs,
-    'SystemUser',
-    password,
-    0,
-    0,
-  );
-  if (!result.session) {
-    throw new Error(result.err.message || `SystemUser login failed (error ${result.err.number})`);
-  }
-  return {
-    id: -1,
-    gci: base.gci,
-    handle: result.session,
-    login: { ...login, gs_user: 'SystemUser', gs_password: password },
-    stoneVersion: base.stoneVersion,
-  };
-}
-
-/**
- * Obtain a SystemUser session on `base`'s connection. Tries the stock default
- * password first. When `interactive` is false (the auto-install path), a rejected
- * default is a silent miss — the caller decides how to surface it — rather than a
- * password prompt the user never asked for.
- */
-async function obtainSystemUserSession(
-  base: ActiveSession,
-  interactive: boolean,
-): Promise<ActiveSession | undefined> {
-  try {
-    return loginAsSystemUser(base, DEFAULT_SYSTEMUSER_PW);
-  } catch {
-    // Default password rejected — fall through and ask for it.
-  }
-  if (!interactive) return undefined;
-  const password = await vscode.window.showInputBox({
-    prompt: `SystemUser password for "${base.login.stone}" (required to install enhanced inspector support)`,
-    password: true,
-    ignoreFocusOut: true,
-  });
-  if (password === undefined) return undefined; // user cancelled
-  try {
-    return loginAsSystemUser(base, password);
-  } catch (e: unknown) {
-    vscode.window.showErrorMessage(`Could not log in as SystemUser: ${messageOf(e)}`);
-    return undefined;
-  }
-}
 
 /**
  * The working session won't see the newly-committed classes until its view is
@@ -178,7 +106,7 @@ async function performInstall(
 
   const reinstall = isEnhancedInspectorInstalled(base);
 
-  const sys = await obtainSystemUserSession(base, interactive);
+  const sys = await obtainSystemUserSession(base, interactive, 'enhanced inspector support');
   if (!sys) {
     // Interactive: the user cancelled or the failure was already reported.
     // Auto: the default password was not accepted — explain how to proceed
