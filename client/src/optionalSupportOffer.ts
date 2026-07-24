@@ -97,6 +97,15 @@ async function installFeatures(
   for (const f of features) {
     await f.install(base, sessionManager, extensionPath, interactive);
   }
+  // The refactoring-engine install adds a `GsRefactoring` dictionary (and refreshes
+  // the working session so it's visible), but the Explorer loaded its dictionary
+  // list on connect — before this install ran — so the new dictionary won't show
+  // until the list is reloaded. Reload it now so the Explorer reflects the stone
+  // without the user hitting Refresh. Unconditional: this only runs when a support
+  // was missing and the user opted in, and a reload after a failed/cancelled
+  // install just re-reads the unchanged list (retaining the selection) — harmless.
+  // The command no-ops gracefully when the Explorer has no active session.
+  await vscode.commands.executeCommand('gemstone.explorer.refresh');
 }
 
 /**

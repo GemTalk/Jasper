@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => {
     }),
     installEI: vi.fn(() => Promise.resolve(true)),
     installRB: vi.fn(() => Promise.resolve(true)),
+    executeCommand: vi.fn(() => Promise.resolve(undefined)),
   };
 });
 
@@ -27,6 +28,9 @@ vi.mock('vscode', () => ({
       get: (key: string, def: unknown) => (key in mocks.config ? mocks.config[key] : def),
       update: mocks.update,
     }),
+  },
+  commands: {
+    executeCommand: mocks.executeCommand,
   },
   ConfigurationTarget: { Global: 1 },
 }));
@@ -104,6 +108,15 @@ describe('maybeOfferServerSupport', () => {
     expect(mocks.showInformationMessage).not.toHaveBeenCalled();
     expect(mocks.installEI).toHaveBeenCalledWith(base, sessionManager, EXTENSION_PATH, false);
     expect(mocks.installRB).toHaveBeenCalledWith(base, sessionManager, EXTENSION_PATH, false);
+    expect(mocks.executeCommand).toHaveBeenCalledWith('gemstone.explorer.refresh');
+  });
+
+  it('reloads the Explorer dictionary list after installing, so a new dictionary appears', async () => {
+    answer('Install');
+
+    await maybeOfferServerSupport(baseSession(), sessionManager, EXTENSION_PATH);
+
+    expect(mocks.executeCommand).toHaveBeenCalledWith('gemstone.explorer.refresh');
   });
 
   it('offers one modal with Install, Always, and Never', async () => {
@@ -152,6 +165,7 @@ describe('maybeOfferServerSupport', () => {
 
     expect(mocks.installEI).not.toHaveBeenCalled();
     expect(mocks.update).not.toHaveBeenCalled();
+    expect(mocks.executeCommand).not.toHaveBeenCalled();
   });
 
   it('offers only the refactoring engine on a pre-3.7.5 stone (Enhanced Inspector not applicable)', async () => {
