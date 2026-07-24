@@ -13,7 +13,7 @@ import {
  */
 
 const asyncExec = () => vi.fn(async (_label: string, code: string) => code);
-const syncExec = () => vi.fn((_label: string, code: string) => code);
+const syncExec = () => vi.fn((code: string) => code);
 
 describe('inline-method query builders', () => {
   it('builds a pre-flight that analyses the send at the given offset', async () => {

@@ -11,11 +11,11 @@ export function getClassDefinition(
   dict?: number | string,
 ): string {
   if (dict === undefined) {
-    return execute(`getClassDefinition(${className})`, `${className} definition`);
+    return execute(`${className} definition`);
   }
   const code = `| cls |
 cls := ${classLookupExpr(className, dict)}.
 cls ifNil: [^ 'Class not found: ${escapeString(className)}'].
 cls definition`;
-  return execute(`getClassDefinition(${className}, dict: ${dict})`, code);
+  return execute(code);
 }

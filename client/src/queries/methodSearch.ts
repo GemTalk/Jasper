@@ -67,7 +67,7 @@ results := ClassOrganizer new substringSearch: '${escapeString(term)}' ignoreCas
 methods := results at: 1.
 ${methodSerialization(0)}`;
 
-  return parseMethodSearchResults(execute(`searchMethodSource('${term}')`, code));
+  return parseMethodSearchResults(execute(code));
 }
 
 export function sendersOf(
@@ -80,7 +80,7 @@ methods := ((ClassOrganizer new environmentId: ${environmentId}; yourself)
   sendersOf: #'${escapeString(selector)}') at: 1.
 ${methodSerialization(environmentId)}`;
 
-  return parseMethodSearchResults(execute(`sendersOf(#${selector}, env:${environmentId})`, code));
+  return parseMethodSearchResults(execute(code));
 }
 
 export function implementorsOf(
@@ -93,9 +93,7 @@ methods := ((ClassOrganizer new environmentId: ${environmentId}; yourself)
   implementorsOf: #'${escapeString(selector)}') asArray.
 ${methodSerialization(environmentId)}`;
 
-  return parseMethodSearchResults(
-    execute(`implementorsOf(#${selector}, env:${environmentId})`, code),
-  );
+  return parseMethodSearchResults(execute(code));
 }
 
 // Implementations of `selector` in a class's hierarchy: the full superclass
@@ -128,9 +126,7 @@ ${collect}
 methods := methods asArray.
 ${methodSerialization(environmentId)}`;
 
-  return parseMethodSearchResults(
-    execute(`hierarchyImplementorsOf(#${selector}, ${direction})`, code),
-  );
+  return parseMethodSearchResults(execute(code));
 }
 
 export function referencesToObject(
@@ -143,5 +139,5 @@ methods := (ClassOrganizer new referencesToObject:
   (System myUserProfile symbolList objectNamed: #'${escapeString(objectName)}')).
 ${methodSerialization(environmentId)}`;
 
-  return parseMethodSearchResults(execute(`referencesToObject(${objectName})`, code));
+  return parseMethodSearchResults(execute(code));
 }

@@ -8,7 +8,7 @@ describe('previewRenameInstVar query', () => {
     const result = previewRenameInstVar(execute, 'Account', 'balance', 'amount');
 
     expect(result).toBe('[{"id":"1"}]');
-    const code = execute.mock.calls[0][1];
+    const code = execute.mock.calls[0][0];
     expect(code).toContain('GsRenameInstanceVariableRefactoring');
     expect(code).toContain("renameInstVar: 'balance'");
     expect(code).toContain("to: 'amount'");
@@ -20,7 +20,7 @@ describe('previewRenameInstVar query', () => {
 
     previewRenameInstVar(execute, 'Account', 'balance', 'amount');
 
-    const code = execute.mock.calls[0][1];
+    const code = execute.mock.calls[0][0];
     expect(code).toContain("objectNamed: #'Account'");
     expect(code).not.toContain('symbolList at:');
   });
@@ -30,7 +30,7 @@ describe('previewRenameInstVar query', () => {
 
     previewRenameInstVar(execute, 'Account', 'balance', 'amount', 3);
 
-    const code = execute.mock.calls[0][1];
+    const code = execute.mock.calls[0][0];
     expect(code).toContain('(System myUserProfile symbolList at: 3)');
   });
 
@@ -40,7 +40,7 @@ describe('previewRenameInstVar query', () => {
     // Not a real ivar name, but the builder must never break the string literal.
     previewRenameInstVar(execute, 'Account', "od'd", "ne'w");
 
-    const code = execute.mock.calls[0][1];
+    const code = execute.mock.calls[0][0];
     expect(code).toContain("renameInstVar: 'od''d'");
     expect(code).toContain("to: 'ne''w'");
   });
@@ -50,7 +50,7 @@ describe('previewRenameInstVar query', () => {
 
     previewRenameInstVar(execute, 'Account', 'balance', 'amount');
 
-    const code = execute.mock.calls[0][1];
+    const code = execute.mock.calls[0][0];
     expect(code).toContain('cls isNil ifTrue:');
   });
 });

@@ -86,8 +86,5 @@ export function applyInlineMethod(
 
 /** Drop a finished preview from SessionTemps. */
 export function clearInlineMethodPreview(execute: QueryExecutor, token: string): string {
-  return execute(
-    `clearInlineMethodPreview(${token})`,
-    `GsInlineMethodRefactoring clearToken: '${escapeString(token)}'`,
-  );
+  return execute(`GsInlineMethodRefactoring clearToken: '${escapeString(token)}'`);
 }

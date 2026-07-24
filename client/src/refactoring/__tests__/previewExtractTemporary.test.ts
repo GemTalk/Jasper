@@ -88,7 +88,7 @@ describe('previewExtractTemporary query builders', () => {
 
   it('clearExtractTemporaryPreview drops the token', () => {
     let captured = '';
-    clearExtractTemporaryPreview((_label, code) => {
+    clearExtractTemporaryPreview((code) => {
       captured = code;
       return '';
     }, 'tok');

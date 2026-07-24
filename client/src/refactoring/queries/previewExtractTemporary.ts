@@ -95,8 +95,5 @@ export function applyExtractTemporary(execute: AsyncQueryExecutor, token: string
 
 // Drop a finished preview from SessionTemps.
 export function clearExtractTemporaryPreview(execute: QueryExecutor, token: string): string {
-  return execute(
-    `clearExtractTemporaryPreview(${token})`,
-    `GsExtractTemporaryRefactoring clearToken: '${escapeString(token)}'`,
-  );
+  return execute(`GsExtractTemporaryRefactoring clearToken: '${escapeString(token)}'`);
 }

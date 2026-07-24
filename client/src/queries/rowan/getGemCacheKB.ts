@@ -9,10 +9,7 @@ import { QueryExecutor } from '../types';
 // GemStone reports GemTempObjCacheSize in bytes; return KB to match the
 // GEM_TEMPOBJ_CACHE_SIZE config unit. Returns undefined if it can't be read.
 export function getGemCacheKB(execute: QueryExecutor): number | undefined {
-  const raw = execute(
-    'getGemCacheKB',
-    '(System configurationAt: #GemTempObjCacheSize) // 1024',
-  ).trim();
+  const raw = execute('(System configurationAt: #GemTempObjCacheSize) // 1024').trim();
   const kb = Number(raw);
   return Number.isFinite(kb) && kb > 0 ? kb : undefined;
 }

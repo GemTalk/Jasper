@@ -23,5 +23,5 @@ chain do: [:c |
   c classVarNames do: [:each |
     ws nextPutAll: each asString; lf]].
 ws contents`;
-  return splitLines(execute(`getVisibleClassVarNames(${className})`, code));
+  return splitLines(execute(code));
 }

@@ -7,7 +7,7 @@ describe('classHistory queries', () => {
 
     getClassHistory(execute, 'Account');
 
-    expect(execute.mock.calls[0][1]).toContain("GsClassHistory forClassNamed: 'Account'");
+    expect(execute.mock.calls[0][0]).toContain("GsClassHistory forClassNamed: 'Account'");
   });
 
   it('builds a revert-to-version query', () => {
@@ -15,7 +15,7 @@ describe('classHistory queries', () => {
 
     revertClassToVersion(execute, 'Account', 2);
 
-    expect(execute.mock.calls[0][1]).toContain("revertClassNamed: 'Account' toIndex: 2");
+    expect(execute.mock.calls[0][0]).toContain("revertClassNamed: 'Account' toIndex: 2");
   });
 
   it('builds a remove-version query', () => {
@@ -23,6 +23,6 @@ describe('classHistory queries', () => {
 
     removeClassVersion(execute, 'Account', 1);
 
-    expect(execute.mock.calls[0][1]).toContain("removeVersionOf: 'Account' index: 1");
+    expect(execute.mock.calls[0][0]).toContain("removeVersionOf: 'Account' index: 1");
   });
 });

@@ -21,10 +21,7 @@ describe("listing a dictionary's classes with their categories", () => {
 
     getClassesWithCategory(execute, 'UserGlobals');
 
-    expect(execute).toHaveBeenCalledWith(
-      expect.stringContaining('UserGlobals'),
-      expect.stringContaining("objectNamed: #'UserGlobals'"),
-    );
+    expect(execute).toHaveBeenCalledWith(expect.stringContaining("objectNamed: #'UserGlobals'"));
   });
 
   it('returns nothing for an empty dictionary', () => {

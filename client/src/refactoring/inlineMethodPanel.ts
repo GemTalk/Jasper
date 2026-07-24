@@ -3,7 +3,8 @@
  * (the rewritten caller) plus, when the inlined call was the target's last sender,
  * a deselectable removal of the now-unused target. Fetches further pages on demand
  * and applies server-side reporting only the DESELECTED ids (so the core recompile,
- * whose checkbox is disabled, always applies; the removal applies unless unticked).
+ * whose checkbox is disabled, always applies; the removal is unchecked by default and
+ * applies only when the user ticks it — a method deletion is opt-in, never automatic).
  * Resolves with the apply result, or undefined if cancelled/closed. UI-only: the
  * caller supplies the page/apply/cleanup handlers.
  *

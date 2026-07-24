@@ -82,8 +82,5 @@ export function applyInlineTemporary(execute: AsyncQueryExecutor, token: string)
 
 // Drop a finished preview from SessionTemps.
 export function clearInlineTemporaryPreview(execute: QueryExecutor, token: string): string {
-  return execute(
-    `clearInlineTemporaryPreview(${token})`,
-    `GsInlineTemporaryRefactoring clearToken: '${escapeString(token)}'`,
-  );
+  return execute(`GsInlineTemporaryRefactoring clearToken: '${escapeString(token)}'`);
 }

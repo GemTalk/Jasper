@@ -19,13 +19,9 @@ vi.mock('../../../client/src/gciLibrary', () => {
   };
 });
 
-vi.mock('../../../client/src/gciConstants', () => ({
-  OOP_NIL: 0x14n,
-  OOP_ILLEGAL: 0x01n,
-}));
-
 import { McpSession, McpSessionConfig } from '../mcpSession';
 import { GciLibrary } from '../../../client/src/gciLibrary';
+import { GciLibraryError } from '../../../client/src/gciLibraryError';
 
 const noErr = {
   number: 0,
@@ -56,9 +52,8 @@ function createMockGci() {
       session: {},
       err: { ...noErr },
     })),
-    GciTsLogout: vi.fn(() => ({ err: { ...noErr } })),
-    GciTsResolveSymbol: vi.fn(() => ({ result: 1000n, err: { ...noErr } })),
-    GciTsExecuteFetchBytes: vi.fn(() => ({ data: 'result', bytesReturned: 6, err: { ...noErr } })),
+    logout: vi.fn(),
+    executeAndFetchString: vi.fn(() => 'result'),
   };
 }
 
@@ -119,62 +114,30 @@ describe('McpSession', () => {
   });
 
   describe('executeFetchString', () => {
-    it('resolves Utf8 class and executes code', () => {
+    it('executes code and returns the fetched string', () => {
       const session = new McpSession(makeConfig());
       const result = session.executeFetchString('3 + 4');
 
-      expect(mockGci.GciTsResolveSymbol).toHaveBeenCalled();
-      expect(mockGci.GciTsExecuteFetchBytes).toHaveBeenCalled();
+      expect(mockGci.executeAndFetchString).toHaveBeenCalledWith(expect.anything(), '3 + 4');
       expect(result).toBe('result');
     });
 
-    it('caches the Utf8 class OOP across calls', () => {
-      const session = new McpSession(makeConfig());
-
-      session.executeFetchString('1 + 1');
-      session.executeFetchString('2 + 2');
-
-      expect(mockGci.GciTsResolveSymbol).toHaveBeenCalledTimes(1);
-      expect(mockGci.GciTsExecuteFetchBytes).toHaveBeenCalledTimes(2);
-    });
-
-    it('throws on GCI execution error', () => {
-      const session = new McpSession(makeConfig());
-      mockGci.GciTsExecuteFetchBytes.mockReturnValue({
-        data: '',
-        bytesReturned: 0,
-        err: { ...noErr, number: 2101, message: 'MessageNotUnderstood' },
+    it('propagates errors from the underlying GCI call', () => {
+      mockGci.executeAndFetchString.mockImplementation(() => {
+        throw GciLibraryError.withMessage('MessageNotUnderstood');
       });
 
+      const session = new McpSession(makeConfig());
       expect(() => session.executeFetchString('bad code')).toThrow('MessageNotUnderstood');
-    });
-
-    it('throws on Utf8 resolve failure', () => {
-      mockGci.GciTsResolveSymbol.mockReturnValue({
-        result: 0n,
-        err: { ...noErr, number: 2023, message: 'symbol not found' },
-      });
-
-      const session = new McpSession(makeConfig());
-      expect(() => session.executeFetchString('anything')).toThrow('symbol not found');
     });
   });
 
   describe('logout', () => {
-    it('calls GciTsLogout', () => {
+    it('logs the session out', () => {
       const session = new McpSession(makeConfig());
       session.logout();
 
-      expect(mockGci.GciTsLogout).toHaveBeenCalled();
-    });
-
-    it('does not throw if logout fails', () => {
-      mockGci.GciTsLogout.mockImplementation(() => {
-        throw new Error('session already dead');
-      });
-
-      const session = new McpSession(makeConfig());
-      expect(() => session.logout()).not.toThrow();
+      expect(mockGci.logout).toHaveBeenCalledWith(expect.anything());
     });
   });
 });

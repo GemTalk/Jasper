@@ -20,7 +20,7 @@ import { splitLines } from './util';
 export function fullLoggingEnabled(execute: QueryExecutor): boolean | undefined {
   const code = `[(System stoneConfigurationAt: #STN_TRAN_FULL_LOGGING) printString]
   on: Error do: [:e | 'unknown']`;
-  const result = execute('extentBackup: full-logging check', code).trim();
+  const result = execute(code).trim();
   if (result === 'true') return true;
   if (result === 'false') return false;
   return undefined;
@@ -34,7 +34,7 @@ export function extentFileNames(execute: QueryExecutor): string[] {
 ws := WriteStream on: String new.
 SystemRepository fileNames do: [:nm | ws nextPutAll: nm asString; lf].
 ws contents] on: Error do: [:e | '']`;
-  return splitLines(execute('extentBackup: extent file names', code));
+  return splitLines(execute(code));
 }
 
 // Suspend checkpoints for `minutes`. true => suspended, safe to copy the
@@ -45,7 +45,7 @@ ws contents] on: Error do: [:e | '']`;
 export function suspendCheckpoints(execute: QueryExecutor, minutes: number): boolean {
   const code = `(System suspendCheckpointsForMinutes: ${Math.trunc(minutes)})
   ifTrue: ['OK'] ifFalse: ['FAILED']`;
-  return execute('extentBackup: suspend checkpoints', code).trim() === 'OK';
+  return execute(code).trim() === 'OK';
 }
 
 // Resume checkpoints. The result MUST be checked: false means checkpoints had
@@ -53,5 +53,5 @@ export function suspendCheckpoints(execute: QueryExecutor, minutes: number): boo
 // the copied extents are not a usable backup.
 export function resumeCheckpoints(execute: QueryExecutor): boolean {
   const code = "(System resumeCheckpoints) ifTrue: ['OK'] ifFalse: ['FAILED']";
-  return execute('extentBackup: resume checkpoints', code).trim() === 'OK';
+  return execute(code).trim() === 'OK';
 }

@@ -150,6 +150,15 @@ export async function saveIfDirty(editor: vscode.TextEditor): Promise<boolean> {
   return saved;
 }
 
+/** 1-based count of code points before `position` in `document`. The engine indexes
+ *  the stored source by CHARACTER (a GemStone Character is a full code point) while
+ *  VS Code offsets count UTF-16 code units — they differ once a non-BMP character
+ *  appears before the position, so count code points (`Array.from`). */
+export function codePointsBefore(document: vscode.TextDocument, position: vscode.Position): number {
+  const prefix = document.getText(new vscode.Range(new vscode.Position(0, 0), position));
+  return Array.from(prefix).length;
+}
+
 /** After an applied rename, reload the method editor from the stone (so it shows
  *  the recompiled source) and put focus back on it. */
 export async function reloadMethodEditor(editor: vscode.TextEditor): Promise<void> {

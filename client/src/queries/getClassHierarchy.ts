@@ -39,7 +39,7 @@ stream nextPutAll: (classDict at: class ifAbsent: ['']); tab;
     nextPutAll: each name; tab; nextPutAll: 'subclass'; lf].
 stream contents`;
 
-  const raw = execute(`getClassHierarchy(${className})`, code);
+  const raw = execute(code);
   const results: ClassHierarchyEntry[] = [];
   for (const line of raw.split('\n')) {
     if (line.length === 0) continue;

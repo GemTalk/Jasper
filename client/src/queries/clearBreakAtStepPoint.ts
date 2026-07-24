@@ -1,5 +1,5 @@
 import { QueryExecutor } from './types';
-import { compiledMethodExpr, receiver } from './util';
+import { compiledMethodExpr } from './util';
 
 export function clearBreakAtStepPoint(
   execute: QueryExecutor,
@@ -12,8 +12,5 @@ export function clearBreakAtStepPoint(
 ): string {
   const method = compiledMethodExpr(className, isMeta, selector, environmentId, dict);
   const code = `${method} clearBreakAtStepPoint: ${stepPoint}. 'ok'`;
-  return execute(
-    `clearBreak(${receiver(className, isMeta)}>>#${selector}, step:${stepPoint})`,
-    code,
-  );
+  return execute(code);
 }

@@ -1,5 +1,5 @@
 import { QueryExecutor } from './types';
-import { compiledMethodExpr, receiver, splitLines } from './util';
+import { compiledMethodExpr, splitLines } from './util';
 
 export function getSourceOffsets(
   execute: QueryExecutor,
@@ -15,7 +15,5 @@ ws := WriteStream on: String new.
 ${method} _sourceOffsets do: [:each |
   ws nextPutAll: each printString; lf].
 ws contents`;
-  return splitLines(
-    execute(`getSourceOffsets(${receiver(className, isMeta)}>>#${selector})`, code),
-  ).map((s) => parseInt(s, 10));
+  return splitLines(execute(code)).map((s) => parseInt(s, 10));
 }
