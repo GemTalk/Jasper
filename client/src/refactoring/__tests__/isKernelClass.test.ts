@@ -19,7 +19,7 @@ describe('isKernelClass query', () => {
 
     isKernelClass(execute, 'Foo');
 
-    const code = execute.mock.calls[0][1];
+    const code = execute.mock.calls[0][0];
     expect(code).toContain('Globals at:');
     expect(code).not.toContain('isModifiable');
   });

@@ -9,7 +9,7 @@ import { runLogicalBackup, LogicalBackupDeps } from '../backupManager';
 
 function makeDeps(overrides?: Partial<LogicalBackupDeps>): LogicalBackupDeps {
   return {
-    execute: vi.fn((_label: string, code: string) => {
+    execute: vi.fn((code: string) => {
       if (code.includes('FileControl')) return 'true';
       if (code.includes('needsCommit')) return 'false';
       return 'aborted';
@@ -99,7 +99,7 @@ describe('runLogicalBackup', () => {
   });
 
   it('reports a pre-flight failure when the uncommitted-changes check errors', async () => {
-    const execute = vi.fn((_l: string, code: string) => {
+    const execute = vi.fn((code: string) => {
       if (code.includes('FileControl')) return 'true';
       throw new Error('gci down');
     });
@@ -115,7 +115,7 @@ describe('runLogicalBackup', () => {
   });
 
   it('reports a failure when aborting the uncommitted changes errors', async () => {
-    const execute = vi.fn((_l: string, code: string) => {
+    const execute = vi.fn((code: string) => {
       if (code.includes('FileControl')) return 'true';
       if (code.includes('needsCommit')) return 'true';
       throw new Error('abort failed');
@@ -146,9 +146,7 @@ describe('runLogicalBackup', () => {
 
   it('does not back up when the user declines to discard uncommitted changes', async () => {
     const deps = makeDeps({
-      execute: vi.fn((_l: string, code: string) =>
-        code.includes('needsCommit') ? 'true' : 'true',
-      ),
+      execute: vi.fn((code: string) => (code.includes('needsCommit') ? 'true' : 'true')),
     });
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(undefined);
 
@@ -159,7 +157,7 @@ describe('runLogicalBackup', () => {
   });
 
   it('aborts the session then backs up when the user agrees to discard changes', async () => {
-    const execute = vi.fn((_l: string, code: string) => {
+    const execute = vi.fn((code: string) => {
       if (code.includes('FileControl')) return 'true';
       if (code.includes('needsCommit')) return 'true';
       return 'aborted';
@@ -172,7 +170,7 @@ describe('runLogicalBackup', () => {
     const ok = await runLogicalBackup(deps);
 
     expect(ok).toBe(true);
-    expect(execute.mock.calls.some(([, code]) => code.includes('System abortTransaction'))).toBe(
+    expect(execute.mock.calls.some(([code]) => code.includes('System abortTransaction'))).toBe(
       true,
     );
     expect(deps.runBackup).toHaveBeenCalledOnce();

@@ -22,13 +22,11 @@ const BASE = 'JasperCvE2EBase';
 describe('rename class variable end-to-end (live GCI)', () => {
   let s: HarnessSession;
   let userIndex: number;
-  const asyncExec = (label: string, code: string): Promise<string> =>
-    Promise.resolve(s.exec(label, code));
+  const asyncExec = (code: string): Promise<string> => Promise.resolve(s.exec(code));
 
   const rbEnginePresent = (): boolean =>
     s
       .exec(
-        'engine-present',
         "(System myUserProfile symbolList objectNamed: 'GsRenameClassVariableRefactoring') notNil printString",
       )
       .trim() === 'true';
@@ -38,30 +36,26 @@ describe('rename class variable end-to-end (live GCI)', () => {
   // (shadow) — which must NOT be rewritten. A non-nil shared value is set on it.
   const defineFixture = (): void => {
     s.exec(
-      'define',
       `Object subclass: '${BASE}' instVarNames: #() classVars: #(Counter) ` +
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals. true printString',
     );
     s.exec(
-      'm-bump',
       `${BASE} compileMethod: 'bump Counter := (Counter ifNil: [0]) + 1' ` +
         "dictionaries: System myUserProfile symbolList category: 'accessing'. true printString",
     );
     // Resume the shadow warning so the fixture still installs.
     s.exec(
-      'm-shadow',
       `[${BASE} compileMethod: 'shadow | Counter | Counter := 5. ^Counter' ` +
         "dictionaries: System myUserProfile symbolList category: 'accessing'] " +
         'on: CompileWarning do: [:ex | ex resume: nil]. true printString',
     );
-    s.exec('set-value', `(${BASE} _classVars associationAt: #Counter) value: 7. true printString`);
+    s.exec(`(${BASE} _classVars associationAt: #Counter) value: 7. true printString`);
   };
 
   beforeAll(() => {
     s = login();
     userIndex = parseInt(
       s.exec(
-        'user-index',
         '| sl d | sl := System myUserProfile symbolList. ' +
           "d := sl detect: [:x | x name = #'UserGlobals'] ifNone: [nil]. " +
           '(d ifNil: [0] ifNotNil: [sl indexOf: d]) printString',
@@ -74,7 +68,7 @@ describe('rename class variable end-to-end (live GCI)', () => {
     // Discard the fixture (and any applied rename) so each test starts clean and
     // nothing is committed.
     try {
-      s.exec('abort', 'System abortTransaction. true printString');
+      s.exec('System abortTransaction. true printString');
     } catch {
       /* best-effort */
     }
@@ -116,7 +110,7 @@ describe('rename class variable end-to-end (live GCI)', () => {
 
     defineFixture();
     const token = `cve2e-apply-${BASE}`;
-    const historyBefore = s.exec('hist', `${BASE} classHistory size printString`).trim();
+    const historyBefore = s.exec(`${BASE} classHistory size printString`).trim();
 
     await startRenameClassVarPreview(
       asyncExec,
@@ -130,22 +124,13 @@ describe('rename class variable end-to-end (live GCI)', () => {
     const result = parseApplyResult(await applyRenameClassVar(asyncExec, token));
 
     expect(result.failed).toEqual([]);
-    expect(s.exec('cv', `(${BASE} classVarNames includes: #Tally) printString`).trim()).toBe(
-      'true',
-    );
-    expect(s.exec('cv', `(${BASE} classVarNames includes: #Counter) printString`).trim()).toBe(
-      'false',
-    );
-    expect(
-      s.exec('val', `(${BASE} _classVars associationAt: #Tally) value printString`).trim(),
-    ).toBe('7');
-    expect(s.exec('hist', `${BASE} classHistory size printString`).trim()).toBe(historyBefore);
+    expect(s.exec(`(${BASE} classVarNames includes: #Tally) printString`).trim()).toBe('true');
+    expect(s.exec(`(${BASE} classVarNames includes: #Counter) printString`).trim()).toBe('false');
+    expect(s.exec(`(${BASE} _classVars associationAt: #Tally) value printString`).trim()).toBe('7');
+    expect(s.exec(`${BASE} classHistory size printString`).trim()).toBe(historyBefore);
     // The shadowing method was never rewritten, so it still names its block temporary.
     expect(
-      s.exec(
-        'shadow-src',
-        `(${BASE} compiledMethodAt: #shadow environmentId: 0 otherwise: nil) sourceString`,
-      ),
+      s.exec(`(${BASE} compiledMethodAt: #shadow environmentId: 0 otherwise: nil) sourceString`),
     ).toContain('Counter');
   });
 });

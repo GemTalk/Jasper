@@ -60,7 +60,7 @@ describe.each([
     expect.assertions(3);
     const execute = vi.fn(() => '12345');
     fn(execute, 99999n, 'gtItemsFor:', 7);
-    const code = (execute as ReturnType<typeof vi.fn>).mock.calls[0][1] as string;
+    const code = (execute as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
     expect(code).toContain('99999');
     expect(code).toContain('gtItemsFor:');
     expect(code).toContain('7');
@@ -72,7 +72,7 @@ describe('fetchEnhancedInspectorRowOop drills into the send-block result', () =>
     expect.assertions(2);
     const execute = vi.fn(() => '338');
     fetchEnhancedInspectorRowOop(execute, 1000n, 'gtRawFor:', 3);
-    const code = (execute as ReturnType<typeof vi.fn>).mock.calls[0][1] as string;
+    const code = (execute as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
     expect(code).toContain('retrieveSentItemAt: 3');
     expect(code).not.toContain('targetObject');
   });

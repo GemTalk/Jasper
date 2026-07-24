@@ -14,7 +14,7 @@ describe("a class's locally-defined instance variable names", () => {
 
     getDefinedInstVarNames(execute, 'Point');
 
-    const code = execute.mock.calls[0][1];
+    const code = execute.mock.calls[0][0];
     // Resolves the class (dict-scoped/quoted via classLookupExpr) then reads its own
     // instVarNames — not allInstVarNames (which would include inherited ones).
     expect(code).toContain("objectNamed: #'Point'");
@@ -27,7 +27,7 @@ describe("a class's locally-defined instance variable names", () => {
 
     getDefinedInstVarNames(execute, 'Point', 5);
 
-    expect(execute.mock.calls[0][1]).toContain('symbolList at: 5');
+    expect(execute.mock.calls[0][0]).toContain('symbolList at: 5');
   });
 
   it('returns nothing for a class that defines no variables', () => {
@@ -53,10 +53,7 @@ describe('counting locally-defined instance variables across a dictionary', () =
 
     getDefinedInstVarCounts(execute, 'UserGlobals');
 
-    expect(execute).toHaveBeenCalledWith(
-      expect.stringContaining('UserGlobals'),
-      expect.stringContaining("objectNamed: #'UserGlobals'"),
-    );
+    expect(execute).toHaveBeenCalledWith(expect.stringContaining("objectNamed: #'UserGlobals'"));
   });
 
   it('has no entries for an empty dictionary', () => {

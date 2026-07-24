@@ -78,6 +78,6 @@ describe('previewRenameClass queries', () => {
 
     clearRenameClassPreview(execute, 'tok');
 
-    expect(execute.mock.calls[0][1]).toContain("clearToken: 'tok'");
+    expect(execute.mock.calls[0][0]).toContain("clearToken: 'tok'");
   });
 });

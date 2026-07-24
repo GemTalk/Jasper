@@ -16,9 +16,5 @@ cls ifNil: [^ 'Class not found: ${esc}'].
 cls isBehavior ifFalse: [^ 'Not a class: ${esc}'].
 cls category: '${escapeString(newCategory)}'.
 'Recategorized: ' , cls name`;
-  const label =
-    dict === undefined
-      ? `recategorizeClass(${className} -> '${newCategory}')`
-      : `recategorizeClass(${className} -> '${newCategory}', dict: ${dict})`;
-  return execute(label, code);
+  return execute(code);
 }

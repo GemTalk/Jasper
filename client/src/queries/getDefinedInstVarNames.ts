@@ -22,5 +22,5 @@ ws := WriteStream on: String new.
 (cls ifNil: [#()] ifNotNil: [:c | c instVarNames]) do: [:each |
   ws nextPutAll: each asString; lf].
 ws contents`;
-  return splitLines(execute(`getDefinedInstVarNames(${className})`, code));
+  return splitLines(execute(code));
 }

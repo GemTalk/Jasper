@@ -38,7 +38,7 @@ describe('rename class + class history (integration)', () => {
   });
 
   const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
-  const exec = (code: string): string => q.executeFetchString(session(), 'rename-class-it', code);
+  const exec = (code: string): string => q.executeFetchString(session(), code);
   const asyncExec = (_label: string, code: string): Promise<string> => Promise.resolve(exec(code));
 
   const rbEnginePresent = (): boolean =>

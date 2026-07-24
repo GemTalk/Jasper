@@ -37,6 +37,5 @@ tgtRecv
   category: (category ifNil: ['as yet unclassified']) asString
   environmentId: ${environmentId}.
 'Copied: ' , tgtRecv name , ' >> ${sel}'`;
-  const label = `copyMethodToClass(${isMeta ? sourceClass + ' class' : sourceClass} >> #${selector} -> ${targetClass})`;
-  return execute(label, code);
+  return execute(code);
 }

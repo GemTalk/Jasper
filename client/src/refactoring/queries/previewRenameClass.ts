@@ -97,8 +97,5 @@ export function applyRenameClass(
 
 // Drop a finished preview from SessionTemps.
 export function clearRenameClassPreview(execute: QueryExecutor, token: string): string {
-  return execute(
-    `clearRenameClassPreview(${token})`,
-    `GsRenameClassRefactoring clearToken: '${escapeString(token)}'`,
-  );
+  return execute(`GsRenameClassRefactoring clearToken: '${escapeString(token)}'`);
 }

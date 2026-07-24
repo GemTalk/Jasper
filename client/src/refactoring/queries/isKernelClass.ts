@@ -13,5 +13,5 @@ export function isKernelClass(execute: QueryExecutor, name: string): boolean {
   const code = `| c |
 c := System myUserProfile symbolList objectNamed: #'${esc}'.
 (c notNil and: [c isBehavior and: [(Globals at: #'${esc}' ifAbsent: [nil]) == c]]) printString`;
-  return execute(`isKernelClass(${name})`, code).trim() === 'true';
+  return execute(code).trim() === 'true';
 }

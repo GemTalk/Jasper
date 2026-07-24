@@ -13,5 +13,5 @@ ws := WriteStream on: String new.
 ${recv} categoryNames asSortedCollection do: [:each |
   ws nextPutAll: each; lf].
 ws contents`;
-  return splitLines(execute(`getMethodCategories(${receiver(className, isMeta)})`, code));
+  return splitLines(execute(code));
 }

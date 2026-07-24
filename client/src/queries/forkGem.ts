@@ -15,7 +15,6 @@ import { escapeString } from './util';
  */
 export function canForkGem(execute: QueryExecutor): boolean {
   const answer = execute(
-    'canForkGem',
     `((GsCurrentSession currentSession respondsTo: #'createOnetimePasswordForUserId:validForSeconds:')
       and: [(System myUserProfile symbolList objectNamed: #'GsTsExternalSession') notNil]) printString`,
   );
@@ -51,7 +50,6 @@ export function canForkGem(execute: QueryExecutor): boolean {
  */
 export function forkGemRunning(execute: QueryExecutor, expression: string, gemNrs: string): string {
   return execute(
-    'forkGemRunning',
     `| gem id |
 gem := GsTsExternalSession newDefault.
 gem gemNRS: '${escapeString(gemNrs)}'.

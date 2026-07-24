@@ -28,20 +28,19 @@ describe('getClassNames', () => {
   it('embeds dictIndex in the Smalltalk code when given a number', () => {
     const execute = vi.fn<QueryExecutor>(() => '');
     getClassNames(execute, 7);
-    expect(execute.mock.calls[0][1]).toContain('symbolList at: 7');
+    expect(execute.mock.calls[0][0]).toContain('symbolList at: 7');
   });
 
   it('uses objectNamed: when given a dictionary name', () => {
     const execute = vi.fn<QueryExecutor>(() => 'Array\n');
     getClassNames(execute, 'Globals');
-    expect(execute.mock.calls[0][1]).toContain("objectNamed: #'Globals'");
-    expect(execute.mock.calls[0][0]).toBe('getClassNames(dictName: Globals)');
+    expect(execute.mock.calls[0][0]).toContain("objectNamed: #'Globals'");
   });
 
   it('escapes single quotes in dictionary names', () => {
     const execute = vi.fn<QueryExecutor>(() => '');
     getClassNames(execute, "it's");
-    expect(execute.mock.calls[0][1]).toContain("objectNamed: #'it''s'");
+    expect(execute.mock.calls[0][0]).toContain("objectNamed: #'it''s'");
   });
 
   it('returns [] for unknown dictionary names (Smalltalk returns empty)', () => {
@@ -64,19 +63,19 @@ describe('getDictionaryClassFileOutOrder', () => {
   it('walks the superclass chain to compute depth', () => {
     const execute = vi.fn<QueryExecutor>(() => '');
     getDictionaryClassFileOutOrder(execute, 1);
-    expect(execute.mock.calls[0][1]).toContain('sc := sc superclass');
+    expect(execute.mock.calls[0][0]).toContain('sc := sc superclass');
   });
 
   it('embeds dictIndex in the Smalltalk code when given a number', () => {
     const execute = vi.fn<QueryExecutor>(() => '');
     getDictionaryClassFileOutOrder(execute, 7);
-    expect(execute.mock.calls[0][1]).toContain('symbolList at: 7');
+    expect(execute.mock.calls[0][0]).toContain('symbolList at: 7');
   });
 
   it('uses objectNamed: when given a dictionary name', () => {
     const execute = vi.fn<QueryExecutor>(() => '');
     getDictionaryClassFileOutOrder(execute, 'Globals');
-    expect(execute.mock.calls[0][1]).toContain("objectNamed: #'Globals'");
+    expect(execute.mock.calls[0][0]).toContain("objectNamed: #'Globals'");
   });
 
   it('returns [] for an unknown dictionary', () => {
@@ -93,13 +92,13 @@ describe('getMethodCategories', () => {
   it('uses "<class>" receiver for instance side', () => {
     const execute = vi.fn<QueryExecutor>(() => 'accessing\nprinting\n');
     expect(getMethodCategories(execute, 'Array', false)).toEqual(['accessing', 'printing']);
-    expect(execute.mock.calls[0][1]).toContain('Array categoryNames');
+    expect(execute.mock.calls[0][0]).toContain('Array categoryNames');
   });
 
   it('uses "<class> class" receiver for class side', () => {
     const execute = vi.fn<QueryExecutor>(() => '');
     getMethodCategories(execute, 'Array', true);
-    expect(execute.mock.calls[0][1]).toContain('Array class categoryNames');
+    expect(execute.mock.calls[0][0]).toContain('Array class categoryNames');
   });
 });
 
@@ -107,7 +106,7 @@ describe('getInstVarNames', () => {
   it('parses allInstVarNames output', () => {
     const execute = vi.fn<QueryExecutor>(() => 'name\nsize\n');
     expect(getInstVarNames(execute, 'Foo')).toEqual(['name', 'size']);
-    expect(execute.mock.calls[0][1]).toContain('Foo allInstVarNames');
+    expect(execute.mock.calls[0][0]).toContain('Foo allInstVarNames');
   });
 });
 
@@ -115,7 +114,7 @@ describe('getAllSelectors', () => {
   it('parses allSelectors sorted output', () => {
     const execute = vi.fn<QueryExecutor>(() => 'at:\nsize\n');
     expect(getAllSelectors(execute, 'Foo')).toEqual(['at:', 'size']);
-    expect(execute.mock.calls[0][1]).toContain('Foo allSelectors asSortedCollection');
+    expect(execute.mock.calls[0][0]).toContain('Foo allSelectors asSortedCollection');
   });
 });
 
@@ -128,6 +127,6 @@ describe('getSourceOffsets', () => {
   it('passes environmentId to compiledMethodAt:', () => {
     const execute = vi.fn<QueryExecutor>(() => '');
     getSourceOffsets(execute, 'Array', false, 'size', 2);
-    expect(execute.mock.calls[0][1]).toContain('environmentId: 2');
+    expect(execute.mock.calls[0][0]).toContain('environmentId: 2');
   });
 });

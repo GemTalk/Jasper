@@ -14,5 +14,5 @@ d := ${dictExpr}.
 d ifNil: [^ 'Dictionary not found'].
 sl remove: d.
 'Removed dictionary: ' , d name`;
-  return execute(`removeDictionary(${dict})`, code);
+  return execute(code);
 }

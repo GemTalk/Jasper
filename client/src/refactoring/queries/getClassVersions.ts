@@ -35,12 +35,8 @@ dict keysAndValuesDo: [:k :v |
     (hist notNil and: [hist size > 1]) ifTrue: [
       ws nextPutAll: k; tab; print: (hist indexOf: v); tab; print: hist size; lf]]].
 ws contents`;
-  const label =
-    typeof dict === 'number'
-      ? `getClassVersions(dictIndex: ${dict})`
-      : `getClassVersions(dictName: ${dict})`;
   const map = new Map<string, ClassVersionInfo>();
-  for (const line of splitLines(execute(label, code))) {
+  for (const line of splitLines(execute(code))) {
     const parts = line.split('\t');
     if (parts.length < 3) continue;
     const current = parseInt(parts[1], 10);

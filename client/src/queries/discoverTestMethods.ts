@@ -22,7 +22,7 @@ cls testSelectors asSortedCollection do: [:each |
     nextPutAll: ((cls categoryOfSelector: each environmentId: 0) ifNil: ['']);
     lf].
 ws contents`;
-  const data = execute(`discoverTestMethods(${className})`, code);
+  const data = execute(code);
   return splitLines(data).map((line) => {
     const [selector, category] = line.split('\t');
     return { selector, category: category || '' };

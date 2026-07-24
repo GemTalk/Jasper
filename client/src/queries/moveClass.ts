@@ -16,5 +16,5 @@ cls := srcDict removeKey: #'${esc}' ifAbsent: [nil].
 cls ifNil: [^ 'Class not found in source dictionary: ${esc}'].
 destDict at: #'${esc}' put: cls.
 'Moved class: ' , cls name`;
-  return execute(`moveClass(${className}: ${srcDictIndex} -> ${destDictIndex})`, code);
+  return execute(code);
 }

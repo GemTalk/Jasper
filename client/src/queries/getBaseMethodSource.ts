@@ -24,8 +24,5 @@ export function getBaseMethodSource(
     `ifNotNil: [:d | d at: #'${sel}' otherwise: nil]) ` +
     `ifNil: ['"(no base method: this selector has no persistent implementation on this class)"'] ` +
     `ifNotNil: [:m | m sourceString]`;
-  return execute(
-    `getBaseMethodSource(${receiver(className, isMeta)}>>#${selector} env:${environmentId})`,
-    code,
-  );
+  return execute(code);
 }

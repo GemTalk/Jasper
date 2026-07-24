@@ -115,7 +115,6 @@ export function isEnhancedInspectorInstalled(session: ActiveSession): boolean {
   try {
     const result = executeFetchString(
       session,
-      'verifyEnhancedInspector',
       '[(GtRemotePhlowViewedObject notNil ' +
         'and: [Object includesSelector: #gtViewsInCurrentContext]) printString] ' +
         "on: Error do: [:e | 'false']",
@@ -172,7 +171,6 @@ export async function installEnhancedInspectorSupport(
     try {
       executeFetchString(
         session,
-        `install:${file}`,
         // #serverUtf8File (not fromServerPath:) because the payload contains
         // UTF-8 test data (e.g. GtWireEncodingExamples' 'čtyři'). The plain
         // file-in reads the file as the repository's StringConfiguration
@@ -232,7 +230,6 @@ function gemCanRead(session: ActiveSession, serverPath: string): boolean {
   try {
     const r = executeFetchString(
       session,
-      'gemCanRead',
       `[(GsFile existsOnServer: ${gsStringLiteral(serverPath)}) printString] ` +
         "on: Error do: [:e | 'false']",
     );

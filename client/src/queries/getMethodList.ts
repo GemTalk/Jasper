@@ -20,7 +20,7 @@ class := ${className}.
         nextPutAll: cat; tab;
         nextPutAll: sel; lf]]].
 ws contents`;
-  const raw = execute(`getMethodList(${className})`, code);
+  const raw = execute(code);
   const results: MethodEntry[] = [];
   for (const line of raw.split('\n')) {
     if (line.length === 0) continue;

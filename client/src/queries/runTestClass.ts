@@ -61,7 +61,7 @@ result errors do: [:each |
   captureMessage value: each.
   ws lf].
 ws contents encodeAsUTF8`;
-  const data = execute(`runTestClass(${className})`, code);
+  const data = execute(code);
   return splitLines(data).map((line) => {
     const parts = line.split('\t');
     return {
