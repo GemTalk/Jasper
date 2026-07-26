@@ -59,33 +59,40 @@ exercised the `gemstone` MCP server retroactively after a CLI workflow. Items gr
   already does, but the gap is small and not worth the new surface area for Jasper users.
 
 ## Ideas
+
+Several former entries now live in the issue tracker or as roadmap themes (see
+[ROADMAP.md](ROADMAP.md)); those are pointers below. The rest are still-unfiled ideas.
+
 - **Configurable Rowan repo location** — Rowan repos currently always land in the open
   workspace (git clones and copied-in local folders alike), and the sidebar Repositories list
   is filtered to the workspace. Make this configurable: open workspace vs the extension's
   global storage vs tracking a local folder in place. See `rowanWorkspaceDest` /
   `workspaceRepos` (both marked `TODO` in the source).
-- **Code Snippets** — Templates for common patterns: do:, collect:, ifTrue:ifFalse:, class definition boilerplate.
-- **Lint / Warnings** — Flag common issues: unused temporaries, missing super sends in initialize, etc.
-- **Bookmarks** — Pin frequently-visited methods for quick access (the Inspector view is close to this already).
+- **Code Snippets** — tracked as [#305](https://github.com/GemTalk/Jasper/issues/305).
+- **Lint / Warnings** — tracked under roadmap theme [#294](https://github.com/GemTalk/Jasper/issues/294) (code critics / lint).
+- **Bookmarks** — tracked as [#306](https://github.com/GemTalk/Jasper/issues/306).
 - **Notebook API for Workspaces** — Smalltalk workspace with persistent bindings per cell.
-- **Method History / Versions** — Surface GemStone method versions in a timeline view.
+- **Method History / Versions** — tracked under roadmap theme [#290](https://github.com/GemTalk/Jasper/issues/290) (method-level code history).
 - **Split systemBrowser.ts** — Extract HTML and handlers into separate files.
 - **Code Actions (Lightbulb)** — Quick fixes: "Define method", "Declare temp", "Extract to method".
-- **Rename Symbol** — Rename a selector across all implementors and senders.
+- **Rename Symbol** — the rename-method/class refactorings themselves shipped
+  (`gs-src/refactoring/engine/` plus the editor/Explorer commands); the remaining piece,
+  LSP F2 rename, is tracked under roadmap theme [#291](https://github.com/GemTalk/Jasper/issues/291) via [#231](https://github.com/GemTalk/Jasper/issues/231).
 - **Inlay Hints** — Show return types and argument names inline.
 - **Signature Help** — Keyword argument hints as you type.
 - **Call Hierarchy** — Senders and implementors as incoming/outgoing call trees.
-- **Debug Inline Values** — Show variable values inline during debugging.
 - **Source Control API** — GemStone method versions as a timeline provider.
-- **Workspace Variables** — Persistent bindings across evaluations (like Jade).
+- **Workspace Variables** — Persistent bindings across evaluations (like Jade). Not yet
+  tracked as an issue.
 - **All Instances / References** — Jade-style object queries.
-- **Breakpoint Conditions** — Conditional breakpoints and hit count breakpoints.
-- **Transcript via ClientForwarderSend** — Real-time output using `System signal: 2336`.
-- **System Administration** - Build the SysAdmin tools into VS Code
+- **Breakpoint Conditions** — tracked under roadmap theme [#277](https://github.com/GemTalk/Jasper/issues/277) (debugging parity).
+- **System Administration** — the base tooling shipped (Databases view, Quick Setup,
+  backup/restore, process management); further work is tracked as the `sysadmin` roadmap
+  themes in [ROADMAP.md](ROADMAP.md) ([#279](https://github.com/GemTalk/Jasper/issues/279)–[#282](https://github.com/GemTalk/Jasper/issues/282), [#298](https://github.com/GemTalk/Jasper/issues/298)–[#300](https://github.com/GemTalk/Jasper/issues/300)).
 
 ## Bugs
 
-- **Browser "Delete Class" doesn't delete local `.gs` file** — `handleDeleteClass` in `systemBrowser.ts` removes the class from GemStone but does not delete the corresponding `.gs` file from disk. The file persists in the file explorer until the next export/refresh.
+(none currently listed here — bugs are tracked as [GitHub issues](https://github.com/GemTalk/Jasper/issues))
 
 ## Known Limitations
 
@@ -93,6 +100,8 @@ exercised the `gemstone` MCP server retroactively after a CLI workflow. Items gr
   - Poll `System transactionMode` periodically
   - Hook into GCI execution to inspect post-execution state
   - Require users to use the extension's commit/abort commands (document as limitation)
+
+  Tracked as roadmap theme [#278](https://github.com/GemTalk/Jasper/issues/278) (transaction awareness in the IDE).
 
 - **Multiple sessions with same credentials**: If two sessions are logged in with the same host/stone/user (and no per-login `exportPath`), they will share the same export directory. Edits in one session's files will be filed in to whichever session matches first. Use distinct `exportPath` templates on each login to avoid this.
 
