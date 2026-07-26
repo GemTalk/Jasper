@@ -23,7 +23,7 @@ npm run format           # Prettier --write over all workspaces
 npm run format:check     # Prettier --check (no writes)
 npm run compile          # TypeScript compile (all workspaces)
 npm run watch            # incremental watch build (client + server)
-npm test                 # run all tests (server → client → mcp-server); needs a live stone — usually already running
+npm test                 # run all tests (client → server → mcp-server); needs a live stone — usually already running
 npm run test:server      # server workspace tests only
 npm run test:client      # client workspace tests only
 npm run test:mcp         # mcp-server workspace tests only
