@@ -2,7 +2,7 @@
 
 ## Why
 
-The `.gemstone` directory is a local, read-only mirror of a session's classes as
+The `.gemstone` directory is a local, read-only-by-default mirror of a session's classes as
 Topaz file-out (`.gs`) files. It exists so VS Code's native tooling — **Find in
 Files**, **Go to Definition**, workspace symbol search — has real files to work
 over. (Editing still goes through the `gemstone://` virtual filesystem, which
@@ -68,7 +68,9 @@ classes that actually changed.
   missing names, never dropped silently. Each server response is also prefixed
   with its build time (`Time millisecondsElapsedTime:`); combined with the
   client wall-clock, the "GemStone Class Sync" output attributes a slow sync to
-  the server (build) vs the network (net ≈ wall − server).
+  the server (build) vs the network (net ≈ wall − server) vs the local disk,
+  whose write/delete time is measured outside the request wall-clock and
+  reported separately (`disk Nms (write Nms, delete Nms)`).
 
 ### Lifecycle and layout
 
@@ -82,6 +84,10 @@ classes that actually changed.
   sync completes (state is persisted to reflect exactly what's on disk).
 - Per-login **`sync_classes`** flag (checkbox in the login editor, defaults on).
   Turn it off for slow/remote connections; server-side search still works.
+- Mirror files are written read-only (`chmod 0o444`) by default so they aren't
+  edited directly. The **`gemstone.classSync.readOnlyMirror`** setting (default
+  `true`) turns that off, which roughly halves the filesystem operations per
+  class — a noticeable win on slow or network filesystems.
 - Per-sync size/round-trip/timing is logged to the **"GemStone Class Sync"**
   output channel for tuning.
 
