@@ -44,6 +44,10 @@
     "configurationDefaults": {
       "[gemstone-smalltalk]": {
         "editor.minimap.enabled": false
+      },
+      "[gemstone-class-comment]": {
+        "editor.wordWrap": "on",
+        "editor.minimap.enabled": false
       }
     },
     "languages": [
@@ -83,6 +87,12 @@
           "text/x-gemstone-smalltalk"
         ],
         "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "gemstone-class-comment",
+        "aliases": [
+          "GemStone Class Comment"
+        ]
       },
       {
         "id": "ston",
@@ -979,6 +989,18 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "gemstone.explorer.commit",
+        "title": "Commit",
+        "category": "GemStone",
+        "icon": "$(check)"
+      },
+      {
+        "command": "gemstone.explorer.abort",
+        "title": "Abort",
+        "category": "GemStone",
+        "icon": "$(discard)"
+      },
+      {
         "command": "gemstone.explorer.revealOpenEditor",
         "title": "Reveal Open Editor",
         "category": "GemStone"
@@ -1128,8 +1150,20 @@
         "icon": "$(go-to-file)"
       },
       {
+        "command": "gemstone.explorer.openComment",
+        "title": "Open Class Comment",
+        "category": "GemStone",
+        "icon": "$(book)"
+      },
+      {
+        "command": "gemstone.explorer.openHierarchyComment",
+        "title": "Open Class Comment",
+        "category": "GemStone",
+        "icon": "$(book)"
+      },
+      {
         "command": "gemstone.explorer.openHierarchyDefinition",
-        "title": "Open Class Definition to the Side",
+        "title": "Open Class Definition",
         "category": "GemStone",
         "icon": "$(go-to-file)"
       },
@@ -1451,6 +1485,14 @@
           "when": "false"
         },
         {
+          "command": "gemstone.explorer.commit",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.abort",
+          "when": "false"
+        },
+        {
           "command": "gemstone.explorer.removeDictionary",
           "when": "false"
         },
@@ -1545,9 +1587,19 @@
       ],
       "view/title": [
         {
+          "command": "gemstone.explorer.commit",
+          "when": "view == gemstoneExplorerDicts",
+          "group": "navigation@3"
+        },
+        {
+          "command": "gemstone.explorer.abort",
+          "when": "view == gemstoneExplorerDicts",
+          "group": "navigation@4"
+        },
+        {
           "command": "gemstone.explorer.refresh",
           "when": "view == gemstoneExplorerDicts",
-          "group": "navigation"
+          "group": "navigation@5"
         },
         {
           "command": "gemstone.explorer.closeAllOpenEditors",
@@ -1597,7 +1649,7 @@
         {
           "command": "gemstone.explorer.newDictionary",
           "when": "view == gemstoneExplorerDicts",
-          "group": "navigation@2"
+          "group": "navigation@6"
         },
         {
           "command": "gemstone.explorer.newClassCategory",
@@ -1613,6 +1665,11 @@
           "command": "gemstone.explorer.findClass",
           "when": "view == gemstoneExplorerClasses",
           "group": "navigation@3"
+        },
+        {
+          "command": "gemstone.explorer.openComment",
+          "when": "view == gemstoneExplorerClasses",
+          "group": "navigation@4"
         },
         {
           "command": "gemstone.explorer.newMethod",
@@ -1724,7 +1781,12 @@
         {
           "command": "gemstone.explorer.openDefinitionToSide",
           "when": "view == gemstoneExplorerClasses && viewItem == explorerClass",
-          "group": "inline"
+          "group": "inline@1"
+        },
+        {
+          "command": "gemstone.explorer.openComment",
+          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass",
+          "group": "inline@2"
         },
         {
           "command": "gemstone.explorer.renameIvar",
@@ -1744,7 +1806,7 @@
         {
           "command": "gemstone.explorer.renameClass",
           "when": "view == gemstoneExplorerClasses && viewItem == explorerClass",
-          "group": "inline"
+          "group": "inline@3"
         },
         {
           "command": "gemstone.explorer.classHistory",
@@ -1754,32 +1816,22 @@
         {
           "command": "gemstone.explorer.openHierarchyDefinition",
           "when": "view == gemstoneExplorerHierarchy && viewItem == explorerHierClass",
-          "group": "inline"
+          "group": "inline@1"
+        },
+        {
+          "command": "gemstone.explorer.openHierarchyComment",
+          "when": "view == gemstoneExplorerHierarchy && viewItem == explorerHierClass",
+          "group": "inline@2"
         },
         {
           "command": "gemstone.explorer.renameClass",
           "when": "view == gemstoneExplorerHierarchy && viewItem == explorerHierClass",
-          "group": "inline"
-        },
-        {
-          "command": "gemstone.explorer.openHierarchyDefinition",
-          "when": "view == gemstoneExplorerHierarchy && viewItem == explorerHierClass",
-          "group": "1_open@1"
+          "group": "inline@3"
         },
         {
           "command": "gemstone.explorer.classHistory",
           "when": "view == gemstoneExplorerHierarchy && viewItem == explorerHierClass",
           "group": "3_refactor@1"
-        },
-        {
-          "command": "gemstone.explorer.openDefinition",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass",
-          "group": "1_open@1"
-        },
-        {
-          "command": "gemstone.explorer.openDefinitionToSide",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass",
-          "group": "1_open@2"
         },
         {
           "command": "gemstone.generateGrailStub",

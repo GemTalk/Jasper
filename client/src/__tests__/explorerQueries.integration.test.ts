@@ -189,6 +189,26 @@ describe('explorer queries (integration)', () => {
     });
   });
 
+  describe('class comment', () => {
+    it('reads back a comment written to a class, scoped to its dictionary', () => {
+      defineWidget();
+
+      q.setClassComment(session(), WIDGET, 'Jasper comment round-trip.', userIndex());
+
+      expect(q.getClassComment(session(), WIDGET, userIndex()).trim()).toBe(
+        'Jasper comment round-trip.',
+      );
+    });
+
+    it('reads a comment by bare class name when no dictionary is given', () => {
+      defineWidget();
+
+      q.setClassComment(session(), WIDGET, 'Bare-name comment.');
+
+      expect(q.getClassComment(session(), WIDGET).trim()).toBe('Bare-name comment.');
+    });
+  });
+
   describe('recategorizeClass', () => {
     it('moves a class to a new class-category', () => {
       defineWidget();

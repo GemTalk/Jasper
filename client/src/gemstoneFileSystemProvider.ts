@@ -116,6 +116,11 @@ export function parseUri(uri: vscode.Uri): ParsedUri {
   if (parts.length === 4 && parts[3] === 'comment') {
     return { kind: 'comment', sessionId, dictName: parts[1], className: parts[2], dictIndex };
   }
+  // 5-segment form `/dict/Class/comment/Class comment` — the trailing label makes
+  // the editor tab read as "Class comment" (see buildClassCommentUri).
+  if (parts.length === 5 && parts[3] === 'comment') {
+    return { kind: 'comment', sessionId, dictName: parts[1], className: parts[2], dictIndex };
+  }
   if (parts.length === 6 && parts[5] === 'new-method') {
     return {
       kind: 'new-method',
@@ -197,6 +202,26 @@ export function buildClassDefinitionUri(
     path: `/${dictName}/${className}/definition/${className}`,
     // The 1-based SymbolList index scopes the class lookup to a specific
     // dictionary (dictionaries can share a name). Omitted → dictName fallback.
+    query: dictIndex !== undefined ? `dict=${dictIndex}` : '',
+  });
+}
+
+export function buildClassCommentUri(
+  sessionId: number,
+  dictName: string,
+  className: string,
+  dictIndex?: number,
+): vscode.Uri {
+  assertIsValidUriPath('Dictionary name', dictName);
+  assertIsValidUriPath('Class name', className);
+  return vscode.Uri.from({
+    scheme: 'gemstone',
+    authority: String(sessionId),
+    // A trailing `${Class} comment` segment makes the editor tab read as e.g.
+    // "Account comment" (VS Code labels a tab by its URI basename) rather than a
+    // bare "comment". parseUri accepts this 5-segment form as well as the legacy
+    // 4-segment `…/comment`; the label segment is ignored (className is parts[2]).
+    path: `/${dictName}/${className}/comment/${className} comment`,
     query: dictIndex !== undefined ? `dict=${dictIndex}` : '',
   });
 }

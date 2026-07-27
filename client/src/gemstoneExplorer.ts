@@ -6,6 +6,7 @@ import {
   escapeSelectorSlashes,
   unescapeSelectorSlashes,
   buildClassDefinitionUri,
+  buildClassCommentUri,
   buildNewMethodUri,
   buildMethodUri,
   parseUri,
@@ -1010,6 +1011,49 @@ export class ExplorerController {
       return;
     }
     await this.openDefinitionFor(className, this.state.dictName, this.state.dictIndex, toSide);
+  }
+
+  // Open a class's (editable) comment editor — the same gemstone://…/comment
+  // document the System Browser saves, but reached from the Explorer's class row
+  // or Classes-pane toolbar. Opens to the side by default so the comment sits
+  // alongside whatever the developer is reading. `item` comes from the inline
+  // button; falls back to the selected class for the toolbar / palette.
+  async openClassComment(item?: ClassItem, toSide = true): Promise<void> {
+    const className = item?.className ?? this.state.className;
+    if (
+      this.state.dictName === undefined ||
+      className === undefined ||
+      this.state.dictIndex === undefined
+    ) {
+      return;
+    }
+    await this.openCommentFor(className, this.state.dictName, this.state.dictIndex, toSide);
+  }
+
+  // Same as openClassComment, but for a Hierarchy node — resolves the class's own
+  // dictionary (it may live elsewhere than the currently-shown one), mirroring
+  // openHierarchyDefinition.
+  async openHierarchyComment(item: HierarchyItem): Promise<void> {
+    const resolved = this.resolveClassDict(item.className, item.dictName);
+    if (!resolved) {
+      void vscode.window.showWarningMessage(`Can't locate class ${item.className}.`);
+      return;
+    }
+    await this.openCommentFor(item.className, resolved.dictName, resolved.dictIndex, true);
+  }
+
+  private async openCommentFor(
+    className: string,
+    dictName: string,
+    dictIndex: number,
+    toSide: boolean,
+  ): Promise<void> {
+    const session = this.session();
+    if (!session) return;
+    const uri = buildClassCommentUri(session.id, dictName, className, dictIndex);
+    this.selfOpenedUris.add(uri.toString());
+    const doc = await vscode.workspace.openTextDocument(uri);
+    await openGemstoneDocument(doc, toSide, this.placement);
   }
 
   // Generate an editable Grail `.py` stub for a class. Invoked from the Classes-
@@ -3076,12 +3120,25 @@ export function registerGemStoneExplorer(
       (item?: ClassItem) =>
         void ctl.openClassDefinition(item instanceof ClassItem ? item : undefined, true),
     ),
+    // Open a class's editable comment (inline button on the class row / Classes-
+    // pane toolbar). A class comment is often the first place a developer looks.
+    vscode.commands.registerCommand(
+      'gemstone.explorer.openComment',
+      (item?: ClassItem) => void ctl.openClassComment(item instanceof ClassItem ? item : undefined),
+    ),
     // Same button on a Hierarchy node — opens that class's definition to the side
     // (resolving its own dictionary), without navigating the panels.
     vscode.commands.registerCommand(
       'gemstone.explorer.openHierarchyDefinition',
       (item?: HierarchyItem) => {
         if (item instanceof HierarchyItem) void ctl.openHierarchyDefinition(item);
+      },
+    ),
+    // Same class-comment button on a Hierarchy node.
+    vscode.commands.registerCommand(
+      'gemstone.explorer.openHierarchyComment',
+      (item?: HierarchyItem) => {
+        if (item instanceof HierarchyItem) void ctl.openHierarchyComment(item);
       },
     ),
     // Per-click hook powering double-click-to-open-definition.
