@@ -13,6 +13,8 @@ import {
 import { PREVIEW_PAGE_BYTES } from '../queries/previewRenameMethod';
 import { parseStartPreview, parseApplyResult } from '../renameTemporaryPreview';
 import type { ActiveSession } from '../../sessionManager';
+import { requireServerPluginFeature } from '../../__tests__/requireServerPluginFeature';
+import { pluginFeatures } from '../../serverPlugin/pluginFeatures';
 
 /**
  * Automatic GCI integration test for the rename-temporary/argument (R5)
@@ -96,7 +98,7 @@ describe('rename temporary/argument (integration)', () => {
   });
 
   it('runs the rename-temporary GS SUnit suite in-stone with zero failures', (ctx) => {
-    if (!rbEnginePresent()) ctx.skip('refactoring engine not loaded in this stone');
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
     const code = `| r |
 ${fileInTests()}
@@ -107,7 +109,7 @@ r := (System myUserProfile symbolList objectNamed: #GsRenameTemporaryRefactoring
   });
 
   it('previews the single method recompile, renaming the outer temporary only', async (ctx) => {
-    if (!rbEnginePresent()) ctx.skip('refactoring engine not loaded in this stone');
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
     defineFixture();
 
@@ -139,7 +141,7 @@ r := (System myUserProfile symbolList objectNamed: #GsRenameTemporaryRefactoring
   });
 
   it('applies the rename server-side, rewriting only the outer temporary', async (ctx) => {
-    if (!rbEnginePresent()) ctx.skip('refactoring engine not loaded in this stone');
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
     defineFixture();
     const token = `rtit-apply-${BASE}`;

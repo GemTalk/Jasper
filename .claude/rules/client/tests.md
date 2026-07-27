@@ -45,3 +45,12 @@ Tests run in random order; the seed is printed at the top of the output. Reprodu
 Tests using `useIntegrationTest` require a live GemStone instance so plain `npm test` needs a running stone. Run `npm run test:server:start` once to provision one; it writes connection details to `.env.test` (which the user may override with `.env.test.local`). CI runs these as a matrix over `client/.gemstone-integration-releases.json`. The deep GCI binding suite (`npm run test:gci`) is separate.
 
 GCI session/oop values are koffi `External` pointer wrappers with no enumerable properties, so vitest's deep equality (`toEqual`, and therefore `expect(spy).toHaveBeenCalledWith(someSession, ...)`) cannot tell two *different* sessions or oops apart — it treats any two of them as equal regardless of the underlying native pointer. To assert *which* session/oop a call received, pull the argument out of `spy.mock.calls` and compare with `toBe` (reference equality) instead.
+
+### Tests that depend on the server plugin
+
+CI runs the integration suite twice — once against a bare stone, then again after installing the Jasper Server Plugin. By default a test runs in *both* passes, so most tests need no gating. Only reach for a gate when the test makes sense in just one of those worlds; call it at the test's top (from `src/__tests__/requireServerPluginFeature.ts`). The gate skips the test, with a reason, when the connected stone isn't in the matching world, so each pass runs exactly the subset that applies instead of failing:
+
+- The test exercises a plugin feature → `requireServerPluginFeature(pluginFeatures.refactoring, ctx, session())` — runs only when the feature is installed.
+- The test asserts fallback/graceful-degradation behavior when the feature is missing → `requireServerPluginFeatureAbsent(pluginFeatures.refactoring, ctx, session())` — runs only when the feature is absent.
+
+Pass the feature straight off the shared registry (`pluginFeatures` from `serverPlugin/pluginFeatures.ts`) — see the registry itself for the current set of features. Both gates decide live against the connected session (version applicability plus a presence probe) — there's no environment flag to set. See the JSDoc in those two files for the mechanics and how to add a new feature.
