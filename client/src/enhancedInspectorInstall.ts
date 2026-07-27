@@ -27,6 +27,13 @@
 import { ActiveSession } from './sessionManager';
 import { executeFetchString } from './browserQueries';
 import { compareGemStoneVersions } from './gemStoneVersion';
+import {
+  gemCanRead,
+  gsStringLiteral,
+  messageOf,
+  safeAbort,
+  yieldToEventLoop,
+} from './serverPlugin/installHelpers';
 
 /**
  * Minimum GemStone version the Enhanced Inspector support is limited to.
@@ -223,45 +230,4 @@ export async function installEnhancedInspectorSupport(
       : 'Payload committed, but verification failed: the expected classes/methods ' +
         'were not found. The install may be incomplete.',
   };
-}
-
-/** Whether the gem process can read the file at `serverPath`. */
-function gemCanRead(session: ActiveSession, serverPath: string): boolean {
-  try {
-    const r = executeFetchString(
-      session,
-      `[(GsFile existsOnServer: ${gsStringLiteral(serverPath)}) printString] ` +
-        "on: Error do: [:e | 'false']",
-    );
-    return r.trim() === 'true';
-  } catch {
-    return false;
-  }
-}
-
-/** Render a JS string as a GemStone string literal: single quotes doubled and
- *  the whole value wrapped in quotes. Named distinctly from systemBrowser.ts's
- *  `smalltalkString`, which only escapes (it does not wrap). */
-function gsStringLiteral(s: string): string {
-  return `'${s.replace(/'/g, "''")}'`;
-}
-
-/** Yield to the event loop so the progress notification can paint between the
- *  per-file (synchronous) server calls. */
-function yieldToEventLoop(): Promise<void> {
-  return new Promise<void>((resolve) => setImmediate(resolve));
-}
-
-function safeAbort(session: ActiveSession): void {
-  try {
-    session.gci.GciTsAbort(session.handle);
-  } catch {
-    // Best-effort rollback; the caller closes the session regardless.
-  }
-}
-
-/** Extract a human-readable message from a thrown value. Shared with
- *  enhancedInspectorCommand.ts. */
-export function messageOf(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
 }

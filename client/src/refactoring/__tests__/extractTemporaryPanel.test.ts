@@ -46,6 +46,7 @@ function mount(changes: ExtractTemporaryChange[], total: number, done: boolean) 
     newName: 't',
     total,
     occurrenceCount: 1,
+    replaceAll: false,
     changes,
     done,
     outOfScope: { references: 0, skipped: 0, collision: null, decline: null },

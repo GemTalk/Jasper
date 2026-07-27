@@ -77,7 +77,7 @@ See [docs/how-to/raising-the-version-floor.md](docs/how-to/raising-the-version-f
 - Test: `npm test`
 - Package: `npm run package`
 
-Tests run in a random order on every run. The seed is printed at the top of the output — to reproduce a specific run, pass `--sequence.seed=<seed>` to that workspace's vitest directly (e.g. `cd client && npx vitest run --sequence.seed=<seed>`).
+Tests run in a random order on every run. The seed is printed at the top of the output — to reproduce a specific run, set the `VITEST_SEED` environment variable (e.g. `VITEST_SEED=<seed> npm test`, or `cd client && VITEST_SEED=<seed> npx vitest run`). Passing `--sequence.seed` directly does not work: `client/vitest.config.ts` pins the seed from `VITEST_SEED` (or the clock) into both projects, overriding the CLI flag.
 
 Before pushing changes, ensure `npm run lint && npm run format:check && npm run compile && npm test` passes locally.
 

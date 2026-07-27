@@ -14,6 +14,8 @@ import {
 import { PREVIEW_PAGE_BYTES } from '../queries/previewRenameMethod';
 import { parseAnalysis, parseStartPreview, parseApplyResult } from '../inlineTemporaryPreview';
 import type { ActiveSession } from '../../sessionManager';
+import { requireServerPluginFeature } from '../../__tests__/requireServerPluginFeature';
+import { pluginFeatures } from '../../serverPlugin/pluginFeatures';
 
 /**
  * Automatic GCI integration test for the inline-temporary (M4) refactoring, over the
@@ -25,9 +27,11 @@ import type { ActiveSession } from '../../sessionManager';
  *     temporary, preview the single method rewrite, apply it, and confirm the stone
  *     inlined the temporary's value and removed the declaration.
  *
- * Gated on the engine being present (a bare stone skips the body but stays green,
- * with a reason). Fully transient: the harness aborts each test, so nothing is
- * committed. All emitted Smalltalk is ASCII-only for the 3.6.x matrix.
+ * Gated via the shared server-plugin feature gate
+ * (`requireServerPluginFeature(pluginFeatures.refactoring, …)`): the engine-dependent
+ * tests run in the plugin-installed CI pass and skip, with a reason, against a bare
+ * stone. Fully transient: the harness aborts each test, so nothing is committed. All
+ * emitted Smalltalk is ASCII-only for the 3.6.x matrix.
  */
 describe('inline temporary (integration)', () => {
   let gci: GciLibrary;
@@ -89,7 +93,7 @@ describe('inline temporary (integration)', () => {
   });
 
   it('runs the inline-temporary GS SUnit suite in-stone with zero failures', (ctx) => {
-    if (!enginePresent()) ctx.skip('refactoring engine not loaded in this stone');
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
     const code = `| r |
 ${fileInTests()}
@@ -100,7 +104,7 @@ r := (System myUserProfile symbolList objectNamed: #GsInlineTemporaryRefactoring
   });
 
   it('pre-flights a temporary, resolving its name', async (ctx) => {
-    if (!enginePresent()) ctx.skip('refactoring engine not loaded in this stone');
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
     defineFixture();
 
@@ -120,7 +124,7 @@ r := (System myUserProfile symbolList objectNamed: #GsInlineTemporaryRefactoring
   });
 
   it('applies the inline, folding the value in and removing the declaration', async (ctx) => {
-    if (!enginePresent()) ctx.skip('refactoring engine not loaded in this stone');
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
     defineFixture();
     const token = `imtit-${BASE}`;
