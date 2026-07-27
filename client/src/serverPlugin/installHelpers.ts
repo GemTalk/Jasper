@@ -12,7 +12,7 @@
  */
 import { ActiveSession } from '../sessionManager';
 import { executeFetchString } from '../browserQueries';
-import { gemNrsFor, DEFAULT_GS_PW } from '../loginTypes';
+import { gemNrsFor, stoneNrsFor, DEFAULT_GS_PW } from '../loginTypes';
 
 // GemStone's default SystemUser password on a fresh stone. Tried first so a
 // stock stone installs in one step; on failure the caller falls back to a
@@ -74,7 +74,7 @@ export function yieldToEventLoop(): Promise<void> {
  */
 export function loginAsSystemUser(base: ActiveSession, password: string): ActiveSession {
   const { login } = base;
-  const stoneNrs = `!tcp@${login.gem_host}#server!${login.stone}`;
+  const stoneNrs = stoneNrsFor(login);
   const gemNrs = gemNrsFor(login);
   const result = base.gci.GciTsLogin(
     stoneNrs,

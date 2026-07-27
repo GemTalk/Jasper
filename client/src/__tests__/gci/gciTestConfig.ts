@@ -11,6 +11,8 @@
 // hardcoded Stone or NetLDI names — every value comes from the environment, and
 // a missing value fails fast with an actionable message.
 
+import { netldiNameFromGemNrs } from '../../loginTypes';
+
 // The GCI library finds a local stone through GEMSTONE_GLOBAL_DIR (its locks/
 // registry). The automatic tests copy it from VITE_GEMSTONE_GLOBAL_DIR before
 // logging in (see ../useIntegrationTest.ts); do the same here so logins reach
@@ -75,5 +77,5 @@ export const NETLDI_NAME = requireEnv(
   'NetLDI name (VITE_GEMSTONE_NETLDI_NAME / GS_NETLDI_NAME, or a #netldi:<name># segment in the Gem NRS)',
   process.env.VITE_GEMSTONE_NETLDI_NAME,
   process.env.GS_NETLDI_NAME,
-  GEM_NRS.match(/#netldi:([^#]+)#/)?.[1],
+  netldiNameFromGemNrs(GEM_NRS),
 );
