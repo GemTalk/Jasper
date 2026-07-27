@@ -30,15 +30,8 @@ import {
   refuse,
   reloadMethodEditor,
   saveIfDirty,
+  codePointsBefore,
 } from './renameAtCursorShared';
-
-/** 1-based count of code points before `position` (the engine indexes stored source
- *  by code point; VS Code offsets count UTF-16 units — they differ past a non-BMP
- *  character). */
-function codePointsBefore(document: vscode.TextDocument, position: vscode.Position): number {
-  const prefix = document.getText(new vscode.Range(new vscode.Position(0, 0), position));
-  return Array.from(prefix).length;
-}
 
 /** Run the extract-temporary flow for the active method editor. */
 export async function extractTemporaryCommand(sessions: SessionManager): Promise<void> {
@@ -186,7 +179,7 @@ export async function extractTemporaryCommand(sessions: SessionManager): Promise
     return;
   }
 
-  const result = await showExtractTemporaryPanel(newName, start, {
+  const result = await showExtractTemporaryPanel(newName, start, replaceAll, {
     loadPage: async (off) =>
       parsePage(await queries.pageExtractTemporaryPreview(session, token, off, PREVIEW_PAGE_BYTES)),
     apply: async () => parseApplyResult(await queries.applyExtractTemporary(session, token)),

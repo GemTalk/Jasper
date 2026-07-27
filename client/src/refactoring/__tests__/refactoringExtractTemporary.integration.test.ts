@@ -159,8 +159,12 @@ r := (System myUserProfile symbolList objectNamed: #GsExtractTemporaryRefactorin
     const rewritten = exec(
       `(${BASE} compiledMethodAt: #doStuff environmentId: 0 otherwise: nil) sourceString`,
     );
-    // A temporary named `tmp` was introduced and assigned.
-    expect(rewritten).toContain('tmp');
-    expect(rewritten).toContain(':=');
+    // Replace-only-selected semantics (replaceAll: false on an expression that appears
+    // twice): the temp is assigned the extracted expression, the FIRST occurrence became
+    // `tmp`, and the SECOND `self hash` is left untouched. A replace-all would instead
+    // have produced `tmp + tmp`, so this pins the choice rather than merely that some
+    // `tmp` assignment appeared.
+    expect(rewritten).toContain('tmp := self hash');
+    expect(rewritten).toContain('tmp + self hash');
   });
 });

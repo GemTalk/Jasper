@@ -55,7 +55,11 @@ export function renderExtractTemporaryCards(changes: ExtractTemporaryChange[]): 
   return changes.map(renderCard).join('\n');
 }
 
-function renderBanner(oos: ExtractTemporaryOutOfScope, occurrenceCount: number): string {
+function renderBanner(
+  oos: ExtractTemporaryOutOfScope,
+  occurrenceCount: number,
+  replaceAll: boolean,
+): string {
   const lines: string[] = [];
   if (oos.decline) {
     lines.push(`⚠ ${escapeHtml(oos.decline)}`);
@@ -65,8 +69,15 @@ function renderBanner(oos: ExtractTemporaryOutOfScope, occurrenceCount: number):
       `⚠ ${escapeHtml(oos.collision)} — applying will fail unless you choose another name.`,
     );
   }
+  // The banner must reflect what is ACTUALLY being rewritten, not just how many
+  // occurrences exist in scope: occurrenceCount is the pre-flight total, but with
+  // replaceAll off only the selected occurrence is replaced.
   if (occurrenceCount > 1) {
-    lines.push(`Replacing all ${occurrenceCount} occurrences of the expression in this scope.`);
+    lines.push(
+      replaceAll
+        ? `Replacing all ${occurrenceCount} occurrences of the expression in this scope.`
+        : `Replacing only the selected occurrence (${occurrenceCount} found in this scope).`,
+    );
   }
   lines.push('Changes are confined to this one method.');
   return `<div class="oos">${lines.join('<br>')}</div>`;
@@ -76,6 +87,9 @@ export interface ExtractTemporaryPanelHtmlOptions {
   newName: string;
   total: number;
   occurrenceCount: number;
+  /** Whether every occurrence is being replaced (vs. only the selected one), so the
+   *  banner describes what the preview actually rewrites. */
+  replaceAll: boolean;
   changes: ExtractTemporaryChange[];
   done: boolean;
   outOfScope: ExtractTemporaryOutOfScope;
@@ -85,7 +99,8 @@ export interface ExtractTemporaryPanelHtmlOptions {
 
 /** Build the panel's HTML. Pure (no vscode) so it unit-tests directly. */
 export function renderExtractTemporaryPanelHtml(opts: ExtractTemporaryPanelHtmlOptions): string {
-  const { newName, total, occurrenceCount, changes, done, outOfScope, nonce, script } = opts;
+  const { newName, total, occurrenceCount, replaceAll, changes, done, outOfScope, nonce, script } =
+    opts;
   const cards = renderExtractTemporaryCards(changes);
   const pagerHidden = done ? ' hidden' : '';
   return `<!DOCTYPE html>
@@ -191,7 +206,7 @@ export function renderExtractTemporaryPanelHtml(opts: ExtractTemporaryPanelHtmlO
       <button id="cancel" class="secondary">Cancel</button>
     </div>
   </header>
-  ${renderBanner(outOfScope, occurrenceCount)}
+  ${renderBanner(outOfScope, occurrenceCount, replaceAll)}
   <div class="summary">
     Introduces the temporary and replaces the selected expression.
     <button id="toggleAll" class="linkish" aria-expanded="false">Expand all</button>

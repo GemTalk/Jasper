@@ -30,6 +30,7 @@ export interface ExtractTemporaryPanelHandlers {
 export function showExtractTemporaryPanel(
   newName: string,
   start: StartExtractTemporaryPreview,
+  replaceAll: boolean,
   handlers: ExtractTemporaryPanelHandlers,
 ): Promise<ApplyResult | undefined> {
   const panel = vscode.window.createWebviewPanel(
@@ -44,6 +45,7 @@ export function showExtractTemporaryPanel(
     newName,
     total: start.total,
     occurrenceCount: start.occurrenceCount,
+    replaceAll,
     changes: start.page.changes,
     done: start.page.done,
     outOfScope: start.outOfScope,

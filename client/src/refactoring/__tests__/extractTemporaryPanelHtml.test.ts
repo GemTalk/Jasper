@@ -29,6 +29,7 @@ function render(over: Partial<Parameters<typeof renderExtractTemporaryPanelHtml>
     newName: 't',
     total: 1,
     occurrenceCount: 1,
+    replaceAll: false,
     changes: [recompile],
     done: true,
     outOfScope: { references: 0, skipped: 0, collision: null, decline: null },
@@ -92,10 +93,18 @@ describe('extract-temporary preview panel HTML', () => {
     expect(html).toContain('another name');
   });
 
-  it('notes that all occurrences are replaced when more than one is in scope', () => {
-    const html = render({ occurrenceCount: 3 });
+  it('notes that all occurrences are replaced when replace-all is chosen', () => {
+    const html = render({ occurrenceCount: 3, replaceAll: true });
 
     expect(html).toContain('all 3 occurrences');
+  });
+
+  it('does NOT claim to replace all occurrences when only the selected one is chosen', () => {
+    const html = render({ occurrenceCount: 3, replaceAll: false });
+
+    expect(html).not.toContain('all 3 occurrences');
+    expect(html).toContain('only the selected occurrence');
+    expect(html).toContain('3 found in this scope');
   });
 
   it('renders the change diff as a card carrying its id', () => {

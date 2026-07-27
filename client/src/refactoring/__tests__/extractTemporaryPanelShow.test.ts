@@ -80,7 +80,7 @@ describe('showExtractTemporaryPanel', () => {
       cleanup: vi.fn(),
     };
 
-    const result = showExtractTemporaryPanel('t', start, handlers);
+    const result = showExtractTemporaryPanel('t', start, false, handlers);
     lastPanel().__emit({ command: 'apply' });
 
     expect(await result).toEqual({ applied: 1, failed: [] });
@@ -91,7 +91,7 @@ describe('showExtractTemporaryPanel', () => {
   it('resolves undefined and cleans up on cancel', async () => {
     const handlers = { loadPage: vi.fn(), apply: vi.fn(), cleanup: vi.fn() };
 
-    const result = showExtractTemporaryPanel('t', start, handlers);
+    const result = showExtractTemporaryPanel('t', start, false, handlers);
     lastPanel().__emit({ command: 'cancel' });
 
     expect(await result).toBeUndefined();
@@ -101,7 +101,7 @@ describe('showExtractTemporaryPanel', () => {
   it('resolves undefined and cleans up when the panel is disposed', async () => {
     const handlers = { loadPage: vi.fn(), apply: vi.fn(), cleanup: vi.fn() };
 
-    const result = showExtractTemporaryPanel('t', start, handlers);
+    const result = showExtractTemporaryPanel('t', start, false, handlers);
     lastPanel().dispose();
 
     expect(await result).toBeUndefined();
@@ -115,7 +115,7 @@ describe('showExtractTemporaryPanel', () => {
       cleanup: vi.fn(),
     };
 
-    void showExtractTemporaryPanel('t', start, handlers);
+    void showExtractTemporaryPanel('t', start, false, handlers);
     lastPanel().__emit({ command: 'loadMore' });
 
     await vi.waitFor(() => expect(handlers.loadPage).toHaveBeenCalledWith(2));
@@ -132,7 +132,7 @@ describe('showExtractTemporaryPanel', () => {
       cleanup: vi.fn(),
     };
 
-    void showExtractTemporaryPanel('t', start, handlers);
+    void showExtractTemporaryPanel('t', start, false, handlers);
     lastPanel().__emit({ command: 'loadAll' });
 
     await vi.waitFor(() => expect(handlers.loadPage).toHaveBeenCalledTimes(2));
@@ -147,7 +147,7 @@ describe('showExtractTemporaryPanel', () => {
       cleanup: vi.fn(),
     };
 
-    void showExtractTemporaryPanel('t', start, handlers);
+    void showExtractTemporaryPanel('t', start, false, handlers);
     lastPanel().__emit({ command: 'apply' });
 
     await vi.waitFor(() =>
