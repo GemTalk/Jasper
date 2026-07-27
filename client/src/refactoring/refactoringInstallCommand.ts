@@ -22,14 +22,16 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { ActiveSession, SessionManager } from '../sessionManager';
-import { sessionNeedsCommit } from '../browserQueries';
 import { refreshRefactoringSupportAvailable } from './refactoringAvailability';
 import {
   installRefactoringSupport,
   isRefactoringSupportInstalled,
   REFACTORING_PAYLOAD_FILES,
 } from './refactoringInstall';
-import { obtainSystemUserSession } from '../serverPlugin/systemUserAuth';
+import {
+  obtainSystemUserSession,
+  refreshWorkingSessionAfterInstall,
+} from '../serverPlugin/systemUserAuth';
 import { pluginFeatures } from '../serverPlugin/pluginFeatures';
 
 // Payload location relative to the extension root, from the shared feature
@@ -45,44 +47,6 @@ function getReportChannel(): vscode.OutputChannel {
     reportChannel = vscode.window.createOutputChannel('GemStone Refactoring');
   }
   return reportChannel;
-}
-
-/**
- * The working session won't see the newly-committed classes until its view is
- * refreshed (an abort). When it has no uncommitted work — always the case right
- * after a login — refresh silently. Only when there ARE uncommitted changes do
- * we ask first, since the abort would discard them.
- */
-async function refreshWorkingSessionAfterInstall(
-  base: ActiveSession,
-  sessionManager: SessionManager,
-): Promise<boolean> {
-  const needsCommit = sessionNeedsCommit(base);
-  if (needsCommit === false) {
-    return safeAbortWorkingSession(base, sessionManager);
-  }
-  const detail = needsCommit
-    ? 'This discards this session’s uncommitted changes.'
-    : 'Any uncommitted changes in this session will be discarded.';
-  const choice = await vscode.window.showInformationMessage(
-    `Refactoring engine installed. Refresh this session to load it? ${detail}`,
-    'Refresh',
-    'Later',
-  );
-  if (choice === 'Refresh') {
-    return safeAbortWorkingSession(base, sessionManager);
-  }
-  return false;
-}
-
-/** Abort (refresh) the working session, tolerating a session that was logged out
- *  while the install ran. Returns true only when the view was actually refreshed. */
-function safeAbortWorkingSession(base: ActiveSession, sessionManager: SessionManager): boolean {
-  try {
-    return sessionManager.abort(base.id).success;
-  } catch {
-    return false;
-  }
 }
 
 /**
@@ -165,7 +129,11 @@ async function performInstall(
     return false;
   }
 
-  const refreshed = await refreshWorkingSessionAfterInstall(base, sessionManager);
+  const refreshed = await refreshWorkingSessionAfterInstall(
+    base,
+    sessionManager,
+    'Refactoring engine installed.',
+  );
   if (refreshed) {
     refreshRefactoringSupportAvailable(base);
     void vscode.commands.executeCommand(

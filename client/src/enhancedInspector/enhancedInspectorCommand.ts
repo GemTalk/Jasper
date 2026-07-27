@@ -19,14 +19,16 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { ActiveSession, SessionManager } from '../sessionManager';
-import { sessionNeedsCommit } from '../browserQueries';
 import { refreshEnhancedInspectorAvailable } from './enhancedInspectorAvailability';
 import {
   installEnhancedInspectorSupport,
   isEnhancedInspectorInstalled,
   ENHANCED_INSPECTOR_FILES,
 } from './enhancedInspectorInstall';
-import { obtainSystemUserSession } from '../serverPlugin/systemUserAuth';
+import {
+  obtainSystemUserSession,
+  refreshWorkingSessionAfterInstall,
+} from '../serverPlugin/systemUserAuth';
 import { pluginFeatures } from '../serverPlugin/pluginFeatures';
 
 // Payload location relative to the extension root, from the shared feature
@@ -34,53 +36,6 @@ import { pluginFeatures } from '../serverPlugin/pluginFeatures';
 // VSIX (unlike `docs/`, which is .vscodeignore'd), so the same path resolves in
 // both the F5 dev host and an installed extension.
 const PAYLOAD_SUBDIR = pluginFeatures.enhancedInspector.payloadSubdir;
-
-/**
- * The working session won't see the newly-committed classes until its view is
- * refreshed (an abort). When the session has no uncommitted work — always the
- * case right after a login, which is when the offer fires — there is nothing to
- * lose, so refresh silently. Only when there ARE uncommitted changes do we ask
- * first, since the abort would discard them.
- */
-async function refreshWorkingSessionAfterInstall(
-  base: ActiveSession,
-  sessionManager: SessionManager,
-): Promise<boolean> {
-  const needsCommit = sessionNeedsCommit(base);
-
-  if (needsCommit === false) {
-    return safeAbortWorkingSession(base, sessionManager);
-  }
-
-  const detail = needsCommit
-    ? 'This discards this session’s uncommitted changes.'
-    : 'Any uncommitted changes in this session will be discarded.';
-  const choice = await vscode.window.showInformationMessage(
-    `Enhanced inspector installed. Refresh this session to load it? ${detail}`,
-    'Refresh',
-    'Later',
-  );
-  if (choice === 'Refresh') {
-    return safeAbortWorkingSession(base, sessionManager);
-  }
-  return false;
-}
-
-/**
- * Abort (refresh) the working session, tolerating a session that was logged out
- * while the install ran (the progress notification is non-modal). Returns true
- * only when the view was actually refreshed, so the caller relatches
- * `enhancedInspectorAvailable` only on a real refresh.
- */
-function safeAbortWorkingSession(base: ActiveSession, sessionManager: SessionManager): boolean {
-  try {
-    return sessionManager.abort(base.id).success;
-  } catch {
-    // The session is gone (sessionManager.abort throws for an unknown id) — there
-    // is nothing to refresh, and nothing to fail over.
-    return false;
-  }
-}
 
 /**
  * Install (or reinstall) Enhanced Inspector support into the stone reached by
@@ -150,7 +105,11 @@ async function performInstall(
     return;
   }
 
-  const refreshed = await refreshWorkingSessionAfterInstall(base, sessionManager);
+  const refreshed = await refreshWorkingSessionAfterInstall(
+    base,
+    sessionManager,
+    'Enhanced inspector installed.',
+  );
   if (refreshed) refreshEnhancedInspectorAvailable(base);
 }
 
