@@ -55,8 +55,13 @@ export class RefactorCodeActionProvider implements vscode.CodeActionProvider {
     }
 
     // "Rename Method…" targets the method being edited (or a sent selector at the
-    // position), so it is offered anywhere in the editor.
+    // position), so it is offered anywhere in the editor. "Change Method Signature…"
+    // targets the edited method's OWN signature (no selection needed), so it too is
+    // offered anywhere.
     actions.push(action('Rename Method…', 'gemstone.renameMethodInEditor', [range.start]));
+    actions.push(
+      action('Change Method Signature…', 'gemstone.changeMethodSignature', [range.start]),
+    );
     return actions;
   }
 }
