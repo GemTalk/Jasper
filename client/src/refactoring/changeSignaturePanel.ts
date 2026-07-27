@@ -14,9 +14,9 @@ import * as vscode from 'vscode';
 import * as crypto from 'crypto';
 import { StartPreview, PreviewPage, ApplyResult } from './changeSignaturePreview';
 import { renderSignaturePanelHtml, renderSignatureCards } from './changeSignaturePanelHtml';
-import { readRefactoringWebviewScript } from './webviewAssets';
+import { readWebviewScript } from '../webviewAssets';
 
-const panelJs = readRefactoringWebviewScript('renameMethodPanelView.js');
+const panelJs = readWebviewScript('renameMethodPanelView.js', 'refactoring');
 
 export interface ChangeSignaturePanelHandlers {
   /** Fetch the page starting at `offset` (1-based). */

@@ -12,9 +12,9 @@ import * as vscode from 'vscode';
 import * as crypto from 'crypto';
 import { renderSignatureEditorHtml } from './changeSignatureEditorHtml';
 import { ChangeSignatureScope } from './queries/previewChangeSignature';
-import { readRefactoringWebviewScript } from './webviewAssets';
+import { readWebviewScript } from '../webviewAssets';
 
-const editorJs = readRefactoringWebviewScript('changeSignatureEditorView.js');
+const editorJs = readWebviewScript('changeSignatureEditorView.js', 'refactoring');
 
 export interface SignatureEditResult {
   /** New selector parts, in new (possibly reordered) order. */
