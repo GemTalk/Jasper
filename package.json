@@ -1163,6 +1163,17 @@
         "icon": "$(edit)"
       },
       {
+        "command": "gemstone.explorer.moveMethodToClass",
+        "title": "Move Method to Class…",
+        "category": "GemStone",
+        "icon": "$(export)"
+      },
+      {
+        "command": "gemstone.explorer.moveMethodToOtherSide",
+        "title": "Move to Class/Instance Side",
+        "category": "GemStone"
+      },
+      {
         "command": "gemstone.renameTemporary",
         "title": "Rename Temporary/Argument…",
         "category": "GemStone",
@@ -1467,6 +1478,14 @@
           "when": "false"
         },
         {
+          "command": "gemstone.explorer.moveMethodToClass",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.moveMethodToOtherSide",
+          "when": "false"
+        },
+        {
           "command": "gemstone.explorer.renameClass",
           "when": "false"
         },
@@ -1740,6 +1759,16 @@
           "command": "gemstone.explorer.renameMethod",
           "when": "view == gemstoneExplorerMethods && viewItem =~ /explorerMethod/",
           "group": "inline"
+        },
+        {
+          "command": "gemstone.explorer.moveMethodToClass",
+          "when": "view == gemstoneExplorerMethods && viewItem =~ /explorerMethod/",
+          "group": "3_refactor@1"
+        },
+        {
+          "command": "gemstone.explorer.moveMethodToOtherSide",
+          "when": "view == gemstoneExplorerMethods && viewItem =~ /explorerMethod/",
+          "group": "3_refactor@2"
         },
         {
           "command": "gemstone.explorer.renameClass",
