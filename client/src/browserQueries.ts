@@ -45,6 +45,14 @@ import {
   RenameMethodScope,
 } from './refactoring/queries/previewRenameMethod';
 import {
+  analyzeChangeSignature as sharedAnalyzeChangeSignature,
+  startChangeSignaturePreview as sharedStartChangeSignaturePreview,
+  pageChangeSignaturePreview as sharedPageChangeSignaturePreview,
+  applyChangeSignature as sharedApplyChangeSignature,
+  clearChangeSignaturePreview as sharedClearChangeSignaturePreview,
+  ChangeSignatureScope,
+} from './refactoring/queries/previewChangeSignature';
+import {
   startRenameClassPreview as sharedStartRenameClassPreview,
   pageRenameClassPreview as sharedPageRenameClassPreview,
   applyRenameClass as sharedApplyRenameClass,
@@ -712,6 +720,79 @@ export function applyRenameMethod(
 
 export function clearRenameMethodPreview(session: ActiveSession, token: string): string {
   return sharedClearRenameMethodPreview(defaultQueryExecutorUsing(session), token);
+}
+
+// Change-method-signature (M5) wrappers: mirror the rename-method ones, adding a
+// pre-flight analyze (to pre-populate the signature editor) and the arity-changing
+// argNames/defaults/meta arguments. Paginated preview fetched NON-BLOCKING; apply is
+// server-side (no commit).
+export function analyzeChangeSignature(
+  session: ActiveSession,
+  className: string,
+  selector: string,
+  isMeta: boolean,
+  dict?: number | string,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Analysing signature…');
+  return sharedAnalyzeChangeSignature(exec, className, selector, isMeta, dict);
+}
+
+export function startChangeSignaturePreview(
+  session: ActiveSession,
+  className: string,
+  oldSelector: string,
+  newParts: string[],
+  permutation: number[],
+  argNames: string[],
+  defaults: string[],
+  scope: ChangeSignatureScope,
+  token: string,
+  maxBytes: number,
+  isMeta: boolean,
+  dict?: number | string,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, `Previewing signature change of ${oldSelector}…`);
+  return sharedStartChangeSignaturePreview(
+    exec,
+    className,
+    oldSelector,
+    newParts,
+    permutation,
+    argNames,
+    defaults,
+    scope,
+    token,
+    maxBytes,
+    isMeta,
+    dict,
+  );
+}
+
+export function pageChangeSignaturePreview(
+  session: ActiveSession,
+  token: string,
+  offset: number,
+  maxBytes: number,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Loading more changes…');
+  return sharedPageChangeSignaturePreview(exec, token, offset, maxBytes);
+}
+
+export function applyChangeSignature(
+  session: ActiveSession,
+  token: string,
+  deselectedIds: string[],
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Applying signature change…');
+  return sharedApplyChangeSignature(exec, token, deselectedIds);
+}
+
+export function clearChangeSignaturePreview(session: ActiveSession, token: string): string {
+  return sharedClearChangeSignaturePreview(defaultQueryExecutorUsing(session), token);
 }
 
 // Paginated rename-class preview: fetched NON-BLOCKING (progress + responsive),
