@@ -16,6 +16,10 @@
  * at it, so the feature list is described in exactly one place. The VS Code
  * plumbing around each install (SystemUser prompt, progress UI, session refresh)
  * stays in the command modules — this registry only owns the per-feature facts.
+ *
+ * Consumers reach a feature directly off `pluginFeatures` (e.g.
+ * `pluginFeatures.refactoring`), which keeps the reference typo-proof and
+ * autocompleted; loops that touch every feature use the `PLUGIN_FEATURES` array.
  */
 import * as path from 'path';
 import { ActiveSession } from '../sessionManager';
@@ -63,40 +67,54 @@ export interface PluginFeature {
   ): Promise<PluginInstallResult>;
 }
 
-/** Every feature the server plugin can install, in file-in order. */
-export const PLUGIN_FEATURES: readonly PluginFeature[] = [
-  {
+/**
+ * Every feature the server plugin can install, keyed by id and in file-in order.
+ *
+ * This keyed record is the single source of truth. Consumers reference a feature
+ * directly — `pluginFeatures.refactoring` — instead of passing an id string, so
+ * the reference is autocompleted and a typo is a compile error rather than a
+ * runtime miss. `as const satisfies …` does double duty: `satisfies` type-checks
+ * that every entry is a well-formed `PluginFeature`, while `as const` keeps the
+ * literal `id`s, which is what makes `PluginFeatureId`/`PluginFeatureRef` below
+ * exact rather than widened to `string`.
+ */
+export const pluginFeatures = {
+  refactoring: {
     id: 'refactoring',
     label: 'Refactoring engine',
     payloadSubdir: path.join('resources', 'refactoring'),
-    isApplicable: () => true,
+    // Loads on every release; the parameter is declared (not used) so the
+    // signature matches `enhancedInspector.isApplicable` and version-passing callers.
+    isApplicable: (_stoneVersion: string | undefined) => true,
     probe: checkRefactoringSupportAvailable,
-    install: async (session, payloadDir, onProgress) => {
+    install: async (session: ActiveSession, payloadDir: string, onProgress?: ProgressReporter) => {
       const r = await installRefactoringSupport(session, payloadDir, onProgress);
       return { success: r.success, message: r.message, report: r.report };
     },
   },
-  {
+  enhancedInspector: {
     id: 'enhancedInspector',
     label: 'Enhanced Inspector',
     payloadSubdir: path.join('resources', 'enhancedInspector'),
-    isApplicable: (stoneVersion) => supportsEnhancedInspector(stoneVersion),
+    isApplicable: (stoneVersion: string | undefined) => supportsEnhancedInspector(stoneVersion),
     probe: isEnhancedInspectorInstalled,
-    install: async (session, payloadDir, onProgress) => {
+    install: async (session: ActiveSession, payloadDir: string, onProgress?: ProgressReporter) => {
       const r = await installEnhancedInspectorSupport(session, payloadDir, onProgress);
       return { success: r.success, message: r.message };
     },
   },
-];
+} as const satisfies Record<string, PluginFeature>;
+
+/** The closed set of feature ids, derived from the registry keys. */
+export type PluginFeatureId = keyof typeof pluginFeatures;
 
 /**
- * The registry entry for `id`. Throws on an unknown id — the id set is closed
- * and compiled-in, so a miss is a programming error, not a runtime condition.
+ * A reference to an actual registry entry. Because the registry is `as const`,
+ * each member carries its literal `id`, so this type accepts `pluginFeatures.x`
+ * but rejects an ad-hoc object that merely matches `PluginFeature`'s shape.
  */
-export function pluginFeature(id: string): PluginFeature {
-  const feature = PLUGIN_FEATURES.find((f) => f.id === id);
-  if (!feature) {
-    throw new Error(`Unknown plugin feature: ${id}`);
-  }
-  return feature;
-}
+export type PluginFeatureRef = (typeof pluginFeatures)[PluginFeatureId];
+
+/** The registry as an array, in file-in order — for install/verify loops that
+ *  iterate every feature rather than reaching for a specific one. */
+export const PLUGIN_FEATURES: readonly PluginFeature[] = Object.values(pluginFeatures);

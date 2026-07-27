@@ -15,6 +15,7 @@ import {
   requireServerPluginFeature,
   requireServerPluginFeatureAbsent,
 } from '../../__tests__/requireServerPluginFeature';
+import { pluginFeatures } from '../../serverPlugin/pluginFeatures';
 
 /**
  * Automatic GCI integration test for the rename-instance-variable round trip:
@@ -97,7 +98,7 @@ describe('rename instance variable (integration)', () => {
   });
 
   it('rewrites references across the defining class and its subclass', (ctx) => {
-    requireServerPluginFeature('refactoring', ctx, session());
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
     defineCounterHierarchy();
 
@@ -111,7 +112,7 @@ describe('rename instance variable (integration)', () => {
   });
 
   it('rewrites the instance-variable list in the class definition', (ctx) => {
-    requireServerPluginFeature('refactoring', ctx, session());
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
     defineCounterHierarchy();
 
@@ -126,7 +127,7 @@ describe('rename instance variable (integration)', () => {
   });
 
   it('builds the preview without committing', (ctx) => {
-    requireServerPluginFeature('refactoring', ctx, session());
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
     defineCounterHierarchy();
     const needsCommitBefore = exec('System needsCommit printString').trim();
@@ -141,7 +142,7 @@ describe('rename instance variable (integration)', () => {
   // silently no-op-ing or returning a malformed change-set the client would
   // mis-render.
   it('surfaces a clear error instead of a malformed preview when the engine is not loaded', (ctx) => {
-    requireServerPluginFeatureAbsent('refactoring', ctx, session());
+    requireServerPluginFeatureAbsent(pluginFeatures.refactoring, ctx, session());
 
     defineCounterHierarchy();
 

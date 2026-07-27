@@ -30,13 +30,13 @@ import {
   REFACTORING_PAYLOAD_FILES,
 } from './refactoringInstall';
 import { obtainSystemUserSession } from '../serverPlugin/systemUserAuth';
-import { pluginFeature } from '../serverPlugin/pluginFeatures';
+import { pluginFeatures } from '../serverPlugin/pluginFeatures';
 
 // Payload location relative to the extension root, from the shared feature
 // registry (the single source of truth). `resources/` ships in the packaged
 // VSIX (unlike `gs-src/`, which is .vscodeignore'd), so the same path resolves
 // in both the F5 dev host and an installed extension.
-const PAYLOAD_SUBDIR = pluginFeature('refactoring').payloadSubdir;
+const PAYLOAD_SUBDIR = pluginFeatures.refactoring.payloadSubdir;
 
 /** Lazily-created output channel for the loader's completeness report. */
 let reportChannel: vscode.OutputChannel | undefined;

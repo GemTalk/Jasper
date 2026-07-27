@@ -27,13 +27,13 @@ import {
   ENHANCED_INSPECTOR_FILES,
 } from './enhancedInspectorInstall';
 import { obtainSystemUserSession } from './serverPlugin/systemUserAuth';
-import { pluginFeature } from './serverPlugin/pluginFeatures';
+import { pluginFeatures } from './serverPlugin/pluginFeatures';
 
 // Payload location relative to the extension root, from the shared feature
 // registry (the single source of truth). `resources/` ships in the packaged
 // VSIX (unlike `docs/`, which is .vscodeignore'd), so the same path resolves in
 // both the F5 dev host and an installed extension.
-const PAYLOAD_SUBDIR = pluginFeature('enhancedInspector').payloadSubdir;
+const PAYLOAD_SUBDIR = pluginFeatures.enhancedInspector.payloadSubdir;
 
 /**
  * The working session won't see the newly-committed classes until its view is

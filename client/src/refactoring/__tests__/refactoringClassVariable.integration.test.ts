@@ -11,6 +11,7 @@ import { PREVIEW_PAGE_BYTES } from '../queries/previewRenameMethod';
 import { parseStartPreview, parseApplyResult } from '../renameClassVarPreview';
 import type { ActiveSession } from '../../sessionManager';
 import { requireServerPluginFeature } from '../../__tests__/requireServerPluginFeature';
+import { pluginFeatures } from '../../serverPlugin/pluginFeatures';
 
 /**
  * Automatic GCI integration test for the rename-class-variable (R4) refactoring,
@@ -118,7 +119,7 @@ describe('rename class variable (integration)', () => {
   });
 
   it('runs the rename-class-variable GS SUnit suite in-stone with zero failures', (ctx) => {
-    requireServerPluginFeature('refactoring', ctx, session());
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
     const code = `| r |
 ${fileInTests()}
@@ -129,7 +130,7 @@ r := (System myUserProfile symbolList objectNamed: #GsRenameClassVariableRefacto
   });
 
   it('previews the rename across both sides and the subclass, and stages the class-def edit', async (ctx) => {
-    requireServerPluginFeature('refactoring', ctx, session());
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
     defineFixture();
 
@@ -159,7 +160,7 @@ r := (System myUserProfile symbolList objectNamed: #GsRenameClassVariableRefacto
   });
 
   it('applies the rename server-side, preserving the value and creating no new version', async (ctx) => {
-    requireServerPluginFeature('refactoring', ctx, session());
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
     defineFixture();
     const token = `rcvit-apply-${BASE}`;
@@ -195,7 +196,7 @@ r := (System myUserProfile symbolList objectNamed: #GsRenameClassVariableRefacto
   });
 
   it('rewrites a genuine reference but leaves a shadowing method temporary unstaged in the preview', async (ctx) => {
-    requireServerPluginFeature('refactoring', ctx, session());
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
     defineShadowFixture();
 
@@ -218,7 +219,7 @@ r := (System myUserProfile symbolList objectNamed: #GsRenameClassVariableRefacto
   });
 
   it('leaves the shadowing method source unchanged after applying the rename', async (ctx) => {
-    requireServerPluginFeature('refactoring', ctx, session());
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
     defineShadowFixture();
     const token = `rcvit-shadow-apply-${SHADOW_BASE}`;

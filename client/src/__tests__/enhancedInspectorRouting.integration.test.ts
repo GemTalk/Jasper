@@ -12,6 +12,7 @@ import {
   requireServerPluginFeature,
   requireServerPluginFeatureAbsent,
 } from './requireServerPluginFeature';
+import { pluginFeatures } from '../serverPlugin/pluginFeatures';
 
 const OOP_NIL = 0x14n;
 
@@ -54,7 +55,7 @@ describe('inspect it routing (integration)', () => {
   });
 
   it('routes to the enhanced inspector once the feature is installed on a supported version', (ctx) => {
-    requireServerPluginFeature('enhancedInspector', ctx, session());
+    requireServerPluginFeature(pluginFeatures.enhancedInspector, ctx, session());
 
     expect(refreshEnhancedInspectorAvailable(session())).toBe(true);
   });
@@ -62,7 +63,7 @@ describe('inspect it routing (integration)', () => {
   // Degradation assertion: on a bare stone, or a version too old for the Enhanced
   // Inspector, routing must fall back rather than ever answer true.
   it('never routes to the enhanced inspector when the feature is absent', (ctx) => {
-    requireServerPluginFeatureAbsent('enhancedInspector', ctx, session());
+    requireServerPluginFeatureAbsent(pluginFeatures.enhancedInspector, ctx, session());
 
     expect(refreshEnhancedInspectorAvailable(session())).toBe(false);
   });
@@ -73,7 +74,7 @@ describe('inspect it routing (integration)', () => {
   // every stone, so it is a stable fixture for the dictionary branch the tree
   // provider uses.
   it('the classic-inspector fallback reads a live object through the real queries', (ctx) => {
-    requireServerPluginFeatureAbsent('enhancedInspector', ctx, session());
+    requireServerPluginFeatureAbsent(pluginFeatures.enhancedInspector, ctx, session());
 
     const { result: globalsOop, err } = gci.GciTsResolveSymbol(handle, 'Globals', OOP_NIL);
     expect(err.number).toBe(0);
