@@ -43,7 +43,10 @@ export function readTestStone(): TestStone | undefined {
   const netldi = env.VITE_GEMSTONE_GEM_NRS
     ? netldiNameFromGemNrs(env.VITE_GEMSTONE_GEM_NRS)
     : undefined;
-  const version = gciLibraryPath.match(/libgcits-([\d.]+)-/)?.[1];
+  // The composed NRS strings don't carry the GemStone version at all, so this is
+  // the one value that must come from an atomic var; fall back to parsing the
+  // GCI library filename for a stale `.env.test` predating VITE_GEMSTONE_VERSION.
+  const version = env.VITE_GEMSTONE_VERSION ?? gciLibraryPath.match(/libgcits-([\d.]+)-/)?.[1];
   if (!stoneNrs || !netldi || !version) return undefined;
 
   return {
