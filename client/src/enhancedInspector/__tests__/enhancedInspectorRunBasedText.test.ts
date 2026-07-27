@@ -20,7 +20,16 @@ import * as path from 'path';
 
 const CLIENT_SRC = fs.readFileSync(path.join(__dirname, '..', 'enhancedInspector.ts'), 'utf8');
 const SERVER_PAYLOAD = fs.readFileSync(
-  path.join(__dirname, '..', '..', '..', 'resources', 'enhancedInspector', 'gtoolkit-remote.gs'),
+  path.join(
+    __dirname,
+    '..',
+    '..',
+    '..',
+    '..',
+    'resources',
+    'enhancedInspector',
+    'gtoolkit-remote.gs',
+  ),
   'utf8',
 );
 

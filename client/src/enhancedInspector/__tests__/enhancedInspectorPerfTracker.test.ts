@@ -8,7 +8,7 @@ import {
   RESET_LABEL,
   COPY_LABEL,
 } from '../enhancedInspectorPerfTracker';
-import type { GciLibrary } from '../gciLibrary';
+import type { GciLibrary } from '../../gciLibrary';
 
 // Reset singleton state before each test.
 beforeEach(() => {

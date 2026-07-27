@@ -29,7 +29,7 @@ import {
   installEnhancedInspectorSupport,
   isEnhancedInspectorInstalled,
   supportsEnhancedInspector,
-} from '../enhancedInspectorInstall';
+} from '../enhancedInspector/enhancedInspectorInstall';
 
 /** Reports incremental progress: a message plus a 0–100 increment for this step. */
 export type ProgressReporter = (message: string, increment: number) => void;

@@ -8,13 +8,13 @@ vi.mock('vscode', () => ({
   ViewColumn: { Beside: 2 },
 }));
 
-vi.mock('../debugQueries', () => ({
+vi.mock('../../debugQueries', () => ({
   fetchPrintString: vi.fn(),
   getObjectClassName: vi.fn(),
   fetchFullPrintString: vi.fn(),
 }));
 
-vi.mock('../browserQueries', () => ({
+vi.mock('../../browserQueries', () => ({
   executeFetchString: vi.fn(() => ''),
 }));
 
@@ -34,17 +34,17 @@ vi.mock('../queries/getEnhancedInspectorViewSpecs', () => ({
   fetchMethodBrowseLocation: vi.fn(),
 }));
 
-vi.mock('../systemBrowser', () => ({
+vi.mock('../../systemBrowser', () => ({
   SystemBrowser: { navigateBeside: vi.fn() },
 }));
 
 import * as vscode from 'vscode';
-import * as debug from '../debugQueries';
+import * as debug from '../../debugQueries';
 import * as queries from '../queries/getEnhancedInspectorViewSpecs';
-import { SystemBrowser } from '../systemBrowser';
+import { SystemBrowser } from '../../systemBrowser';
 import { EnhancedInspector } from '../enhancedInspector';
-import { ActiveSession } from '../sessionManager';
-import { GemStoneLogin } from '../loginTypes';
+import { ActiveSession } from '../../sessionManager';
+import { GemStoneLogin } from '../../loginTypes';
 
 // ── Mock panel factory ─────────────────────────────────────────────────────
 // Each panel is self-contained: its own postMessage, title, and sendMessage.

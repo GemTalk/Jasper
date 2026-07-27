@@ -3,7 +3,7 @@ import { GciLibrary, GciError } from './gciLibrary';
 import { OOP_NIL } from './gciConstants';
 import { GemStoneLogin, gemNrsFor, loginLabel } from './loginTypes';
 import { logInfo } from './gciLog';
-import { wrapWithEnhancedInspectorPerfProxy } from './enhancedInspectorPerfTracker';
+import { wrapWithEnhancedInspectorPerfProxy } from './enhancedInspector/enhancedInspectorPerfTracker';
 import { installTranscriptSink } from './transcriptSink';
 
 // How often the non-blocking login path polls GciTsNbLoginFinished. Small enough

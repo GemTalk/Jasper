@@ -1,10 +1,8 @@
 import * as vscode from 'vscode';
 import * as crypto from 'crypto';
-import * as fs from 'fs';
-import * as path from 'path';
-import { ActiveSession } from './sessionManager';
-import * as debug from './debugQueries';
-import { executeFetchString } from './browserQueries';
+import { ActiveSession } from '../sessionManager';
+import * as debug from '../debugQueries';
+import { executeFetchString } from '../browserQueries';
 import {
   getEnhancedInspectorViewSpecs,
   fetchEnhancedInspectorPrintTabData,
@@ -20,14 +18,15 @@ import {
   fetchMethodSource,
   fetchMethodBrowseLocation,
 } from './queries/getEnhancedInspectorViewSpecs';
-import { SystemBrowser } from './systemBrowser';
-import { QueryExecutor } from './queries/types';
+import { SystemBrowser } from '../systemBrowser';
+import { QueryExecutor } from '../queries/types';
+import { readWebviewScript } from '../webviewAssets';
 
 // Column-strip model, injected into the webview as a <script> tag (read at
 // runtime, not bundled — same pattern as listFilter.js / methodListView.js).
-const enhancedInspectorColumnsJs = fs.readFileSync(
-  path.join(__dirname, '..', 'src', 'enhancedInspectorColumns.js'),
-  'utf8',
+const enhancedInspectorColumnsJs = readWebviewScript(
+  'enhancedInspectorColumns.js',
+  'enhancedInspector',
 );
 
 const PAGE_SIZE = 100;

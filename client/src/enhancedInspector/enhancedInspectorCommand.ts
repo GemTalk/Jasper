@@ -18,16 +18,16 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
-import { ActiveSession, SessionManager } from './sessionManager';
-import { sessionNeedsCommit } from './browserQueries';
+import { ActiveSession, SessionManager } from '../sessionManager';
+import { sessionNeedsCommit } from '../browserQueries';
 import { refreshEnhancedInspectorAvailable } from './enhancedInspectorAvailability';
 import {
   installEnhancedInspectorSupport,
   isEnhancedInspectorInstalled,
   ENHANCED_INSPECTOR_FILES,
 } from './enhancedInspectorInstall';
-import { obtainSystemUserSession } from './serverPlugin/systemUserAuth';
-import { pluginFeatures } from './serverPlugin/pluginFeatures';
+import { obtainSystemUserSession } from '../serverPlugin/systemUserAuth';
+import { pluginFeatures } from '../serverPlugin/pluginFeatures';
 
 // Payload location relative to the extension root, from the shared feature
 // registry (the single source of truth). `resources/` ships in the packaged
