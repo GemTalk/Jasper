@@ -42,7 +42,7 @@ export async function renameTemporaryCommand(
   logInfo('[renameTemp] invoked');
   const target = resolveMethodEditor(sessions, position, 'a temporary or argument');
   if (!target) return;
-  if (!(await ensureRbSupport(target.session.rbSupportAvailable, 'Renaming a temporary'))) {
+  if (!(await ensureRbSupport(target.session, 'Renaming a temporary'))) {
     logInfo('[renameTemp] refactoring engine unavailable; user declined install');
     return;
   }

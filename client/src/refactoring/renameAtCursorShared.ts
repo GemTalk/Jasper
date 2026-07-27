@@ -28,13 +28,26 @@ export function refuse(message: string): void {
 }
 
 /** Gate on the refactoring engine being loaded; offer to install it if not.
- *  Answers true when it is (now) available. Shared so all four cursor commands
- *  gate identically, BEFORE any engine-dependent query. */
+ *  Answers true when it is (now) available. Shared so all the refactoring commands
+ *  gate identically, BEFORE any engine-dependent query.
+ *
+ *  Takes the live session (not a boolean snapshot) so that, after the install
+ *  command runs, it RE-CHECKS `session.rbSupportAvailable` and answers the actual
+ *  outcome — if the install failed (wrong password, missing payload) or the user
+ *  declined the post-install "Refresh this session?" prompt, this returns false and
+ *  the caller cleanly refuses, instead of proceeding to send Smalltalk referencing
+ *  refactoring classes that do not exist yet (a cryptic compile/DNU error). Mirrors
+ *  gemstoneExplorer's private gate. */
 export async function ensureRbSupport(
-  available: boolean | undefined,
+  session: ActiveSession | undefined,
   action: string,
 ): Promise<boolean> {
-  if (available) return true;
+  if (!session) return false;
+  // Read freshly each call: the install command below flips rbSupportAvailable, a
+  // side effect TS's control-flow narrowing cannot see, so a direct property re-read
+  // would be narrowed away.
+  const available = (): boolean => session.rbSupportAvailable === true;
+  if (available()) return true;
   const LOAD = 'Install GemStone Support…';
   const choice = await vscode.window.showInformationMessage(
     `${action} needs the GemStone refactoring engine, which isn't loaded in this stone yet.`,
@@ -42,7 +55,7 @@ export async function ensureRbSupport(
   );
   if (choice !== LOAD) return false;
   await vscode.commands.executeCommand('gemstone.installServerSupport');
-  return true;
+  return available();
 }
 
 export interface MethodEditorTarget {

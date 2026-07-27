@@ -80,6 +80,20 @@ import {
   clearInlineMethodPreview as sharedClearInlineMethodPreview,
 } from './refactoring/queries/previewInlineMethod';
 import {
+  analyzeExtractTemporary as sharedAnalyzeExtractTemporary,
+  startExtractTemporaryPreview as sharedStartExtractTemporaryPreview,
+  pageExtractTemporaryPreview as sharedPageExtractTemporaryPreview,
+  applyExtractTemporary as sharedApplyExtractTemporary,
+  clearExtractTemporaryPreview as sharedClearExtractTemporaryPreview,
+} from './refactoring/queries/previewExtractTemporary';
+import {
+  analyzeInlineTemporary as sharedAnalyzeInlineTemporary,
+  startInlineTemporaryPreview as sharedStartInlineTemporaryPreview,
+  pageInlineTemporaryPreview as sharedPageInlineTemporaryPreview,
+  applyInlineTemporary as sharedApplyInlineTemporary,
+  clearInlineTemporaryPreview as sharedClearInlineTemporaryPreview,
+} from './refactoring/queries/previewInlineTemporary';
+import {
   getClassHistory as sharedGetClassHistory,
   revertClassToVersion as sharedRevertClassToVersion,
   removeClassVersion as sharedRemoveClassVersion,
@@ -996,6 +1010,135 @@ export function applyInlineMethod(
 
 export function clearInlineMethodPreview(session: ActiveSession, token: string): string {
   return sharedClearInlineMethodPreview(defaultQueryExecutorUsing(session), token);
+}
+
+// Extract-temporary (M3) preview: pre-flight analysis, paginated start/page fetched
+// NON-BLOCKING, server-side apply. Method-local, a single methodRecompile change,
+// all-or-nothing (apply passes an empty deselected set).
+export function analyzeExtractTemporary(
+  session: ActiveSession,
+  className: string,
+  selector: string,
+  isMeta: boolean,
+  selStart: number,
+  selStop: number,
+  dict?: number | string,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Analysing selection…');
+  return sharedAnalyzeExtractTemporary(exec, className, selector, isMeta, selStart, selStop, dict);
+}
+
+export function startExtractTemporaryPreview(
+  session: ActiveSession,
+  className: string,
+  selector: string,
+  isMeta: boolean,
+  selStart: number,
+  selStop: number,
+  newName: string,
+  replaceAll: boolean,
+  token: string,
+  maxBytes: number,
+  dict?: number | string,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, `Previewing extract of ${newName}…`);
+  return sharedStartExtractTemporaryPreview(
+    exec,
+    className,
+    selector,
+    isMeta,
+    selStart,
+    selStop,
+    newName,
+    replaceAll,
+    token,
+    maxBytes,
+    dict,
+  );
+}
+
+export function pageExtractTemporaryPreview(
+  session: ActiveSession,
+  token: string,
+  offset: number,
+  maxBytes: number,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Loading more changes…');
+  return sharedPageExtractTemporaryPreview(exec, token, offset, maxBytes);
+}
+
+export function applyExtractTemporary(session: ActiveSession, token: string): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Applying extraction…');
+  return sharedApplyExtractTemporary(exec, token);
+}
+
+export function clearExtractTemporaryPreview(session: ActiveSession, token: string): string {
+  return sharedClearExtractTemporaryPreview(defaultQueryExecutorUsing(session), token);
+}
+
+// Inline-temporary (M4) preview: pre-flight analysis, paginated start/page fetched
+// NON-BLOCKING, server-side apply. Method-local, a single methodRecompile change,
+// all-or-nothing (apply passes an empty deselected set).
+export function analyzeInlineTemporary(
+  session: ActiveSession,
+  className: string,
+  selector: string,
+  isMeta: boolean,
+  offset: number,
+  dict?: number | string,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Analysing temporary…');
+  return sharedAnalyzeInlineTemporary(exec, className, selector, isMeta, offset, dict);
+}
+
+export function startInlineTemporaryPreview(
+  session: ActiveSession,
+  className: string,
+  selector: string,
+  isMeta: boolean,
+  offset: number,
+  token: string,
+  maxBytes: number,
+  dict?: number | string,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Previewing inline…');
+  return sharedStartInlineTemporaryPreview(
+    exec,
+    className,
+    selector,
+    isMeta,
+    offset,
+    token,
+    maxBytes,
+    dict,
+  );
+}
+
+export function pageInlineTemporaryPreview(
+  session: ActiveSession,
+  token: string,
+  offset: number,
+  maxBytes: number,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Loading more changes…');
+  return sharedPageInlineTemporaryPreview(exec, token, offset, maxBytes);
+}
+
+export function applyInlineTemporary(session: ActiveSession, token: string): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Applying inline…');
+  return sharedApplyInlineTemporary(exec, token);
+}
+
+export function clearInlineTemporaryPreview(session: ActiveSession, token: string): string {
+  return sharedClearInlineTemporaryPreview(defaultQueryExecutorUsing(session), token);
 }
 
 // Class-definition history (native classHistory, this-stone-only, read-only) and

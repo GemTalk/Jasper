@@ -4,6 +4,18 @@ All notable changes to the **GemStone Smalltalk** extension will be documented i
 
 ## [Unreleased]
 
+### Added
+
+- **Refactoring: rename instance variable, class variable, method/selector, class, and temporary/argument.** A server-side refactoring engine (based on the Refactoring Browser) plus client commands with preview panels. The renames are offered from the Explorer's context menus, from the method source editor's **Refactor…** menu, and at the cursor. ([#191](https://github.com/GemTalk/Jasper/pull/191))
+- **Refactoring: Extract Method and Inline Method.** Select code in a method and extract it into a new method, or inline a sent method back into its callers — each with a preview before applying. ([#222](https://github.com/GemTalk/Jasper/pull/222))
+- **Class History panel.** A **Class History…** action on a class shows its definition history across class versions. ([#191](https://github.com/GemTalk/Jasper/pull/191))
+- **Unified optional server-support install.** The Enhanced Inspector and the refactoring engine now install together as one "server support" bundle: a single `gemstone.serverSupport.autoInstall` setting (`ask`/`always`/`never`), one **Install Server Support (Enhanced Inspector + Refactoring)** command, and one connect-time prompt. The refactoring engine loads on all supported GemStone versions; the loader's completeness report goes to a new **GemStone Refactoring** output channel. ([#191](https://github.com/GemTalk/Jasper/pull/191))
+- **Rowan: manage a project's dependencies and load state.** A Rowan project can declare dependencies — by git URL or a local directory, pinned to an exact commit — and see, beside its packages, whether each dependency is committed to disk and loaded into the database. Adding one offers to load the project (the `gemstone.rowan.loadAfterAddingDependency` setting remembers the answer), and a project loads and unloads as the working user who asked, never SystemUser. ([#216](https://github.com/GemTalk/Jasper/pull/216))
+
+### Security
+
+- **Patched the `brace-expansion` denial-of-service advisory (GHSA-mh99-v99m-4gvg).** A scoped npm override forces `vscode-languageclient`'s `minimatch` to `^10.2.5` so the only `brace-expansion` in the tree is the patched 5.0.8, avoiding a `vscode-languageclient` major bump that doesn't compile under the repo's module resolution. ([#288](https://github.com/GemTalk/Jasper/pull/288))
+
 ## [1.8.9] - 2026-07-22
 
 ### Changed
@@ -865,7 +877,7 @@ Maintenance release — no user-facing changes. Internal refactoring (migrating 
 - **GCI integration test suite** — separate vitest config (`vitest.gci.config.ts`) and `npm run test:gci` script for tests requiring the native library; 171 tests across 16 test files
 - **GCI library file validation** — the login flow now validates the selected library filename against the expected `libgcits-<version>-64.<ext>` pattern
 - **Login management UI** — sidebar tree view, editor panel for add/edit/duplicate/delete logins, stored in VS Code global settings
-- **GCI documentation headers** — `docs/gcits.hf` and `docs/gcits.ht` for reference
+- **GCI documentation headers** — `docs/3.7/gcits.hf` and `docs/3.7/gcits.ht` for reference
 - **Display It / Execute It** — execute Smalltalk code from the editor against a live GemStone session; Cmd+D inserts the `printString` result inline (with italic decoration), Cmd+E executes silently; non-blocking execution with exponential-backoff polling, progress notification after 2 seconds with soft/hard break support
 - **Session selection** — selected session concept for keyboard-driven code execution; auto-selects when only one session exists, QuickPick prompt for multiple sessions; status bar item shows active session; tree view highlights selected session with distinct icon
 - **Class/method browser** — sidebar tree view (Dict → Class → Definition/Comment/Instance/Class → Category → Method) with `gemstone://` virtual filesystem; click a method to open and edit in the standard editor, Cmd+S compiles; class definitions and comments are also editable documents

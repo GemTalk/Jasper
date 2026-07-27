@@ -93,6 +93,8 @@ import { registerGemStoneExplorer } from './gemstoneExplorer';
 import { renameTemporaryCommand } from './refactoring/renameTemporaryCommand';
 import { extractMethodCommand } from './refactoring/extractMethodCommand';
 import { inlineMethodCommand } from './refactoring/inlineMethodCommand';
+import { extractTemporaryCommand } from './refactoring/extractTemporaryCommand';
+import { inlineTemporaryCommand } from './refactoring/inlineTemporaryCommand';
 import { RefactorCodeActionProvider } from './refactoring/renameRefactorCodeActions';
 import { GemStoneWorkspaceSymbolProvider } from './gemstoneSymbolProvider';
 import { GemStoneDefinitionProvider } from './gemstoneDefinitionProvider';
@@ -1212,6 +1214,20 @@ export function activate(context: vscode.ExtensionContext) {
       'gemstone.explorer.inlineMethod',
       async (position?: unknown) => {
         await inlineMethodCommand(
+          sessionManager,
+          position instanceof vscode.Position ? position : undefined,
+        );
+      },
+    ),
+
+    vscode.commands.registerCommand('gemstone.explorer.extractTemporary', async () => {
+      await extractTemporaryCommand(sessionManager);
+    }),
+
+    vscode.commands.registerCommand(
+      'gemstone.explorer.inlineTemporary',
+      async (position?: unknown) => {
+        await inlineTemporaryCommand(
           sessionManager,
           position instanceof vscode.Position ? position : undefined,
         );
