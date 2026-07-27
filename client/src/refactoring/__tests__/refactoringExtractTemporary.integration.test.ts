@@ -14,6 +14,8 @@ import {
 import { PREVIEW_PAGE_BYTES } from '../queries/previewRenameMethod';
 import { parseAnalysis, parseStartPreview, parseApplyResult } from '../extractTemporaryPreview';
 import type { ActiveSession } from '../../sessionManager';
+import { requireServerPluginFeature } from '../../__tests__/requireServerPluginFeature';
+import { pluginFeatures } from '../../serverPlugin/pluginFeatures';
 
 /**
  * Automatic GCI integration test for the extract-temporary (M3) refactoring, over the
@@ -25,9 +27,11 @@ import type { ActiveSession } from '../../sessionManager';
  *     repeated expression, preview the single method rewrite, apply it, and confirm
  *     the stone introduced the temporary in the method.
  *
- * Gated on the engine being present (a bare stone skips the body but stays green,
- * with a reason). Fully transient: the harness aborts each test, so nothing is
- * committed. All emitted Smalltalk is ASCII-only for the 3.6.x matrix.
+ * Gated via the shared server-plugin feature gate
+ * (`requireServerPluginFeature(pluginFeatures.refactoring, …)`): the engine-dependent
+ * tests run in the plugin-installed CI pass and skip, with a reason, against a bare
+ * stone. Fully transient: the harness aborts each test, so nothing is committed. All
+ * emitted Smalltalk is ASCII-only for the 3.6.x matrix.
  */
 describe('extract temporary (integration)', () => {
   let gci: GciLibrary;
@@ -92,7 +96,7 @@ describe('extract temporary (integration)', () => {
   });
 
   it('runs the extract-temporary GS SUnit suite in-stone with zero failures', (ctx) => {
-    if (!enginePresent()) ctx.skip('refactoring engine not loaded in this stone');
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
     const code = `| r |
 ${fileInTests()}
@@ -103,7 +107,7 @@ r := (System myUserProfile symbolList objectNamed: #GsExtractTemporaryRefactorin
   });
 
   it('pre-flights a repeated expression, counting its occurrences', async (ctx) => {
-    if (!enginePresent()) ctx.skip('refactoring engine not loaded in this stone');
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
     defineFixture();
     const { selStart, selStop } = selectionRange();
@@ -125,7 +129,7 @@ r := (System myUserProfile symbolList objectNamed: #GsExtractTemporaryRefactorin
   });
 
   it('applies the extraction, introducing the temporary in the method', async (ctx) => {
-    if (!enginePresent()) ctx.skip('refactoring engine not loaded in this stone');
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
     defineFixture();
     const { selStart, selStop } = selectionRange();
