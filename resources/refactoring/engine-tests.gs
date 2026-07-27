@@ -1040,6 +1040,71 @@ testAnalyzeReportsUnarySelector
 	self assert: json includesSubstring: '"argNames":[]'
 %
 
+category: 'tests - preconditions'
+method: GsChangeSignatureRefactoringTest
+testCollisionDetectedAcrossHierarchyImplementors
+	"#1: in #hierarchy/#wholeSystem scope EVERY in-scope implementor is renamed, so a subclass
+	 that ALREADY implements the new selector must be flagged -- not only the defining class.
+	 GsCSSub implements movePointX:y: (override) AND moveY:x:; renaming movePointX:y: -> moveY:x:
+	 in hierarchy scope would overwrite GsCSSub's moveY:x:."
+	| ref |
+	self compile: 'moveY: yy x: xx
+	^Array with: yy with: xx' in: self subFixture.
+	ref := self changePartsTo: #('moveY:' 'x:') permutation: #(2 1)
+		argNames: #('' '') defaults: #('' '') scope: #hierarchy.
+
+	self assert: ref newSelectorCollision notNil.
+	self assert: ref newSelectorCollision includesSubstring: 'GsCSSub'
+%
+
+category: 'tests - preconditions'
+method: GsChangeSignatureRefactoringTest
+testEmptyDefaultForNewParameterIsDeclined
+	"#2: a new parameter with no default would make the sender rewrite throw (and the sender be
+	 skipped) while the implementor rename still applies -- a half-apply. Blocked up front."
+	| ref |
+	ref := GsChangeSignatureRefactoring
+		class: self baseFixture meta: false changeSelector: #csPing
+		toParts: #('csPingWith:') permutation: #(0)
+		argNames: #('n') defaults: #('') scope: #wholeSystem.
+
+	self assert: ref declineReason notNil.
+	self assert: ref declineReason includesSubstring: 'default'.
+	self assert: ref changeSet changes isEmpty
+%
+
+category: 'tests - preconditions'
+method: GsChangeSignatureRefactoringTest
+testUnparseableDefaultForNewParameterIsDeclined
+	"#2: a new parameter whose default does not parse is declined for the same reason."
+	| ref |
+	ref := GsChangeSignatureRefactoring
+		class: self baseFixture meta: false changeSelector: #csPing
+		toParts: #('csPingWith:') permutation: #(0)
+		argNames: #('n') defaults: #('1 +') scope: #wholeSystem.
+
+	self assert: ref declineReason notNil.
+	self assert: ref declineReason includesSubstring: 'does not parse'
+%
+
+category: 'tests - reorder'
+method: GsChangeSignatureRefactoringTest
+testMultiLineSenderRegionIsRebuiltOnOneLine
+	"#3: a send written across multiple lines has its selector+args region rebuilt on a single
+	 line (an accepted trade-off of the whole-region rewrite); the reorder is still correct."
+	| change |
+	self compile: 'csMultiCaller
+	^self
+		movePointX: 111
+		y: 222' in: self baseFixture.
+	change := self senderChangeFor: #csMultiCaller
+		in: (self changePartsTo: #('moveY:' 'x:') permutation: #(2 1)
+			argNames: #('' '') defaults: #('' '') scope: #class) changeSet.
+
+	self assert: change notNil.
+	self assert: change newSource includesSubstring: 'moveY: 222 x: 111'
+%
+
 category: 'asserting'
 method: GsClassHistoryTest
 assert: aString includesSubstring: aSubstring

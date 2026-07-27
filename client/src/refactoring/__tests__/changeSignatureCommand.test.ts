@@ -111,20 +111,33 @@ describe('beginChangeSignature (shared flow)', () => {
     expect(queries.startChangeSignaturePreview).not.toHaveBeenCalled();
   });
 
-  it('does nothing when the edit is a no-op', async () => {
-    vi.mocked(queries.analyzeChangeSignature).mockResolvedValue(analysis());
+  it('tells the user and does nothing when the edit is a no-op', async () => {
+    // A multi-keyword selector left in its original order + parts: passes the shape
+    // validation but is a no-op, so it exercises isNoOpChange (a single-part revert would
+    // trip validateSignatureParts first).
+    const noopTarget = { ...target, selector: 'at:put:' };
+    vi.mocked(queries.analyzeChangeSignature).mockResolvedValue(
+      analysis({ arity: 2, argNames: ['k', 'v'] }),
+    );
     vi.mocked(showChangeSignatureEditor).mockResolvedValue({
-      newParts: ['at:'],
-      permutation: [1],
-      newArgNames: ['k'],
-      defaults: [''],
+      newParts: ['at:', 'put:'],
+      permutation: [1, 2],
+      newArgNames: ['k', 'v'],
+      defaults: ['', ''],
       scope: { kind: 'hierarchy' },
     });
 
-    const applied = await beginChangeSignature(target, { session: session(), onApplied: vi.fn() });
+    const applied = await beginChangeSignature(noopTarget, {
+      session: session(),
+      onApplied: vi.fn(),
+    });
 
     expect(applied).toBe(false);
     expect(queries.startChangeSignaturePreview).not.toHaveBeenCalled();
+    // The user is told why nothing happened (the command's "always say why" contract).
+    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+      expect.stringContaining('unchanged'),
+    );
   });
 
   it('refuses (and never opens the panel) on a collision from the preview', async () => {

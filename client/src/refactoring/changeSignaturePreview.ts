@@ -23,6 +23,14 @@
  * refuses to open the panel when they are non-null.
  */
 
+import {
+  isKeywordSelector,
+  isBinarySelector,
+  selectorParts,
+  selectorArgCount,
+  buildSelector,
+} from './selectorShape';
+
 /** One staged change from the engine. `selector` is the old selector for a
  *  methodRename, or the sender's own selector for a methodRecompile. */
 export interface MethodSignatureChange {
@@ -258,40 +266,12 @@ export function methodChangeLabel(change: MethodSignatureChange): string {
   return `${change.className}${side}>>${change.selector ?? '?'}`;
 }
 
-// --- selector shape helpers ---------------------------------------------------
+// --- selector shape helpers (shared with R2 — see selectorShape.ts) -----------
 
-/** True if the selector is a keyword selector (contains a colon). */
-export function isKeywordSelector(selector: string): boolean {
-  return selector.includes(':');
-}
-
-/** True if the selector is a binary selector (all chars are binary characters). */
-export function isBinarySelector(selector: string): boolean {
-  return /^[-+*/~<>=&|@%,?!]+$/.test(selector);
-}
-
-/**
- * Split a selector into its parts: a keyword selector into its colon-terminated
- * keywords (`at:put:` → ['at:', 'put:']), a unary or binary selector into the
- * single whole selector (['foo'] / ['+']). One part per parameter row of the
- * signature editor (for a keyword selector); a unary/binary selector has a single
- * part.
- */
-export function selectorParts(selector: string): string[] {
-  if (!isKeywordSelector(selector)) return [selector];
-  return selector.match(/[^:]+:/g) ?? [selector];
-}
-
-/** The number of arguments a selector takes (keyword count, 1 for binary, 0 for unary). */
-export function selectorArgCount(selector: string): number {
-  if (isKeywordSelector(selector)) return selectorParts(selector).length;
-  return isBinarySelector(selector) ? 1 : 0;
-}
-
-/** Join selector parts back into a selector symbol string. */
-export function buildSelector(parts: string[]): string {
-  return parts.join('');
-}
+// Re-exported (imported at the top) so this module's importers keep a single import
+// site; the definitions live in selectorShape.ts, shared with renameMethodPreview.ts
+// so they can't drift.
+export { isKeywordSelector, isBinarySelector, selectorParts, selectorArgCount, buildSelector };
 
 // --- signature edit model -----------------------------------------------------
 

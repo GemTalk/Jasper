@@ -154,6 +154,41 @@ describe('change-signature editor', () => {
     expect(document.getElementById('error')?.textContent).toMatch(/Duplicate argument/);
   });
 
+  it('rejects more than one part once the colons are stripped (mirrors the host)', () => {
+    mount('at:put:', ['k', 'v']);
+    const parts = document.querySelectorAll<HTMLInputElement>('input.part');
+
+    ['at', 'put'].forEach((v, i) => {
+      parts[i].value = v;
+      parts[i].dispatchEvent(new Event('input'));
+    });
+
+    expect(document.getElementById('error')?.textContent).toMatch(/keyword parts/);
+    expect((document.getElementById('ok') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('rejects a single part that is neither an identifier nor a binary operator', () => {
+    mount('size', []);
+    const part = document.querySelector<HTMLInputElement>('input.part')!;
+
+    part.value = '9bad';
+    part.dispatchEvent(new Event('input'));
+
+    expect(document.getElementById('error')?.textContent).toMatch(/unary identifier or a binary/);
+    expect((document.getElementById('ok') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('accepts a backslash binary selector', () => {
+    mount('size', []);
+    const part = document.querySelector<HTMLInputElement>('input.part')!;
+
+    part.value = '\\';
+    part.dispatchEvent(new Event('input'));
+
+    expect(document.getElementById('error')?.textContent).toBe('');
+    expect((document.getElementById('ok') as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it('has an empty permutation for a unary selector', () => {
     const { handle } = mount('size', []);
 

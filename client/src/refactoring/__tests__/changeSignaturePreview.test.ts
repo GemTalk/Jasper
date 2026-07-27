@@ -170,6 +170,15 @@ describe('selector shape helpers', () => {
     expect(isBinarySelector('size')).toBe(false);
   });
 
+  it('treats backslash as a binary selector character', () => {
+    // \\ (integer remainder) is a valid GemStone binary selector; the server lexer's
+    // SELECTOR_CHARS includes backslash, so the client's set must too.
+    expect(isBinarySelector('\\')).toBe(true);
+    expect(isBinarySelector('\\\\')).toBe(true);
+    expect(selectorArgCount('\\')).toBe(1);
+    expect(validateSignatureParts(['\\'], 'size')).toBeUndefined();
+  });
+
   it('splits a keyword selector into its parts and a non-keyword into one', () => {
     expect(selectorParts('copyFrom:to:')).toEqual(['copyFrom:', 'to:']);
     expect(selectorParts('size')).toEqual(['size']);

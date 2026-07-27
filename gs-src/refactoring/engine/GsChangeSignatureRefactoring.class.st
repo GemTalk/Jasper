@@ -29,14 +29,22 @@ removed parameter is unused in EVERY in-scope implementor body -- if it is used
 the refactoring DECLINES (naming the class). Send-site argument expressions for a
 removed slot are dropped (standard RB semantics).
 
-Like R2, the rewrite preserves comments, string literals, and formatting by
-mutating the AST and registering RBStringReplacements so RBMethodNode>>newSource
-splices minimally (falling back to a reflow only if the splice would be unsafe --
-the result is still correct because the AST was mutated). The implementor header
-is rewritten with RBMethodNode>>renameSelector:andArguments:, whose
-changeSourceSelectors:arguments: already rebuilds the whole signature region when
-the arity changes; a send is rewritten with a hand-rolled whole-region
-replacement (the message-node rename does not register one).
+Comments and string literals are NEVER touched (the rewrite is AST-based, so a
+selector spelling inside a comment or string is not a send). Whitespace/formatting
+preservation, however, differs by side:
+
+  - The implementor HEADER is rewritten with RBMethodNode>>renameSelector:
+    andArguments:, whose changeSourceSelectors:arguments: splices minimally
+    (per-token) when the arity is unchanged and rebuilds the whole signature
+    region when it changes. Body formatting is left byte-identical.
+  - A SEND is rewritten with a hand-rolled whole-region RBStringReplacement over
+    the selector+arguments span (the message-node rename does not register one).
+    Because the region is rebuilt as `part arg part arg ...` with a single space
+    between tokens, a send written across MULTIPLE LINES is collapsed onto one
+    line -- even for a pure reorder. This is an accepted trade-off: rebuilding the
+    whole region is the simple, sound way to handle add/remove (arity changes),
+    and the result is always behaviour-preserving. Only inter-token whitespace in
+    the rewritten send changes; everything else in the sender method is untouched.
 
 Scope (#class / #hierarchy / #dictionary / #wholeSystem) governs which
 implementors/senders are affected; the remainder are counted (out-of-scope) so a
@@ -375,6 +383,17 @@ GsChangeSignatureRefactoring >> computeAnalysis [
 		(permutation at: i) = 0 ifTrue: [
 			(localTemps includes: (newArgNames at: i) asSymbol)
 				ifTrue: [^declineString := 'the name ', (newArgNames at: i), ' is already a temporary in this method']]].
+	"3b. a new parameter's default must be present and parseable, or Apply half-applies:
+	 the sender rewrite (RBParser parseExpression:) throws inside buildChangeSet's per-method
+	 error guard, so that sender is silently SKIPPED while the implementor rename still lands
+	 -- new selector compiled, old removed, callers left with a DNU. Block it here."
+	(1 to: self newArity) do: [:i |
+		(permutation at: i) = 0 ifTrue: [| d |
+			d := (defaults at: i) ifNil: [''] ifNotNil: [:x | x asString].
+			d isEmpty
+				ifTrue: [^declineString := 'the new parameter ', (newArgNames at: i) asString, ' needs a default value']
+				ifFalse: [([(RBParser parseExpression: d) notNil] on: Error do: [:e | false]) not
+					ifTrue: [^declineString := 'the default value for ', (newArgNames at: i) asString, ' does not parse']]]].
 	"4. remove of a used parameter, across every in-scope implementor"
 	removed := (1 to: defArgs size) reject: [:k | permutation includes: k].
 	removed notEmpty ifTrue: [
@@ -390,9 +409,19 @@ GsChangeSignatureRefactoring >> computeAnalysis [
 							ifTrue: [^declineString := 'parameter ', (implArgs at: k) name,
 								' is used in ', base name asString, ' and cannot be removed']]]]]
 			on: Error do: [:e | nil]]].
-	"5. collision with a distinct existing method on the defining class"
-	(newSelector ~= oldSelector and: [(defTarget compiledMethodAt: newSelector otherwise: nil) notNil])
-		ifTrue: [collisionString := definingClass name asString, ' already implements ', newSelector asString]
+	"5. collision: the new selector already names a DIFFERENT method on ANY in-scope
+	 implementor class. In #hierarchy / #wholeSystem scope we rename EVERY in-scope
+	 implementor, so a subclass that already implements newSelector would be silently
+	 overwritten by applyChange: -- check them all, not only the defining class."
+	newSelector ~= oldSelector ifTrue: [
+		(environment implementorsOf: oldSelector) do: [:m |
+			[| base target |
+			 base := self baseClassOf: m.
+			 (self isClassInScope: base) ifTrue: [
+				target := m inClass.
+				(target compiledMethodAt: newSelector otherwise: nil) notNil
+					ifTrue: [collisionString := target name asString, ' already implements ', newSelector asString]]]
+			on: Error do: [:e | nil]]]
 ]
 
 { #category : 'preconditions' }

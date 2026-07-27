@@ -81,13 +81,28 @@
       const anyKeyword = p.some(function (s) {
         return s.charAt(s.length - 1) === ':';
       });
-      if (
-        anyKeyword &&
-        !p.every(function (s) {
-          return /^[A-Za-z_][A-Za-z0-9_]*:$/.test(s);
-        })
-      ) {
-        return 'Each keyword part must be an identifier ending in a colon.';
+      // Binary-selector chars incl. backslash — mirrors selectorShape.ts / the host's
+      // validateSignatureParts. Kept inline because the webview script can't import.
+      const isBinaryPart = function (s) {
+        return /^[-+*/\\~<>=&|@%,?!]+$/.test(s);
+      };
+      // Mirror the host's validateSignatureParts shape rules so an invalid selector is
+      // caught while the rows are still on screen — not after OK disposes the panel and
+      // loses the edit: all keyword parts, OR a single unary/binary part.
+      if (anyKeyword) {
+        if (
+          !p.every(function (s) {
+            return /^[A-Za-z_][A-Za-z0-9_]*:$/.test(s);
+          })
+        ) {
+          return 'Each keyword part must be an identifier ending in a colon.';
+        }
+      } else if (p.length === 1) {
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(p[0]) && !isBinaryPart(p[0])) {
+          return 'A single-part selector must be a unary identifier or a binary operator.';
+        }
+      } else {
+        return 'A selector with more than one part must use keyword parts (each ending in a colon).';
       }
       const names = newArgNames();
       const seen = {};

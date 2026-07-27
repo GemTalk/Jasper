@@ -110,7 +110,14 @@ export async function beginChangeSignature(
     return false;
   }
   const newSelector = buildSelector(edit.newParts);
-  if (isNoOpChange(edit.newParts, edit.permutation, oldSelector)) return false; // nothing to do
+  if (isNoOpChange(edit.newParts, edit.permutation, oldSelector)) {
+    // Tell the user why nothing happened (the command's "always say why" contract), the
+    // same as the total===0 / collision / decline bail-outs below.
+    void vscode.window.showInformationMessage(
+      `The signature of '${oldSelector}' is unchanged; nothing to do.`,
+    );
+    return false;
+  }
 
   // A client-generated token keys this preview's server-side state for paging and
   // the eventual apply.
