@@ -1,13 +1,18 @@
 /**
  * The Refactor code actions hosted under VS Code's native "Refactor…" editor menu
- * (`editor.action.refactor`) in a GemStone method editor: Rename
- * Temporary/Argument, Rename Instance Variable, Rename Class Variable (each on
- * the identifier at the cursor), and Rename Method (the method being edited).
- * That built-in menu item is always present in a text editor and is otherwise
- * empty for GemStone methods; this populates it (the idiomatic home for
- * refactorings) rather than adding separate top-level context-menu entries. Each
- * action invokes its command, which resolves the target at the cursor and
- * declines with a reason (pointing at the right rename) when it doesn't apply.
+ * (`editor.action.refactor`) in a GemStone method editor. That built-in menu item is
+ * always present in a text editor and is otherwise empty for GemStone methods; this
+ * populates it — the idiomatic home for refactorings — rather than adding separate
+ * top-level context-menu entries (which grew too crowded). The whole RB family lives
+ * here:
+ *   - on a SELECTION: Extract Method, Extract Temporary;
+ *   - on an IDENTIFIER at the cursor: Rename Temporary/Argument, Rename Instance
+ *     Variable, Rename Class Variable, Inline Method, Inline Temporary;
+ *   - always: Rename Method (targets the edited method, or a sent selector at the
+ *     cursor).
+ * Each action invokes its command, which resolves the target and declines with a
+ * reason when it doesn't apply — offered without pre-resolving what the token IS
+ * (that needs the stone); simple but polite.
  */
 import * as vscode from 'vscode';
 
@@ -20,46 +25,38 @@ export class RefactorCodeActionProvider implements vscode.CodeActionProvider {
     document: vscode.TextDocument,
     range: vscode.Range | vscode.Selection,
   ): vscode.CodeAction[] {
-    // "Rename Method…" targets the method being edited, so it is offered anywhere
-    // in the editor; the three variable renames need an identifier under the
-    // cursor. The variable renames are offered without knowing what the identifier
-    // IS (that needs the stone); whichever one doesn't apply declines with a
-    // reason pointing at the right one — simple but polite.
-    const method = new vscode.CodeAction('Rename Method…', vscode.CodeActionKind.Refactor);
-    method.command = {
-      command: 'gemstone.renameMethodInEditor',
-      title: 'Rename Method…',
-      // The position steers the target: a sent selector here renames that
-      // selector; the header or a non-send position renames the edited method.
-      arguments: [range.start],
+    const actions: vscode.CodeAction[] = [];
+    const action = (title: string, command: string, args?: unknown[]): vscode.CodeAction => {
+      const a = new vscode.CodeAction(title, vscode.CodeActionKind.Refactor);
+      a.command = { command, title, arguments: args };
+      return a;
     };
-    if (!document.getWordRangeAtPosition(range.start, IDENTIFIER)) return [method];
-    const temp = new vscode.CodeAction(
-      'Rename Temporary/Argument…',
-      vscode.CodeActionKind.Refactor,
-    );
-    temp.command = {
-      command: 'gemstone.renameTemporary',
-      title: 'Rename Temporary/Argument…',
-      // Pass the exact position the action was offered at, so the command renames
-      // the token here rather than wherever the editor selection happens to be.
-      arguments: [range.start],
-    };
-    const ivar = new vscode.CodeAction('Rename Instance Variable…', vscode.CodeActionKind.Refactor);
-    ivar.command = {
-      command: 'gemstone.renameInstVarAtCursor',
-      title: 'Rename Instance Variable…',
-      arguments: [range.start],
-    };
-    const classVar = new vscode.CodeAction(
-      'Rename Class Variable…',
-      vscode.CodeActionKind.Refactor,
-    );
-    classVar.command = {
-      command: 'gemstone.renameClassVarAtCursor',
-      title: 'Rename Class Variable…',
-      arguments: [range.start],
-    };
-    return [temp, ivar, classVar, method];
+
+    // Extractions need a selection (the code to extract); the commands read the
+    // editor selection, so no position argument is passed.
+    if (!range.isEmpty) {
+      actions.push(action('Extract Method…', 'gemstone.explorer.extractMethod'));
+      actions.push(action('Extract Temporary…', 'gemstone.explorer.extractTemporary'));
+    }
+
+    // Cursor-on-identifier refactorings. Each is passed the exact position the action
+    // was offered at, so it acts on the token here rather than wherever the editor
+    // selection happens to be. Whichever doesn't apply declines with a reason.
+    if (document.getWordRangeAtPosition(range.start, IDENTIFIER)) {
+      actions.push(action('Rename Temporary/Argument…', 'gemstone.renameTemporary', [range.start]));
+      actions.push(
+        action('Rename Instance Variable…', 'gemstone.renameInstVarAtCursor', [range.start]),
+      );
+      actions.push(
+        action('Rename Class Variable…', 'gemstone.renameClassVarAtCursor', [range.start]),
+      );
+      actions.push(action('Inline Method…', 'gemstone.explorer.inlineMethod', [range.start]));
+      actions.push(action('Inline Temporary…', 'gemstone.explorer.inlineTemporary', [range.start]));
+    }
+
+    // "Rename Method…" targets the method being edited (or a sent selector at the
+    // position), so it is offered anywhere in the editor.
+    actions.push(action('Rename Method…', 'gemstone.renameMethodInEditor', [range.start]));
+    return actions;
   }
 }

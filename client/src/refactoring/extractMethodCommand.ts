@@ -48,7 +48,7 @@ export async function extractMethodCommand(sessions: SessionManager): Promise<vo
   logInfo('[extractMethod] invoked');
   const target = resolveMethodEditor(sessions, undefined, 'the code to extract');
   if (!target) return;
-  if (!(await ensureRbSupport(target.session.rbSupportAvailable, 'Extracting a method'))) {
+  if (!(await ensureRbSupport(target.session, 'Extracting a method'))) {
     logInfo('[extractMethod] refactoring engine unavailable; user declined install');
     return;
   }
