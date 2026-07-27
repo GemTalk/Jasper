@@ -44,7 +44,7 @@ There are **no dates** — order is priority, and Jasper's near-weekly release c
 
 ### Later
 
-- **[Statistics & monitoring](https://github.com/GemTalk/Jasper/issues/282)** — statmonitor recording with built-in stats viewing, page-cache/extent monitoring, and audits (tracked with the GC theme). *Expected.*
+- **[Statistics & monitoring](https://github.com/GemTalk/Jasper/issues/310)** — statmonitor recording with built-in stats viewing, page-cache/extent monitoring, and audits. *Expected.*
 - **[Headless CLI](https://github.com/GemTalk/Jasper/issues/299)** over the same admin operations. *Expected.*
 - **[Dashboards/alerting, verified backup automation, container stones](https://github.com/GemTalk/Jasper/issues/300)**. *Differentiating.*
 
@@ -57,12 +57,12 @@ There are **no dates** — order is priority, and Jasper's near-weekly release c
 
 ### Next
 
-- **[Rowan audit](https://github.com/GemTalk/Jasper/issues/283)** — verify in-stone code against package metadata from the IDE, and headless for CI (tracked with the reproducible-loads theme). *Expected.*
+- **[Rowan audit](https://github.com/GemTalk/Jasper/issues/311)** — verify in-stone code against package metadata from the IDE, and headless for CI. *Expected.*
 - **[Package-scoped browsing & structure tooling](https://github.com/GemTalk/Jasper/issues/284)** — packages become a first-class browsing dimension; move classes/methods between packages; run a package's tests in one action. *Expected.*
 
 ### Later
 
-- **[CI integration](https://github.com/GemTalk/Jasper/issues/283)** — headless load-and-test into scratch stones with JUnit output (tracked with the reproducible-loads theme). *Expected.*
+- **[CI integration](https://github.com/GemTalk/Jasper/issues/312)** — headless load-and-test into scratch stones with JUnit output. *Expected.*
 - **[Metacello & Monticello interop](https://github.com/GemTalk/Jasper/issues/285)** — load community projects (Seaside, GLASS-era code) distributed as baselines or .mcz packages. *Expected.*
 - **[Method-level merge UI](https://github.com/GemTalk/Jasper/issues/302)** and **[branch-per-task workflow](https://github.com/GemTalk/Jasper/issues/303)**. *Expected.*
 
