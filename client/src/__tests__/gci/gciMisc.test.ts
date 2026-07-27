@@ -17,8 +17,8 @@ describe('GCI Priority 5: NSC, PerformFetchOops, FetchGbjInfo, NewStringFromUtf1
     expect(login.session).not.toBeNull();
     session = login.session;
 
-    OOP_CLASS_STRING = gci.GciTsResolveSymbol(session, 'String', OOP_NIL).result;
-    OOP_CLASS_ARRAY = gci.GciTsResolveSymbol(session, 'Array', OOP_NIL).result;
+    OOP_CLASS_STRING = gci.resolveSymbol(session, 'String');
+    OOP_CLASS_ARRAY = gci.resolveSymbol(session, 'Array');
   });
 
   afterAll(() => {
@@ -272,7 +272,7 @@ describe('GCI Priority 5: NSC, PerformFetchOops, FetchGbjInfo, NewStringFromUtf1
 
       // Verify the class is Unicode7 (not String)
       const classOop = gci.GciTsFetchClass(session, result);
-      const { result: unicode7Oop } = gci.GciTsResolveSymbol(session, 'Unicode7', OOP_NIL);
+      const unicode7Oop = gci.resolveSymbol(session, 'Unicode7');
       expect(classOop.result).toBe(unicode7Oop);
 
       const fetched = gci.GciTsFetchUtf8(session, result, 1024);
