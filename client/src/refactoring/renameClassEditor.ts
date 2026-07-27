@@ -15,9 +15,9 @@ import * as vscode from 'vscode';
 import * as crypto from 'crypto';
 import { renderClassEditorHtml } from './renameClassEditorHtml';
 import { RenameClassScope, RenameClassOptions } from './queries/previewRenameClass';
-import { readRefactoringWebviewScript } from './webviewAssets';
+import { readWebviewScript } from '../webviewAssets';
 
-const editorJs = readRefactoringWebviewScript('renameClassEditorView.js');
+const editorJs = readWebviewScript('renameClassEditorView.js', 'refactoring');
 
 const DEFAULT_OPTIONS: RenameClassOptions = {
   copyMethods: true,

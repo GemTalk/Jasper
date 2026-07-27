@@ -1,5 +1,5 @@
 import { ActiveSession } from './sessionManager';
-import { EnhancedInspector } from './enhancedInspector';
+import { EnhancedInspector } from './enhancedInspector/enhancedInspector';
 import { InspectorTreeProvider } from './inspectorTreeProvider';
 
 /**

@@ -4,12 +4,12 @@ vi.mock('vscode', () => ({
   window: { createOutputChannel: () => ({ appendLine: () => {} }) },
 }));
 
-vi.mock('../browserQueries', () => ({
+vi.mock('../../browserQueries', () => ({
   executeFetchString: vi.fn(),
 }));
 
-import { ActiveSession } from '../sessionManager';
-import { executeFetchString } from '../browserQueries';
+import { ActiveSession } from '../../sessionManager';
+import { executeFetchString } from '../../browserQueries';
 import {
   installEnhancedInspectorSupport,
   isEnhancedInspectorInstalled,

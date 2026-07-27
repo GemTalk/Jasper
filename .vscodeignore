@@ -59,12 +59,12 @@ client/src/**
 # they cannot be compiled into the bundle. (debuggerView.js is read at module load by debuggerPanel.ts,
 # which extension.ts imports eagerly, so omitting it here makes loading the packaged extension.js throw
 # and activation fail entirely. enhancedInspectorColumns.js is likewise read at module load by
-# enhancedInspector.ts.)
+# enhancedInspector/enhancedInspector.ts.)
 !client/src/listFilter.js
 !client/src/methodListView.js
 !client/src/debuggerView.js
-!client/src/enhancedInspectorColumns.js
 !client/src/browserColumnResize.js
+!client/src/enhancedInspector/enhancedInspectorColumns.js
 !client/src/refactoring/renameInstVarPanelView.js
 !client/src/refactoring/renameMethodEditorView.js
 !client/src/refactoring/renameMethodPanelView.js

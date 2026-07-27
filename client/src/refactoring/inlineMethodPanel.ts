@@ -15,9 +15,9 @@ import * as vscode from 'vscode';
 import * as crypto from 'crypto';
 import { StartInlinePreview, PreviewPage, ApplyResult } from './inlineMethodPreview';
 import { renderInlinePanelHtml, renderInlineCards } from './inlineMethodPanelHtml';
-import { readRefactoringWebviewScript } from './webviewAssets';
+import { readWebviewScript } from '../webviewAssets';
 
-const panelJs = readRefactoringWebviewScript('renameMethodPanelView.js');
+const panelJs = readWebviewScript('renameMethodPanelView.js', 'refactoring');
 
 /** The one leading change (the rewritten caller) is always required. */
 const CORE_COUNT = 1;
