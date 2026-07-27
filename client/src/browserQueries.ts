@@ -187,9 +187,6 @@ export type { ClassVersionInfo } from './refactoring/queries/getClassVersions';
 
 const MAX_RESULT = 256 * 1024;
 
-// Cache resolved OOP_CLASS_Utf8 per session handle (Node.js strings are UTF-8 when passed via koffi)
-const classUtf8Cache = new Map<unknown, bigint>();
-
 export class BrowserQueryError extends Error {
   constructor(
     message: string,
@@ -200,15 +197,7 @@ export class BrowserQueryError extends Error {
 }
 
 function resolveClassUtf8(session: ActiveSession): bigint {
-  let oop = classUtf8Cache.get(session.handle);
-  if (oop !== undefined) return oop;
-  const { result, err } = session.gci.GciTsResolveSymbol(session.handle, 'Utf8', OOP_NIL);
-  if (err.number !== 0) {
-    throw new BrowserQueryError(err.message || `Cannot resolve Utf8 class`, err.number);
-  }
-  oop = result;
-  classUtf8Cache.set(session.handle, oop);
-  return oop;
+  return session.gci.utf8ClassOop(session.handle);
 }
 
 // Evaluates `code` and fetches its result as a UTF-8 string via

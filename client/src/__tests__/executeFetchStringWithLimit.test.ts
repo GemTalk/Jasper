@@ -13,7 +13,7 @@ import { ActiveSession } from '../sessionManager';
 function makeSession(gciOverrides: Record<string, unknown> = {}): ActiveSession {
   const gci = {
     GciTsCallInProgress: vi.fn(() => ({ result: 0 })),
-    GciTsResolveSymbol: vi.fn(() => ({ result: 42n, err: { number: 0 } })),
+    utf8ClassOop: vi.fn(() => 42n),
     GciTsExecuteFetchBytes: vi.fn(() => ({ bytesReturned: 3, data: 'abc', err: { number: 0 } })),
     ...gciOverrides,
   };
