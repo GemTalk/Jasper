@@ -13,9 +13,9 @@ import * as vscode from 'vscode';
 import * as crypto from 'crypto';
 import { StartExtractPreview, PreviewPage, ApplyResult } from './extractMethodPreview';
 import { renderExtractPanelHtml, renderExtractCards } from './extractMethodPanelHtml';
-import { readRefactoringWebviewScript } from './webviewAssets';
+import { readWebviewScript } from '../webviewAssets';
 
-const panelJs = readRefactoringWebviewScript('renameMethodPanelView.js');
+const panelJs = readWebviewScript('renameMethodPanelView.js', 'refactoring');
 
 /** The two leading changes (new method + rewritten original) are always required. */
 const CORE_COUNT = 2;

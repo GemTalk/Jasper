@@ -5,8 +5,11 @@ import * as path from 'path';
 // Some webview DOM scripts live as standalone .js files under client/src and are
 // read at runtime — either directly via
 // `fs.readFileSync(path.join(__dirname, '..', 'src', '<name>.js'))` or through the
-// `readWebviewScript(<name>.js, <subdir>)` helper used by the feature folders — to be
-// injected into a <script> tag. Because they are read from disk (not compiled
+// `readWebviewScript(<name>.js, <subdir>)` helper, whose second argument is the
+// feature folder owning the script — to be injected into a <script> tag. Every
+// runtime read must go through one of those two forms, or the scan below misses it:
+// a wrapper that hardcodes the subdir would leave this guard checking a path the
+// production code no longer uses. Because they are read from disk (not compiled
 // into the esbuild bundle), they must be explicitly whitelisted in .vscodeignore —
 // otherwise the broad `client/src/**` ignore rule drops them from the packaged .vsix.
 //
@@ -36,7 +39,6 @@ describe('runtime-injected webview assets are shipped in the .vsix', () => {
   const directRead =
     /readFileSync\(\s*path\.join\(\s*__dirname\s*,\s*['"]\.\.['"]\s*,\s*['"]src['"]\s*,\s*['"]([^'"]+\.js)['"]/g;
   const viaHelper = /readWebviewScript\(\s*['"]([^'"]+\.js)['"]\s*(?:,\s*['"]([^'"]+)['"])?/g;
-  const refactoringHelper = /readRefactoringWebviewScript\(\s*['"]([^'"]+\.js)['"]/g;
 
   // Only production modules read assets at runtime; skipping the test and mock
   // directories also keeps this file's own explanatory comment out of the scan.
@@ -58,9 +60,6 @@ describe('runtime-injected webview assets are shipped in the .vsix', () => {
     }
     for (const match of source.matchAll(viaHelper)) {
       referenced.add(match[2] ? path.posix.join(match[2], match[1]) : match[1]);
-    }
-    for (const match of source.matchAll(refactoringHelper)) {
-      referenced.add(path.posix.join('refactoring', match[1]));
     }
   }
 

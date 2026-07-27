@@ -12,9 +12,9 @@ import * as vscode from 'vscode';
 import * as crypto from 'crypto';
 import { renderMethodEditorHtml } from './renameMethodEditorHtml';
 import { RenameMethodScope } from './queries/previewRenameMethod';
-import { readRefactoringWebviewScript } from './webviewAssets';
+import { readWebviewScript } from '../webviewAssets';
 
-const editorJs = readRefactoringWebviewScript('renameMethodEditorView.js');
+const editorJs = readWebviewScript('renameMethodEditorView.js', 'refactoring');
 
 export interface MethodEditResult {
   /** New selector parts, in new (possibly reordered) order. */
