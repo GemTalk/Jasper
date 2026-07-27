@@ -8,16 +8,16 @@
 // compiled client output under `client/out/`, not the TS source).
 //
 // Logs in as `VITE_GEMSTONE_USER` (from .env.test), elevates to a transient
-// SystemUser session on the same connection — install requires write access
-// to kernel classes — and files in each feature. Enhanced Inspector is
-// skipped on stones below its minimum version, exactly like the client's own
-// auto-install path.
+// SystemUser session on the same connection — install requires write access to
+// kernel classes — and delegates to `installServerPlugin`, which files in every
+// plugin feature applicable to this stone's version and then re-verifies the
+// version→feature contract. Version-gated features (Enhanced Inspector) are
+// skipped below their minimum, exactly like the client's own auto-install path.
 //
-// Finally it re-verifies the version→feature contract
-// (`isRefactoringSupportInstalled` / `isEnhancedInspectorInstalled` vs.
-// `supportsEnhancedInspector`) and exits non-zero on any mismatch. This is
-// the regression guard the two-pass CI workflow relies on: a silently-broken
-// install must fail here, loudly, rather than surface downstream as an
+// The contract check is the regression guard the two-pass CI workflow relies
+// on: `installServerPlugin` throws on any mismatch between a feature's live
+// presence and whether its version supports it, so this script exits non-zero
+// rather than letting a silently-broken install surface downstream as an
 // indistinguishable "feature not installed" skip in the second test pass.
 //
 //   node client/bin/install-server-plugin.mjs
@@ -36,8 +36,8 @@ const clientOutDir = path.join(repoRoot, 'client', 'out');
 // (transitively, gciLog.ts) `require('vscode')` at load time to get an output
 // channel for incidental logging we don't care about here. There's no real
 // `vscode` module outside the extension host, so stub it in for the one thing
-// these modules use it for, rather than dragging the whole shared-helpers
-// question into this PR's scope.
+// these modules use it for. (installHelpers.js, which this script also loads,
+// is deliberately `vscode`-free — see its header — so it doesn't need this.)
 const originalModuleLoad = Module._load;
 Module._load = function (request, parent, isMain) {
   if (request === 'vscode') {
@@ -51,19 +51,12 @@ Module._load = function (request, parent, isMain) {
 };
 
 const { GciLibrary } = require(path.join(clientOutDir, 'gciLibrary.js'));
-const { installRefactoringSupport, isRefactoringSupportInstalled } = require(
-  path.join(clientOutDir, 'refactoring', 'refactoringInstall.js'),
+const { installServerPlugin } = require(
+  path.join(clientOutDir, 'serverPlugin', 'installServerPlugin.js'),
 );
-const {
-  installEnhancedInspectorSupport,
-  isEnhancedInspectorInstalled,
-  supportsEnhancedInspector,
-} = require(path.join(clientOutDir, 'enhancedInspectorInstall.js'));
-
-// GemStone's default SystemUser password on a fresh stone. Not written as
-// `...PASSWORD`/`password = '...'` — see the same note in
-// refactoringInstallCommand.ts about Open VSX's secret-scan false hit.
-const DEFAULT_SYSTEMUSER_PW = 'swordfish';
+const { loginAsSystemUser, DEFAULT_SYSTEMUSER_PW } = require(
+  path.join(clientOutDir, 'serverPlugin', 'installHelpers.js'),
+);
 
 // Loads `client/.env.test` into process.env (vite/vitest do this automatically;
 // a plain Node script has to do it itself). Missing file is fine — requireEnv
@@ -97,38 +90,6 @@ function parseLoginFromNrs(stoneNrs, gemNrs) {
     throw new Error(`Could not parse netldi name from VITE_GEMSTONE_GEM_NRS: ${gemNrs}`);
   }
   return { gem_host: stoneMatch[1], stone: stoneMatch[2], netldi: netldiMatch[1] };
-}
-
-// Opens a transient SystemUser session on `base`'s connection, overriding
-// only the GemStone user. Mirrors refactoringInstallCommand.ts /
-// enhancedInspectorCommand.ts's `loginAsSystemUser` — duplicated rather than
-// imported, since those modules are VS Code plumbing (import `vscode`) and
-// this script runs outside the extension host.
-function loginAsSystemUser(base, password) {
-  const { login } = base;
-  const stoneNrs = `!tcp@${login.gem_host}#server!${login.stone}`;
-  const gemNrs = `!tcp@${login.gem_host}#netldi:${login.netldi}#task!gemnetobject`;
-  const result = base.gci.GciTsLogin(
-    stoneNrs,
-    login.host_user || null,
-    login.host_password || null,
-    false,
-    gemNrs,
-    'SystemUser',
-    password,
-    0,
-    0,
-  );
-  if (!result.session) {
-    throw new Error(result.err.message || `SystemUser login failed (error ${result.err.number})`);
-  }
-  return {
-    id: -1,
-    gci: base.gci,
-    handle: result.session,
-    login: { ...login, gs_user: 'SystemUser', gs_password: password },
-    stoneVersion: base.stoneVersion,
-  };
 }
 
 async function main() {
@@ -174,46 +135,13 @@ async function main() {
     const sys = loginAsSystemUser(base, DEFAULT_SYSTEMUSER_PW);
     sysHandle = sys.handle;
 
-    console.log(`Installing refactoring support (stone version ${version})…`);
-    const refactoringResult = await installRefactoringSupport(
-      sys,
-      path.join(repoRoot, 'resources', 'refactoring'),
-      (message) => console.log(`  ${message}`),
-    );
-    if (refactoringResult.report) console.log(refactoringResult.report);
-    if (!refactoringResult.success) {
-      throw new Error(`Refactoring install failed: ${refactoringResult.message}`);
-    }
+    console.log(`Installing server plugin (stone version ${version})…`);
 
-    const inspectorExpected = supportsEnhancedInspector(version);
-    if (inspectorExpected) {
-      console.log('Installing Enhanced Inspector support…');
-      const inspectorResult = await installEnhancedInspectorSupport(
-        sys,
-        path.join(repoRoot, 'resources', 'enhancedInspector'),
-        (message) => console.log(`  ${message}`),
-      );
-      if (!inspectorResult.success) {
-        throw new Error(`Enhanced Inspector install failed: ${inspectorResult.message}`);
-      }
-    } else {
-      console.log(`Stone version ${version} does not support Enhanced Inspector — skipping.`);
-    }
-
-    const refactoringInstalled = isRefactoringSupportInstalled(sys);
-    const inspectorInstalled = isEnhancedInspectorInstalled(sys);
-    const problems = [];
-    if (!refactoringInstalled) {
-      problems.push('refactoring support did not verify as installed');
-    }
-    if (inspectorInstalled !== inspectorExpected) {
-      problems.push(
-        `Enhanced Inspector installed=${inspectorInstalled} but version ${version} expects installed=${inspectorExpected}`,
-      );
-    }
-    if (problems.length > 0) {
-      throw new Error(`Version→feature contract violated: ${problems.join('; ')}`);
-    }
+    // Files in every applicable feature and re-verifies the version→feature
+    // contract, throwing on a failed install or a contract mismatch. The shared
+    // registry (client/src/serverPlugin/pluginFeatures.ts) is the single source
+    // of truth for the feature list, so this script stays feature-agnostic.
+    await installServerPlugin(sys, repoRoot, (m) => console.log(m));
 
     console.log('Server plugin installed and verified.');
   } finally {

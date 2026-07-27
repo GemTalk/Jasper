@@ -11,6 +11,8 @@ import { PREVIEW_PAGE_BYTES } from '../queries/previewRenameMethod';
 import { parseStartPreview, parseApplyResult } from '../renameClassPreview';
 import { parseClassHistory, parseRevertResult } from '../classHistoryModel';
 import type { ActiveSession } from '../../sessionManager';
+import { requireServerPluginFeature } from '../../__tests__/requireServerPluginFeature';
+import { pluginFeatures } from '../../serverPlugin/pluginFeatures';
 
 /**
  * Automatic GCI integration tests for the rename-class (R3) refactoring and the
@@ -59,7 +61,7 @@ describe('rename class + class history (integration)', () => {
   });
 
   it('runs the rename-class and class-history GS SUnit suites in-stone with zero failures', (ctx) => {
-    if (!rbEnginePresent()) ctx.skip('refactoring engine not loaded in this stone');
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
     const code = `| failuresAndErrors |
 ${fileInTests()}
@@ -105,7 +107,7 @@ failuresAndErrors printString`;
   };
 
   it('previews a whole-system class rename, then applies it server-side', async (ctx) => {
-    if (!rbEnginePresent()) ctx.skip('refactoring engine not loaded in this stone');
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
     defineFixture();
     const token = `rcit-${BASE}`;
@@ -155,7 +157,7 @@ failuresAndErrors printString`;
   });
 
   it('reads a class definition history and restores a prior version as a new one', async (ctx) => {
-    if (!rbEnginePresent()) ctx.skip('refactoring engine not loaded in this stone');
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
     // Two-version fixture: shape a, then shape a+y (new version).
     q.compileClassDefinition(

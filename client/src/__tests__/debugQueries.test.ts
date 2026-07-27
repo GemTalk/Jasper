@@ -92,6 +92,7 @@ function createMockSession(): ActiveSession {
     GciTsFetchSize: vi.fn(() => ({ result: 0n, err: { ...noErr } })),
     GciTsFetchOops: vi.fn(() => ({ oops: [], err: { ...noErr } })),
     GciTsOopIsSpecial: vi.fn(() => false),
+    executeAndFetchString: vi.fn(() => ''),
   };
 
   return {
@@ -238,17 +239,9 @@ describe('debugQueries', () => {
   describe('getMethodUriInfo', () => {
     it('parses tab-separated result into MethodUriInfo', () => {
       const session = createMockSession();
-      // Mock GciTsResolveSymbol for Utf8 class
-      (session.gci as unknown as Record<string, unknown>).GciTsResolveSymbol = vi.fn(() => ({
-        result: 9000n,
-        err: { ...noErr },
-      }));
-      // Mock GciTsExecuteFetchBytes to return tab-separated URI info
-      (session.gci as unknown as Record<string, unknown>).GciTsExecuteFetchBytes = vi.fn(() => ({
-        bytesReturned: 0,
-        data: 'Globals\tSmallInteger\tinstance\tarithmetic\t/',
-        err: { ...noErr },
-      }));
+      (session.gci as unknown as Record<string, unknown>).executeAndFetchString = vi.fn(
+        () => 'Globals\tSmallInteger\tinstance\tarithmetic\t/',
+      );
 
       const result = debug.getMethodUriInfo(session, METHOD_OOP);
 
@@ -261,42 +254,20 @@ describe('debugQueries', () => {
       });
     });
 
-    it('returns undefined when GciTsResolveSymbol fails', () => {
+    it('returns undefined when the execute fails', () => {
       const session = createMockSession();
-      (session.gci as unknown as Record<string, unknown>).GciTsResolveSymbol = vi.fn(() => ({
-        result: 0n,
-        err: { ...noErr, number: 2010, message: 'not found' },
-      }));
-
-      expect(debug.getMethodUriInfo(session, METHOD_OOP)).toBeUndefined();
-    });
-
-    it('returns undefined when GciTsExecuteFetchBytes fails', () => {
-      const session = createMockSession();
-      (session.gci as unknown as Record<string, unknown>).GciTsResolveSymbol = vi.fn(() => ({
-        result: 9000n,
-        err: { ...noErr },
-      }));
-      (session.gci as unknown as Record<string, unknown>).GciTsExecuteFetchBytes = vi.fn(() => ({
-        bytesReturned: 0,
-        data: '',
-        err: { ...noErr, number: 1, message: 'error' },
-      }));
+      (session.gci as unknown as Record<string, unknown>).executeAndFetchString = vi.fn(() => {
+        throw new Error('error');
+      });
 
       expect(debug.getMethodUriInfo(session, METHOD_OOP)).toBeUndefined();
     });
 
     it('parses class-side methods correctly', () => {
       const session = createMockSession();
-      (session.gci as unknown as Record<string, unknown>).GciTsResolveSymbol = vi.fn(() => ({
-        result: 9000n,
-        err: { ...noErr },
-      }));
-      (session.gci as unknown as Record<string, unknown>).GciTsExecuteFetchBytes = vi.fn(() => ({
-        bytesReturned: 0,
-        data: 'Globals\tArray\tclass\tinstance creation\tnew',
-        err: { ...noErr },
-      }));
+      (session.gci as unknown as Record<string, unknown>).executeAndFetchString = vi.fn(
+        () => 'Globals\tArray\tclass\tinstance creation\tnew',
+      );
 
       const result = debug.getMethodUriInfo(session, METHOD_OOP);
 
@@ -315,15 +286,7 @@ describe('debugQueries', () => {
 
     function sessionReturning(data: string): ActiveSession {
       const session = createMockSession();
-      (session.gci as unknown as Record<string, unknown>).GciTsResolveSymbol = vi.fn(() => ({
-        result: 9000n,
-        err: { ...noErr },
-      }));
-      (session.gci as unknown as Record<string, unknown>).GciTsExecuteFetchBytes = vi.fn(() => ({
-        bytesReturned: 0,
-        data,
-        err: { ...noErr },
-      }));
+      (session.gci as unknown as Record<string, unknown>).executeAndFetchString = vi.fn(() => data);
       return session;
     }
 
@@ -356,15 +319,9 @@ describe('debugQueries', () => {
 
     it('returns undefined when the execute fails', () => {
       const session = createMockSession();
-      (session.gci as unknown as Record<string, unknown>).GciTsResolveSymbol = vi.fn(() => ({
-        result: 9000n,
-        err: { ...noErr },
-      }));
-      (session.gci as unknown as Record<string, unknown>).GciTsExecuteFetchBytes = vi.fn(() => ({
-        bytesReturned: 0,
-        data: '',
-        err: { ...noErr, number: 1, message: 'boom' },
-      }));
+      (session.gci as unknown as Record<string, unknown>).executeAndFetchString = vi.fn(() => {
+        throw new Error('boom');
+      });
       expect(debug.getDoesNotUnderstandInfo(session, GS_PROCESS)).toBeUndefined();
     });
   });
@@ -374,15 +331,7 @@ describe('debugQueries', () => {
 
     function sessionReturning(data: string): ActiveSession {
       const session = createMockSession();
-      (session.gci as unknown as Record<string, unknown>).GciTsResolveSymbol = vi.fn(() => ({
-        result: 9000n,
-        err: { ...noErr },
-      }));
-      (session.gci as unknown as Record<string, unknown>).GciTsExecuteFetchBytes = vi.fn(() => ({
-        bytesReturned: 0,
-        data,
-        err: { ...noErr },
-      }));
+      (session.gci as unknown as Record<string, unknown>).executeAndFetchString = vi.fn(() => data);
       return session;
     }
 
@@ -432,15 +381,9 @@ describe('debugQueries', () => {
 
     it('returns [] when the execute fails', () => {
       const session = createMockSession();
-      (session.gci as unknown as Record<string, unknown>).GciTsResolveSymbol = vi.fn(() => ({
-        result: 9000n,
-        err: { ...noErr },
-      }));
-      (session.gci as unknown as Record<string, unknown>).GciTsExecuteFetchBytes = vi.fn(() => ({
-        bytesReturned: 0,
-        data: '',
-        err: { ...noErr, number: 1, message: 'boom' },
-      }));
+      (session.gci as unknown as Record<string, unknown>).executeAndFetchString = vi.fn(() => {
+        throw new Error('boom');
+      });
       expect(debug.getReceiverClassChain(session, RECEIVER_OOP, 'Object')).toEqual([]);
     });
   });
@@ -450,15 +393,7 @@ describe('debugQueries', () => {
 
     function sessionReturning(data: string): ActiveSession {
       const session = createMockSession();
-      (session.gci as unknown as Record<string, unknown>).GciTsResolveSymbol = vi.fn(() => ({
-        result: 9000n,
-        err: { ...noErr },
-      }));
-      (session.gci as unknown as Record<string, unknown>).GciTsExecuteFetchBytes = vi.fn(() => ({
-        bytesReturned: 0,
-        data,
-        err: { ...noErr },
-      }));
+      (session.gci as unknown as Record<string, unknown>).executeAndFetchString = vi.fn(() => data);
       return session;
     }
 
@@ -496,26 +431,11 @@ describe('debugQueries', () => {
       expect(debug.getBrowseTarget(sessionReturning(''), RECEIVER_OOP, 'foo')).toBeUndefined();
     });
 
-    it('returns undefined when symbol resolution fails', () => {
-      const session = createMockSession();
-      (session.gci as unknown as Record<string, unknown>).GciTsResolveSymbol = vi.fn(() => ({
-        result: 0n,
-        err: { ...noErr, number: 2010, message: 'not found' },
-      }));
-      expect(debug.getBrowseTarget(session, RECEIVER_OOP, 'foo')).toBeUndefined();
-    });
-
     it('returns undefined when the execute fails', () => {
       const session = createMockSession();
-      (session.gci as unknown as Record<string, unknown>).GciTsResolveSymbol = vi.fn(() => ({
-        result: 9000n,
-        err: { ...noErr },
-      }));
-      (session.gci as unknown as Record<string, unknown>).GciTsExecuteFetchBytes = vi.fn(() => ({
-        bytesReturned: 0,
-        data: '',
-        err: { ...noErr, number: 1, message: 'boom' },
-      }));
+      (session.gci as unknown as Record<string, unknown>).executeAndFetchString = vi.fn(() => {
+        throw new Error('boom');
+      });
       expect(debug.getBrowseTarget(session, RECEIVER_OOP, 'foo')).toBeUndefined();
     });
   });

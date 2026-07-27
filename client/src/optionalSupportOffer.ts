@@ -15,9 +15,12 @@
  *
  * A feature is *applicable* when the stone's version supports it (the Enhanced
  * Inspector needs 3.7.5+; the refactoring engine loads on any release) and
- * *missing* when it is not yet installed. The connect offer targets
- * applicable-and-missing supports; the command targets all applicable ones so it
- * doubles as a reinstall.
+ * *missing* when it is not yet installed (per the cached availability flag on
+ * `ActiveSession`). The connect offer targets applicable-and-missing supports;
+ * the command targets all applicable ones so it doubles as a reinstall.
+ * `probe` is a separate, uncached presence check against the live session —
+ * used by test gating helpers, which can't rely on a flag latched at connect
+ * time.
  *
  * The actual per-feature install pipelines (transient SystemUser session, file-in,
  * commit, verify, relatch) live in enhancedInspectorCommand.ts and
@@ -26,7 +29,7 @@
  */
 import * as vscode from 'vscode';
 import { ActiveSession, SessionManager } from './sessionManager';
-import { supportsEnhancedInspector } from './enhancedInspectorInstall';
+import { pluginFeatures } from './serverPlugin/pluginFeatures';
 import { installEnhancedInspectorFeature } from './enhancedInspectorCommand';
 import { installRefactoringFeature } from './refactoring/refactoringInstallCommand';
 
@@ -53,6 +56,10 @@ export interface ServerSupportFeature {
   isApplicable(base: ActiveSession): boolean;
   /** Is it not yet installed in this stone? */
   isMissing(base: ActiveSession): boolean;
+  /** Live presence check against the session, distinct from the cached
+   *  `isMissing` flag — used where a fresh answer matters (e.g. test gating)
+   *  rather than the availability latch set at connect time. */
+  probe(session: ActiveSession): boolean;
   /** Install once (interactive = may prompt for the SystemUser password). */
   install(
     base: ActiveSession,
@@ -67,15 +74,17 @@ export const SERVER_SUPPORT_FEATURES: readonly ServerSupportFeature[] = [
   {
     id: 'enhancedInspector',
     label: 'Enhanced Inspector',
-    isApplicable: (b) => supportsEnhancedInspector(b.stoneVersion),
+    isApplicable: (b) => pluginFeatures.enhancedInspector.isApplicable(b.stoneVersion),
     isMissing: (b) => !b.enhancedInspectorAvailable,
+    probe: pluginFeatures.enhancedInspector.probe,
     install: installEnhancedInspectorFeature,
   },
   {
     id: 'refactoring',
     label: 'Refactoring engine',
-    isApplicable: () => true,
+    isApplicable: (b) => pluginFeatures.refactoring.isApplicable(b.stoneVersion),
     isMissing: (b) => !b.rbSupportAvailable,
+    probe: pluginFeatures.refactoring.probe,
     install: installRefactoringFeature,
   },
 ];

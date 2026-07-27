@@ -7,9 +7,15 @@ vi.mock('vscode', () => import('../../__mocks__/vscode'));
 import { useIntegrationTest } from '../../__tests__/useIntegrationTest';
 import { GciLibrary } from '../../gciLibrary';
 import * as q from '../../browserQueries';
+import { BrowserQueryError } from '../../browserQueries';
 import { previewRenameInstVar } from '../queries/previewRenameInstVar';
 import { parseRenameChanges, RenameChange } from '../renameInstVarPreview';
 import type { ActiveSession } from '../../sessionManager';
+import {
+  requireServerPluginFeature,
+  requireServerPluginFeatureAbsent,
+} from '../../__tests__/requireServerPluginFeature';
+import { pluginFeatures } from '../../serverPlugin/pluginFeatures';
 
 /**
  * Automatic GCI integration test for the rename-instance-variable round trip:
@@ -92,7 +98,7 @@ describe('rename instance variable (integration)', () => {
   });
 
   it('rewrites references across the defining class and its subclass', (ctx) => {
-    if (!engineLoaded()) ctx.skip('refactoring engine not loaded in this stone');
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
     defineCounterHierarchy();
 
@@ -106,7 +112,7 @@ describe('rename instance variable (integration)', () => {
   });
 
   it('rewrites the instance-variable list in the class definition', (ctx) => {
-    if (!engineLoaded()) ctx.skip('refactoring engine not loaded in this stone');
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
     defineCounterHierarchy();
 
@@ -121,7 +127,7 @@ describe('rename instance variable (integration)', () => {
   });
 
   it('builds the preview without committing', (ctx) => {
-    if (!engineLoaded()) ctx.skip('refactoring engine not loaded in this stone');
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
     defineCounterHierarchy();
     const needsCommitBefore = exec('System needsCommit printString').trim();
@@ -129,5 +135,19 @@ describe('rename instance variable (integration)', () => {
     previewRenameInstVar(exec, COUNTER, 'count', 'tally', userIndex());
 
     expect(exec('System needsCommit printString').trim()).toBe(needsCommitBefore);
+  });
+
+  // Degradation assertion: without the engine loaded, the preview query references
+  // a class that doesn't exist, so it must surface a clear error rather than
+  // silently no-op-ing or returning a malformed change-set the client would
+  // mis-render.
+  it('surfaces a clear error instead of a malformed preview when the engine is not loaded', (ctx) => {
+    requireServerPluginFeatureAbsent(pluginFeatures.refactoring, ctx, session());
+
+    defineCounterHierarchy();
+
+    expect(() => previewRenameInstVar(exec, COUNTER, 'count', 'tally', userIndex())).toThrow(
+      BrowserQueryError,
+    );
   });
 });

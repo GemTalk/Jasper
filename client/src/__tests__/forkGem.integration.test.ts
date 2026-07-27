@@ -52,11 +52,19 @@ describe('forking a gem (integration)', () => {
   it('gives the new gem a session distinct from this one', (ctx) => {
     if (!supported()) return ctx.skip();
 
-    const mine = execute('GsCurrentSession currentSession serialNumber printString');
+    // Compare stone session ids, not serial numbers. forkGemRunning answers the
+    // fork's `stoneSessionId` — its slot in the session table — so this session
+    // must be read the same way (`System session`). A session's `serialNumber`
+    // is a separate counter, so comparing one against the other is meaningless:
+    // they collide by coincidence (a harness whose serial is 5 against a fork
+    // that lands in slot 5), which is exactly what made this test flaky. Both
+    // sessions are live at the moment the fork's id is read, and two live
+    // sessions can never occupy the same slot, so this comparison is now exact.
+    const mySession = execute('System session printString');
 
     const id = forkGemRunning(execute, 'System sleep: 1', gemNrs());
 
-    expect(id.trim()).not.toBe(mine.trim());
+    expect(id.trim()).not.toBe(mySession.trim());
   });
 
   it('runs the gem as the user who asked, never SystemUser', (ctx) => {

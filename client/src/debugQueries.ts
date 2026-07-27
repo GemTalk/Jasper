@@ -69,6 +69,16 @@ function intToOop(session: ActiveSession, n: number): bigint {
   return result;
 }
 
+function executeAndFetchString(session: ActiveSession, code: string): string {
+  try {
+    return session.gci.executeAndFetchString(session.handle, code);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    logError(session.id, msg);
+    throw e;
+  }
+}
+
 // ── Frame info ──────────────────────────────────────────
 
 export interface FrameInfo {
@@ -204,13 +214,6 @@ export function getMethodUriInfo(
   methodOop: bigint,
 ): MethodUriInfo | undefined {
   try {
-    const { result: classUtf8, err: resErr } = session.gci.GciTsResolveSymbol(
-      session.handle,
-      'Utf8',
-      OOP_NIL,
-    );
-    if (resErr.number !== 0) return undefined;
-
     const code = `| method class baseClass dictName category |
 method := Object _objectForOop: ${methodOop}.
 class := method inClass.
@@ -225,16 +228,7 @@ dictName, String tab,
   category, String tab,
   method selector asString`;
 
-    const { data, err } = session.gci.GciTsExecuteFetchBytes(
-      session.handle,
-      code,
-      -1,
-      classUtf8,
-      OOP_ILLEGAL,
-      OOP_NIL,
-      64 * 1024,
-    );
-    if (err.number !== 0) return undefined;
+    const data = executeAndFetchString(session, code);
 
     const parts = data.split('\t');
     if (parts.length < 5) return undefined;
@@ -292,13 +286,6 @@ export function getReceiverClassChain(
   selector: string,
 ): ClassHomeInfo[] {
   try {
-    const { result: classUtf8, err: resErr } = session.gci.GciTsResolveSymbol(
-      session.handle,
-      'Utf8',
-      OOP_NIL,
-    );
-    if (resErr.number !== 0) return [];
-
     // selector is a method selector (no quotes), but guard the quote anyway.
     const sel = selector.replace(/'/g, "''");
     const code = `| rcvr meta cls sel rows nm dn impl |
@@ -319,16 +306,7 @@ rows := OrderedCollection new.
   cls := cls superclass ].
 rows inject: '' into: [:acc :r | acc isEmpty ifTrue: [r] ifFalse: [acc, (String with: Character lf), r]]`;
 
-    const { data, err } = session.gci.GciTsExecuteFetchBytes(
-      session.handle,
-      code,
-      -1,
-      classUtf8,
-      OOP_ILLEGAL,
-      OOP_NIL,
-      64 * 1024,
-    );
-    if (err.number !== 0) return [];
+    const data = executeAndFetchString(session, code);
 
     return data
       .split('\n')
@@ -378,13 +356,6 @@ export function getBrowseTarget(
   selector: string,
 ): BrowseTarget | undefined {
   try {
-    const { result: classUtf8, err: resErr } = session.gci.GciTsResolveSymbol(
-      session.handle,
-      'Utf8',
-      OOP_NIL,
-    );
-    if (resErr.number !== 0) return undefined;
-
     const sel = selector.replace(/'/g, "''");
     const code = `| rcvr meta cls sel def dn |
 rcvr := Object _objectForOop: ${receiverOop}.
@@ -404,16 +375,8 @@ def isNil ifTrue: [ '' ] ifFalse: [
     (meta ifTrue: ['class'] ifFalse: ['instance']), String tab, dn, String tab,
     ((def categoryOfSelector: sel environmentId: 0) ifNil: ['']) ]`;
 
-    const { data, err } = session.gci.GciTsExecuteFetchBytes(
-      session.handle,
-      code,
-      -1,
-      classUtf8,
-      OOP_ILLEGAL,
-      OOP_NIL,
-      64 * 1024,
-    );
-    if (err.number !== 0) return undefined;
+    const data = executeAndFetchString(session, code);
+
     if (data.length === 0) return undefined; // selector not found in the chain
 
     const parts = data.split('\t');
@@ -461,13 +424,6 @@ export function getDoesNotUnderstandInfo(
   gsProcess: bigint,
 ): DnuInfo | undefined {
   try {
-    const { result: classUtf8, err: resErr } = session.gci.GciTsResolveSymbol(
-      session.handle,
-      'Utf8',
-      OOP_NIL,
-    );
-    if (resErr.number !== 0) return undefined;
-
     // Walk all frames for the doesNotUnderstand:/_doesNotUnderstand:… machinery
     // (selectors containing 'doesNotUnderstand'). `dnuTop` is the `doesNotUnderstand:`
     // frame (it carries `aMessageDescriptor` — `at: 1` selector, `at: 2` args);
@@ -502,16 +458,7 @@ dnuTop isNil
       sel asString, String tab,
       (descr at: 2) size printString ]`;
 
-    const { data, err } = session.gci.GciTsExecuteFetchBytes(
-      session.handle,
-      code,
-      -1,
-      classUtf8,
-      OOP_ILLEGAL,
-      OOP_NIL,
-      64 * 1024,
-    );
-    if (err.number !== 0) return undefined;
+    const data = executeAndFetchString(session, code);
     if (data === '') return undefined; // not parked on a doesNotUnderstand:
 
     const parts = data.split('\t');
@@ -641,8 +588,6 @@ export function fetchPrintString(
   }
 }
 
-const MAX_FULL_PRINT = 256 * 1024;
-
 /**
  * Returns the full output of printOn: for an object, bypassing GemStone's
  * internal printString size cap.  printString uses a LimitedWriteStream
@@ -650,29 +595,14 @@ const MAX_FULL_PRINT = 256 * 1024;
  */
 export function fetchFullPrintString(session: ActiveSession, oop: bigint): string {
   try {
-    const { result: classUtf8, err: classErr } = session.gci.GciTsResolveSymbol(
-      session.handle,
-      'Utf8',
-      OOP_NIL,
-    );
-    if (classErr.number !== 0) return `<error: cannot resolve Utf8>`;
     const code = `| s |
 s := WriteStream on: String new.
 (Object _objectForOop: ${oop}) printOn: s.
 s contents`;
-    const { data, err } = session.gci.GciTsExecuteFetchBytes(
-      session.handle,
-      code,
-      -1,
-      classUtf8,
-      OOP_ILLEGAL,
-      OOP_NIL,
-      MAX_FULL_PRINT,
-    );
-    if (err.number !== 0) return `<error: ${err.message}>`;
-    return data;
-  } catch {
-    return '<error getting full printString>';
+    return executeAndFetchString(session, code);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return `<error: ${msg}>`;
   }
 }
 
@@ -753,13 +683,6 @@ export function parseStackDump(data: string): StackDumpRow[] {
  * fetch returns [] (the dump then shows headings without variables).
  */
 export function fetchStackDump(session: ActiveSession, gsProcess: bigint): StackDumpRow[] {
-  const { result: classUtf8, err: resErr } = session.gci.GciTsResolveSymbol(
-    session.handle,
-    'Utf8',
-    OOP_NIL,
-  );
-  if (resErr.number !== 0) return [];
-
   // self of each row is built server-side; names/printStrings are escaped (\\ \t
   // \n \r) so the tab/newline framing is safe, and printStrings are capped so one
   // huge object can't blow the payload. `_frameContentsAt:` layout matches
@@ -809,20 +732,12 @@ depth := proc localStackDepth.
   ] on: Error do: [:e | ] ].
 out contents`;
 
-  const { data, err } = session.gci.GciTsExecuteFetchBytes(
-    session.handle,
-    code,
-    -1,
-    classUtf8,
-    OOP_ILLEGAL,
-    OOP_NIL,
-    8 * 1024 * 1024,
-  );
-  if (err.number !== 0) {
-    logError(session.id, `fetchStackDump: ${err.message || `error ${err.number}`}`);
+  try {
+    const data = executeAndFetchString(session, code);
+    return parseStackDump(data);
+  } catch {
     return [];
   }
-  return parseStackDump(data);
 }
 
 /** One variable of a single frame (receiver / instVar / arg-temp / stack-temp). */
@@ -878,13 +793,6 @@ export function fetchFrameVariables(
   gsProcess: bigint,
   serverLevel: number,
 ): FrameVarRow[] {
-  const { result: classUtf8, err: resErr } = session.gci.GciTsResolveSymbol(
-    session.handle,
-    'Utf8',
-    OOP_NIL,
-  );
-  if (resErr.number !== 0) return [];
-
   const code = `| proc out tab esc psOf row arr receiver names |
 proc := Object _objectForOop: ${gsProcess}.
 out := WriteStream on: String new.
@@ -920,20 +828,12 @@ row := [:grp :nm :obj :idx |
 ] on: Error do: [:e | ].
 out contents`;
 
-  const { data, err } = session.gci.GciTsExecuteFetchBytes(
-    session.handle,
-    code,
-    -1,
-    classUtf8,
-    OOP_ILLEGAL,
-    OOP_NIL,
-    8 * 1024 * 1024,
-  );
-  if (err.number !== 0) {
-    logError(session.id, `fetchFrameVariables: ${err.message || `error ${err.number}`}`);
+  try {
+    const data = executeAndFetchString(session, code);
+    return parseFrameVars(data);
+  } catch {
     return [];
   }
-  return parseFrameVars(data);
 }
 
 /**
