@@ -12,8 +12,8 @@
  * optional-support offer (optionalSupportOffer.ts) as one leg of the bundle
  * install. The Enhanced Inspector feature itself (views, availability latch,
  * payload) lives elsewhere and is unaffected. The SystemUser-session helpers
- * are shared with refactoringInstallCommand.ts via
- * serverPlugin/systemUserAuth.ts.
+ * already come from serverPlugin/systemUserAuth.ts, shared with
+ * refactoringInstallCommand.ts.
  */
 import * as vscode from 'vscode';
 import * as path from 'path';

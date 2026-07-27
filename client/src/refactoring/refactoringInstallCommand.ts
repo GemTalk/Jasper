@@ -15,8 +15,8 @@
  *
  * The entry point is `installRefactoringFeature`, called by the unified
  * optional-support offer (optionalSupportOffer.ts) as one leg of the bundle
- * install. The SystemUser-session helpers are shared with
- * enhancedInspectorCommand.ts via serverPlugin/systemUserAuth.ts.
+ * install. The SystemUser-session helpers already come from
+ * serverPlugin/systemUserAuth.ts, shared with enhancedInspectorCommand.ts.
  */
 import * as vscode from 'vscode';
 import * as path from 'path';
