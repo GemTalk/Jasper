@@ -329,7 +329,8 @@ class VarSideItem extends vscode.TreeItem {
 type ClassNode = ClassItem | VarSideItem | IvarItem | ClassVarItem;
 
 // Method pane is a 3-level tree: side ▸ method-category ▸ selector.
-class MethodSideItem extends vscode.TreeItem {
+// Exported for unit tests that drive the New Method / category flows.
+export class MethodSideItem extends vscode.TreeItem {
   constructor(public readonly isMeta: boolean) {
     // Instance side opens expanded (so ALL METHODS shows immediately); the
     // class side starts collapsed to keep the default view focused.
@@ -341,10 +342,15 @@ class MethodSideItem extends vscode.TreeItem {
     // Both instance/class side headers use the class icon — distinct from the
     // per-method rows (symbol-method) so a header doesn't read as a method.
     this.iconPath = new vscode.ThemeIcon('symbol-class');
+    // Hosts the per-side "+" (add method category) inline action — a distinct
+    // value per side so each shows its own titled command. Deliberately does NOT
+    // contain the substring "explorerMethod" so it can't match the method-row
+    // menu regexes (/^explorerMethod/, /explorerMethod/).
+    this.contextValue = isMeta ? 'explorerSideClass' : 'explorerSideInstance';
   }
 }
 
-class MethodCategoryItem extends vscode.TreeItem {
+export class MethodCategoryItem extends vscode.TreeItem {
   constructor(
     public readonly isMeta: boolean,
     public readonly category: string,
@@ -360,10 +366,15 @@ class MethodCategoryItem extends vscode.TreeItem {
     );
     this.id = `mcat:${isMeta}:${category}`;
     this.iconPath = new vscode.ThemeIcon(computed ? 'list-flat' : 'symbol-folder');
+    // Real (non-computed) protocols host the rename pencil; the computed
+    // ALL/SESSION rows don't (they aren't renamable categories). The token
+    // avoids the substring "explorerMethod" so it can't match the method-row
+    // menu regexes.
+    if (!computed) this.contextValue = 'explorerProtocol';
   }
 }
 
-class MethodItem extends vscode.TreeItem {
+export class MethodItem extends vscode.TreeItem {
   // `displayCategory` is the category node this row is shown *under* (a real
   // category, ALL METHODS, SESSION METHODS, or undefined when flattened by a
   // filter). It's needed so MethodProvider.getParent can walk up for reveal().
@@ -528,6 +539,15 @@ export class ExplorerController {
   // Freshly-created method categories, per side, that hold no method yet.
   // Cleared on class change.
   private readonly newMethodCategories = { instance: new Set<string>(), meta: new Set<string>() };
+  // A New Method "+" opened a template; on the next compile of this class, select
+  // the newly-added selector (unknown until the user saves). `before` is the
+  // side's selector set at template-open time, diffed against the refreshed set.
+  private pendingNewMethod?: {
+    className: string;
+    dictIndex: number;
+    isMeta: boolean;
+    before: Set<string>;
+  };
   // URIs of editors we opened ourselves (method/definition clicks); syncToEditor
   // ignores its own opens so a tree click doesn't bounce the selection. A Set (not
   // a single value) because opens can overlap — clicking through methods faster
@@ -683,6 +703,7 @@ export class ExplorerController {
     this.newClassCategories.clear();
     this.newMethodCategories.instance.clear();
     this.newMethodCategories.meta.clear();
+    this.pendingNewMethod = undefined;
     this.clearFilters(...EXPLORER_VIEWS);
     this.dictProvider.refresh();
     this.categoryProvider.refresh();
@@ -820,7 +841,7 @@ export class ExplorerController {
       if (info) {
         try {
           await this.views?.method.reveal(
-            new MethodItem(revealMethod.isMeta, info, ALL_METHODS_CATEGORY),
+            new MethodItem(revealMethod.isMeta, info, info.category),
             { select: true, focus: false, expand: true },
           );
         } catch {
@@ -855,6 +876,7 @@ export class ExplorerController {
     this.newClassCategories.clear();
     this.newMethodCategories.instance.clear();
     this.newMethodCategories.meta.clear();
+    this.pendingNewMethod = undefined;
     this.clearFilters(VIEW_CATEGORIES, VIEW_CLASSES, VIEW_METHODS);
     const session = this.session();
     this.classCategoryEntries = session
@@ -966,6 +988,7 @@ export class ExplorerController {
     this.state.selectedMethodCategory = undefined;
     this.newMethodCategories.instance.clear();
     this.newMethodCategories.meta.clear();
+    this.pendingNewMethod = undefined;
     this.clearFilters(VIEW_METHODS);
     const session = this.session();
     this.envLines =
@@ -2323,6 +2346,7 @@ export class ExplorerController {
     this.state.selectedMethodCategory = undefined;
     this.newMethodCategories.instance.clear();
     this.newMethodCategories.meta.clear();
+    this.pendingNewMethod = undefined;
     this.envLines = envLines;
     this.loadHierarchy();
     this.clearFilters(VIEW_CATEGORIES, VIEW_CLASSES, VIEW_METHODS);
@@ -2360,14 +2384,16 @@ export class ExplorerController {
     }
 
     if (opts.revealMethod) {
-      // Reveal under the always-expanded ALL METHODS node (displayCategory).
+      // Select the method under its own category node (expanding as needed), not
+      // the ALL METHODS node. The ALL_METHODS_CATEGORY lookup just enumerates all
+      // selectors; each info carries its real category.
       const info = this.selectorsFor(opts.revealMethod.isMeta, ALL_METHODS_CATEGORY).find(
         (i) => i.selector === opts.revealMethod!.selector,
       );
       if (info) {
         try {
           await this.views?.method.reveal(
-            new MethodItem(opts.revealMethod.isMeta, info, ALL_METHODS_CATEGORY),
+            new MethodItem(opts.revealMethod.isMeta, info, info.category),
             { select: true, focus: false, expand: true },
           );
           this.syncTitles();
@@ -2415,13 +2441,12 @@ export class ExplorerController {
       if (revealMethod) {
         // If the Methods pane already has this selector selected — which is exactly
         // the case when the user just clicked it in the tree (that click is what
-        // opened this editor) — don't re-reveal it. reveal() re-selects the ALL
-        // METHODS copy and scrolls the pane, knocking the just-clicked row out of
-        // view (and stealing selection from the category the user clicked). Only
-        // sync when the tree is genuinely elsewhere, e.g. the user focused an
-        // editor tab for a method that isn't the current selection. This is the
-        // reliable guard; the self-opened-URI check above can miss when the editor
-        // reports a normalized URI that no longer string-matches what we stored.
+        // opened this editor) — don't re-reveal it. A redundant reveal() scrolls the
+        // pane, knocking the just-clicked row out of view. Only sync when the tree
+        // is genuinely elsewhere, e.g. the user focused an editor tab for a method
+        // that isn't the current selection. This is the reliable guard; the
+        // self-opened-URI check above can miss when the editor reports a normalized
+        // URI that no longer string-matches what we stored.
         const alreadySelected = this.views?.method.selection.some(
           (n) =>
             n instanceof MethodItem &&
@@ -2438,7 +2463,7 @@ export class ExplorerController {
         if (info) {
           try {
             await this.views?.method.reveal(
-              new MethodItem(revealMethod.isMeta, info, ALL_METHODS_CATEGORY),
+              new MethodItem(revealMethod.isMeta, info, info.category),
               { select: true, focus: false, expand: true },
             );
             this.syncTitles();
@@ -2559,26 +2584,166 @@ export class ExplorerController {
     void vscode.commands.executeCommand('gemstone.openDocument', uri);
   }
 
-  async newMethodCategory(): Promise<void> {
+  // Add a (still-empty) method category to the given side. The instance and
+  // class "+" buttons pass their side explicitly, so it never depends on the
+  // last-touched selection.
+  async newMethodCategory(isMeta: boolean): Promise<void> {
     if (this.state.className === undefined) {
       void vscode.window.showWarningMessage('Select a class first.');
       return;
     }
     const name = (
       await vscode.window.showInputBox({
-        prompt: 'New method category name',
+        prompt: `New ${isMeta ? 'Class' : 'Instance'} Method Category`,
         placeHolder: 'e.g. accessing',
       })
     )?.trim();
     if (!name) return;
-    const isMeta = this.state.selectedIsMeta ?? false;
     this.newMethodCategories[isMeta ? 'meta' : 'instance'].add(name);
     this.recordMethodContext(isMeta, name);
     this.methodProvider.refresh();
     this.syncTitles();
+    // Select the new category (expanding the side node — the class side starts
+    // collapsed, so otherwise the fresh category would be created out of sight).
+    this.views?.method
+      .reveal(new MethodCategoryItem(isMeta, name, false), {
+        select: true,
+        focus: true,
+        expand: true,
+      })
+      .then(undefined, () => {});
   }
 
-  async newMethod(): Promise<void> {
+  // Rename a real (non-computed) method category via the row's pencil. A category
+  // exists on the server only once a method is filed into it; a still-empty one
+  // lives solely in the client-side "fresh" overlay (`_unifiedCategorys:`, which
+  // drives this pane, never lists an empty category). So a populated category is
+  // renamed server-side via the base `renameCategory:to:` protocol (mirroring the
+  // System Browser; not committed automatically), while an empty one is renamed
+  // purely in the overlay — calling the server would raise classErrMethCatNotFound.
+  async renameMethodCategory(item: MethodCategoryItem): Promise<void> {
+    const session = this.session();
+    if (!session || item.computed) return;
+    if (this.state.className === undefined || this.state.dictIndex === undefined) {
+      void vscode.window.showWarningMessage('Select a class first.');
+      return;
+    }
+    const className = this.state.className;
+    const dictIndex = this.state.dictIndex;
+    const oldCategory = item.category;
+
+    const entered = await vscode.window.showInputBox({
+      title: 'Rename Method Category',
+      prompt: `Rename '${oldCategory}' on the ${item.isMeta ? 'class' : 'instance'} side of ${className}.`,
+      value: oldCategory,
+      valueSelection: [0, oldCategory.length],
+      validateInput: (v) => (v.trim().length === 0 ? 'Enter a category name.' : undefined),
+    });
+    if (entered === undefined) return;
+    const newCategory = entered.trim();
+    if (newCategory === oldCategory) return;
+
+    const hasServerMethods = this.envLines.some(
+      (l) => l.isMeta === item.isMeta && l.category === oldCategory,
+    );
+    if (hasServerMethods) {
+      try {
+        queries.renameCategory(
+          session,
+          className,
+          item.isMeta,
+          oldCategory,
+          newCategory,
+          dictIndex,
+        );
+      } catch (e) {
+        void vscode.window.showErrorMessage(
+          `Rename category failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
+        return;
+      }
+    }
+
+    // Carry a just-created (still-empty) category across the rename so it keeps
+    // showing, and keep the recorded selection pointing at the renamed row.
+    const freshSet = this.newMethodCategories[item.isMeta ? 'meta' : 'instance'];
+    if (freshSet.delete(oldCategory)) freshSet.add(newCategory);
+    if (
+      this.state.selectedIsMeta === item.isMeta &&
+      this.state.selectedMethodCategory === oldCategory
+    ) {
+      this.state.selectedMethodCategory = newCategory;
+    }
+    // A server rename changed the class's methods, so refetch; an overlay-only
+    // rename just needs the tree redrawn.
+    if (hasServerMethods) {
+      this.reloadIfCurrent(className, dictIndex);
+    } else {
+      this.methodProvider.refresh();
+      this.syncTitles();
+    }
+    this.views?.method
+      .reveal(new MethodCategoryItem(item.isMeta, newCategory, false), {
+        select: true,
+        focus: true,
+      })
+      .then(undefined, () => {});
+  }
+
+  // New Method, invoked from a category row → files into THAT category (including
+  // a still-empty one, which the compile then creates on the server, so overlay
+  // categories become real once they hold a method). With no argument (palette)
+  // it infers side/category from the current Methods-pane selection.
+  async newMethod(target?: MethodCategoryItem): Promise<void> {
+    if (target instanceof MethodCategoryItem) {
+      // Computed ALL/SESSION rows aren't real categories → default category.
+      await this.createNewMethod(
+        target.isMeta,
+        target.computed ? 'as yet unclassified' : target.category,
+      );
+      return;
+    }
+    if (this.state.className === undefined) {
+      void vscode.window.showWarningMessage('Select a class first.');
+      return;
+    }
+    // Palette: honor the last-touched side, else ask so either an instance or a
+    // class method can be created regardless of what's selected.
+    let isMeta: boolean;
+    if (this.state.selectedIsMeta !== undefined) {
+      isMeta = this.state.selectedIsMeta;
+    } else {
+      const pick = await vscode.window.showQuickPick(
+        [
+          { label: 'Instance method', meta: false },
+          { label: 'Class method', meta: true },
+        ],
+        { placeHolder: `New method on ${this.state.className}` },
+      );
+      if (!pick) return;
+      isMeta = pick.meta;
+    }
+    const category =
+      this.state.selectedIsMeta === isMeta && this.state.selectedMethodCategory
+        ? this.state.selectedMethodCategory
+        : 'as yet unclassified';
+    await this.createNewMethod(isMeta, category);
+  }
+
+  // "+" on the instance / class side node adds a method on that side; with no
+  // category chosen it lands in the default one (which then appears in the tree).
+  async newInstanceMethod(): Promise<void> {
+    await this.createNewMethod(false, 'as yet unclassified');
+  }
+
+  async newClassMethod(): Promise<void> {
+    await this.createNewMethod(true, 'as yet unclassified');
+  }
+
+  // Open a blank method template for the given side + category. The method only
+  // exists once the user saves (compile), so remember what to select and let the
+  // post-compile refresh reveal it (see maybeRevealNewMethod).
+  private async createNewMethod(isMeta: boolean, category: string): Promise<void> {
     const session = this.session();
     if (
       !session ||
@@ -2604,27 +2769,14 @@ export class ExplorerController {
       );
       return;
     }
-    // Choose the side: honor the last-touched side if the user was working in the
-    // Methods pane, otherwise ask so either an instance or a class method can be
-    // created regardless of what's selected.
-    let isMeta: boolean;
-    if (this.state.selectedIsMeta !== undefined) {
-      isMeta = this.state.selectedIsMeta;
-    } else {
-      const pick = await vscode.window.showQuickPick(
-        [
-          { label: 'Instance method', meta: false },
-          { label: 'Class method', meta: true },
-        ],
-        { placeHolder: `New method on ${this.state.className}` },
-      );
-      if (!pick) return;
-      isMeta = pick.meta;
-    }
-    const category =
-      this.state.selectedIsMeta === isMeta && this.state.selectedMethodCategory
-        ? this.state.selectedMethodCategory
-        : 'as yet unclassified';
+    // Snapshot the side's current selectors so the post-compile refresh can spot
+    // the newly-added one and select it (the selector isn't known until save).
+    this.pendingNewMethod = {
+      className: this.state.className,
+      dictIndex: this.state.dictIndex,
+      isMeta,
+      before: new Set(this.selectorsFor(isMeta, ALL_METHODS_CATEGORY).map((i) => i.selector)),
+    };
     const uri = buildNewMethodUri(
       session.id,
       this.state.dictName,
@@ -2640,6 +2792,33 @@ export class ExplorerController {
       preview: true,
     });
     this.placement.remember(uri);
+  }
+
+  // After a method compiles on the class we're showing, select a just-created
+  // method (from the New Method "+") under its own category — so a brand-new
+  // category shows the method selected. reveal()'s alreadySelected guard in
+  // syncToEditor then skips its own ALL-METHODS reveal, avoiding a fight.
+  private maybeRevealNewMethod(): void {
+    const pending = this.pendingNewMethod;
+    if (
+      !pending ||
+      pending.className !== this.state.className ||
+      pending.dictIndex !== this.state.dictIndex
+    ) {
+      return;
+    }
+    const added = this.selectorsFor(pending.isMeta, ALL_METHODS_CATEGORY).find(
+      (i) => !pending.before.has(i.selector),
+    );
+    if (!added) return;
+    this.pendingNewMethod = undefined;
+    this.views?.method
+      .reveal(new MethodItem(pending.isMeta, added, added.category), {
+        select: true,
+        focus: false,
+        expand: true,
+      })
+      .then(undefined, () => {});
   }
 
   // ── Drag & drop ─────────────────────────────────────────────────────────────
@@ -2785,6 +2964,7 @@ export class ExplorerController {
     );
     this.methodProvider.refresh();
     this.syncTitles();
+    this.maybeRevealNewMethod();
   }
 
   onExternalClassCompiled(sessionId: number, className: string): void {
@@ -3243,6 +3423,17 @@ export function registerGemStoneExplorer(
         void vscode.window.showErrorMessage(`Rename method failed: ${msg}`);
       });
     }),
+    // Rename a method category / protocol (pencil on the category row).
+    vscode.commands.registerCommand(
+      'gemstone.explorer.renameMethodCategory',
+      (item?: MethodCategoryItem) => {
+        if (!(item instanceof MethodCategoryItem)) return;
+        void ctl.renameMethodCategory(item).catch((e: unknown) => {
+          const msg = e instanceof Error ? e.message : String(e);
+          void vscode.window.showErrorMessage(`Rename category failed: ${msg}`);
+        });
+      },
+    ),
     // Change a method's signature — add/remove/reorder parameters (context menu on
     // the method row).
     vscode.commands.registerCommand('gemstone.explorer.changeSignature', (item?: MethodItem) => {
@@ -3293,10 +3484,24 @@ export function registerGemStoneExplorer(
       ctl.newClassCategory(),
     ),
     vscode.commands.registerCommand('gemstone.explorer.newClass', () => ctl.newClass()),
-    vscode.commands.registerCommand('gemstone.explorer.newMethodCategory', () =>
-      ctl.newMethodCategory(),
+    // "+" on the instance / class side node adds a category to that side. Two
+    // commands so each button carries its own title.
+    vscode.commands.registerCommand('gemstone.explorer.newInstanceMethodCategory', () =>
+      ctl.newMethodCategory(false),
     ),
-    vscode.commands.registerCommand('gemstone.explorer.newMethod', () => ctl.newMethod()),
+    vscode.commands.registerCommand('gemstone.explorer.newClassMethodCategory', () =>
+      ctl.newMethodCategory(true),
+    ),
+    // From a category row, file the new method straight into that category;
+    // from the palette (no item), infer side + category from the selection.
+    vscode.commands.registerCommand('gemstone.explorer.newMethod', (item?: MethodCategoryItem) =>
+      ctl.newMethod(item instanceof MethodCategoryItem ? item : undefined),
+    ),
+    // "+" on the instance / class side node → new method in the default category.
+    vscode.commands.registerCommand('gemstone.explorer.newInstanceMethod', () =>
+      ctl.newInstanceMethod(),
+    ),
+    vscode.commands.registerCommand('gemstone.explorer.newClassMethod', () => ctl.newClassMethod()),
     // Indicator / method actions: browse implementors, senders, and the
     // superclass (▲) / subclass (▼) implementations behind the override arrows.
     // Each accepts either the tree item (inline button / right-click) or a

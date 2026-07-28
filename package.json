@@ -1106,14 +1106,38 @@
         "icon": "$(add)"
       },
       {
-        "command": "gemstone.explorer.newMethodCategory",
-        "title": "New Method Category",
+        "command": "gemstone.explorer.newInstanceMethodCategory",
+        "title": "New Instance Method Category",
         "category": "GemStone",
         "icon": "$(new-folder)"
       },
       {
+        "command": "gemstone.explorer.newClassMethodCategory",
+        "title": "New Class Method Category",
+        "category": "GemStone",
+        "icon": "$(new-folder)"
+      },
+      {
+        "command": "gemstone.explorer.renameMethodCategory",
+        "title": "Rename Method Category…",
+        "category": "GemStone",
+        "icon": "$(edit)"
+      },
+      {
         "command": "gemstone.explorer.newMethod",
         "title": "New Method",
+        "category": "GemStone",
+        "icon": "$(add)"
+      },
+      {
+        "command": "gemstone.explorer.newInstanceMethod",
+        "title": "New Instance Method",
+        "category": "GemStone",
+        "icon": "$(add)"
+      },
+      {
+        "command": "gemstone.explorer.newClassMethod",
+        "title": "New Class Method",
         "category": "GemStone",
         "icon": "$(add)"
       },
@@ -1688,16 +1712,6 @@
           "group": "navigation@4"
         },
         {
-          "command": "gemstone.explorer.newMethod",
-          "when": "view == gemstoneExplorerMethods",
-          "group": "navigation@2"
-        },
-        {
-          "command": "gemstone.explorer.newMethodCategory",
-          "when": "view == gemstoneExplorerMethods",
-          "group": "navigation@3"
-        },
-        {
           "command": "gemstone.openWalkthrough",
           "when": "view == gemstoneVersions",
           "group": "navigation@0"
@@ -1818,6 +1832,36 @@
           "command": "gemstone.explorer.renameMethod",
           "when": "view == gemstoneExplorerMethods && viewItem =~ /explorerMethod/",
           "group": "inline"
+        },
+        {
+          "command": "gemstone.explorer.newInstanceMethodCategory",
+          "when": "view == gemstoneExplorerMethods && viewItem == explorerSideInstance",
+          "group": "inline@1"
+        },
+        {
+          "command": "gemstone.explorer.newInstanceMethod",
+          "when": "view == gemstoneExplorerMethods && viewItem == explorerSideInstance",
+          "group": "inline@2"
+        },
+        {
+          "command": "gemstone.explorer.newClassMethodCategory",
+          "when": "view == gemstoneExplorerMethods && viewItem == explorerSideClass",
+          "group": "inline@1"
+        },
+        {
+          "command": "gemstone.explorer.newClassMethod",
+          "when": "view == gemstoneExplorerMethods && viewItem == explorerSideClass",
+          "group": "inline@2"
+        },
+        {
+          "command": "gemstone.explorer.renameMethodCategory",
+          "when": "view == gemstoneExplorerMethods && viewItem == explorerProtocol",
+          "group": "inline@1"
+        },
+        {
+          "command": "gemstone.explorer.newMethod",
+          "when": "view == gemstoneExplorerMethods && viewItem == explorerProtocol",
+          "group": "inline@2"
         },
         {
           "command": "gemstone.explorer.changeSignature",
