@@ -1,113 +1,61 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { GciLibrary } from '../../gciLibrary';
-import {
-  GCI_LIBRARY_PATH,
-  STONE_NRS,
-  GEM_NRS,
-  GS_USER,
-  GS_PASSWORD,
-} from '../../__tests__/gci/gciTestConfig';
+import { OOP_CLASS_STRING, OOP_ILLEGAL, OOP_NIL } from '../../gciConstants';
+import { useIntegrationTest } from '../../__tests__/useIntegrationTest';
 
-const OOP_ILLEGAL = 0x01n;
-const OOP_NIL = 0x14n;
-
-describe('GciTsExecute / GciTsPerform', () => {
-  const gci = new GciLibrary(GCI_LIBRARY_PATH);
+/**
+ * The GCI's two ways of running code on the stone: GciTsExecute (compile and
+ * run a source string) and GciTsPerform (send a selector to an object), plus
+ * the fetch-bytes variants that bring the result back in one call. These are
+ * the primitives every higher-level query in the extension is built on.
+ */
+describe('GCI execute and perform (integration)', () => {
+  let gci: GciLibrary;
   let session: unknown;
 
-  // Discover class OOPs at runtime
-  let OOP_CLASS_ARRAY: bigint;
-  let OOP_CLASS_STRING: bigint;
-
-  beforeAll(() => {
-    const login = gci.GciTsLogin(STONE_NRS, null, null, false, GEM_NRS, GS_USER, GS_PASSWORD, 0, 0);
-    expect(login.session).not.toBeNull();
-    session = login.session;
-
-    OOP_CLASS_ARRAY = gci.resolveSymbol(session, 'Array');
-    OOP_CLASS_STRING = gci.resolveSymbol(session, 'String');
-    console.log(
-      'Class OOPs - Array:',
-      OOP_CLASS_ARRAY.toString(),
-      'String:',
-      OOP_CLASS_STRING.toString(),
-    );
+  useIntegrationTest((testContext) => {
+    gci = testContext.gciLibrary;
+    session = testContext.session;
   });
 
-  afterAll(() => {
-    if (session) {
-      gci.GciTsLogout(session);
-    }
-    gci.close();
-  });
+  const classOop = (name: string): bigint => gci.resolveSymbol(session, name);
+
+  const execute = (source: string) =>
+    gci.GciTsExecute(session, source, OOP_CLASS_STRING, OOP_ILLEGAL, OOP_NIL, 0, 0);
 
   describe('GciTsExecute', () => {
-    it('executes "Array new: 4" and returns an Array', () => {
-      const { result, err } = gci.GciTsExecute(
-        session,
-        'Array new: 4',
-        OOP_CLASS_STRING,
-        OOP_ILLEGAL,
-        OOP_NIL,
-        0,
-        0,
-      );
-      console.log(
-        'Execute("Array new: 4") - result:',
-        result.toString(16),
-        'err.number:',
-        err.number,
-      );
-      expect(result).not.toBe(OOP_ILLEGAL);
+    it('returns the OOP of the object the source evaluates to', () => {
+      const { result, err } = execute('Array new: 4');
+
       expect(err.number).toBe(0);
-
-      // Verify the result is an Array of size 4
-      const cls = gci.GciTsFetchClass(session, result);
-      expect(cls.result).toBe(OOP_CLASS_ARRAY);
-
-      const size = gci.GciTsFetchSize(session, result);
-      expect(size.result).toBe(4n);
+      expect(result).not.toBe(OOP_ILLEGAL);
+      expect(gci.GciTsFetchClass(session, result).result).toBe(classOop('Array'));
+      expect(gci.GciTsFetchSize(session, result).result).toBe(4n);
     });
 
-    it('executes "3 + 4" and returns SmallInteger 7', () => {
-      const { result, err } = gci.GciTsExecute(
-        session,
-        '3 + 4',
-        OOP_CLASS_STRING,
-        OOP_ILLEGAL,
-        OOP_NIL,
-        0,
-        0,
-      );
+    it('returns an immediate OOP for an arithmetic result', () => {
+      const { result, err } = execute('3 + 4');
       expect(err.number).toBe(0);
 
       const { success, value } = gci.GciTsOopToI64(session, result);
+
       expect(success).toBe(true);
       expect(value).toBe(7n);
     });
 
-    it('returns an error for invalid Smalltalk', () => {
-      const { result, err } = gci.GciTsExecute(
-        session,
-        '!!! invalid syntax !!!',
-        OOP_CLASS_STRING,
-        OOP_ILLEGAL,
-        OOP_NIL,
-        0,
-        0,
-      );
-      console.log('Execute(invalid) - err.number:', err.number, 'err.message:', err.message);
+    it('reports an error for source that does not compile', () => {
+      const { result, err } = execute('!!! invalid syntax !!!');
+
       expect(result).toBe(OOP_ILLEGAL);
       expect(err.number).not.toBe(0);
     });
   });
 
   describe('GciTsExecute_', () => {
-    it('executes with explicit source size', () => {
-      const source = 'Array new: 3';
+    it('accepts a source size instead of relying on a null terminator', () => {
       const { result, err } = gci.GciTsExecute_(
         session,
-        source,
+        'Array new: 3',
         -1,
         OOP_CLASS_STRING,
         OOP_ILLEGAL,
@@ -115,85 +63,72 @@ describe('GciTsExecute / GciTsPerform', () => {
         0,
         0,
       );
+
       expect(err.number).toBe(0);
       expect(result).not.toBe(OOP_ILLEGAL);
-
-      const size = gci.GciTsFetchSize(session, result);
-      expect(size.result).toBe(3n);
+      expect(gci.GciTsFetchSize(session, result).result).toBe(3n);
     });
   });
 
   describe('GciTsExecuteFetchBytes', () => {
-    it('executes and fetches the result as bytes', () => {
-      const source = "'hello world' copy";
+    it('returns the bytes of the result without a second call', () => {
       const { bytesReturned, data, err } = gci.GciTsExecuteFetchBytes(
         session,
-        source,
+        "'hello world' copy",
         -1,
         OOP_CLASS_STRING,
         OOP_ILLEGAL,
         OOP_NIL,
         1024,
       );
-      console.log('ExecuteFetchBytes - bytesReturned:', bytesReturned, 'data:', data);
+
       expect(err.number).toBe(0);
       expect(bytesReturned).toBe(11);
       expect(data).toBe('hello world');
     });
 
-    it('executes a numeric-to-string conversion', () => {
-      const source = '(3 + 4) printString';
+    it('returns the bytes of a printString', () => {
       const { data, err } = gci.GciTsExecuteFetchBytes(
         session,
-        source,
+        '(3 + 4) printString',
         -1,
         OOP_CLASS_STRING,
         OOP_ILLEGAL,
         OOP_NIL,
         1024,
       );
+
       expect(err.number).toBe(0);
       expect(data).toBe('7');
     });
   });
 
   describe('GciTsPerform', () => {
-    it('sends new: to Array with SmallInteger arg', () => {
-      const argOop = gci.GciTsI64ToOop(session, 5n);
-      expect(argOop.err.number).toBe(0);
+    it('sends a keyword message with an OOP argument', () => {
+      const argument = gci.GciTsI64ToOop(session, 5n);
+      expect(argument.err.number).toBe(0);
 
       const { result, err } = gci.GciTsPerform(
         session,
-        OOP_CLASS_ARRAY,
+        classOop('Array'),
         OOP_ILLEGAL,
         'new:',
-        [argOop.result],
+        [argument.result],
         0,
         0,
       );
-      console.log(
-        'Perform(Array new: 5) - result:',
-        result.toString(16),
-        'err.number:',
-        err.number,
-      );
+
       expect(err.number).toBe(0);
-      expect(result).not.toBe(OOP_ILLEGAL);
-
-      const cls = gci.GciTsFetchClass(session, result);
-      expect(cls.result).toBe(OOP_CLASS_ARRAY);
-
-      const size = gci.GciTsFetchSize(session, result);
-      expect(size.result).toBe(5n);
+      expect(gci.GciTsFetchClass(session, result).result).toBe(classOop('Array'));
+      expect(gci.GciTsFetchSize(session, result).result).toBe(5n);
     });
 
-    it('sends size to a String', () => {
-      const strOop = gci.GciTsNewString(session, 'hello');
-      expect(strOop.result).not.toBe(OOP_ILLEGAL);
+    it('sends a unary message returning an immediate', () => {
+      const receiver = gci.GciTsNewString(session, 'hello');
 
       const { result, err } = gci.GciTsPerform(
         session,
-        strOop.result,
+        receiver.result,
         OOP_ILLEGAL,
         'size',
         [],
@@ -203,89 +138,90 @@ describe('GciTsExecute / GciTsPerform', () => {
       expect(err.number).toBe(0);
 
       const { success, value } = gci.GciTsOopToI64(session, result);
+
       expect(success).toBe(true);
       expect(value).toBe(5n);
     });
 
-    it('sends reversed to a String', () => {
-      const strOop = gci.GciTsNewString(session, 'abcdef');
-      expect(strOop.result).not.toBe(OOP_ILLEGAL);
+    it('sends a unary message returning an object', () => {
+      const receiver = gci.GciTsNewString(session, 'abcdef');
 
       const { result, err } = gci.GciTsPerform(
         session,
-        strOop.result,
+        receiver.result,
         OOP_ILLEGAL,
-        'reversed',
+        'asUppercase',
         [],
         0,
         0,
       );
-      expect(err.number).toBe(0);
 
-      const fetched = gci.GciTsFetchUtf8(session, result, 1024);
-      expect(fetched.data).toBe('fedcba');
+      expect(err.number).toBe(0);
+      expect(gci.GciTsFetchUtf8(session, result, 1024).data).toBe('ABCDEF');
     });
 
-    it('returns an error for an unknown selector', () => {
-      const strOop = gci.GciTsNewString(session, 'test');
+    it('reports an error for a selector the receiver does not understand', () => {
+      const receiver = gci.GciTsNewString(session, 'test');
+
       const { result, err } = gci.GciTsPerform(
         session,
-        strOop.result,
+        receiver.result,
         OOP_ILLEGAL,
         'noSuchSelector99',
         [],
         0,
         0,
       );
-      console.log('Perform(unknown) - err.number:', err.number, 'err.message:', err.message);
+
       expect(result).toBe(OOP_ILLEGAL);
       expect(err.number).not.toBe(0);
     });
   });
 
   describe('GciTsPerformFetchBytes', () => {
-    it('sends printString to a SmallInteger', () => {
-      const intOop = gci.GciTsI64ToOop(session, 42n);
-      expect(intOop.err.number).toBe(0);
+    it('returns the bytes of the result of a unary send', () => {
+      const receiver = gci.GciTsI64ToOop(session, 42n);
+      expect(receiver.err.number).toBe(0);
 
       const { data, err } = gci.GciTsPerformFetchBytes(
         session,
-        intOop.result,
+        receiver.result,
         'printString',
         [],
         1024,
       );
-      console.log('PerformFetchBytes(42 printString) - data:', data);
+
       expect(err.number).toBe(0);
       expect(data).toBe('42');
     });
 
-    it('sends reversed to a String and fetches bytes', () => {
-      const strOop = gci.GciTsNewString(session, 'GemStone');
-      expect(strOop.result).not.toBe(OOP_ILLEGAL);
+    it('returns the bytes of a String the send built', () => {
+      const receiver = gci.GciTsNewString(session, 'GemStone');
 
       const { data, err } = gci.GciTsPerformFetchBytes(
         session,
-        strOop.result,
-        'reversed',
+        receiver.result,
+        'asUppercase',
         [],
         1024,
       );
+
       expect(err.number).toBe(0);
-      expect(data).toBe('enotSmeG');
+      expect(data).toBe('GEMSTONE');
     });
 
-    it('sends , (comma) to concatenate two strings', () => {
-      const strOop = gci.GciTsNewString(session, 'Hello');
-      const argOop = gci.GciTsNewString(session, ' World');
+    it('returns the bytes of the result of a binary send', () => {
+      const receiver = gci.GciTsNewString(session, 'Hello');
+      const argument = gci.GciTsNewString(session, ' World');
 
       const { data, err } = gci.GciTsPerformFetchBytes(
         session,
-        strOop.result,
+        receiver.result,
         ',',
-        [argOop.result],
+        [argument.result],
         1024,
       );
+
       expect(err.number).toBe(0);
       expect(data).toBe('Hello World');
     });
