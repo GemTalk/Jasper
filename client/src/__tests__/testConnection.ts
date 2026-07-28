@@ -49,7 +49,7 @@
 // itself. That's a deliberately separate concern from resolving already-loaded
 // `process.env` values, so `testStone.ts` needs no changes here.
 
-import { netldiNameFromGemNrs } from '../loginTypes';
+import { parseStoneNrs, netldiNameFromGemNrs, GemStoneLogin } from '../loginTypes';
 
 /** Connection details resolved from the environment, ready for a GCI login. */
 export interface TestConnection {
@@ -82,6 +82,30 @@ function requireValue(label: string, value: string | undefined): string {
     );
   }
   return value;
+}
+
+// This throws rather than returning `undefined` like `parseStoneNrs` itself,
+// because its caller (`testActiveSession`, for the SystemUser elevation in
+// `install-server-plugin.mjs`) rebuilds a real `GemStoneLogin` from the
+// result: a silent fallback to a bogus host/stone there risks a SystemUser
+// login that either fails with a confusing GCI error or, worse, silently
+// succeeds against the wrong stone (e.g. a coincidental default at
+// `localhost`). That risk is specific to *reconstructing a login* — a caller
+// that only ever passes `stoneNrs` through to GCI opaquely (as
+// `resolveTestConnection`'s other 17 callers do) has nothing to protect, so
+// the requirement lives here, in the one function that needs parsed
+// `gem_host`/`stone`, not in `resolveTestConnection`. Legal-but-unrecognized
+// shapes (a bare `gs64stone`, `#netldi:`/`#auth:` forms) are fine for that
+// opaque use; this only rejects a shape none of them are.
+export function requireParsedStoneNrs(stoneNrs: string): Pick<GemStoneLogin, 'gem_host' | 'stone'> {
+  const parsed = parseStoneNrs(stoneNrs);
+  if (parsed === undefined) {
+    throw new Error(
+      `Could not parse gem_host/stone from Stone NRS: ${stoneNrs}. Expected the ` +
+        '`!tcp@<host>#server!<stone>` shape.',
+    );
+  }
+  return parsed;
 }
 
 /**

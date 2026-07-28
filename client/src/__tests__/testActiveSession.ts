@@ -13,8 +13,8 @@
 
 import type { ActiveSession } from '../sessionManager';
 import type { GciLibrary } from '../gciLibrary';
-import { resolveTestConnection } from './testConnection';
-import { parseStoneNrs, type GemStoneLogin } from '../loginTypes';
+import { resolveTestConnection, requireParsedStoneNrs } from './testConnection';
+import type { GemStoneLogin } from '../loginTypes';
 
 // `stoneVersion` on `ActiveSession` means the connected *client library's* own
 // version (`gci.GciTsVersion().version` — see `sessionManager.ts`'s
@@ -44,7 +44,6 @@ function stoneVersionOf(gci: GciLibrary): string {
  */
 export function testActiveSession(gci: GciLibrary, handle: unknown): ActiveSession {
   const conn = resolveTestConnection();
-  const parsedStone = parseStoneNrs(conn.stoneNrs);
 
   const login: GemStoneLogin = {
     label: '',
@@ -53,8 +52,7 @@ export function testActiveSession(gci: GciLibrary, handle: unknown): ActiveSessi
     // for its `libgcits-<v>-64` lookups. `conn.version` is best-effort (see
     // `TestConnection`), hence the fallback.
     version: conn.version ?? '',
-    gem_host: parsedStone?.gem_host ?? 'localhost',
-    stone: parsedStone?.stone ?? '',
+    ...requireParsedStoneNrs(conn.stoneNrs),
     gs_user: conn.gsUser,
     gs_password: conn.gsPassword,
     netldi: conn.netldiName,
