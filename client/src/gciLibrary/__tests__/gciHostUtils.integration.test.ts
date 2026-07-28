@@ -1,40 +1,43 @@
-import { describe, it, expect, afterAll } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { GciLibrary } from '../../gciLibrary';
-import { GCI_LIBRARY_PATH } from '../../__tests__/gci/gciTestConfig';
+import { useIntegrationTest } from '../../__tests__/useIntegrationTest';
 
-describe('GCI Host Utility Functions', () => {
-  const gci = new GciLibrary(GCI_LIBRARY_PATH);
+/**
+ * The GCI library's host-side utilities: allocation, clock, sleep and
+ * timestamp formatting. None of them take a session, but they are real native
+ * calls, so they run against the loaded library under the harness.
+ *
+ * GciHostCallDebuggerMsg is deliberately not covered — it blocks for 60
+ * seconds waiting for a C debugger to attach. That its binding loads at all is
+ * covered by gciOptionalFunctions.test.ts.
+ */
+describe('GCI host utilities (integration)', () => {
+  let gci: GciLibrary;
 
-  afterAll(() => {
-    gci.close();
+  useIntegrationTest((testContext) => {
+    gci = testContext.gciLibrary;
   });
 
   describe('GciShutdown', () => {
-    it('completes without error (no-op)', () => {
-      // GciShutdown has no effect in the thread-safe GCI
+    it('is a no-op in the thread-safe GCI', () => {
       expect(() => gci.GciShutdown()).not.toThrow();
     });
   });
 
   describe('GciMalloc / GciFree', () => {
-    it('allocates and frees memory', () => {
-      const ptr = gci.GciMalloc(256);
-      console.log('GciMalloc(256) - ptr:', ptr);
-      expect(ptr).not.toBeNull();
+    it('allocates a buffer and frees it again', () => {
+      const pointer = gci.GciMalloc(256);
 
-      // Free should not throw
-      expect(() => gci.GciFree(ptr)).not.toThrow();
+      expect(pointer).not.toBeNull();
+      expect(() => gci.GciFree(pointer)).not.toThrow();
     });
   });
 
-  // GciHostCallDebuggerMsg blocks for 60 seconds waiting for a C debugger
-  // to attach. The binding is verified to load correctly via the constructor.
-
   describe('GciHostFtime', () => {
-    it('returns current time with seconds and milliseconds', () => {
+    it('reports the current time as seconds plus milliseconds', () => {
       const { seconds, milliSeconds } = gci.GciHostFtime();
-      console.log('GciHostFtime - seconds:', seconds, 'milliSeconds:', milliSeconds);
-      // seconds should be a reasonable Unix timestamp (after 2020-01-01)
+
+      // Any plausible clock is well past 2020-01-01.
       expect(seconds).toBeGreaterThan(1577836800);
       expect(milliSeconds).toBeGreaterThanOrEqual(0);
       expect(milliSeconds).toBeLessThan(1000);
@@ -42,30 +45,29 @@ describe('GCI Host Utility Functions', () => {
   });
 
   describe('GciHostMilliSleep', () => {
-    it('sleeps for approximately the requested duration', () => {
+    it('sleeps for at least about the requested duration', () => {
       const start = Date.now();
+
       gci.GciHostMilliSleep(50);
-      const elapsed = Date.now() - start;
-      console.log('GciHostMilliSleep(50) - elapsed:', elapsed, 'ms');
-      expect(elapsed).toBeGreaterThanOrEqual(40); // allow some tolerance
+
+      // Some tolerance: the host clock's resolution can under-report a sleep.
+      expect(Date.now() - start).toBeGreaterThanOrEqual(40);
     });
   });
 
   describe('GciTimeStampMsStr', () => {
-    it('formats a timestamp string from GciHostFtime values', () => {
+    it('formats the values GciHostFtime reports', () => {
       const { seconds, milliSeconds } = gci.GciHostFtime();
-      const str = gci.GciTimeStampMsStr(seconds, milliSeconds);
-      console.log('GciTimeStampMsStr - result:', JSON.stringify(str));
-      expect(str.length).toBeGreaterThan(0);
+
+      const formatted = gci.GciTimeStampMsStr(seconds, milliSeconds);
+
+      expect(formatted.length).toBeGreaterThan(0);
     });
 
-    it('formats a known epoch timestamp', () => {
-      // 2024-01-01 00:00:00.000 UTC = 1704067200
-      const str = gci.GciTimeStampMsStr(1704067200, 500);
-      console.log('GciTimeStampMsStr(2024-01-01) - result:', JSON.stringify(str));
-      expect(str.length).toBeGreaterThan(0);
-      // Should contain the milliseconds and date components
-      expect(str).toContain('.500');
+    it('includes the milliseconds it was given', () => {
+      const formatted = gci.GciTimeStampMsStr(1704067200, 500);
+
+      expect(formatted).toContain('.500');
     });
   });
 });
