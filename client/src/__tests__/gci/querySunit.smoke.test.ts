@@ -202,7 +202,9 @@ describe('SUnit queries (live GCI)', () => {
 
         expect(Array.isArray(results)).toBe(true);
       }
-    });
+      // On a small image this runs SUnit across every test class; on a freshly provisioned
+      // (cold) stone that legitimately takes ~30s, past vitest's 5s default — give it room.
+    }, 120000);
   });
 
   describe('describeTestFailure', () => {
