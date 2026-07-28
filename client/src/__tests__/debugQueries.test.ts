@@ -627,10 +627,9 @@ describe('debugQueries', () => {
         GciTsOopToI64: vi.fn(() => ({ value: 5n, err: { ...noErr } })),
         GciTsNewString: vi.fn(() => ({ result: EXPR_STRING, err: { ...noErr } })),
         GciTsNewSymbol: vi.fn(() => ({ result: AMOUNT_SYMBOL, err: { ...noErr } })),
-        GciTsResolveSymbol: vi.fn((_h: unknown, name: string) => ({
-          result: name === 'SymbolDictionary' ? 0xd1n : name === 'SymbolList' ? 0xd2n : 0xd3n,
-          err: { ...noErr },
-        })),
+        resolveSymbol: vi.fn((_h: unknown, name: string) =>
+          name === 'SymbolDictionary' ? 0xd1n : name === 'SymbolList' ? 0xd2n : 0xd3n,
+        ),
         // Frame array size = 11 (so values start at slot 11); names array size = 1.
         GciTsFetchSize: vi.fn((_h: unknown, oop: bigint) => ({
           result: oop === NAMES_ARRAY ? 1n : 11n,
@@ -700,11 +699,11 @@ describe('debugQueries', () => {
       const session = tempSession();
       // SymbolDictionary fails to resolve → no temp dictionary can be built, so
       // buildFrameSymbolList returns null and the eval falls back to self-only.
-      (session.gci.GciTsResolveSymbol as ReturnType<typeof vi.fn>).mockImplementation(
-        (_h: unknown, name: string) =>
-          name === 'SymbolDictionary'
-            ? { result: 0n, err: { ...noErr, number: 2110, message: 'not resolved' } }
-            : { result: 0xd2n, err: { ...noErr } },
+      (session.gci.resolveSymbol as ReturnType<typeof vi.fn>).mockImplementation(
+        (_h: unknown, name: string) => {
+          if (name === 'SymbolDictionary') throw new Error('not resolved');
+          return 0xd2n;
+        },
       );
       debug.evaluateInFrame(session, GS_PROCESS, 'amount * 2', 3);
 
@@ -816,10 +815,9 @@ describe('debugQueries', () => {
         GciTsOopToI64: vi.fn(() => ({ value: 5n, err: { ...noErr } })),
         GciTsNewString: vi.fn(() => ({ result: EXPR_STRING, err: { ...noErr } })),
         GciTsNewSymbol: vi.fn(() => ({ result: AMOUNT_SYMBOL, err: { ...noErr } })),
-        GciTsResolveSymbol: vi.fn((_h: unknown, name: string) => ({
-          result: name === 'SymbolDictionary' ? 0xd1n : name === 'SymbolList' ? 0xd2n : 0xd3n,
-          err: { ...noErr },
-        })),
+        resolveSymbol: vi.fn((_h: unknown, name: string) =>
+          name === 'SymbolDictionary' ? 0xd1n : name === 'SymbolList' ? 0xd2n : 0xd3n,
+        ),
         GciTsFetchSize: vi.fn((_h: unknown, oop: bigint) => ({
           result: oop === NAMES_ARRAY ? 1n : 11n,
           err: { ...noErr },

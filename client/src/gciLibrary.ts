@@ -239,7 +239,6 @@ export class GciLibrary {
   private _GciTsIsKindOfClass: koffi.KoffiFunction;
   private _GciTsIsSubclassOfClass: koffi.KoffiFunction;
   private _GciTsObjExists: koffi.KoffiFunction;
-  private _GciTsResolveSymbol: koffi.KoffiFunction;
   private _GciTsResolveSymbolObj: koffi.KoffiFunction;
   private _GciTsExecute: koffi.KoffiFunction;
   private _GciTsExecute_: koffi.KoffiFunction;
@@ -493,9 +492,6 @@ export class GciLibrary {
       `int GciTsIsSubclassOfClass(GciSessionPtr, ${OopType}, ${OopType}, _Out_ GciErrSType *)`,
     );
     this._GciTsObjExists = this.lib.func(`int GciTsObjExists(GciSessionPtr, ${OopType})`);
-    this._GciTsResolveSymbol = this.lib.func(
-      `${OopType} GciTsResolveSymbol(GciSessionPtr, const char *, ${OopType}, _Out_ GciErrSType *)`,
-    );
     this._GciTsResolveSymbolObj = this.lib.func(
       `${OopType} GciTsResolveSymbolObj(GciSessionPtr, ${OopType}, ${OopType}, _Out_ GciErrSType *)`,
     );
@@ -1256,16 +1252,6 @@ export class GciLibrary {
 
   GciTsObjExists(session: unknown, obj: bigint): boolean {
     return this._GciTsObjExists(session, obj) !== 0;
-  }
-
-  GciTsResolveSymbol(
-    session: unknown,
-    str: string,
-    symbolList: bigint,
-  ): { result: bigint; err: GciError } {
-    const err: Record<string, unknown> = {};
-    const raw = this._GciTsResolveSymbol(session, str, symbolList, err);
-    return { result: toBigInt(raw), err: err as unknown as GciError };
   }
 
   GciTsResolveSymbolObj(
@@ -2349,17 +2335,21 @@ export class GciLibrary {
 
   /**
    * Resolves a symbol name to its OOP using the user's symbol list
-   * (UserGlobals, Globals, and Published).
+   * (UserGlobals, Globals, and Published). This is the only supported way to
+   * resolve a symbol by name. Always go through this method (or
+   * {@link utf8ClassOop} for the `Utf8` class specifically) rather than
+   * binding the GCI call directly.
    *
    * Equivalent to evaluating `Smalltalk at: #symbol` in GemStone. This method
    * does not cache (`Utf8` is the one exception: it's cached separately by
    * {@link utf8ClassOop}).
    *
    * Goes through `createString` + `GciTsResolveSymbolObj` + `releaseObject`
-   * (three GCI round-trips) rather than the single-call `GciTsResolveSymbol`
-   * (which takes the name as a raw C string). `GciTsResolveSymbol` has a
-   * known memory leak that the GemStone team is currently investigating —
-   * use this slower path until that's fixed. See TODO.md.
+   * (three GCI round-trips) rather than the single-call `GciTsResolveSymbol`,
+   * which takes the name as a raw C string and is NOT bound here on purpose:
+   * it has a known memory leak that the GemStone team is currently
+   * investigating. Use this slower-but-safe path until that's fixed. See
+   * TODO.md.
    *
    * @param session - The GemStone session to operate in.
    * @param symbolName - The name to resolve (e.g. `'Object'`, `'Utf8'`).

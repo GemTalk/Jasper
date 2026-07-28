@@ -47,12 +47,7 @@ export function login(): HarnessSession {
     );
   }
   const handle = result.session;
-  const utf8Class = gci.GciTsResolveSymbol(handle, 'Utf8', OOP_NIL);
-  if (utf8Class.err.number !== 0) {
-    gci.GciTsLogout(handle);
-    throw new Error(`Could not resolve Utf8 class: ${utf8Class.err.message}`);
-  }
-  const utf8Oop = utf8Class.result;
+  const utf8Oop = gci.utf8ClassOop(handle);
 
   const exec: QueryExecutor = (code) => {
     const { data, err } = gci.GciTsExecuteFetchBytes(

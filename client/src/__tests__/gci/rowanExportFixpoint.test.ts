@@ -46,7 +46,7 @@ function loginSystemUser(): SysSession {
     throw new Error(`SystemUser login failed: ${r.err.message || `error ${r.err.number}`}`);
   }
   const handle = r.session;
-  const utf8 = gci.GciTsResolveSymbol(handle, 'Utf8', OOP_NIL).result;
+  const utf8 = gci.utf8ClassOop(handle);
   const exec: QueryExecutor = (code) => {
     const { data, err } = gci.GciTsExecuteFetchBytes(
       handle,
