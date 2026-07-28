@@ -298,44 +298,6 @@ describe('GCI Object Creation and Inquiry', () => {
     });
   });
 
-  describe('GciTsResolveSymbol', () => {
-    it('resolves "Array" to a class OOP', () => {
-      const { result, err } = gci.GciTsResolveSymbol(session, 'Array', OOP_NIL);
-      console.log('ResolveSymbol("Array") - result:', result.toString(), 'err.number:', err.number);
-      expect(result).not.toBe(OOP_ILLEGAL);
-      expect(err.number).toBe(0);
-
-      // The resolved OOP should be a class - verify it exists
-      expect(gci.GciTsObjExists(session, result)).toBe(true);
-    });
-
-    it('resolves "String" to the same class OOP we discovered', () => {
-      const { result } = gci.GciTsResolveSymbol(session, 'String', OOP_NIL);
-      expect(result).toBe(OOP_CLASS_STRING);
-    });
-
-    it('resolves "Symbol" to the same class OOP we discovered', () => {
-      const { result } = gci.GciTsResolveSymbol(session, 'Symbol', OOP_NIL);
-      expect(result).toBe(OOP_CLASS_SYMBOL);
-    });
-
-    it('resolves "ByteArray" to the same class OOP we discovered', () => {
-      const { result } = gci.GciTsResolveSymbol(session, 'ByteArray', OOP_NIL);
-      expect(result).toBe(OOP_CLASS_BYTE_ARRAY);
-    });
-
-    it('returns OOP_ILLEGAL for a non-existent name', () => {
-      const { result, err } = gci.GciTsResolveSymbol(session, 'NoSuchClassXyz123', OOP_NIL);
-      console.log(
-        'ResolveSymbol(nonexistent) - result:',
-        result.toString(),
-        'err.number:',
-        err.number,
-      );
-      expect(result).toBe(OOP_ILLEGAL);
-    });
-  });
-
   describe('GciTsResolveSymbolObj', () => {
     it('resolves a Symbol OOP for "Array" to the Array class', () => {
       const { result: symOop } = gci.GciTsNewSymbol(session, 'Array');
@@ -351,7 +313,7 @@ describe('GCI Object Creation and Inquiry', () => {
       expect(result).not.toBe(OOP_ILLEGAL);
 
       // Should match what ResolveSymbol returns
-      const { result: expected } = gci.GciTsResolveSymbol(session, 'Array', OOP_NIL);
+      const expected = gci.resolveSymbol(session, 'Array');
       expect(result).toBe(expected);
     });
   });

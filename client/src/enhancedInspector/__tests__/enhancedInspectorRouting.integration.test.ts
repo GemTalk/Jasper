@@ -14,8 +14,6 @@ import {
 } from '../../__tests__/requireServerPluginFeature';
 import { pluginFeatures } from '../../serverPlugin/pluginFeatures';
 
-const OOP_NIL = 0x14n;
-
 /**
  * Integration tests for the unified "Inspect It" routing: it opens the Enhanced
  * Inspector when the session reports it as available, and otherwise falls back
@@ -76,8 +74,7 @@ describe('inspect it routing (integration)', () => {
   it('the classic-inspector fallback reads a live object through the real queries', (ctx) => {
     requireServerPluginFeatureAbsent(pluginFeatures.enhancedInspector, ctx, session());
 
-    const { result: globalsOop, err } = gci.GciTsResolveSymbol(handle, 'Globals', OOP_NIL);
-    expect(err.number).toBe(0);
+    const globalsOop = gci.resolveSymbol(handle, 'Globals');
 
     expect(debug.getObjectClassName(session(), globalsOop)).toBe('SymbolDictionary');
     expect(debug.getObjectPrintString(session(), globalsOop, 1024).length).toBeGreaterThan(0);

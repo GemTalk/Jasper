@@ -96,6 +96,13 @@ import {
   clearInlineMethodPreview as sharedClearInlineMethodPreview,
 } from './refactoring/queries/previewInlineMethod';
 import {
+  analyzeMoveMethod as sharedAnalyzeMoveMethod,
+  startMoveMethodPreview as sharedStartMoveMethodPreview,
+  pageMoveMethodPreview as sharedPageMoveMethodPreview,
+  applyMoveMethod as sharedApplyMoveMethod,
+  clearMoveMethodPreview as sharedClearMoveMethodPreview,
+} from './refactoring/queries/previewMoveMethod';
+import {
   analyzeExtractTemporary as sharedAnalyzeExtractTemporary,
   startExtractTemporaryPreview as sharedStartExtractTemporaryPreview,
   pageExtractTemporaryPreview as sharedPageExtractTemporaryPreview,
@@ -1159,6 +1166,75 @@ export function applyInlineMethod(
 
 export function clearInlineMethodPreview(session: ActiveSession, token: string): string {
   return sharedClearInlineMethodPreview(defaultQueryExecutorUsing(session), token);
+}
+
+// Move-method (M6) preview: pre-flight analysis (which selectors move, and why the
+// rest can't), paginated start/page fetched NON-BLOCKING, server-side apply. Per
+// movable selector a methodAdd (on the target) + a methodRemove (from the source);
+// apply passes an empty deselected set (every change is required).
+export function analyzeMoveMethod(
+  session: ActiveSession,
+  sourceClass: string,
+  selectors: string[],
+  isMeta: boolean,
+  targetName: string,
+  toMeta: boolean,
+  dict?: number | string,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Analysing move…');
+  return sharedAnalyzeMoveMethod(exec, sourceClass, selectors, isMeta, targetName, toMeta, dict);
+}
+
+export function startMoveMethodPreview(
+  session: ActiveSession,
+  sourceClass: string,
+  selectors: string[],
+  isMeta: boolean,
+  targetName: string,
+  toMeta: boolean,
+  token: string,
+  maxBytes: number,
+  dict?: number | string,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Previewing move…');
+  return sharedStartMoveMethodPreview(
+    exec,
+    sourceClass,
+    selectors,
+    isMeta,
+    targetName,
+    toMeta,
+    token,
+    maxBytes,
+    dict,
+  );
+}
+
+export function pageMoveMethodPreview(
+  session: ActiveSession,
+  token: string,
+  offset: number,
+  maxBytes: number,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Loading more changes…');
+  return sharedPageMoveMethodPreview(exec, token, offset, maxBytes);
+}
+
+export function applyMoveMethod(
+  session: ActiveSession,
+  token: string,
+  deselectedIds: string[],
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Applying move…');
+  return sharedApplyMoveMethod(exec, token, deselectedIds);
+}
+
+export function clearMoveMethodPreview(session: ActiveSession, token: string): string {
+  return sharedClearMoveMethodPreview(defaultQueryExecutorUsing(session), token);
 }
 
 // Extract-temporary (M3) preview: pre-flight analysis, paginated start/page fetched

@@ -38,7 +38,6 @@ const ROUND_TRIP_METHODS = new Set([
   'GciTsIsKindOfClass',
   'GciTsIsSubclassOfClass',
   'GciTsObjExists',
-  'GciTsResolveSymbol',
   'GciTsResolveSymbolObj',
   'GciTsNewObj',
   'GciTsNewByteArray',
@@ -73,6 +72,7 @@ const ROUND_TRIP_METHODS = new Set([
   'GciTsClearStack',
   'GciTsGemTrace',
   'GciTsContinueWith',
+  'GciTsContinueWithAsync',
   'GciTsWaitForEvent',
   'GciTsCancelWaitForEvent',
   'GciTsKeepAliveCount',
@@ -160,18 +160,32 @@ export const enhancedInspectorPerfTracker: EnhancedInspectorPerfTracker = {
   },
 };
 
+/**
+ * Wraps `gci` in a Proxy that increments {@link enhancedInspectorPerfTracker}
+ * for every call to a method in {@link ROUND_TRIP_METHODS}.
+ *
+ * Methods returned from the `get` trap are bound to `receiver` (the proxy
+ * itself), not `target`. Ergonomic GciLibrary methods (e.g. `resolveSymbol`)
+ * make their own nested calls to raw `GciTsXxx` round trips via `this`;
+ * binding to `receiver` means a nested `this.GciTsXxx()` call re-enters this
+ * same `get` trap and gets tracked individually, instead of silently
+ * bypassing it by running on the unwrapped `target`. This is safe because
+ * `GciLibrary` has no real `#`-private fields (only compile-time-only TS
+ * `private`) and this proxy defines no `set` trap, so property reads/writes
+ * still resolve to the one real `target` object either way.
+ */
 export function wrapWithEnhancedInspectorPerfProxy(gci: GciLibrary): GciLibrary {
   return new Proxy(gci, {
-    get(target, prop: string | symbol) {
+    get(target, prop: string | symbol, receiver) {
       const val = (target as unknown as Record<string, unknown>)[prop as string];
       if (typeof val === 'function' && ROUND_TRIP_METHODS.has(prop as string)) {
         return (...args: unknown[]) => {
           enhancedInspectorPerfTracker.increment(prop as string);
-          return (val as (...a: unknown[]) => unknown).apply(target, args);
+          return (val as (...a: unknown[]) => unknown).apply(receiver, args);
         };
       }
       return typeof val === 'function'
-        ? (val as (...args: unknown[]) => unknown).bind(target)
+        ? (val as (...args: unknown[]) => unknown).bind(receiver)
         : val;
     },
   });
