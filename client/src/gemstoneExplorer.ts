@@ -44,6 +44,7 @@ import { PREVIEW_PAGE_BYTES } from './refactoring/queries/previewRenameMethod';
 import { showRenameMethodEditor } from './refactoring/renameMethodEditor';
 import { showRenameMethodPanel } from './refactoring/renameMethodPanel';
 import { beginChangeSignature, changeSignatureCommand } from './refactoring/changeSignatureCommand';
+import { pushInstVar as pushInstVarFlow } from './refactoring/instVarStructureCommand';
 import {
   parseStartPreview as parseStartClassPreview,
   parsePage as parseClassPage,
@@ -1309,6 +1310,23 @@ export class ExplorerController {
   // first) WITHOUT committing. The user commits explicitly, as everywhere else.
   async renameInstVar(item: IvarItem): Promise<void> {
     await this.renameInstVarNamed(item.className, item.ivarName, this.state.dictIndex);
+  }
+
+  // Push an instance variable up to the superclass (V2) or down into the subclasses
+  // (V3), from the ivar row's context menu. The engine recompiles the affected class
+  // definitions (new versions), previews, and applies WITHOUT committing. After a
+  // successful apply the class shape changed, so re-cascade the class panes.
+  async pushInstVar(item: IvarItem, direction: 'up' | 'down'): Promise<void> {
+    const session = this.session();
+    if (!session) return;
+    const applied = await pushInstVarFlow(
+      session,
+      direction,
+      item.className,
+      item.ivarName,
+      this.state.dictIndex,
+    );
+    if (applied) await this.refreshAfterClassReshape(item.className);
   }
 
   // The rename-instance-variable flow, addressed by NAME rather than a tree row so
@@ -3046,6 +3064,22 @@ export function registerGemStoneExplorer(
     // Rename a locally-defined instance variable (pencil on the ivar row).
     vscode.commands.registerCommand('gemstone.explorer.renameIvar', (item?: IvarItem) => {
       if (item instanceof IvarItem) void ctl.renameInstVar(item);
+    }),
+    // Push an instance variable up to the superclass (V2) — ivar row context menu.
+    vscode.commands.registerCommand('gemstone.explorer.pushUpInstVar', (item?: IvarItem) => {
+      if (!(item instanceof IvarItem)) return;
+      void ctl.pushInstVar(item, 'up').catch((e: unknown) => {
+        const msg = e instanceof Error ? e.message : String(e);
+        void vscode.window.showErrorMessage(`Push up instance variable failed: ${msg}`);
+      });
+    }),
+    // Push an instance variable down into the subclasses (V3) — ivar row context menu.
+    vscode.commands.registerCommand('gemstone.explorer.pushDownInstVar', (item?: IvarItem) => {
+      if (!(item instanceof IvarItem)) return;
+      void ctl.pushInstVar(item, 'down').catch((e: unknown) => {
+        const msg = e instanceof Error ? e.message : String(e);
+        void vscode.window.showErrorMessage(`Push down instance variable failed: ${msg}`);
+      });
     }),
     // Rename the instance variable at the cursor in a method source editor (the
     // Refactor… code action / palette) — routes into the same shared flow.

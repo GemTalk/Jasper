@@ -28,6 +28,7 @@ describe('refactor code actions', () => {
       'gemstone.renameClassVarAtCursor',
       'gemstone.explorer.inlineMethod',
       'gemstone.explorer.inlineTemporary',
+      'gemstone.convertTempToInstVar',
       'gemstone.renameMethodInEditor',
       'gemstone.changeMethodSignature',
     ]);
@@ -81,6 +82,7 @@ describe('refactor code actions', () => {
       'gemstone.renameClassVarAtCursor',
       'gemstone.explorer.inlineMethod',
       'gemstone.explorer.inlineTemporary',
+      'gemstone.convertTempToInstVar',
       'gemstone.renameMethodInEditor',
       'gemstone.changeMethodSignature',
     ]);

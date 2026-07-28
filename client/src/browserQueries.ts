@@ -102,6 +102,15 @@ import {
   clearInlineTemporaryPreview as sharedClearInlineTemporaryPreview,
 } from './refactoring/queries/previewInlineTemporary';
 import {
+  analyzeInstVarStructure as sharedAnalyzeInstVarStructure,
+  startInstVarStructurePreview as sharedStartInstVarStructurePreview,
+  pageInstVarStructurePreview as sharedPageInstVarStructurePreview,
+  applyInstVarStructure as sharedApplyInstVarStructure,
+  clearInstVarStructurePreview as sharedClearInstVarStructurePreview,
+  IvarStructureOp,
+  ConvertTempArgs,
+} from './refactoring/queries/previewInstVarStructure';
+import {
   getClassHistory as sharedGetClassHistory,
   revertClassToVersion as sharedRevertClassToVersion,
   removeClassVersion as sharedRemoveClassVersion,
@@ -1220,6 +1229,67 @@ export function applyInlineTemporary(session: ActiveSession, token: string): Pro
 
 export function clearInlineTemporaryPreview(session: ActiveSession, token: string): string {
   return sharedClearInlineTemporaryPreview(defaultQueryExecutorUsing(session), token);
+}
+
+// Instance-variable structure (V2 push up / V3 push down / V5 convert temporary) wrappers.
+// One engine parametrized by operation; new class versions are created server-side (no
+// commit). Paginated preview fetched NON-BLOCKING.
+export function analyzeInstVarStructure(
+  session: ActiveSession,
+  op: IvarStructureOp,
+  className: string,
+  varName: string,
+  dict?: number | string,
+  extra?: ConvertTempArgs,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Analysing…');
+  return sharedAnalyzeInstVarStructure(exec, op, className, varName, dict, extra);
+}
+
+export function startInstVarStructurePreview(
+  session: ActiveSession,
+  op: IvarStructureOp,
+  className: string,
+  varName: string,
+  token: string,
+  maxBytes: number,
+  dict?: number | string,
+  extra?: ConvertTempArgs,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, `Previewing change to ${className}…`);
+  return sharedStartInstVarStructurePreview(
+    exec,
+    op,
+    className,
+    varName,
+    token,
+    maxBytes,
+    dict,
+    extra,
+  );
+}
+
+export function pageInstVarStructurePreview(
+  session: ActiveSession,
+  token: string,
+  offset: number,
+  maxBytes: number,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Loading more changes…');
+  return sharedPageInstVarStructurePreview(exec, token, offset, maxBytes);
+}
+
+export function applyInstVarStructure(session: ActiveSession, token: string): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Applying change…');
+  return sharedApplyInstVarStructure(exec, token);
+}
+
+export function clearInstVarStructurePreview(session: ActiveSession, token: string): string {
+  return sharedClearInstVarStructurePreview(defaultQueryExecutorUsing(session), token);
 }
 
 // Class-definition history (native classHistory, this-stone-only, read-only) and

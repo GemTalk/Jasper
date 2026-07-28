@@ -1157,6 +1157,21 @@
         "icon": "$(edit)"
       },
       {
+        "command": "gemstone.explorer.pushUpInstVar",
+        "title": "Push Instance Variable Up…",
+        "category": "GemStone"
+      },
+      {
+        "command": "gemstone.explorer.pushDownInstVar",
+        "title": "Push Instance Variable Down…",
+        "category": "GemStone"
+      },
+      {
+        "command": "gemstone.convertTempToInstVar",
+        "title": "Convert Temporary to Instance Variable…",
+        "category": "GemStone"
+      },
+      {
         "command": "gemstone.explorer.renameMethod",
         "title": "Rename Method…",
         "category": "GemStone",
@@ -1471,6 +1486,14 @@
           "when": "false"
         },
         {
+          "command": "gemstone.explorer.pushUpInstVar",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.pushDownInstVar",
+          "when": "false"
+        },
+        {
           "command": "gemstone.explorer.renameClassVariable",
           "when": "false"
         },
@@ -1746,6 +1769,16 @@
           "command": "gemstone.explorer.renameIvar",
           "when": "view == gemstoneExplorerClasses && viewItem == explorerIvar",
           "group": "inline"
+        },
+        {
+          "command": "gemstone.explorer.pushUpInstVar",
+          "when": "view == gemstoneExplorerClasses && viewItem == explorerIvar",
+          "group": "3_refactor@1"
+        },
+        {
+          "command": "gemstone.explorer.pushDownInstVar",
+          "when": "view == gemstoneExplorerClasses && viewItem == explorerIvar",
+          "group": "3_refactor@2"
         },
         {
           "command": "gemstone.explorer.renameClassVariable",
