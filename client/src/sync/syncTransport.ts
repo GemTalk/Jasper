@@ -16,7 +16,7 @@ import {
   fetchCode,
   releaseCode,
   SYNC_CHUNK_CHARS,
-  SYNC_MAX_RESULT_BYTES,
+  maxResultBytesFor,
 } from './syncProtocol';
 
 export type LimitExecutor = (label: string, code: string, maxBytes: number) => string;
@@ -39,11 +39,6 @@ export interface RequestTiming {
 
 export type RequestLogger = (t: RequestTiming) => void;
 
-export interface TransportOptions {
-  chunkChars?: number;
-  maxBytes?: number;
-}
-
 export function newStats(): TransportStats {
   return { roundTrips: 0, chars: 0, serverMs: 0, wallMs: 0 };
 }
@@ -53,12 +48,11 @@ export function fetchBlob(
   exec: LimitExecutor,
   label: string,
   buildExpr: string,
-  opts: TransportOptions = {},
+  chunkChars: number = SYNC_CHUNK_CHARS,
   stats?: TransportStats,
   onRequest?: RequestLogger,
 ): string {
-  const chunkChars = opts.chunkChars ?? SYNC_CHUNK_CHARS;
-  const maxBytes = opts.maxBytes ?? SYNC_MAX_RESULT_BYTES;
+  const maxBytes = maxResultBytesFor(chunkChars);
 
   const timedExec = (lbl: string, code: string, max: number): { resp: string; wallMs: number } => {
     const t0 = Date.now();
