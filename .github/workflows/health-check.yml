@@ -1,6 +1,10 @@
 name: Health Check
 
-on: push
+on:
+  push:
+    branches: [main, '*/wip/*']
+  pull_request:
+  merge_group:
 
 # zizmor(excessive-permissions): an explicit permissions block is required
 # instead of relying on the default GITHUB_TOKEN scope
