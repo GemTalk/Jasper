@@ -43,6 +43,7 @@ import {
 import { PREVIEW_PAGE_BYTES } from './refactoring/queries/previewRenameMethod';
 import { showRenameMethodEditor } from './refactoring/renameMethodEditor';
 import { showRenameMethodPanel } from './refactoring/renameMethodPanel';
+import { beginChangeSignature, changeSignatureCommand } from './refactoring/changeSignatureCommand';
 import {
   parseStartPreview as parseStartClassPreview,
   parsePage as parseClassPage,
@@ -1671,6 +1672,35 @@ export class ExplorerController {
         `${result.applied === 1 ? '' : 's'}). Compiled but NOT committed — commit when ready.`,
     );
     return true;
+  }
+
+  // Change a method's signature — add, remove, or reorder parameters — across its
+  // implementors and senders, within a chosen scope, via the server-side engine
+  // (M5). Driven from the Explorer's method-row context menu; shares the flow with
+  // the source-pane Refactor… entry (both call beginChangeSignature).
+  async changeSignature(item: MethodItem): Promise<void> {
+    const className = this.state.className;
+    const session = this.session();
+    if (!className || !session) return;
+    await beginChangeSignature(
+      {
+        className,
+        selector: item.info.selector,
+        isMeta: item.isMeta,
+        dictIndex: this.state.dictIndex,
+        dictName: this.state.dictName,
+      },
+      { session, onApplied: (o, n) => this.refreshAfterSignatureChange(o, n) },
+    );
+  }
+
+  // Bring the tree and any open editors up to date after a signature change: the
+  // method environment is stale (selectors changed) and an editor open on a renamed
+  // implementor must reopen under its new selector. Public so BOTH entry points (the
+  // Explorer method row and the source-pane Refactor… command) share it.
+  async refreshAfterSignatureChange(oldSelector: string, newSelector: string): Promise<void> {
+    this.reloadCurrentClassMethods();
+    await this.refreshRenamedSelectorEditors(oldSelector, newSelector);
   }
 
   // Ensure the refactoring engine is loaded, offering to install it if not.
@@ -3359,6 +3389,25 @@ export function registerGemStoneExplorer(
         });
       },
     ),
+    // Change a method's signature — add/remove/reorder parameters (context menu on
+    // the method row).
+    vscode.commands.registerCommand('gemstone.explorer.changeSignature', (item?: MethodItem) => {
+      if (!(item instanceof MethodItem)) return;
+      void ctl.changeSignature(item).catch((e: unknown) => {
+        const msg = e instanceof Error ? e.message : String(e);
+        void vscode.window.showErrorMessage(`Change signature failed: ${msg}`);
+      });
+    }),
+    // Change the edited method's signature from a source editor (the Refactor… code
+    // action / palette). Routes into the same shared flow, then reopens editors under
+    // the new selector via the controller's refresh.
+    vscode.commands.registerCommand('gemstone.changeMethodSignature', (position?: unknown) => {
+      void changeSignatureCommand(
+        sessionManager,
+        (oldSelector, newSelector) => ctl.refreshAfterSignatureChange(oldSelector, newSelector),
+        position instanceof vscode.Position ? position : undefined,
+      );
+    }),
     // Rename a class across the image (pencil on a class row OR a hierarchy node).
     vscode.commands.registerCommand(
       'gemstone.explorer.renameClass',

@@ -21,13 +21,13 @@ vi.mock('../debuggerPanel', () => ({
   DebuggerPanel: { create: vi.fn() },
 }));
 
-vi.mock('../enhancedInspector', () => ({
+vi.mock('../enhancedInspector/enhancedInspector', () => ({
   EnhancedInspector: { create: vi.fn() },
 }));
 
 import { CodeExecutor } from '../codeExecutor';
 import { DebuggerPanel } from '../debuggerPanel';
-import { EnhancedInspector } from '../enhancedInspector';
+import { EnhancedInspector } from '../enhancedInspector/enhancedInspector';
 import { SessionManager, ActiveSession } from '../sessionManager';
 import * as vscode from 'vscode';
 import { __resetConfig } from '../__mocks__/vscode';

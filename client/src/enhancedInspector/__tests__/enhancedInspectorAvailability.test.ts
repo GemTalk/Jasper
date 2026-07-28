@@ -6,9 +6,9 @@ vi.mock('vscode', () => ({
   },
 }));
 
-import { ActiveSession } from '../sessionManager';
-import { GemStoneLogin } from '../loginTypes';
-import * as queries from '../browserQueries';
+import { ActiveSession } from '../../sessionManager';
+import { GemStoneLogin } from '../../loginTypes';
+import * as queries from '../../browserQueries';
 import { refreshEnhancedInspectorAvailable } from '../enhancedInspectorAvailability';
 
 function createMockSession(executeFetchData = '', stoneVersion = '3.7.5'): ActiveSession {

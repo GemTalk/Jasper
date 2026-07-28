@@ -24,16 +24,16 @@
  * a filesystem with them (a local stone). Remote stones are detected and
  * reported rather than failing cryptically.
  */
-import { ActiveSession } from './sessionManager';
-import { executeFetchString } from './browserQueries';
-import { compareGemStoneVersions } from './gemStoneVersion';
+import { ActiveSession } from '../sessionManager';
+import { executeFetchString } from '../browserQueries';
+import { compareGemStoneVersions } from '../gemStoneVersion';
 import {
   gemCanRead,
   gsStringLiteral,
   messageOf,
   safeAbort,
   yieldToEventLoop,
-} from './serverPlugin/installHelpers';
+} from '../serverPlugin/installHelpers';
 
 /**
  * Minimum GemStone version the Enhanced Inspector support is limited to.

@@ -15,9 +15,9 @@ import * as vscode from 'vscode';
 import * as crypto from 'crypto';
 import { StartMovePreview, PreviewPage, ApplyResult } from './moveMethodPreview';
 import { renderMovePanelHtml, renderMoveCards } from './moveMethodPanelHtml';
-import { readRefactoringWebviewScript } from './webviewAssets';
+import { readWebviewScript } from '../webviewAssets';
 
-const panelJs = readRefactoringWebviewScript('renameMethodPanelView.js');
+const panelJs = readWebviewScript('renameMethodPanelView.js', 'refactoring');
 
 export interface MoveMethodPanelHandlers {
   /** Fetch the page starting at `offset` (1-based). */

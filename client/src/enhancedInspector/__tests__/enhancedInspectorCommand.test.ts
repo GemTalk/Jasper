@@ -29,7 +29,7 @@ vi.mock('vscode', () => ({
 
 vi.mock('fs', () => ({ existsSync: mocks.existsSync }));
 
-vi.mock('../browserQueries', () => ({
+vi.mock('../../browserQueries', () => ({
   sessionNeedsCommit: mocks.sessionNeedsCommit,
   checkEnhancedInspectorAvailable: mocks.checkEnhancedInspectorAvailable,
   // Read at load time by the shared feature registry (pluginFeatures) as
@@ -48,7 +48,7 @@ vi.mock('../enhancedInspectorInstall', async (importActual) => {
   };
 });
 
-import { ActiveSession, SessionManager } from '../sessionManager';
+import { ActiveSession, SessionManager } from '../../sessionManager';
 import { installEnhancedInspectorFeature } from '../enhancedInspectorCommand';
 
 const EXTENSION_PATH = '/ext';

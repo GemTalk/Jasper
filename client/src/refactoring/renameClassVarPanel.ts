@@ -15,9 +15,9 @@ import * as vscode from 'vscode';
 import * as crypto from 'crypto';
 import { StartClassVarPreview, PreviewPage, ApplyResult } from './renameClassVarPreview';
 import { renderClassVarPanelHtml, renderClassVarCards } from './renameClassVarPanelHtml';
-import { readRefactoringWebviewScript } from './webviewAssets';
+import { readWebviewScript } from '../webviewAssets';
 
-const panelJs = readRefactoringWebviewScript('renameMethodPanelView.js');
+const panelJs = readWebviewScript('renameMethodPanelView.js', 'refactoring');
 
 export interface RenameClassVarPanelHandlers {
   loadPage: (offset: number) => Promise<PreviewPage>;

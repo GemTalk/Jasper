@@ -3,7 +3,7 @@
 // The proxy wraps a GciLibrary instance so all round-trip methods are counted
 // without modifying gciLibrary.ts. Enable/disable via gemstone.enhancedInspectorPerfTracking.
 
-import { GciLibrary } from './gciLibrary';
+import { GciLibrary } from '../gciLibrary';
 
 // Methods that make actual network round trips to the GemStone server.
 // Local-only methods (OopIsSpecial, I32ToOop, Encrypt, CallInProgress, etc.) are excluded.

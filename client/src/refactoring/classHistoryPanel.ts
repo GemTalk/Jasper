@@ -14,9 +14,9 @@ import * as vscode from 'vscode';
 import * as crypto from 'crypto';
 import { ClassVersion, RevertResult, RemoveResult } from './classHistoryModel';
 import { renderClassHistoryHtml, renderVersionRows } from './classHistoryPanelHtml';
-import { readRefactoringWebviewScript } from './webviewAssets';
+import { readWebviewScript } from '../webviewAssets';
 
-const panelJs = readRefactoringWebviewScript('classHistoryPanelView.js');
+const panelJs = readWebviewScript('classHistoryPanelView.js', 'refactoring');
 
 export interface ClassHistoryPanelHandlers {
   /** Perform the redo (restore version `index` as a new version, no commit) and

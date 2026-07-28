@@ -15,9 +15,9 @@ import * as vscode from 'vscode';
 import * as crypto from 'crypto';
 import { RenameChange } from './renameInstVarPreview';
 import { renderRenamePanelHtml } from './renameInstVarPanelHtml';
-import { readRefactoringWebviewScript } from './webviewAssets';
+import { readWebviewScript } from '../webviewAssets';
 
-const panelJs = readRefactoringWebviewScript('renameInstVarPanelView.js');
+const panelJs = readWebviewScript('renameInstVarPanelView.js', 'refactoring');
 
 /**
  * Show the rename preview and resolve with the ids of the changes the user chose

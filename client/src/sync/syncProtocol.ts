@@ -33,10 +33,23 @@ export const SYNC_CHUNK_CHARS = 4_000_000;
 // each batch's payload near one chunk. The delta is processed in these groups.
 export const SYNC_REFS_PER_BATCH = 400;
 
-// Result buffer (bytes) the GCI fetch allocates. A chunk is at most
-// SYNC_CHUNK_CHARS code points; UTF-8 uses at most 4 bytes per code point, so
-// this guarantees no chunk is ever truncated mid-character.
-export const SYNC_MAX_RESULT_BYTES = SYNC_CHUNK_CHARS * 4 + 1024;
+/**
+ * The result buffer (bytes) the GCI fetch must allocate to receive a chunk of
+ * `chunkChars` code points without truncation.
+ *
+ * UTF-8 encodes any code point in at most 4 bytes, so `chunkChars * 4` bounds
+ * the encoded chunk itself; the `+ 1024` covers the small ASCII header
+ * (`serverMs \t total \n` / `serverMs \n`) that {@link prepareCode} and
+ * {@link fetchCode} prefix to each response. Always derive `maxBytes` from
+ * `chunkChars` through this function rather than choosing it independently:
+ * the two must move together, or a chunk can come back short with no error.
+ *
+ * @param chunkChars - The chunk size, in code points, that will be requested.
+ * @returns The minimum safe result-buffer size, in bytes.
+ */
+export function maxResultBytesFor(chunkChars: number): number {
+  return chunkChars * 4 + 1024;
+}
 
 // Wrap a multi-statement Smalltalk block as an expression yielding its value.
 function blockExpr(body: string): string {

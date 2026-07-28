@@ -29,6 +29,7 @@ describe('refactor code actions', () => {
       'gemstone.explorer.inlineMethod',
       'gemstone.explorer.inlineTemporary',
       'gemstone.renameMethodInEditor',
+      'gemstone.changeMethodSignature',
     ]);
     for (const action of actions) {
       expect(action.kind?.value).toBe(vscode.CodeActionKind.Refactor.value);
@@ -45,7 +46,10 @@ describe('refactor code actions', () => {
 
     const actions = provider.provideCodeActions(docWith('  + 1'), range);
 
-    expect(actions.map((a) => a.command?.command)).toEqual(['gemstone.renameMethodInEditor']);
+    expect(actions.map((a) => a.command?.command)).toEqual([
+      'gemstone.renameMethodInEditor',
+      'gemstone.changeMethodSignature',
+    ]);
   });
 
   it('offers the extractions (only) on a selection that does not start on an identifier', () => {
@@ -57,6 +61,7 @@ describe('refactor code actions', () => {
       'gemstone.explorer.extractMethod',
       'gemstone.explorer.extractTemporary',
       'gemstone.renameMethodInEditor',
+      'gemstone.changeMethodSignature',
     ]);
     // The extractions read the editor selection, so they carry no position argument.
     expect(actions[0].command?.arguments).toBeUndefined();
@@ -77,6 +82,7 @@ describe('refactor code actions', () => {
       'gemstone.explorer.inlineMethod',
       'gemstone.explorer.inlineTemporary',
       'gemstone.renameMethodInEditor',
+      'gemstone.changeMethodSignature',
     ]);
   });
 
