@@ -1,0 +1,200 @@
+name: Windows Health Check
+
+on: push
+
+# zizmor(excessive-permissions): an explicit permissions block is required
+# instead of relying on the default GITHUB_TOKEN scope
+permissions:
+  contents: read
+
+# Validates the "Windows with WSL" architecture from docs/windows-wsl.md: the
+# extension runs natively on Windows against the real Windows GCI DLL, while
+# the GemStone server (stone + NetLDI) only runs on Linux, hosted here inside
+# WSL2 on the same runner. Pinned to a single GemStone version (3.6.2, the
+# floor in client/.gemstone-integration-releases.json) rather than the full
+# matrix health-check.yml runs, since this workflow is about proving the Windows
+# code path works at all, not re-covering every GemStone version on it too.
+env:
+  GEMSTONE_VERSION: '3.6.2'
+  GS_NAME: 'windows-ci'
+  GS_USERNAME: 'DataCurator'
+  GS_PASSWORD: 'swordfish'
+  # Fixed NetLDI port, named in /etc/services (Linux side, set below) and in
+  # Windows' services file (set below): lets the Windows GCI DLL resolve the
+  # port by service name instead of reading the NetLDI lock file, which would
+  # otherwise require filesystem access across the Windows/WSL boundary. See
+  # "NetLDI port naming (gs64ldi)" in docs/windows-wsl.md.
+  #
+  # `startnetldi <name>` looks up the port by looking for a service literally
+  # named <name>, not by the fixed string "gs64ldi" docs/windows-wsl.md uses
+  # as its example, so the /etc/services entry has to match gs-start.sh's
+  # own derived name (`${GS_NAME}-${GEMSTONE_VERSION}-gs64-ldi`) exactly.
+  # LDI_SERVICE_NAME itself is derived below (see "Derive NetLDI service
+  # name"), not hardcoded, so it can't drift from that formula.
+  GS64LDI_PORT: '50377'
+
+jobs:
+  windows-health-check:
+    name: GemStone S/64 Windows client + WSL server
+    # WSL distro provisioning plus a full GemStone install/compile/test cycle
+    # is slower than the Linux-only health-check job (5 min), so give it room.
+    timeout-minutes: 25
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        # zizmor(unpinned-uses): actions must be pinned to a commit SHA,
+        # not a mutable tag like @v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # zizmor(artipacked): checkout must not persist the token past
+          # this job
+          persist-credentials: false
+
+      - name: Setup Node.js
+        # zizmor(unpinned-uses): actions must be pinned to a commit SHA,
+        # not a mutable tag like @v6
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+
+      - name: Derive NetLDI service name
+        # Same formula gs-config.sh uses for LDI_NAME (`${NAME}-${VERSION}-gs64-ldi`),
+        # computed once from GS_NAME/GEMSTONE_VERSION instead of a hand-typed
+        # literal, so bumping either can't silently drift the two out of sync.
+        run: echo "LDI_SERVICE_NAME=${{ env.GS_NAME }}-${{ env.GEMSTONE_VERSION }}-gs64-ldi" >> $env:GITHUB_ENV
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Compile
+        run: npm run compile
+
+      - name: Setup WSL
+        # zizmor(unpinned-uses): actions must be pinned to a commit SHA,
+        # not a mutable tag like @v6
+        uses: Vampire/setup-wsl@d1da7f2c0322a5ee4f24975344f67fc0f5baf364 # v7.0.0
+        with:
+          distribution: Ubuntu-22.04
+          additional-packages: curl unzip iproute2
+
+      - name: Prepare WSL for GemStone
+        # Runs as the distro's default user (root for a non-interactively
+        # installed distro). System-level setup only: startnetldi's guest
+        # mode (used below) refuses to run as root, so GemStone itself has
+        # to run as an unprivileged user instead (created here).
+        # zizmor(template-injection): bind to an env var instead of
+        # interpolating ${{ }} directly into the script. WSLENV is required
+        # too: wsl.exe only forwards a Windows-host env var into the WSL
+        # guest's environment when it's named there, otherwise bash never
+        # sees it at all.
+        env:
+          LDI_SERVICE_NAME: ${{ env.LDI_SERVICE_NAME }}
+          WSLENV: LDI_SERVICE_NAME
+        shell: wsl-bash {0}
+        run: |
+          grep -q "^$LDI_SERVICE_NAME" /etc/services || echo "$LDI_SERVICE_NAME ${{ env.GS64LDI_PORT }}/tcp" >> /etc/services
+          id -u gsuser >/dev/null 2>&1 || useradd -m -s /bin/bash gsuser
+
+          # actions/checkout on Windows writes tracked files through git's
+          # core.autocrlf, which turns these scripts' LF endings into CRLF.
+          # WSL's bash then sees a shebang of "bash\r" and fails to resolve
+          # it, so strip the "\r" back out before running anything.
+          sed -i 's/\r$//' "$(pwd)"/client/bin/*.sh
+
+      - name: Install and start GemStone server in WSL
+        # Runs as the unprivileged "gsuser" created above (wsl-bash cds into
+        # this checkout's Windows path translated to its WSL mount, same as
+        # the previous step, before running the script below).
+        shell: wsl-bash -u gsuser {0}
+        run: |
+          repo_dir="$(pwd)"
+
+          # GemStone's stone process needs real POSIX locks/shared memory,
+          # which the Windows-drive mount (DrvFs, under /mnt) does not
+          # reliably provide. Install and run it from the distro's own native
+          # filesystem instead; the scripts below are only *read* from the
+          # DrvFs-mounted checkout, which is fine.
+          mkdir -p ~/gemstone-ci
+          cd ~/gemstone-ci
+
+          "$repo_dir/client/bin/gs-install.sh" "${{ env.GEMSTONE_VERSION }}"
+          "$repo_dir/client/bin/gs-start.sh" "${{ env.GEMSTONE_VERSION }}" "${{ env.GS_NAME }}"
+
+      - name: Register NetLDI port on Windows
+        # The Windows GCI DLL resolves "netldi:<name>" in the gem NRS (below)
+        # via its own services file, so the name needs to exist here too.
+        # zizmor(template-injection): bind to an env var instead of
+        # interpolating ${{ }} directly into the script
+        env:
+          LDI_SERVICE_NAME: ${{ env.LDI_SERVICE_NAME }}
+        run: |
+          $servicesPath = "$env:WINDIR\System32\drivers\etc\services"
+          if (-not (Select-String -Path $servicesPath -Pattern "^$env:LDI_SERVICE_NAME" -Quiet)) {
+            Add-Content -Path $servicesPath -Value "$env:LDI_SERVICE_NAME         ${{ env.GS64LDI_PORT }}/tcp"
+          }
+
+      - name: Get WSL IP address
+        id: wsl-ip
+        # Windows reaches WSL2 services through the distro's own IP (the same
+        # probe Jasper's production WSL bridge uses, see
+        # client/src/wslBridge.ts's getWslIpAddressAsync), not "localhost":
+        # mirrored networking requires Windows 11 and hosted runners run
+        # Windows Server, so it isn't available here.
+        run: |
+          $tokens = ((wsl.exe hostname -I) -replace "`0","").Trim().Split(' ')
+          $ip = $tokens | Where-Object { $_ -match '^(\d{1,3}\.){3}\d{1,3}$' } | Select-Object -First 1
+          if (-not $ip) { throw 'Could not determine the WSL IP address.' }
+          echo "ip=$ip" >> $env:GITHUB_OUTPUT
+
+      - name: Download Windows GCI client
+        id: gci-client
+        run: |
+          $fileName = "GemStone64BitClient${{ env.GEMSTONE_VERSION }}-x86.Windows_NT.zip"
+          $url = "https://downloads.gemtalksystems.com/pub/GemStone64/${{ env.GEMSTONE_VERSION }}/$fileName"
+          $zipPath = Join-Path $env:RUNNER_TEMP $fileName
+          $extractDir = Join-Path $env:RUNNER_TEMP 'gemstone-windows-client'
+
+          Invoke-WebRequest -Uri $url -OutFile $zipPath
+          Expand-Archive -Path $zipPath -DestinationPath $extractDir
+
+          $dllPath = Join-Path $extractDir "GemStone64BitClient${{ env.GEMSTONE_VERSION }}-x86.Windows_NT\bin\libgcits-${{ env.GEMSTONE_VERSION }}-64.dll"
+          if (-not (Test-Path $dllPath)) { throw "Expected GCI DLL not found at $dllPath" }
+          echo "dll-path=$dllPath" >> $env:GITHUB_OUTPUT
+
+      - name: Write test environment
+        # zizmor(template-injection): bind step outputs to env vars instead of
+        # interpolating ${{ }} directly into the script
+        env:
+          WSL_IP: ${{ steps.wsl-ip.outputs.ip }}
+          DLL_PATH: ${{ steps.gci-client.outputs.dll-path }}
+          LDI_SERVICE_NAME: ${{ env.LDI_SERVICE_NAME }}
+        run: |
+          $globalDir = Join-Path $env:RUNNER_TEMP 'gemstone-global'
+          New-Item -ItemType Directory -Force -Path $globalDir | Out-Null
+
+          $stoneName = "${{ env.GS_NAME }}-${{ env.GEMSTONE_VERSION }}-gs64-stone"
+          $wslIp = $env:WSL_IP
+          $dllPath = $env:DLL_PATH
+
+          # Built as an array (one line per element) rather than a here-string:
+          # a here-string's closing "@ must sit at column 0, which a YAML
+          # block scalar's indentation can't guarantee.
+          $envLines = @(
+            "VITE_GEMSTONE_STONE_NRS='!tcp@$wslIp#server!$stoneName'"
+            "VITE_GEMSTONE_GEM_NRS='!tcp@$wslIp#netldi:$env:LDI_SERVICE_NAME#task!gemnetobject'"
+            "VITE_GEMSTONE_USER='${{ env.GS_USERNAME }}'"
+            "VITE_GEMSTONE_PASSWORD='${{ env.GS_PASSWORD }}'"
+            "VITE_GEMSTONE_GCI_LIBRARY_PATH='$dllPath'"
+            "VITE_GEMSTONE_GLOBAL_DIR='$globalDir'"
+          )
+          Set-Content -Path 'client\.env.test' -Value $envLines
+
+      - name: Run tests (without server plugin)
+        run: npm test
+
+      - name: Install server plugin
+        run: npm run test:server:install-plugin
+
+      - name: Run tests (with server plugin)
+        run: npm test
