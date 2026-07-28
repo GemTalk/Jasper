@@ -86,7 +86,7 @@ describe('showRenameClassPanel', () => {
       'Foo',
       'Bar',
       start,
-      { recompileSubclasses: true, migrateInstances: true },
+      { recompileSubclasses: true, migrateInstances: true, removeOldFromHistory: false },
       handlers,
     );
     lastPanel().__emit({ command: 'apply', deselected: ['3'] });
@@ -103,7 +103,7 @@ describe('showRenameClassPanel', () => {
       'Foo',
       'Bar',
       start,
-      { recompileSubclasses: true, migrateInstances: true },
+      { recompileSubclasses: true, migrateInstances: true, removeOldFromHistory: false },
       handlers,
     );
     lastPanel().__emit({ command: 'cancel' });
@@ -123,7 +123,7 @@ describe('showRenameClassPanel', () => {
       'Foo',
       'Bar',
       start,
-      { recompileSubclasses: true, migrateInstances: true },
+      { recompileSubclasses: true, migrateInstances: true, removeOldFromHistory: false },
       handlers,
     );
     lastPanel().__emit({ command: 'loadMore' });

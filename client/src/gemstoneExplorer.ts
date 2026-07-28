@@ -1851,6 +1851,7 @@ export class ExplorerController {
       {
         recompileSubclasses: options.recompileSubclasses,
         migrateInstances: options.migrateInstances,
+        removeOldFromHistory: options.removeOldFromHistory,
       },
       {
         loadPage: async (offset) =>
