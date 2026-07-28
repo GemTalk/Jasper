@@ -1197,6 +1197,18 @@
         "icon": "$(edit)"
       },
       {
+        "command": "gemstone.explorer.changeSignature",
+        "title": "Change Method Signature…",
+        "category": "GemStone",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "gemstone.changeMethodSignature",
+        "title": "Change Method Signature…",
+        "category": "GemStone",
+        "icon": "$(edit)"
+      },
+      {
         "command": "gemstone.renameTemporary",
         "title": "Rename Temporary/Argument…",
         "category": "GemStone",
@@ -1509,6 +1521,10 @@
           "when": "false"
         },
         {
+          "command": "gemstone.explorer.changeSignature",
+          "when": "false"
+        },
+        {
           "command": "gemstone.explorer.renameClass",
           "when": "false"
         },
@@ -1802,6 +1818,11 @@
           "command": "gemstone.explorer.renameMethod",
           "when": "view == gemstoneExplorerMethods && viewItem =~ /explorerMethod/",
           "group": "inline"
+        },
+        {
+          "command": "gemstone.explorer.changeSignature",
+          "when": "view == gemstoneExplorerMethods && viewItem =~ /explorerMethod/",
+          "group": "3_refactor@1"
         },
         {
           "command": "gemstone.explorer.renameClass",

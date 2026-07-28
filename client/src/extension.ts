@@ -31,7 +31,7 @@ import {
   buildEnhancedInspectorPerfQuickPickItems,
   RESET_LABEL,
   COPY_LABEL,
-} from './enhancedInspectorPerfTracker';
+} from './enhancedInspector/enhancedInspectorPerfTracker';
 import { CodeExecutor } from './codeExecutor';
 import { SystemBrowser } from './systemBrowser';
 import {
@@ -70,11 +70,11 @@ import { findMethodInClass } from './commands/findMethodInClass';
 import { loadClassPickItems } from './commands/classPicker';
 import { GlobalsBrowser } from './globalsBrowser';
 import { CommentBrowser } from './commentBrowser';
-import { EnhancedInspector } from './enhancedInspector';
+import { EnhancedInspector } from './enhancedInspector/enhancedInspector';
 import { maybeOfferServerSupport, runInstallServerSupport } from './optionalSupportOffer';
-import { refreshEnhancedInspectorAvailable } from './enhancedInspectorAvailability';
+import { refreshEnhancedInspectorAvailable } from './enhancedInspector/enhancedInspectorAvailability';
 import { refreshRefactoringSupportAvailable } from './refactoring/refactoringAvailability';
-import { supportsEnhancedInspector } from './enhancedInspectorInstall';
+import { supportsEnhancedInspector } from './enhancedInspector/enhancedInspectorInstall';
 import { DebuggerPanel } from './debuggerPanel';
 import { InlineValuesCodeLensProvider } from './inlineValuesCodeLens';
 import {

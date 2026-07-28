@@ -206,7 +206,7 @@ export class ExportManager {
             exec,
             'manifest',
             MANIFEST_BUILD_EXPR,
-            {},
+            undefined,
             manifestStats,
             reqLog,
           );
@@ -280,7 +280,7 @@ export class ExportManager {
                 exec,
                 'content',
                 contentBuildExpr(batch),
-                {},
+                undefined,
                 contentStats,
                 reqLog,
               );

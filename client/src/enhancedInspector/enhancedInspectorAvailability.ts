@@ -7,8 +7,8 @@
  * Inspector vs. the classic tree view. Used at login and again after an install
  * refresh, so routing reflects a fresh install without a reconnect.
  */
-import { ActiveSession } from './sessionManager';
-import { checkEnhancedInspectorAvailable } from './browserQueries';
+import { ActiveSession } from '../sessionManager';
+import { checkEnhancedInspectorAvailable } from '../browserQueries';
 import { supportsEnhancedInspector } from './enhancedInspectorInstall';
 
 /** Re-probe the session and cache `enhancedInspectorAvailable` on it. Returns

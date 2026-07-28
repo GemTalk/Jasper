@@ -30,7 +30,7 @@
 import * as vscode from 'vscode';
 import { ActiveSession, SessionManager } from './sessionManager';
 import { pluginFeatures } from './serverPlugin/pluginFeatures';
-import { installEnhancedInspectorFeature } from './enhancedInspectorCommand';
+import { installEnhancedInspectorFeature } from './enhancedInspector/enhancedInspectorCommand';
 import { installRefactoringFeature } from './refactoring/refactoringInstallCommand';
 
 export type AutoInstallMode = 'ask' | 'always' | 'never';

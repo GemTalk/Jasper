@@ -15,9 +15,9 @@ import * as vscode from 'vscode';
 import * as crypto from 'crypto';
 import { StartTemporaryPreview, PreviewPage, ApplyResult } from './renameTemporaryPreview';
 import { renderTemporaryPanelHtml, renderTemporaryCards } from './renameTemporaryPanelHtml';
-import { readRefactoringWebviewScript } from './webviewAssets';
+import { readWebviewScript } from '../webviewAssets';
 
-const panelJs = readRefactoringWebviewScript('renameMethodPanelView.js');
+const panelJs = readWebviewScript('renameMethodPanelView.js', 'refactoring');
 
 export interface RenameTemporaryPanelHandlers {
   loadPage: (offset: number) => Promise<PreviewPage>;

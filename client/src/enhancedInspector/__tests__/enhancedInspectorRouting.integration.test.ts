@@ -1,18 +1,18 @@
 import { describe, it, expect, vi } from 'vitest';
-vi.mock('vscode', () => import('../__mocks__/vscode'));
+vi.mock('vscode', () => import('../../__mocks__/vscode'));
 
-import { useIntegrationTest } from './useIntegrationTest';
-import { GciLibrary } from '../gciLibrary';
-import * as q from '../browserQueries';
-import * as debug from '../debugQueries';
+import { useIntegrationTest } from '../../__tests__/useIntegrationTest';
+import { GciLibrary } from '../../gciLibrary';
+import * as q from '../../browserQueries';
+import * as debug from '../../debugQueries';
 import { isEnhancedInspectorInstalled } from '../enhancedInspectorInstall';
 import { refreshEnhancedInspectorAvailable } from '../enhancedInspectorAvailability';
-import type { ActiveSession } from '../sessionManager';
+import type { ActiveSession } from '../../sessionManager';
 import {
   requireServerPluginFeature,
   requireServerPluginFeatureAbsent,
-} from './requireServerPluginFeature';
-import { pluginFeatures } from '../serverPlugin/pluginFeatures';
+} from '../../__tests__/requireServerPluginFeature';
+import { pluginFeatures } from '../../serverPlugin/pluginFeatures';
 
 const OOP_NIL = 0x14n;
 

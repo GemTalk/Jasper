@@ -8,7 +8,7 @@ import * as queries from './browserQueries';
 import { drainTranscript } from './transcriptSink';
 import { appendTranscriptOutput } from './transcriptChannel';
 import { buildLineOffsets, mapOffsetToStepPoint } from './breakpointManager';
-import { EnhancedInspector } from './enhancedInspector';
+import { EnhancedInspector } from './enhancedInspector/enhancedInspector';
 import { InspectorTreeProvider } from './inspectorTreeProvider';
 import { routeInspect } from './inspectRouter';
 import { SystemBrowser } from './systemBrowser';

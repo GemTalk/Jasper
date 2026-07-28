@@ -14,9 +14,9 @@ import {
   renderInlineTemporaryPanelHtml,
   renderInlineTemporaryCards,
 } from './inlineTemporaryPanelHtml';
-import { readRefactoringWebviewScript } from './webviewAssets';
+import { readWebviewScript } from '../webviewAssets';
 
-const panelJs = readRefactoringWebviewScript('renameMethodPanelView.js');
+const panelJs = readWebviewScript('renameMethodPanelView.js', 'refactoring');
 
 export interface InlineTemporaryPanelHandlers {
   loadPage: (offset: number) => Promise<PreviewPage>;

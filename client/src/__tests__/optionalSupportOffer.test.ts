@@ -35,7 +35,7 @@ vi.mock('vscode', () => ({
   ConfigurationTarget: { Global: 1 },
 }));
 
-vi.mock('../enhancedInspectorCommand', () => ({
+vi.mock('../enhancedInspector/enhancedInspectorCommand', () => ({
   installEnhancedInspectorFeature: mocks.installEI,
 }));
 vi.mock('../refactoring/refactoringInstallCommand', () => ({
