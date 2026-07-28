@@ -1,132 +1,126 @@
-import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-
-// Mock vscode since browserQueries → gciLog → vscode
-vi.mock('vscode', () => ({
-  window: {
-    createOutputChannel: () => ({ appendLine: () => {} }),
-  },
-}));
+import { describe, it, expect, vi } from 'vitest';
+vi.mock('vscode', () => import('../__mocks__/vscode'));
 
 import { GciLibrary } from '../gciLibrary';
-import { GCI_LIBRARY_PATH, STONE_NRS, GEM_NRS, GS_USER, GS_PASSWORD } from './gci/gciTestConfig';
-import { ActiveSession } from '../sessionManager';
-import { GemStoneLogin } from '../loginTypes';
 import * as queries from '../browserQueries';
+import type { ActiveSession } from '../sessionManager';
+import { useIntegrationTest } from './useIntegrationTest';
 
-describe('Browser Queries (integration)', () => {
+/**
+ * The System Browser's queries against a real stone. browserQueries.test.ts
+ * asserts the Smalltalk each one builds; these assert what the stone actually
+ * answers, which is what catches a selector that no longer exists or a
+ * result shape the parser mis-reads.
+ *
+ * Ungated: every query here needs only a running stone.
+ */
+describe('browser queries (integration)', () => {
   let gci: GciLibrary;
-  let session: ActiveSession;
+  let handle: unknown;
 
-  beforeAll(() => {
-    gci = new GciLibrary(GCI_LIBRARY_PATH);
-    const login = gci.GciTsLogin(STONE_NRS, null, null, false, GEM_NRS, GS_USER, GS_PASSWORD, 0, 0);
-    expect(login.session).not.toBeNull();
-
-    session = {
-      id: 1,
-      gci,
-      handle: login.session,
-      login: { label: 'Test' } as GemStoneLogin,
-      stoneVersion: '3.7.2',
-    };
+  useIntegrationTest((testContext) => {
+    gci = testContext.gciLibrary;
+    handle = testContext.session;
   });
 
-  afterAll(() => {
-    if (session?.handle) {
-      gci.GciTsLogout(session.handle);
-    }
-    gci.close();
-  });
+  /**
+   * The live session the queries run against. It deliberately carries no
+   * `login`: the harness only exposes the pre-assembled gem NRS, not the
+   * `gem_host` and `netldi` that `gemNrsFor` reads, so a `login` here would
+   * quietly build an NRS full of `undefined`. Queries that need one —
+   * `forkGemRunning`, for instance — can't be tested through this factory.
+   */
+  const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
+
+  /** The one-based index `getClassNames` wants for the named dictionary. */
+  const dictionaryIndexOf = (name: string): number => {
+    const index = queries.getDictionaryNames(session()).indexOf(name) + 1;
+    // A missing name would answer 0, which reads as a valid argument and fails
+    // downstream instead of here.
+    expect(index).toBeGreaterThan(0);
+
+    return index;
+  };
 
   describe('getDictionaryNames', () => {
-    it('returns an array of dictionary names', () => {
-      const names = queries.getDictionaryNames(session);
-      expect(Array.isArray(names)).toBe(true);
-      expect(names.length).toBeGreaterThan(0);
-      // DataCurator should have at least UserGlobals and Globals
+    it('lists the symbol dictionaries the user can see', () => {
+      const names = queries.getDictionaryNames(session());
+
       expect(names).toContain('UserGlobals');
       expect(names).toContain('Globals');
     });
   });
 
   describe('getClassNames', () => {
-    it('returns class names from Globals', () => {
-      const globalsIndex = queries.getDictionaryNames(session).indexOf('Globals') + 1;
-      const names = queries.getClassNames(session, globalsIndex);
-      expect(Array.isArray(names)).toBe(true);
-      expect(names.length).toBeGreaterThan(0);
-      // Array and String should be in Globals
+    it('lists the classes a dictionary holds', () => {
+      const names = queries.getClassNames(session(), dictionaryIndexOf('Globals'));
+
       expect(names).toContain('Array');
       expect(names).toContain('String');
     });
 
-    it('returns sorted names', () => {
-      const globalsIndex = queries.getDictionaryNames(session).indexOf('Globals') + 1;
-      const names = queries.getClassNames(session, globalsIndex);
-      const sorted = [...names].sort();
-      expect(names).toEqual(sorted);
+    it('lists them in alphabetical order', () => {
+      const names = queries.getClassNames(session(), dictionaryIndexOf('Globals'));
+
+      expect(names).toEqual([...names].sort());
     });
   });
 
   describe('getMethodCategories', () => {
-    it('returns categories for instance side', () => {
-      const categories = queries.getMethodCategories(session, 'Array', false);
-      expect(Array.isArray(categories)).toBe(true);
+    it('lists the instance-side categories of a class', () => {
+      const categories = queries.getMethodCategories(session(), 'Array', false);
+
       expect(categories.length).toBeGreaterThan(0);
     });
 
-    it('returns categories for class side', () => {
-      const categories = queries.getMethodCategories(session, 'Array', true);
-      expect(Array.isArray(categories)).toBe(true);
-      // Class side may have fewer categories but should still have some
+    it('answers the class side without error', () => {
+      // A class side legitimately has no categories of its own, so completing
+      // the round-trip is the whole guarantee here.
+      expect(() => queries.getMethodCategories(session(), 'Array', true)).not.toThrow();
     });
   });
 
   describe('getMethodSource', () => {
-    it('returns source for a known method', () => {
+    it('returns the source of a method the class implements itself', () => {
       // getAllSelectors includes inherited selectors, which getMethodSource
-      // can't look up (it only finds methods Array implements itself) — use
-      // getMethodList, which is scoped to locally-implemented methods.
-      const instanceMethods = queries.getMethodList(session, 'Array').filter((m) => !m.isMeta);
-      expect(instanceMethods.length).toBeGreaterThan(0);
+      // can't look up; getMethodList is scoped to local implementations.
+      const [firstMethod] = queries.getMethodList(session(), 'Array').filter((m) => !m.isMeta);
+      expect(firstMethod).toBeDefined();
 
-      const source = queries.getMethodSource(session, 'Array', false, instanceMethods[0].selector);
-      expect(typeof source).toBe('string');
+      const source = queries.getMethodSource(session(), 'Array', false, firstMethod.selector);
+
       expect(source.length).toBeGreaterThan(0);
     });
   });
 
   describe('getClassDefinition', () => {
-    it('returns a definition string for Array', () => {
-      const def = queries.getClassDefinition(session, 'Array');
-      expect(typeof def).toBe('string');
-      expect(def.length).toBeGreaterThan(0);
-      // Should mention Array somewhere
-      expect(def).toContain('Array');
+    it('returns a definition naming the class it describes', () => {
+      const definition = queries.getClassDefinition(session(), 'Array');
+
+      expect(definition).toContain('Array');
     });
   });
 
   describe('getClassComment', () => {
-    it('returns a comment string for Array', () => {
-      const comment = queries.getClassComment(session, 'Array');
-      expect(typeof comment).toBe('string');
-      // Comment might be empty for some classes, that's OK
+    it('answers the comment of a class without error', () => {
+      // A class is allowed to have an empty comment, and what a kernel class
+      // says about itself is the release's business — so completing the
+      // round-trip is the whole guarantee here.
+      expect(() => queries.getClassComment(session(), 'Array')).not.toThrow();
     });
   });
 
   describe('compileMethod and deleteMethod', () => {
-    // Use a user-owned class instead of Array (system classes are protected
-    // by SystemObjectSecurityPolicy and DataCurator can't modify them).
-    const testClass = 'VsCodeBrowserTest';
-    const testCategory = 'test-vscode-extension';
-    const testSelector = 'vsCodeTestMethod42';
-    const testSource = `${testSelector}\n  "test method"\n  ^ 42`;
+    // System classes belong to SystemObjectSecurityPolicy and the test user
+    // can't modify them, so compile against a class we define here. The
+    // harness aborts afterward, so it never reaches the repository.
+    const TEST_CLASS = 'VsCodeBrowserTest';
+    const TEST_SELECTOR = 'vsCodeTestMethod42';
 
-    beforeAll(() => {
-      // Create a temporary class in UserGlobals that DataCurator owns
-      queries.compileClassDefinition(
-        session,
-        `Object subclass: '${testClass}'
+    const defineTestClass = (): void => {
+      const defined = queries.compileClassDefinition(
+        session(),
+        `Object subclass: '${TEST_CLASS}'
   instVarNames: #()
   classVars: #()
   classInstVars: #()
@@ -134,37 +128,43 @@ describe('Browser Queries (integration)', () => {
   inDictionary: UserGlobals
   options: #()`,
       );
+
+      // The query answers the new class's name; anything else means the
+      // fixture never got defined and every assertion below is meaningless.
+      expect(defined).toBe(TEST_CLASS);
+    };
+
+    it('adds a method the class then reports as its own', () => {
+      defineTestClass();
+
+      const compiled = queries.compileMethod(
+        session(),
+        TEST_CLASS,
+        false,
+        'test-vscode-extension',
+        `${TEST_SELECTOR}\n  "test method"\n  ^ 42`,
+      );
+
+      expect(compiled).toBe(`Compiled: ${TEST_CLASS} >> ${TEST_SELECTOR}`);
+      expect(queries.getMethodSource(session(), TEST_CLASS, false, TEST_SELECTOR)).toContain(
+        TEST_SELECTOR,
+      );
+      expect(queries.getAllSelectors(session(), TEST_CLASS)).toContain(TEST_SELECTOR);
     });
 
-    afterAll(() => {
-      // Cleanup: remove the test method if it exists, then the class
-      try {
-        queries.deleteMethod(session, testClass, false, testSelector);
-      } catch {
-        // ignore if not there
-      }
-      try {
-        const ugIndex = queries.getDictionaryNames(session).indexOf('UserGlobals') + 1;
-        queries.deleteClass(session, ugIndex, testClass);
-      } catch {
-        // ignore
-      }
-    });
+    it('removes a method the class no longer reports', () => {
+      defineTestClass();
+      queries.compileMethod(
+        session(),
+        TEST_CLASS,
+        false,
+        'test-vscode-extension',
+        `${TEST_SELECTOR}\n  ^ 42`,
+      );
 
-    it('compiles a method, reads it back, then deletes it', () => {
-      const compiled = queries.compileMethod(session, testClass, false, testCategory, testSource);
-      expect(compiled).not.toBe(0n);
+      queries.deleteMethod(session(), TEST_CLASS, false, TEST_SELECTOR);
 
-      const source = queries.getMethodSource(session, testClass, false, testSelector);
-      expect(source).toContain(testSelector);
-
-      const afterCompile = queries.getAllSelectors(session, testClass);
-      expect(afterCompile).toContain(testSelector);
-
-      queries.deleteMethod(session, testClass, false, testSelector);
-
-      const afterDelete = queries.getAllSelectors(session, testClass);
-      expect(afterDelete).not.toContain(testSelector);
+      expect(queries.getAllSelectors(session(), TEST_CLASS)).not.toContain(TEST_SELECTOR);
     });
   });
 });
