@@ -896,6 +896,66 @@ export class ExplorerController {
     }
   }
 
+  // After a push moves a method OUT of its source class, an editor still open on the
+  // source method is stale — the method no longer resolves there — and, via syncToEditor
+  // (onDidChangeActiveTextEditor), it drags the navigator back to the source, clobbering
+  // the reveal of the method in its NEW home. Close such editors (non-dirty only), but only
+  // for selectors the source no longer defines: a partial push-down can leave the source
+  // method in place, and that editor is still valid.
+  private async closeStaleSourceMethodEditors(
+    session: ActiveSession,
+    dictName: string,
+    sourceClass: string,
+    selectors: string[],
+    isMeta: boolean,
+  ): Promise<void> {
+    for (const { tab, uri } of listOpenGemstoneTabs()) {
+      if (tab.isDirty) continue;
+      let parsed;
+      try {
+        parsed = parseUri(uri);
+      } catch {
+        continue;
+      }
+      if (parsed.kind !== 'method' || parsed.sessionId !== session.id) continue;
+      if (parsed.base || parsed.diffView) continue;
+      if (parsed.className !== sourceClass || parsed.dictName !== dictName) continue;
+      if (parsed.isMeta !== isMeta) continue;
+      const sel = unescapeSelectorSlashes(parsed.selector);
+      if (!selectors.includes(sel)) continue;
+      if (this.classStillDefines(session, sourceClass, sel, isMeta)) continue;
+      try {
+        await vscode.window.tabGroups.close(tab);
+      } catch {
+        /* best-effort: a failed close just leaves the (now stale) tab open */
+      }
+    }
+  }
+
+  // True when className still defines selector on the given side (its OWN method), used to
+  // decide whether a source-method editor is stale after a push. On any query error, assume
+  // it is still defined (do not close the editor).
+  private classStillDefines(
+    session: ActiveSession,
+    className: string,
+    selector: string,
+    isMeta: boolean,
+  ): boolean {
+    const behavior = isMeta ? `${className} class` : className;
+    try {
+      return (
+        queries
+          .executeFetchString(
+            session,
+            `((${behavior} compiledMethodAt: #'${selector}' environmentId: 0 otherwise: nil) notNil) printString`,
+          )
+          .trim() === 'true'
+      );
+    } catch {
+      return true;
+    }
+  }
+
   selectClass(item: ClassItem): void {
     this.state.className = item.className;
     this.state.selectedSelector = undefined;
@@ -1647,9 +1707,9 @@ export class ExplorerController {
   // Push a method up to its superclass (M7) or down into its subclasses (M8), from the
   // method row's context menu. The engine resolves the target(s) and declines with a
   // clear reason when impossible (no superclass / no subclasses / precondition). After a
-  // successful push, reveal where the method went: for push-up, navigate to the
-  // superclass and select the moved method; for push-down (many targets), just reload
-  // the source class's method list (the method is now gone from it).
+  // successful push, navigate to where the method landed and highlight it: the superclass
+  // for push-up, the first recipient subclass for push-down. If there is nowhere to reveal
+  // (or we lack the dict context), just reload the source list so the removed row vanishes.
   async pushMethod(item: MethodItem, direction: PushDirection): Promise<void> {
     const className = this.state.className;
     const session = this.session();
@@ -1663,17 +1723,27 @@ export class ExplorerController {
       dict: this.state.dictIndex ?? this.state.dictName,
     });
     if (!outcome) return;
-    if (direction === 'up' && outcome.targetClass) {
-      const { dictName, dictIndex } = this.state;
-      if (dictName !== undefined && dictIndex !== undefined) {
-        await this.revealClass(dictName, dictIndex, outcome.targetClass, {
-          revealMethod: { selector: item.info.selector, isMeta: item.isMeta },
-        });
-        return;
-      }
+    const { dictName, dictIndex } = this.state;
+    // The source method(s) moved away; an editor still open on the source is now stale and
+    // would yank the navigator back to the source via syncToEditor, clobbering the reveal.
+    // Close those (only where the source truly lost the method) BEFORE revealing.
+    if (dictName !== undefined) {
+      await this.closeStaleSourceMethodEditors(
+        session,
+        dictName,
+        className,
+        outcome.moved,
+        item.isMeta,
+      );
     }
-    // Push-down (or a push-up we can't reveal): the source lost the method — reload its
-    // method list so the removed row disappears.
+    if (outcome.revealClass && dictName !== undefined && dictIndex !== undefined) {
+      await this.revealClass(dictName, dictIndex, outcome.revealClass, {
+        revealMethod: { selector: item.info.selector, isMeta: item.isMeta },
+      });
+      return;
+    }
+    // Nowhere to reveal: the source lost the method — reload its method list so the removed
+    // row disappears.
     this.reloadCurrentClassMethods();
   }
 

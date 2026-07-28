@@ -13,9 +13,10 @@ This suite pins down:
   - instance-variable access does NOT block a push-down (the subclasses inherit the source's
     ivars);
   - the push is DECLINED (that selector is skipped, with a reason) when: the method sends
-    super; or EVERY immediate subclass already overrides the selector;
-  - a subclass that already overrides the selector is silently SKIPPED (no add for it), and
-    the method still pushes into the others;
+    super; (a class where EVERY subclass already overrides the selector is NOT declined -- it
+    is an all-overwrite push the user opts into);
+  - a subclass that already overrides the selector gets an opt-in OVERWRITE add (existing
+    body + a data-loss warning), NOT a silent skip, and the others get plain adds;
   - a class with no subclasses (an impossible push) is a GLOBAL decline that empties the
     change set;
   - a class-side method pushes down onto each subclass's class side;
@@ -82,6 +83,13 @@ GsPushDownMethodRefactoringTest >> pushSelectors: sels [
 { #category : 'fixture' }
 GsPushDownMethodRefactoringTest >> push: aSelector [
 	^self pushSelectors: (Array with: aSelector)
+]
+
+{ #category : 'fixture' }
+GsPushDownMethodRefactoringTest >> sourceIn: aClass for: aSelector [
+	"The instance-side source of aSelector in aClass, or '' if absent."
+	^(aClass compiledMethodAt: aSelector environmentId: 0 otherwise: nil)
+		ifNil: [''] ifNotNil: [:m | m sourceString]
 ]
 
 { #category : 'fixture' }
@@ -196,6 +204,7 @@ GsPushDownMethodRefactoringTest >> testNoSubclassesIsGlobalDecline [
 	ref := GsPushDownMethodRefactoring sourceClass: self aFixture selectors: #(#overriddenByA) meta: false.
 
 	self assert: ref globalDecline notNil.
+	self assert: ref globalDecline includesSubstring: 'subclasses'.
 	self assert: ref changeSet isEmpty
 ]
 
@@ -209,29 +218,69 @@ GsPushDownMethodRefactoringTest >> testSuperSenderIsDeclined [
 	self assert: ref changeSet isEmpty
 ]
 
-{ #category : 'tests - decline' }
-GsPushDownMethodRefactoringTest >> testEveryoneOverridesIsDeclined [
-	| ref |
-	"#overriddenByAll is overridden by BOTH subclasses -- nothing to push."
+{ #category : 'tests - overwrite' }
+GsPushDownMethodRefactoringTest >> testEveryoneOverridesIsMovableAsOverwrites [
+	"#overriddenByAll is overridden by BOTH subclasses -- no longer a decline; it stages an
+	 opt-in overwrite add for each, plus one remove."
+	| ref cs addA addB |
 	ref := self push: #overriddenByAll.
+	cs := ref changeSet.
+	addA := self addChangeFor: #overriddenByAll inClass: 'GsPDA' in: cs.
+	addB := self addChangeFor: #overriddenByAll inClass: 'GsPDB' in: cs.
 
-	self assert: (ref declineFor: #overriddenByAll) notNil.
-	self assert: (ref declineFor: #overriddenByAll) includesSubstring: 'already overrides'.
-	self assert: ref changeSet isEmpty
+	self assert: (ref declineFor: #overriddenByAll) isNil.
+	self assert: cs size equals: 3.
+	self assert: (self addCountFor: #overriddenByAll in: cs) equals: 2.
+	self assert: addA warning notNil.
+	self assert: addB warning notNil.
+	self assert: (ref overwriteWarningFor: #overriddenByAll) notNil
 ]
 
-{ #category : 'tests - skip' }
-GsPushDownMethodRefactoringTest >> testOverridingSubclassIsSkipped [
-	| ref cs |
-	"#overriddenByA is overridden only by A -- pushes into B only, A is skipped."
+{ #category : 'tests - overwrite' }
+GsPushDownMethodRefactoringTest >> testOverridingSubclassBecomesOverwriteRow [
+	"#overriddenByA is overridden only by A -- B gets a plain add, A gets an opt-in
+	 overwrite (not a silent skip)."
+	| ref cs addA addB |
 	ref := self push: #overriddenByA.
 	cs := ref changeSet.
+	addA := self addChangeFor: #overriddenByA inClass: 'GsPDA' in: cs.
+	addB := self addChangeFor: #overriddenByA inClass: 'GsPDB' in: cs.
 
 	self assert: (ref declineFor: #overriddenByA) isNil.
-	self assert: cs size equals: 2.
-	self assert: (self addCountFor: #overriddenByA in: cs) equals: 1.
-	self assert: (self addChangeFor: #overriddenByA inClass: 'GsPDB' in: cs) notNil.
-	self assert: (self addChangeFor: #overriddenByA inClass: 'GsPDA' in: cs) isNil
+	self assert: cs size equals: 3.
+	self assert: (self addCountFor: #overriddenByA in: cs) equals: 2.
+	self assert: addA notNil.
+	self assert: addA warning notNil.
+	self assert: addB notNil.
+	self assert: addB warning isNil
+]
+
+{ #category : 'tests - overwrite' }
+GsPushDownMethodRefactoringTest >> testApplyingOverwriteReplacesSubclassOverride [
+	"Opting in to overwrite A's override: A receives the base body, B receives it too, and
+	 the source is removed (every subclass now understands it on its own)."
+	| json |
+	json := (self push: #overriddenByA) applyDeselected: #().
+
+	self assert: json includesSubstring: '"applied":3'.
+	self assert: (self sourceIn: self aFixture for: #overriddenByA) includesSubstring: 'base'.
+	self assert: (self bFixture includesSelector: #overriddenByA).
+	self deny: (self baseFixture includesSelector: #overriddenByA)
+]
+
+{ #category : 'tests - overwrite' }
+GsPushDownMethodRefactoringTest >> testDeselectingOverwriteKeepsSubclassOverride [
+	"Leaving A's overwrite un-ticked keeps A's own override; B still gets the copy and the
+	 source is removed (A already understands it via its override, B via the copy)."
+	| ref cs addAId |
+	ref := self push: #overriddenByA.
+	cs := ref changeSet.
+	addAId := (self addChangeFor: #overriddenByA inClass: 'GsPDA' in: cs) id.
+	ref applyDeselected: (Array with: addAId).
+
+	self deny: (self sourceIn: self aFixture for: #overriddenByA) includesSubstring: 'base'.
+	self assert: (self bFixture includesSelector: #overriddenByA).
+	self deny: (self baseFixture includesSelector: #overriddenByA)
 ]
 
 { #category : 'tests - side' }

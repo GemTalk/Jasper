@@ -31,10 +31,16 @@ export interface PushChange {
   isMeta: boolean;
   selector: string | null;
   category: string | null;
-  /** Empty for a `methodAdd` (brand-new on the target) — the diff renders all-added. */
+  /** Empty for a plain `methodAdd` (brand-new on the target) — the diff renders all-added.
+   *  Non-empty for an OVERWRITE add (the target already defines the selector): the existing
+   *  body, so the diff renders a before/after. */
   oldSource: string;
   /** Empty for a `methodRemove` (deleted) — the diff renders all-removed. */
   newSource: string;
+  /** A data-loss warning when this change overwrites an existing method (its definition is
+   *  lost); null for a non-destructive change. Overwrite rows are shown un-ticked by default
+   *  so the user opts in. */
+  warning: string | null;
 }
 
 /** A selector that will NOT move, with the reason. */
@@ -78,6 +84,10 @@ export interface PushApplyResult {
 export interface PushSelectorAnalysis {
   selector: string;
   decline: string | null;
+  /** A data-loss warning when pushing this selector would overwrite an existing method
+   *  (push-up: the superclass's; push-down: one or more subclass overrides); null otherwise.
+   *  The selector still moves — the overwrite is opt-in in the preview. */
+  warning: string | null;
 }
 
 /** The engine pre-flight: the resolved target (superclass name, or null for
@@ -115,6 +125,7 @@ function parseChange(raw: unknown, i: number): PushChange {
     category: typeof c.category === 'string' ? c.category : null,
     oldSource: typeof c.oldSource === 'string' ? c.oldSource : '',
     newSource: typeof c.newSource === 'string' ? c.newSource : '',
+    warning: typeof c.warning === 'string' ? c.warning : null,
   };
 }
 
@@ -154,6 +165,7 @@ export function parseAnalysis(json: string): PushAnalysis {
         .map((s) => ({
           selector: typeof s.selector === 'string' ? s.selector : '?',
           decline: typeof s.decline === 'string' ? s.decline : null,
+          warning: typeof s.warning === 'string' ? s.warning : null,
         }))
     : [];
   return {
@@ -226,10 +238,12 @@ export function parseApplyResult(json: string): PushApplyResult {
   };
 }
 
-/** A human label for a preview row: "Class[ class]>>selector" tagged with the push
- *  direction (add onto the target / remove from the source). */
+/** A human label for a preview row: "Class[ class]>>selector" tagged with what the change
+ *  does — add onto the target, OVERWRITE an existing target method, or remove from the
+ *  source. */
 export function pushChangeLabel(change: PushChange): string {
   const side = change.isMeta ? ' class' : '';
   const base = `${change.className}${side}>>${change.selector ?? '?'}`;
-  return change.kind === 'methodAdd' ? `${base} (add to target)` : `${base} (remove from source)`;
+  if (change.kind === 'methodRemove') return `${base} (remove from source)`;
+  return change.warning ? `${base} (overwrite existing)` : `${base} (add to target)`;
 }

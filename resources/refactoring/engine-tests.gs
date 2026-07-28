@@ -288,9 +288,10 @@ This suite pins down:
   - instance-variable access does NOT block a push-down (the subclasses inherit the source''s
     ivars);
   - the push is DECLINED (that selector is skipped, with a reason) when: the method sends
-    super; or EVERY immediate subclass already overrides the selector;
-  - a subclass that already overrides the selector is silently SKIPPED (no add for it), and
-    the method still pushes into the others;
+    super; (a class where EVERY subclass already overrides the selector is NOT declined -- it
+    is an all-overwrite push the user opts into);
+  - a subclass that already overrides the selector gets an opt-in OVERWRITE add (existing
+    body + a data-loss warning), NOT a silent skip, and the others get plain adds;
   - a class with no subclasses (an impossible push) is a GLOBAL decline that empties the
     change set;
   - a class-side method pushes down onto each subclass''s class side;
@@ -332,8 +333,10 @@ This suite pins down:
   - a pure method (no ivar, no super) pushes up to the superclass: a #methodAdd on the
     superclass carrying the verbatim source + category, and a #methodRemove on the source;
   - the push is DECLINED (that selector is skipped, with a reason) when: the method sends
-    super; the superclass already implements the selector (collision -- would overwrite);
-    or the method accesses an instance variable the superclass does not define;
+    super; or the method accesses an instance variable the superclass does not define;
+  - a collision (the superclass already implements the selector) is NOT declined: it stages
+    an opt-in OVERWRITE add carrying the superclass''s old body + a data-loss warning, and a
+    deselected overwrite must NOT strip the source (regression guard);
   - a method that reads an ivar the superclass ALSO defines pushes up cleanly; the same
     method is declined when only the subclass declares that ivar;
   - a class with no superclass (an impossible push) is a GLOBAL decline that empties the
@@ -3510,6 +3513,14 @@ push: aSelector
 
 category: 'fixture'
 method: GsPushDownMethodRefactoringTest
+sourceIn: aClass for: aSelector
+	"The instance-side source of aSelector in aClass, or '' if absent."
+	^(aClass compiledMethodAt: aSelector environmentId: 0 otherwise: nil)
+		ifNil: [''] ifNotNil: [:m | m sourceString]
+%
+
+category: 'fixture'
+method: GsPushDownMethodRefactoringTest
 addChangeFor: aSelector in: aChangeSet
 	^aChangeSet changes
 		detect: [:c | c kind = #methodAdd and: [c selector = aSelector]]
@@ -3630,6 +3641,7 @@ testNoSubclassesIsGlobalDecline
 	ref := GsPushDownMethodRefactoring sourceClass: self aFixture selectors: #(#overriddenByA) meta: false.
 
 	self assert: ref globalDecline notNil.
+	self assert: ref globalDecline includesSubstring: 'subclasses'.
 	self assert: ref changeSet isEmpty
 %
 
@@ -3644,31 +3656,73 @@ testSuperSenderIsDeclined
 	self assert: ref changeSet isEmpty
 %
 
-category: 'tests - decline'
+category: 'tests - overwrite'
 method: GsPushDownMethodRefactoringTest
-testEveryoneOverridesIsDeclined
-	| ref |
-	"#overriddenByAll is overridden by BOTH subclasses -- nothing to push."
+testEveryoneOverridesIsMovableAsOverwrites
+	"#overriddenByAll is overridden by BOTH subclasses -- no longer a decline; it stages an
+	 opt-in overwrite add for each, plus one remove."
+	| ref cs addA addB |
 	ref := self push: #overriddenByAll.
+	cs := ref changeSet.
+	addA := self addChangeFor: #overriddenByAll inClass: 'GsPDA' in: cs.
+	addB := self addChangeFor: #overriddenByAll inClass: 'GsPDB' in: cs.
 
-	self assert: (ref declineFor: #overriddenByAll) notNil.
-	self assert: (ref declineFor: #overriddenByAll) includesSubstring: 'already overrides'.
-	self assert: ref changeSet isEmpty
+	self assert: (ref declineFor: #overriddenByAll) isNil.
+	self assert: cs size equals: 3.
+	self assert: (self addCountFor: #overriddenByAll in: cs) equals: 2.
+	self assert: addA warning notNil.
+	self assert: addB warning notNil.
+	self assert: (ref overwriteWarningFor: #overriddenByAll) notNil
 %
 
-category: 'tests - skip'
+category: 'tests - overwrite'
 method: GsPushDownMethodRefactoringTest
-testOverridingSubclassIsSkipped
-	| ref cs |
-	"#overriddenByA is overridden only by A -- pushes into B only, A is skipped."
+testOverridingSubclassBecomesOverwriteRow
+	"#overriddenByA is overridden only by A -- B gets a plain add, A gets an opt-in
+	 overwrite (not a silent skip)."
+	| ref cs addA addB |
 	ref := self push: #overriddenByA.
 	cs := ref changeSet.
+	addA := self addChangeFor: #overriddenByA inClass: 'GsPDA' in: cs.
+	addB := self addChangeFor: #overriddenByA inClass: 'GsPDB' in: cs.
 
 	self assert: (ref declineFor: #overriddenByA) isNil.
-	self assert: cs size equals: 2.
-	self assert: (self addCountFor: #overriddenByA in: cs) equals: 1.
-	self assert: (self addChangeFor: #overriddenByA inClass: 'GsPDB' in: cs) notNil.
-	self assert: (self addChangeFor: #overriddenByA inClass: 'GsPDA' in: cs) isNil
+	self assert: cs size equals: 3.
+	self assert: (self addCountFor: #overriddenByA in: cs) equals: 2.
+	self assert: addA notNil.
+	self assert: addA warning notNil.
+	self assert: addB notNil.
+	self assert: addB warning isNil
+%
+
+category: 'tests - overwrite'
+method: GsPushDownMethodRefactoringTest
+testApplyingOverwriteReplacesSubclassOverride
+	"Opting in to overwrite A's override: A receives the base body, B receives it too, and
+	 the source is removed (every subclass now understands it on its own)."
+	| json |
+	json := (self push: #overriddenByA) applyDeselected: #().
+
+	self assert: json includesSubstring: '"applied":3'.
+	self assert: (self sourceIn: self aFixture for: #overriddenByA) includesSubstring: 'base'.
+	self assert: (self bFixture includesSelector: #overriddenByA).
+	self deny: (self baseFixture includesSelector: #overriddenByA)
+%
+
+category: 'tests - overwrite'
+method: GsPushDownMethodRefactoringTest
+testDeselectingOverwriteKeepsSubclassOverride
+	"Leaving A's overwrite un-ticked keeps A's own override; B still gets the copy and the
+	 source is removed (A already understands it via its override, B via the copy)."
+	| ref cs addAId |
+	ref := self push: #overriddenByA.
+	cs := ref changeSet.
+	addAId := (self addChangeFor: #overriddenByA inClass: 'GsPDA' in: cs) id.
+	ref applyDeselected: (Array with: addAId).
+
+	self deny: (self sourceIn: self aFixture for: #overriddenByA) includesSubstring: 'base'.
+	self assert: (self bFixture includesSelector: #overriddenByA).
+	self deny: (self baseFixture includesSelector: #overriddenByA)
 %
 
 category: 'tests - side'
@@ -3873,6 +3927,14 @@ push: aSelector
 
 category: 'fixture'
 method: GsPushUpMethodRefactoringTest
+sourceIn: aClass for: aSelector
+	"The instance-side source of aSelector in aClass, or '' if absent."
+	^(aClass compiledMethodAt: aSelector environmentId: 0 otherwise: nil)
+		ifNil: [''] ifNotNil: [:m | m sourceString]
+%
+
+category: 'fixture'
+method: GsPushUpMethodRefactoringTest
 addChangeFor: aSelector in: aChangeSet
 	^aChangeSet changes
 		detect: [:c | c kind = #methodAdd and: [c selector = aSelector]]
@@ -3894,14 +3956,14 @@ setUp
 	sup := Object
 		subclass: 'GsPUSuper'
 		instVarNames: #('shared')
-		classVars: #()
+		classVars: #('SharedCVar')
 		classInstVars: #()
 		poolDictionaries: #()
 		inDictionary: UserGlobals.
 	sub := sup
 		subclass: 'GsPUSub'
 		instVarNames: #('own')
-		classVars: #()
+		classVars: #('SubOnlyCVar')
 		classInstVars: #()
 		poolDictionaries: #()
 		inDictionary: UserGlobals.
@@ -3910,8 +3972,11 @@ setUp
 	self compile: 'greet ^ ''hi''' in: sub.
 	self compile: 'usesShared ^ shared' in: sub.
 	self compile: 'usesOwn ^ own' in: sub.
+	self compile: 'usesSharedCVar ^ SharedCVar' in: sub.
+	self compile: 'usesSubCVar ^ SubOnlyCVar' in: sub.
 	self compile: 'callsSuper ^ super hash' in: sub.
 	self compile: 'existing ^ 2' in: sub.
+	self compile: 'quoteAndBackslash ^ ''a"b\c''' in: sub.
 	"--- superclass already implements #existing (collision) ---"
 	self compile: 'existing ^ 1' in: sup.
 	"--- class-side method to push up ---"
@@ -3966,18 +4031,83 @@ testNoSuperclassIsGlobalDecline
 	ref := GsPushUpMethodRefactoring sourceClass: Object selectors: #(#hash) meta: false.
 
 	self assert: ref globalDecline notNil.
+	self assert: ref globalDecline includesSubstring: 'superclass'.
 	self assert: ref changeSet isEmpty
 %
 
-category: 'tests - decline'
+category: 'tests - ivar'
 method: GsPushUpMethodRefactoringTest
-testCollisionIsDeclined
+testSharedClassVarReaderPushesUp
 	| ref |
-	ref := self push: #existing.
+	"#usesSharedCVar reads SharedCVar, declared on the superclass -- movable."
+	ref := self push: #usesSharedCVar.
 
-	self assert: (ref declineFor: #existing) notNil.
-	self assert: (ref declineFor: #existing) includesSubstring: 'already defines'.
+	self assert: (ref declineFor: #usesSharedCVar) isNil.
+	self assert: ref changeSet size equals: 2
+%
+
+category: 'tests - ivar'
+method: GsPushUpMethodRefactoringTest
+testSubclassOnlyClassVarReaderDeclined
+	| ref |
+	"#usesSubCVar reads SubOnlyCVar, declared only on the subclass -- would not compile on
+	 the superclass, so it is a hard decline (not an overwrite)."
+	ref := self push: #usesSubCVar.
+
+	self assert: (ref declineFor: #usesSubCVar) notNil.
+	self assert: (ref declineFor: #usesSubCVar) includesSubstring: 'class/pool variable'.
 	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - overwrite'
+method: GsPushUpMethodRefactoringTest
+testCollisionIsMovableAsOverwrite
+	"The superclass already defines #existing -- pushing up is NOT declined; it stages an
+	 opt-in overwrite add carrying the superclass's old body + a data-loss warning."
+	| ref cs add |
+	ref := self push: #existing.
+	cs := ref changeSet.
+	add := self addChangeFor: #existing in: cs.
+
+	self assert: (ref declineFor: #existing) isNil.
+	self assert: cs size equals: 2.
+	self assert: add notNil.
+	self assert: add warning notNil.
+	self assert: add warning includesSubstring: 'overwrites'.
+	self assert: add oldSource includesSubstring: '1'.
+	self assert: add newSource includesSubstring: '2'.
+	self assert: (ref overwriteWarningFor: #existing) notNil
+%
+
+category: 'tests - overwrite'
+method: GsPushUpMethodRefactoringTest
+testApplyingOverwriteReplacesSuperclassMethod
+	"Applying the overwrite compiles the pushed body onto the superclass (replacing its old
+	 definition) and removes the source."
+	| json |
+	json := (self push: #existing) applyDeselected: #().
+
+	self assert: json includesSubstring: '"applied":2'.
+	self assert: (self superFixture includesSelector: #existing).
+	self assert: (self sourceIn: self superFixture for: #existing) includesSubstring: '2'.
+	self deny: (self subFixture includesSelector: #existing)
+%
+
+category: 'tests - overwrite'
+method: GsPushUpMethodRefactoringTest
+testDeselectingOverwriteDoesNotStripSource
+	"Regression: un-ticking the overwrite add must NOT remove the source. The superclass
+	 already defines the selector, so a bare includesSelector: guard would wrongly fire the
+	 remove and lose the subclass version. The applied-add guard prevents that."
+	| ref cs addId |
+	ref := self push: #existing.
+	cs := ref changeSet.
+	addId := (self addChangeFor: #existing in: cs) id.
+	ref applyDeselected: (Array with: addId).
+
+	self assert: (self subFixture includesSelector: #existing).
+	self assert: (self superFixture includesSelector: #existing).
+	self assert: (self sourceIn: self superFixture for: #existing) includesSubstring: '1'
 %
 
 category: 'tests - decline'
@@ -4084,6 +4214,52 @@ testPreviewJsonSerializesAddAndRemove
 
 	self assert: json includesSubstring: 'methodAdd'.
 	self assert: json includesSubstring: 'methodRemove'
+%
+
+category: 'tests - preview'
+method: GsPushUpMethodRefactoringTest
+testPreviewJsonEscapesQuoteAndBackslash
+	"A source containing a double-quote and a backslash must be JSON-escaped by the engine's
+	 jsonEscape: (backslash-quote and backslash-backslash), or the client JSON.parse chokes."
+	| json |
+	json := (self push: #quoteAndBackslash) previewJsonString.
+
+	self assert: json includesSubstring: '\"'.
+	self assert: json includesSubstring: '\\'
+%
+
+category: 'tests - preview'
+method: GsPushUpMethodRefactoringTest
+testPaginationSpansMultiplePages
+	"With a tiny byte budget the preview pages one change at a time: the first page reports
+	 done:false + the next offset, and a later page reports done:true. Exercises the engine's
+	 real byte-bounded slicing, not just a single all-in-one page."
+	| ref first |
+	ref := self pushSelectors: #(#pureCompute #greet #usesShared).
+	ref startPreviewToken: 'm7pg' maxBytes: 1.
+	[first := GsPushUpMethodRefactoring pageForToken: 'm7pg' from: 1 maxBytes: 1.
+	 self assert: first includesSubstring: '"done":false'.
+	 self assert: first includesSubstring: '"nextOffset":2'.
+	 self assert: (GsPushUpMethodRefactoring pageForToken: 'm7pg' from: 6 maxBytes: 1)
+		includesSubstring: '"done":true']
+		ensure: [GsPushUpMethodRefactoring clearToken: 'm7pg']
+%
+
+category: 'tests - creation'
+method: GsPushUpMethodRefactoringTest
+testEnvironmentCtorSetsEnvironment
+	"The environment:sourceClass:selectors:meta: creation path stores the supplied
+	 environment (used for symbol-dict / multi-environment scope) and still builds."
+	| env ref |
+	env := GsRefactoringEnvironment new.
+	ref := GsPushUpMethodRefactoring
+		environment: env
+		sourceClass: self subFixture
+		selectors: #(#pureCompute)
+		meta: false.
+
+	self assert: ref environment == env.
+	self assert: ref changeSet size equals: 2
 %
 
 category: 'tests - preview'

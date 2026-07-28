@@ -42,6 +42,9 @@ export interface PushOutcome {
   moved: string[];
   /** The superclass a push-up landed in; null for push-down (many subclasses). */
   targetClass: string | null;
+  /** A class to navigate to and highlight the moved method in: the superclass for push-up,
+   *  the first fresh recipient subclass for push-down; null if there is nowhere to reveal. */
+  revealClass: string | null;
   isMeta: boolean;
 }
 
@@ -152,6 +155,15 @@ export async function pushMethod(req: PushMethodRequest): Promise<PushOutcome | 
     return undefined;
   }
 
+  // Nothing was applied — e.g. every target row (including opt-in overwrites, which start
+  // un-ticked) was left unchecked. Report it plainly and skip the reveal/refresh.
+  if (result.applied === 0) {
+    void vscode.window.showInformationMessage(
+      'No changes were applied — every target was left un-ticked.',
+    );
+    return undefined;
+  }
+
   const moved = analysis.selectors.filter((s) => !s.decline).map((s) => s.selector);
   const n = moved.length;
   const where =
@@ -161,10 +173,13 @@ export async function pushMethod(req: PushMethodRequest): Promise<PushOutcome | 
       ? `Pushed #${moved[0]} ${direction} ${where}.`
       : `Pushed ${n} methods ${direction} ${where}.`,
   );
-  return {
-    applied: result.applied,
-    moved,
-    targetClass: direction === 'up' ? (start.targetClass ?? analysis.targetClass) : null,
-    isMeta,
-  };
+  const targetClass = direction === 'up' ? (start.targetClass ?? analysis.targetClass) : null;
+  // Where to reveal + highlight the moved method: the superclass for push-up; for push-down,
+  // the first FRESH recipient (a plain add, most likely applied), falling back to the first
+  // recipient of any kind. Reveal is best-effort, so a missing target just no-ops.
+  const firstAdd = start.page.changes.find((c) => c.kind === 'methodAdd');
+  const firstFreshAdd = start.page.changes.find((c) => c.kind === 'methodAdd' && !c.warning);
+  const revealClass =
+    direction === 'up' ? targetClass : ((firstFreshAdd ?? firstAdd)?.className ?? null);
+  return { applied: result.applied, moved, targetClass, revealClass, isMeta };
 }

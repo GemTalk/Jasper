@@ -1,12 +1,17 @@
 /**
  * Pure HTML rendering for the push-up / push-down method (M7 / M8) preview panel.
- * Every row is a CORE change — a `methodAdd` on the target (superclass or a subclass)
- * or a `methodRemove` on the source — rendered with a checked, DISABLED checkbox: the
- * user chose which methods to push at command time, so the preview is confirm-or-cancel,
- * not a per-change picker (and a selector's changes must apply together). Selectors that
- * could NOT move are listed in a summary; a global decline (which blocks Apply) sits in
- * a banner. Paginated exactly like the other refactoring panels, reusing
- * renameMethodPanelView.js for the DOM behaviour.
+ * Rows are one of three kinds:
+ *   - a plain `methodAdd` onto a fresh target — enabled + CHECKED, so the user can un-tick
+ *     a target they do not want (a copy-down convenience; the source is kept);
+ *   - an OVERWRITE `methodAdd` onto a target that already defines the selector — enabled +
+ *     UNCHECKED by default, flagged with a ⚠ data-loss warning and a before/after diff, so
+ *     replacing the existing method is an explicit opt-in;
+ *   - a source `methodRemove` — CORE (checked + disabled): the server fires it only once
+ *     the targets actually hold the method, so it is not a user choice.
+ * Selectors that could NOT move (a hard decline) are listed in a summary; a global decline
+ * (which blocks Apply) sits in a banner. Paginated exactly like the other refactoring
+ * panels, reusing renameMethodPanelView.js for the DOM behaviour (it derives the deselected
+ * set from unchecked boxes and recomputes the count on load).
  *
  * Kept free of any `vscode` dependency so it unit-tests directly.
  */
@@ -36,24 +41,43 @@ function renderAllOfType(source: string, type: 'add' | 'del'): string {
 function renderCard(change: PushChange): string {
   const label = escapeHtml(pushChangeLabel(change));
   const badge = change.category ? `<span class="badge">${escapeHtml(change.category)}</span>` : '';
-  // methodAdd has no old source (all-added on the target); methodRemove has no new
-  // source (all-removed from the source). Render each as a single-sided diff rather
-  // than diffing against '' (which shows a phantom empty line).
-  const diff =
-    change.kind === 'methodAdd'
-      ? renderAllOfType(change.newSource, 'add')
-      : renderAllOfType(change.oldSource, 'del');
-  // Every push change is required: a checked, DISABLED checkbox stays checked, so the
-  // shared view JS (which derives the deselected set from UNCHECKED boxes) never
-  // reports it — the push always applies in full.
-  const cb = `<input type="checkbox" class="sel" checked disabled title="This change is required" aria-label="${label} (required)">`;
-  return `<li class="change" data-id="${escapeHtml(change.id)}">
+  const isRemove = change.kind === 'methodRemove';
+  const isOverwrite = change.kind === 'methodAdd' && change.warning != null;
+  // Diff: a plain add is all-added; a remove is all-removed; an OVERWRITE shows the
+  // existing body (removed) above the pushed body (added) — a real before/after so the
+  // user sees exactly what is lost.
+  const diff = isRemove
+    ? renderAllOfType(change.oldSource, 'del')
+    : isOverwrite
+      ? renderAllOfType(change.oldSource, 'del') + renderAllOfType(change.newSource, 'add')
+      : renderAllOfType(change.newSource, 'add');
+  // Checkbox policy:
+  //  - a source #methodRemove is CORE (checked + disabled): the server fires it only once
+  //    the targets actually hold the method, so it is not a user choice;
+  //  - an OVERWRITE add is opt-in: enabled and UNCHECKED by default, so the destructive
+  //    replace happens only if the user ticks it;
+  //  - a plain add (a fresh target) is enabled and CHECKED, so the user can un-tick a
+  //    target they do not want (a copy-down convenience; the source is then kept).
+  // The shared view JS derives the deselected set from UNCHECKED boxes and recomputes the
+  // count on load, so a default-unchecked overwrite is reported deselected from the start.
+  let cb: string;
+  if (isRemove) {
+    cb = `<input type="checkbox" class="sel" checked disabled title="Removed from the source automatically, once every target has the method" aria-label="${label} (automatic)">`;
+  } else if (isOverwrite) {
+    cb = `<input type="checkbox" class="sel" title="Overwrites an existing method — tick to replace it (data loss)" aria-label="${label} (overwrite, opt-in)">`;
+  } else {
+    cb = `<input type="checkbox" class="sel" checked title="Untick to skip this target" aria-label="${label}">`;
+  }
+  const warn = change.warning ? `<div class="warn">⚠ ${escapeHtml(change.warning)}</div>` : '';
+  const liClass = isOverwrite ? 'change warn deselected' : 'change';
+  return `<li class="${liClass}" data-id="${escapeHtml(change.id)}">
   <div class="change-head">
     ${cb}
     <span class="label">${label}</span>
     ${badge}
     <button class="toggle" title="Show/hide diff" aria-expanded="false">▸</button>
   </div>
+  ${warn}
   <pre class="diff hidden">${diff}</pre>
 </li>`;
 }
@@ -158,6 +182,16 @@ export function renderPushPanelHtml(opts: PushPanelHtmlOptions): string {
     }
     .skipped-head { margin-bottom: 4px; }
     .skipped ul { margin: 0; padding-left: 20px; }
+    li.change.warn {
+      border-color: var(--vscode-inputValidation-warningBorder, rgba(200,140,0,0.6));
+    }
+    .warn {
+      margin: 0; padding: 6px 10px;
+      font-size: 0.9em;
+      color: var(--vscode-inputValidation-warningForeground, var(--vscode-foreground));
+      background: var(--vscode-inputValidation-warningBackground, rgba(200,140,0,0.10));
+      border-top: 1px solid var(--vscode-inputValidation-warningBorder, rgba(200,140,0,0.4));
+    }
     .skipped code, .summary code, .title code { font-family: var(--vscode-editor-font-family, monospace); }
     .summary { padding: 8px 16px; opacity: 0.85; display: flex; align-items: center; gap: 10px; }
     button.linkish { background: none; color: var(--vscode-textLink-foreground); padding: 0; font-size: 0.95em; }
@@ -175,7 +209,8 @@ export function renderPushPanelHtml(opts: PushPanelHtmlOptions): string {
       cursor: pointer; user-select: none;
     }
     .change-head:hover { background: var(--vscode-list-hoverBackground, transparent); }
-    .change-head .sel { cursor: default; }
+    .change-head .sel { cursor: pointer; }
+    .change-head .sel:disabled { cursor: default; }
     .change-head .label { font-family: var(--vscode-editor-font-family, monospace); flex: 1; }
     .badge {
       font-size: 0.8em; opacity: 0.75;

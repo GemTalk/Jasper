@@ -11,8 +11,10 @@ This suite pins down:
   - a pure method (no ivar, no super) pushes up to the superclass: a #methodAdd on the
     superclass carrying the verbatim source + category, and a #methodRemove on the source;
   - the push is DECLINED (that selector is skipped, with a reason) when: the method sends
-    super; the superclass already implements the selector (collision -- would overwrite);
-    or the method accesses an instance variable the superclass does not define;
+    super; or the method accesses an instance variable the superclass does not define;
+  - a collision (the superclass already implements the selector) is NOT declined: it stages
+    an opt-in OVERWRITE add carrying the superclass's old body + a data-loss warning, and a
+    deselected overwrite must NOT strip the source (regression guard);
   - a method that reads an ivar the superclass ALSO defines pushes up cleanly; the same
     method is declined when only the subclass declares that ivar;
   - a class with no superclass (an impossible push) is a GLOBAL decline that empties the
@@ -78,6 +80,13 @@ GsPushUpMethodRefactoringTest >> push: aSelector [
 ]
 
 { #category : 'fixture' }
+GsPushUpMethodRefactoringTest >> sourceIn: aClass for: aSelector [
+	"The instance-side source of aSelector in aClass, or '' if absent."
+	^(aClass compiledMethodAt: aSelector environmentId: 0 otherwise: nil)
+		ifNil: [''] ifNotNil: [:m | m sourceString]
+]
+
+{ #category : 'fixture' }
 GsPushUpMethodRefactoringTest >> addChangeFor: aSelector in: aChangeSet [
 	^aChangeSet changes
 		detect: [:c | c kind = #methodAdd and: [c selector = aSelector]]
@@ -97,14 +106,14 @@ GsPushUpMethodRefactoringTest >> setUp [
 	sup := Object
 		subclass: 'GsPUSuper'
 		instVarNames: #('shared')
-		classVars: #()
+		classVars: #('SharedCVar')
 		classInstVars: #()
 		poolDictionaries: #()
 		inDictionary: UserGlobals.
 	sub := sup
 		subclass: 'GsPUSub'
 		instVarNames: #('own')
-		classVars: #()
+		classVars: #('SubOnlyCVar')
 		classInstVars: #()
 		poolDictionaries: #()
 		inDictionary: UserGlobals.
@@ -113,8 +122,11 @@ GsPushUpMethodRefactoringTest >> setUp [
 	self compile: 'greet ^ ''hi''' in: sub.
 	self compile: 'usesShared ^ shared' in: sub.
 	self compile: 'usesOwn ^ own' in: sub.
+	self compile: 'usesSharedCVar ^ SharedCVar' in: sub.
+	self compile: 'usesSubCVar ^ SubOnlyCVar' in: sub.
 	self compile: 'callsSuper ^ super hash' in: sub.
 	self compile: 'existing ^ 2' in: sub.
+	self compile: 'quoteAndBackslash ^ ''a"b\c''' in: sub.
 	"--- superclass already implements #existing (collision) ---"
 	self compile: 'existing ^ 1' in: sup.
 	"--- class-side method to push up ---"
@@ -164,17 +176,78 @@ GsPushUpMethodRefactoringTest >> testNoSuperclassIsGlobalDecline [
 	ref := GsPushUpMethodRefactoring sourceClass: Object selectors: #(#hash) meta: false.
 
 	self assert: ref globalDecline notNil.
+	self assert: ref globalDecline includesSubstring: 'superclass'.
 	self assert: ref changeSet isEmpty
 ]
 
-{ #category : 'tests - decline' }
-GsPushUpMethodRefactoringTest >> testCollisionIsDeclined [
+{ #category : 'tests - ivar' }
+GsPushUpMethodRefactoringTest >> testSharedClassVarReaderPushesUp [
 	| ref |
-	ref := self push: #existing.
+	"#usesSharedCVar reads SharedCVar, declared on the superclass -- movable."
+	ref := self push: #usesSharedCVar.
 
-	self assert: (ref declineFor: #existing) notNil.
-	self assert: (ref declineFor: #existing) includesSubstring: 'already defines'.
+	self assert: (ref declineFor: #usesSharedCVar) isNil.
+	self assert: ref changeSet size equals: 2
+]
+
+{ #category : 'tests - ivar' }
+GsPushUpMethodRefactoringTest >> testSubclassOnlyClassVarReaderDeclined [
+	| ref |
+	"#usesSubCVar reads SubOnlyCVar, declared only on the subclass -- would not compile on
+	 the superclass, so it is a hard decline (not an overwrite)."
+	ref := self push: #usesSubCVar.
+
+	self assert: (ref declineFor: #usesSubCVar) notNil.
+	self assert: (ref declineFor: #usesSubCVar) includesSubstring: 'class/pool variable'.
 	self assert: ref changeSet isEmpty
+]
+
+{ #category : 'tests - overwrite' }
+GsPushUpMethodRefactoringTest >> testCollisionIsMovableAsOverwrite [
+	"The superclass already defines #existing -- pushing up is NOT declined; it stages an
+	 opt-in overwrite add carrying the superclass's old body + a data-loss warning."
+	| ref cs add |
+	ref := self push: #existing.
+	cs := ref changeSet.
+	add := self addChangeFor: #existing in: cs.
+
+	self assert: (ref declineFor: #existing) isNil.
+	self assert: cs size equals: 2.
+	self assert: add notNil.
+	self assert: add warning notNil.
+	self assert: add warning includesSubstring: 'overwrites'.
+	self assert: add oldSource includesSubstring: '1'.
+	self assert: add newSource includesSubstring: '2'.
+	self assert: (ref overwriteWarningFor: #existing) notNil
+]
+
+{ #category : 'tests - overwrite' }
+GsPushUpMethodRefactoringTest >> testApplyingOverwriteReplacesSuperclassMethod [
+	"Applying the overwrite compiles the pushed body onto the superclass (replacing its old
+	 definition) and removes the source."
+	| json |
+	json := (self push: #existing) applyDeselected: #().
+
+	self assert: json includesSubstring: '"applied":2'.
+	self assert: (self superFixture includesSelector: #existing).
+	self assert: (self sourceIn: self superFixture for: #existing) includesSubstring: '2'.
+	self deny: (self subFixture includesSelector: #existing)
+]
+
+{ #category : 'tests - overwrite' }
+GsPushUpMethodRefactoringTest >> testDeselectingOverwriteDoesNotStripSource [
+	"Regression: un-ticking the overwrite add must NOT remove the source. The superclass
+	 already defines the selector, so a bare includesSelector: guard would wrongly fire the
+	 remove and lose the subclass version. The applied-add guard prevents that."
+	| ref cs addId |
+	ref := self push: #existing.
+	cs := ref changeSet.
+	addId := (self addChangeFor: #existing in: cs) id.
+	ref applyDeselected: (Array with: addId).
+
+	self assert: (self subFixture includesSelector: #existing).
+	self assert: (self superFixture includesSelector: #existing).
+	self assert: (self sourceIn: self superFixture for: #existing) includesSubstring: '1'
 ]
 
 { #category : 'tests - decline' }
@@ -273,6 +346,49 @@ GsPushUpMethodRefactoringTest >> testPreviewJsonSerializesAddAndRemove [
 
 	self assert: json includesSubstring: 'methodAdd'.
 	self assert: json includesSubstring: 'methodRemove'
+]
+
+{ #category : 'tests - preview' }
+GsPushUpMethodRefactoringTest >> testPreviewJsonEscapesQuoteAndBackslash [
+	"A source containing a double-quote and a backslash must be JSON-escaped by the engine's
+	 jsonEscape: (backslash-quote and backslash-backslash), or the client JSON.parse chokes."
+	| json |
+	json := (self push: #quoteAndBackslash) previewJsonString.
+
+	self assert: json includesSubstring: '\"'.
+	self assert: json includesSubstring: '\\'
+]
+
+{ #category : 'tests - preview' }
+GsPushUpMethodRefactoringTest >> testPaginationSpansMultiplePages [
+	"With a tiny byte budget the preview pages one change at a time: the first page reports
+	 done:false + the next offset, and a later page reports done:true. Exercises the engine's
+	 real byte-bounded slicing, not just a single all-in-one page."
+	| ref first |
+	ref := self pushSelectors: #(#pureCompute #greet #usesShared).
+	ref startPreviewToken: 'm7pg' maxBytes: 1.
+	[first := GsPushUpMethodRefactoring pageForToken: 'm7pg' from: 1 maxBytes: 1.
+	 self assert: first includesSubstring: '"done":false'.
+	 self assert: first includesSubstring: '"nextOffset":2'.
+	 self assert: (GsPushUpMethodRefactoring pageForToken: 'm7pg' from: 6 maxBytes: 1)
+		includesSubstring: '"done":true']
+		ensure: [GsPushUpMethodRefactoring clearToken: 'm7pg']
+]
+
+{ #category : 'tests - creation' }
+GsPushUpMethodRefactoringTest >> testEnvironmentCtorSetsEnvironment [
+	"The environment:sourceClass:selectors:meta: creation path stores the supplied
+	 environment (used for symbol-dict / multi-environment scope) and still builds."
+	| env ref |
+	env := GsRefactoringEnvironment new.
+	ref := GsPushUpMethodRefactoring
+		environment: env
+		sourceClass: self subFixture
+		selectors: #(#pureCompute)
+		meta: false.
+
+	self assert: ref environment == env.
+	self assert: ref changeSet size equals: 2
 ]
 
 { #category : 'tests - preview' }

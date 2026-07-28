@@ -12,6 +12,7 @@ const add: PushChange = {
   category: 'accessing',
   oldSource: '',
   newSource: 'foo\n\t^ 1',
+  warning: null,
 };
 const remove: PushChange = {
   id: '2',
@@ -23,6 +24,19 @@ const remove: PushChange = {
   category: 'accessing',
   oldSource: 'foo\n\t^ 1',
   newSource: '',
+  warning: null,
+};
+const overwrite: PushChange = {
+  id: '3',
+  kind: 'methodAdd',
+  dictName: 'UserGlobals',
+  className: 'Sub',
+  isMeta: false,
+  selector: 'foo',
+  category: 'accessing',
+  oldSource: 'foo\n\t^ 99',
+  newSource: 'foo\n\t^ 1',
+  warning: 'Pushing down overwrites Sub>>foo -- its current override is lost.',
 };
 
 describe('push-method panel HTML', () => {
@@ -43,10 +57,35 @@ describe('push-method panel HTML', () => {
       expect(html).not.toContain('line add');
     });
 
-    it('makes every change a required (checked + disabled) row', () => {
-      const html = renderPushCards([add]);
+    it('makes the source removal a required (checked, disabled) row', () => {
+      const html = renderPushCards([remove]);
 
       expect(html).toContain('checked disabled');
+    });
+
+    it('makes a fresh-target add a deselectable (checked, enabled) row', () => {
+      const html = renderPushCards([add]);
+
+      expect(html).toContain('class="sel" checked');
+      expect(html).not.toContain('checked disabled');
+    });
+
+    it('makes an overwrite add opt-in: unchecked, enabled, with a data-loss warning', () => {
+      const html = renderPushCards([overwrite]);
+
+      expect(html).toContain('overwrite existing');
+      expect(html).toContain('current override is lost');
+      const input = html.match(/<input[^>]*class="sel"[^>]*>/)?.[0] ?? '';
+      expect(input).toContain('overwrite, opt-in');
+      expect(input).not.toContain('checked');
+      expect(input).not.toContain('disabled');
+    });
+
+    it('renders an overwrite as a before/after diff of the replaced method', () => {
+      const html = renderPushCards([overwrite]);
+
+      expect(html).toContain('line del');
+      expect(html).toContain('line add');
     });
 
     it('escapes HTML metacharacters in the source', () => {

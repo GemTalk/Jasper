@@ -63,6 +63,9 @@ describe('push method up/down (gci e2e)', () => {
     );
     q.compileMethod(session, BASE, false, 'accessing', 'pumDown\n\t^100');
     q.compileMethod(session, SUBA, false, 'accessing', 'pumUpPure\n\t^7');
+    // Collision: both the superclass and subclass A define pumCollide -> push-up overwrite.
+    q.compileMethod(session, BASE, false, 'accessing', "pumCollide\n\t^'base'");
+    q.compileMethod(session, SUBA, false, 'accessing', "pumCollide\n\t^'suba'");
   };
 
   const definesSelector = (cls: string, selector: string): boolean =>
@@ -70,8 +73,16 @@ describe('push method up/down (gci e2e)', () => {
       `(${cls} compiledMethodAt: #'${selector}' environmentId: 0 otherwise: nil) notNil printString`,
     ).trim() === 'true';
 
+  const sourceOf = (cls: string, selector: string): string =>
+    exec(
+      `(${cls} compiledMethodAt: #'${selector}' environmentId: 0 otherwise: nil) ` +
+        "ifNil: [''] ifNotNil: [:m | m sourceString]",
+    );
+
   const abort = (): void => {
-    exec('System abortTransaction');
+    // Evaluate to a String: executeFetchString sends #encodeAsUTF8 to the result, which
+    // the System class (the value of `System abortTransaction`) does not understand.
+    exec("System abortTransaction. 'ok'");
   };
 
   beforeAll(() => {
@@ -123,6 +134,41 @@ describe('push method up/down (gci e2e)', () => {
       expect(result.failed).toEqual([]);
       expect(definesSelector(BASE, 'pumUpPure')).toBe(true);
       expect(definesSelector(SUBA, 'pumUpPure')).toBe(false);
+    } finally {
+      abort();
+    }
+  });
+
+  it('pushes up onto a colliding superclass as an opt-in overwrite, then rolls back', async (ctx) => {
+    if (!enginePresent) return ctx.skip();
+
+    try {
+      defineFixture();
+      const analysis = parseAnalysis(
+        await analyzePushMethod(asyncExec, 'up', SUBA, ['pumCollide'], false),
+      );
+      expect(analysis.selectors[0].decline).toBeNull();
+      expect(analysis.selectors[0].warning).not.toBeNull();
+
+      const token = `pum-e2e-up-collide`;
+      const start = parseStartPreview(
+        await startPushMethodPreview(
+          asyncExec,
+          'up',
+          SUBA,
+          ['pumCollide'],
+          false,
+          token,
+          PREVIEW_PAGE_BYTES,
+        ),
+      );
+      const add = start.page.changes.find((c) => c.kind === 'methodAdd');
+      expect(add?.oldSource).toContain('base');
+      const result = parseApplyResult(await applyPushMethod(asyncExec, 'up', token, []));
+
+      expect(result.failed).toEqual([]);
+      expect(sourceOf(BASE, 'pumCollide')).toContain('suba');
+      expect(definesSelector(SUBA, 'pumCollide')).toBe(false);
     } finally {
       abort();
     }

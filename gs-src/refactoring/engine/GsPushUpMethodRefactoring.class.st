@@ -15,12 +15,24 @@ is introduced. Each selector is analysed independently; a declined selector is d
 the change set and reported, so a multi-push relocates the movable methods and explains the
 rest.
 
+When the superclass ALREADY implements the selector, the push is NOT declined: it becomes an
+opt-in OVERWRITE change -- the #methodAdd carries the superclass's existing body (for a
+before/after diff) plus a data-loss warning, and the client leaves it un-ticked by default so
+the user consciously chooses to replace the inherited definition (consolidating an inherited
+method by pushing up is a common intent). The paired source #methodRemove is guarded on the
+add having actually been applied THIS run (an applied-add set), NOT on a bare
+includesSelector: -- otherwise a deselected overwrite, whose selector the superclass already
+carries, would wrongly strip the source and lose the subclass version.
+
 A GLOBAL decline (the source has no superclass) empties the whole change set. A per-selector
-decline is recorded when: the source method is missing; the superclass already implements the
-selector (collision -- pushing up would overwrite it); the method sends super (its meaning
-depends on the source class''s superclass, which changes when the home moves up); or the
-method accesses an instance variable the superclass does not define (bytecode-precise via
-instVarsAccessed -- the ivar lives only on the subclass).
+decline (a HARD skip, not an overwrite) is recorded when: the source method is missing; the
+method sends super (its meaning depends on the source class''s superclass, which changes when
+the home moves up); the method accesses an instance variable the superclass does not define
+(bytecode-precise via instVarsAccessed -- the ivar lives only on the subclass); or the method
+references a CLASS variable or POOL variable declared only below the superclass (matched by
+identifier name against the shared-var delta). All three variable cases mean the pushed method
+would not even compile on the superclass. Class-INSTANCE variables are covered by the
+instVarsAccessed check on the metaclass side.
 
 This is the SIMPLEST SOUND variant: the definition is relocated to the superclass and the
 selector kept; siblings that inherited nothing now inherit the pushed-up method, senders are
@@ -41,7 +53,8 @@ Class {
 		'changeSet',
 		'analysisDone',
 		'globalDecline',
-		'declines'
+		'declines',
+		'appliedAddSelectors'
 	],
 	#category : 'Refactoring-Core'
 }
@@ -156,15 +169,17 @@ GsPushUpMethodRefactoring >> computeAnalysis [
 
 { #category : 'private - analysis' }
 GsPushUpMethodRefactoring >> computeDeclineFor: aSelector [
-	"nil if aSelector can be pushed up, otherwise a reason. Checks, in order: method
-	 exists on the source, no collision on the superclass, no super send, and every
-	 accessed instance variable exists on the superclass."
-	| method src tree accessed targetVars missing |
+	"nil if aSelector can be pushed up, otherwise a HARD reason. Checks, in order: the
+	 method exists on the source, it does not send super, every accessed instance variable
+	 exists on the superclass, and no referenced class/pool variable is declared only below
+	 the superclass. A collision (the superclass already implements the selector) is NOT a
+	 hard decline: it becomes an opt-in, data-losing OVERWRITE change (see
+	 overwriteWarningFor:), because consolidating an inherited method by pushing up is often
+	 the intent."
+	| method src tree accessed targetVars missing sharedBelow refNames badShared |
 	method := self sourceBehavior compiledMethodAt: aSelector environmentId: 0 otherwise: nil.
 	method isNil ifTrue: [
 		^'Cannot push up #', aSelector asString, ': it is not defined in ', sourceClass name asString, '.'].
-	(self targetBehavior includesSelector: aSelector) ifTrue: [
-		^'Cannot push up #', aSelector asString, ': ', superClass name asString, ' already defines it.'].
 	src := method sourceString.
 	tree := [RBParser parseMethod: src] on: Error do: [:e | nil].
 	(tree notNil and: [self tree: tree referencesName: 'super']) ifTrue: [
@@ -175,6 +190,18 @@ GsPushUpMethodRefactoring >> computeDeclineFor: aSelector [
 	missing isEmpty ifFalse: [
 		^'Cannot push up #', aSelector asString, ': it uses instance variable(s) not defined in the superclass (',
 			(self commaList: (missing collect: [:v | v asString])), ').'].
+	"Class variables and pool variables declared only below the superclass (the source's
+	 own, or a pool it alone imports) would be undeclared once the method compiles onto the
+	 superclass. instVarsAccessed does not cover these, so match referenced identifier names
+	 (from the parse tree) against the shared-var delta."
+	sharedBelow := self sharedVarsBelowTarget.
+	sharedBelow isEmpty ifFalse: [
+		refNames := Set new.
+		tree ifNotNil: [tree nodesDo: [:n | n isVariable ifTrue: [refNames add: n name asSymbol]]].
+		badShared := sharedBelow select: [:v | refNames includes: v].
+		badShared isEmpty ifFalse: [
+			^'Cannot push up #', aSelector asString, ': it uses class/pool variable(s) not defined in the superclass (',
+				(self commaList: ((badShared asSortedCollection: [:a :b | a <= b]) asArray collect: [:v | v asString])), ').']].
 	^nil
 ]
 
@@ -183,6 +210,54 @@ GsPushUpMethodRefactoring >> tree: aTree referencesName: aName [
 	"True if aTree or any descendant is a variable node named aName."
 	aTree nodesDo: [:n | (n isVariable and: [n name = aName]) ifTrue: [^true]].
 	^false
+]
+
+{ #category : 'private - analysis' }
+GsPushUpMethodRefactoring >> sharedVarsBelowTarget [
+	"Class-variable + pool-variable names visible to the SOURCE but NOT to the superclass --
+	 i.e. declared on the source (or between it and the superclass) -- as a Set of Symbols. A
+	 pushed-up method referencing any of these would fail to compile on the superclass. Class
+	 variables and pool imports are shared across both sides, so this is independent of isMeta."
+	| below |
+	below := self sharedVarNamesOf: sourceClass.
+	(self sharedVarNamesOf: superClass) do: [:v | below remove: v ifAbsent: []].
+	^below
+]
+
+{ #category : 'private - analysis' }
+GsPushUpMethodRefactoring >> sharedVarNamesOf: aClass [
+	"All class-variable + pool-variable names visible to aClass (own + inherited class vars,
+	 plus every imported pool's keys), as a Set of Symbols. Defensive against a release that
+	 lacks either reflection selector."
+	| names |
+	names := Set new.
+	([aClass allClassVarNames] on: Error do: [:e | #()])
+		do: [:n | names add: n asSymbol].
+	([aClass sharedPools] on: Error do: [:e | #()])
+		do: [:pool | pool keysDo: [:k | names add: k asSymbol]].
+	^names
+]
+
+{ #category : 'private - analysis' }
+GsPushUpMethodRefactoring >> targetExistingSourceFor: aSelector [
+	"If the superclass ALREADY implements aSelector, its current source (which pushing up
+	 will OVERWRITE); nil otherwise. Only meaningful for a movable selector."
+	(self targetBehavior includesSelector: aSelector) ifFalse: [^nil].
+	^(self targetBehavior compiledMethodAt: aSelector environmentId: 0 otherwise: nil)
+		ifNil: [nil] ifNotNil: [:m | m sourceString]
+]
+
+{ #category : 'preconditions' }
+GsPushUpMethodRefactoring >> overwriteWarningFor: aSelector [
+	"A data-loss warning if pushing aSelector up would OVERWRITE a method the superclass
+	 itself defines (its definition is replaced by the pushed-up one); nil otherwise.
+	 nil for a declined selector or a global decline."
+	self ensureAnalysis.
+	globalDecline notNil ifTrue: [^nil].
+	(self declineFor: aSelector) notNil ifTrue: [^nil].
+	(self targetExistingSourceFor: aSelector) isNil ifTrue: [^nil].
+	^'Pushing up overwrites ', superClass name asString, '>>', aSelector asString,
+	  ' -- its current definition is lost.'
 ]
 
 { #category : 'private' }
@@ -261,18 +336,31 @@ GsPushUpMethodRefactoring >> buildChangeSet [
 
 { #category : 'building' }
 GsPushUpMethodRefactoring >> stagePushOf: aSelector into: cs [
-	"Stage the add-on-superclass then the remove-from-source for one movable selector."
-	| method src cat |
+	"Stage the add-on-superclass then the remove-from-source for one movable selector. If
+	 the superclass already implements the selector, the add is an OVERWRITE (carries the
+	 existing body + a data-loss warning) rather than a plain add."
+	| method src cat existing |
 	method := self sourceBehavior compiledMethodAt: aSelector environmentId: 0 otherwise: nil.
 	src := method sourceString.
 	cat := self categoryOfSelector: aSelector.
-	cs
-		addMethodAddInDictionary: (self dictNameForClass: superClass)
-		className: superClass name asString
-		isMeta: isMeta
-		selector: aSelector
-		category: cat
-		newSource: src.
+	existing := self targetExistingSourceFor: aSelector.
+	existing isNil
+		ifTrue: [cs
+			addMethodAddInDictionary: (self dictNameForClass: superClass)
+			className: superClass name asString
+			isMeta: isMeta
+			selector: aSelector
+			category: cat
+			newSource: src]
+		ifFalse: [cs
+			addMethodOverwriteInDictionary: (self dictNameForClass: superClass)
+			className: superClass name asString
+			isMeta: isMeta
+			selector: aSelector
+			category: cat
+			oldSource: existing
+			newSource: src
+			warning: (self overwriteWarningFor: aSelector)].
 	cs
 		addMethodRemoveInDictionary: (self dictNameForClass: sourceClass)
 		className: sourceClass name asString
@@ -300,6 +388,8 @@ GsPushUpMethodRefactoring >> analysisJsonString [
 		ws nextPutAll: '{"selector":'; nextPutAll: (self jsonQuote: sel asString).
 		ws nextPutAll: ',"decline":';
 			nextPutAll: ((self declineFor: sel) ifNil: ['null'] ifNotNil: [:r | self jsonQuote: r]).
+		ws nextPutAll: ',"warning":';
+			nextPutAll: ((self overwriteWarningFor: sel) ifNil: ['null'] ifNotNil: [:w | self jsonQuote: w]).
 		ws nextPut: $}].
 	ws nextPutAll: ']}'.
 	^ws contents
@@ -381,11 +471,15 @@ GsPushUpMethodRefactoring >> applyDeselected: deselectedIds [
 	 skipped. Removals are additionally guarded (see applyMethodRemove:) so a skipped or
 	 failed add never strands a method in neither class. Answers {applied, failed:[..]}."
 	| applied failures ids |
-	ids := (deselectedIds ifNil: [#()]) asArray.
+	"Compare ids as Symbols: a deselected id arrives from the client as a String literal,
+	 which on 3.6.x is a Unicode string, and comparing it to the byte-string change id can
+	 raise (the 3.6.2 Unicode-comparison trap). asSymbol canonicalises both sides."
+	ids := ((deselectedIds ifNil: [#()]) collect: [:e | e asSymbol]) asIdentitySet.
 	failures := OrderedCollection new.
 	applied := 0.
+	appliedAddSelectors := Set new.
 	self changeSet changes do: [:change |
-		(ids includes: change id)
+		(ids includes: change id asSymbol)
 			ifFalse: [
 				[(self applyChange: change) ifTrue: [applied := applied + 1]]
 				on: Error do: [:e |
@@ -410,7 +504,10 @@ GsPushUpMethodRefactoring >> applyChange: aChange [
 
 { #category : 'applying' }
 GsPushUpMethodRefactoring >> applyMethodAdd: aChange [
-	"Compile the pushed-up method onto the superclass/side. No commit."
+	"Compile the pushed-up method onto the superclass/side. No commit. Records the
+	 selector as applied so the paired remove knows the add actually happened (a plain
+	 includesSelector: check cannot tell an applied push from a pre-existing collision
+	 method, so a deselected OVERWRITE must not trigger the remove)."
 	| cls target |
 	cls := environment classNamed: aChange className.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
@@ -419,15 +516,20 @@ GsPushUpMethodRefactoring >> applyMethodAdd: aChange [
 		compileMethod: aChange newSource
 		dictionaries: System myUserProfile symbolList
 		category: (aChange category ifNil: ['as yet unclassified']).
+	appliedAddSelectors add: aChange selector asSymbol.
 	^true
 ]
 
 { #category : 'applying' }
 GsPushUpMethodRefactoring >> applyMethodRemove: aChange [
-	"Remove the method from the source -- but ONLY once the superclass actually holds it,
-	 so a deselected or failed add never leaves the method in neither class. No commit."
+	"Remove the method from the source -- but ONLY once this run actually compiled the
+	 method onto the superclass, so a deselected or failed add never leaves the method in
+	 neither class. Guarding on the applied-add set (not a bare includesSelector: on the
+	 superclass) is what makes a deselected OVERWRITE safe: the superclass already has a
+	 same-selector method, so includesSelector: would wrongly report the push succeeded
+	 and strip the source. No commit."
 	| cls target |
-	(self targetBehavior includesSelector: aChange selector asSymbol) ifFalse: [^false].
+	(appliedAddSelectors includes: aChange selector asSymbol) ifFalse: [^false].
 	cls := environment classNamed: aChange className.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].

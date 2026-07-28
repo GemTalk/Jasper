@@ -9,25 +9,29 @@ one-element collection, so single- and multi-method share one path.
 
 Push-down is the inverse of push-up (M7) and a many-target relative of move-method (M6);
 it reuses the same change kinds and preview/apply/token machinery. Per movable selector it
-stages a #methodAdd on EVERY immediate subclass that does not already override the selector
-(each keeps its own override, and is silently skipped) plus a SINGLE #methodRemove on the
-source. So one pushed-down selector produces N adds + 1 remove (N = the receiving subclass
-count). Both change kinds already exist; no new kind is introduced. Each selector is
-analysed independently; a declined selector is dropped from the change set and reported, so
-a multi-push relocates the movable methods and explains the rest.
+stages a #methodAdd on EVERY immediate subclass plus a SINGLE #methodRemove on the source. A
+subclass that does NOT yet understand the selector gets a plain add; a subclass that already
+OVERRIDES it gets an opt-in OVERWRITE add (staged with the existing override's body + a
+data-loss warning), which the client leaves un-ticked by default so the user consciously
+chooses to replace that override. So one pushed-down selector produces N adds + 1 remove
+(N = the immediate subclass count). Both change kinds already exist; no new kind is
+introduced. Each selector is analysed independently; a declined selector is dropped from the
+change set and reported, so a multi-push relocates the movable methods and explains the rest.
 
 A GLOBAL decline (the source has no subclasses) empties the whole change set. A per-selector
-decline is recorded when: the source method is missing; the method sends super (its meaning
-depends on the source class''s superclass, which changes once the home moves down); or EVERY
-immediate subclass already overrides the selector (nothing to push, and removing it from the
-source would only endanger the source's own direct instances). Instance-variable access needs
-no check: the method already lives on the source, so every accessed ivar is defined on (or
-inherited by) the source, and every subclass inherits those same ivars.
+decline (a HARD skip) is recorded when: the source method is missing; or the method sends
+super (its meaning depends on the source class''s superclass, which changes once the home
+moves down). A class where EVERY immediate subclass already overrides the selector is NOT a
+decline any more -- it is simply an all-overwrite push the user opts into (or leaves entirely
+un-ticked). Instance-variable access needs no check: the method already lives on the source,
+so every accessed ivar is defined on (or inherited by) the source, and every subclass inherits
+those same ivars.
 
 This is the SIMPLEST SOUND variant: the definition is copied into each immediate subclass
-that lacks its own and removed from the source; senders are NOT rewritten and no forwarding
-method is left behind. NOTE the intended semantics: after push-down the source class no
-longer understands the selector, so this is meant for an abstract superclass (or one whose
+(overwriting an override only when the user opts in) and removed from the source; senders are
+NOT rewritten and no forwarding method is left behind. NOTE the intended semantics: after
+push-down the source class no longer understands the selector, so this is meant for an
+abstract superclass (or one whose
 direct instances do not use the method). Building the change set compiles nothing and commits
 nothing; the server-side apply compiles each subclass and removes the source, guarding the
 removal so it fires only once EVERY immediate subclass understands the selector (a
@@ -47,7 +51,8 @@ Class {
 		'changeSet',
 		'analysisDone',
 		'globalDecline',
-		'declines'
+		'declines',
+		'appliedAddSelectors'
 	],
 	#category : 'Refactoring-Core'
 }
@@ -165,8 +170,12 @@ GsPushDownMethodRefactoring >> computeAnalysis [
 { #category : 'private - analysis' }
 GsPushDownMethodRefactoring >> analyzeSelector: aSelector [
 	"Record the decline reason (nil when movable) and the receiving subclasses for one
-	 selector."
-	| method src tree recips |
+	 selector. EVERY immediate subclass is a recipient: those that do not yet understand
+	 the selector get a fresh copy; those that already override it get an opt-in OVERWRITE
+	 (staged with the existing body + a data-loss warning), so a class where every subclass
+	 overrides is no longer a hard decline -- it is just an all-overwrite push the user
+	 opts into. Only a missing source method or a super-send is a hard decline."
+	| method src tree |
 	method := self sourceBehavior compiledMethodAt: aSelector environmentId: 0 otherwise: nil.
 	method isNil ifTrue: [
 		^declines at: aSelector put:
@@ -176,11 +185,7 @@ GsPushDownMethodRefactoring >> analyzeSelector: aSelector [
 	(tree notNil and: [self tree: tree referencesName: 'super']) ifTrue: [
 		^declines at: aSelector put:
 			'Cannot push down #', aSelector asString, ': it sends super, whose meaning depends on the class''s superclass.'].
-	recips := subClasses reject: [:s | (self behaviorFor: s) includesSelector: aSelector].
-	recips isEmpty ifTrue: [
-		^declines at: aSelector put:
-			'Cannot push down #', aSelector asString, ': every subclass already overrides it.'].
-	recipients at: aSelector put: recips.
+	recipients at: aSelector put: subClasses.
 	declines at: aSelector put: nil
 ]
 
@@ -223,10 +228,36 @@ GsPushDownMethodRefactoring >> declineFor: aSelector [
 
 { #category : 'accessing' }
 GsPushDownMethodRefactoring >> recipientsFor: aSelector [
-	"The immediate subclasses that will receive a copy of aSelector (empty for a declined
-	 or unknown selector)."
+	"The immediate subclasses that will receive aSelector (empty for a declined or unknown
+	 selector). Includes subclasses that already override it -- those receive an opt-in
+	 OVERWRITE rather than a fresh add."
 	self ensureAnalysis.
 	^recipients at: aSelector asSymbol ifAbsent: [#()]
+]
+
+{ #category : 'private - analysis' }
+GsPushDownMethodRefactoring >> existingSourceIn: aSubclass for: aSelector [
+	"If aSubclass ALREADY overrides aSelector on this side, its current source (which
+	 pushing down will OVERWRITE); nil otherwise."
+	| beh |
+	beh := self behaviorFor: aSubclass.
+	(beh includesSelector: aSelector) ifFalse: [^nil].
+	^(beh compiledMethodAt: aSelector environmentId: 0 otherwise: nil)
+		ifNil: [nil] ifNotNil: [:m | m sourceString]
+]
+
+{ #category : 'preconditions' }
+GsPushDownMethodRefactoring >> overwriteWarningFor: aSelector [
+	"A data-loss summary if pushing aSelector down would OVERWRITE an existing override in
+	 one or more subclasses; nil otherwise. nil for a declined selector or global decline."
+	| overs |
+	self ensureAnalysis.
+	globalDecline notNil ifTrue: [^nil].
+	(self declineFor: aSelector) notNil ifTrue: [^nil].
+	overs := (self recipientsFor: aSelector) select: [:s | (self behaviorFor: s) includesSelector: aSelector].
+	overs isEmpty ifTrue: [^nil].
+	^'Pushing down overwrites the existing override in ', overs size printString,
+	  ' subclass', (overs size = 1 ifTrue: [''] ifFalse: ['es']), ' -- lost unless left un-ticked.'
 ]
 
 { #category : 'accessing' }
@@ -263,19 +294,32 @@ GsPushDownMethodRefactoring >> buildChangeSet [
 
 { #category : 'building' }
 GsPushDownMethodRefactoring >> stagePushOf: aSelector into: cs [
-	"Stage an add on every receiving subclass, then a single remove from the source."
+	"Stage an add on every receiving subclass -- an OVERWRITE (carrying the existing body +
+	 a data-loss warning) for a subclass that already overrides the selector, a plain add
+	 otherwise -- then a single remove from the source."
 	| method src cat |
 	method := self sourceBehavior compiledMethodAt: aSelector environmentId: 0 otherwise: nil.
 	src := method sourceString.
 	cat := self categoryOfSelector: aSelector.
-	(self recipientsFor: aSelector) do: [:sub |
-		cs
-			addMethodAddInDictionary: (self dictNameForClass: sub)
-			className: sub name asString
-			isMeta: isMeta
-			selector: aSelector
-			category: cat
-			newSource: src].
+	(self recipientsFor: aSelector) do: [:sub | | existing |
+		existing := self existingSourceIn: sub for: aSelector.
+		existing isNil
+			ifTrue: [cs
+				addMethodAddInDictionary: (self dictNameForClass: sub)
+				className: sub name asString
+				isMeta: isMeta
+				selector: aSelector
+				category: cat
+				newSource: src]
+			ifFalse: [cs
+				addMethodOverwriteInDictionary: (self dictNameForClass: sub)
+				className: sub name asString
+				isMeta: isMeta
+				selector: aSelector
+				category: cat
+				oldSource: existing
+				newSource: src
+				warning: 'Pushing down overwrites ', sub name asString, '>>', aSelector asString, ' -- its current override is lost.']].
 	cs
 		addMethodRemoveInDictionary: (self dictNameForClass: sourceClass)
 		className: sourceClass name asString
@@ -302,6 +346,8 @@ GsPushDownMethodRefactoring >> analysisJsonString [
 		ws nextPutAll: '{"selector":'; nextPutAll: (self jsonQuote: sel asString).
 		ws nextPutAll: ',"decline":';
 			nextPutAll: ((self declineFor: sel) ifNil: ['null'] ifNotNil: [:r | self jsonQuote: r]).
+		ws nextPutAll: ',"warning":';
+			nextPutAll: ((self overwriteWarningFor: sel) ifNil: ['null'] ifNotNil: [:w | self jsonQuote: w]).
 		ws nextPut: $}].
 	ws nextPutAll: ']}'.
 	^ws contents
@@ -383,11 +429,15 @@ GsPushDownMethodRefactoring >> applyDeselected: deselectedIds [
 	 skipped. The source removal is guarded (see applyMethodRemove:) so a skipped or
 	 failed subclass add never strands that subclass. Answers {applied, failed:[..]}."
 	| applied failures ids |
-	ids := (deselectedIds ifNil: [#()]) asArray.
+	"Compare ids as Symbols: a deselected id arrives from the client as a String literal,
+	 which on 3.6.x is a Unicode string, and comparing it to the byte-string change id can
+	 raise (the 3.6.2 Unicode-comparison trap). asSymbol canonicalises both sides."
+	ids := ((deselectedIds ifNil: [#()]) collect: [:e | e asSymbol]) asIdentitySet.
 	failures := OrderedCollection new.
 	applied := 0.
+	appliedAddSelectors := Set new.
 	self changeSet changes do: [:change |
-		(ids includes: change id)
+		(ids includes: change id asSymbol)
 			ifFalse: [
 				[(self applyChange: change) ifTrue: [applied := applied + 1]]
 				on: Error do: [:e |
@@ -412,7 +462,10 @@ GsPushDownMethodRefactoring >> applyChange: aChange [
 
 { #category : 'applying' }
 GsPushDownMethodRefactoring >> applyMethodAdd: aChange [
-	"Compile the pushed-down method onto a subclass/side. No commit."
+	"Compile the pushed-down method onto a subclass/side. No commit. Records the selector
+	 as applied so the paired remove fires only when at least one add actually happened
+	 this run (so un-ticking every target is a genuine no-op, even when every subclass
+	 already understood the selector via its own override)."
 	| cls target |
 	cls := environment classNamed: aChange className.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
@@ -421,16 +474,20 @@ GsPushDownMethodRefactoring >> applyMethodAdd: aChange [
 		compileMethod: aChange newSource
 		dictionaries: System myUserProfile symbolList
 		category: (aChange category ifNil: ['as yet unclassified']).
+	appliedAddSelectors add: aChange selector asSymbol.
 	^true
 ]
 
 { #category : 'applying' }
 GsPushDownMethodRefactoring >> applyMethodRemove: aChange [
-	"Remove the method from the source -- but ONLY once EVERY immediate subclass
-	 understands the selector on its own (either it received a copy or it already
-	 overrode it), so a deselected or failed add never strands a subclass. No commit."
+	"Remove the method from the source -- but ONLY once at least one add for this selector
+	 was applied this run AND EVERY immediate subclass understands the selector on its own
+	 (it received a copy or already overrode it). The applied-add clause makes un-ticking
+	 every target a no-op; the all-subclasses clause makes a partial push a copy-down that
+	 leaves the source in place rather than stranding a subclass. No commit."
 	| cls sel |
 	sel := aChange selector asSymbol.
+	(appliedAddSelectors includes: sel) ifFalse: [^false].
 	(subClasses allSatisfy: [:s | (self behaviorFor: s) includesSelector: sel])
 		ifFalse: [^false].
 	cls := environment classNamed: aChange className.

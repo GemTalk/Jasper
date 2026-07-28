@@ -1177,12 +1177,14 @@
       {
         "command": "gemstone.explorer.pushUpMethod",
         "title": "Push Up…",
-        "category": "GemStone"
+        "category": "GemStone",
+        "icon": "$(arrow-up)"
       },
       {
         "command": "gemstone.explorer.pushDownMethod",
         "title": "Push Down…",
-        "category": "GemStone"
+        "category": "GemStone",
+        "icon": "$(arrow-down)"
       },
       {
         "command": "gemstone.renameTemporary",
@@ -1783,12 +1785,12 @@
         {
           "command": "gemstone.explorer.pushUpMethod",
           "when": "view == gemstoneExplorerMethods && viewItem =~ /explorerMethod/",
-          "group": "3_refactor@2"
+          "group": "inline@4"
         },
         {
           "command": "gemstone.explorer.pushDownMethod",
           "when": "view == gemstoneExplorerMethods && viewItem =~ /explorerMethod/",
-          "group": "3_refactor@3"
+          "group": "inline@5"
         },
         {
           "command": "gemstone.explorer.renameClass",

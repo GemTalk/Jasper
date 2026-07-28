@@ -84,15 +84,27 @@ describe('push method up/down (integration)', () => {
     // Push-DOWN candidates on the base.
     q.compileMethod(session(), BASE, false, 'accessing', 'pumDown\n\t^100');
     q.compileMethod(session(), BASE, false, 'accessing', 'pumSuperDown\n\t^super hash');
+    // Push-DOWN where subclass A already overrides -> an opt-in overwrite for A.
+    q.compileMethod(session(), BASE, false, 'accessing', "pumOver\n\t^'base'");
+    q.compileMethod(session(), SUBA, false, 'accessing', "pumOver\n\t^'a'");
     // Push-UP candidates on subclass A.
     q.compileMethod(session(), SUBA, false, 'accessing', 'pumUpPure\n\t^7');
     q.compileMethod(session(), SUBA, false, 'accessing', 'pumUpSuper\n\t^super hash');
+    // Push-UP where the superclass already defines it -> an opt-in overwrite.
+    q.compileMethod(session(), BASE, false, 'accessing', "pumCollide\n\t^'base'");
+    q.compileMethod(session(), SUBA, false, 'accessing', "pumCollide\n\t^'suba'");
   };
 
   const definesSelector = (cls: string, selector: string): boolean =>
     exec(
       `(${cls} compiledMethodAt: #'${selector}' environmentId: 0 otherwise: nil) notNil printString`,
     ).trim() === 'true';
+
+  const sourceOf = (cls: string, selector: string): string =>
+    exec(
+      `(${cls} compiledMethodAt: #'${selector}' environmentId: 0 otherwise: nil) ` +
+        "ifNil: [''] ifNotNil: [:m | m sourceString]",
+    );
 
   it('reports push engine availability matching the shared refactoring probe', () => {
     expect(enginePresent()).toBe(q.checkRefactoringSupportAvailable(session()));
@@ -148,6 +160,93 @@ r := (System myUserProfile symbolList objectNamed: #GsPushDownMethodRefactoringT
     expect(result.failed).toEqual([]);
     expect(definesSelector(BASE, 'pumUpPure')).toBe(true);
     expect(definesSelector(SUBA, 'pumUpPure')).toBe(false);
+  });
+
+  it('pushes up onto a colliding superclass as an opt-in overwrite', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+
+    defineFixture();
+    const analysis = parseAnalysis(
+      await analyzePushMethod(asyncExec, 'up', SUBA, ['pumCollide'], false),
+    );
+    expect(analysis.movableCount).toBe(1);
+    expect(analysis.selectors[0].decline).toBeNull();
+    expect(analysis.selectors[0].warning).not.toBeNull();
+
+    const token = `pum-up-collide-${SUBA}`;
+    const start = parseStartPreview(
+      await startPushMethodPreview(
+        asyncExec,
+        'up',
+        SUBA,
+        ['pumCollide'],
+        false,
+        token,
+        PREVIEW_PAGE_BYTES,
+      ),
+    );
+    const add = start.page.changes.find((c) => c.kind === 'methodAdd');
+    expect(add?.warning).not.toBeNull();
+    expect(add?.oldSource).toContain('base');
+    const result = parseApplyResult(await applyPushMethod(asyncExec, 'up', token, []));
+
+    expect(result.failed).toEqual([]);
+    expect(sourceOf(BASE, 'pumCollide')).toContain('suba');
+    expect(definesSelector(SUBA, 'pumCollide')).toBe(false);
+  });
+
+  it('keeps the source and the superclass method when a push-up overwrite is deselected', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+
+    defineFixture();
+    const token = `pum-up-collide-deselect-${SUBA}`;
+    const start = parseStartPreview(
+      await startPushMethodPreview(
+        asyncExec,
+        'up',
+        SUBA,
+        ['pumCollide'],
+        false,
+        token,
+        PREVIEW_PAGE_BYTES,
+      ),
+    );
+    const add = start.page.changes.find((c) => c.kind === 'methodAdd');
+
+    const result = parseApplyResult(await applyPushMethod(asyncExec, 'up', token, [add!.id]));
+
+    expect(result.failed).toEqual([]);
+    expect(sourceOf(BASE, 'pumCollide')).toContain('base'); // superclass unchanged
+    expect(definesSelector(SUBA, 'pumCollide')).toBe(true); // source NOT stranded
+  });
+
+  it('shows an overriding subclass as an opt-in overwrite on push-down', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+
+    defineFixture();
+    const token = `pum-down-over-${BASE}`;
+    const start = parseStartPreview(
+      await startPushMethodPreview(
+        asyncExec,
+        'down',
+        BASE,
+        ['pumOver'],
+        false,
+        token,
+        PREVIEW_PAGE_BYTES,
+      ),
+    );
+    const addA = start.page.changes.find((c) => c.kind === 'methodAdd' && c.className === SUBA);
+    const addB = start.page.changes.find((c) => c.kind === 'methodAdd' && c.className === SUBB);
+    expect(addA?.warning).not.toBeNull(); // A already overrides -> overwrite
+    expect(addB?.warning).toBeNull(); // B is a fresh add
+
+    const result = parseApplyResult(await applyPushMethod(asyncExec, 'down', token, []));
+
+    expect(result.failed).toEqual([]);
+    expect(sourceOf(SUBA, 'pumOver')).toContain('base'); // A's override replaced
+    expect(definesSelector(SUBB, 'pumOver')).toBe(true);
+    expect(definesSelector(BASE, 'pumOver')).toBe(false);
   });
 
   it('declines pushing up a method that sends super', async (ctx) => {

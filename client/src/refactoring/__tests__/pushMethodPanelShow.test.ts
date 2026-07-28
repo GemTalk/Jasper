@@ -64,6 +64,7 @@ const start: StartPushPreview = {
         category: 'accessing',
         oldSource: '',
         newSource: 'foo\n\t^1',
+        warning: null,
       },
     ],
     nextOffset: 2,

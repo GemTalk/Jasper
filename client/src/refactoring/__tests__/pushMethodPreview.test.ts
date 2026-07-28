@@ -52,6 +52,19 @@ describe('push-method preview parsing', () => {
       expect(a.globalDecline).toContain('no subclasses');
     });
 
+    it('reads a per-selector overwrite warning', () => {
+      const a = parseAnalysis(
+        JSON.stringify({
+          targetClass: 'Base',
+          globalDecline: null,
+          movableCount: 1,
+          selectors: [{ selector: 'foo', decline: null, warning: 'overwrites Base>>foo' }],
+        }),
+      );
+
+      expect(a.selectors[0].warning).toBe('overwrites Base>>foo');
+    });
+
     it('throws on a bare (non-JSON) engine error string', () => {
       expect(() => parseAnalysis('Source class not found: Foo')).toThrow();
     });
@@ -147,6 +160,30 @@ describe('push-method preview parsing', () => {
       expect(p.done).toBe(true);
     });
 
+    it('reads a data-loss warning on an overwrite change and defaults it to null otherwise', () => {
+      const p = parsePage(
+        JSON.stringify({
+          changes: [
+            {
+              id: '1',
+              kind: 'methodAdd',
+              className: 'Sub',
+              isMeta: false,
+              oldSource: 'foo ^ 99',
+              newSource: 'foo ^ 1',
+              warning: 'overwrites Sub>>foo',
+            },
+            { id: '2', kind: 'methodAdd', className: 'Other', isMeta: false, newSource: 'foo ^ 1' },
+          ],
+          nextOffset: 3,
+          done: true,
+        }),
+      );
+
+      expect(p.changes[0].warning).toBe('overwrites Sub>>foo');
+      expect(p.changes[1].warning).toBeNull();
+    });
+
     it('throws the engine error carried on an expired-session page', () => {
       expect(() =>
         parsePage(JSON.stringify({ error: 'preview session expired', changes: [] })),
@@ -189,11 +226,18 @@ describe('push-method preview parsing', () => {
       category: null,
       oldSource: '',
       newSource: '',
+      warning: null,
       ...over,
     });
 
     it('tags a methodAdd as add-to-target', () => {
       expect(pushChangeLabel(change({ kind: 'methodAdd' }))).toBe('Base>>foo (add to target)');
+    });
+
+    it('tags an overwriting methodAdd as overwrite-existing', () => {
+      expect(pushChangeLabel(change({ kind: 'methodAdd', warning: 'overwrites Base>>foo' }))).toBe(
+        'Base>>foo (overwrite existing)',
+      );
     });
 
     it('tags a methodRemove as remove-from-source and marks the class side', () => {
