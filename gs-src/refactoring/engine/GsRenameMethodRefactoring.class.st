@@ -184,12 +184,10 @@ GsRenameMethodRefactoring >> isClassInScope: aClass [
 	scopeKind == #class ifTrue: [^aClass == definingClass].
 	scopeKind == #hierarchy ifTrue: [^self hierarchyScopeClasses includes: aClass].
 	scopeKind == #dictionary ifTrue: [
-		"Compare as Symbols -- scopeDictName is a client-supplied literal (Unicode
-		 on 3.6.x); asSymbol canonicalises both sides and avoids the comparison trap."
-		| wanted |
-		wanted := scopeDictName asSymbol.
-		^(environment dictionariesDefiningClassNamed: aClass name)
-			anySatisfy: [:d | d name asSymbol == wanted]].
+		"Identity, not name: a same-named class shadowed in ANOTHER dictionary is
+		 out of scope (matching by name alone duplicated it -- see
+		 GsRefactoringEnvironment>>class:isDefinedInDictionaryNamed:)."
+		^environment class: aClass isDefinedInDictionaryNamed: scopeDictName].
 	^false
 ]
 

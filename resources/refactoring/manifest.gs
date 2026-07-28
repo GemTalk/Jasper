@@ -70,7 +70,7 @@ m add: (Array with: 'GsInlineTemporaryRefactoring' with: 46).
 m add: (Array with: 'GsMoveMethodRefactoring' with: 38).
 m add: (Array with: 'GsRefactoringChange' with: 25).
 m add: (Array with: 'GsRefactoringChangeSet' with: 17).
-m add: (Array with: 'GsRefactoringEnvironment' with: 16).
+m add: (Array with: 'GsRefactoringEnvironment' with: 17).
 m add: (Array with: 'GsRenameClassRefactoring' with: 54).
 m add: (Array with: 'GsRenameClassVariableRefactoring' with: 37).
 m add: (Array with: 'GsRenameInstanceVariableRefactoring' with: 17).

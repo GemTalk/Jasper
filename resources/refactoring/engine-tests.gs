@@ -3986,6 +3986,46 @@ testDictionariesDefiningNameReflectWhereTheClassLives
 
 category: 'tests'
 method: GsRefactoringEnvironmentTest
+testDictionaryScopeMembershipIsByIdentityNotName
+	"A class name bound in two dictionaries (a shadow) must be 'in' ONLY the
+	 dictionary that holds THAT class object -- not every dictionary that happens
+	 to bind the same name. Membership by name alone pulled the sibling into a
+	 single-dictionary scope and produced duplicate change rows (issue #328 item 9).
+	 Self-contained: builds two shadow dictionaries and removes them in an ensure:
+	 so a failure never leaks fixture state into the stone."
+	| sl env dictA dictB fooA fooB |
+	sl := System myUserProfile symbolList.
+	dictA := SymbolDictionary new name: #GsEnvScopeDictA; yourself.
+	dictB := SymbolDictionary new name: #GsEnvScopeDictB; yourself.
+	[sl add: dictA. sl add: dictB.
+	 fooA := Object subclass: 'GsEnvScopeShadow'
+		instVarNames: #() classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: dictA.
+	 fooB := Object subclass: 'GsEnvScopeShadow'
+		instVarNames: #() classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: dictB.
+	 env := GsRefactoringEnvironment new.
+
+	 "the name is genuinely shadowed -- both dictionaries define it"
+	 self assert: (env dictionariesDefiningClassNamed: #GsEnvScopeShadow) size >= 2.
+	 "each class is in exactly its OWN dictionary, by identity"
+	 self assert: (env class: fooA isDefinedInDictionaryNamed: #GsEnvScopeDictA).
+	 self deny: (env class: fooA isDefinedInDictionaryNamed: #GsEnvScopeDictB).
+	 self assert: (env class: fooB isDefinedInDictionaryNamed: #GsEnvScopeDictB).
+	 self deny: (env class: fooB isDefinedInDictionaryNamed: #GsEnvScopeDictA).
+	 "a symbol argument or a string argument both work"
+	 self assert: (env class: fooA isDefinedInDictionaryNamed: 'GsEnvScopeDictA').
+	 "a dictionary that does not exist is never in scope"
+	 self deny: (env class: fooA isDefinedInDictionaryNamed: #GsEnvNoSuchDict_ZZZ)]
+		ensure: [
+			dictA removeKey: #GsEnvScopeShadow ifAbsent: [].
+			dictB removeKey: #GsEnvScopeShadow ifAbsent: [].
+			sl remove: dictA ifAbsent: [].
+			sl remove: dictB ifAbsent: []]
+%
+
+category: 'tests'
+method: GsRefactoringEnvironmentTest
 testFindsInstanceMethodsThatReadOrWriteTheInstVar
 	| sels |
 	sels := GsRefactoringEnvironment new instanceMethodsAccessing: #alpha inClass: self superFixture.
@@ -5390,6 +5430,47 @@ testCommentSpellingIsNotRewritten
 	sender := self senderChangeFor: #caller
 		in: (self renamePartsTo: #('moveY:' 'x:') permutation: #(2 1) scope: #class) changeSet.
 	self assert: sender newSource includesSubstring: 'a caller of movePointX:y: and ping'
+%
+
+category: 'tests'
+method: GsRenameMethodRefactoringTest
+testDictionaryScopeExcludesSameNamedClassInAnotherDictionary
+	"Regression for issue #328 item 9. A class name bound in two dictionaries
+	 (a shadow) must not stage a duplicate rename for the sibling class: renaming
+	 in dictionary A's scope renames ONLY A's class, and B's same-named class is
+	 counted out of scope rather than staged again. Self-contained: the two shadow
+	 dictionaries are removed in an ensure: so a failure leaks nothing."
+	| sl dictA dictB fooA renames ref cs |
+	sl := System myUserProfile symbolList.
+	dictA := SymbolDictionary new name: #GsRMScopeDictA; yourself.
+	dictB := SymbolDictionary new name: #GsRMScopeDictB; yourself.
+	[sl add: dictA. sl add: dictB.
+	 fooA := Object subclass: 'GsRMShadow'
+		instVarNames: #() classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: dictA.
+	 Object subclass: 'GsRMShadow'
+		instVarNames: #() classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: dictB.
+	 self compile: 'shadowSel ^1' in: fooA.
+	 self compile: 'shadowSel ^2' in: (dictB at: #GsRMShadow).
+	 ref := GsRenameMethodRefactoring
+		class: fooA renameSelector: #shadowSel
+		toParts: #('shadowSel2') permutation: #() dictionaryScope: 'GsRMScopeDictA'.
+	 cs := ref changeSet.
+	 renames := cs changes select: [:c | c kind == #methodRename].
+
+	 "exactly ONE implementor renamed -- not the shadow sibling too"
+	 self assert: renames size equals: 1.
+	 "and it is dictionary A's class (body returns 1), never B's (returns 2)"
+	 self assert: renames first oldSource includesSubstring: '^1'.
+	 self deny: renames first oldSource includesSubstring: '^2'.
+	 "B's same-named implementor is counted out of scope, not silently dropped"
+	 self assert: ref outOfScopeImplementorCount equals: 1]
+		ensure: [
+			dictA removeKey: #GsRMShadow ifAbsent: [].
+			dictB removeKey: #GsRMShadow ifAbsent: [].
+			sl remove: dictA ifAbsent: [].
+			sl remove: dictB ifAbsent: []]
 %
 
 category: 'tests'

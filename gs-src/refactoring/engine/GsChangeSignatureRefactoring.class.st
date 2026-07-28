@@ -304,10 +304,10 @@ GsChangeSignatureRefactoring >> isClassInScope: aClass [
 	scopeKind == #class ifTrue: [^aClass == definingClass].
 	scopeKind == #hierarchy ifTrue: [^self hierarchyScopeClasses includes: aClass].
 	scopeKind == #dictionary ifTrue: [
-		| wanted |
-		wanted := scopeDictName asSymbol.
-		^(environment dictionariesDefiningClassNamed: aClass name)
-			anySatisfy: [:d | d name asSymbol == wanted]].
+		"Identity, not name: a same-named class shadowed in ANOTHER dictionary is
+		 out of scope (matching by name alone duplicated it -- see
+		 GsRefactoringEnvironment>>class:isDefinedInDictionaryNamed:)."
+		^environment class: aClass isDefinedInDictionaryNamed: scopeDictName].
 	^false
 ]
 
