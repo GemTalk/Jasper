@@ -44,6 +44,8 @@ import { PREVIEW_PAGE_BYTES } from './refactoring/queries/previewRenameMethod';
 import { showRenameMethodEditor } from './refactoring/renameMethodEditor';
 import { showRenameMethodPanel } from './refactoring/renameMethodPanel';
 import { beginChangeSignature, changeSignatureCommand } from './refactoring/changeSignatureCommand';
+import { pushMethod } from './refactoring/pushMethodCommand';
+import { PushDirection } from './refactoring/queries/previewPushMethod';
 import {
   parseStartPreview as parseStartClassPreview,
   parsePage as parseClassPage,
@@ -1642,6 +1644,39 @@ export class ExplorerController {
     );
   }
 
+  // Push a method up to its superclass (M7) or down into its subclasses (M8), from the
+  // method row's context menu. The engine resolves the target(s) and declines with a
+  // clear reason when impossible (no superclass / no subclasses / precondition). After a
+  // successful push, reveal where the method went: for push-up, navigate to the
+  // superclass and select the moved method; for push-down (many targets), just reload
+  // the source class's method list (the method is now gone from it).
+  async pushMethod(item: MethodItem, direction: PushDirection): Promise<void> {
+    const className = this.state.className;
+    const session = this.session();
+    if (!className || !session) return;
+    const outcome = await pushMethod({
+      session,
+      direction,
+      sourceClass: className,
+      selectors: [item.info.selector],
+      isMeta: item.isMeta,
+      dict: this.state.dictIndex ?? this.state.dictName,
+    });
+    if (!outcome) return;
+    if (direction === 'up' && outcome.targetClass) {
+      const { dictName, dictIndex } = this.state;
+      if (dictName !== undefined && dictIndex !== undefined) {
+        await this.revealClass(dictName, dictIndex, outcome.targetClass, {
+          revealMethod: { selector: item.info.selector, isMeta: item.isMeta },
+        });
+        return;
+      }
+    }
+    // Push-down (or a push-up we can't reveal): the source lost the method — reload its
+    // method list so the removed row disappears.
+    this.reloadCurrentClassMethods();
+  }
+
   // Bring the tree and any open editors up to date after a signature change: the
   // method environment is stale (selectors changed) and an editor open on a renamed
   // implementor must reopen under its new selector. Public so BOTH entry points (the
@@ -3109,6 +3144,22 @@ export function registerGemStoneExplorer(
       void ctl.changeSignature(item).catch((e: unknown) => {
         const msg = e instanceof Error ? e.message : String(e);
         void vscode.window.showErrorMessage(`Change signature failed: ${msg}`);
+      });
+    }),
+    // Push a method up to its superclass (M7) — context menu on the method row.
+    vscode.commands.registerCommand('gemstone.explorer.pushUpMethod', (item?: MethodItem) => {
+      if (!(item instanceof MethodItem)) return;
+      void ctl.pushMethod(item, 'up').catch((e: unknown) => {
+        const msg = e instanceof Error ? e.message : String(e);
+        void vscode.window.showErrorMessage(`Push up failed: ${msg}`);
+      });
+    }),
+    // Push a method down into its subclasses (M8) — context menu on the method row.
+    vscode.commands.registerCommand('gemstone.explorer.pushDownMethod', (item?: MethodItem) => {
+      if (!(item instanceof MethodItem)) return;
+      void ctl.pushMethod(item, 'down').catch((e: unknown) => {
+        const msg = e instanceof Error ? e.message : String(e);
+        void vscode.window.showErrorMessage(`Push down failed: ${msg}`);
       });
     }),
     // Change the edited method's signature from a source editor (the Refactor… code

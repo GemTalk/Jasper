@@ -1175,6 +1175,16 @@
         "icon": "$(edit)"
       },
       {
+        "command": "gemstone.explorer.pushUpMethod",
+        "title": "Push Up…",
+        "category": "GemStone"
+      },
+      {
+        "command": "gemstone.explorer.pushDownMethod",
+        "title": "Push Down…",
+        "category": "GemStone"
+      },
+      {
         "command": "gemstone.renameTemporary",
         "title": "Rename Temporary/Argument…",
         "category": "GemStone",
@@ -1483,6 +1493,14 @@
           "when": "false"
         },
         {
+          "command": "gemstone.explorer.pushUpMethod",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.pushDownMethod",
+          "when": "false"
+        },
+        {
           "command": "gemstone.explorer.renameClass",
           "when": "false"
         },
@@ -1761,6 +1779,16 @@
           "command": "gemstone.explorer.changeSignature",
           "when": "view == gemstoneExplorerMethods && viewItem =~ /explorerMethod/",
           "group": "3_refactor@1"
+        },
+        {
+          "command": "gemstone.explorer.pushUpMethod",
+          "when": "view == gemstoneExplorerMethods && viewItem =~ /explorerMethod/",
+          "group": "3_refactor@2"
+        },
+        {
+          "command": "gemstone.explorer.pushDownMethod",
+          "when": "view == gemstoneExplorerMethods && viewItem =~ /explorerMethod/",
+          "group": "3_refactor@3"
         },
         {
           "command": "gemstone.explorer.renameClass",
