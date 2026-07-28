@@ -8,6 +8,7 @@ gemstone
 .gemstone/
 tsconfig.tsbuildinfo
 .gemstone
+test-results/
 
 # Claude Code: everything under .claude/ is personal/machine-local runtime state
 # by default (locks, checkpoints, mailbox, routines, daemon/registry state, …).
