@@ -175,6 +175,7 @@ jobs:
     if: always()
     needs: [prepare, lint-workflows, lint, health-check]
     runs-on: ubuntu-22.04
+    timeout-minutes: 1
     steps:
       - name: Verify all CI jobs succeeded
         run: |
