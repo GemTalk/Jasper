@@ -2,81 +2,36 @@
 // FIXPOINT: exporting a project, unloading it, reloading from the export, and
 // re-exporting yields a BYTE-IDENTICAL on-disk tree. This is the invariant the
 // export feature promises ("export, load into an image that doesn't have it,
-// identical") — enforced here on every run instead of proven once by hand.
+// identical") -- enforced here on every run instead of proven once by hand.
 //
 // It drives a live stone imperatively: create a throwaway leaf project (nothing
 // depends on it, so it can be unloaded), export via the real
 // `exportRowanProject` query, unload, reload from the export, re-export, and
 // compare the two on-disk trees.
 //
-// Requirements: a SystemUser session (create/unload/reload modify system
-// dictionaries — DataCurator gets a SecurityError) and, crucially, a stone whose
-// image HAS Rowan. The stone from `npm run test:server:start` uses a bare extent
-// with no Rowan, so this test SKIPS there. To actually run it, point .env.test /
-// .env.test.local at a Rowan-enabled stone (start one from `extent0.rowan3.dbf`),
-// then: `npx vitest run --project gci rowanExportFixpoint`.
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+// Requirements: a SystemUser session, because create/unload/reload modify system
+// dictionaries and DataCurator (the configured VITE_GEMSTONE_USER) gets a
+// SecurityError -- so this re-logs the harness session in as SystemUser. And,
+// crucially, a stone whose image HAS Rowan. The stone from
+// `npm run test:server:start` uses a bare extent with no Rowan, so this test
+// SKIPS there. To actually run it, point .env.test / .env.test.local at a
+// Rowan-enabled stone (start one from `extent0.rowan3.dbf`).
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+vi.mock('vscode', () => import('../../../__mocks__/vscode'));
+
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { GciLibrary } from '../../gciLibrary';
-import { QueryExecutor } from '../../queries/types';
-import { GCI_LIBRARY_PATH, STONE_NRS, GEM_NRS, GS_PASSWORD } from './gciTestConfig';
-import { exportRowanProject } from '../../queries/rowan/exportRowanProject';
-import { listRowanProjects } from '../../queries/rowan/listRowanProjects';
+import { useIntegrationTest, GciTestContext } from '../../../__tests__/useIntegrationTest';
+import { GciLibrary } from '../../../gciLibrary';
+import * as q from '../../../browserQueries';
+import type { ActiveSession } from '../../../sessionManager';
+import { exportRowanProject } from '../exportRowanProject';
+import { listRowanProjects } from '../listRowanProjects';
 
-const OOP_NIL = 0x14n;
-const OOP_ILLEGAL = 0x01n;
-const MAX_RESULT = 256 * 1024;
 const TIMEOUT = 300_000;
 const PROJECT = 'JasperFixpointProbe';
 const PACKAGE = 'JasperFixpointProbe-Core';
-
-interface SysSession {
-  exec: QueryExecutor;
-  logout: () => void;
-}
-
-// A SystemUser session (needed for create/unload/reload) bound to a QueryExecutor,
-// mirroring queryHarness.login() but with the elevated user.
-function loginSystemUser(): SysSession {
-  const gci = new GciLibrary(GCI_LIBRARY_PATH);
-  const r = gci.GciTsLogin(STONE_NRS, null, null, false, GEM_NRS, 'SystemUser', GS_PASSWORD, 0, 0);
-  if (!r.session) {
-    throw new Error(`SystemUser login failed: ${r.err.message || `error ${r.err.number}`}`);
-  }
-  const handle = r.session;
-  const utf8 = gci.utf8ClassOop(handle);
-  const exec: QueryExecutor = (code) => {
-    const { data, err } = gci.GciTsExecuteFetchBytes(
-      handle,
-      code,
-      -1,
-      utf8,
-      OOP_ILLEGAL,
-      OOP_NIL,
-      MAX_RESULT,
-    );
-    if (err.number !== 0)
-      throw new Error(`${err.message || `GCI error ${err.number}`} | source: ${code}`);
-    return String(data);
-  };
-  return {
-    exec,
-    logout: () => {
-      try {
-        gci.GciTsAbort(handle);
-      } catch {
-        /* ignore */
-      }
-      try {
-        gci.GciTsLogout(handle);
-      } catch {
-        /* ignore */
-      }
-    },
-  };
-}
 
 function mkTmp(prefix: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -118,17 +73,36 @@ p load.
 'ok'`;
 
 describe('Rowan export is a deterministic reload-faithful fixpoint', () => {
-  let sys: SysSession;
+  let gci: GciLibrary;
+  let handle: unknown;
+  let login: GciTestContext['login'];
+  let logout: GciTestContext['logout'];
+  useIntegrationTest((testContext) => {
+    gci = testContext.gciLibrary;
+    handle = testContext.session;
+    login = testContext.login;
+    logout = testContext.logout;
+  });
+
+  const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
+  const exec = (code: string): string => q.executeFetchString(session(), code);
+
   let rowanAvailable = false;
   const tmpDirs: string[] = [];
 
+  // Runs after the harness's own beforeAll, so there is already a session to
+  // swap: drop the default (DataCurator) login and take a SystemUser one, which
+  // the harness then keeps managing -- per-test transaction, and logout at the
+  // end. That per-test abort is also what rolls the probe project back, so
+  // nothing is left committed on the stone.
   beforeAll(() => {
-    sys = loginSystemUser();
-    rowanAvailable = listRowanProjects(sys.exec).available;
+    logout();
+    login({ user: 'SystemUser' });
+
+    rowanAvailable = listRowanProjects(exec).available;
   });
 
   afterAll(() => {
-    sys?.logout();
     for (const d of tmpDirs) fs.rmSync(d, { recursive: true, force: true });
   });
 
@@ -146,26 +120,24 @@ describe('Rowan export is a deterministic reload-faithful fixpoint', () => {
       const targetA = path.join(dirA, PROJECT);
       const targetC = path.join(dirC, PROJECT);
 
-      expect(sys.exec(createCode(home)).trim()).toBe('ok');
+      expect(exec(createCode(home)).trim()).toBe('ok');
 
-      const a = exportRowanProject(sys.exec, PROJECT, targetA);
+      const a = exportRowanProject(exec, PROJECT, targetA);
       expect(a.success, a.detail).toBe(true);
 
-      expect(
-        sys.exec(`Rowan gemstoneTools topaz unloadProjectNamed: '${PROJECT}'. 'ok'`).trim(),
-      ).toBe('ok');
-      expect(listRowanProjects(sys.exec).projects.some((p) => p.name === PROJECT)).toBe(false);
+      expect(exec(`Rowan gemstoneTools topaz unloadProjectNamed: '${PROJECT}'. 'ok'`).trim()).toBe(
+        'ok',
+      );
+      expect(listRowanProjects(exec).projects.some((p) => p.name === PROJECT)).toBe(false);
 
       expect(
-        sys
-          .exec(
-            `(Rowan projectFromUrl: 'file:${targetA}/rowan/specs/${PROJECT}.ston' projectsHome: '${targetA}') load. 'ok'`,
-          )
-          .trim(),
+        exec(
+          `(Rowan projectFromUrl: 'file:${targetA}/rowan/specs/${PROJECT}.ston' projectsHome: '${targetA}') load. 'ok'`,
+        ).trim(),
       ).toBe('ok');
-      expect(listRowanProjects(sys.exec).projects.some((p) => p.name === PROJECT)).toBe(true);
+      expect(listRowanProjects(exec).projects.some((p) => p.name === PROJECT)).toBe(true);
 
-      const c = exportRowanProject(sys.exec, PROJECT, targetC);
+      const c = exportRowanProject(exec, PROJECT, targetC);
       expect(c.success, c.detail).toBe(true);
 
       const treeA = readTree(targetA);

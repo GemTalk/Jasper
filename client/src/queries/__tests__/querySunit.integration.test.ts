@@ -1,4 +1,4 @@
-// Smoke tests for the SUnit-family queries against a live stone.
+// Integration tests for the SUnit-family queries against a live stone.
 //
 // Covers `runTestMethod`, `runTestClass`, `runFailingTests`, and
 // `describeTestFailure`. Every one of these tools went through at least one
@@ -6,65 +6,44 @@
 // `each testCase` DNU bug, the Utf8 stream growth failure, the missing
 // `asUtf8` selector. With a real session, the test that proves the tool
 // works is "ask it about a known fixture and check the output."
+//
+// Fully transient: the probe fixture is (re-)installed inside each test's own
+// transaction, so the harness's per-test abort cleans it up
+// automatically — no manual teardown.
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { runTestMethod } from '../../queries/runTestMethod';
-import { runTestClass } from '../../queries/runTestClass';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+vi.mock('vscode', () => import('../../__mocks__/vscode'));
+
+import { useIntegrationTest } from '../../__tests__/useIntegrationTest';
+import { GciLibrary } from '../../gciLibrary';
+import * as q from '../../browserQueries';
+import type { ActiveSession } from '../../sessionManager';
+import { runTestMethod } from '../runTestMethod';
+import { runTestClass } from '../runTestClass';
+import { runFailingTests } from '../runFailingTests';
+import { describeTestFailure } from '../describeTestFailure';
+import { discoverAllTestClasses } from './discoverAllTestClasses';
 import {
-  runFailingTests,
-  DISCOVER_ALL_TEST_CLASSES,
-  MAX_RUN_CLASSES,
-} from '../../queries/runFailingTests';
-import { describeTestFailure } from '../../queries/describeTestFailure';
-import { splitLines } from '../../queries/util';
-import { QueryExecutor } from '../../queries/types';
-import { HarnessSession, login } from './queryHarness';
-import {
-  installProbeFixture,
-  uninstallProbeFixture,
-  PROBE_TEST_CLASS,
-  PROBE_PASSING_SELECTOR,
-  PROBE_FAILING_SELECTOR,
-  PROBE_ERRORING_SELECTOR,
-} from './probeFixture';
+  installSunitProbeFixture,
+  SUNIT_PROBE_TEST_CLASS,
+  SUNIT_PROBE_PASSING_SELECTOR,
+  SUNIT_PROBE_FAILING_SELECTOR,
+  SUNIT_PROBE_ERRORING_SELECTOR,
+} from './sunitProbeFixture';
 
-// Run the production discover-all fragment and return one row per discovered
-// TestCase subclass — the exact class set the no-args path of runFailingTests
-// feeds to `suite run`. Exercising it directly lets the round-2 (compiles) and
-// round-5 (deduped + abstract-free) regressions be tested WITHOUT running the
-// entire image's SUnit suite. That full run is the wrong tool for a smoke test:
-// it's unbounded, grows as the image gains tests, and — because the GCI
-// executor is a synchronous blocking call — can't be interrupted by a vitest
-// timeout, so a single slow or blocking image test hangs the whole run.
-function discoverAllTestClasses(exec: QueryExecutor): { name: string; isAbstract: boolean }[] {
-  const code = `| classes ws |
-classes := ${DISCOVER_ALL_TEST_CLASSES}.
-ws := WriteStream on: Unicode7 new.
-classes do: [:c |
-  ws nextPutAll: c name; tab; nextPutAll: c isAbstract printString; lf].
-ws contents encodeAsUTF8`;
-  return splitLines(exec(code)).map((line) => {
-    const [name, isAbstract] = line.split('\t');
-    return { name: name || '', isAbstract: isAbstract === 'true' };
+describe('SUnit queries (integration)', () => {
+  let gci: GciLibrary;
+  let handle: unknown;
+  useIntegrationTest((testContext) => {
+    gci = testContext.gciLibrary;
+    handle = testContext.session;
   });
-}
 
-describe('SUnit queries (live GCI)', () => {
-  let s: HarnessSession;
+  const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
+  const exec = (code: string): string => q.executeFetchString(session(), code);
 
-  beforeAll(() => {
-    s = login();
-    installProbeFixture(s.exec);
-  });
-  afterAll(() => {
-    if (s) {
-      try {
-        uninstallProbeFixture(s.exec);
-      } catch {
-        /* keep going */
-      }
-      s.logout();
-    }
+  beforeEach(() => {
+    installSunitProbeFixture(exec);
   });
 
   describe('runTestMethod', () => {
@@ -73,7 +52,7 @@ describe('SUnit queries (live GCI)', () => {
     // recipe. The probe's `testFails` does `self assert: 1 = 2`, so we
     // expect a TestFailure with an "Assertion failed"-style messageText.
     it('reports the live exception class and messageText for a failing test', () => {
-      const result = runTestMethod(s.exec, PROBE_TEST_CLASS, PROBE_FAILING_SELECTOR);
+      const result = runTestMethod(exec, SUNIT_PROBE_TEST_CLASS, SUNIT_PROBE_FAILING_SELECTOR);
       expect(result.status).toBe('failed');
       expect(result.message).toContain('TestFailure');
       // The classic round-3 regression: every failing test came back as
@@ -83,7 +62,7 @@ describe('SUnit queries (live GCI)', () => {
     });
 
     it('reports MessageNotUnderstood with the bad selector for an erroring test', () => {
-      const result = runTestMethod(s.exec, PROBE_TEST_CLASS, PROBE_ERRORING_SELECTOR);
+      const result = runTestMethod(exec, SUNIT_PROBE_TEST_CLASS, SUNIT_PROBE_ERRORING_SELECTOR);
       expect(result.status).toBe('error');
       expect(result.message).toContain('MessageNotUnderstood');
       expect(result.message).toContain('doesNotUnderstandWHATEVER');
@@ -91,7 +70,7 @@ describe('SUnit queries (live GCI)', () => {
     });
 
     it('reports a passing test with no message', () => {
-      const result = runTestMethod(s.exec, PROBE_TEST_CLASS, PROBE_PASSING_SELECTOR);
+      const result = runTestMethod(exec, SUNIT_PROBE_TEST_CLASS, SUNIT_PROBE_PASSING_SELECTOR);
       expect(result.status).toBe('passed');
       expect(result.message).toBe('');
     });
@@ -99,17 +78,17 @@ describe('SUnit queries (live GCI)', () => {
 
   describe('runTestClass', () => {
     it('reports per-method results for the probe class', () => {
-      const results = runTestClass(s.exec, PROBE_TEST_CLASS);
+      const results = runTestClass(exec, SUNIT_PROBE_TEST_CLASS);
       const bySel = new Map(results.map((r) => [r.selector, r]));
 
-      expect(bySel.get(PROBE_PASSING_SELECTOR)?.status).toBe('passed');
-      expect(bySel.get(PROBE_FAILING_SELECTOR)?.status).toBe('failed');
-      expect(bySel.get(PROBE_ERRORING_SELECTOR)?.status).toBe('error');
+      expect(bySel.get(SUNIT_PROBE_PASSING_SELECTOR)?.status).toBe('passed');
+      expect(bySel.get(SUNIT_PROBE_FAILING_SELECTOR)?.status).toBe('failed');
+      expect(bySel.get(SUNIT_PROBE_ERRORING_SELECTOR)?.status).toBe('error');
 
       // The pre-fix output looked like `JasperProbeTest debug: #testFails`
       // (the SUnit debug recipe). The post-fix output carries
       // `TestFailure: ...`. Either way it must not be a wrapper error.
-      const failing = bySel.get(PROBE_FAILING_SELECTOR)!;
+      const failing = bySel.get(SUNIT_PROBE_FAILING_SELECTOR)!;
       expect(failing.message).not.toContain("Selector:  #'at:put:'");
       expect(failing.message).not.toContain('\0');
     });
@@ -120,11 +99,11 @@ describe('SUnit queries (live GCI)', () => {
     // path tests it. Round-2 had a CompileError on the no-args path
     // because the discover-all fragment had un-wrapped temps.
     it('with explicit classNames returns only failed/errored entries', () => {
-      const results = runFailingTests(s.exec, [PROBE_TEST_CLASS]);
+      const results = runFailingTests(exec, [SUNIT_PROBE_TEST_CLASS]);
       const sels = new Set(results.map((r) => r.selector));
-      expect(sels.has(PROBE_FAILING_SELECTOR)).toBe(true);
-      expect(sels.has(PROBE_ERRORING_SELECTOR)).toBe(true);
-      expect(sels.has(PROBE_PASSING_SELECTOR)).toBe(false);
+      expect(sels.has(SUNIT_PROBE_FAILING_SELECTOR)).toBe(true);
+      expect(sels.has(SUNIT_PROBE_ERRORING_SELECTOR)).toBe(true);
+      expect(sels.has(SUNIT_PROBE_PASSING_SELECTOR)).toBe(false);
 
       // None of the messages should be a Utf8 wrapper error or a NUL leak.
       for (const r of results) {
@@ -135,16 +114,16 @@ describe('SUnit queries (live GCI)', () => {
     });
 
     it('with classNamePattern filters the discovered TestCase set', () => {
-      const results = runFailingTests(s.exec, undefined, 'JasperProbe*');
+      const results = runFailingTests(exec, undefined, 'JasperProbe*');
       // Pattern matches our probe class. We expect both failures from it.
-      const probeFailures = results.filter((r) => r.className === PROBE_TEST_CLASS);
+      const probeFailures = results.filter((r) => r.className === SUNIT_PROBE_TEST_CLASS);
       expect(probeFailures.length).toBeGreaterThanOrEqual(2);
     });
 
     // The no-args path walks every TestCase subclass in the symbolList
     // (DISCOVER_ALL_TEST_CLASSES) and runs each one's suite. We deliberately
     // do NOT exercise that end-to-end here — running the whole stone's suite
-    // hangs the smoke run (see discoverAllTestClasses above for why). The
+    // hangs the integration run (see discoverAllTestClasses.ts for why). The
     // round-2 and round-5 regressions both live in the discovery fragment, so
     // we test it directly: fast, bounded, and immune to a blocking image test.
 
@@ -152,14 +131,14 @@ describe('SUnit queries (live GCI)', () => {
       // Round-2 was a CompileError ("expected a primary expression") from
       // un-wrapped temp declarations in expression position. Running the exact
       // production fragment proves it still compiles; a regression throws here.
-      expect(() => discoverAllTestClasses(s.exec)).not.toThrow();
+      expect(() => discoverAllTestClasses(exec)).not.toThrow();
     });
 
     it('discovers our probe class among the TestCase subclasses', () => {
       // Confirms discovery returns a real, non-empty set (and sees our
       // installed fixture), so the dedup/abstract assertions below have teeth.
-      const names = discoverAllTestClasses(s.exec).map((c) => c.name);
-      expect(names).toContain(PROBE_TEST_CLASS);
+      const names = discoverAllTestClasses(exec).map((c) => c.name);
+      expect(names).toContain(SUNIT_PROBE_TEST_CLASS);
     });
 
     // Round-5: duplicate (className, selector) pairs in the no-args output.
@@ -170,7 +149,7 @@ describe('SUnit queries (live GCI)', () => {
     // discovery level — the duplicate *pairs* were just the downstream
     // symptom — so we assert them on the discovered set directly.
     it('discovers a deduped, abstract-free class set (the round-5 regression)', () => {
-      const classes = discoverAllTestClasses(s.exec);
+      const classes = discoverAllTestClasses(exec);
 
       const counts = new Map<string, number>();
       for (const c of classes) {
@@ -183,33 +162,22 @@ describe('SUnit queries (live GCI)', () => {
       expect(abstract).toEqual([]);
     });
 
-    // The blocking-call guard, end-to-end. The no-args path runs every
-    // discovered TestCase subclass through one synchronous, un-interruptible
-    // GCI call — before the cap, THIS is the call that ran the entire image and
-    // hung the smoke run. Correct behavior depends on image size, so the test
-    // asks the live stone how many classes there are and checks the matching
-    // guarantee: a large image (over the cap) must fail fast with a "narrow it"
-    // error rather than wedge the session; a small image (within the cap, e.g.
-    // a freshly provisioned test stone) simply runs what's there and returns
-    // results.
-    it('limits how many test classes a single run executes', () => {
-      const classCount = discoverAllTestClasses(s.exec).length;
-
-      if (classCount > MAX_RUN_CLASSES) {
-        expect(() => runFailingTests(s.exec)).toThrow(/too many to run|Narrow the run/);
-      } else {
-        const results = runFailingTests(s.exec);
-
-        expect(Array.isArray(results)).toBe(true);
-      }
-      // On a small image this runs SUnit across every test class; on a freshly provisioned
-      // (cold) stone that legitimately takes ~30s, past vitest's 5s default — give it room.
-    }, 120000);
+    // The blocking-call guard (MAX_RUN_CLASSES) is NOT covered here. Asserting
+    // it end-to-end means branching on the live image's size, and the
+    // within-cap branch runs every discovered suite in one un-interruptible GCI
+    // call — too slow for CI on some stones, and unkillable by a vitest
+    // timeout. It's parked in the on-demand gci project
+    // (src/__tests__/gci/querySunitRunLimit.smoke.test.ts) pending a redesign
+    // that trips the guard deterministically; see that file's header.
   });
 
   describe('describeTestFailure', () => {
     it('returns structured fields for a TestFailure', () => {
-      const details = describeTestFailure(s.exec, PROBE_TEST_CLASS, PROBE_FAILING_SELECTOR);
+      const details = describeTestFailure(
+        exec,
+        SUNIT_PROBE_TEST_CLASS,
+        SUNIT_PROBE_FAILING_SELECTOR,
+      );
       expect(details.status).toBe('failed');
       expect(details.exceptionClass).toBe('TestFailure');
       expect(details.messageText).toBeDefined();
@@ -217,7 +185,11 @@ describe('SUnit queries (live GCI)', () => {
     });
 
     it('returns mnuReceiver and mnuSelector for a MessageNotUnderstood', () => {
-      const details = describeTestFailure(s.exec, PROBE_TEST_CLASS, PROBE_ERRORING_SELECTOR);
+      const details = describeTestFailure(
+        exec,
+        SUNIT_PROBE_TEST_CLASS,
+        SUNIT_PROBE_ERRORING_SELECTOR,
+      );
       expect(details.status).toBe('error');
       expect(details.exceptionClass).toBe('MessageNotUnderstood');
       expect(details.mnuSelector).toBe('doesNotUnderstandWHATEVER');
@@ -229,7 +201,11 @@ describe('SUnit queries (live GCI)', () => {
     // we only assert on shape: stackReport is either present and non-empty
     // or absent (the toggle wasn't honored on this stone).
     it('includes a stackReport when the gem-config toggle is honored', () => {
-      const details = describeTestFailure(s.exec, PROBE_TEST_CLASS, PROBE_FAILING_SELECTOR);
+      const details = describeTestFailure(
+        exec,
+        SUNIT_PROBE_TEST_CLASS,
+        SUNIT_PROBE_FAILING_SELECTOR,
+      );
       if (details.stackReport !== undefined) {
         expect(details.stackReport.length).toBeGreaterThan(0);
         expect(details.stackReport).not.toContain('\0');

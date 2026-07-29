@@ -1,6 +1,6 @@
 // Selector-existence probe: every GemStone selector we hardcode in
 // `client/src/queries/*.ts` must actually exist on the receiver class
-// we send it to. The whole point of these smoke tests is to catch
+// we send it to. The whole point of these integration tests is to catch
 // "looks reasonable but doesn't compile/run" misfires that the
 // "expect(code).toContain(...)" unit tests can't.
 //
@@ -10,14 +10,20 @@
 // message instead of producing an obscure runtime error inside a
 // downstream tool.
 //
-// Lines are intentionally redundant with the smoke tests for each
+// Lines are intentionally redundant with the integration tests for each
 // individual query — the per-query tests confirm "this tool works
 // end-to-end on this stone"; this test confirms "every selector we
 // reference exists on the receiver we send it to," which is faster
 // to bisect when something does break.
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { HarnessSession, login, selectorExists } from './queryHarness';
+import { describe, it, expect, vi } from 'vitest';
+vi.mock('vscode', () => import('../../__mocks__/vscode'));
+
+import { useIntegrationTest } from '../../__tests__/useIntegrationTest';
+import { GciLibrary } from '../../gciLibrary';
+import * as q from '../../browserQueries';
+import type { ActiveSession } from '../../sessionManager';
+import { QueryExecutor } from '../types';
 
 interface SelectorClaim {
   /** A short label for the test name; helps locate the offending row. */
@@ -28,6 +34,20 @@ interface SelectorClaim {
   meta?: boolean;
   /** The selector text, exactly as it appears in our query. */
   selector: string;
+}
+
+// Verify a GemStone selector exists on the given class (or class-side method
+// dictionary if `meta` is true). Used below as a regression guard for the
+// `asUtf8` / `encodeAsUTF8` family of typos.
+function selectorExists(
+  exec: QueryExecutor,
+  className: string,
+  selector: string,
+  meta = false,
+): boolean {
+  const receiver = meta ? `${className} class` : className;
+  const code = `(${receiver} canUnderstand: #'${selector.replace(/'/g, "''")}') printString`;
+  return exec(code).trim() === 'true';
 }
 
 // Curated from a grep of `client/src/queries/*.ts` for non-obvious
@@ -138,18 +158,19 @@ const claims: SelectorClaim[] = [
   },
 ];
 
-describe('selectors used by shared queries (live GCI)', () => {
-  let s: HarnessSession;
+describe('selectors used by shared queries (integration)', () => {
+  let gci: GciLibrary;
+  let handle: unknown;
+  useIntegrationTest((testContext) => {
+    gci = testContext.gciLibrary;
+    handle = testContext.session;
+  });
 
-  beforeAll(() => {
-    s = login();
-  });
-  afterAll(() => {
-    s?.logout();
-  });
+  const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
+  const exec = (code: string): string => q.executeFetchString(session(), code);
 
   it.each(claims)('$label', ({ className, selector, meta }) => {
-    const exists = selectorExists(s.exec, className, selector, meta ?? false);
+    const exists = selectorExists(exec, className, selector, meta ?? false);
     expect(
       exists,
       `${meta ? `${className} class` : className} >> #${selector} not found in this stone`,
