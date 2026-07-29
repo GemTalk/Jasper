@@ -15,6 +15,6 @@
 
 export function wrapExecuteCode(code: string): string {
   return `[[[${code}] value printString]
-  on: AlmostOutOfStack do: [:e | 'Error: AlmostOutOfStack — user code exhausted the call stack']]
-  on: AbstractException do: [:e | 'Error: ', e class name asString, ' — ', e messageText asString]`;
+  on: AlmostOutOfStack do: [:e | 'Error: AlmostOutOfStack - user code exhausted the call stack']]
+  on: AbstractException do: [:e | 'Error: ', e class name asString, ' - ', e messageText asString]`;
 }

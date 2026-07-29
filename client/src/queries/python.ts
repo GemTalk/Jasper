@@ -113,13 +113,13 @@ result := dispatcher isNil
   ifTrue: ['${GRAIL_HINT}']
   ifFalse: [
     [[${grailExpression}]
-       on: AlmostOutOfStack do: [:e | 'Error: AlmostOutOfStack — user code exhausted the call stack']]
+       on: AlmostOutOfStack do: [:e | 'Error: AlmostOutOfStack - user code exhausted the call stack']]
       on: AbstractException do: [:e |
         | ws |
         ws := WriteStream on: Unicode7 new.
         ws nextPutAll: 'Error: '.
         ws nextPutAll: e class name asString.
-        ws nextPutAll: ' — '.
+        ws nextPutAll: ' - '.
         ws nextPutAll: e messageText asString.
         ws contents]].
 result encodeAsUTF8`;
