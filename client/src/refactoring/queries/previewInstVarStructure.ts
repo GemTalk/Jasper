@@ -82,9 +82,12 @@ export function startInstVarStructurePreview(
 ): Promise<string> {
   const accessorStmt =
     moveAccessors && (op === 'pushUp' || op === 'pushDown') ? 'ref moveAccessors: true.\n' : '';
+  // Answer the same decline-envelope shape the analyze builder uses (not a bare string) so a
+  // class that vanished between pre-flight and start surfaces its reason through the panel's
+  // decline banner instead of blowing up JSON.parse with "Unexpected token 'C'".
   const code = `| cls ref |
 cls := ${classLookupExpr(className, dict)}.
-cls isNil ifTrue: [^ 'Class not found: ${escapeString(className)}'].
+cls isNil ifTrue: [^ '{"decline":"Class not found: ${escapeString(className)}"}'].
 ref := ${refExpr(op, varName, extra)}.
 ${accessorStmt}^ref startPreviewToken: '${escapeString(token)}' maxBytes: ${maxBytes}`;
   return execute(`startIvar_${op}Preview(${className}.${varName})`, code);
@@ -103,8 +106,10 @@ export function pageInstVarStructurePreview(
 }
 
 /** Apply a started preview server-side (create new class versions, copy methods forward,
- *  re-parent the subtree), WITHOUT committing. The refactoring is all-or-nothing, so the
- *  engine ignores any deselection; the empty list documents that. */
+ *  re-parent the subtree). The default path does not commit; passing `migrateInstances` or
+ *  `removeOldFromHistory` makes the engine commit (they persist instance migration / history
+ *  pruning). The refactoring is all-or-nothing, so the engine ignores any deselection; the
+ *  empty list documents that. */
 export function applyInstVarStructure(
   execute: AsyncQueryExecutor,
   token: string,

@@ -31,6 +31,7 @@ import {
   saveIfDirty,
 } from '../renameAtCursorShared';
 import { pushInstVar, convertTempToInstVarCommand } from '../instVarStructureCommand';
+import { PREVIEW_PAGE_BYTES } from '../queries/previewRenameMethod';
 import type { ActiveSession, SessionManager } from '../../sessionManager';
 
 /**
@@ -86,9 +87,28 @@ describe('push instance variable command', () => {
 
     await pushUp();
 
-    // moveAccessors is the 7th arg of analyze and the 9th of start.
-    expect(vi.mocked(queries.analyzeInstVarStructure).mock.calls[0][6]).toBe(true);
-    expect(vi.mocked(queries.startInstVarStructurePreview).mock.calls[0][8]).toBe(true);
+    // Assert the whole argument list (not a positional index) so inserting or reordering a
+    // parameter fails loudly here instead of silently asserting on the wrong argument.
+    expect(queries.analyzeInstVarStructure).toHaveBeenCalledWith(
+      session,
+      'pushUp',
+      'V2Dog',
+      'tailLength',
+      2,
+      undefined,
+      true,
+    );
+    expect(queries.startInstVarStructurePreview).toHaveBeenCalledWith(
+      session,
+      'pushUp',
+      'V2Dog',
+      'tailLength',
+      expect.any(String),
+      PREVIEW_PAGE_BYTES,
+      2,
+      undefined,
+      true,
+    );
   });
 
   it('surfaces a pre-flight failure and never previews', async () => {

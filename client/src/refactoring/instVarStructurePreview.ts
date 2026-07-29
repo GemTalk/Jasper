@@ -8,9 +8,11 @@
  * class versions and re-parenting the subtree (there is no addInstVarName:). So the
  * change set is: a `classDefinitionEdit` per edited class (with a before/after definition
  * diff), a `classReparent` per other descendant (recompiled only to re-point at the new
- * parent chain — its definition is unchanged), and, for V5, one `methodRecompile` (the
- * method with the temporary's declaration removed). The refactoring is all-or-nothing, so
- * every row is a CORE row (checked + disabled).
+ * parent chain — its definition is unchanged), for V5 one `methodRecompile` (the method with
+ * the temporary's declaration removed), and — when the V2/V3 "move accessors" option is on — a
+ * `methodRemove` on the source class plus a `methodAdd` on the target class(es) for each simple
+ * accessor that travels with the ivar. The refactoring is all-or-nothing, so every row is a
+ * CORE row (checked + disabled).
  */
 
 export type IvarChangeKind =
@@ -142,6 +144,18 @@ export function parseStartPreview(json: string): StartIvarPreview {
     throw new Error('InstVar preview did not return a preview envelope.');
   }
   const env = parsed as Record<string, unknown>;
+  // A pre-start decline (e.g. the class vanished between pre-flight and start) arrives as a bare
+  // `{"decline": …}` envelope with no token. Surface it through outOfScope so the caller's
+  // existing decline path handles it, rather than throwing on the missing token.
+  if (typeof env.decline === 'string') {
+    return {
+      token: '',
+      total: 0,
+      topClass: null,
+      outOfScope: { decline: env.decline, note: null },
+      page: { changes: [], nextOffset: 0, done: true },
+    };
+  }
   if (typeof env.token !== 'string') {
     throw new Error('InstVar preview did not return a session token.');
   }

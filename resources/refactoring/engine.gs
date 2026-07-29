@@ -341,7 +341,8 @@ Optional (V2/V3): #moveAccessors: true also relocates the ivar''s SIMPLE accesso
 getter and an `ivar := arg` setter, nothing more -- alongside the declaration (staged as
 #methodRemove on the source class + #methodAdd on the target class(es), so they show in the
 preview). A method that is anything but a trivial getter/setter is never touched. An accessor is
-skipped rather than overwriting an existing same-named method on a target. Because a simple
+skipped rather than overwriting -- or, on push-up, SHADOWING an inherited -- same-named method on a
+target. Because a simple
 accessor then travels WITH the ivar, on push-down it no longer counts as a blocking own-use of
 the ivar (a non-accessor user still blocks).
 
@@ -4891,20 +4892,42 @@ category: 'private - accessors'
 method: GsInstVarStructureRefactoring
 planAccessorMovesFrom: srcClass to: targetClasses
 	"Record the SIMPLE accessors of varName on srcClass to move alongside the ivar: remove
-	 each from srcClass and add it to the target class(es). Never overwrites an existing method
-	 on a target -- if a target already implements the selector, that target is skipped. On
-	 push-up (the ivar stays reachable via inheritance) an accessor is left in place unless the
-	 superclass can receive it; on push-down (the ivar leaves srcClass) the accessor must be
-	 removed from srcClass regardless, and added to each subclass that doesn't already define it."
+	 each from srcClass and add it to the target class(es). Never overwrites -- or, on push-up,
+	 SHADOWS -- an existing same-named method on a target: for push-up the target (superclass) is
+	 rejected when it OR any of its ancestors already implements the selector (installing the
+	 accessor there would shadow the inherited one for the whole subtree, a behaviour change an
+	 own-dictionary includesSelector: check would miss); for push-down the own-dictionary check
+	 suffices (the accessor is leaving srcClass). A rejected target is skipped. On push-up (the
+	 ivar stays reachable via inheritance) an accessor is left in place unless the superclass can
+	 receive it; on push-down (the ivar leaves srcClass) the accessor must be removed from
+	 srcClass regardless, and added to each subclass that doesn't already define it."
 	(self simpleAccessorsOf: srcClass forIvar: varName) do: [:a |
 		| sel src cat targets |
 		sel := a at: 1. src := a at: 2. cat := a at: 3.
-		targets := targetClasses reject: [:t | t includesSelector: sel].
+		targets := targetClasses reject: [:t |
+			operation == #pushUp
+				ifTrue: [self class: t orAncestorImplements: sel]
+				ifFalse: [t includesSelector: sel]].
 		(operation == #pushUp and: [targets isEmpty])
 			ifFalse: [
 				accessorRemovals add: (Array with: sel with: srcClass name asString with: src with: cat).
 				targets do: [:t |
 					accessorAdds add: (Array with: sel with: t name asString with: src with: cat)]]]
+%
+
+category: 'private - accessors'
+method: GsInstVarStructureRefactoring
+class: aClass orAncestorImplements: sel
+	"True if aClass OR any of its superclasses implements sel. Used on push-up so a moved
+	 accessor never shadows an implementation the target already inherits -- an own-dictionary
+	 includesSelector: would miss an inherited one. Walks superclass links only (includesSelector:
+	 + superclass), so it needs no version-specific hierarchy primitive."
+	| c |
+	c := aClass.
+	[c notNil] whileTrue: [
+		(c includesSelector: sel) ifTrue: [^true].
+		c := c superclass].
+	^false
 %
 
 category: 'private - accessors'
@@ -5168,7 +5191,10 @@ applyDeselected: deselectedIds
 	 options mirror rename-class: when migrateInstances or removeOldFromHistory is on AND the
 	 structural apply had zero failures, commit (so the new versions are durable), then migrate
 	 each old-version's instances to its new version / prune superseded versions, then commit
-	 again. A partly-failed apply is never committed. Answers
+	 again. A partly-failed apply is never committed -- but because the loop keeps going past a
+	 failed change, the changes that DID apply remain in the uncommitted transaction, leaving the
+	 hierarchy half-reversioned; the caller must ABORT the transaction to discard them (mirrors
+	 GsRenameClassRefactoring>>applyDeselected:). Answers
 	 {applied, failed:[..], committed, migratedFailures}."
 	| applied failures migrated committed |
 	self ensureAnalysis.

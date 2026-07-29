@@ -4,10 +4,13 @@
  * row; V5 from a method source editor (cursor on the temporary). All three share one
  * server-side engine and one preview flow: run a pre-flight (viable? why not?), preview the
  * change set (class-definition edits + descendant reparents [+ a method recompile for V5]),
- * apply it server-side (new class versions, no commit), then let the caller refresh.
+ * apply it server-side (new class versions), then let the caller refresh.
  *
- * Nothing is ever committed; the user commits explicitly. Existing instances keep their
- * prior class version and are NOT migrated (standard GemStone class evolution).
+ * On the DEFAULT path nothing is committed and existing instances keep their prior class
+ * version (standard GemStone class evolution) — the user commits explicitly. Two opt-in apply
+ * options change that: `migrateInstances` moves existing instances onto the new version and
+ * `removeOldFromHistory` prunes the superseded versions, and BOTH commit the transaction (the
+ * panel labels them "(commits)"). So a run that enables either one does write to the database.
  */
 import * as vscode from 'vscode';
 import { ActiveSession } from '../sessionManager';
@@ -145,8 +148,13 @@ export async function runInstVarStructure(req: IvarStructureRequest): Promise<bo
   }
 
   if (result.failed.length > 0) {
+    // A structure change is all-or-nothing, but the engine applies top-down and stops reporting
+    // at the first failure with the earlier changes already applied (uncommitted). Tell the user
+    // their transaction is now half-reversioned and must be aborted to discard it.
     const first = result.failed[0];
-    void vscode.window.showErrorMessage(`Change failed: ${first.label}: ${first.error}`);
+    void vscode.window.showErrorMessage(
+      `Change failed: ${first.label}: ${first.error}. Earlier changes may have been applied — abort the transaction to discard them.`,
+    );
     return false;
   }
 

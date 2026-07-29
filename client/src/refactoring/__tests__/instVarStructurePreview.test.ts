@@ -57,6 +57,16 @@ describe('instance-variable structure preview parsing', () => {
       expect(s.outOfScope.decline).toBe('no subclasses');
     });
 
+    it('surfaces a pre-start decline envelope (no token) through the banner', () => {
+      // The class vanished between pre-flight and start: the builder answers a bare
+      // {"decline": …} with no token; it must be surfaced, not thrown on.
+      const s = parseStartPreview(JSON.stringify({ decline: 'Class not found: Ghost' }));
+
+      expect(s.outOfScope.decline).toBe('Class not found: Ghost');
+      expect(s.total).toBe(0);
+      expect(s.page.changes).toEqual([]);
+    });
+
     it('parses a page of changes including a classDefinitionEdit', () => {
       const s = parseStartPreview(
         JSON.stringify({

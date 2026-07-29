@@ -410,6 +410,33 @@ GsInstVarStructureRefactoringTest >> testPushUpLeavesAccessorWhenSuperclassAlrea
 ]
 
 { #category : 'tests - V2/V3 move accessors' }
+GsInstVarStructureRefactoringTest >> testPushUpLeavesAccessorWhenSuperclassInheritsIt [
+	"The shadow guard extends to INHERITED implementations, not just the immediate superclass's
+	 own dictionary. GsVSBase implements #leafM and the push-up target GsVSMid does not; the
+	 fixture's `leafM ^ leaf` is a simple getter of `leaf`, but installing it on GsVSMid would
+	 shadow the inherited GsVSBase>>leafM for the whole subtree, so the ivar still moves up while
+	 the accessor is left on GsVSLeaf."
+	| leaf base json |
+	base := self classNamed: 'GsVSBase'.
+	leaf := self classNamed: 'GsVSLeaf'.
+	self compile: 'leafM ^ 99' in: base.
+
+	json := ((GsInstVarStructureRefactoring class: leaf pushUpInstVar: 'leaf') moveAccessors: true)
+		applyDeselected: #().
+
+	self deny: json includesSubstring: '"failed":[{'.
+	"the ivar moved up..."
+	self assert: (self ownIvarsOf: 'GsVSMid') includes: 'leaf'.
+	self deny: (self ownIvarsOf: 'GsVSLeaf') includes: 'leaf'.
+	"...but the accessor was NOT installed on GsVSMid (it would shadow the inherited GsVSBase>>leafM)"
+	self deny: ((self classNamed: 'GsVSMid') includesSelector: #leafM).
+	self assert: ((self classNamed: 'GsVSLeaf') includesSelector: #leafM).
+	"GsVSBase's own #leafM is untouched"
+	self assert: (((self classNamed: 'GsVSBase') compiledMethodAt: #leafM environmentId: 0 otherwise: nil) sourceString)
+		includesSubstring: '99'
+]
+
+{ #category : 'tests - V2/V3 move accessors' }
 GsInstVarStructureRefactoringTest >> testPushUpStagesAccessorMoveChanges [
 	"The accessor move is surfaced as visible #methodRemove (source) + #methodAdd (target) rows."
 	| mid cs remove add |

@@ -138,6 +138,15 @@ describe('instance-variable structure query builders', () => {
       expect(code).toContain('ref moveAccessors: true.');
       expect(code).toContain("startPreviewToken: 'tok1'");
     });
+
+    it('answers a decline envelope (not a bare string) when the class is missing', () => {
+      const exec = vi.fn().mockResolvedValue('{}');
+
+      void startInstVarStructurePreview(exec, 'pushUp', 'Ghost', 'x', 'tok1', 4096, 2);
+
+      const [, code] = exec.mock.calls[0];
+      expect(code).toContain('{"decline":"Class not found: Ghost"}');
+    });
   });
 
   describe('page / apply / clear', () => {
