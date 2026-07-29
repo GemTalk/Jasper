@@ -440,6 +440,63 @@ describe('debugQueries', () => {
     });
   });
 
+  describe('tab separators in generated Smalltalk (3.6.2-compatible via Character tab)', () => {
+    const GS_PROCESS = 0x123n;
+
+    /**
+     * Runs a generator against a session that captures the Smalltalk handed to it
+     * instead of evaluating it, and returns that source for inspection.
+     */
+    function generatedSmalltalkFrom(run: (session: ActiveSession) => void): string {
+      const session = createMockSession();
+      let generated = '';
+      (session.gci as unknown as Record<string, unknown>).executeAndFetchString = vi.fn(
+        (_handle: unknown, code: string) => {
+          generated = code;
+          return '';
+        },
+      );
+
+      run(session);
+
+      return generated;
+    }
+
+    it('delimits the fields of a stack frame method location lookup', () => {
+      const code = generatedSmalltalkFrom((session) => debug.getMethodUriInfo(session, METHOD_OOP));
+
+      expect(code).toContain('(String with: Character tab)');
+      expect(code).not.toContain('String tab');
+    });
+
+    it('delimits the fields of an implementation-candidate class chain lookup', () => {
+      const code = generatedSmalltalkFrom((session) =>
+        debug.getReceiverClassChain(session, RECEIVER_OOP, 'foo'),
+      );
+
+      expect(code).toContain('(String with: Character tab)');
+      expect(code).not.toContain('String tab');
+    });
+
+    it('delimits the fields of a lookup for where a running method is defined', () => {
+      const code = generatedSmalltalkFrom((session) =>
+        debug.getBrowseTarget(session, RECEIVER_OOP, 'foo'),
+      );
+
+      expect(code).toContain('(String with: Character tab)');
+      expect(code).not.toContain('String tab');
+    });
+
+    it('delimits the fields of a missing-method details lookup', () => {
+      const code = generatedSmalltalkFrom((session) =>
+        debug.getDoesNotUnderstandInfo(session, GS_PROCESS),
+      );
+
+      expect(code).toContain('(String with: Character tab)');
+      expect(code).not.toContain('String tab');
+    });
+  });
+
   describe('getInstVarNames', () => {
     it('does not send multi-word selectors', () => {
       const session = createMockSession();

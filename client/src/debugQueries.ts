@@ -222,10 +222,10 @@ dictName := ''.
 System myUserProfile symbolList do: [:d |
   (d includesKey: baseClass name asSymbol) ifTrue: [dictName := d name]].
 category := (class categoryOfSelector: method selector environmentId: 0) ifNil: ['as yet unclassified'].
-dictName, String tab,
-  baseClass name, String tab,
-  (class isMeta ifTrue: ['class'] ifFalse: ['instance']), String tab,
-  category, String tab,
+dictName, (String with: Character tab),
+  baseClass name, (String with: Character tab),
+  (class isMeta ifTrue: ['class'] ifFalse: ['instance']), (String with: Character tab),
+  category, (String with: Character tab),
   method selector asString`;
 
     const data = executeAndFetchString(session, code);
@@ -301,8 +301,9 @@ rows := OrderedCollection new.
   System myUserProfile symbolList do: [:d |
     (d includesKey: nm asSymbol) ifTrue: [ dn := d name ]].
   impl := cls includesSelector: sel.
-  rows add: nm, String tab, (meta ifTrue: ['class'] ifFalse: ['instance']), String tab, dn,
-    String tab, (impl ifTrue: ['1'] ifFalse: ['0']).
+  rows add: nm, (String with: Character tab),
+    (meta ifTrue: ['class'] ifFalse: ['instance']), (String with: Character tab),
+    dn, (String with: Character tab), (impl ifTrue: ['1'] ifFalse: ['0']).
   cls := cls superclass ].
 rows inject: '' into: [:acc :r | acc isEmpty ifTrue: [r] ifFalse: [acc, (String with: Character lf), r]]`;
 
@@ -371,8 +372,9 @@ def isNil ifTrue: [ '' ] ifFalse: [
   dn := ''.
   System myUserProfile symbolList do: [:d |
     (d includesKey: def theNonMetaClass name asSymbol) ifTrue: [ dn := d name ]].
-  def theNonMetaClass name asString, String tab,
-    (meta ifTrue: ['class'] ifFalse: ['instance']), String tab, dn, String tab,
+  def theNonMetaClass name asString, (String with: Character tab),
+    (meta ifTrue: ['class'] ifFalse: ['instance']), (String with: Character tab),
+    dn, (String with: Character tab),
     ((def categoryOfSelector: sel environmentId: 0) ifNil: ['']) ]`;
 
     const data = executeAndFetchString(session, code);
@@ -452,10 +454,10 @@ dnuTop isNil
     dn := ''.
     System myUserProfile symbolList do: [:d |
       (d includesKey: base name asSymbol) ifTrue: [ dn := d name ] ].
-    base name asString, String tab,
-      (meta ifTrue: ['class'] ifFalse: ['instance']), String tab,
-      dn, String tab,
-      sel asString, String tab,
+    base name asString, (String with: Character tab),
+      (meta ifTrue: ['class'] ifFalse: ['instance']), (String with: Character tab),
+      dn, (String with: Character tab),
+      sel asString, (String with: Character tab),
       (descr at: 2) size printString ]`;
 
     const data = executeAndFetchString(session, code);
