@@ -102,7 +102,6 @@ jobs:
       - name: Lint
         run: npm run lint
 
-
   health-check:
     timeout-minutes: 5
     name: GemStone S/64 ${{ matrix.gemstone-version }}${{ matrix.node-version && format(' (Node {0})', matrix.node-version) || '' }}
@@ -164,3 +163,29 @@ jobs:
         run: node client/bin/install-server-plugin.mjs
       - name: Run tests (with server plugin)
         run: npm test
+
+  # Single stable check for branch protection / the merge queue to require.
+  # The matrix job's own check names embed the matrix values, so requiring
+  # `test` directly is brittle; this fans them in to one name instead.
+  # `if: always()` is essential: without it the job would be SKIPPED whenever a
+  # dependency fails, a required check would never report a conclusion, and the
+  # PR (or queue entry) would hang forever.
+  ci-complete:
+    name: ci-complete
+    if: always()
+    needs: [prepare, lint-workflows, lint, health-check]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 1
+    steps:
+      - name: Verify all CI jobs succeeded
+        run: |
+          if [ "${{ needs.prepare.result }}" != "success" ] || 
+            [ "${{ needs.lint-workflows.result }}" != "success" ] || 
+            [ "${{ needs.lint.result }}" != "success" ] || 
+            [ "${{ needs.health-check.result }}" != "success" ]; then
+            echo "prepare=${{ needs.prepare.result }}"
+            echo "lint-workflows=${{ needs.lint-workflows.result }}"
+            echo "lint=${{ needs.lint.result }}"
+            echo "health-check=${{ needs.health-check.result }}"
+            exit 1
+          fi
