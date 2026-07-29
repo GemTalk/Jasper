@@ -26,6 +26,8 @@ import {
 } from './refactoring/renameInstVarPreview';
 import { showRenameInstVarPanel } from './refactoring/renameInstVarPanel';
 import { renameInstVarAtCursorCommand } from './refactoring/renameInstVarAtCursorCommand';
+import { runInstVarRefactor } from './refactoring/instVarRefactorCommand';
+import { parseMoveTargets } from './refactoring/instVarRefactorPreview';
 import { renameClassVarAtCursorCommand } from './refactoring/renameClassVarAtCursorCommand';
 import {
   renameMethodAtCursorCommand,
@@ -259,7 +261,9 @@ class VarSideItem extends vscode.TreeItem {
   ) {
     super(isMeta ? 'class' : 'instance', vscode.TreeItemCollapsibleState.Expanded);
     this.id = `k:${className}/vside:${isMeta}`;
-    this.contextValue = 'explorerVarSide';
+    // Split by side so the inline "+" (Add Instance Variable) targets only the
+    // instance side; the class side keeps the base token.
+    this.contextValue = isMeta ? 'explorerVarSide.class' : 'explorerVarSide.instance';
     this.iconPath = new vscode.ThemeIcon('symbol-class');
     this.tooltip = isMeta
       ? `Class variables of ${className}`
@@ -1361,6 +1365,167 @@ export class ExplorerController {
   // first) WITHOUT committing. The user commits explicitly, as everywhere else.
   async renameInstVar(item: IvarItem): Promise<void> {
     await this.renameInstVarNamed(item.className, item.ivarName, this.state.dictIndex);
+  }
+
+  // ---- Add / remove / move instance variable (V1 + V4) --------------------------
+  // The engine recompiles the class (a new version), so all four flows preview the
+  // affected classes, surface the methods that will not recompile, expose the class
+  // options, and offer opt-in (committing) instance migration / history deletion.
+
+  // "+" on the instance variable-side node, or right-click on a class row: prompt for
+  // a name and add it as an instance variable of that class.
+  async addInstVarOnClass(className: string): Promise<void> {
+    const session = this.session();
+    if (!session) return;
+    const entered = await vscode.window.showInputBox({
+      title: 'Add Instance Variable',
+      prompt: `Add an instance variable to ${className}.`,
+      placeHolder: 'newVariableName',
+      validateInput: (v) => {
+        const t = v.trim();
+        if (t.length === 0) return 'Enter a name.';
+        return /^[A-Za-z_][A-Za-z0-9_]*$/.test(t)
+          ? undefined
+          : 'Not a valid instance-variable name.';
+      },
+    });
+    if (entered === undefined) return;
+    const name = entered.trim();
+    if (name.length === 0) return;
+    const outcome = await runInstVarRefactor({
+      session,
+      op: 'add',
+      className,
+      ivarName: name,
+      dict: this.state.dictIndex,
+    });
+    if (outcome) await this.refreshAfterClassReshape(className);
+  }
+
+  // "+" inline on the "instance" variable-side node.
+  async addInstVarFromSide(item: VarSideItem): Promise<void> {
+    if (item.isMeta) return; // class-variable side is out of scope
+    await this.addInstVarOnClass(item.className);
+  }
+
+  // "−" inline on an instance-variable row: remove it (with the will-not-recompile
+  // preview).
+  async removeInstVar(item: IvarItem): Promise<void> {
+    const session = this.session();
+    if (!session) return;
+    const outcome = await runInstVarRefactor({
+      session,
+      op: 'remove',
+      className: item.className,
+      ivarName: item.ivarName,
+      dict: this.state.dictIndex,
+    });
+    if (outcome) await this.refreshAfterClassReshape(item.className);
+  }
+
+  // "▲" inline on an ivar row: move it up to the immediate superclass (push up). The
+  // engine's move covers this — the subclass keeps inheriting it, so nothing breaks.
+  async moveInstVarUp(item: IvarItem): Promise<void> {
+    const session = this.session();
+    if (!session) return;
+    let targets;
+    try {
+      targets = parseMoveTargets(
+        queries.getInstVarMoveTargets(session, item.className, this.state.dictIndex),
+      );
+    } catch {
+      targets = { superclass: null, subclasses: [] };
+    }
+    if (!targets.superclass) {
+      void vscode.window.showInformationMessage(
+        `${item.className} has no superclass to move '${item.ivarName}' up to.`,
+      );
+      return;
+    }
+    const outcome = await runInstVarRefactor({
+      session,
+      op: 'move',
+      className: item.className,
+      ivarName: item.ivarName,
+      dict: this.state.dictIndex,
+      targetName: targets.superclass,
+    });
+    if (outcome) await this.refreshAfterClassReshape(targets.superclass);
+  }
+
+  // "▼" inline on an ivar row: move it down to a chosen immediate subclass. With more
+  // than one subclass a QuickPick asks which; with none, nothing to do.
+  async moveInstVarDown(item: IvarItem): Promise<void> {
+    const session = this.session();
+    if (!session) return;
+    let targets;
+    try {
+      targets = parseMoveTargets(
+        queries.getInstVarMoveTargets(session, item.className, this.state.dictIndex),
+      );
+    } catch {
+      targets = { superclass: null, subclasses: [] };
+    }
+    if (targets.subclasses.length === 0) {
+      void vscode.window.showInformationMessage(
+        `${item.className} has no subclass to move '${item.ivarName}' down to.`,
+      );
+      return;
+    }
+    let target = targets.subclasses[0];
+    if (targets.subclasses.length > 1) {
+      const picked = await vscode.window.showQuickPick(targets.subclasses, {
+        title: `Move '${item.ivarName}' down to which subclass of ${item.className}?`,
+      });
+      if (!picked) return;
+      target = picked;
+    }
+    const outcome = await runInstVarRefactor({
+      session,
+      op: 'move',
+      className: item.className,
+      ivarName: item.ivarName,
+      dict: this.state.dictIndex,
+      targetName: target,
+    });
+    if (outcome) await this.refreshAfterClassReshape(target);
+  }
+
+  // Right-click "Move Instance Variable to Class…": move it to any class (prefix picker).
+  async moveInstVarToClass(item: IvarItem): Promise<void> {
+    const session = this.session();
+    if (!session) return;
+    let entries: queries.ClassNameEntry[];
+    try {
+      entries = await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: 'Loading class list…' },
+        () => Promise.resolve(queries.getAllClassNames(session)),
+      );
+    } catch (e: unknown) {
+      void vscode.window.showErrorMessage(
+        `Failed to load classes: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return;
+    }
+    const sorted = entries
+      .filter((e) => e.className !== item.className)
+      .sort(
+        (a, b) => a.className.localeCompare(b.className) || a.dictName.localeCompare(b.dictName),
+      );
+    const target = await pickClassByPrefix(
+      sorted,
+      `Move '${item.ivarName}' from ${item.className} to…`,
+    );
+    if (!target) return;
+    const outcome = await runInstVarRefactor({
+      session,
+      op: 'move',
+      className: item.className,
+      ivarName: item.ivarName,
+      dict: this.state.dictIndex,
+      targetName: target.className,
+    });
+    if (outcome) await this.refreshAfterClassReshape(target.className);
   }
 
   // The rename-instance-variable flow, addressed by NAME rather than a tree row so
@@ -3308,6 +3473,23 @@ export function registerGemStoneExplorer(
     // Rename a locally-defined instance variable (pencil on the ivar row).
     vscode.commands.registerCommand('gemstone.explorer.renameIvar', (item?: IvarItem) => {
       if (item instanceof IvarItem) void ctl.renameInstVar(item);
+    }),
+    // Add / remove / move an instance variable (V1 + V4).
+    vscode.commands.registerCommand('gemstone.explorer.addInstVar', (item?: unknown) => {
+      if (item instanceof VarSideItem) void ctl.addInstVarFromSide(item);
+      else if (item instanceof ClassItem) void ctl.addInstVarOnClass(item.className);
+    }),
+    vscode.commands.registerCommand('gemstone.explorer.removeInstVar', (item?: IvarItem) => {
+      if (item instanceof IvarItem) void ctl.removeInstVar(item);
+    }),
+    vscode.commands.registerCommand('gemstone.explorer.moveInstVarUp', (item?: IvarItem) => {
+      if (item instanceof IvarItem) void ctl.moveInstVarUp(item);
+    }),
+    vscode.commands.registerCommand('gemstone.explorer.moveInstVarDown', (item?: IvarItem) => {
+      if (item instanceof IvarItem) void ctl.moveInstVarDown(item);
+    }),
+    vscode.commands.registerCommand('gemstone.explorer.moveInstVar', (item?: IvarItem) => {
+      if (item instanceof IvarItem) void ctl.moveInstVarToClass(item);
     }),
     // Rename the instance variable at the cursor in a method source editor (the
     // Refactor… code action / palette) — routes into the same shared flow.
