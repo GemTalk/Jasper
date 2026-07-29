@@ -3699,6 +3699,34 @@ testConvertTempDeclinesWhenNotATemporary
 		class: (self classNamed: 'GsVSBase') convertTemporary: 'nope' inMethod: #compute meta: false.
 
 	self assert: ref decline notNil.
+	self assert: ref decline includesSubstring: 'not a method-level temporary'.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - V5 convert temp'
+method: GsInstVarStructureRefactoringTest
+testConvertTempDeclinesForAClassSideMethod
+	"A class-side (meta) method's temporary cannot become an instance variable -- decline rather
+	 than add an unreachable ivar and recompile the class method against it."
+	| ref |
+	self compile: 'baseClassM | c | c := 1. ^c' in: (self classNamed: 'GsVSBase') class.
+	ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSBase') convertTemporary: 'c' inMethod: #baseClassM meta: true.
+
+	self assert: ref decline notNil.
+	self assert: ref decline includesSubstring: 'class-side method'.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - V5 convert temp'
+method: GsInstVarStructureRefactoringTest
+testConvertTempDeclinesWhenMethodNotFound
+	| ref |
+	ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSBase') convertTemporary: 't' inMethod: #noSuchSelector meta: false.
+
+	self assert: ref decline notNil.
+	self assert: ref decline includesSubstring: 'was not found'.
 	self assert: ref changeSet isEmpty
 %
 
@@ -3737,6 +3765,7 @@ testPushUpDeclinesWhenNotAnOwnIvar
 	ref := GsInstVarStructureRefactoring class: (self classNamed: 'GsVSLeaf') pushUpInstVar: 'shared'.
 
 	self assert: ref decline notNil.
+	self assert: ref decline includesSubstring: 'not an instance variable declared in'.
 	self assert: ref changeSet isEmpty
 %
 
@@ -3854,6 +3883,13 @@ category: 'tests - apply'
 method: GsInstVarStructureRefactoringTest
 testApplyForTokenOnAnExpiredSessionAnswersAnError
 	self assert: (GsInstVarStructureRefactoring applyForToken: 'nope' deselected: #())
+		includesSubstring: 'expired'
+%
+
+category: 'tests - apply'
+method: GsInstVarStructureRefactoringTest
+testPageForTokenOnAnExpiredSessionAnswersAnError
+	self assert: (GsInstVarStructureRefactoring pageForToken: 'nope' from: 1 maxBytes: 1000)
 		includesSubstring: 'expired'
 %
 

@@ -42,6 +42,61 @@ describe('instance-variable structure panel HTML', () => {
       expect(html).toContain('re-point at the new class version');
     });
 
+    it('renders a moved-out accessor (methodRemove) as a delete-only diff', () => {
+      const remove: IvarChange = {
+        id: '3',
+        kind: 'methodRemove',
+        dictName: 'UserGlobals',
+        className: 'V2Dog',
+        isMeta: false,
+        selector: 'tailLength',
+        category: 'accessing',
+        oldSource: 'tailLength\n\t^tailLength',
+        newSource: '',
+      };
+
+      const html = renderIvarCards([remove]);
+
+      expect(html).toContain('tailLength — removed (accessor moved with the variable)');
+      expect(html).toContain('line del');
+      expect(html).not.toContain('line add');
+    });
+
+    it('renders a moved-in accessor (methodAdd) as an add-only diff', () => {
+      const add: IvarChange = {
+        id: '4',
+        kind: 'methodAdd',
+        dictName: 'UserGlobals',
+        className: 'V2Animal',
+        isMeta: false,
+        selector: 'tailLength',
+        category: 'accessing',
+        oldSource: '',
+        newSource: 'tailLength\n\t^tailLength',
+      };
+
+      const html = renderIvarCards([add]);
+
+      expect(html).toContain('tailLength — added (accessor moved with the variable)');
+      expect(html).toContain('line add');
+      expect(html).not.toContain('line del');
+    });
+
+    it('escapes HTML metacharacters in the row label (attribute + text contexts)', () => {
+      const nasty: IvarChange = {
+        ...edit,
+        id: 'a"><img>',
+        className: 'B"><b>',
+      };
+
+      const html = renderIvarCards([nasty]);
+
+      expect(html).toContain('&quot;');
+      expect(html).toContain('&gt;');
+      expect(html).not.toContain('"><img>');
+      expect(html).not.toContain('"><b>');
+    });
+
     it('marks every change as a required (checked + disabled) row', () => {
       const html = renderIvarCards([edit]);
 

@@ -1397,6 +1397,9 @@ export class ExplorerController {
   // Locally-defined instance variable names for a class, memoized per dict load.
   // {superclass, immediate subclasses} for a class, memoized. Used to gate the ▼ push-down
   // arrow (no subclasses ⇒ nowhere to push) and to pick the reveal target after a push.
+  // Resolution is first-match (not dict-scoped), matching the Explorer's Hierarchy pane; under a
+  // class name shadowed across dictionaries this only affects arrow visibility / reveal target —
+  // the refactoring itself is dict-scoped (pushInstVar threads state.dictIndex) and stays correct.
   private hierNeighbors(className: string): { superclass?: string; subclasses: string[] } {
     const cached = this.hierNeighborsCache.get(className);
     if (cached) return cached;

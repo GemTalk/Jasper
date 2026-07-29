@@ -263,6 +263,11 @@ GsInstVarStructureRefactoring >> analyzeConvertTemp [
 	 already be an instance variable of the class."
 	| behavior method src tree names remaining newDecl newSrc |
 	topClass := definingClass.
+	methodMeta ifTrue: [
+		"A class-side (meta) method's temporary can't become an INSTANCE variable (the class
+		 method can't reference it), and this engine only edits instance-side ivar lists. Decline
+		 rather than corrupt (add an unreachable ivar + recompile the class method against it)."
+		^decline := 'Cannot convert #', varName, ': converting a temporary in a class-side method to an instance variable is not supported.'].
 	((self allInstVarsOf: definingClass) includes: varName) ifTrue: [
 		^decline := 'Cannot convert #', varName, ': it is already an instance variable of ', definingClass name asString, '.'].
 	behavior := methodMeta ifTrue: [definingClass class] ifFalse: [definingClass].
@@ -453,9 +458,7 @@ GsInstVarStructureRefactoring >> isEditedClassNamed: aName [
 
 { #category : 'private' }
 GsInstVarStructureRefactoring >> dictNameForClass: aClass [
-	| dicts |
-	dicts := environment dictionariesDefiningClassNamed: aClass name.
-	^dicts isEmpty ifTrue: [nil] ifFalse: [dicts first name asString]
+	^self dictNameForClassNamed: aClass name
 ]
 
 { #category : 'preconditions' }
@@ -641,7 +644,11 @@ GsInstVarStructureRefactoring >> applyDeselected: deselectedIds [
 			failures add: (Array with: 'commit' with: topClass name asString with: e messageText)].
 		committed ifTrue: [
 			migrateInstances ifTrue: [migrated := self migrateAllInstances].
-			removeOldFromHistory ifTrue: [self pruneSupersededVersions].
+			"Pruning a version that still has instances raises (e.g. remove-history WITHOUT migrate);
+			 catch it and report as a failure rather than letting it propagate out of the apply."
+			removeOldFromHistory ifTrue: [
+				[self pruneSupersededVersions] on: Error do: [:e |
+					failures add: (Array with: 'removeOldFromHistory' with: topClass name asString with: e messageText)]].
 			[System commitTransaction] on: Error do: [:e |
 				failures add: (Array with: 'commit' with: topClass name asString with: e messageText)]]].
 	^'{"applied":', applied printString,

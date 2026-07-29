@@ -137,6 +137,13 @@ export async function runInstVarStructure(req: IvarStructureRequest): Promise<bo
   });
   if (!result) return false;
 
+  // The engine can report a whole-apply error (e.g. the preview token expired between preview
+  // and apply) with an empty `failed` list — surface it instead of a hollow "applied 0" success.
+  if (result.error) {
+    void vscode.window.showErrorMessage(`${heading} failed: ${result.error}`);
+    return false;
+  }
+
   if (result.failed.length > 0) {
     const first = result.failed[0];
     void vscode.window.showErrorMessage(`Change failed: ${first.label}: ${first.error}`);
