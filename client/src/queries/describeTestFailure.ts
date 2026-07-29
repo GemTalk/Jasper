@@ -68,7 +68,7 @@ captured := nil.
 stackText := nil.
 [
   [System gemConfigurationAt: #GemExceptionSignalCapturesStack put: true]
-    on: AbstractException do: [:ignored | "Setter rejected — proceed without stack capture."].
+    on: AbstractException do: [:ignored | "Setter rejected - proceed without stack capture."].
   tc := ${cls} selector: #'${sel}'.
   [tc setUp] on: AbstractException do: [:e | captured := e].
   captured isNil ifTrue: [
@@ -107,7 +107,7 @@ captured isNil ifTrue: [
     ws nextPutAll: 'mnuReceiver: '; nextPutAll: (cleanText value: captured receiver printString); lf.
     ws nextPutAll: 'mnuSelector: '; nextPutAll: captured selector asString; lf].
   "Always emit stackReport last with a sentinel so the parser can grab the
-   rest of the output verbatim — frame separators are real newlines and
+   rest of the output verbatim - frame separators are real newlines and
    collapsing them would destroy the stack's structure."
   stackText isNil ifFalse: [
     | s |
