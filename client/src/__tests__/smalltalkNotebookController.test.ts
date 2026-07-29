@@ -22,7 +22,6 @@ import { SessionManager } from '../sessionManager';
 function makeGci(overrides: Record<string, unknown> = {}) {
   return {
     GciTsCallInProgress: vi.fn(() => ({ result: 0, err: { number: 0 } })),
-    GciTsResolveSymbol: vi.fn(() => ({ result: 100n, err: { number: 0 } })),
     GciTsNbExecute: vi.fn((..._args: unknown[]) => ({
       success: true,
       err: { number: 0, message: '' },

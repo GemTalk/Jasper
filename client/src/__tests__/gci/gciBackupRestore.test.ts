@@ -77,9 +77,7 @@ function connect(gci: GciLibrary): unknown {
 
 // The Smalltalk source is interpreted as this class; Utf8 matches production.
 function sourceClass(gci: GciLibrary, session: unknown): bigint {
-  const { result, err } = gci.GciTsResolveSymbol(session, 'Utf8', OOP_NIL);
-  if (err.number !== 0) throw new Error(`Could not resolve Utf8: ${err.message}`);
-  return result;
+  return gci.utf8ClassOop(session);
 }
 
 // Execute and surface the raw GCI error NUMBER (not just a thrown message) so the

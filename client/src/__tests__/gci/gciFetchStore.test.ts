@@ -19,9 +19,9 @@ describe('GCI Fetch/Store Bytes and OOPs', () => {
     expect(login.session).not.toBeNull();
     session = login.session;
 
-    OOP_CLASS_ARRAY = gci.GciTsResolveSymbol(session, 'Array', OOP_NIL).result;
-    OOP_CLASS_STRING = gci.GciTsResolveSymbol(session, 'String', OOP_NIL).result;
-    OOP_CLASS_BYTE_ARRAY = gci.GciTsResolveSymbol(session, 'ByteArray', OOP_NIL).result;
+    OOP_CLASS_ARRAY = gci.resolveSymbol(session, 'Array');
+    OOP_CLASS_STRING = gci.resolveSymbol(session, 'String');
+    OOP_CLASS_BYTE_ARRAY = gci.resolveSymbol(session, 'ByteArray');
     console.log(
       'Class OOPs - Array:',
       OOP_CLASS_ARRAY.toString(),

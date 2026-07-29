@@ -46,6 +46,8 @@ import { PREVIEW_PAGE_BYTES } from './refactoring/queries/previewRenameMethod';
 import { showRenameMethodEditor } from './refactoring/renameMethodEditor';
 import { showRenameMethodPanel } from './refactoring/renameMethodPanel';
 import { beginChangeSignature, changeSignatureCommand } from './refactoring/changeSignatureCommand';
+import { pushMethod } from './refactoring/pushMethodCommand';
+import { PushDirection } from './refactoring/queries/previewPushMethod';
 import {
   parseStartPreview as parseStartClassPreview,
   parsePage as parseClassPage,
@@ -69,6 +71,7 @@ import {
   parseRemoveResult,
 } from './refactoring/classHistoryModel';
 import { showClassHistoryPanel } from './refactoring/classHistoryPanel';
+import { moveMethod } from './refactoring/moveMethodCommand';
 
 const VIEW_DICTS = 'gemstoneExplorerDicts';
 const VIEW_CATEGORIES = 'gemstoneExplorerCategories';
@@ -488,12 +491,63 @@ interface MethodDragPayload {
 }
 const METHOD_MIME = 'application/vnd.gemstone.explorermethod';
 
+// A class picker that filters by PREFIX on the class name as the user types. VS Code's
+// default showQuickPick does fuzzy SUBSTRING matching — typing "Z" would also surface
+// "AZure" / "BtreeOptimiZed" (a 'z' anywhere) — which reads as random. Here we own the
+// items and prefix-filter them ourselves (matchOnDescription/Detail off), so "Z" shows
+// only Z… classes. Returns the chosen entry, or undefined if dismissed.
+async function pickClassByPrefix(
+  entries: queries.ClassNameEntry[],
+  title: string,
+): Promise<queries.ClassNameEntry | undefined> {
+  type Item = vscode.QuickPickItem & { entry: queries.ClassNameEntry };
+  const all: Item[] = entries.map((e) => ({
+    label: e.className,
+    description: e.dictName,
+    entry: e,
+  }));
+  const qp = vscode.window.createQuickPick<Item>();
+  qp.title = title;
+  qp.placeholder = 'Type the start of the destination class name…';
+  qp.matchOnDescription = false;
+  qp.matchOnDetail = false;
+  qp.items = all;
+  qp.onDidChangeValue((value) => {
+    const q = value.trim().toLowerCase();
+    qp.items = q === '' ? all : all.filter((it) => it.label.toLowerCase().startsWith(q));
+  });
+  try {
+    return await new Promise<queries.ClassNameEntry | undefined>((resolve) => {
+      qp.onDidAccept(() => {
+        resolve(qp.selectedItems[0]?.entry);
+        qp.hide();
+      });
+      qp.onDidHide(() => resolve(undefined));
+      qp.show();
+    });
+  } finally {
+    qp.dispose();
+  }
+}
+
 type MethodCommandArg = MethodItem | { selector: string; isMeta: boolean } | undefined;
 function methodArg(arg: MethodCommandArg): { selector: string; isMeta: boolean } | undefined {
   if (arg instanceof MethodItem) return { selector: arg.info.selector, isMeta: arg.isMeta };
   if (arg && typeof arg.selector === 'string')
     return { selector: arg.selector, isMeta: !!arg.isMeta };
   return undefined;
+}
+
+// The MethodItem set a tree command should act on. VS Code passes a multi-select
+// command (focusedItem, allSelectedItems); prefer the full selection, falling back to
+// the focused row when the array is absent (single-select / palette). Non-method nodes
+// are filtered out.
+function methodSelection(
+  item: MethodItem | undefined,
+  selected: MethodItem[] | undefined,
+): MethodItem[] {
+  const source = Array.isArray(selected) && selected.length > 0 ? selected : item ? [item] : [];
+  return source.filter((n): n is MethodItem => n instanceof MethodItem);
 }
 
 // Views the controller updates with the current selection (shown as the greyed
@@ -978,6 +1032,66 @@ export class ExplorerController {
       } catch {
         // Best-effort: a failed reopen just leaves the tab closed.
       }
+    }
+  }
+
+  // After a push moves a method OUT of its source class, an editor still open on the
+  // source method is stale — the method no longer resolves there — and, via syncToEditor
+  // (onDidChangeActiveTextEditor), it drags the navigator back to the source, clobbering
+  // the reveal of the method in its NEW home. Close such editors (non-dirty only), but only
+  // for selectors the source no longer defines: a partial push-down can leave the source
+  // method in place, and that editor is still valid.
+  private async closeStaleSourceMethodEditors(
+    session: ActiveSession,
+    dictName: string,
+    sourceClass: string,
+    selectors: string[],
+    isMeta: boolean,
+  ): Promise<void> {
+    for (const { tab, uri } of listOpenGemstoneTabs()) {
+      if (tab.isDirty) continue;
+      let parsed;
+      try {
+        parsed = parseUri(uri);
+      } catch {
+        continue;
+      }
+      if (parsed.kind !== 'method' || parsed.sessionId !== session.id) continue;
+      if (parsed.base || parsed.diffView) continue;
+      if (parsed.className !== sourceClass || parsed.dictName !== dictName) continue;
+      if (parsed.isMeta !== isMeta) continue;
+      const sel = unescapeSelectorSlashes(parsed.selector);
+      if (!selectors.includes(sel)) continue;
+      if (this.classStillDefines(session, sourceClass, sel, isMeta)) continue;
+      try {
+        await vscode.window.tabGroups.close(tab);
+      } catch {
+        /* best-effort: a failed close just leaves the (now stale) tab open */
+      }
+    }
+  }
+
+  // True when className still defines selector on the given side (its OWN method), used to
+  // decide whether a source-method editor is stale after a push. On any query error, assume
+  // it is still defined (do not close the editor).
+  private classStillDefines(
+    session: ActiveSession,
+    className: string,
+    selector: string,
+    isMeta: boolean,
+  ): boolean {
+    const behavior = isMeta ? `${className} class` : className;
+    try {
+      return (
+        queries
+          .executeFetchString(
+            session,
+            `((${behavior} compiledMethodAt: #'${selector}' environmentId: 0 otherwise: nil) notNil) printString`,
+          )
+          .trim() === 'true'
+      );
+    } catch {
+      return true;
     }
   }
 
@@ -1771,6 +1885,49 @@ export class ExplorerController {
       },
       { session, onApplied: (o, n) => this.refreshAfterSignatureChange(o, n) },
     );
+  }
+
+  // Push a method up to its superclass (M7) or down into its subclasses (M8), from the
+  // method row's context menu. The engine resolves the target(s) and declines with a
+  // clear reason when impossible (no superclass / no subclasses / precondition). After a
+  // successful push, navigate to where the method landed and highlight it: the superclass
+  // for push-up, the first recipient subclass for push-down. If there is nowhere to reveal
+  // (or we lack the dict context), just reload the source list so the removed row vanishes.
+  async pushMethod(item: MethodItem, direction: PushDirection): Promise<void> {
+    const className = this.state.className;
+    const session = this.session();
+    if (!className || !session) return;
+    const outcome = await pushMethod({
+      session,
+      direction,
+      sourceClass: className,
+      selectors: [item.info.selector],
+      isMeta: item.isMeta,
+      dict: this.state.dictIndex ?? this.state.dictName,
+    });
+    if (!outcome) return;
+    const { dictName, dictIndex } = this.state;
+    // The source method(s) moved away; an editor still open on the source is now stale and
+    // would yank the navigator back to the source via syncToEditor, clobbering the reveal.
+    // Close those (only where the source truly lost the method) BEFORE revealing.
+    if (dictName !== undefined) {
+      await this.closeStaleSourceMethodEditors(
+        session,
+        dictName,
+        className,
+        outcome.moved,
+        item.isMeta,
+      );
+    }
+    if (outcome.revealClass && dictName !== undefined && dictIndex !== undefined) {
+      await this.revealClass(dictName, dictIndex, outcome.revealClass, {
+        revealMethod: { selector: item.info.selector, isMeta: item.isMeta },
+      });
+      return;
+    }
+    // Nowhere to reveal: the source lost the method — reload its method list so the removed
+    // row disappears.
+    this.reloadCurrentClassMethods();
   }
 
   // Bring the tree and any open editors up to date after a signature change: the
@@ -2826,6 +2983,25 @@ export class ExplorerController {
   // source method and any class drop-target live in the currently-shown
   // dictionary, so state.dictIndex scopes every lookup.
 
+  // The method rows currently being dragged. VS Code does NOT carry a custom
+  // DataTransferItem's content across DIFFERENT trees (methods → classes): the item
+  // arrives with an empty string. So the DataTransfer is used only as a SIGNAL that a
+  // method drag is in flight, and the actual payload is stashed here — both tree
+  // drag/drop controllers share this one ExplorerController, so an in-memory hand-off
+  // is reliable where serialization is not.
+  private pendingMethodDrag: MethodDragPayload[] = [];
+
+  setPendingMethodDrag(payloads: MethodDragPayload[]): void {
+    this.pendingMethodDrag = payloads;
+  }
+
+  // Read AND clear the pending drag (a drag lands on exactly one drop target).
+  takePendingMethodDrag(): MethodDragPayload[] {
+    const p = this.pendingMethodDrag;
+    this.pendingMethodDrag = [];
+    return p;
+  }
+
   dragPayload(item: MethodItem): MethodDragPayload | undefined {
     if (
       this.state.className === undefined ||
@@ -2844,44 +3020,220 @@ export class ExplorerController {
     };
   }
 
-  // Drop on a method category → move the method there (recategorize).
-  async dragMoveToCategory(p: MethodDragPayload, category: string): Promise<void> {
+  // Drop on a method category → recategorize each dragged method there.
+  async dragMoveToCategory(payloads: MethodDragPayload[], category: string): Promise<void> {
     const session = this.session();
-    if (!session || category === p.category) return;
+    if (!session) return;
+    const toMove = payloads.filter((p) => p.category !== category);
+    if (toMove.length === 0) return;
     try {
-      queries.recategorizeMethod(session, p.className, p.isMeta, p.selector, category, p.dictIndex);
+      for (const p of toMove) {
+        queries.recategorizeMethod(
+          session,
+          p.className,
+          p.isMeta,
+          p.selector,
+          category,
+          p.dictIndex,
+        );
+      }
     } catch (e) {
       void vscode.window.showErrorMessage(
         `Move failed: ${e instanceof Error ? e.message : String(e)}`,
       );
       return;
     }
-    this.reloadIfCurrent(p.className, p.dictIndex);
-    void vscode.window.showInformationMessage(`Moved #${p.selector} to '${category}'.`);
+    this.reloadIfCurrent(toMove[0].className, toMove[0].dictIndex);
+    void vscode.window.showInformationMessage(
+      toMove.length === 1
+        ? `Moved #${toMove[0].selector} to '${category}'.`
+        : `Moved ${toMove.length} methods to '${category}'.`,
+    );
   }
 
-  // Drop on a class → copy the method into it (preserving source + category).
-  async dragCopyToClass(p: MethodDragPayload, targetClass: string): Promise<void> {
+  // Drop on a class → ask whether to MOVE (relocate, remove from source, with a
+  // preview) or COPY (duplicate into the target, immediate). VS Code's tree drag/drop
+  // API exposes no modifier-key state, so a plain-vs-shift distinction is impossible;
+  // this QuickPick is the copy/move choice a modifier would otherwise carry.
+  async dragToClass(payloads: MethodDragPayload[], targetClass: string): Promise<void> {
+    const fresh = payloads.filter((p) => p.className !== targetClass);
+    if (fresh.length === 0) return;
+    const n = fresh.length;
+    const noun = n === 1 ? `#${fresh[0].selector}` : `${n} methods`;
+    const MOVE = `Move here (remove from source)`;
+    const COPY = `Copy here (keep original)`;
+    const choice = await vscode.window.showQuickPick([MOVE, COPY], {
+      title: `Drop ${noun} onto ${targetClass}`,
+      placeHolder: `Move or copy ${noun} to ${targetClass}?`,
+    });
+    if (choice === MOVE) await this.dragMoveToClass(fresh, targetClass);
+    else if (choice === COPY) await this.dragCopyToClass(fresh, targetClass);
+  }
+
+  // Relocate the dragged methods into targetClass through the move-method refactoring
+  // (preview → apply, no commit). Grouped by source side so an instance→instance and a
+  // class→class move each run on their own side.
+  async dragMoveToClass(payloads: MethodDragPayload[], targetClass: string): Promise<void> {
     const session = this.session();
-    if (!session || targetClass === p.className) return;
-    try {
-      queries.copyMethodToClass(
+    if (!session) return;
+    // The drop target is a class row in the CURRENTLY-shown dictionary.
+    await this.runMoveToClass(
+      session,
+      payloads.filter((p) => p.className !== targetClass),
+      targetClass,
+      this.state.dictName,
+      this.state.dictIndex,
+      false,
+    );
+  }
+
+  // Run the move for the selected rows, grouped by source side (so a mixed
+  // instance/class selection each moves on its own side), then reveal the first moved
+  // method in its NEW class so the result is visible (otherwise a move looks like
+  // "nothing happened"). `flipSide` moves to the OTHER side of the SAME class.
+  private async runMoveToClass(
+    session: ActiveSession,
+    payloads: MethodDragPayload[],
+    targetClass: string,
+    targetDictName: string | undefined,
+    targetDictIndex: number | undefined,
+    flipSide: boolean,
+  ): Promise<void> {
+    if (payloads.length === 0) return;
+    let reveal: { selector: string; isMeta: boolean } | undefined;
+    for (const isMeta of [false, true]) {
+      const group = payloads.filter((p) => p.isMeta === isMeta);
+      if (group.length === 0) continue;
+      const outcome = await moveMethod({
         session,
-        p.className,
-        targetClass,
-        p.isMeta,
-        p.selector,
-        0,
-        p.dictIndex,
-      );
+        sourceClass: group[0].className,
+        selectors: group.map((p) => p.selector),
+        isMeta,
+        targetName: flipSide ? group[0].className : targetClass,
+        toMeta: flipSide ? !isMeta : isMeta,
+        dict: group[0].dictIndex,
+      });
+      if (outcome && outcome.moved.length > 0 && !reveal) {
+        reveal = { selector: outcome.moved[0], isMeta: outcome.toMeta };
+      }
+    }
+    if (reveal && targetDictName !== undefined && targetDictIndex !== undefined) {
+      await this.revealClass(targetDictName, targetDictIndex, targetClass, {
+        revealMethod: reveal,
+      });
+    }
+  }
+
+  // Drop on a class → copy each dragged method into it (preserving source + category).
+  async dragCopyToClass(payloads: MethodDragPayload[], targetClass: string): Promise<void> {
+    const session = this.session();
+    if (!session) return;
+    const toCopy = payloads.filter((p) => p.className !== targetClass);
+    if (toCopy.length === 0) return;
+    try {
+      for (const p of toCopy) {
+        queries.copyMethodToClass(
+          session,
+          p.className,
+          targetClass,
+          p.isMeta,
+          p.selector,
+          0,
+          p.dictIndex,
+        );
+      }
     } catch (e) {
       void vscode.window.showErrorMessage(
         `Copy failed: ${e instanceof Error ? e.message : String(e)}`,
       );
       return;
     }
-    this.reloadIfCurrent(targetClass, p.dictIndex);
-    void vscode.window.showInformationMessage(`Copied #${p.selector} to ${targetClass}.`);
+    this.reloadIfCurrent(targetClass, toCopy[0].dictIndex);
+    void vscode.window.showInformationMessage(
+      toCopy.length === 1
+        ? `Copied #${toCopy[0].selector} to ${targetClass}.`
+        : `Copied ${toCopy.length} methods to ${targetClass}.`,
+    );
+  }
+
+  // Right-click "Move Method to Class…": pick a target from ALL classes in the image
+  // (not just the visible ones — the point of Move is to relocate anywhere, including
+  // classes outside the Explorer's current dictionary/category), then move + reveal.
+  async moveMethodsToClassPrompt(items: MethodItem[]): Promise<void> {
+    const session = this.session();
+    if (!session) return;
+    const payloads = this.dragPayloads(items);
+    if (payloads.length === 0) return;
+    const source = payloads[0].className;
+    const sourceDict = payloads[0].dictIndex;
+
+    let entries: queries.ClassNameEntry[];
+    try {
+      entries = await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: 'Loading class list…',
+          cancellable: false,
+        },
+        () => Promise.resolve(queries.getAllClassNames(session)),
+      );
+    } catch (e: unknown) {
+      void vscode.window.showErrorMessage(
+        `Failed to load classes: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return;
+    }
+    // Drop only the source class's OWN entry (a same-named class in another dictionary
+    // is a legitimate, distinct target), then sort alphabetically (class name, then
+    // dictionary). The picker itself prefix-filters as the user types (see
+    // pickClassByPrefix) so the list reads sensibly rather than fuzzy-substring.
+    const sorted = entries
+      .filter((e) => !(e.className === source && e.dictIndex === sourceDict))
+      .sort(
+        (a, b) => a.className.localeCompare(b.className) || a.dictName.localeCompare(b.dictName),
+      );
+    const target = await pickClassByPrefix(
+      sorted,
+      `Move ${payloads.length === 1 ? `#${payloads[0].selector}` : `${payloads.length} methods`} from ${source} to…`,
+    );
+    if (!target) return;
+    await this.runMoveToClass(
+      session,
+      payloads,
+      target.className,
+      target.dictName,
+      target.dictIndex,
+      false,
+    );
+  }
+
+  // Right-click "Move to Class/Instance Side": relocate the selected method rows to
+  // the OTHER side of their own class (instance↔class), then reveal them there.
+  async moveMethodsToOtherSide(items: MethodItem[]): Promise<void> {
+    const session = this.session();
+    if (!session) return;
+    const payloads = this.dragPayloads(items);
+    if (payloads.length === 0) return;
+    await this.runMoveToClass(
+      session,
+      payloads,
+      payloads[0].className,
+      this.state.dictName,
+      this.state.dictIndex,
+      true,
+    );
+  }
+
+  // Map selected method rows to drag payloads (skipping non-method nodes).
+  dragPayloads(items: readonly MethodNode[]): MethodDragPayload[] {
+    const out: MethodDragPayload[] = [];
+    for (const item of items) {
+      if (item instanceof MethodItem) {
+        const p = this.dragPayload(item);
+        if (p) out.push(p);
+      }
+    }
+    return out;
   }
 
   // Reload the method list when the class just mutated is the one on screen.
@@ -3144,28 +3496,36 @@ class MethodDragAndDrop implements vscode.TreeDragAndDropController<MethodNode> 
   constructor(private readonly ctl: ExplorerController) {}
 
   handleDrag(source: readonly MethodNode[], dataTransfer: vscode.DataTransfer): void {
-    const item = source.find((n) => n instanceof MethodItem);
-    const payload = item && this.ctl.dragPayload(item);
-    if (payload) dataTransfer.set(METHOD_MIME, new vscode.DataTransferItem(payload));
+    // Carry ALL selected method rows (multi-select is enabled on this view), so a
+    // drag can move/copy several methods at once.
+    const payloads = this.ctl.dragPayloads(source);
+    // Stash the payload in the shared controller (survives cross-tree; a DataTransfer
+    // value does not) and set the mime only as a SIGNAL so the Classes/Methods drop
+    // controllers accept the drop and know it's ours.
+    this.ctl.setPendingMethodDrag(payloads);
+    if (payloads.length > 0) {
+      dataTransfer.set(METHOD_MIME, new vscode.DataTransferItem('gemstone-method-drag'));
+    }
   }
 
   async handleDrop(
     target: MethodNode | undefined,
     dataTransfer: vscode.DataTransfer,
   ): Promise<void> {
-    const raw = dataTransfer.get(METHOD_MIME);
-    if (!raw) return;
-    const payload = raw.value as MethodDragPayload;
+    if (!dataTransfer.get(METHOD_MIME)) return;
+    const payloads = this.ctl.takePendingMethodDrag();
+    if (payloads.length === 0) return;
     // Resolve the drop's target category: a real category row, or the category
     // of the method row it landed on. Dropping on a side/computed row is ignored.
     let category: string | undefined;
     if (target instanceof MethodCategoryItem && !target.computed) category = target.category;
     else if (target instanceof MethodItem) category = target.info.category;
-    if (category) await this.ctl.dragMoveToCategory(payload, category);
+    if (category) await this.ctl.dragMoveToCategory(payloads, category);
   }
 }
 
-// Classes pane: accept a dragged method and COPY it into the dropped-on class.
+// Classes pane: accept dragged method(s) and MOVE or COPY them into the dropped-on
+// class (a QuickPick asks which — the drag/drop API has no modifier-key signal).
 class ClassDropController implements vscode.TreeDragAndDropController<ClassNode> {
   readonly dragMimeTypes: readonly string[] = [];
   readonly dropMimeTypes = [METHOD_MIME];
@@ -3179,10 +3539,15 @@ class ClassDropController implements vscode.TreeDragAndDropController<ClassNode>
     target: ClassNode | undefined,
     dataTransfer: vscode.DataTransfer,
   ): Promise<void> {
-    if (!(target instanceof ClassItem)) return;
-    const raw = dataTransfer.get(METHOD_MIME);
-    if (!raw) return;
-    await this.ctl.dragCopyToClass(raw.value as MethodDragPayload, target.className);
+    // Resolve the owning class from ANY class-pane node — the class row itself OR a
+    // child (its instance/class variable-side node, an ivar/classvar row) — so a drop
+    // onto an EXPANDED class (showing its variables) still lands on that class rather
+    // than being silently ignored. Every ClassNode carries `className`.
+    const targetClass = target?.className;
+    if (!dataTransfer.get(METHOD_MIME)) return;
+    const payloads = this.ctl.takePendingMethodDrag();
+    if (!targetClass || payloads.length === 0) return;
+    await this.ctl.dragToClass(payloads, targetClass);
   }
 }
 
@@ -3238,6 +3603,8 @@ export function registerGemStoneExplorer(
   const methodView = vscode.window.createTreeView('gemstoneExplorerMethods', {
     treeDataProvider: ctl.methodProvider,
     showCollapseAll: true,
+    // Multi-select so several method rows can be dragged (move/copy) together.
+    canSelectMany: true,
     dragAndDropController: new MethodDragAndDrop(ctl),
   });
   ctl.setViews({
@@ -3434,6 +3801,31 @@ export function registerGemStoneExplorer(
         });
       },
     ),
+    // Move method(s) to another class (M6). Works on the focused row plus any other
+    // selected method rows (multi-select), so several methods move at once.
+    vscode.commands.registerCommand(
+      'gemstone.explorer.moveMethodToClass',
+      (item?: MethodItem, selected?: MethodItem[]) => {
+        const items = methodSelection(item, selected);
+        if (items.length === 0) return;
+        void ctl.moveMethodsToClassPrompt(items).catch((e: unknown) => {
+          const msg = e instanceof Error ? e.message : String(e);
+          void vscode.window.showErrorMessage(`Move method failed: ${msg}`);
+        });
+      },
+    ),
+    // Move method(s) to the OTHER side (instance↔class) of their own class.
+    vscode.commands.registerCommand(
+      'gemstone.explorer.moveMethodToOtherSide',
+      (item?: MethodItem, selected?: MethodItem[]) => {
+        const items = methodSelection(item, selected);
+        if (items.length === 0) return;
+        void ctl.moveMethodsToOtherSide(items).catch((e: unknown) => {
+          const msg = e instanceof Error ? e.message : String(e);
+          void vscode.window.showErrorMessage(`Move method failed: ${msg}`);
+        });
+      },
+    ),
     // Change a method's signature — add/remove/reorder parameters (context menu on
     // the method row).
     vscode.commands.registerCommand('gemstone.explorer.changeSignature', (item?: MethodItem) => {
@@ -3441,6 +3833,22 @@ export function registerGemStoneExplorer(
       void ctl.changeSignature(item).catch((e: unknown) => {
         const msg = e instanceof Error ? e.message : String(e);
         void vscode.window.showErrorMessage(`Change signature failed: ${msg}`);
+      });
+    }),
+    // Push a method up to its superclass (M7) — context menu on the method row.
+    vscode.commands.registerCommand('gemstone.explorer.pushUpMethod', (item?: MethodItem) => {
+      if (!(item instanceof MethodItem)) return;
+      void ctl.pushMethod(item, 'up').catch((e: unknown) => {
+        const msg = e instanceof Error ? e.message : String(e);
+        void vscode.window.showErrorMessage(`Push up failed: ${msg}`);
+      });
+    }),
+    // Push a method down into its subclasses (M8) — context menu on the method row.
+    vscode.commands.registerCommand('gemstone.explorer.pushDownMethod', (item?: MethodItem) => {
+      if (!(item instanceof MethodItem)) return;
+      void ctl.pushMethod(item, 'down').catch((e: unknown) => {
+        const msg = e instanceof Error ? e.message : String(e);
+        void vscode.window.showErrorMessage(`Push down failed: ${msg}`);
       });
     }),
     // Change the edited method's signature from a source editor (the Refactor… code

@@ -1221,6 +1221,17 @@
         "icon": "$(edit)"
       },
       {
+        "command": "gemstone.explorer.moveMethodToClass",
+        "title": "Move Method to Class…",
+        "category": "GemStone",
+        "icon": "$(export)"
+      },
+      {
+        "command": "gemstone.explorer.moveMethodToOtherSide",
+        "title": "Move to Class/Instance Side",
+        "category": "GemStone"
+      },
+      {
         "command": "gemstone.explorer.changeSignature",
         "title": "Change Method Signature…",
         "category": "GemStone",
@@ -1231,6 +1242,18 @@
         "title": "Change Method Signature…",
         "category": "GemStone",
         "icon": "$(edit)"
+      },
+      {
+        "command": "gemstone.explorer.pushUpMethod",
+        "title": "Push Up…",
+        "category": "GemStone",
+        "icon": "$(arrow-up)"
+      },
+      {
+        "command": "gemstone.explorer.pushDownMethod",
+        "title": "Push Down…",
+        "category": "GemStone",
+        "icon": "$(arrow-down)"
       },
       {
         "command": "gemstone.renameTemporary",
@@ -1545,7 +1568,23 @@
           "when": "false"
         },
         {
+          "command": "gemstone.explorer.moveMethodToClass",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.moveMethodToOtherSide",
+          "when": "false"
+        },
+        {
           "command": "gemstone.explorer.changeSignature",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.pushUpMethod",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.pushDownMethod",
           "when": "false"
         },
         {
@@ -1864,9 +1903,29 @@
           "group": "inline@2"
         },
         {
-          "command": "gemstone.explorer.changeSignature",
+          "command": "gemstone.explorer.moveMethodToClass",
           "when": "view == gemstoneExplorerMethods && viewItem =~ /explorerMethod/",
           "group": "3_refactor@1"
+        },
+        {
+          "command": "gemstone.explorer.moveMethodToOtherSide",
+          "when": "view == gemstoneExplorerMethods && viewItem =~ /explorerMethod/",
+          "group": "3_refactor@2"
+        },
+        {
+          "command": "gemstone.explorer.changeSignature",
+          "when": "view == gemstoneExplorerMethods && viewItem =~ /explorerMethod/",
+          "group": "3_refactor@3"
+        },
+        {
+          "command": "gemstone.explorer.pushUpMethod",
+          "when": "view == gemstoneExplorerMethods && viewItem =~ /explorerMethod/",
+          "group": "inline@4"
+        },
+        {
+          "command": "gemstone.explorer.pushDownMethod",
+          "when": "view == gemstoneExplorerMethods && viewItem =~ /explorerMethod/",
+          "group": "inline@5"
         },
         {
           "command": "gemstone.explorer.renameClass",

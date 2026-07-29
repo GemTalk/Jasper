@@ -1395,9 +1395,11 @@ export function releaseObjs(session: ActiveSession, oops: bigint[]): void {
 
 /** Resolve a global (e.g. a class name) to its OOP; null if it doesn't resolve. */
 function resolveGlobalOop(session: ActiveSession, name: string): bigint | null {
-  const { result, err } = session.gci.GciTsResolveSymbol(session.handle, name, OOP_NIL);
-  if (err.number !== 0) return null;
-  return result;
+  try {
+    return session.gci.resolveSymbol(session.handle, name);
+  } catch {
+    return null;
+  }
 }
 
 /**

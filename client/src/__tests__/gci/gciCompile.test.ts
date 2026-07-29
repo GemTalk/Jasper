@@ -16,7 +16,7 @@ describe('GciTsCompileMethod / ClassRemoveAllMethods / ProtectMethods', () => {
     expect(login.session).not.toBeNull();
     session = login.session;
 
-    OOP_CLASS_STRING = gci.GciTsResolveSymbol(session, 'String', OOP_NIL).result;
+    OOP_CLASS_STRING = gci.resolveSymbol(session, 'String');
 
     // Shared fixture: every test operates on GciTestClass, so create it once
     // here rather than relying on an earlier test to have made it (which breaks
@@ -44,8 +44,7 @@ describe('GciTsCompileMethod / ClassRemoveAllMethods / ProtectMethods', () => {
 
   describe('GciTsCompileMethod', () => {
     it('compiles an instance method successfully', () => {
-      const { result: classOop } = gci.GciTsResolveSymbol(session, 'GciTestClass', OOP_NIL);
-      expect(classOop).not.toBe(OOP_ILLEGAL);
+      const classOop = gci.resolveSymbol(session, 'GciTestClass');
 
       // Compile a method: source must be an OOP of a String
       const sourceOop = gci.GciTsNewString(session, 'testMethod\n  ^ 42');
@@ -97,8 +96,7 @@ describe('GciTsCompileMethod / ClassRemoveAllMethods / ProtectMethods', () => {
 
     it('compiles a class method with GCI_COMPILE_CLASS_METH flag', () => {
       // Resolve the test class
-      const { result: classOop } = gci.GciTsResolveSymbol(session, 'GciTestClass', OOP_NIL);
-      expect(classOop).not.toBe(OOP_ILLEGAL);
+      const classOop = gci.resolveSymbol(session, 'GciTestClass');
 
       const sourceOop = gci.GciTsNewString(session, 'classTestMethod\n  ^ #classResult');
       expect(sourceOop.result).not.toBe(OOP_ILLEGAL);
@@ -136,7 +134,7 @@ describe('GciTsCompileMethod / ClassRemoveAllMethods / ProtectMethods', () => {
     });
 
     it('returns an error for invalid method source', () => {
-      const { result: classOop } = gci.GciTsResolveSymbol(session, 'GciTestClass', OOP_NIL);
+      const classOop = gci.resolveSymbol(session, 'GciTestClass');
       const sourceOop = gci.GciTsNewString(session, '!!! not valid smalltalk method !!!');
 
       const { result, err } = gci.GciTsCompileMethod(
@@ -164,7 +162,7 @@ describe('GciTsCompileMethod / ClassRemoveAllMethods / ProtectMethods', () => {
 
   describe('GciTsClassRemoveAllMethods', () => {
     it('removes all instance methods from a class', () => {
-      const { result: classOop } = gci.GciTsResolveSymbol(session, 'GciTestClass', OOP_NIL);
+      const classOop = gci.resolveSymbol(session, 'GciTestClass');
 
       // Compile our own method so this test doesn't depend on another having
       // run first, then verify it exists before removing.

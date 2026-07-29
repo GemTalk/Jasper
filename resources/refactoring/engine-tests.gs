@@ -266,6 +266,144 @@ removeallclassmethods GsInlineTemporaryRefactoringTest
 
 doit
 | cls |
+cls := TestCase subclass: 'GsMoveMethodRefactoringTest'
+  instVarNames: #()
+  classVars: #()
+  classInstVars: #()
+  poolDictionaries: #()
+  inDictionary: UserGlobals.
+cls category: 'Refactoring-Tests-Core'.
+cls comment: '
+Correctness of the move-method refactoring (M6). Move relocates one OR MORE methods
+from a source class/side to a DIFFERENT class -- and/or flips instance<->class side
+-- keeping the selector and the source verbatim. Each selector stages a #methodAdd on
+the target (compile the same source there) plus a #methodRemove on the source. Nothing
+is compiled or committed while building; the server-side apply compiles the target and
+removes the source WITHOUT committing (the user commits explicitly).
+
+This suite pins down:
+
+  - a pure method (no ivar, no super) moves to another class: a #methodAdd on the
+    target carrying the verbatim source + category, and a #methodRemove on the source;
+  - the move is DECLINED (that selector is skipped, with a reason) when: the target
+    class does not exist (a GLOBAL decline that empties the whole change set); the
+    target and side are the same as the source (no-op); the target already implements
+    the selector (collision); the method sends super; or the method accesses an
+    instance variable the target class does not define;
+  - a method that reads an ivar the target ALSO defines moves cleanly; the same method
+    is declined when the target lacks that ivar;
+  - an instance method flips to the class side of its own class (target = source class,
+    other side); the flip is declined for an ivar-reader (the class side has no such
+    instance variable);
+  - a MULTI-selector move moves the movable ones and reports the declined ones;
+  - the analysis pre-flight reports per-selector decline + a movable count;
+  - building compiles nothing and commits nothing; apply relocates the method and
+    removes it from the source, guarding the removal so a deselected/failed add never
+    strands the method in neither class; apply never commits; a token round-trip works.
+
+setUp builds throwaway classes in UserGlobals; tearDown removes them.
+'.
+true.
+%
+
+removeallmethods GsMoveMethodRefactoringTest
+removeallclassmethods GsMoveMethodRefactoringTest
+
+doit
+| cls |
+cls := TestCase subclass: 'GsPushDownMethodRefactoringTest'
+  instVarNames: #()
+  classVars: #()
+  classInstVars: #()
+  poolDictionaries: #()
+  inDictionary: UserGlobals.
+cls category: 'Refactoring-Tests-Core'.
+cls comment: '
+Correctness of the push-down-method refactoring (M8). Push-down relocates one OR MORE
+methods from a source class into its immediate SUBCLASSES, same side, keeping the selector
+and the source verbatim. Per movable selector it stages a #methodAdd on every immediate
+subclass that does not already override the selector (each keeps its own override) plus a
+SINGLE #methodRemove on the source. Nothing is compiled or committed while building; the
+server-side apply compiles the subclasses and removes the source WITHOUT committing.
+
+This suite pins down:
+
+  - a pure method pushes down: one #methodAdd per receiving subclass (verbatim source +
+    category) plus one #methodRemove on the source;
+  - instance-variable access does NOT block a push-down (the subclasses inherit the source''s
+    ivars);
+  - the push is DECLINED (that selector is skipped, with a reason) when: the method sends
+    super; (a class where EVERY subclass already overrides the selector is NOT declined -- it
+    is an all-overwrite push the user opts into);
+  - a subclass that already overrides the selector gets an opt-in OVERWRITE add (existing
+    body + a data-loss warning), NOT a silent skip, and the others get plain adds;
+  - a class with no subclasses (an impossible push) is a GLOBAL decline that empties the
+    change set;
+  - a class-side method pushes down onto each subclass''s class side;
+  - a MULTI-selector push moves the movable ones and reports the declined ones;
+  - the analysis pre-flight reports a null targetClass, a per-selector decline, and a
+    movable count;
+  - building compiles nothing and commits nothing; apply copies the method into each
+    subclass and removes it from the source, guarding the removal so it fires only once
+    every subclass understands the selector (a deselected subclass add leaves the source
+    method in place); apply never commits; a token round-trip works.
+
+setUp builds a throwaway base + two subclasses in UserGlobals; tearDown removes them.
+'.
+true.
+%
+
+removeallmethods GsPushDownMethodRefactoringTest
+removeallclassmethods GsPushDownMethodRefactoringTest
+
+doit
+| cls |
+cls := TestCase subclass: 'GsPushUpMethodRefactoringTest'
+  instVarNames: #()
+  classVars: #()
+  classInstVars: #()
+  poolDictionaries: #()
+  inDictionary: UserGlobals.
+cls category: 'Refactoring-Tests-Core'.
+cls comment: '
+Correctness of the push-up-method refactoring (M7). Push-up relocates one OR MORE
+methods from a source class to its immediate SUPERCLASS, same side, keeping the selector
+and the source verbatim. Each selector stages a #methodAdd on the superclass (compile the
+same source there) plus a #methodRemove on the source. Nothing is compiled or committed
+while building; the server-side apply compiles the superclass and removes the source
+WITHOUT committing (the user commits explicitly).
+
+This suite pins down:
+
+  - a pure method (no ivar, no super) pushes up to the superclass: a #methodAdd on the
+    superclass carrying the verbatim source + category, and a #methodRemove on the source;
+  - the push is DECLINED (that selector is skipped, with a reason) when: the method sends
+    super; or the method accesses an instance variable the superclass does not define;
+  - a collision (the superclass already implements the selector) is NOT declined: it stages
+    an opt-in OVERWRITE add carrying the superclass''s old body + a data-loss warning, and a
+    deselected overwrite must NOT strip the source (regression guard);
+  - a method that reads an ivar the superclass ALSO defines pushes up cleanly; the same
+    method is declined when only the subclass declares that ivar;
+  - a class with no superclass (an impossible push) is a GLOBAL decline that empties the
+    change set;
+  - a class-side method pushes up to the superclass''s class side;
+  - a MULTI-selector push moves the movable ones and reports the declined ones;
+  - the analysis pre-flight reports the target superclass, a per-selector decline, and a
+    movable count;
+  - building compiles nothing and commits nothing; apply relocates the method to the
+    superclass and removes it from the source, guarding the removal so a deselected/failed
+    add never strands the method; apply never commits; a token round-trip works.
+
+setUp builds a throwaway superclass/subclass pair in UserGlobals; tearDown removes them.
+'.
+true.
+%
+
+removeallmethods GsPushUpMethodRefactoringTest
+removeallclassmethods GsPushUpMethodRefactoringTest
+
+doit
+| cls |
 cls := TestCase subclass: 'GsRefactoringChangeSetTest'
   instVarNames: #()
   classVars: #()
@@ -3358,6 +3496,1262 @@ category: 'tests - apply'
 method: GsInlineTemporaryRefactoringTest
 testApplyForTokenOnAnExpiredSessionAnswersAnError
 	self assert: (GsInlineTemporaryRefactoring applyForToken: 'nope' deselected: #())
+		includesSubstring: 'expired'
+%
+
+category: 'asserting'
+method: GsMoveMethodRefactoringTest
+assert: aString includesSubstring: aSubstring
+	self assert: (aString indexOfSubCollection: aSubstring) > 0
+%
+
+category: 'asserting'
+method: GsMoveMethodRefactoringTest
+deny: aString includesSubstring: aSubstring
+	self assert: (aString indexOfSubCollection: aSubstring) = 0
+%
+
+category: 'fixture'
+method: GsMoveMethodRefactoringTest
+sourceFixture
+	^UserGlobals at: #GsMMSource
+%
+
+category: 'fixture'
+method: GsMoveMethodRefactoringTest
+targetFixture
+	^UserGlobals at: #GsMMTarget
+%
+
+category: 'fixture'
+method: GsMoveMethodRefactoringTest
+noVarFixture
+	^UserGlobals at: #GsMMNoVar
+%
+
+category: 'fixture'
+method: GsMoveMethodRefactoringTest
+compile: aSource in: aClass
+	[aClass
+		compileMethod: aSource
+		dictionaries: System myUserProfile symbolList
+		category: 'fixture']
+		on: CompileWarning
+		do: [:ex | ex resume: nil]
+%
+
+category: 'fixture'
+method: GsMoveMethodRefactoringTest
+moveSelectors: sels to: aTargetName
+	"Move instance-side sels from GsMMSource to the instance side of aTargetName."
+	^GsMoveMethodRefactoring
+		sourceClass: self sourceFixture
+		selectors: sels
+		meta: false
+		toClassNamed: aTargetName
+		toMeta: false
+%
+
+category: 'fixture'
+method: GsMoveMethodRefactoringTest
+move: aSelector to: aTargetName
+	^self moveSelectors: (Array with: aSelector) to: aTargetName
+%
+
+category: 'fixture'
+method: GsMoveMethodRefactoringTest
+addChangeFor: aSelector in: aChangeSet
+	^aChangeSet changes
+		detect: [:c | c kind = #methodAdd and: [c selector = aSelector]]
+		ifNone: [nil]
+%
+
+category: 'fixture'
+method: GsMoveMethodRefactoringTest
+removeChangeFor: aSelector in: aChangeSet
+	^aChangeSet changes
+		detect: [:c | c kind = #methodRemove and: [c selector = aSelector]]
+		ifNone: [nil]
+%
+
+category: 'running'
+method: GsMoveMethodRefactoringTest
+setUp
+	| source target novar |
+	super setUp.
+	source := Object
+		subclass: 'GsMMSource'
+		instVarNames: #('balance')
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	target := Object
+		subclass: 'GsMMTarget'
+		instVarNames: #('balance')
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	novar := Object
+		subclass: 'GsMMNoVar'
+		instVarNames: #()
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	"--- source instance methods ---"
+	self compile: 'pureCompute ^ 40 + 2' in: source.
+	self compile: 'greet ^ ''hi''' in: source.
+	self compile: 'usesBalance ^ balance' in: source.
+	self compile: 'callsSuper ^ super hash' in: source.
+	self compile: 'existing ^ 2' in: source.
+	"--- target already implements #existing (collision) ---"
+	self compile: 'existing ^ 1' in: target
+%
+
+category: 'running'
+method: GsMoveMethodRefactoringTest
+tearDown
+	#('GsMMSource' 'GsMMTarget' 'GsMMNoVar')
+		do: [:nm | UserGlobals removeKey: nm asSymbol ifAbsent: []]
+%
+
+category: 'tests - move'
+method: GsMoveMethodRefactoringTest
+testMovesPureMethodStagesAddAndRemove
+	| ref cs add remove |
+	ref := self move: #pureCompute to: 'GsMMTarget'.
+	cs := ref changeSet.
+	add := self addChangeFor: #pureCompute in: cs.
+	remove := self removeChangeFor: #pureCompute in: cs.
+
+	self assert: cs size equals: 2.
+	self assert: add notNil.
+	self assert: add className equals: 'GsMMTarget'.
+	self assert: add newSource includesSubstring: '40 + 2'.
+	self assert: remove notNil.
+	self assert: remove className equals: 'GsMMSource'.
+	self assert: (ref declineFor: #pureCompute) isNil
+%
+
+category: 'tests - move'
+method: GsMoveMethodRefactoringTest
+testMovedAddPreservesCategory
+	| add |
+	add := self addChangeFor: #pureCompute in: (self move: #pureCompute to: 'GsMMTarget') changeSet.
+
+	self assert: add category equals: 'fixture'
+%
+
+category: 'tests - decline'
+method: GsMoveMethodRefactoringTest
+testMissingTargetIsGlobalDeclineAndEmptyChangeSet
+	| ref |
+	ref := self move: #pureCompute to: 'GsMMNoSuchClass'.
+
+	self assert: ref globalDecline notNil.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - decline'
+method: GsMoveMethodRefactoringTest
+testSameClassSameSideIsNoOpDecline
+	| ref |
+	ref := self move: #pureCompute to: 'GsMMSource'.
+
+	self assert: ref globalDecline notNil.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - decline'
+method: GsMoveMethodRefactoringTest
+testCollisionIsDeclined
+	| ref |
+	ref := self move: #existing to: 'GsMMTarget'.
+
+	self assert: (ref declineFor: #existing) notNil.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - decline'
+method: GsMoveMethodRefactoringTest
+testSuperSenderIsDeclined
+	| ref |
+	ref := self move: #callsSuper to: 'GsMMTarget'.
+
+	self assert: (ref declineFor: #callsSuper) notNil.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - ivar'
+method: GsMoveMethodRefactoringTest
+testIvarReaderMovesWhenTargetHasTheIvar
+	| ref |
+	ref := self move: #usesBalance to: 'GsMMTarget'.
+
+	self assert: (ref declineFor: #usesBalance) isNil.
+	self assert: ref changeSet size equals: 2
+%
+
+category: 'tests - ivar'
+method: GsMoveMethodRefactoringTest
+testIvarReaderDeclinedWhenTargetLacksTheIvar
+	| ref |
+	ref := self move: #usesBalance to: 'GsMMNoVar'.
+
+	self assert: (ref declineFor: #usesBalance) notNil.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - side flip'
+method: GsMoveMethodRefactoringTest
+testInstanceToClassSideFlipMovesPure
+	| ref cs add remove |
+	ref := GsMoveMethodRefactoring
+		sourceClass: self sourceFixture
+		selectors: (Array with: #pureCompute)
+		meta: false
+		toClassNamed: 'GsMMSource'
+		toMeta: true.
+	cs := ref changeSet.
+	add := self addChangeFor: #pureCompute in: cs.
+	remove := self removeChangeFor: #pureCompute in: cs.
+
+	self assert: cs size equals: 2.
+	self assert: add isMeta.
+	self deny: remove isMeta
+%
+
+category: 'tests - side flip'
+method: GsMoveMethodRefactoringTest
+testInstanceToClassSideFlipDeclinesIvarReader
+	| ref |
+	ref := GsMoveMethodRefactoring
+		sourceClass: self sourceFixture
+		selectors: (Array with: #usesBalance)
+		meta: false
+		toClassNamed: 'GsMMSource'
+		toMeta: true.
+
+	self assert: (ref declineFor: #usesBalance) notNil.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - multi'
+method: GsMoveMethodRefactoringTest
+testMultiMoveMovesMovableAndSkipsDeclined
+	| ref cs |
+	ref := self moveSelectors: #(#pureCompute #callsSuper #greet) to: 'GsMMTarget'.
+	cs := ref changeSet.
+
+	"pureCompute + greet move (2 changes each); callsSuper is skipped"
+	self assert: cs size equals: 4.
+	self assert: (self addChangeFor: #pureCompute in: cs) notNil.
+	self assert: (self addChangeFor: #greet in: cs) notNil.
+	self assert: (self addChangeFor: #callsSuper in: cs) isNil.
+	self assert: (ref declineFor: #callsSuper) notNil
+%
+
+category: 'tests - preflight'
+method: GsMoveMethodRefactoringTest
+testAnalysisPreflightReportsPerSelectorAndMovableCount
+	| json |
+	json := GsMoveMethodRefactoring
+		analyzeForClass: self sourceFixture
+		selectors: #(#pureCompute #callsSuper)
+		meta: false
+		toClassNamed: 'GsMMTarget'
+		toMeta: false.
+
+	self assert: json includesSubstring: '"targetClass":"GsMMTarget"'.
+	self assert: json includesSubstring: '"movableCount":1'.
+	self assert: json includesSubstring: '"selector":"pureCompute"'.
+	self assert: json includesSubstring: '"selector":"callsSuper"'
+%
+
+category: 'tests - staging'
+method: GsMoveMethodRefactoringTest
+testBuildingChangeSetCompilesNothingAndDoesNotCommit
+	| before |
+	before := System needsCommit.
+	(self move: #pureCompute to: 'GsMMTarget') changeSet.
+
+	"source still has it; target does not; nothing committed"
+	self assert: (self sourceFixture includesSelector: #pureCompute).
+	self deny: (self targetFixture includesSelector: #pureCompute).
+	self assert: System needsCommit equals: before
+%
+
+category: 'tests - preview'
+method: GsMoveMethodRefactoringTest
+testPreviewJsonSerializesAddAndRemove
+	| json |
+	json := (self move: #pureCompute to: 'GsMMTarget') previewJsonString.
+
+	self assert: json includesSubstring: 'methodAdd'.
+	self assert: json includesSubstring: 'methodRemove'
+%
+
+category: 'tests - preview'
+method: GsMoveMethodRefactoringTest
+testStartPreviewCarriesTotalsAndPage
+	| json |
+	json := (self move: #pureCompute to: 'GsMMTarget')
+		startPreviewToken: 'm6Tok' maxBytes: 100000.
+	[self assert: json includesSubstring: '"targetClass":"GsMMTarget"'.
+	 self assert: json includesSubstring: '"total":2'.
+	 self assert: json includesSubstring: '"movableCount":1'.
+	 self assert: json includesSubstring: '"changes":']
+		ensure: [GsMoveMethodRefactoring clearToken: 'm6Tok']
+%
+
+category: 'tests - apply'
+method: GsMoveMethodRefactoringTest
+testApplyRelocatesMethodAndRemovesFromSource
+	| json |
+	json := (self move: #pureCompute to: 'GsMMTarget') applyDeselected: #().
+
+	self assert: json includesSubstring: '"applied":2'.
+	self assert: (self targetFixture includesSelector: #pureCompute).
+	self deny: (self sourceFixture includesSelector: #pureCompute)
+%
+
+category: 'tests - apply'
+method: GsMoveMethodRefactoringTest
+testApplyDoesNotCommit
+	| before |
+	before := System needsCommit.
+	(self move: #pureCompute to: 'GsMMTarget') applyDeselected: #().
+
+	self assert: System needsCommit equals: before
+%
+
+category: 'tests - apply'
+method: GsMoveMethodRefactoringTest
+testDeselectingAddGuardsTheRemove
+	"Unticking the #methodAdd must NOT strand the method: the guarded remove is
+	 skipped because the target never received the method."
+	| ref cs addId json |
+	ref := self move: #pureCompute to: 'GsMMTarget'.
+	cs := ref changeSet.
+	addId := (self addChangeFor: #pureCompute in: cs) id.
+	json := ref applyDeselected: (Array with: addId).
+
+	self assert: (self sourceFixture includesSelector: #pureCompute).
+	self deny: (self targetFixture includesSelector: #pureCompute)
+%
+
+category: 'tests - apply'
+method: GsMoveMethodRefactoringTest
+testTokenRoundTripStartThenApply
+	| ref json before |
+	before := System needsCommit.
+	ref := self move: #pureCompute to: 'GsMMTarget'.
+	ref startPreviewToken: 'm6rt' maxBytes: 100000.
+	[json := GsMoveMethodRefactoring applyForToken: 'm6rt' deselected: #().
+	 self assert: json includesSubstring: '"applied":2'.
+	 self assert: (self targetFixture includesSelector: #pureCompute).
+	 self assert: System needsCommit equals: before]
+		ensure: [GsMoveMethodRefactoring clearToken: 'm6rt']
+%
+
+category: 'tests - apply'
+method: GsMoveMethodRefactoringTest
+testApplyForTokenOnAnExpiredSessionAnswersAnError
+	self assert: (GsMoveMethodRefactoring applyForToken: 'nope' deselected: #())
+		includesSubstring: 'expired'
+%
+
+category: 'tests - apply'
+method: GsMoveMethodRefactoringTest
+testPageForTokenOnAnExpiredSessionAnswersAnError
+	self assert: (GsMoveMethodRefactoring pageForToken: 'nope' from: 1 maxBytes: 100)
+		includesSubstring: 'expired'
+%
+
+category: 'asserting'
+method: GsPushDownMethodRefactoringTest
+assert: aString includesSubstring: aSubstring
+	self assert: (aString indexOfSubCollection: aSubstring) > 0
+%
+
+category: 'asserting'
+method: GsPushDownMethodRefactoringTest
+deny: aString includesSubstring: aSubstring
+	self assert: (aString indexOfSubCollection: aSubstring) = 0
+%
+
+category: 'fixture'
+method: GsPushDownMethodRefactoringTest
+baseFixture
+	^UserGlobals at: #GsPDBase
+%
+
+category: 'fixture'
+method: GsPushDownMethodRefactoringTest
+aFixture
+	^UserGlobals at: #GsPDA
+%
+
+category: 'fixture'
+method: GsPushDownMethodRefactoringTest
+bFixture
+	^UserGlobals at: #GsPDB
+%
+
+category: 'fixture'
+method: GsPushDownMethodRefactoringTest
+compile: aSource in: aClass
+	[aClass
+		compileMethod: aSource
+		dictionaries: System myUserProfile symbolList
+		category: 'fixture']
+		on: CompileWarning
+		do: [:ex | ex resume: nil]
+%
+
+category: 'fixture'
+method: GsPushDownMethodRefactoringTest
+pushSelectors: sels
+	"Push instance-side sels from GsPDBase down into its subclasses."
+	^GsPushDownMethodRefactoring
+		sourceClass: self baseFixture
+		selectors: sels
+		meta: false
+%
+
+category: 'fixture'
+method: GsPushDownMethodRefactoringTest
+push: aSelector
+	^self pushSelectors: (Array with: aSelector)
+%
+
+category: 'fixture'
+method: GsPushDownMethodRefactoringTest
+sourceIn: aClass for: aSelector
+	"The instance-side source of aSelector in aClass, or '' if absent."
+	^(aClass compiledMethodAt: aSelector environmentId: 0 otherwise: nil)
+		ifNil: [''] ifNotNil: [:m | m sourceString]
+%
+
+category: 'fixture'
+method: GsPushDownMethodRefactoringTest
+addChangeFor: aSelector in: aChangeSet
+	^aChangeSet changes
+		detect: [:c | c kind = #methodAdd and: [c selector = aSelector]]
+		ifNone: [nil]
+%
+
+category: 'fixture'
+method: GsPushDownMethodRefactoringTest
+addChangeFor: aSelector inClass: aName in: aChangeSet
+	^aChangeSet changes
+		detect: [:c | c kind = #methodAdd and: [c selector = aSelector and: [c className = aName]]]
+		ifNone: [nil]
+%
+
+category: 'fixture'
+method: GsPushDownMethodRefactoringTest
+removeChangeFor: aSelector in: aChangeSet
+	^aChangeSet changes
+		detect: [:c | c kind = #methodRemove and: [c selector = aSelector]]
+		ifNone: [nil]
+%
+
+category: 'fixture'
+method: GsPushDownMethodRefactoringTest
+addCountFor: aSelector in: aChangeSet
+	^(aChangeSet changes select: [:c | c kind = #methodAdd and: [c selector = aSelector]]) size
+%
+
+category: 'running'
+method: GsPushDownMethodRefactoringTest
+setUp
+	| base a b |
+	base := Object
+		subclass: 'GsPDBase'
+		instVarNames: #('state')
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	a := base
+		subclass: 'GsPDA'
+		instVarNames: #()
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	b := base
+		subclass: 'GsPDB'
+		instVarNames: #()
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	"--- base instance methods (candidates to push down) ---"
+	self compile: 'pureCompute ^ 40 + 2' in: base.
+	self compile: 'greet ^ ''hi''' in: base.
+	self compile: 'usesState ^ state' in: base.
+	self compile: 'callsSuper ^ super hash' in: base.
+	self compile: 'overriddenByA ^ ''base''' in: base.
+	self compile: 'overriddenByAll ^ ''base''' in: base.
+	"--- A overrides overriddenByA + overriddenByAll; B overrides only overriddenByAll ---"
+	self compile: 'overriddenByA ^ ''a''' in: a.
+	self compile: 'overriddenByAll ^ ''a''' in: a.
+	self compile: 'overriddenByAll ^ ''b''' in: b.
+	"--- class-side method to push down ---"
+	self compile: 'makeOne ^ self new' in: base class
+%
+
+category: 'running'
+method: GsPushDownMethodRefactoringTest
+tearDown
+	#('GsPDA' 'GsPDB' 'GsPDBase')
+		do: [:nm | UserGlobals removeKey: nm asSymbol ifAbsent: []]
+%
+
+category: 'tests - push'
+method: GsPushDownMethodRefactoringTest
+testPushesPureMethodStagesAddPerSubclassAndOneRemove
+	| ref cs |
+	ref := self push: #pureCompute.
+	cs := ref changeSet.
+
+	"two subclasses both lack it -> 2 adds + 1 remove"
+	self assert: cs size equals: 3.
+	self assert: (self addCountFor: #pureCompute in: cs) equals: 2.
+	self assert: (self addChangeFor: #pureCompute inClass: 'GsPDA' in: cs) notNil.
+	self assert: (self addChangeFor: #pureCompute inClass: 'GsPDB' in: cs) notNil.
+	self assert: (self removeChangeFor: #pureCompute in: cs) className equals: 'GsPDBase'.
+	self assert: (ref declineFor: #pureCompute) isNil
+%
+
+category: 'tests - push'
+method: GsPushDownMethodRefactoringTest
+testPushedAddPreservesSourceAndCategory
+	| add |
+	add := self addChangeFor: #pureCompute inClass: 'GsPDA' in: (self push: #pureCompute) changeSet.
+
+	self assert: add newSource includesSubstring: '40 + 2'.
+	self assert: add category equals: 'fixture'
+%
+
+category: 'tests - ivar'
+method: GsPushDownMethodRefactoringTest
+testIvarReaderPushesDown
+	| ref |
+	"#usesState reads 'state' on the base; subclasses inherit it -- movable."
+	ref := self push: #usesState.
+
+	self assert: (ref declineFor: #usesState) isNil.
+	self assert: (self addCountFor: #usesState in: ref changeSet) equals: 2
+%
+
+category: 'tests - decline'
+method: GsPushDownMethodRefactoringTest
+testNoSubclassesIsGlobalDecline
+	| ref |
+	"GsPDA is a leaf -- pushing down from it is impossible."
+	ref := GsPushDownMethodRefactoring sourceClass: self aFixture selectors: #(#overriddenByA) meta: false.
+
+	self assert: ref globalDecline notNil.
+	self assert: ref globalDecline includesSubstring: 'subclasses'.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - decline'
+method: GsPushDownMethodRefactoringTest
+testSuperSenderIsDeclined
+	| ref |
+	ref := self push: #callsSuper.
+
+	self assert: (ref declineFor: #callsSuper) notNil.
+	self assert: (ref declineFor: #callsSuper) includesSubstring: 'super'.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - overwrite'
+method: GsPushDownMethodRefactoringTest
+testEveryoneOverridesIsMovableAsOverwrites
+	"#overriddenByAll is overridden by BOTH subclasses -- no longer a decline; it stages an
+	 opt-in overwrite add for each, plus one remove."
+	| ref cs addA addB |
+	ref := self push: #overriddenByAll.
+	cs := ref changeSet.
+	addA := self addChangeFor: #overriddenByAll inClass: 'GsPDA' in: cs.
+	addB := self addChangeFor: #overriddenByAll inClass: 'GsPDB' in: cs.
+
+	self assert: (ref declineFor: #overriddenByAll) isNil.
+	self assert: cs size equals: 3.
+	self assert: (self addCountFor: #overriddenByAll in: cs) equals: 2.
+	self assert: addA warning notNil.
+	self assert: addB warning notNil.
+	self assert: (ref overwriteWarningFor: #overriddenByAll) notNil
+%
+
+category: 'tests - overwrite'
+method: GsPushDownMethodRefactoringTest
+testOverridingSubclassBecomesOverwriteRow
+	"#overriddenByA is overridden only by A -- B gets a plain add, A gets an opt-in
+	 overwrite (not a silent skip)."
+	| ref cs addA addB |
+	ref := self push: #overriddenByA.
+	cs := ref changeSet.
+	addA := self addChangeFor: #overriddenByA inClass: 'GsPDA' in: cs.
+	addB := self addChangeFor: #overriddenByA inClass: 'GsPDB' in: cs.
+
+	self assert: (ref declineFor: #overriddenByA) isNil.
+	self assert: cs size equals: 3.
+	self assert: (self addCountFor: #overriddenByA in: cs) equals: 2.
+	self assert: addA notNil.
+	self assert: addA warning notNil.
+	self assert: addB notNil.
+	self assert: addB warning isNil
+%
+
+category: 'tests - overwrite'
+method: GsPushDownMethodRefactoringTest
+testApplyingOverwriteReplacesSubclassOverride
+	"Opting in to overwrite A's override: A receives the base body, B receives it too, and
+	 the source is removed (every subclass now understands it on its own)."
+	| json |
+	json := (self push: #overriddenByA) applyDeselected: #().
+
+	self assert: json includesSubstring: '"applied":3'.
+	self assert: (self sourceIn: self aFixture for: #overriddenByA) includesSubstring: 'base'.
+	self assert: (self bFixture includesSelector: #overriddenByA).
+	self deny: (self baseFixture includesSelector: #overriddenByA)
+%
+
+category: 'tests - overwrite'
+method: GsPushDownMethodRefactoringTest
+testDeselectingOverwriteKeepsSubclassOverride
+	"Leaving A's overwrite un-ticked keeps A's own override; B still gets the copy and the
+	 source is removed (A already understands it via its override, B via the copy)."
+	| ref cs addAId |
+	ref := self push: #overriddenByA.
+	cs := ref changeSet.
+	addAId := (self addChangeFor: #overriddenByA inClass: 'GsPDA' in: cs) id.
+	ref applyDeselected: (Array with: addAId).
+
+	self deny: (self sourceIn: self aFixture for: #overriddenByA) includesSubstring: 'base'.
+	self assert: (self bFixture includesSelector: #overriddenByA).
+	self deny: (self baseFixture includesSelector: #overriddenByA)
+%
+
+category: 'tests - side'
+method: GsPushDownMethodRefactoringTest
+testClassSideMethodPushesDown
+	| ref cs |
+	ref := GsPushDownMethodRefactoring
+		sourceClass: self baseFixture
+		selectors: (Array with: #makeOne)
+		meta: true.
+	cs := ref changeSet.
+
+	self assert: cs size equals: 3.
+	self assert: (self addCountFor: #makeOne in: cs) equals: 2.
+	self assert: (self addChangeFor: #makeOne inClass: 'GsPDA' in: cs) isMeta.
+	self assert: (self removeChangeFor: #makeOne in: cs) isMeta
+%
+
+category: 'tests - multi'
+method: GsPushDownMethodRefactoringTest
+testMultiPushMovesMovableAndSkipsDeclined
+	| ref cs |
+	ref := self pushSelectors: #(#pureCompute #callsSuper #greet).
+	cs := ref changeSet.
+
+	"pureCompute + greet each push into 2 subclasses (2 adds + 1 remove each = 6);
+	 callsSuper is skipped"
+	self assert: cs size equals: 6.
+	self assert: (self addCountFor: #pureCompute in: cs) equals: 2.
+	self assert: (self addCountFor: #greet in: cs) equals: 2.
+	self assert: (self addChangeFor: #callsSuper in: cs) isNil.
+	self assert: (ref declineFor: #callsSuper) notNil
+%
+
+category: 'tests - preflight'
+method: GsPushDownMethodRefactoringTest
+testAnalysisPreflightReportsPerSelectorAndMovableCount
+	| json |
+	json := GsPushDownMethodRefactoring
+		analyzeForClass: self baseFixture
+		selectors: #(#pureCompute #callsSuper)
+		meta: false.
+
+	self assert: json includesSubstring: '"targetClass":null'.
+	self assert: json includesSubstring: '"movableCount":1'.
+	self assert: json includesSubstring: '"selector":"pureCompute"'.
+	self assert: json includesSubstring: '"selector":"callsSuper"'
+%
+
+category: 'tests - staging'
+method: GsPushDownMethodRefactoringTest
+testBuildingChangeSetCompilesNothingAndDoesNotCommit
+	| before |
+	before := System needsCommit.
+	(self push: #pureCompute) changeSet.
+
+	"base still has it; subclasses do not; nothing committed"
+	self assert: (self baseFixture includesSelector: #pureCompute).
+	self deny: (self aFixture includesSelector: #pureCompute).
+	self assert: System needsCommit equals: before
+%
+
+category: 'tests - preview'
+method: GsPushDownMethodRefactoringTest
+testPreviewJsonSerializesAddAndRemove
+	| json |
+	json := (self push: #pureCompute) previewJsonString.
+
+	self assert: json includesSubstring: 'methodAdd'.
+	self assert: json includesSubstring: 'methodRemove'
+%
+
+category: 'tests - preview'
+method: GsPushDownMethodRefactoringTest
+testStartPreviewCarriesTotalsAndPage
+	| json |
+	json := (self push: #pureCompute)
+		startPreviewToken: 'm8Tok' maxBytes: 100000.
+	[self assert: json includesSubstring: '"targetClass":null'.
+	 self assert: json includesSubstring: '"total":3'.
+	 self assert: json includesSubstring: '"movableCount":1'.
+	 self assert: json includesSubstring: '"changes":']
+		ensure: [GsPushDownMethodRefactoring clearToken: 'm8Tok']
+%
+
+category: 'tests - apply'
+method: GsPushDownMethodRefactoringTest
+testApplyRelocatesMethodIntoSubclassesAndRemovesFromSource
+	| json |
+	json := (self push: #pureCompute) applyDeselected: #().
+
+	self assert: json includesSubstring: '"applied":3'.
+	self assert: (self aFixture includesSelector: #pureCompute).
+	self assert: (self bFixture includesSelector: #pureCompute).
+	self deny: (self baseFixture includesSelector: #pureCompute)
+%
+
+category: 'tests - apply'
+method: GsPushDownMethodRefactoringTest
+testApplyDoesNotCommit
+	| before |
+	before := System needsCommit.
+	(self push: #pureCompute) applyDeselected: #().
+
+	self assert: System needsCommit equals: before
+%
+
+category: 'tests - apply'
+method: GsPushDownMethodRefactoringTest
+testDeselectingOneSubclassAddGuardsTheRemove
+	"Unticking one subclass's #methodAdd must NOT strand it: the guarded remove is
+	 skipped because not every subclass received the method, so the source keeps it."
+	| ref cs addBId |
+	ref := self push: #pureCompute.
+	cs := ref changeSet.
+	addBId := (self addChangeFor: #pureCompute inClass: 'GsPDB' in: cs) id.
+	ref applyDeselected: (Array with: addBId).
+
+	self assert: (self baseFixture includesSelector: #pureCompute).
+	self assert: (self aFixture includesSelector: #pureCompute).
+	self deny: (self bFixture includesSelector: #pureCompute)
+%
+
+category: 'tests - apply'
+method: GsPushDownMethodRefactoringTest
+testTokenRoundTripStartThenApply
+	| ref json before |
+	before := System needsCommit.
+	ref := self push: #pureCompute.
+	ref startPreviewToken: 'm8rt' maxBytes: 100000.
+	[json := GsPushDownMethodRefactoring applyForToken: 'm8rt' deselected: #().
+	 self assert: json includesSubstring: '"applied":3'.
+	 self assert: (self aFixture includesSelector: #pureCompute).
+	 self assert: System needsCommit equals: before]
+		ensure: [GsPushDownMethodRefactoring clearToken: 'm8rt']
+%
+
+category: 'tests - apply'
+method: GsPushDownMethodRefactoringTest
+testApplyForTokenOnAnExpiredSessionAnswersAnError
+	self assert: (GsPushDownMethodRefactoring applyForToken: 'nope' deselected: #())
+		includesSubstring: 'expired'
+%
+
+category: 'tests - apply'
+method: GsPushDownMethodRefactoringTest
+testPageForTokenOnAnExpiredSessionAnswersAnError
+	self assert: (GsPushDownMethodRefactoring pageForToken: 'nope' from: 1 maxBytes: 100)
+		includesSubstring: 'expired'
+%
+
+category: 'asserting'
+method: GsPushUpMethodRefactoringTest
+assert: aString includesSubstring: aSubstring
+	self assert: (aString indexOfSubCollection: aSubstring) > 0
+%
+
+category: 'asserting'
+method: GsPushUpMethodRefactoringTest
+deny: aString includesSubstring: aSubstring
+	self assert: (aString indexOfSubCollection: aSubstring) = 0
+%
+
+category: 'fixture'
+method: GsPushUpMethodRefactoringTest
+superFixture
+	^UserGlobals at: #GsPUSuper
+%
+
+category: 'fixture'
+method: GsPushUpMethodRefactoringTest
+subFixture
+	^UserGlobals at: #GsPUSub
+%
+
+category: 'fixture'
+method: GsPushUpMethodRefactoringTest
+compile: aSource in: aClass
+	[aClass
+		compileMethod: aSource
+		dictionaries: System myUserProfile symbolList
+		category: 'fixture']
+		on: CompileWarning
+		do: [:ex | ex resume: nil]
+%
+
+category: 'fixture'
+method: GsPushUpMethodRefactoringTest
+pushSelectors: sels
+	"Push instance-side sels from GsPUSub up to GsPUSuper."
+	^GsPushUpMethodRefactoring
+		sourceClass: self subFixture
+		selectors: sels
+		meta: false
+%
+
+category: 'fixture'
+method: GsPushUpMethodRefactoringTest
+push: aSelector
+	^self pushSelectors: (Array with: aSelector)
+%
+
+category: 'fixture'
+method: GsPushUpMethodRefactoringTest
+sourceIn: aClass for: aSelector
+	"The instance-side source of aSelector in aClass, or '' if absent."
+	^(aClass compiledMethodAt: aSelector environmentId: 0 otherwise: nil)
+		ifNil: [''] ifNotNil: [:m | m sourceString]
+%
+
+category: 'fixture'
+method: GsPushUpMethodRefactoringTest
+addChangeFor: aSelector in: aChangeSet
+	^aChangeSet changes
+		detect: [:c | c kind = #methodAdd and: [c selector = aSelector]]
+		ifNone: [nil]
+%
+
+category: 'fixture'
+method: GsPushUpMethodRefactoringTest
+removeChangeFor: aSelector in: aChangeSet
+	^aChangeSet changes
+		detect: [:c | c kind = #methodRemove and: [c selector = aSelector]]
+		ifNone: [nil]
+%
+
+category: 'running'
+method: GsPushUpMethodRefactoringTest
+setUp
+	| sup sub |
+	sup := Object
+		subclass: 'GsPUSuper'
+		instVarNames: #('shared')
+		classVars: #('SharedCVar')
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	sub := sup
+		subclass: 'GsPUSub'
+		instVarNames: #('own')
+		classVars: #('SubOnlyCVar')
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	"--- subclass instance methods (candidates to push up) ---"
+	self compile: 'pureCompute ^ 40 + 2' in: sub.
+	self compile: 'greet ^ ''hi''' in: sub.
+	self compile: 'usesShared ^ shared' in: sub.
+	self compile: 'usesOwn ^ own' in: sub.
+	self compile: 'usesSharedCVar ^ SharedCVar' in: sub.
+	self compile: 'usesSubCVar ^ SubOnlyCVar' in: sub.
+	self compile: 'callsSuper ^ super hash' in: sub.
+	self compile: 'existing ^ 2' in: sub.
+	self compile: 'quoteAndBackslash ^ ''a"b\c''' in: sub.
+	"--- superclass already implements #existing (collision) ---"
+	self compile: 'existing ^ 1' in: sup.
+	"--- class-side method to push up ---"
+	self compile: 'buildOne ^ self new' in: sub class
+%
+
+category: 'running'
+method: GsPushUpMethodRefactoringTest
+tearDown
+	#('GsPUSub' 'GsPUSuper')
+		do: [:nm | UserGlobals removeKey: nm asSymbol ifAbsent: []]
+%
+
+category: 'tests - push'
+method: GsPushUpMethodRefactoringTest
+testPushesPureMethodStagesAddAndRemove
+	| ref cs add remove |
+	ref := self push: #pureCompute.
+	cs := ref changeSet.
+	add := self addChangeFor: #pureCompute in: cs.
+	remove := self removeChangeFor: #pureCompute in: cs.
+
+	self assert: cs size equals: 2.
+	self assert: add notNil.
+	self assert: add className equals: 'GsPUSuper'.
+	self assert: add newSource includesSubstring: '40 + 2'.
+	self assert: remove notNil.
+	self assert: remove className equals: 'GsPUSub'.
+	self assert: (ref declineFor: #pureCompute) isNil
+%
+
+category: 'tests - push'
+method: GsPushUpMethodRefactoringTest
+testPushedAddPreservesCategory
+	| add |
+	add := self addChangeFor: #pureCompute in: (self push: #pureCompute) changeSet.
+
+	self assert: add category equals: 'fixture'
+%
+
+category: 'tests - push'
+method: GsPushUpMethodRefactoringTest
+testTargetSuperclassResolved
+	self assert: (self push: #pureCompute) superClass name asString equals: 'GsPUSuper'
+%
+
+category: 'tests - decline'
+method: GsPushUpMethodRefactoringTest
+testNoSuperclassIsGlobalDecline
+	| ref |
+	"Object has no superclass; pushing up from it is impossible."
+	ref := GsPushUpMethodRefactoring sourceClass: Object selectors: #(#hash) meta: false.
+
+	self assert: ref globalDecline notNil.
+	self assert: ref globalDecline includesSubstring: 'superclass'.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - ivar'
+method: GsPushUpMethodRefactoringTest
+testSharedClassVarReaderPushesUp
+	| ref |
+	"#usesSharedCVar reads SharedCVar, declared on the superclass -- movable."
+	ref := self push: #usesSharedCVar.
+
+	self assert: (ref declineFor: #usesSharedCVar) isNil.
+	self assert: ref changeSet size equals: 2
+%
+
+category: 'tests - ivar'
+method: GsPushUpMethodRefactoringTest
+testSubclassOnlyClassVarReaderDeclined
+	| ref |
+	"#usesSubCVar reads SubOnlyCVar, declared only on the subclass -- would not compile on
+	 the superclass, so it is a hard decline (not an overwrite)."
+	ref := self push: #usesSubCVar.
+
+	self assert: (ref declineFor: #usesSubCVar) notNil.
+	self assert: (ref declineFor: #usesSubCVar) includesSubstring: 'class/pool variable'.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - overwrite'
+method: GsPushUpMethodRefactoringTest
+testCollisionIsMovableAsOverwrite
+	"The superclass already defines #existing -- pushing up is NOT declined; it stages an
+	 opt-in overwrite add carrying the superclass's old body + a data-loss warning."
+	| ref cs add |
+	ref := self push: #existing.
+	cs := ref changeSet.
+	add := self addChangeFor: #existing in: cs.
+
+	self assert: (ref declineFor: #existing) isNil.
+	self assert: cs size equals: 2.
+	self assert: add notNil.
+	self assert: add warning notNil.
+	self assert: add warning includesSubstring: 'overwrites'.
+	self assert: add oldSource includesSubstring: '1'.
+	self assert: add newSource includesSubstring: '2'.
+	self assert: (ref overwriteWarningFor: #existing) notNil
+%
+
+category: 'tests - overwrite'
+method: GsPushUpMethodRefactoringTest
+testApplyingOverwriteReplacesSuperclassMethod
+	"Applying the overwrite compiles the pushed body onto the superclass (replacing its old
+	 definition) and removes the source."
+	| json |
+	json := (self push: #existing) applyDeselected: #().
+
+	self assert: json includesSubstring: '"applied":2'.
+	self assert: (self superFixture includesSelector: #existing).
+	self assert: (self sourceIn: self superFixture for: #existing) includesSubstring: '2'.
+	self deny: (self subFixture includesSelector: #existing)
+%
+
+category: 'tests - overwrite'
+method: GsPushUpMethodRefactoringTest
+testDeselectingOverwriteDoesNotStripSource
+	"Regression: un-ticking the overwrite add must NOT remove the source. The superclass
+	 already defines the selector, so a bare includesSelector: guard would wrongly fire the
+	 remove and lose the subclass version. The applied-add guard prevents that."
+	| ref cs addId |
+	ref := self push: #existing.
+	cs := ref changeSet.
+	addId := (self addChangeFor: #existing in: cs) id.
+	ref applyDeselected: (Array with: addId).
+
+	self assert: (self subFixture includesSelector: #existing).
+	self assert: (self superFixture includesSelector: #existing).
+	self assert: (self sourceIn: self superFixture for: #existing) includesSubstring: '1'
+%
+
+category: 'tests - decline'
+method: GsPushUpMethodRefactoringTest
+testSuperSenderIsDeclined
+	| ref |
+	ref := self push: #callsSuper.
+
+	self assert: (ref declineFor: #callsSuper) notNil.
+	self assert: (ref declineFor: #callsSuper) includesSubstring: 'super'.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - ivar'
+method: GsPushUpMethodRefactoringTest
+testSharedIvarReaderPushesUp
+	| ref |
+	"#usesShared reads 'shared', which the superclass declares -- movable."
+	ref := self push: #usesShared.
+
+	self assert: (ref declineFor: #usesShared) isNil.
+	self assert: ref changeSet size equals: 2
+%
+
+category: 'tests - ivar'
+method: GsPushUpMethodRefactoringTest
+testOwnIvarReaderDeclined
+	| ref |
+	"#usesOwn reads 'own', declared only on the subclass -- cannot push up."
+	ref := self push: #usesOwn.
+
+	self assert: (ref declineFor: #usesOwn) notNil.
+	self assert: (ref declineFor: #usesOwn) includesSubstring: 'instance variable'.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - side'
+method: GsPushUpMethodRefactoringTest
+testClassSideMethodPushesUp
+	| ref cs add remove |
+	ref := GsPushUpMethodRefactoring
+		sourceClass: self subFixture
+		selectors: (Array with: #buildOne)
+		meta: true.
+	cs := ref changeSet.
+	add := self addChangeFor: #buildOne in: cs.
+	remove := self removeChangeFor: #buildOne in: cs.
+
+	self assert: cs size equals: 2.
+	self assert: add isMeta.
+	self assert: add className equals: 'GsPUSuper'.
+	self assert: remove isMeta.
+	self assert: remove className equals: 'GsPUSub'
+%
+
+category: 'tests - multi'
+method: GsPushUpMethodRefactoringTest
+testMultiPushMovesMovableAndSkipsDeclined
+	| ref cs |
+	ref := self pushSelectors: #(#pureCompute #callsSuper #greet).
+	cs := ref changeSet.
+
+	"pureCompute + greet move (2 changes each); callsSuper is skipped"
+	self assert: cs size equals: 4.
+	self assert: (self addChangeFor: #pureCompute in: cs) notNil.
+	self assert: (self addChangeFor: #greet in: cs) notNil.
+	self assert: (self addChangeFor: #callsSuper in: cs) isNil.
+	self assert: (ref declineFor: #callsSuper) notNil
+%
+
+category: 'tests - preflight'
+method: GsPushUpMethodRefactoringTest
+testAnalysisPreflightReportsTargetPerSelectorAndMovableCount
+	| json |
+	json := GsPushUpMethodRefactoring
+		analyzeForClass: self subFixture
+		selectors: #(#pureCompute #callsSuper)
+		meta: false.
+
+	self assert: json includesSubstring: '"targetClass":"GsPUSuper"'.
+	self assert: json includesSubstring: '"movableCount":1'.
+	self assert: json includesSubstring: '"selector":"pureCompute"'.
+	self assert: json includesSubstring: '"selector":"callsSuper"'
+%
+
+category: 'tests - staging'
+method: GsPushUpMethodRefactoringTest
+testBuildingChangeSetCompilesNothingAndDoesNotCommit
+	| before |
+	before := System needsCommit.
+	(self push: #pureCompute) changeSet.
+
+	"subclass still has it; superclass does not; nothing committed"
+	self assert: (self subFixture includesSelector: #pureCompute).
+	self deny: (self superFixture includesSelector: #pureCompute).
+	self assert: System needsCommit equals: before
+%
+
+category: 'tests - preview'
+method: GsPushUpMethodRefactoringTest
+testPreviewJsonSerializesAddAndRemove
+	| json |
+	json := (self push: #pureCompute) previewJsonString.
+
+	self assert: json includesSubstring: 'methodAdd'.
+	self assert: json includesSubstring: 'methodRemove'
+%
+
+category: 'tests - preview'
+method: GsPushUpMethodRefactoringTest
+testPreviewJsonEscapesQuoteAndBackslash
+	"A source containing a double-quote and a backslash must be JSON-escaped by the engine's
+	 jsonEscape: (backslash-quote and backslash-backslash), or the client JSON.parse chokes."
+	| json |
+	json := (self push: #quoteAndBackslash) previewJsonString.
+
+	self assert: json includesSubstring: '\"'.
+	self assert: json includesSubstring: '\\'
+%
+
+category: 'tests - preview'
+method: GsPushUpMethodRefactoringTest
+testPaginationSpansMultiplePages
+	"With a tiny byte budget the preview pages one change at a time: the first page reports
+	 done:false + the next offset, and a later page reports done:true. Exercises the engine's
+	 real byte-bounded slicing, not just a single all-in-one page."
+	| ref first |
+	ref := self pushSelectors: #(#pureCompute #greet #usesShared).
+	ref startPreviewToken: 'm7pg' maxBytes: 1.
+	[first := GsPushUpMethodRefactoring pageForToken: 'm7pg' from: 1 maxBytes: 1.
+	 self assert: first includesSubstring: '"done":false'.
+	 self assert: first includesSubstring: '"nextOffset":2'.
+	 self assert: (GsPushUpMethodRefactoring pageForToken: 'm7pg' from: 6 maxBytes: 1)
+		includesSubstring: '"done":true']
+		ensure: [GsPushUpMethodRefactoring clearToken: 'm7pg']
+%
+
+category: 'tests - creation'
+method: GsPushUpMethodRefactoringTest
+testEnvironmentCtorSetsEnvironment
+	"The environment:sourceClass:selectors:meta: creation path stores the supplied
+	 environment (used for symbol-dict / multi-environment scope) and still builds."
+	| env ref |
+	env := GsRefactoringEnvironment new.
+	ref := GsPushUpMethodRefactoring
+		environment: env
+		sourceClass: self subFixture
+		selectors: #(#pureCompute)
+		meta: false.
+
+	self assert: ref environment == env.
+	self assert: ref changeSet size equals: 2
+%
+
+category: 'tests - preview'
+method: GsPushUpMethodRefactoringTest
+testStartPreviewCarriesTotalsAndPage
+	| json |
+	json := (self push: #pureCompute)
+		startPreviewToken: 'm7Tok' maxBytes: 100000.
+	[self assert: json includesSubstring: '"targetClass":"GsPUSuper"'.
+	 self assert: json includesSubstring: '"total":2'.
+	 self assert: json includesSubstring: '"movableCount":1'.
+	 self assert: json includesSubstring: '"changes":']
+		ensure: [GsPushUpMethodRefactoring clearToken: 'm7Tok']
+%
+
+category: 'tests - apply'
+method: GsPushUpMethodRefactoringTest
+testApplyRelocatesMethodAndRemovesFromSource
+	| json |
+	json := (self push: #pureCompute) applyDeselected: #().
+
+	self assert: json includesSubstring: '"applied":2'.
+	self assert: (self superFixture includesSelector: #pureCompute).
+	self deny: (self subFixture includesSelector: #pureCompute)
+%
+
+category: 'tests - apply'
+method: GsPushUpMethodRefactoringTest
+testApplyDoesNotCommit
+	| before |
+	before := System needsCommit.
+	(self push: #pureCompute) applyDeselected: #().
+
+	self assert: System needsCommit equals: before
+%
+
+category: 'tests - apply'
+method: GsPushUpMethodRefactoringTest
+testDeselectingAddGuardsTheRemove
+	"Unticking the #methodAdd must NOT strand the method: the guarded remove is
+	 skipped because the superclass never received the method."
+	| ref cs addId |
+	ref := self push: #pureCompute.
+	cs := ref changeSet.
+	addId := (self addChangeFor: #pureCompute in: cs) id.
+	ref applyDeselected: (Array with: addId).
+
+	self assert: (self subFixture includesSelector: #pureCompute).
+	self deny: (self superFixture includesSelector: #pureCompute)
+%
+
+category: 'tests - apply'
+method: GsPushUpMethodRefactoringTest
+testTokenRoundTripStartThenApply
+	| ref json before |
+	before := System needsCommit.
+	ref := self push: #pureCompute.
+	ref startPreviewToken: 'm7rt' maxBytes: 100000.
+	[json := GsPushUpMethodRefactoring applyForToken: 'm7rt' deselected: #().
+	 self assert: json includesSubstring: '"applied":2'.
+	 self assert: (self superFixture includesSelector: #pureCompute).
+	 self assert: System needsCommit equals: before]
+		ensure: [GsPushUpMethodRefactoring clearToken: 'm7rt']
+%
+
+category: 'tests - apply'
+method: GsPushUpMethodRefactoringTest
+testApplyForTokenOnAnExpiredSessionAnswersAnError
+	self assert: (GsPushUpMethodRefactoring applyForToken: 'nope' deselected: #())
+		includesSubstring: 'expired'
+%
+
+category: 'tests - apply'
+method: GsPushUpMethodRefactoringTest
+testPageForTokenOnAnExpiredSessionAnswersAnError
+	self assert: (GsPushUpMethodRefactoring pageForToken: 'nope' from: 1 maxBytes: 100)
 		includesSubstring: 'expired'
 %
 
