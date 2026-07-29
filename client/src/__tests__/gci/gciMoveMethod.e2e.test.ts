@@ -121,7 +121,9 @@ describe('move method (gci e2e)', () => {
       expect(includesSelector(TARGET, 'gciPure')).toBe(true);
       expect(includesSelector(SOURCE, 'gciPure')).toBe(false);
     } finally {
-      exec('System abortTransaction');
+      // Evaluate to a String: executeFetchString sends #encodeAsUTF8 to the result, which
+      // the System class (the value of `System abortTransaction`) does not understand.
+      exec("System abortTransaction. 'ok'");
     }
   });
 
@@ -150,7 +152,9 @@ describe('move method (gci e2e)', () => {
       expect(includesSelector(SOURCE, 'gciSuper')).toBe(true);
       expect(includesSelector(TARGET, 'gciSuper')).toBe(false);
     } finally {
-      exec('System abortTransaction');
+      // Evaluate to a String: executeFetchString sends #encodeAsUTF8 to the result, which
+      // the System class (the value of `System abortTransaction`) does not understand.
+      exec("System abortTransaction. 'ok'");
     }
   });
 });

@@ -970,7 +970,7 @@ export function registerTools(rawServer: McpServer, session: McpSession): void {
         // be far more harmful than reporting slightly stale state.
         const code = `| ws viewState |
 viewState := System needsCommit
-  ifTrue: ['stale (uncommitted changes — call abort or commit to refresh)']
+  ifTrue: ['stale (uncommitted changes - call abort or commit to refresh)']
   ifFalse: [System abortTransaction. 'refreshed'].
 ws := WriteStream on: String new.
 ws nextPutAll: 'User: '; nextPutAll: System myUserProfile userId asString; lf.
