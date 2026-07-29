@@ -4,14 +4,13 @@ import {
   parseStartPreview,
   parsePage,
   parseApplyResult,
-  parseMoveTargets,
   instVarChangeLabel,
 } from '../instVarRefactorPreview';
 
 describe('instance-variable refactor preview parsing', () => {
   it('parses a viable add analysis', () => {
     const a = parseAnalysis(
-      '{"decline":null,"operation":"add","sourceClass":"Foo","targetClass":null,"affectedCount":3,"willNotRecompileCount":0}',
+      '{"decline":null,"operation":"add","sourceClass":"Foo","affectedCount":3,"willNotRecompileCount":0}',
     );
     expect(a.decline).toBeNull();
     expect(a.operation).toBe('add');
@@ -22,17 +21,16 @@ describe('instance-variable refactor preview parsing', () => {
 
   it('parses a declined analysis', () => {
     const a = parseAnalysis(
-      '{"decline":"Cannot add count: already an instance variable.","operation":"add","sourceClass":"Foo","targetClass":null,"affectedCount":0,"willNotRecompileCount":0}',
+      '{"decline":"Cannot add count: already an instance variable.","operation":"add","sourceClass":"Foo","affectedCount":0,"willNotRecompileCount":0}',
     );
     expect(a.decline).toMatch(/already an instance variable/);
   });
 
-  it('parses a move analysis with a target class', () => {
+  it('parses a remove analysis reporting methods that will not recompile', () => {
     const a = parseAnalysis(
-      '{"decline":null,"operation":"move","sourceClass":"Foo","targetClass":"Bar","affectedCount":4,"willNotRecompileCount":2}',
+      '{"decline":null,"operation":"remove","sourceClass":"Foo","affectedCount":4,"willNotRecompileCount":2}',
     );
-    expect(a.operation).toBe('move');
-    expect(a.targetClass).toBe('Bar');
+    expect(a.operation).toBe('remove');
     expect(a.willNotRecompileCount).toBe(2);
   });
 
@@ -42,7 +40,6 @@ describe('instance-variable refactor preview parsing', () => {
         token: 'tok1',
         total: 2,
         sourceClass: 'Foo',
-        targetClass: null,
         outOfScope: {
           decline: null,
           willNotRecompile: [
@@ -116,15 +113,6 @@ describe('instance-variable refactor preview parsing', () => {
     );
     expect(r.failed[0].error).toBe('boom');
     expect(r.committed).toBe(false);
-  });
-
-  it('parses move targets (super + subclasses)', () => {
-    const t = parseMoveTargets('{"superclass":"Object","subclasses":["Sub1","Sub2"]}');
-    expect(t.superclass).toBe('Object');
-    expect(t.subclasses).toEqual(['Sub1', 'Sub2']);
-    const none = parseMoveTargets('{"superclass":null,"subclasses":[]}');
-    expect(none.superclass).toBeNull();
-    expect(none.subclasses).toEqual([]);
   });
 
   it('labels edited vs reparented changes', () => {

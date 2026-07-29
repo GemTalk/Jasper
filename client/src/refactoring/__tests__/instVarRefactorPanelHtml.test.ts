@@ -78,17 +78,10 @@ describe('instance-variable refactor panel HTML', () => {
     expect(html({ willNotRecompile: [] })).not.toContain('will NOT recompile');
   });
 
-  it('renders the editable class-options group, pre-checking current options', () => {
+  it('does not surface the class-options group for editing', () => {
     const h = html();
-    expect(h).toContain('Class options for');
-    expect(h).toContain('value="logCreation" checked');
-    expect(h).toContain('value="modifiable"'); // present but not checked
-    expect(h).not.toContain('value="modifiable" checked');
-  });
-
-  it('includes a current option not in the vocabulary so nothing is silently lost', () => {
-    const h = html({ currentOptions: ['weirdLegacyOption'], optionVocabulary: ['logCreation'] });
-    expect(h).toContain('value="weirdLegacyOption" checked');
+    expect(h).not.toContain('Class options for');
+    expect(h).not.toContain('class="opt"');
   });
 
   it('renders migrate + delete-history commit controls with the commit warning', () => {

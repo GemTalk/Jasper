@@ -50,7 +50,6 @@ const start: StartInstVarPreview = {
   token: 'tok',
   total: 2,
   sourceClass: 'Foo',
-  targetClass: null,
   outOfScope: {
     decline: null,
     willNotRecompile: [],

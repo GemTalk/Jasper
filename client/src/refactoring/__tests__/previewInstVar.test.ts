@@ -5,7 +5,6 @@ import {
   pageInstVarPreview,
   applyInstVar,
   clearInstVarPreview,
-  getMoveTargets,
 } from '../queries/previewInstVar';
 
 // The async executor records the code it is handed so we can assert the generated
@@ -45,14 +44,6 @@ describe('instance-variable refactor query builders', () => {
     expect(r.last()).toContain("startPreviewToken: 'tok' maxBytes: 1000");
   });
 
-  it('builds a move expression resolving BOTH source and target class', async () => {
-    const r = recorder();
-    await analyzeInstVar(r.exec, 'move', 'Foo', 'count', undefined, 'Bar');
-    expect(r.last()).toContain('moveInstVar:');
-    expect(r.last()).toContain('toClass:');
-    expect(r.last()).toContain("objectNamed: #'Bar'");
-  });
-
   it('pages by token', async () => {
     const r = recorder();
     await pageInstVarPreview(r.exec, 'tok', 5, 2048);
@@ -83,15 +74,6 @@ describe('instance-variable refactor query builders', () => {
     const exec = vi.fn((code: string) => code);
     clearInstVarPreview(exec, 'tok');
     expect(exec).toHaveBeenCalledWith(expect.stringContaining("clearToken: 'tok'"));
-  });
-
-  it('builds a move-targets query returning super/subclasses', () => {
-    const exec = vi.fn((code: string) => code);
-    getMoveTargets(exec, 'Foo', 2);
-    const code = exec.mock.calls[0][0];
-    expect(code).toContain('superclass');
-    expect(code).toContain('subclasses');
-    expect(code).toContain('at: 2');
   });
 
   it('escapes a quote in the variable name', async () => {

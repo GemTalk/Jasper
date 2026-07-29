@@ -1,15 +1,17 @@
 /**
- * Pure HTML rendering for the add / remove / move instance-variable (V1 + V4) preview
+ * Pure HTML rendering for the add / remove instance-variable (V1) preview
  * panel. Every row is a CORE change — a `classDefinitionEdit` on an edited class or a
  * `classReparent` on an affected descendant — rendered with a checked, DISABLED
  * checkbox: the change is all-or-nothing, so the preview is confirm-or-cancel.
  *
- * Beyond the diff list it renders three things the rest of the family does not:
+ * Beyond the diff list it renders two things the rest of the family does not:
  *   - a prominent WILL-NOT-RECOMPILE warning listing every method that references the
  *     removed/moved variable and will be dropped;
- *   - an editable CLASS OPTIONS group (the class is recompiled, so its options must be
- *     visible and adjustable — pre-checked from the class's current options);
  *   - MIGRATE INSTANCES / DELETE HISTORY checkboxes, each flagged as committing.
+ *
+ * The acted-on class's compile options are preserved across the new version server-side
+ * (apply sends nil to keep the class's current options); they are intentionally not
+ * surfaced for editing here.
  *
  * Kept free of any `vscode` dependency so it unit-tests directly. Uses
  * instVarRefactorPanelView.js for the DOM behaviour.
@@ -87,28 +89,6 @@ function renderWillNotRecompile(oos: InstVarOutOfScope): string {
   </div>`;
 }
 
-function renderOptions(oos: InstVarOutOfScope): string {
-  const cls = oos.actedOnClass ?? 'the class';
-  // Show the full known vocabulary plus any current option not in it (so nothing the
-  // class already has is silently unrepresentable), each pre-checked when current.
-  const current = new Set(oos.currentOptions);
-  const all = [...oos.optionVocabulary];
-  for (const c of oos.currentOptions) if (!all.includes(c)) all.push(c);
-  if (all.length === 0) return '';
-  const boxes = all
-    .map((opt) => {
-      const checked = current.has(opt) ? ' checked' : '';
-      return `<label class="opt-item"><input type="checkbox" class="opt" value="${escapeHtml(
-        opt,
-      )}"${checked}> ${escapeHtml(opt)}</label>`;
-    })
-    .join('');
-  return `<details class="options" open>
-    <summary>Class options for <code>${escapeHtml(cls)}</code> (recompiled)</summary>
-    <div class="opt-grid">${boxes}</div>
-  </details>`;
-}
-
 function renderCommitControls(oos: InstVarOutOfScope): string {
   const note = oos.note
     ? `<div class="commit-note">${escapeHtml(oos.note)}</div>`
@@ -160,7 +140,7 @@ export function renderInstVarPanelHtml(opts: InstVarPanelHtmlOptions): string {
       display: flex; align-items: center; justify-content: space-between; gap: 12px;
     }
     .title { font-size: 1.1em; }
-    .title code, .options code {
+    .title code {
       font-family: var(--vscode-editor-font-family, monospace);
       background: var(--vscode-textCodeBlock-background, rgba(127,127,127,0.15));
       padding: 1px 5px; border-radius: 3px;
@@ -200,17 +180,12 @@ export function renderInstVarPanelHtml(opts: InstVarPanelHtmlOptions): string {
     .warn-head { margin-bottom: 4px; font-weight: 600; }
     .warn-box ul { margin: 0; padding-left: 20px; }
     .warn-box code { font-family: var(--vscode-editor-font-family, monospace); }
-    .options, .commit-box {
+    .commit-box {
       margin: 8px 16px 0; padding: 8px 12px;
       border: 1px solid var(--vscode-panel-border, rgba(127,127,127,0.25));
       border-radius: 4px;
     }
-    .options summary { cursor: pointer; user-select: none; }
-    .opt-grid {
-      display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-      gap: 2px 12px; margin-top: 8px;
-    }
-    .opt-item, .commit-item { display: flex; align-items: center; gap: 6px; }
+    .commit-item { display: flex; align-items: center; gap: 6px; }
     .commit-item { margin-top: 6px; }
     .commit-note { opacity: 0.85; margin-bottom: 4px; }
     .warn-tag { color: var(--vscode-inputValidation-warningBorder, #c88c00); font-size: 0.85em; }
@@ -261,7 +236,6 @@ export function renderInstVarPanelHtml(opts: InstVarPanelHtmlOptions): string {
   </header>
   ${renderDeclineBanner(outOfScope)}
   ${renderWillNotRecompile(outOfScope)}
-  ${renderOptions(outOfScope)}
   ${renderCommitControls(outOfScope)}
   <div class="summary">
     ${total} change${total === 1 ? '' : 's'}

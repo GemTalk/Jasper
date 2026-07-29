@@ -1,8 +1,8 @@
 /**
- * The paginated add / remove / move instance-variable (V1 + V4) preview panel. Shows
- * every staged class change (a definition edit or a reparent) as a required row, a
- * prominent list of methods that will not recompile, an editable class-options group,
- * and migrate / delete-history checkboxes. Fetches further pages on demand and applies
+ * The paginated add / remove instance-variable (V1) preview panel. Shows every staged
+ * class change (a definition edit or a reparent) as a required row, a prominent list of
+ * methods that will not recompile, and migrate / delete-history checkboxes. Fetches
+ * further pages on demand and applies
  * server-side. Applying with neither migrate nor delete-history does NOT commit; with
  * either, it commits — so the host confirms first. Resolves with the apply result, or
  * undefined if cancelled/closed. UI-only: the caller supplies the handlers.

@@ -15,7 +15,6 @@ interface PanelApi {
     doc: Document,
     vscode: { postMessage: (m: unknown) => void },
   ): {
-    chosenOptions: () => string[];
     appendChanges: (html: string, done: boolean) => void;
   };
 }
@@ -60,30 +59,29 @@ function mount(done = true) {
 }
 
 describe('instance-variable refactor panel view', () => {
-  it('apply reports the checked class options and both commit flags off by default', () => {
+  it('apply keeps the class options (sends null) with both commit flags off by default', () => {
     const { vscode } = mount();
     (document.getElementById('apply') as HTMLButtonElement).click();
     expect(vscode.postMessage).toHaveBeenCalledWith({
       command: 'apply',
       deselected: [],
-      options: ['logCreation'],
+      options: null,
       migrate: false,
       deleteHistory: false,
     });
   });
 
-  it('apply reflects toggled options and the migrate/delete-history checkboxes', () => {
+  it('apply reflects the migrate and delete-history checkboxes', () => {
     const { vscode } = mount();
-    (document.querySelector('input.opt[value="modifiable"]') as HTMLInputElement).checked = true;
     (document.getElementById('migrate') as HTMLInputElement).checked = true;
     (document.getElementById('deleteHistory') as HTMLInputElement).checked = true;
     (document.getElementById('apply') as HTMLButtonElement).click();
     const msg = vscode.postMessage.mock.calls[0][0] as {
-      options: string[];
+      options: string[] | null;
       migrate: boolean;
       deleteHistory: boolean;
     };
-    expect(msg.options.sort()).toEqual(['logCreation', 'modifiable']);
+    expect(msg.options).toBeNull();
     expect(msg.migrate).toBe(true);
     expect(msg.deleteHistory).toBe(true);
   });

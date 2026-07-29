@@ -1,14 +1,14 @@
 /**
- * The add / remove / move instance-variable (V1 + V4) orchestration, driven from the
- * GemStone Explorer. Runs a server-side pre-flight (viable? how many methods will not
- * recompile?), previews the change set (a class-definition edit per edited class + a
- * reparent per affected descendant), and applies it server-side. The structural change
- * never commits; migrating instances / deleting history (chosen in the panel) DO commit,
- * and the panel confirms before either.
+ * The add / remove instance-variable (V1) orchestration, driven from the GemStone
+ * Explorer. Runs a server-side pre-flight (viable? how many methods will not recompile?),
+ * previews the change set (a class-definition edit per edited class + a reparent per
+ * affected descendant), and applies it server-side. The structural change never commits;
+ * migrating instances / deleting history (chosen in the panel) DO commit, and the panel
+ * confirms before either.
  *
- * The caller resolves the target class (for a move) and the new name (for an add) before
- * calling in — this module just previews and applies a fully-specified operation, and
- * reports the outcome so the caller can refresh/reveal.
+ * The caller resolves the new name (for an add) before calling in — this module just
+ * previews and applies a fully-specified operation, and reports the outcome so the caller
+ * can refresh/reveal.
  */
 import * as vscode from 'vscode';
 import { ActiveSession } from '../sessionManager';
@@ -28,13 +28,11 @@ import { logInfo } from '../gciLog';
 export interface InstVarRefactorRequest {
   session: ActiveSession;
   op: InstVarOp;
-  /** The class the variable is (or will be) declared in — the source for a move. */
+  /** The class the variable is (or will be) declared in. */
   className: string;
   ivarName: string;
-  /** Dict scope for the source-class lookup (1-based SymbolList index or name). */
+  /** Dict scope for the class lookup (1-based SymbolList index or name). */
   dict?: number | string;
-  /** The move target class name (op === 'move' only). */
-  targetName?: string;
 }
 
 export interface InstVarRefactorOutcome {
@@ -46,8 +44,7 @@ export interface InstVarRefactorOutcome {
 
 function titleFor(req: InstVarRefactorRequest): string {
   if (req.op === 'add') return `Add ${req.ivarName} to ${req.className}`;
-  if (req.op === 'remove') return `Remove ${req.ivarName} from ${req.className}`;
-  return `Move ${req.ivarName} from ${req.className} to ${req.targetName ?? '?'}`;
+  return `Remove ${req.ivarName} from ${req.className}`;
 }
 
 /** Preview + apply a fully-specified instance-variable operation. Answers the outcome
@@ -55,10 +52,10 @@ function titleFor(req: InstVarRefactorRequest): string {
 export async function runInstVarRefactor(
   req: InstVarRefactorRequest,
 ): Promise<InstVarRefactorOutcome | undefined> {
-  const { session, op, className, ivarName, dict, targetName } = req;
-  logInfo(`[instVar] ${op} ${ivarName} on ${className}${targetName ? ` -> ${targetName}` : ''}`);
+  const { session, op, className, ivarName, dict } = req;
+  logInfo(`[instVar] ${op} ${ivarName} on ${className}`);
 
-  const verb = op === 'add' ? 'Adding' : op === 'remove' ? 'Removing' : 'Moving';
+  const verb = op === 'add' ? 'Adding' : 'Removing';
   if (!(await ensureRbSupport(session, `${verb} an instance variable`))) {
     logInfo('[instVar] refactoring engine unavailable; user declined install');
     return undefined;
@@ -67,9 +64,7 @@ export async function runInstVarRefactor(
   // Pre-flight: refuse a hard decline before opening the preview.
   let analysis;
   try {
-    analysis = parseAnalysis(
-      await queries.analyzeInstVar(session, op, className, ivarName, dict, targetName),
-    );
+    analysis = parseAnalysis(await queries.analyzeInstVar(session, op, className, ivarName, dict));
   } catch (e: unknown) {
     void vscode.window.showErrorMessage(
       `Pre-flight failed: ${e instanceof Error ? e.message : String(e)}`,
@@ -101,7 +96,6 @@ export async function runInstVarRefactor(
         token,
         PREVIEW_PAGE_BYTES,
         dict,
-        targetName,
       ),
     );
   } catch (e: unknown) {

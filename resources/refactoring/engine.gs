@@ -296,15 +296,15 @@ removeallclassmethods GsInlineTemporaryRefactoring
 doit
 | cls |
 cls := Object subclass: 'GsInstVarRefactoring'
-  instVarNames: #('environment' 'operation' 'definingClass' 'varName' 'targetClass' 'newIvarLists' 'affected' 'willNotRecompile' 'editedOptions' 'changeSet' 'analysisDone' 'decline' 'oldToNew' 'dropped' 'committed')
+  instVarNames: #('environment' 'operation' 'definingClass' 'varName' 'newIvarLists' 'affected' 'willNotRecompile' 'editedOptions' 'changeSet' 'analysisDone' 'decline' 'oldToNew' 'dropped' 'committed')
   classVars: #()
   classInstVars: #()
   poolDictionaries: #()
   inDictionary: GsRefactoring.
 cls category: 'Refactoring-Core'.
 cls comment: '
-Add, remove, or move an INSTANCE VARIABLE on a class (catalog items V1 add/remove and V4 move),
-without committing -- except for the two explicitly opt-in, explicitly committing steps below.
+Add or remove an INSTANCE VARIABLE on a class (catalog item V1), without committing -- except for
+the two explicitly opt-in, explicitly committing steps below.
 
 GemStone has no addInstVarName:/removeInstVarName:, so changing a class''s own instance-variable
 list means creating a NEW class VERSION (exactly as a class rename, R3, does): a new version
@@ -313,19 +313,15 @@ must, for every affected class top-down, create a new version in the same class 
 edited own-instVar list and its (preserved or user-edited) class options, COPY its methods forward,
 and re-parent it under the freshly created parent version. This reuses R3''s newVersionOf: machinery.
 
-Three operations (instVar `operation`):
+Two operations (instVar `operation`):
 
   - #add    -- append varName to definingClass''s own instance-variable list.
   - #remove -- drop varName from definingClass''s own instance-variable list.
-  - #move   -- move varName from definingClass (the source) to targetClass: the source loses it,
-               the target gains it. Move-to-superclass is push-up; move-to-a-subclass is a
-               targeted push-down. Both are just #move with the appropriate targetClass.
 
-Affected set = the union of the source''s subtree and (for #move) the target''s subtree, toposorted
-so a superclass is always versioned before its subclasses. Each affected class becomes a new
-version: an edited class (#classDefinitionEdit, shown as a definition diff) when its own-ivar list
-changes, else a re-parented class (#classReparent, recompiled only to re-point at the new parent
-chain).
+Affected set = definingClass''s subtree (the class + all descendants), toposorted so a superclass is
+always versioned before its subclasses. Each affected class becomes a new version: an edited class
+(#classDefinitionEdit, shown as a definition diff) when its own-ivar list changes, else a
+re-parented class (#classReparent, recompiled only to re-point at the new parent chain).
 
 Two things the family did not surface before, both required here:
 
@@ -334,7 +330,7 @@ Two things the family did not surface before, both required here:
     passed options: #() and silently dropped them). optionsForApply: answers the option list a
     given class''s new version is built with.
 
-  - METHODS THAT WILL NOT RECOMPILE. A method that references a removed/moved instance variable no
+  - METHODS THAT WILL NOT RECOMPILE. A method that references a removed instance variable no
     longer resolves the name; GemStone will not compile a reference to an undeclared lowercase
     identifier, so such a method fails to compile and is silently DROPPED from the new version. The
     set is predicted (without compiling) from bytecode-level instance-variable access, surfaced in
@@ -4675,12 +4671,11 @@ clearToken: token
 
 category: 'private'
 method: GsInstVarRefactoring
-setEnvironment: anEnvironment operation: anOp class: aClass varName: aName target: aTargetClass
+setEnvironment: anEnvironment operation: anOp class: aClass varName: aName
 	environment := anEnvironment.
 	operation := anOp.
 	definingClass := aClass.
 	varName := aName asString.
-	targetClass := aTargetClass.
 	analysisDone := false
 %
 
@@ -4768,7 +4763,6 @@ computeAnalysis
 	willNotRecompile := OrderedCollection new.
 	operation == #add ifTrue: [^self analyzeAdd].
 	operation == #remove ifTrue: [^self analyzeRemove].
-	operation == #move ifTrue: [^self analyzeMove].
 	decline := 'Unknown operation: ', operation printString
 %
 
@@ -4796,27 +4790,7 @@ analyzeRemove
 		^decline := 'Cannot remove ', varName, ': it is not an instance variable declared in ', definingClass name asString, '.'].
 	newIvarLists at: definingClass name asString put: ((self ownInstVarsOf: definingClass) reject: [:n | n = varName]).
 	self computeAffectedFrom: (Array with: definingClass).
-	self recordWillNotRecompileLosing: definingClass keeping: nil
-%
-
-category: 'private - analysis'
-method: GsInstVarRefactoring
-analyzeMove
-	"V4 move: varName must be an OWN instance variable of the source (definingClass); the target
-	 must be a distinct class that does not already have (own or inherited) an instance variable of
-	 that name. Methods that access it in classes outside the target's subtree lose it."
-	targetClass isNil ifTrue: [
-		^decline := 'Cannot move ', varName, ': no target class was given.'].
-	targetClass == definingClass ifTrue: [
-		^decline := 'Cannot move ', varName, ': the source and target class are the same.'].
-	((self ownInstVarsOf: definingClass) includes: varName) ifFalse: [
-		^decline := 'Cannot move ', varName, ': it is not an instance variable declared in ', definingClass name asString, '.'].
-	((self allInstVarsOf: targetClass) includes: varName) ifTrue: [
-		^decline := 'Cannot move ', varName, ' to ', targetClass name asString, ': it already has an instance variable of that name (own or inherited).'].
-	newIvarLists at: definingClass name asString put: ((self ownInstVarsOf: definingClass) reject: [:n | n = varName]).
-	newIvarLists at: targetClass name asString put: ((self ownInstVarsOf: targetClass) copyWith: varName).
-	self computeAffectedFrom: (Array with: definingClass with: targetClass).
-	self recordWillNotRecompileLosing: definingClass keeping: targetClass
+	self recordWillNotRecompileLosing: definingClass
 %
 
 category: 'private - analysis'
@@ -4854,26 +4828,18 @@ orderTopDown: anIdentitySet
 
 category: 'private - analysis'
 method: GsInstVarRefactoring
-recordWillNotRecompileLosing: aScopeClass keeping: aKeepClass
+recordWillNotRecompileLosing: aScopeClass
 	"Record class -> sorted selectors of the instance methods that access varName in aScopeClass's
-	 hierarchy but whose class will NOT see the variable afterwards. aKeepClass (or nil) is the
-	 class whose subtree keeps the variable (the move target); methods in that subtree survive."
-	| keepSet accessors |
-	keepSet := IdentitySet new.
-	aKeepClass ifNotNil: [
-		keepSet add: aKeepClass.
-		(environment descendantsOf: aKeepClass) do: [:d | keepSet add: d]].
+	 hierarchy; after the remove none of them will still see the variable."
+	| accessors |
 	accessors := environment classesAndSelectorsAccessing: varName inHierarchyOf: aScopeClass.
-	accessors do: [:assoc |
-		(keepSet includes: assoc key) ifFalse: [
-			willNotRecompile add: assoc]]
+	accessors do: [:assoc | willNotRecompile add: assoc]
 %
 
 category: 'private'
 method: GsInstVarRefactoring
 actedOnClassName
-	"The class whose options are user-editable in the panel: always the class the user acted on
-	 (the source of the ivar for a move)."
+	"The class whose options are user-editable in the panel: always the class the user acted on."
 	^definingClass name asString
 %
 
@@ -4972,13 +4938,12 @@ replaceListClause: marker in: defString with: aList
 category: 'serializing'
 method: GsInstVarRefactoring
 analysisJsonString
-	"The pre-flight payload: the decline reason (nil when viable), the source and (for move) target
-	 class, the number of classes that will be recompiled, and how many methods will not recompile."
+	"The pre-flight payload: the decline reason (nil when viable), the source class, the number of
+	 classes that will be recompiled, and how many methods will not recompile."
 	self ensureAnalysis.
 	^'{"decline":', (decline ifNil: ['null'] ifNotNil: [:r | self jsonQuote: r]),
 	  ',"operation":', (self jsonQuote: operation asString),
 	  ',"sourceClass":', (self jsonQuote: definingClass name asString),
-	  ',"targetClass":', (targetClass isNil ifTrue: ['null'] ifFalse: [self jsonQuote: targetClass name asString]),
 	  ',"affectedCount":', (decline notNil ifTrue: ['0'] ifFalse: [affected size printString]),
 	  ',"willNotRecompileCount":', (decline notNil ifTrue: ['0'] ifFalse: [(self willNotRecompileSelectorCount) printString]),
 	  '}'
@@ -5066,7 +5031,6 @@ startPreviewToken: token maxBytes: maxBytes
 	^'{"token":', (self jsonQuote: token),
 	  ',"total":', self changeSet size printString,
 	  ',"sourceClass":', (self jsonQuote: definingClass name asString),
-	  ',"targetClass":', (targetClass isNil ifTrue: ['null'] ifFalse: [self jsonQuote: targetClass name asString]),
 	  ',"outOfScope":', self outOfScopeJsonString,
 	  ',"page":', (self pageJsonFrom: 1 maxBytes: maxBytes), '}'
 %
@@ -5092,7 +5056,7 @@ pageJsonFrom: startIndex maxBytes: maxBytes
 category: 'applying'
 method: GsInstVarRefactoring
 applyDeselected: deselectedIds options: optsArray migrate: aBool deleteHistory: dBool
-	"Apply EVERY staged change in the stone. An instance-variable add/remove/move is ALL-OR-NOTHING
+	"Apply EVERY staged change in the stone. An instance-variable add/remove is ALL-OR-NOTHING
 	 (the class-shape edits and the descendant reparents must move together), so a deselection is
 	 ignored. optsArray (nil or an Array of Strings) replaces the acted-on class's options; nil
 	 keeps them. If migrate or deleteHistory is true the structural change is COMMITTED first (the
@@ -5215,7 +5179,7 @@ category: 'applying'
 method: GsInstVarRefactoring
 copyMethodsFrom: old to: new
 	"Copy every method of old (both sides) verbatim onto new -- a new class version starts with an
-	 empty method dictionary. A method that references a removed/moved instance variable will not
+	 empty method dictionary. A method that references a removed instance variable will not
 	 compile; it is recorded as dropped (its class and selector) rather than silently vanishing."
 	old selectors do: [:sel | self copyMethod: sel from: old to: new meta: false].
 	old class selectors do: [:sel | self copyMethod: sel from: old class to: new class meta: true]
@@ -5302,7 +5266,6 @@ class: aClass addInstVar: aName
 		operation: #add
 		class: aClass
 		varName: aName
-		target: nil
 %
 
 category: 'instance creation'
@@ -5314,30 +5277,6 @@ class: aClass removeInstVar: aName
 		operation: #remove
 		class: aClass
 		varName: aName
-		target: nil
-%
-
-category: 'instance creation'
-classmethod: GsInstVarRefactoring
-class: aClass moveInstVar: aName toClass: aTargetClass
-	"V4 move: move the instance variable aName from aClass (source) to aTargetClass."
-	^self new
-		setEnvironment: GsRefactoringEnvironment new
-		operation: #move
-		class: aClass
-		varName: aName
-		target: aTargetClass
-%
-
-category: 'instance creation'
-classmethod: GsInstVarRefactoring
-environment: anEnvironment operation: anOp class: aClass varName: aName target: aTargetClass
-	^self new
-		setEnvironment: anEnvironment
-		operation: anOp
-		class: aClass
-		varName: aName
-		target: aTargetClass
 %
 
 category: 'preconditions'
@@ -5350,12 +5289,6 @@ category: 'preconditions'
 classmethod: GsInstVarRefactoring
 analyzeClass: aClass removeInstVar: aName
 	^(self class: aClass removeInstVar: aName) analysisJsonString
-%
-
-category: 'preconditions'
-classmethod: GsInstVarRefactoring
-analyzeClass: aClass moveInstVar: aName toClass: aTargetClass
-	^(self class: aClass moveInstVar: aName toClass: aTargetClass) analysisJsonString
 %
 
 category: 'paginated preview'

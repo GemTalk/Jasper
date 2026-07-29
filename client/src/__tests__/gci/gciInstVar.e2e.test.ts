@@ -25,18 +25,17 @@ import {
 } from '../../refactoring/instVarRefactorPreview';
 
 /**
- * On-demand GCI e2e for the add / remove / move instance-variable (V1 + V4) refactoring,
- * over the real GCI transport (`npm run test:gci`). Drives the actual client query
- * builders + parsers against a live stone: add an ivar and confirm the class carries it;
- * remove one that methods use and confirm those methods are reported and dropped; move
- * one to another class and confirm it relocated.
+ * On-demand GCI e2e for the add / remove instance-variable (V1) refactoring, over the
+ * real GCI transport (`npm run test:gci`). Drives the actual client query builders +
+ * parsers against a live stone: add an ivar and confirm the class carries it; remove one
+ * that methods use and confirm those methods are reported and dropped.
  *
  * Guarded on the refactoring engine being installed (the queries reference the in-stone
  * `GsInstVarRefactoring`); the tests skip with a reason otherwise. Fully transient: every
  * test rolls back with `System abortTransaction` in a `finally` (migrate / delete-history,
  * which would commit, are never requested here). All Smalltalk is ASCII-only for 3.6.x.
  */
-describe('add / remove / move instance variable (gci e2e)', () => {
+describe('add / remove instance variable (gci e2e)', () => {
   let gci: GciLibrary;
   let session: ActiveSession;
   let enginePresent = false;
@@ -46,7 +45,6 @@ describe('add / remove / move instance variable (gci e2e)', () => {
 
   const BASE = 'GciIvBase';
   const SUB = 'GciIvSub';
-  const TARGET = 'GciIvTarget';
 
   const userIndex = (): number =>
     parseInt(
@@ -73,11 +71,6 @@ describe('add / remove / move instance variable (gci e2e)', () => {
     q.compileClassDefinition(
       session,
       `${BASE} subclass: '${SUB}' instVarNames: #() classVars: #() ` +
-        'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
-    );
-    q.compileClassDefinition(
-      session,
-      `Object subclass: '${TARGET}' instVarNames: #(kept) classVars: #() ` +
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
     );
     q.compileMethod(session, BASE, false, 'accessing', 'combine\n\t^ count + other');
@@ -174,43 +167,6 @@ describe('add / remove / move instance variable (gci e2e)', () => {
       expect(hasIvar(BASE, 'count')).toBe(false);
       expect(includesSelector(BASE, 'combine')).toBe(false);
       expect(includesSelector(BASE, 'getOther')).toBe(false); // never existed
-    } finally {
-      exec('System abortTransaction');
-    }
-  });
-
-  it('moves an instance variable to another class', async (ctx) => {
-    if (!enginePresent) return ctx.skip();
-
-    try {
-      defineFixture();
-
-      const analysis = parseAnalysis(
-        await analyzeInstVar(asyncExec, 'move', BASE, 'count', userIndex(), TARGET),
-      );
-      expect(analysis.decline).toBeNull();
-      expect(analysis.targetClass).toBe(TARGET);
-
-      parseStartPreview(
-        await startInstVarPreview(
-          asyncExec,
-          'move',
-          BASE,
-          'count',
-          'gci-iv-move',
-          PREVIEW_PAGE_BYTES,
-          userIndex(),
-          TARGET,
-        ),
-      );
-      const result = parseApplyResult(
-        await applyInstVar(asyncExec, 'gci-iv-move', [], null, false, false),
-      );
-      expect(result.failed).toEqual([]);
-
-      expect(hasIvar(BASE, 'count')).toBe(false);
-      expect(hasIvar(TARGET, 'count')).toBe(true);
-      expect(hasIvar(TARGET, 'kept')).toBe(true);
     } finally {
       exec('System abortTransaction');
     }

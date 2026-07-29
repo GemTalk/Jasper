@@ -2,23 +2,21 @@ import { QueryExecutor } from '../../queries/types';
 import { AsyncQueryExecutor } from './previewRenameMethod';
 import { classLookupExpr, escapeString } from '../../queries/util';
 
-// Add / remove / move instance-variable (catalog V1 + V4) query builders. The engine
-// (GsInstVarRefactoring) is addressed by an operation, a source class + variable name,
-// and — for a move — a target class. It stages a `classDefinitionEdit` for each edited
-// class plus a `classReparent` for every other affected class, stashes the change set
-// under `token`, and returns totals + the first page. `dict` scopes the source-class
-// lookup (1-based SymbolList index, canonical for Jasper, or a name); the move target
-// is resolved by name across all dictionaries.
+// Add / remove instance-variable (catalog V1) query builders. The engine
+// (GsInstVarRefactoring) is addressed by an operation and a source class + variable name.
+// It stages a `classDefinitionEdit` for each edited class plus a `classReparent` for every
+// other affected class, stashes the change set under `token`, and returns totals + the
+// first page. `dict` scopes the source-class lookup (1-based SymbolList index, canonical
+// for Jasper, or a name).
 
-export type InstVarOp = 'add' | 'remove' | 'move';
+export type InstVarOp = 'add' | 'remove';
 
-/** The `(GsInstVarRefactoring class: src <op> name [toClass: tgt])` builder expression,
- *  given already-built source/target lookup sub-expressions. */
-function buildExpr(op: InstVarOp, srcExpr: string, name: string, tgtExpr?: string): string {
+/** The `(GsInstVarRefactoring class: src <op> name)` builder expression, given an
+ *  already-built source lookup sub-expression. */
+function buildExpr(op: InstVarOp, srcExpr: string, name: string): string {
   const n = `'${escapeString(name)}'`;
   if (op === 'add') return `GsInstVarRefactoring class: ${srcExpr} addInstVar: ${n}`;
-  if (op === 'remove') return `GsInstVarRefactoring class: ${srcExpr} removeInstVar: ${n}`;
-  return `GsInstVarRefactoring class: ${srcExpr} moveInstVar: ${n} toClass: ${tgtExpr}`;
+  return `GsInstVarRefactoring class: ${srcExpr} removeInstVar: ${n}`;
 }
 
 /** Pre-flight (before opening the preview): the decline reason (nil when viable), the
@@ -29,17 +27,14 @@ export function analyzeInstVar(
   className: string,
   ivarName: string,
   dict?: number | string,
-  targetName?: string,
 ): Promise<string> {
-  const tgtExpr = op === 'move' ? `(${classLookupExpr(targetName ?? '')})` : undefined;
   const code = `| cls |
 cls := ${classLookupExpr(className, dict)}.
 cls isNil ifTrue: [^ '{"decline":"Class not found: ${escapeString(
     className,
-  )}","operation":"${op}","sourceClass":null,"targetClass":null,"affectedCount":0,"willNotRecompileCount":0}'].
-(${buildExpr(op, 'cls', ivarName, tgtExpr)}) analysisJsonString`;
-  const to = op === 'move' ? ` -> ${targetName ?? '?'}` : '';
-  return execute(`analyzeInstVar(${op} ${ivarName} on ${className}${to})`, code);
+  )}","operation":"${op}","sourceClass":null,"affectedCount":0,"willNotRecompileCount":0}'].
+(${buildExpr(op, 'cls', ivarName)}) analysisJsonString`;
+  return execute(`analyzeInstVar(${op} ${ivarName} on ${className})`, code);
 }
 
 /** Start a paginated preview under `token`. */
@@ -51,13 +46,11 @@ export function startInstVarPreview(
   token: string,
   maxBytes: number,
   dict?: number | string,
-  targetName?: string,
 ): Promise<string> {
-  const tgtExpr = op === 'move' ? `(${classLookupExpr(targetName ?? '')})` : undefined;
   const code = `| cls ref |
 cls := ${classLookupExpr(className, dict)}.
 cls isNil ifTrue: [^ 'Class not found: ${escapeString(className)}'].
-ref := ${buildExpr(op, 'cls', ivarName, tgtExpr)}.
+ref := ${buildExpr(op, 'cls', ivarName)}.
 ^ref startPreviewToken: '${escapeString(token)}' maxBytes: ${maxBytes}`;
   return execute(`startInstVarPreview(${op} ${ivarName} on ${className})`, code);
 }
@@ -104,21 +97,4 @@ export function applyInstVar(
 /** Drop a finished preview from SessionTemps. */
 export function clearInstVarPreview(execute: QueryExecutor, token: string): string {
   return execute(`GsInstVarRefactoring clearToken: '${escapeString(token)}'`);
-}
-
-/** The move-up / move-down targets for a class: its immediate superclass name (or null)
- *  and its immediate subclass names. Class names are identifiers, so they need no JSON
- *  escaping. Answers `{"superclass":name|null,"subclasses":[name,...]}`. */
-export function getMoveTargets(
-  execute: QueryExecutor,
-  className: string,
-  dict?: number | string,
-): string {
-  const code = `| cls subs |
-cls := ${classLookupExpr(className, dict)}.
-cls isNil ifTrue: [^ '{"superclass":null,"subclasses":[]}'].
-subs := (cls subclasses ifNil: [#()]) asSortedCollection: [:a :b | a name <= b name].
-'{"superclass":', (cls superclass isNil ifTrue: ['null'] ifFalse: ['"', cls superclass name, '"']),
-',"subclasses":[', ((subs collect: [:c | '"', c name, '"']) inject: '' into: [:acc :s | acc isEmpty ifTrue: [s] ifFalse: [acc, ',', s]]), ']}'`;
-  return execute(code);
 }

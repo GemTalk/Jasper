@@ -1,19 +1,19 @@
 /**
- * Pure helpers for the add / remove / move instance-variable (V1 + V4) preview:
- * parsing the engine's pre-flight analysis, the paginated preview envelope, and the
- * apply result. No `vscode` dependency, so it unit-tests directly.
+ * Pure helpers for the add / remove instance-variable (V1) preview: parsing the engine's
+ * pre-flight analysis, the paginated preview envelope, and the apply result. No `vscode`
+ * dependency, so it unit-tests directly.
  *
- * The engine stages a `classDefinitionEdit` for each edited class (the source loses or
- * the target/source gains the variable) plus a `classReparent` for every other affected
- * class (recompiled only to re-point at the freshly created parent version). The whole
- * change is ALL-OR-NOTHING: the class-shape edits and the descendant reparents must
- * move together, so every row is a required (checked + disabled) row and the deselected
- * set is always empty.
+ * The engine stages a `classDefinitionEdit` for each edited class (the class gains or
+ * loses the variable) plus a `classReparent` for every other affected class (recompiled
+ * only to re-point at the freshly created parent version). The whole change is
+ * ALL-OR-NOTHING: the class-shape edits and the descendant reparents must move together,
+ * so every row is a required (checked + disabled) row and the deselected set is always
+ * empty.
  *
  * Two things this preview surfaces beyond the rest of the family:
- *   - `willNotRecompile` — the methods that reference the removed/moved variable and so
- *     will fail to compile onto the new class version (they are dropped, and reported
- *     again in the apply result's `dropped`);
+ *   - `willNotRecompile` — the methods that reference the removed variable and so will
+ *     fail to compile onto the new class version (they are dropped, and reported again in
+ *     the apply result's `dropped`);
  *   - the acted-on class's `currentOptions` + the `optionVocabulary`, driving the
  *     editable class-options group, plus the migrate / delete-history commit note.
  */
@@ -31,13 +31,13 @@ export interface InstVarChange {
 }
 
 /** A method that will not recompile onto the new class version (it references the
- *  removed/moved variable) and will be dropped. */
+ *  removed variable) and will be dropped. */
 export interface BrokenMethod {
   className: string;
   selector: string;
 }
 
-/** Preview preconditions + the extra V1/V4 payload. `decline` blocks Apply. */
+/** Preview preconditions + the extra V1 payload. `decline` blocks Apply. */
 export interface InstVarOutOfScope {
   decline: string | null;
   willNotRecompile: BrokenMethod[];
@@ -57,7 +57,6 @@ export interface StartInstVarPreview {
   token: string;
   total: number;
   sourceClass: string | null;
-  targetClass: string | null;
   outOfScope: InstVarOutOfScope;
   page: PreviewPage;
 }
@@ -74,7 +73,6 @@ export interface InstVarAnalysis {
   decline: string | null;
   operation: string | null;
   sourceClass: string | null;
-  targetClass: string | null;
   affectedCount: number;
   willNotRecompileCount: number;
 }
@@ -153,7 +151,6 @@ export function parseAnalysis(json: string): InstVarAnalysis {
     decline: typeof env.decline === 'string' ? env.decline : null,
     operation: typeof env.operation === 'string' ? env.operation : null,
     sourceClass: typeof env.sourceClass === 'string' ? env.sourceClass : null,
-    targetClass: typeof env.targetClass === 'string' ? env.targetClass : null,
     affectedCount: asCount(env.affectedCount),
     willNotRecompileCount: asCount(env.willNotRecompileCount),
   };
@@ -177,7 +174,6 @@ export function parseStartPreview(json: string): StartInstVarPreview {
     token: env.token,
     total: asCount(env.total),
     sourceClass: typeof env.sourceClass === 'string' ? env.sourceClass : null,
-    targetClass: typeof env.targetClass === 'string' ? env.targetClass : null,
     outOfScope: parseOutOfScope(env.outOfScope),
     page,
   };
@@ -212,25 +208,6 @@ export function parseApplyResult(json: string): ApplyResult {
     dropped: parseBroken(env.dropped),
     committed: env.committed === true,
     error: typeof env.error === 'string' ? env.error : undefined,
-  };
-}
-
-/** The immediate superclass (or null) and immediate subclasses of a class, for the
- *  move-up / move-down instance-variable actions. */
-export interface MoveTargets {
-  superclass: string | null;
-  subclasses: string[];
-}
-
-export function parseMoveTargets(json: string): MoveTargets {
-  const parsed: unknown = JSON.parse(json);
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    return { superclass: null, subclasses: [] };
-  }
-  const env = parsed as Record<string, unknown>;
-  return {
-    superclass: typeof env.superclass === 'string' ? env.superclass : null,
-    subclasses: asStringArray(env.subclasses),
   };
 }
 

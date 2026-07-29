@@ -109,7 +109,6 @@ import {
   pageInstVarPreview as sharedPageInstVarPreview,
   applyInstVar as sharedApplyInstVar,
   clearInstVarPreview as sharedClearInstVarPreview,
-  getMoveTargets as sharedGetMoveTargets,
 } from './refactoring/queries/previewInstVar';
 import {
   analyzeExtractTemporary as sharedAnalyzeExtractTemporary,
@@ -1246,10 +1245,10 @@ export function clearMoveMethodPreview(session: ActiveSession, token: string): s
   return sharedClearMoveMethodPreview(defaultQueryExecutorUsing(session), token);
 }
 
-// Add / remove / move instance-variable (V1 + V4) preview: pre-flight analysis (decline
-// reason, affected count, how many methods will not recompile), paginated start/page
-// fetched NON-BLOCKING, server-side apply. The structural change never commits; migrate
-// / delete-history do (and are opt-in). `options` (or null) replaces the acted-on class's
+// Add / remove instance-variable (V1) preview: pre-flight analysis (decline reason,
+// affected count, how many methods will not recompile), paginated start/page fetched
+// NON-BLOCKING, server-side apply. The structural change never commits; migrate /
+// delete-history do (and are opt-in). `options` (or null) replaces the acted-on class's
 // class options.
 export function analyzeInstVar(
   session: ActiveSession,
@@ -1257,11 +1256,10 @@ export function analyzeInstVar(
   className: string,
   ivarName: string,
   dict?: number | string,
-  targetName?: string,
 ): Promise<string> {
   const exec = (label: string, code: string): Promise<string> =>
     executeFetchStringNb(session, label, code, 'Analysing…');
-  return sharedAnalyzeInstVar(exec, op, className, ivarName, dict, targetName);
+  return sharedAnalyzeInstVar(exec, op, className, ivarName, dict);
 }
 
 export function startInstVarPreview(
@@ -1272,20 +1270,10 @@ export function startInstVarPreview(
   token: string,
   maxBytes: number,
   dict?: number | string,
-  targetName?: string,
 ): Promise<string> {
   const exec = (label: string, code: string): Promise<string> =>
     executeFetchStringNb(session, label, code, 'Previewing…');
-  return sharedStartInstVarPreview(
-    exec,
-    op,
-    className,
-    ivarName,
-    token,
-    maxBytes,
-    dict,
-    targetName,
-  );
+  return sharedStartInstVarPreview(exec, op, className, ivarName, token, maxBytes, dict);
 }
 
 export function pageInstVarPreview(
@@ -1314,15 +1302,6 @@ export function applyInstVar(
 
 export function clearInstVarPreview(session: ActiveSession, token: string): string {
   return sharedClearInstVarPreview(defaultQueryExecutorUsing(session), token);
-}
-
-/** The immediate super/subclass names of a class, for the move-up/down ivar actions. */
-export function getInstVarMoveTargets(
-  session: ActiveSession,
-  className: string,
-  dict?: number | string,
-): string {
-  return sharedGetMoveTargets(defaultQueryExecutorUsing(session), className, dict);
 }
 
 // Extract-temporary (M3) preview: pre-flight analysis, paginated start/page fetched

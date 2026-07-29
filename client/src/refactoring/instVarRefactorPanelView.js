@@ -3,13 +3,14 @@
  * preview panel (instVarRefactorPanel.ts).
  *
  * Read at runtime and injected as a <script> tag (NOT bundled) so the diff toggle,
- * pagination, class-options collection, and apply dispatch can be unit-tested in jsdom
+ * pagination, and apply dispatch can be unit-tested in jsdom
  * (see instVarRefactorPanel.test.ts).
  *
  * Every change is REQUIRED (the class-shape edit and its descendant reparents are
  * all-or-nothing), so rows are checked + disabled and the reported deselected set is
- * always empty. APPLY additionally reports the chosen class options and whether to
- * migrate instances / delete history (both of which commit the transaction).
+ * always empty. APPLY reports whether to migrate instances / delete history (both of
+ * which commit the transaction) and sends `options: null` so the acted-on class keeps
+ * its current compile options.
  *
  * Exposed as the global `InstVarRefactorPanel` so the webview and tests reach `wire`.
  */
@@ -29,20 +30,6 @@
 
     const cards = function () {
       return Array.prototype.slice.call(doc.querySelectorAll('li.change'));
-    };
-
-    const chosenOptions = function () {
-      return Array.prototype.slice
-        .call(doc.querySelectorAll('input.opt'))
-        .filter(function (cb) {
-          return cb.checked;
-        })
-        .map(function (cb) {
-          return cb.getAttribute('value');
-        })
-        .filter(function (v) {
-          return v !== null;
-        });
     };
 
     const setExpanded = function (li, expanded) {
@@ -130,7 +117,7 @@
         vscode.postMessage({
           command: 'apply',
           deselected: [],
-          options: chosenOptions(),
+          options: null,
           migrate: !!(migrateBox && migrateBox.checked),
           deleteHistory: !!(deleteHistoryBox && deleteHistoryBox.checked),
         });
@@ -164,7 +151,6 @@
     syncToggleAll();
     syncCommitHint();
     return {
-      chosenOptions: chosenOptions,
       appendChanges: appendChanges,
       handleMessage: handleMessage,
     };

@@ -14,21 +14,21 @@ import { requireServerPluginFeature } from '../../__tests__/requireServerPluginF
 import { pluginFeatures } from '../../serverPlugin/pluginFeatures';
 
 /**
- * Automatic GCI integration test for the add / remove / move instance-variable (V1 + V4)
- * refactoring, over the real GCI transport.
+ * Automatic GCI integration test for the add / remove instance-variable (V1) refactoring,
+ * over the real GCI transport.
  *
  * Two layers, mirroring the other refactoring integration tests:
  *  1. The engine's GS SUnit suite, filed in from the built payload and run in-stone.
  *  2. A client round trip through the real query builders + parsers: add an ivar and
  *     confirm the class carries it; remove one that methods use and confirm those methods
- *     are reported (will-not-recompile) and dropped; move one to another class.
+ *     are reported (will-not-recompile) and dropped.
  *
  * Gated via the shared server-plugin feature gate; the engine-dependent tests run in the
  * plugin-installed pass and skip, with a reason, against a bare stone. Fully transient:
  * the harness aborts each test, so nothing is committed (migrate / delete-history, which
  * would commit, are never requested here). All emitted Smalltalk is ASCII-only for 3.6.x.
  */
-describe('add / remove / move instance variable (integration)', () => {
+describe('add / remove instance variable (integration)', () => {
   let gci: GciLibrary;
   let handle: unknown;
   useIntegrationTest((testContext) => {
@@ -65,7 +65,6 @@ describe('add / remove / move instance variable (integration)', () => {
 
   const BASE = 'XIvItBase';
   const SUB = 'XIvItSub';
-  const TARGET = 'XIvItTarget';
 
   const hasIvar = (cls: string, name: string): boolean =>
     exec(`(${cls} instVarNames includes: #${name}) printString`).trim() === 'true';
@@ -81,11 +80,6 @@ describe('add / remove / move instance variable (integration)', () => {
     q.compileClassDefinition(
       session(),
       `${BASE} subclass: '${SUB}' instVarNames: #() classVars: #() ` +
-        'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
-    );
-    q.compileClassDefinition(
-      session(),
-      `Object subclass: '${TARGET}' instVarNames: #(kept) classVars: #() ` +
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
     );
     q.compileMethod(session(), BASE, false, 'accessing', 'combine\n\t^ count + other');
@@ -165,37 +159,6 @@ r := (System myUserProfile symbolList objectNamed: #GsInstVarRefactoringTest) su
     );
     expect(hasIvar(BASE, 'count')).toBe(false);
     expect(includesSelector(BASE, 'combine')).toBe(false);
-  });
-
-  it('moves an instance variable to another class', async (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
-
-    defineFixture();
-
-    const analysis = parseAnalysis(
-      await analyzeInstVar(asyncExec, 'move', BASE, 'count', userIndex(), TARGET),
-    );
-    expect(analysis.decline).toBeNull();
-    expect(analysis.targetClass).toBe(TARGET);
-
-    parseStartPreview(
-      await startInstVarPreview(
-        asyncExec,
-        'move',
-        BASE,
-        'count',
-        'xivit-move',
-        PREVIEW_PAGE_BYTES,
-        userIndex(),
-        TARGET,
-      ),
-    );
-    const result = parseApplyResult(
-      await applyInstVar(asyncExec, 'xivit-move', [], null, false, false),
-    );
-    expect(result.failed).toEqual([]);
-    expect(hasIvar(BASE, 'count')).toBe(false);
-    expect(hasIvar(TARGET, 'count')).toBe(true);
   });
 
   it('declines adding a duplicate instance variable', async (ctx) => {
