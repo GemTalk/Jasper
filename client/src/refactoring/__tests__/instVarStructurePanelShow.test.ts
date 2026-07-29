@@ -84,6 +84,44 @@ describe('showInstVarStructurePanel', () => {
     expect(handlers.cleanup).toHaveBeenCalledTimes(1);
   });
 
+  it('passes the apply-option checkbox states through to the apply handler', async () => {
+    const handlers = {
+      loadPage: vi.fn(),
+      apply: vi.fn(async () => ({ applied: 2, failed: [], committed: true })),
+      cleanup: vi.fn(),
+    };
+
+    const result = showInstVarStructurePanel('Push up', start, handlers);
+    lastPanel().__emit({
+      command: 'apply',
+      deselected: [],
+      options: { migrateInstances: true, removeOldFromHistory: false },
+    });
+    await result;
+
+    expect(handlers.apply).toHaveBeenCalledWith([], {
+      migrateInstances: true,
+      removeOldFromHistory: false,
+    });
+  });
+
+  it('defaults both options to false when the apply message omits them', async () => {
+    const handlers = {
+      loadPage: vi.fn(),
+      apply: vi.fn(async () => ({ applied: 1, failed: [] })),
+      cleanup: vi.fn(),
+    };
+
+    const result = showInstVarStructurePanel('Push up', start, handlers);
+    lastPanel().__emit({ command: 'apply', deselected: [] });
+    await result;
+
+    expect(handlers.apply).toHaveBeenCalledWith([], {
+      migrateInstances: false,
+      removeOldFromHistory: false,
+    });
+  });
+
   it('resolves undefined and cleans up on cancel', async () => {
     const handlers = { loadPage: vi.fn(), apply: vi.fn(), cleanup: vi.fn() };
 

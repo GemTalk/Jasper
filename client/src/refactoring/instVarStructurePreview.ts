@@ -13,7 +13,14 @@
  * every row is a CORE row (checked + disabled).
  */
 
-export type IvarChangeKind = 'classDefinitionEdit' | 'classReparent' | 'methodRecompile';
+export type IvarChangeKind =
+  | 'classDefinitionEdit'
+  | 'classReparent'
+  | 'methodRecompile'
+  // V2/V3 "move accessors" opt-in: a simple accessor removed from its source class and added
+  // to the target class(es) alongside the ivar declaration.
+  | 'methodRemove'
+  | 'methodAdd';
 
 /** One staged change: a class-definition edit, a descendant reparent, or (V5) a method
  *  recompile. `oldSource`/`newSource` are the before/after for the diff. */
@@ -53,6 +60,10 @@ export interface StartIvarPreview {
 export interface IvarApplyResult {
   applied: number;
   failed: { id: string; label: string; error: string }[];
+  /** True when the apply committed (only the migrate / remove-old-history options commit). */
+  committed?: boolean;
+  /** Instances that failed to migrate (only meaningful when migrate was on). */
+  migratedFailures?: number;
   error?: string;
 }
 
@@ -76,7 +87,9 @@ function parseChange(raw: unknown, i: number): IvarChange {
   if (
     c.kind !== 'classDefinitionEdit' &&
     c.kind !== 'classReparent' &&
-    c.kind !== 'methodRecompile'
+    c.kind !== 'methodRecompile' &&
+    c.kind !== 'methodRemove' &&
+    c.kind !== 'methodAdd'
   ) {
     throw new Error(`InstVar preview change ${i} has an unknown kind: ${String(c.kind)}`);
   }
@@ -178,6 +191,8 @@ export function parseApplyResult(json: string): IvarApplyResult {
   return {
     applied: asCount(env.applied),
     failed,
+    committed: env.committed === true,
+    migratedFailures: asCount(env.migratedFailures),
     error: typeof env.error === 'string' ? env.error : undefined,
   };
 }
@@ -187,6 +202,12 @@ export function ivarChangeLabel(change: IvarChange): string {
   const side = change.isMeta ? ' class' : '';
   if (change.kind === 'methodRecompile') {
     return `${change.className}${side}>>${change.selector ?? '?'}`;
+  }
+  if (change.kind === 'methodRemove') {
+    return `${change.className}${side}>>${change.selector ?? '?'} — removed (accessor moved with the variable)`;
+  }
+  if (change.kind === 'methodAdd') {
+    return `${change.className}${side}>>${change.selector ?? '?'} — added (accessor moved with the variable)`;
   }
   if (change.kind === 'classReparent') {
     return `${change.className} (recompiled)`;

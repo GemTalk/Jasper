@@ -1159,12 +1159,14 @@
       {
         "command": "gemstone.explorer.pushUpInstVar",
         "title": "Push Instance Variable Up…",
-        "category": "GemStone"
+        "category": "GemStone",
+        "icon": "$(arrow-up)"
       },
       {
         "command": "gemstone.explorer.pushDownInstVar",
         "title": "Push Instance Variable Down…",
-        "category": "GemStone"
+        "category": "GemStone",
+        "icon": "$(arrow-down)"
       },
       {
         "command": "gemstone.convertTempToInstVar",
@@ -1806,18 +1808,18 @@
         },
         {
           "command": "gemstone.explorer.renameIvar",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerIvar",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerIvar/",
           "group": "inline"
         },
         {
           "command": "gemstone.explorer.pushUpInstVar",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerIvar",
-          "group": "3_refactor@1"
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerIvar/",
+          "group": "inline@2"
         },
         {
           "command": "gemstone.explorer.pushDownInstVar",
           "when": "view == gemstoneExplorerClasses && viewItem == explorerIvar",
-          "group": "3_refactor@2"
+          "group": "inline@3"
         },
         {
           "command": "gemstone.explorer.renameClassVariable",

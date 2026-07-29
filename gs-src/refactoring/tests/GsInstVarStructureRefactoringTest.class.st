@@ -257,6 +257,7 @@ GsInstVarStructureRefactoringTest >> testPushDownDeclinesWhenClassStillUsesIt [
 
 	self assert: ref decline notNil.
 	self assert: ref decline includesSubstring: 'still uses it'.
+	self assert: ref decline includesSubstring: '#midM'.
 	self assert: ref changeSet isEmpty
 ]
 
@@ -316,4 +317,213 @@ GsInstVarStructureRefactoringTest >> testApplyDoesNotCommit [
 GsInstVarStructureRefactoringTest >> testApplyForTokenOnAnExpiredSessionAnswersAnError [
 	self assert: (GsInstVarStructureRefactoring applyForToken: 'nope' deselected: #())
 		includesSubstring: 'expired'
+]
+
+{ #category : 'tests - V2/V3 move accessors' }
+GsInstVarStructureRefactoringTest >> testPushUpMovesSimpleAccessorsToSuperclass [
+	"With moveAccessors, a `^ivar` getter and an `ivar := arg` setter travel up with the
+	 declaration; a non-trivial method that uses the ivar is left behind (it still works via
+	 the now-inherited ivar)."
+	| mid json |
+	mid := self classNamed: 'GsVSMid'.
+	self compile: 'pushable ^ pushable' in: mid.
+	self compile: 'pushable: aValue pushable := aValue' in: mid.
+	self compile: 'usesPushable ^ pushable + 1' in: mid.
+
+	json := ((GsInstVarStructureRefactoring class: mid pushUpInstVar: 'pushable') moveAccessors: true)
+		applyDeselected: #().
+
+	self deny: json includesSubstring: '"failed":[{'.
+	self assert: (self ownIvarsOf: 'GsVSBase') includes: 'pushable'.
+	self deny: (self ownIvarsOf: 'GsVSMid') includes: 'pushable'.
+	self assert: ((self classNamed: 'GsVSBase') includesSelector: #pushable).
+	self assert: ((self classNamed: 'GsVSBase') includesSelector: #'pushable:').
+	self deny: ((self classNamed: 'GsVSMid') includesSelector: #pushable).
+	self deny: ((self classNamed: 'GsVSMid') includesSelector: #'pushable:').
+	self assert: ((self classNamed: 'GsVSMid') includesSelector: #usesPushable)
+]
+
+{ #category : 'tests - V2/V3 move accessors' }
+GsInstVarStructureRefactoringTest >> testPushUpWithoutMoveAccessorsLeavesAccessorsInPlace [
+	"Default behaviour is unchanged: without opting in, the accessors stay on the subclass."
+	| mid json |
+	mid := self classNamed: 'GsVSMid'.
+	self compile: 'pushable ^ pushable' in: mid.
+
+	json := (GsInstVarStructureRefactoring class: mid pushUpInstVar: 'pushable') applyDeselected: #().
+
+	self deny: json includesSubstring: '"failed":[{'.
+	self assert: ((self classNamed: 'GsVSMid') includesSelector: #pushable).
+	self deny: ((self classNamed: 'GsVSBase') includesSelector: #pushable)
+]
+
+{ #category : 'tests - V2/V3 move accessors' }
+GsInstVarStructureRefactoringTest >> testPushUpLeavesAccessorWhenSuperclassAlreadyImplementsIt [
+	"Never overwrite an existing same-named method on the target: if the superclass already
+	 implements the accessor selector, the subclass's accessor is left in place."
+	| base mid json |
+	base := self classNamed: 'GsVSBase'.
+	mid := self classNamed: 'GsVSMid'.
+	self compile: 'pushable ^ pushable' in: mid.
+	self compile: 'pushable ^ 99' in: base.
+
+	json := ((GsInstVarStructureRefactoring class: mid pushUpInstVar: 'pushable') moveAccessors: true)
+		applyDeselected: #().
+
+	self deny: json includesSubstring: '"failed":[{'.
+	self assert: ((self classNamed: 'GsVSMid') includesSelector: #pushable).
+	self assert: (((self classNamed: 'GsVSBase') compiledMethodAt: #pushable environmentId: 0 otherwise: nil) sourceString)
+		includesSubstring: '99'
+]
+
+{ #category : 'tests - V2/V3 move accessors' }
+GsInstVarStructureRefactoringTest >> testPushUpStagesAccessorMoveChanges [
+	"The accessor move is surfaced as visible #methodRemove (source) + #methodAdd (target) rows."
+	| mid cs remove add |
+	mid := self classNamed: 'GsVSMid'.
+	self compile: 'pushable ^ pushable' in: mid.
+
+	cs := ((GsInstVarStructureRefactoring class: mid pushUpInstVar: 'pushable') moveAccessors: true) changeSet.
+	remove := cs changes detect: [:c | c kind = #methodRemove and: [c selector = #pushable]] ifNone: [nil].
+	add := cs changes detect: [:c | c kind = #methodAdd and: [c selector = #pushable]] ifNone: [nil].
+
+	self assert: remove notNil.
+	self assert: remove className equals: 'GsVSMid'.
+	self assert: add notNil.
+	self assert: add className equals: 'GsVSBase'
+]
+
+{ #category : 'tests - V2/V3 move accessors' }
+GsInstVarStructureRefactoringTest >> testPushDownMovesSimpleAccessorsIntoEverySubclass [
+	"midM (`^mid`) is a simple getter of `mid`, so with moveAccessors the push-down is no longer
+	 blocked: the getter moves down into every immediate subclass and is removed from the class."
+	| mid ref json |
+	mid := self classNamed: 'GsVSMid'.
+	ref := (GsInstVarStructureRefactoring class: mid pushDownInstVar: 'mid') moveAccessors: true.
+
+	self assert: ref decline isNil.
+	json := ref applyDeselected: #().
+
+	self deny: json includesSubstring: '"failed":[{'.
+	self deny: (self ownIvarsOf: 'GsVSMid') includes: 'mid'.
+	self assert: (self ownIvarsOf: 'GsVSLeaf') includes: 'mid'.
+	self assert: (self ownIvarsOf: 'GsVSLeaf2') includes: 'mid'.
+	self deny: ((self classNamed: 'GsVSMid') includesSelector: #midM).
+	self assert: ((self classNamed: 'GsVSLeaf') includesSelector: #midM).
+	self assert: ((self classNamed: 'GsVSLeaf2') includesSelector: #midM)
+]
+
+{ #category : 'tests - V2/V3 move accessors' }
+GsInstVarStructureRefactoringTest >> testPushDownNonAccessorUserStillBlocksEvenWithMoveAccessors [
+	"Only SIMPLE accessors are exempt from the push-down block: a non-trivial method that uses
+	 the ivar still prevents the push-down, even with moveAccessors on."
+	| mid ref |
+	mid := self classNamed: 'GsVSMid'.
+	self compile: 'usesMid ^ mid + 1' in: mid.
+
+	ref := (GsInstVarStructureRefactoring class: mid pushDownInstVar: 'mid') moveAccessors: true.
+
+	self assert: ref decline notNil.
+	self assert: ref decline includesSubstring: 'still uses it'
+]
+
+{ #category : 'tests - migrate + history options' }
+GsInstVarStructureRefactoringTest >> testApplyReportsNotCommittedByDefault [
+	"With neither persistent option on, the apply never commits and says so."
+	| json |
+	json := (GsInstVarStructureRefactoring class: (self classNamed: 'GsVSMid') pushDownInstVar: 'pushable')
+		applyDeselected: #().
+
+	self assert: json includesSubstring: '"committed":false'.
+	self assert: json includesSubstring: '"migratedFailures":0'.
+	self deny: json includesSubstring: '"failed":[{'
+]
+
+{ #category : 'tests - migrate + history options' }
+GsInstVarStructureRefactoringTest >> testMigrateAllInstancesNeverRaisesWithoutACommit [
+	"migrateAllInstances must answer an Integer failure count and never propagate an exception.
+	 Here the structural change is uncommitted, so migrateInstancesTo: raises (it needs a clean
+	 transaction) -- the method must CATCH and count it. The real apply commits before migrating;
+	 the full migrate+commit path is exercised via the GCI/MCP round trip, which cannot run in a
+	 no-commit SUnit test."
+	| ref result |
+	ref := GsInstVarStructureRefactoring class: (self classNamed: 'GsVSMid') pushDownInstVar: 'pushable'.
+	ref applyDeselected: #().
+	result := ref migrateAllInstances.
+
+	self assert: (result isKindOf: Integer).
+	self assert: result >= 0
+]
+
+{ #category : 'tests - migrate + history options' }
+GsInstVarStructureRefactoringTest >> testPruneSupersededVersionsTrimsHistoryToCurrent [
+	"Reversioning leaves each edited class with >1 history entry; the remove-old-from-history
+	 option (exercised here without the commit) trims it to just the current version."
+	| ref new |
+	ref := GsInstVarStructureRefactoring class: (self classNamed: 'GsVSMid') pushDownInstVar: 'pushable'.
+	ref applyDeselected: #().
+	new := UserGlobals at: #GsVSMid.
+	self assert: new classHistory size > 1.
+
+	ref pruneSupersededVersions.
+
+	self assert: new classHistory size equals: 1.
+	self assert: (new classHistory at: 1) == new
+]
+
+{ #category : 'tests - accessor detection' }
+GsInstVarStructureRefactoringTest >> testPushUpMovesAGetterThatCarriesAComment [
+	"A method comment must not defeat simple-accessor detection (the parser ignores it)."
+	| mid |
+	mid := self classNamed: 'GsVSMid'.
+	self compile: 'pushable "the pushable value" ^ pushable' in: mid.
+
+	((GsInstVarStructureRefactoring class: mid pushUpInstVar: 'pushable') moveAccessors: true)
+		applyDeselected: #().
+
+	self assert: ((self classNamed: 'GsVSBase') includesSelector: #pushable).
+	self deny: ((self classNamed: 'GsVSMid') includesSelector: #pushable)
+]
+
+{ #category : 'tests - accessor detection' }
+GsInstVarStructureRefactoringTest >> testPushUpMovesASetterEndingInReturnSelf [
+	"A setter of the form `ivar := arg. ^self` is still a simple setter."
+	| mid |
+	mid := self classNamed: 'GsVSMid'.
+	self compile: 'pushable: aValue pushable := aValue. ^self' in: mid.
+
+	((GsInstVarStructureRefactoring class: mid pushUpInstVar: 'pushable') moveAccessors: true)
+		applyDeselected: #().
+
+	self assert: ((self classNamed: 'GsVSBase') includesSelector: #'pushable:').
+	self deny: ((self classNamed: 'GsVSMid') includesSelector: #'pushable:')
+]
+
+{ #category : 'tests - accessor detection' }
+GsInstVarStructureRefactoringTest >> testPushUpLeavesALazyInitGetterBehind [
+	"A getter with any extra logic (here a lazy init) is NOT a simple accessor: it is left on
+	 the subclass, which still works via the now-inherited ivar."
+	| mid |
+	mid := self classNamed: 'GsVSMid'.
+	self compile: 'pushable ^ pushable ifNil: [pushable := 0]' in: mid.
+
+	((GsInstVarStructureRefactoring class: mid pushUpInstVar: 'pushable') moveAccessors: true)
+		applyDeselected: #().
+
+	self assert: ((self classNamed: 'GsVSMid') includesSelector: #pushable).
+	self deny: ((self classNamed: 'GsVSBase') includesSelector: #pushable)
+]
+
+{ #category : 'tests - accessor detection' }
+GsInstVarStructureRefactoringTest >> testPushUpLeavesAMultiStatementSetterBehind [
+	"A setter that does more than the bare assignment is not simple and is left in place."
+	| mid |
+	mid := self classNamed: 'GsVSMid'.
+	self compile: 'pushable: aValue Transcript show: ''set''. pushable := aValue' in: mid.
+
+	((GsInstVarStructureRefactoring class: mid pushUpInstVar: 'pushable') moveAccessors: true)
+		applyDeselected: #().
+
+	self assert: ((self classNamed: 'GsVSMid') includesSelector: #'pushable:').
+	self deny: ((self classNamed: 'GsVSBase') includesSelector: #'pushable:')
 ]

@@ -17,9 +17,14 @@ import { readWebviewScript } from '../webviewAssets';
 
 const panelJs = readWebviewScript('renameMethodPanelView.js', 'refactoring');
 
+export interface IvarApplyOptions {
+  migrateInstances: boolean;
+  removeOldFromHistory: boolean;
+}
+
 export interface IvarStructurePanelHandlers {
   loadPage: (offset: number) => Promise<IvarPreviewPage>;
-  apply: (deselectedIds: string[]) => Promise<IvarApplyResult>;
+  apply: (deselectedIds: string[], options: IvarApplyOptions) => Promise<IvarApplyResult>;
   cleanup: () => void;
 }
 
@@ -99,7 +104,11 @@ export function showInstVarStructurePanel(
             const deselected: string[] = Array.isArray(message.deselected)
               ? message.deselected
               : [];
-            const result = await handlers.apply(deselected);
+            const opts = (message.options ?? {}) as Record<string, unknown>;
+            const result = await handlers.apply(deselected, {
+              migrateInstances: opts.migrateInstances === true,
+              removeOldFromHistory: opts.removeOldFromHistory === true,
+            });
             finish(result);
           } else if (message?.command === 'cancel') {
             finish(undefined);

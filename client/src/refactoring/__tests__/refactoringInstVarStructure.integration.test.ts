@@ -97,9 +97,10 @@ describe('instance-variable structure (integration)', () => {
     varName: string,
     token: string,
     extra?: { selector: string; isMeta: boolean; varName: string },
+    moveAccessors = false,
   ): Promise<void> => {
     const analysis = parseAnalysis(
-      await analyzeInstVarStructure(asyncExec, op, cls, varName, undefined, extra),
+      await analyzeInstVarStructure(asyncExec, op, cls, varName, undefined, extra, moveAccessors),
     );
     expect(analysis.decline).toBeNull();
     const start = parseStartPreview(
@@ -112,11 +113,14 @@ describe('instance-variable structure (integration)', () => {
         PREVIEW_PAGE_BYTES,
         undefined,
         extra,
+        moveAccessors,
       ),
     );
     expect(start.outOfScope.decline).toBeNull();
+    // moveAccessors alone never commits; the apply leaves both persistent options off.
     const result = parseApplyResult(await applyInstVarStructure(asyncExec, token));
     expect(result.failed).toEqual([]);
+    expect(result.committed).toBe(false);
   };
 
   it('reports engine availability matching the shared refactoring probe', () => {
@@ -183,5 +187,31 @@ r := (System myUserProfile symbolList objectNamed: #GsInstVarStructureRefactorin
 
     expect(analysis.decline).not.toBeNull();
     expect(analysis.decline).toContain('still uses it');
+  });
+
+  it('moves a simple accessor up with the instance variable when moving accessors', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+
+    defineFixture();
+    // midM (`^mid`) is a simple getter of `mid`, so it travels up with the declaration.
+    await runToApply('pushUp', MID, 'mid', 'vs-up-acc', undefined, true);
+
+    expect(ownIvars(BASE)).toContain("'mid'");
+    expect(ownIvars(MID)).not.toContain("'mid'");
+    expect(definesSelector(BASE, 'midM')).toBe(true);
+    expect(definesSelector(MID, 'midM')).toBe(false);
+  });
+
+  it('pushes down when the only own-user is a simple accessor and moves it too', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+
+    defineFixture();
+    // Without moving accessors this declines (see above); with it, midM moves into the subclass.
+    await runToApply('pushDown', MID, 'mid', 'vs-down-acc', undefined, true);
+
+    expect(ownIvars(MID)).not.toContain("'mid'");
+    expect(ownIvars(LEAF)).toContain("'mid'");
+    expect(definesSelector(MID, 'midM')).toBe(false);
+    expect(definesSelector(LEAF, 'midM')).toBe(true);
   });
 });

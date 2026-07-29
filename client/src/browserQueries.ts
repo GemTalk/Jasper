@@ -1385,10 +1385,11 @@ export function analyzeInstVarStructure(
   varName: string,
   dict?: number | string,
   extra?: ConvertTempArgs,
+  moveAccessors = false,
 ): Promise<string> {
   const exec = (label: string, code: string): Promise<string> =>
     executeFetchStringNb(session, label, code, 'Analysing…');
-  return sharedAnalyzeInstVarStructure(exec, op, className, varName, dict, extra);
+  return sharedAnalyzeInstVarStructure(exec, op, className, varName, dict, extra, moveAccessors);
 }
 
 export function startInstVarStructurePreview(
@@ -1400,6 +1401,7 @@ export function startInstVarStructurePreview(
   maxBytes: number,
   dict?: number | string,
   extra?: ConvertTempArgs,
+  moveAccessors = false,
 ): Promise<string> {
   const exec = (label: string, code: string): Promise<string> =>
     executeFetchStringNb(session, label, code, `Previewing change to ${className}…`);
@@ -1412,6 +1414,7 @@ export function startInstVarStructurePreview(
     maxBytes,
     dict,
     extra,
+    moveAccessors,
   );
 }
 
@@ -1426,10 +1429,15 @@ export function pageInstVarStructurePreview(
   return sharedPageInstVarStructurePreview(exec, token, offset, maxBytes);
 }
 
-export function applyInstVarStructure(session: ActiveSession, token: string): Promise<string> {
+export function applyInstVarStructure(
+  session: ActiveSession,
+  token: string,
+  migrateInstances = false,
+  removeOldFromHistory = false,
+): Promise<string> {
   const exec = (label: string, code: string): Promise<string> =>
     executeFetchStringNb(session, label, code, 'Applying change…');
-  return sharedApplyInstVarStructure(exec, token);
+  return sharedApplyInstVarStructure(exec, token, migrateInstances, removeOldFromHistory);
 }
 
 export function clearInstVarStructurePreview(session: ActiveSession, token: string): string {

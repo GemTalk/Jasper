@@ -42,20 +42,30 @@ export interface IvarStructureRequest {
   dict?: number | string;
   /** V5 only: the method + side the temporary lives in. */
   extra?: ConvertTempArgs;
+  /** V2/V3 opt-in: also move the ivar's simple getter/setter accessors with the declaration. */
+  moveAccessors?: boolean;
 }
 
 /** Preview + apply one instance-variable structure change. Answers true when it applied,
  *  false when cancelled/declined/failed. Surfaces its own user-facing messages. */
 export async function runInstVarStructure(req: IvarStructureRequest): Promise<boolean> {
-  const { session, op, className, varName, heading, dict, extra } = req;
-  logInfo(`[instVar:${op}] ${className}.${varName}`);
+  const { session, op, className, varName, heading, dict, extra, moveAccessors } = req;
+  logInfo(`[instVar:${op}] ${className}.${varName}${moveAccessors ? ' (+accessors)' : ''}`);
 
   if (!(await ensureRbSupport(session, heading))) return false;
 
   let analysis;
   try {
     analysis = parseAnalysis(
-      await queries.analyzeInstVarStructure(session, op, className, varName, dict, extra),
+      await queries.analyzeInstVarStructure(
+        session,
+        op,
+        className,
+        varName,
+        dict,
+        extra,
+        moveAccessors,
+      ),
     );
   } catch (e: unknown) {
     void vscode.window.showErrorMessage(
@@ -89,6 +99,7 @@ export async function runInstVarStructure(req: IvarStructureRequest): Promise<bo
         PREVIEW_PAGE_BYTES,
         dict,
         extra,
+        moveAccessors,
       ),
     );
   } catch (e: unknown) {
@@ -113,7 +124,15 @@ export async function runInstVarStructure(req: IvarStructureRequest): Promise<bo
   const result = await showInstVarStructurePanel(heading, start, {
     loadPage: async (off) =>
       parsePage(await queries.pageInstVarStructurePreview(session, token, off, PREVIEW_PAGE_BYTES)),
-    apply: async () => parseApplyResult(await queries.applyInstVarStructure(session, token)),
+    apply: async (_deselected, options) =>
+      parseApplyResult(
+        await queries.applyInstVarStructure(
+          session,
+          token,
+          options.migrateInstances,
+          options.removeOldFromHistory,
+        ),
+      ),
     cleanup: safeClear,
   });
   if (!result) return false;
@@ -124,7 +143,14 @@ export async function runInstVarStructure(req: IvarStructureRequest): Promise<bo
     return false;
   }
 
-  void vscode.window.showInformationMessage(`${heading} — applied ${result.applied} change(s).`);
+  const committedNote = result.committed ? ' and committed' : '';
+  const migrateNote =
+    result.migratedFailures && result.migratedFailures > 0
+      ? ` (${result.migratedFailures} instance(s) failed to migrate)`
+      : '';
+  void vscode.window.showInformationMessage(
+    `${heading} — applied ${result.applied} change(s)${committedNote}${migrateNote}.`,
+  );
   return true;
 }
 
@@ -141,7 +167,19 @@ export async function pushInstVar(
     direction === 'up'
       ? `Push instance variable '${ivarName}' up from ${className}`
       : `Push instance variable '${ivarName}' down from ${className}`;
-  return runInstVarStructure({ session, op, className, varName: ivarName, heading, dict });
+
+  // Always carry the ivar's SIMPLE getter/setter accessors along with the declaration — a bare
+  // `^ivar` / `ivar := arg` belongs with the variable it exposes. Anything that isn't a trivial
+  // accessor is never moved, and the preview lists every change so the user can still cancel.
+  return runInstVarStructure({
+    session,
+    op,
+    className,
+    varName: ivarName,
+    heading,
+    dict,
+    moveAccessors: true,
+  });
 }
 
 /** V5: convert the temporary at the cursor of the active method editor into an instance

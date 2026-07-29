@@ -87,5 +87,17 @@ describe('instance-variable structure panel HTML', () => {
     it('hides the pager when the first page is the last', () => {
       expect(renderIvarPanelHtml(opts)).toContain('pager hidden');
     });
+
+    it('renders the migrate + remove-history apply-option checkboxes (default unchecked)', () => {
+      const html = renderIvarPanelHtml(opts);
+
+      expect(html).toContain('class="apply-option" data-opt="migrateInstances"');
+      expect(html).toContain('class="apply-option" data-opt="removeOldFromHistory"');
+      expect(html).toContain('Migrate existing instances');
+      expect(html).toContain('Remove old versions from class history');
+      // both commit, and neither is pre-checked
+      expect(html).not.toContain('data-opt="migrateInstances" checked');
+      expect(html).not.toContain('data-opt="removeOldFromHistory" checked');
+    });
   });
 });

@@ -132,6 +132,22 @@ describe('instance-variable structure preview parsing', () => {
       expect(r.applied).toBe(3);
       expect(r.failed[0].error).toBe('boom');
     });
+
+    it('reads the committed flag and migrate-failure count', () => {
+      const r = parseApplyResult(
+        JSON.stringify({ applied: 4, failed: [], committed: true, migratedFailures: 2 }),
+      );
+
+      expect(r.committed).toBe(true);
+      expect(r.migratedFailures).toBe(2);
+    });
+
+    it('defaults committed to false when the apply did not commit', () => {
+      const r = parseApplyResult(JSON.stringify({ applied: 4, failed: [] }));
+
+      expect(r.committed).toBe(false);
+      expect(r.migratedFailures).toBe(0);
+    });
   });
 
   describe('ivarChangeLabel', () => {
@@ -160,6 +176,49 @@ describe('instance-variable structure preview parsing', () => {
       expect(ivarChangeLabel(change({ kind: 'methodRecompile', selector: 'compute' }))).toBe(
         'Base>>compute',
       );
+    });
+
+    it('labels an accessor removed from its source class', () => {
+      expect(ivarChangeLabel(change({ kind: 'methodRemove', selector: 'color' }))).toBe(
+        'Base>>color — removed (accessor moved with the variable)',
+      );
+    });
+
+    it('labels an accessor added to a target class', () => {
+      expect(ivarChangeLabel(change({ kind: 'methodAdd', selector: 'color' }))).toBe(
+        'Base>>color — added (accessor moved with the variable)',
+      );
+    });
+  });
+
+  describe('accessor-move change kinds', () => {
+    it('accepts methodRemove and methodAdd rows in a preview page', () => {
+      const page = parsePage(
+        JSON.stringify({
+          changes: [
+            {
+              id: '3',
+              kind: 'methodRemove',
+              className: 'Sub',
+              selector: 'color',
+              oldSource: 'color\n\t^color',
+            },
+            {
+              id: '4',
+              kind: 'methodAdd',
+              className: 'Super',
+              selector: 'color',
+              newSource: 'color\n\t^color',
+            },
+          ],
+          nextOffset: 2,
+          done: true,
+        }),
+      );
+
+      expect(page.changes.map((c) => c.kind)).toEqual(['methodRemove', 'methodAdd']);
+      expect(page.changes[0].oldSource).toContain('^color');
+      expect(page.changes[1].newSource).toContain('^color');
     });
   });
 });

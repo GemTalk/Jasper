@@ -296,7 +296,7 @@ removeallclassmethods GsInlineTemporaryRefactoring
 doit
 | cls |
 cls := Object subclass: 'GsInstVarStructureRefactoring'
-  instVarNames: #('environment' 'operation' 'definingClass' 'varName' 'methodSelector' 'methodMeta' 'topClass' 'newIvarLists' 'methodRewrite' 'changeSet' 'analysisDone' 'decline' 'oldToNew')
+  instVarNames: #('environment' 'operation' 'definingClass' 'varName' 'methodSelector' 'methodMeta' 'topClass' 'newIvarLists' 'methodRewrite' 'moveAccessors' 'accessorRemovals' 'accessorAdds' 'migrateInstances' 'removeOldFromHistory' 'changeSet' 'analysisDone' 'decline' 'oldToNew')
   classVars: #()
   classInstVars: #()
   poolDictionaries: #()
@@ -336,6 +336,14 @@ IMPORTANT semantics (documented, surfaced in the preview):
     the family does not perform. So the moved ivar''s value is not carried onto live instances.
   - V2/V3 do not preserve the moved ivar''s per-instance value (the remove+add resets the slot);
     this is a structural refactoring, matching the classic Refactoring Browser.
+
+Optional (V2/V3): #moveAccessors: true also relocates the ivar''s SIMPLE accessors -- a `^ivar`
+getter and an `ivar := arg` setter, nothing more -- alongside the declaration (staged as
+#methodRemove on the source class + #methodAdd on the target class(es), so they show in the
+preview). A method that is anything but a trivial getter/setter is never touched. An accessor is
+skipped rather than overwriting an existing same-named method on a target. Because a simple
+accessor then travels WITH the ivar, on push-down it no longer counts as a blocking own-use of
+the ivar (a non-accessor user still blocks).
 
 The refactoring is all-or-nothing (like rename-class-variable): the class-shape changes and the
 descendant reparents must all apply together or the hierarchy is left inconsistent, so the
@@ -4675,7 +4683,42 @@ setEnvironment: anEnvironment operation: anOp class: aClass varName: aName selec
 	varName := aName asString.
 	methodSelector := aSelector isNil ifTrue: [nil] ifFalse: [aSelector asSymbol].
 	methodMeta := aBool.
+	moveAccessors := false.
+	accessorRemovals := OrderedCollection new.
+	accessorAdds := OrderedCollection new.
+	migrateInstances := false.
+	removeOldFromHistory := false.
 	analysisDone := false
+%
+
+category: 'accessing'
+method: GsInstVarStructureRefactoring
+migrateInstances: mi removeOldFromHistory: rh
+	"Opt-in, class-rename-parity persistent options (both default false):
+	  - migrateInstances: migrate every old-version instance of each reversioned class to its
+	    new version -- REQUIRES a commit, so the apply commits when it is on;
+	  - removeOldFromHistory: prune the superseded versions from each reversioned class's
+	    history -- also commits.
+	 With both off the apply never commits (matching the rest of the family). Answers self."
+	migrateInstances := mi.
+	removeOldFromHistory := rh.
+	^self
+%
+
+category: 'accessing'
+method: GsInstVarStructureRefactoring
+moveAccessors: aBool
+	"V2/V3 opt-in: also move the pushed ivar's SIMPLE accessors (a `^ivar` getter and an
+	 `ivar := arg` setter) along with the declaration. Anything that isn't a trivial
+	 getter/setter is never moved. Answers self so senders can chain before analysis."
+	moveAccessors := aBool.
+	^self
+%
+
+category: 'accessing'
+method: GsInstVarStructureRefactoring
+moveAccessors
+	^moveAccessors == true
 %
 
 category: 'accessing'
@@ -4726,6 +4769,8 @@ computeAnalysis
 	 Array), and, for V5, methodRewrite. Dispatches on the operation."
 	decline := nil.
 	newIvarLists := Dictionary new.
+	accessorRemovals := OrderedCollection new.
+	accessorAdds := OrderedCollection new.
 	operation == #convertTemp ifTrue: [^self analyzeConvertTemp].
 	operation == #pushUp ifTrue: [^self analyzePushUp].
 	operation == #pushDown ifTrue: [^self analyzePushDown].
@@ -4781,7 +4826,8 @@ analyzePushUp
 		^decline := 'Cannot push up ', varName, ': ', cls, ' also declares an instance variable of that name, which would collide once it is inherited.'].
 	topClass := sup.
 	newIvarLists at: definingClass name asString put: ((self ownInstVarsOf: definingClass) reject: [:n | n = varName]).
-	newIvarLists at: sup name asString put: ((self ownInstVarsOf: sup) copyWith: varName)
+	newIvarLists at: sup name asString put: ((self ownInstVarsOf: sup) copyWith: varName).
+	self moveAccessors ifTrue: [self planAccessorMovesFrom: definingClass to: (Array with: sup)]
 %
 
 category: 'private - analysis'
@@ -4797,14 +4843,23 @@ analyzePushDown
 	subs isEmpty ifTrue: [
 		^decline := 'Cannot push down ', varName, ': ', definingClass name asString, ' has no subclasses.'].
 	users := environment instanceMethodsAccessing: varName inClass: definingClass.
+	"When moving accessors, the class's own SIMPLE accessors of varName no longer block the
+	 push-down -- they move down with the ivar instead of dangling. Non-accessor users still block."
+	self moveAccessors ifTrue: [
+		| accessorSels |
+		accessorSels := (self simpleAccessorsOf: definingClass forIvar: varName) collect: [:a | a at: 1].
+		users := users reject: [:sel | accessorSels includes: sel]].
 	users isEmpty ifFalse: [
-		^decline := 'Cannot push down ', varName, ': ', definingClass name asString, ' still uses it in ', users size printString, ' of its own method(s).'].
+		^decline := 'Cannot push down ', varName, ': ', definingClass name asString,
+			' still uses it in ', users size printString, ' of its own method(s): ',
+			(self selectorListString: users), '.'].
 	(self anyDescendantOf: definingClass ownsIvar: varName) ifNotNil: [:cls |
 		^decline := 'Cannot push down ', varName, ': ', cls, ' already declares an instance variable of that name.'].
 	topClass := definingClass.
 	newIvarLists at: definingClass name asString put: ((self ownInstVarsOf: definingClass) reject: [:n | n = varName]).
 	subs do: [:sub |
-		newIvarLists at: sub name asString put: ((self ownInstVarsOf: sub) copyWith: varName)]
+		newIvarLists at: sub name asString put: ((self ownInstVarsOf: sub) copyWith: varName)].
+	self moveAccessors ifTrue: [self planAccessorMovesFrom: definingClass to: subs]
 %
 
 category: 'private - analysis'
@@ -4825,6 +4880,95 @@ anyDescendantOf: aTop ownsIvar: aName
 	(environment descendantsOf: aTop) do: [:cls |
 		((self ownInstVarsOf: cls) includes: aName) ifTrue: [^cls name asString]].
 	^nil
+%
+
+category: 'private - accessors'
+method: GsInstVarStructureRefactoring
+planAccessorMovesFrom: srcClass to: targetClasses
+	"Record the SIMPLE accessors of varName on srcClass to move alongside the ivar: remove
+	 each from srcClass and add it to the target class(es). Never overwrites an existing method
+	 on a target -- if a target already implements the selector, that target is skipped. On
+	 push-up (the ivar stays reachable via inheritance) an accessor is left in place unless the
+	 superclass can receive it; on push-down (the ivar leaves srcClass) the accessor must be
+	 removed from srcClass regardless, and added to each subclass that doesn't already define it."
+	(self simpleAccessorsOf: srcClass forIvar: varName) do: [:a |
+		| sel src cat targets |
+		sel := a at: 1. src := a at: 2. cat := a at: 3.
+		targets := targetClasses reject: [:t | t includesSelector: sel].
+		(operation == #pushUp and: [targets isEmpty])
+			ifFalse: [
+				accessorRemovals add: (Array with: sel with: srcClass name asString with: src with: cat).
+				targets do: [:t |
+					accessorAdds add: (Array with: sel with: t name asString with: src with: cat)]]]
+%
+
+category: 'private - accessors'
+method: GsInstVarStructureRefactoring
+simpleAccessorsOf: aClass forIvar: aName
+	"aClass's OWN instance-side simple accessors of aName, as Arrays {selector, source,
+	 category}. A simple accessor is a `^aName` getter or an `aName := arg` setter and nothing
+	 more (see #simpleAccessorKindOf:forVar:); anything with extra logic is excluded."
+	| result |
+	result := OrderedCollection new.
+	aClass selectors do: [:sel |
+		| m tree |
+		m := aClass compiledMethodAt: sel environmentId: 0 otherwise: nil.
+		m notNil ifTrue: [
+			tree := [RBParser parseMethod: m sourceString] on: Error do: [:e | nil].
+			(tree notNil and: [(self simpleAccessorKindOf: tree forVar: aName) notNil]) ifTrue: [
+				result add: (Array
+					with: sel
+					with: m sourceString
+					with: ((aClass categoryOfSelector: sel environmentId: 0) ifNil: ['accessing']) asString)]]].
+	^result
+%
+
+category: 'private - accessors'
+method: GsInstVarStructureRefactoring
+simpleAccessorKindOf: tree forVar: v
+	"#getter if tree is exactly `^v`; #setter if it is exactly `v := arg` (optionally followed
+	 by `^self`/`^v`/`^arg`) for the method's single argument; nil otherwise. No temporaries
+	 allowed. Purely structural so a same-named literal or a computed body never qualifies."
+	| body stmts first argName |
+	body := tree body.
+	body temporaries isEmpty ifFalse: [^nil].
+	stmts := body statements.
+	(tree argumentNames isEmpty and: [stmts size = 1 and: [stmts first isReturn
+		and: [stmts first value isVariable and: [stmts first value name = v]]]])
+		ifTrue: [^#getter].
+	tree argumentNames size = 1 ifTrue: [
+		argName := tree argumentNames first asString.
+		(stmts size between: 1 and: 2) ifTrue: [
+			first := stmts first.
+			(first isAssignment and: [first variable name = v
+				and: [first value isVariable and: [first value name = argName]]]) ifTrue: [
+				stmts size = 1 ifTrue: [^#setter].
+				(stmts last isReturn and: [stmts last value isVariable and: [
+					(stmts last value name = 'self')
+						or: [(stmts last value name = v) or: [stmts last value name = argName]]]])
+					ifTrue: [^#setter]]]].
+	^nil
+%
+
+category: 'private'
+method: GsInstVarStructureRefactoring
+dictNameForClassNamed: aName
+	| dicts |
+	dicts := environment dictionariesDefiningClassNamed: aName.
+	^dicts isEmpty ifTrue: [nil] ifFalse: [dicts first name asString]
+%
+
+category: 'private'
+method: GsInstVarStructureRefactoring
+selectorListString: aCollectionOfSelectors
+	"A comma-separated, #-prefixed list of selectors for a decline message,
+	 e.g. #perimeter, #area."
+	^aCollectionOfSelectors
+		inject: ''
+		into: [:acc :s |
+			acc isEmpty
+				ifTrue: ['#', s asString]
+				ifFalse: [acc, ', #', s asString]]
 %
 
 category: 'private'
@@ -4875,6 +5019,22 @@ buildChangeSet
 	affected add: topClass.
 	affected addAll: (environment descendantsOf: topClass).
 	affected do: [:cls | self stageClassChange: cls into: cs].
+	accessorRemovals do: [:r |
+		cs
+			addMethodRemoveInDictionary: (self dictNameForClassNamed: (r at: 2))
+			className: (r at: 2)
+			isMeta: false
+			selector: (r at: 1)
+			category: (r at: 4)
+			oldSource: (r at: 3)].
+	accessorAdds do: [:a |
+		cs
+			addMethodAddInDictionary: (self dictNameForClassNamed: (a at: 2))
+			className: (a at: 2)
+			isMeta: false
+			selector: (a at: 1)
+			category: (a at: 4)
+			newSource: (a at: 3)].
 	methodRewrite ifNotNil: [self stageMethodRewriteInto: cs].
 	^cs
 %
@@ -4963,7 +5123,7 @@ outOfScopeJsonString
 	 semantics."
 	^'{"references":0,"skipped":0,"scope":"hierarchy","collision":null,"decline":',
 	  (decline ifNil: ['null'] ifNotNil: [:r | self jsonQuote: r]),
-	  ',"note":', (self jsonQuote: 'Existing instances keep their prior version and are not migrated.'), '}'
+	  ',"note":', (self jsonQuote: 'By default existing instances keep their prior version. Enable "Migrate existing instances" below to move them to the new version (this commits).'), '}'
 %
 
 category: 'serializing'
@@ -4999,10 +5159,15 @@ pageJsonFrom: startIndex maxBytes: maxBytes
 category: 'applying'
 method: GsInstVarStructureRefactoring
 applyDeselected: deselectedIds
-	"Apply EVERY staged change in the stone WITHOUT committing. An instance-variable
-	 structure change is ALL-OR-NOTHING (the class-shape edits and the descendant reparents
-	 must move together), so a deselection is ignored. Answers {applied, failed:[..]}."
-	| applied failures |
+	"Apply EVERY staged change in the stone. An instance-variable structure change is
+	 ALL-OR-NOTHING (the class-shape edits and the descendant reparents must move together),
+	 so a deselection is ignored. By default NOTHING is committed. The opt-in persistent
+	 options mirror rename-class: when migrateInstances or removeOldFromHistory is on AND the
+	 structural apply had zero failures, commit (so the new versions are durable), then migrate
+	 each old-version's instances to its new version / prune superseded versions, then commit
+	 again. A partly-failed apply is never committed. Answers
+	 {applied, failed:[..], committed, migratedFailures}."
+	| applied failures migrated committed |
 	self ensureAnalysis.
 	oldToNew := IdentityDictionary new.
 	failures := OrderedCollection new.
@@ -5011,7 +5176,22 @@ applyDeselected: deselectedIds
 		[self applyChange: change. applied := applied + 1]
 		on: Error do: [:e |
 			failures add: (Array with: change id with: change className with: e messageText)]].
+	migrated := 0.
+	committed := false.
+	((migrateInstances or: [removeOldFromHistory]) and: [failures isEmpty]) ifTrue: [
+		"Commit the structural change FIRST so the new versions are persistent (migrating
+		 already-committed instances to a version created in this same uncommitted transaction
+		 is a no-op), then migrate/prune and commit again."
+		[System commitTransaction. committed := true] on: Error do: [:e |
+			failures add: (Array with: 'commit' with: topClass name asString with: e messageText)].
+		committed ifTrue: [
+			migrateInstances ifTrue: [migrated := self migrateAllInstances].
+			removeOldFromHistory ifTrue: [self pruneSupersededVersions].
+			[System commitTransaction] on: Error do: [:e |
+				failures add: (Array with: 'commit' with: topClass name asString with: e messageText)]]].
 	^'{"applied":', applied printString,
+	  ',"committed":', committed printString,
+	  ',"migratedFailures":', migrated printString,
 	  ',"failed":[',
 	  ((failures collect: [:f |
 		'{"id":', (self jsonQuote: (f at: 1)),
@@ -5023,11 +5203,80 @@ applyDeselected: deselectedIds
 
 category: 'applying'
 method: GsInstVarStructureRefactoring
+migrateAllInstances
+	"Migrate every instance of each superseded version (the keys of oldToNew: the top edited
+	 class and each reversioned descendant) to its new version. Answers the number of instances
+	 that FAILED to migrate (migrateInstancesTo: answers five sets; set 1 is empty, sets 2..5 are
+	 failures). A migrateInstancesTo: that RAISES is counted as at least one failure.
+
+	 MOST-DERIVED FIRST: a subclass instance is also an instance of its (old) superclass version,
+	 so migrating an ancestor before the subclass would report that not-yet-moved instance as a
+	 failure. Sorting deepest-first means each instance is migrated by its OWN class, and an
+	 ancestor's migrateInstancesTo: then sees none of them. Does not commit -- the caller commits."
+	| failed |
+	failed := 0.
+	(oldToNew keys asSortedCollection: [:a :b | a allSuperclasses size >= b allSuperclasses size])
+		do: [:old | | new |
+			new := oldToNew at: old.
+			[| report |
+			 report := old migrateInstancesTo: new.
+			 2 to: report size do: [:i | failed := failed + (report at: i) size].
+			 "migrateInstancesTo: requires a CLEAN transaction: if the prior class's migration is
+			  still uncommitted, the next one raises TransactionError (rtErrAbortWouldLoseData). So
+			  commit after each class's migration, not just once at the end."
+			 System commitTransaction]
+			on: Error do: [:e | failed := failed + 1]].
+	^failed
+%
+
+category: 'applying'
+method: GsInstVarStructureRefactoring
+pruneSupersededVersions
+	"Remove the superseded versions from each reversioned class's history, leaving only the
+	 current (new) version. Guards on identity so the new version is never removed. Does not
+	 commit -- the caller commits."
+	oldToNew valuesDo: [:new | | hist |
+		hist := new classHistory.
+		hist asArray do: [:v | v == new ifFalse: [hist removeVersion: v]]]
+%
+
+category: 'applying'
+method: GsInstVarStructureRefactoring
 applyChange: aChange
 	(aChange kind == #classDefinitionEdit or: [aChange kind == #classReparent])
 		ifTrue: [^self applyClassChange: aChange].
 	aChange kind == #methodRecompile ifTrue: [^self applyMethodRecompile: aChange].
+	aChange kind == #methodRemove ifTrue: [^self applyMethodRemove: aChange].
+	aChange kind == #methodAdd ifTrue: [^self applyMethodAdd: aChange].
 	^self error: 'Unexpected change kind for instVar-structure: ', aChange kind printString
+%
+
+category: 'applying'
+method: GsInstVarStructureRefactoring
+applyMethodRemove: aChange
+	"Accessor move: ensure the moved accessor is absent from its (freshly versioned) source
+	 class. #copyMethodsFrom:to: already skips carrying it forward, so this is normally a no-op;
+	 the guard also keeps re-application idempotent and avoids removeSelector: on an absent one."
+	| cls target sel |
+	cls := environment classNamed: aChange className.
+	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
+	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
+	sel := aChange selector asSymbol.
+	(target includesSelector: sel) ifTrue: [target removeSelector: sel]
+%
+
+category: 'applying'
+method: GsInstVarStructureRefactoring
+applyMethodAdd: aChange
+	"Accessor move: compile the accessor onto its (freshly versioned) target class."
+	| cls target |
+	cls := environment classNamed: aChange className.
+	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
+	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
+	target
+		compileMethod: aChange newSource
+		dictionaries: System myUserProfile symbolList
+		category: (aChange category ifNil: ['accessing'])
 %
 
 category: 'applying'
@@ -5073,9 +5322,26 @@ copyMethodsFrom: old to: new
 	"Copy every method of old (both sides) verbatim onto new -- a new class version starts
 	 with an empty method dictionary, so this carries the behaviour forward. The V5 method
 	 rewrite is applied afterwards, as its own #methodRecompile, so it overwrites the verbatim
-	 copy."
-	old selectors do: [:sel | self copyMethod: sel from: old to: new].
+	 copy. Accessors being MOVED OUT of old (V2/V3 moveAccessors) are NOT copied: on a push-down
+	 old no longer owns the ivar, so copying its `^ivar` accessor would compile an undeclared
+	 reference -- the accessor is instead added to the target class as its own #methodAdd."
+	| skip |
+	skip := self accessorRemovalSelectorsFor: old name asString.
+	old selectors do: [:sel |
+		(skip includes: sel) ifFalse: [self copyMethod: sel from: old to: new]].
 	old class selectors do: [:sel | self copyMethod: sel from: old class to: new class]
+%
+
+category: 'private - accessors'
+method: GsInstVarStructureRefactoring
+accessorRemovalSelectorsFor: aClassName
+	"The set of (instance-side) selectors being moved OUT of the named class, so
+	 #copyMethodsFrom:to: can skip carrying them onto the new version."
+	| set |
+	set := IdentitySet new.
+	accessorRemovals do: [:r |
+		(r at: 2) = aClassName ifTrue: [set add: (r at: 1)]].
+	^set
 %
 
 category: 'applying'
@@ -5239,9 +5505,19 @@ pageForToken: token from: startIndex maxBytes: maxBytes
 category: 'paginated preview'
 classmethod: GsInstVarStructureRefactoring
 applyForToken: token deselected: deselectedIds
+	^self applyForToken: token deselected: deselectedIds migrateInstances: false removeOldFromHistory: false
+%
+
+category: 'paginated preview'
+classmethod: GsInstVarStructureRefactoring
+applyForToken: token deselected: deselectedIds migrateInstances: mi removeOldFromHistory: rh
+	"Apply the previewed change under token, carrying the opt-in persistent options chosen in
+	 the preview panel. With both off nothing commits."
 	^(SessionTemps current at: token asSymbol ifAbsent: [nil])
-		ifNil: ['{"applied":0,"failed":[],"error":"preview session expired"}']
-		ifNotNil: [:ref | ref applyDeselected: deselectedIds]
+		ifNil: ['{"applied":0,"committed":false,"migratedFailures":0,"failed":[],"error":"preview session expired"}']
+		ifNotNil: [:ref |
+			ref migrateInstances: mi removeOldFromHistory: rh.
+			ref applyDeselected: deselectedIds]
 %
 
 category: 'paginated preview'

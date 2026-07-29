@@ -226,10 +226,14 @@ class IvarItem extends vscode.TreeItem {
   constructor(
     public readonly className: string,
     public readonly ivarName: string,
+    // Drives the inline ▼ "Push Down" arrow: with no subclasses there's nowhere to push
+    // to, so the row uses a contextValue the push-down menu doesn't match. The ▲ "Push Up"
+    // and ✎ rename actions match both contextValues.
+    hasSubclasses = true,
   ) {
     super(ivarName, vscode.TreeItemCollapsibleState.None);
     this.id = `k:${className}/iv:${ivarName}`;
-    this.contextValue = 'explorerIvar';
+    this.contextValue = hasSubclasses ? 'explorerIvar' : 'explorerIvarNoSubs';
     this.iconPath = new vscode.ThemeIcon('symbol-field');
     this.tooltip = `Instance variable defined in ${className}`;
   }
@@ -501,6 +505,13 @@ export class ExplorerController {
   // expansion caret. Names are fetched lazily on expand and memoized here.
   private definedIvarCounts = new Map<string, number>();
   private readonly definedIvarNamesCache = new Map<string, string[]>();
+  // className → {superclass, subclasses} from the class hierarchy, memoized so ivar rows
+  // can cheaply know whether a class has subclasses (to gate the ▼ push-down arrow) and
+  // find the push up/down reveal target. Cleared alongside the ivar caches on any reshape.
+  private readonly hierNeighborsCache = new Map<
+    string,
+    { superclass?: string; subclasses: string[] }
+  >();
   // Same, for locally-defined CLASS variables (drives the class-variable sub-tree).
   private definedClassVarCounts = new Map<string, number>();
   private readonly definedClassVarNamesCache = new Map<string, string[]>();
@@ -665,6 +676,7 @@ export class ExplorerController {
     this.definedIvarCounts = new Map();
     this.classVersions = new Map();
     this.definedIvarNamesCache.clear();
+    this.hierNeighborsCache.clear();
     this.definedClassVarCounts = new Map();
     this.definedClassVarNamesCache.clear();
     this.envLines = [];
@@ -1336,6 +1348,7 @@ export class ExplorerController {
   private loadDefinedIvarCounts(): void {
     const session = this.session();
     this.definedIvarNamesCache.clear();
+    this.hierNeighborsCache.clear();
     this.definedClassVarNamesCache.clear();
     if (!session || this.state.dictIndex === undefined) {
       this.definedIvarCounts = new Map();
@@ -1382,6 +1395,42 @@ export class ExplorerController {
   }
 
   // Locally-defined instance variable names for a class, memoized per dict load.
+  // {superclass, immediate subclasses} for a class, memoized. Used to gate the ▼ push-down
+  // arrow (no subclasses ⇒ nowhere to push) and to pick the reveal target after a push.
+  private hierNeighbors(className: string): { superclass?: string; subclasses: string[] } {
+    const cached = this.hierNeighborsCache.get(className);
+    if (cached) return cached;
+    let neighbors: { superclass?: string; subclasses: string[] } = { subclasses: [] };
+    const session = this.session();
+    if (session) {
+      try {
+        const entries = queries.getClassHierarchy(session, className);
+        const supers = entries.filter((e) => e.kind === 'superclass');
+        neighbors = {
+          // superclasses are root-first, so the immediate parent is the last one.
+          superclass: supers.length > 0 ? supers[supers.length - 1].className : undefined,
+          subclasses: entries.filter((e) => e.kind === 'subclass').map((e) => e.className),
+        };
+      } catch {
+        /* leave empty — treated as a leaf with no superclass */
+      }
+    }
+    this.hierNeighborsCache.set(className, neighbors);
+    return neighbors;
+  }
+
+  classHasSubclasses(className: string): boolean {
+    return this.hierNeighbors(className).subclasses.length > 0;
+  }
+
+  immediateSuperclassOf(className: string): string | undefined {
+    return this.hierNeighbors(className).superclass;
+  }
+
+  firstSubclassOf(className: string): string | undefined {
+    return this.hierNeighbors(className).subclasses[0];
+  }
+
   definedIvarNames(className: string): string[] {
     const cached = this.definedIvarNamesCache.get(className);
     if (cached) return cached;
@@ -1440,7 +1489,23 @@ export class ExplorerController {
       item.ivarName,
       this.state.dictIndex,
     );
-    if (applied) await this.refreshAfterClassReshape(item.className);
+    if (!applied) return;
+    await this.refreshAfterClassReshape(item.className);
+    // Select the moved variable on its new home: the superclass (push up) or the first
+    // immediate subclass (push down — it now lives on every subclass). Best-effort: reveal
+    // rejects if the row isn't in the rebuilt tree, which we ignore.
+    const target =
+      direction === 'up'
+        ? this.immediateSuperclassOf(item.className)
+        : this.firstSubclassOf(item.className);
+    if (target) {
+      this.views?.klass
+        .reveal(new IvarItem(target, item.ivarName, this.classHasSubclasses(target)), {
+          select: true,
+          focus: true,
+        })
+        .then(undefined, () => {});
+    }
   }
 
   // The rename-instance-variable flow, addressed by NAME rather than a tree row so
@@ -3134,7 +3199,10 @@ class ClassProvider extends RefreshableProvider<ClassNode> {
             .map((cv) => new ClassVarItem(element.className, cv))
         : this.ctl
             .definedIvarNames(element.className)
-            .map((iv) => new IvarItem(element.className, iv));
+            .map(
+              (iv) =>
+                new IvarItem(element.className, iv, this.ctl.classHasSubclasses(element.className)),
+            );
     }
     return [];
   }

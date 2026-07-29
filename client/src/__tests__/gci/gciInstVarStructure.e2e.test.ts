@@ -63,14 +63,29 @@ describe('instance-variable structure (gci e2e)', () => {
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
     );
     q.compileMethod(session, MID, false, 'accessing', 'midM\n\t^mid');
+    q.compileMethod(session, MID, false, 'accessing', 'compute\n\t| t |\n\tt := mid.\n\t^t');
     q.compileMethod(session, LEAF, false, 'accessing', 'leafM\n\t^leaf');
   };
 
   const ownIvars = (cls: string): string =>
     exec(`(${cls} instVarNames collect: [:e | e asString]) printString`);
 
+  const definesSelector = (cls: string, selector: string): boolean =>
+    exec(
+      `(${cls} compiledMethodAt: #'${selector}' environmentId: 0 otherwise: nil) notNil printString`,
+    ).trim() === 'true';
+
   const abort = (): void => {
     exec('System abortTransaction');
+  };
+
+  // Remove the fixture classes (+ any stray migrate-test instance) and COMMIT — used to clean
+  // up the one test that must commit. Best-effort; safe to call when they don't exist.
+  const removeFixtureAndCommit = (): void => {
+    exec(
+      `#(#VsE2eInst #${LEAF} #${MID} #${BASE}) do: [:s | UserGlobals removeKey: s ifAbsent: []]. ` +
+        'System commitTransaction',
+    );
   };
 
   beforeAll(() => {
@@ -147,6 +162,103 @@ describe('instance-variable structure (gci e2e)', () => {
       expect(ownIvars(MID)).not.toContain("'pushable'");
     } finally {
       abort();
+    }
+  });
+
+  it('moves a simple accessor up with the ivar, then rolls back', async (ctx) => {
+    if (!enginePresent) return ctx.skip();
+
+    try {
+      defineFixture();
+      parseStartPreview(
+        await startInstVarStructurePreview(
+          asyncExec,
+          'pushUp',
+          MID,
+          'mid',
+          'vs-e2e-acc',
+          PREVIEW_PAGE_BYTES,
+          undefined,
+          undefined,
+          true,
+        ),
+      );
+      // Accessor move alone never commits.
+      const result = parseApplyResult(await applyInstVarStructure(asyncExec, 'vs-e2e-acc'));
+
+      expect(result.failed).toEqual([]);
+      expect(result.committed).toBe(false);
+      expect(ownIvars(BASE)).toContain("'mid'");
+      // midM (`^mid`) moved up to BASE; the non-accessor `compute` stayed on MID.
+      expect(definesSelector(BASE, 'midM')).toBe(true);
+      expect(definesSelector(MID, 'midM')).toBe(false);
+      expect(definesSelector(MID, 'compute')).toBe(true);
+    } finally {
+      abort();
+    }
+  });
+
+  it('converts a method temporary to an instance variable, then rolls back', async (ctx) => {
+    if (!enginePresent) return ctx.skip();
+
+    try {
+      defineFixture();
+      parseStartPreview(
+        await startInstVarStructurePreview(
+          asyncExec,
+          'convertTemp',
+          MID,
+          't',
+          'vs-e2e-ct',
+          PREVIEW_PAGE_BYTES,
+          undefined,
+          { selector: 'compute', isMeta: false, varName: 't' },
+        ),
+      );
+      const result = parseApplyResult(await applyInstVarStructure(asyncExec, 'vs-e2e-ct'));
+
+      expect(result.failed).toEqual([]);
+      expect(ownIvars(MID)).toContain("'t'");
+    } finally {
+      abort();
+    }
+  });
+
+  it('migrates existing instances to the new version and commits (opt-in)', async (ctx) => {
+    if (!enginePresent) return ctx.skip();
+
+    try {
+      // The fixture + a live instance must be COMMITTED before migrating: migrateInstancesTo:
+      // needs a clean transaction and already-persistent instances.
+      defineFixture();
+      exec('System commitTransaction');
+      exec(`UserGlobals at: #VsE2eInst put: ${LEAF} new. System commitTransaction`);
+
+      parseStartPreview(
+        await startInstVarStructurePreview(
+          asyncExec,
+          'pushUp',
+          LEAF,
+          'leaf',
+          'vs-e2e-mig',
+          PREVIEW_PAGE_BYTES,
+        ),
+      );
+      // migrateInstances: true (removeOldFromHistory: false) → the one path that commits.
+      const result = parseApplyResult(
+        await applyInstVarStructure(asyncExec, 'vs-e2e-mig', true, false),
+      );
+
+      expect(result.failed).toEqual([]);
+      expect(result.committed).toBe(true);
+      expect(result.migratedFailures).toBe(0);
+      expect(ownIvars(MID)).toContain("'leaf'");
+      // The instance was migrated onto the new LEAF version (the name now resolves to it).
+      expect(exec(`((UserGlobals at: #VsE2eInst) class == ${LEAF}) printString`).trim()).toBe(
+        'true',
+      );
+    } finally {
+      removeFixtureAndCommit();
     }
   });
 });

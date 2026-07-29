@@ -36,10 +36,11 @@ function renderCard(change: IvarChange): string {
     // No textual change — the class is recompiled only to re-point at the new parent.
     body = `<pre class="diff hidden"><div class="line ctx">recompiled to re-point at the new class version</div></pre>`;
   } else {
-    body = `<pre class="diff hidden">${renderLines(change.oldSource, 'del')}${renderLines(
-      change.newSource,
-      'add',
-    )}</pre>`;
+    // A methodAdd carries only newSource; a methodRemove only oldSource — render just the side
+    // that's present so accessor-move rows don't show a phantom empty line.
+    const del = change.oldSource ? renderLines(change.oldSource, 'del') : '';
+    const add = change.newSource ? renderLines(change.newSource, 'add') : '';
+    body = `<pre class="diff hidden">${del}${add}</pre>`;
   }
   return `<li class="change" data-id="${escapeHtml(change.id)}">
   <div class="change-head">
@@ -132,6 +133,14 @@ export function renderIvarPanelHtml(opts: IvarPanelHtmlOptions): string {
       background: var(--vscode-inputValidation-infoBackground, rgba(0,120,200,0.10));
       border-radius: 4px;
     }
+    fieldset.applyopts {
+      margin: 8px 16px 0; padding: 8px 12px;
+      border: 1px solid var(--vscode-panel-border, rgba(127,127,127,0.25)); border-radius: 4px;
+    }
+    fieldset.applyopts legend { opacity: 0.8; padding: 0 4px; }
+    fieldset.applyopts label { display: block; padding: 2px 0; cursor: pointer; }
+    fieldset.applyopts input { margin-right: 6px; }
+    .note-inline { opacity: 0.7; font-style: italic; }
     .summary { padding: 8px 16px; opacity: 0.85; display: flex; align-items: center; gap: 10px; }
     button.linkish { background: none; color: var(--vscode-textLink-foreground); padding: 0; font-size: 0.95em; }
     button.linkish:hover { background: none; text-decoration: underline; }
@@ -182,6 +191,11 @@ export function renderIvarPanelHtml(opts: IvarPanelHtmlOptions): string {
   </header>
   ${renderBanner(outOfScope)}
   ${renderNote(outOfScope)}
+  <fieldset class="applyopts">
+    <legend>Instance &amp; history options</legend>
+    <label><input type="checkbox" class="apply-option" data-opt="migrateInstances"> Migrate existing instances to the new version <span class="note-inline">(commits)</span></label>
+    <label><input type="checkbox" class="apply-option" data-opt="removeOldFromHistory"> Remove old versions from class history <span class="note-inline">(commits)</span></label>
+  </fieldset>
   <div class="summary">
     <span id="selcount">${total}</span> of ${total} change${total === 1 ? '' : 's'} selected
     <button id="toggleAll" class="linkish" aria-expanded="false">Expand all</button>
