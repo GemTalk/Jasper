@@ -31,11 +31,20 @@ function renderCard(change: RenameChange): string {
         ? `<span class="badge">${escapeHtml(change.category)}</span>`
         : '';
   const diff = renderDiff(lineDiff(change.oldSource, change.newSource));
+  // The classDefinitionEdit is STRUCTURAL — checked and DISABLED so it can't be
+  // deselected: applying the method recompiles (which reference the new ivar name)
+  // without recompiling the class definition would fail every recompile or bind to
+  // a stray Undeclared global. A disabled checkbox can never be unchecked, so it is
+  // never reported as deselected to the engine. (Mirrors the class-rename panel.)
+  const structural = change.kind === 'classDefinitionEdit';
+  const cb = structural
+    ? `<input type="checkbox" class="sel" checked disabled title="required" aria-label="${label} (required)">`
+    : `<input type="checkbox" class="sel" checked aria-label="Include ${label}">`;
   // Diffs start collapsed so the list is a scannable set of change headers;
   // click a row (or its chevron) to expand its before/after.
   return `<li class="change" data-id="${escapeHtml(change.id)}">
   <div class="change-head">
-    <input type="checkbox" class="sel" checked aria-label="Include ${label}">
+    ${cb}
     <span class="label">${label}</span>
     ${badge}
     <button class="toggle" title="Show/hide diff" aria-expanded="false">▸</button>

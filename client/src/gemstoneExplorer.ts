@@ -1438,21 +1438,9 @@ export class ExplorerController {
     const session = this.session();
     if (!session) return false;
 
-    // The engine ships as an optional, separately-installed payload (bundled with
-    // the Enhanced Inspector). When it isn't loaded, offer to install the optional
-    // GemStone support; the install relatches the probe, so re-read it and only
-    // continue if the engine is now present.
-    if (!session.rbSupportAvailable) {
-      const LOAD = 'Install GemStone Support…';
-      const choice = await vscode.window.showInformationMessage(
-        'Renaming instance variables needs the GemStone refactoring engine, which ' +
-          "isn't loaded in this stone yet.",
-        LOAD,
-      );
-      if (choice !== LOAD) return false;
-      await vscode.commands.executeCommand('gemstone.installServerSupport');
-      if (!this.session()?.rbSupportAvailable) return false;
-    }
+    // The engine ships as an optional, separately-installed payload; gate through
+    // the shared helper so the install-then-re-check logic lives in one place.
+    if (!(await this.ensureRbSupport('Renaming an instance variable'))) return false;
 
     const oldName = ivarName;
     const entered = await vscode.window.showInputBox({
@@ -1616,17 +1604,9 @@ export class ExplorerController {
     const session = this.session();
     if (!session) return false;
 
-    if (!session.rbSupportAvailable) {
-      const LOAD = 'Install GemStone Support…';
-      const choice = await vscode.window.showInformationMessage(
-        "Renaming a method needs the GemStone refactoring engine, which isn't " +
-          'loaded in this stone yet.',
-        LOAD,
-      );
-      if (choice !== LOAD) return false;
-      await vscode.commands.executeCommand('gemstone.installServerSupport');
-      if (!this.session()?.rbSupportAvailable) return false;
-    }
+    // Gate through the shared helper (see renameInstVarNamed) — one place for the
+    // install-then-re-check logic instead of a verbatim copy per call site.
+    if (!(await this.ensureRbSupport('Renaming a method'))) return false;
 
     const oldSelector = selector;
 
@@ -1809,7 +1789,9 @@ export class ExplorerController {
   }
 
   // Ensure the refactoring engine is loaded, offering to install it if not.
-  // Returns true when it is (now) available. Shared by rename-class and history.
+  // Returns true when it is (now) available — re-checks rbSupportAvailable AFTER the
+  // install command so a failed/declined install cleanly returns false. The single
+  // gate for every rename refactoring (ivar, method, class, class-var) + class history.
   private async ensureRbSupport(action: string): Promise<boolean> {
     const session = this.session();
     if (!session) return false;

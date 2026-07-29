@@ -62,6 +62,28 @@ describe('rename-method preview panel', () => {
     expect(out).not.toContain('class="sel-removed"');
   });
 
+  it('marks an implementor rename as required — its checkbox is checked and disabled', () => {
+    const out = html([rename()]);
+
+    expect(out).toContain('class="sel" checked disabled');
+  });
+
+  it('keeps a sender recompile individually deselectable — its checkbox is not disabled', () => {
+    const out = html([sender]);
+
+    expect(out).toContain('class="sel" checked aria-label="Include');
+    expect(out).not.toContain('class="sel" checked disabled');
+  });
+
+  it('renders the structural implementor rename disabled while leaving senders selectable in one preview', () => {
+    const out = html([rename(), sender]);
+
+    // exactly one disabled (required) checkbox — the implementor rename — and the
+    // sender stays plainly deselectable.
+    expect((out.match(/class="sel" checked disabled/g) ?? []).length).toBe(1);
+    expect(out).toContain('class="sel" checked aria-label="Include');
+  });
+
   it('treats a same-selector argument reorder as a plain change, not add/remove', () => {
     const reorder = rename({ selector: 'from:to:', newSelector: 'from:to:' });
 
