@@ -94,7 +94,7 @@ Notice that fractions stay exact (they are not reduced to floating point), and i
       '$B codePoint',
       'Character cr codePoint',
       'Character space codePoint',
-      '"A gem stone 💎 from its hex code point:"\n(Character codePoint: 16r1F48E) asString',
+      '"A gem stone emoji from its hex code point:"\n(Character codePoint: 16r1F48E) asString',
     ],
   },
   {
@@ -117,7 +117,7 @@ There is only ever *one* \`#ProfStef\` symbol, but there can be many equal \`'Pr
     snippets: [
       "'ProfStef' asSymbol",
       '#ProfStef asString',
-      '"Two separate strings — same characters, different objects:"\n(2 printString) == (2 printString)',
+      '"Two separate strings - same characters, different objects:"\n(2 printString) == (2 printString)',
       '"The same symbol, always:"\n(2 printString) asSymbol == (2 printString) asSymbol',
     ],
   },
@@ -217,7 +217,7 @@ Run the whole cell together — the temporary lives only while the cell runs.`,
     body: `Conditionals are just keyword messages sent to **Boolean** objects, taking blocks as arguments: \`ifTrue:ifFalse:\`.`,
     snippets: [
       '1 < 2\n  ifTrue: [100]\n  ifFalse: [42]',
-      "3 > 10\n  ifTrue: ['maybe there''s a bug…']\n  ifFalse: ['all good: 3 is less than 10']",
+      "3 > 10\n  ifTrue: ['maybe there''s a bug...']\n  ifFalse: ['all good: 3 is less than 10']",
     ],
   },
   {
@@ -271,7 +271,7 @@ The second cell keeps the collection in a variable so it can be changed step by 
 Notebook cells report an error inline rather than opening the debugger. To experience the debugger, use **Debug It** on an expression in a GemStone Workspace, or run failing code there — for example \`nil foo\` or \`self halt\`. Jasper offers both a VS Code debugger and an Enhanced (Smalltalk-style) debugger.
 
 Run the cell below to see how an error is reported here.`,
-    snippets: ['"An intentional error — a nil does not understand #foo:"\nnil foo'],
+    snippets: ['"An intentional error - a nil does not understand #foo:"\nnil foo'],
   },
   {
     title: 'Introduction to GemStone',
@@ -290,8 +290,8 @@ Run these read-only cells to look around. (This lesson changes nothing permanent
       '"Who you are logged in as:"\nSystem myUserProfile userId',
       '"Do you have uncommitted changes right now?"\nSystem needsCommit',
       '"Globals holds system classes; UserGlobals is your personal namespace:"\nUserGlobals class',
-      '"Persist a value by storing it in a root, then read it back. It would\n survive logout ONLY after a commit — here we abort at the end."\nUserGlobals at: #JasperTutorialGreeting put: (Array with: DateAndTime now with: \'hello\').\nUserGlobals at: #JasperTutorialGreeting',
-      '"Undo the change above so nothing is left behind:"\nUserGlobals removeKey: #JasperTutorialGreeting ifAbsent: [nil].\nSystem abortTransaction.\n\'view refreshed — no changes committed\'',
+      '"Persist a value by storing it in a root, then read it back. It would\n survive logout ONLY after a commit - here we abort at the end."\nUserGlobals at: #JasperTutorialGreeting put: (Array with: DateAndTime now with: \'hello\').\nUserGlobals at: #JasperTutorialGreeting',
+      '"Undo the change above so nothing is left behind:"\nUserGlobals removeKey: #JasperTutorialGreeting ifAbsent: [nil].\nSystem abortTransaction.\n\'view refreshed - no changes committed\'',
     ],
   },
   {
