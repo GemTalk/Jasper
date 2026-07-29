@@ -123,7 +123,7 @@ describe('Rowan export is a deterministic reload-faithful fixpoint', () => {
       expect(exec(createCode(home)).trim()).toBe('ok');
 
       const a = exportRowanProject(exec, PROJECT, targetA);
-      expect(a.success, a.detail).toBe(true);
+      expect(a.success, `${a.detail}`).toBe(true);
 
       expect(exec(`Rowan gemstoneTools topaz unloadProjectNamed: '${PROJECT}'. 'ok'`).trim()).toBe(
         'ok',
@@ -138,7 +138,7 @@ describe('Rowan export is a deterministic reload-faithful fixpoint', () => {
       expect(listRowanProjects(exec).projects.some((p) => p.name === PROJECT)).toBe(true);
 
       const c = exportRowanProject(exec, PROJECT, targetC);
-      expect(c.success, c.detail).toBe(true);
+      expect(c.success, `${c.detail}`).toBe(true);
 
       const treeA = readTree(targetA);
       const treeC = readTree(targetC);
