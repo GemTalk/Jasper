@@ -53,6 +53,14 @@ import {
   ChangeSignatureScope,
 } from './refactoring/queries/previewChangeSignature';
 import {
+  analyzePushMethod as sharedAnalyzePushMethod,
+  startPushMethodPreview as sharedStartPushMethodPreview,
+  pagePushMethodPreview as sharedPagePushMethodPreview,
+  applyPushMethod as sharedApplyPushMethod,
+  clearPushMethodPreview as sharedClearPushMethodPreview,
+  PushDirection,
+} from './refactoring/queries/previewPushMethod';
+import {
   startRenameClassPreview as sharedStartRenameClassPreview,
   pageRenameClassPreview as sharedPageRenameClassPreview,
   applyRenameClass as sharedApplyRenameClass,
@@ -798,6 +806,77 @@ export function applyChangeSignature(
 
 export function clearChangeSignaturePreview(session: ActiveSession, token: string): string {
   return sharedClearChangeSignaturePreview(defaultQueryExecutorUsing(session), token);
+}
+
+// Push-up / push-down method (M7 / M8) wrappers: mirror the move-method shape but with
+// the target(s) resolved server-side (the superclass, or the immediate subclasses).
+// Paginated preview fetched NON-BLOCKING; apply is server-side (no commit).
+export function analyzePushMethod(
+  session: ActiveSession,
+  direction: PushDirection,
+  sourceClass: string,
+  selectors: string[],
+  isMeta: boolean,
+  dict?: number | string,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Analysing push…');
+  return sharedAnalyzePushMethod(exec, direction, sourceClass, selectors, isMeta, dict);
+}
+
+export function startPushMethodPreview(
+  session: ActiveSession,
+  direction: PushDirection,
+  sourceClass: string,
+  selectors: string[],
+  isMeta: boolean,
+  token: string,
+  maxBytes: number,
+  dict?: number | string,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, `Previewing push of ${sourceClass}…`);
+  return sharedStartPushMethodPreview(
+    exec,
+    direction,
+    sourceClass,
+    selectors,
+    isMeta,
+    token,
+    maxBytes,
+    dict,
+  );
+}
+
+export function pagePushMethodPreview(
+  session: ActiveSession,
+  direction: PushDirection,
+  token: string,
+  offset: number,
+  maxBytes: number,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Loading more changes…');
+  return sharedPagePushMethodPreview(exec, direction, token, offset, maxBytes);
+}
+
+export function applyPushMethod(
+  session: ActiveSession,
+  direction: PushDirection,
+  token: string,
+  deselectedIds: string[],
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Applying push…');
+  return sharedApplyPushMethod(exec, direction, token, deselectedIds);
+}
+
+export function clearPushMethodPreview(
+  session: ActiveSession,
+  direction: PushDirection,
+  token: string,
+): string {
+  return sharedClearPushMethodPreview(defaultQueryExecutorUsing(session), direction, token);
 }
 
 // Paginated rename-class preview: fetched NON-BLOCKING (progress + responsive),
