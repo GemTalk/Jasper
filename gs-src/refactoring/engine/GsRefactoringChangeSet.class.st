@@ -62,6 +62,22 @@ GsRefactoringChangeSet >> addMethodAddInDictionary: dn className: cn isMeta: aBo
 ]
 
 { #category : 'building' }
+GsRefactoringChangeSet >> addMethodOverwriteInDictionary: dn className: cn isMeta: aBool selector: sel category: cat oldSource: os newSource: ns warning: w [
+	"Stage a method-add onto a class that ALREADY defines the selector (push-up onto a
+	 superclass that implements it, or push-down onto an overriding subclass). Records the
+	 change only; NEVER compiles or commits. Apply compiles newSource exactly like a plain
+	 add (the kind is #methodAdd); oldSource + warning let the client show what will be
+	 overwritten and flag the data loss so the user can opt in. Returns the new
+	 GsRefactoringChange."
+	| change |
+	change := GsRefactoringChange
+		methodOverwriteId: self nextIdString dictName: dn className: cn
+		isMeta: aBool selector: sel category: cat oldSource: os newSource: ns warning: w.
+	changes add: change.
+	^change
+]
+
+{ #category : 'building' }
 GsRefactoringChangeSet >> addMethodRemoveInDictionary: dn className: cn isMeta: aBool selector: sel category: cat oldSource: os [
 	"Stage the removal of a method (inline-method deletes a now-unused target).
 	 Records the change only; NEVER compiles or commits. Apply calls removeSelector:.

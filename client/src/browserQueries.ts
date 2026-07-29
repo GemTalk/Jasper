@@ -53,6 +53,14 @@ import {
   ChangeSignatureScope,
 } from './refactoring/queries/previewChangeSignature';
 import {
+  analyzePushMethod as sharedAnalyzePushMethod,
+  startPushMethodPreview as sharedStartPushMethodPreview,
+  pagePushMethodPreview as sharedPagePushMethodPreview,
+  applyPushMethod as sharedApplyPushMethod,
+  clearPushMethodPreview as sharedClearPushMethodPreview,
+  PushDirection,
+} from './refactoring/queries/previewPushMethod';
+import {
   startRenameClassPreview as sharedStartRenameClassPreview,
   pageRenameClassPreview as sharedPageRenameClassPreview,
   applyRenameClass as sharedApplyRenameClass,
@@ -87,6 +95,13 @@ import {
   applyInlineMethod as sharedApplyInlineMethod,
   clearInlineMethodPreview as sharedClearInlineMethodPreview,
 } from './refactoring/queries/previewInlineMethod';
+import {
+  analyzeMoveMethod as sharedAnalyzeMoveMethod,
+  startMoveMethodPreview as sharedStartMoveMethodPreview,
+  pageMoveMethodPreview as sharedPageMoveMethodPreview,
+  applyMoveMethod as sharedApplyMoveMethod,
+  clearMoveMethodPreview as sharedClearMoveMethodPreview,
+} from './refactoring/queries/previewMoveMethod';
 import {
   analyzeExtractTemporary as sharedAnalyzeExtractTemporary,
   startExtractTemporaryPreview as sharedStartExtractTemporaryPreview,
@@ -196,9 +211,6 @@ export type { ClassVersionInfo } from './refactoring/queries/getClassVersions';
 
 const MAX_RESULT = 256 * 1024;
 
-// Cache resolved OOP_CLASS_Utf8 per session handle (Node.js strings are UTF-8 when passed via koffi)
-const classUtf8Cache = new Map<unknown, bigint>();
-
 export class BrowserQueryError extends Error {
   constructor(
     message: string,
@@ -209,15 +221,7 @@ export class BrowserQueryError extends Error {
 }
 
 function resolveClassUtf8(session: ActiveSession): bigint {
-  let oop = classUtf8Cache.get(session.handle);
-  if (oop !== undefined) return oop;
-  const { result, err } = session.gci.GciTsResolveSymbol(session.handle, 'Utf8', OOP_NIL);
-  if (err.number !== 0) {
-    throw new BrowserQueryError(err.message || `Cannot resolve Utf8 class`, err.number);
-  }
-  oop = result;
-  classUtf8Cache.set(session.handle, oop);
-  return oop;
+  return session.gci.utf8ClassOop(session.handle);
 }
 
 // Evaluates `code` and fetches its result as a UTF-8 string via
@@ -804,6 +808,77 @@ export function clearChangeSignaturePreview(session: ActiveSession, token: strin
   return sharedClearChangeSignaturePreview(defaultQueryExecutorUsing(session), token);
 }
 
+// Push-up / push-down method (M7 / M8) wrappers: mirror the move-method shape but with
+// the target(s) resolved server-side (the superclass, or the immediate subclasses).
+// Paginated preview fetched NON-BLOCKING; apply is server-side (no commit).
+export function analyzePushMethod(
+  session: ActiveSession,
+  direction: PushDirection,
+  sourceClass: string,
+  selectors: string[],
+  isMeta: boolean,
+  dict?: number | string,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Analysing push…');
+  return sharedAnalyzePushMethod(exec, direction, sourceClass, selectors, isMeta, dict);
+}
+
+export function startPushMethodPreview(
+  session: ActiveSession,
+  direction: PushDirection,
+  sourceClass: string,
+  selectors: string[],
+  isMeta: boolean,
+  token: string,
+  maxBytes: number,
+  dict?: number | string,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, `Previewing push of ${sourceClass}…`);
+  return sharedStartPushMethodPreview(
+    exec,
+    direction,
+    sourceClass,
+    selectors,
+    isMeta,
+    token,
+    maxBytes,
+    dict,
+  );
+}
+
+export function pagePushMethodPreview(
+  session: ActiveSession,
+  direction: PushDirection,
+  token: string,
+  offset: number,
+  maxBytes: number,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Loading more changes…');
+  return sharedPagePushMethodPreview(exec, direction, token, offset, maxBytes);
+}
+
+export function applyPushMethod(
+  session: ActiveSession,
+  direction: PushDirection,
+  token: string,
+  deselectedIds: string[],
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Applying push…');
+  return sharedApplyPushMethod(exec, direction, token, deselectedIds);
+}
+
+export function clearPushMethodPreview(
+  session: ActiveSession,
+  direction: PushDirection,
+  token: string,
+): string {
+  return sharedClearPushMethodPreview(defaultQueryExecutorUsing(session), direction, token);
+}
+
 // Paginated rename-class preview: fetched NON-BLOCKING (progress + responsive),
 // byte-bounded pages, server-side apply. Mirrors the rename-method wrappers.
 export function startRenameClassPreview(
@@ -1100,6 +1175,75 @@ export function applyInlineMethod(
 
 export function clearInlineMethodPreview(session: ActiveSession, token: string): string {
   return sharedClearInlineMethodPreview(defaultQueryExecutorUsing(session), token);
+}
+
+// Move-method (M6) preview: pre-flight analysis (which selectors move, and why the
+// rest can't), paginated start/page fetched NON-BLOCKING, server-side apply. Per
+// movable selector a methodAdd (on the target) + a methodRemove (from the source);
+// apply passes an empty deselected set (every change is required).
+export function analyzeMoveMethod(
+  session: ActiveSession,
+  sourceClass: string,
+  selectors: string[],
+  isMeta: boolean,
+  targetName: string,
+  toMeta: boolean,
+  dict?: number | string,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Analysing move…');
+  return sharedAnalyzeMoveMethod(exec, sourceClass, selectors, isMeta, targetName, toMeta, dict);
+}
+
+export function startMoveMethodPreview(
+  session: ActiveSession,
+  sourceClass: string,
+  selectors: string[],
+  isMeta: boolean,
+  targetName: string,
+  toMeta: boolean,
+  token: string,
+  maxBytes: number,
+  dict?: number | string,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Previewing move…');
+  return sharedStartMoveMethodPreview(
+    exec,
+    sourceClass,
+    selectors,
+    isMeta,
+    targetName,
+    toMeta,
+    token,
+    maxBytes,
+    dict,
+  );
+}
+
+export function pageMoveMethodPreview(
+  session: ActiveSession,
+  token: string,
+  offset: number,
+  maxBytes: number,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Loading more changes…');
+  return sharedPageMoveMethodPreview(exec, token, offset, maxBytes);
+}
+
+export function applyMoveMethod(
+  session: ActiveSession,
+  token: string,
+  deselectedIds: string[],
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Applying move…');
+  return sharedApplyMoveMethod(exec, token, deselectedIds);
+}
+
+export function clearMoveMethodPreview(session: ActiveSession, token: string): string {
+  return sharedClearMoveMethodPreview(defaultQueryExecutorUsing(session), token);
 }
 
 // Extract-temporary (M3) preview: pre-flight analysis, paginated start/page fetched

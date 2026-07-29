@@ -16,7 +16,7 @@ describe('GCI Traversal Functions', () => {
     expect(login.session).not.toBeNull();
     session = login.session;
 
-    OOP_CLASS_STRING = gci.GciTsResolveSymbol(session, 'String', OOP_NIL).result;
+    OOP_CLASS_STRING = gci.resolveSymbol(session, 'String');
   });
 
   afterAll(() => {

@@ -38,7 +38,7 @@ describe('debugger single-stepping (integration)', () => {
   const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
 
   const exec = (code: string, flags: number) => {
-    const { result: strClass } = gci.GciTsResolveSymbol(handle, 'String', OOP_NIL);
+    const strClass = gci.resolveSymbol(handle, 'String');
     return gci.GciTsExecute(handle, code, strClass, OOP_ILLEGAL, OOP_NIL, flags, 0);
   };
 

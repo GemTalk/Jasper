@@ -18,8 +18,8 @@ describe('GciTsExecute / GciTsPerform', () => {
     expect(login.session).not.toBeNull();
     session = login.session;
 
-    OOP_CLASS_ARRAY = gci.GciTsResolveSymbol(session, 'Array', OOP_NIL).result;
-    OOP_CLASS_STRING = gci.GciTsResolveSymbol(session, 'String', OOP_NIL).result;
+    OOP_CLASS_ARRAY = gci.resolveSymbol(session, 'Array');
+    OOP_CLASS_STRING = gci.resolveSymbol(session, 'String');
     console.log(
       'Class OOPs - Array:',
       OOP_CLASS_ARRAY.toString(),
