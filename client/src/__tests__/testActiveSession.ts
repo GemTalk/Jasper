@@ -1,15 +1,14 @@
 // Builds a real `ActiveSession` for test code that already has a live GCI
 // login (a `GciLibrary` instance and its session handle) — the refactoring
 // integration tests (`client/src/refactoring/__tests__/*.integration.test.ts`)
-// and `client/bin/install-server-plugin.mjs`.
+// and `client/bin/installServerPluginMain.ts`.
 //
-// `ActiveSession` is imported type-only: tsc elides a type-only import from
-// compiled JS output, so this compiles to a module with no `require('../
-// sessionManager')` at all (confirm by checking `client/out/__tests__/
-// testActiveSession.js` after `npm run compile`). That matters because
-// `sessionManager.ts` is a `vscode`-dependent module, and this file's compiled
-// output is `require()`d directly by `install-server-plugin.mjs`, a plain Node
-// script with no `vscode` available.
+// `ActiveSession` is imported type-only: tsc elides a type-only import, so
+// this module has no `require('../sessionManager')` at runtime. That matters
+// because `sessionManager.ts` is a `vscode`-dependent module, and `tsx` loads
+// this module straight from `client/src` (see `install-server-plugin.mjs`)
+// for a plain Node script whose `vscode` stub only covers `require('vscode')`
+// itself.
 
 import type { ActiveSession } from '../sessionManager';
 import type { GciLibrary } from '../gciLibrary';

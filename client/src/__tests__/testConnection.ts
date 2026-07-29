@@ -1,14 +1,14 @@
 // Resolves the connection details the on-demand GCI test suite
 // (`gci/gciTestConfig.ts`), the refactoring integration tests (via
-// `testActiveSession.ts`), and `client/bin/install-server-plugin.mjs` all need
-// to reach a live stone.
+// `testActiveSession.ts`), and `client/bin/installServerPluginMain.ts` all
+// need to reach a live stone.
 //
 // Deliberately imports only `../loginTypes` (verify with a grep on this file
 // if you touch it) — nothing here may pull in `vscode`, a test runner, or
-// `sessionManager`. `install-server-plugin.mjs` `require()`s this module's
-// compiled output (`client/out/__tests__/testConnection.js`) directly from a
-// plain Node script with none of those available, so a stray import here would
-// break that script at load time, not just at test time.
+// `sessionManager`. `tsx` loads this module straight from `client/src` (see
+// `install-server-plugin.mjs`), and that launcher's `vscode` stub only covers
+// `require('vscode')` itself — a stray import here would break that script
+// at load time, not just at test time.
 //
 // Exports a function, not module-load-time constants: a constant computed (and
 // validated) at the top of this module would throw the moment anything
@@ -86,7 +86,7 @@ function requireValue(label: string, value: string | undefined): string {
 
 // This throws rather than returning `undefined` like `parseStoneNrs` itself,
 // because its caller (`testActiveSession`, for the SystemUser elevation in
-// `install-server-plugin.mjs`) rebuilds a real `GemStoneLogin` from the
+// `installServerPluginMain.ts`) rebuilds a real `GemStoneLogin` from the
 // result: a silent fallback to a bogus host/stone there risks a SystemUser
 // login that either fails with a confusing GCI error or, worse, silently
 // succeeds against the wrong stone (e.g. a coincidental default at

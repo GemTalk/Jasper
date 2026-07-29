@@ -34,8 +34,14 @@ export default tseslint.config(
       parserOptions: {
         projectService: {
           // vitest.config.ts files aren't included in any tsconfig's `include`,
-          // so type-aware linting can't otherwise parse them.
-          allowDefaultProject: ['vitest.config.ts', '*/vitest.config.ts'],
+          // so type-aware linting can't otherwise parse them. `defaultProject`
+          // is the fallback used for those globs too, not just `client/bin/*.ts`
+          // — a mismatch (it's `client/tsconfig.bin.json`, not a vitest config)
+          // that's benign because only `compilerOptions` matter for these
+          // inline programs, and both configs extend `tsconfig.base.json`.
+          // Don't "fix" this to look more consistent.
+          allowDefaultProject: ['vitest.config.ts', '*/vitest.config.ts', 'client/bin/*.ts'],
+          defaultProject: 'client/tsconfig.bin.json',
         },
         tsconfigRootDir: import.meta.dirname,
       },
@@ -93,6 +99,7 @@ export default tseslint.config(
       '**/*.mjs',
       '**/*.cjs',
       'client/bin/**/*.js',
+      'client/bin/**/*.ts',
       '**/*.config.{ts,js,mjs}',
       'client/src/gemStoneVersion.js',
       // Server-side refactoring-engine build tooling (Node CLI scripts that
