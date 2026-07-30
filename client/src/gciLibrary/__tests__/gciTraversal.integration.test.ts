@@ -1,216 +1,140 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { GciLibrary } from '../../gciLibrary';
-import { GCI_LIBRARY_PATH, STONE_NRS, GEM_NRS, GS_USER, GS_PASSWORD } from './gciTestConfig';
+import { describe, it, expect } from 'vitest';
+import { GciLibrary, type GciObjReport } from '../../gciLibrary';
+import { OOP_CLASS_STRING, OOP_ILLEGAL, OOP_NIL } from '../../gciConstants';
+import { useIntegrationTest } from '../../__tests__/useIntegrationTest';
 
-const OOP_ILLEGAL = 0x01n;
-const OOP_NIL = 0x14n;
-
-describe('GCI Traversal Functions', () => {
-  const gci = new GciLibrary(GCI_LIBRARY_PATH);
+/**
+ * The GCI's traversal family: reading an object graph into a flat buffer of
+ * object reports, and writing modified reports back. Nothing outside these
+ * tests calls the wrappers yet — what the tests protect is the binding itself,
+ * above all the hand-rolled packing and unpacking of the traversal buffer,
+ * which no other test exercises. Stores ride the harness's aborted transaction.
+ */
+describe('GCI object traversal (integration)', () => {
+  let gci: GciLibrary;
   let session: unknown;
 
-  let OOP_CLASS_STRING: bigint;
-
-  beforeAll(() => {
-    const login = gci.GciTsLogin(STONE_NRS, null, null, false, GEM_NRS, GS_USER, GS_PASSWORD, 0, 0);
-    expect(login.session).not.toBeNull();
-    session = login.session;
-
-    OOP_CLASS_STRING = gci.resolveSymbol(session, 'String');
+  useIntegrationTest((testContext) => {
+    gci = testContext.gciLibrary;
+    session = testContext.session;
   });
 
-  afterAll(() => {
-    if (session) {
-      gci.GciTsAbort(session);
-      gci.GciTsLogout(session);
-    }
-    gci.close();
-  });
+  /** GciTsFetchTraversal / GciTsStoreTravDoTravRefs status: the graph fit in the buffer. */
+  const TRAVERSAL_COMPLETE = 0;
+  /** ...and: more reports are waiting for a GciTsMoreTraversal call. */
+  const TRAVERSAL_INCOMPLETE = 1;
+
+  const execute = (source: string) =>
+    gci.GciTsExecute(session, source, OOP_CLASS_STRING, OOP_ILLEGAL, OOP_NIL, 0, 0);
+
+  /** The bytes a report carries for its object, as text. */
+  const bodyText = (report: GciObjReport): string =>
+    report.body.toString('utf8', 0, report.valueBuffSize);
+
+  /** The `usedBytes` field of a traversal buffer's header. */
+  const usedBytes = (travBuf: Buffer): number => travBuf.readUInt32LE(4);
 
   describe('GciTsFetchTraversal', () => {
-    it('traverses a String object and returns its bytes', () => {
-      const strOop = gci.GciTsNewString(session, 'traverse-me');
-      expect(strOop.result).not.toBe(OOP_ILLEGAL);
+    it('reports the bytes of the object it traversed', () => {
+      const { result: oop } = gci.GciTsNewString(session, 'traverse-me');
 
-      const { status, travBuf, err } = gci.GciTsFetchTraversal(session, [strOop.result]);
-      console.log('FetchTraversal(String) - status:', status, 'err.number:', err.number);
+      const { status, travBuf, err } = gci.GciTsFetchTraversal(session, [oop]);
+
       expect(err.number).toBe(0);
-      expect(status).toBe(0); // 0 = traversal complete
-
-      const usedBytes = travBuf.readUInt32LE(4);
-      console.log('FetchTraversal - usedBytes:', usedBytes);
-      expect(usedBytes).toBeGreaterThan(0);
-
-      const reports = GciLibrary.parseTravBuffer(travBuf);
-      console.log('FetchTraversal - reports:', reports.length);
-      expect(reports.length).toBeGreaterThanOrEqual(1);
-
-      // The first report should be for our String
-      const report = reports[0];
-      expect(report.objId).toBe(strOop.result);
+      expect(status).toBe(TRAVERSAL_COMPLETE);
+      const [report] = GciLibrary.parseTravBuffer(travBuf);
+      expect(report.objId).toBe(oop);
       expect(report.oclass).toBe(OOP_CLASS_STRING);
-      const str = report.body.toString('utf8', 0, report.valueBuffSize);
-      expect(str).toBe('traverse-me');
+      expect(bodyText(report)).toBe('traverse-me');
     });
 
-    it('traverses an Array with level 1', () => {
-      const { result: arrOop, err: execErr } = gci.GciTsExecute(
-        session,
-        '#(10 20 30)',
-        OOP_CLASS_STRING,
-        OOP_ILLEGAL,
-        OOP_NIL,
-        0,
-        0,
-      );
-      expect(execErr.number).toBe(0);
+    it('reports the object it was asked about before the objects it references', () => {
+      const { result: arrayOop } = execute('#(10 20 30)');
 
-      const { status, travBuf, err } = gci.GciTsFetchTraversal(session, [arrOop], 1);
-      console.log('FetchTraversal(Array) - status:', status, 'err.number:', err.number);
+      const { status, travBuf, err } = gci.GciTsFetchTraversal(session, [arrayOop], 1);
+
       expect(err.number).toBe(0);
-      expect(status).toBe(0);
-
+      expect(status).toBe(TRAVERSAL_COMPLETE);
       const reports = GciLibrary.parseTravBuffer(travBuf);
-      console.log('FetchTraversal(Array) - reports:', reports.length);
-      expect(reports.length).toBeGreaterThanOrEqual(1);
-
-      // First report should be the Array itself
-      const report = reports[0];
-      expect(report.objId).toBe(arrOop);
+      expect(reports[0].objId).toBe(arrayOop);
     });
   });
 
   describe('GciTsMoreTraversal', () => {
-    it('fetches remaining data when buffer is too small', () => {
-      // Create a large string that won't fit in a small buffer
-      // GCI_MIN_TRAV_BUFF_SIZE = 2048; ObjRepHdr = 40 bytes
-      // So a 2048-byte buffer can hold ~2008 bytes of string data
-      const bigStr = 'X'.repeat(4000);
-      const strOop = gci.GciTsNewString(session, bigStr);
-      expect(strOop.result).not.toBe(OOP_ILLEGAL);
+    it('returns the reports that did not fit in the first traversal buffer', () => {
+      // GCI_MIN_TRAV_BUFF_SIZE is 2048 bytes, of which a 40-byte object report
+      // header is overhead — so a String this long cannot be reported in one go
+      // and needs at least one follow-up call. It may still not fit in the
+      // second buffer either, so we assert only that more bytes came back, not
+      // that the traversal is now complete.
+      const { result: oop } = gci.GciTsNewString(session, 'X'.repeat(4000));
+      const MIN_TRAV_BUFF_SIZE = 2048;
 
-      // Use minimum legal buffer size (2048 bytes)
-      const { status, err } = gci.GciTsFetchTraversal(
-        session,
-        [strOop.result],
-        1,
-        0,
-        OOP_NIL,
-        2048,
-      );
-      console.log(
-        'FetchTraversal(small buf) - status:',
-        status,
-        'err.number:',
-        err.number,
-        'err.message:',
-        err.message,
-      );
-      expect(err.number).toBe(0);
+      const first = gci.GciTsFetchTraversal(session, [oop], 1, 0, OOP_NIL, MIN_TRAV_BUFF_SIZE);
 
-      if (status === 1) {
-        // More data available — fetch it
-        const {
-          status: moreStatus,
-          travBuf: moreBuf,
-          err: moreErr,
-        } = gci.GciTsMoreTraversal(session);
-        console.log('MoreTraversal - status:', moreStatus, 'err.number:', moreErr.number);
-        expect(moreErr.number).toBe(0);
-        // moreStatus: 1 = complete, 0 = still more
-        expect(moreStatus).toBeGreaterThanOrEqual(0);
-
-        const moreUsedBytes = moreBuf.readUInt32LE(4);
-        console.log('MoreTraversal - usedBytes:', moreUsedBytes);
-        expect(moreUsedBytes).toBeGreaterThan(0);
-      } else {
-        // Traversal completed in one call (buffer was large enough)
-        console.log('FetchTraversal completed in one call, MoreTraversal not needed');
-        expect(status).toBe(0);
-      }
+      expect(first.err.number).toBe(0);
+      expect(first.status).toBe(TRAVERSAL_INCOMPLETE);
+      const rest = gci.GciTsMoreTraversal(session, MIN_TRAV_BUFF_SIZE);
+      expect(rest.err.number).toBe(0);
+      expect(usedBytes(rest.travBuf)).toBeGreaterThan(0);
     });
   });
 
   describe('GciTsStoreTrav', () => {
-    it('modifies a String via store traversal', () => {
-      const strOop = gci.GciTsNewString(session, 'AAAA');
-      expect(strOop.result).not.toBe(OOP_ILLEGAL);
-
-      // Fetch the current representation
-      const { travBuf: fetchBuf, err: fetchErr } = gci.GciTsFetchTraversal(session, [
-        strOop.result,
-      ]);
-      expect(fetchErr.number).toBe(0);
-
-      const reports = GciLibrary.parseTravBuffer(fetchBuf);
-      expect(reports.length).toBeGreaterThanOrEqual(1);
-      const origReport = reports[0];
-      console.log('StoreTrav - original body:', origReport.body.toString('utf8'));
-
-      // Build a store buffer that changes the bytes to 'BBBB'
-      const newBody = Buffer.from('BBBB');
-      const storeBuf = GciLibrary.buildTravBuffer([
-        {
-          objId: strOop.result,
-          oclass: origReport.oclass,
-          firstOffset: origReport.firstOffset,
-          body: newBody,
-          namedSize: origReport.namedSize,
-          objectSecurityPolicyId: origReport.objectSecurityPolicyId,
-          idxSizeBits: origReport.idxSizeBits,
-        },
-      ]);
-
-      const { success, err: storeErr } = gci.GciTsStoreTrav(session, storeBuf);
-      console.log(
-        'StoreTrav - success:',
-        success,
-        'err.number:',
-        storeErr.number,
-        'err.message:',
-        storeErr.message,
+    it('writes the bytes of a report back into the object it describes', () => {
+      const { result: oop } = gci.GciTsNewString(session, 'AAAA');
+      const [original] = GciLibrary.parseTravBuffer(
+        gci.GciTsFetchTraversal(session, [oop]).travBuf,
       );
-      console.log(
-        'StoreTrav - origReport firstOffset:',
-        origReport.firstOffset.toString(),
-        'idxSizeBits:',
-        origReport.idxSizeBits.toString(16),
-        'namedSize:',
-        origReport.namedSize,
-        'valueBuffSize:',
-        origReport.valueBuffSize,
+
+      const { success, err } = gci.GciTsStoreTrav(
+        session,
+        GciLibrary.buildTravBuffer([{ ...original, body: Buffer.from('BBBB') }]),
       );
-      expect(storeErr.number).toBe(0);
+
+      expect(err.number).toBe(0);
       expect(success).toBe(true);
-
-      // Verify the change
-      const fetched = gci.GciTsFetchUtf8(session, strOop.result, 1024);
-      expect(fetched.data).toBe('BBBB');
+      expect(gci.GciTsFetchUtf8(session, oop, 1024).data).toBe('BBBB');
     });
   });
 
   describe('GciTsStoreTravDoTravRefs', () => {
-    it('performs a message send and traverses the result', () => {
-      // Initialize dirty object tracking (required before StoreTravDoTravRefs)
-      const { success: initOk, err: initErr } = gci.GciTsDirtyObjsInit(session);
-      console.log('DirtyObjsInit - success:', initOk, 'err.number:', initErr.number);
-      expect(initErr.number).toBe(0);
+    it('sends a message and traverses its result in a single call', () => {
+      // Dirty-object tracking has to be initialized before the call, and only
+      // once per session — the harness gives this file a session of its own.
+      expect(gci.GciTsDirtyObjsInit(session).err.number).toBe(0);
+      const { result: receiver } = gci.GciTsNewString(session, 'GemStone');
 
-      // Create a receiver string
-      const strOop = gci.GciTsNewString(session, 'GemStone');
-      expect(strOop.result).not.toBe(OOP_ILLEGAL);
+      const { status, resultOop, travBuf, err } = gci.GciTsStoreTravDoTravRefs(
+        session,
+        null,
+        null,
+        performArgs(receiver, 'asUppercase'),
+      );
 
-      // Use doPerform=1 to send 'reversed' to the string, then traverse the result
-      const stdArgs: Record<string, unknown> = {
+      expect(err.number).toBe(0);
+      expect(status).toBe(TRAVERSAL_COMPLETE);
+      const reports = GciLibrary.parseTravBuffer(travBuf);
+      const result = reports.find((report) => report.objId === resultOop);
+      expect(result).toBeDefined();
+      expect(bodyText(result!)).toBe('GEMSTONE');
+    });
+
+    /**
+     * A `GciStoreTravDoArgsSType` asking for `selector` to be sent to
+     * `receiver`, with nothing to store beforehand.
+     */
+    function performArgs(receiver: bigint, selector: string): Record<string, unknown> {
+      return {
         doPerform: 1,
         doFlags: 0,
         alteredNumOops: 0,
         alteredCompleted: 0,
         u: {
           perform: {
-            receiver: strOop.result,
+            receiver,
             _pad: new Array(24).fill(0),
-            selector: 'reversed',
+            selector,
             args: null,
             numArgs: 0,
             environmentId: 0,
@@ -220,38 +144,6 @@ describe('GCI Traversal Functions', () => {
         alteredTheOops: null,
         storeTravFlags: 0,
       };
-
-      const { status, resultOop, travBuf, err } = gci.GciTsStoreTravDoTravRefs(
-        session,
-        null,
-        null,
-        stdArgs,
-      );
-      console.log(
-        'StoreTravDoTravRefs - status:',
-        status,
-        'resultOop:',
-        resultOop.toString(16),
-        'err.number:',
-        err.number,
-        'err.message:',
-        err.message,
-      );
-      expect(err.number).toBe(0);
-      expect(status).toBe(0); // traversal complete
-
-      // Parse the traversal result
-      const reports = GciLibrary.parseTravBuffer(travBuf);
-      console.log('StoreTravDoTravRefs - reports:', reports.length);
-      expect(reports.length).toBeGreaterThanOrEqual(1);
-
-      // The result should be 'enotSmeG' (reversed)
-      const resultReport = reports.find((r) => r.objId === resultOop);
-      if (resultReport) {
-        const str = resultReport.body.toString('utf8', 0, resultReport.valueBuffSize);
-        console.log('StoreTravDoTravRefs - result string:', str);
-        expect(str).toBe('enotSmeG');
-      }
-    });
+    }
   });
 });
