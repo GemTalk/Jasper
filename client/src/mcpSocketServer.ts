@@ -12,6 +12,7 @@ import { registerMcpTools } from './mcpTools';
 import { appendSysadmin } from './sysadminChannel';
 import { defaultSidecarPath, deleteOwnerSidecar, writeOwnerSidecar } from './mcpOwnerSidecar';
 import { extensionPathFrom } from './extensionPath';
+import { isWindows } from './wslBridge';
 
 /**
  * Single, user-scoped server name. Every MCP client (Claude Code, Claude
@@ -42,7 +43,7 @@ export const LEGACY_MCP_SERVER_NAME = 'gemstone';
  * ownership cleanly.
  */
 export function defaultSocketPath(): string {
-  if (process.platform === 'win32') {
+  if (isWindows()) {
     return '\\\\.\\pipe\\jasper-mcp';
   }
   return extensionPathFrom('mcp.sock');
@@ -119,7 +120,7 @@ export class McpSocketServer {
    *   working through whichever window does own it.
    */
   async start(): Promise<boolean> {
-    if (process.platform !== 'win32') {
+    if (!isWindows()) {
       const dir = path.dirname(this.socketPath);
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
@@ -229,7 +230,7 @@ export class McpSocketServer {
     await new Promise<void>((resolve) => {
       server.close(() => resolve());
     });
-    if (wasOwner && process.platform !== 'win32' && fs.existsSync(this.socketPath)) {
+    if (wasOwner && !isWindows() && fs.existsSync(this.socketPath)) {
       try {
         fs.unlinkSync(this.socketPath);
       } catch {
@@ -290,7 +291,7 @@ export function claudeDesktopConfigPath(): string {
       'claude_desktop_config.json',
     );
   }
-  if (process.platform === 'win32') {
+  if (isWindows()) {
     const appData = process.env.APPDATA ?? path.join(home, 'AppData', 'Roaming');
     return path.join(appData, 'Claude', 'claude_desktop_config.json');
   }

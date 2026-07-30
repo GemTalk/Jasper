@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
-import * as os from 'os';
 import * as path from 'path';
 import {
   McpOwnerInfo,
@@ -9,10 +8,7 @@ import {
   readOwnerSidecar,
   writeOwnerSidecar,
 } from '../mcpOwnerSidecar';
-
-function makeTempSidecarPath(): string {
-  return path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-owner-sidecar-')), 'mcp.owner.json');
-}
+import { safelyRemovePath, temporarySidecarPath, withTemporaryFolderDo } from './support/file';
 
 function sampleInfo(overrides: Partial<McpOwnerInfo> = {}): McpOwnerInfo {
   return {
@@ -27,14 +23,10 @@ function sampleInfo(overrides: Partial<McpOwnerInfo> = {}): McpOwnerInfo {
 describe('writeOwnerSidecar / readOwnerSidecar', () => {
   let sidecarPath: string;
   beforeEach(() => {
-    sidecarPath = makeTempSidecarPath();
+    sidecarPath = temporarySidecarPath();
   });
   afterEach(() => {
-    try {
-      fs.rmSync(path.dirname(sidecarPath), { recursive: true, force: true });
-    } catch {
-      /* ignore */
-    }
+    safelyRemovePath(sidecarPath);
   });
 
   it('round-trips an info record through disk', () => {
@@ -45,9 +37,13 @@ describe('writeOwnerSidecar / readOwnerSidecar', () => {
   });
 
   it('creates the parent directory if it does not exist', () => {
-    const nested = path.join(path.dirname(sidecarPath), 'sub', 'mcp.owner.json');
-    writeOwnerSidecar(sampleInfo(), nested);
-    expect(fs.existsSync(nested)).toBe(true);
+    withTemporaryFolderDo((temporaryFolder) => {
+      const nested = path.join(temporaryFolder, 'sub', 'mcp.owner.json');
+
+      writeOwnerSidecar(sampleInfo(), nested);
+
+      expect(fs.existsSync(nested)).toBe(true);
+    });
   });
 
   it('returns undefined when the sidecar does not exist', () => {
@@ -103,14 +99,10 @@ describe('writeOwnerSidecar / readOwnerSidecar', () => {
 describe('deleteOwnerSidecar', () => {
   let sidecarPath: string;
   beforeEach(() => {
-    sidecarPath = makeTempSidecarPath();
+    sidecarPath = temporarySidecarPath();
   });
   afterEach(() => {
-    try {
-      fs.rmSync(path.dirname(sidecarPath), { recursive: true, force: true });
-    } catch {
-      /* ignore */
-    }
+    safelyRemovePath(sidecarPath);
   });
 
   it('removes the sidecar when the recorded pid matches', () => {
