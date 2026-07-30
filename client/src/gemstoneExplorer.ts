@@ -1517,8 +1517,9 @@ export class ExplorerController {
   ): Promise<string[] | undefined> {
     if (direction === 'up') {
       // superclass entries are root-first; reverse so the immediate superclass leads the list.
+      // Dict-scoped like the down path so a shadowed class name offers the right lineage.
       const ancestors = queries
-        .getClassHierarchy(session, item.className)
+        .getClassHierarchy(session, item.className, this.state.dictIndex)
         .filter((e) => e.kind === 'superclass')
         .map((e) => e.className)
         .reverse();

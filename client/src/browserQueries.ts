@@ -603,8 +603,12 @@ export function getAllClassNames(session: ActiveSession) {
   return sharedGetAllClassNames(defaultQueryExecutorUsing(session));
 }
 
-export function getClassHierarchy(session: ActiveSession, className: string) {
-  return sharedGetClassHierarchy(defaultQueryExecutorUsing(session), className);
+export function getClassHierarchy(
+  session: ActiveSession,
+  className: string,
+  dict?: number | string,
+) {
+  return sharedGetClassHierarchy(defaultQueryExecutorUsing(session), className, dict);
 }
 
 export function getClassDescendantNames(

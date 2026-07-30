@@ -8,7 +8,7 @@ describe('getClassDescendantNames', () => {
     getClassDescendantNames(exec, 'Mid', 2);
 
     const code = exec.mock.calls[0][0] as string;
-    expect(code).toContain('ClassOrganizer new');
+    expect(code).toContain("(System myUserProfile symbolList at: 2) at: #'Mid'");
     expect(code).toContain('subclassesOf:');
   });
 
