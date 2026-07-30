@@ -1,6 +1,6 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import { GciLibrary } from '../../gciLibrary';
-import { GCI_LIBRARY_PATH } from './gciTestConfig';
+import { GCI_LIBRARY_PATH } from '../../__tests__/gci/gciTestConfig';
 
 describe('GciTsVersion', () => {
   const gci = new GciLibrary(GCI_LIBRARY_PATH);
