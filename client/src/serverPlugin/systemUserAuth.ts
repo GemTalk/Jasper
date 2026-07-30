@@ -5,9 +5,15 @@
  * while `installHelpers.ts` stays free of it so the CI provisioning script
  * (`install-server-plugin.mjs`, which runs outside the extension host) can
  * import `loginAsSystemUser` without dragging `vscode` in.
+ *
+ * Also owns `refreshWorkingSessionAfterInstall`, the post-install working
+ * session refresh shared by the same two callers, for the same vscode-needing
+ * reason (it shows the confirmation prompt via
+ * `vscode.window.showInformationMessage`).
  */
 import * as vscode from 'vscode';
-import { ActiveSession } from '../sessionManager';
+import { ActiveSession, SessionManager } from '../sessionManager';
+import { sessionNeedsCommit } from '../browserQueries';
 import { DEFAULT_SYSTEMUSER_PW, loginAsSystemUser, messageOf } from './installHelpers';
 
 /**
@@ -41,5 +47,47 @@ export async function obtainSystemUserSession(
   } catch (e: unknown) {
     vscode.window.showErrorMessage(`Could not log in as SystemUser: ${messageOf(e)}`);
     return undefined;
+  }
+}
+
+/**
+ * The working session won't see the newly-committed classes until its view is
+ * refreshed (an abort). When it has no uncommitted work — always the case right
+ * after a login — refresh silently. Only when there ARE uncommitted changes do
+ * we ask first, since the abort would discard them.
+ *
+ * @param doneMessage  lead sentence of the confirmation prompt, naming what was
+ *                       just installed (e.g. "Refactoring engine installed.").
+ */
+export async function refreshWorkingSessionAfterInstall(
+  base: ActiveSession,
+  sessionManager: SessionManager,
+  doneMessage: string,
+): Promise<boolean> {
+  const needsCommit = sessionNeedsCommit(base);
+  if (needsCommit === false) {
+    return safeAbortWorkingSession(base, sessionManager);
+  }
+  const detail = needsCommit
+    ? 'This discards this session’s uncommitted changes.'
+    : 'Any uncommitted changes in this session will be discarded.';
+  const choice = await vscode.window.showInformationMessage(
+    `${doneMessage} Refresh this session to load it? ${detail}`,
+    'Refresh',
+    'Later',
+  );
+  if (choice === 'Refresh') {
+    return safeAbortWorkingSession(base, sessionManager);
+  }
+  return false;
+}
+
+/** Abort (refresh) the working session, tolerating a session that was logged out
+ *  while the install ran. Returns true only when the view was actually refreshed. */
+function safeAbortWorkingSession(base: ActiveSession, sessionManager: SessionManager): boolean {
+  try {
+    return sessionManager.abort(base.id).success;
+  } catch {
+    return false;
   }
 }

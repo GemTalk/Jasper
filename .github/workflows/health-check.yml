@@ -173,7 +173,7 @@ jobs:
           path: test-results/skips-${{ matrix.gemstone-version }}-${{ matrix.node-version || 'nvmrc' }}-bare.json
           if-no-files-found: ignore
       - name: Install server plugin
-        run: node client/bin/install-server-plugin.mjs
+        run: npm run test:server:install-plugin
       - name: Run tests (with server plugin)
         # zizmor(template-injection): bind the untrusted matrix values to an
         # env var instead of interpolating ${{ }} directly into the script
