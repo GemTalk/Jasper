@@ -7,11 +7,11 @@ vi.mock('vscode', () => ({
   },
 }));
 
-import { GciLibrary } from '../../gciLibrary';
-import { GCI_LIBRARY_PATH, STONE_NRS, GEM_NRS, GS_USER, GS_PASSWORD } from './gciTestConfig';
-import { ActiveSession } from '../../sessionManager';
-import { GemStoneLogin } from '../../loginTypes';
-import * as queries from '../../browserQueries';
+import { GciLibrary } from '../gciLibrary';
+import { GCI_LIBRARY_PATH, STONE_NRS, GEM_NRS, GS_USER, GS_PASSWORD } from './gci/gciTestConfig';
+import { ActiveSession } from '../sessionManager';
+import { GemStoneLogin } from '../loginTypes';
+import * as queries from '../browserQueries';
 
 describe('Browser Queries (integration)', () => {
   let gci: GciLibrary;
