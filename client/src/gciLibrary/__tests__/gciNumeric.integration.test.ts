@@ -1,6 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { GciLibrary } from '../../gciLibrary';
-import { GCI_LIBRARY_PATH, STONE_NRS, GEM_NRS, GS_USER, GS_PASSWORD } from './gciTestConfig';
+import {
+  GCI_LIBRARY_PATH,
+  STONE_NRS,
+  GEM_NRS,
+  GS_USER,
+  GS_PASSWORD,
+} from '../../__tests__/gci/gciTestConfig';
 
 function bigIntReplacer(_key: string, value: unknown): unknown {
   return typeof value === 'bigint' ? value.toString() + 'n' : value;

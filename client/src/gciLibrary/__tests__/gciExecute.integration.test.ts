@@ -1,6 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { GciLibrary } from '../../gciLibrary';
-import { GCI_LIBRARY_PATH, STONE_NRS, GEM_NRS, GS_USER, GS_PASSWORD } from './gciTestConfig';
+import {
+  GCI_LIBRARY_PATH,
+  STONE_NRS,
+  GEM_NRS,
+  GS_USER,
+  GS_PASSWORD,
+} from '../../__tests__/gci/gciTestConfig';
 
 const OOP_ILLEGAL = 0x01n;
 const OOP_NIL = 0x14n;
