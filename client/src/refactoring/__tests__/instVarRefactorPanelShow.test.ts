@@ -174,4 +174,72 @@ describe('showInstVarRefactorPanel', () => {
     expect(await p).toBeUndefined();
     expect(h.cleanup).toHaveBeenCalledOnce();
   });
+
+  it('loadAll fetches successive pages until the preview is exhausted', async () => {
+    const page = (id: string, off: number, done: boolean) => ({
+      changes: [
+        {
+          id,
+          kind: 'classReparent' as const,
+          dictName: 'UserGlobals',
+          className: 'Sub',
+          oldSource: 'x',
+          newSource: 'x',
+        },
+      ],
+      nextOffset: off,
+      done,
+    });
+    const h = handlers();
+    h.loadPage = vi
+      .fn()
+      .mockResolvedValueOnce(page('2', 3, false))
+      .mockResolvedValueOnce(page('3', 4, true));
+
+    void showInstVarRefactorPanel('Add tally to Foo', start, h);
+    const panel = lastPanel();
+    panel.__emit({ command: 'loadAll' });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(h.loadPage).toHaveBeenNthCalledWith(1, 2);
+    expect(h.loadPage).toHaveBeenNthCalledWith(2, 3);
+    expect(panel.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'appendChanges', done: true }),
+    );
+  });
+
+  it('a load request after the preview is exhausted just re-enables the panel', async () => {
+    const h = handlers(); // its loadPage returns a single done:true page
+    void showInstVarRefactorPanel('Add tally to Foo', start, h);
+    const panel = lastPanel();
+
+    panel.__emit({ command: 'loadMore' }); // consumes the last page → done
+    await new Promise((r) => setTimeout(r, 0));
+    panel.webview.postMessage.mockClear();
+
+    panel.__emit({ command: 'loadMore' }); // nothing left to fetch
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(h.loadPage).toHaveBeenCalledTimes(1);
+    expect(panel.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'busyDone' }),
+    );
+  });
+
+  it('surfaces a page-load failure and re-enables the panel', async () => {
+    const h = handlers();
+    h.loadPage = vi.fn().mockRejectedValue(new Error('page boom'));
+
+    void showInstVarRefactorPanel('Add tally to Foo', start, h);
+    const panel = lastPanel();
+    panel.__emit({ command: 'loadMore' });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining('page boom'),
+    );
+    expect(panel.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'busyDone' }),
+    );
+  });
 });

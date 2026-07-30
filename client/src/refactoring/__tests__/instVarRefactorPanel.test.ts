@@ -16,8 +16,13 @@ interface PanelApi {
     vscode: { postMessage: (m: unknown) => void },
   ): {
     appendChanges: (html: string, done: boolean) => void;
+    handleMessage: (m: unknown) => void;
   };
 }
+
+const appended =
+  '<li class="change" data-id="9"><div class="change-head"><span class="label">Sub</span>' +
+  '<button class="toggle">▸</button></div><pre class="diff hidden">x</pre></li>';
 function api(): PanelApi {
   return (globalThis as unknown as { InstVarRefactorPanel: PanelApi }).InstVarRefactorPanel;
 }
@@ -111,10 +116,58 @@ describe('instance-variable refactor panel view', () => {
 
   it('appendChanges adds rows and wires their diff toggle', () => {
     const { handle } = mount(false);
-    handle.appendChanges(
-      '<li class="change" data-id="9"><div class="change-head"><span class="label">Sub</span><button class="toggle">▸</button></div><pre class="diff hidden">x</pre></li>',
-      true,
-    );
+    handle.appendChanges(appended, true);
     expect(document.querySelectorAll('li.change').length).toBe(2);
+  });
+
+  it('Load all requests every remaining page and disables the pager while loading', () => {
+    const { vscode } = mount(false);
+    const loadAll = document.getElementById('loadAll') as HTMLButtonElement;
+
+    loadAll.click();
+
+    expect(vscode.postMessage).toHaveBeenCalledWith({ command: 'loadAll' });
+    expect(loadAll.disabled).toBe(true);
+    expect((document.getElementById('more') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('busyDone re-enables the pager buttons after a load settles', () => {
+    const { handle } = mount(false);
+    const more = document.getElementById('more') as HTMLButtonElement;
+    const loadAll = document.getElementById('loadAll') as HTMLButtonElement;
+    more.click();
+    expect(more.disabled).toBe(true);
+
+    handle.handleMessage({ command: 'busyDone' });
+
+    expect(more.disabled).toBe(false);
+    expect(loadAll.disabled).toBe(false);
+  });
+
+  it('toggle-all expands then collapses every change', () => {
+    const { handle } = mount(false);
+    handle.appendChanges(appended, true);
+    const toggleAll = document.getElementById('toggleAll') as HTMLButtonElement;
+
+    toggleAll.click();
+    expect(toggleAll.textContent).toBe('Collapse all');
+    expect(document.querySelectorAll('li.change pre.diff.hidden').length).toBe(0);
+
+    toggleAll.click();
+    expect(toggleAll.textContent).toBe('Expand all');
+    const diffs = document.querySelectorAll('li.change pre.diff');
+    expect(document.querySelectorAll('li.change pre.diff.hidden').length).toBe(diffs.length);
+  });
+
+  it('clicking a change head toggles just that diff', () => {
+    mount(false);
+    const li = document.querySelector('li.change') as HTMLElement;
+    const head = li.querySelector('.change-head') as HTMLElement;
+    const pre = li.querySelector('pre.diff') as HTMLElement;
+    const wasHidden = pre.classList.contains('hidden');
+
+    head.click();
+
+    expect(pre.classList.contains('hidden')).toBe(!wasHidden);
   });
 });

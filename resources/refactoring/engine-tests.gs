@@ -286,8 +286,10 @@ Correctness of the add / remove instance-variable refactoring (catalog V1):
     removed variable is dropped and reported.
 
 setUp builds a throwaway hierarchy (GsIVBase -> GsIVSub -> GsIVLeaf) in UserGlobals; tearDown removes
-it. Applying an operation creates new, uncommitted class versions; nothing here commits (migrate /
-delete-history, which do commit, are exercised by a separate probe).
+it. Applying an operation creates new, uncommitted class versions; nothing here commits. The
+delete-history STEP (deletePriorVersionsOf:) is exercised no-commit against a just-applied version;
+the full committing migrate / delete-history round trip (which needs a clean committed transaction)
+is exercised via the GCI e2e (gciInstVar.e2e.test.ts).
 '.
 true.
 %
@@ -3704,8 +3706,46 @@ testAddDeclinesClassVariableShadow
 
 category: 'tests - add'
 method: GsInstVarRefactoringTest
+testAddDeclinesInheritedClassVariableShadow
+	"A class variable declared on a SUPERCLASS is still visible to the subclass, so adding an
+	 instance variable of that name on the subclass would shadow it and is declined."
+	| sup sub |
+	sup := Object
+		subclass: 'GsIVCvSup'
+		instVarNames: #()
+		classVars: #('Shared')
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	sub := sup
+		subclass: 'GsIVCvSub'
+		instVarNames: #()
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	[self assert: (GsInstVarRefactoring class: sub addInstVar: 'Shared') decline notNil]
+		ensure: [#('GsIVCvSub' 'GsIVCvSup') do: [:n | UserGlobals removeKey: n asSymbol ifAbsent: []]]
+%
+
+category: 'tests - add'
+method: GsInstVarRefactoringTest
 testAddHasNoWillNotRecompile
 	self assert: (self add: 'tally') willNotRecompileSelectorCount equals: 0
+%
+
+category: 'tests - add'
+method: GsInstVarRefactoringTest
+testUnknownOperationDeclines
+	"A refactoring built with an operation other than #add / #remove declines rather than acting."
+	| ref |
+	ref := GsInstVarRefactoring new
+		setEnvironment: GsRefactoringEnvironment new
+		operation: #frobnicate
+		class: self base
+		varName: 'x'.
+	self assert: ref decline notNil.
+	self assert: ref decline includesSubstring: 'Unknown operation'
 %
 
 category: 'tests - remove'
@@ -3739,6 +3779,29 @@ testRemoveListsEveryMethodThatWillNotRecompile
 	self assert: refactoring willNotRecompileJsonString includesSubstring: 'doubleCount'.
 	self assert: refactoring willNotRecompileJsonString includesSubstring: 'leafCount'.
 	self deny: refactoring willNotRecompileJsonString includesSubstring: 'getOther'
+%
+
+category: 'tests - remove'
+method: GsInstVarRefactoringTest
+testRemoveCleanIvarDropsNothing
+	"Removing an instance variable that no method references reports nothing will-not-recompile and
+	 drops no method; the still-referenced sibling ivar and its accessor survive."
+	| cls ref result |
+	cls := Object
+		subclass: 'GsIVClean'
+		instVarNames: #('used' 'unused')
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	self compile: 'readUsed ^used' in: cls.
+	[ref := GsInstVarRefactoring class: cls removeInstVar: 'unused'.
+	 self assert: ref willNotRecompileSelectorCount equals: 0.
+	 result := ref applyDeselected: #() options: nil migrate: false deleteHistory: false.
+	 self assert: result includesSubstring: '"dropped":[]'.
+	 self deny: ((UserGlobals at: #GsIVClean) instVarNames includes: #unused).
+	 self assert: ((UserGlobals at: #GsIVClean) includesSelector: #readUsed)]
+		ensure: [UserGlobals removeKey: #GsIVClean ifAbsent: []]
 %
 
 category: 'tests - json'
@@ -3796,6 +3859,24 @@ testStartPreviewTokenStoresSelfAndPaginates
 	self assert: page includesSubstring: 'classDefinitionEdit'.
 	GsInstVarRefactoring clearToken: 'gsivtok1'.
 	self assert: (GsInstVarRefactoring pageForToken: 'gsivtok1' from: 1 maxBytes: 100) includesSubstring: 'expired'
+%
+
+category: 'tests - json'
+method: GsInstVarRefactoringTest
+testPaginatedPreviewReturnsBoundedPages
+	"A tiny byte budget yields one change per page: the first page is not done and points at the
+	 next offset; fetching from the last change reports done."
+	| ref total first last |
+	ref := self add: 'tally'.
+	total := ref changeSet size.
+	self assert: total > 1.
+
+	first := ref pageJsonFrom: 1 maxBytes: 1.
+	self assert: first includesSubstring: '"nextOffset":2'.
+	self assert: first includesSubstring: '"done":false'.
+
+	last := ref pageJsonFrom: total maxBytes: 1000000.
+	self assert: last includesSubstring: '"done":true'
 %
 
 category: 'tests - no commit'
@@ -3861,6 +3942,57 @@ testApplyEditsClassOptions
 	 refactoring applyDeselected: #() options: #('disallowGciStore') migrate: false deleteHistory: false.
 	 self assert: ((UserGlobals at: #GsIVOpt2) _optionsArray includes: #disallowGciStore)]
 		ensure: [UserGlobals removeKey: #GsIVOpt2 ifAbsent: []]
+%
+
+category: 'tests - apply'
+method: GsInstVarRefactoringTest
+testApplyReparentsSubclassesKeepingOwnMethods
+	"Reshaping the base versions the whole subtree: every descendant is re-parented onto the new
+	 version of its superclass and keeps its own methods."
+	| ref |
+	ref := self add: 'tally'.
+	ref applyDeselected: #() options: nil migrate: false deleteHistory: false.
+	self assert: self sub superclass == self base.
+	self assert: (self sub includesSelector: #readSubOwn).
+	self assert: (self sub includesSelector: #doubleCount).
+	self assert: self leaf superclass == self sub.
+	self assert: (self leaf includesSelector: #leafCount)
+%
+
+category: 'tests - apply'
+method: GsInstVarRefactoringTest
+testApplyIgnoresDeselectionApplyingAllChanges
+	"An instance-variable add/remove is all-or-nothing: the shape edit and the descendant reparents
+	 must move together, so a deselection is ignored and every staged change is still applied."
+	| ref result |
+	ref := self add: 'tally'.
+	result := ref
+		applyDeselected: #('bogus-id-1' 'bogus-id-2')
+		options: nil
+		migrate: false
+		deleteHistory: false.
+	self assert: result includesSubstring: '"applied":3'.
+	self assert: (self base instVarNames includes: #tally).
+	self assert: self sub superclass == self base
+%
+
+category: 'tests - apply'
+method: GsInstVarRefactoringTest
+testDeleteHistoryTrimsPriorVersionsToCurrent
+	"Applying versions the acted-on class, so its history gains the prior version;
+	 deletePriorVersionsOf: (the delete-history step) then trims that history down to just the
+	 current version. Exercised WITHOUT committing (setUp's fixture is abort-restored); the full
+	 committing migrate / delete-history round trip is exercised via the GCI e2e, since it needs a
+	 clean, committed transaction and so cannot run in a no-commit SUnit test."
+	| refactoring current |
+	refactoring := self add: 'tally'.
+	refactoring applyDeselected: #() options: nil migrate: false deleteHistory: false.
+	current := self base.
+	self assert: current classHistory size >= 2.
+
+	refactoring deletePriorVersionsOf: current.
+	self assert: current classHistory size equals: 1.
+	self assert: (current classHistory at: 1) == current
 %
 
 category: 'tests - apply'

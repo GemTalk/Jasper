@@ -31,9 +31,11 @@ import {
  * that methods use and confirm those methods are reported and dropped.
  *
  * Guarded on the refactoring engine being installed (the queries reference the in-stone
- * `GsInstVarRefactoring`); the tests skip with a reason otherwise. Fully transient: every
- * test rolls back with `System abortTransaction` in a `finally` (migrate / delete-history,
- * which would commit, are never requested here). All Smalltalk is ASCII-only for 3.6.x.
+ * `GsInstVarRefactoring`); the tests skip with a reason otherwise. The non-committing tests are
+ * transient (they roll back with `System abortTransaction` in a `finally`); the two committing
+ * tests (migrate instances / delete history) instead remove the class they created — and commit
+ * that removal — in their `finally`, since an abort cannot undo a commit. All Smalltalk is
+ * ASCII-only for 3.6.x.
  */
 describe('add / remove instance variable (gci e2e)', () => {
   let gci: GciLibrary;
@@ -184,6 +186,97 @@ describe('add / remove instance variable (gci e2e)', () => {
       expect(analysis.decline).toBeTruthy();
     } finally {
       exec('System abortTransaction');
+    }
+  });
+
+  // The committing paths (migrate instances / delete history) can only be verified end to end
+  // here: the engine commits the structural change first (migrateInstancesTo: needs a clean
+  // transaction), so an abort-isolated unit/SUnit test cannot observe them. Each test is
+  // self-cleaning — it removes the committed class (and any persisted instance) and commits that
+  // removal in `finally`, leaving no residue — since `System abortTransaction` cannot undo a commit.
+
+  it('migrates existing instances onto the new version and commits when migrate is requested', async (ctx) => {
+    if (!enginePresent) return ctx.skip();
+
+    const CLS = 'GciIvMig';
+    try {
+      q.compileClassDefinition(
+        session,
+        `Object subclass: '${CLS}' instVarNames: #(x) classVars: #() ` +
+          'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
+      );
+      // A persisted instance of the old version, so migrateInstancesTo: has something on disk to move.
+      exec(`UserGlobals at: #GciIvMigInst put: ${CLS} new. System commitTransaction`);
+
+      parseStartPreview(
+        await startInstVarPreview(
+          asyncExec,
+          'add',
+          CLS,
+          'y',
+          'gci-iv-migrate',
+          PREVIEW_PAGE_BYTES,
+          userIndex(),
+        ),
+      );
+      const result = parseApplyResult(
+        await applyInstVar(asyncExec, 'gci-iv-migrate', [], null, true, false),
+      );
+
+      expect(result.failed).toEqual([]);
+      expect(result.committed).toBe(true);
+      expect(hasIvar(CLS, 'y')).toBe(true);
+      // The same persisted object is now an instance of the new version and carries the new ivar.
+      expect(exec(`((UserGlobals at: #GciIvMigInst) class == ${CLS}) printString`).trim()).toBe(
+        'true',
+      );
+      expect(
+        exec(
+          `((UserGlobals at: #GciIvMigInst) class instVarNames includes: #y) printString`,
+        ).trim(),
+      ).toBe('true');
+    } finally {
+      exec(
+        `UserGlobals removeKey: #GciIvMigInst ifAbsent: []. ` +
+          `UserGlobals removeKey: #${CLS} ifAbsent: []. System commitTransaction`,
+      );
+    }
+  });
+
+  it('deletes prior versions from the class history and commits when delete-history is requested', async (ctx) => {
+    if (!enginePresent) return ctx.skip();
+
+    const CLS = 'GciIvHist';
+    try {
+      q.compileClassDefinition(
+        session,
+        `Object subclass: '${CLS}' instVarNames: #(x) classVars: #() ` +
+          'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
+      );
+      exec('System commitTransaction'); // commit the original version so applying bumps history to 2
+
+      parseStartPreview(
+        await startInstVarPreview(
+          asyncExec,
+          'add',
+          CLS,
+          'z',
+          'gci-iv-history',
+          PREVIEW_PAGE_BYTES,
+          userIndex(),
+        ),
+      );
+      const result = parseApplyResult(
+        await applyInstVar(asyncExec, 'gci-iv-history', [], null, false, true),
+      );
+
+      expect(result.failed).toEqual([]);
+      expect(result.committed).toBe(true);
+      expect(hasIvar(CLS, 'z')).toBe(true);
+      // The prior version was pruned: only the current version remains in the history.
+      expect(exec(`${CLS} classHistory size printString`).trim()).toBe('1');
+    } finally {
+      exec(`UserGlobals removeKey: #${CLS} ifAbsent: []. System commitTransaction`);
     }
   });
 });
