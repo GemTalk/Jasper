@@ -14,6 +14,7 @@ import {
 } from '../queries/previewRenameMethod';
 import { parseStartPreview, parsePage, parseApplyResult } from '../renameMethodPreview';
 import type { ActiveSession } from '../../sessionManager';
+import { testActiveSession } from '../../__tests__/testActiveSession';
 import { requireServerPluginFeature } from '../../__tests__/requireServerPluginFeature';
 import { pluginFeatures } from '../../serverPlugin/pluginFeatures';
 
@@ -43,7 +44,7 @@ describe('rename method (integration)', () => {
     handle = testContext.session;
   });
 
-  const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
+  const session = (): ActiveSession => testActiveSession(gci, handle);
   const exec = (code: string): string => q.executeFetchString(session(), code);
   // The paginated query builders take an async executor; the GCI sync path is
   // fine here (small fixture), so wrap it in a resolved promise.

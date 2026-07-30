@@ -8,6 +8,36 @@ export function gemNrsFor(login: Pick<GemStoneLogin, 'gem_host' | 'netldi'>): st
   return `!tcp@${login.gem_host}#netldi:${login.netldi}#task!gemnetobject`;
 }
 
+/**
+ * The NRS naming the stone itself for `login` — the host and the stone name,
+ * with no NetLDI/service component (that's `gemNrsFor`'s job). Used to log in
+ * and to identify which stone a session belongs to.
+ */
+export function stoneNrsFor(login: Pick<GemStoneLogin, 'gem_host' | 'stone'>): string {
+  return `!tcp@${login.gem_host}#server!${login.stone}`;
+}
+
+/**
+ * The inverse of `stoneNrsFor`: pulls `{ gem_host, stone }` back out of a
+ * stone-NRS string in exactly the `!tcp@<host>#server!<stone>` shape
+ * `stoneNrsFor` produces. GCI accepts other legal Stone NRS shapes this
+ * doesn't recognize — a bare stone name (GCI's own default is `gs64stone`),
+ * `#netldi:`/`#auth:` forms, host omitted, etc. — so `undefined` means "not
+ * this shape", not "invalid NRS". Don't treat it as a validity check.
+ */
+export function parseStoneNrs(nrs: string): Pick<GemStoneLogin, 'gem_host' | 'stone'> | undefined {
+  const match = nrs.match(/^!tcp@([^#]+)#server!(.+)$/);
+  return match ? { gem_host: match[1], stone: match[2] } : undefined;
+}
+
+/**
+ * The NetLDI name embedded in a gem-NRS string built by `gemNrsFor`, or
+ * `undefined` if it doesn't carry a `#netldi:<name>#` segment.
+ */
+export function netldiNameFromGemNrs(gemNrs: string): string | undefined {
+  return gemNrs.match(/#netldi:([^#]+)#/)?.[1];
+}
+
 export interface GemStoneLogin {
   label: string;
   version: string;
