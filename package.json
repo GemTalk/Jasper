@@ -581,7 +581,7 @@
           {
             "id": "serverSupport",
             "title": "Install optional server support",
-            "description": "Jasper can install two optional server-side supports: the Enhanced Inspector (rich object views, GemStone 3.7.5+) and the refactoring engine (rename instance variable, and more). On connect it offers to install whatever a stone is missing; the `gemstone.serverSupport.autoInstall` setting (ask / always / never) controls that.\n[Install GemStone Support\u2026](command:gemstone.installServerSupport)",
+            "description": "Jasper can install two optional server-side supports: the Enhanced Inspector (rich object views, GemStone 3.7.5+) and the refactoring engine (rename instance variable, and more). On connect it offers to install whatever a stone is missing; the `gemstone.serverSupport.autoInstall` setting (ask / always / never) controls that.\n[Install GemStone Support…](command:gemstone.installServerSupport)",
             "media": {
               "markdown": "resources/walkthrough/enhancedInspector.md"
             },
@@ -2301,6 +2301,7 @@
     "@eslint/js": "^9.19.0",
     "@playwright/test": "^1.61.1",
     "@types/node": "^22.15",
+    "@vitest/eslint-plugin": "^1.6.24",
     "@vscode/test-electron": "^2.5.2",
     "@vscode/vsce": "^3.7.1",
     "esbuild": "^0.28.1",

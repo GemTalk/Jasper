@@ -4,6 +4,7 @@ import globals from 'globals';
 import eslintComments from '@eslint-community/eslint-plugin-eslint-comments';
 import eslintConfigPrettier from 'eslint-config-prettier';
 import gitignore from 'eslint-config-flat-gitignore';
+import vitest from '@vitest/eslint-plugin';
 
 export default tseslint.config(
   // Keep lint ignores in sync with every `.gitignore` in the repo, instead of
@@ -110,6 +111,30 @@ export default tseslint.config(
     // which still applies) and browser globals (added here) to satisfy `no-undef`.
     files: ['client/src/__tests__/vitest.windowSetup.cjs'],
     languageOptions: { globals: { ...globals.browser } },
+  },
+  {
+    // Vitest-specific best-practice rules, scoped to test files across all
+    // workspaces. Only a subset of `vitest.configs.recommended` is enabled:
+    // the rest (expect-expect, no-conditional-expect, no-standalone-expect,
+    // no-mocks-import, no-disabled-tests) currently have real violations
+    // across ~90 test files that need separate triage before they can be
+    // turned on.
+    files: ['**/__tests__/**/*.test.ts'],
+    plugins: { vitest },
+    rules: {
+      'vitest/no-commented-out-tests': 'error',
+      'vitest/no-focused-tests': 'error',
+      'vitest/no-identical-title': 'error',
+      'vitest/no-import-node-test': 'error',
+      'vitest/no-interpolation-in-snapshots': 'error',
+      'vitest/no-unneeded-async-expect-function': 'error',
+      'vitest/prefer-called-exactly-once-with': 'error',
+      'vitest/require-local-test-context-for-concurrent-snapshots': 'error',
+      'vitest/valid-describe-callback': 'error',
+      'vitest/valid-expect': 'error',
+      'vitest/valid-expect-in-promise': 'error',
+      'vitest/valid-title': 'error',
+    },
   },
   // Disables stylistic ESLint rules that would conflict with Prettier; must stay last.
   eslintConfigPrettier,
