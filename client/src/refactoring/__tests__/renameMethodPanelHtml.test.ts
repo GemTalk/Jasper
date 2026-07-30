@@ -68,6 +68,13 @@ describe('rename-method preview panel', () => {
     expect(out).toContain('class="sel" checked disabled');
   });
 
+  it('still forces an implementor change that keeps its selector, showing a plain label', () => {
+    const out = html([rename({ newSelector: null })]);
+
+    expect(out).toContain('class="sel" checked disabled');
+    expect(out).not.toContain('class="sel-removed"');
+  });
+
   it('keeps a sender recompile individually deselectable — its checkbox is not disabled', () => {
     const out = html([sender]);
 
