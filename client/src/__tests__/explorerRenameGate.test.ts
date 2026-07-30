@@ -28,8 +28,8 @@ const inputBox = vi.mocked(vscode.window.showInputBox);
 
 beforeEach(() => vi.clearAllMocks());
 
-describe('rename gate routes through the shared ensureRbSupport (issue #340 #4)', () => {
-  it('renameInstVarNamed aborts (no rename) when the engine is absent and the install offer is dismissed', async () => {
+describe('the RB engine-availability gate on the rename flows (issue #340 #4)', () => {
+  it('cancels an instance-variable rename before prompting for a new name when the engine is missing and its install is declined', async () => {
     infoMsg.mockResolvedValueOnce(undefined); // user dismisses "Install GemStone Support…"
     const ctl = makeController(false);
 
@@ -42,7 +42,7 @@ describe('rename gate routes through the shared ensureRbSupport (issue #340 #4)'
     expect(inputBox).not.toHaveBeenCalled();
   });
 
-  it('renameInstVarNamed proceeds past the gate when the engine is present', async () => {
+  it('prompts for a new instance-variable name when the engine is already available', async () => {
     inputBox.mockResolvedValueOnce(undefined); // got past the gate, user then cancels the name prompt
     const ctl = makeController(true);
 
@@ -53,7 +53,7 @@ describe('rename gate routes through the shared ensureRbSupport (issue #340 #4)'
     expect(inputBox).toHaveBeenCalledTimes(1); // reached the name prompt → gate passed
   });
 
-  it('renameMethodNamed aborts (no rename) when the engine is absent and the install offer is dismissed', async () => {
+  it('cancels a method rename when the engine is missing and its install is declined', async () => {
     infoMsg.mockResolvedValueOnce(undefined);
     const ctl = makeController(false);
 

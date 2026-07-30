@@ -82,7 +82,7 @@ describe('renderRenamePanelHtml', () => {
     expect(html.match(/class="sel" checked/g) ?? []).toHaveLength(2);
   });
 
-  it('marks the classDefinitionEdit as required — checked and disabled — while method recompiles stay deselectable', () => {
+  it('marks the class-definition edit as required — checked and disabled — while method recompiles stay deselectable', () => {
     const html = renderRenamePanelHtml({
       oldName: 'count',
       newName: 'tally',
