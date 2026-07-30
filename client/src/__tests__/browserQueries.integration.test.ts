@@ -5,6 +5,7 @@ import { GciLibrary } from '../gciLibrary';
 import * as queries from '../browserQueries';
 import type { ActiveSession } from '../sessionManager';
 import { useIntegrationTest } from './useIntegrationTest';
+import { testActiveSession } from './testActiveSession';
 
 /**
  * The System Browser's queries against a real stone. browserQueries.test.ts
@@ -24,13 +25,14 @@ describe('browser queries (integration)', () => {
   });
 
   /**
-   * The live session the queries run against. It deliberately carries no
-   * `login`: the harness only exposes the pre-assembled gem NRS, not the
-   * `gem_host` and `netldi` that `gemNrsFor` reads, so a `login` here would
-   * quietly build an NRS full of `undefined`. Queries that need one —
-   * `forkGemRunning`, for instance — can't be tested through this factory.
+   * The live session the queries run against, assembled from the same test
+   * environment the harness logs in with (`testActiveSession` reads it via
+   * `resolveTestConnection`), so it carries a real `login`. Every query here
+   * is ungated and needs only a running stone, but building the full session
+   * keeps `login`-dependent queries (e.g. `forkGemRunning`) reachable from
+   * this file.
    */
-  const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
+  const session = (): ActiveSession => testActiveSession(gci, handle);
 
   /** The one-based index `getClassNames` wants for the named dictionary. */
   const dictionaryIndexOf = (name: string): number => {
