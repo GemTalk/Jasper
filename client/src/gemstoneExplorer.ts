@@ -44,7 +44,7 @@ import { PREVIEW_PAGE_BYTES } from './refactoring/queries/previewRenameMethod';
 import { showRenameMethodEditor } from './refactoring/renameMethodEditor';
 import { showRenameMethodPanel } from './refactoring/renameMethodPanel';
 import { beginChangeSignature, changeSignatureCommand } from './refactoring/changeSignatureCommand';
-import { pushInstVar as pushInstVarFlow } from './refactoring/instVarStructureCommand';
+import { moveInstVar as moveInstVarFlow } from './refactoring/instVarStructureCommand';
 import { pushMethod } from './refactoring/pushMethodCommand';
 import { PushDirection } from './refactoring/queries/previewPushMethod';
 import {
@@ -1426,14 +1426,6 @@ export class ExplorerController {
     return this.hierNeighbors(className).subclasses.length > 0;
   }
 
-  immediateSuperclassOf(className: string): string | undefined {
-    return this.hierNeighbors(className).superclass;
-  }
-
-  firstSubclassOf(className: string): string | undefined {
-    return this.hierNeighbors(className).subclasses[0];
-  }
-
   definedIvarNames(className: string): string[] {
     const cached = this.definedIvarNamesCache.get(className);
     if (cached) return cached;
@@ -1478,29 +1470,32 @@ export class ExplorerController {
     await this.renameInstVarNamed(item.className, item.ivarName, this.state.dictIndex);
   }
 
-  // Push an instance variable up to the superclass (V2) or down into the subclasses
-  // (V3), from the ivar row's context menu. The engine recompiles the affected class
-  // definitions (new versions), previews, and applies WITHOUT committing. After a
-  // successful apply the class shape changed, so re-cascade the class panes.
+  // Move an instance variable up the hierarchy (▲) or down into subclasses (▼), from the ivar
+  // row. Each arrow opens a picker of destination classes IN THE HIERARCHY — ancestors for ▲
+  // (pick one), descendants for ▼ (pick one or more) — so the two arrows cover push-up (V2),
+  // push-down to a chosen subset (V3), and move to any hierarchy class (V4). The engine
+  // recompiles the affected class definitions (new versions), previews, and applies WITHOUT
+  // committing. After a successful apply the class shape changed, so re-cascade the class panes.
   async pushInstVar(item: IvarItem, direction: 'up' | 'down'): Promise<void> {
     const session = this.session();
     if (!session) return;
-    const applied = await pushInstVarFlow(
+
+    const targets = await this.pickInstVarMoveTargets(session, item, direction);
+    if (!targets || targets.length === 0) return;
+
+    const applied = await moveInstVarFlow(
       session,
       direction,
       item.className,
       item.ivarName,
+      targets,
       this.state.dictIndex,
     );
     if (!applied) return;
     await this.refreshAfterClassReshape(item.className);
-    // Select the moved variable on its new home: the superclass (push up) or the first
-    // immediate subclass (push down — it now lives on every subclass). Best-effort: reveal
-    // rejects if the row isn't in the rebuilt tree, which we ignore.
-    const target =
-      direction === 'up'
-        ? this.immediateSuperclassOf(item.className)
-        : this.firstSubclassOf(item.className);
+    // Select the moved variable on its first destination. Best-effort: reveal rejects if the
+    // row isn't in the rebuilt tree, which we ignore.
+    const target = targets[0];
     if (target) {
       this.views?.klass
         .reveal(new IvarItem(target, item.ivarName, this.classHasSubclasses(target)), {
@@ -1509,6 +1504,66 @@ export class ExplorerController {
         })
         .then(undefined, () => {});
     }
+  }
+
+  // Ask the user which hierarchy class(es) to move an ivar to. ▲ lists ancestors (immediate
+  // superclass first) as a single-select; ▼ lists every descendant (top-down) as a multi-select.
+  // Answers the chosen destination class names, or undefined when there is nowhere to move or the
+  // user cancels.
+  private async pickInstVarMoveTargets(
+    session: ActiveSession,
+    item: IvarItem,
+    direction: 'up' | 'down',
+  ): Promise<string[] | undefined> {
+    if (direction === 'up') {
+      // superclass entries are root-first; reverse so the immediate superclass leads the list.
+      const ancestors = queries
+        .getClassHierarchy(session, item.className)
+        .filter((e) => e.kind === 'superclass')
+        .map((e) => e.className)
+        .reverse();
+      if (ancestors.length === 0) {
+        void vscode.window.showInformationMessage(
+          `${item.className} has no superclass to move '${item.ivarName}' up to.`,
+        );
+        return undefined;
+      }
+      const chosen = await vscode.window.showQuickPick(
+        ancestors.map((name, i) => ({
+          label: name,
+          description: i === 0 ? 'immediate superclass' : 'ancestor',
+        })),
+        {
+          title: `Move '${item.ivarName}' up — choose the destination superclass`,
+          placeHolder: 'Pick one ancestor class',
+        },
+      );
+      return chosen ? [chosen.label] : undefined;
+    }
+
+    const descendants = queries.getClassDescendantNames(
+      session,
+      item.className,
+      this.state.dictIndex,
+    );
+    if (descendants.length === 0) {
+      void vscode.window.showInformationMessage(
+        `${item.className} has no subclasses to move '${item.ivarName}' down to.`,
+      );
+      return undefined;
+    }
+    const chosen = await vscode.window.showQuickPick(
+      descendants.map((d) => ({
+        label: d.className,
+        description: d.parentName ? `subclass of ${d.parentName}` : undefined,
+      })),
+      {
+        title: `Move '${item.ivarName}' down — choose destination subclass(es)`,
+        placeHolder: 'Pick one or more subclasses',
+        canPickMany: true,
+      },
+    );
+    return chosen && chosen.length > 0 ? chosen.map((c) => c.label) : undefined;
   }
 
   // The rename-instance-variable flow, addressed by NAME rather than a tree row so

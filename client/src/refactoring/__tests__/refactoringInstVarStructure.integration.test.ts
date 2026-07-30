@@ -10,6 +10,7 @@ import {
   analyzeInstVarStructure,
   startInstVarStructurePreview,
   applyInstVarStructure,
+  MoveArgs,
 } from '../queries/previewInstVarStructure';
 import { PREVIEW_PAGE_BYTES } from '../queries/previewRenameMethod';
 import { parseAnalysis, parseStartPreview, parseApplyResult } from '../instVarStructurePreview';
@@ -92,15 +93,25 @@ describe('instance-variable structure (integration)', () => {
     ).trim() === 'true';
 
   const runToApply = async (
-    op: 'convertTemp' | 'pushUp' | 'pushDown',
+    op: 'convertTemp' | 'pushUp' | 'pushDown' | 'move',
     cls: string,
     varName: string,
     token: string,
     extra?: { selector: string; isMeta: boolean; varName: string },
     moveAccessors = false,
+    move?: MoveArgs,
   ): Promise<void> => {
     const analysis = parseAnalysis(
-      await analyzeInstVarStructure(asyncExec, op, cls, varName, undefined, extra, moveAccessors),
+      await analyzeInstVarStructure(
+        asyncExec,
+        op,
+        cls,
+        varName,
+        undefined,
+        extra,
+        moveAccessors,
+        move,
+      ),
     );
     expect(analysis.decline).toBeNull();
     const start = parseStartPreview(
@@ -114,6 +125,7 @@ describe('instance-variable structure (integration)', () => {
         undefined,
         extra,
         moveAccessors,
+        move,
       ),
     );
     expect(start.outOfScope.decline).toBeNull();
@@ -213,5 +225,34 @@ r := (System myUserProfile symbolList objectNamed: #GsInstVarStructureRefactorin
     expect(ownIvars(LEAF)).toContain("'mid'");
     expect(definesSelector(MID, 'midM')).toBe(false);
     expect(definesSelector(LEAF, 'midM')).toBe(true);
+  });
+
+  it('moves an instance variable up to a chosen non-immediate ancestor', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+
+    defineFixture();
+    // leaf lives on Leaf; move it up two levels to Base. Leaf keeps it by inheritance.
+    await runToApply('move', LEAF, 'leaf', 'vs-move-up', undefined, false, {
+      targets: [BASE],
+      direction: 'up',
+    });
+
+    expect(ownIvars(BASE)).toContain("'leaf'");
+    expect(ownIvars(LEAF)).not.toContain("'leaf'");
+    expect(definesSelector(LEAF, 'leafM')).toBe(true);
+  });
+
+  it('moves an instance variable down to a chosen subclass', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+
+    defineFixture();
+    await runToApply('move', MID, 'pushable', 'vs-move-down', undefined, false, {
+      targets: [LEAF],
+      direction: 'down',
+    });
+
+    expect(ownIvars(MID)).not.toContain("'pushable'");
+    expect(ownIvars(LEAF)).toContain("'pushable'");
+    expect(definesSelector(MID, 'midM')).toBe(true);
   });
 });
