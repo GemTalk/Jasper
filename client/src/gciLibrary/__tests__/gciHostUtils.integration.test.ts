@@ -7,9 +7,10 @@ import { useIntegrationTest } from '../../__tests__/useIntegrationTest';
  * timestamp formatting. None of them take a session, but they are real native
  * calls, so they run against the loaded library under the harness.
  *
- * GciHostCallDebuggerMsg is deliberately not covered — it blocks for 60
- * seconds waiting for a C debugger to attach. That its binding loads at all is
- * covered by gciOptionalFunctions.test.ts.
+ * GciHostCallDebuggerMsg is deliberately not called — it blocks for 60
+ * seconds waiting for a C debugger to attach. Its binding is non-optional
+ * (gciLibrary.ts binds it via this.lib.func), so constructing the real
+ * GciLibrary — as this suite does — already fails if the symbol is absent.
  */
 describe('GCI host utilities (integration)', () => {
   let gci: GciLibrary;
