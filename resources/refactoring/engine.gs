@@ -8366,12 +8366,19 @@ category: 'private - applying'
 method: GsRenameInstanceVariableRefactoring
 deselectedSelectorsFrom: deselectedIds
 	"The {className. selector} pairs the user chose not to carry forward, as a Set of
-	 'Class>>sel' keys. Ids that name no staged change are ignored."
+	 'Class>>sel' keys. Ids that name no staged change are ignored.
+
+	 The ids arrive from the client as literals in GCI-compiled source, which 3.6.2 can
+	 promote to Unicode strings; comparing one of those to the change's own (byte)
+	 String raises 'Unicode argument disallowed in String comparison' (error 2718).
+	 asSymbol canonicalises both sides, so the comparison is an identity test on
+	 Symbols and never touches String comparison. (Same workaround as
+	 GsRenameMethodRefactoring.)"
 	| ids result |
 	result := Set new.
-	ids := deselectedIds ifNil: [#()].
+	ids := ((deselectedIds ifNil: [#()]) collect: [:e | e asSymbol]) asIdentitySet.
 	self changeSet changes do: [:c |
-		((ids includes: c id) and: [c kind = #methodRecompile])
+		((ids includes: c id asSymbol) and: [c kind = #methodRecompile])
 			ifTrue: [result add: (self keyForClassNamed: c className selector: c selector)]].
 	^result
 %
@@ -8539,6 +8546,22 @@ hex2: anInteger
 		with: (digits at: anInteger \\ 16 + 1)
 %
 
+category: 'previewing'
+method: GsRenameInstanceVariableRefactoring
+startPreviewToken: token
+	"Build the change set, stash this refactoring in SessionTemps under token, and
+	 answer it. The token lets the client APPLY server-side afterwards
+	 (applyForToken:deselected:) instead of replaying the changes itself -- which is
+	 what keeps every untouched method alive, since only the engine knows to copy the
+	 whole method dictionary onto the new class version.
+
+	 Nothing is compiled and nothing is committed."
+	self changeSet.
+	SessionTemps current at: token asSymbol put: self.
+	^'{"token":', (self jsonQuote: token),
+	  ',"changes":', self changeSet jsonString, '}'
+%
+
 category: 'instance creation'
 classmethod: GsRenameInstanceVariableRefactoring
 class: aClass renameInstVar: oldNameString to: newNameString
@@ -8568,6 +8591,13 @@ applyForToken: token deselected: deselectedIds
 	^(SessionTemps current at: token asSymbol ifAbsent: [nil])
 		ifNil: ['{"applied":0,"failed":[],"error":"preview session expired"}']
 		ifNotNil: [:ref | ref applyDeselected: deselectedIds]
+%
+
+category: 'previewing'
+classmethod: GsRenameInstanceVariableRefactoring
+clearToken: token
+	"Drop a finished preview from SessionTemps."
+	SessionTemps current removeKey: token asSymbol ifAbsent: []
 %
 
 category: 'building'

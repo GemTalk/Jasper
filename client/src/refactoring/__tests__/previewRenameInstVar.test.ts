@@ -1,24 +1,24 @@
 import { describe, it, expect, vi } from 'vitest';
-import { previewRenameInstVar } from '../queries/previewRenameInstVar';
+import { startRenameInstVarPreview } from '../queries/previewRenameInstVar';
 
-describe('previewRenameInstVar query', () => {
-  it('drives the server-side refactoring engine and returns its JSON preview', () => {
-    const execute = vi.fn().mockReturnValue('[{"id":"1"}]');
+describe('startRenameInstVarPreview query', () => {
+  it('drives the server-side refactoring engine and returns its tokenised JSON preview', () => {
+    const execute = vi.fn().mockReturnValue('{"token":"tok1","changes":[{"id":"1"}]}');
 
-    const result = previewRenameInstVar(execute, 'Account', 'balance', 'amount');
+    const result = startRenameInstVarPreview(execute, 'Account', 'balance', 'amount', 'tok1');
 
-    expect(result).toBe('[{"id":"1"}]');
+    expect(result).toBe('{"token":"tok1","changes":[{"id":"1"}]}');
     const code = execute.mock.calls[0][0];
     expect(code).toContain('GsRenameInstanceVariableRefactoring');
     expect(code).toContain("renameInstVar: 'balance'");
     expect(code).toContain("to: 'amount'");
-    expect(code).toContain('previewJsonString');
+    expect(code).toContain("startPreviewToken: 'tok1'");
   });
 
   it('resolves the class as a global when no dictionary is given', () => {
     const execute = vi.fn().mockReturnValue('[]');
 
-    previewRenameInstVar(execute, 'Account', 'balance', 'amount');
+    startRenameInstVarPreview(execute, 'Account', 'balance', 'amount', 'tok1');
 
     const code = execute.mock.calls[0][0];
     expect(code).toContain("objectNamed: #'Account'");
@@ -28,7 +28,7 @@ describe('previewRenameInstVar query', () => {
   it('scopes the class lookup to a dictionary index when given', () => {
     const execute = vi.fn().mockReturnValue('[]');
 
-    previewRenameInstVar(execute, 'Account', 'balance', 'amount', 3);
+    startRenameInstVarPreview(execute, 'Account', 'balance', 'amount', 'tok1', 3);
 
     const code = execute.mock.calls[0][0];
     expect(code).toContain('(System myUserProfile symbolList at: 3)');
@@ -38,7 +38,7 @@ describe('previewRenameInstVar query', () => {
     const execute = vi.fn().mockReturnValue('[]');
 
     // Not a real ivar name, but the builder must never break the string literal.
-    previewRenameInstVar(execute, 'Account', "od'd", "ne'w");
+    startRenameInstVarPreview(execute, 'Account', "od'd", "ne'w", 'tok1');
 
     const code = execute.mock.calls[0][0];
     expect(code).toContain("renameInstVar: 'od''d'");
@@ -48,7 +48,7 @@ describe('previewRenameInstVar query', () => {
   it('guards against a missing class before invoking the engine', () => {
     const execute = vi.fn().mockReturnValue('[]');
 
-    previewRenameInstVar(execute, 'Account', 'balance', 'amount');
+    startRenameInstVarPreview(execute, 'Account', 'balance', 'amount', 'tok1');
 
     const code = execute.mock.calls[0][0];
     expect(code).toContain('cls isNil ifTrue:');
