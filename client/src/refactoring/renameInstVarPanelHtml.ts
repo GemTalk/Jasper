@@ -4,7 +4,7 @@
  * creates the webview and handles messages lives in renameInstVarPanel.ts, which
  * imports renderRenamePanelHtml from here.
  */
-import { RenameChange, changeLabel } from './renameInstVarPreview';
+import { RenameChange, changeLabel, isStructuralChange } from './renameInstVarPreview';
 import { lineDiff, DiffLine } from './lineDiff';
 
 function escapeHtml(s: string): string {
@@ -31,12 +31,9 @@ function renderCard(change: RenameChange): string {
         ? `<span class="badge">${escapeHtml(change.category)}</span>`
         : '';
   const diff = renderDiff(lineDiff(change.oldSource, change.newSource));
-  // The classDefinitionEdit is STRUCTURAL — checked and DISABLED so it can't be
-  // deselected: applying the method recompiles (which reference the new ivar name)
-  // without recompiling the class definition would fail every recompile or bind to
-  // a stray Undeclared global. A disabled checkbox can never be unchecked, so it is
-  // never reported as deselected to the engine. (Mirrors the class-rename panel.)
-  const structural = change.kind === 'classDefinitionEdit';
+  // A structural change is checked and DISABLED so it can't be deselected; see
+  // isStructuralChange for why. (Mirrors the class-rename panel.)
+  const structural = isStructuralChange(change);
   const cb = structural
     ? `<input type="checkbox" class="sel" checked disabled title="required" aria-label="${label} (required)">`
     : `<input type="checkbox" class="sel" checked aria-label="Include ${label}">`;

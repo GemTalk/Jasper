@@ -15,6 +15,7 @@
 import {
   MethodRenameChange,
   methodChangeLabel,
+  isStructuralChange,
   OutOfScopeCounts,
   SkippedMethod,
 } from './renameMethodPreview';
@@ -53,13 +54,9 @@ function renderCard(change: MethodRenameChange): string {
       '<span class="ren-arrow"> → </span>' +
       `<span class="sel-added" title="added">${escapeHtml(change.newSelector as string)}</span>`
     : label;
-  // An implementor's methodRename is STRUCTURAL — checked and DISABLED so it can't
-  // be deselected while sender recompiles proceed: rewriting every call site to the
-  // new selector but leaving one implementor under the old selector would silently
-  // change dispatch (the subclass inherits a different method, or DNUs). A disabled
-  // checkbox is never reported as deselected to the engine. Senders (methodRecompile)
-  // stay individually deselectable. (Mirrors the class-rename panel.)
-  const structural = change.kind === 'methodRename';
+  // A structural change is checked and DISABLED so it can't be deselected; see
+  // isStructuralChange for why. (Mirrors the class-rename panel.)
+  const structural = isStructuralChange(change);
   const cb = structural
     ? `<input type="checkbox" class="sel" checked disabled title="required" aria-label="${label} (required)">`
     : `<input type="checkbox" class="sel" checked aria-label="Include ${label}">`;

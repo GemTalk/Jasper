@@ -23,6 +23,16 @@ export interface RenameChange {
   newSource: string;
 }
 
+/** True when a change is structural (always applied, cannot be deselected).
+ *  The class-definition edit must accompany the method recompiles: recompiling
+ *  method bodies that reference the new ivar name without reshaping the class
+ *  would fail every recompile, or bind to a stray Undeclared global. The panel
+ *  renders such a change checked and DISABLED, and a disabled checkbox is never
+ *  reported as deselected to the engine. */
+export function isStructuralChange(change: RenameChange): boolean {
+  return change.kind === 'classDefinitionEdit';
+}
+
 /**
  * Parse the engine's change-set JSON into typed changes. Throws if the payload
  * is not the expected JSON array of change objects — callers surface that as an

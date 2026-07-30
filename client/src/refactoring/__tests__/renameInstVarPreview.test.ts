@@ -5,6 +5,7 @@ import {
   planRenameApply,
   changeLabel,
   validateNewIvarName,
+  isStructuralChange,
   RenameChange,
 } from '../renameInstVarPreview';
 
@@ -181,6 +182,16 @@ describe('changeLabel', () => {
 
   it('labels a class-side method', () => {
     expect(changeLabel(methodChange({ isMeta: true, selector: 'new' }))).toBe('Foo class>>new');
+  });
+});
+
+describe('rename-instance-variable change classification', () => {
+  it('treats the class-definition edit as structural (non-deselectable)', () => {
+    expect(isStructuralChange(classDefChange())).toBe(true);
+  });
+
+  it('treats a method recompile as optional', () => {
+    expect(isStructuralChange(methodChange())).toBe(false);
   });
 });
 
