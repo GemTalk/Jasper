@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { ActiveSession } from './sessionManager';
-import { DEFAULT_SYSTEMUSER_PW } from './systemUserSession';
+import { DEFAULT_GS_PW as DEFAULT_SYSTEMUSER_PW } from './loginTypes';
 
 /** Default port the Seaside Zinc adaptor listens on. */
 export const SEASIDE_DEFAULT_PORT = 8383;
