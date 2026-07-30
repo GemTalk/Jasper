@@ -112,12 +112,7 @@ describe('GemStone 3.6.2 compatibility gate', () => {
 
     expect(
       offenders,
-      offenders.length === 0
-        ? ''
-        : `Production code uses GCI function(s) that do NOT exist in GemStone 3.6.2:\n${detail}\n\n` +
-            `These will throw on a 3.6.2 server. If you intend to require GemStone 3.7+ for ` +
-            `this path, consciously add the name(s) to ALLOWED_POST_362 in ` +
-            `client/src/__tests__/gciVersionGated.test.ts.`,
+      `Production code uses GCI function(s) that do NOT exist in GemStone 3.6.2:\n${detail}\n\nThese will throw on a 3.6.2 server. If you intend to require GemStone 3.7+ for this path, consciously add the name(s) to ALLOWED_POST_362 in client/src/__tests__/gciVersionGated.test.ts.`,
     ).toEqual([]);
   });
 });
