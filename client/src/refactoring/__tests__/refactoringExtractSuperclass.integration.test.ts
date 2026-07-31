@@ -103,6 +103,9 @@ describe('extract superclass (integration)', () => {
     expect(enginePresent()).toBe(q.checkRefactoringSupportAvailable(session()));
   });
 
+  // Generous timeout: this files in the whole (growing) engine-tests.gs payload and runs a full
+  // SUnit suite in-stone over the GCI transport, which takes several seconds and scales with the
+  // number of refactorings — well past vitest's 5s default on a cold stone.
   it('runs the extract-superclass GS SUnit suite in-stone with zero failures', (ctx) => {
     requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
@@ -112,7 +115,7 @@ r := (System myUserProfile symbolList objectNamed: #GsExtractSuperclassRefactori
 (r failures size + r errors size) printString`;
 
     expect(exec(code).trim()).toBe('0');
-  });
+  }, 60_000);
 
   it('inserts an empty superclass above a class, keeping the subtree parented', async (ctx) => {
     requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
