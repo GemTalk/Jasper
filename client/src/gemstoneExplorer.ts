@@ -46,6 +46,10 @@ import { showRenameMethodPanel } from './refactoring/renameMethodPanel';
 import { beginChangeSignature, changeSignatureCommand } from './refactoring/changeSignatureCommand';
 import { moveInstVar as moveInstVarFlow } from './refactoring/instVarStructureCommand';
 import { pushMethod } from './refactoring/pushMethodCommand';
+import {
+  insertSuperclassCommand,
+  extractSuperclassCommand,
+} from './refactoring/extractSuperclassCommand';
 import { PushDirection } from './refactoring/queries/previewPushMethod';
 import {
   parseStartPreview as parseStartClassPreview,
@@ -2138,6 +2142,28 @@ export class ExplorerController {
     );
   }
 
+  // V6 Insert Superclass: slide a new empty class between this class and its current
+  // superclass (server-side new class versions, no commit). Reveals the new class after.
+  async insertSuperclass(item: ClassItem | HierarchyItem): Promise<void> {
+    const session = this.session();
+    if (!session) return;
+    // A hierarchy node may name a class outside the current dictionary; a class row uses it.
+    const dict = item instanceof HierarchyItem ? undefined : this.state.dictIndex;
+    const outcome = await insertSuperclassCommand({ session, className: item.className, dict });
+    if (outcome) await this.refreshAfterClassReshape(outcome.newClass);
+  }
+
+  // V7 Extract Superclass: insert a new common superclass above this class and chosen sibling
+  // classes, hoisting chosen shared members up into it (server-side, no commit). Reveals the
+  // new class after.
+  async extractSuperclass(item: ClassItem | HierarchyItem): Promise<void> {
+    const session = this.session();
+    if (!session) return;
+    const dict = item instanceof HierarchyItem ? undefined : this.state.dictIndex;
+    const outcome = await extractSuperclassCommand({ session, className: item.className, dict });
+    if (outcome) await this.refreshAfterClassReshape(outcome.newClass);
+  }
+
   // Rename this class variable across its defining class and every subclass — both
   // the instance and class side — via the server-side engine (R4). The apply is
   // value-preserving (the shared class-variable VALUE carries across) and
@@ -3710,6 +3736,28 @@ export function registerGemStoneExplorer(
         void ctl.classHistory(item).catch((e: unknown) => {
           const msg = e instanceof Error ? e.message : String(e);
           void vscode.window.showErrorMessage(`Class history failed: ${msg}`);
+        });
+      },
+    ),
+    // Insert an empty superclass above a class (context menu on a class row or hierarchy node).
+    vscode.commands.registerCommand(
+      'gemstone.explorer.insertSuperclass',
+      (item?: ClassItem | HierarchyItem) => {
+        if (!(item instanceof ClassItem) && !(item instanceof HierarchyItem)) return;
+        void ctl.insertSuperclass(item).catch((e: unknown) => {
+          const msg = e instanceof Error ? e.message : String(e);
+          void vscode.window.showErrorMessage(`Insert superclass failed: ${msg}`);
+        });
+      },
+    ),
+    // Extract a common superclass above a class + chosen siblings, hoisting shared members.
+    vscode.commands.registerCommand(
+      'gemstone.explorer.extractSuperclass',
+      (item?: ClassItem | HierarchyItem) => {
+        if (!(item instanceof ClassItem) && !(item instanceof HierarchyItem)) return;
+        void ctl.extractSuperclass(item).catch((e: unknown) => {
+          const msg = e instanceof Error ? e.message : String(e);
+          void vscode.window.showErrorMessage(`Extract superclass failed: ${msg}`);
         });
       },
     ),
