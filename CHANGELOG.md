@@ -14,7 +14,7 @@ All notable changes to the **GemStone Smalltalk** extension will be documented i
 
 ### Security
 
-- **Patched the `brace-expansion` denial-of-service advisory (GHSA-mh99-v99m-4gvg).** A scoped npm override forces `vscode-languageclient`'s `minimatch` to `^10.2.5` so the only `brace-expansion` in the tree is the patched 5.0.8, avoiding a `vscode-languageclient` major bump that doesn't compile under the repo's module resolution. ([#288](https://github.com/GemTalk/Jasper/pull/288))
+- **Patched the `brace-expansion` denial-of-service advisory (GHSA-mh99-v99m-4gvg) by upgrading `vscode-languageclient` to 10.1.0.** Version 10 is an exports-only package, so `client/tsconfig.json` carries a `paths` mapping for `vscode-languageclient/node` until the repo moves off `node10` module resolution. ([#288](https://github.com/GemTalk/Jasper/pull/288), [#354](https://github.com/GemTalk/Jasper/pull/354))
 
 ## [1.8.9] - 2026-07-22
 
