@@ -54,8 +54,6 @@ const start: StartInstVarPreview = {
     decline: null,
     willNotRecompile: [],
     actedOnClass: 'Foo',
-    currentOptions: [],
-    optionVocabulary: ['logCreation'],
     note: null,
   },
   page: {

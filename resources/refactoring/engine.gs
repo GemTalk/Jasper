@@ -310,7 +310,7 @@ GemStone has no addInstVarName:/removeInstVarName:, so changing a class''s own i
 list means creating a NEW class VERSION (exactly as a class rename, R3, does): a new version
 starts with an empty method dictionary and does NOT re-parent existing subclasses. So the apply
 must, for every affected class top-down, create a new version in the same class history with the
-edited own-instVar list and its (preserved or user-edited) class options, COPY its methods forward,
+edited own-instVar list and its preserved class options, COPY its methods forward,
 and re-parent it under the freshly created parent version. This reuses R3''s newVersionOf: machinery.
 
 Two operations (instVar `operation`):
@@ -326,9 +326,9 @@ re-parented class (#classReparent, recompiled only to re-point at the new parent
 Two things the family did not surface before, both required here:
 
   - CLASS OPTIONS. Every new version preserves its own class''s options (`_optionsArray`); the
-    acted-on class''s options are additionally EDITABLE from the preview panel (the earlier engines
-    passed options: #() and silently dropped them). optionsForApply: answers the option list a
-    given class''s new version is built with.
+    earlier engines passed options: #() and silently dropped them. optionsForApply: answers the
+    option list a given class''s new version is built with. (The panel does not surface options
+    for editing; editedOptions is plumbing for a future options editor and is left nil.)
 
   - METHODS THAT WILL NOT RECOMPILE. A method that references a removed instance variable no
     longer resolves the name; GemStone will not compile a reference to an undeclared lowercase
@@ -4913,7 +4913,7 @@ recordWillNotRecompileLosing: aScopeClass
 category: 'private'
 method: GsInstVarRefactoring
 actedOnClassName
-	"The class whose options are user-editable in the panel: always the class the user acted on."
+	"The class the user acted on (identifies the acted-on class to the panel)."
 	^definingClass name asString
 %
 
@@ -4981,8 +4981,8 @@ category: 'building'
 method: GsInstVarRefactoring
 previewDefinitionFor: aClass oldDef: defString
 	"The before/after 'after' text for an edited class: its definition with the instVarNames: list
-	 replaced by the class's new own-ivar list. (Options in the preview show the CURRENT options;
-	 an options edit chosen in the panel is applied at apply time.)"
+	 replaced by the class's new own-ivar list. Class options are preserved onto the new version but
+	 are not surfaced for editing in the panel."
 	^self replaceListClause: 'instVarNames:'
 		in: defString
 		with: (newIvarLists at: aClass name asString ifAbsent: [self ownInstVarsOf: aClass])
@@ -5058,41 +5058,15 @@ willNotRecompileJsonString
 
 category: 'serializing'
 method: GsInstVarRefactoring
-jsonStringArray: aCollection
-	| ws |
-	ws := WriteStream on: String new.
-	ws nextPut: $[.
-	aCollection keysAndValuesDo: [:i :s |
-		i = 1 ifFalse: [ws nextPut: $,].
-		ws nextPutAll: (self jsonQuote: s asString)].
-	ws nextPut: $].
-	^ws contents
-%
-
-category: 'serializing'
-method: GsInstVarRefactoring
-optionVocabulary
-	"The known class-creation options offered as checkboxes in the panel. The stone validates the
-	 chosen set at apply; an unknown option surfaces as a failure rather than being silently lost."
-	^#('dbTransient' 'instancesInvariant' 'instancesNonPersistent' 'modifiable'
-	   'subclassesDisallowed' 'disallowGciStore' 'logCreation' 'selfCanBeSpecial'
-	   'traverseByCallback')
-%
-
-category: 'serializing'
-method: GsInstVarRefactoring
 outOfScopeJsonString
 	"The precondition / warning payload for the preview panel, in the family's shape. A hard
 	 decline (which blocks Apply) rides in `decline`; willNotRecompile lists the methods that will
-	 be dropped; currentOptions/optionVocabulary drive the editable class-options group; note warns
-	 about the commit semantics of migrate/delete-history."
+	 be dropped; note warns about the commit semantics of migrate/delete-history."
 	self ensureAnalysis.
 	^'{"references":0,"skipped":0,"scope":"hierarchy","collision":null,"decline":',
 	  (decline ifNil: ['null'] ifNotNil: [:r | self jsonQuote: r]),
 	  ',"willNotRecompile":', self willNotRecompileJsonString,
 	  ',"actedOnClass":', (self jsonQuote: self actedOnClassName),
-	  ',"currentOptions":', (self jsonStringArray: (self optionsOf: definingClass)),
-	  ',"optionVocabulary":', (self jsonStringArray: self optionVocabulary),
 	  ',"note":', (self jsonQuote: 'The structural change does not commit. Migrating instances and deleting history DO commit the transaction; nothing else does.'),
 	  '}'
 %

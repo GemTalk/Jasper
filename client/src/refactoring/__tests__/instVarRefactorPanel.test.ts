@@ -40,8 +40,6 @@ const oos: InstVarOutOfScope = {
   decline: null,
   willNotRecompile: [],
   actedOnClass: 'Foo',
-  currentOptions: ['logCreation'],
-  optionVocabulary: ['logCreation', 'modifiable'],
   note: 'commit note',
 };
 

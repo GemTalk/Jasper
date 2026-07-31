@@ -286,14 +286,11 @@ GsInstVarRefactoringTest >> testAnalysisJsonStringReportsDecline [
 ]
 
 { #category : 'tests - json' }
-GsInstVarRefactoringTest >> testOutOfScopeJsonCarriesOptionsAndCommitNote [
+GsInstVarRefactoringTest >> testOutOfScopeJsonCarriesWarningsAndCommitNote [
 	| refactoring json |
 	refactoring := self remove: 'count'.
 	json := refactoring outOfScopeJsonString.
 	self assert: json includesSubstring: '"willNotRecompile":'.
-	self assert: json includesSubstring: '"currentOptions":'.
-	self assert: json includesSubstring: '"optionVocabulary":'.
-	self assert: json includesSubstring: 'instancesInvariant'.
 	self assert: json includesSubstring: 'commit'.
 	self assert: json includesSubstring: '"actedOnClass":"GsIVBase"'
 ]

@@ -66,8 +66,6 @@ const startJson = (over: Record<string, unknown> = {}): string =>
       decline: null,
       willNotRecompile: [],
       actedOnClass: 'Foo',
-      currentOptions: [],
-      optionVocabulary: [],
       note: null,
     },
     page: {
@@ -144,8 +142,6 @@ describe('add / remove instance variable command', () => {
           decline: 'Out of scope here.',
           willNotRecompile: [],
           actedOnClass: 'Foo',
-          currentOptions: [],
-          optionVocabulary: [],
           note: null,
         },
       }),

@@ -23,8 +23,6 @@ const baseOos: InstVarOutOfScope = {
   decline: null,
   willNotRecompile: [],
   actedOnClass: 'Foo',
-  currentOptions: ['logCreation'],
-  optionVocabulary: ['logCreation', 'modifiable', 'dbTransient'],
   note: 'Migrating instances and deleting history DO commit the transaction; nothing else does.',
 };
 

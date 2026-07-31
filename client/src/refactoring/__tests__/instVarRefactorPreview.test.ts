@@ -34,7 +34,7 @@ describe('instance-variable refactor preview parsing', () => {
     expect(a.willNotRecompileCount).toBe(2);
   });
 
-  it('parses a start-preview envelope with will-not-recompile, options and note', () => {
+  it('parses a start-preview envelope with will-not-recompile and note', () => {
     const s = parseStartPreview(
       JSON.stringify({
         token: 'tok1',
@@ -47,8 +47,6 @@ describe('instance-variable refactor preview parsing', () => {
             { class: 'Sub', selector: 'doubleCount' },
           ],
           actedOnClass: 'Foo',
-          currentOptions: ['logCreation'],
-          optionVocabulary: ['logCreation', 'modifiable'],
           note: 'Migrating instances and deleting history DO commit.',
         },
         page: {
@@ -70,8 +68,6 @@ describe('instance-variable refactor preview parsing', () => {
     expect(s.token).toBe('tok1');
     expect(s.outOfScope.willNotRecompile).toHaveLength(2);
     expect(s.outOfScope.willNotRecompile[0]).toEqual({ className: 'Foo', selector: 'combine' });
-    expect(s.outOfScope.currentOptions).toEqual(['logCreation']);
-    expect(s.outOfScope.optionVocabulary).toContain('modifiable');
     expect(s.outOfScope.note).toMatch(/commit/);
     expect(s.page.changes[0].kind).toBe('classDefinitionEdit');
     expect(s.page.done).toBe(false);

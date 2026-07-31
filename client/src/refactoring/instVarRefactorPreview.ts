@@ -10,12 +10,11 @@
  * so every row is a required (checked + disabled) row and the deselected set is always
  * empty.
  *
- * Two things this preview surfaces beyond the rest of the family:
- *   - `willNotRecompile` — the methods that reference the removed variable and so will
- *     fail to compile onto the new class version (they are dropped, and reported again in
- *     the apply result's `dropped`);
- *   - the acted-on class's `currentOptions` + the `optionVocabulary`, driving the
- *     editable class-options group, plus the migrate / delete-history commit note.
+ * Beyond the rest of the family, this preview surfaces `willNotRecompile` — the methods
+ * that reference the removed variable and so will fail to compile onto the new class
+ * version (they are dropped, and reported again in the apply result's `dropped`) — plus
+ * the migrate / delete-history commit note. Class-creation options are preserved onto the
+ * new version by the engine but are not surfaced for editing in the panel.
  */
 
 export type InstVarChangeKind = 'classDefinitionEdit' | 'classReparent';
@@ -42,8 +41,6 @@ export interface InstVarOutOfScope {
   decline: string | null;
   willNotRecompile: BrokenMethod[];
   actedOnClass: string | null;
-  currentOptions: string[];
-  optionVocabulary: string[];
   note: string | null;
 }
 
@@ -79,10 +76,6 @@ export interface InstVarAnalysis {
 
 function asCount(v: unknown): number {
   return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0;
-}
-
-function asStringArray(v: unknown): string[] {
-  return Array.isArray(v) ? v.filter((s): s is string => typeof s === 'string') : [];
 }
 
 function parseBroken(raw: unknown): BrokenMethod[] {
@@ -134,8 +127,6 @@ function parseOutOfScope(raw: unknown): InstVarOutOfScope {
     decline: typeof oos.decline === 'string' ? oos.decline : null,
     willNotRecompile: parseBroken(oos.willNotRecompile),
     actedOnClass: typeof oos.actedOnClass === 'string' ? oos.actedOnClass : null,
-    currentOptions: asStringArray(oos.currentOptions),
-    optionVocabulary: asStringArray(oos.optionVocabulary),
     note: typeof oos.note === 'string' ? oos.note : null,
   };
 }
