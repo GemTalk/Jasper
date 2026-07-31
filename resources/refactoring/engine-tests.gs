@@ -4017,6 +4017,23 @@ testMoveDownDeclinesWhenAnUnselectedSubtreeStillUsesIt
 
 category: 'tests - V4 move'
 method: GsInstVarStructureRefactoringTest
+testMoveDownDeclinesWhenATargetIsUnderAnotherTarget
+	"The #down picker lists descendants at any depth, so a user can tick both a class and one of its
+	 own descendants. Moving Base's 'shared' down to BOTH GsVSMid and GsVSLeaf (which descends from
+	 GsVSMid) would declare the ivar on Leaf while it also inherits it from the freshly-edited Mid --
+	 a double declaration GemStone rejects at apply. Analysis declines instead, recording nothing."
+	| ref |
+	ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSBase') moveInstVar: 'shared' toClasses: #('GsVSMid' 'GsVSLeaf') direction: #down.
+
+	self assert: ref decline notNil.
+	self assert: ref decline includesSubstring: 'GsVSLeaf'.
+	self assert: ref decline includesSubstring: 'GsVSMid'.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - V4 move'
+method: GsInstVarStructureRefactoringTest
 testMoveDeclinesWhenNotAnOwnIvar
 	| ref |
 	"'shared' is Base's ivar, only inherited by Mid."
