@@ -52,7 +52,7 @@ describe('debugger single-stepping (integration)', () => {
       `| cls |
 cls := Object subclass: 'ZzSteppingProbe' instVarNames: #() classVars: #() classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals options: #().
 cls compileMethod: 'inner ^ self halt' dictionaries: System myUserProfile symbolList category: #probe.
-cls compileMethod: 'outer | x | x := self inner. ^ 42' dictionaries: System myUserProfile symbolList category: #probe.
+cls compileMethod: 'outer self inner. ^ 42' dictionaries: System myUserProfile symbolList category: #probe.
 'compiled'`,
       0,
     );
@@ -74,7 +74,15 @@ cls compileMethod: 'outer | x | x := self inner. ^ 42' dictionaries: System myUs
     const stepErrorNumbers: number[] = [];
 
     try {
-      for (let i = 0; i < 3 && !ranToCompletion; i++) {
+      // gciStepOverFromLevel: blocks synchronously on the native GCI call, so a
+      // stuck loop can't be interrupted by vitest's test timeout — there's no
+      // await for it to fire on. This cap is a runaway guard, not a tuned
+      // bound: on stones without native code (e.g. Darwin/ARM — see the class
+      // comment) stepping advances by bytecode-level step points rather than
+      // by source statement, so completing even this small method legitimately
+      // takes more than a couple of steps. 500 is far beyond anything a real
+      // stepping run should ever need, however the bytecode shape varies.
+      for (let i = 0; i < 500 && !ranToCompletion; i++) {
         const step = stepOver(session(), gsProcess, 1);
         ranToCompletion = step.completed;
         if (!ranToCompletion) {
