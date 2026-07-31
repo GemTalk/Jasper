@@ -201,6 +201,56 @@ describe('add / remove instance variable command', () => {
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(expect.stringContaining('boom'));
   });
 
+  // The engine's expired-token path answers `applied:0` with an EMPTY `failed`, so it parses
+  // cleanly. The token can expire while the user sits on the preview deciding about the
+  // committing checkboxes, so this is reachable — and without the `result.error` check it
+  // produced a success toast and a refresh/reveal over an unchanged tree.
+  it('reports an expired preview token instead of a success toast', async () => {
+    vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson());
+    vi.mocked(queries.startInstVarPreview).mockResolvedValue(startJson());
+    vi.mocked(showInstVarRefactorPanel).mockResolvedValue(
+      applied({ applied: 0, failed: [], error: 'preview session expired' }),
+    );
+
+    const outcome = await runInstVarRefactor(req());
+
+    expect(outcome).toBeUndefined();
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining('preview session expired'),
+    );
+    expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
+  });
+
+  it('names the operation in the expired-token error so the user knows what did not happen', async () => {
+    vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson({ operation: 'remove' }));
+    vi.mocked(queries.startInstVarPreview).mockResolvedValue(startJson());
+    vi.mocked(showInstVarRefactorPanel).mockResolvedValue(
+      applied({ applied: 0, failed: [], error: 'preview session expired' }),
+    );
+
+    await runInstVarRefactor(req({ op: 'remove', ivarName: 'bar', className: 'Foo' }));
+
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining('Remove bar from Foo failed'),
+    );
+  });
+
+  // Defence in depth: a zero-change apply that reports no error at all is still not a
+  // success, because the panel only opens with `total > 0` and every change is required.
+  it('treats a zero-change apply with no error as a failure', async () => {
+    vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson());
+    vi.mocked(queries.startInstVarPreview).mockResolvedValue(startJson());
+    vi.mocked(showInstVarRefactorPanel).mockResolvedValue(applied({ applied: 0 }));
+
+    const outcome = await runInstVarRefactor(req());
+
+    expect(outcome).toBeUndefined();
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining('nothing was applied'),
+    );
+    expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
+  });
+
   it('titles an add and reports success', async () => {
     vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson());
     vi.mocked(queries.startInstVarPreview).mockResolvedValue(startJson());

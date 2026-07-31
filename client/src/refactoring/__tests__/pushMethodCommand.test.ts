@@ -210,6 +210,25 @@ describe('push method command', () => {
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(expect.stringContaining('boom'));
   });
 
+  // An expired preview token answers `applied:0` with an EMPTY `failed`, so it parses
+  // cleanly — without the `result.error` check it reached the success path.
+  it('reports an expired preview token instead of taking the success path', async () => {
+    vi.mocked(queries.analyzePushMethod).mockResolvedValue(analysisJson());
+    vi.mocked(queries.startPushMethodPreview).mockResolvedValue(startJson());
+    vi.mocked(showPushMethodPanel).mockResolvedValue({
+      applied: 0,
+      failed: [],
+      error: 'preview session expired',
+    });
+
+    await pushMethod(req());
+
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining('preview session expired'),
+    );
+    expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
+  });
+
   it('reports when every target was left un-ticked (nothing applied)', async () => {
     vi.mocked(queries.analyzePushMethod).mockResolvedValue(analysisJson());
     vi.mocked(queries.startPushMethodPreview).mockResolvedValue(startJson());

@@ -128,9 +128,26 @@ export async function runInstVarRefactor(
   });
   if (!result) return undefined;
 
+  // A whole-apply error — in practice an expired preview token, which the user can reach by
+  // sitting on the preview while deciding about the committing checkboxes. It answers
+  // `applied:0` with an empty `failed`, so it parses cleanly and would otherwise fall through
+  // to the success toast and a refresh/reveal of an unchanged tree. Nothing was applied, so
+  // there is deliberately no abort advice here.
+  if (result.error) {
+    void vscode.window.showErrorMessage(`${titleFor(req)} failed: ${result.error}`);
+    return undefined;
+  }
+
   if (result.failed.length > 0) {
     const first = result.failed[0];
     void vscode.window.showErrorMessage(`Failed: ${first.label}: ${first.error}`);
+    return undefined;
+  }
+
+  // Belt-and-braces: a zero-change apply with no error reported at all is still not a
+  // success — the panel only opens with `total > 0` and every change is required.
+  if (result.applied === 0) {
+    void vscode.window.showErrorMessage(`${titleFor(req)} failed: nothing was applied.`);
     return undefined;
   }
 

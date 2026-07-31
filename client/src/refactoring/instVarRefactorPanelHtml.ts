@@ -6,7 +6,7 @@
  *
  * Beyond the diff list it renders two things the rest of the family does not:
  *   - a prominent WILL-NOT-RECOMPILE warning listing every method that references the
- *     removed/moved variable and will be dropped;
+ *     removed variable and will be dropped;
  *   - MIGRATE INSTANCES / DELETE HISTORY checkboxes, each flagged as committing.
  *
  * The acted-on class's compile options are preserved across the new version server-side
@@ -84,7 +84,7 @@ function renderWillNotRecompile(oos: InstVarOutOfScope): string {
     .join('');
   const n = broken.length;
   return `<div class="warn-box">
-    <div class="warn-head">⚠ ${n} method${n === 1 ? '' : 's'} will NOT recompile (they reference the ${n === 1 ? 'variable' : 'variable'} being removed/moved) and will be dropped:</div>
+    <div class="warn-head">⚠ ${n} method${n === 1 ? '' : 's'} will NOT recompile (${n === 1 ? 'it references' : 'they reference'} the variable being removed) and will be dropped:</div>
     <ul>${items}</ul>
   </div>`;
 }
@@ -101,7 +101,7 @@ function renderCommitControls(oos: InstVarOutOfScope): string {
 }
 
 export interface InstVarPanelHtmlOptions {
-  /** Panel title, e.g. "Add tally to Foo" / "Remove count from Foo" / "Move count to Bar". */
+  /** Panel title, e.g. "Add tally to Foo" / "Remove count from Foo". */
   title: string;
   total: number;
   changes: InstVarChange[];

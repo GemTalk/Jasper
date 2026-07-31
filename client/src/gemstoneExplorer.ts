@@ -1938,6 +1938,14 @@ export class ExplorerController {
     });
     if (!result) return false; // cancelled/closed
 
+    // A whole-apply error (an expired preview token) answers `applied:0` with an empty
+    // `failed`, so it parses cleanly. Reported before the reload below: no selector
+    // changed, so there is nothing stale to refresh and nothing to abort.
+    if (result.error) {
+      void vscode.window.showErrorMessage(`Rename failed: ${result.error}`);
+      return false;
+    }
+
     // Selectors changed, so the current class's cached method environment is
     // stale — reload it and reopen any editor that was on the renamed selector.
     this.reloadCurrentClassMethods();
@@ -2192,6 +2200,14 @@ export class ExplorerController {
     );
     if (!result) return;
 
+    // A whole-apply error (an expired preview token) answers `applied:0` with an empty
+    // `failed`, so it parses cleanly. Reported before the re-cascade below: the class was
+    // never reshaped, so there is nothing to refresh and nothing to abort.
+    if (result.error) {
+      void vscode.window.showErrorMessage(`Rename failed: ${result.error}`);
+      return;
+    }
+
     // The class was reshaped/rebound — re-cascade so both panes show the new name
     // and version tag.
     await this.refreshAfterClassReshape(newName);
@@ -2321,6 +2337,15 @@ export class ExplorerController {
       cleanup: safeClear,
     });
     if (!result) {
+      reselect();
+      return false;
+    }
+
+    // A whole-apply error (an expired preview token) answers `applied:0` with an empty
+    // `failed`, so it parses cleanly. Reported before the re-cascade below: nothing was
+    // renamed, so there is nothing to refresh and nothing to abort.
+    if (result.error) {
+      void vscode.window.showErrorMessage(`Rename failed: ${result.error}`);
       reselect();
       return false;
     }

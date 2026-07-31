@@ -42,6 +42,10 @@ describe('add / remove instance variable (gci e2e)', () => {
   let session: ActiveSession;
   let enginePresent = false;
 
+  // NB: `executeFetchString` sends #encodeAsUTF8 to whatever the code evaluates to, so every
+  // `exec` here must end in a String. `System abortTransaction` / `commitTransaction` answer
+  // the System class (and some primitives a Boolean), neither of which understands it — hence
+  // the trailing `. 'ok'` on the mutating calls below, matching the sibling gci suites.
   const exec = (code: string): string => q.executeFetchString(session, code);
   const asyncExec = (_label: string, code: string): Promise<string> => Promise.resolve(exec(code));
 
@@ -76,6 +80,9 @@ describe('add / remove instance variable (gci e2e)', () => {
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
     );
     q.compileMethod(session, BASE, false, 'accessing', 'combine\n\t^ count + other');
+    // Deliberately touches `other` only, never `count` — the control for the selective
+    // copy-forward assertion in the remove test: removing `count` must NOT drop this.
+    q.compileMethod(session, BASE, false, 'accessing', 'getOther\n\t^ other');
     q.compileMethod(session, SUB, false, 'accessing', 'doubleCount\n\t^ count * 2');
   };
 
@@ -133,7 +140,7 @@ describe('add / remove instance variable (gci e2e)', () => {
 
       expect(hasIvar(BASE, 'tally')).toBe(true);
     } finally {
-      exec('System abortTransaction');
+      exec("System abortTransaction. 'ok'");
     }
   });
 
@@ -168,9 +175,13 @@ describe('add / remove instance variable (gci e2e)', () => {
 
       expect(hasIvar(BASE, 'count')).toBe(false);
       expect(includesSelector(BASE, 'combine')).toBe(false);
-      expect(includesSelector(BASE, 'getOther')).toBe(false); // never existed
+
+      // Copy-forward is SELECTIVE, not all-or-nothing: `getOther` never referenced `count`,
+      // so it must survive onto the new class version and must not be reported as dropped.
+      expect(includesSelector(BASE, 'getOther')).toBe(true);
+      expect(result.dropped.map((m) => m.selector)).not.toContain('getOther');
     } finally {
-      exec('System abortTransaction');
+      exec("System abortTransaction. 'ok'");
     }
   });
 
@@ -185,7 +196,7 @@ describe('add / remove instance variable (gci e2e)', () => {
       );
       expect(analysis.decline).toBeTruthy();
     } finally {
-      exec('System abortTransaction');
+      exec("System abortTransaction. 'ok'");
     }
   });
 
@@ -206,7 +217,7 @@ describe('add / remove instance variable (gci e2e)', () => {
           'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
       );
       // A persisted instance of the old version, so migrateInstancesTo: has something on disk to move.
-      exec(`UserGlobals at: #GciIvMigInst put: ${CLS} new. System commitTransaction`);
+      exec(`UserGlobals at: #GciIvMigInst put: ${CLS} new. System commitTransaction. 'ok'`);
 
       parseStartPreview(
         await startInstVarPreview(
@@ -238,7 +249,7 @@ describe('add / remove instance variable (gci e2e)', () => {
     } finally {
       exec(
         `UserGlobals removeKey: #GciIvMigInst ifAbsent: []. ` +
-          `UserGlobals removeKey: #${CLS} ifAbsent: []. System commitTransaction`,
+          `UserGlobals removeKey: #${CLS} ifAbsent: []. System commitTransaction. 'ok'`,
       );
     }
   });
@@ -253,7 +264,7 @@ describe('add / remove instance variable (gci e2e)', () => {
         `Object subclass: '${CLS}' instVarNames: #(x) classVars: #() ` +
           'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
       );
-      exec('System commitTransaction'); // commit the original version so applying bumps history to 2
+      exec("System commitTransaction. 'ok'"); // commit the original version so history bumps to 2
 
       parseStartPreview(
         await startInstVarPreview(
@@ -276,7 +287,7 @@ describe('add / remove instance variable (gci e2e)', () => {
       // The prior version was pruned: only the current version remains in the history.
       expect(exec(`${CLS} classHistory size printString`).trim()).toBe('1');
     } finally {
-      exec(`UserGlobals removeKey: #${CLS} ifAbsent: []. System commitTransaction`);
+      exec(`UserGlobals removeKey: #${CLS} ifAbsent: []. System commitTransaction. 'ok'`);
     }
   });
 });

@@ -1,5 +1,5 @@
 /**
- * Webview-side behavior for the PAGINATED add / remove / move instance-variable
+ * Webview-side behavior for the PAGINATED add / remove instance-variable
  * preview panel (instVarRefactorPanel.ts).
  *
  * Read at runtime and injected as a <script> tag (NOT bundled) so the diff toggle,

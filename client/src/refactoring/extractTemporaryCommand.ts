@@ -190,6 +190,15 @@ export async function extractTemporaryCommand(sessions: SessionManager): Promise
     return;
   }
 
+  // A whole-apply error (an expired preview token) answers `applied:0` with an empty
+  // `failed`, so it parses cleanly and would otherwise reach the success path — which
+  // reloads the editor as if it had been rewritten. Nothing changed, so no abort advice.
+  if (result.error) {
+    void vscode.window.showErrorMessage(`Extract failed: ${result.error}`);
+    focusEditor();
+    return;
+  }
+
   if (result.failed.length > 0) {
     const first = result.failed[0];
     void vscode.window.showErrorMessage(`Extract failed: ${first.label}: ${first.error}`);
