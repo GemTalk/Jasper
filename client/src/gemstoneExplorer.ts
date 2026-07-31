@@ -1395,11 +1395,12 @@ export class ExplorerController {
   }
 
   // Locally-defined instance variable names for a class, memoized per dict load.
-  // {superclass, immediate subclasses} for a class, memoized. Used to gate the ▼ push-down
-  // arrow (no subclasses ⇒ nowhere to push) and to pick the reveal target after a push.
+  // {superclass, immediate subclasses} for a class, memoized. Used to gate the ▼ move-down
+  // arrow (no subclasses ⇒ nowhere to move) and to pick the reveal target after a move.
   // Resolution is first-match (not dict-scoped), matching the Explorer's Hierarchy pane; under a
   // class name shadowed across dictionaries this only affects arrow visibility / reveal target —
-  // the refactoring itself is dict-scoped (pushInstVar threads state.dictIndex) and stays correct.
+  // the refactoring itself stays correct: the source class is resolved dict-scoped, and the engine
+  // binds each chosen destination within the source's own lineage rather than by unscoped name.
   private hierNeighbors(className: string): { superclass?: string; subclasses: string[] } {
     const cached = this.hierNeighborsCache.get(className);
     if (cached) return cached;
@@ -1476,7 +1477,7 @@ export class ExplorerController {
   // push-down to a chosen subset (V3), and move to any hierarchy class (V4). The engine
   // recompiles the affected class definitions (new versions), previews, and applies WITHOUT
   // committing. After a successful apply the class shape changed, so re-cascade the class panes.
-  async pushInstVar(item: IvarItem, direction: 'up' | 'down'): Promise<void> {
+  async moveInstVar(item: IvarItem, direction: 'up' | 'down'): Promise<void> {
     const session = this.session();
     if (!session) return;
 
@@ -3559,20 +3560,20 @@ export function registerGemStoneExplorer(
     vscode.commands.registerCommand('gemstone.explorer.renameIvar', (item?: IvarItem) => {
       if (item instanceof IvarItem) void ctl.renameInstVar(item);
     }),
-    // Push an instance variable up to the superclass (V2) — ivar row context menu.
-    vscode.commands.registerCommand('gemstone.explorer.pushUpInstVar', (item?: IvarItem) => {
+    // Move an instance variable up to a chosen ancestor (▲) — ivar row context menu.
+    vscode.commands.registerCommand('gemstone.explorer.moveUpInstVar', (item?: IvarItem) => {
       if (!(item instanceof IvarItem)) return;
-      void ctl.pushInstVar(item, 'up').catch((e: unknown) => {
+      void ctl.moveInstVar(item, 'up').catch((e: unknown) => {
         const msg = e instanceof Error ? e.message : String(e);
-        void vscode.window.showErrorMessage(`Push up instance variable failed: ${msg}`);
+        void vscode.window.showErrorMessage(`Move up instance variable failed: ${msg}`);
       });
     }),
-    // Push an instance variable down into the subclasses (V3) — ivar row context menu.
-    vscode.commands.registerCommand('gemstone.explorer.pushDownInstVar', (item?: IvarItem) => {
+    // Move an instance variable down into chosen subclasses (▼) — ivar row context menu.
+    vscode.commands.registerCommand('gemstone.explorer.moveDownInstVar', (item?: IvarItem) => {
       if (!(item instanceof IvarItem)) return;
-      void ctl.pushInstVar(item, 'down').catch((e: unknown) => {
+      void ctl.moveInstVar(item, 'down').catch((e: unknown) => {
         const msg = e instanceof Error ? e.message : String(e);
-        void vscode.window.showErrorMessage(`Push down instance variable failed: ${msg}`);
+        void vscode.window.showErrorMessage(`Move down instance variable failed: ${msg}`);
       });
     }),
     // Rename the instance variable at the cursor in a method source editor (the

@@ -1157,13 +1157,13 @@
         "icon": "$(edit)"
       },
       {
-        "command": "gemstone.explorer.pushUpInstVar",
+        "command": "gemstone.explorer.moveUpInstVar",
         "title": "Move Instance Variable Up…",
         "category": "GemStone",
         "icon": "$(arrow-up)"
       },
       {
-        "command": "gemstone.explorer.pushDownInstVar",
+        "command": "gemstone.explorer.moveDownInstVar",
         "title": "Move Instance Variable Down…",
         "category": "GemStone",
         "icon": "$(arrow-down)"
@@ -1511,11 +1511,11 @@
           "when": "false"
         },
         {
-          "command": "gemstone.explorer.pushUpInstVar",
+          "command": "gemstone.explorer.moveUpInstVar",
           "when": "false"
         },
         {
-          "command": "gemstone.explorer.pushDownInstVar",
+          "command": "gemstone.explorer.moveDownInstVar",
           "when": "false"
         },
         {
@@ -1812,12 +1812,12 @@
           "group": "inline"
         },
         {
-          "command": "gemstone.explorer.pushUpInstVar",
+          "command": "gemstone.explorer.moveUpInstVar",
           "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerIvar/",
           "group": "inline@2"
         },
         {
-          "command": "gemstone.explorer.pushDownInstVar",
+          "command": "gemstone.explorer.moveDownInstVar",
           "when": "view == gemstoneExplorerClasses && viewItem == explorerIvar",
           "group": "inline@3"
         },
