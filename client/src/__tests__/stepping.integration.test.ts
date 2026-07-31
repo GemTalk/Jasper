@@ -71,20 +71,24 @@ cls compileMethod: 'outer | x | x := self inner. ^ 42' dictionaries: System myUs
   it('single-steps a process halted inside a compiled method', () => {
     let gsProcess = haltedProcess();
     let ranToCompletion = false;
+    const stepErrorNumbers: number[] = [];
 
     try {
       for (let i = 0; i < 3 && !ranToCompletion; i++) {
         const step = stepOver(session(), gsProcess, 1);
-
-        if (step.completed) {
-          ranToCompletion = true;
-        } else {
-          expect(step.errorNumber).toBe(GCI_ERR_STEP_POINT);
+        ranToCompletion = step.completed;
+        if (!ranToCompletion) {
+          stepErrorNumbers.push(step.errorNumber!);
           gsProcess = step.errorContext!;
         }
       }
     } finally {
       if (!ranToCompletion) clearStack(session(), gsProcess);
+    }
+
+    expect(ranToCompletion).toBe(true);
+    for (const errorNumber of stepErrorNumbers) {
+      expect(errorNumber).toBe(GCI_ERR_STEP_POINT);
     }
   });
 

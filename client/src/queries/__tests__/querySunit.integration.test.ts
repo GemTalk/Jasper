@@ -179,9 +179,15 @@ describe('SUnit queries (integration)', () => {
         SUNIT_PROBE_FAILING_SELECTOR,
       );
       expect(details.status).toBe('failed');
+
       expect(details.exceptionClass).toBe('TestFailure');
+
       expect(details.messageText).toBeDefined();
       expect(details.messageText).not.toContain('\0');
+
+      expect(details.stackReport).toBeDefined();
+      expect(details.stackReport!.length).toBeGreaterThan(0);
+      expect(details.stackReport).not.toContain('\0');
     });
 
     it('returns mnuReceiver and mnuSelector for a MessageNotUnderstood', () => {
@@ -194,22 +200,6 @@ describe('SUnit queries (integration)', () => {
       expect(details.exceptionClass).toBe('MessageNotUnderstood');
       expect(details.mnuSelector).toBe('doesNotUnderstandWHATEVER');
       expect(details.mnuReceiver).toBeDefined();
-    });
-
-    // GemExceptionSignalCapturesStack is toggled inside the query and
-    // restored. Stack capture is non-deterministic across GS versions, so
-    // we only assert on shape: stackReport is either present and non-empty
-    // or absent (the toggle wasn't honored on this stone).
-    it('includes a stackReport when the gem-config toggle is honored', () => {
-      const details = describeTestFailure(
-        exec,
-        SUNIT_PROBE_TEST_CLASS,
-        SUNIT_PROBE_FAILING_SELECTOR,
-      );
-      if (details.stackReport !== undefined) {
-        expect(details.stackReport.length).toBeGreaterThan(0);
-        expect(details.stackReport).not.toContain('\0');
-      }
     });
   });
 });

@@ -222,9 +222,12 @@ describe('debugQueries', () => {
       debug.getObjectClassName(session, RECEIVER_OOP);
 
       const performCalls = (session.gci.GciTsPerform as ReturnType<typeof vi.fn>).mock.calls;
-      for (const call of performCalls) {
-        const selectorStr = call[3] as string | null;
-        if (selectorStr) expect(selectorStr).not.toContain(' ');
+      const selectorStrs = performCalls
+        .map((call) => call[3] as string | null)
+        .filter((s): s is string => s !== null);
+      expect(selectorStrs.length).toBeGreaterThan(0);
+      for (const selector of selectorStrs) {
+        expect(selector).not.toContain(' ');
       }
 
       const fetchBytesCalls = (session.gci.GciTsPerformFetchBytes as ReturnType<typeof vi.fn>).mock
@@ -503,9 +506,12 @@ describe('debugQueries', () => {
       debug.getInstVarNames(session, RECEIVER_OOP);
 
       const performCalls = (session.gci.GciTsPerform as ReturnType<typeof vi.fn>).mock.calls;
-      for (const call of performCalls) {
-        const selectorStr = call[3] as string | null;
-        if (selectorStr) expect(selectorStr).not.toContain(' ');
+      const selectorStrs = performCalls
+        .map((call) => call[3] as string | null)
+        .filter((s): s is string => s !== null);
+      expect(selectorStrs.length).toBeGreaterThan(0);
+      for (const selector of selectorStrs) {
+        expect(selector).not.toContain(' ');
       }
 
       const fetchBytesCalls = (session.gci.GciTsPerformFetchBytes as ReturnType<typeof vi.fn>).mock
