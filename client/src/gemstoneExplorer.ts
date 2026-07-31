@@ -1692,6 +1692,7 @@ export class ExplorerController {
       session,
       token,
       deselectedIdsFrom(ordered, selectedIds),
+      className,
       oldName,
       newName,
     );
@@ -1709,6 +1710,7 @@ export class ExplorerController {
     session: ActiveSession,
     token: string,
     deselectedIds: string[],
+    className: string,
     oldName: string,
     newName: string,
   ): Promise<boolean> {
@@ -1731,12 +1733,21 @@ export class ExplorerController {
       return false;
     }
 
-    // The class was just reshaped and re-versioned — reload the defined-ivar data
-    // (dropping the memoized names) and refresh so the ivar sub-tree and method
-    // list reflect the new name.
+    // The defining class and every subclass were reshaped onto new versions, so the
+    // cached method environment is stale. Do a full reshape refresh keyed on the
+    // DEFINING class: it re-fetches the environment and re-selects that class (not a
+    // subclass) via revealClass, so the method pane shows the carried-forward methods
+    // of the right class rather than re-rendering stale data.
     this.loadDefinedIvarCounts();
-    this.classProvider.refresh();
-    this.methodProvider.refresh();
+    await this.refreshAfterClassReshape(className);
+    // Land on the renamed variable's row on the defining class. Best-effort: reveal
+    // rejects if the row isn't in the rebuilt tree, which we ignore.
+    this.views?.klass
+      .reveal(new IvarItem(className, newName, this.classHasSubclasses(className)), {
+        select: true,
+        focus: true,
+      })
+      .then(undefined, () => {});
 
     if (result.error !== undefined) {
       void vscode.window.showErrorMessage(`Rename failed: ${result.error}`);
