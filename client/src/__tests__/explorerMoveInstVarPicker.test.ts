@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
-vi.mock('vscode', () => import('../__mocks__/vscode'));
+vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 // The controller module pulls in browserQueries (→ native GCI). Stub just the two hierarchy
 // queries the picker calls; nothing else is exercised by pickInstVarMoveTargets.
 vi.mock('../browserQueries', () => ({

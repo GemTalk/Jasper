@@ -3,17 +3,7 @@
   "compilerOptions": {
     "outDir": "./out",
     "rootDir": "./src",
-    "allowJs": true,
-    // vscode-languageclient@10 is an exports-only package: it dropped the root-level `node.js` /
-    // `node.d.ts` shims v9 shipped and declares no `main`/`types`, exposing `./node` solely through
-    // the `exports` map. tsconfig.base.json uses `"module": "commonjs"` with no `moduleResolution`,
-    // which implies `node10` — and node10 resolution ignores `exports`, so tsc cannot find
-    // `vscode-languageclient/node`. esbuild (which builds the shipped bundle) does honour
-    // `exports`, so this only ever needed to be a hint for the type checker.
-    // Delete this mapping once the project moves to `moduleResolution: node16`/`bundler`.
-    "paths": {
-      "vscode-languageclient/node": ["../node_modules/vscode-languageclient/lib/node/main"]
-    }
+    "allowJs": true
   },
   "include": ["src/**/*.ts", "src/**/*.js"]
 }
