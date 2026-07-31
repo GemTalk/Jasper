@@ -4,11 +4,15 @@ import {
   GemStoneLogin,
   buildDataCuratorLogin,
   dataCuratorLoginToCreate,
+  gemNrsFor,
   loginLabel,
   loginTargetKey,
+  netldiNameFromGemNrs,
+  parseStoneNrs,
   sameLoginTarget,
   sessionsForLogin,
   shouldSyncClasses,
+  stoneNrsFor,
 } from '../loginTypes';
 
 function makeLogin(overrides: Partial<GemStoneLogin> = {}): GemStoneLogin {
@@ -106,6 +110,38 @@ describe('sessionsForLogin', () => {
     const sessions = [makeSession(b, 7)];
     expect(sessionsForLogin(0, dupLogins, sessions).map((s) => s.id)).toEqual([7]);
     expect(sessionsForLogin(1, dupLogins, sessions)).toEqual([]);
+  });
+});
+
+describe('stoneNrsFor / parseStoneNrs', () => {
+  it('parses back the gem_host and stone that built the NRS', () => {
+    const login = makeLogin({ gem_host: 'db.example.com', stone: 'prodstone' });
+
+    const parsed = parseStoneNrs(stoneNrsFor(login));
+
+    expect(parsed).toEqual({ gem_host: 'db.example.com', stone: 'prodstone' });
+  });
+
+  it('returns undefined for a string that is not a stone NRS', () => {
+    expect(parseStoneNrs('not a stone nrs')).toBeUndefined();
+  });
+
+  it('returns undefined for a gem NRS (wrong NRS shape)', () => {
+    const login = makeLogin({ gem_host: 'db.example.com', netldi: 'gs64ldi' });
+
+    expect(parseStoneNrs(gemNrsFor(login))).toBeUndefined();
+  });
+});
+
+describe('netldiNameFromGemNrs', () => {
+  it('extracts the netldi name that built the NRS', () => {
+    const login = makeLogin({ gem_host: 'db.example.com', netldi: 'jasper-test-ldi' });
+
+    expect(netldiNameFromGemNrs(gemNrsFor(login))).toBe('jasper-test-ldi');
+  });
+
+  it('returns undefined for a string with no #netldi: segment', () => {
+    expect(netldiNameFromGemNrs('!tcp@localhost#server!gs64stone')).toBeUndefined();
   });
 });
 

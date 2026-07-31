@@ -26,7 +26,7 @@ describe('extension command handlers guard against undefined node', () => {
         unguarded.push({ line: i + 1, text: text.trim() });
       }
     });
-    expect(unguarded, 'unguarded node.kind reads:\n' + JSON.stringify(unguarded, null, 2)).toEqual(
+    expect(unguarded, `unguarded node.kind reads:\n${JSON.stringify(unguarded, null, 2)}`).toEqual(
       [],
     );
   });

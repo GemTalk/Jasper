@@ -7,6 +7,7 @@ import * as q from '../../browserQueries';
 import { getDefinedClassVarNames } from '../queries/getDefinedClassVarNames';
 import { getDefinedClassVarCounts } from '../queries/getDefinedClassVarCounts';
 import type { ActiveSession } from '../../sessionManager';
+import { testActiveSession } from '../../__tests__/testActiveSession';
 
 /**
  * Automatic GCI integration test for the Explorer's class-variable row queries
@@ -26,7 +27,7 @@ describe('class-variable Explorer queries (integration)', () => {
     handle = testContext.session;
   });
 
-  const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
+  const session = (): ActiveSession => testActiveSession(gci, handle);
   const exec = (code: string): string => q.executeFetchString(session(), code);
 
   const dictIndexOf = (name: string): number =>

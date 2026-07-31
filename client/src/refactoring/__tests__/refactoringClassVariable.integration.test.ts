@@ -10,6 +10,7 @@ import { startRenameClassVarPreview, applyRenameClassVar } from '../queries/prev
 import { PREVIEW_PAGE_BYTES } from '../queries/previewRenameMethod';
 import { parseStartPreview, parseApplyResult } from '../renameClassVarPreview';
 import type { ActiveSession } from '../../sessionManager';
+import { testActiveSession } from '../../__tests__/testActiveSession';
 import { requireServerPluginFeature } from '../../__tests__/requireServerPluginFeature';
 import { pluginFeatures } from '../../serverPlugin/pluginFeatures';
 
@@ -37,7 +38,7 @@ describe('rename class variable (integration)', () => {
     handle = testContext.session;
   });
 
-  const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
+  const session = (): ActiveSession => testActiveSession(gci, handle);
   const exec = (code: string): string => q.executeFetchString(session(), code);
   const asyncExec = (_label: string, code: string): Promise<string> => Promise.resolve(exec(code));
 

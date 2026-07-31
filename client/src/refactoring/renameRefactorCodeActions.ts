@@ -52,6 +52,11 @@ export class RefactorCodeActionProvider implements vscode.CodeActionProvider {
       );
       actions.push(action('Inline Method…', 'gemstone.explorer.inlineMethod', [range.start]));
       actions.push(action('Inline Temporary…', 'gemstone.explorer.inlineTemporary', [range.start]));
+      actions.push(
+        action('Convert Temporary to Instance Variable…', 'gemstone.convertTempToInstVar', [
+          range.start,
+        ]),
+      );
     }
 
     // "Rename Method…" targets the method being edited (or a sent selector at the

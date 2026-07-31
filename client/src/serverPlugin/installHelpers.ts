@@ -12,19 +12,19 @@
  */
 import { ActiveSession } from '../sessionManager';
 import { executeFetchString } from '../browserQueries';
-import { gemNrsFor } from '../loginTypes';
+import { gemNrsFor, stoneNrsFor, DEFAULT_GS_PW } from '../loginTypes';
 
 // GemStone's default SystemUser password on a fresh stone. Tried first so a
 // stock stone installs in one step; on failure the caller falls back to a
 // prompt (or, non-interactively, reports it as a miss).
 //
-// NOTE: do not rename this to `...PASSWORD` or write it as
-// `password = '...'`. esbuild normalizes the bundled literal to double
-// quotes, and Open VSX's server-side secret scan rejects any
-// `password = "<7-20 chars>"` (gitleaks rule hashicorp-tf-password), even
-// though 'swordfish' is GemStone's public default — that block silently
-// fails only the ovsx publish step.
-export const DEFAULT_SYSTEMUSER_PW = 'swordfish';
+// DataCurator's and SystemUser's stock passwords aren't two facts that happen
+// to coincide — they're the same fact ("stock stone default"), so this
+// re-exports `DEFAULT_GS_PW` under the name this module's callers expect
+// rather than redeclaring the literal. See the secret-scan-avoidance note on
+// `DEFAULT_GS_PW` in loginTypes.ts for why it's a named constant instead of a
+// `password`-suffixed identifier.
+export const DEFAULT_SYSTEMUSER_PW = DEFAULT_GS_PW;
 
 /** Render a JS string as a GemStone string literal: single quotes doubled and
  *  the whole value wrapped in quotes. */
@@ -74,7 +74,7 @@ export function yieldToEventLoop(): Promise<void> {
  */
 export function loginAsSystemUser(base: ActiveSession, password: string): ActiveSession {
   const { login } = base;
-  const stoneNrs = `!tcp@${login.gem_host}#server!${login.stone}`;
+  const stoneNrs = stoneNrsFor(login);
   const gemNrs = gemNrsFor(login);
   const result = base.gci.GciTsLogin(
     stoneNrs,
