@@ -2695,7 +2695,7 @@ describe('SystemBrowser', () => {
     });
   });
 
-  describe('navigateToClass', () => {
+  describe('navigateToClass updating the target panel', () => {
     beforeEach(() => {
       SystemBrowser.show(session, exportManager);
       messageHandler({ command: 'ready' });

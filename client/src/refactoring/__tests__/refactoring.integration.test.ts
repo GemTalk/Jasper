@@ -11,6 +11,7 @@ import { BrowserQueryError } from '../../browserQueries';
 import { previewRenameInstVar } from '../queries/previewRenameInstVar';
 import { parseRenameChanges, RenameChange } from '../renameInstVarPreview';
 import type { ActiveSession } from '../../sessionManager';
+import { testActiveSession } from '../../__tests__/testActiveSession';
 import {
   requireServerPluginFeature,
   requireServerPluginFeatureAbsent,
@@ -41,7 +42,7 @@ describe('rename instance variable (integration)', () => {
     handle = testContext.session;
   });
 
-  const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
+  const session = (): ActiveSession => testActiveSession(gci, handle);
   const exec = (code: string): string => q.executeFetchString(session(), code);
 
   const engineLoaded = (): boolean => q.checkRefactoringSupportAvailable(session());

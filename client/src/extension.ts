@@ -90,6 +90,7 @@ import { GemStoneDebugSession } from './gemstoneDebugSession';
 import { InspectorTreeProvider, InspectorNode } from './inspectorTreeProvider';
 import { registerGemStoneExplorer } from './gemstoneExplorer';
 import { renameTemporaryCommand } from './refactoring/renameTemporaryCommand';
+import { convertTempToInstVarCommand } from './refactoring/instVarStructureCommand';
 import { extractMethodCommand } from './refactoring/extractMethodCommand';
 import { inlineMethodCommand } from './refactoring/inlineMethodCommand';
 import { extractTemporaryCommand } from './refactoring/extractTemporaryCommand';
@@ -1200,6 +1201,14 @@ export function activate(context: vscode.ExtensionContext) {
 
     vscode.commands.registerCommand('gemstone.renameTemporary', async (position?: unknown) => {
       await renameTemporaryCommand(
+        sessionManager,
+        position instanceof vscode.Position ? position : undefined,
+      );
+    }),
+
+    // Convert the temporary at the cursor into an instance variable (V5).
+    vscode.commands.registerCommand('gemstone.convertTempToInstVar', async (position?: unknown) => {
+      await convertTempToInstVarCommand(
         sessionManager,
         position instanceof vscode.Position ? position : undefined,
       );

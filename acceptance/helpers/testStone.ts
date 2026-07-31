@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { netldiNameFromGemNrs, parseStoneNrs } from '../../client/src/loginTypes';
 
 /** Connection details for the provisioned test stone, drawn from `.env.test`. */
 export interface TestStone {
@@ -36,15 +37,22 @@ export function readTestStone(): TestStone | undefined {
   if (!gciLibraryPath || !fs.existsSync(gciLibraryPath)) return undefined;
 
   // The NRS strings carry the names: `…#server!<stone>` and `…netldi:<netldi>#…`.
-  const stone = env.VITE_GEMSTONE_STONE_NRS?.match(/!([^!#]+)$/)?.[1];
-  const netldi = env.VITE_GEMSTONE_GEM_NRS?.match(/netldi:([^#]+)/)?.[1];
-  const version = gciLibraryPath.match(/libgcits-([\d.]+)-/)?.[1];
-  if (!stone || !netldi || !version) return undefined;
+  const stoneNrs = env.VITE_GEMSTONE_STONE_NRS
+    ? parseStoneNrs(env.VITE_GEMSTONE_STONE_NRS)
+    : undefined;
+  const netldi = env.VITE_GEMSTONE_GEM_NRS
+    ? netldiNameFromGemNrs(env.VITE_GEMSTONE_GEM_NRS)
+    : undefined;
+  // The composed NRS strings don't carry the GemStone version at all, so this is
+  // the one value that must come from an atomic var; fall back to parsing the
+  // GCI library filename for a stale `.env.test` predating VITE_GEMSTONE_VERSION.
+  const version = env.VITE_GEMSTONE_VERSION ?? gciLibraryPath.match(/libgcits-([\d.]+)-/)?.[1];
+  if (!stoneNrs || !netldi || !version) return undefined;
 
   return {
     version,
-    host: 'localhost',
-    stone,
+    host: stoneNrs.gem_host,
+    stone: stoneNrs.stone,
     netldi,
     user: env.VITE_GEMSTONE_USER ?? 'DataCurator',
     password: env.VITE_GEMSTONE_PASSWORD ?? '',
