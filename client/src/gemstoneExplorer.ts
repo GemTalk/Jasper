@@ -48,6 +48,7 @@ import { PREVIEW_PAGE_BYTES } from './refactoring/queries/previewRenameMethod';
 import { showRenameMethodEditor } from './refactoring/renameMethodEditor';
 import { showRenameMethodPanel } from './refactoring/renameMethodPanel';
 import { beginChangeSignature, changeSignatureCommand } from './refactoring/changeSignatureCommand';
+import { moveInstVar as moveInstVarFlow } from './refactoring/instVarStructureCommand';
 import { pushMethod } from './refactoring/pushMethodCommand';
 import { PushDirection } from './refactoring/queries/previewPushMethod';
 import {
@@ -229,10 +230,14 @@ class IvarItem extends vscode.TreeItem {
   constructor(
     public readonly className: string,
     public readonly ivarName: string,
+    // Drives the inline ▼ "Push Down" arrow: with no subclasses there's nowhere to push
+    // to, so the row uses a contextValue the push-down menu doesn't match. The ▲ "Push Up"
+    // and ✎ rename actions match both contextValues.
+    hasSubclasses = true,
   ) {
     super(ivarName, vscode.TreeItemCollapsibleState.None);
     this.id = `k:${className}/iv:${ivarName}`;
-    this.contextValue = 'explorerIvar';
+    this.contextValue = hasSubclasses ? 'explorerIvar' : 'explorerIvarNoSubs';
     this.iconPath = new vscode.ThemeIcon('symbol-field');
     this.tooltip = `Instance variable defined in ${className}`;
   }
@@ -522,6 +527,13 @@ export class ExplorerController {
   // expansion caret. Names are fetched lazily on expand and memoized here.
   private definedIvarCounts = new Map<string, number>();
   private readonly definedIvarNamesCache = new Map<string, string[]>();
+  // className → {superclass, subclasses} from the class hierarchy, memoized so ivar rows
+  // can cheaply know whether a class has subclasses (to gate the ▼ push-down arrow) and
+  // find the push up/down reveal target. Cleared alongside the ivar caches on any reshape.
+  private readonly hierNeighborsCache = new Map<
+    string,
+    { superclass?: string; subclasses: string[] }
+  >();
   // Same, for locally-defined CLASS variables (drives the class-variable sub-tree).
   private definedClassVarCounts = new Map<string, number>();
   private readonly definedClassVarNamesCache = new Map<string, string[]>();
@@ -686,6 +698,7 @@ export class ExplorerController {
     this.definedIvarCounts = new Map();
     this.classVersions = new Map();
     this.definedIvarNamesCache.clear();
+    this.hierNeighborsCache.clear();
     this.definedClassVarCounts = new Map();
     this.definedClassVarNamesCache.clear();
     this.envLines = [];
@@ -1357,6 +1370,7 @@ export class ExplorerController {
   private loadDefinedIvarCounts(): void {
     const session = this.session();
     this.definedIvarNamesCache.clear();
+    this.hierNeighborsCache.clear();
     this.definedClassVarNamesCache.clear();
     if (!session || this.state.dictIndex === undefined) {
       this.definedIvarCounts = new Map();
@@ -1403,6 +1417,37 @@ export class ExplorerController {
   }
 
   // Locally-defined instance variable names for a class, memoized per dict load.
+  // {superclass, immediate subclasses} for a class, memoized. Used to gate the ▼ push-down
+  // arrow (no subclasses ⇒ nowhere to push) and to pick the reveal target after a push.
+  // Resolution is first-match (not dict-scoped), matching the Explorer's Hierarchy pane; under a
+  // class name shadowed across dictionaries this only affects arrow visibility / reveal target —
+  // the refactoring itself is dict-scoped (pushInstVar threads state.dictIndex) and stays correct.
+  private hierNeighbors(className: string): { superclass?: string; subclasses: string[] } {
+    const cached = this.hierNeighborsCache.get(className);
+    if (cached) return cached;
+    let neighbors: { superclass?: string; subclasses: string[] } = { subclasses: [] };
+    const session = this.session();
+    if (session) {
+      try {
+        const entries = queries.getClassHierarchy(session, className);
+        const supers = entries.filter((e) => e.kind === 'superclass');
+        neighbors = {
+          // superclasses are root-first, so the immediate parent is the last one.
+          superclass: supers.length > 0 ? supers[supers.length - 1].className : undefined,
+          subclasses: entries.filter((e) => e.kind === 'subclass').map((e) => e.className),
+        };
+      } catch {
+        /* leave empty — treated as a leaf with no superclass */
+      }
+    }
+    this.hierNeighborsCache.set(className, neighbors);
+    return neighbors;
+  }
+
+  classHasSubclasses(className: string): boolean {
+    return this.hierNeighbors(className).subclasses.length > 0;
+  }
+
   definedIvarNames(className: string): string[] {
     const cached = this.definedIvarNamesCache.get(className);
     if (cached) return cached;
@@ -1445,6 +1490,103 @@ export class ExplorerController {
   // first) WITHOUT committing. The user commits explicitly, as everywhere else.
   async renameInstVar(item: IvarItem): Promise<void> {
     await this.renameInstVarNamed(item.className, item.ivarName, this.state.dictIndex);
+  }
+
+  // Move an instance variable up the hierarchy (▲) or down into subclasses (▼), from the ivar
+  // row. Each arrow opens a picker of destination classes IN THE HIERARCHY — ancestors for ▲
+  // (pick one), descendants for ▼ (pick one or more) — so the two arrows cover push-up (V2),
+  // push-down to a chosen subset (V3), and move to any hierarchy class (V4). The engine
+  // recompiles the affected class definitions (new versions), previews, and applies WITHOUT
+  // committing. After a successful apply the class shape changed, so re-cascade the class panes.
+  async pushInstVar(item: IvarItem, direction: 'up' | 'down'): Promise<void> {
+    const session = this.session();
+    if (!session) return;
+
+    const targets = await this.pickInstVarMoveTargets(session, item, direction);
+    if (!targets || targets.length === 0) return;
+
+    const applied = await moveInstVarFlow(
+      session,
+      direction,
+      item.className,
+      item.ivarName,
+      targets,
+      this.state.dictIndex,
+    );
+    if (!applied) return;
+    await this.refreshAfterClassReshape(item.className);
+    // Select the moved variable on its first destination. Best-effort: reveal rejects if the
+    // row isn't in the rebuilt tree, which we ignore.
+    const target = targets[0];
+    if (target) {
+      this.views?.klass
+        .reveal(new IvarItem(target, item.ivarName, this.classHasSubclasses(target)), {
+          select: true,
+          focus: true,
+        })
+        .then(undefined, () => {});
+    }
+  }
+
+  // Ask the user which hierarchy class(es) to move an ivar to. ▲ lists ancestors (immediate
+  // superclass first) as a single-select; ▼ lists every descendant (top-down) as a multi-select.
+  // Answers the chosen destination class names, or undefined when there is nowhere to move or the
+  // user cancels.
+  private async pickInstVarMoveTargets(
+    session: ActiveSession,
+    item: IvarItem,
+    direction: 'up' | 'down',
+  ): Promise<string[] | undefined> {
+    if (direction === 'up') {
+      // superclass entries are root-first; reverse so the immediate superclass leads the list.
+      // Dict-scoped like the down path so a shadowed class name offers the right lineage.
+      const ancestors = queries
+        .getClassHierarchy(session, item.className, this.state.dictIndex)
+        .filter((e) => e.kind === 'superclass')
+        .map((e) => e.className)
+        .reverse();
+      if (ancestors.length === 0) {
+        void vscode.window.showInformationMessage(
+          `${item.className} has no superclass to move '${item.ivarName}' up to.`,
+        );
+        return undefined;
+      }
+      const chosen = await vscode.window.showQuickPick(
+        ancestors.map((name, i) => ({
+          label: name,
+          description: i === 0 ? 'immediate superclass' : 'ancestor',
+        })),
+        {
+          title: `Move '${item.ivarName}' up — choose the destination superclass`,
+          placeHolder: 'Pick one ancestor class',
+        },
+      );
+      return chosen ? [chosen.label] : undefined;
+    }
+
+    const descendants = queries.getClassDescendantNames(
+      session,
+      item.className,
+      this.state.dictIndex,
+    );
+    if (descendants.length === 0) {
+      void vscode.window.showInformationMessage(
+        `${item.className} has no subclasses to move '${item.ivarName}' down to.`,
+      );
+      return undefined;
+    }
+    const chosen = await vscode.window.showQuickPick(
+      descendants.map((d) => ({
+        label: d.className,
+        description: d.parentName ? `subclass of ${d.parentName}` : undefined,
+      })),
+      {
+        title: `Move '${item.ivarName}' down — choose destination subclass(es)`,
+        placeHolder: 'Pick one or more subclasses',
+        canPickMany: true,
+      },
+    );
+    return chosen && chosen.length > 0 ? chosen.map((c) => c.label) : undefined;
   }
 
   // The rename-instance-variable flow, addressed by NAME rather than a tree row so
@@ -3143,7 +3285,10 @@ class ClassProvider extends RefreshableProvider<ClassNode> {
             .map((cv) => new ClassVarItem(element.className, cv))
         : this.ctl
             .definedIvarNames(element.className)
-            .map((iv) => new IvarItem(element.className, iv));
+            .map(
+              (iv) =>
+                new IvarItem(element.className, iv, this.ctl.classHasSubclasses(element.className)),
+            );
     }
     return [];
   }
@@ -3440,6 +3585,22 @@ export function registerGemStoneExplorer(
     // Rename a locally-defined instance variable (pencil on the ivar row).
     vscode.commands.registerCommand('gemstone.explorer.renameIvar', (item?: IvarItem) => {
       if (item instanceof IvarItem) void ctl.renameInstVar(item);
+    }),
+    // Push an instance variable up to the superclass (V2) — ivar row context menu.
+    vscode.commands.registerCommand('gemstone.explorer.pushUpInstVar', (item?: IvarItem) => {
+      if (!(item instanceof IvarItem)) return;
+      void ctl.pushInstVar(item, 'up').catch((e: unknown) => {
+        const msg = e instanceof Error ? e.message : String(e);
+        void vscode.window.showErrorMessage(`Push up instance variable failed: ${msg}`);
+      });
+    }),
+    // Push an instance variable down into the subclasses (V3) — ivar row context menu.
+    vscode.commands.registerCommand('gemstone.explorer.pushDownInstVar', (item?: IvarItem) => {
+      if (!(item instanceof IvarItem)) return;
+      void ctl.pushInstVar(item, 'down').catch((e: unknown) => {
+        const msg = e instanceof Error ? e.message : String(e);
+        void vscode.window.showErrorMessage(`Push down instance variable failed: ${msg}`);
+      });
     }),
     // Rename the instance variable at the cursor in a method source editor (the
     // Refactor… code action / palette) — routes into the same shared flow.

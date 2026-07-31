@@ -140,7 +140,19 @@
 
     if (applyBtn) {
       applyBtn.addEventListener('click', function () {
-        vscode.postMessage({ command: 'apply', deselected: deselectedIds() });
+        var msg = { command: 'apply', deselected: deselectedIds() };
+        // Panels may add apply-time option checkboxes (class "apply-option", a data-opt
+        // key). Collect them only when present, so panels without options send the exact
+        // same message shape as before.
+        var optEls = doc.querySelectorAll('input.apply-option[data-opt]');
+        if (optEls.length) {
+          var options = {};
+          Array.prototype.slice.call(optEls).forEach(function (cb) {
+            options[cb.getAttribute('data-opt')] = cb.checked;
+          });
+          msg.options = options;
+        }
+        vscode.postMessage(msg);
       });
     }
     if (cancelBtn) {
