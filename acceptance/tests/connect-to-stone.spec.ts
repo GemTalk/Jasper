@@ -7,9 +7,15 @@ import { readTestStone } from '../helpers/testStone';
  * `npm run test:server:start`; without it the spec skips rather than fails.
  */
 const stone = readTestStone();
+// `readTestStone` collapses five distinct conditions (missing `.env.test`,
+// missing GCI library, an unset/unparseable Stone NRS, an unextractable
+// NetLDI name, or an unresolvable version) into a single `undefined` — it
+// can't tell "never provisioned" from "provisioned but incomplete or
+// unreadable", so the skip reason must not claim either one specifically.
+const skipReason = 'test stone env is missing or incomplete (run npm run test:server:start)';
 
 test.describe('connecting to a stone', () => {
-  test.skip(!stone, 'no test stone provisioned (run npm run test:server:start)');
+  test.skip(!stone, skipReason);
 
   test.use({
     workspaceSettings: {

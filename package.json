@@ -591,7 +591,7 @@
           {
             "id": "serverSupport",
             "title": "Install optional server support",
-            "description": "Jasper can install two optional server-side supports: the Enhanced Inspector (rich object views, GemStone 3.7.5+) and the refactoring engine (rename instance variable, and more). On connect it offers to install whatever a stone is missing; the `gemstone.serverSupport.autoInstall` setting (ask / always / never) controls that.\n[Install GemStone Support\u2026](command:gemstone.installServerSupport)",
+            "description": "Jasper can install two optional server-side supports: the Enhanced Inspector (rich object views, GemStone 3.7.5+) and the refactoring engine (rename instance variable, and more). On connect it offers to install whatever a stone is missing; the `gemstone.serverSupport.autoInstall` setting (ask / always / never) controls that.\n[Install GemStone Support…](command:gemstone.installServerSupport)",
             "media": {
               "markdown": "resources/walkthrough/enhancedInspector.md"
             },
@@ -1215,6 +1215,23 @@
         "icon": "$(edit)"
       },
       {
+        "command": "gemstone.explorer.pushUpInstVar",
+        "title": "Push Instance Variable Up…",
+        "category": "GemStone",
+        "icon": "$(arrow-up)"
+      },
+      {
+        "command": "gemstone.explorer.pushDownInstVar",
+        "title": "Push Instance Variable Down…",
+        "category": "GemStone",
+        "icon": "$(arrow-down)"
+      },
+      {
+        "command": "gemstone.convertTempToInstVar",
+        "title": "Convert Temporary to Instance Variable…",
+        "category": "GemStone"
+      },
+      {
         "command": "gemstone.explorer.renameMethod",
         "title": "Rename Method…",
         "category": "GemStone",
@@ -1560,6 +1577,14 @@
           "when": "false"
         },
         {
+          "command": "gemstone.explorer.pushUpInstVar",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.pushDownInstVar",
+          "when": "false"
+        },
+        {
           "command": "gemstone.explorer.renameClassVariable",
           "when": "false"
         },
@@ -1859,8 +1884,18 @@
         },
         {
           "command": "gemstone.explorer.renameIvar",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerIvar",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerIvar/",
           "group": "inline"
+        },
+        {
+          "command": "gemstone.explorer.pushUpInstVar",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerIvar/",
+          "group": "inline@2"
+        },
+        {
+          "command": "gemstone.explorer.pushDownInstVar",
+          "when": "view == gemstoneExplorerClasses && viewItem == explorerIvar",
+          "group": "inline@3"
         },
         {
           "command": "gemstone.explorer.renameClassVariable",
@@ -2355,8 +2390,9 @@
   ],
   "scripts": {
     "vscode:prepublish": "npm run bundle",
-    "compile": "npm run compile:client && npm run compile:server && npm run compile:mcp",
+    "compile": "npm run compile:client && npm run compile:bin && npm run compile:server && npm run compile:mcp",
     "compile:client": "tsc -p client/tsconfig.json",
+    "compile:bin": "tsc -p client/tsconfig.bin.json",
     "compile:server": "tsc -p server/tsconfig.json",
     "compile:mcp": "tsc -p mcp-server/tsconfig.json",
     "bundle": "node esbuild.mjs",
@@ -2378,6 +2414,7 @@
     "test:server:start": "npm run test:server:start --workspace client",
     "test:server:stop": "npm run test:server:stop --workspace client",
     "test:server:list": "npm run test:server:list --workspace client",
+    "test:server:install-plugin": "tsx client/bin/install-server-plugin.mjs",
     "test:server": "npm test --workspace server",
     "test:client": "npm test --workspace client",
     "test:mcp": "npm test --workspace mcp-server",
@@ -2397,6 +2434,7 @@
     "@eslint/js": "^9.19.0",
     "@playwright/test": "^1.61.1",
     "@types/node": "^22.15",
+    "@vitest/eslint-plugin": "^1.6.24",
     "@vscode/test-electron": "^2.5.2",
     "@vscode/vsce": "^3.7.1",
     "esbuild": "^0.28.1",
@@ -2408,6 +2446,7 @@
     "ovsx": "^0.10.5",
     "playwright-bdd": "^9.2.0",
     "prettier": "^3.9.5",
+    "tsx": "^4.23.1",
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.20.0",
     "vscode-oniguruma": "^2.0.1",

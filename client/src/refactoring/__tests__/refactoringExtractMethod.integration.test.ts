@@ -14,6 +14,7 @@ import {
 import { PREVIEW_PAGE_BYTES } from '../queries/previewRenameMethod';
 import { parseAnalysis, parseStartPreview, parseApplyResult } from '../extractMethodPreview';
 import type { ActiveSession } from '../../sessionManager';
+import { testActiveSession } from '../../__tests__/testActiveSession';
 
 /**
  * Automatic GCI integration test for the extract-method (M1) refactoring, over the
@@ -37,7 +38,7 @@ describe('extract method (integration)', () => {
     handle = testContext.session;
   });
 
-  const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
+  const session = (): ActiveSession => testActiveSession(gci, handle);
   const exec = (code: string): string => q.executeFetchString(session(), code);
   const asyncExec = (_label: string, code: string): Promise<string> => Promise.resolve(exec(code));
 

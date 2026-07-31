@@ -1,12 +1,13 @@
-// Throwaway TestCase fixture for the SUnit-family smoke tests.
+// Throwaway TestCase fixture for the SUnit-family integration tests.
 //
-// Creating a real `JasperProbeTest` class once per test file lets the smoke
+// Creating a real `JasperProbeTest` class once per test lets the
 // tests assert on concrete results (e.g. "running JasperProbeTest reports
 // exactly one passed, one failed, one errored") without depending on
-// whatever production tests happen to exist on the stone. Cleanup runs in
-// an `afterAll` hook so the stone isn't left polluted on test failure.
+// whatever production tests happen to exist on the stone. Installed inside
+// each test's own transaction, so the harness's per-test abort cleans it up
+// automatically — no explicit teardown needed.
 
-import { QueryExecutor } from '../../queries/types';
+import { QueryExecutor } from '../types';
 
 const PROBE_CLASS_NAME = 'JasperProbeTest';
 
@@ -33,18 +34,11 @@ probe
   category: 'tests'.
 'ok'] value`;
 
-const TEARDOWN_SOURCE = `UserGlobals removeKey: #'${PROBE_CLASS_NAME}' ifAbsent: [].
-'ok'`;
+export const SUNIT_PROBE_TEST_CLASS = PROBE_CLASS_NAME;
+export const SUNIT_PROBE_PASSING_SELECTOR = 'testPasses';
+export const SUNIT_PROBE_FAILING_SELECTOR = 'testFails';
+export const SUNIT_PROBE_ERRORING_SELECTOR = 'testErrors';
 
-export const PROBE_TEST_CLASS = PROBE_CLASS_NAME;
-export const PROBE_PASSING_SELECTOR = 'testPasses';
-export const PROBE_FAILING_SELECTOR = 'testFails';
-export const PROBE_ERRORING_SELECTOR = 'testErrors';
-
-export function installProbeFixture(exec: QueryExecutor): void {
+export function installSunitProbeFixture(exec: QueryExecutor): void {
   exec(SETUP_SOURCE);
-}
-
-export function uninstallProbeFixture(exec: QueryExecutor): void {
-  exec(TEARDOWN_SOURCE);
 }
