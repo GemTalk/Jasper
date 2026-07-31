@@ -2,13 +2,13 @@ import { QueryExecutor } from '../../queries/types';
 import { AsyncQueryExecutor } from './previewRenameMethod';
 import { classLookupExpr, escapeString } from '../../queries/util';
 
-// Instance-variable structure (V2 push up / V3 push down / V5 convert temporary) query
-// builders. One engine (GsInstVarStructureRefactoring) parametrized by an OPERATION; the
+// Instance-variable structure (V2 push up / V3 push down / V4 move / V5 convert temporary)
+// query builders. One engine (GsInstVarStructureRefactoring) parametrized by an OPERATION; the
 // analyze + start builders construct the right instance, and page/apply/clear are the
 // shared token entry points. `dict` scopes the class lookup (1-based SymbolList index,
 // canonical for Jasper, or a name).
 
-export type IvarStructureOp = 'convertTemp' | 'pushUp' | 'pushDown';
+export type IvarStructureOp = 'convertTemp' | 'pushUp' | 'pushDown' | 'move';
 
 /** A V5 request also carries the method + temporary name. */
 export interface ConvertTempArgs {
@@ -17,14 +17,38 @@ export interface ConvertTempArgs {
   varName: string;
 }
 
+/** A V4 `move` request carries the destination class name(s) and the direction the ivar
+ *  travels: `up` (a single chosen ancestor) or `down` (one or more chosen descendants). */
+export interface MoveArgs {
+  targets: string[];
+  direction: 'up' | 'down';
+}
+
 const ENGINE = 'GsInstVarStructureRefactoring';
 
+/** A Smalltalk Array literal of the (escaped, quoted) class names. */
+function targetArrayExpr(targets: string[]): string {
+  return `#(${targets.map((t) => `'${escapeString(t)}'`).join(' ')})`;
+}
+
 /** The class-message send that builds the refactoring for `op`, given a `cls` binding in
- *  scope. `varName` is the ivar (V2/V3) or temporary (V5) name. */
-function refExpr(op: IvarStructureOp, varName: string, extra?: ConvertTempArgs): string {
+ *  scope. `varName` is the ivar (V2/V3/V4) or temporary (V5) name. */
+function refExpr(
+  op: IvarStructureOp,
+  varName: string,
+  extra?: ConvertTempArgs,
+  move?: MoveArgs,
+): string {
   const v = escapeString(varName);
   if (op === 'pushUp') return `${ENGINE} class: cls pushUpInstVar: '${v}'`;
   if (op === 'pushDown') return `${ENGINE} class: cls pushDownInstVar: '${v}'`;
+  if (op === 'move') {
+    const m = move!;
+    return (
+      `${ENGINE} class: cls moveInstVar: '${v}' ` +
+      `toClasses: ${targetArrayExpr(m.targets)} direction: #${m.direction}`
+    );
+  }
   // convertTemp
   const e = extra!;
   return (
@@ -33,16 +57,24 @@ function refExpr(op: IvarStructureOp, varName: string, extra?: ConvertTempArgs):
   );
 }
 
-/** The refactoring send, optionally opted into moving the ivar's simple accessors (V2/V3 only;
- *  `#moveAccessors:` answers the refactoring, so the result is still the instance to message). */
+/** True for the ivar-relocation operations that support carrying the simple accessors along
+ *  with the declaration (push up/down and the general move). */
+function supportsAccessors(op: IvarStructureOp): boolean {
+  return op === 'pushUp' || op === 'pushDown' || op === 'move';
+}
+
+/** The refactoring send, optionally opted into moving the ivar's simple accessors (relocation
+ *  ops only; `#moveAccessors:` answers the refactoring, so the result is still the instance to
+ *  message). */
 function refExprWithAccessors(
   op: IvarStructureOp,
   varName: string,
   extra: ConvertTempArgs | undefined,
   moveAccessors: boolean,
+  move?: MoveArgs,
 ): string {
-  const base = refExpr(op, varName, extra);
-  if (moveAccessors && (op === 'pushUp' || op === 'pushDown')) {
+  const base = refExpr(op, varName, extra, move);
+  if (moveAccessors && supportsAccessors(op)) {
     return `(${base}) moveAccessors: true`;
   }
   return base;
@@ -58,13 +90,14 @@ export function analyzeInstVarStructure(
   dict?: number | string,
   extra?: ConvertTempArgs,
   moveAccessors = false,
+  move?: MoveArgs,
 ): Promise<string> {
   const code = `| cls |
 cls := ${classLookupExpr(className, dict)}.
 cls isNil ifTrue: [^ '{"decline":"Class not found: ${escapeString(
     className,
   )}","topClass":null,"affectedCount":0}'].
-(${refExprWithAccessors(op, varName, extra, moveAccessors)}) analysisJsonString`;
+(${refExprWithAccessors(op, varName, extra, moveAccessors, move)}) analysisJsonString`;
   return execute(`analyzeIvar_${op}(${className}.${varName})`, code);
 }
 
@@ -79,16 +112,16 @@ export function startInstVarStructurePreview(
   dict?: number | string,
   extra?: ConvertTempArgs,
   moveAccessors = false,
+  move?: MoveArgs,
 ): Promise<string> {
-  const accessorStmt =
-    moveAccessors && (op === 'pushUp' || op === 'pushDown') ? 'ref moveAccessors: true.\n' : '';
+  const accessorStmt = moveAccessors && supportsAccessors(op) ? 'ref moveAccessors: true.\n' : '';
   // Answer the same decline-envelope shape the analyze builder uses (not a bare string) so a
   // class that vanished between pre-flight and start surfaces its reason through the panel's
   // decline banner instead of blowing up JSON.parse with "Unexpected token 'C'".
   const code = `| cls ref |
 cls := ${classLookupExpr(className, dict)}.
 cls isNil ifTrue: [^ '{"decline":"Class not found: ${escapeString(className)}"}'].
-ref := ${refExpr(op, varName, extra)}.
+ref := ${refExpr(op, varName, extra, move)}.
 ${accessorStmt}^ref startPreviewToken: '${escapeString(token)}' maxBytes: ${maxBytes}`;
   return execute(`startIvar_${op}Preview(${className}.${varName})`, code);
 }

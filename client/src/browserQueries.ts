@@ -124,7 +124,12 @@ import {
   clearInstVarStructurePreview as sharedClearInstVarStructurePreview,
   IvarStructureOp,
   ConvertTempArgs,
+  MoveArgs,
 } from './refactoring/queries/previewInstVarStructure';
+import {
+  getClassDescendantNames as sharedGetClassDescendantNames,
+  DescendantClass,
+} from './refactoring/queries/getClassDescendantNames';
 import {
   getClassHistory as sharedGetClassHistory,
   revertClassToVersion as sharedRevertClassToVersion,
@@ -192,6 +197,8 @@ export type { ClassNameEntry } from './queries/getAllClassNames';
 export type { ClassCategoryEntry } from './queries/getClassesWithCategory';
 export type { EnvCategoryLine } from './queries/getClassEnvironments';
 export type { ClassHierarchyEntry } from './queries/getClassHierarchy';
+export type { DescendantClass } from './refactoring/queries/getClassDescendantNames';
+export type { MoveArgs } from './refactoring/queries/previewInstVarStructure';
 export type { MethodEntry } from './queries/getMethodList';
 export type { StepPointSelectorInfo } from './queries/getStepPointSelectorRanges';
 export type { MethodSearchResult } from './queries/methodSearch';
@@ -596,8 +603,20 @@ export function getAllClassNames(session: ActiveSession) {
   return sharedGetAllClassNames(defaultQueryExecutorUsing(session));
 }
 
-export function getClassHierarchy(session: ActiveSession, className: string) {
-  return sharedGetClassHierarchy(defaultQueryExecutorUsing(session), className);
+export function getClassHierarchy(
+  session: ActiveSession,
+  className: string,
+  dict?: number | string,
+) {
+  return sharedGetClassHierarchy(defaultQueryExecutorUsing(session), className, dict);
+}
+
+export function getClassDescendantNames(
+  session: ActiveSession,
+  className: string,
+  dict?: number | string,
+): DescendantClass[] {
+  return sharedGetClassDescendantNames(defaultQueryExecutorUsing(session), className, dict);
 }
 
 export function fileOutClass(
@@ -1386,10 +1405,20 @@ export function analyzeInstVarStructure(
   dict?: number | string,
   extra?: ConvertTempArgs,
   moveAccessors = false,
+  move?: MoveArgs,
 ): Promise<string> {
   const exec = (label: string, code: string): Promise<string> =>
     executeFetchStringNb(session, label, code, 'Analysing…');
-  return sharedAnalyzeInstVarStructure(exec, op, className, varName, dict, extra, moveAccessors);
+  return sharedAnalyzeInstVarStructure(
+    exec,
+    op,
+    className,
+    varName,
+    dict,
+    extra,
+    moveAccessors,
+    move,
+  );
 }
 
 export function startInstVarStructurePreview(
@@ -1402,6 +1431,7 @@ export function startInstVarStructurePreview(
   dict?: number | string,
   extra?: ConvertTempArgs,
   moveAccessors = false,
+  move?: MoveArgs,
 ): Promise<string> {
   const exec = (label: string, code: string): Promise<string> =>
     executeFetchStringNb(session, label, code, `Previewing change to ${className}…`);
@@ -1415,6 +1445,7 @@ export function startInstVarStructurePreview(
     dict,
     extra,
     moveAccessors,
+    move,
   );
 }
 

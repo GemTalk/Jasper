@@ -296,7 +296,7 @@ removeallclassmethods GsInlineTemporaryRefactoring
 doit
 | cls |
 cls := Object subclass: 'GsInstVarStructureRefactoring'
-  instVarNames: #('environment' 'operation' 'definingClass' 'varName' 'methodSelector' 'methodMeta' 'topClass' 'newIvarLists' 'methodRewrite' 'moveAccessors' 'accessorRemovals' 'accessorAdds' 'migrateInstances' 'removeOldFromHistory' 'changeSet' 'analysisDone' 'decline' 'oldToNew')
+  instVarNames: #('environment' 'operation' 'definingClass' 'varName' 'methodSelector' 'methodMeta' 'topClass' 'newIvarLists' 'methodRewrite' 'targetClasses' 'moveDirection' 'moveAccessors' 'accessorRemovals' 'accessorAdds' 'migrateInstances' 'removeOldFromHistory' 'changeSet' 'analysisDone' 'decline' 'oldToNew')
   classVars: #()
   classInstVars: #()
   poolDictionaries: #()
@@ -324,6 +324,15 @@ Three operations:
 
   - V3 pushDown -- move an instance variable from a class down into EVERY immediate subclass.
     The class loses it (edited); each immediate subclass gains it (edited).
+
+  - V4 move -- the GENERAL form the Explorer''s up/down arrows drive: move the declaration from
+    its class to chosen destination class(es) IN THE HIERARCHY. #up carries it to a single chosen
+    SUPERCLASS (any ancestor, not just the immediate one -- pushUp is the immediate-superclass
+    special case); #down carries it to one OR MORE chosen SUBCLASSES (a selected subset at any
+    descendant depth -- pushDown is the all-immediate-subclasses special case). The class always
+    loses it; each destination gains it. An extra precondition beyond push up/down: on a partial
+    push-down every class that ends up WITHOUT the ivar (the source, and any descendant subtree
+    not under a chosen destination) must not still use it in its own methods.
 
 Affected set = the highest edited class + all its descendants, top-down. Each affected class
 gets a new version: an edited class with its computed own-instVar list (a #classDefinitionEdit,
@@ -4684,12 +4693,33 @@ setEnvironment: anEnvironment operation: anOp class: aClass varName: aName selec
 	varName := aName asString.
 	methodSelector := aSelector isNil ifTrue: [nil] ifFalse: [aSelector asSymbol].
 	methodMeta := aBool.
+	targetClasses := nil.
+	moveDirection := nil.
 	moveAccessors := false.
 	accessorRemovals := OrderedCollection new.
 	accessorAdds := OrderedCollection new.
 	migrateInstances := false.
 	removeOldFromHistory := false.
 	analysisDone := false
+%
+
+category: 'private'
+method: GsInstVarStructureRefactoring
+setMoveTargets: anArrayOfClasses direction: aSymbol
+	"The #move operation's destination class(es) and direction (#up / #down). Answers self."
+	targetClasses := anArrayOfClasses.
+	moveDirection := aSymbol.
+	^self
+%
+
+category: 'accessing'
+method: GsInstVarStructureRefactoring
+effectiveDirection
+	"The direction the ivar travels, unified across the fixed push operations and the general
+	 #move. #up (toward superclasses) or #down (toward subclasses)."
+	operation == #pushUp ifTrue: [^#up].
+	operation == #pushDown ifTrue: [^#down].
+	^moveDirection
 %
 
 category: 'accessing'
@@ -4775,6 +4805,7 @@ computeAnalysis
 	operation == #convertTemp ifTrue: [^self analyzeConvertTemp].
 	operation == #pushUp ifTrue: [^self analyzePushUp].
 	operation == #pushDown ifTrue: [^self analyzePushDown].
+	operation == #move ifTrue: [^self analyzeMove].
 	decline := 'Unknown operation: ', operation printString
 %
 
@@ -4870,6 +4901,101 @@ analyzePushDown
 
 category: 'private - analysis'
 method: GsInstVarStructureRefactoring
+analyzeMove
+	"V4: move varName from definingClass to the destination class(es) in targetClasses. This is
+	 the general form the Explorer's up/down arrows drive: #up carries the declaration to a single
+	 chosen SUPERCLASS (like V2 push-up, but to any ancestor, not just the immediate one); #down
+	 carries it to one OR MORE chosen SUBCLASSES (like V3 push-down, but to a selected subset, and
+	 to any descendant depth). varName must be definingClass's own ivar. On #up the target's
+	 ancestry must not already define the name and no OTHER descendant of the target may own it
+	 (collision on inherit). On #down no descendant of definingClass may already own it. In both
+	 directions every class that ends up WITHOUT the ivar must not still use it in its own methods."
+	| def dir sup losing |
+	def := definingClass.
+	dir := moveDirection.
+	((self ownInstVarsOf: def) includes: varName) ifFalse: [
+		^decline := 'Cannot move ', varName, ': it is not an instance variable declared in ', def name asString, '.'].
+	(targetClasses isNil or: [targetClasses isEmpty]) ifTrue: [
+		^decline := 'Cannot move ', varName, ': no destination class was chosen.'].
+	(targetClasses anySatisfy: [:t | t isNil]) ifTrue: [
+		^decline := 'Cannot move ', varName, ': a destination class could not be found.'].
+	(targetClasses includes: def) ifTrue: [
+		^decline := 'Cannot move ', varName, ' to ', def name asString, ': that is the class it already lives in.'].
+	dir == #up
+		ifTrue: [
+			targetClasses size = 1 ifFalse: [
+				^decline := 'Cannot move ', varName, ' up to more than one superclass.'].
+			sup := targetClasses first.
+			(self isAncestor: sup of: def) ifFalse: [
+				^decline := 'Cannot move ', varName, ' up: ', sup name asString, ' is not a superclass of ', def name asString, '.'].
+			((self allInstVarsOf: sup) includes: varName) ifTrue: [
+				^decline := 'Cannot move ', varName, ' up: ', sup name asString, ' already defines an instance variable of that name.'].
+			(self otherDescendant: def ofTop: sup ownsIvar: varName) ifNotNil: [:cls |
+				^decline := 'Cannot move ', varName, ' up: ', cls, ' also declares an instance variable of that name, which would collide once it is inherited.'].
+			topClass := sup]
+		ifFalse: [
+			dir == #down
+				ifTrue: [
+					targetClasses do: [:t |
+						(self isAncestor: def of: t) ifFalse: [
+							^decline := 'Cannot move ', varName, ' down: ', t name asString, ' is not a subclass of ', def name asString, '.']].
+					(self anyDescendantOf: def ownsIvar: varName) ifNotNil: [:cls |
+						^decline := 'Cannot move ', varName, ' down: ', cls, ' already declares an instance variable of that name.'].
+					topClass := def]
+				ifFalse: [
+					^decline := 'Cannot move ', varName, ': unknown direction ', dir printString]].
+	newIvarLists at: def name asString put: ((self ownInstVarsOf: def) reject: [:n | n = varName]).
+	targetClasses do: [:t |
+		newIvarLists at: t name asString put: ((self ownInstVarsOf: t) copyWith: varName)].
+	self moveAccessors ifTrue: [self planAccessorMovesFrom: def to: targetClasses].
+	"Every class that ends up without the ivar must not still use it in its own methods (it would
+	 compile against an undeclared variable). On #up nobody loses it (the subtree inherits it from
+	 higher up), so this only bites #down to a subset. definingClass's own simple accessors are
+	 excepted when they are being moved with the ivar."
+	losing := self classesLosingVar: targetClasses.
+	losing do: [:cls | | users |
+		users := environment instanceMethodsAccessing: varName inClass: cls.
+		(cls == def and: [self moveAccessors]) ifTrue: [
+			| accessorSels |
+			accessorSels := (self simpleAccessorsOf: def forIvar: varName) collect: [:a | a at: 1].
+			users := users reject: [:sel | accessorSels includes: sel]].
+		users isEmpty ifFalse: [
+			^decline := 'Cannot move ', varName, ': ', cls name asString,
+				' still uses it in ', users size printString, ' of its own method(s): ',
+				(self selectorListString: users), '.']]
+%
+
+category: 'private - analysis'
+method: GsInstVarStructureRefactoring
+classesLosingVar: targets
+	"The classes that HAVE varName now (definingClass and every descendant, via own or inherited)
+	 but will NOT after the move -- i.e. neither a target nor a descendant of a target. On #up this
+	 is empty (a chosen ancestor's subtree is a superset of definingClass's); on a partial #down it
+	 is definingClass plus any descendant subtree not under a chosen target."
+	| having keep |
+	having := OrderedCollection new.
+	having add: definingClass.
+	having addAll: (environment descendantsOf: definingClass).
+	keep := IdentitySet new.
+	targets do: [:t | keep add: t. keep addAll: (environment descendantsOf: t)].
+	^having reject: [:c | keep includes: c]
+%
+
+category: 'private - analysis'
+method: GsInstVarStructureRefactoring
+isAncestor: aClass of: aSubclass
+	"True if aClass is a proper superclass of aSubclass. Walks superclass links only, so it needs
+	 no version-specific hierarchy primitive."
+	| c |
+	c := aSubclass superclass.
+	[c notNil] whileTrue: [
+		c == aClass ifTrue: [^true].
+		c := c superclass].
+	^false
+%
+
+category: 'private - analysis'
+method: GsInstVarStructureRefactoring
 otherDescendant: aSkip ofTop: aTop ownsIvar: aName
 	"The name of a descendant of aTop (other than aSkip) that owns an ivar named aName, or
 	 nil."
@@ -4890,7 +5016,7 @@ anyDescendantOf: aTop ownsIvar: aName
 
 category: 'private - accessors'
 method: GsInstVarStructureRefactoring
-planAccessorMovesFrom: srcClass to: targetClasses
+planAccessorMovesFrom: srcClass to: destClasses
 	"Record the SIMPLE accessors of varName on srcClass to move alongside the ivar: remove
 	 each from srcClass and add it to the target class(es). Never overwrites -- or, on push-up,
 	 SHADOWS -- an existing same-named method on a target: for push-up the target (superclass) is
@@ -4904,11 +5030,11 @@ planAccessorMovesFrom: srcClass to: targetClasses
 	(self simpleAccessorsOf: srcClass forIvar: varName) do: [:a |
 		| sel src cat targets |
 		sel := a at: 1. src := a at: 2. cat := a at: 3.
-		targets := targetClasses reject: [:t |
-			operation == #pushUp
+		targets := destClasses reject: [:t |
+			self effectiveDirection == #up
 				ifTrue: [self class: t orAncestorImplements: sel]
 				ifFalse: [t includesSelector: sel]].
-		(operation == #pushUp and: [targets isEmpty])
+		(self effectiveDirection == #up and: [targets isEmpty])
 			ifFalse: [
 				accessorRemovals add: (Array with: sel with: srcClass name asString with: src with: cat).
 				targets do: [:t |
@@ -5499,6 +5625,26 @@ class: aClass pushDownInstVar: aName
 
 category: 'instance creation'
 classmethod: GsInstVarStructureRefactoring
+class: aClass moveInstVar: aName toClasses: classNames direction: aSymbol
+	"V4 (generalised push up/down): move aClass's own instance variable aName to the named
+	 destination class(es). aSymbol is #up (classNames is a single ancestor of aClass) or #down
+	 (classNames are descendants of aClass, one or many). Names are resolved against the
+	 environment; an unresolved name declines in analysis."
+	| ref env targets |
+	env := GsRefactoringEnvironment new.
+	ref := self new
+		setEnvironment: env
+		operation: #move
+		class: aClass
+		varName: aName
+		selector: nil
+		meta: false.
+	targets := classNames collect: [:n | env classNamed: n asString].
+	^ref setMoveTargets: targets direction: aSymbol asSymbol
+%
+
+category: 'instance creation'
+classmethod: GsInstVarStructureRefactoring
 environment: anEnvironment operation: anOp class: aClass varName: aName selector: aSelector meta: aBool
 	^self new
 		setEnvironment: anEnvironment
@@ -5525,6 +5671,12 @@ category: 'preconditions'
 classmethod: GsInstVarStructureRefactoring
 analyzeClass: aClass pushDownInstVar: aName
 	^(self class: aClass pushDownInstVar: aName) analysisJsonString
+%
+
+category: 'preconditions'
+classmethod: GsInstVarStructureRefactoring
+analyzeClass: aClass moveInstVar: aName toClasses: classNames direction: aSymbol
+	^(self class: aClass moveInstVar: aName toClasses: classNames direction: aSymbol) analysisJsonString
 %
 
 category: 'paginated preview'

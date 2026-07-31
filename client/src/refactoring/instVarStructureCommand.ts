@@ -17,7 +17,7 @@ import { ActiveSession } from '../sessionManager';
 import { SessionManager } from '../sessionManager';
 import * as queries from '../browserQueries';
 import { PREVIEW_PAGE_BYTES } from './queries/previewRenameMethod';
-import { IvarStructureOp, ConvertTempArgs } from './queries/previewInstVarStructure';
+import { IvarStructureOp, ConvertTempArgs, MoveArgs } from './queries/previewInstVarStructure';
 import {
   parseAnalysis,
   parseStartPreview,
@@ -45,14 +45,16 @@ export interface IvarStructureRequest {
   dict?: number | string;
   /** V5 only: the method + side the temporary lives in. */
   extra?: ConvertTempArgs;
-  /** V2/V3 opt-in: also move the ivar's simple getter/setter accessors with the declaration. */
+  /** V4 only (op `move`): the destination class name(s) and direction the ivar travels. */
+  move?: MoveArgs;
+  /** V2/V3/V4 opt-in: also move the ivar's simple getter/setter accessors with the declaration. */
   moveAccessors?: boolean;
 }
 
 /** Preview + apply one instance-variable structure change. Answers true when it applied,
  *  false when cancelled/declined/failed. Surfaces its own user-facing messages. */
 export async function runInstVarStructure(req: IvarStructureRequest): Promise<boolean> {
-  const { session, op, className, varName, heading, dict, extra, moveAccessors } = req;
+  const { session, op, className, varName, heading, dict, extra, move, moveAccessors } = req;
   logInfo(`[instVar:${op}] ${className}.${varName}${moveAccessors ? ' (+accessors)' : ''}`);
 
   if (!(await ensureRbSupport(session, heading))) return false;
@@ -68,6 +70,7 @@ export async function runInstVarStructure(req: IvarStructureRequest): Promise<bo
         dict,
         extra,
         moveAccessors,
+        move,
       ),
     );
   } catch (e: unknown) {
@@ -103,6 +106,7 @@ export async function runInstVarStructure(req: IvarStructureRequest): Promise<bo
         dict,
         extra,
         moveAccessors,
+        move,
       ),
     );
   } catch (e: unknown) {
@@ -196,6 +200,38 @@ export async function pushInstVar(
     heading,
     dict,
     moveAccessors: true,
+  });
+}
+
+/** V4: move an instance variable to chosen destination class(es) in the hierarchy — the general
+ *  form the Explorer's ▲/▼ arrows drive after the user picks a destination. `direction` is `up`
+ *  (a single chosen ancestor) or `down` (one or more chosen descendants). Always carries the
+ *  ivar's simple getter/setter accessors along, like push up/down. */
+export async function moveInstVar(
+  session: ActiveSession,
+  direction: 'up' | 'down',
+  className: string,
+  ivarName: string,
+  targets: string[],
+  dict?: number | string,
+): Promise<boolean> {
+  const where =
+    direction === 'up'
+      ? `up to ${targets[0] ?? 'superclass'}`
+      : targets.length === 1
+        ? `down to ${targets[0]}`
+        : `down to ${targets.length} subclasses`;
+  const heading = `Move instance variable '${ivarName}' ${where}`;
+
+  return runInstVarStructure({
+    session,
+    op: 'move',
+    className,
+    varName: ivarName,
+    heading,
+    dict,
+    moveAccessors: true,
+    move: { targets, direction },
   });
 }
 

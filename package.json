@@ -1158,13 +1158,13 @@
       },
       {
         "command": "gemstone.explorer.pushUpInstVar",
-        "title": "Push Instance Variable Up…",
+        "title": "Move Instance Variable Up…",
         "category": "GemStone",
         "icon": "$(arrow-up)"
       },
       {
         "command": "gemstone.explorer.pushDownInstVar",
-        "title": "Push Instance Variable Down…",
+        "title": "Move Instance Variable Down…",
         "category": "GemStone",
         "icon": "$(arrow-down)"
       },

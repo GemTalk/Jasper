@@ -30,7 +30,7 @@ import {
   wordAt,
   saveIfDirty,
 } from '../renameAtCursorShared';
-import { pushInstVar, convertTempToInstVarCommand } from '../instVarStructureCommand';
+import { pushInstVar, moveInstVar, convertTempToInstVarCommand } from '../instVarStructureCommand';
 import { PREVIEW_PAGE_BYTES } from '../queries/previewRenameMethod';
 import type { ActiveSession, SessionManager } from '../../sessionManager';
 
@@ -97,6 +97,7 @@ describe('push instance variable command', () => {
       2,
       undefined,
       true,
+      undefined,
     );
     expect(queries.startInstVarStructurePreview).toHaveBeenCalledWith(
       session,
@@ -108,6 +109,7 @@ describe('push instance variable command', () => {
       2,
       undefined,
       true,
+      undefined,
     );
   });
 
@@ -203,6 +205,48 @@ describe('push instance variable command', () => {
     const msg = vi.mocked(vscode.window.showInformationMessage).mock.calls[0][0];
     expect(msg).toContain('committed');
     expect(msg).toContain('2 instance');
+  });
+});
+
+describe('move instance variable command', () => {
+  it('threads the chosen destinations and direction through as a move, opting into accessors', async () => {
+    vi.mocked(queries.analyzeInstVarStructure).mockResolvedValue(analysis());
+    vi.mocked(queries.startInstVarStructurePreview).mockResolvedValue(startEnvelope());
+    vi.mocked(showInstVarStructurePanel).mockResolvedValue(applyResult());
+
+    await moveInstVar(session, 'down', 'V4Mid', 'shared', ['V4LeafA', 'V4LeafB'], 2);
+
+    expect(queries.analyzeInstVarStructure).toHaveBeenCalledWith(
+      session,
+      'move',
+      'V4Mid',
+      'shared',
+      2,
+      undefined,
+      true,
+      { targets: ['V4LeafA', 'V4LeafB'], direction: 'down' },
+    );
+  });
+
+  it('names the single destination in an up-move heading', async () => {
+    vi.mocked(queries.analyzeInstVarStructure).mockResolvedValue(analysis());
+    vi.mocked(queries.startInstVarStructurePreview).mockResolvedValue(startEnvelope());
+    vi.mocked(showInstVarStructurePanel).mockResolvedValue(applyResult());
+
+    expect(await moveInstVar(session, 'up', 'V4Leaf', 'shared', ['V4Base'], 2)).toBe(true);
+
+    const heading = vi.mocked(showInstVarStructurePanel).mock.calls[0][0];
+    expect(heading).toContain('up to V4Base');
+  });
+
+  it('refuses on a hard decline and never previews', async () => {
+    vi.mocked(queries.analyzeInstVarStructure).mockResolvedValue(
+      analysis({ decline: 'GsVSLeaf2 still uses it in 1 of its own method(s): #usesPush.' }),
+    );
+
+    expect(await moveInstVar(session, 'down', 'V4Mid', 'shared', ['V4LeafA'], 2)).toBe(false);
+    expect(queries.startInstVarStructurePreview).not.toHaveBeenCalled();
+    expect(refuse).toHaveBeenCalledWith(expect.stringContaining('still uses it'));
   });
 });
 
