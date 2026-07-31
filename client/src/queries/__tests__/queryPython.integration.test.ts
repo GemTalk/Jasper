@@ -15,6 +15,7 @@ import { GciLibrary } from '../../gciLibrary';
 import * as q from '../../browserQueries';
 import { evalPython, compilePython } from '../python';
 import type { ActiveSession } from '../../sessionManager';
+import { requireGrail, requireGrailAbsent } from './support/grailAvailability';
 
 describe('python queries (integration)', () => {
   let gci: GciLibrary;
@@ -30,15 +31,9 @@ describe('python queries (integration)', () => {
   describe('eval_python', () => {
     // Simplest possible success case — any encoding bug in the success
     // path would surface as the wrong digits or visible NUL bytes.
-    it('evaluates a basic Python expression', () => {
+    it('evaluates a basic Python expression', (ctx) => {
+      requireGrail(ctx, exec);
       const result = evalPython(exec, '2 + 3');
-      const dispatcherMissing = result.includes('Grail (GemStone-Python) not detected');
-      // Stones without Grail report the hint cleanly; that's also a pass —
-      // we only need to confirm we didn't get a wrapper error.
-      if (dispatcherMissing) {
-        expect(result).toContain('Grail');
-        return;
-      }
       expect(result.trim()).toBe('5');
     });
 
@@ -48,9 +43,9 @@ describe('python queries (integration)', () => {
     // ways this used to break: UTF-16LE bytes leaking through (every char
     // followed by NUL) and Utf8-stream `at:put:` raising before any text
     // was produced.
-    it('reports Grail-side errors as a clean ASCII string (no UTF-16 leak, no Utf8 wrapper error)', () => {
+    it('reports Grail-side errors as a clean ASCII string (no UTF-16 leak, no Utf8 wrapper error)', (ctx) => {
+      requireGrail(ctx, exec);
       const result = evalPython(exec, 'undefined_variable');
-      if (result.includes('Grail (GemStone-Python) not detected')) return;
 
       // Every byte readable; no NUL or every-other-NUL pattern.
       expect(result).not.toContain(' ');
@@ -69,10 +64,16 @@ describe('python queries (integration)', () => {
     // Source is supplied verbatim, including single quotes. The escape
     // path is shared with every other query in the file — if it's broken,
     // every test on this branch breaks.
-    it('escapes single quotes in Python source', () => {
+    it('escapes single quotes in Python source', (ctx) => {
+      requireGrail(ctx, exec);
       const result = evalPython(exec, "'hello'.upper()");
-      if (result.includes('Grail (GemStone-Python) not detected')) return;
       expect(result).toContain('HELLO');
+    });
+
+    it('reports a clear hint when Grail is not installed', (ctx) => {
+      requireGrailAbsent(ctx, exec);
+      const result = evalPython(exec, '2 + 3');
+      expect(result).toContain('Grail');
     });
   });
 
@@ -80,9 +81,9 @@ describe('python queries (integration)', () => {
     // Transpile path uses `parseSource: ... smalltalkSource`. Selector
     // typos there would surface as a wrapper error (caught by the same
     // regression guards as eval_python).
-    it('returns the generated Smalltalk source for a Python expression', () => {
+    it('returns the generated Smalltalk source for a Python expression', (ctx) => {
+      requireGrail(ctx, exec);
       const result = compilePython(exec, '1 + 1');
-      if (result.includes('Grail (GemStone-Python) not detected')) return;
       // Whatever Grail emits, it must be ASCII-clean and non-empty.
       expect(result.length).toBeGreaterThan(0);
       expect(result).not.toContain(' ');
