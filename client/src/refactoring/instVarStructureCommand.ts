@@ -144,16 +144,18 @@ export async function runInstVarStructure(req: IvarStructureRequest): Promise<bo
   });
   if (!result) return false;
 
-  // The engine can report a whole-apply error (e.g. the preview token expired between preview
-  // and apply) with an empty `failed` list — surface it instead of a hollow "applied 0" success.
+  // The only whole-apply error the engine reports here is an expired preview token (the apply
+  // arrived after its preview session was dropped): `applied:0`, nothing changed, so there is
+  // deliberately no abort advice below. A failure *during* apply is caught per-change and
+  // collected into `failed` (see the next branch), which is where the abort warning lives.
   if (result.error) {
     void vscode.window.showErrorMessage(`${heading} failed: ${result.error}`);
     return false;
   }
 
   if (result.failed.length > 0) {
-    // A structure change is all-or-nothing, but the engine applies top-down and stops reporting
-    // at the first failure with the earlier changes already applied (uncommitted). Tell the user
+    // A structure change is all-or-nothing, but the engine applies top-down and collects every
+    // failure (the earlier changes stay applied, uncommitted); we surface the first. Tell the user
     // their transaction is now half-reversioned and must be aborted to discard it.
     const first = result.failed[0];
     void vscode.window.showErrorMessage(
