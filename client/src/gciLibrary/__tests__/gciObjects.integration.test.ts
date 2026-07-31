@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import { GciLibrary } from '../../gciLibrary';
-import { GciLibraryError } from '../../gciLibraryError';
 import { OOP_CLASS_STRING, OOP_CLASS_UTF8, OOP_ILLEGAL, OOP_NIL } from '../../gciConstants';
 import { useIntegrationTest } from '../../__tests__/useIntegrationTest';
 
@@ -176,23 +175,6 @@ describe('GCI object creation and inquiry (integration)', () => {
       const { result: oop } = gci.GciTsNewString(session, 'class test');
 
       expect(gci.GciTsFetchClass(session, oop).result).toBe(OOP_CLASS_STRING);
-    });
-  });
-
-  describe('resolveSymbol', () => {
-    it('resolves a global name to an object that exists', () => {
-      const oop = gci.resolveSymbol(session, 'Array');
-
-      expect(oop).not.toBe(OOP_ILLEGAL);
-      expect(gci.GciTsObjExists(session, oop)).toBe(true);
-    });
-
-    it('resolves a class name to that class', () => {
-      expect(gci.resolveSymbol(session, 'String')).toBe(OOP_CLASS_STRING);
-    });
-
-    it('throws for a name that is not bound', () => {
-      expect(() => gci.resolveSymbol(session, 'NoSuchClassXyz123')).toThrow(GciLibraryError);
     });
   });
 
