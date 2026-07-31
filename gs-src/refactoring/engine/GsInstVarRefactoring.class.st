@@ -504,8 +504,12 @@ GsInstVarRefactoring >> applyDeselected: deselectedIds options: optsArray migrat
 			(aBool or: [dBool]) ifTrue: [
 				self commitStructuralThenMigrate: aBool deleteHistory: dBool on: failures]]
 		ifFalse: [
-			"Nothing has been committed at this point, so the partial work can be discarded whole."
-			(self rollbackPartialApplyHadPriorWork: hadPriorWork) ifTrue: [applied := 0]].
+			"Nothing has been committed at this point, so the partial work can be discarded whole.
+			 When it IS discarded, the classes versioned before the failure are gone again -- and so
+			 are the methods that failed to copy forward onto them, so reporting those as `dropped`
+			 would name methods that are still perfectly intact."
+			(self rollbackPartialApplyHadPriorWork: hadPriorWork)
+				ifTrue: [applied := 0. dropped := OrderedCollection new]].
 	^'{"applied":', applied printString,
 	  ',"failed":[',
 	  ((failures collect: [:f |

@@ -301,4 +301,65 @@ describe('add / remove instance variable (gci e2e)', () => {
       exec(`UserGlobals removeKey: #${CLS} ifAbsent: []. System commitTransaction. 'ok'`);
     }
   });
+
+  // The all-or-nothing ROLLBACK path can only be exercised where the session can be made clean:
+  // the engine deliberately refuses to abort when the session already holds uncommitted work, and
+  // an in-stone SUnit test always does (its fixture is uncommitted). So it lives here, with a
+  // committed fixture — this is the only place the abort branch runs end to end.
+  it('rolls the whole apply back when a change fails part-way through', async (ctx) => {
+    if (!enginePresent) return ctx.skip();
+
+    const RB_BASE = 'GciIvRbBase';
+    const RB_SUB = 'GciIvRbSub';
+    try {
+      q.compileClassDefinition(
+        session,
+        `Object subclass: '${RB_BASE}' instVarNames: #(x) classVars: #() ` +
+          'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
+      );
+      q.compileClassDefinition(
+        session,
+        `${RB_BASE} subclass: '${RB_SUB}' instVarNames: #() classVars: #() ` +
+          'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
+      );
+      // A method that WOULD be dropped by the apply, so a bogus `dropped` report is detectable.
+      q.compileMethod(session, RB_SUB, false, 'accessing', 'shadowIt | tally | ^tally');
+      exec("System commitTransaction. 'ok'"); // clean session — the engine may now abort
+
+      const start = parseStartPreview(
+        await startInstVarPreview(
+          asyncExec,
+          'add',
+          RB_BASE,
+          'tally',
+          'gci-iv-rollback',
+          PREVIEW_PAGE_BYTES,
+          userIndex(),
+        ),
+      );
+      expect(start.total).toBe(2); // base + sub are both staged
+
+      // Break the SECOND change after the preview was staged: the base will version fine, then
+      // the sub will fail with 'Class not found'. Committed so the session stays clean.
+      exec(`UserGlobals removeKey: #${RB_SUB} ifAbsent: []. System commitTransaction. 'ok'`);
+
+      const result = parseApplyResult(
+        await applyInstVar(asyncExec, 'gci-iv-rollback', [], null, false, false),
+      );
+
+      expect(result.failed.length).toBe(1);
+      expect(result.rolledBack).toBe(true);
+      expect(result.applied).toBe(0);
+      // Nothing was dropped, because the version those methods failed to copy onto is gone again.
+      expect(result.dropped).toEqual([]);
+      expect(result.committed).toBe(false);
+      // The decisive check: the base was versioned before the failure, and the abort undid it.
+      expect(hasIvar(RB_BASE, 'tally')).toBe(false);
+    } finally {
+      exec(
+        `#(#${RB_SUB} #${RB_BASE}) do: [:s | UserGlobals removeKey: s ifAbsent: []]. ` +
+          "System commitTransaction. 'ok'",
+      );
+    }
+  });
 });

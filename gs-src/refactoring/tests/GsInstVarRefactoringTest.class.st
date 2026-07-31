@@ -702,3 +702,31 @@ GsInstVarRefactoringTest >> testOutOfScopeReportsWhetherTheSessionHasUncommitted
 	json := (self add: 'tally') outOfScopeJsonString.
 	self assert: json includesSubstring: '"sessionHasUncommittedChanges":true'
 ]
+
+{ #category : 'tests - apply rollback' }
+GsInstVarRefactoringTest >> testSucceedingApplyStillReportsItsDroppedMethods [
+	"The counterpart to the rollback case: when nothing fails, the dropped list is reported as
+	 usual -- clearing it must be tied to the rollback, not to failure in general.
+
+	 The rolled-back case (dropped cleared, applied 0, rolledBack true) cannot be reached from
+	 SUnit: the engine refuses to abort while the session holds uncommitted work, and this
+	 session always does (setUp's fixture). It is covered end to end, against a committed
+	 fixture, by 'rolls the whole apply back when a change fails part-way through' in
+	 client/src/__tests__/gci/gciInstVar.e2e.test.ts."
+	| result |
+	result := (self remove: 'count') applyDeselected: #() options: nil migrate: false deleteHistory: false.
+	self assert: result includesSubstring: 'combine'.
+	self assert: result includesSubstring: '"rolledBack":false'
+]
+
+{ #category : 'tests - add shadowing' }
+GsInstVarRefactoringTest >> testShadowScanIgnoresMethodsThatMerelyMentionTheName [
+	"The scan pre-filters on the name appearing in the source before parsing. A method that only
+	 SENDS a same-named message (or names it in a comment) declares nothing and must not be
+	 reported -- the pre-filter must not turn into the answer."
+	| ref |
+	self compile: 'mentionsOnly "tally here" ^self class name' in: self sub.
+	self compile: 'sendsIt ^self respondsTo: #tally' in: self sub.
+	ref := self add: 'tally'.
+	self assert: ref willNotRecompileSelectorCount equals: 0
+]

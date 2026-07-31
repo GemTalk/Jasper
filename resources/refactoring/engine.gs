@@ -5166,8 +5166,12 @@ applyDeselected: deselectedIds options: optsArray migrate: aBool deleteHistory: 
 			(aBool or: [dBool]) ifTrue: [
 				self commitStructuralThenMigrate: aBool deleteHistory: dBool on: failures]]
 		ifFalse: [
-			"Nothing has been committed at this point, so the partial work can be discarded whole."
-			(self rollbackPartialApplyHadPriorWork: hadPriorWork) ifTrue: [applied := 0]].
+			"Nothing has been committed at this point, so the partial work can be discarded whole.
+			 When it IS discarded, the classes versioned before the failure are gone again -- and so
+			 are the methods that failed to copy forward onto them, so reporting those as `dropped`
+			 would name methods that are still perfectly intact."
+			(self rollbackPartialApplyHadPriorWork: hadPriorWork)
+				ifTrue: [applied := 0. dropped := OrderedCollection new]].
 	^'{"applied":', applied printString,
 	  ',"failed":[',
 	  ((failures collect: [:f |
@@ -8714,15 +8718,21 @@ instanceMethodsShadowing: anInstVarName inClass: aClass
 	"Selectors of aClass's OWN instance methods (environment 0) whose source declares a
 	 method argument or a method-level temporary named anInstVarName, sorted. See
 	 #classesAndSelectorsShadowing:inHierarchyOf: for why only those two forms count."
-	| sym result |
+	| sym name result |
 	sym := anInstVarName asSymbol.
+	name := anInstVarName asString.
 	result := OrderedCollection new.
-	aClass selectors do: [:sel | | m tree |
+	aClass selectors do: [:sel | | m src tree |
 		m := aClass compiledMethodAt: sel environmentId: 0 otherwise: nil.
 		m isNil ifFalse: [
-			tree := [RBParser parseMethod: m sourceString] on: Error do: [:e | nil].
-			(tree notNil and: [self methodNode: tree declares: sym])
-				ifTrue: [result add: sel]]].
+			src := m sourceString.
+			"Cheap pre-filter: a method can only DECLARE the name if the name appears in its source
+			 at all. This runs on every add-preview over the whole subtree, so it keeps the parse --
+			 by far the expensive part -- off the overwhelming majority of methods."
+			(src indexOfSubCollection: name) > 0 ifTrue: [
+				tree := [RBParser parseMethod: src] on: Error do: [:e | nil].
+				(tree notNil and: [self methodNode: tree declares: sym])
+					ifTrue: [result add: sel]]]].
 	^result asSortedCollection asArray
 %
 

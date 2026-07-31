@@ -225,15 +225,21 @@ GsRefactoringEnvironment >> instanceMethodsShadowing: anInstVarName inClass: aCl
 	"Selectors of aClass's OWN instance methods (environment 0) whose source declares a
 	 method argument or a method-level temporary named anInstVarName, sorted. See
 	 #classesAndSelectorsShadowing:inHierarchyOf: for why only those two forms count."
-	| sym result |
+	| sym name result |
 	sym := anInstVarName asSymbol.
+	name := anInstVarName asString.
 	result := OrderedCollection new.
-	aClass selectors do: [:sel | | m tree |
+	aClass selectors do: [:sel | | m src tree |
 		m := aClass compiledMethodAt: sel environmentId: 0 otherwise: nil.
 		m isNil ifFalse: [
-			tree := [RBParser parseMethod: m sourceString] on: Error do: [:e | nil].
-			(tree notNil and: [self methodNode: tree declares: sym])
-				ifTrue: [result add: sel]]].
+			src := m sourceString.
+			"Cheap pre-filter: a method can only DECLARE the name if the name appears in its source
+			 at all. This runs on every add-preview over the whole subtree, so it keeps the parse --
+			 by far the expensive part -- off the overwhelming majority of methods."
+			(src indexOfSubCollection: name) > 0 ifTrue: [
+				tree := [RBParser parseMethod: src] on: Error do: [:e | nil].
+				(tree notNil and: [self methodNode: tree declares: sym])
+					ifTrue: [result add: sel]]]].
 	^result asSortedCollection asArray
 ]
 
