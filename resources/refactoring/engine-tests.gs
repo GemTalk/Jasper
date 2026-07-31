@@ -4597,6 +4597,77 @@ testMoveUpMovesSimpleAccessorsToAncestor
 
 category: 'tests - V4 move'
 method: GsInstVarStructureRefactoringTest
+testMoveUpBindsLineageClassNotASameNamedShadowInAnotherDictionary
+	"#2 dictionary scoping: a destination name resolves within the source's OWN lineage, not by
+	 unscoped global first-match. Bind an unrelated GsVSBase in a dictionary AHEAD of UserGlobals so a
+	 global lookup returns that shadow (which is not an ancestor of GsVSMid). Moving GsVSMid's own
+	 'mid' up to 'GsVSBase' must still bind the REAL lineage GsVSBase and succeed -- the old unscoped
+	 lookup bound the shadow and declined 'is not a superclass'. This is the exact case the lineage
+	 fix was written for, and the only test that fails if it is reverted (see issue #356)."
+	| shadow ref |
+	shadow := SymbolDictionary new.
+	System myUserProfile insertDictionary: shadow at: 1.
+	[Object
+		subclass: 'GsVSBase'
+		instVarNames: #()
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: shadow.
+	ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSMid') moveInstVar: 'mid' toClasses: #('GsVSBase') direction: #up.
+
+	self assert: ref decline isNil.
+	self assert: ref topClass name asString equals: 'GsVSBase'.
+	self assert: (self editChangeFor: 'GsVSBase' in: ref changeSet) notNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+%
+
+category: 'tests - V4 move'
+method: GsInstVarStructureRefactoringTest
+testMoveDownBindsLineageClassNotASameNamedShadowInAnotherDictionary
+	"#2 dictionary scoping, #down half: the down lineage resolves through the source's DESCENDANTS,
+	 a different code path than #up's ancestor walk. Bind an unrelated GsVSLeaf in a dictionary AHEAD
+	 of UserGlobals so a global lookup returns that shadow (which is not a subclass of GsVSMid).
+	 Moving GsVSMid's own 'pushable' down to 'GsVSLeaf' must still bind the REAL descendant GsVSLeaf
+	 and succeed -- the old unscoped lookup bound the shadow and declined 'is not a subclass'."
+	| shadow ref |
+	shadow := SymbolDictionary new.
+	System myUserProfile insertDictionary: shadow at: 1.
+	[Object
+		subclass: 'GsVSLeaf'
+		instVarNames: #()
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: shadow.
+	ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSMid') moveInstVar: 'pushable' toClasses: #('GsVSLeaf') direction: #down.
+
+	self assert: ref decline isNil.
+	self assert: (self editChangeFor: 'GsVSLeaf' in: ref changeSet) notNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+%
+
+category: 'tests - V4 move'
+method: GsInstVarStructureRefactoringTest
+testMoveUpToANonImmediateAncestor
+	"V4 moves up to ANY chosen ancestor, not just the immediate superclass. GsVSLeaf's 'leaf' moves
+	 up to GsVSBase -- its grandparent, skipping GsVSMid -- so the declaration lands on GsVSBase (from
+	 which GsVSLeaf still inherits it) and leaves GsVSLeaf's own list."
+	| ref cs |
+	ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSLeaf') moveInstVar: 'leaf' toClasses: #('GsVSBase') direction: #up.
+	cs := ref changeSet.
+
+	self assert: ref decline isNil.
+	self assert: ref topClass name asString equals: 'GsVSBase'.
+	self assert: (self editChangeFor: 'GsVSBase' in: cs) notNil.
+	self assert: (self editChangeFor: 'GsVSLeaf' in: cs) notNil
+%
+
+category: 'tests - V4 move'
+method: GsInstVarStructureRefactoringTest
 testMoveApplyDoesNotCommit
 	| before |
 	before := System needsCommit.
