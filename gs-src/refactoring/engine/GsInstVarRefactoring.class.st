@@ -59,7 +59,8 @@ Class {
 		'decline',
 		'oldToNew',
 		'dropped',
-		'committed'
+		'committed',
+		'rolledBack'
 	],
 	#category : 'Refactoring-Core'
 }
@@ -170,12 +171,17 @@ GsInstVarRefactoring >> allClassVarsOf: aClass [
 
 { #category : 'private' }
 GsInstVarRefactoring >> isValidIvarName: aString [
-	"A syntactically valid Smalltalk instance-variable name: a letter or underscore followed by
-	 letters, digits, or underscores."
+	"A syntactically valid Smalltalk instance-variable name: a LOWERCASE letter or an underscore,
+	 followed by letters, digits, or underscores.
+
+	 The first character must not be uppercase. A capitalised identifier in a method body reads as a
+	 global (or a class/class-variable name), so an uppercase instance variable is confusing and
+	 shadow-prone -- `Tally` used to pass. The client's fast-fail regex in instVarRefactorCommand.ts
+	 enforces the same rule; this predicate is the authority."
 	| first |
 	aString isEmpty ifTrue: [^false].
 	first := aString at: 1.
-	(first isLetter or: [first == $_]) ifFalse: [^false].
+	((first isLetter and: [first isLowercase]) or: [first == $_]) ifFalse: [^false].
 	^aString allSatisfy: [:ch | ch isLetter or: [ch isDigit or: [ch == $_]]]
 ]
 
@@ -205,13 +211,14 @@ GsInstVarRefactoring >> analyzeAdd [
 	"V1 add: varName must be a valid identifier not already visible as an instance variable of
 	 definingClass, and not shadowing a class variable in the hierarchy."
 	(self isValidIvarName: varName) ifFalse: [
-		^decline := 'Cannot add ', varName printString, ': it is not a valid instance-variable name.'].
+		^decline := 'Cannot add ', varName printString, ': an instance-variable name must start with a lowercase letter or an underscore, followed by letters, digits, or underscores.'].
 	((self allInstVarsOf: definingClass) includes: varName) ifTrue: [
 		^decline := 'Cannot add ', varName, ': ', definingClass name asString, ' already has an instance variable of that name.'].
 	((self allClassVarsOf: definingClass) includes: varName) ifTrue: [
 		^decline := 'Cannot add ', varName, ': a class variable of that name is visible to ', definingClass name asString, ', which it would shadow.'].
 	newIvarLists at: definingClass name asString put: ((self ownInstVarsOf: definingClass) copyWith: varName).
-	self computeAffectedFrom: (Array with: definingClass)
+	self computeAffectedFrom: (Array with: definingClass).
+	self recordWillNotRecompileShadowedBy: definingClass
 ]
 
 { #category : 'private - analysis' }
@@ -263,6 +270,19 @@ GsInstVarRefactoring >> recordWillNotRecompileLosing: aScopeClass [
 	| accessors |
 	accessors := environment classesAndSelectorsAccessing: varName inHierarchyOf: aScopeClass.
 	accessors do: [:assoc | willNotRecompile add: assoc]
+]
+
+{ #category : 'private - analysis' }
+GsInstVarRefactoring >> recordWillNotRecompileShadowedBy: aScopeClass [
+	"Record class -> sorted selectors of the instance methods in aScopeClass's hierarchy that already
+	 declare a method-level TEMPORARY or an ARGUMENT named varName. Once the new instance variable
+	 becomes visible to the subtree, GemStone refuses that shadowing declaration, so those methods do
+	 not recompile onto the new class version and are dropped -- exactly like the methods that lose a
+	 removed variable. Predicting them here is what stops the preview claiming '0 will not recompile'
+	 and then silently dropping them."
+	| shadowers |
+	shadowers := environment classesAndSelectorsShadowing: varName inHierarchyOf: aScopeClass.
+	shadowers do: [:assoc | willNotRecompile add: assoc]
 ]
 
 { #category : 'private' }
@@ -402,12 +422,18 @@ GsInstVarRefactoring >> willNotRecompileJsonString [
 GsInstVarRefactoring >> outOfScopeJsonString [
 	"The precondition / warning payload for the preview panel, in the family's shape. A hard
 	 decline (which blocks Apply) rides in `decline`; willNotRecompile lists the methods that will
-	 be dropped; note warns about the commit semantics of migrate/delete-history."
+	 be dropped; note warns about the commit semantics of migrate/delete-history.
+
+	 sessionHasUncommittedChanges reports `System needsCommit` as the preview is built. The
+	 committing options (migrate instances / delete history) call `System commitTransaction`, which
+	 commits the WHOLE session transaction -- not just the change we staged -- so when this is true
+	 the client warns that the user's other uncommitted work will be committed along with it."
 	self ensureAnalysis.
 	^'{"references":0,"skipped":0,"scope":"hierarchy","collision":null,"decline":',
 	  (decline ifNil: ['null'] ifNotNil: [:r | self jsonQuote: r]),
 	  ',"willNotRecompile":', self willNotRecompileJsonString,
 	  ',"actedOnClass":', (self jsonQuote: self actedOnClassName),
+	  ',"sessionHasUncommittedChanges":', (System needsCommit ifTrue: ['true'] ifFalse: ['false']),
 	  ',"note":', (self jsonQuote: 'The structural change does not commit. Migrating instances and deleting history DO commit the transaction; nothing else does.'),
 	  '}'
 ]
@@ -448,21 +474,38 @@ GsInstVarRefactoring >> applyDeselected: deselectedIds options: optsArray migrat
 	 keeps them. If migrate or deleteHistory is true the structural change is COMMITTED first (the
 	 substrate requires a clean transaction to migrate), then the committing step(s) run and commit.
 	 Answers {applied, failed:[..], dropped:[..], committed:bool}."
-	| applied failures |
+	| applied failures changes index hadPriorWork |
 	self ensureAnalysis.
 	"nil optsArray keeps the acted-on class's current options; an Array (even empty) sets them."
 	editedOptions := optsArray isNil ifTrue: [nil] ifFalse: [optsArray collect: [:e | e asString]].
 	oldToNew := IdentityDictionary new.
 	dropped := OrderedCollection new.
 	committed := false.
+	rolledBack := false.
 	failures := OrderedCollection new.
 	applied := 0.
-	self changeSet changes do: [:change |
+	"Whether the SESSION already had uncommitted work before we staged anything -- decides whether a
+	 rollback may abort (see #rollbackPartialApply)."
+	hadPriorWork := System needsCommit.
+	"STOP at the first failure. The change set is all-or-nothing and each class is re-parented onto
+	 the new version of its parent, so carrying on past a failure would version later classes onto a
+	 stale oldToNew entry and leave a half-reshaped subtree behind."
+	changes := self changeSet changes.
+	index := 1.
+	[failures isEmpty and: [index <= changes size]] whileTrue: [
+		| change |
+		change := changes at: index.
 		[self applyChange: change. applied := applied + 1]
-		on: Error do: [:e |
-			failures add: (Array with: change id with: change className with: e messageText)]].
-	(failures isEmpty and: [aBool or: [dBool]]) ifTrue: [
-		self commitStructuralThenMigrate: aBool deleteHistory: dBool on: failures].
+			on: Error do: [:e |
+				failures add: (Array with: change id with: change className with: e messageText)].
+		index := index + 1].
+	failures isEmpty
+		ifTrue: [
+			(aBool or: [dBool]) ifTrue: [
+				self commitStructuralThenMigrate: aBool deleteHistory: dBool on: failures]]
+		ifFalse: [
+			"Nothing has been committed at this point, so the partial work can be discarded whole."
+			(self rollbackPartialApplyHadPriorWork: hadPriorWork) ifTrue: [applied := 0]].
 	^'{"applied":', applied printString,
 	  ',"failed":[',
 	  ((failures collect: [:f |
@@ -475,7 +518,26 @@ GsInstVarRefactoring >> applyDeselected: deselectedIds options: optsArray migrat
 		'{"class":', (self jsonQuote: (d at: 1) asString),
 		',"selector":', (self jsonQuote: (d at: 2) asString), '}'])
 			inject: '' into: [:acc :s | acc isEmpty ifTrue: [s] ifFalse: [acc, ',', s]]),
-	  '],"committed":', (committed ifTrue: ['true'] ifFalse: ['false']), '}'
+	  '],"committed":', (committed ifTrue: ['true'] ifFalse: ['false']),
+	  ',"rolledBack":', (rolledBack ifTrue: ['true'] ifFalse: ['false']), '}'
+]
+
+{ #category : 'applying' }
+GsInstVarRefactoring >> rollbackPartialApplyHadPriorWork: hadPriorWork [
+	"A change failed part-way through an ALL-OR-NOTHING apply. The versions created before the
+	 failure are staged in the transaction and uncommitted, so aborting discards them and leaves the
+	 hierarchy exactly as it was -- which is what the user is promised.
+
+	 The one case where we must NOT abort: the session already had uncommitted work of its own when
+	 the apply started. `System abortTransaction` rolls back the WHOLE session transaction, so
+	 aborting would throw that work away too. There we leave the transaction alone and report
+	 rolledBack:false, so the client can tell the user their transaction now holds a partial change
+	 and they must abort it themselves.
+
+	 Answers whether the abort happened."
+	hadPriorWork ifTrue: [^rolledBack := false].
+	System abortTransaction.
+	^rolledBack := true
 ]
 
 { #category : 'applying' }

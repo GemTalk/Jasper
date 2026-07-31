@@ -185,6 +185,63 @@ describe('add / remove instance variable command', () => {
     expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
   });
 
+  // The apply is all-or-nothing: the engine stops at the first failure and aborts the versions
+  // it had already staged, so the user must be told the hierarchy is untouched...
+  it('says nothing was applied when the engine rolled the transaction back', async () => {
+    vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson());
+    vi.mocked(queries.startInstVarPreview).mockResolvedValue(startJson());
+    vi.mocked(showInstVarRefactorPanel).mockResolvedValue(
+      applied({
+        applied: 0,
+        failed: [{ id: 'c2', label: 'FooSub (reparented)', error: 'boom' }],
+        rolledBack: true,
+      }),
+    );
+
+    const outcome = await runInstVarRefactor(req());
+
+    expect(outcome).toBeUndefined();
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining('Nothing was applied; the transaction was rolled back.'),
+    );
+  });
+
+  // ...and told to abort themselves when it could NOT roll back (the session already had other
+  // uncommitted work, which an abort would have discarded too).
+  it('advises aborting when the engine could not roll back', async () => {
+    vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson());
+    vi.mocked(queries.startInstVarPreview).mockResolvedValue(startJson());
+    vi.mocked(showInstVarRefactorPanel).mockResolvedValue(
+      applied({
+        applied: 1,
+        failed: [{ id: 'c2', label: 'FooSub (reparented)', error: 'boom' }],
+        rolledBack: false,
+      }),
+    );
+
+    await runInstVarRefactor(req());
+
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining('PARTIAL change'),
+    );
+  });
+
+  // An engine that predates the rolledBack field: take the conservative branch rather than
+  // promise a rollback that may not have happened.
+  it('advises aborting when the engine did not report a rollback at all', async () => {
+    vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson());
+    vi.mocked(queries.startInstVarPreview).mockResolvedValue(startJson());
+    vi.mocked(showInstVarRefactorPanel).mockResolvedValue(
+      applied({ applied: 1, failed: [{ id: 'c2', label: 'FooSub', error: 'boom' }] }),
+    );
+
+    await runInstVarRefactor(req());
+
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining('PARTIAL change'),
+    );
+  });
+
   it('reports a failed apply and returns no outcome', async () => {
     vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson());
     vi.mocked(queries.startInstVarPreview).mockResolvedValue(startJson());

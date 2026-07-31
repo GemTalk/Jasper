@@ -30,6 +30,17 @@ import {
  * parsers against a live stone: add an ivar and confirm the class carries it; remove one
  * that methods use and confirm those methods are reported and dropped.
  *
+ * WHY THIS IS STILL AN on-demand gci SUITE (issue #360, "can this migrate to
+ * useIntegrationTest?"): the three NON-committing scenarios below are already covered by the
+ * automatic integration suite, which does run in CI — see
+ * `refactoring/__tests__/refactoringInstVar.integration.test.ts` (add, remove + drop, decline
+ * duplicate, plus the engine's GS SUnit suite). What is unique here are the two COMMITTING
+ * tests. `useIntegrationTest` aborts after every test to keep them isolated, and an abort
+ * cannot undo a commit, so a committing test can only live there by cleaning up after itself
+ * and committing that cleanup — which is what these two do. That is technically possible under
+ * the harness; it is the harness's "never commit" invariant, not a technical blocker, that
+ * keeps them out. Moving them is a policy call for the CI-migration work, not this file.
+ *
  * Guarded on the refactoring engine being installed (the queries reference the in-stone
  * `GsInstVarRefactoring`); the tests skip with a reason otherwise. The non-committing tests are
  * transient (they roll back with `System abortTransaction` in a `finally`); the two committing

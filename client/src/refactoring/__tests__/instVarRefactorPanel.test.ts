@@ -41,6 +41,7 @@ const oos: InstVarOutOfScope = {
   willNotRecompile: [],
   actedOnClass: 'Foo',
   note: 'commit note',
+  sessionHasUncommittedChanges: false,
 };
 
 function mount(done = true) {

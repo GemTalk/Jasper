@@ -111,6 +111,43 @@ describe('instance-variable refactor preview parsing', () => {
     expect(r.committed).toBe(false);
   });
 
+  it('parses the rollback flag on a failed apply', () => {
+    const rolled = parseApplyResult(
+      '{"applied":0,"failed":[{"id":"1","label":"Foo","error":"boom"}],"dropped":[],"committed":false,"rolledBack":true}',
+    );
+    expect(rolled.rolledBack).toBe(true);
+
+    const partial = parseApplyResult(
+      '{"applied":1,"failed":[{"id":"1","label":"Foo","error":"boom"}],"dropped":[],"committed":false,"rolledBack":false}',
+    );
+    expect(partial.rolledBack).toBe(false);
+  });
+
+  // An engine older than the rollback change omits the field; undefined (not false) so the
+  // caller can tell "did not roll back" from "did not say".
+  it('leaves the rollback flag undefined when the engine omits it', () => {
+    const r = parseApplyResult('{"applied":2,"failed":[],"dropped":[],"committed":false}');
+    expect(r.rolledBack).toBeUndefined();
+  });
+
+  it('parses the session-has-uncommitted-changes flag from the preview', () => {
+    const envelope = (extra: string): string =>
+      `{"token":"t","total":1,"sourceClass":"Foo","outOfScope":{"decline":null,` +
+      `"willNotRecompile":[],"actedOnClass":"Foo","note":null${extra}},` +
+      `"page":{"changes":[],"nextOffset":1,"done":true}}`;
+
+    expect(
+      parseStartPreview(envelope(',"sessionHasUncommittedChanges":true')).outOfScope
+        .sessionHasUncommittedChanges,
+    ).toBe(true);
+    expect(
+      parseStartPreview(envelope(',"sessionHasUncommittedChanges":false')).outOfScope
+        .sessionHasUncommittedChanges,
+    ).toBe(false);
+    // Absent (an older engine) reads as false — no warning rather than a false alarm.
+    expect(parseStartPreview(envelope('')).outOfScope.sessionHasUncommittedChanges).toBe(false);
+  });
+
   it('labels edited vs reparented changes', () => {
     expect(
       instVarChangeLabel({

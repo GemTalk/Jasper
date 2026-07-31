@@ -5,8 +5,9 @@
  * checkbox: the change is all-or-nothing, so the preview is confirm-or-cancel.
  *
  * Beyond the diff list it renders two things the rest of the family does not:
- *   - a prominent WILL-NOT-RECOMPILE warning listing every method that references the
- *     removed variable and will be dropped;
+ *   - a prominent WILL-NOT-RECOMPILE warning listing every method that will be dropped —
+ *     on a remove, the methods that reference the variable; on an add, the methods whose
+ *     own temporary or argument the new variable would shadow;
  *   - MIGRATE INSTANCES / DELETE HISTORY checkboxes, each flagged as committing.
  *
  * The acted-on class's compile options are preserved across the new version server-side
@@ -84,7 +85,7 @@ function renderWillNotRecompile(oos: InstVarOutOfScope): string {
     .join('');
   const n = broken.length;
   return `<div class="warn-box">
-    <div class="warn-head">⚠ ${n} method${n === 1 ? '' : 's'} will NOT recompile (${n === 1 ? 'it references' : 'they reference'} the variable being removed) and will be dropped:</div>
+    <div class="warn-head">⚠ ${n} method${n === 1 ? '' : 's'} will NOT recompile onto the new class version and will be dropped:</div>
     <ul>${items}</ul>
   </div>`;
 }

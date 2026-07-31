@@ -117,8 +117,14 @@ export function showInstVarRefactorPanel(
                 migrate ? 'migrate existing instances' : '',
                 deleteHistory ? 'delete prior class versions' : '',
               ].filter(Boolean);
+              // `System commitTransaction` commits the WHOLE session transaction, not just the
+              // change staged here, so anything else the user has uncommitted rides along. The
+              // engine reports `System needsCommit` as of the preview; say so explicitly.
+              const collateral = start.outOfScope.sessionHasUncommittedChanges
+                ? ' You have OTHER uncommitted changes in this session — they will be committed too.'
+                : '';
               const ok = await vscode.window.showWarningMessage(
-                `This will COMMIT the transaction (${parts.join(' and ')}). Continue?`,
+                `This will COMMIT the transaction (${parts.join(' and ')}).${collateral} Continue?`,
                 { modal: true },
                 'Apply & Commit',
               );

@@ -277,16 +277,24 @@ cls comment: '
 Correctness of the add / remove instance-variable refactoring (catalog V1):
 
   - #add appends the variable to the class definition, versions the whole subtree, and declines a
-    duplicate/inherited name, an invalid name, or a name that would shadow a class variable;
+    duplicate/inherited name, an invalid name (including an UPPERCASE first letter), or a name that
+    would shadow a class variable;
+  - #add also PREDICTS the methods it will break: a method whose own temporary or argument has the
+    new variable''s name stops compiling once the variable is visible, while a block argument or
+    block temporary of that name is fine;
   - #remove drops the variable and reports every method (defining class and descendants) that will
     no longer recompile because it accessed the variable;
-  - class options are preserved across the new version (the earlier engines dropped them) and can be
+  - class options, class variables, class-instance variables, and class-side methods are all
+    preserved across the new version (earlier engines dropped options), and the options can be
     replaced with a user-edited set for the acted-on class;
   - applying (with neither migrate nor delete-history) never commits, and a method that references a
-    removed variable is dropped and reported.
+    removed variable is dropped and reported;
+  - applying is ALL-OR-NOTHING: it stops at the first failure and rolls the transaction back, unless
+    the session already held other uncommitted work (which the rollback would have discarded too).
 
-setUp builds a throwaway hierarchy (GsIVBase -> GsIVSub -> GsIVLeaf) in UserGlobals; tearDown removes
-it. Applying an operation creates new, uncommitted class versions; nothing here commits. The
+setUp builds a throwaway hierarchy (GsIVBase -> GsIVSub -> GsIVLeaf) in UserGlobals, with a class
+variable, a class-instance variable, and class-side methods on the base so the meta-side of the
+new-version machinery is covered; tearDown removes it. Applying an operation creates new, uncommitted class versions; nothing here commits. The
 delete-history STEP (deletePriorVersionsOf:) is exercised no-commit against a just-applied version;
 the full committing migrate / delete-history round trip (which needs a clean committed transaction)
 is exercised via the GCI e2e (gciInstVar.e2e.test.ts).
@@ -3650,11 +3658,14 @@ method: GsInstVarRefactoringTest
 setUp
 	| base sub leaf |
 	super setUp.
+	"The base carries a class variable AND a class-instance variable, and both sides carry methods,
+	 so a new version has to preserve the meta-side shape and copy the class-side methods forward --
+	 the parts of makeNewVersionOf: / copyMethodsFrom: an instance-side-only fixture never touched."
 	base := Object
 		subclass: 'GsIVBase'
 		instVarNames: #('count' 'other')
-		classVars: #()
-		classInstVars: #()
+		classVars: #('BaseTag')
+		classInstVars: #('registry')
 		poolDictionaries: #()
 		inDictionary: UserGlobals.
 	sub := base
@@ -3673,9 +3684,15 @@ setUp
 		inDictionary: UserGlobals.
 	self compile: 'combine ^count + other' in: base.
 	self compile: 'getOther ^other' in: base.
+	self compile: 'readTag ^BaseTag' in: base.
 	self compile: 'doubleCount ^count * 2' in: sub.
 	self compile: 'readSubOwn ^subOwn' in: sub.
-	self compile: 'leafCount ^count negated' in: leaf
+	self compile: 'leafCount ^count negated' in: leaf.
+	"Class side: a plain method, one reading the class variable, and one reading the
+	 class-INSTANCE variable -- all three must survive onto the new class version."
+	self compile: 'describe ^''base''' in: base class.
+	self compile: 'tag ^BaseTag' in: base class.
+	self compile: 'registry ^registry' in: base class
 %
 
 category: 'running'
@@ -3773,7 +3790,178 @@ testAddDeclinesInheritedClassVariableShadow
 category: 'tests - add'
 method: GsInstVarRefactoringTest
 testAddHasNoWillNotRecompile
+	"Nothing in the fixture declares a temporary or argument named tally, so adding it breaks
+	 nothing. (See the shadowing tests below for the case where something does.)"
 	self assert: (self add: 'tally') willNotRecompileSelectorCount equals: 0
+%
+
+category: 'tests - add name rules'
+method: GsInstVarRefactoringTest
+testAddDeclinesUppercaseFirstLetter
+	"A capitalised identifier in a method body reads as a global, so an uppercase instance
+	 variable is confusing and shadow-prone. `Tally` used to be accepted."
+	| ref |
+	ref := self add: 'Tally'.
+	self assert: ref decline notNil.
+	self assert: ref decline includesSubstring: 'lowercase'
+%
+
+category: 'tests - add name rules'
+method: GsInstVarRefactoringTest
+testAddAcceptsLowercaseFirstLetter
+	self assert: (self add: 'tally') decline isNil
+%
+
+category: 'tests - add name rules'
+method: GsInstVarRefactoringTest
+testAddAcceptsUnderscoreFirstLetter
+	self assert: (self add: '_tally') decline isNil
+%
+
+category: 'tests - add name rules'
+method: GsInstVarRefactoringTest
+testAddAcceptsInteriorUppercaseAndDigits
+	"Only the FIRST character is restricted; camelCase and digits stay legal."
+	self assert: (self add: 'tallyForQ2') decline isNil
+%
+
+category: 'tests - add shadowing'
+method: GsInstVarRefactoringTest
+testAddPredictsMethodTemporaryShadowing
+	"Adding an instance variable makes it visible to the whole subtree. GemStone REFUSES a method
+	 whose own temporary has that name (verified on live 3.6.2 and 3.7.5 stones), so such a method
+	 will not recompile onto the new version -- the preview has to say so."
+	| ref |
+	self compile: 'shadowTemp | tally | tally := 1. ^tally' in: self sub.
+	ref := self add: 'tally'.
+	self assert: ref decline isNil.
+	self assert: ref willNotRecompileSelectorCount equals: 1.
+	self assert: ref willNotRecompileJsonString includesSubstring: 'shadowTemp'.
+	self assert: ref willNotRecompileJsonString includesSubstring: 'GsIVSub'
+%
+
+category: 'tests - add shadowing'
+method: GsInstVarRefactoringTest
+testAddPredictsMethodArgumentShadowing
+	| ref |
+	self compile: 'shadowArg: tally ^tally' in: self leaf.
+	ref := self add: 'tally'.
+	self assert: ref willNotRecompileSelectorCount equals: 1.
+	self assert: ref willNotRecompileJsonString includesSubstring: 'shadowArg:'
+%
+
+category: 'tests - add shadowing'
+method: GsInstVarRefactoringTest
+testAddPredictsShadowingOnTheActedOnClassItself
+	"Not just descendants: the acted-on class's own methods see the new variable too."
+	| ref |
+	self compile: 'shadowHere | tally | tally := 2. ^tally' in: self base.
+	ref := self add: 'tally'.
+	self assert: ref willNotRecompileSelectorCount equals: 1.
+	self assert: ref willNotRecompileJsonString includesSubstring: 'GsIVBase'
+%
+
+category: 'tests - add shadowing'
+method: GsInstVarRefactoringTest
+testAddIgnoresBlockArgumentShadowing
+	"GemStone ALLOWS a block argument to shadow an instance variable, so it must not be predicted
+	 as broken -- a false positive would scare the user off a change that is fine."
+	| ref |
+	self compile: 'blockArg ^(#(1 2) collect: [:tally | tally * 2]) last' in: self sub.
+	ref := self add: 'tally'.
+	self assert: ref willNotRecompileSelectorCount equals: 0
+%
+
+category: 'tests - add shadowing'
+method: GsInstVarRefactoringTest
+testAddIgnoresBlockTemporaryShadowing
+	"Same for a temporary declared INSIDE a block, at any nesting."
+	| ref |
+	self compile: 'blockTemp ^[ | tally | tally := 3. tally ] value' in: self sub.
+	self compile: 'nestedBlockTemp ^[ [ | tally | tally := 4. tally ] value ] value' in: self leaf.
+	ref := self add: 'tally'.
+	self assert: ref willNotRecompileSelectorCount equals: 0
+%
+
+category: 'tests - add shadowing'
+method: GsInstVarRefactoringTest
+testAddIgnoresClassSideShadowing
+	"Instance variables are invisible to class-side methods, so a class-side temporary of the same
+	 name is not a collision."
+	| ref |
+	self compile: 'classSideTemp | tally | tally := 5. ^tally' in: self base class.
+	ref := self add: 'tally'.
+	self assert: ref willNotRecompileSelectorCount equals: 0
+%
+
+category: 'tests - add shadowing'
+method: GsInstVarRefactoringTest
+testAddShadowingPredictionMatchesWhatIsActuallyDropped
+	"The point of the prediction: what the preview warns about is exactly what apply drops. Without
+	 it the preview promised '0 will not recompile' and then dropped the method anyway."
+	| ref result |
+	self compile: 'shadowTemp | tally | tally := 1. ^tally' in: self sub.
+	self compile: 'keeper ^subOwn' in: self sub.
+	ref := self add: 'tally'.
+	self assert: ref willNotRecompileSelectorCount equals: 1.
+	result := ref applyDeselected: #() options: nil migrate: false deleteHistory: false.
+	self assert: result includesSubstring: 'shadowTemp'.
+	self deny: result includesSubstring: 'keeper'.
+	"...and the method really is gone from the new version, while its untouched sibling survives."
+	self deny: ((UserGlobals at: #GsIVSub) includesSelector: #shadowTemp).
+	self assert: ((UserGlobals at: #GsIVSub) includesSelector: #keeper)
+%
+
+category: 'tests - class side'
+method: GsInstVarRefactoringTest
+testNewVersionPreservesClassVariables
+	"An earlier engine dropped class OPTIONS across the new version; class variables are the same
+	 class of bug, and were untested because the fixture had none."
+	self add: 'tally'.
+	self assert: ((UserGlobals at: #GsIVBase) classVarNames collect: [:n | n asString])
+		includesItem: 'BaseTag'
+%
+
+category: 'tests - class side'
+method: GsInstVarRefactoringTest
+testNewVersionPreservesClassInstanceVariables
+	self add: 'tally'.
+	self assert: ((UserGlobals at: #GsIVBase) class instVarNames collect: [:n | n asString])
+		includesItem: 'registry'
+%
+
+category: 'tests - class side'
+method: GsInstVarRefactoringTest
+testNewVersionCopiesClassSideMethodsForward
+	"copyMethodsFrom:to: copies BOTH sides; the meta-side half had no coverage."
+	| newBase |
+	self add: 'tally'.
+	newBase := UserGlobals at: #GsIVBase.
+	self assert: (newBase class includesSelector: #describe).
+	self assert: (newBase class includesSelector: #tag).
+	self assert: (newBase class includesSelector: #registry)
+%
+
+category: 'tests - class side'
+method: GsInstVarRefactoringTest
+testClassSideMethodsStillRunOnTheNewVersion
+	"Copied forward AND still functional -- the class variable and class-instance variable they
+	 read have to have come across with them."
+	| newBase |
+	self add: 'tally'.
+	newBase := UserGlobals at: #GsIVBase.
+	self assert: newBase describe equals: 'base'.
+	self assert: newBase tag isNil.
+	self assert: newBase registry isNil
+%
+
+category: 'tests - class side'
+method: GsInstVarRefactoringTest
+testClassSideMethodsAreNotReportedAsDropped
+	| result |
+	result := (self add: 'tally') applyDeselected: #() options: nil migrate: false deleteHistory: false.
+	self assert: result includesSubstring: '"dropped":[]'.
+	self deny: result includesSubstring: 'describe'
 %
 
 category: 'tests - add'
@@ -4046,6 +4234,87 @@ testApplyRemoveDropsBrokenMethodsAndReportsThem
 	self assert: (self base compiledMethodAt: #combine environmentId: 0 otherwise: nil) isNil.
 	self assert: (self base compiledMethodAt: #getOther environmentId: 0 otherwise: nil) notNil.
 	self deny: (self base instVarNames includes: #count)
+%
+
+category: 'tests - apply rollback'
+method: GsInstVarRefactoringTest
+testApplyStopsAtTheFirstFailure
+	"An add/remove is ALL-OR-NOTHING: each class is re-versioned under the NEW version of its
+	 parent, so carrying on past a failure would version later classes onto a stale oldToNew entry
+	 and leave a half-reshaped subtree. The apply must stop dead at the first failure.
+
+	 The failure is provoked the only way a caller could hit it: the change set is staged (base,
+	 sub, leaf, top-down), then the middle class disappears from the symbol list before apply, so
+	 applyClassChange: raises 'Class not found' on it."
+	| refactoring result |
+	refactoring := self add: 'tally'.
+	refactoring changeSet.  "stage while the whole hierarchy still exists"
+	UserGlobals removeKey: #GsIVSub ifAbsent: [].
+	result := refactoring applyDeselected: #() options: nil migrate: false deleteHistory: false.
+
+	"The base (staged first) applied, the sub failed, and the leaf was never attempted -- before the
+	 fix the loop ran on and versioned the leaf onto a stale parent."
+	self assert: result includesSubstring: '"applied":1'.
+	self assert: result includesSubstring: 'GsIVSub'.
+	self deny: result includesSubstring: 'GsIVLeaf'
+%
+
+category: 'tests - apply rollback'
+method: GsInstVarRefactoringTest
+testApplyLeavesTransactionAloneWhenTheSessionHadOtherWork
+	"System abortTransaction rolls back the WHOLE session transaction. When the session already had
+	 uncommitted work of its own -- as it does here: setUp created the fixture and nothing committed
+	 -- aborting would throw that work away too, so the engine must NOT abort. It reports
+	 rolledBack:false instead, and the client tells the user to abort it themselves."
+	| refactoring result |
+	refactoring := self add: 'tally'.
+	refactoring changeSet.
+	UserGlobals removeKey: #GsIVSub ifAbsent: [].
+	result := refactoring applyDeselected: #() options: nil migrate: false deleteHistory: false.
+
+	self assert: result includesSubstring: '"rolledBack":false'.
+	"The fixture is still here, which is the point: nothing of the user's was discarded."
+	self assert: (UserGlobals includesKey: #GsIVBase)
+%
+
+category: 'tests - apply rollback'
+method: GsInstVarRefactoringTest
+testRollbackDoesNotAbortWhenPriorWorkExists
+	"The decision in isolation: with prior uncommitted work, answer false and abort nothing."
+	| refactoring |
+	refactoring := self add: 'tally'.
+	self deny: (refactoring rollbackPartialApplyHadPriorWork: true).
+	self assert: (UserGlobals includesKey: #GsIVBase)
+%
+
+category: 'tests - apply rollback'
+method: GsInstVarRefactoringTest
+testRollbackAbortsWhenThereWasNoPriorWork
+	"...and with a clean session it really does abort. Proof that the abort happened: this test's
+	 own uncommitted fixture is gone afterwards. (Which is also why the abort is refused above.)"
+	| refactoring |
+	refactoring := self add: 'tally'.
+	self assert: (refactoring rollbackPartialApplyHadPriorWork: false).
+	self deny: (UserGlobals includesKey: #GsIVBase)
+%
+
+category: 'tests - apply rollback'
+method: GsInstVarRefactoringTest
+testSuccessfulApplyReportsNoRollback
+	| result |
+	result := (self add: 'tally') applyDeselected: #() options: nil migrate: false deleteHistory: false.
+	self assert: result includesSubstring: '"rolledBack":false'.
+	self assert: result includesSubstring: '"failed":[]'
+%
+
+category: 'tests - json'
+method: GsInstVarRefactoringTest
+testOutOfScopeReportsWhetherTheSessionHasUncommittedChanges
+	"The committing options commit the WHOLE session transaction, so the client warns when the
+	 session already holds other uncommitted work. setUp's fixture is uncommitted, so it does."
+	| json |
+	json := (self add: 'tally') outOfScopeJsonString.
+	self assert: json includesSubstring: '"sessionHasUncommittedChanges":true'
 %
 
 category: 'asserting'

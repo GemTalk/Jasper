@@ -29,8 +29,9 @@ export interface InstVarChange {
   newSource: string;
 }
 
-/** A method that will not recompile onto the new class version (it references the
- *  removed variable) and will be dropped. */
+/** A method that will not recompile onto the new class version and will be dropped —
+ *  either because it references the variable being REMOVED, or because it declares a
+ *  method temporary/argument that the variable being ADDED would shadow. */
 export interface BrokenMethod {
   className: string;
   selector: string;
@@ -42,6 +43,10 @@ export interface InstVarOutOfScope {
   willNotRecompile: BrokenMethod[];
   actedOnClass: string | null;
   note: string | null;
+  /** `System needsCommit` when the preview was built: the session already holds OTHER
+   *  uncommitted work. The committing options commit the whole session transaction, so
+   *  that work would ride along — the commit confirmation says so when this is true. */
+  sessionHasUncommittedChanges: boolean;
 }
 
 export interface PreviewPage {
@@ -64,6 +69,10 @@ export interface ApplyResult {
   dropped: BrokenMethod[];
   committed: boolean;
   error?: string;
+  /** Set when a change failed part-way through: true if the engine aborted the
+   *  transaction so nothing was applied, false if it could not (the session already had
+   *  other uncommitted work) and a PARTIAL change is still staged. */
+  rolledBack?: boolean;
 }
 
 export interface InstVarAnalysis {
@@ -128,6 +137,8 @@ function parseOutOfScope(raw: unknown): InstVarOutOfScope {
     willNotRecompile: parseBroken(oos.willNotRecompile),
     actedOnClass: typeof oos.actedOnClass === 'string' ? oos.actedOnClass : null,
     note: typeof oos.note === 'string' ? oos.note : null,
+    // Absent (an older engine) reads as false: no warning rather than a false alarm.
+    sessionHasUncommittedChanges: oos.sessionHasUncommittedChanges === true,
   };
 }
 
@@ -199,6 +210,9 @@ export function parseApplyResult(json: string): ApplyResult {
     dropped: parseBroken(env.dropped),
     committed: env.committed === true,
     error: typeof env.error === 'string' ? env.error : undefined,
+    // Only meaningful alongside a failure; absent (an older engine) stays undefined so the
+    // caller falls back to the conservative "abort it yourself" advice.
+    rolledBack: typeof env.rolledBack === 'boolean' ? env.rolledBack : undefined,
   };
 }
 

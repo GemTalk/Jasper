@@ -140,7 +140,15 @@ export async function runInstVarRefactor(
 
   if (result.failed.length > 0) {
     const first = result.failed[0];
-    void vscode.window.showErrorMessage(`Failed: ${first.label}: ${first.error}`);
+    // The change set is all-or-nothing, so the engine stops at the first failure and aborts the
+    // staged versions — unless the session already had OTHER uncommitted work, which an abort
+    // would have discarded too. In that case a partial reshape is still sitting in the
+    // transaction and only the user can decide to abort it.
+    const advice =
+      result.rolledBack === true
+        ? ' Nothing was applied; the transaction was rolled back.'
+        : ' Your transaction now holds a PARTIAL change — abort it to discard the classes that were already versioned.';
+    void vscode.window.showErrorMessage(`Failed: ${first.label}: ${first.error}.${advice}`);
     return undefined;
   }
 

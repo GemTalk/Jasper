@@ -24,6 +24,7 @@ const baseOos: InstVarOutOfScope = {
   willNotRecompile: [],
   actedOnClass: 'Foo',
   note: 'Migrating instances and deleting history DO commit the transaction; nothing else does.',
+  sessionHasUncommittedChanges: false,
 };
 
 function html(oos: Partial<InstVarOutOfScope> = {}, changes = [edit, reparent], done = true) {
@@ -78,7 +79,7 @@ describe('instance-variable refactor panel HTML', () => {
 
   it('agrees in number for a single broken method', () => {
     const h = html({ willNotRecompile: [{ className: 'Foo', selector: 'combine' }] });
-    expect(h).toContain('1 method will NOT recompile (it references the variable being removed)');
+    expect(h).toContain('1 method will NOT recompile onto the new class version');
   });
 
   it('agrees in number for several broken methods', () => {
@@ -88,7 +89,7 @@ describe('instance-variable refactor panel HTML', () => {
         { className: 'Sub', selector: 'doubleCount' },
       ],
     });
-    expect(h).toContain('2 methods will NOT recompile (they reference the variable being removed)');
+    expect(h).toContain('2 methods will NOT recompile onto the new class version');
   });
 
   // V1 ships add / remove only — V4 (move) was deliberately dropped from this panel, so no

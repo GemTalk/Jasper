@@ -55,6 +55,7 @@ const start: StartInstVarPreview = {
     willNotRecompile: [],
     actedOnClass: 'Foo',
     note: null,
+    sessionHasUncommittedChanges: false,
   },
   page: {
     changes: [
@@ -144,6 +145,53 @@ describe('showInstVarRefactorPanel', () => {
       'Apply & Commit',
     );
     expect(h.apply).not.toHaveBeenCalled();
+  });
+
+  // `System commitTransaction` commits the WHOLE session transaction, so the user's other
+  // uncommitted work rides along with a migrate / delete-history apply. The engine reports
+  // `System needsCommit` in the preview; the confirmation must say so.
+  it('warns that other uncommitted work will be committed too when the session has some', async () => {
+    (vscode.window.showWarningMessage as ReturnType<typeof vi.fn>).mockResolvedValueOnce(undefined);
+    const dirty: StartInstVarPreview = {
+      ...start,
+      outOfScope: { ...start.outOfScope, sessionHasUncommittedChanges: true },
+    };
+
+    void showInstVarRefactorPanel('Add tally to Foo', dirty, handlers());
+    lastPanel().__emit({
+      command: 'apply',
+      deselected: [],
+      options: [],
+      migrate: true,
+      deleteHistory: false,
+    });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+      expect.stringContaining('OTHER uncommitted changes'),
+      expect.objectContaining({ modal: true }),
+      'Apply & Commit',
+    );
+  });
+
+  it('does not mention other uncommitted work when the session is clean', async () => {
+    (vscode.window.showWarningMessage as ReturnType<typeof vi.fn>).mockResolvedValueOnce(undefined);
+
+    void showInstVarRefactorPanel('Add tally to Foo', start, handlers());
+    lastPanel().__emit({
+      command: 'apply',
+      deselected: [],
+      options: [],
+      migrate: true,
+      deleteHistory: false,
+    });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+      expect.not.stringContaining('OTHER uncommitted changes'),
+      expect.objectContaining({ modal: true }),
+      'Apply & Commit',
+    );
   });
 
   it('a confirmed committing apply calls apply with the commit flags', async () => {

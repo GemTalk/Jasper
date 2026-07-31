@@ -1488,12 +1488,16 @@ export class ExplorerController {
       title: 'Add Instance Variable',
       prompt: `Add an instance variable to ${className}.`,
       placeHolder: 'newVariableName',
+      // A FAST-FAIL only — the engine's isValidIvarName: is the authority and declines with a
+      // fuller message. Kept so a typo is caught in the box without a round trip, and kept in
+      // step with the engine: lowercase-or-underscore first, because a capitalised identifier
+      // in a method body reads as a global.
       validateInput: (v) => {
         const t = v.trim();
         if (t.length === 0) return 'Enter a name.';
-        return /^[A-Za-z_][A-Za-z0-9_]*$/.test(t)
+        return /^[a-z_][A-Za-z0-9_]*$/.test(t)
           ? undefined
-          : 'Not a valid instance-variable name.';
+          : 'Must start with a lowercase letter or underscore, then letters, digits, or underscores.';
       },
     });
     if (entered === undefined) return;
