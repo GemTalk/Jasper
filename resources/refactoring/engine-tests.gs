@@ -3776,7 +3776,7 @@ category: 'tests - V2 push up'
 method: GsInstVarStructureRefactoringTest
 testPushUpDeclinesOnSiblingCollision
 	| ref |
-	"Both Leaf and Leaf2 declare 'dup'; pushing Leaf's up to Mid would collide on Leaf2."
+	"Both Leaf and GsVSTwig declare 'dup'; pushing Leaf's up to Mid would collide on GsVSTwig."
 	ref := GsInstVarStructureRefactoring class: (self classNamed: 'GsVSLeaf') pushUpInstVar: 'dup'.
 
 	self assert: ref decline notNil.
@@ -3956,7 +3956,7 @@ testMoveUpDeclinesOnMoreThanOneSuperclass
 category: 'tests - V4 move'
 method: GsInstVarStructureRefactoringTest
 testMoveUpDeclinesOnSiblingCollision
-	"'dup' is owned by both Leaf and Leaf2; pushing Leaf's up to Mid would collide with Leaf2's
+	"'dup' is owned by both Leaf and GsVSTwig; pushing Leaf's up to Mid would collide with GsVSTwig's
 	 once inherited."
 	| ref |
 	ref := GsInstVarStructureRefactoring
@@ -3972,7 +3972,7 @@ method: GsInstVarStructureRefactoringTest
 testMoveDownToASelectedSubset
 	"#down carries the declaration to a CHOSEN subset of subclasses (unlike push-down, which
 	 goes to every immediate subclass). Moving Mid's 'pushable' to only Leaf: Leaf gains it,
-	 Mid and Leaf2 end up without it."
+	 Mid and GsVSTwig end up without it."
 	| json |
 	json := (GsInstVarStructureRefactoring
 		class: (self classNamed: 'GsVSMid') moveInstVar: 'pushable' toClasses: #('GsVSLeaf') direction: #down)
@@ -4084,8 +4084,8 @@ testMoveUpMovesSimpleAccessorsToAncestor
 	cs := ref changeSet.
 
 	self assert: ref decline isNil.
-	self assert: (cs changes anySatisfy: [:c | c kind = #methodAdd and: [c className = 'GsVSBase']]).
-	self assert: (cs changes anySatisfy: [:c | c kind = #methodRemove and: [c className = 'GsVSMid']])
+	self assert: (cs changes anySatisfy: [:c | c kind = #methodAdd and: [c className = 'GsVSBase' and: [c selector = #pushable]]]).
+	self assert: (cs changes anySatisfy: [:c | c kind = #methodRemove and: [c className = 'GsVSMid' and: [c selector = #pushable]]])
 %
 
 category: 'tests - V4 move'
