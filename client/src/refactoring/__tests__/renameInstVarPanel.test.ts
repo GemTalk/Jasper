@@ -223,4 +223,31 @@ describe('rename panel interactions', () => {
     expect(hidden()).toBe(3);
     expect(toggleAll.textContent).toBe('Expand all');
   });
+
+  it('a double-click on Apply posts exactly one apply and disables the button', () => {
+    const { vscode } = mount([method({ id: '1' }), classDef]);
+    const apply = document.getElementById('apply') as HTMLButtonElement;
+
+    apply.click();
+    apply.click();
+
+    const applies = vscode.postMessage.mock.calls.filter(
+      (c) => (c[0] as { command: string }).command === 'apply',
+    );
+    expect(applies).toHaveLength(1);
+    expect(apply.disabled).toBe(true);
+  });
+
+  it('a checkbox change while applying cannot re-enable Apply', () => {
+    mount([method({ id: '1' }), method({ id: '2', selector: 'baz' })]);
+    const apply = document.getElementById('apply') as HTMLButtonElement;
+    apply.click();
+    expect(apply.disabled).toBe(true);
+
+    const cb = document.querySelector<HTMLInputElement>('li.change[data-id="2"] .sel')!;
+    cb.checked = false;
+    cb.dispatchEvent(new Event('change'));
+
+    expect(apply.disabled).toBe(true);
+  });
 });

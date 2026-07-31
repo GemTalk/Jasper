@@ -165,6 +165,126 @@ describe('showInstVarRefactorPanel', () => {
     expect(result?.committed).toBe(true);
   });
 
+  it('a second apply while the first is still in flight is ignored', async () => {
+    const h = handlers();
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    h.apply = vi.fn(async () => {
+      await gate;
+      return { applied: 2, failed: [], dropped: [], committed: false };
+    });
+    const applyMsg = {
+      command: 'apply',
+      deselected: [],
+      options: [],
+      migrate: false,
+      deleteHistory: false,
+    };
+
+    const p = showInstVarRefactorPanel('Add tally to Foo', start, h);
+    const panel = lastPanel();
+    panel.__emit(applyMsg);
+    panel.__emit(applyMsg); // the double-click
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(h.apply).toHaveBeenCalledTimes(1);
+
+    release();
+    expect((await p)?.applied).toBe(2);
+    expect(h.apply).toHaveBeenCalledTimes(1);
+    expect(h.cleanup).toHaveBeenCalledOnce();
+  });
+
+  it('a second apply while the commit confirmation is open is ignored', async () => {
+    let confirm!: (choice: string | undefined) => void;
+    (vscode.window.showWarningMessage as ReturnType<typeof vi.fn>).mockReturnValueOnce(
+      new Promise((r) => {
+        confirm = r;
+      }),
+    );
+    const h = handlers();
+    const applyMsg = {
+      command: 'apply',
+      deselected: [],
+      options: [],
+      migrate: true,
+      deleteHistory: false,
+    };
+
+    const p = showInstVarRefactorPanel('Add tally to Foo', start, h);
+    const panel = lastPanel();
+    panel.__emit(applyMsg);
+    panel.__emit(applyMsg); // arrives while the modal is up
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledTimes(1);
+    expect(h.apply).not.toHaveBeenCalled();
+
+    confirm('Apply & Commit');
+    await p;
+    expect(h.apply).toHaveBeenCalledTimes(1);
+  });
+
+  it('a declined committing apply can be retried', async () => {
+    (vscode.window.showWarningMessage as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce('Apply & Commit');
+    const h = handlers();
+    const applyMsg = {
+      command: 'apply',
+      deselected: [],
+      options: [],
+      migrate: true,
+      deleteHistory: false,
+    };
+
+    const p = showInstVarRefactorPanel('Add tally to Foo', start, h);
+    const panel = lastPanel();
+
+    panel.__emit(applyMsg); // declined
+    await new Promise((r) => setTimeout(r, 0));
+    expect(h.apply).not.toHaveBeenCalled();
+    expect(panel.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'busyDone' }),
+    );
+
+    panel.__emit(applyMsg); // retry, confirmed this time
+    await p;
+
+    expect(h.apply).toHaveBeenCalledTimes(1);
+    expect(h.apply).toHaveBeenCalledWith([], true, false);
+  });
+
+  it('an apply that fails can be retried, and the retry runs', async () => {
+    const h = handlers();
+    h.apply = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('apply boom'))
+      .mockResolvedValueOnce({ applied: 2, failed: [], dropped: [], committed: false });
+    const applyMsg = {
+      command: 'apply',
+      deselected: [],
+      options: [],
+      migrate: false,
+      deleteHistory: false,
+    };
+
+    const p = showInstVarRefactorPanel('Add tally to Foo', start, h);
+    const panel = lastPanel();
+
+    panel.__emit(applyMsg);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining('apply boom'),
+    );
+
+    panel.__emit(applyMsg);
+    expect((await p)?.applied).toBe(2);
+    expect(h.apply).toHaveBeenCalledTimes(2);
+  });
+
   it('cancel resolves undefined and cleans up', async () => {
     const h = handlers();
     const p = showInstVarRefactorPanel('Add tally to Foo', start, h);

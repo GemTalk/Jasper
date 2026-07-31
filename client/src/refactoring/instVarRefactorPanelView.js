@@ -88,6 +88,15 @@
       if (loadAllBtn) loadAllBtn.disabled = busy;
     };
 
+    // Applying is one-shot: a second dispatch would stage a second round of class
+    // versions (and a second commit if a committing option is ticked). The host guards
+    // this too; disabling the button keeps the UI honest about the in-flight apply.
+    let applying = false;
+    const setApplying = function (busy) {
+      applying = busy;
+      if (applyBtn) applyBtn.disabled = busy;
+    };
+
     if (moreBtn) {
       moreBtn.addEventListener('click', function () {
         setBusy(true);
@@ -114,6 +123,8 @@
 
     if (applyBtn) {
       applyBtn.addEventListener('click', function () {
+        if (applying) return;
+        setApplying(true);
         vscode.postMessage({
           command: 'apply',
           deselected: [],
@@ -139,7 +150,12 @@
     const handleMessage = function (msg) {
       if (!msg) return;
       if (msg.command === 'appendChanges') appendChanges(msg.html, msg.done === true);
-      else if (msg.command === 'busyDone') setBusy(false);
+      else if (msg.command === 'busyDone') {
+        setBusy(false);
+        // The host declined/aborted the apply (or a page load settled) and the panel is
+        // staying open — let Apply be pressed again.
+        setApplying(false);
+      }
     };
     if (typeof doc.defaultView !== 'undefined' && doc.defaultView) {
       doc.defaultView.addEventListener('message', function (e) {

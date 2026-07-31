@@ -28,6 +28,11 @@
     const selCountEl = doc.getElementById('selcount');
     const toggleAllBtn = doc.getElementById('toggleAll');
 
+    // Applying is one-shot. The host already ignores a second `apply` (its `finish` is
+    // latched), but disabling Apply stops the panel from looking live while it closes, and
+    // `refresh` folds this in so a checkbox change can't re-enable the button.
+    let applying = false;
+
     const cards = function () {
       return Array.prototype.slice.call(doc.querySelectorAll('li.change'));
     };
@@ -70,7 +75,7 @@
       const n = selectedIds().length;
       if (countEl) countEl.textContent = String(n);
       if (selCountEl) selCountEl.textContent = String(n);
-      if (applyBtn) applyBtn.disabled = n === 0;
+      if (applyBtn) applyBtn.disabled = applying || n === 0;
       checkboxes().forEach(function (cb) {
         const li = cb.closest('li.change');
         if (li) li.classList.toggle('deselected', !cb.checked);
@@ -126,7 +131,11 @@
 
     if (applyBtn) {
       applyBtn.addEventListener('click', function () {
-        vscode.postMessage({ command: 'apply', ids: selectedIds() });
+        if (applying) return;
+        const ids = selectedIds();
+        applying = true;
+        refresh();
+        vscode.postMessage({ command: 'apply', ids: ids });
       });
     }
     if (cancelBtn) {

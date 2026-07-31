@@ -89,6 +89,37 @@ describe('instance-variable refactor panel view', () => {
     expect(msg.deleteHistory).toBe(true);
   });
 
+  it('a double-click on Apply posts exactly one apply and disables the button', () => {
+    const { vscode } = mount();
+    const apply = document.getElementById('apply') as HTMLButtonElement;
+
+    apply.click();
+    apply.click();
+
+    const applies = vscode.postMessage.mock.calls.filter(
+      (c) => (c[0] as { command: string }).command === 'apply',
+    );
+    expect(applies).toHaveLength(1);
+    expect(apply.disabled).toBe(true);
+  });
+
+  it('busyDone re-enables Apply so a declined commit can be retried', () => {
+    const { handle, vscode } = mount();
+    const apply = document.getElementById('apply') as HTMLButtonElement;
+    apply.click();
+    expect(apply.disabled).toBe(true);
+
+    handle.handleMessage({ command: 'busyDone' });
+    expect(apply.disabled).toBe(false);
+
+    apply.click();
+
+    const applies = vscode.postMessage.mock.calls.filter(
+      (c) => (c[0] as { command: string }).command === 'apply',
+    );
+    expect(applies).toHaveLength(2);
+  });
+
   it('shows an "Apply & Commit" hint when a committing option is checked', () => {
     mount();
     const apply = document.getElementById('apply') as HTMLButtonElement;

@@ -80,6 +80,11 @@ export function showInstVarRefactorPanel(
     };
 
     let loading = false;
+    // Apply is one-shot per panel: `applyForToken:` versions classes (and commits when a
+    // committing option is on), so a second run would stage a second round of versions on
+    // top of the first. Set before the commit confirmation so an apply arriving while that
+    // modal is open is dropped too; cleared only on the paths that leave the panel open.
+    let applying = false;
     panel.webview.onDidReceiveMessage((message) => {
       void (async () => {
         try {
@@ -100,6 +105,8 @@ export function showInstVarRefactorPanel(
               loading = false;
             }
           } else if (message?.command === 'apply') {
+            if (applying) return;
+            applying = true;
             const options: string[] | null = Array.isArray(message.options)
               ? message.options.filter((o: unknown): o is string => typeof o === 'string')
               : null;
@@ -116,6 +123,7 @@ export function showInstVarRefactorPanel(
                 'Apply & Commit',
               );
               if (ok !== 'Apply & Commit') {
+                applying = false;
                 void panel.webview.postMessage({ command: 'busyDone' });
                 return;
               }
@@ -127,6 +135,7 @@ export function showInstVarRefactorPanel(
           }
         } catch (e: unknown) {
           loading = false;
+          applying = false;
           const msg = e instanceof Error ? e.message : String(e);
           void vscode.window.showErrorMessage(`Instance-variable preview: ${msg}`);
           void panel.webview.postMessage({ command: 'busyDone' });
