@@ -4908,7 +4908,8 @@ analyzeMove
 	 carries it to one OR MORE chosen SUBCLASSES (like V3 push-down, but to a selected subset, and
 	 to any descendant depth). varName must be definingClass's own ivar. On #up the target's
 	 ancestry must not already define the name and no OTHER descendant of the target may own it
-	 (collision on inherit). On #down no descendant of definingClass may already own it. In both
+	 (collision on inherit). On #down no descendant of definingClass may already own it, and no
+	 chosen target may sit under another chosen target (the ancestor target already covers it). In both
 	 directions every class that ends up WITHOUT the ivar must not still use it in its own methods."
 	| def dir sup losing |
 	def := definingClass.
@@ -4939,19 +4940,25 @@ analyzeMove
 					targetClasses do: [:t |
 						(self isAncestor: def of: t) ifFalse: [
 							^decline := 'Cannot move ', varName, ' down: ', t name asString, ' is not a subclass of ', def name asString, '.']].
+					"The picker lists descendants at any depth, so a chosen target can itself sit under
+					 another chosen target. That would declare the ivar on the child while it also inherits
+					 it from the freshly-edited ancestor -- a double declaration GemStone rejects at apply.
+					 The ancestor target already delivers the ivar there by inheritance, so decline rather
+					 than build a plan that fails; the user should drop the redundant target."
+					targetClasses do: [:t | | cover |
+						cover := targetClasses detect: [:other | other ~~ t and: [self isAncestor: other of: t]] ifNone: [nil].
+						cover ifNotNil: [
+							^decline := 'Cannot move ', varName, ' down: ', t name asString, ' is already a subclass of ', cover name asString, ', which was also chosen; drop the redundant target.']].
 					(self anyDescendantOf: def ownsIvar: varName) ifNotNil: [:cls |
 						^decline := 'Cannot move ', varName, ' down: ', cls, ' already declares an instance variable of that name.'].
 					topClass := def]
 				ifFalse: [
 					^decline := 'Cannot move ', varName, ': unknown direction ', dir printString]].
-	newIvarLists at: def name asString put: ((self ownInstVarsOf: def) reject: [:n | n = varName]).
-	targetClasses do: [:t |
-		newIvarLists at: t name asString put: ((self ownInstVarsOf: t) copyWith: varName)].
-	self moveAccessors ifTrue: [self planAccessorMovesFrom: def to: targetClasses].
 	"Every class that ends up without the ivar must not still use it in its own methods (it would
 	 compile against an undeclared variable). On #up nobody loses it (the subtree inherits it from
 	 higher up), so this only bites #down to a subset. definingClass's own simple accessors are
-	 excepted when they are being moved with the ivar."
+	 excepted when they are being moved with the ivar. Checked BEFORE the plan below is recorded so
+	 a declined move leaves the instance with nothing half-built."
 	losing := self classesLosingVar: targetClasses.
 	losing do: [:cls | | users |
 		users := environment instanceMethodsAccessing: varName inClass: cls.
@@ -4962,7 +4969,11 @@ analyzeMove
 		users isEmpty ifFalse: [
 			^decline := 'Cannot move ', varName, ': ', cls name asString,
 				' still uses it in ', users size printString, ' of its own method(s): ',
-				(self selectorListString: users), '.']]
+				(self selectorListString: users), '.']].
+	newIvarLists at: def name asString put: ((self ownInstVarsOf: def) reject: [:n | n = varName]).
+	targetClasses do: [:t |
+		newIvarLists at: t name asString put: ((self ownInstVarsOf: t) copyWith: varName)].
+	self moveAccessors ifTrue: [self planAccessorMovesFrom: def to: targetClasses]
 %
 
 category: 'private - analysis'
@@ -5012,6 +5023,18 @@ anyDescendantOf: aTop ownsIvar: aName
 	(environment descendantsOf: aTop) do: [:cls |
 		((self ownInstVarsOf: cls) includes: aName) ifTrue: [^cls name asString]].
 	^nil
+%
+
+category: 'private - analysis'
+method: GsInstVarStructureRefactoring
+ancestorsOf: aClass
+	"aClass's proper superclasses, immediate-first. Walks superclass links only, so it needs no
+	 version-specific hierarchy primitive (matching #isAncestor:of:)."
+	| out c |
+	out := OrderedCollection new.
+	c := aClass superclass.
+	[c notNil] whileTrue: [out add: c. c := c superclass].
+	^out
 %
 
 category: 'private - accessors'
@@ -5628,10 +5651,15 @@ classmethod: GsInstVarStructureRefactoring
 class: aClass moveInstVar: aName toClasses: classNames direction: aSymbol
 	"V4 (generalised push up/down): move aClass's own instance variable aName to the named
 	 destination class(es). aSymbol is #up (classNames is a single ancestor of aClass) or #down
-	 (classNames are descendants of aClass, one or many). Names are resolved against the
-	 environment; an unresolved name declines in analysis."
-	| ref env targets |
+	 (classNames are descendants of aClass, one or many). Each name is resolved WITHIN aClass's own
+	 lineage first -- its superclasses for #up, its descendants for #down -- so a name shadowed
+	 across dictionaries binds the class that is genuinely in aClass's hierarchy rather than an
+	 unrelated global first match. A name nowhere in the lineage falls back to a global lookup so
+	 analysis can still report the friendlier 'is not a superclass/subclass' decline; an unresolved
+	 name yields nil and declines as a destination that could not be found."
+	| ref env dir lineage targets |
 	env := GsRefactoringEnvironment new.
+	dir := aSymbol asSymbol.
 	ref := self new
 		setEnvironment: env
 		operation: #move
@@ -5639,8 +5667,13 @@ class: aClass moveInstVar: aName toClasses: classNames direction: aSymbol
 		varName: aName
 		selector: nil
 		meta: false.
-	targets := classNames collect: [:n | env classNamed: n asString].
-	^ref setMoveTargets: targets direction: aSymbol asSymbol
+	lineage := dir == #up
+		ifTrue: [ref ancestorsOf: aClass]
+		ifFalse: [env descendantsOf: aClass].
+	targets := classNames collect: [:n |
+		(lineage detect: [:c | c name asString = n asString] ifNone: [nil])
+			ifNil: [env classNamed: n asString]].
+	^ref setMoveTargets: targets direction: dir
 %
 
 category: 'instance creation'
