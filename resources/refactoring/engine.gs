@@ -330,11 +330,16 @@ Two things the family did not surface before, both required here:
     option list a given class''s new version is built with. (The panel does not surface options
     for editing; editedOptions is plumbing for a future options editor and is left nil.)
 
-  - METHODS THAT WILL NOT RECOMPILE. A method that references a removed instance variable no
-    longer resolves the name; GemStone will not compile a reference to an undeclared lowercase
-    identifier, so such a method fails to compile and is silently DROPPED from the new version. The
-    set is predicted (without compiling) from bytecode-level instance-variable access, surfaced in
-    the preview as willNotRecompile, and reported (dropped) after apply.
+  - METHODS THAT WILL NOT RECOMPILE, predicted (without compiling) for BOTH operations, surfaced in
+    the preview as willNotRecompile, and reported (dropped) after apply. Two distinct causes:
+      * #remove -- the method references the removed variable, so the name no longer resolves.
+        Found by bytecode-level instance-variable access (GsNMethod>>instVarsAccessed).
+      * #add    -- the method declares a method-level TEMPORARY or an ARGUMENT of the name the new
+        variable is about to occupy. GemStone refuses that shadowing declaration (verified on 3.6.2
+        and 3.7.5), and compileMethod: answers an error Array rather than raising, so the method is
+        simply not installed. Found by parsing each method''s source, since a compiled method keeps
+        no temporary/argument names. Block arguments and block temporaries may shadow freely and are
+        deliberately NOT reported.
 
 IMPORTANT commit semantics (surfaced in the preview):
   - The structural change (new versions + method copy-forward + reparents) NEVER commits on its own.
@@ -652,6 +657,33 @@ true.
 
 removeallmethods GsRefactoringEnvironment
 removeallclassmethods GsRefactoringEnvironment
+
+doit
+| cls |
+cls := Object subclass: 'GsRefactoringJson'
+  instVarNames: #()
+  classVars: #()
+  classInstVars: #()
+  poolDictionaries: #()
+  inDictionary: GsRefactoring.
+cls category: 'Refactoring-Core'.
+cls comment: '
+Shared JSON serialization helpers for the refactoring engine.
+
+Every Gs*Refactoring serializer emits its preview/analysis payloads as JSON, and
+each used to carry a byte-identical copy of the same three helpers (RB catalog C1).
+They now live here, class-side, and each refactoring''s `jsonQuote:` / `jsonEscape:` /
+`hex2:` delegates to this one implementation -- one place to fix, one place to test.
+
+The escaper emits PURE ASCII (control chars and code points above 126 become
+\\uXXXX), so the client''s non-blocking GCI fetch is never handed a Unicode-promoted
+(wide) result.
+'.
+true.
+%
+
+removeallmethods GsRefactoringJson
+removeallclassmethods GsRefactoringJson
 
 doit
 | cls |
@@ -1297,40 +1329,19 @@ rewriteSend: aMessageNode source: src
 category: 'serializing'
 method: GsChangeSignatureRefactoring
 hex2: anInteger
-	| digits |
-	digits := '0123456789abcdef'.
-	^(String with: (digits at: (anInteger // 16) + 1))
-		, (String with: (digits at: (anInteger \\ 16) + 1))
+	^GsRefactoringJson hex2: anInteger
 %
 
 category: 'serializing'
 method: GsChangeSignatureRefactoring
 jsonEscape: aString
-	| ws |
-	ws := WriteStream on: String new.
-	aString do: [:ch | | code |
-		code := ch asInteger.
-		ch == $" ifTrue: [ws nextPutAll: '\"']
-		ifFalse: [ch == $\ ifTrue: [ws nextPutAll: '\\']
-		ifFalse: [code = 10 ifTrue: [ws nextPutAll: '\n']
-		ifFalse: [code = 13 ifTrue: [ws nextPutAll: '\r']
-		ifFalse: [code = 9 ifTrue: [ws nextPutAll: '\t']
-		ifFalse: [code < 32
-			ifTrue: [ws nextPutAll: '\u00'; nextPutAll: (self hex2: code)]
-		ifFalse: [code > 126
-			ifTrue: [code > 65535
-				ifTrue: [ws nextPut: $?]
-				ifFalse: [ws nextPutAll: '\u';
-					nextPutAll: (self hex2: code // 256);
-					nextPutAll: (self hex2: code \\ 256)]]
-			ifFalse: [ws nextPut: ch]]]]]]]].
-	^ws contents
+	^GsRefactoringJson jsonEscape: aString
 %
 
 category: 'serializing'
 method: GsChangeSignatureRefactoring
 jsonQuote: aString
-	^'"', (self jsonEscape: aString), '"'
+	^GsRefactoringJson jsonQuote: aString
 %
 
 category: 'private'
@@ -1769,43 +1780,19 @@ pad2: anInteger
 category: 'serializing'
 classmethod: GsClassHistory
 hex2: anInteger
-	| digits |
-	digits := '0123456789abcdef'.
-	^(String with: (digits at: (anInteger // 16) + 1))
-		, (String with: (digits at: (anInteger \\ 16) + 1))
+	^GsRefactoringJson hex2: anInteger
 %
 
 category: 'serializing'
 classmethod: GsClassHistory
 jsonEscape: aString
-	"JSON string escaping emitting PURE ASCII (control chars + code points above 126
-	 become \\uXXXX), so a client's non-blocking GCI fetch is never handed a
-	 Unicode-promoted result."
-	| ws |
-	ws := WriteStream on: String new.
-	aString do: [:ch | | code |
-		code := ch asInteger.
-		ch == $" ifTrue: [ws nextPutAll: '\"']
-		ifFalse: [ch == $\ ifTrue: [ws nextPutAll: '\\']
-		ifFalse: [code = 10 ifTrue: [ws nextPutAll: '\n']
-		ifFalse: [code = 13 ifTrue: [ws nextPutAll: '\r']
-		ifFalse: [code = 9 ifTrue: [ws nextPutAll: '\t']
-		ifFalse: [code < 32
-			ifTrue: [ws nextPutAll: '\u00'; nextPutAll: (self hex2: code)]
-		ifFalse: [code > 126
-			ifTrue: [code > 65535
-				ifTrue: [ws nextPut: $?]
-				ifFalse: [ws nextPutAll: '\u';
-					nextPutAll: (self hex2: code // 256);
-					nextPutAll: (self hex2: code \\ 256)]]
-			ifFalse: [ws nextPut: ch]]]]]]]].
-	^ws contents
+	^GsRefactoringJson jsonEscape: aString
 %
 
 category: 'serializing'
 classmethod: GsClassHistory
 jsonQuote: aString
-	^'"', (self jsonEscape: aString), '"'
+	^GsRefactoringJson jsonQuote: aString
 %
 
 category: 'private'
@@ -2647,43 +2634,19 @@ applyMethodCompile: aChange
 category: 'serializing'
 method: GsExtractMethodRefactoring
 jsonQuote: aString
-	^'"', (self jsonEscape: aString), '"'
+	^GsRefactoringJson jsonQuote: aString
 %
 
 category: 'serializing'
 method: GsExtractMethodRefactoring
 jsonEscape: aString
-	"JSON string escaping emitting PURE ASCII (control chars and code points above 126
-	 become \\uXXXX), so the client's non-blocking GCI fetch is never handed a Unicode
-	 result."
-	| ws |
-	ws := WriteStream on: String new.
-	aString do: [:ch | | code |
-		code := ch asInteger.
-		ch == $" ifTrue: [ws nextPutAll: '\"']
-		ifFalse: [ch == $\ ifTrue: [ws nextPutAll: '\\']
-		ifFalse: [code = 10 ifTrue: [ws nextPutAll: '\n']
-		ifFalse: [code = 13 ifTrue: [ws nextPutAll: '\r']
-		ifFalse: [code = 9 ifTrue: [ws nextPutAll: '\t']
-		ifFalse: [code < 32
-			ifTrue: [ws nextPutAll: '\u00'; nextPutAll: (self hex2: code)]
-		ifFalse: [code > 126
-			ifTrue: [code > 65535
-				ifTrue: [ws nextPut: $?]
-				ifFalse: [ws nextPutAll: '\u';
-					nextPutAll: (self hex2: code // 256);
-					nextPutAll: (self hex2: code \\ 256)]]
-			ifFalse: [ws nextPut: ch]]]]]]]].
-	^ws contents
+	^GsRefactoringJson jsonEscape: aString
 %
 
 category: 'serializing'
 method: GsExtractMethodRefactoring
 hex2: anInteger
-	| digits |
-	digits := '0123456789abcdef'.
-	^(String with: (digits at: (anInteger // 16) + 1))
-		, (String with: (digits at: (anInteger \\ 16) + 1))
+	^GsRefactoringJson hex2: anInteger
 %
 
 category: 'instance creation'
@@ -3317,43 +3280,19 @@ applyMethodRecompile: aChange
 category: 'serializing'
 method: GsExtractTemporaryRefactoring
 jsonQuote: aString
-	^'"', (self jsonEscape: aString), '"'
+	^GsRefactoringJson jsonQuote: aString
 %
 
 category: 'serializing'
 method: GsExtractTemporaryRefactoring
 jsonEscape: aString
-	"JSON string escaping emitting PURE ASCII (control chars and code points above 126
-	 become \\uXXXX), so the client's non-blocking GCI fetch is never handed a Unicode
-	 result."
-	| ws |
-	ws := WriteStream on: String new.
-	aString do: [:ch | | code |
-		code := ch asInteger.
-		ch == $" ifTrue: [ws nextPutAll: '\"']
-		ifFalse: [ch == $\ ifTrue: [ws nextPutAll: '\\']
-		ifFalse: [code = 10 ifTrue: [ws nextPutAll: '\n']
-		ifFalse: [code = 13 ifTrue: [ws nextPutAll: '\r']
-		ifFalse: [code = 9 ifTrue: [ws nextPutAll: '\t']
-		ifFalse: [code < 32
-			ifTrue: [ws nextPutAll: '\u00'; nextPutAll: (self hex2: code)]
-		ifFalse: [code > 126
-			ifTrue: [code > 65535
-				ifTrue: [ws nextPut: $?]
-				ifFalse: [ws nextPutAll: '\u';
-					nextPutAll: (self hex2: code // 256);
-					nextPutAll: (self hex2: code \\ 256)]]
-			ifFalse: [ws nextPut: ch]]]]]]]].
-	^ws contents
+	^GsRefactoringJson jsonEscape: aString
 %
 
 category: 'serializing'
 method: GsExtractTemporaryRefactoring
 hex2: anInteger
-	| digits |
-	digits := '0123456789abcdef'.
-	^(String with: (digits at: (anInteger // 16) + 1))
-		, (String with: (digits at: (anInteger \\ 16) + 1))
+	^GsRefactoringJson hex2: anInteger
 %
 
 category: 'instance creation'
@@ -4037,43 +3976,19 @@ applyMethodRemove: aChange
 category: 'serializing'
 method: GsInlineMethodRefactoring
 jsonQuote: aString
-	^'"', (self jsonEscape: aString), '"'
+	^GsRefactoringJson jsonQuote: aString
 %
 
 category: 'serializing'
 method: GsInlineMethodRefactoring
 jsonEscape: aString
-	"JSON string escaping emitting PURE ASCII (control chars and code points above 126
-	 become \\uXXXX), so the client's non-blocking GCI fetch is never handed a Unicode
-	 result."
-	| ws |
-	ws := WriteStream on: String new.
-	aString do: [:ch | | code |
-		code := ch asInteger.
-		ch == $" ifTrue: [ws nextPutAll: '\"']
-		ifFalse: [ch == $\ ifTrue: [ws nextPutAll: '\\']
-		ifFalse: [code = 10 ifTrue: [ws nextPutAll: '\n']
-		ifFalse: [code = 13 ifTrue: [ws nextPutAll: '\r']
-		ifFalse: [code = 9 ifTrue: [ws nextPutAll: '\t']
-		ifFalse: [code < 32
-			ifTrue: [ws nextPutAll: '\u00'; nextPutAll: (self hex2: code)]
-		ifFalse: [code > 126
-			ifTrue: [code > 65535
-				ifTrue: [ws nextPut: $?]
-				ifFalse: [ws nextPutAll: '\u';
-					nextPutAll: (self hex2: code // 256);
-					nextPutAll: (self hex2: code \\ 256)]]
-			ifFalse: [ws nextPut: ch]]]]]]]].
-	^ws contents
+	^GsRefactoringJson jsonEscape: aString
 %
 
 category: 'serializing'
 method: GsInlineMethodRefactoring
 hex2: anInteger
-	| digits |
-	digits := '0123456789abcdef'.
-	^(String with: (digits at: (anInteger // 16) + 1))
-		, (String with: (digits at: (anInteger \\ 16) + 1))
+	^GsRefactoringJson hex2: anInteger
 %
 
 category: 'instance creation'
@@ -4640,43 +4555,19 @@ applyMethodRecompile: aChange
 category: 'serializing'
 method: GsInlineTemporaryRefactoring
 jsonQuote: aString
-	^'"', (self jsonEscape: aString), '"'
+	^GsRefactoringJson jsonQuote: aString
 %
 
 category: 'serializing'
 method: GsInlineTemporaryRefactoring
 jsonEscape: aString
-	"JSON string escaping emitting PURE ASCII (control chars and code points above 126
-	 become \\uXXXX), so the client's non-blocking GCI fetch is never handed a Unicode
-	 result."
-	| ws |
-	ws := WriteStream on: String new.
-	aString do: [:ch | | code |
-		code := ch asInteger.
-		ch == $" ifTrue: [ws nextPutAll: '\"']
-		ifFalse: [ch == $\ ifTrue: [ws nextPutAll: '\\']
-		ifFalse: [code = 10 ifTrue: [ws nextPutAll: '\n']
-		ifFalse: [code = 13 ifTrue: [ws nextPutAll: '\r']
-		ifFalse: [code = 9 ifTrue: [ws nextPutAll: '\t']
-		ifFalse: [code < 32
-			ifTrue: [ws nextPutAll: '\u00'; nextPutAll: (self hex2: code)]
-		ifFalse: [code > 126
-			ifTrue: [code > 65535
-				ifTrue: [ws nextPut: $?]
-				ifFalse: [ws nextPutAll: '\u';
-					nextPutAll: (self hex2: code // 256);
-					nextPutAll: (self hex2: code \\ 256)]]
-			ifFalse: [ws nextPut: ch]]]]]]]].
-	^ws contents
+	^GsRefactoringJson jsonEscape: aString
 %
 
 category: 'serializing'
 method: GsInlineTemporaryRefactoring
 hex2: anInteger
-	| digits |
-	digits := '0123456789abcdef'.
-	^(String with: (digits at: (anInteger // 16) + 1))
-		, (String with: (digits at: (anInteger \\ 16) + 1))
+	^GsRefactoringJson hex2: anInteger
 %
 
 category: 'instance creation'
@@ -5334,42 +5225,19 @@ dictObjectFor: aClass
 category: 'serializing'
 method: GsInstVarRefactoring
 jsonQuote: aString
-	^'"', (self jsonEscape: aString), '"'
+	^GsRefactoringJson jsonQuote: aString
 %
 
 category: 'serializing'
 method: GsInstVarRefactoring
 jsonEscape: aString
-	"JSON string escaping emitting PURE ASCII (control chars and code points above 126 become
-	 \\uXXXX), so the client's non-blocking GCI fetch is never handed a Unicode result."
-	| ws |
-	ws := WriteStream on: String new.
-	aString do: [:ch | | code |
-		code := ch asInteger.
-		ch == $" ifTrue: [ws nextPutAll: '\"']
-		ifFalse: [ch == $\ ifTrue: [ws nextPutAll: '\\']
-		ifFalse: [code = 10 ifTrue: [ws nextPutAll: '\n']
-		ifFalse: [code = 13 ifTrue: [ws nextPutAll: '\r']
-		ifFalse: [code = 9 ifTrue: [ws nextPutAll: '\t']
-		ifFalse: [code < 32
-			ifTrue: [ws nextPutAll: '\u00'; nextPutAll: (self hex2: code)]
-		ifFalse: [code > 126
-			ifTrue: [code > 65535
-				ifTrue: [ws nextPut: $?]
-				ifFalse: [ws nextPutAll: '\u';
-					nextPutAll: (self hex2: code // 256);
-					nextPutAll: (self hex2: code \\ 256)]]
-			ifFalse: [ws nextPut: ch]]]]]]]].
-	^ws contents
+	^GsRefactoringJson jsonEscape: aString
 %
 
 category: 'serializing'
 method: GsInstVarRefactoring
 hex2: anInteger
-	| digits |
-	digits := '0123456789abcdef'.
-	^(String with: (digits at: (anInteger // 16) + 1))
-		, (String with: (digits at: (anInteger \\ 16) + 1))
+	^GsRefactoringJson hex2: anInteger
 %
 
 category: 'instance creation'
@@ -6313,42 +6181,19 @@ dictObjectFor: aClass
 category: 'serializing'
 method: GsInstVarStructureRefactoring
 jsonQuote: aString
-	^'"', (self jsonEscape: aString), '"'
+	^GsRefactoringJson jsonQuote: aString
 %
 
 category: 'serializing'
 method: GsInstVarStructureRefactoring
 jsonEscape: aString
-	"JSON string escaping emitting PURE ASCII (control chars and code points above 126 become
-	 \\uXXXX), so the client's non-blocking GCI fetch is never handed a Unicode result."
-	| ws |
-	ws := WriteStream on: String new.
-	aString do: [:ch | | code |
-		code := ch asInteger.
-		ch == $" ifTrue: [ws nextPutAll: '\"']
-		ifFalse: [ch == $\ ifTrue: [ws nextPutAll: '\\']
-		ifFalse: [code = 10 ifTrue: [ws nextPutAll: '\n']
-		ifFalse: [code = 13 ifTrue: [ws nextPutAll: '\r']
-		ifFalse: [code = 9 ifTrue: [ws nextPutAll: '\t']
-		ifFalse: [code < 32
-			ifTrue: [ws nextPutAll: '\u00'; nextPutAll: (self hex2: code)]
-		ifFalse: [code > 126
-			ifTrue: [code > 65535
-				ifTrue: [ws nextPut: $?]
-				ifFalse: [ws nextPutAll: '\u';
-					nextPutAll: (self hex2: code // 256);
-					nextPutAll: (self hex2: code \\ 256)]]
-			ifFalse: [ws nextPut: ch]]]]]]]].
-	^ws contents
+	^GsRefactoringJson jsonEscape: aString
 %
 
 category: 'serializing'
 method: GsInstVarStructureRefactoring
 hex2: anInteger
-	| digits |
-	digits := '0123456789abcdef'.
-	^(String with: (digits at: (anInteger // 16) + 1))
-		, (String with: (digits at: (anInteger \\ 16) + 1))
+	^GsRefactoringJson hex2: anInteger
 %
 
 category: 'instance creation'
@@ -6854,43 +6699,19 @@ applyMethodRemove: aChange
 category: 'serializing'
 method: GsMoveMethodRefactoring
 jsonQuote: aString
-	^'"', (self jsonEscape: aString), '"'
+	^GsRefactoringJson jsonQuote: aString
 %
 
 category: 'serializing'
 method: GsMoveMethodRefactoring
 jsonEscape: aString
-	"JSON string escaping emitting PURE ASCII (control chars and code points above 126
-	 become \\uXXXX), so the client's non-blocking GCI fetch is never handed a Unicode
-	 result."
-	| ws |
-	ws := WriteStream on: String new.
-	aString do: [:ch | | code |
-		code := ch asInteger.
-		ch == $" ifTrue: [ws nextPutAll: '\"']
-		ifFalse: [ch == $\ ifTrue: [ws nextPutAll: '\\']
-		ifFalse: [code = 10 ifTrue: [ws nextPutAll: '\n']
-		ifFalse: [code = 13 ifTrue: [ws nextPutAll: '\r']
-		ifFalse: [code = 9 ifTrue: [ws nextPutAll: '\t']
-		ifFalse: [code < 32
-			ifTrue: [ws nextPutAll: '\u00'; nextPutAll: (self hex2: code)]
-		ifFalse: [code > 126
-			ifTrue: [code > 65535
-				ifTrue: [ws nextPut: $?]
-				ifFalse: [ws nextPutAll: '\u';
-					nextPutAll: (self hex2: code // 256);
-					nextPutAll: (self hex2: code \\ 256)]]
-			ifFalse: [ws nextPut: ch]]]]]]]].
-	^ws contents
+	^GsRefactoringJson jsonEscape: aString
 %
 
 category: 'serializing'
 method: GsMoveMethodRefactoring
 hex2: anInteger
-	| digits |
-	digits := '0123456789abcdef'.
-	^(String with: (digits at: (anInteger // 16) + 1))
-		, (String with: (digits at: (anInteger \\ 16) + 1))
+	^GsRefactoringJson hex2: anInteger
 %
 
 category: 'instance creation'
@@ -7377,43 +7198,19 @@ applyMethodRemove: aChange
 category: 'serializing'
 method: GsPushDownMethodRefactoring
 jsonQuote: aString
-	^'"', (self jsonEscape: aString), '"'
+	^GsRefactoringJson jsonQuote: aString
 %
 
 category: 'serializing'
 method: GsPushDownMethodRefactoring
 jsonEscape: aString
-	"JSON string escaping emitting PURE ASCII (control chars and code points above 126
-	 become \\uXXXX), so the client's non-blocking GCI fetch is never handed a Unicode
-	 result."
-	| ws |
-	ws := WriteStream on: String new.
-	aString do: [:ch | | code |
-		code := ch asInteger.
-		ch == $" ifTrue: [ws nextPutAll: '\"']
-		ifFalse: [ch == $\ ifTrue: [ws nextPutAll: '\\']
-		ifFalse: [code = 10 ifTrue: [ws nextPutAll: '\n']
-		ifFalse: [code = 13 ifTrue: [ws nextPutAll: '\r']
-		ifFalse: [code = 9 ifTrue: [ws nextPutAll: '\t']
-		ifFalse: [code < 32
-			ifTrue: [ws nextPutAll: '\u00'; nextPutAll: (self hex2: code)]
-		ifFalse: [code > 126
-			ifTrue: [code > 65535
-				ifTrue: [ws nextPut: $?]
-				ifFalse: [ws nextPutAll: '\u';
-					nextPutAll: (self hex2: code // 256);
-					nextPutAll: (self hex2: code \\ 256)]]
-			ifFalse: [ws nextPut: ch]]]]]]]].
-	^ws contents
+	^GsRefactoringJson jsonEscape: aString
 %
 
 category: 'serializing'
 method: GsPushDownMethodRefactoring
 hex2: anInteger
-	| digits |
-	digits := '0123456789abcdef'.
-	^(String with: (digits at: (anInteger // 16) + 1))
-		, (String with: (digits at: (anInteger \\ 16) + 1))
+	^GsRefactoringJson hex2: anInteger
 %
 
 category: 'instance creation'
@@ -7938,43 +7735,19 @@ applyMethodRemove: aChange
 category: 'serializing'
 method: GsPushUpMethodRefactoring
 jsonQuote: aString
-	^'"', (self jsonEscape: aString), '"'
+	^GsRefactoringJson jsonQuote: aString
 %
 
 category: 'serializing'
 method: GsPushUpMethodRefactoring
 jsonEscape: aString
-	"JSON string escaping emitting PURE ASCII (control chars and code points above 126
-	 become \\uXXXX), so the client's non-blocking GCI fetch is never handed a Unicode
-	 result."
-	| ws |
-	ws := WriteStream on: String new.
-	aString do: [:ch | | code |
-		code := ch asInteger.
-		ch == $" ifTrue: [ws nextPutAll: '\"']
-		ifFalse: [ch == $\ ifTrue: [ws nextPutAll: '\\']
-		ifFalse: [code = 10 ifTrue: [ws nextPutAll: '\n']
-		ifFalse: [code = 13 ifTrue: [ws nextPutAll: '\r']
-		ifFalse: [code = 9 ifTrue: [ws nextPutAll: '\t']
-		ifFalse: [code < 32
-			ifTrue: [ws nextPutAll: '\u00'; nextPutAll: (self hex2: code)]
-		ifFalse: [code > 126
-			ifTrue: [code > 65535
-				ifTrue: [ws nextPut: $?]
-				ifFalse: [ws nextPutAll: '\u';
-					nextPutAll: (self hex2: code // 256);
-					nextPutAll: (self hex2: code \\ 256)]]
-			ifFalse: [ws nextPut: ch]]]]]]]].
-	^ws contents
+	^GsRefactoringJson jsonEscape: aString
 %
 
 category: 'serializing'
 method: GsPushUpMethodRefactoring
 hex2: anInteger
-	| digits |
-	digits := '0123456789abcdef'.
-	^(String with: (digits at: (anInteger // 16) + 1))
-		, (String with: (digits at: (anInteger \\ 16) + 1))
+	^GsRefactoringJson hex2: anInteger
 %
 
 category: 'instance creation'
@@ -8053,11 +7826,7 @@ dictName
 category: 'serializing'
 method: GsRefactoringChange
 hex2: anInteger
-	"Two lowercase hex digits for a 0..255 code point."
-	| digits |
-	digits := '0123456789abcdef'.
-	^(String with: (digits at: (anInteger // 16) + 1))
-		, (String with: (digits at: (anInteger \\ 16) + 1))
+	^GsRefactoringJson hex2: anInteger
 %
 
 category: 'accessing'
@@ -8773,6 +8542,48 @@ onSymbolList: aSymbolList
 	^self basicNew setSymbolList: aSymbolList
 %
 
+category: 'json'
+classmethod: GsRefactoringJson
+hex2: anInteger
+	| digits |
+	digits := '0123456789abcdef'.
+	^(String with: (digits at: (anInteger // 16) + 1))
+		, (String with: (digits at: (anInteger \\ 16) + 1))
+%
+
+category: 'json'
+classmethod: GsRefactoringJson
+jsonEscape: aString
+	"JSON string escaping emitting PURE ASCII (control chars and code points above 126
+	 become \\uXXXX), so the client's non-blocking GCI fetch is never handed a
+	 Unicode-promoted result."
+	| ws |
+	ws := WriteStream on: String new.
+	aString do: [:ch | | code |
+		code := ch asInteger.
+		ch == $" ifTrue: [ws nextPutAll: '\"']
+		ifFalse: [ch == $\ ifTrue: [ws nextPutAll: '\\']
+		ifFalse: [code = 10 ifTrue: [ws nextPutAll: '\n']
+		ifFalse: [code = 13 ifTrue: [ws nextPutAll: '\r']
+		ifFalse: [code = 9 ifTrue: [ws nextPutAll: '\t']
+		ifFalse: [code < 32
+			ifTrue: [ws nextPutAll: '\u00'; nextPutAll: (self hex2: code)]
+		ifFalse: [code > 126
+			ifTrue: [code > 65535
+				ifTrue: [ws nextPut: $?]
+				ifFalse: [ws nextPutAll: '\u';
+					nextPutAll: (self hex2: code // 256);
+					nextPutAll: (self hex2: code \\ 256)]]
+			ifFalse: [ws nextPut: ch]]]]]]]].
+	^ws contents
+%
+
+category: 'json'
+classmethod: GsRefactoringJson
+jsonQuote: aString
+	^'"', (self jsonEscape: aString), '"'
+%
+
 category: 'private'
 method: GsRenameClassRefactoring
 setShapeSource: aClass
@@ -9426,43 +9237,19 @@ removeBinding: aName ifValueIs: aClass
 category: 'serializing'
 method: GsRenameClassRefactoring
 hex2: anInteger
-	| digits |
-	digits := '0123456789abcdef'.
-	^(String with: (digits at: (anInteger // 16) + 1))
-		, (String with: (digits at: (anInteger \\ 16) + 1))
+	^GsRefactoringJson hex2: anInteger
 %
 
 category: 'serializing'
 method: GsRenameClassRefactoring
 jsonEscape: aString
-	"JSON string escaping emitting PURE ASCII (control chars and code points above 126
-	 become \\uXXXX), so the client's non-blocking GCI fetch is never handed a
-	 Unicode-promoted result."
-	| ws |
-	ws := WriteStream on: String new.
-	aString do: [:ch | | code |
-		code := ch asInteger.
-		ch == $" ifTrue: [ws nextPutAll: '\"']
-		ifFalse: [ch == $\ ifTrue: [ws nextPutAll: '\\']
-		ifFalse: [code = 10 ifTrue: [ws nextPutAll: '\n']
-		ifFalse: [code = 13 ifTrue: [ws nextPutAll: '\r']
-		ifFalse: [code = 9 ifTrue: [ws nextPutAll: '\t']
-		ifFalse: [code < 32
-			ifTrue: [ws nextPutAll: '\u00'; nextPutAll: (self hex2: code)]
-		ifFalse: [code > 126
-			ifTrue: [code > 65535
-				ifTrue: [ws nextPut: $?]
-				ifFalse: [ws nextPutAll: '\u';
-					nextPutAll: (self hex2: code // 256);
-					nextPutAll: (self hex2: code \\ 256)]]
-			ifFalse: [ws nextPut: ch]]]]]]]].
-	^ws contents
+	^GsRefactoringJson jsonEscape: aString
 %
 
 category: 'serializing'
 method: GsRenameClassRefactoring
 jsonQuote: aString
-	^'"', (self jsonEscape: aString), '"'
+	^GsRefactoringJson jsonQuote: aString
 %
 
 category: 'instance creation'
@@ -9857,43 +9644,19 @@ skippedMethodsJsonString
 category: 'serializing'
 method: GsRenameClassVariableRefactoring
 jsonEscape: aString
-	"JSON string escaping emitting PURE ASCII (control chars and code points above 126
-	 become \\uXXXX), so the client's non-blocking GCI fetch is never handed a
-	 Unicode-promoted result."
-	| ws |
-	ws := WriteStream on: String new.
-	aString do: [:ch | | code |
-		code := ch asInteger.
-		ch == $" ifTrue: [ws nextPutAll: '\"']
-		ifFalse: [ch == $\ ifTrue: [ws nextPutAll: '\\']
-		ifFalse: [code = 10 ifTrue: [ws nextPutAll: '\n']
-		ifFalse: [code = 13 ifTrue: [ws nextPutAll: '\r']
-		ifFalse: [code = 9 ifTrue: [ws nextPutAll: '\t']
-		ifFalse: [code < 32
-			ifTrue: [ws nextPutAll: '\u00'; nextPutAll: (self hex2: code)]
-		ifFalse: [code > 126
-			ifTrue: [code > 65535
-				ifTrue: [ws nextPut: $?]
-				ifFalse: [ws nextPutAll: '\u';
-					nextPutAll: (self hex2: code // 256);
-					nextPutAll: (self hex2: code \\ 256)]]
-			ifFalse: [ws nextPut: ch]]]]]]]].
-	^ws contents
+	^GsRefactoringJson jsonEscape: aString
 %
 
 category: 'serializing'
 method: GsRenameClassVariableRefactoring
 jsonQuote: aString
-	^'"', (self jsonEscape: aString), '"'
+	^GsRefactoringJson jsonQuote: aString
 %
 
 category: 'serializing'
 method: GsRenameClassVariableRefactoring
 hex2: anInteger
-	| digits |
-	digits := '0123456789abcdef'.
-	^(String with: (digits at: (anInteger // 16) + 1))
-		, (String with: (digits at: (anInteger \\ 16) + 1))
+	^GsRefactoringJson hex2: anInteger
 %
 
 category: 'paginated preview'
@@ -10248,6 +10011,240 @@ stageMethodRecompilesInto: aChangeSet
 						newSource: newSrc]]]]
 %
 
+category: 'applying'
+method: GsRenameInstanceVariableRefactoring
+applyDeselected: deselectedIds
+	"Apply the rename in the stone WITHOUT committing (the user commits explicitly).
+
+	 Renaming an instance variable RESHAPES the defining class, and a reshape means a
+	 NEW CLASS VERSION whose method dictionary starts EMPTY. Recompiling only the
+	 methods in the change set would therefore destroy every other method on the class
+	 -- including class-side methods, which can never appear in the change set because
+	 they cannot access an instance variable at all. So every method is COPIED FORWARD
+	 onto the new version: the accessing ones with their rewritten source, the rest
+	 verbatim. Same for every subclass, which is re-versioned in turn because its
+	 superclass changed shape.
+
+	 A change whose id is in deselectedIds is deliberately NOT carried forward -- the
+	 user chose to drop that method rather than have it reference the new name. That is
+	 the only way a method disappears here.
+
+	 Answers {applied, failed:[..]}."
+	| deselected failures applied newDefining |
+	deselected := self deselectedSelectorsFrom: deselectedIds.
+	failures := OrderedCollection new.
+	applied := 0.
+	newDefining := self
+		reversion: definingClass
+		superclass: definingClass superclass
+		instVarNames: (self renamedInstVarNamesOf: definingClass)
+		deselected: deselected
+		into: failures.
+	applied := applied + 1.
+	(environment descendantsOf: definingClass) do: [:sub | | parent |
+		parent := (sub superclass == definingClass)
+			ifTrue: [newDefining]
+			ifFalse: [environment classNamed: sub superclass name].
+		self
+			reversion: sub
+			superclass: parent
+			instVarNames: (sub instVarNames collect: [:e | e asString])
+			deselected: deselected
+			into: failures.
+		applied := applied + 1].
+	^self applyEnvelopeApplied: applied failures: failures
+%
+
+category: 'private - applying'
+method: GsRenameInstanceVariableRefactoring
+applyEnvelopeApplied: applied failures: failures
+	"The {applied, failed:[..]} envelope the client parses, matching the other
+	 refactorings' apply results."
+	^'{"applied":', applied printString,
+	  ',"failed":[',
+	  ((failures collect: [:f |
+		'{"id":', (self jsonQuote: (f at: 1)),
+		',"label":', (self jsonQuote: (f at: 2)),
+		',"error":', (self jsonQuote: (f at: 3)), '}'])
+			inject: '' into: [:acc :s | acc isEmpty ifTrue: [s] ifFalse: [acc, ',', s]]),
+	  ']}'
+%
+
+category: 'private - applying'
+method: GsRenameInstanceVariableRefactoring
+deselectedSelectorsFrom: deselectedIds
+	"The {className. selector} pairs the user chose not to carry forward, as a Set of
+	 'Class>>sel' keys. Ids that name no staged change are ignored.
+
+	 The ids arrive from the client as literals in GCI-compiled source, which 3.6.2 can
+	 promote to Unicode strings; comparing one of those to the change's own (byte)
+	 String raises 'Unicode argument disallowed in String comparison' (error 2718).
+	 asSymbol canonicalises both sides, so the comparison is an identity test on
+	 Symbols and never touches String comparison. (Same workaround as
+	 GsRenameMethodRefactoring.)"
+	| ids result |
+	result := Set new.
+	ids := ((deselectedIds ifNil: [#()]) collect: [:e | e asSymbol]) asIdentitySet.
+	self changeSet changes do: [:c |
+		((ids includes: c id asSymbol) and: [c kind = #methodRecompile])
+			ifTrue: [result add: (self keyForClassNamed: c className selector: c selector)]].
+	^result
+%
+
+category: 'private - applying'
+method: GsRenameInstanceVariableRefactoring
+keyForClassNamed: aName selector: aSelector
+	^aName asString, '>>', aSelector asString
+%
+
+category: 'private - applying'
+method: GsRenameInstanceVariableRefactoring
+newSourceFor: aClass selector: aSelector
+	"The rewritten source staged for this method, or nil when no change was staged
+	 (the method does not access the variable and is carried forward verbatim)."
+	^(self changeSet changes
+		detect: [:c |
+			c kind = #methodRecompile
+				and: [c className asString = aClass name asString
+					and: [c selector asString = aSelector asString]]]
+		ifNone: [nil])
+			ifNil: [nil]
+			ifNotNil: [:change | change newSource]
+%
+
+category: 'private - applying'
+method: GsRenameInstanceVariableRefactoring
+renamedInstVarNamesOf: aClass
+	"aClass's OWN instance-variable names with the renamed one substituted."
+	^aClass instVarNames collect: [:n |
+		n asSymbol == oldNameSym ifTrue: [newName] ifFalse: [n asString]]
+%
+
+category: 'private - applying'
+method: GsRenameInstanceVariableRefactoring
+reversion: old superclass: sup instVarNames: ivars deselected: deselected into: failures
+	"Create the new version of `old` under `sup` with `ivars`, then carry every method
+	 forward onto it. Answers the new version."
+	| new |
+	new := self makeNewVersionOf: old superclass: sup instVarNames: ivars.
+	self copyMethodsFrom: old to: new deselected: deselected into: failures.
+	^new
+%
+
+category: 'private - applying'
+method: GsRenameInstanceVariableRefactoring
+makeNewVersionOf: old superclass: sup instVarNames: ivars
+	"A new version in `old`'s class history, under `sup`, with `ivars` as its own
+	 instance variables.
+
+	 Passes `old format` explicitly rather than using the plain newVersionOf: form,
+	 which derives format from the superclass and so silently drops the class's own
+	 format bits (byte vs pointer vs NSC vs indexable, and options such as
+	 instancesInvariant). Threading `inClassHistory: old classHistory` keeps it a
+	 version of the same class, so class-variable values and the class category carry
+	 forward automatically. (Same construction as GsRenameClassRefactoring.)"
+	^sup
+		_subclass: old name asString
+		instVarNames: ivars
+		format: old format
+		classVars: (old classVarNames collect: [:e | e asString])
+		classInstVars: (old class instVarNames collect: [:e | e asString])
+		poolDictionaries: old sharedPools
+		inDictionary: (self dictObjectFor: old)
+		inClassHistory: old classHistory
+		description: ([old commentForFileout] on: Error do: [:e | ''])
+		options: #()
+%
+
+category: 'private - applying'
+method: GsRenameInstanceVariableRefactoring
+copyMethodsFrom: old to: new deselected: deselected into: failures
+	"Carry every method of `old` onto `new`, both sides. An accessing method compiles
+	 from its staged, rewritten source; every other method compiles from its existing
+	 source unchanged. A new class version starts with an empty method dictionary, so
+	 this is the only thing that keeps the behaviour alive.
+
+	 Class-side methods cannot reference an instance variable, so they are always
+	 copied verbatim and are never deselectable."
+	old selectors do: [:sel |
+		(deselected includes: (self keyForClassNamed: old name selector: sel))
+			ifFalse: [self copyMethod: sel from: old to: new meta: false into: failures]].
+	old class selectors do: [:sel |
+		self copyMethod: sel from: old class to: new class meta: true into: failures]
+%
+
+category: 'private - applying'
+method: GsRenameInstanceVariableRefactoring
+copyMethod: sel from: srcCls to: dstCls meta: isMeta into: failures
+	"Compile one method onto the new version, preserving its category -- without it the
+	 method silently lands in 'as yet unclassified'. A method that fails to compile is
+	 recorded rather than allowed to vanish unremarked."
+	| m src cat result label |
+	m := srcCls compiledMethodAt: sel environmentId: 0 otherwise: nil.
+	m isNil ifTrue: [^self].
+	src := isMeta
+		ifTrue: [m sourceString]
+		ifFalse: [(self newSourceFor: srcCls selector: sel) ifNil: [m sourceString]].
+	cat := (srcCls categoryOfSelector: sel environmentId: 0) ifNil: ['as yet unclassified'].
+	result := dstCls
+		compileMethod: src
+		dictionaries: System myUserProfile symbolList
+		category: cat asString.
+	"compileMethod: answers nil on success and a non-empty Array of error tuples on a
+	 compile failure. A failed method is not installed, so record it."
+	(result isNil or: [(result isKindOf: Array) and: [result isEmpty]]) ifFalse: [
+		label := isMeta
+			ifTrue: [dstCls thisClass name asString, ' class>>', sel asString]
+			ifFalse: [dstCls name asString, '>>', sel asString].
+		failures add: (Array with: label with: label with: 'did not recompile')]
+%
+
+category: 'private - applying'
+method: GsRenameInstanceVariableRefactoring
+dictObjectFor: aClass
+	"The SymbolDictionary that defines aClass's name, for inDictionary:. Falls back to
+	 UserGlobals if none is found (should not happen for a bound class)."
+	| dicts |
+	dicts := environment dictionariesDefiningClassNamed: aClass name.
+	^dicts isEmpty
+		ifTrue: [environment symbolList objectNamed: #UserGlobals]
+		ifFalse: [dicts first]
+%
+
+category: 'serializing'
+method: GsRenameInstanceVariableRefactoring
+jsonQuote: aString
+	^GsRefactoringJson jsonQuote: aString
+%
+
+category: 'serializing'
+method: GsRenameInstanceVariableRefactoring
+jsonEscape: aString
+	^GsRefactoringJson jsonEscape: aString
+%
+
+category: 'serializing'
+method: GsRenameInstanceVariableRefactoring
+hex2: anInteger
+	^GsRefactoringJson hex2: anInteger
+%
+
+category: 'previewing'
+method: GsRenameInstanceVariableRefactoring
+startPreviewToken: token
+	"Build the change set, stash this refactoring in SessionTemps under token, and
+	 answer it. The token lets the client APPLY server-side afterwards
+	 (applyForToken:deselected:) instead of replaying the changes itself -- which is
+	 what keeps every untouched method alive, since only the engine knows to copy the
+	 whole method dictionary onto the new class version.
+
+	 Nothing is compiled and nothing is committed."
+	self changeSet.
+	SessionTemps current at: token asSymbol put: self.
+	^'{"token":', (self jsonQuote: token),
+	  ',"changes":', self changeSet jsonString, '}'
+%
+
 category: 'instance creation'
 classmethod: GsRenameInstanceVariableRefactoring
 class: aClass renameInstVar: oldNameString to: newNameString
@@ -10267,6 +10264,23 @@ environment: anEnvironment class: aClass oldName: oldNameString newName: newName
 		class: aClass
 		oldName: oldNameString
 		newName: newNameString
+%
+
+category: 'applying'
+classmethod: GsRenameInstanceVariableRefactoring
+applyForToken: token deselected: deselectedIds
+	"Apply a previously-started preview (by token), skipping deselectedIds. No
+	 commit. Answers an error envelope if the preview session has expired."
+	^(SessionTemps current at: token asSymbol ifAbsent: [nil])
+		ifNil: ['{"applied":0,"failed":[],"error":"preview session expired"}']
+		ifNotNil: [:ref | ref applyDeselected: deselectedIds]
+%
+
+category: 'previewing'
+classmethod: GsRenameInstanceVariableRefactoring
+clearToken: token
+	"Drop a finished preview from SessionTemps."
+	SessionTemps current removeKey: token asSymbol ifAbsent: []
 %
 
 category: 'building'
@@ -10436,46 +10450,19 @@ outOfScopeJsonString
 category: 'private'
 method: GsRenameMethodRefactoring
 hex2: anInteger
-	"Two lowercase hex digits for a 0..255 code point."
-	| digits |
-	digits := '0123456789abcdef'.
-	^(String with: (digits at: (anInteger // 16) + 1))
-		, (String with: (digits at: (anInteger \\ 16) + 1))
+	^GsRefactoringJson hex2: anInteger
 %
 
 category: 'private'
 method: GsRenameMethodRefactoring
 jsonEscape: aString
-	"JSON string escaping emitting PURE ASCII (control chars and code points above
-	 126 become \uXXXX), for a class name, selector, or error message. Keeps the
-	 payload a byte String so the client's non-blocking GCI fetch is never handed a
-	 Unicode-promoted result."
-	| ws |
-	ws := WriteStream on: String new.
-	aString do: [:ch | | code |
-		code := ch asInteger.
-		ch == $" ifTrue: [ws nextPutAll: '\"']
-		ifFalse: [ch == $\ ifTrue: [ws nextPutAll: '\\']
-		ifFalse: [code = 10 ifTrue: [ws nextPutAll: '\n']
-		ifFalse: [code = 13 ifTrue: [ws nextPutAll: '\r']
-		ifFalse: [code = 9 ifTrue: [ws nextPutAll: '\t']
-		ifFalse: [code < 32
-			ifTrue: [ws nextPutAll: '\u00'; nextPutAll: (self hex2: code)]
-		ifFalse: [code > 126
-			ifTrue: [code > 65535
-				ifTrue: [ws nextPut: $?]
-				ifFalse: [ws nextPutAll: '\u';
-					nextPutAll: (self hex2: code // 256);
-					nextPutAll: (self hex2: code \\ 256)]]
-			ifFalse: [ws nextPut: ch]]]]]]]].
-	^ws contents
+	^GsRefactoringJson jsonEscape: aString
 %
 
 category: 'private'
 method: GsRenameMethodRefactoring
 jsonQuote: aString
-	"aString as a quoted, escaped JSON string."
-	^'"', (self jsonEscape: aString), '"'
+	^GsRefactoringJson jsonQuote: aString
 %
 
 category: 'accessing'
@@ -11192,43 +11179,19 @@ applyMethodRecompile: aChange
 category: 'serializing'
 method: GsRenameTemporaryRefactoring
 jsonQuote: aString
-	^'"', (self jsonEscape: aString), '"'
+	^GsRefactoringJson jsonQuote: aString
 %
 
 category: 'serializing'
 method: GsRenameTemporaryRefactoring
 jsonEscape: aString
-	"JSON string escaping emitting PURE ASCII (control chars and code points above
-	 126 become \\uXXXX), so the client's non-blocking GCI fetch is never handed a
-	 Unicode-promoted result."
-	| ws |
-	ws := WriteStream on: String new.
-	aString do: [:ch | | code |
-		code := ch asInteger.
-		ch == $" ifTrue: [ws nextPutAll: '\"']
-		ifFalse: [ch == $\ ifTrue: [ws nextPutAll: '\\']
-		ifFalse: [code = 10 ifTrue: [ws nextPutAll: '\n']
-		ifFalse: [code = 13 ifTrue: [ws nextPutAll: '\r']
-		ifFalse: [code = 9 ifTrue: [ws nextPutAll: '\t']
-		ifFalse: [code < 32
-			ifTrue: [ws nextPutAll: '\u00'; nextPutAll: (self hex2: code)]
-		ifFalse: [code > 126
-			ifTrue: [code > 65535
-				ifTrue: [ws nextPut: $?]
-				ifFalse: [ws nextPutAll: '\u';
-					nextPutAll: (self hex2: code // 256);
-					nextPutAll: (self hex2: code \\ 256)]]
-			ifFalse: [ws nextPut: ch]]]]]]]].
-	^ws contents
+	^GsRefactoringJson jsonEscape: aString
 %
 
 category: 'serializing'
 method: GsRenameTemporaryRefactoring
 hex2: anInteger
-	| digits |
-	digits := '0123456789abcdef'.
-	^(String with: (digits at: (anInteger // 16) + 1))
-		, (String with: (digits at: (anInteger \\ 16) + 1))
+	^GsRefactoringJson hex2: anInteger
 %
 
 category: 'instance creation'

@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import * as crypto from 'crypto';
 import { SessionManager, ActiveSession } from './sessionManager';
 import * as queries from './browserQueries';
 import { ALL_METHODS_CATEGORY, SESSION_METHODS_CATEGORY } from './systemBrowser';
@@ -18,10 +19,13 @@ import { registerExplorerOpenEditors } from './explorerOpenEditors';
 import { SourceEditorPlacement } from './sourceEditorPlacement';
 import { generateAndSaveGrailStub } from './grailStubGenerator';
 import {
-  RenameChange,
-  parseRenameChanges,
+  RenamePreview,
+  RenameApplyResult,
+  parseRenamePreview,
+  parseRenameApplyResult,
   orderChangesClassDefFirst,
-  planRenameApply,
+  deselectedIdsFrom,
+  deselectedLabels,
   validateNewIvarName,
 } from './refactoring/renameInstVarPreview';
 import { showRenameInstVarPanel } from './refactoring/renameInstVarPanel';
@@ -465,6 +469,24 @@ async function pickClassByPrefix(
   } finally {
     qp.dispose();
   }
+}
+
+// Unchecking a method in the rename-instance-variable preview does not "leave it
+// alone" — the class is re-versioned, and a method that isn't carried onto the new
+// version is gone. Deleting a method can be exactly what the user wants, but it
+// should never be a surprise, so name the casualties and make them say yes.
+async function confirmDroppedMethods(labels: string[]): Promise<boolean> {
+  const shown = labels.slice(0, 5).join(', ');
+  const more = labels.length > 5 ? ` (+${labels.length - 5} more)` : '';
+  const DELETE = 'Delete Them';
+  const choice = await vscode.window.showWarningMessage(
+    `${labels.length} unchecked method${labels.length === 1 ? '' : 's'} will be DELETED, not ` +
+      `left unchanged: ${shown}${more}. Renaming reshapes the class, and a method that isn't ` +
+      'recompiled cannot be carried onto the new version.',
+    { modal: true },
+    DELETE,
+  );
+  return choice === DELETE;
 }
 
 type MethodCommandArg = MethodItem | { selector: string; isMeta: boolean } | undefined;
@@ -1665,21 +1687,9 @@ export class ExplorerController {
     const session = this.session();
     if (!session) return false;
 
-    // The engine ships as an optional, separately-installed payload (bundled with
-    // the Enhanced Inspector). When it isn't loaded, offer to install the optional
-    // GemStone support; the install relatches the probe, so re-read it and only
-    // continue if the engine is now present.
-    if (!session.rbSupportAvailable) {
-      const LOAD = 'Install GemStone Support…';
-      const choice = await vscode.window.showInformationMessage(
-        'Renaming instance variables needs the GemStone refactoring engine, which ' +
-          "isn't loaded in this stone yet.",
-        LOAD,
-      );
-      if (choice !== LOAD) return false;
-      await vscode.commands.executeCommand('gemstone.installServerSupport');
-      if (!this.session()?.rbSupportAvailable) return false;
-    }
+    // The engine ships as an optional, separately-installed payload; gate through
+    // the shared helper so the install-then-re-check logic lives in one place.
+    if (!(await this.ensureRbSupport('Renaming an instance variable'))) return false;
 
     const oldName = ivarName;
     const entered = await vscode.window.showInputBox({
@@ -1693,6 +1703,20 @@ export class ExplorerController {
     const newName = entered.trim();
     if (newName === oldName) return false;
 
+    // The preview is addressed by token so the APPLY runs server-side: renaming an
+    // instance variable reshapes the class, and a reshape starts a new class version
+    // with an EMPTY method dictionary. Only the engine can copy the whole method
+    // dictionary forward, so a client that replayed the staged changes itself would
+    // destroy every method the change set doesn't mention.
+    const token = `rivPreview_${crypto.randomBytes(8).toString('hex')}`;
+    const safeClear = (): void => {
+      try {
+        queries.clearRenameInstVarPreview(session, token);
+      } catch {
+        /* best-effort — the token expires with the session anyway */
+      }
+    };
+
     let json: string;
     try {
       json = await vscode.window.withProgress(
@@ -1702,7 +1726,9 @@ export class ExplorerController {
           cancellable: false,
         },
         () =>
-          Promise.resolve(queries.previewRenameInstVar(session, className, oldName, newName, dict)),
+          Promise.resolve(
+            queries.startRenameInstVarPreview(session, className, oldName, newName, token, dict),
+          ),
       );
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -1710,105 +1736,123 @@ export class ExplorerController {
       return false;
     }
 
-    let changes: RenameChange[];
+    let preview: RenamePreview;
     try {
-      changes = parseRenameChanges(json);
+      preview = parseRenamePreview(json);
     } catch {
       const detail = json.length > 200 ? `${json.slice(0, 200)}…` : json;
       void vscode.window.showErrorMessage(`Rename preview failed: ${detail}`);
+      safeClear();
       return false;
     }
 
-    if (changes.length === 0) {
+    if (preview.changes.length === 0) {
       void vscode.window.showInformationMessage(
         `No references to '${oldName}' were found in ${className} or its ` +
           'subclasses; nothing to rename.',
       );
+      safeClear();
       return false;
     }
 
     // Preview in the custom panel (all changes pre-checked, before/after diffs);
     // the user unchecks any they don't want and hits Apply.
-    const ordered = orderChangesClassDefFirst(changes);
+    const ordered = orderChangesClassDefFirst(preview.changes);
     const selectedIds = await showRenameInstVarPanel(oldName, newName, ordered);
-    if (!selectedIds || selectedIds.length === 0) return false;
+    if (!selectedIds || selectedIds.length === 0) {
+      safeClear();
+      return false;
+    }
 
-    await this.applyRename(session, ordered, selectedIds, oldName, newName);
-    return true;
+    // Unchecking a method means it is NOT carried onto the new class version, i.e.
+    // it is deleted. That is a reasonable thing to ask for, but not a good thing to
+    // discover afterwards, so confirm it explicitly.
+    const dropping = deselectedLabels(ordered, selectedIds);
+    if (dropping.length > 0 && !(await confirmDroppedMethods(dropping))) {
+      safeClear();
+      return false;
+    }
+
+    const applied = await this.applyRenameInstVar(
+      session,
+      token,
+      deselectedIdsFrom(ordered, selectedIds),
+      className,
+      oldName,
+      newName,
+    );
+    safeClear();
+    return applied;
   }
 
-  // Recompile the selected changes in the stone: the class-definition edit first
-  // (so methods recompile against the new class shape), then each method under
-  // its own category. Everything compiles in the stone but NOTHING is committed —
-  // the user commits explicitly, as everywhere else in Jasper.
-  private async applyRename(
+  // Apply the rename SERVER-SIDE, without committing. The engine re-versions the
+  // defining class and every subclass and copies all their methods onto the new
+  // versions — accessing methods from their rewritten source, everything else
+  // verbatim — so nothing the change set never mentioned is lost. `deselectedIds`
+  // are the methods the user chose to drop; the class-definition edit is structural
+  // and can never be among them. Answers true when the rename was applied.
+  private async applyRenameInstVar(
     session: ActiveSession,
-    ordered: RenameChange[],
-    selectedIds: string[],
+    token: string,
+    deselectedIds: string[],
+    className: string,
     oldName: string,
     newName: string,
-  ): Promise<void> {
-    // Ordering (class definition first), dictionary-index resolution, and the
-    // category default are computed as a pure plan so those rules are unit-tested
-    // directly; here we just execute each step with no commit.
-    const steps = planRenameApply(
-      ordered,
-      selectedIds,
-      queries.getDictionaryNames(session),
-      this.state.dictName,
-    );
-    const failures: string[] = [];
-    let applied = 0;
-    await vscode.window.withProgress(
-      {
-        location: vscode.ProgressLocation.Notification,
-        title: `Applying rename '${oldName}' → '${newName}'…`,
-        cancellable: false,
-      },
-      async () => {
-        for (const step of steps) {
-          try {
-            if (step.kind === 'classDefinitionEdit') {
-              queries.compileClassDefinition(session, step.newSource);
-            } else {
-              queries.compileMethod(
-                session,
-                step.className,
-                step.isMeta,
-                step.category,
-                step.newSource,
-                0,
-                step.dictIndex,
-              );
-            }
-            applied += 1;
-          } catch (e: unknown) {
-            const msg = e instanceof Error ? e.message : String(e);
-            failures.push(`${step.label}: ${msg}`);
-          }
-        }
-      },
-    );
-
-    // The class was just reshaped/recompiled — reload the defined-ivar data
-    // (dropping the memoized names) and refresh so the ivar sub-tree and method
-    // list reflect the new name.
-    this.loadDefinedIvarCounts();
-    this.classProvider.refresh();
-    this.methodProvider.refresh();
-
-    if (failures.length > 0) {
-      void vscode.window.showErrorMessage(
-        `Rename applied ${applied} of ${steps.length} change(s); ` +
-          `${failures.length} failed: ${failures[0]}` +
-          (failures.length > 1 ? ` (+${failures.length - 1} more)` : ''),
+  ): Promise<boolean> {
+    let result: RenameApplyResult;
+    try {
+      result = await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: `Applying rename '${oldName}' → '${newName}'…`,
+          cancellable: false,
+        },
+        () =>
+          Promise.resolve(
+            parseRenameApplyResult(queries.applyRenameInstVar(session, token, deselectedIds)),
+          ),
       );
-      return;
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      void vscode.window.showErrorMessage(`Rename failed: ${msg}`);
+      return false;
+    }
+
+    // The defining class and every subclass were reshaped onto new versions, so the
+    // cached method environment is stale. Do a full reshape refresh keyed on the
+    // DEFINING class: it re-fetches the environment and re-selects that class (not a
+    // subclass) via revealClass, so the method pane shows the carried-forward methods
+    // of the right class rather than re-rendering stale data.
+    this.loadDefinedIvarCounts();
+    await this.refreshAfterClassReshape(className);
+    // Land on the renamed variable's row on the defining class. Best-effort: reveal
+    // rejects if the row isn't in the rebuilt tree, which we ignore.
+    this.views?.klass
+      .reveal(new IvarItem(className, newName, this.classHasSubclasses(className)), {
+        select: true,
+        focus: true,
+      })
+      .then(undefined, () => {});
+
+    if (result.error !== undefined) {
+      void vscode.window.showErrorMessage(`Rename failed: ${result.error}`);
+      return false;
+    }
+    if (result.failed.length > 0) {
+      void vscode.window.showErrorMessage(
+        `Renamed '${oldName}' → '${newName}', but ${result.failed.length} method(s) did not ` +
+          `recompile onto the new class version: ${result.failed[0].label}` +
+          (result.failed.length > 1 ? ` (+${result.failed.length - 1} more)` : '') +
+          '. Compiled but NOT committed — abort if this is not what you wanted.',
+      );
+      return true;
     }
     void vscode.window.showInformationMessage(
-      `Renamed '${oldName}' → '${newName}' (${applied} change${applied === 1 ? '' : 's'}). ` +
+      `Renamed '${oldName}' → '${newName}' (${result.applied} class` +
+        `${result.applied === 1 ? '' : 'es'} re-versioned). ` +
         'Compiled but NOT committed — commit when ready.',
     );
+    return true;
   }
 
   // Rename this method / selector across its implementors and senders, within a
@@ -1843,17 +1887,9 @@ export class ExplorerController {
     const session = this.session();
     if (!session) return false;
 
-    if (!session.rbSupportAvailable) {
-      const LOAD = 'Install GemStone Support…';
-      const choice = await vscode.window.showInformationMessage(
-        "Renaming a method needs the GemStone refactoring engine, which isn't " +
-          'loaded in this stone yet.',
-        LOAD,
-      );
-      if (choice !== LOAD) return false;
-      await vscode.commands.executeCommand('gemstone.installServerSupport');
-      if (!this.session()?.rbSupportAvailable) return false;
-    }
+    // Gate through the shared helper (see renameInstVarNamed) — one place for the
+    // install-then-re-check logic instead of a verbatim copy per call site.
+    if (!(await this.ensureRbSupport('Renaming a method'))) return false;
 
     const oldSelector = selector;
 
@@ -2044,7 +2080,9 @@ export class ExplorerController {
   }
 
   // Ensure the refactoring engine is loaded, offering to install it if not.
-  // Returns true when it is (now) available. Shared by rename-class and history.
+  // Returns true when it is (now) available — re-checks rbSupportAvailable AFTER the
+  // install command so a failed/declined install cleanly returns false. The single
+  // gate for every rename refactoring (ivar, method, class, class-var) + class history.
   private async ensureRbSupport(action: string): Promise<boolean> {
     const session = this.session();
     if (!session) return false;

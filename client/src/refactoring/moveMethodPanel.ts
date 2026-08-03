@@ -6,18 +6,14 @@
  * undefined if cancelled/closed. UI-only: the caller supplies the page/apply/cleanup
  * handlers.
  *
- * Reuses Jasper's webview convention and the shared renameMethodPanelView.js (read at
- * runtime, injected under a nonce) for diff/pagination/apply behaviour. Because every
- * row is required (checked + disabled), the deselected set the view reports is always
- * empty; apply passes it through unchanged.
+ * Thin wrapper over the shared `showMethodRelocationPanel` scaffold, supplying move's
+ * view-type, title, and render functions. Because every row is required (checked +
+ * disabled), the deselected set the view reports is always empty; apply passes it
+ * through unchanged.
  */
-import * as vscode from 'vscode';
-import * as crypto from 'crypto';
 import { StartMovePreview, PreviewPage, ApplyResult } from './moveMethodPreview';
 import { renderMovePanelHtml, renderMoveCards } from './moveMethodPanelHtml';
-import { readWebviewScript } from '../webviewAssets';
-
-const panelJs = readWebviewScript('renameMethodPanelView.js', 'refactoring');
+import { showMethodRelocationPanel } from './methodRelocationPanel';
 
 export interface MoveMethodPanelHandlers {
   /** Fetch the page starting at `offset` (1-based). */
@@ -35,97 +31,25 @@ export function showMoveMethodPanel(
   start: StartMovePreview,
   handlers: MoveMethodPanelHandlers,
 ): Promise<ApplyResult | undefined> {
-  const panel = vscode.window.createWebviewPanel(
-    'gemstoneMoveMethod',
-    `Move to ${targetClass}`,
-    vscode.ViewColumn.Active,
-    { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [] },
+  return showMethodRelocationPanel(
+    start,
+    {
+      viewType: 'gemstoneMoveMethod',
+      title: `Move to ${targetClass}`,
+      errorPrefix: 'Move preview',
+      renderCards: renderMoveCards,
+      renderHtml: (nonce, script) =>
+        renderMovePanelHtml({
+          targetClass,
+          total: start.total,
+          changes: start.page.changes,
+          done: start.page.done,
+          outOfScope: start.outOfScope,
+          skippedMethods: start.skippedMethods,
+          nonce,
+          script,
+        }),
+    },
+    handlers,
   );
-
-  const nonce = crypto.randomBytes(16).toString('hex');
-  panel.webview.html = renderMovePanelHtml({
-    targetClass,
-    total: start.total,
-    changes: start.page.changes,
-    done: start.page.done,
-    outOfScope: start.outOfScope,
-    skippedMethods: start.skippedMethods,
-    nonce,
-    script: panelJs,
-  });
-
-  let offset = start.page.nextOffset;
-  let done = start.page.done;
-
-  return new Promise<ApplyResult | undefined>((resolve) => {
-    let settled = false;
-    const finish = (result: ApplyResult | undefined): void => {
-      if (settled) return;
-      settled = true;
-      handlers.cleanup();
-      resolve(result);
-      panel.dispose();
-    };
-
-    const fetchOne = async (): Promise<boolean> => {
-      const page = await handlers.loadPage(offset);
-      void panel.webview.postMessage({
-        command: 'appendChanges',
-        html: renderMoveCards(page.changes),
-        done: page.done,
-      });
-      offset = page.nextOffset;
-      done = page.done;
-      return done;
-    };
-
-    let loading = false;
-    // Apply is one-shot per panel: `handlers.apply` performs the change set server-side, so a
-    // second dispatch (a double-click on Apply, or a replayed webview message) would apply it a
-    // second time. Cleared only in the catch below, which leaves the panel open for a retry.
-    let applying = false;
-    panel.webview.onDidReceiveMessage((message) => {
-      void (async () => {
-        try {
-          if (message?.command === 'loadMore' || message?.command === 'loadAll') {
-            if (loading) return;
-            if (done) {
-              void panel.webview.postMessage({ command: 'busyDone' });
-              return;
-            }
-            loading = true;
-            try {
-              if (message.command === 'loadAll') {
-                while (!done) {
-                  await fetchOne();
-                }
-              } else {
-                await fetchOne();
-              }
-            } finally {
-              loading = false;
-            }
-          } else if (message?.command === 'apply') {
-            if (applying) return;
-            applying = true;
-            const deselected: string[] = Array.isArray(message.deselected)
-              ? message.deselected
-              : [];
-            const result = await handlers.apply(deselected);
-            finish(result);
-          } else if (message?.command === 'cancel') {
-            finish(undefined);
-          }
-        } catch (e: unknown) {
-          loading = false;
-          applying = false;
-          const msg = e instanceof Error ? e.message : String(e);
-          void vscode.window.showErrorMessage(`Move preview: ${msg}`);
-          void panel.webview.postMessage({ command: 'busyDone' });
-        }
-      })();
-    });
-
-    panel.onDidDispose(() => finish(undefined));
-  });
 }

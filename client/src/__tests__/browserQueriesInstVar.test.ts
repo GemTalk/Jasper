@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
-vi.mock('vscode', () => import('../__mocks__/vscode'));
+vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 // Stub the shared query builders so we can assert the extension-side wrappers delegate to them
 // with the right arguments and hand back their result, without a live GCI transport.
 vi.mock('../refactoring/queries/previewInstVar', () => ({

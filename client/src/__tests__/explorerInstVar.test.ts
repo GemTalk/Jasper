@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
-vi.mock('vscode', () => import('../__mocks__/vscode'));
+vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 // The controller module pulls in browserQueries (→ native GCI). Stub it; this test drives the
 // add/remove handlers with the command mocked and the tree navigation spied out.
 vi.mock('../browserQueries', () => ({}));

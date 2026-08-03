@@ -26,11 +26,16 @@ Two things the family did not surface before, both required here:
     option list a given class's new version is built with. (The panel does not surface options
     for editing; editedOptions is plumbing for a future options editor and is left nil.)
 
-  - METHODS THAT WILL NOT RECOMPILE. A method that references a removed instance variable no
-    longer resolves the name; GemStone will not compile a reference to an undeclared lowercase
-    identifier, so such a method fails to compile and is silently DROPPED from the new version. The
-    set is predicted (without compiling) from bytecode-level instance-variable access, surfaced in
-    the preview as willNotRecompile, and reported (dropped) after apply.
+  - METHODS THAT WILL NOT RECOMPILE, predicted (without compiling) for BOTH operations, surfaced in
+    the preview as willNotRecompile, and reported (dropped) after apply. Two distinct causes:
+      * #remove -- the method references the removed variable, so the name no longer resolves.
+        Found by bytecode-level instance-variable access (GsNMethod>>instVarsAccessed).
+      * #add    -- the method declares a method-level TEMPORARY or an ARGUMENT of the name the new
+        variable is about to occupy. GemStone refuses that shadowing declaration (verified on 3.6.2
+        and 3.7.5), and compileMethod: answers an error Array rather than raising, so the method is
+        simply not installed. Found by parsing each method's source, since a compiled method keeps
+        no temporary/argument names. Block arguments and block temporaries may shadow freely and are
+        deliberately NOT reported.
 
 IMPORTANT commit semantics (surfaced in the preview):
   - The structural change (new versions + method copy-forward + reparents) NEVER commits on its own.
@@ -661,38 +666,15 @@ GsInstVarRefactoring >> dictObjectFor: aClass [
 
 { #category : 'serializing' }
 GsInstVarRefactoring >> jsonQuote: aString [
-	^'"', (self jsonEscape: aString), '"'
+	^GsRefactoringJson jsonQuote: aString
 ]
 
 { #category : 'serializing' }
 GsInstVarRefactoring >> jsonEscape: aString [
-	"JSON string escaping emitting PURE ASCII (control chars and code points above 126 become
-	 \\uXXXX), so the client's non-blocking GCI fetch is never handed a Unicode result."
-	| ws |
-	ws := WriteStream on: String new.
-	aString do: [:ch | | code |
-		code := ch asInteger.
-		ch == $" ifTrue: [ws nextPutAll: '\"']
-		ifFalse: [ch == $\ ifTrue: [ws nextPutAll: '\\']
-		ifFalse: [code = 10 ifTrue: [ws nextPutAll: '\n']
-		ifFalse: [code = 13 ifTrue: [ws nextPutAll: '\r']
-		ifFalse: [code = 9 ifTrue: [ws nextPutAll: '\t']
-		ifFalse: [code < 32
-			ifTrue: [ws nextPutAll: '\u00'; nextPutAll: (self hex2: code)]
-		ifFalse: [code > 126
-			ifTrue: [code > 65535
-				ifTrue: [ws nextPut: $?]
-				ifFalse: [ws nextPutAll: '\u';
-					nextPutAll: (self hex2: code // 256);
-					nextPutAll: (self hex2: code \\ 256)]]
-			ifFalse: [ws nextPut: ch]]]]]]]].
-	^ws contents
+	^GsRefactoringJson jsonEscape: aString
 ]
 
 { #category : 'serializing' }
 GsInstVarRefactoring >> hex2: anInteger [
-	| digits |
-	digits := '0123456789abcdef'.
-	^(String with: (digits at: (anInteger // 16) + 1))
-		, (String with: (digits at: (anInteger \\ 16) + 1))
+	^GsRefactoringJson hex2: anInteger
 ]

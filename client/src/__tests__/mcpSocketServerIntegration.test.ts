@@ -8,7 +8,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-vi.mock('vscode', () => import('../__mocks__/vscode'));
+vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 // Delegate browserQueries so we can observe which tool ran without invoking
 // real GCI. The integration we care about is: MCP client → socket → McpServer
 // → registerMcpTools → getSession() → browserQueries.*
