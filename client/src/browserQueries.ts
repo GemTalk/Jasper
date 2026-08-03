@@ -107,6 +107,14 @@ import {
   clearMoveMethodPreview as sharedClearMoveMethodPreview,
 } from './refactoring/queries/previewMoveMethod';
 import {
+  InstVarOp,
+  analyzeInstVar as sharedAnalyzeInstVar,
+  startInstVarPreview as sharedStartInstVarPreview,
+  pageInstVarPreview as sharedPageInstVarPreview,
+  applyInstVar as sharedApplyInstVar,
+  clearInstVarPreview as sharedClearInstVarPreview,
+} from './refactoring/queries/previewInstVar';
+import {
   analyzeExtractTemporary as sharedAnalyzeExtractTemporary,
   startExtractTemporaryPreview as sharedStartExtractTemporaryPreview,
   pageExtractTemporaryPreview as sharedPageExtractTemporaryPreview,
@@ -1281,6 +1289,65 @@ export function applyMoveMethod(
 
 export function clearMoveMethodPreview(session: ActiveSession, token: string): string {
   return sharedClearMoveMethodPreview(defaultQueryExecutorUsing(session), token);
+}
+
+// Add / remove instance-variable (V1) preview: pre-flight analysis (decline reason,
+// affected count, how many methods will not recompile), paginated start/page fetched
+// NON-BLOCKING, server-side apply. The structural change never commits; migrate /
+// delete-history do (and are opt-in). `options` (or null) replaces the acted-on class's
+// class options.
+export function analyzeInstVar(
+  session: ActiveSession,
+  op: InstVarOp,
+  className: string,
+  ivarName: string,
+  dict?: number | string,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Analysing…');
+  return sharedAnalyzeInstVar(exec, op, className, ivarName, dict);
+}
+
+export function startInstVarPreview(
+  session: ActiveSession,
+  op: InstVarOp,
+  className: string,
+  ivarName: string,
+  token: string,
+  maxBytes: number,
+  dict?: number | string,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Previewing…');
+  return sharedStartInstVarPreview(exec, op, className, ivarName, token, maxBytes, dict);
+}
+
+export function pageInstVarPreview(
+  session: ActiveSession,
+  token: string,
+  offset: number,
+  maxBytes: number,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Loading more changes…');
+  return sharedPageInstVarPreview(exec, token, offset, maxBytes);
+}
+
+export function applyInstVar(
+  session: ActiveSession,
+  token: string,
+  deselectedIds: string[],
+  options: string[] | null,
+  migrate: boolean,
+  deleteHistory: boolean,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Applying…');
+  return sharedApplyInstVar(exec, token, deselectedIds, options, migrate, deleteHistory);
+}
+
+export function clearInstVarPreview(session: ActiveSession, token: string): string {
+  return sharedClearInstVarPreview(defaultQueryExecutorUsing(session), token);
 }
 
 // Extract-temporary (M3) preview: pre-flight analysis, paginated start/page fetched

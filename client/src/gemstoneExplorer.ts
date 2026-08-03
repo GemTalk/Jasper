@@ -30,6 +30,7 @@ import {
 } from './refactoring/renameInstVarPreview';
 import { showRenameInstVarPanel } from './refactoring/renameInstVarPanel';
 import { renameInstVarAtCursorCommand } from './refactoring/renameInstVarAtCursorCommand';
+import { runInstVarRefactor } from './refactoring/instVarRefactorCommand';
 import { renameClassVarAtCursorCommand } from './refactoring/renameClassVarAtCursorCommand';
 import {
   renameMethodAtCursorCommand,
@@ -270,7 +271,9 @@ class VarSideItem extends vscode.TreeItem {
   ) {
     super(isMeta ? 'class' : 'instance', vscode.TreeItemCollapsibleState.Expanded);
     this.id = `k:${className}/vside:${isMeta}`;
-    this.contextValue = 'explorerVarSide';
+    // Split by side so the inline "+" (Add Instance Variable) targets only the
+    // instance side; the class side keeps the base token.
+    this.contextValue = isMeta ? 'explorerVarSide.class' : 'explorerVarSide.instance';
     this.iconPath = new vscode.ThemeIcon('symbol-class');
     this.tooltip = isMeta
       ? `Class variables of ${className}`
@@ -1491,6 +1494,83 @@ export class ExplorerController {
   // first) WITHOUT committing. The user commits explicitly, as everywhere else.
   async renameInstVar(item: IvarItem): Promise<void> {
     await this.renameInstVarNamed(item.className, item.ivarName, this.state.dictIndex);
+  }
+
+  // ---- Add / remove instance variable (V1) --------------------------------------
+  // The engine recompiles the class (a new version), so both flows preview the
+  // affected classes, surface the methods that will not recompile, and offer opt-in
+  // (committing) instance migration / history deletion.
+
+  // "+" on the instance variable-side node, or right-click on a class row: prompt for
+  // a name and add it as an instance variable of that class.
+  async addInstVarOnClass(className: string): Promise<void> {
+    const session = this.session();
+    if (!session) return;
+    const entered = await vscode.window.showInputBox({
+      title: 'Add Instance Variable',
+      prompt: `Add an instance variable to ${className}.`,
+      placeHolder: 'newVariableName',
+      validateInput: (v) => {
+        const t = v.trim();
+        if (t.length === 0) return 'Enter a name.';
+        return /^[A-Za-z_][A-Za-z0-9_]*$/.test(t)
+          ? undefined
+          : 'Not a valid instance-variable name.';
+      },
+    });
+    if (entered === undefined) return;
+    const name = entered.trim();
+    if (name.length === 0) return;
+    const outcome = await runInstVarRefactor({
+      session,
+      op: 'add',
+      className,
+      ivarName: name,
+      dict: this.state.dictIndex,
+    });
+    if (outcome) {
+      await this.refreshAfterClassReshape(className);
+      // Select the newly-added instance variable: refreshAfterClassReshape re-reveals
+      // the CLASS, which would otherwise steal the selection, so re-reveal the new
+      // ivar row last. Best-effort — the row (and its instance-side parent) must be in
+      // the rebuilt tree, else fall back to the instance-variable side node.
+      try {
+        await this.views?.klass.reveal(new IvarItem(className, name), {
+          select: true,
+          focus: false,
+        });
+      } catch {
+        try {
+          await this.views?.klass.reveal(new VarSideItem(className, false), {
+            select: true,
+            focus: false,
+          });
+        } catch {
+          /* best-effort — leave the class selected if neither row can be revealed */
+        }
+      }
+    }
+  }
+
+  // "+" inline on the "instance" variable-side node.
+  async addInstVarFromSide(item: VarSideItem): Promise<void> {
+    if (item.isMeta) return; // class-variable side is out of scope
+    await this.addInstVarOnClass(item.className);
+  }
+
+  // "−" inline on an instance-variable row: remove it (with the will-not-recompile
+  // preview).
+  async removeInstVar(item: IvarItem): Promise<void> {
+    const session = this.session();
+    if (!session) return;
+    const outcome = await runInstVarRefactor({
+      session,
+      op: 'remove',
+      className: item.className,
+      ivarName: item.ivarName,
+      dict: this.state.dictIndex,
+    });
+    if (outcome) await this.refreshAfterClassReshape(item.className);
   }
 
   // Move an instance variable up the hierarchy (▲) or down into subclasses (▼), from the ivar
@@ -3597,6 +3677,14 @@ export function registerGemStoneExplorer(
     // Rename a locally-defined instance variable (pencil on the ivar row).
     vscode.commands.registerCommand('gemstone.explorer.renameIvar', (item?: IvarItem) => {
       if (item instanceof IvarItem) void ctl.renameInstVar(item);
+    }),
+    // Add / remove an instance variable (V1).
+    vscode.commands.registerCommand('gemstone.explorer.addInstVar', (item?: unknown) => {
+      if (item instanceof VarSideItem) void ctl.addInstVarFromSide(item);
+      else if (item instanceof ClassItem) void ctl.addInstVarOnClass(item.className);
+    }),
+    vscode.commands.registerCommand('gemstone.explorer.removeInstVar', (item?: IvarItem) => {
+      if (item instanceof IvarItem) void ctl.removeInstVar(item);
     }),
     // Move an instance variable up to a chosen ancestor (▲) — ivar row context menu.
     vscode.commands.registerCommand('gemstone.explorer.moveUpInstVar', (item?: IvarItem) => {
