@@ -36,7 +36,11 @@ import {
   getClassVersions as sharedGetClassVersions,
   ClassVersionInfo,
 } from './refactoring/queries/getClassVersions';
-import { previewRenameInstVar as sharedPreviewRenameInstVar } from './refactoring/queries/previewRenameInstVar';
+import {
+  startRenameInstVarPreview as sharedStartRenameInstVarPreview,
+  applyRenameInstVar as sharedApplyRenameInstVar,
+  clearRenameInstVarPreview as sharedClearRenameInstVarPreview,
+} from './refactoring/queries/previewRenameInstVar';
 import {
   startRenameMethodPreview as sharedStartRenameMethodPreview,
   pageRenameMethodPreview as sharedPageRenameMethodPreview,
@@ -684,20 +688,34 @@ export function getClassVersions(
   return sharedGetClassVersions(defaultQueryExecutorUsing(session), dict);
 }
 
-export function previewRenameInstVar(
+export function startRenameInstVarPreview(
   session: ActiveSession,
   className: string,
   oldName: string,
   newName: string,
+  token: string,
   dict?: number | string,
 ): string {
-  return sharedPreviewRenameInstVar(
+  return sharedStartRenameInstVarPreview(
     defaultQueryExecutorUsing(session),
     className,
     oldName,
     newName,
+    token,
     dict,
   );
+}
+
+export function applyRenameInstVar(
+  session: ActiveSession,
+  token: string,
+  deselectedIds: string[],
+): string {
+  return sharedApplyRenameInstVar(defaultQueryExecutorUsing(session), token, deselectedIds);
+}
+
+export function clearRenameInstVarPreview(session: ActiveSession, token: string): string {
+  return sharedClearRenameInstVarPreview(defaultQueryExecutorUsing(session), token);
 }
 
 // Paginated rename-method preview: fetched NON-BLOCKING so a slow build shows a
