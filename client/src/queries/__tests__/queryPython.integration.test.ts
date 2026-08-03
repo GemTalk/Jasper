@@ -72,7 +72,9 @@ describe('python queries (integration)', () => {
 
     it('reports a clear hint when Grail is not installed', (ctx) => {
       requireGrailAbsent(ctx, exec);
+
       const result = evalPython(exec, '2 + 3');
+
       expect(result).toContain('Grail');
     });
   });
@@ -83,7 +85,9 @@ describe('python queries (integration)', () => {
     // regression guards as eval_python).
     it('returns the generated Smalltalk source for a Python expression', (ctx) => {
       requireGrail(ctx, exec);
+
       const result = compilePython(exec, '1 + 1');
+
       // Whatever Grail emits, it must be ASCII-clean and non-empty.
       expect(result.length).toBeGreaterThan(0);
       expect(result).not.toContain(' ');

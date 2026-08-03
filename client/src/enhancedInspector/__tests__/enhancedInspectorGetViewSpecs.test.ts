@@ -59,7 +59,9 @@ describe('getEnhancedInspectorViewSpecs', () => {
   it('returns non-null array when JSON array elements lack view spec properties', () => {
     expect.assertions(2);
     const execute = vi.fn(() => '[1,2,3]');
+
     const result = getEnhancedInspectorViewSpecs(execute, 1000n);
+
     expect(result).not.toBeNull();
     expect(result).toHaveLength(3);
   });
