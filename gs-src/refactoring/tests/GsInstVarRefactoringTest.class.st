@@ -645,6 +645,23 @@ GsInstVarRefactoringTest >> testDeleteHistoryTrimsPriorVersionsToCurrent [
 ]
 
 { #category : 'tests - apply' }
+GsInstVarRefactoringTest >> testMigrateAllInstancesNeverRaisesWithoutACommit [
+	"migrateAllInstances must answer an Integer failure count and never propagate an exception --
+	 that is what stops a partial migration failure (migrateInstancesTo: reports it in the RETURN
+	 VALUE, not by raising) or a raise from being silently swallowed as a clean success. Here the
+	 structural change is uncommitted, so migrateInstancesTo: raises (it needs a clean transaction)
+	 and the method must CATCH and count it. The real apply commits before migrating; the full
+	 migrate+commit round trip is exercised via GCI, which cannot run in a no-commit SUnit test."
+	| ref result |
+	ref := self add: 'tally'.
+	ref applyDeselected: #() options: nil migrate: false deleteHistory: false.
+	result := ref migrateAllInstances.
+
+	self assert: (result isKindOf: Integer).
+	self assert: result >= 0
+]
+
+{ #category : 'tests - apply' }
 GsInstVarRefactoringTest >> testApplyRemoveDropsBrokenMethodsAndReportsThem [
 	| refactoring result |
 	refactoring := self remove: 'count'.

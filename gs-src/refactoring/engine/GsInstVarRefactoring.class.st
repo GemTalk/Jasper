@@ -558,18 +558,55 @@ GsInstVarRefactoring >> applyDeselected: deselectedIds options: optsArray migrat
 { #category : 'applying' }
 GsInstVarRefactoring >> commitStructuralThenMigrate: aBool deleteHistory: dBool on: failures [
 	"With the structural change applied in the transaction, commit it (migrateInstancesTo: needs a
-	 clean transaction), then -- if asked -- migrate instances of each old version to its new one
-	 and commit, and delete every prior version from each versioned class's history and commit."
+	 clean transaction), then -- if asked -- migrate instances of each old version to its new one and
+	 delete every prior version from each versioned class's history.
+
+	 migrateInstancesTo: reports instances it could NOT migrate in its RETURN VALUE (five sets: set 1
+	 migrated, sets 2..5 failures) and does not raise on a partial failure, so migrateAllInstances
+	 inspects those reports and answers a failure count; a nonzero count is folded into failures
+	 rather than silently swallowed as a clean success. Prior versions are pruned only when nothing
+	 was left stranded -- deleting the version whose instances did not migrate would orphan them."
 	[System commitTransaction.
 	 committed := true.
-	 aBool ifTrue: [
-		oldToNew keysAndValuesDo: [:old :new | old migrateInstancesTo: new].
-		System commitTransaction].
-	 dBool ifTrue: [
+	 aBool ifTrue: [ | failed |
+		failed := self migrateAllInstances.
+		failed > 0 ifTrue: [
+			failures add: (Array with: 'migrate' with: 'migrate'
+				with: failed printString,
+					(failed = 1
+						ifTrue: [' instance could not be migrated to the new class version']
+						ifFalse: [' instances could not be migrated to the new class version']))]].
+	 (dBool and: [failures isEmpty]) ifTrue: [
 		oldToNew valuesDo: [:new | self deletePriorVersionsOf: new].
 		System commitTransaction]]
 	on: Error do: [:e |
 		failures add: (Array with: 'commit' with: 'commit' with: e messageText)]
+]
+
+{ #category : 'applying' }
+GsInstVarRefactoring >> migrateAllInstances [
+	"Migrate every instance of each superseded version (the keys of oldToNew) to its new version.
+	 Answers the number of instances that FAILED to migrate. migrateInstancesTo: answers five sets
+	 (set 1 = migrated, sets 2..5 = failures) and does NOT raise on a partial failure, so its report
+	 must be summed; a migrateInstancesTo: that DOES raise is counted as at least one failure and is
+	 never propagated. Mirrors GsInstVarStructureRefactoring>>migrateAllInstances.
+
+	 MOST-DERIVED FIRST: a subclass instance is also an instance of its old superclass version, so
+	 migrating an ancestor before the subclass would report that not-yet-moved instance as a failure.
+	 Deepest-first means each instance is migrated by its own class. migrateInstancesTo: also needs a
+	 CLEAN transaction, so commit after each class, not once at the end. The caller has already
+	 committed the structural change."
+	| failed |
+	failed := 0.
+	(oldToNew keys asSortedCollection: [:a :b | a allSuperclasses size >= b allSuperclasses size])
+		do: [:old | | new |
+			new := oldToNew at: old.
+			[| report |
+			 report := old migrateInstancesTo: new.
+			 2 to: report size do: [:i | failed := failed + (report at: i) size].
+			 System commitTransaction]
+			on: Error do: [:e | failed := failed + 1]].
+	^failed
 ]
 
 { #category : 'applying' }
