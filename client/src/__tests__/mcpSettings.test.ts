@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
-vi.mock('vscode', () => import('../__mocks__/vscode'));
+vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
 import { __resetConfig, __setConfig } from '../__mocks__/vscode';
 import { readMcpSetting } from '../mcpSettings';

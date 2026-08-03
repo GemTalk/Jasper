@@ -17,7 +17,7 @@
 // SKIPS there. To actually run it, point .env.test / .env.test.local at a
 // Rowan-enabled stone (start one from `extent0.rowan3.dbf`).
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-vi.mock('vscode', () => import('../../../__mocks__/vscode'));
+vi.mock('vscode', () => import('../../../__mocks__/vscode.js'));
 
 import * as fs from 'fs';
 import * as os from 'os';

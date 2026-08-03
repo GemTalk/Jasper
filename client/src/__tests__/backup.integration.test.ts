@@ -4,7 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 
 // Real GCI, but stub the `vscode` module the query layer pulls in via gciLog.
-vi.mock('vscode', () => import('../__mocks__/vscode'));
+vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
 import { useIntegrationTest } from './useIntegrationTest';
 import { GciLibrary } from '../gciLibrary';

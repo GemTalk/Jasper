@@ -98,6 +98,34 @@ describe('instance-variable structure query builders', () => {
       const [, code] = exec.mock.calls[0];
       expect(code).not.toContain('moveAccessors:');
     });
+
+    it('builds a move send carrying the destination classes and the direction', async () => {
+      const exec = vi.fn().mockResolvedValue('{}');
+
+      await analyzeInstVarStructure(exec, 'move', 'Mid', 'x', 2, undefined, false, {
+        targets: ['LeafA', 'LeafB'],
+        direction: 'down',
+      });
+
+      const [, code] = exec.mock.calls[0];
+      expect(code).toContain(
+        "GsInstVarStructureRefactoring class: cls moveInstVar: 'x' toClasses: #('LeafA' 'LeafB') direction: #down",
+      );
+    });
+
+    it('opts into moving accessors on a move when asked', async () => {
+      const exec = vi.fn().mockResolvedValue('{}');
+
+      await analyzeInstVarStructure(exec, 'move', 'Sub', 'x', 2, undefined, true, {
+        targets: ['Base'],
+        direction: 'up',
+      });
+
+      const [, code] = exec.mock.calls[0];
+      expect(code).toContain(
+        "(GsInstVarStructureRefactoring class: cls moveInstVar: 'x' toClasses: #('Base') direction: #up) moveAccessors: true",
+      );
+    });
   });
 
   describe('startInstVarStructurePreview', () => {
@@ -146,6 +174,28 @@ describe('instance-variable structure query builders', () => {
 
       const [, code] = exec.mock.calls[0];
       expect(code).toContain('{"decline":"Class not found: Ghost"}');
+    });
+
+    it('builds a move preview send with the destinations and direction', async () => {
+      const exec = vi.fn().mockResolvedValue('{}');
+
+      await startInstVarStructurePreview(
+        exec,
+        'move',
+        'Mid',
+        'x',
+        'tok2',
+        4096,
+        2,
+        undefined,
+        true,
+        { targets: ['LeafA'], direction: 'down' },
+      );
+
+      const [, code] = exec.mock.calls[0];
+      expect(code).toContain("moveInstVar: 'x' toClasses: #('LeafA') direction: #down");
+      expect(code).toContain('ref moveAccessors: true.');
+      expect(code).toContain("startPreviewToken: 'tok2'");
     });
   });
 

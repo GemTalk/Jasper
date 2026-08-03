@@ -7,7 +7,7 @@ every affected class top-down, creates a new version with its computed own-instV
 its methods forward, and re-parents it under the new parent chain (the R3 newVersionOf:
 mechanism).
 
-This suite pins down, on a Base -> Mid -> {Leaf, Leaf2} hierarchy:
+This suite pins down, on a Base -> Mid -> {Leaf, Twig} hierarchy:
 
   - V5: converting a method temporary adds it as an instance variable and drops its
     declaration from the method; declines when the name is already an instance variable or is
@@ -17,7 +17,10 @@ This suite pins down, on a Base -> Mid -> {Leaf, Leaf2} hierarchy:
     or when a sibling already declares the same name (collision on inherit);
   - V3: pushing an own ivar down moves it into every immediate subclass and removes it from the
     class; declines when the class still uses the ivar in its own methods or has no subclasses;
-  - across all three: the whole subtree's METHODS survive the reversioning, the subtree stays
+  - V4: the general #move -- up to any chosen ancestor, or down to a chosen subset of
+    descendants -- declining a non-ancestor/non-descendant target, a multi-superclass up-move,
+    and a partial push-down that would leave a still-using class without the ivar;
+  - across all four: the whole subtree's METHODS survive the reversioning, the subtree stays
     correctly parented, and building compiles/commits nothing.
 
 setUp builds the throwaway hierarchy in UserGlobals; tearDown removes it.
@@ -105,7 +108,7 @@ GsInstVarStructureRefactoringTest >> setUp [
 		poolDictionaries: #()
 		inDictionary: UserGlobals.
 	mid
-		subclass: 'GsVSLeaf2'
+		subclass: 'GsVSTwig'
 		instVarNames: #('dup')
 		classVars: #()
 		classInstVars: #()
@@ -119,7 +122,7 @@ GsInstVarStructureRefactoringTest >> setUp [
 
 { #category : 'running' }
 GsInstVarStructureRefactoringTest >> tearDown [
-	#('GsVSLeaf' 'GsVSLeaf2' 'GsVSMid' 'GsVSBase')
+	#('GsVSLeaf' 'GsVSTwig' 'GsVSMid' 'GsVSBase')
 		do: [:nm | UserGlobals removeKey: nm asSymbol ifAbsent: []]
 ]
 
@@ -242,7 +245,7 @@ GsInstVarStructureRefactoringTest >> testPushUpDeclinesWhenNotAnOwnIvar [
 { #category : 'tests - V2 push up' }
 GsInstVarStructureRefactoringTest >> testPushUpDeclinesOnSiblingCollision [
 	| ref |
-	"Both Leaf and Leaf2 declare 'dup'; pushing Leaf's up to Mid would collide on Leaf2."
+	"Both Leaf and GsVSTwig declare 'dup'; pushing Leaf's up to Mid would collide on GsVSTwig."
 	ref := GsInstVarStructureRefactoring class: (self classNamed: 'GsVSLeaf') pushUpInstVar: 'dup'.
 
 	self assert: ref decline notNil.
@@ -259,7 +262,7 @@ GsInstVarStructureRefactoringTest >> testPushDownMovesIvarIntoEverySubclass [
 	self assert: ref decline isNil.
 	self assert: (self editChangeFor: 'GsVSMid' in: cs) notNil.
 	self assert: (self editChangeFor: 'GsVSLeaf' in: cs) notNil.
-	self assert: (self editChangeFor: 'GsVSLeaf2' in: cs) notNil
+	self assert: (self editChangeFor: 'GsVSTwig' in: cs) notNil
 ]
 
 { #category : 'tests - V3 push down' }
@@ -271,7 +274,7 @@ GsInstVarStructureRefactoringTest >> testPushDownAppliesMovingTheDeclaration [
 	self deny: json includesSubstring: '"failed":[{'.
 	self deny: (self ownIvarsOf: 'GsVSMid') includes: 'pushable'.
 	self assert: (self ownIvarsOf: 'GsVSLeaf') includes: 'pushable'.
-	self assert: (self ownIvarsOf: 'GsVSLeaf2') includes: 'pushable'.
+	self assert: (self ownIvarsOf: 'GsVSTwig') includes: 'pushable'.
 	self assert: ((self classNamed: 'GsVSMid') includesSelector: #midM).
 	self assert: ((self classNamed: 'GsVSLeaf') includesSelector: #leafM)
 ]
@@ -350,6 +353,280 @@ GsInstVarStructureRefactoringTest >> testApplyForTokenOnAnExpiredSessionAnswersA
 GsInstVarStructureRefactoringTest >> testPageForTokenOnAnExpiredSessionAnswersAnError [
 	self assert: (GsInstVarStructureRefactoring pageForToken: 'nope' from: 1 maxBytes: 1000)
 		includesSubstring: 'expired'
+]
+
+{ #category : 'tests - V4 move' }
+GsInstVarStructureRefactoringTest >> testMoveUpToAGrandparentAncestor [
+	"#up carries the declaration to ANY chosen ancestor, not just the immediate superclass.
+	 Moving Leaf's 'leaf' to Base (its grandparent): Base gains it, Leaf loses its own copy
+	 (still reachable by inheritance)."
+	| ref cs |
+	ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSLeaf') moveInstVar: 'leaf' toClasses: #('GsVSBase') direction: #up.
+	cs := ref changeSet.
+
+	self assert: ref decline isNil.
+	self assert: ref topClass name asString equals: 'GsVSBase'.
+	self assert: (self editChangeFor: 'GsVSBase' in: cs) notNil.
+	self assert: (self editChangeFor: 'GsVSLeaf' in: cs) notNil
+]
+
+{ #category : 'tests - V4 move' }
+GsInstVarStructureRefactoringTest >> testMoveUpAppliesToAncestor [
+	| json |
+	json := (GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSLeaf') moveInstVar: 'leaf' toClasses: #('GsVSBase') direction: #up)
+		applyDeselected: #().
+
+	self deny: json includesSubstring: '"failed":[{'.
+	self assert: (self ownIvarsOf: 'GsVSBase') includes: 'leaf'.
+	self deny: (self ownIvarsOf: 'GsVSLeaf') includes: 'leaf'.
+	self assert: (self allIvarsOf: 'GsVSLeaf') includes: 'leaf'.
+	"the leaf reader still resolves against the now-inherited ivar"
+	self assert: ((self classNamed: 'GsVSLeaf') includesSelector: #leafM)
+]
+
+{ #category : 'tests - V4 move' }
+GsInstVarStructureRefactoringTest >> testMoveUpDeclinesWhenTargetIsNotAnAncestor [
+	| ref |
+	ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSLeaf') moveInstVar: 'leaf' toClasses: #('GsVSTwig') direction: #up.
+
+	self assert: ref decline notNil.
+	self assert: ref decline includesSubstring: 'is not a superclass of'.
+	self assert: ref changeSet isEmpty
+]
+
+{ #category : 'tests - V4 move' }
+GsInstVarStructureRefactoringTest >> testMoveUpDeclinesOnMoreThanOneSuperclass [
+	| ref |
+	ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSLeaf') moveInstVar: 'leaf' toClasses: #('GsVSMid' 'GsVSBase') direction: #up.
+
+	self assert: ref decline notNil.
+	self assert: ref decline includesSubstring: 'more than one superclass'.
+	self assert: ref changeSet isEmpty
+]
+
+{ #category : 'tests - V4 move' }
+GsInstVarStructureRefactoringTest >> testMoveUpDeclinesOnSiblingCollision [
+	"'dup' is owned by both Leaf and GsVSTwig; pushing Leaf's up to Mid would collide with GsVSTwig's
+	 once inherited."
+	| ref |
+	ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSLeaf') moveInstVar: 'dup' toClasses: #('GsVSMid') direction: #up.
+
+	self assert: ref decline notNil.
+	self assert: ref decline includesSubstring: 'GsVSTwig'.
+	self assert: ref changeSet isEmpty
+]
+
+{ #category : 'tests - V4 move' }
+GsInstVarStructureRefactoringTest >> testMoveDownToASelectedSubset [
+	"#down carries the declaration to a CHOSEN subset of subclasses (unlike push-down, which
+	 goes to every immediate subclass). Moving Mid's 'pushable' to only Leaf: Leaf gains it,
+	 Mid and GsVSTwig end up without it."
+	| json |
+	json := (GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSMid') moveInstVar: 'pushable' toClasses: #('GsVSLeaf') direction: #down)
+		applyDeselected: #().
+
+	self deny: json includesSubstring: '"failed":[{'.
+	self deny: (self ownIvarsOf: 'GsVSMid') includes: 'pushable'.
+	self assert: (self ownIvarsOf: 'GsVSLeaf') includes: 'pushable'.
+	self deny: (self ownIvarsOf: 'GsVSTwig') includes: 'pushable'.
+	self deny: (self allIvarsOf: 'GsVSTwig') includes: 'pushable'
+]
+
+{ #category : 'tests - V4 move' }
+GsInstVarStructureRefactoringTest >> testMoveDownToMultipleSelectedSubclasses [
+	| ref cs |
+	ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSMid') moveInstVar: 'pushable' toClasses: #('GsVSLeaf' 'GsVSTwig') direction: #down.
+	cs := ref changeSet.
+
+	self assert: ref decline isNil.
+	self assert: (self editChangeFor: 'GsVSMid' in: cs) notNil.
+	self assert: (self editChangeFor: 'GsVSLeaf' in: cs) notNil.
+	self assert: (self editChangeFor: 'GsVSTwig' in: cs) notNil
+]
+
+{ #category : 'tests - V4 move' }
+GsInstVarStructureRefactoringTest >> testMoveDownDeclinesWhenAnUnselectedSubtreeStillUsesIt [
+	"A partial push-down leaves the unselected subtree WITHOUT the ivar; if a class there still
+	 reads it, the move is declined (it would compile against an undeclared variable)."
+	| ref |
+	self compile: 'usesPush ^ pushable' in: (self classNamed: 'GsVSTwig').
+	ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSMid') moveInstVar: 'pushable' toClasses: #('GsVSLeaf') direction: #down.
+
+	self assert: ref decline notNil.
+	self assert: ref decline includesSubstring: 'GsVSTwig'.
+	self assert: ref decline includesSubstring: '#usesPush'.
+	self assert: ref changeSet isEmpty
+]
+
+{ #category : 'tests - V4 move' }
+GsInstVarStructureRefactoringTest >> testMoveDownDeclinesWhenATargetIsUnderAnotherTarget [
+	"The #down picker lists descendants at any depth, so a user can tick both a class and one of its
+	 own descendants. Moving Base's 'shared' down to BOTH GsVSMid and GsVSLeaf (which descends from
+	 GsVSMid) would declare the ivar on Leaf while it also inherits it from the freshly-edited Mid --
+	 a double declaration GemStone rejects at apply. Analysis declines instead, recording nothing."
+	| ref |
+	ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSBase') moveInstVar: 'shared' toClasses: #('GsVSMid' 'GsVSLeaf') direction: #down.
+
+	self assert: ref decline notNil.
+	self assert: ref decline includesSubstring: 'GsVSLeaf'.
+	self assert: ref decline includesSubstring: 'GsVSMid'.
+	self assert: ref changeSet isEmpty
+]
+
+{ #category : 'tests - V4 move' }
+GsInstVarStructureRefactoringTest >> testMoveDeclinesWhenNotAnOwnIvar [
+	| ref |
+	"'shared' is Base's ivar, only inherited by Mid."
+	ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSMid') moveInstVar: 'shared' toClasses: #('GsVSBase') direction: #up.
+
+	self assert: ref decline notNil.
+	self assert: ref decline includesSubstring: 'not an instance variable declared in GsVSMid'.
+	self assert: ref changeSet isEmpty
+]
+
+{ #category : 'tests - V4 move' }
+GsInstVarStructureRefactoringTest >> testMoveDeclinesWhenNoDestinationChosen [
+	| ref |
+	ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSMid') moveInstVar: 'pushable' toClasses: #() direction: #down.
+
+	self assert: ref decline notNil.
+	self assert: ref decline includesSubstring: 'no destination class'.
+	self assert: ref changeSet isEmpty
+]
+
+{ #category : 'tests - V4 move' }
+GsInstVarStructureRefactoringTest >> testMoveAnalysisReportsDeclineAndTopClass [
+	| ok bad |
+	ok := GsInstVarStructureRefactoring
+		analyzeClass: (self classNamed: 'GsVSMid') moveInstVar: 'pushable' toClasses: #('GsVSLeaf') direction: #down.
+	bad := GsInstVarStructureRefactoring
+		analyzeClass: (self classNamed: 'GsVSLeaf') moveInstVar: 'leaf' toClasses: #('GsVSTwig') direction: #up.
+
+	self assert: ok includesSubstring: '"decline":null'.
+	self assert: ok includesSubstring: '"topClass":"GsVSMid"'.
+	self assert: bad includesSubstring: 'is not a superclass of'
+]
+
+{ #category : 'tests - V4 move' }
+GsInstVarStructureRefactoringTest >> testMoveUpMovesSimpleAccessorsToAncestor [
+	"moveAccessors also works through the general #move: a `^ivar` getter travels to the chosen
+	 ancestor. Mid gets a simple getter for 'pushable'; move it up to Base."
+	| ref cs |
+	self compile: 'pushable ^ pushable' in: (self classNamed: 'GsVSMid').
+	ref := (GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSMid') moveInstVar: 'pushable' toClasses: #('GsVSBase') direction: #up)
+		moveAccessors: true.
+	cs := ref changeSet.
+
+	self assert: ref decline isNil.
+	self assert: (cs changes anySatisfy: [:c | c kind = #methodAdd and: [c className = 'GsVSBase' and: [c selector = #pushable]]]).
+	self assert: (cs changes anySatisfy: [:c | c kind = #methodRemove and: [c className = 'GsVSMid' and: [c selector = #pushable]]])
+]
+
+{ #category : 'tests - V4 move' }
+GsInstVarStructureRefactoringTest >> testMoveUpBindsLineageClassNotASameNamedShadowInAnotherDictionary [
+	"#2 dictionary scoping: a destination name resolves within the source's OWN lineage, not by
+	 unscoped global first-match. Bind an unrelated GsVSBase in a dictionary AHEAD of UserGlobals so a
+	 global lookup returns that shadow (which is not an ancestor of GsVSMid). Moving GsVSMid's own
+	 'mid' up to 'GsVSBase' must still bind the REAL lineage GsVSBase and succeed -- the old unscoped
+	 lookup bound the shadow and declined 'is not a superclass'. This is the exact case the lineage
+	 fix was written for, and the only test that fails if it is reverted (see issue #356)."
+	| shadow ref |
+	shadow := SymbolDictionary new.
+	System myUserProfile insertDictionary: shadow at: 1.
+	[Object
+		subclass: 'GsVSBase'
+		instVarNames: #()
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: shadow.
+	ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSMid') moveInstVar: 'mid' toClasses: #('GsVSBase') direction: #up.
+
+	self assert: ref decline isNil.
+	self assert: ref topClass name asString equals: 'GsVSBase'.
+	self assert: (self editChangeFor: 'GsVSBase' in: ref changeSet) notNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+]
+
+{ #category : 'tests - V4 move' }
+GsInstVarStructureRefactoringTest >> testMoveDownBindsLineageClassNotASameNamedShadowInAnotherDictionary [
+	"#2 dictionary scoping, #down half: the down lineage resolves through the source's DESCENDANTS,
+	 a different code path than #up's ancestor walk. Bind an unrelated GsVSLeaf in a dictionary AHEAD
+	 of UserGlobals so a global lookup returns that shadow (which is not a subclass of GsVSMid).
+	 Moving GsVSMid's own 'pushable' down to 'GsVSLeaf' must still bind the REAL descendant GsVSLeaf
+	 and succeed -- the old unscoped lookup bound the shadow and declined 'is not a subclass'."
+	| shadow ref |
+	shadow := SymbolDictionary new.
+	System myUserProfile insertDictionary: shadow at: 1.
+	[Object
+		subclass: 'GsVSLeaf'
+		instVarNames: #()
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: shadow.
+	ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSMid') moveInstVar: 'pushable' toClasses: #('GsVSLeaf') direction: #down.
+
+	self assert: ref decline isNil.
+	self assert: (self editChangeFor: 'GsVSLeaf' in: ref changeSet) notNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+]
+
+{ #category : 'tests - V4 move' }
+GsInstVarStructureRefactoringTest >> testMoveUpToANonImmediateAncestor [
+	"V4 moves up to ANY chosen ancestor, not just the immediate superclass. GsVSLeaf's 'leaf' moves
+	 up to GsVSBase -- its grandparent, skipping GsVSMid -- so the declaration lands on GsVSBase (from
+	 which GsVSLeaf still inherits it) and leaves GsVSLeaf's own list."
+	| ref cs |
+	ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSLeaf') moveInstVar: 'leaf' toClasses: #('GsVSBase') direction: #up.
+	cs := ref changeSet.
+
+	self assert: ref decline isNil.
+	self assert: ref topClass name asString equals: 'GsVSBase'.
+	self assert: (self editChangeFor: 'GsVSBase' in: cs) notNil.
+	self assert: (self editChangeFor: 'GsVSLeaf' in: cs) notNil
+]
+
+{ #category : 'tests - V4 move' }
+GsInstVarStructureRefactoringTest >> testMoveApplyDoesNotCommit [
+	| before |
+	before := System needsCommit.
+	(GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSMid') moveInstVar: 'pushable' toClasses: #('GsVSLeaf') direction: #down)
+		applyDeselected: #().
+
+	self assert: System needsCommit equals: before
+]
+
+{ #category : 'tests - V4 move' }
+GsInstVarStructureRefactoringTest >> testMoveDownPartialMovesAccessorToSelectedSubclassOnly [
+	"A partial #down with moveAccessors removes the source's simple accessor and adds it only to
+	 the CHOSEN subclass -- not to the unselected sibling (which loses the ivar entirely)."
+	| mid cs |
+	mid := self classNamed: 'GsVSMid'.
+	self compile: 'pushable ^ pushable' in: mid.
+	cs := ((GsInstVarStructureRefactoring
+		class: mid moveInstVar: 'pushable' toClasses: #('GsVSLeaf') direction: #down)
+		moveAccessors: true) changeSet.
+
+	self assert: (cs changes anySatisfy: [:c | c kind = #methodRemove and: [c className = 'GsVSMid' and: [c selector = #pushable]]]).
+	self assert: (cs changes anySatisfy: [:c | c kind = #methodAdd and: [c className = 'GsVSLeaf' and: [c selector = #pushable]]]).
+	self deny: (cs changes anySatisfy: [:c | c kind = #methodAdd and: [c className = 'GsVSTwig']])
 ]
 
 { #category : 'tests - V2/V3 move accessors' }
@@ -467,10 +744,10 @@ GsInstVarStructureRefactoringTest >> testPushDownMovesSimpleAccessorsIntoEverySu
 	self deny: json includesSubstring: '"failed":[{'.
 	self deny: (self ownIvarsOf: 'GsVSMid') includes: 'mid'.
 	self assert: (self ownIvarsOf: 'GsVSLeaf') includes: 'mid'.
-	self assert: (self ownIvarsOf: 'GsVSLeaf2') includes: 'mid'.
+	self assert: (self ownIvarsOf: 'GsVSTwig') includes: 'mid'.
 	self deny: ((self classNamed: 'GsVSMid') includesSelector: #midM).
 	self assert: ((self classNamed: 'GsVSLeaf') includesSelector: #midM).
-	self assert: ((self classNamed: 'GsVSLeaf2') includesSelector: #midM)
+	self assert: ((self classNamed: 'GsVSTwig') includesSelector: #midM)
 ]
 
 { #category : 'tests - V2/V3 move accessors' }

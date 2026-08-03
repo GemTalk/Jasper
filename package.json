@@ -2,7 +2,7 @@
   "name": "gemstone-ide",
   "displayName": "Jasper: A GemStone Smalltalk IDE",
   "description": "GemStone/S IDE for Visual Studio Code",
-  "version": "1.8.9",
+  "version": "1.8.10",
   "publisher": "gemtalksystems",
   "license": "MIT",
   "author": "James Foster",
@@ -1151,20 +1151,32 @@
         "icon": "$(edit)"
       },
       {
+        "command": "gemstone.explorer.addInstVar",
+        "title": "Add Instance Variable…",
+        "category": "GemStone",
+        "icon": "$(add)"
+      },
+      {
+        "command": "gemstone.explorer.removeInstVar",
+        "title": "Remove Instance Variable…",
+        "category": "GemStone",
+        "icon": "$(remove)"
+      },
+      {
         "command": "gemstone.explorer.renameClassVariable",
         "title": "Rename Class Variable…",
         "category": "GemStone",
         "icon": "$(edit)"
       },
       {
-        "command": "gemstone.explorer.pushUpInstVar",
-        "title": "Push Instance Variable Up…",
+        "command": "gemstone.explorer.moveUpInstVar",
+        "title": "Move Instance Variable Up…",
         "category": "GemStone",
         "icon": "$(arrow-up)"
       },
       {
-        "command": "gemstone.explorer.pushDownInstVar",
-        "title": "Push Instance Variable Down…",
+        "command": "gemstone.explorer.moveDownInstVar",
+        "title": "Move Instance Variable Down…",
         "category": "GemStone",
         "icon": "$(arrow-down)"
       },
@@ -1511,11 +1523,19 @@
           "when": "false"
         },
         {
-          "command": "gemstone.explorer.pushUpInstVar",
+          "command": "gemstone.explorer.addInstVar",
           "when": "false"
         },
         {
-          "command": "gemstone.explorer.pushDownInstVar",
+          "command": "gemstone.explorer.removeInstVar",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.moveUpInstVar",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.moveDownInstVar",
           "when": "false"
         },
         {
@@ -1812,14 +1832,34 @@
           "group": "inline"
         },
         {
-          "command": "gemstone.explorer.pushUpInstVar",
+          "command": "gemstone.explorer.moveUpInstVar",
           "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerIvar/",
           "group": "inline@2"
         },
         {
-          "command": "gemstone.explorer.pushDownInstVar",
+          "command": "gemstone.explorer.moveDownInstVar",
           "when": "view == gemstoneExplorerClasses && viewItem == explorerIvar",
           "group": "inline@3"
+        },
+        {
+          "command": "gemstone.explorer.removeInstVar",
+          "when": "view == gemstoneExplorerClasses && viewItem == explorerIvar",
+          "group": "inline@4"
+        },
+        {
+          "command": "gemstone.explorer.removeInstVar",
+          "when": "view == gemstoneExplorerClasses && viewItem == explorerIvar",
+          "group": "3_refactor@1"
+        },
+        {
+          "command": "gemstone.explorer.addInstVar",
+          "when": "view == gemstoneExplorerClasses && viewItem == explorerVarSide.instance",
+          "group": "inline"
+        },
+        {
+          "command": "gemstone.explorer.addInstVar",
+          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass",
+          "group": "2_generate@2"
         },
         {
           "command": "gemstone.explorer.renameClassVariable",
@@ -2362,9 +2402,6 @@
   },
   "overrides": {
     "fast-uri": "^3.1.4",
-    "js-yaml": "^4.3.0",
-    "vscode-languageclient": {
-      "minimatch": "^10.2.5"
-    }
+    "js-yaml": "^4.3.0"
   }
 }

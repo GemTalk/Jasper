@@ -38,6 +38,17 @@ export interface MethodRenameChange {
   newSource: string;
 }
 
+/** True when a change is structural (always applied, cannot be deselected).
+ *  An implementor's rename must happen while its senders are rewritten:
+ *  rewriting every call site to the new selector but leaving one implementor
+ *  under the old one silently changes dispatch (instances fall through to an
+ *  inherited method, or DNU). The panel renders such a change checked and
+ *  DISABLED, and a disabled checkbox is never reported as deselected to the
+ *  engine. Senders (methodRecompile) stay individually deselectable. */
+export function isStructuralChange(change: MethodRenameChange): boolean {
+  return change.kind === 'methodRename';
+}
+
 /** How many implementors/senders fall OUTSIDE the chosen scope (and so will not
  *  be changed), plus how many in-scope methods could not be rewritten and were
  *  skipped (a source the vendored AST does not accept). Surfaced as a warning in

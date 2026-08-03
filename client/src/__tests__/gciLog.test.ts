@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-vi.mock('vscode', () => import('../__mocks__/vscode'));
+vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
 import { window } from 'vscode';
 import { getGciLog, logError, logInfo, _resetGciLogForTests } from '../gciLog';

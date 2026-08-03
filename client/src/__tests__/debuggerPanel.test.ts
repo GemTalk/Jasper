@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-vi.mock('vscode', () => import('../__mocks__/vscode'));
+vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
 // Keep real `fs` (debuggerPanel reads debuggerView.js via readFileSync at import
 // time) but stub the dump's writes so Save-to-File tests do no real disk IO.

@@ -12,6 +12,21 @@
 ! Extension methods
 
 doit
+(Character canUnderstand: #'isSqueakSeparator') ifFalse: [
+  Character
+    compileMethod: 'isSqueakSeparator
+	"True for the ASCII whitespace separators the RBScanner treats as token
+	 boundaries: space, tab, LF, CR, form-feed. Any other character (including any
+	 wide character) is not a separator."
+	| v |
+	v := self asInteger.
+	^v == 32 or: [v == 9 or: [v == 10 or: [v == 13 or: [v == 12]]]]'
+    dictionaries: System myUserProfile symbolList
+    category: '*ast-core-compat-362' ].
+true.
+%
+
+doit
 (CharacterCollection canUnderstand: #'readStreamPortable') ifFalse: [
   CharacterCollection
     compileMethod: 'readStreamPortable
