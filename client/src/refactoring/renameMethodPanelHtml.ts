@@ -15,6 +15,7 @@
 import {
   MethodRenameChange,
   methodChangeLabel,
+  isStructuralChange,
   OutOfScopeCounts,
   SkippedMethod,
 } from './renameMethodPreview';
@@ -39,13 +40,16 @@ function renderCard(change: MethodRenameChange): string {
   const label = escapeHtml(methodChangeLabel(change));
   const badge = change.category ? `<span class="badge">${escapeHtml(change.category)}</span>` : '';
   const diff = renderDiff(lineDiff(change.oldSource, change.newSource));
-  // A methodRename REMOVES the old-selector method and ADDS the new-selector one;
-  // show both in the collapsed header. A pure argument reorder (same selector,
-  // recompiled in place) and a sender render as a plain label.
-  const isRename =
-    change.kind === 'methodRename' &&
-    !!change.newSelector &&
-    change.newSelector !== change.selector;
+  // A structural change is checked and DISABLED so it can't be deselected; see
+  // isStructuralChange for why. (Mirrors the class-rename panel.)
+  const structural = isStructuralChange(change);
+  // A structural change that also changes the selector REMOVES the old-selector
+  // method and ADDS the new-selector one; show both in the collapsed header.
+  // Derived from `structural` rather than re-testing the kind, so a card can
+  // never show the removed→added header without also being forced-applied. A
+  // pure argument reorder (same selector, recompiled in place) and a sender
+  // render as a plain label.
+  const isRename = structural && !!change.newSelector && change.newSelector !== change.selector;
   const side = change.isMeta ? ' class' : '';
   const labelHtml = isRename
     ? `${escapeHtml(change.className)}${side}&gt;&gt;` +
@@ -53,9 +57,12 @@ function renderCard(change: MethodRenameChange): string {
       '<span class="ren-arrow"> → </span>' +
       `<span class="sel-added" title="added">${escapeHtml(change.newSelector as string)}</span>`
     : label;
+  const cb = structural
+    ? `<input type="checkbox" class="sel" checked disabled title="required" aria-label="${label} (required)">`
+    : `<input type="checkbox" class="sel" checked aria-label="Include ${label}">`;
   return `<li class="change" data-id="${escapeHtml(change.id)}">
   <div class="change-head">
-    <input type="checkbox" class="sel" checked aria-label="Include ${label}">
+    ${cb}
     <span class="label">${labelHtml}</span>
     ${badge}
     <button class="toggle" title="Show/hide diff" aria-expanded="false">▸</button>

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('vscode', () => import('../__mocks__/vscode'));
+vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
 vi.mock('vscode-languageclient/node', () => ({
   LanguageClient: class {

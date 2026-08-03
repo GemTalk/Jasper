@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
-vi.mock('vscode', () => import('../__mocks__/vscode'));
+vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
 const listRowanProjectsMock = vi.fn();
 const diffRowanProjectMock = vi.fn();

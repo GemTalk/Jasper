@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 
 // Real GCI, but stub the `vscode` module the query layer pulls in via gciLog.
-vi.mock('vscode', () => import('../__mocks__/vscode'));
+vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
 import { useIntegrationTest } from './useIntegrationTest';
 import { GciLibrary } from '../gciLibrary';

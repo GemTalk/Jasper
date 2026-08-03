@@ -22,7 +22,7 @@
 // `npm run test:gci`.
 
 import { describe, it, expect, vi } from 'vitest';
-vi.mock('vscode', () => import('../../__mocks__/vscode'));
+vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 
 import { useIntegrationTest } from '../useIntegrationTest';
 import { GciLibrary } from '../../gciLibrary';

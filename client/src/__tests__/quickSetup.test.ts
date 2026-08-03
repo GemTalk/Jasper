@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vitest';
 
-vi.mock('vscode', () => import('../__mocks__/vscode'));
+vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 vi.mock('fs');
 vi.mock('child_process');
 

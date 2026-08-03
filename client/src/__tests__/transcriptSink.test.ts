@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 
-vi.mock('vscode', () => import('../__mocks__/vscode'));
+vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 vi.mock('../gciLog', () => ({
   logInfo: vi.fn(),
   logError: vi.fn(),
