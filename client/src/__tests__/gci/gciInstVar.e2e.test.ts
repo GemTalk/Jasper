@@ -155,6 +155,54 @@ describe('add / remove instance variable (gci e2e)', () => {
     }
   });
 
+  it('warns up front that a method whose temp shadows the new variable will not recompile', async (ctx) => {
+    if (!enginePresent) return ctx.skip();
+
+    try {
+      defineFixture();
+      // A SUB method with a METHOD-LEVEL temporary named `tally`: once `tally` becomes an
+      // inherited instance variable, that declaration shadows it. The preview must surface the
+      // method up front so it is not silently dropped at apply.
+      //
+      // We assert the PREDICTION only, not an apply drop: whether the shadowed recompile hard-fails
+      // or merely warns can vary by stone/version, but the source-based prediction is deterministic
+      // and is the contract this covers. (The apply-drops-exactly-the-predicted-method invariant is
+      // pinned in the GS SUnit suite, which runs in-stone on both boundaries.)
+      q.compileMethod(
+        session,
+        SUB,
+        false,
+        'accessing',
+        'shadowsTally\n\t| tally |\n\ttally := 1.\n\t^ tally',
+      );
+
+      const analysis = parseAnalysis(
+        await analyzeInstVar(asyncExec, 'add', BASE, 'tally', userIndex()),
+      );
+      expect(analysis.decline).toBeNull();
+
+      const start = parseStartPreview(
+        await startInstVarPreview(
+          asyncExec,
+          'add',
+          BASE,
+          'tally',
+          'gci-iv-add-shadow',
+          PREVIEW_PAGE_BYTES,
+          userIndex(),
+        ),
+      );
+
+      const shadowed = start.outOfScope.willNotRecompile.find((m) => m.selector === 'shadowsTally');
+      expect(shadowed).toBeDefined();
+      expect(shadowed?.className).toBe(SUB);
+      // A sibling method that only USES another ivar (`count`) must not be over-reported.
+      expect(start.outOfScope.willNotRecompile.map((m) => m.selector)).not.toContain('doubleCount');
+    } finally {
+      exec("System abortTransaction. 'ok'");
+    }
+  });
+
   it('removes an instance variable, reporting and dropping the methods that used it', async (ctx) => {
     if (!enginePresent) return ctx.skip();
 
