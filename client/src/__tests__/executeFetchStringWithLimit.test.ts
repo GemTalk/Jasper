@@ -45,7 +45,7 @@ describe('executeFetchStringWithLimit', () => {
     expect(session.gci.GciTsExecuteFetchBytes).not.toHaveBeenCalled();
   });
 
-  it('throws a BrowserQueryError carrying the GCI error number', () => {
+  it('throws a BrowserQueryError with the underlying GCI error message', () => {
     const session = makeSession({
       GciTsExecuteFetchBytes: vi.fn(() => ({
         bytesReturned: -1,
@@ -53,12 +53,8 @@ describe('executeFetchStringWithLimit', () => {
         err: { number: 2010, message: 'boom' },
       })),
     });
-    try {
-      executeFetchStringWithLimit(session, 'l', 'C', 1024);
-      expect.unreachable('should have thrown');
-    } catch (e) {
-      expect(e).toBeInstanceOf(BrowserQueryError);
-      expect((e as BrowserQueryError).gciErrorNumber).toBe(2010);
-    }
+
+    expect(() => executeFetchStringWithLimit(session, 'l', 'C', 1024)).toThrow(BrowserQueryError);
+    expect(() => executeFetchStringWithLimit(session, 'l', 'C', 1024)).toThrow('boom');
   });
 });

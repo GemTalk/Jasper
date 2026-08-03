@@ -4,7 +4,7 @@ vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
 import { ActiveSession } from '../sessionManager';
 import { writeOwnerSidecar } from '../mcpOwnerSidecar';
-import { resolveOwnership, renderOwnership } from '../mcpServerTreeProvider';
+import { McpOwnership, resolveOwnership, renderOwnership } from '../mcpServerTreeProvider';
 import { safelyRemovePath, temporarySidecarPath } from './support/file';
 
 function fakeSession(id = 7): ActiveSession {
@@ -45,12 +45,12 @@ describe('resolveOwnership', () => {
       getSession: () => session,
       sidecarPath,
     });
-    expect(ownership.kind).toBe('this');
-    if (ownership.kind === 'this') {
-      expect(ownership.selectedSession).toBe(session);
-      expect(ownership.socketPath).toBe('/tmp/sock');
-      expect(ownership.httpsUrl).toBe('https://127.0.0.1:27101/sse');
-    }
+    expect(ownership).toMatchObject({
+      kind: 'this',
+      socketPath: '/tmp/sock',
+      httpsUrl: 'https://127.0.0.1:27101/sse',
+    });
+    expect((ownership as Extract<McpOwnership, { kind: 'this' }>).selectedSession).toBe(session);
   });
 
   it('returns "other" with the sidecar info when another live window owns the socket', () => {
@@ -70,10 +70,10 @@ describe('resolveOwnership', () => {
       getSession: () => undefined,
       sidecarPath,
     });
-    expect(ownership.kind).toBe('other');
-    if (ownership.kind === 'other') {
-      expect(ownership.info.workspacePath).toBe('/Users/me/other-workspace');
-    }
+    expect(ownership).toMatchObject({
+      kind: 'other',
+      info: { workspacePath: '/Users/me/other-workspace' },
+    });
   });
 
   it('returns "none" when the sidecar names a dead pid (stale)', () => {

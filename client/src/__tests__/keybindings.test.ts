@@ -94,11 +94,11 @@ describe('keybindings', () => {
       'gemstone.debugIt',
       'gemstone.inspectIt',
     ];
-    for (const kb of keybindings) {
-      if (editorCommands.includes(kb.command)) {
-        expect(kb.when).toContain('editorTextFocus');
-        expect(kb.when).toContain('!gemstone.executing');
-      }
+    const matches = keybindings.filter((kb) => editorCommands.includes(kb.command));
+    expect(matches.length).toBeGreaterThan(0);
+    for (const kb of matches) {
+      expect(kb.when).toContain('editorTextFocus');
+      expect(kb.when).toContain('!gemstone.executing');
     }
   });
 
