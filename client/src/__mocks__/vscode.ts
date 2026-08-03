@@ -538,6 +538,12 @@ export class CodeActionKind {
   static readonly QuickFix = new CodeActionKind('quickfix');
   static readonly Refactor = new CodeActionKind('refactor');
   static readonly Source = new CodeActionKind('source');
+  append(parts: string): CodeActionKind {
+    return new CodeActionKind(this.value ? `${this.value}.${parts}` : parts);
+  }
+  contains(other: CodeActionKind): boolean {
+    return this.value === other.value || other.value.startsWith(`${this.value}.`);
+  }
 }
 
 export class CodeAction {
