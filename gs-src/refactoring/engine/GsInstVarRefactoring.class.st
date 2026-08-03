@@ -65,7 +65,7 @@ Class {
 		'oldToNew',
 		'dropped',
 		'committed',
-		'rolledBack'
+		'partiallyApplied'
 	],
 	#category : 'Refactoring-Core'
 }
@@ -479,19 +479,16 @@ GsInstVarRefactoring >> applyDeselected: deselectedIds options: optsArray migrat
 	 keeps them. If migrate or deleteHistory is true the structural change is COMMITTED first (the
 	 substrate requires a clean transaction to migrate), then the committing step(s) run and commit.
 	 Answers {applied, failed:[..], dropped:[..], committed:bool}."
-	| applied failures changes index hadPriorWork |
+	| applied failures changes index |
 	self ensureAnalysis.
 	"nil optsArray keeps the acted-on class's current options; an Array (even empty) sets them."
 	editedOptions := optsArray isNil ifTrue: [nil] ifFalse: [optsArray collect: [:e | e asString]].
 	oldToNew := IdentityDictionary new.
 	dropped := OrderedCollection new.
 	committed := false.
-	rolledBack := false.
+	partiallyApplied := false.
 	failures := OrderedCollection new.
 	applied := 0.
-	"Whether the SESSION already had uncommitted work before we staged anything -- decides whether a
-	 rollback may abort (see #rollbackPartialApply)."
-	hadPriorWork := System needsCommit.
 	"STOP at the first failure. The change set is all-or-nothing and each class is re-parented onto
 	 the new version of its parent, so carrying on past a failure would version later classes onto a
 	 stale oldToNew entry and leave a half-reshaped subtree behind."
@@ -509,12 +506,11 @@ GsInstVarRefactoring >> applyDeselected: deselectedIds options: optsArray migrat
 			(aBool or: [dBool]) ifTrue: [
 				self commitStructuralThenMigrate: aBool deleteHistory: dBool on: failures]]
 		ifFalse: [
-			"Nothing has been committed at this point, so the partial work can be discarded whole.
-			 When it IS discarded, the classes versioned before the failure are gone again -- and so
-			 are the methods that failed to copy forward onto them, so reporting those as `dropped`
-			 would name methods that are still perfectly intact."
-			(self rollbackPartialApplyHadPriorWork: hadPriorWork)
-				ifTrue: [applied := 0. dropped := OrderedCollection new]].
+			"The engine does NOT abort: rolling the transaction back would discard any work the user
+			 had in flight before this refactoring started, which is not ours to throw away. Instead we
+			 report whether anything was staged before the failure; the client RECOMMENDS an abort when
+			 something was, and says what an abort would cost."
+			partiallyApplied := applied > 0].
 	^'{"applied":', applied printString,
 	  ',"failed":[',
 	  ((failures collect: [:f |
@@ -528,25 +524,7 @@ GsInstVarRefactoring >> applyDeselected: deselectedIds options: optsArray migrat
 		',"selector":', (self jsonQuote: (d at: 2) asString), '}'])
 			inject: '' into: [:acc :s | acc isEmpty ifTrue: [s] ifFalse: [acc, ',', s]]),
 	  '],"committed":', (committed ifTrue: ['true'] ifFalse: ['false']),
-	  ',"rolledBack":', (rolledBack ifTrue: ['true'] ifFalse: ['false']), '}'
-]
-
-{ #category : 'applying' }
-GsInstVarRefactoring >> rollbackPartialApplyHadPriorWork: hadPriorWork [
-	"A change failed part-way through an ALL-OR-NOTHING apply. The versions created before the
-	 failure are staged in the transaction and uncommitted, so aborting discards them and leaves the
-	 hierarchy exactly as it was -- which is what the user is promised.
-
-	 The one case where we must NOT abort: the session already had uncommitted work of its own when
-	 the apply started. `System abortTransaction` rolls back the WHOLE session transaction, so
-	 aborting would throw that work away too. There we leave the transaction alone and report
-	 rolledBack:false, so the client can tell the user their transaction now holds a partial change
-	 and they must abort it themselves.
-
-	 Answers whether the abort happened."
-	hadPriorWork ifTrue: [^rolledBack := false].
-	System abortTransaction.
-	^rolledBack := true
+	  ',"partiallyApplied":', (partiallyApplied ifTrue: ['true'] ifFalse: ['false']), '}'
 ]
 
 { #category : 'applying' }

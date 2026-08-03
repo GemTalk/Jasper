@@ -6,6 +6,7 @@ vi.mock('../../browserQueries', () => ({
   pageInstVarPreview: vi.fn(),
   applyInstVar: vi.fn(),
   clearInstVarPreview: vi.fn(),
+  abortSessionTransaction: vi.fn(),
 }));
 vi.mock('../instVarRefactorPanel', () => ({
   showInstVarRefactorPanel: vi.fn(),
@@ -185,60 +186,175 @@ describe('add / remove instance variable command', () => {
     expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
   });
 
-  // The apply is all-or-nothing: the engine stops at the first failure and aborts the versions
-  // it had already staged, so the user must be told the hierarchy is untouched...
-  it('says nothing was applied when the engine rolled the transaction back', async () => {
+  // A partial refactoring: the engine never aborts (that would discard the user's other
+  // in-flight work), so the client explains what is stranded and OFFERS the abort.
+  const partialApply = () =>
+    applied({
+      applied: 1,
+      failed: [{ id: 'c2', label: 'FooSub (reparented)', error: 'boom' }],
+      partiallyApplied: true,
+    });
+
+  const dirtySessionStart = () =>
+    startJson({
+      outOfScope: {
+        decline: null,
+        willNotRecompile: [],
+        actedOnClass: 'Foo',
+        note: null,
+        sessionHasUncommittedChanges: true,
+      },
+    });
+
+  it('offers an abort, with the reason and what is stranded, when changes were staged', async () => {
     vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson());
     vi.mocked(queries.startInstVarPreview).mockResolvedValue(startJson());
-    vi.mocked(showInstVarRefactorPanel).mockResolvedValue(
-      applied({
-        applied: 0,
-        failed: [{ id: 'c2', label: 'FooSub (reparented)', error: 'boom' }],
-        rolledBack: true,
-      }),
-    );
+    vi.mocked(showInstVarRefactorPanel).mockResolvedValue(partialApply());
+    (vscode.window.showErrorMessage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 
     const outcome = await runInstVarRefactor(req());
 
     expect(outcome).toBeUndefined();
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      expect.stringContaining('Nothing was applied; the transaction was rolled back.'),
+      expect.stringContaining('1 class was already versioned and remains in your transaction'),
+      'Abort Transaction',
+    );
+    // the reason travels with it
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining('FooSub (reparented): boom'),
+      'Abort Transaction',
     );
   });
 
-  // ...and told to abort themselves when it could NOT roll back (the session already had other
-  // uncommitted work, which an abort would have discarded too).
-  it('advises aborting when the engine could not roll back', async () => {
+  it('does nothing when the user dismisses the abort offer', async () => {
+    vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson());
+    vi.mocked(queries.startInstVarPreview).mockResolvedValue(startJson());
+    vi.mocked(showInstVarRefactorPanel).mockResolvedValue(partialApply());
+    (vscode.window.showErrorMessage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+    await runInstVarRefactor(req());
+
+    expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
+    expect(queries.abortSessionTransaction).not.toHaveBeenCalled();
+  });
+
+  // Accepting the offer must still confirm: an abort discards more than this refactoring.
+  it('confirms before aborting, and does not abort when the confirmation is declined', async () => {
+    vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson());
+    vi.mocked(queries.startInstVarPreview).mockResolvedValue(startJson());
+    vi.mocked(showInstVarRefactorPanel).mockResolvedValue(partialApply());
+    (vscode.window.showErrorMessage as ReturnType<typeof vi.fn>).mockResolvedValue(
+      'Abort Transaction',
+    );
+    (vscode.window.showWarningMessage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+    await runInstVarRefactor(req());
+
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+      expect.stringContaining('Abort the transaction?'),
+      expect.objectContaining({ modal: true }),
+      'Abort Transaction',
+    );
+    expect(queries.abortSessionTransaction).not.toHaveBeenCalled();
+  });
+
+  it('aborts and says so when the user confirms', async () => {
+    vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson());
+    vi.mocked(queries.startInstVarPreview).mockResolvedValue(startJson());
+    vi.mocked(showInstVarRefactorPanel).mockResolvedValue(partialApply());
+    (vscode.window.showErrorMessage as ReturnType<typeof vi.fn>).mockResolvedValue(
+      'Abort Transaction',
+    );
+    (vscode.window.showWarningMessage as ReturnType<typeof vi.fn>).mockResolvedValue(
+      'Abort Transaction',
+    );
+    // Explicit: vi.clearAllMocks() resets calls but NOT implementations, and this suite shuffles.
+    vi.mocked(queries.abortSessionTransaction).mockImplementation(() => 'Transaction aborted');
+
+    await runInstVarRefactor(req());
+
+    expect(queries.abortSessionTransaction).toHaveBeenCalledOnce();
+    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+      expect.stringContaining('Transaction aborted'),
+    );
+  });
+
+  // The abort takes the WHOLE transaction, so the confirmation must say so when the session
+  // also held the user's own uncommitted work.
+  it('warns in the confirmation that other uncommitted work goes too', async () => {
+    vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson());
+    vi.mocked(queries.startInstVarPreview).mockResolvedValue(dirtySessionStart());
+    vi.mocked(showInstVarRefactorPanel).mockResolvedValue(partialApply());
+    (vscode.window.showErrorMessage as ReturnType<typeof vi.fn>).mockResolvedValue(
+      'Abort Transaction',
+    );
+    (vscode.window.showWarningMessage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+    await runInstVarRefactor(req());
+
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+      expect.stringContaining('every other uncommitted change in this session'),
+      expect.objectContaining({ modal: true }),
+      'Abort Transaction',
+    );
+  });
+
+  it('surfaces a failed abort and points the user at the session menu', async () => {
+    vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson());
+    vi.mocked(queries.startInstVarPreview).mockResolvedValue(startJson());
+    vi.mocked(showInstVarRefactorPanel).mockResolvedValue(partialApply());
+    (vscode.window.showErrorMessage as ReturnType<typeof vi.fn>).mockResolvedValue(
+      'Abort Transaction',
+    );
+    (vscode.window.showWarningMessage as ReturnType<typeof vi.fn>).mockResolvedValue(
+      'Abort Transaction',
+    );
+    vi.mocked(queries.abortSessionTransaction).mockImplementationOnce(() => {
+      throw new Error('gci down');
+    });
+
+    await runInstVarRefactor(req());
+
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining('Abort failed: gci down'),
+    );
+  });
+
+  // A failure on the very FIRST change stages nothing, so there is nothing to abort: plain
+  // report, no offer.
+  it('does not offer an abort when nothing was staged', async () => {
     vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson());
     vi.mocked(queries.startInstVarPreview).mockResolvedValue(startJson());
     vi.mocked(showInstVarRefactorPanel).mockResolvedValue(
       applied({
-        applied: 1,
-        failed: [{ id: 'c2', label: 'FooSub (reparented)', error: 'boom' }],
-        rolledBack: false,
+        applied: 0,
+        failed: [{ id: 'c1', label: 'Foo (definition edited)', error: 'boom' }],
+        partiallyApplied: false,
       }),
     );
 
     await runInstVarRefactor(req());
 
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      expect.stringContaining('PARTIAL change'),
+      expect.stringContaining('Nothing was applied.'),
     );
+    expect(queries.abortSessionTransaction).not.toHaveBeenCalled();
   });
 
-  // An engine that predates the rolledBack field: take the conservative branch rather than
-  // promise a rollback that may not have happened.
-  it('advises aborting when the engine did not report a rollback at all', async () => {
+  // An engine older than the field: assume something was staged rather than promise otherwise.
+  it('offers the abort when the engine did not report the partial state', async () => {
     vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson());
     vi.mocked(queries.startInstVarPreview).mockResolvedValue(startJson());
     vi.mocked(showInstVarRefactorPanel).mockResolvedValue(
       applied({ applied: 1, failed: [{ id: 'c2', label: 'FooSub', error: 'boom' }] }),
     );
+    (vscode.window.showErrorMessage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 
     await runInstVarRefactor(req());
 
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      expect.stringContaining('PARTIAL change'),
+      expect.any(String),
+      'Abort Transaction',
     );
   });
 

@@ -302,11 +302,10 @@ describe('add / remove instance variable (gci e2e)', () => {
     }
   });
 
-  // The all-or-nothing ROLLBACK path can only be exercised where the session can be made clean:
-  // the engine deliberately refuses to abort when the session already holds uncommitted work, and
-  // an in-stone SUnit test always does (its fixture is uncommitted). So it lives here, with a
-  // committed fixture — this is the only place the abort branch runs end to end.
-  it('rolls the whole apply back when a change fails part-way through', async (ctx) => {
+  // A mid-apply failure, end to end against a COMMITTED fixture: the engine must stop at the
+  // first failure, leave the transaction alone (it never aborts — that would discard the user's
+  // other in-flight work), and report the partial state for the client's abort recommendation.
+  it('stops at the first failure and reports the partial apply without aborting', async (ctx) => {
     if (!enginePresent) return ctx.skip();
 
     const RB_BASE = 'GciIvRbBase';
@@ -348,13 +347,12 @@ describe('add / remove instance variable (gci e2e)', () => {
       );
 
       expect(result.failed.length).toBe(1);
-      expect(result.rolledBack).toBe(true);
-      expect(result.applied).toBe(0);
-      // Nothing was dropped, because the version those methods failed to copy onto is gone again.
-      expect(result.dropped).toEqual([]);
+      expect(result.applied).toBe(1); // the base applied; the sub failed; nothing after it ran
+      expect(result.partiallyApplied).toBe(true);
       expect(result.committed).toBe(false);
-      // The decisive check: the base was versioned before the failure, and the abort undid it.
-      expect(hasIvar(RB_BASE, 'tally')).toBe(false);
+      // The decisive check: the engine did NOT abort, so the base's new version is still staged
+      // in the transaction — which is exactly why the client tells the user to abort it.
+      expect(hasIvar(RB_BASE, 'tally')).toBe(true);
     } finally {
       exec(
         `#(#${RB_SUB} #${RB_BASE}) do: [:s | UserGlobals removeKey: s ifAbsent: []]. ` +

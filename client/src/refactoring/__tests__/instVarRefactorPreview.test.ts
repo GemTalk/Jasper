@@ -111,23 +111,25 @@ describe('instance-variable refactor preview parsing', () => {
     expect(r.committed).toBe(false);
   });
 
-  it('parses the rollback flag on a failed apply', () => {
-    const rolled = parseApplyResult(
-      '{"applied":0,"failed":[{"id":"1","label":"Foo","error":"boom"}],"dropped":[],"committed":false,"rolledBack":true}',
+  it('parses the partially-applied flag on a failed apply', () => {
+    // Something was staged before the failure: the transaction holds a partial reshape.
+    const staged = parseApplyResult(
+      '{"applied":1,"failed":[{"id":"2","label":"Sub","error":"boom"}],"dropped":[],"committed":false,"partiallyApplied":true}',
     );
-    expect(rolled.rolledBack).toBe(true);
+    expect(staged.partiallyApplied).toBe(true);
 
-    const partial = parseApplyResult(
-      '{"applied":1,"failed":[{"id":"1","label":"Foo","error":"boom"}],"dropped":[],"committed":false,"rolledBack":false}',
+    // The very first change failed: nothing staged, nothing to abort.
+    const nothingStaged = parseApplyResult(
+      '{"applied":0,"failed":[{"id":"1","label":"Foo","error":"boom"}],"dropped":[],"committed":false,"partiallyApplied":false}',
     );
-    expect(partial.rolledBack).toBe(false);
+    expect(nothingStaged.partiallyApplied).toBe(false);
   });
 
-  // An engine older than the rollback change omits the field; undefined (not false) so the
-  // caller can tell "did not roll back" from "did not say".
-  it('leaves the rollback flag undefined when the engine omits it', () => {
+  // An engine older than this change omits the field; undefined (not false) so the caller can
+  // tell "nothing was staged" from "the engine did not say".
+  it('leaves the partially-applied flag undefined when the engine omits it', () => {
     const r = parseApplyResult('{"applied":2,"failed":[],"dropped":[],"committed":false}');
-    expect(r.rolledBack).toBeUndefined();
+    expect(r.partiallyApplied).toBeUndefined();
   });
 
   it('parses the session-has-uncommitted-changes flag from the preview', () => {

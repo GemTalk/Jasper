@@ -140,20 +140,58 @@ export async function runInstVarRefactor(
 
   if (result.failed.length > 0) {
     const first = result.failed[0];
-    // The change set is all-or-nothing, so the engine stops at the first failure and aborts the
-    // staged versions — unless the session already had OTHER uncommitted work, which an abort
-    // would have discarded too. In that case a partial reshape is still sitting in the
-    // transaction and only the user can decide to abort it.
-    const advice =
-      result.rolledBack === true
-        ? ' Nothing was applied; the transaction was rolled back.'
-        : ' Your transaction now holds a PARTIAL change — abort it to discard the classes that were already versioned.';
-    void vscode.window.showErrorMessage(`Failed: ${first.label}: ${first.error}.${advice}`);
+    // The engine stops at the first failure and deliberately does NOT abort: aborting rolls back
+    // the whole session transaction, including whatever the user had in flight before starting.
+    // So the client tells them what is left behind, why, and OFFERS the abort -- their choice.
+    // When the engine reports `partiallyApplied`, trust it. An older engine omits it, so fall
+    // back to the applied count -- 0 applied is direct evidence that nothing was staged.
+    const staged = result.partiallyApplied ?? result.applied > 0;
+    const reason = `Failed: ${first.label}: ${first.error}.`;
+
+    if (!staged) {
+      // The very first change failed, so nothing is staged and there is nothing to abort.
+      void vscode.window.showErrorMessage(`${reason} Nothing was applied.`);
+      return undefined;
+    }
+
+    const one = result.applied === 1;
+    const left =
+      `${result.applied} class${one ? '' : 'es'} ${one ? 'was' : 'were'} already versioned and` +
+      ` ${one ? 'remains' : 'remain'} in your transaction.`;
+    const choice = await vscode.window.showErrorMessage(
+      `${reason} ${left} The change is all-or-nothing, so aborting the transaction discards` +
+        ` ${one ? 'it' : 'them'}.`,
+      'Abort Transaction',
+    );
+    if (choice !== 'Abort Transaction') return undefined;
+
+    // Abort is destructive beyond this refactoring, so confirm with the cost spelled out --
+    // the preview told us whether the session also held work of the user's own.
+    const confirmed = await vscode.window.showWarningMessage(
+      start.outOfScope.sessionHasUncommittedChanges
+        ? 'Abort the transaction? This discards the partial refactoring AND every other' +
+            ' uncommitted change in this session.'
+        : 'Abort the transaction? This discards the partial refactoring.',
+      { modal: true },
+      'Abort Transaction',
+    );
+    if (confirmed !== 'Abort Transaction') return undefined;
+
+    try {
+      queries.abortSessionTransaction(session);
+      void vscode.window.showInformationMessage(
+        'Transaction aborted; nothing from this refactoring remains.',
+      );
+    } catch (e: unknown) {
+      void vscode.window.showErrorMessage(
+        `Abort failed: ${e instanceof Error ? e.message : String(e)}. Abort from the session menu.`,
+      );
+    }
     return undefined;
   }
 
-  // Belt-and-braces: a zero-change apply with no error reported at all is still not a
-  // success — the panel only opens with `total > 0` and every change is required.
+  // Belt-and-braces: a zero-change apply with no error and no failure reported at all is still
+  // not a success — the panel only opens with `total > 0` and every change is required.
   if (result.applied === 0) {
     void vscode.window.showErrorMessage(`${titleFor(req)} failed: nothing was applied.`);
     return undefined;

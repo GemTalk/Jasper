@@ -69,10 +69,10 @@ export interface ApplyResult {
   dropped: BrokenMethod[];
   committed: boolean;
   error?: string;
-  /** Set when a change failed part-way through: true if the engine aborted the
-   *  transaction so nothing was applied, false if it could not (the session already had
-   *  other uncommitted work) and a PARTIAL change is still staged. */
-  rolledBack?: boolean;
+  /** Set when a change failed: true if earlier changes were already staged, so the
+   *  transaction now holds a PARTIAL reshape. The engine never aborts (that would discard
+   *  the user's other in-flight work), so this is what the client's abort advice keys on. */
+  partiallyApplied?: boolean;
 }
 
 export interface InstVarAnalysis {
@@ -212,7 +212,7 @@ export function parseApplyResult(json: string): ApplyResult {
     error: typeof env.error === 'string' ? env.error : undefined,
     // Only meaningful alongside a failure; absent (an older engine) stays undefined so the
     // caller falls back to the conservative "abort it yourself" advice.
-    rolledBack: typeof env.rolledBack === 'boolean' ? env.rolledBack : undefined,
+    partiallyApplied: typeof env.partiallyApplied === 'boolean' ? env.partiallyApplied : undefined,
   };
 }
 

@@ -14,8 +14,10 @@ Correctness of the add / remove instance-variable refactoring (catalog V1):
     replaced with a user-edited set for the acted-on class;
   - applying (with neither migrate nor delete-history) never commits, and a method that references a
     removed variable is dropped and reported;
-  - applying is ALL-OR-NOTHING: it stops at the first failure and rolls the transaction back, unless
-    the session already held other uncommitted work (which the rollback would have discarded too).
+  - applying stops at the FIRST failure, so no later class is ever versioned onto a stale parent.
+    The engine does NOT abort -- that would discard whatever the user had in flight before the
+    refactoring started -- it reports `partiallyApplied`, and the client RECOMMENDS an abort (and
+    says what one would cost) when changes were already staged.
 
 setUp builds a throwaway hierarchy (GsIVBase -> GsIVSub -> GsIVLeaf) in UserGlobals, with a class
 variable, a class-instance variable, and class-side methods on the base so the meta-side of the
@@ -647,50 +649,18 @@ GsInstVarRefactoringTest >> testApplyStopsAtTheFirstFailure [
 	 fix the loop ran on and versioned the leaf onto a stale parent."
 	self assert: result includesSubstring: '"applied":1'.
 	self assert: result includesSubstring: 'GsIVSub'.
-	self deny: result includesSubstring: 'GsIVLeaf'
-]
-
-{ #category : 'tests - apply rollback' }
-GsInstVarRefactoringTest >> testApplyLeavesTransactionAloneWhenTheSessionHadOtherWork [
-	"System abortTransaction rolls back the WHOLE session transaction. When the session already had
-	 uncommitted work of its own -- as it does here: setUp created the fixture and nothing committed
-	 -- aborting would throw that work away too, so the engine must NOT abort. It reports
-	 rolledBack:false instead, and the client tells the user to abort it themselves."
-	| refactoring result |
-	refactoring := self add: 'tally'.
-	refactoring changeSet.
-	UserGlobals removeKey: #GsIVSub ifAbsent: [].
-	result := refactoring applyDeselected: #() options: nil migrate: false deleteHistory: false.
-
-	self assert: result includesSubstring: '"rolledBack":false'.
-	"The fixture is still here, which is the point: nothing of the user's was discarded."
+	self deny: result includesSubstring: 'GsIVLeaf'.
+	"...and the engine does NOT abort: it reports the partial state and leaves the transaction (and
+	 therefore the fixture, which is uncommitted work of this session) exactly where it was."
+	self assert: result includesSubstring: '"partiallyApplied":true'.
 	self assert: (UserGlobals includesKey: #GsIVBase)
 ]
 
 { #category : 'tests - apply rollback' }
-GsInstVarRefactoringTest >> testRollbackDoesNotAbortWhenPriorWorkExists [
-	"The decision in isolation: with prior uncommitted work, answer false and abort nothing."
-	| refactoring |
-	refactoring := self add: 'tally'.
-	self deny: (refactoring rollbackPartialApplyHadPriorWork: true).
-	self assert: (UserGlobals includesKey: #GsIVBase)
-]
-
-{ #category : 'tests - apply rollback' }
-GsInstVarRefactoringTest >> testRollbackAbortsWhenThereWasNoPriorWork [
-	"...and with a clean session it really does abort. Proof that the abort happened: this test's
-	 own uncommitted fixture is gone afterwards. (Which is also why the abort is refused above.)"
-	| refactoring |
-	refactoring := self add: 'tally'.
-	self assert: (refactoring rollbackPartialApplyHadPriorWork: false).
-	self deny: (UserGlobals includesKey: #GsIVBase)
-]
-
-{ #category : 'tests - apply rollback' }
-GsInstVarRefactoringTest >> testSuccessfulApplyReportsNoRollback [
+GsInstVarRefactoringTest >> testSuccessfulApplyReportsNoPartialApply [
 	| result |
 	result := (self add: 'tally') applyDeselected: #() options: nil migrate: false deleteHistory: false.
-	self assert: result includesSubstring: '"rolledBack":false'.
+	self assert: result includesSubstring: '"partiallyApplied":false'.
 	self assert: result includesSubstring: '"failed":[]'
 ]
 
@@ -705,18 +675,11 @@ GsInstVarRefactoringTest >> testOutOfScopeReportsWhetherTheSessionHasUncommitted
 
 { #category : 'tests - apply rollback' }
 GsInstVarRefactoringTest >> testSucceedingApplyStillReportsItsDroppedMethods [
-	"The counterpart to the rollback case: when nothing fails, the dropped list is reported as
-	 usual -- clearing it must be tied to the rollback, not to failure in general.
-
-	 The rolled-back case (dropped cleared, applied 0, rolledBack true) cannot be reached from
-	 SUnit: the engine refuses to abort while the session holds uncommitted work, and this
-	 session always does (setUp's fixture). It is covered end to end, against a committed
-	 fixture, by 'rolls the whole apply back when a change fails part-way through' in
-	 client/src/__tests__/gci/gciInstVar.e2e.test.ts."
+	"A clean apply reports its dropped methods as usual and flags no partial apply."
 	| result |
 	result := (self remove: 'count') applyDeselected: #() options: nil migrate: false deleteHistory: false.
 	self assert: result includesSubstring: 'combine'.
-	self assert: result includesSubstring: '"rolledBack":false'
+	self assert: result includesSubstring: '"partiallyApplied":false'
 ]
 
 { #category : 'tests - add shadowing' }
