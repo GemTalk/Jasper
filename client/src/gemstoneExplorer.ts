@@ -397,9 +397,14 @@ export class MethodItem extends vscode.TreeItem {
     public readonly isMeta: boolean,
     public readonly info: SelectorInfo,
     public readonly displayCategory?: string,
+    // The method's gemstone:// source URI, when known. Only used to carry a
+    // FileDecoration (the "shown in the active editor" tint) — the label and icon
+    // are still set explicitly below, so it doesn't affect how the row renders.
+    resourceUri?: vscode.Uri,
   ) {
     super(info.selector, vscode.TreeItemCollapsibleState.None);
     this.id = `msel:${isMeta}:${displayCategory ?? ''}:${info.selector}`;
+    this.resourceUri = resourceUri;
     // The context value carries the indicator state so the right-click menu can
     // offer superclass/subclass-implementation browsing only where an override
     // arrow is actually present (▲ overrides super, ▼ overridden below). Base
@@ -2640,6 +2645,33 @@ export class ExplorerController {
       }));
   }
 
+  // The gemstone:// source URI for a method row — the SAME URI openMethod opens, so
+  // a FileDecoration keyed on it (the active-editor tint) matches the row. Returns
+  // undefined without a session/dictionary/class. Both the ALL METHODS copy and the
+  // real-category copy of a selector share this URI (built from info.category), so
+  // both rows light up together.
+  methodSourceUri(isMeta: boolean, info: SelectorInfo): vscode.Uri | undefined {
+    const session = this.session();
+    if (
+      session === undefined ||
+      this.state.dictName === undefined ||
+      this.state.className === undefined
+    ) {
+      return undefined;
+    }
+    return buildMethodUri({
+      kind: 'method',
+      sessionId: session.id,
+      dictName: this.state.dictName,
+      className: this.state.className,
+      isMeta,
+      category: info.category,
+      selector: escapeSelectorSlashes(info.selector),
+      environmentId: 0,
+      dictIndex: this.state.dictIndex,
+    });
+  }
+
   async openMethod(node: MethodItem, toSide = false): Promise<void> {
     const session = this.session();
     if (!session || this.state.dictName === undefined || this.state.className === undefined) {
@@ -3738,14 +3770,30 @@ class MethodProvider extends RefreshableProvider<MethodNode> {
         return this.ctl
           .selectorsFor(element.isMeta, ALL_METHODS_CATEGORY)
           .filter((info) => filterMatches(info.selector, filter))
-          .map((info) => new MethodItem(element.isMeta, info));
+          .map(
+            (info) =>
+              new MethodItem(
+                element.isMeta,
+                info,
+                undefined,
+                this.ctl.methodSourceUri(element.isMeta, info),
+              ),
+          );
       }
       return this.ctl.methodCategories(element.isMeta);
     }
     if (element instanceof MethodCategoryItem) {
       return this.ctl
         .selectorsFor(element.isMeta, element.category)
-        .map((info) => new MethodItem(element.isMeta, info, element.category));
+        .map(
+          (info) =>
+            new MethodItem(
+              element.isMeta,
+              info,
+              element.category,
+              this.ctl.methodSourceUri(element.isMeta, info),
+            ),
+        );
     }
     return [];
   }
