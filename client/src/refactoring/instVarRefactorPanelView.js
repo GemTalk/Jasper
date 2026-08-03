@@ -97,9 +97,14 @@
     // versions (and a second commit if a committing option is ticked). The host guards
     // this too; disabling the button keeps the UI honest about the in-flight apply.
     let applying = false;
+    // Once a failure banner is up the apply is terminally done: the host has latched its own
+    // `applying` and will drop any further apply message. `busyDone` (which the host still posts
+    // for an already-done loadMore) must NOT re-enable Apply in that state, or the button would
+    // look live under the ✖ banner while clicking it does nothing.
+    let terminated = false;
     const setApplying = function (busy) {
       applying = busy;
-      if (applyBtn) applyBtn.disabled = busy;
+      if (applyBtn) applyBtn.disabled = busy || terminated;
     };
 
     if (moreBtn) {
@@ -167,7 +172,8 @@
         failBanner.classList.remove('hidden');
         if (typeof failBanner.scrollIntoView === 'function') failBanner.scrollIntoView();
       }
-      // The apply already ran; keep it from re-firing.
+      // The apply already ran and this is terminal; keep Apply dead even if a later busyDone arrives.
+      terminated = true;
       setApplying(true);
     };
     const showAborted = function () {

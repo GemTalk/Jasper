@@ -282,4 +282,15 @@ describe('instance-variable refactor panel view', () => {
 
     expect(vscode.postMessage).toHaveBeenCalledWith({ command: 'cancel' });
   });
+
+  it('keeps Apply dead after a failure even if a stale busyDone arrives later', () => {
+    const { handle } = mount(false);
+    handle.handleMessage({ command: 'applyFailed', message: 'x', canAbort: true });
+    const apply = document.getElementById('apply') as HTMLButtonElement;
+    expect(apply.disabled).toBe(true);
+
+    handle.handleMessage({ command: 'busyDone' });
+
+    expect(apply.disabled).toBe(true);
+  });
 });

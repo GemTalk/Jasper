@@ -7,6 +7,7 @@ vi.mock('../../browserQueries', () => ({
   applyInstVar: vi.fn(),
   clearInstVarPreview: vi.fn(),
   abortSessionTransaction: vi.fn(),
+  sessionNeedsCommit: vi.fn(),
 }));
 vi.mock('../instVarRefactorPanel', () => ({
   showInstVarRefactorPanel: vi.fn(),

@@ -250,9 +250,21 @@ export function describeApplyFailure(
       return { message: `${reason} Nothing was applied.`, canAbort: false };
     }
     const one = result.applied === 1;
-    const left =
-      `${result.applied} class${one ? '' : 'es'} ${one ? 'was' : 'were'} already versioned and` +
-      ` ${one ? 'remains' : 'remain'} in your transaction.`;
+    const count = `${result.applied} class${one ? '' : 'es'}`;
+    if (result.committed) {
+      // The structural change was committed BEFORE the failing step (a migrate / delete-history
+      // step that raised after the commit). It is permanent — an abort cannot undo a commit — so
+      // do not offer one; say what stuck and that the follow-up step is what failed. (Without this
+      // branch the "aborting discards them" wording below would be a lie for the committed case.)
+      return {
+        message:
+          `${reason} ${count} ${one ? 'was' : 'were'} already versioned and committed, so an` +
+          ` abort cannot undo the change; the failure came from the migrate / delete-history step.` +
+          ` Check the stone before retrying.`,
+        canAbort: false,
+      };
+    }
+    const left = `${count} ${one ? 'was' : 'were'} already versioned and ${one ? 'remains' : 'remain'} in your transaction.`;
     const cost = sessionHasUncommittedChanges
       ? ` Aborting the transaction discards ${one ? 'it' : 'them'} AND every other uncommitted` +
         ' change in this session.'

@@ -96,6 +96,7 @@ function handlers() {
       committed: false,
     })),
     abort: vi.fn(),
+    sessionNeedsCommit: undefined as undefined | (() => boolean | undefined),
     cleanup: vi.fn(),
   };
 }
@@ -195,6 +196,29 @@ describe('showInstVarRefactorPanel', () => {
 
     expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
       expect.not.stringContaining('OTHER uncommitted changes'),
+      expect.objectContaining({ modal: true }),
+      'Apply & Commit',
+    );
+  });
+
+  it('warns from a LIVE re-probe, not the stale preview snapshot, at commit time', async () => {
+    (vscode.window.showWarningMessage as ReturnType<typeof vi.fn>).mockResolvedValueOnce(undefined);
+    const h = handlers();
+    h.sessionNeedsCommit = vi.fn(() => true); // session picked up other work since the preview
+
+    void showInstVarRefactorPanel('Add tally to Foo', start, h); // start snapshot is clean
+    lastPanel().__emit({
+      command: 'apply',
+      deselected: [],
+      options: [],
+      migrate: true,
+      deleteHistory: false,
+    });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(h.sessionNeedsCommit).toHaveBeenCalled();
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+      expect.stringContaining('OTHER uncommitted changes'),
       expect.objectContaining({ modal: true }),
       'Apply & Commit',
     );

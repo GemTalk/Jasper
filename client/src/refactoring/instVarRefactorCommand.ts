@@ -130,6 +130,8 @@ export async function runInstVarRefactor(
     abort: () => {
       queries.abortSessionTransaction(session);
     },
+    // Live re-probe for the commit-confirmation warning — see the panel handler's doc.
+    sessionNeedsCommit: () => queries.sessionNeedsCommit(session),
     cleanup: safeClear,
   });
   // The panel resolves a result only on success; every apply failure is shown and handled inside

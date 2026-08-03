@@ -232,6 +232,23 @@ describe('describing an apply failure for the preview panel', () => {
     expect(failure?.message).toContain('every other uncommitted change in this session');
   });
 
+  it('does not offer an abort, and says the change is committed, when the failure struck after the commit', () => {
+    const failure = describeApplyFailure(
+      applyResult({
+        applied: 3,
+        failed: [{ id: 'commit', label: 'commit', error: 'migrate boom' }],
+        committed: true,
+        partiallyApplied: true,
+      }),
+      false,
+    );
+
+    expect(failure?.canAbort).toBe(false);
+    expect(failure?.message).toContain('committed');
+    expect(failure?.message).toContain('cannot undo');
+    expect(failure?.message).not.toContain('remain in your transaction');
+  });
+
   it('assumes a stranded change when an older engine omits the partial-state flag', () => {
     const failure = describeApplyFailure(
       applyResult({ applied: 1, failed: [{ id: 'c2', label: 'Sub', error: 'boom' }] }),

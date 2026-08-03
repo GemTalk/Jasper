@@ -33,6 +33,12 @@ export interface InstVarPanelHandlers {
   /** Abort the session transaction — discards the stranded partial reshape (and any other
    *  uncommitted work). Invoked from the panel's in-place Abort button. Throws on failure. */
   abort: () => void;
+  /** LIVE probe of `System needsCommit`, used at commit-confirmation time. The preview's
+   *  `sessionHasUncommittedChanges` is a snapshot from when it was built; a paginated preview can
+   *  sit open while the user picks up other uncommitted work, so re-probe here rather than warn (or
+   *  fail to warn) off a stale value. `undefined` = couldn't tell; the caller falls back to the
+   *  snapshot. Optional so unit tests that don't exercise the committing path can omit it. */
+  sessionNeedsCommit?: () => boolean | undefined;
   /** Drop the preview session (called exactly once when the panel closes). */
   cleanup: () => void;
 }
@@ -127,8 +133,12 @@ export function showInstVarRefactorPanel(
               ].filter(Boolean);
               // `System commitTransaction` commits the WHOLE session transaction, not just the
               // change staged here, so anything else the user has uncommitted rides along. The
-              // engine reports `System needsCommit` as of the preview; say so explicitly.
-              const collateral = start.outOfScope.sessionHasUncommittedChanges
+              // preview's flag is a SNAPSHOT from when it was built and the panel may have sat open
+              // for a while, so re-probe live; only fall back to the snapshot if the probe can't
+              // tell. (A stale `true` merely over-warns; it's the stale `false` that would bite.)
+              const live = handlers.sessionNeedsCommit?.();
+              const dirty = live ?? start.outOfScope.sessionHasUncommittedChanges;
+              const collateral = dirty
                 ? ' You have OTHER uncommitted changes in this session — they will be committed too.'
                 : '';
               const ok = await vscode.window.showWarningMessage(
