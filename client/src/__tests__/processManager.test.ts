@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as nodePath from 'path';
 
-vi.mock('vscode', () => import('../__mocks__/vscode'));
+vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 vi.mock('child_process');
 vi.mock('../sysadminChannel', () => ({ appendSysadmin: vi.fn(), showSysadmin: vi.fn() }));
 vi.mock('../wslBridge', async () => {

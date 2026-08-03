@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-vi.mock('vscode', () => import('../../__mocks__/vscode'));
+vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 vi.mock('../../browserQueries', () => ({
   getDefinedClassVarNames: vi.fn(),
   getVisibleClassVarNames: vi.fn(),
