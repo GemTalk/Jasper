@@ -77,6 +77,9 @@ describe('ExplorerController add instance variable', () => {
     expect(validate('9bad')).toBeTruthy();
     expect(validate('has space')).toBeTruthy();
     expect(validate('  ')).toBeTruthy();
+    // Kept in step with the engine's isValidIvarName: an UPPERCASE first letter reads as a global
+    // and must be rejected here too, not just declined after a round trip (#360 item 5).
+    expect(validate('Tally')).toBeTruthy();
   });
 
   it('does not run the refactor when the name prompt is cancelled', async () => {
