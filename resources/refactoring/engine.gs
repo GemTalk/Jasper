@@ -296,7 +296,7 @@ removeallclassmethods GsInlineTemporaryRefactoring
 doit
 | cls |
 cls := Object subclass: 'GsInstVarRefactoring'
-  instVarNames: #('environment' 'operation' 'definingClass' 'varName' 'newIvarLists' 'affected' 'willNotRecompile' 'editedOptions' 'changeSet' 'analysisDone' 'decline' 'oldToNew' 'dropped' 'committed' 'partiallyApplied')
+  instVarNames: #('environment' 'operation' 'definingClass' 'varName' 'newIvarLists' 'affected' 'willNotRecompile' 'editedOptions' 'changeSet' 'analysisDone' 'decline' 'oldToNew' 'dropped' 'committed' 'partiallyApplied' 'applied')
   classVars: #()
   classInstVars: #()
   poolDictionaries: #()
@@ -5043,7 +5043,9 @@ applyDeselected: deselectedIds options: optsArray migrate: aBool deleteHistory: 
 	 keeps them. If migrate or deleteHistory is true the structural change is COMMITTED first (the
 	 substrate requires a clean transaction to migrate), then the committing step(s) run and commit.
 	 Answers {applied, failed:[..], dropped:[..], committed:bool}."
-	| applied failures changes index |
+	"`applied` is an instance variable (not a temp) so applyClassChange: can bump it the moment a
+	 version is staged; reset it here per apply."
+	| failures changes index |
 	self ensureAnalysis.
 	"nil optsArray keeps the acted-on class's current options; an Array (even empty) sets them."
 	editedOptions := optsArray isNil ifTrue: [nil] ifFalse: [optsArray collect: [:e | e asString]].
@@ -5061,20 +5063,29 @@ applyDeselected: deselectedIds options: optsArray migrate: aBool deleteHistory: 
 	[failures isEmpty and: [index <= changes size]] whileTrue: [
 		| change |
 		change := changes at: index.
-		[self applyChange: change. applied := applied + 1]
+		"applied is bumped inside applyClassChange: the instant makeNewVersionOf: stages a version,
+		 NOT here after applyChange: returns -- copyMethodsFrom: runs after the version already
+		 exists, so a raise there would otherwise leave a staged (method-less) version behind while
+		 applied stayed 0, making partiallyApplied read false and the client say 'Nothing was
+		 applied.' over a stranded reshape."
+		[self applyChange: change]
 			on: Error do: [:e |
 				failures add: (Array with: change id with: change className with: e messageText)].
 		index := index + 1].
-	failures isEmpty
-		ifTrue: [
-			(aBool or: [dBool]) ifTrue: [
-				self commitStructuralThenMigrate: aBool deleteHistory: dBool on: failures]]
-		ifFalse: [
-			"The engine does NOT abort: rolling the transaction back would discard any work the user
-			 had in flight before this refactoring started, which is not ours to throw away. Instead we
-			 report whether anything was staged before the failure; the client RECOMMENDS an abort when
-			 something was, and says what an abort would cost."
-			partiallyApplied := applied > 0].
+	failures isEmpty ifTrue: [
+		(aBool or: [dBool]) ifTrue: [
+			self commitStructuralThenMigrate: aBool deleteHistory: dBool on: failures]].
+	"partiallyApplied means a failure left work behind -- classes already versioned in the
+	 transaction, or already committed if the failure struck AFTER the commit (a migrate /
+	 delete-history step that raised). Compute it once here, from what actually applied, regardless
+	 of WHICH stage failed: setting it only on the structural-failure branch let a commit/migrate
+	 failure answer partiallyApplied:false, so the client wrongly reported 'Nothing was applied.'
+	 when whole classes had in fact been versioned (and possibly committed).
+
+	 The engine still does NOT abort -- that would discard any work the user had in flight before
+	 this refactoring started, which is not ours to throw away -- so the client keys its abort
+	 recommendation off this and says what an abort would cost."
+	partiallyApplied := failures notEmpty and: [applied > 0].
 	^'{"applied":', applied printString,
 	  ',"failed":[',
 	  ((failures collect: [:f |
@@ -5141,6 +5152,10 @@ applyClassChange: aChange
 	parentNew := oldToNew at: old superclass ifAbsent: [old superclass].
 	list := newIvarLists at: aChange className ifAbsent: [self ownInstVarsOf: old].
 	new := self makeNewVersionOf: old superclass: parentNew instVarNames: list options: (self optionsForApply: old).
+	"Count it as applied HERE, the moment the version is staged -- before copyMethodsFrom:, which
+	 could raise. If it does, this class's new version is already a real staged mutation, so the
+	 apply is genuinely partial and partiallyApplied must reflect that."
+	applied := applied + 1.
 	self copyMethodsFrom: old to: new.
 	oldToNew at: old put: new
 %

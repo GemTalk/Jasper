@@ -3750,7 +3750,12 @@ setUp
 	 class-INSTANCE variable -- all three must survive onto the new class version."
 	self compile: 'describe ^''base''' in: base class.
 	self compile: 'tag ^BaseTag' in: base class.
-	self compile: 'registry ^registry' in: base class
+	self compile: 'registry ^registry' in: base class.
+	"Seed the class variable and the class-instance variable with VALUES, so the meta-side tests can
+	 assert the values -- not merely the slots -- survive the reshape. isNil alone would pass even if
+	 makeNewVersionOf: recreated empty slots instead of carrying the existing ones over."
+	self compile: 'seedClassState BaseTag := ''tagged''. registry := ''reg''' in: base class.
+	base seedClassState
 %
 
 category: 'running'
@@ -3997,7 +4002,9 @@ testNewVersionPreservesClassVariables
 	 class of bug, and were untested because the fixture had none."
 	self add: 'tally'.
 	self assert: ((UserGlobals at: #GsIVBase) classVarNames collect: [:n | n asString])
-		includesItem: 'BaseTag'
+		includesItem: 'BaseTag'.
+	"the VALUE carried over, not just an empty recreated slot"
+	self assert: (UserGlobals at: #GsIVBase) tag equals: 'tagged'
 %
 
 category: 'tests - class side'
@@ -4005,7 +4012,9 @@ method: GsInstVarRefactoringTest
 testNewVersionPreservesClassInstanceVariables
 	self add: 'tally'.
 	self assert: ((UserGlobals at: #GsIVBase) class instVarNames collect: [:n | n asString])
-		includesItem: 'registry'
+		includesItem: 'registry'.
+	"the VALUE carried over, not just an empty recreated slot"
+	self assert: (UserGlobals at: #GsIVBase) registry equals: 'reg'
 %
 
 category: 'tests - class side'
@@ -4029,8 +4038,8 @@ testClassSideMethodsStillRunOnTheNewVersion
 	self add: 'tally'.
 	newBase := UserGlobals at: #GsIVBase.
 	self assert: newBase describe equals: 'base'.
-	self assert: newBase tag isNil.
-	self assert: newBase registry isNil
+	self assert: newBase tag equals: 'tagged'.
+	self assert: newBase registry equals: 'reg'
 %
 
 category: 'tests - class side'
