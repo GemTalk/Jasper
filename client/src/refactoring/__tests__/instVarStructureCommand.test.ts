@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-vi.mock('vscode', () => import('../../__mocks__/vscode'));
+vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 vi.mock('../../browserQueries', () => ({
   analyzeInstVarStructure: vi.fn(),
   startInstVarStructurePreview: vi.fn(),
@@ -30,8 +30,7 @@ import {
   wordAt,
   saveIfDirty,
 } from '../renameAtCursorShared';
-import { pushInstVar, convertTempToInstVarCommand } from '../instVarStructureCommand';
-import { PREVIEW_PAGE_BYTES } from '../queries/previewRenameMethod';
+import { moveInstVar, convertTempToInstVarCommand } from '../instVarStructureCommand';
 import type { ActiveSession, SessionManager } from '../../sessionManager';
 
 /**
@@ -64,7 +63,10 @@ const applyResult = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-const pushUp = (): Promise<boolean> => pushInstVar(session, 'up', 'V2Dog', 'tailLength', 2);
+// Drives the shared runInstVarStructure flow through the live entry point (the general #move);
+// the pre-flight/preview/apply contract below is the same whatever direction or op reaches it.
+const runFlow = (): Promise<boolean> =>
+  moveInstVar(session, 'up', 'V2Dog', 'tailLength', ['V2Animal'], 2);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -72,49 +74,18 @@ beforeEach(() => {
   vi.mocked(saveIfDirty).mockResolvedValue(true);
 });
 
-describe('push instance variable command', () => {
+describe('instance-variable structure command — apply/decline flow', () => {
   it('does not run a pre-flight when the engine is unavailable', async () => {
     vi.mocked(ensureRbSupport).mockResolvedValue(false);
 
-    expect(await pushUp()).toBe(false);
+    expect(await runFlow()).toBe(false);
     expect(queries.analyzeInstVarStructure).not.toHaveBeenCalled();
-  });
-
-  it('always opts into moving simple accessors on a push', async () => {
-    vi.mocked(queries.analyzeInstVarStructure).mockResolvedValue(analysis());
-    vi.mocked(queries.startInstVarStructurePreview).mockResolvedValue(startEnvelope());
-    vi.mocked(showInstVarStructurePanel).mockResolvedValue(applyResult());
-
-    await pushUp();
-
-    // Assert the whole argument list (not a positional index) so inserting or reordering a
-    // parameter fails loudly here instead of silently asserting on the wrong argument.
-    expect(queries.analyzeInstVarStructure).toHaveBeenCalledWith(
-      session,
-      'pushUp',
-      'V2Dog',
-      'tailLength',
-      2,
-      undefined,
-      true,
-    );
-    expect(queries.startInstVarStructurePreview).toHaveBeenCalledWith(
-      session,
-      'pushUp',
-      'V2Dog',
-      'tailLength',
-      expect.any(String),
-      PREVIEW_PAGE_BYTES,
-      2,
-      undefined,
-      true,
-    );
   });
 
   it('surfaces a pre-flight failure and never previews', async () => {
     vi.mocked(queries.analyzeInstVarStructure).mockRejectedValue(new Error('kaboom'));
 
-    expect(await pushUp()).toBe(false);
+    expect(await runFlow()).toBe(false);
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(expect.stringContaining('kaboom'));
     expect(queries.startInstVarStructurePreview).not.toHaveBeenCalled();
   });
@@ -124,7 +95,7 @@ describe('push instance variable command', () => {
       analysis({ decline: 'it is not an instance variable declared in V2Dog' }),
     );
 
-    expect(await pushUp()).toBe(false);
+    expect(await runFlow()).toBe(false);
     expect(refuse).toHaveBeenCalledWith(expect.stringContaining('not an instance variable'));
     expect(queries.startInstVarStructurePreview).not.toHaveBeenCalled();
   });
@@ -133,7 +104,7 @@ describe('push instance variable command', () => {
     vi.mocked(queries.analyzeInstVarStructure).mockResolvedValue(analysis());
     vi.mocked(queries.startInstVarStructurePreview).mockRejectedValue(new Error('splat'));
 
-    expect(await pushUp()).toBe(false);
+    expect(await runFlow()).toBe(false);
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(expect.stringContaining('splat'));
     expect(queries.clearInstVarStructurePreview).toHaveBeenCalled();
     expect(showInstVarStructurePanel).not.toHaveBeenCalled();
@@ -145,7 +116,7 @@ describe('push instance variable command', () => {
       startEnvelope({ outOfScope: { decline: 'still uses it', note: null } }),
     );
 
-    expect(await pushUp()).toBe(false);
+    expect(await runFlow()).toBe(false);
     expect(refuse).toHaveBeenCalledWith(expect.stringContaining('still uses it'));
     expect(showInstVarStructurePanel).not.toHaveBeenCalled();
   });
@@ -154,7 +125,7 @@ describe('push instance variable command', () => {
     vi.mocked(queries.analyzeInstVarStructure).mockResolvedValue(analysis());
     vi.mocked(queries.startInstVarStructurePreview).mockResolvedValue(startEnvelope({ total: 0 }));
 
-    expect(await pushUp()).toBe(false);
+    expect(await runFlow()).toBe(false);
     expect(refuse).toHaveBeenCalledWith(expect.stringContaining('Nothing to change'));
   });
 
@@ -163,7 +134,7 @@ describe('push instance variable command', () => {
     vi.mocked(queries.startInstVarStructurePreview).mockResolvedValue(startEnvelope());
     vi.mocked(showInstVarStructurePanel).mockResolvedValue(undefined);
 
-    expect(await pushUp()).toBe(false);
+    expect(await runFlow()).toBe(false);
     expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
   });
 
@@ -174,7 +145,7 @@ describe('push instance variable command', () => {
       applyResult({ applied: 0, error: 'preview session expired' }),
     );
 
-    expect(await pushUp()).toBe(false);
+    expect(await runFlow()).toBe(false);
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
       expect.stringContaining('preview session expired'),
     );
@@ -188,7 +159,7 @@ describe('push instance variable command', () => {
       applyResult({ failed: [{ id: '1', label: 'V2Dog', error: 'boom' }] }),
     );
 
-    expect(await pushUp()).toBe(false);
+    expect(await runFlow()).toBe(false);
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(expect.stringContaining('boom'));
   });
 
@@ -199,10 +170,74 @@ describe('push instance variable command', () => {
       applyResult({ committed: true, migratedFailures: 2 }),
     );
 
-    expect(await pushUp()).toBe(true);
+    expect(await runFlow()).toBe(true);
     const msg = vi.mocked(vscode.window.showInformationMessage).mock.calls[0][0];
     expect(msg).toContain('committed');
     expect(msg).toContain('2 instance');
+  });
+});
+
+describe('move instance variable command', () => {
+  it('threads the chosen destinations and direction through as a move, opting into accessors', async () => {
+    vi.mocked(queries.analyzeInstVarStructure).mockResolvedValue(analysis());
+    vi.mocked(queries.startInstVarStructurePreview).mockResolvedValue(startEnvelope());
+    vi.mocked(showInstVarStructurePanel).mockResolvedValue(applyResult());
+
+    await moveInstVar(session, 'down', 'V4Mid', 'shared', ['V4LeafA', 'V4LeafB'], 2);
+
+    expect(queries.analyzeInstVarStructure).toHaveBeenCalledWith(
+      session,
+      'move',
+      'V4Mid',
+      'shared',
+      2,
+      undefined,
+      true,
+      { targets: ['V4LeafA', 'V4LeafB'], direction: 'down' },
+    );
+  });
+
+  it('names the source class and single destination in an up-move heading', async () => {
+    vi.mocked(queries.analyzeInstVarStructure).mockResolvedValue(analysis());
+    vi.mocked(queries.startInstVarStructurePreview).mockResolvedValue(startEnvelope());
+    vi.mocked(showInstVarStructurePanel).mockResolvedValue(applyResult());
+
+    expect(await moveInstVar(session, 'up', 'V4Leaf', 'shared', ['V4Base'], 2)).toBe(true);
+
+    const heading = vi.mocked(showInstVarStructurePanel).mock.calls[0][0];
+    expect(heading).toContain("'shared' from V4Leaf up to V4Base");
+  });
+
+  it('names each destination in a down-move heading', async () => {
+    vi.mocked(queries.analyzeInstVarStructure).mockResolvedValue(analysis());
+    vi.mocked(queries.startInstVarStructurePreview).mockResolvedValue(startEnvelope());
+    vi.mocked(showInstVarStructurePanel).mockResolvedValue(applyResult());
+
+    await moveInstVar(session, 'down', 'V4Mid', 'shared', ['V4LeafA', 'V4LeafB'], 2);
+
+    const heading = vi.mocked(showInstVarStructurePanel).mock.calls[0][0];
+    expect(heading).toContain('from V4Mid down to V4LeafA, V4LeafB');
+  });
+
+  it('falls back to a subclass count once there are more destinations than fit', async () => {
+    vi.mocked(queries.analyzeInstVarStructure).mockResolvedValue(analysis());
+    vi.mocked(queries.startInstVarStructurePreview).mockResolvedValue(startEnvelope());
+    vi.mocked(showInstVarStructurePanel).mockResolvedValue(applyResult());
+
+    await moveInstVar(session, 'down', 'V4Mid', 'shared', ['A', 'B', 'C', 'D'], 2);
+
+    const heading = vi.mocked(showInstVarStructurePanel).mock.calls[0][0];
+    expect(heading).toContain('from V4Mid down to 4 subclasses');
+  });
+
+  it('refuses on a hard decline and never previews', async () => {
+    vi.mocked(queries.analyzeInstVarStructure).mockResolvedValue(
+      analysis({ decline: 'GsVSTwig still uses it in 1 of its own method(s): #usesPush.' }),
+    );
+
+    expect(await moveInstVar(session, 'down', 'V4Mid', 'shared', ['V4LeafA'], 2)).toBe(false);
+    expect(queries.startInstVarStructurePreview).not.toHaveBeenCalled();
+    expect(refuse).toHaveBeenCalledWith(expect.stringContaining('still uses it'));
   });
 });
 

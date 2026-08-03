@@ -36,7 +36,11 @@ import {
   getClassVersions as sharedGetClassVersions,
   ClassVersionInfo,
 } from './refactoring/queries/getClassVersions';
-import { previewRenameInstVar as sharedPreviewRenameInstVar } from './refactoring/queries/previewRenameInstVar';
+import {
+  startRenameInstVarPreview as sharedStartRenameInstVarPreview,
+  applyRenameInstVar as sharedApplyRenameInstVar,
+  clearRenameInstVarPreview as sharedClearRenameInstVarPreview,
+} from './refactoring/queries/previewRenameInstVar';
 import {
   startRenameMethodPreview as sharedStartRenameMethodPreview,
   pageRenameMethodPreview as sharedPageRenameMethodPreview,
@@ -103,6 +107,14 @@ import {
   clearMoveMethodPreview as sharedClearMoveMethodPreview,
 } from './refactoring/queries/previewMoveMethod';
 import {
+  InstVarOp,
+  analyzeInstVar as sharedAnalyzeInstVar,
+  startInstVarPreview as sharedStartInstVarPreview,
+  pageInstVarPreview as sharedPageInstVarPreview,
+  applyInstVar as sharedApplyInstVar,
+  clearInstVarPreview as sharedClearInstVarPreview,
+} from './refactoring/queries/previewInstVar';
+import {
   analyzeExtractTemporary as sharedAnalyzeExtractTemporary,
   startExtractTemporaryPreview as sharedStartExtractTemporaryPreview,
   pageExtractTemporaryPreview as sharedPageExtractTemporaryPreview,
@@ -124,7 +136,12 @@ import {
   clearInstVarStructurePreview as sharedClearInstVarStructurePreview,
   IvarStructureOp,
   ConvertTempArgs,
+  MoveArgs,
 } from './refactoring/queries/previewInstVarStructure';
+import {
+  getClassDescendantNames as sharedGetClassDescendantNames,
+  DescendantClass,
+} from './refactoring/queries/getClassDescendantNames';
 import {
   getClassHistory as sharedGetClassHistory,
   revertClassToVersion as sharedRevertClassToVersion,
@@ -192,6 +209,8 @@ export type { ClassNameEntry } from './queries/getAllClassNames';
 export type { ClassCategoryEntry } from './queries/getClassesWithCategory';
 export type { EnvCategoryLine } from './queries/getClassEnvironments';
 export type { ClassHierarchyEntry } from './queries/getClassHierarchy';
+export type { DescendantClass } from './refactoring/queries/getClassDescendantNames';
+export type { MoveArgs } from './refactoring/queries/previewInstVarStructure';
 export type { MethodEntry } from './queries/getMethodList';
 export type { StepPointSelectorInfo } from './queries/getStepPointSelectorRanges';
 export type { MethodSearchResult } from './queries/methodSearch';
@@ -596,8 +615,20 @@ export function getAllClassNames(session: ActiveSession) {
   return sharedGetAllClassNames(defaultQueryExecutorUsing(session));
 }
 
-export function getClassHierarchy(session: ActiveSession, className: string) {
-  return sharedGetClassHierarchy(defaultQueryExecutorUsing(session), className);
+export function getClassHierarchy(
+  session: ActiveSession,
+  className: string,
+  dict?: number | string,
+) {
+  return sharedGetClassHierarchy(defaultQueryExecutorUsing(session), className, dict);
+}
+
+export function getClassDescendantNames(
+  session: ActiveSession,
+  className: string,
+  dict?: number | string,
+): DescendantClass[] {
+  return sharedGetClassDescendantNames(defaultQueryExecutorUsing(session), className, dict);
 }
 
 export function fileOutClass(
@@ -665,20 +696,34 @@ export function getClassVersions(
   return sharedGetClassVersions(defaultQueryExecutorUsing(session), dict);
 }
 
-export function previewRenameInstVar(
+export function startRenameInstVarPreview(
   session: ActiveSession,
   className: string,
   oldName: string,
   newName: string,
+  token: string,
   dict?: number | string,
 ): string {
-  return sharedPreviewRenameInstVar(
+  return sharedStartRenameInstVarPreview(
     defaultQueryExecutorUsing(session),
     className,
     oldName,
     newName,
+    token,
     dict,
   );
+}
+
+export function applyRenameInstVar(
+  session: ActiveSession,
+  token: string,
+  deselectedIds: string[],
+): string {
+  return sharedApplyRenameInstVar(defaultQueryExecutorUsing(session), token, deselectedIds);
+}
+
+export function clearRenameInstVarPreview(session: ActiveSession, token: string): string {
+  return sharedClearRenameInstVarPreview(defaultQueryExecutorUsing(session), token);
 }
 
 // Paginated rename-method preview: fetched NON-BLOCKING so a slow build shows a
@@ -1246,6 +1291,65 @@ export function clearMoveMethodPreview(session: ActiveSession, token: string): s
   return sharedClearMoveMethodPreview(defaultQueryExecutorUsing(session), token);
 }
 
+// Add / remove instance-variable (V1) preview: pre-flight analysis (decline reason,
+// affected count, how many methods will not recompile), paginated start/page fetched
+// NON-BLOCKING, server-side apply. The structural change never commits; migrate /
+// delete-history do (and are opt-in). `options` (or null) replaces the acted-on class's
+// class options.
+export function analyzeInstVar(
+  session: ActiveSession,
+  op: InstVarOp,
+  className: string,
+  ivarName: string,
+  dict?: number | string,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Analysing…');
+  return sharedAnalyzeInstVar(exec, op, className, ivarName, dict);
+}
+
+export function startInstVarPreview(
+  session: ActiveSession,
+  op: InstVarOp,
+  className: string,
+  ivarName: string,
+  token: string,
+  maxBytes: number,
+  dict?: number | string,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Previewing…');
+  return sharedStartInstVarPreview(exec, op, className, ivarName, token, maxBytes, dict);
+}
+
+export function pageInstVarPreview(
+  session: ActiveSession,
+  token: string,
+  offset: number,
+  maxBytes: number,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Loading more changes…');
+  return sharedPageInstVarPreview(exec, token, offset, maxBytes);
+}
+
+export function applyInstVar(
+  session: ActiveSession,
+  token: string,
+  deselectedIds: string[],
+  options: string[] | null,
+  migrate: boolean,
+  deleteHistory: boolean,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Applying…');
+  return sharedApplyInstVar(exec, token, deselectedIds, options, migrate, deleteHistory);
+}
+
+export function clearInstVarPreview(session: ActiveSession, token: string): string {
+  return sharedClearInstVarPreview(defaultQueryExecutorUsing(session), token);
+}
+
 // Extract-temporary (M3) preview: pre-flight analysis, paginated start/page fetched
 // NON-BLOCKING, server-side apply. Method-local, a single methodRecompile change,
 // all-or-nothing (apply passes an empty deselected set).
@@ -1386,10 +1490,20 @@ export function analyzeInstVarStructure(
   dict?: number | string,
   extra?: ConvertTempArgs,
   moveAccessors = false,
+  move?: MoveArgs,
 ): Promise<string> {
   const exec = (label: string, code: string): Promise<string> =>
     executeFetchStringNb(session, label, code, 'Analysing…');
-  return sharedAnalyzeInstVarStructure(exec, op, className, varName, dict, extra, moveAccessors);
+  return sharedAnalyzeInstVarStructure(
+    exec,
+    op,
+    className,
+    varName,
+    dict,
+    extra,
+    moveAccessors,
+    move,
+  );
 }
 
 export function startInstVarStructurePreview(
@@ -1402,6 +1516,7 @@ export function startInstVarStructurePreview(
   dict?: number | string,
   extra?: ConvertTempArgs,
   moveAccessors = false,
+  move?: MoveArgs,
 ): Promise<string> {
   const exec = (label: string, code: string): Promise<string> =>
     executeFetchStringNb(session, label, code, `Previewing change to ${className}…`);
@@ -1415,6 +1530,7 @@ export function startInstVarStructurePreview(
     dict,
     extra,
     moveAccessors,
+    move,
   );
 }
 

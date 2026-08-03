@@ -295,8 +295,67 @@ removeallclassmethods GsInlineTemporaryRefactoring
 
 doit
 | cls |
+cls := Object subclass: 'GsInstVarRefactoring'
+  instVarNames: #('environment' 'operation' 'definingClass' 'varName' 'newIvarLists' 'affected' 'willNotRecompile' 'editedOptions' 'changeSet' 'analysisDone' 'decline' 'oldToNew' 'dropped' 'committed')
+  classVars: #()
+  classInstVars: #()
+  poolDictionaries: #()
+  inDictionary: GsRefactoring.
+cls category: 'Refactoring-Core'.
+cls comment: '
+Add or remove an INSTANCE VARIABLE on a class (catalog item V1), without committing -- except for
+the two explicitly opt-in, explicitly committing steps below.
+
+GemStone has no addInstVarName:/removeInstVarName:, so changing a class''s own instance-variable
+list means creating a NEW class VERSION (exactly as a class rename, R3, does): a new version
+starts with an empty method dictionary and does NOT re-parent existing subclasses. So the apply
+must, for every affected class top-down, create a new version in the same class history with the
+edited own-instVar list and its preserved class options, COPY its methods forward,
+and re-parent it under the freshly created parent version. This reuses R3''s newVersionOf: machinery.
+
+Two operations (instVar `operation`):
+
+  - #add    -- append varName to definingClass''s own instance-variable list.
+  - #remove -- drop varName from definingClass''s own instance-variable list.
+
+Affected set = definingClass''s subtree (the class + all descendants), toposorted so a superclass is
+always versioned before its subclasses. Each affected class becomes a new version: an edited class
+(#classDefinitionEdit, shown as a definition diff) when its own-ivar list changes, else a
+re-parented class (#classReparent, recompiled only to re-point at the new parent chain).
+
+Two things the family did not surface before, both required here:
+
+  - CLASS OPTIONS. Every new version preserves its own class''s options (`_optionsArray`); the
+    earlier engines passed options: #() and silently dropped them. optionsForApply: answers the
+    option list a given class''s new version is built with. (The panel does not surface options
+    for editing; editedOptions is plumbing for a future options editor and is left nil.)
+
+  - METHODS THAT WILL NOT RECOMPILE. A method that references a removed instance variable no
+    longer resolves the name; GemStone will not compile a reference to an undeclared lowercase
+    identifier, so such a method fails to compile and is silently DROPPED from the new version. The
+    set is predicted (without compiling) from bytecode-level instance-variable access, surfaced in
+    the preview as willNotRecompile, and reported (dropped) after apply.
+
+IMPORTANT commit semantics (surfaced in the preview):
+  - The structural change (new versions + method copy-forward + reparents) NEVER commits on its own.
+  - MIGRATE INSTANCES and DELETE HISTORY are opt-in and DO commit: migrateInstancesTo: requires a
+    clean transaction, so the apply commits the structural change first, then migrates and commits,
+    then (if asked) deletes prior versions and commits. Nothing else in the family commits.
+
+The refactoring is all-or-nothing (like rename-class-variable): the class-shape edits and the
+descendant reparents must all apply together, so the client offers no per-change deselection and
+applyDeselected: ignores any deselection.
+'.
+true.
+%
+
+removeallmethods GsInstVarRefactoring
+removeallclassmethods GsInstVarRefactoring
+
+doit
+| cls |
 cls := Object subclass: 'GsInstVarStructureRefactoring'
-  instVarNames: #('environment' 'operation' 'definingClass' 'varName' 'methodSelector' 'methodMeta' 'topClass' 'newIvarLists' 'methodRewrite' 'moveAccessors' 'accessorRemovals' 'accessorAdds' 'migrateInstances' 'removeOldFromHistory' 'changeSet' 'analysisDone' 'decline' 'oldToNew')
+  instVarNames: #('environment' 'operation' 'definingClass' 'varName' 'methodSelector' 'methodMeta' 'topClass' 'newIvarLists' 'methodRewrite' 'targetClasses' 'moveDirection' 'moveAccessors' 'accessorRemovals' 'accessorAdds' 'migrateInstances' 'removeOldFromHistory' 'changeSet' 'analysisDone' 'decline' 'oldToNew')
   classVars: #()
   classInstVars: #()
   poolDictionaries: #()
@@ -324,6 +383,15 @@ Three operations:
 
   - V3 pushDown -- move an instance variable from a class down into EVERY immediate subclass.
     The class loses it (edited); each immediate subclass gains it (edited).
+
+  - V4 move -- the GENERAL form the Explorer''s up/down arrows drive: move the declaration from
+    its class to chosen destination class(es) IN THE HIERARCHY. #up carries it to a single chosen
+    SUPERCLASS (any ancestor, not just the immediate one -- pushUp is the immediate-superclass
+    special case); #down carries it to one OR MORE chosen SUBCLASSES (a selected subset at any
+    descendant depth -- pushDown is the all-immediate-subclasses special case). The class always
+    loses it; each destination gains it. An extra precondition beyond push up/down: on a partial
+    push-down every class that ends up WITHOUT the ivar (the source, and any descendant subtree
+    not under a chosen destination) must not still use it in its own methods.
 
 Affected set = the highest edited class + all its descendants, top-down. Each affected class
 gets a new version: an edited class with its computed own-instVar list (a #classDefinitionEdit,
@@ -584,6 +652,33 @@ true.
 
 removeallmethods GsRefactoringEnvironment
 removeallclassmethods GsRefactoringEnvironment
+
+doit
+| cls |
+cls := Object subclass: 'GsRefactoringJson'
+  instVarNames: #()
+  classVars: #()
+  classInstVars: #()
+  poolDictionaries: #()
+  inDictionary: GsRefactoring.
+cls category: 'Refactoring-Core'.
+cls comment: '
+Shared JSON serialization helpers for the refactoring engine.
+
+Every Gs*Refactoring serializer emits its preview/analysis payloads as JSON, and
+each used to carry a byte-identical copy of the same three helpers (RB catalog C1).
+They now live here, class-side, and each refactoring''s `jsonQuote:` / `jsonEscape:` /
+`hex2:` delegates to this one implementation -- one place to fix, one place to test.
+
+The escaper emits PURE ASCII (control chars and code points above 126 become
+\\uXXXX), so the client''s non-blocking GCI fetch is never handed a Unicode-promoted
+(wide) result.
+'.
+true.
+%
+
+removeallmethods GsRefactoringJson
+removeallclassmethods GsRefactoringJson
 
 doit
 | cls |
@@ -1229,40 +1324,19 @@ rewriteSend: aMessageNode source: src
 category: 'serializing'
 method: GsChangeSignatureRefactoring
 hex2: anInteger
-	| digits |
-	digits := '0123456789abcdef'.
-	^(String with: (digits at: (anInteger // 16) + 1))
-		, (String with: (digits at: (anInteger \\ 16) + 1))
+	^GsRefactoringJson hex2: anInteger
 %
 
 category: 'serializing'
 method: GsChangeSignatureRefactoring
 jsonEscape: aString
-	| ws |
-	ws := WriteStream on: String new.
-	aString do: [:ch | | code |
-		code := ch asInteger.
-		ch == $" ifTrue: [ws nextPutAll: '\"']
-		ifFalse: [ch == $\ ifTrue: [ws nextPutAll: '\\']
-		ifFalse: [code = 10 ifTrue: [ws nextPutAll: '\n']
-		ifFalse: [code = 13 ifTrue: [ws nextPutAll: '\r']
-		ifFalse: [code = 9 ifTrue: [ws nextPutAll: '\t']
-		ifFalse: [code < 32
-			ifTrue: [ws nextPutAll: '\u00'; nextPutAll: (self hex2: code)]
-		ifFalse: [code > 126
-			ifTrue: [code > 65535
-				ifTrue: [ws nextPut: $?]
-				ifFalse: [ws nextPutAll: '\u';
-					nextPutAll: (self hex2: code // 256);
-					nextPutAll: (self hex2: code \\ 256)]]
-			ifFalse: [ws nextPut: ch]]]]]]]].
-	^ws contents
+	^GsRefactoringJson jsonEscape: aString
 %
 
 category: 'serializing'
 method: GsChangeSignatureRefactoring
 jsonQuote: aString
-	^'"', (self jsonEscape: aString), '"'
+	^GsRefactoringJson jsonQuote: aString
 %
 
 category: 'private'
@@ -1701,43 +1775,19 @@ pad2: anInteger
 category: 'serializing'
 classmethod: GsClassHistory
 hex2: anInteger
-	| digits |
-	digits := '0123456789abcdef'.
-	^(String with: (digits at: (anInteger // 16) + 1))
-		, (String with: (digits at: (anInteger \\ 16) + 1))
+	^GsRefactoringJson hex2: anInteger
 %
 
 category: 'serializing'
 classmethod: GsClassHistory
 jsonEscape: aString
-	"JSON string escaping emitting PURE ASCII (control chars + code points above 126
-	 become \\uXXXX), so a client's non-blocking GCI fetch is never handed a
-	 Unicode-promoted result."
-	| ws |
-	ws := WriteStream on: String new.
-	aString do: [:ch | | code |
-		code := ch asInteger.
-		ch == $" ifTrue: [ws nextPutAll: '\"']
-		ifFalse: [ch == $\ ifTrue: [ws nextPutAll: '\\']
-		ifFalse: [code = 10 ifTrue: [ws nextPutAll: '\n']
-		ifFalse: [code = 13 ifTrue: [ws nextPutAll: '\r']
-		ifFalse: [code = 9 ifTrue: [ws nextPutAll: '\t']
-		ifFalse: [code < 32
-			ifTrue: [ws nextPutAll: '\u00'; nextPutAll: (self hex2: code)]
-		ifFalse: [code > 126
-			ifTrue: [code > 65535
-				ifTrue: [ws nextPut: $?]
-				ifFalse: [ws nextPutAll: '\u';
-					nextPutAll: (self hex2: code // 256);
-					nextPutAll: (self hex2: code \\ 256)]]
-			ifFalse: [ws nextPut: ch]]]]]]]].
-	^ws contents
+	^GsRefactoringJson jsonEscape: aString
 %
 
 category: 'serializing'
 classmethod: GsClassHistory
 jsonQuote: aString
-	^'"', (self jsonEscape: aString), '"'
+	^GsRefactoringJson jsonQuote: aString
 %
 
 category: 'private'
@@ -2579,43 +2629,19 @@ applyMethodCompile: aChange
 category: 'serializing'
 method: GsExtractMethodRefactoring
 jsonQuote: aString
-	^'"', (self jsonEscape: aString), '"'
+	^GsRefactoringJson jsonQuote: aString
 %
 
 category: 'serializing'
 method: GsExtractMethodRefactoring
 jsonEscape: aString
-	"JSON string escaping emitting PURE ASCII (control chars and code points above 126
-	 become \\uXXXX), so the client's non-blocking GCI fetch is never handed a Unicode
-	 result."
-	| ws |
-	ws := WriteStream on: String new.
-	aString do: [:ch | | code |
-		code := ch asInteger.
-		ch == $" ifTrue: [ws nextPutAll: '\"']
-		ifFalse: [ch == $\ ifTrue: [ws nextPutAll: '\\']
-		ifFalse: [code = 10 ifTrue: [ws nextPutAll: '\n']
-		ifFalse: [code = 13 ifTrue: [ws nextPutAll: '\r']
-		ifFalse: [code = 9 ifTrue: [ws nextPutAll: '\t']
-		ifFalse: [code < 32
-			ifTrue: [ws nextPutAll: '\u00'; nextPutAll: (self hex2: code)]
-		ifFalse: [code > 126
-			ifTrue: [code > 65535
-				ifTrue: [ws nextPut: $?]
-				ifFalse: [ws nextPutAll: '\u';
-					nextPutAll: (self hex2: code // 256);
-					nextPutAll: (self hex2: code \\ 256)]]
-			ifFalse: [ws nextPut: ch]]]]]]]].
-	^ws contents
+	^GsRefactoringJson jsonEscape: aString
 %
 
 category: 'serializing'
 method: GsExtractMethodRefactoring
 hex2: anInteger
-	| digits |
-	digits := '0123456789abcdef'.
-	^(String with: (digits at: (anInteger // 16) + 1))
-		, (String with: (digits at: (anInteger \\ 16) + 1))
+	^GsRefactoringJson hex2: anInteger
 %
 
 category: 'instance creation'
@@ -3249,43 +3275,19 @@ applyMethodRecompile: aChange
 category: 'serializing'
 method: GsExtractTemporaryRefactoring
 jsonQuote: aString
-	^'"', (self jsonEscape: aString), '"'
+	^GsRefactoringJson jsonQuote: aString
 %
 
 category: 'serializing'
 method: GsExtractTemporaryRefactoring
 jsonEscape: aString
-	"JSON string escaping emitting PURE ASCII (control chars and code points above 126
-	 become \\uXXXX), so the client's non-blocking GCI fetch is never handed a Unicode
-	 result."
-	| ws |
-	ws := WriteStream on: String new.
-	aString do: [:ch | | code |
-		code := ch asInteger.
-		ch == $" ifTrue: [ws nextPutAll: '\"']
-		ifFalse: [ch == $\ ifTrue: [ws nextPutAll: '\\']
-		ifFalse: [code = 10 ifTrue: [ws nextPutAll: '\n']
-		ifFalse: [code = 13 ifTrue: [ws nextPutAll: '\r']
-		ifFalse: [code = 9 ifTrue: [ws nextPutAll: '\t']
-		ifFalse: [code < 32
-			ifTrue: [ws nextPutAll: '\u00'; nextPutAll: (self hex2: code)]
-		ifFalse: [code > 126
-			ifTrue: [code > 65535
-				ifTrue: [ws nextPut: $?]
-				ifFalse: [ws nextPutAll: '\u';
-					nextPutAll: (self hex2: code // 256);
-					nextPutAll: (self hex2: code \\ 256)]]
-			ifFalse: [ws nextPut: ch]]]]]]]].
-	^ws contents
+	^GsRefactoringJson jsonEscape: aString
 %
 
 category: 'serializing'
 method: GsExtractTemporaryRefactoring
 hex2: anInteger
-	| digits |
-	digits := '0123456789abcdef'.
-	^(String with: (digits at: (anInteger // 16) + 1))
-		, (String with: (digits at: (anInteger \\ 16) + 1))
+	^GsRefactoringJson hex2: anInteger
 %
 
 category: 'instance creation'
@@ -3969,43 +3971,19 @@ applyMethodRemove: aChange
 category: 'serializing'
 method: GsInlineMethodRefactoring
 jsonQuote: aString
-	^'"', (self jsonEscape: aString), '"'
+	^GsRefactoringJson jsonQuote: aString
 %
 
 category: 'serializing'
 method: GsInlineMethodRefactoring
 jsonEscape: aString
-	"JSON string escaping emitting PURE ASCII (control chars and code points above 126
-	 become \\uXXXX), so the client's non-blocking GCI fetch is never handed a Unicode
-	 result."
-	| ws |
-	ws := WriteStream on: String new.
-	aString do: [:ch | | code |
-		code := ch asInteger.
-		ch == $" ifTrue: [ws nextPutAll: '\"']
-		ifFalse: [ch == $\ ifTrue: [ws nextPutAll: '\\']
-		ifFalse: [code = 10 ifTrue: [ws nextPutAll: '\n']
-		ifFalse: [code = 13 ifTrue: [ws nextPutAll: '\r']
-		ifFalse: [code = 9 ifTrue: [ws nextPutAll: '\t']
-		ifFalse: [code < 32
-			ifTrue: [ws nextPutAll: '\u00'; nextPutAll: (self hex2: code)]
-		ifFalse: [code > 126
-			ifTrue: [code > 65535
-				ifTrue: [ws nextPut: $?]
-				ifFalse: [ws nextPutAll: '\u';
-					nextPutAll: (self hex2: code // 256);
-					nextPutAll: (self hex2: code \\ 256)]]
-			ifFalse: [ws nextPut: ch]]]]]]]].
-	^ws contents
+	^GsRefactoringJson jsonEscape: aString
 %
 
 category: 'serializing'
 method: GsInlineMethodRefactoring
 hex2: anInteger
-	| digits |
-	digits := '0123456789abcdef'.
-	^(String with: (digits at: (anInteger // 16) + 1))
-		, (String with: (digits at: (anInteger \\ 16) + 1))
+	^GsRefactoringJson hex2: anInteger
 %
 
 category: 'instance creation'
@@ -4572,43 +4550,19 @@ applyMethodRecompile: aChange
 category: 'serializing'
 method: GsInlineTemporaryRefactoring
 jsonQuote: aString
-	^'"', (self jsonEscape: aString), '"'
+	^GsRefactoringJson jsonQuote: aString
 %
 
 category: 'serializing'
 method: GsInlineTemporaryRefactoring
 jsonEscape: aString
-	"JSON string escaping emitting PURE ASCII (control chars and code points above 126
-	 become \\uXXXX), so the client's non-blocking GCI fetch is never handed a Unicode
-	 result."
-	| ws |
-	ws := WriteStream on: String new.
-	aString do: [:ch | | code |
-		code := ch asInteger.
-		ch == $" ifTrue: [ws nextPutAll: '\"']
-		ifFalse: [ch == $\ ifTrue: [ws nextPutAll: '\\']
-		ifFalse: [code = 10 ifTrue: [ws nextPutAll: '\n']
-		ifFalse: [code = 13 ifTrue: [ws nextPutAll: '\r']
-		ifFalse: [code = 9 ifTrue: [ws nextPutAll: '\t']
-		ifFalse: [code < 32
-			ifTrue: [ws nextPutAll: '\u00'; nextPutAll: (self hex2: code)]
-		ifFalse: [code > 126
-			ifTrue: [code > 65535
-				ifTrue: [ws nextPut: $?]
-				ifFalse: [ws nextPutAll: '\u';
-					nextPutAll: (self hex2: code // 256);
-					nextPutAll: (self hex2: code \\ 256)]]
-			ifFalse: [ws nextPut: ch]]]]]]]].
-	^ws contents
+	^GsRefactoringJson jsonEscape: aString
 %
 
 category: 'serializing'
 method: GsInlineTemporaryRefactoring
 hex2: anInteger
-	| digits |
-	digits := '0123456789abcdef'.
-	^(String with: (digits at: (anInteger // 16) + 1))
-		, (String with: (digits at: (anInteger \\ 16) + 1))
+	^GsRefactoringJson hex2: anInteger
 %
 
 category: 'instance creation'
@@ -4676,6 +4630,602 @@ clearToken: token
 %
 
 category: 'private'
+method: GsInstVarRefactoring
+setEnvironment: anEnvironment operation: anOp class: aClass varName: aName
+	environment := anEnvironment.
+	operation := anOp.
+	definingClass := aClass.
+	varName := aName asString.
+	analysisDone := false
+%
+
+category: 'accessing'
+method: GsInstVarRefactoring
+environment
+	^environment
+%
+
+category: 'accessing'
+method: GsInstVarRefactoring
+operation
+	^operation
+%
+
+category: 'accessing'
+method: GsInstVarRefactoring
+varName
+	^varName
+%
+
+category: 'private'
+method: GsInstVarRefactoring
+ownInstVarsOf: aClass
+	"aClass's OWN instance-variable names (not inherited), as an Array of Strings."
+	^aClass instVarNames collect: [:e | e asString]
+%
+
+category: 'private'
+method: GsInstVarRefactoring
+allInstVarsOf: aClass
+	^aClass allInstVarNames collect: [:e | e asString]
+%
+
+category: 'private'
+method: GsInstVarRefactoring
+optionsOf: aClass
+	"aClass's own class-creation options, as an Array of Strings (e.g. #('selfCanBeSpecial'))."
+	^(aClass _optionsArray ifNil: [#()]) collect: [:e | e asString]
+%
+
+category: 'private'
+method: GsInstVarRefactoring
+allClassVarsOf: aClass
+	"aClass's own and inherited class-variable names, as a Set of Strings. Used to decline an
+	 #add whose name would shadow a class variable inside method bodies."
+	| result cls |
+	result := Set new.
+	cls := aClass.
+	[cls isNil] whileFalse: [
+		(cls classVarNames ifNil: [#()]) do: [:n | result add: n asString].
+		cls := cls superclass].
+	^result
+%
+
+category: 'private'
+method: GsInstVarRefactoring
+isValidIvarName: aString
+	"A syntactically valid Smalltalk instance-variable name: a letter or underscore followed by
+	 letters, digits, or underscores."
+	| first |
+	aString isEmpty ifTrue: [^false].
+	first := aString at: 1.
+	(first isLetter or: [first == $_]) ifFalse: [^false].
+	^aString allSatisfy: [:ch | ch isLetter or: [ch isDigit or: [ch == $_]]]
+%
+
+category: 'private - analysis'
+method: GsInstVarRefactoring
+ensureAnalysis
+	analysisDone ifFalse: [
+		analysisDone := true.
+		[self computeAnalysis] on: Error do: [:e |
+			decline := 'The change could not be analysed: ', e messageText]]
+%
+
+category: 'private - analysis'
+method: GsInstVarRefactoring
+computeAnalysis
+	"Set decline (nil when viable), newIvarLists (className -> new own-ivar Array for each edited
+	 class), affected (classes to version, top-down), and willNotRecompile (className -> selectors
+	 of methods that will lose the variable). Dispatches on the operation."
+	decline := nil.
+	newIvarLists := Dictionary new.
+	willNotRecompile := OrderedCollection new.
+	operation == #add ifTrue: [^self analyzeAdd].
+	operation == #remove ifTrue: [^self analyzeRemove].
+	decline := 'Unknown operation: ', operation printString
+%
+
+category: 'private - analysis'
+method: GsInstVarRefactoring
+analyzeAdd
+	"V1 add: varName must be a valid identifier not already visible as an instance variable of
+	 definingClass, and not shadowing a class variable in the hierarchy."
+	(self isValidIvarName: varName) ifFalse: [
+		^decline := 'Cannot add ', varName printString, ': it is not a valid instance-variable name.'].
+	((self allInstVarsOf: definingClass) includes: varName) ifTrue: [
+		^decline := 'Cannot add ', varName, ': ', definingClass name asString, ' already has an instance variable of that name.'].
+	((self allClassVarsOf: definingClass) includes: varName) ifTrue: [
+		^decline := 'Cannot add ', varName, ': a class variable of that name is visible to ', definingClass name asString, ', which it would shadow.'].
+	newIvarLists at: definingClass name asString put: ((self ownInstVarsOf: definingClass) copyWith: varName).
+	self computeAffectedFrom: (Array with: definingClass)
+%
+
+category: 'private - analysis'
+method: GsInstVarRefactoring
+analyzeRemove
+	"V1 remove: varName must be an OWN instance variable of definingClass. Every method (defining
+	 class and descendants) that accesses it will lose it -- those are the willNotRecompile set."
+	((self ownInstVarsOf: definingClass) includes: varName) ifFalse: [
+		^decline := 'Cannot remove ', varName, ': it is not an instance variable declared in ', definingClass name asString, '.'].
+	newIvarLists at: definingClass name asString put: ((self ownInstVarsOf: definingClass) reject: [:n | n = varName]).
+	self computeAffectedFrom: (Array with: definingClass).
+	self recordWillNotRecompileLosing: definingClass
+%
+
+category: 'private - analysis'
+method: GsInstVarRefactoring
+computeAffectedFrom: rootClasses
+	"affected = the union of each root's subtree (root + all descendants), toposorted so a
+	 superclass is always ordered before any of its subclasses (the apply versions parents first
+	 so each child re-points at the freshly created parent version)."
+	| set |
+	set := IdentitySet new.
+	rootClasses do: [:root |
+		set add: root.
+		(environment descendantsOf: root) do: [:d | set add: d]].
+	affected := self orderTopDown: set
+%
+
+category: 'private - analysis'
+method: GsInstVarRefactoring
+orderTopDown: anIdentitySet
+	"anIdentitySet ordered so every class follows its superclass (when that superclass is in the
+	 set). A simple stable topological sort by the superclass relation."
+	| remaining ordered |
+	remaining := IdentitySet withAll: anIdentitySet.
+	ordered := OrderedCollection new.
+	[remaining isEmpty] whileFalse: [
+		| ready |
+		ready := (remaining reject: [:cls | remaining includes: cls superclass]) asArray
+			asSortedCollection: [:a :b | a name asString <= b name asString].
+		ready isEmpty ifTrue: [
+			"defensive: a cycle cannot occur in a class hierarchy; take the rest as-is."
+			ordered addAll: remaining. ^ordered].
+		ready do: [:cls | ordered add: cls. remaining remove: cls]].
+	^ordered
+%
+
+category: 'private - analysis'
+method: GsInstVarRefactoring
+recordWillNotRecompileLosing: aScopeClass
+	"Record class -> sorted selectors of the instance methods that access varName in aScopeClass's
+	 hierarchy; after the remove none of them will still see the variable."
+	| accessors |
+	accessors := environment classesAndSelectorsAccessing: varName inHierarchyOf: aScopeClass.
+	accessors do: [:assoc | willNotRecompile add: assoc]
+%
+
+category: 'private'
+method: GsInstVarRefactoring
+actedOnClassName
+	"The class the user acted on (identifies the acted-on class to the panel)."
+	^definingClass name asString
+%
+
+category: 'private'
+method: GsInstVarRefactoring
+isEditedClassNamed: aName
+	^newIvarLists includesKey: aName
+%
+
+category: 'private'
+method: GsInstVarRefactoring
+dictNameForClass: aClass
+	| dicts |
+	dicts := environment dictionariesDefiningClassNamed: aClass name.
+	^dicts isEmpty ifTrue: [nil] ifFalse: [dicts first name asString]
+%
+
+category: 'preconditions'
+method: GsInstVarRefactoring
+decline
+	self ensureAnalysis.
+	^decline
+%
+
+category: 'building'
+method: GsInstVarRefactoring
+changeSet
+	changeSet isNil ifTrue: [changeSet := self buildChangeSet].
+	^changeSet
+%
+
+category: 'building'
+method: GsInstVarRefactoring
+buildChangeSet
+	"Stage, top-down, a #classDefinitionEdit for each edited class and a #classReparent for every
+	 other affected class. Compiles nothing, commits nothing."
+	| cs |
+	cs := GsRefactoringChangeSet new.
+	self ensureAnalysis.
+	decline notNil ifTrue: [^cs].
+	affected do: [:cls | self stageClassChange: cls into: cs].
+	^cs
+%
+
+category: 'building'
+method: GsInstVarRefactoring
+stageClassChange: aClass into: cs
+	| dn oldDef |
+	dn := self dictNameForClass: aClass.
+	oldDef := aClass definition.
+	(self isEditedClassNamed: aClass name asString)
+		ifTrue: [cs
+			addClassDefinitionEditInDictionary: dn
+			className: aClass name asString
+			oldSource: oldDef
+			newSource: (self previewDefinitionFor: aClass oldDef: oldDef)]
+		ifFalse: [cs
+			addClassReparentInDictionary: dn
+			className: aClass name asString
+			oldSource: oldDef
+			newSource: oldDef]
+%
+
+category: 'building'
+method: GsInstVarRefactoring
+previewDefinitionFor: aClass oldDef: defString
+	"The before/after 'after' text for an edited class: its definition with the instVarNames: list
+	 replaced by the class's new own-ivar list. Class options are preserved onto the new version but
+	 are not surfaced for editing in the panel."
+	^self replaceListClause: 'instVarNames:'
+		in: defString
+		with: (newIvarLists at: aClass name asString ifAbsent: [self ownInstVarsOf: aClass])
+%
+
+category: 'building'
+method: GsInstVarRefactoring
+replaceListClause: marker in: defString with: aList
+	"defString with the parenthesised list after marker replaced by aList (each element quoted).
+	 Used for the preview definition diff only."
+	| start openParen closeParen ws |
+	start := defString indexOfSubCollection: marker.
+	start = 0 ifTrue: [^defString].
+	openParen := defString indexOf: $( startingAt: start.
+	openParen = 0 ifTrue: [^defString].
+	closeParen := defString indexOf: $) startingAt: openParen.
+	closeParen = 0 ifTrue: [^defString].
+	ws := WriteStream on: String new.
+	ws nextPutAll: (defString copyFrom: 1 to: openParen).
+	aList keysAndValuesDo: [:i :n |
+		i = 1 ifFalse: [ws nextPut: $ ].
+		ws nextPutAll: ''''; nextPutAll: n asString; nextPutAll: ''''].
+	ws nextPutAll: (defString copyFrom: closeParen to: defString size).
+	^ws contents
+%
+
+category: 'serializing'
+method: GsInstVarRefactoring
+analysisJsonString
+	"The pre-flight payload: the decline reason (nil when viable), the source class, the number of
+	 classes that will be recompiled, and how many methods will not recompile."
+	self ensureAnalysis.
+	^'{"decline":', (decline ifNil: ['null'] ifNotNil: [:r | self jsonQuote: r]),
+	  ',"operation":', (self jsonQuote: operation asString),
+	  ',"sourceClass":', (self jsonQuote: definingClass name asString),
+	  ',"affectedCount":', (decline notNil ifTrue: ['0'] ifFalse: [affected size printString]),
+	  ',"willNotRecompileCount":', (decline notNil ifTrue: ['0'] ifFalse: [(self willNotRecompileSelectorCount) printString]),
+	  '}'
+%
+
+category: 'serializing'
+method: GsInstVarRefactoring
+willNotRecompileSelectorCount
+	self ensureAnalysis.
+	^willNotRecompile inject: 0 into: [:acc :assoc | acc + assoc value size]
+%
+
+category: 'serializing'
+method: GsInstVarRefactoring
+previewJsonString
+	^self changeSet jsonString
+%
+
+category: 'serializing'
+method: GsInstVarRefactoring
+willNotRecompileJsonString
+	"[{class,selector}] for every method that will not recompile after the change."
+	| ws first |
+	self ensureAnalysis.
+	ws := WriteStream on: String new.
+	ws nextPut: $[.
+	first := true.
+	willNotRecompile do: [:assoc |
+		assoc value do: [:sel |
+			first ifFalse: [ws nextPut: $,].
+			first := false.
+			ws nextPutAll: '{"class":'; nextPutAll: (self jsonQuote: assoc key name asString);
+			   nextPutAll: ',"selector":'; nextPutAll: (self jsonQuote: sel asString);
+			   nextPut: $}]].
+	ws nextPut: $].
+	^ws contents
+%
+
+category: 'serializing'
+method: GsInstVarRefactoring
+outOfScopeJsonString
+	"The precondition / warning payload for the preview panel, in the family's shape. A hard
+	 decline (which blocks Apply) rides in `decline`; willNotRecompile lists the methods that will
+	 be dropped; note warns about the commit semantics of migrate/delete-history."
+	self ensureAnalysis.
+	^'{"references":0,"skipped":0,"scope":"hierarchy","collision":null,"decline":',
+	  (decline ifNil: ['null'] ifNotNil: [:r | self jsonQuote: r]),
+	  ',"willNotRecompile":', self willNotRecompileJsonString,
+	  ',"actedOnClass":', (self jsonQuote: self actedOnClassName),
+	  ',"note":', (self jsonQuote: 'The structural change does not commit. Migrating instances and deleting history DO commit the transaction; nothing else does.'),
+	  '}'
+%
+
+category: 'serializing'
+method: GsInstVarRefactoring
+startPreviewToken: token maxBytes: maxBytes
+	self changeSet.
+	SessionTemps current at: token asSymbol put: self.
+	^'{"token":', (self jsonQuote: token),
+	  ',"total":', self changeSet size printString,
+	  ',"sourceClass":', (self jsonQuote: definingClass name asString),
+	  ',"outOfScope":', self outOfScopeJsonString,
+	  ',"page":', (self pageJsonFrom: 1 maxBytes: maxBytes), '}'
+%
+
+category: 'paginated preview'
+method: GsInstVarRefactoring
+pageJsonFrom: startIndex maxBytes: maxBytes
+	| all ws i |
+	all := self changeSet changes.
+	ws := WriteStream on: String new.
+	ws nextPut: $[.
+	i := startIndex.
+	[i <= all size and: [i = startIndex or: [ws position < maxBytes]]] whileTrue: [
+		i > startIndex ifTrue: [ws nextPut: $,].
+		(all at: i) jsonOn: ws.
+		i := i + 1].
+	ws nextPut: $].
+	^'{"changes":', ws contents,
+	  ',"nextOffset":', i printString,
+	  ',"done":', (i > all size) printString, '}'
+%
+
+category: 'applying'
+method: GsInstVarRefactoring
+applyDeselected: deselectedIds options: optsArray migrate: aBool deleteHistory: dBool
+	"Apply EVERY staged change in the stone. An instance-variable add/remove is ALL-OR-NOTHING
+	 (the class-shape edits and the descendant reparents must move together), so a deselection is
+	 ignored. optsArray (nil or an Array of Strings) replaces the acted-on class's options; nil
+	 keeps them. If migrate or deleteHistory is true the structural change is COMMITTED first (the
+	 substrate requires a clean transaction to migrate), then the committing step(s) run and commit.
+	 Answers {applied, failed:[..], dropped:[..], committed:bool}."
+	| applied failures |
+	self ensureAnalysis.
+	"nil optsArray keeps the acted-on class's current options; an Array (even empty) sets them."
+	editedOptions := optsArray isNil ifTrue: [nil] ifFalse: [optsArray collect: [:e | e asString]].
+	oldToNew := IdentityDictionary new.
+	dropped := OrderedCollection new.
+	committed := false.
+	failures := OrderedCollection new.
+	applied := 0.
+	self changeSet changes do: [:change |
+		[self applyChange: change. applied := applied + 1]
+		on: Error do: [:e |
+			failures add: (Array with: change id with: change className with: e messageText)]].
+	(failures isEmpty and: [aBool or: [dBool]]) ifTrue: [
+		self commitStructuralThenMigrate: aBool deleteHistory: dBool on: failures].
+	^'{"applied":', applied printString,
+	  ',"failed":[',
+	  ((failures collect: [:f |
+		'{"id":', (self jsonQuote: (f at: 1) asString),
+		',"label":', (self jsonQuote: (f at: 2) asString),
+		',"error":', (self jsonQuote: (f at: 3) asString), '}'])
+			inject: '' into: [:acc :s | acc isEmpty ifTrue: [s] ifFalse: [acc, ',', s]]),
+	  '],"dropped":[',
+	  ((dropped collect: [:d |
+		'{"class":', (self jsonQuote: (d at: 1) asString),
+		',"selector":', (self jsonQuote: (d at: 2) asString), '}'])
+			inject: '' into: [:acc :s | acc isEmpty ifTrue: [s] ifFalse: [acc, ',', s]]),
+	  '],"committed":', (committed ifTrue: ['true'] ifFalse: ['false']), '}'
+%
+
+category: 'applying'
+method: GsInstVarRefactoring
+commitStructuralThenMigrate: aBool deleteHistory: dBool on: failures
+	"With the structural change applied in the transaction, commit it (migrateInstancesTo: needs a
+	 clean transaction), then -- if asked -- migrate instances of each old version to its new one
+	 and commit, and delete every prior version from each versioned class's history and commit."
+	[System commitTransaction.
+	 committed := true.
+	 aBool ifTrue: [
+		oldToNew keysAndValuesDo: [:old :new | old migrateInstancesTo: new].
+		System commitTransaction].
+	 dBool ifTrue: [
+		oldToNew valuesDo: [:new | self deletePriorVersionsOf: new].
+		System commitTransaction]]
+	on: Error do: [:e |
+		failures add: (Array with: 'commit' with: 'commit' with: e messageText)]
+%
+
+category: 'applying'
+method: GsInstVarRefactoring
+deletePriorVersionsOf: aNewClass
+	"Remove every version other than aNewClass (the current one) from its class history."
+	| history victims |
+	history := aNewClass classHistory.
+	victims := (1 to: history size) inject: OrderedCollection new into: [:acc :i |
+		| v | v := history at: i.
+		v == aNewClass ifFalse: [acc add: v]. acc].
+	victims do: [:v | history removeVersion: v]
+%
+
+category: 'applying'
+method: GsInstVarRefactoring
+applyChange: aChange
+	(aChange kind == #classDefinitionEdit or: [aChange kind == #classReparent])
+		ifTrue: [^self applyClassChange: aChange].
+	^self error: 'Unexpected change kind for instVar refactoring: ', aChange kind printString
+%
+
+category: 'applying'
+method: GsInstVarRefactoring
+applyClassChange: aChange
+	"Create a new version of the named class -- under the freshly created parent version, with its
+	 computed own-instVar list and its preserved-or-edited options -- copy its methods forward, and
+	 record the old->new mapping so its own descendants re-parent onto it. No commit here."
+	| old parentNew list new |
+	old := environment classNamed: aChange className.
+	old isNil ifTrue: [^self error: 'Class not found: ', aChange className].
+	parentNew := oldToNew at: old superclass ifAbsent: [old superclass].
+	list := newIvarLists at: aChange className ifAbsent: [self ownInstVarsOf: old].
+	new := self makeNewVersionOf: old superclass: parentNew instVarNames: list options: (self optionsForApply: old).
+	self copyMethodsFrom: old to: new.
+	oldToNew at: old put: new
+%
+
+category: 'applying'
+method: GsInstVarRefactoring
+optionsForApply: aClass
+	"The class-creation option list aClass's new version is built with: the user-edited set for the
+	 acted-on class (when they changed it), otherwise the class's own preserved options."
+	(editedOptions notNil and: [aClass name asString = self actedOnClassName])
+		ifTrue: [^editedOptions].
+	^self optionsOf: aClass
+%
+
+category: 'applying'
+method: GsInstVarRefactoring
+makeNewVersionOf: old superclass: sup instVarNames: ivars options: opts
+	"Create a new version in old's class history, under sup, with own-instVar list ivars, the given
+	 options, and all of old's other shape (format, class vars, class-instance vars, pools, comment).
+	 Same primitive R3 uses for a rename/reparent -- but options are preserved/edited (not dropped)."
+	^sup
+		_subclass: old name asString
+		instVarNames: (ivars collect: [:e | e asString])
+		format: old format
+		classVars: (old classVarNames collect: [:e | e asString])
+		classInstVars: (old class instVarNames collect: [:e | e asString])
+		poolDictionaries: old sharedPools
+		inDictionary: (self dictObjectFor: old)
+		inClassHistory: old classHistory
+		description: ([old commentForFileout] on: Error do: [:e | ''])
+		options: (opts collect: [:e | e asSymbol])
+%
+
+category: 'applying'
+method: GsInstVarRefactoring
+copyMethodsFrom: old to: new
+	"Copy every method of old (both sides) verbatim onto new -- a new class version starts with an
+	 empty method dictionary. A method that references a removed instance variable will not
+	 compile; it is recorded as dropped (its class and selector) rather than silently vanishing."
+	old selectors do: [:sel | self copyMethod: sel from: old to: new meta: false].
+	old class selectors do: [:sel | self copyMethod: sel from: old class to: new class meta: true]
+%
+
+category: 'applying'
+method: GsInstVarRefactoring
+copyMethod: sel from: srcCls to: dstCls meta: isMeta
+	| m cat result |
+	m := srcCls compiledMethodAt: sel environmentId: 0 otherwise: nil.
+	m isNil ifTrue: [^self].
+	cat := (srcCls categoryOfSelector: sel environmentId: 0) ifNil: ['as yet unclassified'].
+	result := dstCls
+		compileMethod: m sourceString
+		dictionaries: System myUserProfile symbolList
+		category: cat asString.
+	"compileMethod: answers nil on success and a non-empty Array of error tuples on a compile
+	 failure (e.g. a reference to the just-removed instance variable). A failed method is not
+	 installed, so record it as dropped rather than let it vanish silently."
+	(result isNil or: [(result isKindOf: Array) and: [result isEmpty]])
+		ifFalse: [dropped add: (Array
+			with: (isMeta ifTrue: [dstCls thisClass name asString, ' class'] ifFalse: [dstCls name asString])
+			with: sel asString)]
+%
+
+category: 'applying'
+method: GsInstVarRefactoring
+dictObjectFor: aClass
+	"The actual SymbolDictionary object that defines aClass's name, for inDictionary:."
+	| dicts |
+	dicts := environment dictionariesDefiningClassNamed: aClass name.
+	^dicts isEmpty
+		ifTrue: [environment symbolList objectNamed: #UserGlobals]
+		ifFalse: [dicts first]
+%
+
+category: 'serializing'
+method: GsInstVarRefactoring
+jsonQuote: aString
+	^GsRefactoringJson jsonQuote: aString
+%
+
+category: 'serializing'
+method: GsInstVarRefactoring
+jsonEscape: aString
+	^GsRefactoringJson jsonEscape: aString
+%
+
+category: 'serializing'
+method: GsInstVarRefactoring
+hex2: anInteger
+	^GsRefactoringJson hex2: anInteger
+%
+
+category: 'instance creation'
+classmethod: GsInstVarRefactoring
+class: aClass addInstVar: aName
+	"V1 add: append the instance variable aName to aClass's own definition."
+	^self new
+		setEnvironment: GsRefactoringEnvironment new
+		operation: #add
+		class: aClass
+		varName: aName
+%
+
+category: 'instance creation'
+classmethod: GsInstVarRefactoring
+class: aClass removeInstVar: aName
+	"V1 remove: drop the instance variable aName from aClass's own definition."
+	^self new
+		setEnvironment: GsRefactoringEnvironment new
+		operation: #remove
+		class: aClass
+		varName: aName
+%
+
+category: 'preconditions'
+classmethod: GsInstVarRefactoring
+analyzeClass: aClass addInstVar: aName
+	^(self class: aClass addInstVar: aName) analysisJsonString
+%
+
+category: 'preconditions'
+classmethod: GsInstVarRefactoring
+analyzeClass: aClass removeInstVar: aName
+	^(self class: aClass removeInstVar: aName) analysisJsonString
+%
+
+category: 'paginated preview'
+classmethod: GsInstVarRefactoring
+pageForToken: token from: startIndex maxBytes: maxBytes
+	^(SessionTemps current at: token asSymbol ifAbsent: [nil])
+		ifNil: ['{"error":"preview session expired","changes":[],"nextOffset":0,"done":true}']
+		ifNotNil: [:ref | ref pageJsonFrom: startIndex maxBytes: maxBytes]
+%
+
+category: 'paginated preview'
+classmethod: GsInstVarRefactoring
+applyForToken: token deselected: deselectedIds options: optsArray migrate: aBool deleteHistory: dBool
+	^(SessionTemps current at: token asSymbol ifAbsent: [nil])
+		ifNil: ['{"applied":0,"failed":[],"dropped":[],"committed":false,"error":"preview session expired"}']
+		ifNotNil: [:ref | ref applyDeselected: deselectedIds options: optsArray migrate: aBool deleteHistory: dBool]
+%
+
+category: 'paginated preview'
+classmethod: GsInstVarRefactoring
+clearToken: token
+	SessionTemps current removeKey: token asSymbol ifAbsent: [].
+	^'ok'
+%
+
+category: 'private'
 method: GsInstVarStructureRefactoring
 setEnvironment: anEnvironment operation: anOp class: aClass varName: aName selector: aSelector meta: aBool
 	environment := anEnvironment.
@@ -4684,12 +5234,33 @@ setEnvironment: anEnvironment operation: anOp class: aClass varName: aName selec
 	varName := aName asString.
 	methodSelector := aSelector isNil ifTrue: [nil] ifFalse: [aSelector asSymbol].
 	methodMeta := aBool.
+	targetClasses := nil.
+	moveDirection := nil.
 	moveAccessors := false.
 	accessorRemovals := OrderedCollection new.
 	accessorAdds := OrderedCollection new.
 	migrateInstances := false.
 	removeOldFromHistory := false.
 	analysisDone := false
+%
+
+category: 'private'
+method: GsInstVarStructureRefactoring
+setMoveTargets: anArrayOfClasses direction: aSymbol
+	"The #move operation's destination class(es) and direction (#up / #down). Answers self."
+	targetClasses := anArrayOfClasses.
+	moveDirection := aSymbol.
+	^self
+%
+
+category: 'accessing'
+method: GsInstVarStructureRefactoring
+effectiveDirection
+	"The direction the ivar travels, unified across the fixed push operations and the general
+	 #move. #up (toward superclasses) or #down (toward subclasses)."
+	operation == #pushUp ifTrue: [^#up].
+	operation == #pushDown ifTrue: [^#down].
+	^moveDirection
 %
 
 category: 'accessing'
@@ -4775,6 +5346,7 @@ computeAnalysis
 	operation == #convertTemp ifTrue: [^self analyzeConvertTemp].
 	operation == #pushUp ifTrue: [^self analyzePushUp].
 	operation == #pushDown ifTrue: [^self analyzePushDown].
+	operation == #move ifTrue: [^self analyzeMove].
 	decline := 'Unknown operation: ', operation printString
 %
 
@@ -4870,6 +5442,112 @@ analyzePushDown
 
 category: 'private - analysis'
 method: GsInstVarStructureRefactoring
+analyzeMove
+	"V4: move varName from definingClass to the destination class(es) in targetClasses. This is
+	 the general form the Explorer's up/down arrows drive: #up carries the declaration to a single
+	 chosen SUPERCLASS (like V2 push-up, but to any ancestor, not just the immediate one); #down
+	 carries it to one OR MORE chosen SUBCLASSES (like V3 push-down, but to a selected subset, and
+	 to any descendant depth). varName must be definingClass's own ivar. On #up the target's
+	 ancestry must not already define the name and no OTHER descendant of the target may own it
+	 (collision on inherit). On #down no descendant of definingClass may already own it, and no
+	 chosen target may sit under another chosen target (the ancestor target already covers it). In both
+	 directions every class that ends up WITHOUT the ivar must not still use it in its own methods."
+	| def dir sup losing |
+	def := definingClass.
+	dir := moveDirection.
+	((self ownInstVarsOf: def) includes: varName) ifFalse: [
+		^decline := 'Cannot move ', varName, ': it is not an instance variable declared in ', def name asString, '.'].
+	(targetClasses isNil or: [targetClasses isEmpty]) ifTrue: [
+		^decline := 'Cannot move ', varName, ': no destination class was chosen.'].
+	(targetClasses anySatisfy: [:t | t isNil]) ifTrue: [
+		^decline := 'Cannot move ', varName, ': a destination class could not be found.'].
+	(targetClasses includes: def) ifTrue: [
+		^decline := 'Cannot move ', varName, ' to ', def name asString, ': that is the class it already lives in.'].
+	dir == #up
+		ifTrue: [
+			targetClasses size = 1 ifFalse: [
+				^decline := 'Cannot move ', varName, ' up to more than one superclass.'].
+			sup := targetClasses first.
+			(self isAncestor: sup of: def) ifFalse: [
+				^decline := 'Cannot move ', varName, ' up: ', sup name asString, ' is not a superclass of ', def name asString, '.'].
+			((self allInstVarsOf: sup) includes: varName) ifTrue: [
+				^decline := 'Cannot move ', varName, ' up: ', sup name asString, ' already defines an instance variable of that name.'].
+			(self otherDescendant: def ofTop: sup ownsIvar: varName) ifNotNil: [:cls |
+				^decline := 'Cannot move ', varName, ' up: ', cls, ' also declares an instance variable of that name, which would collide once it is inherited.'].
+			topClass := sup]
+		ifFalse: [
+			dir == #down
+				ifTrue: [
+					targetClasses do: [:t |
+						(self isAncestor: def of: t) ifFalse: [
+							^decline := 'Cannot move ', varName, ' down: ', t name asString, ' is not a subclass of ', def name asString, '.']].
+					"The picker lists descendants at any depth, so a chosen target can itself sit under
+					 another chosen target. That would declare the ivar on the child while it also inherits
+					 it from the freshly-edited ancestor -- a double declaration GemStone rejects at apply.
+					 The ancestor target already delivers the ivar there by inheritance, so decline rather
+					 than build a plan that fails; the user should drop the redundant target."
+					targetClasses do: [:t | | cover |
+						cover := targetClasses detect: [:other | other ~~ t and: [self isAncestor: other of: t]] ifNone: [nil].
+						cover ifNotNil: [
+							^decline := 'Cannot move ', varName, ' down: ', t name asString, ' is already a subclass of ', cover name asString, ', which was also chosen; drop the redundant target.']].
+					(self anyDescendantOf: def ownsIvar: varName) ifNotNil: [:cls |
+						^decline := 'Cannot move ', varName, ' down: ', cls, ' already declares an instance variable of that name.'].
+					topClass := def]
+				ifFalse: [
+					^decline := 'Cannot move ', varName, ': unknown direction ', dir printString]].
+	"Every class that ends up without the ivar must not still use it in its own methods (it would
+	 compile against an undeclared variable). On #up nobody loses it (the subtree inherits it from
+	 higher up), so this only bites #down to a subset. definingClass's own simple accessors are
+	 excepted when they are being moved with the ivar. Checked BEFORE the plan below is recorded so
+	 a declined move leaves the instance with nothing half-built."
+	losing := self classesLosingVar: targetClasses.
+	losing do: [:cls | | users |
+		users := environment instanceMethodsAccessing: varName inClass: cls.
+		(cls == def and: [self moveAccessors]) ifTrue: [
+			| accessorSels |
+			accessorSels := (self simpleAccessorsOf: def forIvar: varName) collect: [:a | a at: 1].
+			users := users reject: [:sel | accessorSels includes: sel]].
+		users isEmpty ifFalse: [
+			^decline := 'Cannot move ', varName, ': ', cls name asString,
+				' still uses it in ', users size printString, ' of its own method(s): ',
+				(self selectorListString: users), '.']].
+	newIvarLists at: def name asString put: ((self ownInstVarsOf: def) reject: [:n | n = varName]).
+	targetClasses do: [:t |
+		newIvarLists at: t name asString put: ((self ownInstVarsOf: t) copyWith: varName)].
+	self moveAccessors ifTrue: [self planAccessorMovesFrom: def to: targetClasses]
+%
+
+category: 'private - analysis'
+method: GsInstVarStructureRefactoring
+classesLosingVar: targets
+	"The classes that HAVE varName now (definingClass and every descendant, via own or inherited)
+	 but will NOT after the move -- i.e. neither a target nor a descendant of a target. On #up this
+	 is empty (a chosen ancestor's subtree is a superset of definingClass's); on a partial #down it
+	 is definingClass plus any descendant subtree not under a chosen target."
+	| having keep |
+	having := OrderedCollection new.
+	having add: definingClass.
+	having addAll: (environment descendantsOf: definingClass).
+	keep := IdentitySet new.
+	targets do: [:t | keep add: t. keep addAll: (environment descendantsOf: t)].
+	^having reject: [:c | keep includes: c]
+%
+
+category: 'private - analysis'
+method: GsInstVarStructureRefactoring
+isAncestor: aClass of: aSubclass
+	"True if aClass is a proper superclass of aSubclass. Walks superclass links only, so it needs
+	 no version-specific hierarchy primitive."
+	| c |
+	c := aSubclass superclass.
+	[c notNil] whileTrue: [
+		c == aClass ifTrue: [^true].
+		c := c superclass].
+	^false
+%
+
+category: 'private - analysis'
+method: GsInstVarStructureRefactoring
 otherDescendant: aSkip ofTop: aTop ownsIvar: aName
 	"The name of a descendant of aTop (other than aSkip) that owns an ivar named aName, or
 	 nil."
@@ -4888,9 +5566,21 @@ anyDescendantOf: aTop ownsIvar: aName
 	^nil
 %
 
+category: 'private - analysis'
+method: GsInstVarStructureRefactoring
+ancestorsOf: aClass
+	"aClass's proper superclasses, immediate-first. Walks superclass links only, so it needs no
+	 version-specific hierarchy primitive (matching #isAncestor:of:)."
+	| out c |
+	out := OrderedCollection new.
+	c := aClass superclass.
+	[c notNil] whileTrue: [out add: c. c := c superclass].
+	^out
+%
+
 category: 'private - accessors'
 method: GsInstVarStructureRefactoring
-planAccessorMovesFrom: srcClass to: targetClasses
+planAccessorMovesFrom: srcClass to: destClasses
 	"Record the SIMPLE accessors of varName on srcClass to move alongside the ivar: remove
 	 each from srcClass and add it to the target class(es). Never overwrites -- or, on push-up,
 	 SHADOWS -- an existing same-named method on a target: for push-up the target (superclass) is
@@ -4904,11 +5594,11 @@ planAccessorMovesFrom: srcClass to: targetClasses
 	(self simpleAccessorsOf: srcClass forIvar: varName) do: [:a |
 		| sel src cat targets |
 		sel := a at: 1. src := a at: 2. cat := a at: 3.
-		targets := targetClasses reject: [:t |
-			operation == #pushUp
+		targets := destClasses reject: [:t |
+			self effectiveDirection == #up
 				ifTrue: [self class: t orAncestorImplements: sel]
 				ifFalse: [t includesSelector: sel]].
-		(operation == #pushUp and: [targets isEmpty])
+		(self effectiveDirection == #up and: [targets isEmpty])
 			ifFalse: [
 				accessorRemovals add: (Array with: sel with: srcClass name asString with: src with: cat).
 				targets do: [:t |
@@ -5419,42 +6109,19 @@ dictObjectFor: aClass
 category: 'serializing'
 method: GsInstVarStructureRefactoring
 jsonQuote: aString
-	^'"', (self jsonEscape: aString), '"'
+	^GsRefactoringJson jsonQuote: aString
 %
 
 category: 'serializing'
 method: GsInstVarStructureRefactoring
 jsonEscape: aString
-	"JSON string escaping emitting PURE ASCII (control chars and code points above 126 become
-	 \\uXXXX), so the client's non-blocking GCI fetch is never handed a Unicode result."
-	| ws |
-	ws := WriteStream on: String new.
-	aString do: [:ch | | code |
-		code := ch asInteger.
-		ch == $" ifTrue: [ws nextPutAll: '\"']
-		ifFalse: [ch == $\ ifTrue: [ws nextPutAll: '\\']
-		ifFalse: [code = 10 ifTrue: [ws nextPutAll: '\n']
-		ifFalse: [code = 13 ifTrue: [ws nextPutAll: '\r']
-		ifFalse: [code = 9 ifTrue: [ws nextPutAll: '\t']
-		ifFalse: [code < 32
-			ifTrue: [ws nextPutAll: '\u00'; nextPutAll: (self hex2: code)]
-		ifFalse: [code > 126
-			ifTrue: [code > 65535
-				ifTrue: [ws nextPut: $?]
-				ifFalse: [ws nextPutAll: '\u';
-					nextPutAll: (self hex2: code // 256);
-					nextPutAll: (self hex2: code \\ 256)]]
-			ifFalse: [ws nextPut: ch]]]]]]]].
-	^ws contents
+	^GsRefactoringJson jsonEscape: aString
 %
 
 category: 'serializing'
 method: GsInstVarStructureRefactoring
 hex2: anInteger
-	| digits |
-	digits := '0123456789abcdef'.
-	^(String with: (digits at: (anInteger // 16) + 1))
-		, (String with: (digits at: (anInteger \\ 16) + 1))
+	^GsRefactoringJson hex2: anInteger
 %
 
 category: 'instance creation'
@@ -5499,6 +6166,36 @@ class: aClass pushDownInstVar: aName
 
 category: 'instance creation'
 classmethod: GsInstVarStructureRefactoring
+class: aClass moveInstVar: aName toClasses: classNames direction: aSymbol
+	"V4 (generalised push up/down): move aClass's own instance variable aName to the named
+	 destination class(es). aSymbol is #up (classNames is a single ancestor of aClass) or #down
+	 (classNames are descendants of aClass, one or many). Each name is resolved WITHIN aClass's own
+	 lineage first -- its superclasses for #up, its descendants for #down -- so a name shadowed
+	 across dictionaries binds the class that is genuinely in aClass's hierarchy rather than an
+	 unrelated global first match. A name nowhere in the lineage falls back to a global lookup so
+	 analysis can still report the friendlier 'is not a superclass/subclass' decline; an unresolved
+	 name yields nil and declines as a destination that could not be found."
+	| ref env dir lineage targets |
+	env := GsRefactoringEnvironment new.
+	dir := aSymbol asSymbol.
+	ref := self new
+		setEnvironment: env
+		operation: #move
+		class: aClass
+		varName: aName
+		selector: nil
+		meta: false.
+	lineage := dir == #up
+		ifTrue: [ref ancestorsOf: aClass]
+		ifFalse: [env descendantsOf: aClass].
+	targets := classNames collect: [:n |
+		(lineage detect: [:c | c name asString = n asString] ifNone: [nil])
+			ifNil: [env classNamed: n asString]].
+	^ref setMoveTargets: targets direction: dir
+%
+
+category: 'instance creation'
+classmethod: GsInstVarStructureRefactoring
 environment: anEnvironment operation: anOp class: aClass varName: aName selector: aSelector meta: aBool
 	^self new
 		setEnvironment: anEnvironment
@@ -5525,6 +6222,12 @@ category: 'preconditions'
 classmethod: GsInstVarStructureRefactoring
 analyzeClass: aClass pushDownInstVar: aName
 	^(self class: aClass pushDownInstVar: aName) analysisJsonString
+%
+
+category: 'preconditions'
+classmethod: GsInstVarStructureRefactoring
+analyzeClass: aClass moveInstVar: aName toClasses: classNames direction: aSymbol
+	^(self class: aClass moveInstVar: aName toClasses: classNames direction: aSymbol) analysisJsonString
 %
 
 category: 'paginated preview'
@@ -5924,43 +6627,19 @@ applyMethodRemove: aChange
 category: 'serializing'
 method: GsMoveMethodRefactoring
 jsonQuote: aString
-	^'"', (self jsonEscape: aString), '"'
+	^GsRefactoringJson jsonQuote: aString
 %
 
 category: 'serializing'
 method: GsMoveMethodRefactoring
 jsonEscape: aString
-	"JSON string escaping emitting PURE ASCII (control chars and code points above 126
-	 become \\uXXXX), so the client's non-blocking GCI fetch is never handed a Unicode
-	 result."
-	| ws |
-	ws := WriteStream on: String new.
-	aString do: [:ch | | code |
-		code := ch asInteger.
-		ch == $" ifTrue: [ws nextPutAll: '\"']
-		ifFalse: [ch == $\ ifTrue: [ws nextPutAll: '\\']
-		ifFalse: [code = 10 ifTrue: [ws nextPutAll: '\n']
-		ifFalse: [code = 13 ifTrue: [ws nextPutAll: '\r']
-		ifFalse: [code = 9 ifTrue: [ws nextPutAll: '\t']
-		ifFalse: [code < 32
-			ifTrue: [ws nextPutAll: '\u00'; nextPutAll: (self hex2: code)]
-		ifFalse: [code > 126
-			ifTrue: [code > 65535
-				ifTrue: [ws nextPut: $?]
-				ifFalse: [ws nextPutAll: '\u';
-					nextPutAll: (self hex2: code // 256);
-					nextPutAll: (self hex2: code \\ 256)]]
-			ifFalse: [ws nextPut: ch]]]]]]]].
-	^ws contents
+	^GsRefactoringJson jsonEscape: aString
 %
 
 category: 'serializing'
 method: GsMoveMethodRefactoring
 hex2: anInteger
-	| digits |
-	digits := '0123456789abcdef'.
-	^(String with: (digits at: (anInteger // 16) + 1))
-		, (String with: (digits at: (anInteger \\ 16) + 1))
+	^GsRefactoringJson hex2: anInteger
 %
 
 category: 'instance creation'
@@ -6447,43 +7126,19 @@ applyMethodRemove: aChange
 category: 'serializing'
 method: GsPushDownMethodRefactoring
 jsonQuote: aString
-	^'"', (self jsonEscape: aString), '"'
+	^GsRefactoringJson jsonQuote: aString
 %
 
 category: 'serializing'
 method: GsPushDownMethodRefactoring
 jsonEscape: aString
-	"JSON string escaping emitting PURE ASCII (control chars and code points above 126
-	 become \\uXXXX), so the client's non-blocking GCI fetch is never handed a Unicode
-	 result."
-	| ws |
-	ws := WriteStream on: String new.
-	aString do: [:ch | | code |
-		code := ch asInteger.
-		ch == $" ifTrue: [ws nextPutAll: '\"']
-		ifFalse: [ch == $\ ifTrue: [ws nextPutAll: '\\']
-		ifFalse: [code = 10 ifTrue: [ws nextPutAll: '\n']
-		ifFalse: [code = 13 ifTrue: [ws nextPutAll: '\r']
-		ifFalse: [code = 9 ifTrue: [ws nextPutAll: '\t']
-		ifFalse: [code < 32
-			ifTrue: [ws nextPutAll: '\u00'; nextPutAll: (self hex2: code)]
-		ifFalse: [code > 126
-			ifTrue: [code > 65535
-				ifTrue: [ws nextPut: $?]
-				ifFalse: [ws nextPutAll: '\u';
-					nextPutAll: (self hex2: code // 256);
-					nextPutAll: (self hex2: code \\ 256)]]
-			ifFalse: [ws nextPut: ch]]]]]]]].
-	^ws contents
+	^GsRefactoringJson jsonEscape: aString
 %
 
 category: 'serializing'
 method: GsPushDownMethodRefactoring
 hex2: anInteger
-	| digits |
-	digits := '0123456789abcdef'.
-	^(String with: (digits at: (anInteger // 16) + 1))
-		, (String with: (digits at: (anInteger \\ 16) + 1))
+	^GsRefactoringJson hex2: anInteger
 %
 
 category: 'instance creation'
@@ -7008,43 +7663,19 @@ applyMethodRemove: aChange
 category: 'serializing'
 method: GsPushUpMethodRefactoring
 jsonQuote: aString
-	^'"', (self jsonEscape: aString), '"'
+	^GsRefactoringJson jsonQuote: aString
 %
 
 category: 'serializing'
 method: GsPushUpMethodRefactoring
 jsonEscape: aString
-	"JSON string escaping emitting PURE ASCII (control chars and code points above 126
-	 become \\uXXXX), so the client's non-blocking GCI fetch is never handed a Unicode
-	 result."
-	| ws |
-	ws := WriteStream on: String new.
-	aString do: [:ch | | code |
-		code := ch asInteger.
-		ch == $" ifTrue: [ws nextPutAll: '\"']
-		ifFalse: [ch == $\ ifTrue: [ws nextPutAll: '\\']
-		ifFalse: [code = 10 ifTrue: [ws nextPutAll: '\n']
-		ifFalse: [code = 13 ifTrue: [ws nextPutAll: '\r']
-		ifFalse: [code = 9 ifTrue: [ws nextPutAll: '\t']
-		ifFalse: [code < 32
-			ifTrue: [ws nextPutAll: '\u00'; nextPutAll: (self hex2: code)]
-		ifFalse: [code > 126
-			ifTrue: [code > 65535
-				ifTrue: [ws nextPut: $?]
-				ifFalse: [ws nextPutAll: '\u';
-					nextPutAll: (self hex2: code // 256);
-					nextPutAll: (self hex2: code \\ 256)]]
-			ifFalse: [ws nextPut: ch]]]]]]]].
-	^ws contents
+	^GsRefactoringJson jsonEscape: aString
 %
 
 category: 'serializing'
 method: GsPushUpMethodRefactoring
 hex2: anInteger
-	| digits |
-	digits := '0123456789abcdef'.
-	^(String with: (digits at: (anInteger // 16) + 1))
-		, (String with: (digits at: (anInteger \\ 16) + 1))
+	^GsRefactoringJson hex2: anInteger
 %
 
 category: 'instance creation'
@@ -7123,11 +7754,7 @@ dictName
 category: 'serializing'
 method: GsRefactoringChange
 hex2: anInteger
-	"Two lowercase hex digits for a 0..255 code point."
-	| digits |
-	digits := '0123456789abcdef'.
-	^(String with: (digits at: (anInteger // 16) + 1))
-		, (String with: (digits at: (anInteger \\ 16) + 1))
+	^GsRefactoringJson hex2: anInteger
 %
 
 category: 'accessing'
@@ -7776,6 +8403,48 @@ category: 'instance creation'
 classmethod: GsRefactoringEnvironment
 onSymbolList: aSymbolList
 	^self basicNew setSymbolList: aSymbolList
+%
+
+category: 'json'
+classmethod: GsRefactoringJson
+hex2: anInteger
+	| digits |
+	digits := '0123456789abcdef'.
+	^(String with: (digits at: (anInteger // 16) + 1))
+		, (String with: (digits at: (anInteger \\ 16) + 1))
+%
+
+category: 'json'
+classmethod: GsRefactoringJson
+jsonEscape: aString
+	"JSON string escaping emitting PURE ASCII (control chars and code points above 126
+	 become \\uXXXX), so the client's non-blocking GCI fetch is never handed a
+	 Unicode-promoted result."
+	| ws |
+	ws := WriteStream on: String new.
+	aString do: [:ch | | code |
+		code := ch asInteger.
+		ch == $" ifTrue: [ws nextPutAll: '\"']
+		ifFalse: [ch == $\ ifTrue: [ws nextPutAll: '\\']
+		ifFalse: [code = 10 ifTrue: [ws nextPutAll: '\n']
+		ifFalse: [code = 13 ifTrue: [ws nextPutAll: '\r']
+		ifFalse: [code = 9 ifTrue: [ws nextPutAll: '\t']
+		ifFalse: [code < 32
+			ifTrue: [ws nextPutAll: '\u00'; nextPutAll: (self hex2: code)]
+		ifFalse: [code > 126
+			ifTrue: [code > 65535
+				ifTrue: [ws nextPut: $?]
+				ifFalse: [ws nextPutAll: '\u';
+					nextPutAll: (self hex2: code // 256);
+					nextPutAll: (self hex2: code \\ 256)]]
+			ifFalse: [ws nextPut: ch]]]]]]]].
+	^ws contents
+%
+
+category: 'json'
+classmethod: GsRefactoringJson
+jsonQuote: aString
+	^'"', (self jsonEscape: aString), '"'
 %
 
 category: 'private'
@@ -8431,43 +9100,19 @@ removeBinding: aName ifValueIs: aClass
 category: 'serializing'
 method: GsRenameClassRefactoring
 hex2: anInteger
-	| digits |
-	digits := '0123456789abcdef'.
-	^(String with: (digits at: (anInteger // 16) + 1))
-		, (String with: (digits at: (anInteger \\ 16) + 1))
+	^GsRefactoringJson hex2: anInteger
 %
 
 category: 'serializing'
 method: GsRenameClassRefactoring
 jsonEscape: aString
-	"JSON string escaping emitting PURE ASCII (control chars and code points above 126
-	 become \\uXXXX), so the client's non-blocking GCI fetch is never handed a
-	 Unicode-promoted result."
-	| ws |
-	ws := WriteStream on: String new.
-	aString do: [:ch | | code |
-		code := ch asInteger.
-		ch == $" ifTrue: [ws nextPutAll: '\"']
-		ifFalse: [ch == $\ ifTrue: [ws nextPutAll: '\\']
-		ifFalse: [code = 10 ifTrue: [ws nextPutAll: '\n']
-		ifFalse: [code = 13 ifTrue: [ws nextPutAll: '\r']
-		ifFalse: [code = 9 ifTrue: [ws nextPutAll: '\t']
-		ifFalse: [code < 32
-			ifTrue: [ws nextPutAll: '\u00'; nextPutAll: (self hex2: code)]
-		ifFalse: [code > 126
-			ifTrue: [code > 65535
-				ifTrue: [ws nextPut: $?]
-				ifFalse: [ws nextPutAll: '\u';
-					nextPutAll: (self hex2: code // 256);
-					nextPutAll: (self hex2: code \\ 256)]]
-			ifFalse: [ws nextPut: ch]]]]]]]].
-	^ws contents
+	^GsRefactoringJson jsonEscape: aString
 %
 
 category: 'serializing'
 method: GsRenameClassRefactoring
 jsonQuote: aString
-	^'"', (self jsonEscape: aString), '"'
+	^GsRefactoringJson jsonQuote: aString
 %
 
 category: 'instance creation'
@@ -8862,43 +9507,19 @@ skippedMethodsJsonString
 category: 'serializing'
 method: GsRenameClassVariableRefactoring
 jsonEscape: aString
-	"JSON string escaping emitting PURE ASCII (control chars and code points above 126
-	 become \\uXXXX), so the client's non-blocking GCI fetch is never handed a
-	 Unicode-promoted result."
-	| ws |
-	ws := WriteStream on: String new.
-	aString do: [:ch | | code |
-		code := ch asInteger.
-		ch == $" ifTrue: [ws nextPutAll: '\"']
-		ifFalse: [ch == $\ ifTrue: [ws nextPutAll: '\\']
-		ifFalse: [code = 10 ifTrue: [ws nextPutAll: '\n']
-		ifFalse: [code = 13 ifTrue: [ws nextPutAll: '\r']
-		ifFalse: [code = 9 ifTrue: [ws nextPutAll: '\t']
-		ifFalse: [code < 32
-			ifTrue: [ws nextPutAll: '\u00'; nextPutAll: (self hex2: code)]
-		ifFalse: [code > 126
-			ifTrue: [code > 65535
-				ifTrue: [ws nextPut: $?]
-				ifFalse: [ws nextPutAll: '\u';
-					nextPutAll: (self hex2: code // 256);
-					nextPutAll: (self hex2: code \\ 256)]]
-			ifFalse: [ws nextPut: ch]]]]]]]].
-	^ws contents
+	^GsRefactoringJson jsonEscape: aString
 %
 
 category: 'serializing'
 method: GsRenameClassVariableRefactoring
 jsonQuote: aString
-	^'"', (self jsonEscape: aString), '"'
+	^GsRefactoringJson jsonQuote: aString
 %
 
 category: 'serializing'
 method: GsRenameClassVariableRefactoring
 hex2: anInteger
-	| digits |
-	digits := '0123456789abcdef'.
-	^(String with: (digits at: (anInteger // 16) + 1))
-		, (String with: (digits at: (anInteger \\ 16) + 1))
+	^GsRefactoringJson hex2: anInteger
 %
 
 category: 'paginated preview'
@@ -9253,6 +9874,240 @@ stageMethodRecompilesInto: aChangeSet
 						newSource: newSrc]]]]
 %
 
+category: 'applying'
+method: GsRenameInstanceVariableRefactoring
+applyDeselected: deselectedIds
+	"Apply the rename in the stone WITHOUT committing (the user commits explicitly).
+
+	 Renaming an instance variable RESHAPES the defining class, and a reshape means a
+	 NEW CLASS VERSION whose method dictionary starts EMPTY. Recompiling only the
+	 methods in the change set would therefore destroy every other method on the class
+	 -- including class-side methods, which can never appear in the change set because
+	 they cannot access an instance variable at all. So every method is COPIED FORWARD
+	 onto the new version: the accessing ones with their rewritten source, the rest
+	 verbatim. Same for every subclass, which is re-versioned in turn because its
+	 superclass changed shape.
+
+	 A change whose id is in deselectedIds is deliberately NOT carried forward -- the
+	 user chose to drop that method rather than have it reference the new name. That is
+	 the only way a method disappears here.
+
+	 Answers {applied, failed:[..]}."
+	| deselected failures applied newDefining |
+	deselected := self deselectedSelectorsFrom: deselectedIds.
+	failures := OrderedCollection new.
+	applied := 0.
+	newDefining := self
+		reversion: definingClass
+		superclass: definingClass superclass
+		instVarNames: (self renamedInstVarNamesOf: definingClass)
+		deselected: deselected
+		into: failures.
+	applied := applied + 1.
+	(environment descendantsOf: definingClass) do: [:sub | | parent |
+		parent := (sub superclass == definingClass)
+			ifTrue: [newDefining]
+			ifFalse: [environment classNamed: sub superclass name].
+		self
+			reversion: sub
+			superclass: parent
+			instVarNames: (sub instVarNames collect: [:e | e asString])
+			deselected: deselected
+			into: failures.
+		applied := applied + 1].
+	^self applyEnvelopeApplied: applied failures: failures
+%
+
+category: 'private - applying'
+method: GsRenameInstanceVariableRefactoring
+applyEnvelopeApplied: applied failures: failures
+	"The {applied, failed:[..]} envelope the client parses, matching the other
+	 refactorings' apply results."
+	^'{"applied":', applied printString,
+	  ',"failed":[',
+	  ((failures collect: [:f |
+		'{"id":', (self jsonQuote: (f at: 1)),
+		',"label":', (self jsonQuote: (f at: 2)),
+		',"error":', (self jsonQuote: (f at: 3)), '}'])
+			inject: '' into: [:acc :s | acc isEmpty ifTrue: [s] ifFalse: [acc, ',', s]]),
+	  ']}'
+%
+
+category: 'private - applying'
+method: GsRenameInstanceVariableRefactoring
+deselectedSelectorsFrom: deselectedIds
+	"The {className. selector} pairs the user chose not to carry forward, as a Set of
+	 'Class>>sel' keys. Ids that name no staged change are ignored.
+
+	 The ids arrive from the client as literals in GCI-compiled source, which 3.6.2 can
+	 promote to Unicode strings; comparing one of those to the change's own (byte)
+	 String raises 'Unicode argument disallowed in String comparison' (error 2718).
+	 asSymbol canonicalises both sides, so the comparison is an identity test on
+	 Symbols and never touches String comparison. (Same workaround as
+	 GsRenameMethodRefactoring.)"
+	| ids result |
+	result := Set new.
+	ids := ((deselectedIds ifNil: [#()]) collect: [:e | e asSymbol]) asIdentitySet.
+	self changeSet changes do: [:c |
+		((ids includes: c id asSymbol) and: [c kind = #methodRecompile])
+			ifTrue: [result add: (self keyForClassNamed: c className selector: c selector)]].
+	^result
+%
+
+category: 'private - applying'
+method: GsRenameInstanceVariableRefactoring
+keyForClassNamed: aName selector: aSelector
+	^aName asString, '>>', aSelector asString
+%
+
+category: 'private - applying'
+method: GsRenameInstanceVariableRefactoring
+newSourceFor: aClass selector: aSelector
+	"The rewritten source staged for this method, or nil when no change was staged
+	 (the method does not access the variable and is carried forward verbatim)."
+	^(self changeSet changes
+		detect: [:c |
+			c kind = #methodRecompile
+				and: [c className asString = aClass name asString
+					and: [c selector asString = aSelector asString]]]
+		ifNone: [nil])
+			ifNil: [nil]
+			ifNotNil: [:change | change newSource]
+%
+
+category: 'private - applying'
+method: GsRenameInstanceVariableRefactoring
+renamedInstVarNamesOf: aClass
+	"aClass's OWN instance-variable names with the renamed one substituted."
+	^aClass instVarNames collect: [:n |
+		n asSymbol == oldNameSym ifTrue: [newName] ifFalse: [n asString]]
+%
+
+category: 'private - applying'
+method: GsRenameInstanceVariableRefactoring
+reversion: old superclass: sup instVarNames: ivars deselected: deselected into: failures
+	"Create the new version of `old` under `sup` with `ivars`, then carry every method
+	 forward onto it. Answers the new version."
+	| new |
+	new := self makeNewVersionOf: old superclass: sup instVarNames: ivars.
+	self copyMethodsFrom: old to: new deselected: deselected into: failures.
+	^new
+%
+
+category: 'private - applying'
+method: GsRenameInstanceVariableRefactoring
+makeNewVersionOf: old superclass: sup instVarNames: ivars
+	"A new version in `old`'s class history, under `sup`, with `ivars` as its own
+	 instance variables.
+
+	 Passes `old format` explicitly rather than using the plain newVersionOf: form,
+	 which derives format from the superclass and so silently drops the class's own
+	 format bits (byte vs pointer vs NSC vs indexable, and options such as
+	 instancesInvariant). Threading `inClassHistory: old classHistory` keeps it a
+	 version of the same class, so class-variable values and the class category carry
+	 forward automatically. (Same construction as GsRenameClassRefactoring.)"
+	^sup
+		_subclass: old name asString
+		instVarNames: ivars
+		format: old format
+		classVars: (old classVarNames collect: [:e | e asString])
+		classInstVars: (old class instVarNames collect: [:e | e asString])
+		poolDictionaries: old sharedPools
+		inDictionary: (self dictObjectFor: old)
+		inClassHistory: old classHistory
+		description: ([old commentForFileout] on: Error do: [:e | ''])
+		options: #()
+%
+
+category: 'private - applying'
+method: GsRenameInstanceVariableRefactoring
+copyMethodsFrom: old to: new deselected: deselected into: failures
+	"Carry every method of `old` onto `new`, both sides. An accessing method compiles
+	 from its staged, rewritten source; every other method compiles from its existing
+	 source unchanged. A new class version starts with an empty method dictionary, so
+	 this is the only thing that keeps the behaviour alive.
+
+	 Class-side methods cannot reference an instance variable, so they are always
+	 copied verbatim and are never deselectable."
+	old selectors do: [:sel |
+		(deselected includes: (self keyForClassNamed: old name selector: sel))
+			ifFalse: [self copyMethod: sel from: old to: new meta: false into: failures]].
+	old class selectors do: [:sel |
+		self copyMethod: sel from: old class to: new class meta: true into: failures]
+%
+
+category: 'private - applying'
+method: GsRenameInstanceVariableRefactoring
+copyMethod: sel from: srcCls to: dstCls meta: isMeta into: failures
+	"Compile one method onto the new version, preserving its category -- without it the
+	 method silently lands in 'as yet unclassified'. A method that fails to compile is
+	 recorded rather than allowed to vanish unremarked."
+	| m src cat result label |
+	m := srcCls compiledMethodAt: sel environmentId: 0 otherwise: nil.
+	m isNil ifTrue: [^self].
+	src := isMeta
+		ifTrue: [m sourceString]
+		ifFalse: [(self newSourceFor: srcCls selector: sel) ifNil: [m sourceString]].
+	cat := (srcCls categoryOfSelector: sel environmentId: 0) ifNil: ['as yet unclassified'].
+	result := dstCls
+		compileMethod: src
+		dictionaries: System myUserProfile symbolList
+		category: cat asString.
+	"compileMethod: answers nil on success and a non-empty Array of error tuples on a
+	 compile failure. A failed method is not installed, so record it."
+	(result isNil or: [(result isKindOf: Array) and: [result isEmpty]]) ifFalse: [
+		label := isMeta
+			ifTrue: [dstCls thisClass name asString, ' class>>', sel asString]
+			ifFalse: [dstCls name asString, '>>', sel asString].
+		failures add: (Array with: label with: label with: 'did not recompile')]
+%
+
+category: 'private - applying'
+method: GsRenameInstanceVariableRefactoring
+dictObjectFor: aClass
+	"The SymbolDictionary that defines aClass's name, for inDictionary:. Falls back to
+	 UserGlobals if none is found (should not happen for a bound class)."
+	| dicts |
+	dicts := environment dictionariesDefiningClassNamed: aClass name.
+	^dicts isEmpty
+		ifTrue: [environment symbolList objectNamed: #UserGlobals]
+		ifFalse: [dicts first]
+%
+
+category: 'serializing'
+method: GsRenameInstanceVariableRefactoring
+jsonQuote: aString
+	^GsRefactoringJson jsonQuote: aString
+%
+
+category: 'serializing'
+method: GsRenameInstanceVariableRefactoring
+jsonEscape: aString
+	^GsRefactoringJson jsonEscape: aString
+%
+
+category: 'serializing'
+method: GsRenameInstanceVariableRefactoring
+hex2: anInteger
+	^GsRefactoringJson hex2: anInteger
+%
+
+category: 'previewing'
+method: GsRenameInstanceVariableRefactoring
+startPreviewToken: token
+	"Build the change set, stash this refactoring in SessionTemps under token, and
+	 answer it. The token lets the client APPLY server-side afterwards
+	 (applyForToken:deselected:) instead of replaying the changes itself -- which is
+	 what keeps every untouched method alive, since only the engine knows to copy the
+	 whole method dictionary onto the new class version.
+
+	 Nothing is compiled and nothing is committed."
+	self changeSet.
+	SessionTemps current at: token asSymbol put: self.
+	^'{"token":', (self jsonQuote: token),
+	  ',"changes":', self changeSet jsonString, '}'
+%
+
 category: 'instance creation'
 classmethod: GsRenameInstanceVariableRefactoring
 class: aClass renameInstVar: oldNameString to: newNameString
@@ -9272,6 +10127,23 @@ environment: anEnvironment class: aClass oldName: oldNameString newName: newName
 		class: aClass
 		oldName: oldNameString
 		newName: newNameString
+%
+
+category: 'applying'
+classmethod: GsRenameInstanceVariableRefactoring
+applyForToken: token deselected: deselectedIds
+	"Apply a previously-started preview (by token), skipping deselectedIds. No
+	 commit. Answers an error envelope if the preview session has expired."
+	^(SessionTemps current at: token asSymbol ifAbsent: [nil])
+		ifNil: ['{"applied":0,"failed":[],"error":"preview session expired"}']
+		ifNotNil: [:ref | ref applyDeselected: deselectedIds]
+%
+
+category: 'previewing'
+classmethod: GsRenameInstanceVariableRefactoring
+clearToken: token
+	"Drop a finished preview from SessionTemps."
+	SessionTemps current removeKey: token asSymbol ifAbsent: []
 %
 
 category: 'building'
@@ -9441,46 +10313,19 @@ outOfScopeJsonString
 category: 'private'
 method: GsRenameMethodRefactoring
 hex2: anInteger
-	"Two lowercase hex digits for a 0..255 code point."
-	| digits |
-	digits := '0123456789abcdef'.
-	^(String with: (digits at: (anInteger // 16) + 1))
-		, (String with: (digits at: (anInteger \\ 16) + 1))
+	^GsRefactoringJson hex2: anInteger
 %
 
 category: 'private'
 method: GsRenameMethodRefactoring
 jsonEscape: aString
-	"JSON string escaping emitting PURE ASCII (control chars and code points above
-	 126 become \uXXXX), for a class name, selector, or error message. Keeps the
-	 payload a byte String so the client's non-blocking GCI fetch is never handed a
-	 Unicode-promoted result."
-	| ws |
-	ws := WriteStream on: String new.
-	aString do: [:ch | | code |
-		code := ch asInteger.
-		ch == $" ifTrue: [ws nextPutAll: '\"']
-		ifFalse: [ch == $\ ifTrue: [ws nextPutAll: '\\']
-		ifFalse: [code = 10 ifTrue: [ws nextPutAll: '\n']
-		ifFalse: [code = 13 ifTrue: [ws nextPutAll: '\r']
-		ifFalse: [code = 9 ifTrue: [ws nextPutAll: '\t']
-		ifFalse: [code < 32
-			ifTrue: [ws nextPutAll: '\u00'; nextPutAll: (self hex2: code)]
-		ifFalse: [code > 126
-			ifTrue: [code > 65535
-				ifTrue: [ws nextPut: $?]
-				ifFalse: [ws nextPutAll: '\u';
-					nextPutAll: (self hex2: code // 256);
-					nextPutAll: (self hex2: code \\ 256)]]
-			ifFalse: [ws nextPut: ch]]]]]]]].
-	^ws contents
+	^GsRefactoringJson jsonEscape: aString
 %
 
 category: 'private'
 method: GsRenameMethodRefactoring
 jsonQuote: aString
-	"aString as a quoted, escaped JSON string."
-	^'"', (self jsonEscape: aString), '"'
+	^GsRefactoringJson jsonQuote: aString
 %
 
 category: 'accessing'
@@ -10197,43 +11042,19 @@ applyMethodRecompile: aChange
 category: 'serializing'
 method: GsRenameTemporaryRefactoring
 jsonQuote: aString
-	^'"', (self jsonEscape: aString), '"'
+	^GsRefactoringJson jsonQuote: aString
 %
 
 category: 'serializing'
 method: GsRenameTemporaryRefactoring
 jsonEscape: aString
-	"JSON string escaping emitting PURE ASCII (control chars and code points above
-	 126 become \\uXXXX), so the client's non-blocking GCI fetch is never handed a
-	 Unicode-promoted result."
-	| ws |
-	ws := WriteStream on: String new.
-	aString do: [:ch | | code |
-		code := ch asInteger.
-		ch == $" ifTrue: [ws nextPutAll: '\"']
-		ifFalse: [ch == $\ ifTrue: [ws nextPutAll: '\\']
-		ifFalse: [code = 10 ifTrue: [ws nextPutAll: '\n']
-		ifFalse: [code = 13 ifTrue: [ws nextPutAll: '\r']
-		ifFalse: [code = 9 ifTrue: [ws nextPutAll: '\t']
-		ifFalse: [code < 32
-			ifTrue: [ws nextPutAll: '\u00'; nextPutAll: (self hex2: code)]
-		ifFalse: [code > 126
-			ifTrue: [code > 65535
-				ifTrue: [ws nextPut: $?]
-				ifFalse: [ws nextPutAll: '\u';
-					nextPutAll: (self hex2: code // 256);
-					nextPutAll: (self hex2: code \\ 256)]]
-			ifFalse: [ws nextPut: ch]]]]]]]].
-	^ws contents
+	^GsRefactoringJson jsonEscape: aString
 %
 
 category: 'serializing'
 method: GsRenameTemporaryRefactoring
 hex2: anInteger
-	| digits |
-	digits := '0123456789abcdef'.
-	^(String with: (digits at: (anInteger // 16) + 1))
-		, (String with: (digits at: (anInteger \\ 16) + 1))
+	^GsRefactoringJson hex2: anInteger
 %
 
 category: 'instance creation'

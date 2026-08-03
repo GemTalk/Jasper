@@ -23,12 +23,77 @@ export interface RenameChange {
   newSource: string;
 }
 
+/** True when a change is structural (always applied, cannot be deselected).
+ *  The class-definition edit must accompany the method recompiles: recompiling
+ *  method bodies that reference the new ivar name without reshaping the class
+ *  would fail every recompile, or bind to a stray Undeclared global. The panel
+ *  renders such a change checked and DISABLED, and a disabled checkbox is never
+ *  reported as deselected to the engine. */
+export function isStructuralChange(change: RenameChange): boolean {
+  return change.kind === 'classDefinitionEdit';
+}
+
+/** A started preview: the SessionTemps token the apply is addressed to, plus the
+ *  staged changes. */
+export interface RenamePreview {
+  token: string;
+  changes: RenameChange[];
+}
+
 /**
- * Parse the engine's change-set JSON into typed changes. Throws if the payload
- * is not the expected JSON array of change objects — callers surface that as an
- * error rather than a partial rename. The stone returns a bare error string
- * (e.g. "Class not found: Foo") instead of JSON when the class can't be
- * resolved; that fails JSON.parse and is reported as an error.
+ * Parse the engine's start-preview envelope, `{"token":..,"changes":[..]}`.
+ * Throws if the payload isn't that shape — callers surface it as an error rather
+ * than a partial rename. The stone returns a bare error string (e.g. "Class not
+ * found: Foo") instead of JSON when the class can't be resolved; that fails
+ * JSON.parse and is reported as an error.
+ */
+export function parseRenamePreview(json: string): RenamePreview {
+  const parsed: unknown = JSON.parse(json);
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error('Rename preview did not return a preview envelope.');
+  }
+  const env = parsed as Record<string, unknown>;
+  if (typeof env.token !== 'string') {
+    throw new Error('Rename preview did not return a token.');
+  }
+  return { token: env.token, changes: parseRenameChanges(JSON.stringify(env.changes)) };
+}
+
+/** The apply result: how many classes were re-versioned, and anything that
+ *  failed to recompile onto its new class version. */
+export interface RenameApplyResult {
+  applied: number;
+  failed: { id: string; label: string; error: string }[];
+  error?: string;
+}
+
+/** Parse the engine's apply envelope, `{"applied":N,"failed":[..]}`. A malformed
+ *  payload is reported as an error rather than silently read as success. */
+export function parseRenameApplyResult(json: string): RenameApplyResult {
+  const parsed: unknown = JSON.parse(json);
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error('Rename apply did not return a result envelope.');
+  }
+  const env = parsed as Record<string, unknown>;
+  const rawFailed = Array.isArray(env.failed) ? env.failed : [];
+  return {
+    applied: typeof env.applied === 'number' ? env.applied : 0,
+    failed: rawFailed.map((f) => {
+      const o = (typeof f === 'object' && f !== null ? f : {}) as Record<string, unknown>;
+      return {
+        id: typeof o.id === 'string' ? o.id : '',
+        label: typeof o.label === 'string' ? o.label : '?',
+        error: typeof o.error === 'string' ? o.error : 'unknown error',
+      };
+    }),
+    error: typeof env.error === 'string' ? env.error : undefined,
+  };
+}
+
+/**
+ * Parse a JSON array of change objects into typed changes. Throws if the payload
+ * is not the expected array — callers surface that as an error rather than a
+ * partial rename.
  */
 export function parseRenameChanges(json: string): RenameChange[] {
   const parsed: unknown = JSON.parse(json);
@@ -104,51 +169,23 @@ export function changeLabel(change: RenameChange): string {
   return `${change.className}${side}>>${change.selector ?? '?'}`;
 }
 
-/** One recompile to perform when applying a rename: everything the client needs
- *  to drive a compile query, with the source's dictionary already resolved to a
- *  1-based symbol-list index (or undefined to fall back to first-match). */
-export interface RenameApplyStep {
-  id: string;
-  kind: RenameChange['kind'];
-  className: string;
-  isMeta: boolean;
-  category: string;
-  newSource: string;
-  dictIndex: number | undefined;
-  label: string;
+/**
+ * The ids the user unchecked, which is what the engine's apply takes. Inverting
+ * the panel's SELECTED list here (rather than sending it) matters: the engine
+ * carries every method forward by default and drops only what it is told to, so a
+ * dropped id list that arrives short is harmless, whereas a kept-id list that
+ * arrived short would delete methods. Structural changes can't be deselected, so
+ * they never appear here even if the caller passes a stale selection.
+ */
+export function deselectedIdsFrom(changes: RenameChange[], selectedIds: string[]): string[] {
+  return changes
+    .filter((c) => !isStructuralChange(c) && !selectedIds.includes(c.id))
+    .map((c) => c.id);
 }
 
-/**
- * Build the ordered list of recompiles for the selected changes. Keeps the
- * caller's ordering (class definition first, so methods recompile against the
- * new class shape), resolves each change's dictionary name to its 1-based
- * symbol-list index (falling back to the currently-selected dictionary, then to
- * undefined = first-match), and fills the method category (defaulting to "as yet
- * unclassified"). Pure so the ordering/resolution rules unit-test directly; the
- * caller just executes each step with no commit.
- */
-export function planRenameApply(
-  ordered: RenameChange[],
-  selectedIds: string[],
-  dictNames: string[],
-  currentDictName?: string,
-): RenameApplyStep[] {
-  const dictIndexOf = (name: string | null): number | undefined => {
-    const dn = name ?? currentDictName;
-    if (dn === undefined || dn === null) return undefined;
-    const i = dictNames.indexOf(dn);
-    return i >= 0 ? i + 1 : undefined;
-  };
-  return ordered
-    .filter((c) => selectedIds.includes(c.id))
-    .map((c) => ({
-      id: c.id,
-      kind: c.kind,
-      className: c.className,
-      isMeta: c.isMeta,
-      category: c.category ?? 'as yet unclassified',
-      newSource: c.newSource,
-      dictIndex: dictIndexOf(c.dictName),
-      label: changeLabel(c),
-    }));
+/** Labels for the methods a deselection will DELETE, for the confirm prompt —
+ *  deselecting a method means it is not carried onto the new class version. */
+export function deselectedLabels(changes: RenameChange[], selectedIds: string[]): string[] {
+  const dropped = deselectedIdsFrom(changes, selectedIds);
+  return changes.filter((c) => dropped.includes(c.id)).map((c) => changeLabel(c));
 }

@@ -67,16 +67,18 @@ m add: (Array with: 'GsExtractMethodRefactoring' with: 71).
 m add: (Array with: 'GsExtractTemporaryRefactoring' with: 50).
 m add: (Array with: 'GsInlineMethodRefactoring' with: 59).
 m add: (Array with: 'GsInlineTemporaryRefactoring' with: 46).
-m add: (Array with: 'GsInstVarStructureRefactoring' with: 63).
+m add: (Array with: 'GsInstVarRefactoring' with: 52).
+m add: (Array with: 'GsInstVarStructureRefactoring' with: 71).
 m add: (Array with: 'GsMoveMethodRefactoring' with: 38).
 m add: (Array with: 'GsPushDownMethodRefactoring' with: 40).
 m add: (Array with: 'GsPushUpMethodRefactoring' with: 43).
 m add: (Array with: 'GsRefactoringChange' with: 28).
 m add: (Array with: 'GsRefactoringChangeSet' with: 18).
 m add: (Array with: 'GsRefactoringEnvironment' with: 16).
+m add: (Array with: 'GsRefactoringJson' with: 3).
 m add: (Array with: 'GsRenameClassRefactoring' with: 54).
 m add: (Array with: 'GsRenameClassVariableRefactoring' with: 37).
-m add: (Array with: 'GsRenameInstanceVariableRefactoring' with: 17).
+m add: (Array with: 'GsRenameInstanceVariableRefactoring' with: 34).
 m add: (Array with: 'GsRenameMethodRefactoring' with: 36).
 m add: (Array with: 'GsRenameTemporaryRefactoring' with: 40).
 GsRefactoring at: #GsRefactoringManifest put: m.

@@ -5,5 +5,5 @@
     "rootDir": "./src",
     "allowJs": true
   },
-  "include": ["src/**/*.ts", "src/**/*.js"]
+  "include": ["src/**/*.ts", "src/gemStoneVersion.js"]
 }
