@@ -211,6 +211,32 @@ describe('add / remove instance variable (gci e2e)', () => {
     }
   });
 
+  it('declines a name a subclass already declares, naming the subclass, before any preview', async (ctx) => {
+    if (!enginePresent) return ctx.skip();
+
+    try {
+      q.compileClassDefinition(
+        session,
+        `Object subclass: '${BASE}' instVarNames: #() classVars: #() ` +
+          'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
+      );
+      q.compileClassDefinition(
+        session,
+        `${BASE} subclass: '${SUB}' instVarNames: #(mine) classVars: #() ` +
+          'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
+      );
+
+      const analysis = parseAnalysis(
+        await analyzeInstVar(asyncExec, 'add', BASE, 'mine', userIndex()),
+      );
+
+      expect(analysis.decline).toBeTruthy();
+      expect(analysis.decline).toContain(SUB);
+    } finally {
+      exec("System abortTransaction. 'ok'");
+    }
+  });
+
   // The committing paths (migrate instances / delete history) can only be verified end to end
   // here: the engine commits the structural change first (migrateInstancesTo: needs a clean
   // transaction), so an abort-isolated unit/SUnit test cannot observe them. Each test is

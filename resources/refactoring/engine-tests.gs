@@ -3800,6 +3800,26 @@ testAddDeclinesInheritedName
 
 category: 'tests - add'
 method: GsInstVarRefactoringTest
+testAddDeclinesSubclassOwnName
+	"A subclass (GsIVSub) already declares 'subOwn' as its own instance variable. Adding 'subOwn'
+	 to the base would, once inherited, duplicate it on the subclass -- which fails at apply. The
+	 analysis must catch it up front and decline, naming the offending subclass, so the user never
+	 reaches a preview that could only strand a half-versioned subtree."
+	| ref |
+	ref := self add: 'subOwn'.
+	self assert: ref decline notNil.
+	self assert: ref decline includesSubstring: 'GsIVSub'
+%
+
+category: 'tests - add'
+method: GsInstVarRefactoringTest
+testAddAllowsANameNoSubclassDeclares
+	"The mirror of the decline: a name no descendant owns analyzes cleanly and reaches a change set."
+	self assert: (self add: 'freshVar') decline isNil
+%
+
+category: 'tests - add'
+method: GsInstVarRefactoringTest
 testAddDeclinesInvalidName
 	self assert: (self add: '9bad') decline notNil.
 	self assert: (self add: 'has space') decline notNil.

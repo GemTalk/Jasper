@@ -214,13 +214,29 @@ GsInstVarRefactoring >> computeAnalysis [
 { #category : 'private - analysis' }
 GsInstVarRefactoring >> analyzeAdd [
 	"V1 add: varName must be a valid identifier not already visible as an instance variable of
-	 definingClass, and not shadowing a class variable in the hierarchy."
+	 definingClass, not shadowing a class variable in the hierarchy, and not already declared as an
+	 own instance variable by any subclass -- once inherited from definingClass it would collide
+	 with the subclass's own copy, which the class-creation primitive rejects."
+	| conflicts names |
 	(self isValidIvarName: varName) ifFalse: [
 		^decline := 'Cannot add ', varName printString, ': an instance-variable name must start with a lowercase letter or an underscore, followed by letters, digits, or underscores.'].
 	((self allInstVarsOf: definingClass) includes: varName) ifTrue: [
 		^decline := 'Cannot add ', varName, ': ', definingClass name asString, ' already has an instance variable of that name.'].
 	((self allClassVarsOf: definingClass) includes: varName) ifTrue: [
 		^decline := 'Cannot add ', varName, ': a class variable of that name is visible to ', definingClass name asString, ', which it would shadow.'].
+	"A subclass that already declares varName as its OWN instance variable would end up with two
+	 of that name once the new one is inherited. That fails mid-apply (error 2271), so decline up
+	 front and name the offenders rather than let the reshape strand a half-versioned subtree."
+	conflicts := (environment descendantsOf: definingClass)
+		select: [:d | (self ownInstVarsOf: d) includes: varName].
+	conflicts notEmpty ifTrue: [
+		names := (conflicts collect: [:c | c name asString])
+			inject: '' into: [:acc :s | acc isEmpty ifTrue: [s] ifFalse: [acc, ', ', s]].
+		^decline := 'Cannot add ', varName, ': ',
+			(conflicts size = 1 ifTrue: ['subclass '] ifFalse: ['subclasses ']), names,
+			(conflicts size = 1 ifTrue: [' already declares'] ifFalse: [' already declare']),
+			' an instance variable of that name; adding it to ', definingClass name asString,
+			' would duplicate that variable.'].
 	newIvarLists at: definingClass name asString put: ((self ownInstVarsOf: definingClass) copyWith: varName).
 	self computeAffectedFrom: (Array with: definingClass).
 	self recordWillNotRecompileShadowedBy: definingClass
