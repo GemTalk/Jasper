@@ -1,6 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import { Lexer } from '../../lexer/lexer';
 import { Parser } from '../parser';
+import { MessageNode, MessagePatternNode, StatementNode } from '../ast';
+
+type DeepPartial<T> = T extends (infer U)[]
+  ? DeepPartial<U>[]
+  : T extends object
+    ? { [K in keyof T]?: DeepPartial<T[K]> }
+    : T;
 
 function parse(source: string) {
   const lexer = new Lexer(source);
@@ -28,11 +35,12 @@ describe('Parser', () => {
     it('parses keyword method', () => {
       const { ast } = parse('at: index put: value ^self');
       expect(ast).not.toBeNull();
-      expect(ast!.pattern.kind).toBe('KeywordPattern');
-      if (ast!.pattern.kind === 'KeywordPattern') {
-        expect(ast!.pattern.selector).toBe('at:put:');
-        expect(ast!.pattern.parameters).toHaveLength(2);
-      }
+      const expected: DeepPartial<MessagePatternNode> = {
+        kind: 'KeywordPattern',
+        selector: 'at:put:',
+        parameters: [expect.anything(), expect.anything()],
+      };
+      expect(ast!.pattern).toMatchObject(expected);
     });
   });
 
@@ -114,9 +122,11 @@ describe('Parser', () => {
       const { ast } = parse('foo self add: 1; add: 2; yourself');
       expect(ast).not.toBeNull();
       const expr = ast!.body.statements[0];
-      if (expr.kind === 'Expression') {
-        expect(expr.cascades.length).toBeGreaterThan(0);
-      }
+      const expected: DeepPartial<StatementNode> = {
+        kind: 'Expression',
+        cascades: expect.arrayContaining([expect.anything()]),
+      };
+      expect(expr).toMatchObject(expected);
     });
   });
 
@@ -154,13 +164,11 @@ describe('Parser', () => {
       expect(errors).toHaveLength(0);
       expect(ast).not.toBeNull();
       const ret = ast!.body.statements[0];
-      expect(ret.kind).toBe('Return');
-      if (ret.kind === 'Return') {
-        expect(ret.expression.kind).toBe('Expression');
-        if (ret.expression.kind === 'Expression') {
-          expect(ret.expression.receiver.kind).toBe('Path');
-        }
-      }
+      const expected: DeepPartial<StatementNode> = {
+        kind: 'Return',
+        expression: { kind: 'Expression', receiver: { kind: 'Path' } },
+      };
+      expect(ret).toMatchObject(expected);
     });
   });
 
@@ -269,151 +277,153 @@ describe('Parser', () => {
       const expr = findMessages('foo 3 @env2:squared');
       expect(expr.messages).toHaveLength(1);
       const msg = expr.messages[0];
-      expect(msg.kind).toBe('UnaryMessage');
-      if (msg.kind === 'UnaryMessage') {
-        expect(msg.selector).toBe('squared');
-        expect(msg.envSpecifier).toBe('@env2:');
-      }
+      const expected: DeepPartial<MessageNode> = {
+        kind: 'UnaryMessage',
+        selector: 'squared',
+        envSpecifier: '@env2:',
+      };
+      expect(msg).toMatchObject(expected);
     });
 
     it('parses env specifier on a top-level binary message', () => {
       const expr = findMessages('foo 2 @env1:+ 3');
       expect(expr.messages).toHaveLength(1);
       const msg = expr.messages[0];
-      expect(msg.kind).toBe('BinaryMessage');
-      if (msg.kind === 'BinaryMessage') {
-        expect(msg.selector).toBe('+');
-        expect(msg.envSpecifier).toBe('@env1:');
-      }
+      const expected: DeepPartial<MessageNode> = {
+        kind: 'BinaryMessage',
+        selector: '+',
+        envSpecifier: '@env1:',
+      };
+      expect(msg).toMatchObject(expected);
     });
 
     it('parses env specifier on a top-level keyword message', () => {
       const expr = findMessages('foo Transcript @env0:show: 2');
       expect(expr.messages).toHaveLength(1);
       const msg = expr.messages[0];
-      expect(msg.kind).toBe('KeywordMessage');
-      if (msg.kind === 'KeywordMessage') {
-        expect(msg.selector).toBe('show:');
-        expect(msg.envSpecifier).toBe('@env0:');
-        expect(msg.parts).toHaveLength(1);
-      }
+      const expected: DeepPartial<MessageNode> = {
+        kind: 'KeywordMessage',
+        selector: 'show:',
+        envSpecifier: '@env0:',
+        parts: [expect.anything()],
+      };
+      expect(msg).toMatchObject(expected);
     });
 
     it('parses the BNF docstring example with env specifiers on each message', () => {
       const expr = findMessages('foo Transcript @env0:show: 2 @env1:+ 3 @env2:squared');
-      // Receiver is Transcript, then a single keyword message show: with env0
+      // Receiver is Transcript, then a single keyword message show: with env0,
+      // whose argument is 2 + 3 squared: binary + (env1) on receiver 2, whose
+      // own argument is 3 with a unary squared (env2).
       expect(expr.messages).toHaveLength(1);
       const msg = expr.messages[0];
-      expect(msg.kind).toBe('KeywordMessage');
-      if (msg.kind === 'KeywordMessage') {
-        expect(msg.envSpecifier).toBe('@env0:');
-        expect(msg.parts).toHaveLength(1);
-        // The argument: 2 + 3 squared
-        const arg = msg.parts[0].value;
-        // arg has receiver=2, then binary +, with binary's argument being "3 squared"
-        expect(arg.receiver.kind).toBe('NumberLiteral');
-        // Should have one binary message on the keyword argument with @env1:
-        expect(arg.messages).toHaveLength(1);
-        const bin = arg.messages[0];
-        expect(bin.kind).toBe('BinaryMessage');
-        if (bin.kind === 'BinaryMessage') {
-          expect(bin.selector).toBe('+');
-          expect(bin.envSpecifier).toBe('@env1:');
-          // The binary argument has receiver=3, with one unary squared with @env2:
-          expect(bin.argument.receiver.kind).toBe('NumberLiteral');
-          expect(bin.argument.messages).toHaveLength(1);
-          const unary = bin.argument.messages[0];
-          expect(unary.kind).toBe('UnaryMessage');
-          if (unary.kind === 'UnaryMessage') {
-            expect(unary.selector).toBe('squared');
-            expect(unary.envSpecifier).toBe('@env2:');
-          }
-        }
-      }
+      const expected: DeepPartial<MessageNode> = {
+        kind: 'KeywordMessage',
+        envSpecifier: '@env0:',
+        parts: [
+          {
+            value: {
+              receiver: { kind: 'NumberLiteral' },
+              messages: [
+                {
+                  kind: 'BinaryMessage',
+                  selector: '+',
+                  envSpecifier: '@env1:',
+                  argument: {
+                    receiver: { kind: 'NumberLiteral' },
+                    messages: [
+                      { kind: 'UnaryMessage', selector: 'squared', envSpecifier: '@env2:' },
+                    ],
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      };
+      expect(msg).toMatchObject(expected);
     });
 
     it('parses env specifier on a unary message inside a binary argument', () => {
       const expr = findMessages('foo 1 + 3 @env0:squared');
       expect(expr.messages).toHaveLength(1);
       const msg = expr.messages[0];
-      expect(msg.kind).toBe('BinaryMessage');
-      if (msg.kind === 'BinaryMessage') {
-        expect(msg.selector).toBe('+');
-        expect(msg.argument.messages).toHaveLength(1);
-        const inner = msg.argument.messages[0];
-        expect(inner.kind).toBe('UnaryMessage');
-        if (inner.kind === 'UnaryMessage') {
-          expect(inner.selector).toBe('squared');
-          expect(inner.envSpecifier).toBe('@env0:');
-        }
-      }
+      const expected: DeepPartial<MessageNode> = {
+        kind: 'BinaryMessage',
+        selector: '+',
+        argument: {
+          messages: [{ kind: 'UnaryMessage', selector: 'squared', envSpecifier: '@env0:' }],
+        },
+      };
+      expect(msg).toMatchObject(expected);
     });
 
     it('parses env specifier on a unary message inside a keyword argument', () => {
       const expr = findMessages('foo self foo: 3 @env0:squared');
       expect(expr.messages).toHaveLength(1);
       const msg = expr.messages[0];
-      expect(msg.kind).toBe('KeywordMessage');
-      if (msg.kind === 'KeywordMessage') {
-        const arg = msg.parts[0].value;
-        expect(arg.messages).toHaveLength(1);
-        const inner = arg.messages[0];
-        expect(inner.kind).toBe('UnaryMessage');
-        if (inner.kind === 'UnaryMessage') {
-          expect(inner.selector).toBe('squared');
-          expect(inner.envSpecifier).toBe('@env0:');
-        }
-      }
+      const expected: DeepPartial<MessageNode> = {
+        kind: 'KeywordMessage',
+        parts: [
+          {
+            value: {
+              messages: [{ kind: 'UnaryMessage', selector: 'squared', envSpecifier: '@env0:' }],
+            },
+          },
+        ],
+      };
+      expect(msg).toMatchObject(expected);
     });
 
     it('parses env specifier on a binary message inside a keyword argument', () => {
       const expr = findMessages('foo self foo: 3 @env0:+ 4');
       expect(expr.messages).toHaveLength(1);
       const msg = expr.messages[0];
-      expect(msg.kind).toBe('KeywordMessage');
-      if (msg.kind === 'KeywordMessage') {
-        const arg = msg.parts[0].value;
-        expect(arg.messages).toHaveLength(1);
-        const inner = arg.messages[0];
-        expect(inner.kind).toBe('BinaryMessage');
-        if (inner.kind === 'BinaryMessage') {
-          expect(inner.selector).toBe('+');
-          expect(inner.envSpecifier).toBe('@env0:');
-        }
-      }
+      const expected: DeepPartial<MessageNode> = {
+        kind: 'KeywordMessage',
+        parts: [
+          {
+            value: { messages: [{ kind: 'BinaryMessage', selector: '+', envSpecifier: '@env0:' }] },
+          },
+        ],
+      };
+      expect(msg).toMatchObject(expected);
     });
 
     it('parses env specifier on cascade unary message', () => {
       const expr = findMessages('foo self bar; @env0:baz');
       expect(expr.cascades).toHaveLength(1);
       const cascade = expr.cascades[0];
-      expect(cascade.kind).toBe('UnaryMessage');
-      if (cascade.kind === 'UnaryMessage') {
-        expect(cascade.selector).toBe('baz');
-        expect(cascade.envSpecifier).toBe('@env0:');
-      }
+      const expected: DeepPartial<MessageNode> = {
+        kind: 'UnaryMessage',
+        selector: 'baz',
+        envSpecifier: '@env0:',
+      };
+      expect(cascade).toMatchObject(expected);
     });
 
     it('parses env specifier on cascade binary message', () => {
       const expr = findMessages('foo self bar; @env1:+ 2');
       expect(expr.cascades).toHaveLength(1);
       const cascade = expr.cascades[0];
-      expect(cascade.kind).toBe('BinaryMessage');
-      if (cascade.kind === 'BinaryMessage') {
-        expect(cascade.selector).toBe('+');
-        expect(cascade.envSpecifier).toBe('@env1:');
-      }
+      const expected: DeepPartial<MessageNode> = {
+        kind: 'BinaryMessage',
+        selector: '+',
+        envSpecifier: '@env1:',
+      };
+      expect(cascade).toMatchObject(expected);
     });
 
     it('parses env specifier on cascade keyword message', () => {
       const expr = findMessages('foo Transcript show: 1; @env0:show: 2');
       expect(expr.cascades).toHaveLength(1);
       const cascade = expr.cascades[0];
-      expect(cascade.kind).toBe('KeywordMessage');
-      if (cascade.kind === 'KeywordMessage') {
-        expect(cascade.selector).toBe('show:');
-        expect(cascade.envSpecifier).toBe('@env0:');
-      }
+      const expected: DeepPartial<MessageNode> = {
+        kind: 'KeywordMessage',
+        selector: 'show:',
+        envSpecifier: '@env0:',
+      };
+      expect(cascade).toMatchObject(expected);
     });
   });
 });
