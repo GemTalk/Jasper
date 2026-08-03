@@ -2,16 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
 import { ActiveSession } from '../sessionManager';
 import { writeOwnerSidecar } from '../mcpOwnerSidecar';
 import { resolveOwnership, renderOwnership } from '../mcpServerTreeProvider';
-
-function makeTempSidecarPath(): string {
-  return path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-tree-')), 'mcp.owner.json');
-}
+import { safelyRemovePath, temporarySidecarPath } from './support/file';
 
 function fakeSession(id = 7): ActiveSession {
   return {
@@ -36,14 +30,10 @@ function fakeSession(id = 7): ActiveSession {
 describe('resolveOwnership', () => {
   let sidecarPath: string;
   beforeEach(() => {
-    sidecarPath = makeTempSidecarPath();
+    sidecarPath = temporarySidecarPath();
   });
   afterEach(() => {
-    try {
-      fs.rmSync(path.dirname(sidecarPath), { recursive: true, force: true });
-    } catch {
-      /* ignore */
-    }
+    safelyRemovePath(sidecarPath);
   });
 
   it('returns "this" with the active session when this window is owner', () => {
