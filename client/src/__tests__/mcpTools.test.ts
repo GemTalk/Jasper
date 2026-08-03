@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-vi.mock('vscode', () => import('../__mocks__/vscode'));
+vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 // browserQueries imports sessionManager (vscode) and gciLog (vscode).
 // The vscode mock covers that; we mock the specific query functions we rely on.
 vi.mock('../browserQueries', () => ({
