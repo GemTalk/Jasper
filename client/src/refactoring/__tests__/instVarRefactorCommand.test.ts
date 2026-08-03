@@ -24,9 +24,12 @@ import type { ApplyResult } from '../instVarRefactorPreview';
  * ensure-engine → pre-flight → preview → panel → apply → report flow and the "always say why
  * nothing happened" contract: engine-unavailable, a failed pre-flight, an analysis decline, a
  * failed preview (with token cleanup), an out-of-scope or empty preview (with cleanup), user
- * cancel, a failed apply, the dropped-methods / committed notes, and the loadPage / apply /
- * cleanup callbacks the command wires into the panel. The parsers run for real; only the GCI
- * queries and the preview panel are mocked.
+ * cancel, the dropped-methods / committed notes, and the loadPage / apply / abort / cleanup
+ * callbacks the command wires into the panel. Apply FAILURES (a stranded partial reshape, an
+ * expired token, a zero-change apply) are surfaced inside the panel now, not here — the panel
+ * resolves undefined for all of them — so their coverage lives in the panel / preview tests; the
+ * command's only remaining stake is the abort handler it hands the panel. The parsers run for
+ * real; only the GCI queries and the preview panel are mocked.
  */
 
 const req = (over: Partial<InstVarRefactorRequest> = {}): InstVarRefactorRequest => ({
@@ -186,242 +189,15 @@ describe('add / remove instance variable command', () => {
     expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
   });
 
-  // A partial refactoring: the engine never aborts (that would discard the user's other
-  // in-flight work), so the client explains what is stranded and OFFERS the abort.
-  const partialApply = () =>
-    applied({
-      applied: 1,
-      failed: [{ id: 'c2', label: 'FooSub (reparented)', error: 'boom' }],
-      partiallyApplied: true,
-    });
-
-  const dirtySessionStart = () =>
-    startJson({
-      outOfScope: {
-        decline: null,
-        willNotRecompile: [],
-        actedOnClass: 'Foo',
-        note: null,
-        sessionHasUncommittedChanges: true,
-      },
-    });
-
-  it('offers an abort, with the reason and what is stranded, when changes were staged', async () => {
+  it('hands the panel an abort handler that aborts the session transaction', async () => {
     vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson());
     vi.mocked(queries.startInstVarPreview).mockResolvedValue(startJson());
-    vi.mocked(showInstVarRefactorPanel).mockResolvedValue(partialApply());
-    (vscode.window.showErrorMessage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
-
-    const outcome = await runInstVarRefactor(req());
-
-    expect(outcome).toBeUndefined();
-    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      expect.stringContaining('1 class was already versioned and remains in your transaction'),
-      'Abort Transaction',
-    );
-    // the reason travels with it
-    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      expect.stringContaining('FooSub (reparented): boom'),
-      'Abort Transaction',
-    );
-  });
-
-  it('does nothing when the user dismisses the abort offer', async () => {
-    vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson());
-    vi.mocked(queries.startInstVarPreview).mockResolvedValue(startJson());
-    vi.mocked(showInstVarRefactorPanel).mockResolvedValue(partialApply());
-    (vscode.window.showErrorMessage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    vi.mocked(showInstVarRefactorPanel).mockResolvedValue(undefined);
 
     await runInstVarRefactor(req());
-
-    expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
-    expect(queries.abortSessionTransaction).not.toHaveBeenCalled();
-  });
-
-  // Accepting the offer must still confirm: an abort discards more than this refactoring.
-  it('confirms before aborting, and does not abort when the confirmation is declined', async () => {
-    vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson());
-    vi.mocked(queries.startInstVarPreview).mockResolvedValue(startJson());
-    vi.mocked(showInstVarRefactorPanel).mockResolvedValue(partialApply());
-    (vscode.window.showErrorMessage as ReturnType<typeof vi.fn>).mockResolvedValue(
-      'Abort Transaction',
-    );
-    (vscode.window.showWarningMessage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
-
-    await runInstVarRefactor(req());
-
-    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
-      expect.stringContaining('Abort the transaction?'),
-      expect.objectContaining({ modal: true }),
-      'Abort Transaction',
-    );
-    expect(queries.abortSessionTransaction).not.toHaveBeenCalled();
-  });
-
-  it('aborts and says so when the user confirms', async () => {
-    vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson());
-    vi.mocked(queries.startInstVarPreview).mockResolvedValue(startJson());
-    vi.mocked(showInstVarRefactorPanel).mockResolvedValue(partialApply());
-    (vscode.window.showErrorMessage as ReturnType<typeof vi.fn>).mockResolvedValue(
-      'Abort Transaction',
-    );
-    (vscode.window.showWarningMessage as ReturnType<typeof vi.fn>).mockResolvedValue(
-      'Abort Transaction',
-    );
-    // Explicit: vi.clearAllMocks() resets calls but NOT implementations, and this suite shuffles.
-    vi.mocked(queries.abortSessionTransaction).mockImplementation(() => 'Transaction aborted');
-
-    await runInstVarRefactor(req());
+    vi.mocked(showInstVarRefactorPanel).mock.calls[0][2].abort();
 
     expect(queries.abortSessionTransaction).toHaveBeenCalledOnce();
-    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
-      expect.stringContaining('Transaction aborted'),
-    );
-  });
-
-  // The abort takes the WHOLE transaction, so the confirmation must say so when the session
-  // also held the user's own uncommitted work.
-  it('warns in the confirmation that other uncommitted work goes too', async () => {
-    vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson());
-    vi.mocked(queries.startInstVarPreview).mockResolvedValue(dirtySessionStart());
-    vi.mocked(showInstVarRefactorPanel).mockResolvedValue(partialApply());
-    (vscode.window.showErrorMessage as ReturnType<typeof vi.fn>).mockResolvedValue(
-      'Abort Transaction',
-    );
-    (vscode.window.showWarningMessage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
-
-    await runInstVarRefactor(req());
-
-    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
-      expect.stringContaining('every other uncommitted change in this session'),
-      expect.objectContaining({ modal: true }),
-      'Abort Transaction',
-    );
-  });
-
-  it('surfaces a failed abort and points the user at the session menu', async () => {
-    vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson());
-    vi.mocked(queries.startInstVarPreview).mockResolvedValue(startJson());
-    vi.mocked(showInstVarRefactorPanel).mockResolvedValue(partialApply());
-    (vscode.window.showErrorMessage as ReturnType<typeof vi.fn>).mockResolvedValue(
-      'Abort Transaction',
-    );
-    (vscode.window.showWarningMessage as ReturnType<typeof vi.fn>).mockResolvedValue(
-      'Abort Transaction',
-    );
-    vi.mocked(queries.abortSessionTransaction).mockImplementationOnce(() => {
-      throw new Error('gci down');
-    });
-
-    await runInstVarRefactor(req());
-
-    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      expect.stringContaining('Abort failed: gci down'),
-    );
-  });
-
-  // A failure on the very FIRST change stages nothing, so there is nothing to abort: plain
-  // report, no offer.
-  it('does not offer an abort when nothing was staged', async () => {
-    vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson());
-    vi.mocked(queries.startInstVarPreview).mockResolvedValue(startJson());
-    vi.mocked(showInstVarRefactorPanel).mockResolvedValue(
-      applied({
-        applied: 0,
-        failed: [{ id: 'c1', label: 'Foo (definition edited)', error: 'boom' }],
-        partiallyApplied: false,
-      }),
-    );
-
-    await runInstVarRefactor(req());
-
-    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      expect.stringContaining('Nothing was applied.'),
-    );
-    expect(queries.abortSessionTransaction).not.toHaveBeenCalled();
-  });
-
-  // An engine older than the field: assume something was staged rather than promise otherwise.
-  it('offers the abort when the engine did not report the partial state', async () => {
-    vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson());
-    vi.mocked(queries.startInstVarPreview).mockResolvedValue(startJson());
-    vi.mocked(showInstVarRefactorPanel).mockResolvedValue(
-      applied({ applied: 1, failed: [{ id: 'c2', label: 'FooSub', error: 'boom' }] }),
-    );
-    (vscode.window.showErrorMessage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
-
-    await runInstVarRefactor(req());
-
-    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      expect.any(String),
-      'Abort Transaction',
-    );
-  });
-
-  it('reports a failed apply and returns no outcome', async () => {
-    vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson());
-    vi.mocked(queries.startInstVarPreview).mockResolvedValue(startJson());
-    vi.mocked(showInstVarRefactorPanel).mockResolvedValue(
-      applied({
-        applied: 0,
-        failed: [{ id: 'c1', label: 'Foo (definition edited)', error: 'boom' }],
-      }),
-    );
-
-    const outcome = await runInstVarRefactor(req());
-
-    expect(outcome).toBeUndefined();
-    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(expect.stringContaining('boom'));
-  });
-
-  // The engine's expired-token path answers `applied:0` with an EMPTY `failed`, so it parses
-  // cleanly. The token can expire while the user sits on the preview deciding about the
-  // committing checkboxes, so this is reachable — and without the `result.error` check it
-  // produced a success toast and a refresh/reveal over an unchanged tree.
-  it('reports an expired preview token instead of a success toast', async () => {
-    vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson());
-    vi.mocked(queries.startInstVarPreview).mockResolvedValue(startJson());
-    vi.mocked(showInstVarRefactorPanel).mockResolvedValue(
-      applied({ applied: 0, failed: [], error: 'preview session expired' }),
-    );
-
-    const outcome = await runInstVarRefactor(req());
-
-    expect(outcome).toBeUndefined();
-    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      expect.stringContaining('preview session expired'),
-    );
-    expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
-  });
-
-  it('names the operation in the expired-token error so the user knows what did not happen', async () => {
-    vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson({ operation: 'remove' }));
-    vi.mocked(queries.startInstVarPreview).mockResolvedValue(startJson());
-    vi.mocked(showInstVarRefactorPanel).mockResolvedValue(
-      applied({ applied: 0, failed: [], error: 'preview session expired' }),
-    );
-
-    await runInstVarRefactor(req({ op: 'remove', ivarName: 'bar', className: 'Foo' }));
-
-    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      expect.stringContaining('Remove bar from Foo failed'),
-    );
-  });
-
-  // Defence in depth: a zero-change apply that reports no error at all is still not a
-  // success, because the panel only opens with `total > 0` and every change is required.
-  it('treats a zero-change apply with no error as a failure', async () => {
-    vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson());
-    vi.mocked(queries.startInstVarPreview).mockResolvedValue(startJson());
-    vi.mocked(showInstVarRefactorPanel).mockResolvedValue(applied({ applied: 0 }));
-
-    const outcome = await runInstVarRefactor(req());
-
-    expect(outcome).toBeUndefined();
-    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-      expect.stringContaining('nothing was applied'),
-    );
-    expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
   });
 
   it('titles an add and reports success', async () => {

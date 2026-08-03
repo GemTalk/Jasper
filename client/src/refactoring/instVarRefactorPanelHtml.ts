@@ -160,9 +160,25 @@ export function renderInstVarPanelHtml(opts: InstVarPanelHtmlOptions): string {
       color: var(--vscode-button-secondaryForeground);
     }
     button:disabled { opacity: 0.5; cursor: default; }
+    .hidden { display: none; }
     #apply.commits {
       background: var(--vscode-inputValidation-warningBorder, #c88c00);
       color: #000;
+    }
+    .fail-box {
+      margin: 12px 16px 0; padding: 14px 16px;
+      border: 2px solid var(--vscode-inputValidation-errorBorder, rgba(200,0,0,0.8));
+      background: var(--vscode-inputValidation-errorBackground, rgba(200,0,0,0.15));
+      border-radius: 4px;
+    }
+    .fail-head { font-size: 1.25em; font-weight: 700; margin-bottom: 6px; }
+    .fail-msg { margin-bottom: 12px; white-space: pre-wrap; }
+    .fail-actions { display: flex; gap: 8px; }
+    button.danger {
+      background: var(--vscode-inputValidation-errorBorder, #c0392b); color: #fff;
+    }
+    button.danger:hover {
+      background: var(--vscode-inputValidation-errorBorder, #c0392b); opacity: 0.9;
     }
     button.toggle { background: none; color: var(--vscode-foreground); padding: 0 4px; opacity: 0.7; }
     button.toggle:hover { background: none; opacity: 1; }
@@ -235,6 +251,14 @@ export function renderInstVarPanelHtml(opts: InstVarPanelHtmlOptions): string {
       <button id="cancel" class="secondary">Cancel</button>
     </div>
   </header>
+  <div id="failBanner" class="fail-box hidden" role="alert" aria-live="assertive">
+    <div class="fail-head">✖ Apply failed</div>
+    <div id="failMsg" class="fail-msg"></div>
+    <div class="fail-actions">
+      <button id="abort" class="danger hidden">Abort Transaction</button>
+      <button id="failClose" class="secondary">Close</button>
+    </div>
+  </div>
   ${renderDeclineBanner(outOfScope)}
   ${renderWillNotRecompile(outOfScope)}
   ${renderCommitControls(outOfScope)}

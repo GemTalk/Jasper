@@ -216,6 +216,57 @@ export function parseApplyResult(json: string): ApplyResult {
   };
 }
 
+/** A failure to surface in the preview panel instead of applying. `canAbort` is true when a
+ *  partial reshape is stranded in the transaction, so the panel offers an in-place abort. */
+export interface ApplyFailure {
+  message: string;
+  canAbort: boolean;
+}
+
+/** Interpret an apply result for display. Returns null on success (something applied, nothing
+ *  failed, no whole-apply error); otherwise the failure to show in the panel. The panel aborts
+ *  directly (no second confirmation), so when the session also holds the user's other
+ *  uncommitted work the message spells out that an abort discards that too.
+ *
+ *  The engine stops at the first failure and never aborts on its own — aborting would throw away
+ *  whatever the user had in flight before starting — so a partial reshape is left in the
+ *  transaction for the user to abort or keep. */
+export function describeApplyFailure(
+  result: ApplyResult,
+  sessionHasUncommittedChanges: boolean,
+): ApplyFailure | null {
+  // A whole-apply error — in practice an expired preview token — answers applied:0 with an empty
+  // `failed`, so it parses cleanly. Nothing was staged, so there is nothing to abort.
+  if (result.error) {
+    return { message: result.error, canAbort: false };
+  }
+  if (result.failed.length > 0) {
+    const first = result.failed[0];
+    // Trust the engine's `partiallyApplied`; an older engine omits it, so fall back to the
+    // applied count — 0 applied is direct evidence that nothing was staged.
+    const staged = result.partiallyApplied ?? result.applied > 0;
+    const reason = `Failed: ${first.label}: ${first.error}.`;
+    if (!staged) {
+      return { message: `${reason} Nothing was applied.`, canAbort: false };
+    }
+    const one = result.applied === 1;
+    const left =
+      `${result.applied} class${one ? '' : 'es'} ${one ? 'was' : 'were'} already versioned and` +
+      ` ${one ? 'remains' : 'remain'} in your transaction.`;
+    const cost = sessionHasUncommittedChanges
+      ? ` Aborting the transaction discards ${one ? 'it' : 'them'} AND every other uncommitted` +
+        ' change in this session.'
+      : ` The change is all-or-nothing, so aborting the transaction discards ${one ? 'it' : 'them'}.`;
+    return { message: `${reason} ${left}${cost}`, canAbort: true };
+  }
+  // No error and nothing failed, but nothing applied either — the panel only opens with
+  // total > 0 and every change is required, so this is still not a success.
+  if (result.applied === 0) {
+    return { message: 'Nothing was applied.', canAbort: false };
+  }
+  return null;
+}
+
 /** A human label for a preview row: "Class — edited" or "Class — recompiled". */
 export function instVarChangeLabel(change: InstVarChange): string {
   return change.kind === 'classDefinitionEdit'

@@ -9,7 +9,12 @@
  */
 import * as vscode from 'vscode';
 import * as crypto from 'crypto';
-import { StartInstVarPreview, PreviewPage, ApplyResult } from './instVarRefactorPreview';
+import {
+  StartInstVarPreview,
+  PreviewPage,
+  ApplyResult,
+  describeApplyFailure,
+} from './instVarRefactorPreview';
 import { renderInstVarPanelHtml, renderInstVarCards } from './instVarRefactorPanelHtml';
 import { readWebviewScript } from '../webviewAssets';
 
@@ -25,6 +30,9 @@ export interface InstVarPanelHandlers {
     migrate: boolean,
     deleteHistory: boolean,
   ) => Promise<ApplyResult>;
+  /** Abort the session transaction — discards the stranded partial reshape (and any other
+   *  uncommitted work). Invoked from the panel's in-place Abort button. Throws on failure. */
+  abort: () => void;
   /** Drop the preview session (called exactly once when the panel closes). */
   cleanup: () => void;
 }
@@ -135,7 +143,33 @@ export function showInstVarRefactorPanel(
               }
             }
             const result = await handlers.apply(options, migrate, deleteHistory);
-            finish(result);
+            const failure = describeApplyFailure(
+              result,
+              start.outOfScope.sessionHasUncommittedChanges,
+            );
+            if (!failure) {
+              finish(result);
+              return;
+            }
+            // Apply failed. Keep the panel up with a prominent banner instead of a toast, and
+            // leave `applying` set so the (now meaningless) Apply button cannot re-fire. The
+            // stranded partial reshape, if any, is aborted in place via the banner's button.
+            void panel.webview.postMessage({
+              command: 'applyFailed',
+              message: failure.message,
+              canAbort: failure.canAbort,
+            });
+          } else if (message?.command === 'abort') {
+            // Direct abort — no second confirmation; the banner already stated the cost.
+            try {
+              handlers.abort();
+              void panel.webview.postMessage({ command: 'aborted' });
+            } catch (e: unknown) {
+              void panel.webview.postMessage({
+                command: 'abortFailed',
+                message: e instanceof Error ? e.message : String(e),
+              });
+            }
           } else if (message?.command === 'cancel') {
             finish(undefined);
           }

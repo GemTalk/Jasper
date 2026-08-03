@@ -135,4 +135,13 @@ describe('instance-variable refactor panel HTML', () => {
     expect(h).toContain('Move &lt;x&gt; to Bar');
     expect(h).toContain('&lt;b&gt;');
   });
+
+  it('renders a hidden failure banner with an abort button and a close button', () => {
+    const h = html();
+
+    expect(h).toContain('id="failBanner"');
+    expect(h).toMatch(/id="failBanner"[^>]*class="fail-box hidden"/);
+    expect(h).toMatch(/id="abort"[^>]*class="danger hidden"[^>]*>Abort Transaction</);
+    expect(h).toMatch(/id="failClose"[^>]*>Close</);
+  });
 });

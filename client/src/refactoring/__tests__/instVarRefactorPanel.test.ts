@@ -200,4 +200,86 @@ describe('instance-variable refactor panel view', () => {
 
     expect(pre.classList.contains('hidden')).toBe(!wasHidden);
   });
+
+  it('a failed apply raises the failure banner with its message and offers an abort', () => {
+    const { handle } = mount();
+    const banner = document.getElementById('failBanner') as HTMLElement;
+    const abort = document.getElementById('abort') as HTMLButtonElement;
+
+    handle.handleMessage({
+      command: 'applyFailed',
+      message: 'Failed: Sub: boom. 1 class was already versioned and remains in your transaction.',
+      canAbort: true,
+    });
+
+    expect(banner.classList.contains('hidden')).toBe(false);
+    expect((document.getElementById('failMsg') as HTMLElement).textContent).toContain(
+      'already versioned',
+    );
+    expect(abort.classList.contains('hidden')).toBe(false);
+  });
+
+  it('keeps the abort button hidden when nothing is left to abort', () => {
+    const { handle } = mount();
+
+    handle.handleMessage({
+      command: 'applyFailed',
+      message: 'preview session expired',
+      canAbort: false,
+    });
+
+    expect(
+      (document.getElementById('failBanner') as HTMLElement).classList.contains('hidden'),
+    ).toBe(false);
+    expect(
+      (document.getElementById('abort') as HTMLButtonElement).classList.contains('hidden'),
+    ).toBe(true);
+  });
+
+  it('the abort button posts an abort and disables itself so it cannot fire twice', () => {
+    const { handle, vscode } = mount();
+    handle.handleMessage({ command: 'applyFailed', message: 'x', canAbort: true });
+    const abort = document.getElementById('abort') as HTMLButtonElement;
+
+    abort.click();
+
+    expect(vscode.postMessage).toHaveBeenCalledWith({ command: 'abort' });
+    expect(abort.disabled).toBe(true);
+  });
+
+  it('a completed abort replaces the notice with a confirmation and drops the abort button', () => {
+    const { handle } = mount();
+    handle.handleMessage({ command: 'applyFailed', message: 'x', canAbort: true });
+
+    handle.handleMessage({ command: 'aborted' });
+
+    expect((document.getElementById('failMsg') as HTMLElement).textContent).toContain(
+      'Transaction aborted',
+    );
+    expect(
+      (document.getElementById('abort') as HTMLButtonElement).classList.contains('hidden'),
+    ).toBe(true);
+  });
+
+  it('a failed abort explains it and re-enables the abort button for a retry', () => {
+    const { handle } = mount();
+    handle.handleMessage({ command: 'applyFailed', message: 'x', canAbort: true });
+    const abort = document.getElementById('abort') as HTMLButtonElement;
+    abort.click();
+
+    handle.handleMessage({ command: 'abortFailed', message: 'gci down' });
+
+    expect((document.getElementById('failMsg') as HTMLElement).textContent).toContain(
+      'Abort failed: gci down',
+    );
+    expect(abort.disabled).toBe(false);
+  });
+
+  it('the close button dismisses the panel', () => {
+    const { vscode } = mount();
+
+    (document.getElementById('failClose') as HTMLButtonElement).click();
+
+    expect(vscode.postMessage).toHaveBeenCalledWith({ command: 'cancel' });
+  });
 });

@@ -124,78 +124,18 @@ export async function runInstVarRefactor(
       parseApplyResult(
         await queries.applyInstVar(session, token, [], options, migrate, deleteHistory),
       ),
+    // The engine stops at the first failure and never aborts on its own (that would discard the
+    // user's other in-flight work). The panel surfaces the failure in place and, when a partial
+    // reshape is stranded, offers this abort directly — no toast, no second confirmation.
+    abort: () => {
+      queries.abortSessionTransaction(session);
+    },
     cleanup: safeClear,
   });
+  // The panel resolves a result only on success; every apply failure is shown and handled inside
+  // the panel (Abort or Close), which then resolves undefined. So a falsy result means the user
+  // cancelled, closed, or hit a failure the panel already reported — nothing more to say here.
   if (!result) return undefined;
-
-  // A whole-apply error — in practice an expired preview token, which the user can reach by
-  // sitting on the preview while deciding about the committing checkboxes. It answers
-  // `applied:0` with an empty `failed`, so it parses cleanly and would otherwise fall through
-  // to the success toast and a refresh/reveal of an unchanged tree. Nothing was applied, so
-  // there is deliberately no abort advice here.
-  if (result.error) {
-    void vscode.window.showErrorMessage(`${titleFor(req)} failed: ${result.error}`);
-    return undefined;
-  }
-
-  if (result.failed.length > 0) {
-    const first = result.failed[0];
-    // The engine stops at the first failure and deliberately does NOT abort: aborting rolls back
-    // the whole session transaction, including whatever the user had in flight before starting.
-    // So the client tells them what is left behind, why, and OFFERS the abort -- their choice.
-    // When the engine reports `partiallyApplied`, trust it. An older engine omits it, so fall
-    // back to the applied count -- 0 applied is direct evidence that nothing was staged.
-    const staged = result.partiallyApplied ?? result.applied > 0;
-    const reason = `Failed: ${first.label}: ${first.error}.`;
-
-    if (!staged) {
-      // The very first change failed, so nothing is staged and there is nothing to abort.
-      void vscode.window.showErrorMessage(`${reason} Nothing was applied.`);
-      return undefined;
-    }
-
-    const one = result.applied === 1;
-    const left =
-      `${result.applied} class${one ? '' : 'es'} ${one ? 'was' : 'were'} already versioned and` +
-      ` ${one ? 'remains' : 'remain'} in your transaction.`;
-    const choice = await vscode.window.showErrorMessage(
-      `${reason} ${left} The change is all-or-nothing, so aborting the transaction discards` +
-        ` ${one ? 'it' : 'them'}.`,
-      'Abort Transaction',
-    );
-    if (choice !== 'Abort Transaction') return undefined;
-
-    // Abort is destructive beyond this refactoring, so confirm with the cost spelled out --
-    // the preview told us whether the session also held work of the user's own.
-    const confirmed = await vscode.window.showWarningMessage(
-      start.outOfScope.sessionHasUncommittedChanges
-        ? 'Abort the transaction? This discards the partial refactoring AND every other' +
-            ' uncommitted change in this session.'
-        : 'Abort the transaction? This discards the partial refactoring.',
-      { modal: true },
-      'Abort Transaction',
-    );
-    if (confirmed !== 'Abort Transaction') return undefined;
-
-    try {
-      queries.abortSessionTransaction(session);
-      void vscode.window.showInformationMessage(
-        'Transaction aborted; nothing from this refactoring remains.',
-      );
-    } catch (e: unknown) {
-      void vscode.window.showErrorMessage(
-        `Abort failed: ${e instanceof Error ? e.message : String(e)}. Abort from the session menu.`,
-      );
-    }
-    return undefined;
-  }
-
-  // Belt-and-braces: a zero-change apply with no error and no failure reported at all is still
-  // not a success — the panel only opens with `total > 0` and every change is required.
-  if (result.applied === 0) {
-    void vscode.window.showErrorMessage(`${titleFor(req)} failed: nothing was applied.`);
-    return undefined;
-  }
 
   const droppedNote =
     result.dropped.length > 0

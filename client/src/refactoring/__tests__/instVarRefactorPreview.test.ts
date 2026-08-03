@@ -5,7 +5,17 @@ import {
   parsePage,
   parseApplyResult,
   instVarChangeLabel,
+  describeApplyFailure,
 } from '../instVarRefactorPreview';
+import type { ApplyResult } from '../instVarRefactorPreview';
+
+const applyResult = (over: Partial<ApplyResult> = {}): ApplyResult => ({
+  applied: 2,
+  failed: [],
+  dropped: [],
+  committed: false,
+  ...over,
+});
 
 describe('instance-variable refactor preview parsing', () => {
   it('parses a viable add analysis', () => {
@@ -171,5 +181,95 @@ describe('instance-variable refactor preview parsing', () => {
         newSource: '',
       }),
     ).toMatch(/recompiled/);
+  });
+});
+
+describe('describing an apply failure for the preview panel', () => {
+  it('treats a clean apply as a success (no failure to show)', () => {
+    expect(describeApplyFailure(applyResult({ applied: 2 }), false)).toBeNull();
+  });
+
+  it('offers an abort and names what is stranded when a partial reshape was staged', () => {
+    const failure = describeApplyFailure(
+      applyResult({
+        applied: 1,
+        failed: [{ id: 'c2', label: 'Sub (recompiled)', error: 'boom' }],
+        partiallyApplied: true,
+      }),
+      false,
+    );
+
+    expect(failure).toEqual({
+      canAbort: true,
+      message: expect.stringContaining('1 class was already versioned and remains'),
+    });
+    expect(failure?.message).toContain('Sub (recompiled): boom');
+  });
+
+  it('pluralizes the stranded-class count', () => {
+    const failure = describeApplyFailure(
+      applyResult({
+        applied: 3,
+        failed: [{ id: 'c4', label: 'Leaf (recompiled)', error: 'boom' }],
+        partiallyApplied: true,
+      }),
+      false,
+    );
+
+    expect(failure?.message).toContain('3 classes were already versioned and remain');
+  });
+
+  it('spells out that an abort also discards other uncommitted work in a dirty session', () => {
+    const failure = describeApplyFailure(
+      applyResult({
+        applied: 1,
+        failed: [{ id: 'c2', label: 'Sub (recompiled)', error: 'boom' }],
+        partiallyApplied: true,
+      }),
+      true,
+    );
+
+    expect(failure?.message).toContain('every other uncommitted change in this session');
+  });
+
+  it('assumes a stranded change when an older engine omits the partial-state flag', () => {
+    const failure = describeApplyFailure(
+      applyResult({ applied: 1, failed: [{ id: 'c2', label: 'Sub', error: 'boom' }] }),
+      false,
+    );
+
+    expect(failure?.canAbort).toBe(true);
+  });
+
+  it('does not offer an abort when the first change failed and nothing was staged', () => {
+    const failure = describeApplyFailure(
+      applyResult({
+        applied: 0,
+        failed: [{ id: 'c1', label: 'Foo (definition edited)', error: 'boom' }],
+        partiallyApplied: false,
+      }),
+      false,
+    );
+
+    expect(failure).toEqual({
+      canAbort: false,
+      message: expect.stringContaining('Nothing was applied.'),
+    });
+  });
+
+  it('surfaces a whole-apply error (an expired token) with no abort offered', () => {
+    const failure = describeApplyFailure(
+      applyResult({ applied: 0, failed: [], error: 'preview session expired' }),
+      false,
+    );
+
+    expect(failure).toEqual({ canAbort: false, message: 'preview session expired' });
+  });
+
+  it('treats a zero-change apply with no error as a failure', () => {
+    expect(describeApplyFailure(applyResult({ applied: 0 }), false)).toEqual({
+      canAbort: false,
+      message: expect.stringContaining('Nothing was applied.'),
+    });
   });
 });

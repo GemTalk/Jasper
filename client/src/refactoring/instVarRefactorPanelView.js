@@ -26,6 +26,11 @@
     const list = doc.querySelector('ul.changes');
     const migrateBox = doc.getElementById('migrate');
     const deleteHistoryBox = doc.getElementById('deleteHistory');
+    const failBanner = doc.getElementById('failBanner');
+    const failHead = failBanner ? failBanner.querySelector('.fail-head') : null;
+    const failMsg = doc.getElementById('failMsg');
+    const abortBtn = doc.getElementById('abort');
+    const failCloseBtn = doc.getElementById('failClose');
     const total = parseInt((doc.body && doc.body.getAttribute('data-total')) || '0', 10);
 
     const cards = function () {
@@ -139,6 +144,49 @@
         vscode.postMessage({ command: 'cancel' });
       });
     }
+    // The Abort button aborts the transaction directly — no second confirmation dialog. Its cost
+    // is spelled out in the banner message the host sent. Disable it while the abort is in flight.
+    if (abortBtn) {
+      abortBtn.addEventListener('click', function () {
+        abortBtn.disabled = true;
+        vscode.postMessage({ command: 'abort' });
+      });
+    }
+    if (failCloseBtn) {
+      failCloseBtn.addEventListener('click', function () {
+        vscode.postMessage({ command: 'cancel' });
+      });
+    }
+
+    // The apply failed: leave the preview up and raise a prominent, hard-to-miss banner (not a
+    // toast). Show the Abort button only when a partial change is stranded and can be discarded.
+    const showApplyFailed = function (message, canAbort) {
+      if (failMsg) failMsg.textContent = message || 'Apply failed.';
+      if (abortBtn) abortBtn.classList.toggle('hidden', !canAbort);
+      if (failBanner) {
+        failBanner.classList.remove('hidden');
+        if (typeof failBanner.scrollIntoView === 'function') failBanner.scrollIntoView();
+      }
+      // The apply already ran; keep it from re-firing.
+      setApplying(true);
+    };
+    const showAborted = function () {
+      if (failHead) failHead.textContent = '✔ Transaction aborted';
+      if (failMsg)
+        failMsg.textContent = 'Transaction aborted; nothing from this refactoring remains.';
+      if (abortBtn) abortBtn.classList.add('hidden');
+    };
+    const showAbortFailed = function (message) {
+      if (failMsg) {
+        var prefix = failMsg.textContent ? failMsg.textContent + '\n\n' : '';
+        failMsg.textContent =
+          prefix +
+          'Abort failed: ' +
+          (message || 'unknown error') +
+          '. Abort from the session menu.';
+      }
+      if (abortBtn) abortBtn.disabled = false;
+    };
 
     const appendChanges = function (html, done) {
       if (list && html) list.insertAdjacentHTML('beforeend', html);
@@ -155,7 +203,9 @@
         // The host declined/aborted the apply (or a page load settled) and the panel is
         // staying open — let Apply be pressed again.
         setApplying(false);
-      }
+      } else if (msg.command === 'applyFailed') showApplyFailed(msg.message, msg.canAbort === true);
+      else if (msg.command === 'aborted') showAborted();
+      else if (msg.command === 'abortFailed') showAbortFailed(msg.message);
     };
     if (typeof doc.defaultView !== 'undefined' && doc.defaultView) {
       doc.defaultView.addEventListener('message', function (e) {

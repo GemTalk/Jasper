@@ -32,7 +32,7 @@ vi.mock('vscode', () => ({
 
 import * as vscode from 'vscode';
 import { showInstVarRefactorPanel } from '../instVarRefactorPanel';
-import { StartInstVarPreview } from '../instVarRefactorPreview';
+import { StartInstVarPreview, ApplyResult } from '../instVarRefactorPreview';
 
 interface MockPanel {
   __emit: (m: unknown) => void;
@@ -89,7 +89,13 @@ function handlers() {
       nextOffset: 3,
       done: true,
     })),
-    apply: vi.fn(async () => ({ applied: 2, failed: [], dropped: [], committed: false })),
+    apply: vi.fn(async (): Promise<ApplyResult> => ({
+      applied: 2,
+      failed: [],
+      dropped: [],
+      committed: false,
+    })),
+    abort: vi.fn(),
     cleanup: vi.fn(),
   };
 }
@@ -199,7 +205,12 @@ describe('showInstVarRefactorPanel', () => {
       'Apply & Commit',
     );
     const h = handlers();
-    h.apply = vi.fn(async () => ({ applied: 1, failed: [], dropped: [], committed: true }));
+    h.apply = vi.fn(async (): Promise<ApplyResult> => ({
+      applied: 1,
+      failed: [],
+      dropped: [],
+      committed: true,
+    }));
     const p = showInstVarRefactorPanel('Add tally to Foo', start, h);
     lastPanel().__emit({
       command: 'apply',
@@ -331,6 +342,113 @@ describe('showInstVarRefactorPanel', () => {
     panel.__emit(applyMsg);
     expect((await p)?.applied).toBe(2);
     expect(h.apply).toHaveBeenCalledTimes(2);
+  });
+
+  const applyMsg = {
+    command: 'apply',
+    deselected: [],
+    options: [],
+    migrate: false,
+    deleteHistory: false,
+  };
+
+  it('leaves the preview open with a failure notice, rather than resolving, when the apply fails', async () => {
+    const h = handlers();
+    h.apply = vi.fn(async (): Promise<ApplyResult> => ({
+      applied: 1,
+      failed: [{ id: 'c2', label: 'Sub (recompiled)', error: 'boom' }],
+      dropped: [],
+      committed: false,
+      partiallyApplied: true,
+    }));
+
+    void showInstVarRefactorPanel('Add tally to Foo', start, h);
+    const panel = lastPanel();
+    panel.__emit(applyMsg);
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(panel.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: 'applyFailed',
+        canAbort: true,
+        message: expect.stringContaining('already versioned'),
+      }),
+    );
+    expect(h.cleanup).not.toHaveBeenCalled();
+  });
+
+  it('a whole-apply error shows a failure notice with no abort offered', async () => {
+    const h = handlers();
+    h.apply = vi.fn(async (): Promise<ApplyResult> => ({
+      applied: 0,
+      failed: [],
+      dropped: [],
+      committed: false,
+      error: 'preview session expired',
+    }));
+
+    void showInstVarRefactorPanel('Add tally to Foo', start, h);
+    const panel = lastPanel();
+    panel.__emit(applyMsg);
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(panel.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: 'applyFailed',
+        canAbort: false,
+        message: expect.stringContaining('preview session expired'),
+      }),
+    );
+  });
+
+  it('the in-panel abort aborts the transaction and confirms in place', async () => {
+    const h = handlers();
+    h.apply = vi.fn(async (): Promise<ApplyResult> => ({
+      applied: 1,
+      failed: [{ id: 'c2', label: 'Sub (recompiled)', error: 'boom' }],
+      dropped: [],
+      committed: false,
+      partiallyApplied: true,
+    }));
+
+    void showInstVarRefactorPanel('Add tally to Foo', start, h);
+    const panel = lastPanel();
+    panel.__emit(applyMsg);
+    await new Promise((r) => setTimeout(r, 0));
+    panel.__emit({ command: 'abort' });
+
+    expect(h.abort).toHaveBeenCalledOnce();
+    expect(panel.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'aborted' }),
+    );
+  });
+
+  it('reports an abort that throws in the panel instead of closing it', async () => {
+    const h = handlers();
+    h.apply = vi.fn(async (): Promise<ApplyResult> => ({
+      applied: 1,
+      failed: [{ id: 'c2', label: 'Sub (recompiled)', error: 'boom' }],
+      dropped: [],
+      committed: false,
+      partiallyApplied: true,
+    }));
+    h.abort = vi.fn(() => {
+      throw new Error('gci down');
+    });
+
+    void showInstVarRefactorPanel('Add tally to Foo', start, h);
+    const panel = lastPanel();
+    panel.__emit(applyMsg);
+    await new Promise((r) => setTimeout(r, 0));
+    panel.__emit({ command: 'abort' });
+
+    expect(panel.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: 'abortFailed',
+        message: expect.stringContaining('gci down'),
+      }),
+    );
+    expect(h.cleanup).not.toHaveBeenCalled();
   });
 
   it('cancel resolves undefined and cleans up', async () => {
