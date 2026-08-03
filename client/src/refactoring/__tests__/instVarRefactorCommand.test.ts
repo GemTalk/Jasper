@@ -201,6 +201,19 @@ describe('add / remove instance variable command', () => {
     expect(queries.abortSessionTransaction).toHaveBeenCalledOnce();
   });
 
+  it('hands the panel a live needs-commit probe over the session', async () => {
+    vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson());
+    vi.mocked(queries.startInstVarPreview).mockResolvedValue(startJson());
+    vi.mocked(showInstVarRefactorPanel).mockResolvedValue(undefined);
+    vi.mocked(queries.sessionNeedsCommit).mockReturnValue(true);
+
+    await runInstVarRefactor(req());
+    const probe = vi.mocked(showInstVarRefactorPanel).mock.calls[0][2].sessionNeedsCommit;
+
+    expect(probe?.()).toBe(true);
+    expect(queries.sessionNeedsCommit).toHaveBeenCalled();
+  });
+
   it('titles an add and reports success', async () => {
     vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson());
     vi.mocked(queries.startInstVarPreview).mockResolvedValue(startJson());

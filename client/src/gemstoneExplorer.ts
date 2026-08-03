@@ -1514,6 +1514,10 @@ export class ExplorerController {
       // fuller message. Kept so a typo is caught in the box without a round trip, and kept in
       // step with the engine: lowercase-or-underscore first, because a capitalised identifier
       // in a method body reads as a global.
+      // Deliberately ASCII-only: the engine's `first isLowercase` also accepts non-ASCII lowercase
+      // letters (é, ä, …), so this regex is intentionally the stricter, conservative side — it may
+      // decline a rare Unicode-lowercase name the engine would accept, but never accepts one it
+      // would reject, so there is no data risk. Widen to a Unicode letter class if that ever bites.
       validateInput: (v) => {
         const t = v.trim();
         if (t.length === 0) return 'Enter a name.';
