@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
-vi.mock('vscode', () => import('../__mocks__/vscode'));
+vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 // The controller module pulls in browserQueries (→ native GCI). Stub it; these
 // tests abort at (or just past) the rb-support gate, before any query runs.
 vi.mock('../browserQueries', () => ({}));
