@@ -1039,38 +1039,15 @@ GsInstVarStructureRefactoring >> dictObjectFor: aClass [
 
 { #category : 'serializing' }
 GsInstVarStructureRefactoring >> jsonQuote: aString [
-	^'"', (self jsonEscape: aString), '"'
+	^GsRefactoringJson jsonQuote: aString
 ]
 
 { #category : 'serializing' }
 GsInstVarStructureRefactoring >> jsonEscape: aString [
-	"JSON string escaping emitting PURE ASCII (control chars and code points above 126 become
-	 \\uXXXX), so the client's non-blocking GCI fetch is never handed a Unicode result."
-	| ws |
-	ws := WriteStream on: String new.
-	aString do: [:ch | | code |
-		code := ch asInteger.
-		ch == $" ifTrue: [ws nextPutAll: '\"']
-		ifFalse: [ch == $\ ifTrue: [ws nextPutAll: '\\']
-		ifFalse: [code = 10 ifTrue: [ws nextPutAll: '\n']
-		ifFalse: [code = 13 ifTrue: [ws nextPutAll: '\r']
-		ifFalse: [code = 9 ifTrue: [ws nextPutAll: '\t']
-		ifFalse: [code < 32
-			ifTrue: [ws nextPutAll: '\u00'; nextPutAll: (self hex2: code)]
-		ifFalse: [code > 126
-			ifTrue: [code > 65535
-				ifTrue: [ws nextPut: $?]
-				ifFalse: [ws nextPutAll: '\u';
-					nextPutAll: (self hex2: code // 256);
-					nextPutAll: (self hex2: code \\ 256)]]
-			ifFalse: [ws nextPut: ch]]]]]]]].
-	^ws contents
+	^GsRefactoringJson jsonEscape: aString
 ]
 
 { #category : 'serializing' }
 GsInstVarStructureRefactoring >> hex2: anInteger [
-	| digits |
-	digits := '0123456789abcdef'.
-	^(String with: (digits at: (anInteger // 16) + 1))
-		, (String with: (digits at: (anInteger \\ 16) + 1))
+	^GsRefactoringJson hex2: anInteger
 ]

@@ -4,6 +4,7 @@ import {
   parsePage,
   parseApplyResult,
   methodChangeLabel,
+  isStructuralChange,
   selectorParts,
   selectorArgCount,
   isKeywordSelector,
@@ -137,6 +138,18 @@ describe('methodChangeLabel', () => {
     const [r, s] = parseStartPreview(startEnvelope()).page.changes;
     expect(methodChangeLabel(r)).toBe('Foo>>from:to:');
     expect(methodChangeLabel(s)).toBe('Bar class>>caller');
+  });
+});
+
+describe('rename-method change classification', () => {
+  it("treats an implementor's rename as structural (non-deselectable)", () => {
+    const [implementor] = parseStartPreview(startEnvelope()).page.changes;
+    expect(isStructuralChange(implementor)).toBe(true);
+  });
+
+  it("treats a sender's recompile as optional", () => {
+    const [, sender] = parseStartPreview(startEnvelope()).page.changes;
+    expect(isStructuralChange(sender)).toBe(false);
   });
 });
 

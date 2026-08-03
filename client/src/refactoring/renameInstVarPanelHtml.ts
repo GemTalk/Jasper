@@ -4,7 +4,7 @@
  * creates the webview and handles messages lives in renameInstVarPanel.ts, which
  * imports renderRenamePanelHtml from here.
  */
-import { RenameChange, changeLabel } from './renameInstVarPreview';
+import { RenameChange, changeLabel, isStructuralChange } from './renameInstVarPreview';
 import { lineDiff, DiffLine } from './lineDiff';
 
 function escapeHtml(s: string): string {
@@ -31,11 +31,17 @@ function renderCard(change: RenameChange): string {
         ? `<span class="badge">${escapeHtml(change.category)}</span>`
         : '';
   const diff = renderDiff(lineDiff(change.oldSource, change.newSource));
+  // A structural change is checked and DISABLED so it can't be deselected; see
+  // isStructuralChange for why. (Mirrors the class-rename panel.)
+  const structural = isStructuralChange(change);
+  const cb = structural
+    ? `<input type="checkbox" class="sel" checked disabled title="required" aria-label="${label} (required)">`
+    : `<input type="checkbox" class="sel" checked aria-label="Include ${label}">`;
   // Diffs start collapsed so the list is a scannable set of change headers;
   // click a row (or its chevron) to expand its before/after.
   return `<li class="change" data-id="${escapeHtml(change.id)}">
   <div class="change-head">
-    <input type="checkbox" class="sel" checked aria-label="Include ${label}">
+    ${cb}
     <span class="label">${label}</span>
     ${badge}
     <button class="toggle" title="Show/hide diff" aria-expanded="false">▸</button>

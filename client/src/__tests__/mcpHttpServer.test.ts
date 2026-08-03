@@ -8,7 +8,7 @@
 
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from 'vitest';
 
-vi.mock('vscode', () => import('../__mocks__/vscode'));
+vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 vi.mock('../sysadminChannel', () => ({ appendSysadmin: vi.fn(), showSysadmin: vi.fn() }));
 vi.mock('../browserQueries', () => ({
   executeFetchString: vi.fn(() => 'ok'),

@@ -71,6 +71,7 @@ client/src/**
 !client/src/refactoring/renameClassEditorView.js
 !client/src/refactoring/classHistoryPanelView.js
 !client/src/refactoring/changeSignatureEditorView.js
+!client/src/refactoring/instVarRefactorPanelView.js
 server/src/**
 mcp-server/src/**
 

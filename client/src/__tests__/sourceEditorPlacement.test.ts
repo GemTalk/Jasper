@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-vi.mock('vscode', () => import('../__mocks__/vscode'));
+vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 import { SourceEditorPlacement } from '../sourceEditorPlacement';
 import { Uri, TabInputText, TabInputTextDiff, window } from '../__mocks__/vscode';
 

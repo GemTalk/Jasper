@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
-vi.mock('vscode', () => import('../__mocks__/vscode'));
+vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 // The controller pulls in browserQueries; stub only what removeDictionary touches.
 vi.mock('../browserQueries', () => ({ removeDictionary: vi.fn() }));
 

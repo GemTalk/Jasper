@@ -1,13 +1,14 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "commonjs",
+    "module": "node16",
     "lib": ["ES2024", "ESNext.Array", "ESNext.Collection", "ESNext.Iterator"],
     "strict": true,
     "sourceMap": true,
     "declaration": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
+    "isolatedModules": true,
     "resolveJsonModule": true,
     "forceConsistentCasingInFileNames": true
   }

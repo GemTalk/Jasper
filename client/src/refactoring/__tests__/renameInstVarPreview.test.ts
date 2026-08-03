@@ -1,10 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import {
   parseRenameChanges,
+  parseRenamePreview,
+  parseRenameApplyResult,
   orderChangesClassDefFirst,
-  planRenameApply,
+  deselectedIdsFrom,
+  deselectedLabels,
   changeLabel,
   validateNewIvarName,
+  isStructuralChange,
   RenameChange,
 } from '../renameInstVarPreview';
 
@@ -96,77 +100,89 @@ describe('orderChangesClassDefFirst', () => {
   });
 });
 
-describe('planRenameApply', () => {
-  const dictNames = ['UserGlobals', 'Globals', 'Published'];
+describe('deselectedIdsFrom', () => {
+  it('answers the ids the user unchecked', () => {
+    const changes = [
+      classDefChange({ id: '3' }),
+      methodChange({ id: '1' }),
+      methodChange({ id: '2', selector: 'baz' }),
+    ];
 
-  it('keeps only the selected changes, in the given (class-def-first) order', () => {
-    const steps = planRenameApply(
-      [
-        classDefChange({ id: '3' }),
-        methodChange({ id: '1' }),
-        methodChange({ id: '2', selector: 'baz' }),
-      ],
-      ['1', '3'],
-      dictNames,
-      'UserGlobals',
-    );
-
-    expect(steps.map((s) => s.id)).toEqual(['3', '1']);
+    expect(deselectedIdsFrom(changes, ['3', '1'])).toEqual(['2']);
   });
 
-  it('resolves each change dictionary to its 1-based symbol-list index', () => {
-    const steps = planRenameApply(
-      [methodChange({ id: '1', dictName: 'Globals' })],
-      ['1'],
-      dictNames,
-      'UserGlobals',
-    );
+  it('answers nothing when everything is still selected', () => {
+    const changes = [classDefChange({ id: '3' }), methodChange({ id: '1' })];
 
-    expect(steps[0].dictIndex).toBe(2);
+    expect(deselectedIdsFrom(changes, ['3', '1'])).toEqual([]);
   });
 
-  it('falls back to the current dictionary when the change names none', () => {
-    const steps = planRenameApply(
-      [methodChange({ id: '1', dictName: null })],
-      ['1'],
-      dictNames,
-      'Published',
-    );
+  it('never reports the class-definition edit as dropped, even if the selection omits it', () => {
+    // The panel renders it checked+disabled, so it cannot be unchecked; inverting a
+    // stale selection must not turn the structural change into a deletion.
+    const changes = [classDefChange({ id: '3' }), methodChange({ id: '1' })];
 
-    expect(steps[0].dictIndex).toBe(3);
+    expect(deselectedIdsFrom(changes, [])).toEqual(['1']);
+  });
+});
+
+describe('deselectedLabels', () => {
+  it('labels the methods a deselection will delete', () => {
+    const changes = [
+      classDefChange({ id: '3' }),
+      methodChange({ id: '1', selector: 'bar' }),
+      methodChange({ id: '2', selector: 'baz' }),
+    ];
+
+    expect(deselectedLabels(changes, ['3', '1'])).toEqual(['Foo>>baz']);
+  });
+});
+
+describe('parseRenamePreview', () => {
+  it('reads the token and the staged changes from the envelope', () => {
+    const json = JSON.stringify({ token: 'tok1', changes: [methodChange(), classDefChange()] });
+
+    const preview = parseRenamePreview(json);
+
+    expect(preview.token).toBe('tok1');
+    expect(preview.changes.map((c) => c.kind)).toEqual(['methodRecompile', 'classDefinitionEdit']);
   });
 
-  it('leaves the dict index undefined when neither dictionary is known', () => {
-    const steps = planRenameApply(
-      [methodChange({ id: '1', dictName: 'Mystery' })],
-      ['1'],
-      dictNames,
-      undefined,
-    );
-
-    expect(steps[0].dictIndex).toBeUndefined();
+  it('rejects an envelope with no token rather than applying against nothing', () => {
+    expect(() => parseRenamePreview(JSON.stringify({ changes: [] }))).toThrow(/token/);
   });
 
-  it('defaults a missing method category to "as yet unclassified"', () => {
-    const steps = planRenameApply(
-      [methodChange({ id: '1', category: null })],
-      ['1'],
-      dictNames,
-      'UserGlobals',
-    );
+  it('rejects a bare change array, which would leave the apply unaddressable', () => {
+    expect(() => parseRenamePreview('[]')).toThrow(/envelope/);
+  });
+});
 
-    expect(steps[0].category).toBe('as yet unclassified');
+describe('parseRenameApplyResult', () => {
+  it('reads how many classes were re-versioned', () => {
+    const result = parseRenameApplyResult(JSON.stringify({ applied: 2, failed: [] }));
+
+    expect(result.applied).toBe(2);
+    expect(result.failed).toEqual([]);
   });
 
-  it('carries a label for reporting a per-change failure', () => {
-    const steps = planRenameApply(
-      [methodChange({ id: '1', selector: 'total' })],
-      ['1'],
-      dictNames,
-      'UserGlobals',
+  it('reads the methods that did not recompile onto the new version', () => {
+    const result = parseRenameApplyResult(
+      JSON.stringify({
+        applied: 1,
+        failed: [{ id: 'x', label: 'Foo>>bar', error: 'did not recompile' }],
+      }),
     );
 
-    expect(steps[0].label).toBe('Foo>>total');
+    expect(result.failed[0].label).toBe('Foo>>bar');
+    expect(result.failed[0].error).toBe('did not recompile');
+  });
+
+  it('surfaces an expired preview session as an error', () => {
+    const result = parseRenameApplyResult(
+      JSON.stringify({ applied: 0, failed: [], error: 'preview session expired' }),
+    );
+
+    expect(result.error).toBe('preview session expired');
   });
 });
 
@@ -181,6 +197,16 @@ describe('changeLabel', () => {
 
   it('labels a class-side method', () => {
     expect(changeLabel(methodChange({ isMeta: true, selector: 'new' }))).toBe('Foo class>>new');
+  });
+});
+
+describe('rename-instance-variable change classification', () => {
+  it('treats the class-definition edit as structural (non-deselectable)', () => {
+    expect(isStructuralChange(classDefChange())).toBe(true);
+  });
+
+  it('treats a method recompile as optional', () => {
+    expect(isStructuralChange(methodChange())).toBe(false);
   });
 });
 

@@ -137,11 +137,7 @@ GsRefactoringChange >> dictName [
 
 { #category : 'serializing' }
 GsRefactoringChange >> hex2: anInteger [
-	"Two lowercase hex digits for a 0..255 code point."
-	| digits |
-	digits := '0123456789abcdef'.
-	^(String with: (digits at: (anInteger // 16) + 1))
-		, (String with: (digits at: (anInteger \\ 16) + 1))
+	^GsRefactoringJson hex2: anInteger
 ]
 
 { #category : 'accessing' }

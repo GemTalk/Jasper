@@ -307,6 +307,39 @@ removeallclassmethods GsInlineTemporaryRefactoringTest
 
 doit
 | cls |
+cls := TestCase subclass: 'GsInstVarRefactoringTest'
+  instVarNames: #()
+  classVars: #()
+  classInstVars: #()
+  poolDictionaries: #()
+  inDictionary: UserGlobals.
+cls category: 'Refactoring-Tests-Core'.
+cls comment: '
+Correctness of the add / remove instance-variable refactoring (catalog V1):
+
+  - #add appends the variable to the class definition, versions the whole subtree, and declines a
+    duplicate/inherited name, an invalid name, or a name that would shadow a class variable;
+  - #remove drops the variable and reports every method (defining class and descendants) that will
+    no longer recompile because it accessed the variable;
+  - class options are preserved across the new version (the earlier engines dropped them) and can be
+    replaced with a user-edited set for the acted-on class;
+  - applying (with neither migrate nor delete-history) never commits, and a method that references a
+    removed variable is dropped and reported.
+
+setUp builds a throwaway hierarchy (GsIVBase -> GsIVSub -> GsIVLeaf) in UserGlobals; tearDown removes
+it. Applying an operation creates new, uncommitted class versions; nothing here commits. The
+delete-history STEP (deletePriorVersionsOf:) is exercised no-commit against a just-applied version;
+the full committing migrate / delete-history round trip (which needs a clean committed transaction)
+is exercised via the GCI e2e (gciInstVar.e2e.test.ts).
+'.
+true.
+%
+
+removeallmethods GsInstVarRefactoringTest
+removeallclassmethods GsInstVarRefactoringTest
+
+doit
+| cls |
 cls := TestCase subclass: 'GsInstVarStructureRefactoringTest'
   instVarNames: #()
   classVars: #()
@@ -530,6 +563,62 @@ true.
 
 removeallmethods GsRefactoringEnvironmentTest
 removeallclassmethods GsRefactoringEnvironmentTest
+
+doit
+| cls |
+cls := TestCase subclass: 'GsRefactoringJsonTest'
+  instVarNames: #()
+  classVars: #()
+  classInstVars: #()
+  poolDictionaries: #()
+  inDictionary: UserGlobals.
+cls category: 'Refactoring-Tests-Core'.
+cls comment: '
+Characterization tests for the canonical JSON escaper (RB catalog C1). The
+serializers used to each carry a byte-identical copy of jsonQuote:/jsonEscape:/
+hex2:; those now delegate to GsRefactoringJson, so the escaper''s contract is
+pinned here in one place.
+
+The load-bearing property is testEscapeOutputIsPureAscii: every escaped byte is
+<= 126, so the client''s non-blocking GCI fetch is never handed a Unicode-promoted
+(wide) result. Every wide char AND every expected escape sequence is built from
+#codePoint: (backslash is codePoint 92), so THIS test''s own stored source stays
+pure ASCII -- there is not one backslash or non-ASCII byte in a string literal
+here (the 3.6.2 ComStrmSetCursor discipline, applied to the test itself).
+'.
+true.
+%
+
+removeallmethods GsRefactoringJsonTest
+removeallclassmethods GsRefactoringJsonTest
+
+doit
+| cls |
+cls := TestCase subclass: 'GsRefactoringParseTest'
+  instVarNames: #()
+  classVars: #()
+  classInstVars: #()
+  poolDictionaries: #()
+  inDictionary: UserGlobals.
+cls category: 'Refactoring-Tests-Core'.
+cls comment: '
+Regression tests for the RBScanner non-ASCII (wide-source) parse gap. The
+vendored RBScanner classifies characters with #isSqueakSeparator; GemStone''s
+Character lacked it, so parsing any method whose STORED SOURCE is a wide
+DoubleByteString (a non-ASCII character in a comment, string or character
+literal) raised MessageNotUnderstood inside RBParser -- silently breaking
+convert-temp and push-up/down accessor detection. The compat shim
+(Character>>isSqueakSeparator, feature-detected) closes that gap.
+
+Every method-under-test''s source is assembled at run time from #codePoint:
+pieces -- the wide character, and even the quote/comment delimiters -- so THIS
+test''s own stored source stays pure ASCII (no wide bytes, no literal quotes).
+'.
+true.
+%
+
+removeallmethods GsRefactoringParseTest
+removeallclassmethods GsRefactoringParseTest
 
 doit
 | cls |
@@ -4118,6 +4207,480 @@ testApplyForTokenOnAnExpiredSessionAnswersAnError
 %
 
 category: 'asserting'
+method: GsInstVarRefactoringTest
+assert: aString includesSubstring: aSubstring
+	self assert: (aString indexOfSubCollection: aSubstring) > 0
+%
+
+category: 'asserting'
+method: GsInstVarRefactoringTest
+deny: aString includesSubstring: aSubstring
+	self assert: (aString indexOfSubCollection: aSubstring) = 0
+%
+
+category: 'asserting'
+method: GsInstVarRefactoringTest
+assert: aCollection includesItem: anObject
+	self assert: (aCollection includes: anObject)
+%
+
+category: 'asserting'
+method: GsInstVarRefactoringTest
+deny: aCollection includesItem: anObject
+	self deny: (aCollection includes: anObject)
+%
+
+category: 'fixture'
+method: GsInstVarRefactoringTest
+base
+	^UserGlobals at: #GsIVBase
+%
+
+category: 'fixture'
+method: GsInstVarRefactoringTest
+sub
+	^UserGlobals at: #GsIVSub
+%
+
+category: 'fixture'
+method: GsInstVarRefactoringTest
+leaf
+	^UserGlobals at: #GsIVLeaf
+%
+
+category: 'fixture'
+method: GsInstVarRefactoringTest
+compile: aSource in: aClass
+	aClass
+		compileMethod: aSource
+		dictionaries: System myUserProfile symbolList
+		category: 'fixture'
+%
+
+category: 'fixture'
+method: GsInstVarRefactoringTest
+classDefinitionEditFor: aName in: aChangeSet
+	^aChangeSet changes
+		detect: [:c | c kind = #classDefinitionEdit and: [c className asString = aName]]
+		ifNone: [nil]
+%
+
+category: 'fixture'
+method: GsInstVarRefactoringTest
+add: aName
+	^GsInstVarRefactoring class: self base addInstVar: aName
+%
+
+category: 'fixture'
+method: GsInstVarRefactoringTest
+remove: aName
+	^GsInstVarRefactoring class: self base removeInstVar: aName
+%
+
+category: 'running'
+method: GsInstVarRefactoringTest
+setUp
+	| base sub leaf |
+	super setUp.
+	base := Object
+		subclass: 'GsIVBase'
+		instVarNames: #('count' 'other')
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	sub := base
+		subclass: 'GsIVSub'
+		instVarNames: #('subOwn')
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	leaf := sub
+		subclass: 'GsIVLeaf'
+		instVarNames: #()
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	self compile: 'combine ^count + other' in: base.
+	self compile: 'getOther ^other' in: base.
+	self compile: 'doubleCount ^count * 2' in: sub.
+	self compile: 'readSubOwn ^subOwn' in: sub.
+	self compile: 'leafCount ^count negated' in: leaf
+%
+
+category: 'running'
+method: GsInstVarRefactoringTest
+tearDown
+	#('GsIVLeaf' 'GsIVSub' 'GsIVBase')
+		do: [:nm | UserGlobals removeKey: nm asSymbol ifAbsent: []]
+%
+
+category: 'tests - add'
+method: GsInstVarRefactoringTest
+testAddStagesClassDefinitionEditWithNewIvar
+	| change |
+	change := self classDefinitionEditFor: 'GsIVBase' in: (self add: 'tally') changeSet.
+	self assert: change notNil.
+	self assert: change newSource includesSubstring: 'tally'.
+	self assert: change newSource includesSubstring: 'count'.
+	self assert: change oldSource includesSubstring: 'count'.
+	self deny: change oldSource includesSubstring: 'tally'
+%
+
+category: 'tests - add'
+method: GsInstVarRefactoringTest
+testAddVersionsTheWholeSubtree
+	"base's shape changes, so base + sub + leaf are all recompiled and nothing else is."
+	| cs names |
+	cs := (self add: 'tally') changeSet.
+	names := cs changes collect: [:c | c className asString].
+	self assert: names includesItem: 'GsIVBase'.
+	self assert: names includesItem: 'GsIVSub'.
+	self assert: names includesItem: 'GsIVLeaf'.
+	self assert: cs size equals: 3
+%
+
+category: 'tests - add'
+method: GsInstVarRefactoringTest
+testAddDeclinesDuplicateOwnName
+	self assert: (self add: 'count') decline notNil
+%
+
+category: 'tests - add'
+method: GsInstVarRefactoringTest
+testAddDeclinesInheritedName
+	"count is inherited by the subclass, so adding it there is also a duplicate."
+	self assert: (GsInstVarRefactoring class: self sub addInstVar: 'count') decline notNil
+%
+
+category: 'tests - add'
+method: GsInstVarRefactoringTest
+testAddDeclinesInvalidName
+	self assert: (self add: '9bad') decline notNil.
+	self assert: (self add: 'has space') decline notNil.
+	self assert: (self add: '') decline notNil
+%
+
+category: 'tests - add'
+method: GsInstVarRefactoringTest
+testAddDeclinesClassVariableShadow
+	| withCvar |
+	withCvar := Object
+		subclass: 'GsIVCv'
+		instVarNames: #()
+		classVars: #('Shared')
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	[self assert: (GsInstVarRefactoring class: withCvar addInstVar: 'Shared') decline notNil]
+		ensure: [UserGlobals removeKey: #GsIVCv ifAbsent: []]
+%
+
+category: 'tests - add'
+method: GsInstVarRefactoringTest
+testAddDeclinesInheritedClassVariableShadow
+	"A class variable declared on a SUPERCLASS is still visible to the subclass, so adding an
+	 instance variable of that name on the subclass would shadow it and is declined."
+	| sup sub |
+	sup := Object
+		subclass: 'GsIVCvSup'
+		instVarNames: #()
+		classVars: #('Shared')
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	sub := sup
+		subclass: 'GsIVCvSub'
+		instVarNames: #()
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	[self assert: (GsInstVarRefactoring class: sub addInstVar: 'Shared') decline notNil]
+		ensure: [#('GsIVCvSub' 'GsIVCvSup') do: [:n | UserGlobals removeKey: n asSymbol ifAbsent: []]]
+%
+
+category: 'tests - add'
+method: GsInstVarRefactoringTest
+testAddHasNoWillNotRecompile
+	self assert: (self add: 'tally') willNotRecompileSelectorCount equals: 0
+%
+
+category: 'tests - add'
+method: GsInstVarRefactoringTest
+testUnknownOperationDeclines
+	"A refactoring built with an operation other than #add / #remove declines rather than acting."
+	| ref |
+	ref := GsInstVarRefactoring new
+		setEnvironment: GsRefactoringEnvironment new
+		operation: #frobnicate
+		class: self base
+		varName: 'x'.
+	self assert: ref decline notNil.
+	self assert: ref decline includesSubstring: 'Unknown operation'
+%
+
+category: 'tests - remove'
+method: GsInstVarRefactoringTest
+testRemoveStagesClassDefinitionEditDroppingIvar
+	| change |
+	change := self classDefinitionEditFor: 'GsIVBase' in: (self remove: 'count') changeSet.
+	self assert: change notNil.
+	self assert: change newSource includesSubstring: 'other'.
+	self deny: change newSource includesSubstring: 'count'
+%
+
+category: 'tests - remove'
+method: GsInstVarRefactoringTest
+testRemoveDeclinesNonOwnIvar
+	"'count' is inherited by the subclass, not owned; only its declaring class can remove it."
+	self assert: (GsInstVarRefactoring class: self sub removeInstVar: 'count') decline notNil.
+	self assert: (self remove: 'missing') decline notNil
+%
+
+category: 'tests - remove'
+method: GsInstVarRefactoringTest
+testRemoveListsEveryMethodThatWillNotRecompile
+	"combine (base), doubleCount (sub), leafCount (leaf) all read count and will lose it; getOther
+	 reads only other and survives."
+	| refactoring |
+	refactoring := self remove: 'count'.
+	refactoring decline.
+	self assert: refactoring willNotRecompileSelectorCount equals: 3.
+	self assert: refactoring willNotRecompileJsonString includesSubstring: 'combine'.
+	self assert: refactoring willNotRecompileJsonString includesSubstring: 'doubleCount'.
+	self assert: refactoring willNotRecompileJsonString includesSubstring: 'leafCount'.
+	self deny: refactoring willNotRecompileJsonString includesSubstring: 'getOther'
+%
+
+category: 'tests - remove'
+method: GsInstVarRefactoringTest
+testRemoveCleanIvarDropsNothing
+	"Removing an instance variable that no method references reports nothing will-not-recompile and
+	 drops no method; the still-referenced sibling ivar and its accessor survive."
+	| cls ref result |
+	cls := Object
+		subclass: 'GsIVClean'
+		instVarNames: #('used' 'unused')
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	self compile: 'readUsed ^used' in: cls.
+	[ref := GsInstVarRefactoring class: cls removeInstVar: 'unused'.
+	 self assert: ref willNotRecompileSelectorCount equals: 0.
+	 result := ref applyDeselected: #() options: nil migrate: false deleteHistory: false.
+	 self assert: result includesSubstring: '"dropped":[]'.
+	 self deny: ((UserGlobals at: #GsIVClean) instVarNames includes: #unused).
+	 self assert: ((UserGlobals at: #GsIVClean) includesSelector: #readUsed)]
+		ensure: [UserGlobals removeKey: #GsIVClean ifAbsent: []]
+%
+
+category: 'tests - json'
+method: GsInstVarRefactoringTest
+testAnalysisJsonStringShape
+	| json |
+	json := GsInstVarRefactoring analyzeClass: self base addInstVar: 'tally'.
+	self assert: json includesSubstring: '"decline":null'.
+	self assert: json includesSubstring: '"operation":"add"'.
+	self assert: json includesSubstring: '"sourceClass":"GsIVBase"'.
+	self assert: json includesSubstring: '"affectedCount":3'
+%
+
+category: 'tests - json'
+method: GsInstVarRefactoringTest
+testAnalysisJsonStringReportsDecline
+	| json |
+	json := GsInstVarRefactoring analyzeClass: self base addInstVar: 'count'.
+	self deny: json includesSubstring: '"decline":null'
+%
+
+category: 'tests - json'
+method: GsInstVarRefactoringTest
+testOutOfScopeJsonCarriesWarningsAndCommitNote
+	| refactoring json |
+	refactoring := self remove: 'count'.
+	json := refactoring outOfScopeJsonString.
+	self assert: json includesSubstring: '"willNotRecompile":'.
+	self assert: json includesSubstring: 'commit'.
+	self assert: json includesSubstring: '"actedOnClass":"GsIVBase"'
+%
+
+category: 'tests - json'
+method: GsInstVarRefactoringTest
+testPreviewJsonSerializesChangeSet
+	| json |
+	json := (self add: 'tally') previewJsonString.
+	self assert: (json isKindOf: String).
+	self assert: json includesSubstring: 'classDefinitionEdit'.
+	self assert: json includesSubstring: 'classReparent'
+%
+
+category: 'tests - json'
+method: GsInstVarRefactoringTest
+testStartPreviewTokenStoresSelfAndPaginates
+	| refactoring start page |
+	refactoring := self add: 'tally'.
+	start := refactoring startPreviewToken: 'gsivtok1' maxBytes: 100000.
+	self assert: start includesSubstring: '"token":"gsivtok1"'.
+	self assert: start includesSubstring: '"total":3'.
+	page := GsInstVarRefactoring pageForToken: 'gsivtok1' from: 1 maxBytes: 100000.
+	self assert: page includesSubstring: 'classDefinitionEdit'.
+	GsInstVarRefactoring clearToken: 'gsivtok1'.
+	self assert: (GsInstVarRefactoring pageForToken: 'gsivtok1' from: 1 maxBytes: 100) includesSubstring: 'expired'
+%
+
+category: 'tests - json'
+method: GsInstVarRefactoringTest
+testPaginatedPreviewReturnsBoundedPages
+	"A tiny byte budget yields one change per page: the first page is not done and points at the
+	 next offset; fetching from the last change reports done."
+	| ref total first last |
+	ref := self add: 'tally'.
+	total := ref changeSet size.
+	self assert: total > 1.
+
+	first := ref pageJsonFrom: 1 maxBytes: 1.
+	self assert: first includesSubstring: '"nextOffset":2'.
+	self assert: first includesSubstring: '"done":false'.
+
+	last := ref pageJsonFrom: total maxBytes: 1000000.
+	self assert: last includesSubstring: '"done":true'
+%
+
+category: 'tests - no commit'
+method: GsInstVarRefactoringTest
+testBuildingChangeSetDoesNotCommit
+	| before |
+	before := System needsCommit.
+	self add: 'tally'.
+	self remove: 'count'.
+	self assert: System needsCommit equals: before
+%
+
+category: 'tests - apply'
+method: GsInstVarRefactoringTest
+testApplyAddInstallsNewVersionWithIvar
+	| refactoring result |
+	refactoring := self add: 'tally'.
+	result := refactoring applyDeselected: #() options: nil migrate: false deleteHistory: false.
+	self assert: result includesSubstring: '"committed":false'.
+	self assert: (self base instVarNames includes: #tally).
+	self assert: ((self sub new) class allInstVarNames includes: #tally)
+%
+
+category: 'tests - apply'
+method: GsInstVarRefactoringTest
+testApplyPreservesClassOptions
+	"The acted-on class's options must survive the new version (the bug the earlier engines had:
+	 they passed options: #() and dropped them)."
+	| optioned refactoring |
+	optioned := Object
+		_subclass: 'GsIVOpt'
+		instVarNames: #('a')
+		format: Object format
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals
+		inClassHistory: nil
+		description: ''
+		options: #(#disallowGciStore).
+	[refactoring := GsInstVarRefactoring class: optioned addInstVar: 'b'.
+	 refactoring applyDeselected: #() options: nil migrate: false deleteHistory: false.
+	 self assert: ((UserGlobals at: #GsIVOpt) _optionsArray includes: #disallowGciStore)]
+		ensure: [UserGlobals removeKey: #GsIVOpt ifAbsent: []]
+%
+
+category: 'tests - apply'
+method: GsInstVarRefactoringTest
+testApplyEditsClassOptions
+	| optioned refactoring |
+	optioned := Object
+		_subclass: 'GsIVOpt2'
+		instVarNames: #('a')
+		format: Object format
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals
+		inClassHistory: nil
+		description: ''
+		options: #().
+	[refactoring := GsInstVarRefactoring class: optioned addInstVar: 'b'.
+	 refactoring applyDeselected: #() options: #('disallowGciStore') migrate: false deleteHistory: false.
+	 self assert: ((UserGlobals at: #GsIVOpt2) _optionsArray includes: #disallowGciStore)]
+		ensure: [UserGlobals removeKey: #GsIVOpt2 ifAbsent: []]
+%
+
+category: 'tests - apply'
+method: GsInstVarRefactoringTest
+testApplyReparentsSubclassesKeepingOwnMethods
+	"Reshaping the base versions the whole subtree: every descendant is re-parented onto the new
+	 version of its superclass and keeps its own methods."
+	| ref |
+	ref := self add: 'tally'.
+	ref applyDeselected: #() options: nil migrate: false deleteHistory: false.
+	self assert: self sub superclass == self base.
+	self assert: (self sub includesSelector: #readSubOwn).
+	self assert: (self sub includesSelector: #doubleCount).
+	self assert: self leaf superclass == self sub.
+	self assert: (self leaf includesSelector: #leafCount)
+%
+
+category: 'tests - apply'
+method: GsInstVarRefactoringTest
+testApplyIgnoresDeselectionApplyingAllChanges
+	"An instance-variable add/remove is all-or-nothing: the shape edit and the descendant reparents
+	 must move together, so a deselection is ignored and every staged change is still applied."
+	| ref result |
+	ref := self add: 'tally'.
+	result := ref
+		applyDeselected: #('bogus-id-1' 'bogus-id-2')
+		options: nil
+		migrate: false
+		deleteHistory: false.
+	self assert: result includesSubstring: '"applied":3'.
+	self assert: (self base instVarNames includes: #tally).
+	self assert: self sub superclass == self base
+%
+
+category: 'tests - apply'
+method: GsInstVarRefactoringTest
+testDeleteHistoryTrimsPriorVersionsToCurrent
+	"Applying versions the acted-on class, so its history gains the prior version;
+	 deletePriorVersionsOf: (the delete-history step) then trims that history down to just the
+	 current version. Exercised WITHOUT committing (setUp's fixture is abort-restored); the full
+	 committing migrate / delete-history round trip is exercised via the GCI e2e, since it needs a
+	 clean, committed transaction and so cannot run in a no-commit SUnit test."
+	| refactoring current |
+	refactoring := self add: 'tally'.
+	refactoring applyDeselected: #() options: nil migrate: false deleteHistory: false.
+	current := self base.
+	self assert: current classHistory size >= 2.
+
+	refactoring deletePriorVersionsOf: current.
+	self assert: current classHistory size equals: 1.
+	self assert: (current classHistory at: 1) == current
+%
+
+category: 'tests - apply'
+method: GsInstVarRefactoringTest
+testApplyRemoveDropsBrokenMethodsAndReportsThem
+	| refactoring result |
+	refactoring := self remove: 'count'.
+	result := refactoring applyDeselected: #() options: nil migrate: false deleteHistory: false.
+	"combine, doubleCount, leafCount reference count -> dropped; getOther survives."
+	self assert: result includesSubstring: '"dropped":'.
+	self assert: result includesSubstring: 'combine'.
+	self assert: (self base compiledMethodAt: #combine environmentId: 0 otherwise: nil) isNil.
+	self assert: (self base compiledMethodAt: #getOther environmentId: 0 otherwise: nil) notNil.
+	self deny: (self base instVarNames includes: #count)
+%
+
+category: 'asserting'
 method: GsInstVarStructureRefactoringTest
 assert: aString includesSubstring: aSubstring
 	self assert: (aString indexOfSubCollection: aSubstring) > 0
@@ -6542,6 +7105,246 @@ testUnknownClassNameResolvesToNil
 	self assert: (GsRefactoringEnvironment new classNamed: #GsNoSuchClass_ZZZ) isNil
 %
 
+category: 'private'
+method: GsRefactoringJsonTest
+bslash
+	"A one-character String holding a single backslash (codePoint 92), so no
+	 string literal in this test needs to spell an escape sequence."
+	^String with: (Character codePoint: 92)
+%
+
+category: 'private'
+method: GsRefactoringJsonTest
+dquote
+	^String with: (Character codePoint: 34)
+%
+
+category: 'private'
+method: GsRefactoringJsonTest
+escape: aString
+	^GsRefactoringJson jsonEscape: aString
+%
+
+category: 'tests'
+method: GsRefactoringJsonTest
+testBmpCharBecomesLowercaseHexUnicode
+	"U+FB01 (ligature fi) exercises lowercase hex digits a-f in the escape."
+	self assert: ((self escape: (String with: (Character codePoint: 64257)))
+		= (self bslash, 'ufb01'))
+%
+
+category: 'tests'
+method: GsRefactoringJsonTest
+testControlCharBecomesUnicodeEscape
+	self assert: ((self escape: (String with: (Character codePoint: 1)))
+		= (self bslash, 'u0001'))
+%
+
+category: 'tests'
+method: GsRefactoringJsonTest
+testEmDashBecomesUnicodeEscape
+	"U+2014 EM DASH -- the character that first exposed the wide-source hazard."
+	self assert: ((self escape: (String with: (Character codePoint: 8212)))
+		= (self bslash, 'u2014'))
+%
+
+category: 'tests'
+method: GsRefactoringJsonTest
+testEmptyString
+	self assert: ((self escape: '') = '')
+%
+
+category: 'tests'
+method: GsRefactoringJsonTest
+testEscapeOutputIsPureAscii
+	"The load-bearing invariant: no escaped byte exceeds 126, for ANY input --
+	 including control, DEL, wide-BMP and non-BMP characters."
+	| inputs |
+	inputs := OrderedCollection new.
+	inputs add: 'plain text 123'.
+	inputs add: (String with: (Character codePoint: 34)).
+	inputs add: (String with: (Character codePoint: 92)).
+	inputs add: (String with: (Character codePoint: 0)).
+	inputs add: (String with: (Character codePoint: 9)).
+	inputs add: (String with: (Character codePoint: 10)).
+	inputs add: (String with: (Character codePoint: 13)).
+	inputs add: (String with: (Character codePoint: 31)).
+	inputs add: (String with: (Character codePoint: 127)).
+	inputs add: (String with: (Character codePoint: 8212)).
+	inputs add: (String with: (Character codePoint: 64257)).
+	inputs add: (String with: (Character codePoint: 128512)).
+	inputs do: [:s |
+		(self escape: s) do: [:c | self assert: (c asInteger <= 126)]]
+%
+
+category: 'tests'
+method: GsRefactoringJsonTest
+testEscapesBackslash
+	self assert: ((self escape: self bslash) = (self bslash, self bslash))
+%
+
+category: 'tests'
+method: GsRefactoringJsonTest
+testEscapesCarriageReturn
+	self assert: ((self escape: (String with: (Character codePoint: 13)))
+		= (self bslash, 'r'))
+%
+
+category: 'tests'
+method: GsRefactoringJsonTest
+testEscapesNewline
+	self assert: ((self escape: (String with: (Character codePoint: 10)))
+		= (self bslash, 'n'))
+%
+
+category: 'tests'
+method: GsRefactoringJsonTest
+testEscapesQuote
+	self assert: ((self escape: self dquote) = (self bslash, self dquote))
+%
+
+category: 'tests'
+method: GsRefactoringJsonTest
+testEscapesTab
+	self assert: ((self escape: (String with: (Character codePoint: 9)))
+		= (self bslash, 't'))
+%
+
+category: 'tests'
+method: GsRefactoringJsonTest
+testHex2
+	self assert: ((GsRefactoringJson hex2: 255) = 'ff').
+	self assert: ((GsRefactoringJson hex2: 0) = '00').
+	self assert: ((GsRefactoringJson hex2: 10) = '0a').
+	self assert: ((GsRefactoringJson hex2: 16) = '10')
+%
+
+category: 'tests'
+method: GsRefactoringJsonTest
+testJsonQuoteEscapesContents
+	"jsonQuote: wraps in quotes AND escapes -- an embedded quote comes back
+	 escaped, so the whole thing stays one valid JSON string."
+	self assert: ((GsRefactoringJson jsonQuote: self dquote)
+		= (self dquote, self bslash, self dquote, self dquote))
+%
+
+category: 'tests'
+method: GsRefactoringJsonTest
+testJsonQuoteWraps
+	self assert: ((GsRefactoringJson jsonQuote: 'ab') = (self dquote, 'ab', self dquote))
+%
+
+category: 'tests'
+method: GsRefactoringJsonTest
+testNonBmpBecomesQuestionMark
+	"Above U+FFFF the escaper emits a literal ? (surrogate pairs are not encoded)."
+	self assert: ((self escape: (String with: (Character codePoint: 128512))) = '?')
+%
+
+category: 'tests'
+method: GsRefactoringJsonTest
+testPlainCharactersUnchanged
+	self assert: ((self escape: 'abcXYZ 09') = 'abcXYZ 09')
+%
+
+category: 'private'
+method: GsRefactoringParseTest
+ch: anInteger
+	^String with: (Character codePoint: anInteger)
+%
+
+category: 'private'
+method: GsRefactoringParseTest
+emDash
+	"U+2014 EM DASH -- built by codePoint so this source is not itself wide."
+	^Character codePoint: 8212
+%
+
+category: 'tests'
+method: GsRefactoringParseTest
+testIsSqueakSeparatorAnswersBooleanForWideChar
+	"It must ANSWER (not DNU) for a wide character -- that is the whole fix."
+	self assert: (self emDash isSqueakSeparator isKindOf: Boolean)
+%
+
+category: 'tests'
+method: GsRefactoringParseTest
+testIsSqueakSeparatorFalseForEmDash
+	self deny: self emDash isSqueakSeparator
+%
+
+category: 'tests'
+method: GsRefactoringParseTest
+testIsSqueakSeparatorFalseForLetter
+	self deny: $a isSqueakSeparator
+%
+
+category: 'tests'
+method: GsRefactoringParseTest
+testIsSqueakSeparatorFalseForNonBmpChar
+	self deny: (Character codePoint: 128512) isSqueakSeparator
+%
+
+category: 'tests'
+method: GsRefactoringParseTest
+testIsSqueakSeparatorTrueForAsciiWhitespace
+	"The five ASCII whitespace separators the scanner treats as boundaries:
+	 tab, LF, form-feed, CR, space."
+	self assert: (Character codePoint: 9) isSqueakSeparator.
+	self assert: (Character codePoint: 10) isSqueakSeparator.
+	self assert: (Character codePoint: 12) isSqueakSeparator.
+	self assert: (Character codePoint: 13) isSqueakSeparator.
+	self assert: (Character codePoint: 32) isSqueakSeparator
+%
+
+category: 'tests'
+method: GsRefactoringParseTest
+testParsesMethodWithWideCharacterLiteral
+	"Source: foo ^$<emdash>"
+	| src node |
+	src := 'foo ^$', (String with: self emDash).
+	node := RBParser parseMethod: src.
+	self deny: node isNil.
+	self assert: (node selector = #foo)
+%
+
+category: 'tests'
+method: GsRefactoringParseTest
+testParsesMethodWithWideComment
+	"Source: foo <dq>c<emdash>d<dq> ^42  (dq = double quote, so a real comment)."
+	| dq src node |
+	dq := self ch: 34.
+	src := 'foo ', dq, 'c', (String with: self emDash), 'd', dq, ' ^42'.
+	node := RBParser parseMethod: src.
+	self deny: node isNil.
+	self assert: (node selector = #foo)
+%
+
+category: 'tests'
+method: GsRefactoringParseTest
+testParsesMethodWithWideStringLiteral
+	"Source: foo ^<sq>x<emdash>y<sq>  (sq = single quote)."
+	| sq src node |
+	sq := self ch: 39.
+	src := 'foo ^', sq, 'x', (String with: self emDash), 'y', sq.
+	node := RBParser parseMethod: src.
+	self deny: node isNil.
+	self assert: (node selector = #foo)
+%
+
+category: 'tests'
+method: GsRefactoringParseTest
+testWideAndAsciiCommentYieldSameSelector
+	"A wide comment must not change the parse: same method, ASCII vs wide comment,
+	 parses to the same selector."
+	| dq wide ascii |
+	dq := self ch: 34.
+	wide := 'foo ', dq, 'c', (String with: self emDash), 'd', dq, ' ^42'.
+	ascii := 'foo ', dq, 'cxd', dq, ' ^42'.
+	self assert: ((RBParser parseMethod: wide) selector
+		= (RBParser parseMethod: ascii) selector)
+%
+
 category: 'asserting'
 method: GsRenameClassRefactoringTest
 assert: aString includesSubstring: aSubstring
@@ -7535,7 +8338,12 @@ setUp
 	 assignment, a genuine read alongside a shadowing block argument (mixed), a
 	 fully shadowing block argument (blockOnly), a method that touches only the
 	 sibling variable (getOther), a selector spelled like the variable (count),
-	 and a subclass read (doubleCount)."
+	 and a subclass read (doubleCount).
+
+	 makeOne / describe are CLASS-side and cannot touch an instance variable at
+	 all, so no change set will ever mention them; they exist so the apply tests
+	 can prove the class side survives the reshape. Likewise getOther and
+	 subLabel are instance methods no change set mentions."
 	| base sub |
 	super setUp.
 	base := Object
@@ -7558,7 +8366,10 @@ setUp
 	self compile: 'mixed | s | s := count. ^[:count | count + 1] value: s' in: base.
 	self compile: 'blockOnly ^[:count | count * count] value: 3' in: base.
 	self compile: 'getOther ^other' in: base.
-	self compile: 'doubleCount ^count * 2' in: sub
+	self compile: 'doubleCount ^count * 2' in: sub.
+	self compile: 'subLabel ^''sub''' in: sub.
+	self compile: 'makeOne ^self new' in: base class.
+	self compile: 'describe ^''base''' in: sub class
 %
 
 category: 'fixture'
@@ -7708,6 +8519,113 @@ testStagesOneChangePerAffectedMethodPlusClassDefinition
 
 	self assert: recompiles size equals: 5.
 	self assert: (self classDefinitionChangeIn: cs) notNil
+%
+
+category: 'asserting'
+method: GsRenameInstanceVariableRefactoringTest
+assertSelectorsOf: aClass include: selectorArray
+	"Every selector in selectorArray is still installed on aClass. Named
+	 explicitly rather than by count so a failure says WHICH method vanished."
+	selectorArray do: [:sel |
+		self
+			assert: (aClass compiledMethodAt: sel environmentId: 0 otherwise: nil) notNil
+			description: aClass name asString, '>>', sel asString, ' did not survive the apply']
+%
+
+category: 'fixture'
+method: GsRenameInstanceVariableRefactoringTest
+applyRenameCountTo: aName deselected: idArray
+	"Run the whole refactoring -- preview then apply -- and answer the apply
+	 result envelope. Nothing commits."
+	| ref |
+	ref := GsRenameInstanceVariableRefactoring
+		class: self baseFixture
+		renameInstVar: 'count'
+		to: aName.
+	ref changeSet.
+	^ref applyDeselected: idArray
+%
+
+category: 'tests - apply'
+method: GsRenameInstanceVariableRefactoringTest
+testApplyKeepsEveryMethodOnBothSidesOfTheDefiningClass
+	"Reshaping a class creates a new class version whose method dictionary starts
+	 EMPTY, so only what is copied forward survives. The change set names just the
+	 methods that access the variable -- getOther (instance) and makeOne (class
+	 side) appear in no change set, and are exactly what a naive class-definition
+	 recompile destroys."
+	| base |
+	self applyRenameCountTo: 'tally' deselected: #().
+	base := self baseFixture.
+
+	self assertSelectorsOf: base include: #(combine count increment mixed blockOnly getOther).
+	self assertSelectorsOf: base class include: #(makeOne).
+	self assert: (base instVarNames includesIdentical: #tally).
+	self deny: (base instVarNames includesIdentical: #count)
+%
+
+category: 'tests - apply'
+method: GsRenameInstanceVariableRefactoringTest
+testApplyKeepsEveryMethodOnBothSidesOfTheSubclass
+	"The subclass is re-versioned too when its superclass is reshaped, so it needs
+	 the same survival guarantee. subLabel and describe reference nothing."
+	| sub |
+	self applyRenameCountTo: 'tally' deselected: #().
+	sub := self subFixture.
+
+	self assertSelectorsOf: sub include: #(doubleCount subLabel).
+	self assertSelectorsOf: sub class include: #(describe)
+%
+
+category: 'tests - apply'
+method: GsRenameInstanceVariableRefactoringTest
+testApplyRewritesTheAccessingMethodsToTheNewName
+	"Surviving is not enough -- the accessing methods must also carry the new name."
+	| base |
+	self applyRenameCountTo: 'tally' deselected: #().
+	base := self baseFixture.
+
+	self
+		assert: (base compiledMethodAt: #combine environmentId: 0 otherwise: nil) sourceString
+		includesSubstring: 'tally'.
+	self
+		deny: (base compiledMethodAt: #combine environmentId: 0 otherwise: nil) sourceString
+		includesSubstring: 'count'
+%
+
+category: 'tests - apply'
+method: GsRenameInstanceVariableRefactoringTest
+testApplyKeepsTheCategoryOfACarriedForwardMethod
+	"A method copied onto the new class version without its category silently
+	 lands in 'as yet unclassified'. getOther is carried forward, not recompiled."
+	| base |
+	self applyRenameCountTo: 'tally' deselected: #().
+	base := self baseFixture.
+
+	self
+		assert: (base categoryOfSelector: #getOther environmentId: 0) asString
+		equals: 'fixture'
+%
+
+category: 'tests - apply'
+method: GsRenameInstanceVariableRefactoringTest
+testApplyDropsOnlyTheDeselectedMethod
+	"Deselecting an accessing method is a deliberate choice to lose it -- but it
+	 must lose ONLY that method."
+	| ref combineId base |
+	ref := GsRenameInstanceVariableRefactoring
+		class: self baseFixture
+		renameInstVar: 'count'
+		to: 'tally'.
+	combineId := (ref changeSet changes
+		detect: [:c | c kind = #methodRecompile and: [c selector = #combine]]) id.
+
+	ref applyDeselected: (Array with: combineId).
+	base := self baseFixture.
+
+	self assert: (base compiledMethodAt: #combine environmentId: 0 otherwise: nil) isNil.
+	self assertSelectorsOf: base include: #(count increment mixed blockOnly getOther).
+	self assertSelectorsOf: base class include: #(makeOne)
 %
 
 category: 'asserting'

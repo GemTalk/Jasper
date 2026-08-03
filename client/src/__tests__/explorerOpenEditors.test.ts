@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-vi.mock('vscode', () => import('../__mocks__/vscode'));
+vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 import { DirtyDecorationProvider } from '../explorerOpenEditors';
 import { Uri, TabInputText, window } from '../__mocks__/vscode';
 

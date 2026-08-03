@@ -3537,7 +3537,6 @@ export function activate(context: vscode.ExtensionContext) {
         const gsPath = sysadminStorage.getGemstonePath(db.config.version);
         if (gsPath) {
           const ext = process.platform === 'darwin' ? 'dylib' : 'so';
-          const fs = await import('fs');
           const libPath = path.join(gsPath, 'lib', `libgcits-${db.config.version}-64.${ext}`);
           if (fs.existsSync(libPath)) {
             await storage.setGciLibraryPath(db.config.version, libPath);
