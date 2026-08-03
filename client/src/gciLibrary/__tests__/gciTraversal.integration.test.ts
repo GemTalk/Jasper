@@ -23,6 +23,13 @@ describe('GCI object traversal (integration)', () => {
   const TRAVERSAL_COMPLETE = 0;
   /** ...and: more reports are waiting for a GciTsMoreTraversal call. */
   const TRAVERSAL_INCOMPLETE = 1;
+  /**
+   * GciTsMoreTraversal's status: no more reports are waiting. Beware that its
+   * encoding is the inverse of the two above — gcits.hf documents it as
+   * "function result 1 if traversal completed, 0 if data returned but traversal
+   * not complete, -1 if an error was returned in *err".
+   */
+  const MORE_TRAVERSAL_COMPLETE = 1;
 
   const execute = (source: string) =>
     gci.GciTsExecute(session, source, OOP_CLASS_STRING, OOP_ILLEGAL, OOP_NIL, 0, 0);
@@ -31,8 +38,9 @@ describe('GCI object traversal (integration)', () => {
   const bodyText = (report: GciObjReport): string =>
     report.body.toString('utf8', 0, report.valueBuffSize);
 
-  /** The `usedBytes` field of a traversal buffer's header. */
-  const usedBytes = (travBuf: Buffer): number => travBuf.readUInt32LE(4);
+  /** The bytes every report in a traversal buffer carries, as one string. */
+  const travText = (travBuf: Buffer): string =>
+    GciLibrary.parseTravBuffer(travBuf).map(bodyText).join('');
 
   describe('GciTsFetchTraversal', () => {
     it('reports the bytes of the object it traversed', () => {
@@ -63,20 +71,21 @@ describe('GCI object traversal (integration)', () => {
   describe('GciTsMoreTraversal', () => {
     it('returns the reports that did not fit in the first traversal buffer', () => {
       // GCI_MIN_TRAV_BUFF_SIZE is 2048 bytes, of which a 40-byte object report
-      // header is overhead — so a String this long cannot be reported in one go
-      // and needs at least one follow-up call. It may still not fit in the
-      // second buffer either, so we assert only that more bytes came back, not
-      // that the traversal is now complete.
-      const { result: oop } = gci.GciTsNewString(session, 'X'.repeat(4000));
+      // header is overhead — so a String this long is split across exactly two
+      // buffers: 2008 bytes of it in the first, the remaining 1992 in the
+      // second, which the two calls together have to hand back intact.
+      const contents = 'X'.repeat(4000);
+      const { result: oop } = gci.GciTsNewString(session, contents);
       const MIN_TRAV_BUFF_SIZE = 2048;
 
       const first = gci.GciTsFetchTraversal(session, [oop], 1, 0, OOP_NIL, MIN_TRAV_BUFF_SIZE);
+      const rest = gci.GciTsMoreTraversal(session, MIN_TRAV_BUFF_SIZE);
 
       expect(first.err.number).toBe(0);
       expect(first.status).toBe(TRAVERSAL_INCOMPLETE);
-      const rest = gci.GciTsMoreTraversal(session, MIN_TRAV_BUFF_SIZE);
       expect(rest.err.number).toBe(0);
-      expect(usedBytes(rest.travBuf)).toBeGreaterThan(0);
+      expect(rest.status).toBe(MORE_TRAVERSAL_COMPLETE);
+      expect(travText(first.travBuf) + travText(rest.travBuf)).toBe(contents);
     });
   });
 
