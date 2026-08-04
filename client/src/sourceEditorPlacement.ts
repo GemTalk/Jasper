@@ -1,14 +1,13 @@
 import * as vscode from 'vscode';
-import { pickBalancedColumn } from './explorerColumnBalance';
 import { tabInputUri } from './gemstoneFileSystemProvider';
 
 // The `gemstone://` method-source editor is shared: both the old System Browser
 // and the new GemStone Explorer open the same kind of documents into the editor
 // area. Placement, however, must NOT be shared — each browser wants its source
 // in its own region (the System Browser below its webview columns; the Explorer
-// spread across balanced side groups). When both scan the whole window for "any
-// session editor", they steal each other's groups: click a method in the System
-// Browser after using the Explorer and the source lands in the Explorer's
+// in one navigation pane + one side pane). When both scan the whole window for
+// "any session editor", they steal each other's groups: click a method in the
+// System Browser after using the Explorer and the source lands in the Explorer's
 // column instead of below the browser.
 //
 // SourceEditorPlacement disentangles that. Each browser holds its own instance
@@ -63,12 +62,19 @@ export class SourceEditorPlacement {
   }
 
   /**
-   * A balanced side column among THIS browser's editors only, so several source
-   * editors spread across up to `maxColumns` of our own groups instead of
-   * clumping — and without counting (or invading) another browser's groups.
-   * Returns 'new' when a fresh group should be appended.
+   * The one editor group that holds this browser's source editors — the transient
+   * tab and every pinned tab live together here, so they read as one row of tabs.
+   * Undefined until the first open, when the caller uses the active group.
    */
-  balancedColumn(maxColumns = 3): number | 'new' {
-    return pickBalancedColumn(this.ownedColumns(), maxColumns);
+  sourceColumn(): number | undefined {
+    for (const group of vscode.window.tabGroups.all) {
+      if (!group.viewColumn) continue;
+      const holdsOurs = group.tabs.some((tab) => {
+        const uri = tabInputUri(tab)?.toString();
+        return uri !== undefined && this.owned.has(uri);
+      });
+      if (holdsOurs) return group.viewColumn;
+    }
+    return undefined;
   }
 }

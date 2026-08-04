@@ -1019,14 +1019,14 @@
       },
       {
         "command": "gemstone.explorer.openSelectedMethodToSide",
-        "title": "Open Method to the Side",
+        "title": "Pin Method",
         "category": "GemStone"
       },
       {
         "command": "gemstone.explorer.openMethodToSide",
-        "title": "Open Method to the Side",
+        "title": "Pin Method",
         "category": "GemStone",
-        "icon": "$(split-horizontal)"
+        "icon": "$(pin)"
       },
       {
         "command": "gemstoneExplorerDicts.filter",
@@ -1169,27 +1169,27 @@
       },
       {
         "command": "gemstone.explorer.openDefinitionToSide",
-        "title": "Open Class Definition to the Side",
+        "title": "Pin Definition",
         "category": "GemStone",
-        "icon": "$(go-to-file)"
+        "icon": "$(pin)"
       },
       {
         "command": "gemstone.explorer.openComment",
-        "title": "Open Class Comment",
+        "title": "Pin Comment",
         "category": "GemStone",
         "icon": "$(book)"
       },
       {
         "command": "gemstone.explorer.openHierarchyComment",
-        "title": "Open Class Comment",
+        "title": "Pin Comment",
         "category": "GemStone",
         "icon": "$(book)"
       },
       {
         "command": "gemstone.explorer.openHierarchyDefinition",
-        "title": "Open Class Definition",
+        "title": "Pin Definition",
         "category": "GemStone",
-        "icon": "$(go-to-file)"
+        "icon": "$(pin)"
       },
       {
         "command": "gemstone.explorer.classClicked",

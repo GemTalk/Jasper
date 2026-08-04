@@ -86,73 +86,83 @@ const VIEW_METHODS = 'gemstoneExplorerMethods';
 // Panes that support the live filter (the Hierarchy pane doesn't).
 const EXPLORER_VIEWS = [VIEW_DICTS, VIEW_CATEGORIES, VIEW_CLASSES, VIEW_METHODS];
 
-// Open a gemstone:// source document in the editor area. A plain open replaces
-// the active preview tab (keeping focus in the tree for live browsing); an
-// open-to-side pins the editor in a balanced column so several editors spread
-// across a few of OUR groups instead of clumping. `placement` scopes the
-// balancing to editors this Explorer opened, so it doesn't invade the System
-// Browser's group (see sourceEditorPlacement.ts).
-// Exported for unit testing the open-to-side placement (reveal-if-already-open).
+// Open a gemstone:// source document in the editor area. All of this Explorer's
+// source editors live as tabs in ONE group (see NOTES-editor-placement.md), so the
+// transient tab and every pinned tab sit next to each other in one row:
+//   - NAVIGATION (single click): the ONE transient (unpinned) tab, reused — a new
+//     click replaces it; pinned tabs are left alone. Already-open tab → just reveal.
+//   - PIN (the 📌 action): the method becomes a PINNED tab in that same group, added
+//     WITHOUT stealing the view (the tab you were reading stays showing).
+// `placement` scopes this to editors this Explorer opened, so it never invades the
+// System Browser's group (see sourceEditorPlacement.ts).
+// Exported for unit testing the placement rules.
 export async function openGemstoneDocument(
   doc: vscode.TextDocument,
   toSide: boolean,
   placement: SourceEditorPlacement,
 ): Promise<void> {
+  const uriStr = doc.uri.toString();
+  const sourceColumn = placement.sourceColumn();
+  const targetColumn = sourceColumn ?? vscode.ViewColumn.Active;
+
   if (!toSide) {
-    // A preview tab (preview: true) would be the natural "one throwaway editor"
-    // for single-click navigation, but opening a preview makes VS Code's tree list
-    // re-reveal its focused row — the in-place preview swap briefly pulls focus off
-    // the tree — which scrolls the pane out from under the click (worse the more
-    // you've scrolled). So open a normal tab with focus kept in the tree, and keep
-    // just ONE such tab: the next single-click closes the previous one, unless it's
-    // pinned or has unsaved edits (exactly when a preview would have promoted itself
-    // to a permanent tab). Same "no pileup", no scroll jump.
+    // NAVIGATION. If the method is already a tab in our group (transient or pinned),
+    // reveal it — no duplicate, and pinned tabs stay pinned. (A real tab, not
+    // preview:true, because a preview swap scrolls the Methods tree.)
+    if (sourceColumn !== undefined && columnHoldsUri(sourceColumn, uriStr)) {
+      await vscode.window.showTextDocument(doc, {
+        viewColumn: sourceColumn,
+        preview: false,
+        preserveFocus: true,
+      });
+      return;
+    }
+    // Otherwise open it as the ONE transient tab, replacing the previous transient
+    // (unless it's pinned or dirty). Pinned tabs are untouched.
     const previous = placement.reusableTab;
     await vscode.window.showTextDocument(doc, {
-      viewColumn: vscode.ViewColumn.Active,
+      viewColumn: targetColumn,
       preview: false,
       preserveFocus: true,
     });
     placement.remember(doc.uri);
-    placement.reusableTab = doc.uri.toString();
-    if (previous && previous !== doc.uri.toString()) closeDisposableTab(previous);
+    placement.reusableTab = uriStr;
+    if (previous && previous !== uriStr) closeDisposableTab(previous);
     return;
   }
-  // Already open somewhere? Reveal that editor instead of opening a second copy.
-  // Opening the same method to the side repeatedly used to pile up duplicate
-  // same-URI editors across balanced groups, which don't track cleanly in the
-  // Open Editors view (and comparing a method against itself isn't useful).
-  const uriStr = doc.uri.toString();
-  for (const group of vscode.window.tabGroups.all) {
-    if (group.tabs.some((tab) => tabInputUri(tab)?.toString() === uriStr)) {
-      await vscode.window.showTextDocument(doc, {
-        viewColumn: group.viewColumn,
-        preview: false,
-        preserveFocus: false,
-      });
-      placement.remember(doc.uri);
-      return;
-    }
-  }
-  const target = placement.balancedColumn();
-  if (target === 'new') {
-    // Append a fresh group at the far right: focus the last group first so
-    // Beside lands to its right. (A numeric column past the end is treated as
-    // "beside the active group", which isn't reliably the rightmost.)
-    await vscode.commands.executeCommand('workbench.action.focusLastEditorGroup');
-    await vscode.window.showTextDocument(doc, {
-      viewColumn: vscode.ViewColumn.Beside,
-      preview: false,
-      preserveFocus: false,
-    });
-  } else {
-    await vscode.window.showTextDocument(doc, {
-      viewColumn: target,
-      preview: false,
-      preserveFocus: false,
-    });
-  }
+
+  // PIN. Bring the method into our group and pin it, WITHOUT stealing the view: note
+  // what's showing, add + pin the tab, then restore what was showing so a new pin
+  // just parks a background tab beside the one you're reading. Pinning the method
+  // that's currently the transient simply promotes it to a pinned tab.
+  const showing = sourceColumn !== undefined ? activeUriInColumn(sourceColumn) : undefined;
+  await vscode.window.showTextDocument(doc, {
+    viewColumn: targetColumn,
+    preview: false,
+    preserveFocus: false,
+  });
+  await vscode.commands.executeCommand('workbench.action.pinEditor');
   placement.remember(doc.uri);
+  if (placement.reusableTab === uriStr) placement.reusableTab = undefined;
+  if (sourceColumn !== undefined && showing !== undefined && showing !== uriStr) {
+    await vscode.window.showTextDocument(vscode.Uri.parse(showing), {
+      viewColumn: sourceColumn,
+      preview: false,
+      preserveFocus: true,
+    });
+  }
+}
+
+// The URI showing in a given view-column's group (its active tab), or undefined.
+function activeUriInColumn(column: number): string | undefined {
+  const group = vscode.window.tabGroups.all.find((g) => g.viewColumn === column);
+  return group?.activeTab ? tabInputUri(group.activeTab)?.toString() : undefined;
+}
+
+// Does the group in this view-column currently hold a tab for this URI?
+function columnHoldsUri(column: number, uriStr: string): boolean {
+  const group = vscode.window.tabGroups.all.find((g) => g.viewColumn === column);
+  return group?.tabs.some((tab) => tabInputUri(tab)?.toString() === uriStr) ?? false;
 }
 
 // Close the single reusable source tab a prior single-click opened, but only if
@@ -430,7 +440,7 @@ export class MethodItem extends vscode.TreeItem {
     const arg = encodeURIComponent(JSON.stringify([{ selector: info.selector, isMeta }]));
     const cmd = (id: string) => `command:gemstone.explorer.${id}?${arg}`;
 
-    const lines = ['Click to open · $(split-horizontal) opens to the side'];
+    const lines = ['Click to open · $(pin) pins it to the side'];
     lines.push(`[Implementors](${cmd('implementorsOf')}) · [Senders](${cmd('sendersOf')})`);
     if (info.overrideBits & 1) {
       lines.push(
@@ -3242,6 +3252,9 @@ export class ExplorerController {
       preview: true,
     });
     this.placement.remember(uri);
+    // Count the new-method template as the navigation editor, not a side pane, so
+    // "open to the side" doesn't mistake its group for the side group.
+    this.placement.reusableTab = uri.toString();
   }
 
   // After a method compiles on the class we're showing, select a just-created

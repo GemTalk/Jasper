@@ -3,144 +3,202 @@ vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
 import type * as vscode from 'vscode';
 import { openGemstoneDocument } from '../gemstoneExplorer';
-import type { SourceEditorPlacement } from '../sourceEditorPlacement';
+import { SourceEditorPlacement } from '../sourceEditorPlacement';
 import { Uri, TabInputText, ViewColumn, window, commands } from '../__mocks__/vscode';
 
 const SOURCE = 'gemstone://1/UserGlobals/M2Demo/instance/inline-demos/twiceAtom';
+const NAV = 'gemstone://1/UserGlobals/M2Demo/instance/inline-demos/nav';
+const SIDE = 'gemstone://1/UserGlobals/M2Demo/instance/inline-demos/side';
 
 function methodDoc(uriString = SOURCE): vscode.TextDocument {
   return { uri: Uri.parse(uriString) } as unknown as vscode.TextDocument;
 }
 
-// A placement whose column choice is fixed, so the test controls which branch of
-// the "not already open" path runs without exercising the real balancing logic.
-function stubPlacement(choice: number | 'new'): SourceEditorPlacement {
-  return {
-    remember: vi.fn(),
-    balancedColumn: vi.fn(() => choice),
-  } as unknown as SourceEditorPlacement;
-}
-
-function openTabInGroup(uriString: string, viewColumn: number): void {
-  window.tabGroups.all = [
-    { viewColumn, tabs: [{ input: new TabInputText(Uri.parse(uriString)) }] },
-  ];
+function setGroups(
+  groups: {
+    viewColumn?: number;
+    tabs: { uri: string; isDirty?: boolean; isPinned?: boolean; active?: boolean }[];
+  }[],
+): void {
+  window.tabGroups.all = groups.map((g) => {
+    const tabs = g.tabs.map((t) => ({
+      input: new TabInputText(Uri.parse(t.uri)),
+      isDirty: t.isDirty,
+      isPinned: t.isPinned,
+    }));
+    const activeIndex = g.tabs.findIndex((t) => t.active);
+    return {
+      viewColumn: g.viewColumn,
+      activeTab: activeIndex >= 0 ? tabs[activeIndex] : undefined,
+      tabs,
+    };
+  });
 }
 
 const showTextDocument = window.showTextDocument as ReturnType<typeof vi.fn>;
 const executeCommand = commands.executeCommand as ReturnType<typeof vi.fn>;
 const closeTab = window.tabGroups.close as ReturnType<typeof vi.fn>;
 
-const OTHER = 'gemstone://1/UserGlobals/M2Demo/instance/inline-demos/other';
-
-describe('openGemstoneDocument — open to side', () => {
+describe('openGemstoneDocument', () => {
   beforeEach(() => {
-    window.tabGroups.all = [];
-    showTextDocument.mockClear();
-    executeCommand.mockClear();
-  });
-
-  afterEach(() => {
     window.tabGroups.all = [];
     vi.clearAllMocks();
   });
-
-  it('reveals the existing editor when the method is already open, without duplicating it', async () => {
-    openTabInGroup(SOURCE, ViewColumn.Two);
-    const placement = stubPlacement('new');
-
-    await openGemstoneDocument(methodDoc(), true, placement);
-
-    expect(placement.balancedColumn).not.toHaveBeenCalled();
-    expect(executeCommand).not.toHaveBeenCalled();
-    expect(showTextDocument).toHaveBeenCalledTimes(1);
-    expect(showTextDocument).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ viewColumn: ViewColumn.Two, preview: false }),
-    );
+  afterEach(() => {
+    window.tabGroups.all = [];
   });
 
-  it('ignores an open editor for a different method and opens a new one', async () => {
-    openTabInGroup('gemstone://1/UserGlobals/M2Demo/instance/inline-demos/other', ViewColumn.Two);
-    const placement = stubPlacement(ViewColumn.Three);
+  describe('single-click navigation', () => {
+    it('opens one transient tab in the active group, keeping focus in the tree', async () => {
+      const placement = new SourceEditorPlacement();
 
-    await openGemstoneDocument(methodDoc(), true, placement);
+      await openGemstoneDocument(methodDoc(), false, placement);
 
-    expect(placement.balancedColumn).toHaveBeenCalled();
-    expect(showTextDocument).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ viewColumn: ViewColumn.Three, preview: false }),
-    );
+      expect(showTextDocument).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          viewColumn: ViewColumn.Active,
+          preview: false,
+          preserveFocus: true,
+        }),
+      );
+      expect(placement.reusableTab).toBe(SOURCE);
+    });
+
+    it('opens the transient tab in the group that already holds our editors', async () => {
+      const placement = new SourceEditorPlacement();
+      placement.remember(Uri.parse(NAV));
+      placement.reusableTab = NAV;
+      setGroups([{ viewColumn: 2, tabs: [{ uri: NAV, active: true }] }]);
+
+      await openGemstoneDocument(methodDoc(), false, placement);
+
+      expect(showTextDocument).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ viewColumn: 2, preview: false, preserveFocus: true }),
+      );
+    });
+
+    it('reveals a method already open in our group instead of duplicating it', async () => {
+      const placement = new SourceEditorPlacement();
+      placement.remember(Uri.parse(NAV));
+      placement.remember(Uri.parse(SOURCE));
+      placement.reusableTab = NAV;
+      setGroups([
+        {
+          viewColumn: 2,
+          tabs: [
+            { uri: NAV, active: true },
+            { uri: SOURCE, isPinned: true },
+          ],
+        },
+      ]);
+
+      await openGemstoneDocument(methodDoc(), false, placement);
+
+      expect(showTextDocument).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ viewColumn: 2, preview: false, preserveFocus: true }),
+      );
+      // The transient wasn't replaced and nothing was closed.
+      expect(placement.reusableTab).toBe(NAV);
+      expect(closeTab).not.toHaveBeenCalled();
+    });
+
+    it('closes the previous transient so browsing does not pile up tabs', async () => {
+      const placement = new SourceEditorPlacement();
+      placement.remember(Uri.parse(NAV));
+      placement.reusableTab = NAV;
+      setGroups([{ viewColumn: 2, tabs: [{ uri: NAV, active: true }] }]);
+
+      await openGemstoneDocument(methodDoc(), false, placement);
+
+      expect(closeTab).toHaveBeenCalledTimes(1);
+      expect(placement.reusableTab).toBe(SOURCE);
+    });
+
+    it('keeps the previous transient when it has unsaved edits', async () => {
+      const placement = new SourceEditorPlacement();
+      placement.remember(Uri.parse(NAV));
+      placement.reusableTab = NAV;
+      setGroups([{ viewColumn: 2, tabs: [{ uri: NAV, isDirty: true, active: true }] }]);
+
+      await openGemstoneDocument(methodDoc(), false, placement);
+
+      expect(closeTab).not.toHaveBeenCalled();
+    });
   });
 
-  it('appends a fresh group when nothing is open and balancing asks for a new column', async () => {
-    const placement = stubPlacement('new');
+  describe('pin', () => {
+    it('pins the method as a tab in our group', async () => {
+      const placement = new SourceEditorPlacement();
+      placement.remember(Uri.parse(NAV));
+      placement.reusableTab = NAV;
+      setGroups([{ viewColumn: 2, tabs: [{ uri: NAV, active: true }] }]);
 
-    await openGemstoneDocument(methodDoc(), true, placement);
+      await openGemstoneDocument(methodDoc(), true, placement);
 
-    expect(executeCommand).toHaveBeenCalledWith('workbench.action.focusLastEditorGroup');
-    expect(showTextDocument).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ viewColumn: ViewColumn.Beside, preview: false }),
-    );
-  });
+      expect(showTextDocument).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ viewColumn: 2, preview: false, preserveFocus: false }),
+      );
+      expect(executeCommand).toHaveBeenCalledWith('workbench.action.pinEditor');
+    });
 
-  it('opens a single-click method as a reusable non-preview tab in the active column, keeping focus in the tree', async () => {
-    const placement = stubPlacement('new');
+    it('adds a new pin without stealing the view from the method being read', async () => {
+      const placement = new SourceEditorPlacement();
+      placement.remember(Uri.parse(NAV));
+      placement.remember(Uri.parse(SIDE));
+      placement.reusableTab = NAV;
+      setGroups([
+        { viewColumn: 2, tabs: [{ uri: NAV }, { uri: SIDE, isPinned: true, active: true }] },
+      ]);
 
-    await openGemstoneDocument(methodDoc(), false, placement);
+      await openGemstoneDocument(methodDoc(), true, placement);
 
-    expect(showTextDocument).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        viewColumn: ViewColumn.Active,
-        preview: false,
-        preserveFocus: true,
-      }),
-    );
-    expect(placement.reusableTab).toBe(SOURCE);
-  });
+      expect(showTextDocument).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ viewColumn: 2, preview: false, preserveFocus: false }),
+      );
+      expect(executeCommand).toHaveBeenCalledWith('workbench.action.pinEditor');
+      // Restores the previously-visible tab (SIDE), so the new pin parks in the
+      // background rather than switching what you're reading.
+      const restore = showTextDocument.mock.calls.find((c) => c[1]?.preserveFocus === true);
+      expect(restore).toBeDefined();
+      expect(String(restore?.[0])).toBe(SIDE);
+      expect(restore?.[1]).toMatchObject({ viewColumn: 2 });
+    });
 
-  it('closes the previous single-click tab when navigating to another method, so tabs do not pile up', async () => {
-    window.tabGroups.all = [
-      { viewColumn: ViewColumn.Two, tabs: [{ input: new TabInputText(Uri.parse(OTHER)) }] },
-    ];
-    const placement = stubPlacement('new');
-    placement.reusableTab = OTHER;
+    it('promotes the transient method to a pinned tab and frees the transient slot', async () => {
+      const placement = new SourceEditorPlacement();
+      placement.remember(Uri.parse(SOURCE));
+      placement.reusableTab = SOURCE;
+      setGroups([{ viewColumn: 2, tabs: [{ uri: SOURCE, active: true }] }]);
 
-    await openGemstoneDocument(methodDoc(), false, placement);
+      await openGemstoneDocument(methodDoc(), true, placement);
 
-    expect(closeTab).toHaveBeenCalledTimes(1);
-    expect(placement.reusableTab).toBe(SOURCE);
-  });
+      expect(executeCommand).toHaveBeenCalledWith('workbench.action.pinEditor');
+      expect(placement.reusableTab).toBeUndefined();
+      // The pinned method was already the visible one, so nothing is restored.
+      expect(showTextDocument.mock.calls.filter((c) => c[1]?.preserveFocus === true)).toHaveLength(
+        0,
+      );
+    });
 
-  it('keeps the previous single-click tab open when it has unsaved edits', async () => {
-    window.tabGroups.all = [
-      {
-        viewColumn: ViewColumn.Two,
-        tabs: [{ input: new TabInputText(Uri.parse(OTHER)), isDirty: true }],
-      },
-    ];
-    const placement = stubPlacement('new');
-    placement.reusableTab = OTHER;
+    it('opens the first pin in the active group when nothing is open yet', async () => {
+      const placement = new SourceEditorPlacement();
 
-    await openGemstoneDocument(methodDoc(), false, placement);
+      await openGemstoneDocument(methodDoc(), true, placement);
 
-    expect(closeTab).not.toHaveBeenCalled();
-  });
-
-  it('keeps the previous single-click tab open when the user pinned it', async () => {
-    window.tabGroups.all = [
-      {
-        viewColumn: ViewColumn.Two,
-        tabs: [{ input: new TabInputText(Uri.parse(OTHER)), isPinned: true }],
-      },
-    ];
-    const placement = stubPlacement('new');
-    placement.reusableTab = OTHER;
-
-    await openGemstoneDocument(methodDoc(), false, placement);
-
-    expect(closeTab).not.toHaveBeenCalled();
+      expect(showTextDocument).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          viewColumn: ViewColumn.Active,
+          preview: false,
+          preserveFocus: false,
+        }),
+      );
+      expect(executeCommand).toHaveBeenCalledWith('workbench.action.pinEditor');
+    });
   });
 });

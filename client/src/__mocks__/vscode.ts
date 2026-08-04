@@ -315,6 +315,7 @@ export const window = {
   tabGroups: {
     all: [] as {
       viewColumn?: number;
+      activeTab?: { input: unknown; isDirty?: boolean; isPinned?: boolean };
       tabs: { input: unknown; isDirty?: boolean; isPinned?: boolean }[];
     }[],
     close: vi.fn(),
