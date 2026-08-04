@@ -488,7 +488,9 @@ type MethodNode = MethodSideItem | MethodCategoryItem | MethodItem;
 // ── Hierarchy pane ───────────────────────────────────────────────────────────
 // Shows the selected class's lineage: superclasses (root-first) → the class
 // itself → its immediate subclasses. Clicking any row navigates to that class.
-class HierarchyItem extends vscode.TreeItem {
+// Exported so the Explorer controller tests can construct a genuine hierarchy-node item — the
+// insert/extract-superclass handlers branch on `instanceof HierarchyItem` to resolve the dictionary.
+export class HierarchyItem extends vscode.TreeItem {
   constructor(
     public readonly className: string,
     public readonly dictName: string,
