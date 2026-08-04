@@ -1,0 +1,19 @@
+import { describe, it } from 'vitest';
+
+const isSupportedPosixPlatform = process.platform === 'linux' || process.platform === 'darwin';
+
+/**
+ * Wraps a `describe` block that only makes sense on a POSIX platform we've
+ * validated socket behavior on (Linux/macOS), e.g. behavior backed by real
+ * Unix domain sockets or filesystem paths that have no equivalent on Windows
+ * named pipes. This is an allow-list, not a POSIX-detection check: other
+ * POSIX platforms (freebsd, aix, sunos, ...) are deliberately excluded
+ * because we haven't validated socket behavior there, not because they
+ * aren't POSIX. Runs the block's tests normally on Linux/macOS; reports them
+ * as skipped elsewhere.
+ */
+export const onSupportedPosixDescribe: ReturnType<typeof describe.runIf> =
+  describe.runIf(isSupportedPosixPlatform);
+
+/** Same as {@link onSupportedPosixDescribe}, for a single `it` rather than a whole block. */
+export const onSupportedPosixIt: ReturnType<typeof it.runIf> = it.runIf(isSupportedPosixPlatform);

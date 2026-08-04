@@ -18,6 +18,15 @@ import * as vscode from 'vscode';
 
 const IDENTIFIER = /[A-Za-z_][A-Za-z0-9_]*/;
 
+// Sub-kinds of Refactor. VS Code's "Refactor…" menu separates actions into groups
+// by the segment after `refactor.`, so tagging each action gives the family clean
+// separators (Extract | Inline | Rename | other rewrites) instead of one flat list.
+// Actions are emitted grouped by kind (see below) so each group stays contiguous.
+const EXTRACT = vscode.CodeActionKind.Refactor.append('extract');
+const INLINE = vscode.CodeActionKind.Refactor.append('inline');
+const RENAME = vscode.CodeActionKind.Refactor.append('rename');
+const REWRITE = vscode.CodeActionKind.Refactor.append('rewrite');
+
 export class RefactorCodeActionProvider implements vscode.CodeActionProvider {
   static readonly providedCodeActionKinds = [vscode.CodeActionKind.Refactor];
 
@@ -26,47 +35,53 @@ export class RefactorCodeActionProvider implements vscode.CodeActionProvider {
     range: vscode.Range | vscode.Selection,
   ): vscode.CodeAction[] {
     const actions: vscode.CodeAction[] = [];
-    const action = (title: string, command: string, args?: unknown[]): vscode.CodeAction => {
-      const a = new vscode.CodeAction(title, vscode.CodeActionKind.Refactor);
+    const action = (
+      kind: vscode.CodeActionKind,
+      title: string,
+      command: string,
+      args?: unknown[],
+    ): void => {
+      const a = new vscode.CodeAction(title, kind);
       a.command = { command, title, arguments: args };
-      return a;
+      actions.push(a);
     };
+    // Cursor-on-identifier refactorings act on the exact token here (each is passed
+    // the position it was offered at); whichever doesn't apply declines with a reason.
+    const onIdentifier = document.getWordRangeAtPosition(range.start, IDENTIFIER) !== undefined;
 
-    // Extractions need a selection (the code to extract); the commands read the
+    // Extract group — needs a selection (the code to extract); the commands read the
     // editor selection, so no position argument is passed.
     if (!range.isEmpty) {
-      actions.push(action('Extract Method…', 'gemstone.explorer.extractMethod'));
-      actions.push(action('Extract Temporary…', 'gemstone.explorer.extractTemporary'));
+      action(EXTRACT, 'Extract Method…', 'gemstone.explorer.extractMethod');
+      action(EXTRACT, 'Extract Temporary…', 'gemstone.explorer.extractTemporary');
     }
 
-    // Cursor-on-identifier refactorings. Each is passed the exact position the action
-    // was offered at, so it acts on the token here rather than wherever the editor
-    // selection happens to be. Whichever doesn't apply declines with a reason.
-    if (document.getWordRangeAtPosition(range.start, IDENTIFIER)) {
-      actions.push(action('Rename Temporary/Argument…', 'gemstone.renameTemporary', [range.start]));
-      actions.push(
-        action('Rename Instance Variable…', 'gemstone.renameInstVarAtCursor', [range.start]),
-      );
-      actions.push(
-        action('Rename Class Variable…', 'gemstone.renameClassVarAtCursor', [range.start]),
-      );
-      actions.push(action('Inline Method…', 'gemstone.explorer.inlineMethod', [range.start]));
-      actions.push(action('Inline Temporary…', 'gemstone.explorer.inlineTemporary', [range.start]));
-      actions.push(
-        action('Convert Temporary to Instance Variable…', 'gemstone.convertTempToInstVar', [
-          range.start,
-        ]),
-      );
+    // Inline group — on an identifier at the cursor.
+    if (onIdentifier) {
+      action(INLINE, 'Inline Method…', 'gemstone.explorer.inlineMethod', [range.start]);
+      action(INLINE, 'Inline Temporary…', 'gemstone.explorer.inlineTemporary', [range.start]);
     }
 
-    // "Rename Method…" targets the method being edited (or a sent selector at the
-    // position), so it is offered anywhere in the editor. "Change Method Signature…"
-    // targets the edited method's OWN signature (no selection needed), so it too is
+    // Rename group — the cursor renames (on an identifier), then "Rename Method…",
+    // which targets the edited method (or a sent selector at the position) and so is
     // offered anywhere.
-    actions.push(action('Rename Method…', 'gemstone.renameMethodInEditor', [range.start]));
-    actions.push(
-      action('Change Method Signature…', 'gemstone.changeMethodSignature', [range.start]),
-    );
+    if (onIdentifier) {
+      action(RENAME, 'Rename Temporary/Argument…', 'gemstone.renameTemporary', [range.start]);
+      action(RENAME, 'Rename Instance Variable…', 'gemstone.renameInstVarAtCursor', [range.start]);
+      action(RENAME, 'Rename Class Variable…', 'gemstone.renameClassVarAtCursor', [range.start]);
+    }
+    action(RENAME, 'Rename Method…', 'gemstone.renameMethodInEditor', [range.start]);
+
+    // Other rewrites — promote a temp (on an identifier), then "Change Method
+    // Signature…", which targets the edited method's own signature and is offered
+    // anywhere.
+    if (onIdentifier) {
+      action(REWRITE, 'Convert Temporary to Instance Variable…', 'gemstone.convertTempToInstVar', [
+        range.start,
+      ]);
+    }
+    action(REWRITE, 'Change Method Signature…', 'gemstone.changeMethodSignature', [range.start]);
+
     return actions;
   }
 }

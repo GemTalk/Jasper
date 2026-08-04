@@ -75,6 +75,10 @@ export function showInlineTemporaryPanel(
     };
 
     let loading = false;
+    // Apply is one-shot per panel: `handlers.apply` performs the change set server-side, so a
+    // second dispatch (a double-click on Apply, or a replayed webview message) would apply it a
+    // second time. Cleared only in the catch below, which leaves the panel open for a retry.
+    let applying = false;
     panel.webview.onDidReceiveMessage((message) => {
       void (async () => {
         try {
@@ -97,6 +101,8 @@ export function showInlineTemporaryPanel(
               loading = false;
             }
           } else if (message?.command === 'apply') {
+            if (applying) return;
+            applying = true;
             const result = await handlers.apply();
             finish(result);
           } else if (message?.command === 'cancel') {
@@ -104,6 +110,7 @@ export function showInlineTemporaryPanel(
           }
         } catch (e: unknown) {
           loading = false;
+          applying = false;
           const msg = e instanceof Error ? e.message : String(e);
           void vscode.window.showErrorMessage(`Inline preview: ${msg}`);
           void panel.webview.postMessage({ command: 'busyDone' });

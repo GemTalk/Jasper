@@ -29,8 +29,9 @@ export interface InstVarChange {
   newSource: string;
 }
 
-/** A method that will not recompile onto the new class version (it references the
- *  removed variable) and will be dropped. */
+/** A method that will not recompile onto the new class version and will be dropped —
+ *  either because it references the variable being REMOVED, or because it declares a
+ *  method temporary/argument that the variable being ADDED would shadow. */
 export interface BrokenMethod {
   className: string;
   selector: string;
@@ -42,6 +43,10 @@ export interface InstVarOutOfScope {
   willNotRecompile: BrokenMethod[];
   actedOnClass: string | null;
   note: string | null;
+  /** `System needsCommit` when the preview was built: the session already holds OTHER
+   *  uncommitted work. The committing options commit the whole session transaction, so
+   *  that work would ride along — the commit confirmation says so when this is true. */
+  sessionHasUncommittedChanges: boolean;
 }
 
 export interface PreviewPage {
@@ -64,6 +69,10 @@ export interface ApplyResult {
   dropped: BrokenMethod[];
   committed: boolean;
   error?: string;
+  /** Set when a change failed: true if earlier changes were already staged, so the
+   *  transaction now holds a PARTIAL reshape. The engine never aborts (that would discard
+   *  the user's other in-flight work), so this is what the client's abort advice keys on. */
+  partiallyApplied?: boolean;
 }
 
 export interface InstVarAnalysis {
@@ -128,6 +137,8 @@ function parseOutOfScope(raw: unknown): InstVarOutOfScope {
     willNotRecompile: parseBroken(oos.willNotRecompile),
     actedOnClass: typeof oos.actedOnClass === 'string' ? oos.actedOnClass : null,
     note: typeof oos.note === 'string' ? oos.note : null,
+    // Absent (an older engine) reads as false: no warning rather than a false alarm.
+    sessionHasUncommittedChanges: oos.sessionHasUncommittedChanges === true,
   };
 }
 
@@ -199,7 +210,73 @@ export function parseApplyResult(json: string): ApplyResult {
     dropped: parseBroken(env.dropped),
     committed: env.committed === true,
     error: typeof env.error === 'string' ? env.error : undefined,
+    // Only meaningful alongside a failure; absent (an older engine) stays undefined so the
+    // caller falls back to the conservative "abort it yourself" advice.
+    partiallyApplied: typeof env.partiallyApplied === 'boolean' ? env.partiallyApplied : undefined,
   };
+}
+
+/** A failure to surface in the preview panel instead of applying. `canAbort` is true when a
+ *  partial reshape is stranded in the transaction, so the panel offers an in-place abort. */
+export interface ApplyFailure {
+  message: string;
+  canAbort: boolean;
+}
+
+/** Interpret an apply result for display. Returns null on success (something applied, nothing
+ *  failed, no whole-apply error); otherwise the failure to show in the panel. The panel aborts
+ *  directly (no second confirmation), so when the session also holds the user's other
+ *  uncommitted work the message spells out that an abort discards that too.
+ *
+ *  The engine stops at the first failure and never aborts on its own — aborting would throw away
+ *  whatever the user had in flight before starting — so a partial reshape is left in the
+ *  transaction for the user to abort or keep. */
+export function describeApplyFailure(
+  result: ApplyResult,
+  sessionHasUncommittedChanges: boolean,
+): ApplyFailure | null {
+  // A whole-apply error — in practice an expired preview token — answers applied:0 with an empty
+  // `failed`, so it parses cleanly. Nothing was staged, so there is nothing to abort.
+  if (result.error) {
+    return { message: result.error, canAbort: false };
+  }
+  if (result.failed.length > 0) {
+    const first = result.failed[0];
+    // Trust the engine's `partiallyApplied`; an older engine omits it, so fall back to the
+    // applied count — 0 applied is direct evidence that nothing was staged.
+    const staged = result.partiallyApplied ?? result.applied > 0;
+    const reason = `Failed: ${first.label}: ${first.error}.`;
+    if (!staged) {
+      return { message: `${reason} Nothing was applied.`, canAbort: false };
+    }
+    const one = result.applied === 1;
+    const count = `${result.applied} class${one ? '' : 'es'}`;
+    if (result.committed) {
+      // The structural change was committed BEFORE the failing step (a migrate / delete-history
+      // step that raised after the commit). It is permanent — an abort cannot undo a commit — so
+      // do not offer one; say what stuck and that the follow-up step is what failed. (Without this
+      // branch the "aborting discards them" wording below would be a lie for the committed case.)
+      return {
+        message:
+          `${reason} ${count} ${one ? 'was' : 'were'} already versioned and committed, so an` +
+          ` abort cannot undo the change; the failure came from the migrate / delete-history step.` +
+          ` Check the stone before retrying.`,
+        canAbort: false,
+      };
+    }
+    const left = `${count} ${one ? 'was' : 'were'} already versioned and ${one ? 'remains' : 'remain'} in your transaction.`;
+    const cost = sessionHasUncommittedChanges
+      ? ` Aborting the transaction discards ${one ? 'it' : 'them'} AND every other uncommitted` +
+        ' change in this session.'
+      : ` The change is all-or-nothing, so aborting the transaction discards ${one ? 'it' : 'them'}.`;
+    return { message: `${reason} ${left}${cost}`, canAbort: true };
+  }
+  // No error and nothing failed, but nothing applied either — the panel only opens with
+  // total > 0 and every change is required, so this is still not a success.
+  if (result.applied === 0) {
+    return { message: 'Nothing was applied.', canAbort: false };
+  }
+  return null;
 }
 
 /** A human label for a preview row: "Class — edited" or "Class — recompiled". */

@@ -188,6 +188,15 @@ export async function beginChangeSignature(
   });
   if (!result) return false; // cancelled/closed
 
+  // A whole-apply error (an expired preview token) answers `applied:0` with an empty
+  // `failed`, so it parses cleanly. Reported before `onApplied` below: the selector never
+  // changed, so refreshing/reopening editors on the new selector would be wrong. Nothing
+  // was applied, so no abort advice.
+  if (result.error) {
+    void vscode.window.showErrorMessage(`Change signature failed: ${result.error}`);
+    return false;
+  }
+
   await deps.onApplied(oldSelector, newSelector);
 
   if (result.failed.length > 0) {

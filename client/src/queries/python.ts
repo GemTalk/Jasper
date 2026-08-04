@@ -59,6 +59,16 @@ scopes ifNotNil: [scopes removeKey: '${escScope}' ifAbsent: []].
   return execute(code);
 }
 
+// Probe for Grail's presence: mirrors the same dispatcher lookup the queries
+// above do internally, so tests can gate on the same condition that decides
+// whether evalPython/compilePython run the real path or emit GRAIL_HINT.
+export function isGrailInstalled(execute: QueryExecutor): boolean {
+  return (
+    execute(`(System myUserProfile symbolList objectNamed: #'ModuleAst') notNil printString`) ===
+    'true'
+  );
+}
+
 // Transpile a Python source string to Smalltalk via Grail and return the
 // generated Smalltalk source verbatim. Useful for inspecting codegen output
 // without actually running the code (and as an end-to-end check on the

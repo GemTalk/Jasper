@@ -86,43 +86,43 @@ describe('SourceEditorPlacement', () => {
     });
   });
 
-  describe('balancedColumn', () => {
-    it('asks for a new group while it owns fewer than the cap', () => {
+  describe('sourceColumn', () => {
+    it('is undefined when none of our editors are open', () => {
       const placement = new SourceEditorPlacement();
-      const uri = gemUri('Globals/A/instance/x/one');
-      placement.remember(uri);
-      setGroups([{ viewColumn: 1, uris: [uri] }]);
+      setGroups([{ viewColumn: 1, uris: [gemUri('other')] }]);
 
-      expect(placement.balancedColumn(3)).toBe('new');
+      expect(placement.sourceColumn()).toBeUndefined();
     });
 
-    it('reuses its least-full owned column once the cap is reached', () => {
+    it('reports the group holding our editors', () => {
       const placement = new SourceEditorPlacement();
-      const a = gemUri('A'),
-        b = gemUri('B'),
-        c = gemUri('C'),
-        d = gemUri('D');
-      [a, b, c, d].forEach((u) => placement.remember(u));
-      setGroups([
-        { viewColumn: 1, uris: [a, b] },
-        { viewColumn: 2, uris: [c] },
-        { viewColumn: 3, uris: [d] },
-      ]);
+      const nav = gemUri('nav');
+      const pinned = gemUri('pinned');
+      [nav, pinned].forEach((u) => placement.remember(u));
+      setGroups([{ viewColumn: 2, uris: [nav, pinned] }]);
 
-      expect(placement.balancedColumn(3)).toBe(2);
+      expect(placement.sourceColumn()).toBe(2);
     });
 
-    it("does not count another browser's columns toward the balance", () => {
+    it('ignores a foreign editor', () => {
       const placement = new SourceEditorPlacement();
-      const mine = gemUri('mine');
-      placement.remember(mine);
+      const nav = gemUri('nav');
+      placement.remember(nav);
       setGroups([
-        { viewColumn: 1, uris: [mine] },
-        { viewColumn: 2, uris: [gemUri('foreign-a')] },
-        { viewColumn: 3, uris: [gemUri('foreign-b')] },
+        { viewColumn: 1, uris: [gemUri('foreign')] },
+        { viewColumn: 2, uris: [nav] },
       ]);
 
-      expect(placement.balancedColumn(3)).toBe('new');
+      expect(placement.sourceColumn()).toBe(2);
+    });
+
+    it('finds our editor on the modified side of a diff tab', () => {
+      const placement = new SourceEditorPlacement();
+      const modified = gemUri('Globals/Array/instance/x/y%20(session%20override)');
+      placement.remember(modified);
+      setGroups([{ viewColumn: 3, uris: [{ original: gemUri('base'), modified }] }]);
+
+      expect(placement.sourceColumn()).toBe(3);
     });
   });
 });
