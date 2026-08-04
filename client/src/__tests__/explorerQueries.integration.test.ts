@@ -19,8 +19,7 @@ import type { ActiveSession } from '../sessionManager';
  * throwaway class/dictionary created inside the same transaction, so they never
  * mutate kernel classes and any GemStone user can run them.
  *
- * Runs across the whole `npm run test:server:start` matrix (3.6.2 -> 3.7.5), so
- * all emitted Smalltalk is ASCII-only (a non-ASCII char in compiled source
+ * All emitted Smalltalk is ASCII-only (a non-ASCII char in compiled source
  * trips the 3.6.x ComStrmSetCursor compiler bug). The one assertion that
  * depends on a non-system user (a kernel class is read-only) skips itself under
  * a system profile.

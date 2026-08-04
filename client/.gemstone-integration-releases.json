@@ -1,5 +1,13 @@
 [
   {
+    "version": "3.4.5",
+    "experimental": true,
+    "reasons": [
+      "Experimental probe for pre-3.6.2 servers.",
+      "Some customers still run GemStone releases this old; validates Jasper still connects and works against them, even though this version falls below the installable minimum (3.6.2)."
+    ]
+  },
+  {
     "version": "3.6.2",
     "reasons": [
       "Minimum supported version.",
