@@ -189,6 +189,26 @@ describe('explorer queries (integration)', () => {
     });
   });
 
+  describe('class comment', () => {
+    it('reads back a comment written to a class, scoped to its dictionary', () => {
+      defineWidget();
+
+      q.setClassComment(session(), WIDGET, 'Jasper comment round-trip.', userIndex());
+
+      expect(q.getClassComment(session(), WIDGET, userIndex()).trim()).toBe(
+        'Jasper comment round-trip.',
+      );
+    });
+
+    it('reads a comment by bare class name when no dictionary is given', () => {
+      defineWidget();
+
+      q.setClassComment(session(), WIDGET, 'Bare-name comment.');
+
+      expect(q.getClassComment(session(), WIDGET).trim()).toBe('Bare-name comment.');
+    });
+  });
+
   describe('recategorizeClass', () => {
     it('moves a class to a new class-category', () => {
       defineWidget();
@@ -220,6 +240,40 @@ describe('explorer queries (integration)', () => {
 
       expect(selectorsIn(WIDGET, false, 'renamed-accessing')).toContain('bar');
       expect(selectorsIn(WIDGET, false, 'accessing')).toEqual([]);
+    });
+
+    // The Explorer's "+ new category" is client-only until a method lands, because
+    // an empty category has no server existence. Renaming one server-side raises —
+    // which is exactly why the controller renames still-empty categories locally.
+    it('raises when renaming a category the class does not have', () => {
+      defineWidget();
+
+      expect(() =>
+        q.renameCategory(session(), WIDGET, false, 'no-such-category', 'whatever'),
+      ).toThrow();
+    });
+  });
+
+  // The "+ new method" flow relies on the compiler creating the target category on
+  // save — so an Explorer overlay category becomes real once it holds a method.
+  describe('compileMethod into a not-yet-existing category', () => {
+    it('creates an instance-side category and files the method there', () => {
+      defineWidget();
+
+      q.compileMethod(session(), WIDGET, false, 'freshly-made', 'baz ^0');
+
+      expect(selectorsIn(WIDGET, false, 'freshly-made')).toContain('baz');
+      expect(q.getMethodCategories(session(), WIDGET, false, userIndex())).toContain(
+        'freshly-made',
+      );
+    });
+
+    it('creates a class-side category and files the method there', () => {
+      defineWidget();
+
+      q.compileMethod(session(), WIDGET, true, 'class-side cat', 'zot ^0');
+
+      expect(selectorsIn(WIDGET, true, 'class-side cat')).toContain('zot');
     });
   });
 

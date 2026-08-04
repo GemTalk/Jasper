@@ -7,10 +7,12 @@ import {
   escapeSelectorSlashes,
   unescapeSelectorSlashes,
   buildClassDefinitionUri,
+  buildClassCommentUri,
   buildNewMethodUri,
   buildMethodUri,
   parseUri,
   listOpenGemstoneTabs,
+  tabInputUri,
 } from './gemstoneFileSystemProvider';
 import { filterMatches } from './explorerFilter';
 import { DoubleClickDetector } from './explorerDoubleClick';
@@ -68,6 +70,7 @@ import {
 } from './refactoring/renameClassVarPreview';
 import { showRenameClassVarPanel } from './refactoring/renameClassVarPanel';
 import { variableSides, defaultDictionaryIndex } from './explorerTreeHelpers';
+import { emptyVarSideUri } from './explorerVarDecorations';
 import {
   parseClassHistory,
   parseRevertResult,
@@ -83,45 +86,109 @@ const VIEW_METHODS = 'gemstoneExplorerMethods';
 // Panes that support the live filter (the Hierarchy pane doesn't).
 const EXPLORER_VIEWS = [VIEW_DICTS, VIEW_CATEGORIES, VIEW_CLASSES, VIEW_METHODS];
 
-// Open a gemstone:// source document in the editor area. A plain open replaces
-// the active preview tab (keeping focus in the tree for live browsing); an
-// open-to-side pins the editor in a balanced column so several editors spread
-// across a few of OUR groups instead of clumping. `placement` scopes the
-// balancing to editors this Explorer opened, so it doesn't invade the System
-// Browser's group (see sourceEditorPlacement.ts).
-async function openGemstoneDocument(
+// Open a gemstone:// source document in the editor area. All of this Explorer's
+// source editors live as tabs in ONE group (see NOTES-editor-placement.md), so the
+// transient tab and every pinned tab sit next to each other in one row:
+//   - NAVIGATION (single click): the ONE transient (unpinned) tab, reused — a new
+//     click replaces it; pinned tabs are left alone. Already-open tab → just reveal.
+//   - PIN (the 📌 action): the method becomes a PINNED tab in that same group, added
+//     WITHOUT stealing the view (the tab you were reading stays showing).
+// `placement` scopes this to editors this Explorer opened, so it never invades the
+// System Browser's group (see sourceEditorPlacement.ts).
+// Exported for unit testing the placement rules.
+export async function openGemstoneDocument(
   doc: vscode.TextDocument,
-  toSide: boolean,
+  pin: boolean,
   placement: SourceEditorPlacement,
 ): Promise<void> {
-  if (!toSide) {
-    await vscode.window.showTextDocument(doc, {
-      viewColumn: vscode.ViewColumn.Active,
-      preview: true,
+  const uriStr = doc.uri.toString();
+  const sourceColumn = placement.sourceColumn();
+  const targetColumn = sourceColumn ?? vscode.ViewColumn.Active;
+
+  if (!pin) {
+    // NAVIGATION. If the method is already a tab in our group (transient or pinned),
+    // reveal it — no duplicate, and pinned tabs stay pinned. (A real tab, not
+    // preview:true, because a preview swap scrolls the Methods tree.)
+    if (sourceColumn !== undefined && columnHoldsUri(sourceColumn, uriStr)) {
+      await vscode.window.showTextDocument(doc, {
+        viewColumn: sourceColumn,
+        preview: false,
+        preserveFocus: true,
+      });
+      return;
+    }
+    // Otherwise open it as the ONE transient tab, replacing the previous transient
+    // (unless it's pinned or dirty). Pinned tabs are untouched.
+    const previous = placement.reusableTab;
+    const previousColumn = placement.reusableColumn;
+    const editor = await vscode.window.showTextDocument(doc, {
+      viewColumn: targetColumn,
+      preview: false,
       preserveFocus: true,
     });
     placement.remember(doc.uri);
+    placement.reusableTab = uriStr;
+    placement.reusableColumn = editor.viewColumn ?? targetColumn;
+    // Close the OUTGOING transient in the column WE opened it into — never scan the
+    // whole window, or the same URI open in the System Browser's group gets closed.
+    if (previous && previous !== uriStr)
+      closeDisposableTab(previous, previousColumn ?? targetColumn);
     return;
   }
-  const target = placement.balancedColumn();
-  if (target === 'new') {
-    // Append a fresh group at the far right: focus the last group first so
-    // Beside lands to its right. (A numeric column past the end is treated as
-    // "beside the active group", which isn't reliably the rightmost.)
-    await vscode.commands.executeCommand('workbench.action.focusLastEditorGroup');
-    await vscode.window.showTextDocument(doc, {
-      viewColumn: vscode.ViewColumn.Beside,
+
+  // PIN. Bring the method into our group and pin it, WITHOUT stealing the view: note
+  // what's showing, add + pin the tab, then restore what was showing so a new pin
+  // just parks a background tab beside the one you're reading. Pinning the method
+  // that's currently the transient simply promotes it to a pinned tab.
+  const showing = sourceColumn !== undefined ? activeUriInColumn(sourceColumn) : undefined;
+  await vscode.window.showTextDocument(doc, {
+    viewColumn: targetColumn,
+    preview: false,
+    preserveFocus: false,
+  });
+  await vscode.commands.executeCommand('workbench.action.pinEditor');
+  placement.remember(doc.uri);
+  if (placement.reusableTab === uriStr) placement.reusableTab = undefined;
+  if (sourceColumn !== undefined && showing !== undefined && showing !== uriStr) {
+    await vscode.window.showTextDocument(vscode.Uri.parse(showing), {
+      viewColumn: sourceColumn,
       preview: false,
-      preserveFocus: false,
-    });
-  } else {
-    await vscode.window.showTextDocument(doc, {
-      viewColumn: target,
-      preview: false,
-      preserveFocus: false,
+      preserveFocus: true,
     });
   }
-  placement.remember(doc.uri);
+}
+
+// The URI showing in a given view-column's group (its active tab), or undefined.
+function activeUriInColumn(column: number): string | undefined {
+  const group = vscode.window.tabGroups.all.find((g) => g.viewColumn === column);
+  return group?.activeTab ? tabInputUri(group.activeTab)?.toString() : undefined;
+}
+
+// Does the group in this view-column currently hold a tab for this URI?
+function columnHoldsUri(column: number, uriStr: string): boolean {
+  const group = vscode.window.tabGroups.all.find((g) => g.viewColumn === column);
+  return group?.tabs.some((tab) => tabInputUri(tab)?.toString() === uriStr) ?? false;
+}
+
+// Close the single reusable source tab a prior single-click opened, but only if
+// the user isn't working in it: a dirty tab has unsaved edits and a pinned tab was
+// deliberately kept — both are cases where a preview tab would likewise have
+// promoted itself to permanent rather than being replaced.
+//
+// Scoped to OUR column: the outgoing transient always lives in the group we open
+// into, and the same gemstone:// URI can also be open in the System Browser's own
+// group. Scanning every group and matching on the URI alone would let us close
+// that foreign copy — exactly the cross-browser interference SourceEditorPlacement
+// exists to prevent.
+function closeDisposableTab(uriStr: string, column: vscode.ViewColumn): void {
+  const group = vscode.window.tabGroups.all.find((g) => g.viewColumn === column);
+  if (!group) return;
+  for (const tab of group.tabs) {
+    if (tabInputUri(tab)?.toString() !== uriStr) continue;
+    if (tab.isDirty || tab.isPinned) return;
+    void vscode.window.tabGroups.close(tab);
+    return;
+  }
 }
 
 // ── GemStone Explorer ───────────────────────────────────────────────────────
@@ -268,23 +335,38 @@ class VarSideItem extends vscode.TreeItem {
   constructor(
     public readonly className: string,
     public readonly isMeta: boolean,
+    // When the class defines no variables on this side we still show its header,
+    // grayed and non-expandable, so the instance/class structure stays consistent.
+    isEmpty = false,
   ) {
-    super(isMeta ? 'class' : 'instance', vscode.TreeItemCollapsibleState.Expanded);
+    super(
+      isMeta ? 'class variables' : 'instance variables',
+      isEmpty ? vscode.TreeItemCollapsibleState.None : vscode.TreeItemCollapsibleState.Expanded,
+    );
     this.id = `k:${className}/vside:${isMeta}`;
     // Split by side so the inline "+" (Add Instance Variable) targets only the
     // instance side; the class side keeps the base token.
     this.contextValue = isMeta ? 'explorerVarSide.class' : 'explorerVarSide.instance';
     this.iconPath = new vscode.ThemeIcon('symbol-class');
-    this.tooltip = isMeta
-      ? `Class variables of ${className}`
-      : `Instance variables of ${className}`;
+    if (isEmpty) {
+      // Synthetic resourceUri → FileDecorationProvider grays the header label.
+      this.resourceUri = emptyVarSideUri(className, isMeta);
+      this.tooltip = isMeta
+        ? `${className} defines no class variables`
+        : `${className} defines no instance variables`;
+    } else {
+      this.tooltip = isMeta
+        ? `Class variables of ${className}`
+        : `Instance variables of ${className}`;
+    }
   }
 }
 
 type ClassNode = ClassItem | VarSideItem | IvarItem | ClassVarItem;
 
 // Method pane is a 3-level tree: side ▸ method-category ▸ selector.
-class MethodSideItem extends vscode.TreeItem {
+// Exported for unit tests that drive the New Method / category flows.
+export class MethodSideItem extends vscode.TreeItem {
   constructor(public readonly isMeta: boolean) {
     // Instance side opens expanded (so ALL METHODS shows immediately); the
     // class side starts collapsed to keep the default view focused.
@@ -296,10 +378,15 @@ class MethodSideItem extends vscode.TreeItem {
     // Both instance/class side headers use the class icon — distinct from the
     // per-method rows (symbol-method) so a header doesn't read as a method.
     this.iconPath = new vscode.ThemeIcon('symbol-class');
+    // Hosts the per-side "+" (add method category) inline action — a distinct
+    // value per side so each shows its own titled command. Deliberately does NOT
+    // contain the substring "explorerMethod" so it can't match the method-row
+    // menu regexes (/^explorerMethod/, /explorerMethod/).
+    this.contextValue = isMeta ? 'explorerSideClass' : 'explorerSideInstance';
   }
 }
 
-class MethodCategoryItem extends vscode.TreeItem {
+export class MethodCategoryItem extends vscode.TreeItem {
   constructor(
     public readonly isMeta: boolean,
     public readonly category: string,
@@ -315,10 +402,15 @@ class MethodCategoryItem extends vscode.TreeItem {
     );
     this.id = `mcat:${isMeta}:${category}`;
     this.iconPath = new vscode.ThemeIcon(computed ? 'list-flat' : 'symbol-folder');
+    // Real (non-computed) protocols host the rename pencil; the computed
+    // ALL/SESSION rows don't (they aren't renamable categories). The token
+    // avoids the substring "explorerMethod" so it can't match the method-row
+    // menu regexes.
+    if (!computed) this.contextValue = 'explorerProtocol';
   }
 }
 
-class MethodItem extends vscode.TreeItem {
+export class MethodItem extends vscode.TreeItem {
   // `displayCategory` is the category node this row is shown *under* (a real
   // category, ALL METHODS, SESSION METHODS, or undefined when flattened by a
   // filter). It's needed so MethodProvider.getParent can walk up for reveal().
@@ -326,9 +418,14 @@ class MethodItem extends vscode.TreeItem {
     public readonly isMeta: boolean,
     public readonly info: SelectorInfo,
     public readonly displayCategory?: string,
+    // The method's gemstone:// source URI, when known. Only used to carry a
+    // FileDecoration (the "shown in the active editor" tint) — the label and icon
+    // are still set explicitly below, so it doesn't affect how the row renders.
+    resourceUri?: vscode.Uri,
   ) {
     super(info.selector, vscode.TreeItemCollapsibleState.None);
     this.id = `msel:${isMeta}:${displayCategory ?? ''}:${info.selector}`;
+    this.resourceUri = resourceUri;
     // The context value carries the indicator state so the right-click menu can
     // offer superclass/subclass-implementation browsing only where an override
     // arrow is actually present (▲ overrides super, ▼ overridden below). Base
@@ -354,7 +451,7 @@ class MethodItem extends vscode.TreeItem {
     const arg = encodeURIComponent(JSON.stringify([{ selector: info.selector, isMeta }]));
     const cmd = (id: string) => `command:gemstone.explorer.${id}?${arg}`;
 
-    const lines = ['Click to open · $(split-horizontal) opens to the side'];
+    const lines = ['Click to open · $(pin) pins it to the side'];
     lines.push(`[Implementors](${cmd('implementorsOf')}) · [Senders](${cmd('sendersOf')})`);
     if (info.overrideBits & 1) {
       lines.push(
@@ -559,9 +656,23 @@ export class ExplorerController {
   // Freshly-created method categories, per side, that hold no method yet.
   // Cleared on class change.
   private readonly newMethodCategories = { instance: new Set<string>(), meta: new Set<string>() };
-  // URI of an editor we opened ourselves (method/definition click); syncToEditor
-  // ignores its own open so a tree click doesn't bounce the selection.
-  private selfOpenedUri?: string;
+  // A New Method "+" opened a template; on the next compile of this class, select
+  // the newly-added selector (unknown until the user saves). `before` is the
+  // side's selector set at template-open time, diffed against the refreshed set.
+  private pendingNewMethod?: {
+    className: string;
+    dictIndex: number;
+    isMeta: boolean;
+    before: Set<string>;
+  };
+  // URIs of editors we opened ourselves (method/definition clicks); syncToEditor
+  // ignores its own opens so a tree click doesn't bounce the selection. A Set (not
+  // a single value) because opens can overlap — clicking through methods faster
+  // than each preview settles — and each open must match its own later
+  // onDidChangeActiveTextEditor event; a scalar got overwritten by the next click,
+  // letting the earlier open's event slip past the guard and re-reveal (scroll) the
+  // Methods pane.
+  private readonly selfOpenedUris = new Set<string>();
   // Owns where our source editors land. Balances "open to the side" across only
   // our own groups, so we neither clump nor invade the System Browser's group.
   readonly placement = new SourceEditorPlacement();
@@ -710,6 +821,7 @@ export class ExplorerController {
     this.newClassCategories.clear();
     this.newMethodCategories.instance.clear();
     this.newMethodCategories.meta.clear();
+    this.pendingNewMethod = undefined;
     this.clearFilters(...EXPLORER_VIEWS);
     this.dictProvider.refresh();
     this.categoryProvider.refresh();
@@ -847,7 +959,7 @@ export class ExplorerController {
       if (info) {
         try {
           await this.views?.method.reveal(
-            new MethodItem(revealMethod.isMeta, info, ALL_METHODS_CATEGORY),
+            new MethodItem(revealMethod.isMeta, info, info.category),
             { select: true, focus: false, expand: true },
           );
         } catch {
@@ -882,6 +994,7 @@ export class ExplorerController {
     this.newClassCategories.clear();
     this.newMethodCategories.instance.clear();
     this.newMethodCategories.meta.clear();
+    this.pendingNewMethod = undefined;
     this.clearFilters(VIEW_CATEGORIES, VIEW_CLASSES, VIEW_METHODS);
     const session = this.session();
     this.classCategoryEntries = session
@@ -1053,6 +1166,7 @@ export class ExplorerController {
     this.state.selectedMethodCategory = undefined;
     this.newMethodCategories.instance.clear();
     this.newMethodCategories.meta.clear();
+    this.pendingNewMethod = undefined;
     this.clearFilters(VIEW_METHODS);
     const session = this.session();
     this.envLines =
@@ -1087,9 +1201,9 @@ export class ExplorerController {
 
   // Open a class's (editable, compilable) definition editor. `item` comes from
   // the inline button (which doesn't change tree selection); falls back to the
-  // currently-selected class for Find Class / new-class flows. `toSide` pins it
+  // currently-selected class for Find Class / new-class flows. `pin` pins it
   // in the neighbouring editor group so several definitions can be compared.
-  async openClassDefinition(item?: ClassItem, toSide = false): Promise<void> {
+  async openClassDefinition(item?: ClassItem, pin = false): Promise<void> {
     const className = item?.className ?? this.state.className;
     if (
       this.state.dictName === undefined ||
@@ -1098,7 +1212,50 @@ export class ExplorerController {
     ) {
       return;
     }
-    await this.openDefinitionFor(className, this.state.dictName, this.state.dictIndex, toSide);
+    await this.openDefinitionFor(className, this.state.dictName, this.state.dictIndex, pin);
+  }
+
+  // Open a class's (editable) comment editor — the same gemstone://…/comment
+  // document the System Browser saves, but reached from the Explorer's class row
+  // or Classes-pane toolbar. Opens to the side by default so the comment sits
+  // alongside whatever the developer is reading. `item` comes from the inline
+  // button; falls back to the selected class for the toolbar / palette.
+  async openClassComment(item?: ClassItem, pin = true): Promise<void> {
+    const className = item?.className ?? this.state.className;
+    if (
+      this.state.dictName === undefined ||
+      className === undefined ||
+      this.state.dictIndex === undefined
+    ) {
+      return;
+    }
+    await this.openCommentFor(className, this.state.dictName, this.state.dictIndex, pin);
+  }
+
+  // Same as openClassComment, but for a Hierarchy node — resolves the class's own
+  // dictionary (it may live elsewhere than the currently-shown one), mirroring
+  // openHierarchyDefinition.
+  async openHierarchyComment(item: HierarchyItem): Promise<void> {
+    const resolved = this.resolveClassDict(item.className, item.dictName);
+    if (!resolved) {
+      void vscode.window.showWarningMessage(`Can't locate class ${item.className}.`);
+      return;
+    }
+    await this.openCommentFor(item.className, resolved.dictName, resolved.dictIndex, true);
+  }
+
+  private async openCommentFor(
+    className: string,
+    dictName: string,
+    dictIndex: number,
+    pin: boolean,
+  ): Promise<void> {
+    const session = this.session();
+    if (!session) return;
+    const uri = buildClassCommentUri(session.id, dictName, className, dictIndex);
+    this.selfOpenedUris.add(uri.toString());
+    const doc = await vscode.workspace.openTextDocument(uri);
+    await openGemstoneDocument(doc, pin, this.placement);
   }
 
   // Generate an editable Grail `.py` stub for a class. Invoked from the Classes-
@@ -1184,14 +1341,14 @@ export class ExplorerController {
     className: string,
     dictName: string,
     dictIndex: number,
-    toSide: boolean,
+    pin: boolean,
   ): Promise<void> {
     const session = this.session();
     if (!session) return;
     const uri = buildClassDefinitionUri(session.id, dictName, className, dictIndex);
-    this.selfOpenedUri = uri.toString();
+    this.selfOpenedUris.add(uri.toString());
     const doc = await vscode.workspace.openTextDocument(uri);
-    await openGemstoneDocument(doc, toSide, this.placement);
+    await openGemstoneDocument(doc, pin, this.placement);
   }
 
   // Manual double-click detection for the Classes pane: VS Code trees have no
@@ -2542,7 +2699,34 @@ export class ExplorerController {
       }));
   }
 
-  async openMethod(node: MethodItem, toSide = false): Promise<void> {
+  // The gemstone:// source URI for a method row — the SAME URI openMethod opens, so
+  // a FileDecoration keyed on it (the active-editor tint) matches the row. Returns
+  // undefined without a session/dictionary/class. Both the ALL METHODS copy and the
+  // real-category copy of a selector share this URI (built from info.category), so
+  // both rows light up together.
+  methodSourceUri(isMeta: boolean, info: SelectorInfo): vscode.Uri | undefined {
+    const session = this.session();
+    if (
+      session === undefined ||
+      this.state.dictName === undefined ||
+      this.state.className === undefined
+    ) {
+      return undefined;
+    }
+    return buildMethodUri({
+      kind: 'method',
+      sessionId: session.id,
+      dictName: this.state.dictName,
+      className: this.state.className,
+      isMeta,
+      category: info.category,
+      selector: escapeSelectorSlashes(info.selector),
+      environmentId: 0,
+      dictIndex: this.state.dictIndex,
+    });
+  }
+
+  async openMethod(node: MethodItem, pin = false): Promise<void> {
     const session = this.session();
     if (!session || this.state.dictName === undefined || this.state.className === undefined) {
       return;
@@ -2563,15 +2747,74 @@ export class ExplorerController {
       environmentId: 0,
       dictIndex: this.state.dictIndex,
     });
-    // This open will fire onDidChangeActiveTextEditor; mark it so syncToEditor
-    // doesn't then re-reveal the row under ALL METHODS and steal the selection
-    // from the category the user actually clicked.
-    this.selfOpenedUri = uri.toString();
+    // This open normally fires onDidChangeActiveTextEditor, so mark it — syncToEditor
+    // then ignores its own open instead of re-revealing the row under ALL METHODS and
+    // stealing the selection from the category the user clicked. But if this method is
+    // ALREADY the active editor (the user clicked the row whose tab is focused),
+    // re-showing it fires no such event: a mark here would never be consumed and would
+    // later swallow a genuine focus event for this tab. Only mark when the active
+    // editor is actually going to change.
+    const uriStr = uri.toString();
+    if (vscode.window.activeTextEditor?.document.uri.toString() !== uriStr) {
+      this.selfOpenedUris.add(uriStr);
+    }
     const doc = await vscode.workspace.openTextDocument(uri);
-    // Single-click swaps in place (preview, focus stays in the tree so
-    // type-to-filter / arrow-nav keep working); open-to-side pins a real tab in
-    // a balanced neighbouring group so methods can be compared.
-    await openGemstoneDocument(doc, toSide, this.placement);
+    // Single-click reuses one source tab (focus stays in the tree so type-to-filter
+    // / arrow-nav keep working); open-to-side pins a real tab in a balanced
+    // neighbouring group so methods can be compared.
+    await openGemstoneDocument(doc, pin, this.placement);
+  }
+
+  // Remove a method from its class (the row's 🗑 button). Destructive, so it
+  // asks for a modal confirmation first; nothing is committed (the user commits
+  // explicitly, same as every other Explorer edit). After removal the class's
+  // method set changed, so re-cascade the method panes.
+  async removeMethod(node: MethodItem): Promise<void> {
+    const session = this.session();
+    if (!session || this.state.className === undefined) return;
+
+    const className = this.state.className;
+    const selector = node.info.selector;
+
+    // Kernel/system classes can't be modified in this repository, so a removal
+    // there can only fail. Guard before prompting (mirrors createNewMethod's
+    // canClassBeWritten check) rather than popping a modal that leads nowhere.
+    if (!queries.canClassBeWritten(session, className, this.state.dictIndex)) {
+      void vscode.window.showWarningMessage(`${className} cannot be modified in this repository.`);
+      return;
+    }
+
+    const confirmed = await vscode.window.showWarningMessage(
+      `Remove method #${selector} from ${node.isMeta ? `${className} class` : className}?`,
+      { modal: true },
+      'Remove',
+    );
+    if (confirmed !== 'Remove') return;
+
+    // deleteMethod reports failure two ways: a non-"Deleted:" status string
+    // (class/selector not found) or a raised error (e.g. removeSelector: on an
+    // unwritable class). Surface either — otherwise the pane just redraws with
+    // the method still present and the user thinks the click didn't register.
+    let result: string;
+    try {
+      result = queries.deleteMethod(
+        session,
+        className,
+        node.isMeta,
+        selector,
+        this.state.dictIndex,
+      );
+    } catch (e) {
+      void vscode.window.showErrorMessage(
+        `Remove method failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return;
+    }
+    if (!result.startsWith('Deleted:')) {
+      void vscode.window.showErrorMessage(`Remove method failed: ${result}`);
+      return;
+    }
+    this.reloadCurrentClassMethods();
   }
 
   // ── Find Class ────────────────────────────────────────────────────────────
@@ -2666,6 +2909,7 @@ export class ExplorerController {
     this.state.selectedMethodCategory = undefined;
     this.newMethodCategories.instance.clear();
     this.newMethodCategories.meta.clear();
+    this.pendingNewMethod = undefined;
     this.envLines = envLines;
     this.loadHierarchy();
     this.clearFilters(VIEW_CATEGORIES, VIEW_CLASSES, VIEW_METHODS);
@@ -2703,14 +2947,16 @@ export class ExplorerController {
     }
 
     if (opts.revealMethod) {
-      // Reveal under the always-expanded ALL METHODS node (displayCategory).
+      // Select the method under its own category node (expanding as needed), not
+      // the ALL METHODS node. The ALL_METHODS_CATEGORY lookup just enumerates all
+      // selectors; each info carries its real category.
       const info = this.selectorsFor(opts.revealMethod.isMeta, ALL_METHODS_CATEGORY).find(
         (i) => i.selector === opts.revealMethod!.selector,
       );
       if (info) {
         try {
           await this.views?.method.reveal(
-            new MethodItem(opts.revealMethod.isMeta, info, ALL_METHODS_CATEGORY),
+            new MethodItem(opts.revealMethod.isMeta, info, info.category),
             { select: true, focus: false, expand: true },
           );
           this.syncTitles();
@@ -2730,8 +2976,9 @@ export class ExplorerController {
     if (uri.scheme !== 'gemstone') return;
     // We opened this editor ourselves from a tree click — the tree selection is
     // already correct, so don't bounce it (e.g. onto the ALL METHODS node).
-    if (this.selfOpenedUri === uri.toString()) {
-      this.selfOpenedUri = undefined;
+    // delete() consumes just this URI's mark, leaving any other in-flight self-open
+    // to still match its own event.
+    if (this.selfOpenedUris.delete(uri.toString())) {
       return;
     }
     const session = this.session();
@@ -2755,13 +3002,31 @@ export class ExplorerController {
     // Already showing this class: just (re)reveal the method row / refresh title.
     if (this.state.className === className && this.state.dictName === dictName) {
       if (revealMethod) {
+        // If the Methods pane already has this selector selected — which is exactly
+        // the case when the user just clicked it in the tree (that click is what
+        // opened this editor) — don't re-reveal it. A redundant reveal() scrolls the
+        // pane, knocking the just-clicked row out of view. Only sync when the tree
+        // is genuinely elsewhere, e.g. the user focused an editor tab for a method
+        // that isn't the current selection. This is the reliable guard; the
+        // self-opened-URI check above can miss when the editor reports a normalized
+        // URI that no longer string-matches what we stored.
+        const alreadySelected = this.views?.method.selection.some(
+          (n) =>
+            n instanceof MethodItem &&
+            n.isMeta === revealMethod.isMeta &&
+            n.info.selector === revealMethod.selector,
+        );
+        if (alreadySelected) {
+          this.syncTitles();
+          return;
+        }
         const info = this.selectorsFor(revealMethod.isMeta, ALL_METHODS_CATEGORY).find(
           (i) => i.selector === revealMethod.selector,
         );
         if (info) {
           try {
             await this.views?.method.reveal(
-              new MethodItem(revealMethod.isMeta, info, ALL_METHODS_CATEGORY),
+              new MethodItem(revealMethod.isMeta, info, info.category),
               { select: true, focus: false, expand: true },
             );
             this.syncTitles();
@@ -2882,26 +3147,166 @@ export class ExplorerController {
     void vscode.commands.executeCommand('gemstone.openDocument', uri);
   }
 
-  async newMethodCategory(): Promise<void> {
+  // Add a (still-empty) method category to the given side. The instance and
+  // class "+" buttons pass their side explicitly, so it never depends on the
+  // last-touched selection.
+  async newMethodCategory(isMeta: boolean): Promise<void> {
     if (this.state.className === undefined) {
       void vscode.window.showWarningMessage('Select a class first.');
       return;
     }
     const name = (
       await vscode.window.showInputBox({
-        prompt: 'New method category name',
+        prompt: `New ${isMeta ? 'Class' : 'Instance'} Method Category`,
         placeHolder: 'e.g. accessing',
       })
     )?.trim();
     if (!name) return;
-    const isMeta = this.state.selectedIsMeta ?? false;
     this.newMethodCategories[isMeta ? 'meta' : 'instance'].add(name);
     this.recordMethodContext(isMeta, name);
     this.methodProvider.refresh();
     this.syncTitles();
+    // Select the new category (expanding the side node — the class side starts
+    // collapsed, so otherwise the fresh category would be created out of sight).
+    this.views?.method
+      .reveal(new MethodCategoryItem(isMeta, name, false), {
+        select: true,
+        focus: true,
+        expand: true,
+      })
+      .then(undefined, () => {});
   }
 
-  async newMethod(): Promise<void> {
+  // Rename a real (non-computed) method category via the row's pencil. A category
+  // exists on the server only once a method is filed into it; a still-empty one
+  // lives solely in the client-side "fresh" overlay (`_unifiedCategorys:`, which
+  // drives this pane, never lists an empty category). So a populated category is
+  // renamed server-side via the base `renameCategory:to:` protocol (mirroring the
+  // System Browser; not committed automatically), while an empty one is renamed
+  // purely in the overlay — calling the server would raise classErrMethCatNotFound.
+  async renameMethodCategory(item: MethodCategoryItem): Promise<void> {
+    const session = this.session();
+    if (!session || item.computed) return;
+    if (this.state.className === undefined || this.state.dictIndex === undefined) {
+      void vscode.window.showWarningMessage('Select a class first.');
+      return;
+    }
+    const className = this.state.className;
+    const dictIndex = this.state.dictIndex;
+    const oldCategory = item.category;
+
+    const entered = await vscode.window.showInputBox({
+      title: 'Rename Method Category',
+      prompt: `Rename '${oldCategory}' on the ${item.isMeta ? 'class' : 'instance'} side of ${className}.`,
+      value: oldCategory,
+      valueSelection: [0, oldCategory.length],
+      validateInput: (v) => (v.trim().length === 0 ? 'Enter a category name.' : undefined),
+    });
+    if (entered === undefined) return;
+    const newCategory = entered.trim();
+    if (newCategory === oldCategory) return;
+
+    const hasServerMethods = this.envLines.some(
+      (l) => l.isMeta === item.isMeta && l.category === oldCategory,
+    );
+    if (hasServerMethods) {
+      try {
+        queries.renameCategory(
+          session,
+          className,
+          item.isMeta,
+          oldCategory,
+          newCategory,
+          dictIndex,
+        );
+      } catch (e) {
+        void vscode.window.showErrorMessage(
+          `Rename category failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
+        return;
+      }
+    }
+
+    // Carry a just-created (still-empty) category across the rename so it keeps
+    // showing, and keep the recorded selection pointing at the renamed row.
+    const freshSet = this.newMethodCategories[item.isMeta ? 'meta' : 'instance'];
+    if (freshSet.delete(oldCategory)) freshSet.add(newCategory);
+    if (
+      this.state.selectedIsMeta === item.isMeta &&
+      this.state.selectedMethodCategory === oldCategory
+    ) {
+      this.state.selectedMethodCategory = newCategory;
+    }
+    // A server rename changed the class's methods, so refetch; an overlay-only
+    // rename just needs the tree redrawn.
+    if (hasServerMethods) {
+      this.reloadIfCurrent(className, dictIndex);
+    } else {
+      this.methodProvider.refresh();
+      this.syncTitles();
+    }
+    this.views?.method
+      .reveal(new MethodCategoryItem(item.isMeta, newCategory, false), {
+        select: true,
+        focus: true,
+      })
+      .then(undefined, () => {});
+  }
+
+  // New Method, invoked from a category row → files into THAT category (including
+  // a still-empty one, which the compile then creates on the server, so overlay
+  // categories become real once they hold a method). With no argument (palette)
+  // it infers side/category from the current Methods-pane selection.
+  async newMethod(target?: MethodCategoryItem): Promise<void> {
+    if (target instanceof MethodCategoryItem) {
+      // Computed ALL/SESSION rows aren't real categories → default category.
+      await this.createNewMethod(
+        target.isMeta,
+        target.computed ? 'as yet unclassified' : target.category,
+      );
+      return;
+    }
+    if (this.state.className === undefined) {
+      void vscode.window.showWarningMessage('Select a class first.');
+      return;
+    }
+    // Palette: honor the last-touched side, else ask so either an instance or a
+    // class method can be created regardless of what's selected.
+    let isMeta: boolean;
+    if (this.state.selectedIsMeta !== undefined) {
+      isMeta = this.state.selectedIsMeta;
+    } else {
+      const pick = await vscode.window.showQuickPick(
+        [
+          { label: 'Instance method', meta: false },
+          { label: 'Class method', meta: true },
+        ],
+        { placeHolder: `New method on ${this.state.className}` },
+      );
+      if (!pick) return;
+      isMeta = pick.meta;
+    }
+    const category =
+      this.state.selectedIsMeta === isMeta && this.state.selectedMethodCategory
+        ? this.state.selectedMethodCategory
+        : 'as yet unclassified';
+    await this.createNewMethod(isMeta, category);
+  }
+
+  // "+" on the instance / class side node adds a method on that side; with no
+  // category chosen it lands in the default one (which then appears in the tree).
+  async newInstanceMethod(): Promise<void> {
+    await this.createNewMethod(false, 'as yet unclassified');
+  }
+
+  async newClassMethod(): Promise<void> {
+    await this.createNewMethod(true, 'as yet unclassified');
+  }
+
+  // Open a blank method template for the given side + category. The method only
+  // exists once the user saves (compile), so remember what to select and let the
+  // post-compile refresh reveal it (see maybeRevealNewMethod).
+  private async createNewMethod(isMeta: boolean, category: string): Promise<void> {
     const session = this.session();
     if (
       !session ||
@@ -2927,27 +3332,14 @@ export class ExplorerController {
       );
       return;
     }
-    // Choose the side: honor the last-touched side if the user was working in the
-    // Methods pane, otherwise ask so either an instance or a class method can be
-    // created regardless of what's selected.
-    let isMeta: boolean;
-    if (this.state.selectedIsMeta !== undefined) {
-      isMeta = this.state.selectedIsMeta;
-    } else {
-      const pick = await vscode.window.showQuickPick(
-        [
-          { label: 'Instance method', meta: false },
-          { label: 'Class method', meta: true },
-        ],
-        { placeHolder: `New method on ${this.state.className}` },
-      );
-      if (!pick) return;
-      isMeta = pick.meta;
-    }
-    const category =
-      this.state.selectedIsMeta === isMeta && this.state.selectedMethodCategory
-        ? this.state.selectedMethodCategory
-        : 'as yet unclassified';
+    // Snapshot the side's current selectors so the post-compile refresh can spot
+    // the newly-added one and select it (the selector isn't known until save).
+    this.pendingNewMethod = {
+      className: this.state.className,
+      dictIndex: this.state.dictIndex,
+      isMeta,
+      before: new Set(this.selectorsFor(isMeta, ALL_METHODS_CATEGORY).map((i) => i.selector)),
+    };
     const uri = buildNewMethodUri(
       session.id,
       this.state.dictName,
@@ -2963,6 +3355,36 @@ export class ExplorerController {
       preview: true,
     });
     this.placement.remember(uri);
+    // Count the new-method template as the navigation editor, not a side pane, so
+    // "open to the side" doesn't mistake its group for the side group.
+    this.placement.reusableTab = uri.toString();
+  }
+
+  // After a method compiles on the class we're showing, select a just-created
+  // method (from the New Method "+") under its own category — so a brand-new
+  // category shows the method selected. reveal()'s alreadySelected guard in
+  // syncToEditor then skips its own ALL-METHODS reveal, avoiding a fight.
+  private maybeRevealNewMethod(): void {
+    const pending = this.pendingNewMethod;
+    if (
+      !pending ||
+      pending.className !== this.state.className ||
+      pending.dictIndex !== this.state.dictIndex
+    ) {
+      return;
+    }
+    const added = this.selectorsFor(pending.isMeta, ALL_METHODS_CATEGORY).find(
+      (i) => !pending.before.has(i.selector),
+    );
+    if (!added) return;
+    this.pendingNewMethod = undefined;
+    this.views?.method
+      .reveal(new MethodItem(pending.isMeta, added, added.category), {
+        select: true,
+        focus: false,
+        expand: true,
+      })
+      .then(undefined, () => {});
   }
 
   // ── Drag & drop ─────────────────────────────────────────────────────────────
@@ -3303,6 +3725,7 @@ export class ExplorerController {
     );
     this.methodProvider.refresh();
     this.syncTitles();
+    this.maybeRevealNewMethod();
   }
 
   onExternalClassCompiled(sessionId: number, className: string): void {
@@ -3400,7 +3823,7 @@ class ClassProvider extends RefreshableProvider<ClassNode> {
       return variableSides(
         this.ctl.definedIvarNames(element.className),
         this.ctl.definedClassVarNames(element.className),
-      ).map((side) => new VarSideItem(element.className, side.isMeta));
+      ).map((side) => new VarSideItem(element.className, side.isMeta, side.names.length === 0));
     }
     // A side node expands to its variable rows (each with an inline rename pencil).
     if (element instanceof VarSideItem) {
@@ -3463,14 +3886,30 @@ class MethodProvider extends RefreshableProvider<MethodNode> {
         return this.ctl
           .selectorsFor(element.isMeta, ALL_METHODS_CATEGORY)
           .filter((info) => filterMatches(info.selector, filter))
-          .map((info) => new MethodItem(element.isMeta, info));
+          .map(
+            (info) =>
+              new MethodItem(
+                element.isMeta,
+                info,
+                undefined,
+                this.ctl.methodSourceUri(element.isMeta, info),
+              ),
+          );
       }
       return this.ctl.methodCategories(element.isMeta);
     }
     if (element instanceof MethodCategoryItem) {
       return this.ctl
         .selectorsFor(element.isMeta, element.category)
-        .map((info) => new MethodItem(element.isMeta, info, element.category));
+        .map(
+          (info) =>
+            new MethodItem(
+              element.isMeta,
+              info,
+              element.category,
+              this.ctl.methodSourceUri(element.isMeta, info),
+            ),
+        );
     }
     return [];
   }
@@ -3662,6 +4101,14 @@ export function registerGemStoneExplorer(
     vscode.commands.registerCommand('gemstone.explorer.openMethodToSide', (node: MethodItem) => {
       if (node instanceof MethodItem) void ctl.openMethod(node, true);
     }),
+    vscode.commands.registerCommand('gemstone.explorer.removeMethod', (node?: MethodItem) => {
+      if (node instanceof MethodItem)
+        void ctl.removeMethod(node).catch((e: unknown) => {
+          void vscode.window.showErrorMessage(
+            `Remove method failed: ${e instanceof Error ? e.message : String(e)}`,
+          );
+        });
+    }),
     // Ctrl/Cmd+Enter in the Methods pane: open the selected method in a new
     // source editor to the side (same as the row's ↗ button). Keybindings don't
     // pass the tree selection, so read it from the view here.
@@ -3686,12 +4133,25 @@ export function registerGemStoneExplorer(
       (item?: ClassItem) =>
         void ctl.openClassDefinition(item instanceof ClassItem ? item : undefined, true),
     ),
+    // Open a class's editable comment (inline button on the class row / Classes-
+    // pane toolbar). A class comment is often the first place a developer looks.
+    vscode.commands.registerCommand(
+      'gemstone.explorer.openComment',
+      (item?: ClassItem) => void ctl.openClassComment(item instanceof ClassItem ? item : undefined),
+    ),
     // Same button on a Hierarchy node — opens that class's definition to the side
     // (resolving its own dictionary), without navigating the panels.
     vscode.commands.registerCommand(
       'gemstone.explorer.openHierarchyDefinition',
       (item?: HierarchyItem) => {
         if (item instanceof HierarchyItem) void ctl.openHierarchyDefinition(item);
+      },
+    ),
+    // Same class-comment button on a Hierarchy node.
+    vscode.commands.registerCommand(
+      'gemstone.explorer.openHierarchyComment',
+      (item?: HierarchyItem) => {
+        if (item instanceof HierarchyItem) void ctl.openHierarchyComment(item);
       },
     ),
     // Per-click hook powering double-click-to-open-definition.
@@ -3790,6 +4250,17 @@ export function registerGemStoneExplorer(
         void vscode.window.showErrorMessage(`Rename method failed: ${msg}`);
       });
     }),
+    // Rename a method category / protocol (pencil on the category row).
+    vscode.commands.registerCommand(
+      'gemstone.explorer.renameMethodCategory',
+      (item?: MethodCategoryItem) => {
+        if (!(item instanceof MethodCategoryItem)) return;
+        void ctl.renameMethodCategory(item).catch((e: unknown) => {
+          const msg = e instanceof Error ? e.message : String(e);
+          void vscode.window.showErrorMessage(`Rename category failed: ${msg}`);
+        });
+      },
+    ),
     // Move method(s) to another class (M6). Works on the focused row plus any other
     // selected method rows (multi-select), so several methods move at once.
     vscode.commands.registerCommand(
@@ -3881,10 +4352,24 @@ export function registerGemStoneExplorer(
       ctl.newClassCategory(),
     ),
     vscode.commands.registerCommand('gemstone.explorer.newClass', () => ctl.newClass()),
-    vscode.commands.registerCommand('gemstone.explorer.newMethodCategory', () =>
-      ctl.newMethodCategory(),
+    // "+" on the instance / class side node adds a category to that side. Two
+    // commands so each button carries its own title.
+    vscode.commands.registerCommand('gemstone.explorer.newInstanceMethodCategory', () =>
+      ctl.newMethodCategory(false),
     ),
-    vscode.commands.registerCommand('gemstone.explorer.newMethod', () => ctl.newMethod()),
+    vscode.commands.registerCommand('gemstone.explorer.newClassMethodCategory', () =>
+      ctl.newMethodCategory(true),
+    ),
+    // From a category row, file the new method straight into that category;
+    // from the palette (no item), infer side + category from the selection.
+    vscode.commands.registerCommand('gemstone.explorer.newMethod', (item?: MethodCategoryItem) =>
+      ctl.newMethod(item instanceof MethodCategoryItem ? item : undefined),
+    ),
+    // "+" on the instance / class side node → new method in the default category.
+    vscode.commands.registerCommand('gemstone.explorer.newInstanceMethod', () =>
+      ctl.newInstanceMethod(),
+    ),
+    vscode.commands.registerCommand('gemstone.explorer.newClassMethod', () => ctl.newClassMethod()),
     // Indicator / method actions: browse implementors, senders, and the
     // superclass (▲) / subclass (▼) implementations behind the override arrows.
     // Each accepts either the tree item (inline button / right-click) or a
