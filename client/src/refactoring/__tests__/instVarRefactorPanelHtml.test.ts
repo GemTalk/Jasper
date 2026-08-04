@@ -24,6 +24,7 @@ const baseOos: InstVarOutOfScope = {
   willNotRecompile: [],
   actedOnClass: 'Foo',
   note: 'Migrating instances and deleting history DO commit the transaction; nothing else does.',
+  sessionHasUncommittedChanges: false,
 };
 
 function html(oos: Partial<InstVarOutOfScope> = {}, changes = [edit, reparent], done = true) {
@@ -76,6 +77,31 @@ describe('instance-variable refactor panel HTML', () => {
     expect(html({ willNotRecompile: [] })).not.toContain('will NOT recompile');
   });
 
+  it('agrees in number for a single broken method', () => {
+    const h = html({ willNotRecompile: [{ className: 'Foo', selector: 'combine' }] });
+    expect(h).toContain('1 method will NOT recompile onto the new class version');
+  });
+
+  it('agrees in number for several broken methods', () => {
+    const h = html({
+      willNotRecompile: [
+        { className: 'Foo', selector: 'combine' },
+        { className: 'Sub', selector: 'doubleCount' },
+      ],
+    });
+    expect(h).toContain('2 methods will NOT recompile onto the new class version');
+  });
+
+  // V1 ships add / remove only — V4 (move) was deliberately dropped from this panel, so no
+  // rendered string may promise a move.
+  it('never mentions a move, which this panel does not do', () => {
+    const h = html({
+      willNotRecompile: [{ className: 'Foo', selector: 'combine' }],
+      decline: null,
+    });
+    expect(h).not.toMatch(/\bmoved\b|\bmoving\b|removed\/moved/i);
+  });
+
   it('does not surface the class-options group for editing', () => {
     const h = html();
     expect(h).not.toContain('Class options for');
@@ -108,5 +134,14 @@ describe('instance-variable refactor panel HTML', () => {
     });
     expect(h).toContain('Move &lt;x&gt; to Bar');
     expect(h).toContain('&lt;b&gt;');
+  });
+
+  it('renders a hidden failure banner with an abort button and a close button', () => {
+    const h = html();
+
+    expect(h).toContain('id="failBanner"');
+    expect(h).toMatch(/id="failBanner"[^>]*class="fail-box hidden"/);
+    expect(h).toMatch(/id="abort"[^>]*class="danger hidden"[^>]*>Abort Transaction</);
+    expect(h).toMatch(/id="failClose"[^>]*>Close</);
   });
 });

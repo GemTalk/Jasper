@@ -6,6 +6,7 @@ import { runNbCall } from './nbRunner';
 import { QueryExecutor } from './queries/types';
 
 // Read-path shared queries.
+import { abortTransaction as sharedAbortTransaction } from './queries/abortTransaction';
 import { getMethodSource as sharedGetMethodSource } from './queries/getMethodSource';
 import { getBaseMethodSource as sharedGetBaseMethodSource } from './queries/getBaseMethodSource';
 import { getDictionaryNames as sharedGetDictionaryNames } from './queries/getDictionaryNames';
@@ -413,6 +414,15 @@ export function sessionNeedsCommit(session: ActiveSession): boolean | undefined 
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Abort the session's transaction, discarding EVERY uncommitted change in it — not just
+ * whatever the caller happens to be undoing. Callers must have told the user that, and
+ * should probe {@link sessionNeedsCommit} first when they need to say how much is at stake.
+ */
+export function abortSessionTransaction(session: ActiveSession): string {
+  return sharedAbortTransaction(defaultQueryExecutorUsing(session));
 }
 
 /**
