@@ -225,7 +225,17 @@ export const window = {
     panel.title = title;
     return panel;
   }),
-  showTextDocument: vi.fn(async () => createMockTextEditor()),
+  showTextDocument: vi.fn(async (_a: unknown, b?: unknown) => {
+    const editor = createMockTextEditor();
+    let col: number | undefined;
+    if (typeof b === 'number') col = b;
+    else if (b && typeof b === 'object' && 'viewColumn' in b)
+      col = (b as { viewColumn?: number }).viewColumn;
+    // Resolve Active (-1) / Beside (-2) / unspecified to a concrete column, as real
+    // VS Code does, so callers can record the column an editor actually landed in.
+    editor.viewColumn = col === undefined || col < 0 ? 1 : col;
+    return editor;
+  }),
   showNotebookDocument: vi.fn(async (doc: unknown) => ({ notebook: doc })),
   showErrorMessage: vi.fn(),
   showInformationMessage: vi.fn(),

@@ -98,14 +98,14 @@ const EXPLORER_VIEWS = [VIEW_DICTS, VIEW_CATEGORIES, VIEW_CLASSES, VIEW_METHODS]
 // Exported for unit testing the placement rules.
 export async function openGemstoneDocument(
   doc: vscode.TextDocument,
-  toSide: boolean,
+  pin: boolean,
   placement: SourceEditorPlacement,
 ): Promise<void> {
   const uriStr = doc.uri.toString();
   const sourceColumn = placement.sourceColumn();
   const targetColumn = sourceColumn ?? vscode.ViewColumn.Active;
 
-  if (!toSide) {
+  if (!pin) {
     // NAVIGATION. If the method is already a tab in our group (transient or pinned),
     // reveal it — no duplicate, and pinned tabs stay pinned. (A real tab, not
     // preview:true, because a preview swap scrolls the Methods tree.)
@@ -120,14 +120,19 @@ export async function openGemstoneDocument(
     // Otherwise open it as the ONE transient tab, replacing the previous transient
     // (unless it's pinned or dirty). Pinned tabs are untouched.
     const previous = placement.reusableTab;
-    await vscode.window.showTextDocument(doc, {
+    const previousColumn = placement.reusableColumn;
+    const editor = await vscode.window.showTextDocument(doc, {
       viewColumn: targetColumn,
       preview: false,
       preserveFocus: true,
     });
     placement.remember(doc.uri);
     placement.reusableTab = uriStr;
-    if (previous && previous !== uriStr) closeDisposableTab(previous);
+    placement.reusableColumn = editor.viewColumn ?? targetColumn;
+    // Close the OUTGOING transient in the column WE opened it into — never scan the
+    // whole window, or the same URI open in the System Browser's group gets closed.
+    if (previous && previous !== uriStr)
+      closeDisposableTab(previous, previousColumn ?? targetColumn);
     return;
   }
 
@@ -169,14 +174,20 @@ function columnHoldsUri(column: number, uriStr: string): boolean {
 // the user isn't working in it: a dirty tab has unsaved edits and a pinned tab was
 // deliberately kept — both are cases where a preview tab would likewise have
 // promoted itself to permanent rather than being replaced.
-function closeDisposableTab(uriStr: string): void {
-  for (const group of vscode.window.tabGroups.all) {
-    for (const tab of group.tabs) {
-      if (tabInputUri(tab)?.toString() !== uriStr) continue;
-      if (tab.isDirty || tab.isPinned) return;
-      void vscode.window.tabGroups.close(tab);
-      return;
-    }
+//
+// Scoped to OUR column: the outgoing transient always lives in the group we open
+// into, and the same gemstone:// URI can also be open in the System Browser's own
+// group. Scanning every group and matching on the URI alone would let us close
+// that foreign copy — exactly the cross-browser interference SourceEditorPlacement
+// exists to prevent.
+function closeDisposableTab(uriStr: string, column: vscode.ViewColumn): void {
+  const group = vscode.window.tabGroups.all.find((g) => g.viewColumn === column);
+  if (!group) return;
+  for (const tab of group.tabs) {
+    if (tabInputUri(tab)?.toString() !== uriStr) continue;
+    if (tab.isDirty || tab.isPinned) return;
+    void vscode.window.tabGroups.close(tab);
+    return;
   }
 }
 
@@ -1190,9 +1201,9 @@ export class ExplorerController {
 
   // Open a class's (editable, compilable) definition editor. `item` comes from
   // the inline button (which doesn't change tree selection); falls back to the
-  // currently-selected class for Find Class / new-class flows. `toSide` pins it
+  // currently-selected class for Find Class / new-class flows. `pin` pins it
   // in the neighbouring editor group so several definitions can be compared.
-  async openClassDefinition(item?: ClassItem, toSide = false): Promise<void> {
+  async openClassDefinition(item?: ClassItem, pin = false): Promise<void> {
     const className = item?.className ?? this.state.className;
     if (
       this.state.dictName === undefined ||
@@ -1201,7 +1212,7 @@ export class ExplorerController {
     ) {
       return;
     }
-    await this.openDefinitionFor(className, this.state.dictName, this.state.dictIndex, toSide);
+    await this.openDefinitionFor(className, this.state.dictName, this.state.dictIndex, pin);
   }
 
   // Open a class's (editable) comment editor — the same gemstone://…/comment
@@ -1209,7 +1220,7 @@ export class ExplorerController {
   // or Classes-pane toolbar. Opens to the side by default so the comment sits
   // alongside whatever the developer is reading. `item` comes from the inline
   // button; falls back to the selected class for the toolbar / palette.
-  async openClassComment(item?: ClassItem, toSide = true): Promise<void> {
+  async openClassComment(item?: ClassItem, pin = true): Promise<void> {
     const className = item?.className ?? this.state.className;
     if (
       this.state.dictName === undefined ||
@@ -1218,7 +1229,7 @@ export class ExplorerController {
     ) {
       return;
     }
-    await this.openCommentFor(className, this.state.dictName, this.state.dictIndex, toSide);
+    await this.openCommentFor(className, this.state.dictName, this.state.dictIndex, pin);
   }
 
   // Same as openClassComment, but for a Hierarchy node — resolves the class's own
@@ -1237,14 +1248,14 @@ export class ExplorerController {
     className: string,
     dictName: string,
     dictIndex: number,
-    toSide: boolean,
+    pin: boolean,
   ): Promise<void> {
     const session = this.session();
     if (!session) return;
     const uri = buildClassCommentUri(session.id, dictName, className, dictIndex);
     this.selfOpenedUris.add(uri.toString());
     const doc = await vscode.workspace.openTextDocument(uri);
-    await openGemstoneDocument(doc, toSide, this.placement);
+    await openGemstoneDocument(doc, pin, this.placement);
   }
 
   // Generate an editable Grail `.py` stub for a class. Invoked from the Classes-
@@ -1330,14 +1341,14 @@ export class ExplorerController {
     className: string,
     dictName: string,
     dictIndex: number,
-    toSide: boolean,
+    pin: boolean,
   ): Promise<void> {
     const session = this.session();
     if (!session) return;
     const uri = buildClassDefinitionUri(session.id, dictName, className, dictIndex);
     this.selfOpenedUris.add(uri.toString());
     const doc = await vscode.workspace.openTextDocument(uri);
-    await openGemstoneDocument(doc, toSide, this.placement);
+    await openGemstoneDocument(doc, pin, this.placement);
   }
 
   // Manual double-click detection for the Classes pane: VS Code trees have no
@@ -2715,7 +2726,7 @@ export class ExplorerController {
     });
   }
 
-  async openMethod(node: MethodItem, toSide = false): Promise<void> {
+  async openMethod(node: MethodItem, pin = false): Promise<void> {
     const session = this.session();
     if (!session || this.state.dictName === undefined || this.state.className === undefined) {
       return;
@@ -2736,15 +2747,22 @@ export class ExplorerController {
       environmentId: 0,
       dictIndex: this.state.dictIndex,
     });
-    // This open will fire onDidChangeActiveTextEditor; mark it so syncToEditor
-    // doesn't then re-reveal the row under ALL METHODS and steal the selection
-    // from the category the user actually clicked.
-    this.selfOpenedUris.add(uri.toString());
+    // This open normally fires onDidChangeActiveTextEditor, so mark it — syncToEditor
+    // then ignores its own open instead of re-revealing the row under ALL METHODS and
+    // stealing the selection from the category the user clicked. But if this method is
+    // ALREADY the active editor (the user clicked the row whose tab is focused),
+    // re-showing it fires no such event: a mark here would never be consumed and would
+    // later swallow a genuine focus event for this tab. Only mark when the active
+    // editor is actually going to change.
+    const uriStr = uri.toString();
+    if (vscode.window.activeTextEditor?.document.uri.toString() !== uriStr) {
+      this.selfOpenedUris.add(uriStr);
+    }
     const doc = await vscode.workspace.openTextDocument(uri);
     // Single-click reuses one source tab (focus stays in the tree so type-to-filter
     // / arrow-nav keep working); open-to-side pins a real tab in a balanced
     // neighbouring group so methods can be compared.
-    await openGemstoneDocument(doc, toSide, this.placement);
+    await openGemstoneDocument(doc, pin, this.placement);
   }
 
   // Remove a method from its class (the row's 🗑 button). Destructive, so it
@@ -2757,6 +2775,15 @@ export class ExplorerController {
 
     const className = this.state.className;
     const selector = node.info.selector;
+
+    // Kernel/system classes can't be modified in this repository, so a removal
+    // there can only fail. Guard before prompting (mirrors createNewMethod's
+    // canClassBeWritten check) rather than popping a modal that leads nowhere.
+    if (!queries.canClassBeWritten(session, className, this.state.dictIndex)) {
+      void vscode.window.showWarningMessage(`${className} cannot be modified in this repository.`);
+      return;
+    }
+
     const confirmed = await vscode.window.showWarningMessage(
       `Remove method #${selector} from ${node.isMeta ? `${className} class` : className}?`,
       { modal: true },
@@ -2764,7 +2791,29 @@ export class ExplorerController {
     );
     if (confirmed !== 'Remove') return;
 
-    queries.deleteMethod(session, className, node.isMeta, selector, this.state.dictIndex);
+    // deleteMethod reports failure two ways: a non-"Deleted:" status string
+    // (class/selector not found) or a raised error (e.g. removeSelector: on an
+    // unwritable class). Surface either — otherwise the pane just redraws with
+    // the method still present and the user thinks the click didn't register.
+    let result: string;
+    try {
+      result = queries.deleteMethod(
+        session,
+        className,
+        node.isMeta,
+        selector,
+        this.state.dictIndex,
+      );
+    } catch (e) {
+      void vscode.window.showErrorMessage(
+        `Remove method failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return;
+    }
+    if (!result.startsWith('Deleted:')) {
+      void vscode.window.showErrorMessage(`Remove method failed: ${result}`);
+      return;
+    }
     this.reloadCurrentClassMethods();
   }
 
@@ -4053,7 +4102,12 @@ export function registerGemStoneExplorer(
       if (node instanceof MethodItem) void ctl.openMethod(node, true);
     }),
     vscode.commands.registerCommand('gemstone.explorer.removeMethod', (node?: MethodItem) => {
-      if (node instanceof MethodItem) void ctl.removeMethod(node);
+      if (node instanceof MethodItem)
+        void ctl.removeMethod(node).catch((e: unknown) => {
+          void vscode.window.showErrorMessage(
+            `Remove method failed: ${e instanceof Error ? e.message : String(e)}`,
+          );
+        });
     }),
     // Ctrl/Cmd+Enter in the Methods pane: open the selected method in a new
     // source editor to the side (same as the row's ↗ button). Keybindings don't

@@ -1721,17 +1721,17 @@
       ],
       "view/title": [
         {
-          "command": "gemstone.explorer.commit",
+          "command": "gemstone.explorer.refresh",
           "when": "view == gemstoneExplorerDicts",
           "group": "navigation@3"
         },
         {
-          "command": "gemstone.explorer.abort",
+          "command": "gemstone.explorer.commit",
           "when": "view == gemstoneExplorerDicts",
           "group": "navigation@4"
         },
         {
-          "command": "gemstone.explorer.refresh",
+          "command": "gemstone.explorer.abort",
           "when": "view == gemstoneExplorerDicts",
           "group": "navigation@5"
         },

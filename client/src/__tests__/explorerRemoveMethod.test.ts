@@ -5,7 +5,8 @@ vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 // (reloadCurrentClassMethods) calls getClassEnvironments. Neither should reach
 // a real GCI session in a unit test.
 vi.mock('../browserQueries', () => ({
-  deleteMethod: vi.fn(() => 'Deleted'),
+  canClassBeWritten: vi.fn(() => true),
+  deleteMethod: vi.fn(() => 'Deleted: Array >> at:'),
   getClassEnvironments: vi.fn(() => []),
 }));
 
@@ -48,11 +49,17 @@ function methodItem(over: Partial<SelectorInfo> = {}, isMeta = false): MethodIte
 }
 
 const deleteMethod = queries.deleteMethod as ReturnType<typeof vi.fn>;
+const canClassBeWritten = queries.canClassBeWritten as ReturnType<typeof vi.fn>;
 const showWarningMessage = window.showWarningMessage as ReturnType<typeof vi.fn>;
+const showErrorMessage = window.showErrorMessage as ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   vi.clearAllMocks();
   window.tabGroups.all = [];
+  // clearAllMocks resets call history but not implementations; restore the query
+  // defaults so a failure-path test's override can't leak into a shuffled neighbour.
+  canClassBeWritten.mockReturnValue(true);
+  deleteMethod.mockReturnValue('Deleted: Array >> at:');
 });
 
 describe('ExplorerController.removeMethod', () => {
@@ -129,5 +136,47 @@ describe('ExplorerController.removeMethod', () => {
     await ctl.removeMethod(methodItem());
 
     expect(deleteMethod).not.toHaveBeenCalled();
+  });
+
+  it('warns and does not prompt when the class cannot be modified', async () => {
+    canClassBeWritten.mockReturnValue(false);
+    showWarningMessage.mockResolvedValue('Remove');
+    const ctl = makeController();
+
+    await ctl.removeMethod(methodItem());
+
+    expect(showWarningMessage).toHaveBeenCalledWith(expect.stringContaining('cannot be modified'));
+    expect(showWarningMessage).not.toHaveBeenCalledWith(
+      expect.stringContaining('Remove method'),
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(deleteMethod).not.toHaveBeenCalled();
+  });
+
+  it('surfaces an error and does not refresh when the removal reports a failure status', async () => {
+    showWarningMessage.mockResolvedValue('Remove');
+    deleteMethod.mockReturnValue('Selector not found: Array >> at:');
+    const ctl = makeController();
+    const refresh = vi.spyOn(ctl.methodProvider, 'refresh');
+
+    await ctl.removeMethod(methodItem());
+
+    expect(showErrorMessage).toHaveBeenCalledWith(expect.stringContaining('Selector not found'));
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it('surfaces an error and does not refresh when the removal query raises', async () => {
+    showWarningMessage.mockResolvedValue('Remove');
+    deleteMethod.mockImplementation(() => {
+      throw new Error('a SecurityError occurred');
+    });
+    const ctl = makeController();
+    const refresh = vi.spyOn(ctl.methodProvider, 'refresh');
+
+    await ctl.removeMethod(methodItem());
+
+    expect(showErrorMessage).toHaveBeenCalledWith(expect.stringContaining('a SecurityError'));
+    expect(refresh).not.toHaveBeenCalled();
   });
 });

@@ -127,6 +127,28 @@ describe('openGemstoneDocument', () => {
 
       expect(closeTab).not.toHaveBeenCalled();
     });
+
+    it('closes the outgoing transient in our column, never a System Browser copy of the same URI', async () => {
+      const placement = new SourceEditorPlacement();
+      placement.remember(Uri.parse(NAV));
+      placement.reusableTab = NAV;
+      placement.reusableColumn = 2;
+      // The same gemstone:// method is open in the System Browser's group (column 1)
+      // and as our transient (column 2). The foreign group is listed first, so a
+      // whole-window scan would reach and close it first.
+      setGroups([
+        { viewColumn: 1, tabs: [{ uri: NAV }] },
+        { viewColumn: 2, tabs: [{ uri: NAV, active: true }] },
+      ]);
+      const foreignTab = window.tabGroups.all[0].tabs[0];
+      const ourTab = window.tabGroups.all[1].tabs[0];
+
+      await openGemstoneDocument(methodDoc(), false, placement);
+
+      expect(closeTab).toHaveBeenCalledTimes(1);
+      expect(closeTab.mock.calls[0][0]).toBe(ourTab);
+      expect(closeTab.mock.calls[0][0]).not.toBe(foreignTab);
+    });
   });
 
   describe('pin', () => {

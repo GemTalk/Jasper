@@ -1641,6 +1641,12 @@ describe('parseUri', () => {
     expect(parsed).toMatchObject({ kind: 'definition', className: 'Array' });
   });
 
+  it('recognizes a class-definition editor whose tab-label segment repeats the class name', () => {
+    const parsed = parseUri(Uri.parse('gemstone://1/Globals/Array/definition/Array'));
+
+    expect(parsed).toMatchObject({ kind: 'definition', className: 'Array' });
+  });
+
   it('recognizes a class-comment editor', () => {
     const parsed = parseUri(Uri.parse('gemstone://1/Globals/Array/comment'));
 

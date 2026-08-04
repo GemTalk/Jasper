@@ -65,6 +65,7 @@ const openTextDocument = workspace.openTextDocument as ReturnType<typeof vi.fn>;
 beforeEach(() => {
   vi.clearAllMocks();
   window.tabGroups.all = [];
+  window.activeTextEditor = undefined;
 });
 
 describe('ExplorerController.openMethod', () => {
@@ -178,5 +179,27 @@ describe('ExplorerController.syncToEditor', () => {
     await ctl.syncToEditor(Uri.parse('gemstone://1/UserGlobals/Array/instance/accessing/at%3A'));
 
     expect(method.reveal).not.toHaveBeenCalled();
+  });
+
+  it('still follows a later focus event for a method that was already the active editor', async () => {
+    // Discover the exact URI a click on this node builds, via a throwaway controller.
+    const probe = makeController();
+    await probe.openMethod(methodItem(), false);
+    const builtUri = openTextDocument.mock.calls[0][0] as vscode.Uri;
+    vi.clearAllMocks();
+
+    // The method is already the focused editor, so opening it fires no active-editor
+    // change — openMethod must NOT leave a self-open mark that swallows a genuine
+    // later focus event for this tab.
+    const ctl = makeController();
+    const method = withViews(ctl);
+    stubResolvableSelector(ctl);
+    window.activeTextEditor = { document: { uri: builtUri } };
+    await ctl.openMethod(methodItem(), false);
+    method.reveal.mockClear();
+
+    await ctl.syncToEditor(builtUri);
+
+    expect(method.reveal).toHaveBeenCalled();
   });
 });

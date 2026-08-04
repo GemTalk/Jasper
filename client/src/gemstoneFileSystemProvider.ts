@@ -105,20 +105,16 @@ export function parseUri(uri: vscode.Uri): ParsedUri {
     const category = catMatch ? decodeURIComponent(catMatch[1]) : undefined;
     return { kind: 'new-class', sessionId, dictName: parts[1], category };
   }
-  if (parts.length === 4 && parts[3] === 'definition') {
+  // 4-segment `/dict/Class/definition`, or 5-segment `/dict/Class/definition/Class`
+  // — the trailing repeat makes the editor tab read as the class name (see
+  // buildClassDefinitionUri). Both resolve to the same definition.
+  if ((parts.length === 4 || parts.length === 5) && parts[3] === 'definition') {
     return { kind: 'definition', sessionId, dictName: parts[1], className: parts[2], dictIndex };
   }
-  // 5-segment form `/dict/Class/definition/Class` — the trailing repeat makes the
-  // editor tab read as the class name (see buildClassDefinitionUri).
-  if (parts.length === 5 && parts[3] === 'definition') {
-    return { kind: 'definition', sessionId, dictName: parts[1], className: parts[2], dictIndex };
-  }
-  if (parts.length === 4 && parts[3] === 'comment') {
-    return { kind: 'comment', sessionId, dictName: parts[1], className: parts[2], dictIndex };
-  }
-  // 5-segment form `/dict/Class/comment/Class comment` — the trailing label makes
-  // the editor tab read as "Class comment" (see buildClassCommentUri).
-  if (parts.length === 5 && parts[3] === 'comment') {
+  // 4-segment `/dict/Class/comment`, or 5-segment `/dict/Class/comment/Class comment`
+  // — the trailing label makes the editor tab read as "Class comment" (see
+  // buildClassCommentUri). Both resolve to the same comment.
+  if ((parts.length === 4 || parts.length === 5) && parts[3] === 'comment') {
     return { kind: 'comment', sessionId, dictName: parts[1], className: parts[2], dictIndex };
   }
   if (parts.length === 6 && parts[5] === 'new-method') {
