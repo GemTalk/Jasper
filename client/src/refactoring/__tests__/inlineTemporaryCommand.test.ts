@@ -215,4 +215,24 @@ describe('inline-temporary command', () => {
 
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(expect.stringContaining('boom'));
   });
+
+  // An expired preview token answers `applied:0` with an EMPTY `failed`, so it parses
+  // cleanly — without the `result.error` check it reached the success path.
+  it('reports an expired preview token instead of taking the success path', async () => {
+    installEditor();
+    vi.mocked(queries.analyzeInlineTemporary).mockResolvedValue(analysis());
+    vi.mocked(queries.startInlineTemporaryPreview).mockResolvedValue(startEnvelope());
+    vi.mocked(showInlineTemporaryPanel).mockResolvedValue({
+      applied: 0,
+      failed: [],
+      error: 'preview session expired',
+    });
+
+    await inlineTemporaryCommand(sessions);
+
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining('preview session expired'),
+    );
+    expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
+  });
 });

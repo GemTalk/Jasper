@@ -76,7 +76,10 @@ describe('instance-variable structure (gci e2e)', () => {
     ).trim() === 'true';
 
   const abort = (): void => {
-    exec('System abortTransaction');
+    // Must end in a String: executeFetchString sends #encodeAsUTF8 to whatever the code
+    // evaluates to, and `System abortTransaction` answers the System class, which does not
+    // understand it. Same idiom as the sibling gci suites.
+    exec("System abortTransaction. 'ok'");
   };
 
   // Remove the fixture classes (+ any stray migrate-test instance) and COMMIT — used to clean
@@ -84,7 +87,7 @@ describe('instance-variable structure (gci e2e)', () => {
   const removeFixtureAndCommit = (): void => {
     exec(
       `#(#VsE2eInst #${LEAF} #${MID} #${BASE}) do: [:s | UserGlobals removeKey: s ifAbsent: []]. ` +
-        'System commitTransaction',
+        "System commitTransaction. 'ok'",
     );
   };
 
@@ -231,8 +234,8 @@ describe('instance-variable structure (gci e2e)', () => {
       // The fixture + a live instance must be COMMITTED before migrating: migrateInstancesTo:
       // needs a clean transaction and already-persistent instances.
       defineFixture();
-      exec('System commitTransaction');
-      exec(`UserGlobals at: #VsE2eInst put: ${LEAF} new. System commitTransaction`);
+      exec("System commitTransaction. 'ok'");
+      exec(`UserGlobals at: #VsE2eInst put: ${LEAF} new. System commitTransaction. 'ok'`);
 
       parseStartPreview(
         await startInstVarStructurePreview(

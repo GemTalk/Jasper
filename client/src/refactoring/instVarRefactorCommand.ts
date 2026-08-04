@@ -124,15 +124,20 @@ export async function runInstVarRefactor(
       parseApplyResult(
         await queries.applyInstVar(session, token, [], options, migrate, deleteHistory),
       ),
+    // The engine stops at the first failure and never aborts on its own (that would discard the
+    // user's other in-flight work). The panel surfaces the failure in place and, when a partial
+    // reshape is stranded, offers this abort directly — no toast, no second confirmation.
+    abort: () => {
+      queries.abortSessionTransaction(session);
+    },
+    // Live re-probe for the commit-confirmation warning — see the panel handler's doc.
+    sessionNeedsCommit: () => queries.sessionNeedsCommit(session),
     cleanup: safeClear,
   });
+  // The panel resolves a result only on success; every apply failure is shown and handled inside
+  // the panel (Abort or Close), which then resolves undefined. So a falsy result means the user
+  // cancelled, closed, or hit a failure the panel already reported — nothing more to say here.
   if (!result) return undefined;
-
-  if (result.failed.length > 0) {
-    const first = result.failed[0];
-    void vscode.window.showErrorMessage(`Failed: ${first.label}: ${first.error}`);
-    return undefined;
-  }
 
   const droppedNote =
     result.dropped.length > 0

@@ -1656,12 +1656,20 @@ export class ExplorerController {
       title: 'Add Instance Variable',
       prompt: `Add an instance variable to ${className}.`,
       placeHolder: 'newVariableName',
+      // A FAST-FAIL only — the engine's isValidIvarName: is the authority and declines with a
+      // fuller message. Kept so a typo is caught in the box without a round trip, and kept in
+      // step with the engine: lowercase-or-underscore first, because a capitalised identifier
+      // in a method body reads as a global.
+      // Deliberately ASCII-only: the engine's `first isLowercase` also accepts non-ASCII lowercase
+      // letters (é, ä, …), so this regex is intentionally the stricter, conservative side — it may
+      // decline a rare Unicode-lowercase name the engine would accept, but never accepts one it
+      // would reject, so there is no data risk. Widen to a Unicode letter class if that ever bites.
       validateInput: (v) => {
         const t = v.trim();
         if (t.length === 0) return 'Enter a name.';
-        return /^[A-Za-z_][A-Za-z0-9_]*$/.test(t)
+        return /^[a-z_][A-Za-z0-9_]*$/.test(t)
           ? undefined
-          : 'Not a valid instance-variable name.';
+          : 'Must start with a lowercase letter or underscore, then letters, digits, or underscores.';
       },
     });
     if (entered === undefined) return;
@@ -2120,6 +2128,14 @@ export class ExplorerController {
     });
     if (!result) return false; // cancelled/closed
 
+    // A whole-apply error (an expired preview token) answers `applied:0` with an empty
+    // `failed`, so it parses cleanly. Reported before the reload below: no selector
+    // changed, so there is nothing stale to refresh and nothing to abort.
+    if (result.error) {
+      void vscode.window.showErrorMessage(`Rename failed: ${result.error}`);
+      return false;
+    }
+
     // Selectors changed, so the current class's cached method environment is
     // stale — reload it and reopen any editor that was on the renamed selector.
     this.reloadCurrentClassMethods();
@@ -2376,6 +2392,14 @@ export class ExplorerController {
     );
     if (!result) return;
 
+    // A whole-apply error (an expired preview token) answers `applied:0` with an empty
+    // `failed`, so it parses cleanly. Reported before the re-cascade below: the class was
+    // never reshaped, so there is nothing to refresh and nothing to abort.
+    if (result.error) {
+      void vscode.window.showErrorMessage(`Rename failed: ${result.error}`);
+      return;
+    }
+
     // The class was reshaped/rebound — re-cascade so both panes show the new name
     // and version tag.
     await this.refreshAfterClassReshape(newName);
@@ -2505,6 +2529,15 @@ export class ExplorerController {
       cleanup: safeClear,
     });
     if (!result) {
+      reselect();
+      return false;
+    }
+
+    // A whole-apply error (an expired preview token) answers `applied:0` with an empty
+    // `failed`, so it parses cleanly. Reported before the re-cascade below: nothing was
+    // renamed, so there is nothing to refresh and nothing to abort.
+    if (result.error) {
+      void vscode.window.showErrorMessage(`Rename failed: ${result.error}`);
       reselect();
       return false;
     }

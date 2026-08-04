@@ -1,76 +1,18 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import { GciLibrary } from '../../gciLibrary';
 import { GCI_LIBRARY_PATH } from './gciTestConfig';
-import {
-  OOP_ILLEGAL,
-  OOP_NIL,
-  OOP_FALSE,
-  OOP_TRUE,
-  OOP_ASCII_NUL,
-  OOP_Zero,
-  OOP_One,
-  OOP_Two,
-  OOP_Three,
-  OOP_CLASS_BOOLEAN,
-  OOP_CLASS_CHARACTER,
-  OOP_CLASS_SMALL_INTEGER,
-  OOP_CLASS_UNDEFINED_OBJECT,
-  OOP_CLASS_SMALL_DOUBLE,
-} from '../../gciConstants';
+import { OOP_One, OOP_Two, OOP_Three, OOP_Zero, OOP_CLASS_SMALL_INTEGER } from '../../gciConstants';
 
+// The rest of this file's session-free special-OOP coverage now lives in
+// `gciLibrary/__tests__/gciSpecials.integration.test.ts`. GciI32ToOop and
+// GciTsI32ToOop stay here because they are optional symbols, absent from the
+// oldest libraries in the release matrix, so they need a per-symbol
+// availability gate before they can join the default suite.
 describe('GCI session-free OOP functions', () => {
   const gci = new GciLibrary(GCI_LIBRARY_PATH);
 
   afterAll(() => {
     gci.close();
-  });
-
-  describe('GciTsOopIsSpecial', () => {
-    it('returns true for OOP_NIL', () => {
-      expect(gci.GciTsOopIsSpecial(OOP_NIL)).toBe(true);
-    });
-
-    it('returns true for OOP_TRUE', () => {
-      expect(gci.GciTsOopIsSpecial(OOP_TRUE)).toBe(true);
-    });
-
-    it('returns true for OOP_FALSE', () => {
-      expect(gci.GciTsOopIsSpecial(OOP_FALSE)).toBe(true);
-    });
-
-    it('returns true for SmallInteger 0', () => {
-      expect(gci.GciTsOopIsSpecial(OOP_Zero)).toBe(true);
-    });
-
-    it('returns true for a Character', () => {
-      expect(gci.GciTsOopIsSpecial(OOP_ASCII_NUL)).toBe(true);
-    });
-  });
-
-  describe('GciTsFetchSpecialClass', () => {
-    it('returns UndefinedObject for OOP_NIL', () => {
-      expect(gci.GciTsFetchSpecialClass(OOP_NIL)).toBe(OOP_CLASS_UNDEFINED_OBJECT);
-    });
-
-    it('returns Boolean for OOP_TRUE', () => {
-      expect(gci.GciTsFetchSpecialClass(OOP_TRUE)).toBe(OOP_CLASS_BOOLEAN);
-    });
-
-    it('returns Boolean for OOP_FALSE', () => {
-      expect(gci.GciTsFetchSpecialClass(OOP_FALSE)).toBe(OOP_CLASS_BOOLEAN);
-    });
-
-    it('returns SmallInteger for OOP_Zero', () => {
-      expect(gci.GciTsFetchSpecialClass(OOP_Zero)).toBe(OOP_CLASS_SMALL_INTEGER);
-    });
-
-    it('returns Character for OOP_ASCII_NUL', () => {
-      expect(gci.GciTsFetchSpecialClass(OOP_ASCII_NUL)).toBe(OOP_CLASS_CHARACTER);
-    });
-
-    it('returns OOP_ILLEGAL for a non-special OOP', () => {
-      expect(gci.GciTsFetchSpecialClass(OOP_ILLEGAL)).toBe(OOP_ILLEGAL);
-    });
   });
 
   describe('GciI32ToOop / GciTsI32ToOop', () => {
@@ -114,66 +56,6 @@ describe('GCI session-free OOP functions', () => {
       } else {
         expect(() => gci.GciTsI32ToOop(1)).toThrow(/not available in this GCI library/);
       }
-    });
-  });
-
-  describe('GciTsCharToOop / GciTsOopToChar', () => {
-    it('round-trips ASCII characters', () => {
-      for (const ch of [0, 65, 90, 97, 122, 127]) {
-        const oop = gci.GciTsCharToOop(ch);
-        expect(gci.GciTsOopToChar(oop)).toBe(ch);
-      }
-    });
-
-    it('round-trips Unicode code points', () => {
-      for (const ch of [0x00e9, 0x4e16, 0x1f600, 0x10ffff]) {
-        const oop = gci.GciTsCharToOop(ch);
-        expect(gci.GciTsOopToChar(oop)).toBe(ch);
-      }
-    });
-
-    it('Character OOPs are recognized as special', () => {
-      const oop = gci.GciTsCharToOop(65);
-      expect(gci.GciTsOopIsSpecial(oop)).toBe(true);
-      expect(gci.GciTsFetchSpecialClass(oop)).toBe(OOP_CLASS_CHARACTER);
-    });
-
-    it('returns OOP_ILLEGAL for code points above U+10FFFF', () => {
-      expect(gci.GciTsCharToOop(0x110000)).toBe(OOP_ILLEGAL);
-    });
-
-    it('returns -1 for non-Character OOPs', () => {
-      expect(gci.GciTsOopToChar(OOP_NIL)).toBe(-1);
-      expect(gci.GciTsOopToChar(OOP_Zero)).toBe(-1);
-    });
-  });
-
-  describe('supportsNonBlockingLogin', () => {
-    it('reports non-blocking login support on every platform except Windows', () => {
-      expect(gci.supportsNonBlockingLogin()).toBe(process.platform !== 'win32');
-    });
-  });
-
-  describe('GciTsDoubleToSmallDouble', () => {
-    it('encodes 0.0 as a special OOP', () => {
-      const oop = gci.GciTsDoubleToSmallDouble(0.0);
-      expect(oop).not.toBe(OOP_ILLEGAL);
-      expect(gci.GciTsOopIsSpecial(oop)).toBe(true);
-      expect(gci.GciTsFetchSpecialClass(oop)).toBe(OOP_CLASS_SMALL_DOUBLE);
-    });
-
-    it('encodes 1.0 as a special OOP', () => {
-      const oop = gci.GciTsDoubleToSmallDouble(1.0);
-      expect(oop).not.toBe(OOP_ILLEGAL);
-      expect(gci.GciTsFetchSpecialClass(oop)).toBe(OOP_CLASS_SMALL_DOUBLE);
-    });
-
-    it('returns OOP_ILLEGAL for NaN', () => {
-      expect(gci.GciTsDoubleToSmallDouble(NaN)).toBe(OOP_ILLEGAL);
-    });
-
-    it('returns OOP_ILLEGAL for Infinity', () => {
-      expect(gci.GciTsDoubleToSmallDouble(Infinity)).toBe(OOP_ILLEGAL);
     });
   });
 });

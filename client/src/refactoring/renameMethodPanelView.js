@@ -27,6 +27,11 @@
     const list = doc.querySelector('ul.changes');
     const total = parseInt((doc.body && doc.body.getAttribute('data-total')) || '0', 10);
 
+    // Applying is one-shot: a second dispatch would apply the whole change set again. The
+    // host guards this too; disabling Apply keeps the UI honest about the in-flight apply.
+    // `refresh` folds this in so a later checkbox change can't re-enable the button.
+    let applying = false;
+
     const cards = function () {
       return Array.prototype.slice.call(doc.querySelectorAll('li.change'));
     };
@@ -62,11 +67,15 @@
       const selected = total - deselectedIds().length;
       if (countEl) countEl.textContent = String(selected);
       if (selCountEl) selCountEl.textContent = String(selected);
-      if (applyBtn) applyBtn.disabled = selected <= 0;
+      if (applyBtn) applyBtn.disabled = applying || selected <= 0;
       cards().forEach(function (li) {
         const cb = li.querySelector('.sel');
         if (cb) li.classList.toggle('deselected', !cb.checked);
       });
+    };
+    const setApplying = function (busy) {
+      applying = busy;
+      refresh();
     };
 
     // Wire cards that haven't been wired yet (idempotent — safe after appends).
@@ -140,6 +149,8 @@
 
     if (applyBtn) {
       applyBtn.addEventListener('click', function () {
+        if (applying) return;
+        setApplying(true);
         var msg = { command: 'apply', deselected: deselectedIds() };
         // Panels may add apply-time option checkboxes (class "apply-option", a data-opt
         // key). Collect them only when present, so panels without options send the exact
@@ -173,7 +184,12 @@
     const handleMessage = function (msg) {
       if (!msg) return;
       if (msg.command === 'appendChanges') appendChanges(msg.html, msg.done === true);
-      else if (msg.command === 'busyDone') setBusy(false);
+      else if (msg.command === 'busyDone') {
+        setBusy(false);
+        // The host aborted/failed the apply and the panel is staying open (or a page load
+        // settled) — let Apply be pressed again.
+        setApplying(false);
+      }
     };
     if (typeof doc.defaultView !== 'undefined' && doc.defaultView) {
       doc.defaultView.addEventListener('message', function (e) {

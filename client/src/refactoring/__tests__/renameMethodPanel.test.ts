@@ -18,6 +18,7 @@ interface PanelApi {
     refresh: () => void;
     deselectedIds: () => string[];
     appendChanges: (html: string, done: boolean) => void;
+    handleMessage: (m: unknown) => void;
   };
 }
 function api(): PanelApi {
@@ -128,5 +129,64 @@ describe('paginated rename-method panel', () => {
       deselected: [],
       options: { migrateInstances: true, removeOldFromHistory: false },
     });
+  });
+
+  // This view script is shared by every paginated preview panel (rename-method,
+  // move/push, extract/inline, change-signature, rename-class/class-var/temporary,
+  // instVar-structure), so the guard below covers all of them.
+  it('a double-click on Apply posts exactly one apply and disables the button', () => {
+    const { vscode } = mount([change('1', 'a')], 1, true);
+    const apply = document.getElementById('apply') as HTMLButtonElement;
+
+    apply.click();
+    apply.click();
+
+    const applies = vscode.postMessage.mock.calls.filter(
+      (c) => (c[0] as { command: string }).command === 'apply',
+    );
+    expect(applies).toHaveLength(1);
+    expect(apply.disabled).toBe(true);
+  });
+
+  it('a checkbox change while applying cannot re-enable Apply', () => {
+    const { handle } = mount([change('1', 'a'), change('2', 'c')], 2, true);
+    const apply = document.getElementById('apply') as HTMLButtonElement;
+    apply.click();
+    expect(apply.disabled).toBe(true);
+
+    // refresh() recomputes `disabled` from the selection — it must keep honouring `applying`.
+    const cb = document.querySelector<HTMLInputElement>('li.change[data-id="2"] .sel')!;
+    cb.checked = false;
+    cb.dispatchEvent(new Event('change'));
+    handle.refresh();
+
+    expect(apply.disabled).toBe(true);
+  });
+
+  it('an appended page while applying cannot re-enable Apply', () => {
+    const { handle } = mount([change('1', 'a')], 3, false);
+    const apply = document.getElementById('apply') as HTMLButtonElement;
+    apply.click();
+
+    handle.appendChanges(renderMethodCards([change('2', 'c')]), true);
+
+    expect(apply.disabled).toBe(true);
+  });
+
+  it('busyDone re-enables Apply so a failed apply can be retried', () => {
+    const { handle, vscode } = mount([change('1', 'a')], 1, true);
+    const apply = document.getElementById('apply') as HTMLButtonElement;
+    apply.click();
+    expect(apply.disabled).toBe(true);
+
+    handle.handleMessage({ command: 'busyDone' });
+    expect(apply.disabled).toBe(false);
+
+    apply.click();
+
+    const applies = vscode.postMessage.mock.calls.filter(
+      (c) => (c[0] as { command: string }).command === 'apply',
+    );
+    expect(applies).toHaveLength(2);
   });
 });

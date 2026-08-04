@@ -30,6 +30,17 @@ import {
  * parsers against a live stone: add an ivar and confirm the class carries it; remove one
  * that methods use and confirm those methods are reported and dropped.
  *
+ * WHY THIS IS STILL AN on-demand gci SUITE (issue #360, "can this migrate to
+ * useIntegrationTest?"): the three NON-committing scenarios below are already covered by the
+ * automatic integration suite, which does run in CI — see
+ * `refactoring/__tests__/refactoringInstVar.integration.test.ts` (add, remove + drop, decline
+ * duplicate, plus the engine's GS SUnit suite). What is unique here are the two COMMITTING
+ * tests. `useIntegrationTest` aborts after every test to keep them isolated, and an abort
+ * cannot undo a commit, so a committing test can only live there by cleaning up after itself
+ * and committing that cleanup — which is what these two do. That is technically possible under
+ * the harness; it is the harness's "never commit" invariant, not a technical blocker, that
+ * keeps them out. Moving them is a policy call for the CI-migration work, not this file.
+ *
  * Guarded on the refactoring engine being installed (the queries reference the in-stone
  * `GsInstVarRefactoring`); the tests skip with a reason otherwise. The non-committing tests are
  * transient (they roll back with `System abortTransaction` in a `finally`); the two committing
@@ -42,6 +53,10 @@ describe('add / remove instance variable (gci e2e)', () => {
   let session: ActiveSession;
   let enginePresent = false;
 
+  // NB: `executeFetchString` sends #encodeAsUTF8 to whatever the code evaluates to, so every
+  // `exec` here must end in a String. `System abortTransaction` / `commitTransaction` answer
+  // the System class (and some primitives a Boolean), neither of which understands it — hence
+  // the trailing `. 'ok'` on the mutating calls below, matching the sibling gci suites.
   const exec = (code: string): string => q.executeFetchString(session, code);
   const asyncExec = (_label: string, code: string): Promise<string> => Promise.resolve(exec(code));
 
@@ -76,6 +91,9 @@ describe('add / remove instance variable (gci e2e)', () => {
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
     );
     q.compileMethod(session, BASE, false, 'accessing', 'combine\n\t^ count + other');
+    // Deliberately touches `other` only, never `count` — the control for the selective
+    // copy-forward assertion in the remove test: removing `count` must NOT drop this.
+    q.compileMethod(session, BASE, false, 'accessing', 'getOther\n\t^ other');
     q.compileMethod(session, SUB, false, 'accessing', 'doubleCount\n\t^ count * 2');
   };
 
@@ -133,7 +151,55 @@ describe('add / remove instance variable (gci e2e)', () => {
 
       expect(hasIvar(BASE, 'tally')).toBe(true);
     } finally {
-      exec('System abortTransaction');
+      exec("System abortTransaction. 'ok'");
+    }
+  });
+
+  it('warns up front that a method whose temp shadows the new variable will not recompile', async (ctx) => {
+    if (!enginePresent) return ctx.skip();
+
+    try {
+      defineFixture();
+      // A SUB method with a METHOD-LEVEL temporary named `tally`: once `tally` becomes an
+      // inherited instance variable, that declaration shadows it. The preview must surface the
+      // method up front so it is not silently dropped at apply.
+      //
+      // We assert the PREDICTION only, not an apply drop: whether the shadowed recompile hard-fails
+      // or merely warns can vary by stone/version, but the source-based prediction is deterministic
+      // and is the contract this covers. (The apply-drops-exactly-the-predicted-method invariant is
+      // pinned in the GS SUnit suite, which runs in-stone on both boundaries.)
+      q.compileMethod(
+        session,
+        SUB,
+        false,
+        'accessing',
+        'shadowsTally\n\t| tally |\n\ttally := 1.\n\t^ tally',
+      );
+
+      const analysis = parseAnalysis(
+        await analyzeInstVar(asyncExec, 'add', BASE, 'tally', userIndex()),
+      );
+      expect(analysis.decline).toBeNull();
+
+      const start = parseStartPreview(
+        await startInstVarPreview(
+          asyncExec,
+          'add',
+          BASE,
+          'tally',
+          'gci-iv-add-shadow',
+          PREVIEW_PAGE_BYTES,
+          userIndex(),
+        ),
+      );
+
+      const shadowed = start.outOfScope.willNotRecompile.find((m) => m.selector === 'shadowsTally');
+      expect(shadowed).toBeDefined();
+      expect(shadowed?.className).toBe(SUB);
+      // A sibling method that only USES another ivar (`count`) must not be over-reported.
+      expect(start.outOfScope.willNotRecompile.map((m) => m.selector)).not.toContain('doubleCount');
+    } finally {
+      exec("System abortTransaction. 'ok'");
     }
   });
 
@@ -168,9 +234,13 @@ describe('add / remove instance variable (gci e2e)', () => {
 
       expect(hasIvar(BASE, 'count')).toBe(false);
       expect(includesSelector(BASE, 'combine')).toBe(false);
-      expect(includesSelector(BASE, 'getOther')).toBe(false); // never existed
+
+      // Copy-forward is SELECTIVE, not all-or-nothing: `getOther` never referenced `count`,
+      // so it must survive onto the new class version and must not be reported as dropped.
+      expect(includesSelector(BASE, 'getOther')).toBe(true);
+      expect(result.dropped.map((m) => m.selector)).not.toContain('getOther');
     } finally {
-      exec('System abortTransaction');
+      exec("System abortTransaction. 'ok'");
     }
   });
 
@@ -185,7 +255,33 @@ describe('add / remove instance variable (gci e2e)', () => {
       );
       expect(analysis.decline).toBeTruthy();
     } finally {
-      exec('System abortTransaction');
+      exec("System abortTransaction. 'ok'");
+    }
+  });
+
+  it('declines a name a subclass already declares, naming the subclass, before any preview', async (ctx) => {
+    if (!enginePresent) return ctx.skip();
+
+    try {
+      q.compileClassDefinition(
+        session,
+        `Object subclass: '${BASE}' instVarNames: #() classVars: #() ` +
+          'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
+      );
+      q.compileClassDefinition(
+        session,
+        `${BASE} subclass: '${SUB}' instVarNames: #(mine) classVars: #() ` +
+          'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
+      );
+
+      const analysis = parseAnalysis(
+        await analyzeInstVar(asyncExec, 'add', BASE, 'mine', userIndex()),
+      );
+
+      expect(analysis.decline).toBeTruthy();
+      expect(analysis.decline).toContain(SUB);
+    } finally {
+      exec("System abortTransaction. 'ok'");
     }
   });
 
@@ -206,7 +302,7 @@ describe('add / remove instance variable (gci e2e)', () => {
           'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
       );
       // A persisted instance of the old version, so migrateInstancesTo: has something on disk to move.
-      exec(`UserGlobals at: #GciIvMigInst put: ${CLS} new. System commitTransaction`);
+      exec(`UserGlobals at: #GciIvMigInst put: ${CLS} new. System commitTransaction. 'ok'`);
 
       parseStartPreview(
         await startInstVarPreview(
@@ -238,7 +334,7 @@ describe('add / remove instance variable (gci e2e)', () => {
     } finally {
       exec(
         `UserGlobals removeKey: #GciIvMigInst ifAbsent: []. ` +
-          `UserGlobals removeKey: #${CLS} ifAbsent: []. System commitTransaction`,
+          `UserGlobals removeKey: #${CLS} ifAbsent: []. System commitTransaction. 'ok'`,
       );
     }
   });
@@ -253,7 +349,7 @@ describe('add / remove instance variable (gci e2e)', () => {
         `Object subclass: '${CLS}' instVarNames: #(x) classVars: #() ` +
           'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
       );
-      exec('System commitTransaction'); // commit the original version so applying bumps history to 2
+      exec("System commitTransaction. 'ok'"); // commit the original version so history bumps to 2
 
       parseStartPreview(
         await startInstVarPreview(
@@ -276,7 +372,66 @@ describe('add / remove instance variable (gci e2e)', () => {
       // The prior version was pruned: only the current version remains in the history.
       expect(exec(`${CLS} classHistory size printString`).trim()).toBe('1');
     } finally {
-      exec(`UserGlobals removeKey: #${CLS} ifAbsent: []. System commitTransaction`);
+      exec(`UserGlobals removeKey: #${CLS} ifAbsent: []. System commitTransaction. 'ok'`);
+    }
+  });
+
+  // A mid-apply failure, end to end against a COMMITTED fixture: the engine must stop at the
+  // first failure, leave the transaction alone (it never aborts — that would discard the user's
+  // other in-flight work), and report the partial state for the client's abort recommendation.
+  it('stops at the first failure and reports the partial apply without aborting', async (ctx) => {
+    if (!enginePresent) return ctx.skip();
+
+    const RB_BASE = 'GciIvRbBase';
+    const RB_SUB = 'GciIvRbSub';
+    try {
+      q.compileClassDefinition(
+        session,
+        `Object subclass: '${RB_BASE}' instVarNames: #(x) classVars: #() ` +
+          'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
+      );
+      q.compileClassDefinition(
+        session,
+        `${RB_BASE} subclass: '${RB_SUB}' instVarNames: #() classVars: #() ` +
+          'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
+      );
+      // A method that WOULD be dropped by the apply, so a bogus `dropped` report is detectable.
+      q.compileMethod(session, RB_SUB, false, 'accessing', 'shadowIt | tally | ^tally');
+      exec("System commitTransaction. 'ok'"); // clean session — the engine may now abort
+
+      const start = parseStartPreview(
+        await startInstVarPreview(
+          asyncExec,
+          'add',
+          RB_BASE,
+          'tally',
+          'gci-iv-rollback',
+          PREVIEW_PAGE_BYTES,
+          userIndex(),
+        ),
+      );
+      expect(start.total).toBe(2); // base + sub are both staged
+
+      // Break the SECOND change after the preview was staged: the base will version fine, then
+      // the sub will fail with 'Class not found'. Committed so the session stays clean.
+      exec(`UserGlobals removeKey: #${RB_SUB} ifAbsent: []. System commitTransaction. 'ok'`);
+
+      const result = parseApplyResult(
+        await applyInstVar(asyncExec, 'gci-iv-rollback', [], null, false, false),
+      );
+
+      expect(result.failed.length).toBe(1);
+      expect(result.applied).toBe(1); // the base applied; the sub failed; nothing after it ran
+      expect(result.partiallyApplied).toBe(true);
+      expect(result.committed).toBe(false);
+      // The decisive check: the engine did NOT abort, so the base's new version is still staged
+      // in the transaction — which is exactly why the client tells the user to abort it.
+      expect(hasIvar(RB_BASE, 'tally')).toBe(true);
+    } finally {
+      exec(
+        `#(#${RB_SUB} #${RB_BASE}) do: [:s | UserGlobals removeKey: s ifAbsent: []]. ` +
+          "System commitTransaction. 'ok'",
+      );
     }
   });
 });

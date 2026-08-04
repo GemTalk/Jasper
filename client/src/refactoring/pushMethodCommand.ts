@@ -149,6 +149,15 @@ export async function pushMethod(req: PushMethodRequest): Promise<PushOutcome | 
   });
   if (!result) return undefined;
 
+  // A whole-apply error (an expired preview token) answers `applied:0` with an empty
+  // `failed`, so it parses cleanly and would otherwise reach the success toast. Nothing
+  // changed, so no abort advice. Checked before the `applied === 0` branch below, which
+  // reports the benign "everything was left unchecked" case.
+  if (result.error) {
+    void vscode.window.showErrorMessage(`Push failed: ${result.error}`);
+    return undefined;
+  }
+
   if (result.failed.length > 0) {
     const first = result.failed[0];
     void vscode.window.showErrorMessage(`Push failed: ${first.label}: ${first.error}`);
