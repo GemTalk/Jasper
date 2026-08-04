@@ -1,16 +1,18 @@
 // Orchestrates a logical (object) backup of a running stone: pre-flight checks,
 // destination selection, and running Repository>>fullBackupTo: via a
 // non-blocking executor (which keeps VS Code responsive and shows its own
-// cancellable progress notification for the long-running call).
+// progress notification for the long-running call).
 //
 // Session acquisition (matching the active session to the target stone) and the
 // executor wiring live in the command handler; this module takes the executors
 // as dependencies so it stays unit-testable without a live GCI session.
 import * as vscode from 'vscode';
-import * as path from 'path';
 import { QueryExecutor } from './queries/types';
 import * as backup from './queries/backup';
-import { wslExistsSync, wslMkdirSync } from './wslFs';
+import { isWindows, wslPathToWindows } from './wslBridge';
+import { wslExistsSync } from './wslFs';
+import { backupFolderInServer } from './queries/extentBackup';
+import path from 'path';
 
 export interface LogicalBackupDeps {
   // Fast, synchronous executor for the pre-flight queries.
@@ -21,16 +23,9 @@ export interface LogicalBackupDeps {
   runBackup: (code: string) => Promise<string>;
   // Stone the session is connected to (used for labels and the default filename).
   stoneName: string;
-  // Managed database directory, when the session's stone is one we manage
-  // locally; the default destination is <dbPath>/backups. Omitted for stones we
-  // don't manage — the picker then opens without a pre-filled directory.
-  dbPath?: string;
 }
 
-const BACKUP_FILTERS: Record<string, string[]> = {
-  'GemStone backup': ['dbf'],
-  'All files': ['*'],
-};
+const GEMSTONE_BACKUP_EXTENSION = '.dbf';
 
 // How long the green success message lingers in the status bar (ms).
 const STATUS_SUCCESS_MS = 6000;
@@ -72,6 +67,23 @@ export async function runLogicalBackup(deps: LogicalBackupDeps): Promise<boolean
     return false;
   }
 
+  // The destination is a path on the server, so a wrong or missing directory
+  // here is not recoverable by falling back to "just a file name" — a relative
+  // path would land wherever the gem's own working directory happens to be,
+  // silently, on the server, with nothing for the user to inspect. So this is a
+  // hard pre-flight check, same as the FileControl and needsCommit checks above,
+  // rather than a soft default: either we know the stone's backups directory, or
+  // we stop before asking for anything else.
+  let backupFolder: string;
+  try {
+    backupFolder = backupFolderInServer(deps.execute);
+  } catch (e) {
+    void vscode.window.showErrorMessage(
+      `Could not determine the backups directory for "${deps.stoneName}": ${errorMessage(e)}`,
+    );
+    return false;
+  }
+
   let needsCommit: boolean;
   try {
     needsCommit = backup.sessionNeedsCommit(deps.execute);
@@ -95,29 +107,51 @@ export async function runLogicalBackup(deps: LogicalBackupDeps): Promise<boolean
     }
   }
 
-  // Destination is a server-side path. For a local stone the client and server
-  // share a filesystem, so the file picker resolves correctly; remote-stone
-  // support is deferred (would browse via the GCI session instead).
-  const fileName = `${deps.stoneName}_${timestamp()}.dbf`;
-  let defaultUri: vscode.Uri | undefined;
-  if (deps.dbPath) {
-    const defaultDir = path.join(deps.dbPath, 'backups');
-    if (!wslExistsSync(defaultDir)) {
-      try {
-        wslMkdirSync(defaultDir, { recursive: true });
-      } catch {
-        // Non-fatal: the picker still opens on the parent directory.
-      }
-    }
-    defaultUri = vscode.Uri.file(path.join(defaultDir, fileName));
-  }
-  const uri = await vscode.window.showSaveDialog({
+  // Windows is a client-only platform — GemStone's server runs on Linux, AIX,
+  // Solaris, or macOS, never Windows — so its path is always POSIX, even when
+  // the extension itself runs on Windows and reaches the gem through WSL. We
+  // ask only for a bare file name and join it onto the backups directory above,
+  // rather than translate a path from a native picker — which is only
+  // meaningful when the client and the gem share a filesystem.
+  const suggestedFilename = `${deps.stoneName}_${timestamp()}.dbf`;
+  const providedFilename = await vscode.window.showInputBox({
     title: `Full Logical Backup of ${deps.stoneName}`,
-    defaultUri,
-    filters: BACKUP_FILTERS,
+    prompt:
+      'File name for the backup, no path: it will be written to the backups directory on the server',
+    value: suggestedFilename,
+    // Pre-select the name but not the extension, so retyping it can't drop the .dbf.
+    valueSelection: [0, suggestedFilename.length - GEMSTONE_BACKUP_EXTENSION.length],
+    validateInput: (answer) =>
+      !/[/\\]/.test(answer) &&
+      answer.length > GEMSTONE_BACKUP_EXTENSION.length &&
+      answer.endsWith(GEMSTONE_BACKUP_EXTENSION)
+        ? null
+        : 'File name must end in .dbf and contain no path (for example, backup.dbf)',
   });
-  if (!uri) return false;
-  const destination = uri.fsPath;
+  if (!providedFilename) return false;
+
+  const destination = path.posix.join(backupFolder, providedFilename);
+
+  // showInputBox (above) has no native overwrite warning the way a save
+  // dialog would, so check explicitly and let the user back out — same
+  // confirm-or-cancel shape as the needsCommit warning above.
+  let backupFileAlreadyExists: boolean;
+  try {
+    backupFileAlreadyExists = backup.serverFileExists(deps.execute, destination);
+  } catch (e) {
+    vscode.window.showErrorMessage(
+      `Could not determine whether a backup already exists at "${destination}": ${errorMessage(e)}`,
+    );
+    return false;
+  }
+  if (backupFileAlreadyExists) {
+    const overwriteAnswer = await vscode.window.showWarningMessage(
+      `A backup already exists at "${destination}". Overwrite it?`,
+      { modal: true },
+      'Overwrite',
+    );
+    if (overwriteAnswer !== 'Overwrite') return false;
+  }
 
   // Colored status-bar item: a blue spinner while the (possibly instant) backup
   // runs, then a green confirmation that lingers ~6s. A fast backup can outrace
@@ -155,17 +189,23 @@ export async function runLogicalBackup(deps: LogicalBackupDeps): Promise<boolean
   status.color = new vscode.ThemeColor(SUCCESS_COLOR);
   setTimeout(() => status.dispose(), STATUS_SUCCESS_MS);
 
-  // Offer to reveal the file, but only for a locally-managed stone: the path is
-  // on the server, and revealing it in the client's file manager only makes
-  // sense when client and server share a filesystem (which dbPath implies).
+  // The gem has written the file, so rather than infer whether the client can
+  // reach it, test it: on Windows the server path is only ever reachable via the
+  // \\wsl$ share (destination itself is a foreign POSIX string there — checking
+  // it directly against the local filesystem risks a false hit against an
+  // unrelated drive-relative path); everywhere else the client and server share a
+  // filesystem, so destination itself is the right name. No hit — a genuinely
+  // remote stone — means we cannot name the file locally, and we offer no action.
+  const candidatePath = isWindows() ? wslPathToWindows(destination) : destination;
+  const revealPath = wslExistsSync(candidatePath) ? candidatePath : undefined;
   const reveal = 'Reveal in File Explorer';
-  const actions = deps.dbPath ? [reveal] : [];
+  const actions = revealPath ? [reveal] : [];
   const choice = await vscode.window.showInformationMessage(
     `Full logical backup of "${deps.stoneName}" written to ${destination}`,
     ...actions,
   );
-  if (choice === reveal) {
-    void vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(destination));
+  if (choice === reveal && revealPath) {
+    void vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(revealPath));
   }
   return true;
 }
