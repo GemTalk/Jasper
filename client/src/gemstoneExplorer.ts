@@ -2747,6 +2747,27 @@ export class ExplorerController {
     await openGemstoneDocument(doc, toSide, this.placement);
   }
 
+  // Remove a method from its class (the row's 🗑 button). Destructive, so it
+  // asks for a modal confirmation first; nothing is committed (the user commits
+  // explicitly, same as every other Explorer edit). After removal the class's
+  // method set changed, so re-cascade the method panes.
+  async removeMethod(node: MethodItem): Promise<void> {
+    const session = this.session();
+    if (!session || this.state.className === undefined) return;
+
+    const className = this.state.className;
+    const selector = node.info.selector;
+    const confirmed = await vscode.window.showWarningMessage(
+      `Remove method #${selector} from ${node.isMeta ? `${className} class` : className}?`,
+      { modal: true },
+      'Remove',
+    );
+    if (confirmed !== 'Remove') return;
+
+    queries.deleteMethod(session, className, node.isMeta, selector, this.state.dictIndex);
+    this.reloadCurrentClassMethods();
+  }
+
   // ── Find Class ────────────────────────────────────────────────────────────
 
   // Show a type-to-filter list of every class (the same UX as the old System
@@ -4030,6 +4051,9 @@ export function registerGemStoneExplorer(
     ),
     vscode.commands.registerCommand('gemstone.explorer.openMethodToSide', (node: MethodItem) => {
       if (node instanceof MethodItem) void ctl.openMethod(node, true);
+    }),
+    vscode.commands.registerCommand('gemstone.explorer.removeMethod', (node?: MethodItem) => {
+      if (node instanceof MethodItem) void ctl.removeMethod(node);
     }),
     // Ctrl/Cmd+Enter in the Methods pane: open the selected method in a new
     // source editor to the side (same as the row's ↗ button). Keybindings don't

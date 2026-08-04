@@ -1029,6 +1029,12 @@
         "icon": "$(pin)"
       },
       {
+        "command": "gemstone.explorer.removeMethod",
+        "title": "Remove Method",
+        "category": "GemStone",
+        "icon": "$(trash)"
+      },
+      {
         "command": "gemstoneExplorerDicts.filter",
         "title": "Filter",
         "category": "GemStone",
@@ -1653,6 +1659,10 @@
           "when": "false"
         },
         {
+          "command": "gemstone.explorer.removeMethod",
+          "when": "false"
+        },
+        {
           "command": "gemstone.rowanRemoveRepo",
           "when": "false"
         },
@@ -2001,6 +2011,16 @@
           "command": "gemstone.explorer.pushDownMethod",
           "when": "view == gemstoneExplorerMethods && viewItem =~ /explorerMethod/",
           "group": "inline@5"
+        },
+        {
+          "command": "gemstone.explorer.removeMethod",
+          "when": "view == gemstoneExplorerMethods && viewItem =~ /^explorerMethod/",
+          "group": "inline@6"
+        },
+        {
+          "command": "gemstone.explorer.removeMethod",
+          "when": "view == gemstoneExplorerMethods && viewItem =~ /^explorerMethod/",
+          "group": "9_danger@0"
         },
         {
           "command": "gemstone.explorer.renameClass",
