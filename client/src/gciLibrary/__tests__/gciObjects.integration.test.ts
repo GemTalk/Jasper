@@ -1,13 +1,19 @@
 import { describe, it, expect } from 'vitest';
 import { GciLibrary } from '../../gciLibrary';
-import { OOP_CLASS_STRING, OOP_CLASS_UTF8, OOP_ILLEGAL, OOP_NIL } from '../../gciConstants';
+import {
+  OOP_CLASS_STRING,
+  OOP_CLASS_UNDEFINED_OBJECT,
+  OOP_CLASS_UTF8,
+  OOP_ILLEGAL,
+  OOP_NIL,
+} from '../../gciConstants';
 import { useIntegrationTest } from '../../__tests__/useIntegrationTest';
 
 /**
  * The GCI's object-creation and object-inquiry calls: making Strings, Symbols,
  * ByteArrays and bare instances in the stone, then asking about their class,
- * size and identity. Objects created here are never committed — the harness
- * aborts each test's transaction.
+ * size, class membership and identity. Objects created here are never
+ * committed — the harness aborts each test's transaction.
  */
 describe('GCI object creation and inquiry (integration)', () => {
   let gci: GciLibrary;
@@ -175,6 +181,62 @@ describe('GCI object creation and inquiry (integration)', () => {
       const { result: oop } = gci.GciTsNewString(session, 'class test');
 
       expect(gci.GciTsFetchClass(session, oop).result).toBe(OOP_CLASS_STRING);
+    });
+
+    it('returns the class a special OOP encodes', () => {
+      expect(gci.GciTsFetchClass(session, OOP_NIL).result).toBe(OOP_CLASS_UNDEFINED_OBJECT);
+    });
+  });
+
+  describe('GciTsFetchUnicode', () => {
+    it('fetches a String as UTF-16 code units', () => {
+      const text = 'hello';
+      const { result: oop } = gci.GciTsNewString(session, text);
+
+      const { bytesReturned, data } = gci.GciTsFetchUnicode(session, oop, 256);
+
+      // The call counts 16-bit code units, so the decoded range is twice that.
+      expect(bytesReturned).toBe(BigInt(text.length));
+      expect(data.toString('utf16le', 0, Number(bytesReturned) * 2)).toBe(text);
+    });
+  });
+
+  describe('GciTsIsKindOf / GciTsIsKindOfClass', () => {
+    it('reports an object as a kind of its own class', () => {
+      const { result: oop } = gci.GciTsNewString(session, 'kind test');
+
+      expect(gci.GciTsIsKindOf(session, oop, OOP_CLASS_STRING).result).toBe(1);
+      expect(gci.GciTsIsKindOfClass(session, oop, OOP_CLASS_STRING).result).toBe(1);
+    });
+
+    it('reports an object as not a kind of an unrelated class', () => {
+      const { result: oop } = gci.GciTsNewString(session, 'kind test');
+
+      expect(gci.GciTsIsKindOf(session, oop, classOop('ByteArray')).result).toBe(0);
+    });
+  });
+
+  describe('GciTsIsSubclassOf / GciTsIsSubclassOfClass', () => {
+    it('reports a class as a subclass of its superclass', () => {
+      expect(gci.GciTsIsSubclassOf(session, classOop('Symbol'), OOP_CLASS_STRING).result).toBe(1);
+      expect(gci.GciTsIsSubclassOfClass(session, classOop('Symbol'), OOP_CLASS_STRING).result).toBe(
+        1,
+      );
+    });
+
+    it('reports a class as not a subclass of its own subclass', () => {
+      expect(gci.GciTsIsSubclassOf(session, OOP_CLASS_STRING, classOop('Symbol')).result).toBe(0);
+    });
+  });
+
+  describe('GciTsResolveSymbolObj', () => {
+    it('resolves a Symbol object to what the name is bound to', () => {
+      const { result: symbol } = gci.GciTsNewSymbol(session, 'Array');
+
+      const { result, err } = gci.GciTsResolveSymbolObj(session, symbol, OOP_NIL);
+
+      expect(err.number).toBe(0);
+      expect(result).toBe(classOop('Array'));
     });
   });
 
