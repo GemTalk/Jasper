@@ -3678,11 +3678,6 @@ export function activate(context: vscode.ExtensionContext) {
           );
           return;
         }
-        // Default the destination next to the extents when this session's stone is
-        // one we manage locally; otherwise the picker opens without a default dir.
-        const db = sysadminStorage
-          .getDatabases()
-          .find((d) => d.config.stoneName === session.login.stone);
         await runLogicalBackup({
           execute: (code) => queries.executeFetchString(session, code),
           runBackup: (code) =>
@@ -3694,7 +3689,6 @@ export function activate(context: vscode.ExtensionContext) {
               true,
             ),
           stoneName: session.login.stone,
-          dbPath: db?.path,
         });
       },
     ),
