@@ -12,6 +12,8 @@ The GCI library (`libgcits`) is a platform-native `.so`/`.dylib`/`.dll` bundled 
 
 `docs/3.7/` contains the GCI header files (`gcits.hf`, `gci.ht`, `gcicmn.ht`, `gcits.ht`) — the authoritative reference for GCI function signatures, struct layouts, and constants.
 
-## Running the deep GCI suite (`npm run test:gci`)
+## The on-demand `gci` suite (`npm run test:gci`) — legacy, being retired
 
-The GCI binding tests (`client/src/__tests__/gci/**`) are a separate vitest project named `gci` (in `client/vitest.config.ts`), excluded from `npm test` (which runs the `default` project); run them with `npm run test:gci` (`--project gci`). They read their connection from `.env.test` (`VITE_GEMSTONE_*`, written by `npm run test:server:start`) via `client/src/__tests__/gci/gciTestConfig.ts`; `GCI_LIBRARY_PATH` / `GS_*` shell vars are honored as a fallback for a custom stone. Needs a running stone at localhost.
+`client/src/__tests__/gci/**` is a separate vitest project named `gci` (in `client/vitest.config.ts`), excluded from `npm test` (which runs the `default` project); run it with `npm run test:gci` (`--project gci`). It reads its connection from `.env.test` (`VITE_GEMSTONE_*`, written by `npm run test:server:start`) via `client/src/__tests__/gci/gciTestConfig.ts`; `GCI_LIBRARY_PATH` / `GS_*` shell vars are honored as a fallback for a custom stone. Needs a running stone at localhost.
+
+Because it is excluded from `npm test`, **nothing in this project runs in CI** — it only ever runs on demand, locally. Its tests are being migrated to `useIntegrationTest` integration tests that do run, across the release matrix. Treat the directory as closed: move tests out of it rather than adding to it, and consult "Choosing where a stone-dependent test lives" in `.claude/rules/client/tests.md` for the narrow set of cases that still belong here.
