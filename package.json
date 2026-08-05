@@ -393,12 +393,13 @@
           "size": 3
         },
         {
-          "id": "gemstoneExplorerHierarchy",
+          "id": "gemstoneExplorerClassHierarchy",
           "name": "Hierarchy",
           "type": "tree",
           "icon": "$(type-hierarchy)",
           "when": "gemstone.explorerActive",
-          "size": 2
+          "size": 2,
+          "visibility": "collapsed"
         },
         {
           "id": "gemstoneExplorerMethods",
@@ -2034,22 +2035,22 @@
         },
         {
           "command": "gemstone.explorer.openHierarchyDefinition",
-          "when": "view == gemstoneExplorerHierarchy && viewItem == explorerHierClass",
+          "when": "view == gemstoneExplorerClassHierarchy && viewItem == explorerHierClass",
           "group": "inline@1"
         },
         {
           "command": "gemstone.explorer.openHierarchyComment",
-          "when": "view == gemstoneExplorerHierarchy && viewItem == explorerHierClass",
+          "when": "view == gemstoneExplorerClassHierarchy && viewItem == explorerHierClass",
           "group": "inline@2"
         },
         {
           "command": "gemstone.explorer.renameClass",
-          "when": "view == gemstoneExplorerHierarchy && viewItem == explorerHierClass",
+          "when": "view == gemstoneExplorerClassHierarchy && viewItem == explorerHierClass",
           "group": "inline@3"
         },
         {
           "command": "gemstone.explorer.classHistory",
-          "when": "view == gemstoneExplorerHierarchy && viewItem == explorerHierClass",
+          "when": "view == gemstoneExplorerClassHierarchy && viewItem == explorerHierClass",
           "group": "3_refactor@1"
         },
         {
@@ -2059,7 +2060,7 @@
         },
         {
           "command": "gemstone.generateGrailStub",
-          "when": "view == gemstoneExplorerHierarchy && viewItem == explorerHierClass",
+          "when": "view == gemstoneExplorerClassHierarchy && viewItem == explorerHierClass",
           "group": "2_generate@1"
         },
         {

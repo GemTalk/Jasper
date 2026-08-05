@@ -90,7 +90,7 @@ describe('ExplorerController.openMethod', () => {
   it('opens the method URI built from the node and the current dictionary/class', async () => {
     const ctl = makeController();
 
-    await ctl.openMethod(methodItem({ selector: 'at:', category: 'accessing' }), false);
+    await ctl.openMethod(methodItem({ selector: 'at:', category: 'accessing' }), 'preview');
 
     const opened = openTextDocument.mock.calls[0][0] as vscode.Uri;
     expect(String(opened)).toContain('gemstone://1/UserGlobals/Array/instance/accessing/at');
@@ -100,35 +100,90 @@ describe('ExplorerController.openMethod', () => {
   it('escapes the class side into the URI for a class-side method', async () => {
     const ctl = makeController();
 
-    await ctl.openMethod(methodItem({ selector: 'new' }, true), false);
+    await ctl.openMethod(methodItem({ selector: 'new' }, true), 'preview');
 
     expect(String(openTextDocument.mock.calls[0][0])).toContain(
       'gemstone://1/UserGlobals/Array/class/accessing/new',
     );
   });
 
-  it('single-click opens the method as the transient tab, keeping focus in the tree', async () => {
+  it('single-click opens the method as a preview tab, keeping focus in the tree', async () => {
     const ctl = makeController();
 
-    await ctl.openMethod(methodItem(), false);
+    await ctl.openMethod(methodItem(), 'preview');
+
+    expect(showTextDocument).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ preview: true, preserveFocus: true }),
+    );
+  });
+
+  it('double-click promotes the method to a permanent tab, keeping focus in the tree', async () => {
+    const ctl = makeController();
+
+    await ctl.openMethod(methodItem(), 'keep');
 
     expect(showTextDocument).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ preview: false, preserveFocus: true }),
     );
-    expect(ctl.placement.reusableTab).toBe(String(openTextDocument.mock.calls[0][0]));
+    expect(executeCommand).not.toHaveBeenCalledWith('workbench.action.pinEditor');
   });
 
   it('pin opens the method as a pinned tab', async () => {
     const ctl = makeController();
 
-    await ctl.openMethod(methodItem(), true);
+    await ctl.openMethod(methodItem(), 'pin');
 
     expect(showTextDocument).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ preview: false, preserveFocus: false }),
     );
     expect(executeCommand).toHaveBeenCalledWith('workbench.action.pinEditor');
+  });
+});
+
+describe('MethodItem click wiring', () => {
+  it('routes each click to the double-click hook, carrying the node', () => {
+    const node = methodItem();
+
+    expect(node.command).toMatchObject({
+      command: 'gemstone.explorer.methodClicked',
+      arguments: [node],
+    });
+  });
+});
+
+describe('ExplorerController.handleMethodClick', () => {
+  it('leaves the first click to the single-click preview open', () => {
+    const ctl = makeController();
+    const open = vi.spyOn(ctl, 'openMethod').mockResolvedValue();
+
+    ctl.handleMethodClick(methodItem());
+
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it('promotes the preview to a permanent tab on a double-click of the same method', () => {
+    const ctl = makeController();
+    const open = vi.spyOn(ctl, 'openMethod').mockResolvedValue();
+    const node = methodItem();
+
+    ctl.handleMethodClick(node);
+    ctl.handleMethodClick(node);
+
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(open).toHaveBeenCalledWith(node, 'keep');
+  });
+
+  it('does not promote when two clicks land on different methods', () => {
+    const ctl = makeController();
+    const open = vi.spyOn(ctl, 'openMethod').mockResolvedValue();
+
+    ctl.handleMethodClick(methodItem({ selector: 'at:' }));
+    ctl.handleMethodClick(methodItem({ selector: 'size' }));
+
+    expect(open).not.toHaveBeenCalled();
   });
 });
 
@@ -154,7 +209,7 @@ describe('ExplorerController.syncToEditor', () => {
     const ctl = makeController();
     const method = withViews(ctl);
     stubResolvableSelector(ctl);
-    await ctl.openMethod(methodItem(), false);
+    await ctl.openMethod(methodItem(), 'preview');
     const openedUri = openTextDocument.mock.calls[0][0] as vscode.Uri;
     method.reveal.mockClear();
 
@@ -184,7 +239,7 @@ describe('ExplorerController.syncToEditor', () => {
   it('still follows a later focus event for a method that was already the active editor', async () => {
     // Discover the exact URI a click on this node builds, via a throwaway controller.
     const probe = makeController();
-    await probe.openMethod(methodItem(), false);
+    await probe.openMethod(methodItem(), 'preview');
     const builtUri = openTextDocument.mock.calls[0][0] as vscode.Uri;
     vi.clearAllMocks();
 
@@ -195,7 +250,7 @@ describe('ExplorerController.syncToEditor', () => {
     const method = withViews(ctl);
     stubResolvableSelector(ctl);
     window.activeTextEditor = { document: { uri: builtUri } };
-    await ctl.openMethod(methodItem(), false);
+    await ctl.openMethod(methodItem(), 'preview');
     method.reveal.mockClear();
 
     await ctl.syncToEditor(builtUri);

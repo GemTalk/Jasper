@@ -17,7 +17,13 @@ function methodDoc(uriString = SOURCE): vscode.TextDocument {
 function setGroups(
   groups: {
     viewColumn?: number;
-    tabs: { uri: string; isDirty?: boolean; isPinned?: boolean; active?: boolean }[];
+    tabs: {
+      uri: string;
+      isDirty?: boolean;
+      isPinned?: boolean;
+      isPreview?: boolean;
+      active?: boolean;
+    }[];
   }[],
 ): void {
   window.tabGroups.all = groups.map((g) => {
@@ -25,6 +31,7 @@ function setGroups(
       input: new TabInputText(Uri.parse(t.uri)),
       isDirty: t.isDirty,
       isPinned: t.isPinned,
+      isPreview: t.isPreview,
     }));
     const activeIndex = g.tabs.findIndex((t) => t.active);
     return {
@@ -49,105 +56,58 @@ describe('openGemstoneDocument', () => {
   });
 
   describe('single-click navigation', () => {
-    it('opens one transient tab in the active group, keeping focus in the tree', async () => {
+    it('opens a preview tab in the active group, keeping focus in the tree', async () => {
       const placement = new SourceEditorPlacement();
 
-      await openGemstoneDocument(methodDoc(), false, placement);
+      await openGemstoneDocument(methodDoc(), 'preview', placement);
 
       expect(showTextDocument).toHaveBeenCalledWith(
         expect.anything(),
         expect.objectContaining({
           viewColumn: ViewColumn.Active,
-          preview: false,
+          preview: true,
           preserveFocus: true,
         }),
       );
-      expect(placement.reusableTab).toBe(SOURCE);
     });
 
-    it('opens the transient tab in the group that already holds our editors', async () => {
+    it('opens the preview tab in the group that already holds our editors', async () => {
       const placement = new SourceEditorPlacement();
       placement.remember(Uri.parse(NAV));
-      placement.reusableTab = NAV;
       setGroups([{ viewColumn: 2, tabs: [{ uri: NAV, active: true }] }]);
 
-      await openGemstoneDocument(methodDoc(), false, placement);
+      await openGemstoneDocument(methodDoc(), 'preview', placement);
+
+      expect(showTextDocument).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ viewColumn: 2, preview: true, preserveFocus: true }),
+      );
+    });
+
+    it('leaves the transient-tab bookkeeping to VS Code — never closes a tab itself', async () => {
+      const placement = new SourceEditorPlacement();
+      placement.remember(Uri.parse(NAV));
+      setGroups([{ viewColumn: 2, tabs: [{ uri: NAV, active: true }] }]);
+
+      await openGemstoneDocument(methodDoc(), 'preview', placement);
+
+      expect(closeTab).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('double-click', () => {
+    it('opens a permanent (non-preview) tab, keeping focus in the tree', async () => {
+      const placement = new SourceEditorPlacement();
+      placement.remember(Uri.parse(NAV));
+      setGroups([{ viewColumn: 2, tabs: [{ uri: NAV, active: true }] }]);
+
+      await openGemstoneDocument(methodDoc(), 'keep', placement);
 
       expect(showTextDocument).toHaveBeenCalledWith(
         expect.anything(),
         expect.objectContaining({ viewColumn: 2, preview: false, preserveFocus: true }),
       );
-    });
-
-    it('reveals a method already open in our group instead of duplicating it', async () => {
-      const placement = new SourceEditorPlacement();
-      placement.remember(Uri.parse(NAV));
-      placement.remember(Uri.parse(SOURCE));
-      placement.reusableTab = NAV;
-      setGroups([
-        {
-          viewColumn: 2,
-          tabs: [
-            { uri: NAV, active: true },
-            { uri: SOURCE, isPinned: true },
-          ],
-        },
-      ]);
-
-      await openGemstoneDocument(methodDoc(), false, placement);
-
-      expect(showTextDocument).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.objectContaining({ viewColumn: 2, preview: false, preserveFocus: true }),
-      );
-      // The transient wasn't replaced and nothing was closed.
-      expect(placement.reusableTab).toBe(NAV);
-      expect(closeTab).not.toHaveBeenCalled();
-    });
-
-    it('closes the previous transient so browsing does not pile up tabs', async () => {
-      const placement = new SourceEditorPlacement();
-      placement.remember(Uri.parse(NAV));
-      placement.reusableTab = NAV;
-      setGroups([{ viewColumn: 2, tabs: [{ uri: NAV, active: true }] }]);
-
-      await openGemstoneDocument(methodDoc(), false, placement);
-
-      expect(closeTab).toHaveBeenCalledTimes(1);
-      expect(placement.reusableTab).toBe(SOURCE);
-    });
-
-    it('keeps the previous transient when it has unsaved edits', async () => {
-      const placement = new SourceEditorPlacement();
-      placement.remember(Uri.parse(NAV));
-      placement.reusableTab = NAV;
-      setGroups([{ viewColumn: 2, tabs: [{ uri: NAV, isDirty: true, active: true }] }]);
-
-      await openGemstoneDocument(methodDoc(), false, placement);
-
-      expect(closeTab).not.toHaveBeenCalled();
-    });
-
-    it('closes the outgoing transient in our column, never a System Browser copy of the same URI', async () => {
-      const placement = new SourceEditorPlacement();
-      placement.remember(Uri.parse(NAV));
-      placement.reusableTab = NAV;
-      placement.reusableColumn = 2;
-      // The same gemstone:// method is open in the System Browser's group (column 1)
-      // and as our transient (column 2). The foreign group is listed first, so a
-      // whole-window scan would reach and close it first.
-      setGroups([
-        { viewColumn: 1, tabs: [{ uri: NAV }] },
-        { viewColumn: 2, tabs: [{ uri: NAV, active: true }] },
-      ]);
-      const foreignTab = window.tabGroups.all[0].tabs[0];
-      const ourTab = window.tabGroups.all[1].tabs[0];
-
-      await openGemstoneDocument(methodDoc(), false, placement);
-
-      expect(closeTab).toHaveBeenCalledTimes(1);
-      expect(closeTab.mock.calls[0][0]).toBe(ourTab);
-      expect(closeTab.mock.calls[0][0]).not.toBe(foreignTab);
+      expect(executeCommand).not.toHaveBeenCalledWith('workbench.action.pinEditor');
     });
   });
 
@@ -155,10 +115,9 @@ describe('openGemstoneDocument', () => {
     it('pins the method as a tab in our group', async () => {
       const placement = new SourceEditorPlacement();
       placement.remember(Uri.parse(NAV));
-      placement.reusableTab = NAV;
       setGroups([{ viewColumn: 2, tabs: [{ uri: NAV, active: true }] }]);
 
-      await openGemstoneDocument(methodDoc(), true, placement);
+      await openGemstoneDocument(methodDoc(), 'pin', placement);
 
       expect(showTextDocument).toHaveBeenCalledWith(
         expect.anything(),
@@ -171,12 +130,11 @@ describe('openGemstoneDocument', () => {
       const placement = new SourceEditorPlacement();
       placement.remember(Uri.parse(NAV));
       placement.remember(Uri.parse(SIDE));
-      placement.reusableTab = NAV;
       setGroups([
         { viewColumn: 2, tabs: [{ uri: NAV }, { uri: SIDE, isPinned: true, active: true }] },
       ]);
 
-      await openGemstoneDocument(methodDoc(), true, placement);
+      await openGemstoneDocument(methodDoc(), 'pin', placement);
 
       expect(showTextDocument).toHaveBeenCalledWith(
         expect.anything(),
@@ -191,17 +149,26 @@ describe('openGemstoneDocument', () => {
       expect(restore?.[1]).toMatchObject({ viewColumn: 2 });
     });
 
-    it('promotes the transient method to a pinned tab and frees the transient slot', async () => {
+    it('restores the browsed method as a preview tab, not promoting it, when pinning another', async () => {
+      const placement = new SourceEditorPlacement();
+      placement.remember(Uri.parse(NAV));
+      placement.remember(Uri.parse(SIDE));
+      setGroups([{ viewColumn: 2, tabs: [{ uri: SIDE, isPreview: true, active: true }] }]);
+
+      await openGemstoneDocument(methodDoc(), 'pin', placement);
+
+      const restore = showTextDocument.mock.calls.find((c) => String(c[0]) === SIDE);
+      expect(restore?.[1]).toMatchObject({ viewColumn: 2, preview: true, preserveFocus: true });
+    });
+
+    it('does not restore the view when the pinned method was the one already showing', async () => {
       const placement = new SourceEditorPlacement();
       placement.remember(Uri.parse(SOURCE));
-      placement.reusableTab = SOURCE;
       setGroups([{ viewColumn: 2, tabs: [{ uri: SOURCE, active: true }] }]);
 
-      await openGemstoneDocument(methodDoc(), true, placement);
+      await openGemstoneDocument(methodDoc(), 'pin', placement);
 
       expect(executeCommand).toHaveBeenCalledWith('workbench.action.pinEditor');
-      expect(placement.reusableTab).toBeUndefined();
-      // The pinned method was already the visible one, so nothing is restored.
       expect(showTextDocument.mock.calls.filter((c) => c[1]?.preserveFocus === true)).toHaveLength(
         0,
       );
@@ -210,7 +177,7 @@ describe('openGemstoneDocument', () => {
     it('opens the first pin in the active group when nothing is open yet', async () => {
       const placement = new SourceEditorPlacement();
 
-      await openGemstoneDocument(methodDoc(), true, placement);
+      await openGemstoneDocument(methodDoc(), 'pin', placement);
 
       expect(showTextDocument).toHaveBeenCalledWith(
         expect.anything(),

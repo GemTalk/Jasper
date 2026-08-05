@@ -48,3 +48,24 @@ describe('GemStone Explorer views are registrable when created', () => {
     },
   );
 });
+
+// The Class Hierarchy pane starts collapsed so it doesn't crowd out the other
+// panes. VS Code only applies a view's declared `visibility` when it has no
+// stored layout for that view id, so the pane id must also stay in sync with
+// the id passed to createTreeView — a mismatch throws "No view is registered".
+const HIERARCHY = 'gemstoneExplorerClassHierarchy';
+
+describe('GemStone Explorer Class Hierarchy pane', () => {
+  it('starts collapsed to leave room for the other panes', () => {
+    const hierarchy = explorerViews.find((v) => v.id === HIERARCHY) as
+      { visibility?: string } | undefined;
+
+    expect(hierarchy?.visibility).toBe('collapsed');
+  });
+
+  it('registers the pane under the id the source creates it with', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '..', 'gemstoneExplorer.ts'), 'utf-8');
+
+    expect(src).toContain(`createTreeView('${HIERARCHY}'`);
+  });
+});

@@ -86,61 +86,59 @@ const VIEW_METHODS = 'gemstoneExplorerMethods';
 // Panes that support the live filter (the Hierarchy pane doesn't).
 const EXPLORER_VIEWS = [VIEW_DICTS, VIEW_CATEGORIES, VIEW_CLASSES, VIEW_METHODS];
 
+// How the Explorer should open a gemstone:// source editor:
+//   - 'preview': a single-click NAVIGATION open — VS Code's own preview tab (the
+//     one italic, reused tab per group that the next preview replaces; pinned and
+//     permanent tabs are left alone). Focus stays in the tree so type-to-filter /
+//     arrow-nav keep working.
+//   - 'keep': a double-click open — the same doc re-shown as a permanent (non-
+//     preview) tab, promoting the preview in place so a later single click won't
+//     replace it.
+//   - 'pin': the 📌 action — a pinned tab added to the group WITHOUT stealing the
+//     view (the tab you were reading stays showing).
+export type OpenSourceMode = 'preview' | 'keep' | 'pin';
+
 // Open a gemstone:// source document in the editor area. All of this Explorer's
 // source editors live as tabs in ONE group (see NOTES-editor-placement.md), so the
-// transient tab and every pinned tab sit next to each other in one row:
-//   - NAVIGATION (single click): the ONE transient (unpinned) tab, reused — a new
-//     click replaces it; pinned tabs are left alone. Already-open tab → just reveal.
-//   - PIN (the 📌 action): the method becomes a PINNED tab in that same group, added
-//     WITHOUT stealing the view (the tab you were reading stays showing).
-// `placement` scopes this to editors this Explorer opened, so it never invades the
-// System Browser's group (see sourceEditorPlacement.ts).
+// preview tab and every pinned tab sit next to each other in one row. `placement`
+// scopes this to editors this Explorer opened, so it never invades the System
+// Browser's group (see sourceEditorPlacement.ts).
 // Exported for unit testing the placement rules.
 export async function openGemstoneDocument(
   doc: vscode.TextDocument,
-  pin: boolean,
+  mode: OpenSourceMode,
   placement: SourceEditorPlacement,
 ): Promise<void> {
-  const uriStr = doc.uri.toString();
   const sourceColumn = placement.sourceColumn();
   const targetColumn = sourceColumn ?? vscode.ViewColumn.Active;
 
-  if (!pin) {
-    // NAVIGATION. If the method is already a tab in our group (transient or pinned),
-    // reveal it — no duplicate, and pinned tabs stay pinned. (A real tab, not
-    // preview:true, because a preview swap scrolls the Methods tree.)
-    if (sourceColumn !== undefined && columnHoldsUri(sourceColumn, uriStr)) {
-      await vscode.window.showTextDocument(doc, {
-        viewColumn: sourceColumn,
-        preview: false,
-        preserveFocus: true,
-      });
-      return;
-    }
-    // Otherwise open it as the ONE transient tab, replacing the previous transient
-    // (unless it's pinned or dirty). Pinned tabs are untouched.
-    const previous = placement.reusableTab;
-    const previousColumn = placement.reusableColumn;
-    const editor = await vscode.window.showTextDocument(doc, {
+  if (mode !== 'pin') {
+    // NAVIGATION. Let VS Code's native preview tab do the transient-tab
+    // bookkeeping — one reusable preview tab per group, replaced by the next
+    // preview, leaving pinned/permanent tabs alone. A single click ('preview')
+    // opens that preview tab; a double click ('keep') re-shows the same doc as a
+    // permanent tab, promoting the preview in place. Either way focus stays in the
+    // tree. Preview being per-group means we never disturb the System Browser's
+    // own group.
+    await vscode.window.showTextDocument(doc, {
       viewColumn: targetColumn,
-      preview: false,
+      preview: mode === 'preview',
       preserveFocus: true,
     });
     placement.remember(doc.uri);
-    placement.reusableTab = uriStr;
-    placement.reusableColumn = editor.viewColumn ?? targetColumn;
-    // Close the OUTGOING transient in the column WE opened it into — never scan the
-    // whole window, or the same URI open in the System Browser's group gets closed.
-    if (previous && previous !== uriStr)
-      closeDisposableTab(previous, previousColumn ?? targetColumn);
     return;
   }
 
   // PIN. Bring the method into our group and pin it, WITHOUT stealing the view: note
   // what's showing, add + pin the tab, then restore what was showing so a new pin
   // just parks a background tab beside the one you're reading. Pinning the method
-  // that's currently the transient simply promotes it to a pinned tab.
-  const showing = sourceColumn !== undefined ? activeUriInColumn(sourceColumn) : undefined;
+  // that's currently the preview simply promotes it to a pinned tab.
+  const uriStr = doc.uri.toString();
+  const showingTab =
+    sourceColumn !== undefined
+      ? vscode.window.tabGroups.all.find((g) => g.viewColumn === sourceColumn)?.activeTab
+      : undefined;
+  const showing = showingTab ? tabInputUri(showingTab)?.toString() : undefined;
   await vscode.window.showTextDocument(doc, {
     viewColumn: targetColumn,
     preview: false,
@@ -148,46 +146,14 @@ export async function openGemstoneDocument(
   });
   await vscode.commands.executeCommand('workbench.action.pinEditor');
   placement.remember(doc.uri);
-  if (placement.reusableTab === uriStr) placement.reusableTab = undefined;
   if (sourceColumn !== undefined && showing !== undefined && showing !== uriStr) {
+    // Restore whatever was showing in its ORIGINAL preview/permanent state — a pin
+    // action must not silently promote the preview method you were just browsing.
     await vscode.window.showTextDocument(vscode.Uri.parse(showing), {
       viewColumn: sourceColumn,
-      preview: false,
+      preview: showingTab?.isPreview ?? false,
       preserveFocus: true,
     });
-  }
-}
-
-// The URI showing in a given view-column's group (its active tab), or undefined.
-function activeUriInColumn(column: number): string | undefined {
-  const group = vscode.window.tabGroups.all.find((g) => g.viewColumn === column);
-  return group?.activeTab ? tabInputUri(group.activeTab)?.toString() : undefined;
-}
-
-// Does the group in this view-column currently hold a tab for this URI?
-function columnHoldsUri(column: number, uriStr: string): boolean {
-  const group = vscode.window.tabGroups.all.find((g) => g.viewColumn === column);
-  return group?.tabs.some((tab) => tabInputUri(tab)?.toString() === uriStr) ?? false;
-}
-
-// Close the single reusable source tab a prior single-click opened, but only if
-// the user isn't working in it: a dirty tab has unsaved edits and a pinned tab was
-// deliberately kept — both are cases where a preview tab would likewise have
-// promoted itself to permanent rather than being replaced.
-//
-// Scoped to OUR column: the outgoing transient always lives in the group we open
-// into, and the same gemstone:// URI can also be open in the System Browser's own
-// group. Scanning every group and matching on the URI alone would let us close
-// that foreign copy — exactly the cross-browser interference SourceEditorPlacement
-// exists to prevent.
-function closeDisposableTab(uriStr: string, column: vscode.ViewColumn): void {
-  const group = vscode.window.tabGroups.all.find((g) => g.viewColumn === column);
-  if (!group) return;
-  for (const tab of group.tabs) {
-    if (tabInputUri(tab)?.toString() !== uriStr) continue;
-    if (tab.isDirty || tab.isPinned) return;
-    void vscode.window.tabGroups.close(tab);
-    return;
   }
 }
 
@@ -476,6 +442,16 @@ export class MethodItem extends vscode.TreeItem {
     } else {
       this.iconPath = new vscode.ThemeIcon('symbol-method');
     }
+
+    // Fires on every click (a re-click of the already-selected row too, which
+    // onDidChangeSelection misses). Selection still drives the single-click
+    // preview open; the controller uses this hook's timing to detect a
+    // double-click and promote that preview to a permanent tab.
+    this.command = {
+      command: 'gemstone.explorer.methodClicked',
+      title: '',
+      arguments: [this],
+    };
   }
 }
 
@@ -1255,7 +1231,7 @@ export class ExplorerController {
     const uri = buildClassCommentUri(session.id, dictName, className, dictIndex);
     this.selfOpenedUris.add(uri.toString());
     const doc = await vscode.workspace.openTextDocument(uri);
-    await openGemstoneDocument(doc, pin, this.placement);
+    await openGemstoneDocument(doc, pin ? 'pin' : 'preview', this.placement);
   }
 
   // Generate an editable Grail `.py` stub for a class. Invoked from the Classes-
@@ -1348,7 +1324,7 @@ export class ExplorerController {
     const uri = buildClassDefinitionUri(session.id, dictName, className, dictIndex);
     this.selfOpenedUris.add(uri.toString());
     const doc = await vscode.workspace.openTextDocument(uri);
-    await openGemstoneDocument(doc, pin, this.placement);
+    await openGemstoneDocument(doc, pin ? 'pin' : 'preview', this.placement);
   }
 
   // Manual double-click detection for the Classes pane: VS Code trees have no
@@ -1358,6 +1334,17 @@ export class ExplorerController {
   handleClassClick(className: string): void {
     if (this.classClicks.register(className)) {
       void this.openClassDefinition(new ClassItem(className));
+    }
+  }
+
+  // Same manual double-click detection for the Methods pane: a single click
+  // already opened the method as a preview tab (via onDidChangeSelection); a
+  // double-click on the same row promotes it to a permanent tab so a later
+  // single click elsewhere won't replace it.
+  private readonly methodClicks = new DoubleClickDetector(500);
+  handleMethodClick(node: MethodItem): void {
+    if (this.methodClicks.register(`${node.isMeta}:${node.info.selector}`)) {
+      void this.openMethod(node, 'keep');
     }
   }
 
@@ -1426,6 +1413,10 @@ export class ExplorerController {
   // in sync with the Classes pane.
   async revealHierarchySelf(): Promise<void> {
     if (this.hierChain.length === 0) return;
+    // Don't reveal when the Hierarchy pane is collapsed — reveal() would force
+    // VS Code to expand the section, defeating the collapsed-by-default layout
+    // and re-opening the pane every time the user selects a class.
+    if (!this.views?.hierarchy.visible) return;
     const lastIdx = this.hierChain.length - 1;
     const e = this.hierChain[lastIdx];
     const self = new HierarchyItem(
@@ -2726,7 +2717,7 @@ export class ExplorerController {
     });
   }
 
-  async openMethod(node: MethodItem, pin = false): Promise<void> {
+  async openMethod(node: MethodItem, mode: OpenSourceMode = 'preview'): Promise<void> {
     const session = this.session();
     if (!session || this.state.dictName === undefined || this.state.className === undefined) {
       return;
@@ -2759,10 +2750,10 @@ export class ExplorerController {
       this.selfOpenedUris.add(uriStr);
     }
     const doc = await vscode.workspace.openTextDocument(uri);
-    // Single-click reuses one source tab (focus stays in the tree so type-to-filter
-    // / arrow-nav keep working); open-to-side pins a real tab in a balanced
-    // neighbouring group so methods can be compared.
-    await openGemstoneDocument(doc, pin, this.placement);
+    // Single-click opens a preview tab and a double-click promotes it to a
+    // permanent one (focus stays in the tree so type-to-filter / arrow-nav keep
+    // working); the 📌 action pins a real tab so methods can be compared.
+    await openGemstoneDocument(doc, mode, this.placement);
   }
 
   // Remove a method from its class (the row's 🗑 button). Destructive, so it
@@ -3350,14 +3341,14 @@ export class ExplorerController {
       this.state.dictIndex,
     );
     const doc = await vscode.workspace.openTextDocument(uri);
+    // A preview tab, like a single-click navigation open: the next preview
+    // replaces it, and it counts as the navigation editor (remembered below) so
+    // "open to the side" doesn't mistake its group for the side group.
     await vscode.window.showTextDocument(doc, {
       viewColumn: vscode.ViewColumn.Active,
       preview: true,
     });
     this.placement.remember(uri);
-    // Count the new-method template as the navigation editor, not a side pane, so
-    // "open to the side" doesn't mistake its group for the side group.
-    this.placement.reusableTab = uri.toString();
   }
 
   // After a method compiles on the class we're showing, select a just-created
@@ -4025,7 +4016,7 @@ export function registerGemStoneExplorer(
     treeDataProvider: ctl.classProvider,
     dragAndDropController: new ClassDropController(ctl),
   });
-  const hierarchyView = vscode.window.createTreeView('gemstoneExplorerHierarchy', {
+  const hierarchyView = vscode.window.createTreeView('gemstoneExplorerClassHierarchy', {
     treeDataProvider: ctl.hierarchyProvider,
   });
   const methodView = vscode.window.createTreeView('gemstoneExplorerMethods', {
@@ -4099,7 +4090,7 @@ export function registerGemStoneExplorer(
       vscode.commands.registerCommand(`${viewId}.clearFilter`, () => ctl.clearFilter(viewId)),
     ),
     vscode.commands.registerCommand('gemstone.explorer.openMethodToSide', (node: MethodItem) => {
-      if (node instanceof MethodItem) void ctl.openMethod(node, true);
+      if (node instanceof MethodItem) void ctl.openMethod(node, 'pin');
     }),
     vscode.commands.registerCommand('gemstone.explorer.removeMethod', (node?: MethodItem) => {
       if (node instanceof MethodItem)
@@ -4114,7 +4105,7 @@ export function registerGemStoneExplorer(
     // pass the tree selection, so read it from the view here.
     vscode.commands.registerCommand('gemstone.explorer.openSelectedMethodToSide', () => {
       const node = methodView.selection[0];
-      if (node instanceof MethodItem) void ctl.openMethod(node, true);
+      if (node instanceof MethodItem) void ctl.openMethod(node, 'pin');
     }),
     // Find Class: cascade the panes to a class by name (from the Classes pane
     // title button or the command palette).
@@ -4157,6 +4148,10 @@ export function registerGemStoneExplorer(
     // Per-click hook powering double-click-to-open-definition.
     vscode.commands.registerCommand('gemstone.explorer.classClicked', (className?: string) => {
       if (typeof className === 'string') ctl.handleClassClick(className);
+    }),
+    // Per-click hook powering double-click-to-promote-the-preview-tab.
+    vscode.commands.registerCommand('gemstone.explorer.methodClicked', (node?: MethodItem) => {
+      if (node instanceof MethodItem) ctl.handleMethodClick(node);
     }),
     // Generate a Grail (.py) stub for a class — Classes/Hierarchy menus and the
     // Command Palette all route here.
