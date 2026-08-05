@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import * as fs from 'fs';
+import * as path from 'path';
 
 const mocks = vi.hoisted(() => {
   const state: { config: Record<string, unknown> } = { config: {} };
@@ -145,5 +147,27 @@ describe('configureAutoStartDatabase', () => {
     await configureAutoStartDatabase();
 
     expect(mocks.updateSpy).not.toHaveBeenCalled();
+  });
+});
+
+// The prompt's buttons write ConfigurationTarget.Global, but VS Code's default
+// setting scope is "window", which a workspace is free to override. With both in
+// play the workspace value keeps winning, so choosing "Never" would look like it
+// had not stuck and the prompt would come back on the next connect.
+describe('the contributed setting', () => {
+  const pkgPath = path.resolve(__dirname, '..', '..', '..', 'package.json');
+  const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+  const setting = pkg.contributes.configuration[0].properties['gemstone.autoStartDatabase'];
+
+  it('is scoped so no workspace can override the remembered choice', () => {
+    expect(setting.scope).toBe('application');
+  });
+
+  it('offers exactly the modes the code understands', () => {
+    expect(setting.enum).toEqual(['ask', 'always', 'never']);
+  });
+
+  it('defaults to asking', () => {
+    expect(setting.default).toBe('ask');
   });
 });

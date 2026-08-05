@@ -251,7 +251,8 @@
               "Never offer to start a database; report the login failure as-is."
             ],
             "default": "ask",
-            "description": "What to do when a login fails because the database it connects to is not running. Only applies to local databases Jasper manages — a remote or hand-rolled stone is never started. Starting a database starts both its stone and its NetLDI. The buttons on the prompt update this setting."
+            "description": "What to do when a login fails because the database it connects to is not running. Only applies to local databases Jasper manages — a remote or hand-rolled stone is never started. Starting a database starts both its stone and its NetLDI. The buttons on the prompt update this setting.",
+            "scope": "application"
           },
           "gemstone.displayItMode": {
             "type": "string",
