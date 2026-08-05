@@ -3341,6 +3341,10 @@ applyDeselected: deselectedIds
 	 {applied, failed:[..], committed}."
 	| applied failures |
 	self ensureAnalysis.
+	"Defence in depth: the client gates on the analysis before ever applying, but a declined ref
+	 must not answer a success-shaped envelope. Surface the reason via error (nothing applied)."
+	decline notNil ifTrue: [
+		^'{"applied":0,"committed":false,"failed":[],"error":', (self jsonQuote: decline), '}'].
 	oldToNew := IdentityDictionary new.
 	newClass := nil.
 	failures := OrderedCollection new.

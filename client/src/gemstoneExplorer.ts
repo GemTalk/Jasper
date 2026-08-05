@@ -2265,8 +2265,10 @@ export class ExplorerController {
   }
 
   // Validate a proposed rename target: the name's format AND that it isn't already
-  // bound to another global in the stone (so we reject a collision up front and let
-  // the user pick another name, per Eric's UX). Returns an error string or undefined.
+  // bound to another global in the stone. Runs as the rename input's live validator
+  // (showRenameClassEditor), so catching a collision here surfaces it inline while the
+  // user is still typing — they correct the name in place, instead of the rename starting
+  // and failing server-side with a costlier, later error. Returns an error string or undefined.
   private validateRenameTarget(newName: string, oldName: string): string | undefined {
     const fmt = validateNewClassName(newName, oldName);
     if (fmt) return fmt;

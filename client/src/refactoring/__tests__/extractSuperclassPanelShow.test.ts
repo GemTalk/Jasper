@@ -88,6 +88,22 @@ describe('showExtractSuperclassPanel', () => {
     expect(handlers.cleanup).toHaveBeenCalledTimes(1);
   });
 
+  it('applies once even when two apply messages arrive (double-click / replayed message)', async () => {
+    const handlers = {
+      loadPage: vi.fn(),
+      apply: vi.fn(async () => ({ applied: 3, failed: [] })),
+      cleanup: vi.fn(),
+    };
+
+    const result = showExtractSuperclassPanel('Extract superclass Pet', start, handlers);
+    lastPanel().__emit({ command: 'apply', deselected: [] });
+    lastPanel().__emit({ command: 'apply', deselected: [] });
+
+    expect(await result).toEqual({ applied: 3, failed: [] });
+    expect(handlers.apply).toHaveBeenCalledTimes(1);
+    expect(handlers.cleanup).toHaveBeenCalledTimes(1);
+  });
+
   it('resolves undefined and cleans up on cancel', async () => {
     const handlers = { loadPage: vi.fn(), apply: vi.fn(), cleanup: vi.fn() };
 

@@ -78,6 +78,12 @@ export function showExtractSuperclassPanel(
     };
 
     let loading = false;
+    // Apply is one-shot per panel: `handlers.apply` creates a class and reversions a subtree
+    // server-side, so a second dispatch (a double-click on Apply, or a replayed/synthetic webview
+    // message that bypasses the view's own guard) would re-apply it — hitting "class already
+    // exists" and surfacing a spurious failure after a real success. Cleared only in the catch
+    // below, which leaves the panel open for a retry.
+    let applying = false;
     panel.webview.onDidReceiveMessage((message) => {
       void (async () => {
         try {
@@ -100,6 +106,8 @@ export function showExtractSuperclassPanel(
               loading = false;
             }
           } else if (message?.command === 'apply') {
+            if (applying) return;
+            applying = true;
             const deselected: string[] = Array.isArray(message.deselected)
               ? message.deselected
               : [];
@@ -110,6 +118,7 @@ export function showExtractSuperclassPanel(
           }
         } catch (e: unknown) {
           loading = false;
+          applying = false;
           const msg = e instanceof Error ? e.message : String(e);
           void vscode.window.showErrorMessage(`Extract-superclass preview: ${msg}`);
           void panel.webview.postMessage({ command: 'busyDone' });

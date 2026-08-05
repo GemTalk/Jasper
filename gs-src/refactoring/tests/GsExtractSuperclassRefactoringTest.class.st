@@ -12,7 +12,7 @@ ivars move onto the new class; hoisted methods are added to it and removed from 
 classes.
 
 This suite pins down, on Object -> GsESAnimal -> {GsESDog, GsESCat, GsESFish} with
-GsESDog -> GsESPuppy:
+GsESDog -> GsESPuppy -> GsESRunt (a two-deep subtree below the anchor):
 
   - V6: inserting an empty superclass leaves the anchor's methods/ivars intact and keeps the whole
     subtree correctly parented;
@@ -92,7 +92,7 @@ GsExtractSuperclassRefactoringTest >> changeOfKind: aKind for: aName in: cs [
 
 { #category : 'running' }
 GsExtractSuperclassRefactoringTest >> setUp [
-	| animal dog cat |
+	| animal dog cat puppy |
 	animal := Object
 		subclass: 'GsESAnimal'
 		instVarNames: #()
@@ -113,9 +113,14 @@ GsExtractSuperclassRefactoringTest >> setUp [
 		instVarNames: #('name')
 		classVars: #() classInstVars: #() poolDictionaries: #()
 		inDictionary: UserGlobals.
-	dog
+	puppy := dog
 		subclass: 'GsESPuppy'
 		instVarNames: #('cuteness')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: UserGlobals.
+	puppy
+		subclass: 'GsESRunt'
+		instVarNames: #('speckles')
 		classVars: #() classInstVars: #() poolDictionaries: #()
 		inDictionary: UserGlobals.
 	self compile: 'eat ^ 42' in: dog.
@@ -130,12 +135,14 @@ GsExtractSuperclassRefactoringTest >> setUp [
 	self compile: 'describe ^ ''a cat''' in: cat.
 	self compile: 'nameGetter ^ name' in: cat.
 	self compile: 'eat ^ 42' in: (self classNamed: 'GsESFish').
-	self compile: 'puppyM ^ 1' in: (self classNamed: 'GsESPuppy')
+	self compile: 'puppyM ^ 1' in: (self classNamed: 'GsESPuppy').
+	self compile: 'runtM ^ 2' in: (self classNamed: 'GsESRunt')
 ]
 
 { #category : 'running' }
 GsExtractSuperclassRefactoringTest >> tearDown [
-	#('GsESPuppy' 'GsESDog' 'GsESCat' 'GsESFish' 'GsESPet' 'GsESAnimal')
+	"children first (a class is removed before its superclass)"
+	#('GsESRunt' 'GsESPuppy' 'GsESDog' 'GsESCat' 'GsESFish' 'GsESPet' 'GsESAnimal')
 		do: [:nm | UserGlobals removeKey: nm asSymbol ifAbsent: []]
 ]
 
@@ -210,6 +217,33 @@ GsExtractSuperclassRefactoringTest >> testExtractHoistsIdenticalMethod [
 	"the non-hoisted methods stay put"
 	self assert: ((self classNamed: 'GsESDog') includesSelector: #describe).
 	self assert: ((self classNamed: 'GsESCat') includesSelector: #describe)
+]
+
+{ #category : 'tests - V7 extract' }
+GsExtractSuperclassRefactoringTest >> testExtractWithSiblingReparentsDeepSubtree [
+	"With a sibling in the extracted set the apply stream interleaves classAdd, the Dog and Cat
+	 edits and the Puppy + Runt reparents. The anchor's WHOLE descendant subtree, two deep
+	 (GsESDog -> GsESPuppy -> GsESRunt), must reparent top-down onto each freshly-versioned
+	 ancestor -- the grandchild onto the anchor's new version, the great-grandchild onto the
+	 grandchild's -- keep its own methods, and inherit the hoisted selector all the way down."
+	| json |
+	json := (GsExtractSuperclassRefactoring
+		class: (self classNamed: 'GsESDog')
+		extractSuperclassNamed: 'GsESPet' inDictionary: nil
+		siblings: #('GsESCat') hoistMethods: #(#eat) hoistInstVars: #())
+		applyDeselected: #().
+
+	self deny: json includesSubstring: '"failed":[{'.
+	"depth 1: the grandchild reparents onto the anchor's new version"
+	self assert: (self classNamed: 'GsESPuppy') superclass name asString equals: 'GsESDog'.
+	self assert: ((self classNamed: 'GsESPuppy') includesSelector: #puppyM).
+	"depth 2: the great-grandchild reparents onto the grandchild's new version (top-down ordering)"
+	self assert: (self classNamed: 'GsESRunt') superclass name asString equals: 'GsESPuppy'.
+	self assert: ((self classNamed: 'GsESRunt') includesSelector: #runtM).
+	self assert: (self ownIvarsOf: 'GsESRunt') includes: 'speckles'.
+	"the hoisted #eat lives on GsESPet and is understood all the way down to the great-grandchild"
+	self assert: ((self classNamed: 'GsESPuppy') canUnderstand: #eat).
+	self assert: ((self classNamed: 'GsESRunt') canUnderstand: #eat)
 ]
 
 { #category : 'tests - V7 extract' }
@@ -316,7 +350,9 @@ GsExtractSuperclassRefactoringTest >> testSuperSendMethodUnhoistable [
 
 	self assert: greet notNil.
 	self assert: (greet at: 2) equals: #unhoistable.
-	self assert: (greet at: 3) includesSubstring: 'super'
+	"assert a phrase unique to the super-send branch -- 'super' alone is a substring of the
+	 selector #superGreet the reason echoes, so it would pass for ANY reason (a false pass)."
+	self assert: (greet at: 3) includesSubstring: 'sends super'
 ]
 
 { #category : 'tests - classification' }
@@ -397,7 +433,8 @@ GsExtractSuperclassRefactoringTest >> testDeclinesHoistingSuperSendMethod [
 		siblings: #('GsESCat') hoistMethods: #(#superGreet) hoistInstVars: #().
 
 	self assert: ref decline notNil.
-	self assert: ref decline includesSubstring: 'super'.
+	"'sends super', not 'super' -- the latter is a substring of the echoed selector #superGreet."
+	self assert: ref decline includesSubstring: 'sends super'.
 	self assert: ref changeSet isEmpty
 ]
 

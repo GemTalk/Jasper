@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 vi.mock('../../browserQueries', () => ({
   getSiblingClassNames: vi.fn(),
@@ -81,7 +81,12 @@ const candidatesJson = (over: Record<string, unknown> = {}): string =>
     ...over,
   });
 
+const setOpenDocs = (docs: unknown[]): void => {
+  (vscode.workspace as unknown as { textDocuments: unknown[] }).textDocuments = docs;
+};
+
 beforeEach(() => vi.clearAllMocks());
+afterEach(() => setOpenDocs([]));
 
 describe('insert superclass command', () => {
   it('does nothing when the engine is unavailable', async () => {
@@ -154,6 +159,42 @@ describe('extract superclass command', () => {
     const [, , , siblings, hoist] = vi.mocked(queries.analyzeExtractSuperclass).mock.calls[0];
     expect(siblings).toEqual(['Cat']);
     expect(hoist).toEqual({ methods: ['eat'], instVars: ['name'] });
+  });
+
+  it('saves dirty gemstone method editors before classifying, leaving other buffers alone', async () => {
+    const dirtyMethod = vi.fn(async () => true);
+    const cleanMethod = vi.fn(async () => true);
+    const dirtyFile = vi.fn(async () => true);
+    setOpenDocs([
+      { isDirty: true, uri: { scheme: 'gemstone' }, save: dirtyMethod },
+      { isDirty: false, uri: { scheme: 'gemstone' }, save: cleanMethod },
+      { isDirty: true, uri: { scheme: 'file' }, save: dirtyFile },
+    ]);
+    vi.mocked(queries.getSiblingClassNames).mockReturnValue([]);
+    vi.mocked(vscode.window.showInputBox).mockResolvedValue('Pet');
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValue([] as never);
+    vi.mocked(queries.candidatesForExtractSuperclass).mockResolvedValue(candidatesJson());
+    vi.mocked(queries.analyzeExtractSuperclass).mockResolvedValue(analysisJson());
+    vi.mocked(queries.startExtractSuperclassPreview).mockResolvedValue(startJson());
+    vi.mocked(showExtractSuperclassPanel).mockResolvedValue({ applied: 1, failed: [] });
+
+    await extractSuperclassCommand(ctx());
+
+    expect(dirtyMethod).toHaveBeenCalledTimes(1);
+    expect(cleanMethod).not.toHaveBeenCalled();
+    expect(dirtyFile).not.toHaveBeenCalled();
+    expect(queries.candidatesForExtractSuperclass).toHaveBeenCalled();
+  });
+
+  it('aborts before classifying when a dirty method buffer will not save', async () => {
+    setOpenDocs([{ isDirty: true, uri: { scheme: 'gemstone' }, save: vi.fn(async () => false) }]);
+    vi.mocked(queries.getSiblingClassNames).mockReturnValue([]);
+    vi.mocked(vscode.window.showInputBox).mockResolvedValue('Pet');
+
+    const outcome = await extractSuperclassCommand(ctx());
+
+    expect(outcome).toBeUndefined();
+    expect(queries.candidatesForExtractSuperclass).not.toHaveBeenCalled();
   });
 
   it('skips the sibling picker when the class is an only child', async () => {

@@ -51,6 +51,24 @@ function validateClassName(name: string): string | null {
   return null;
 }
 
+/** Save any open GemStone method editors with unsaved edits, so the engine hoists their CURRENT
+ *  source rather than the stale stored version. The single-editor refactorings do this with
+ *  `saveIfDirty(editor)`; extract-superclass is Explorer-driven with no single active editor, so
+ *  flush every dirty `gemstone:`-scheme buffer. Returns false (and refuses) if one will not save
+ *  — e.g. it does not compile — leaving the user to fix it before retrying. */
+async function flushDirtyMethodBuffers(): Promise<boolean> {
+  const dirty = vscode.workspace.textDocuments.filter(
+    (d) => d.isDirty && d.uri.scheme === 'gemstone',
+  );
+  for (const doc of dirty) {
+    if (!(await doc.save())) {
+      refuse('Save your open method edits before extracting a superclass.');
+      return false;
+    }
+  }
+  return true;
+}
+
 async function promptNewClassName(anchor: string): Promise<string | undefined> {
   const name = await vscode.window.showInputBox({
     title: `New superclass for ${anchor}`,
@@ -206,6 +224,13 @@ async function runExtractSuperclass(
     );
     return undefined;
   }
+  // Defensive: the preview was non-empty (guarded above) and the apply is all-or-nothing, so
+  // zero changes applied without an error/failure is an impossible-in-practice state — but do not
+  // claim success for it (the "no false success" rule).
+  if (result.applied === 0) {
+    void vscode.window.showErrorMessage(`${heading} applied no changes.`);
+    return undefined;
+  }
 
   void vscode.window.showInformationMessage(
     `${heading} — applied ${result.applied} change(s). Existing instances keep their prior version; commit to persist.`,
@@ -256,6 +281,11 @@ export async function extractSuperclassCommand(
   // 2. Name the new superclass.
   const newName = await promptNewClassName(ctx.className);
   if (!newName) return undefined;
+
+  // The engine classifies and hoists by reading each class's STORED method source, so flush any
+  // unsaved method edits first — otherwise a dirty editor's method would hoist at its stale saved
+  // version. Explorer-driven (no single active editor), so flush every dirty method buffer.
+  if (!(await flushDirtyMethodBuffers())) return undefined;
 
   // 3. Which common members to hoist? Classify across {anchor} ∪ siblings.
   let candidates: MemberCandidates;
