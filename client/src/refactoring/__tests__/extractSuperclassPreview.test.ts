@@ -92,6 +92,25 @@ describe('extract-superclass parsers', () => {
     expect(s.outOfScope.note).toContain('not migrated');
   });
 
+  // An unrecognised classification must FAIL CLOSED. buildMemberPicks withholds 'unhoistable'
+  // from the checklist but offers 'partial', so defaulting to 'partial' would put a member we
+  // cannot classify in front of the user as opt-in-able without knowing whether it compiles.
+  it('classifies an unknown member kind as unhoistable, not as offerable', () => {
+    const c = parseCandidates(
+      JSON.stringify({
+        decline: null,
+        methods: [
+          { selector: 'mystery', kind: 'somethingNew', defaultChecked: true, reason: null },
+          { selector: 'truncated', defaultChecked: false, reason: null },
+        ],
+        instVars: [{ name: 'odd', kind: 42, defaultChecked: true }],
+      }),
+    );
+
+    expect(c.methods.map((m) => m.kind)).toEqual(['unhoistable', 'unhoistable']);
+    expect(c.instVars[0].kind).toBe('unhoistable');
+  });
+
   it('throws on a change with an unknown kind', () => {
     const page = JSON.stringify({ changes: [{ id: '1', kind: 'bogus', className: 'X' }] });
 

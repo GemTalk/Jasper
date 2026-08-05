@@ -2888,8 +2888,16 @@ resolveSibling: aName
 category: 'private - analysis'
 method: GsExtractSuperclassRefactoring
 validateHoistInstVars
-	"Every hoisted ivar must be the anchor's OWN ivar and must not already be defined on S (a
-	 double declaration once the new class -- a child of S -- declares it)."
+	"Every hoisted ivar must be the anchor's OWN ivar, must not already be defined on S (a
+	 double declaration once the new class -- a child of S -- declares it), and must not be OWNED
+	 BY A DESCENDANT of any extracted class.
+
+	 That last one is why this walks downwards. Hoisting puts the name on the new superclass, so
+	 every descendant inherits it; a descendant that also declares the name itself would be
+	 re-versioned with a duplicate declaration and GemStone rejects it. Without this check the
+	 rejection surfaced from applyClassChange: PART-WAY THROUGH the apply, leaving the new class
+	 created and some reparents done -- the half-applied state the user then has to abort. The
+	 class comment sells these as global declines that empty the change set, so it belongs here."
 	| own supAll |
 	own := self ownInstVarsOf: anchorClass.
 	supAll := self allInstVarsOf: sharedParent.
@@ -2897,7 +2905,23 @@ validateHoistInstVars
 		(own includes: v) ifFalse: [
 			^decline := 'Cannot hoist instance variable ', v, ': it is not declared in ', anchorClass name asString, '.'].
 		(supAll includes: v) ifTrue: [
-			^decline := 'Cannot hoist instance variable ', v, ': ', sharedParent name asString, ' already defines it.']]
+			^decline := 'Cannot hoist instance variable ', v, ': ', sharedParent name asString, ' already defines it.'].
+		(self descendantDeclaring: v) ifNotNil: [:owner |
+			^decline := 'Cannot hoist instance variable ', v, ': ', owner name asString, ' already declares it.']]
+%
+
+category: 'private - analysis'
+method: GsExtractSuperclassRefactoring
+descendantDeclaring: anIvarName
+	"The first descendant of an extracted class that declares anIvarName as its OWN instance
+	 variable, or nil. The extracted classes themselves are skipped -- the anchor is supposed to
+	 own the name (it is what gets hoisted), and a sibling losing its own copy is the point."
+	extractedClasses do: [:cls |
+		(environment descendantsOf: cls) do: [:d |
+			((extractedClasses includes: d) not
+				and: [(self ownInstVarsOf: d) includes: anIvarName])
+					ifTrue: [^d]]].
+	^nil
 %
 
 category: 'private - analysis'
