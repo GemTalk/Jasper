@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-vi.mock('vscode', () => import('../../__mocks__/vscode'));
+vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 import * as vscode from 'vscode';
 import { RefactorCodeActionProvider } from '../renameRefactorCodeActions';
 
@@ -23,18 +23,27 @@ describe('refactor code actions', () => {
     const actions = provider.provideCodeActions(docWith('total'), range);
 
     expect(actions.map((a) => a.command?.command)).toEqual([
+      'gemstone.explorer.inlineMethod',
+      'gemstone.explorer.inlineTemporary',
       'gemstone.renameTemporary',
       'gemstone.renameInstVarAtCursor',
       'gemstone.renameClassVarAtCursor',
-      'gemstone.explorer.inlineMethod',
-      'gemstone.explorer.inlineTemporary',
-      'gemstone.convertTempToInstVar',
       'gemstone.renameMethodInEditor',
+      'gemstone.convertTempToInstVar',
       'gemstone.changeMethodSignature',
     ]);
-    for (const action of actions) {
-      expect(action.kind?.value).toBe(vscode.CodeActionKind.Refactor.value);
-    }
+    // Tagged with Refactor sub-kinds and emitted grouped, so the Refactor… menu
+    // separates them into Inline / Rename / other-rewrite sections.
+    expect(actions.map((a) => a.kind?.value)).toEqual([
+      'refactor.inline',
+      'refactor.inline',
+      'refactor.rename',
+      'refactor.rename',
+      'refactor.rename',
+      'refactor.rename',
+      'refactor.rewrite',
+      'refactor.rewrite',
+    ]);
     // Each carries the exact position it was offered at, so it acts on the token
     // there rather than wherever the editor selection happens to be.
     for (const action of actions) {
@@ -77,14 +86,28 @@ describe('refactor code actions', () => {
     expect(actions.map((a) => a.command?.command)).toEqual([
       'gemstone.explorer.extractMethod',
       'gemstone.explorer.extractTemporary',
+      'gemstone.explorer.inlineMethod',
+      'gemstone.explorer.inlineTemporary',
       'gemstone.renameTemporary',
       'gemstone.renameInstVarAtCursor',
       'gemstone.renameClassVarAtCursor',
-      'gemstone.explorer.inlineMethod',
-      'gemstone.explorer.inlineTemporary',
-      'gemstone.convertTempToInstVar',
       'gemstone.renameMethodInEditor',
+      'gemstone.convertTempToInstVar',
       'gemstone.changeMethodSignature',
+    ]);
+    // Contiguous groups → the Refactor… menu separates Extract / Inline / Rename /
+    // other-rewrite.
+    expect(actions.map((a) => a.kind?.value)).toEqual([
+      'refactor.extract',
+      'refactor.extract',
+      'refactor.inline',
+      'refactor.inline',
+      'refactor.rename',
+      'refactor.rename',
+      'refactor.rename',
+      'refactor.rename',
+      'refactor.rewrite',
+      'refactor.rewrite',
     ]);
   });
 

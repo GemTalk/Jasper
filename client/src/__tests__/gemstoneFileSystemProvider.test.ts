@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
-vi.mock('vscode', () => import('../__mocks__/vscode'));
+vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
 // Mock browserQueries
 vi.mock('../browserQueries', () => ({
@@ -34,6 +34,7 @@ import {
   buildMethodUri,
   buildNewMethodUri,
   buildClassDefinitionUri,
+  buildClassCommentUri,
   closeGemstoneTabsForSession,
   installStaleGemstoneTabReaper,
   escapeSelectorSlashes,
@@ -1350,6 +1351,37 @@ describe('buildClassDefinitionUri', () => {
   });
 });
 
+describe('buildClassCommentUri', () => {
+  it('places "comment" at path segment 3', () => {
+    const uri = buildClassCommentUri(1, 'Globals', 'Array');
+    expect(uri.path.split('/')[3]).toBe('comment');
+  });
+
+  it('labels the editor tab with the class name so it reads "<Class> comment"', () => {
+    const uri = buildClassCommentUri(1, 'Globals', 'Array');
+
+    const basename = decodeURIComponent(uri.path.split('/').pop() as string);
+    expect(basename).toBe('Array comment');
+  });
+
+  it('scopes the lookup to the dictionary index via the query', () => {
+    const uri = buildClassCommentUri(1, 'Globals', 'Array', 9);
+    expect(uri.query).toBe('dict=9');
+  });
+
+  it('round-trips back to the class comment through parseUri', () => {
+    const parsed = parseUri(buildClassCommentUri(1, 'Globals', 'Array', 9));
+
+    expect(parsed).toMatchObject({ kind: 'comment', className: 'Array', dictIndex: 9 });
+  });
+
+  it('throws when className contains a slash', () => {
+    expect(() => buildClassCommentUri(1, 'Globals', 'My/Class')).toThrow(
+      "Class name must not contain '/': My/Class",
+    );
+  });
+});
+
 describe('closeGemstoneTabsForSession', () => {
   it("closes this session's gemstone tabs (definition, method, diff) and leaves the rest", async () => {
     vi.mocked(window.tabGroups.close).mockClear();
@@ -1609,8 +1641,20 @@ describe('parseUri', () => {
     expect(parsed).toMatchObject({ kind: 'definition', className: 'Array' });
   });
 
+  it('recognizes a class-definition editor whose tab-label segment repeats the class name', () => {
+    const parsed = parseUri(Uri.parse('gemstone://1/Globals/Array/definition/Array'));
+
+    expect(parsed).toMatchObject({ kind: 'definition', className: 'Array' });
+  });
+
   it('recognizes a class-comment editor', () => {
     const parsed = parseUri(Uri.parse('gemstone://1/Globals/Array/comment'));
+
+    expect(parsed).toMatchObject({ kind: 'comment', className: 'Array' });
+  });
+
+  it('recognizes a class-comment editor whose tab-label segment carries the class name', () => {
+    const parsed = parseUri(Uri.parse('gemstone://1/Globals/Array/comment/Array%20comment'));
 
     expect(parsed).toMatchObject({ kind: 'comment', className: 'Array' });
   });

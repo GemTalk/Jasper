@@ -82,6 +82,21 @@ describe('renderRenamePanelHtml', () => {
     expect(html.match(/class="sel" checked/g) ?? []).toHaveLength(2);
   });
 
+  it('marks the class-definition edit as required — checked and disabled — while method recompiles stay deselectable', () => {
+    const html = renderRenamePanelHtml({
+      oldName: 'count',
+      newName: 'tally',
+      changes: [method(), classDef],
+      nonce: 'n',
+      script: '',
+    });
+
+    // exactly one disabled (required) checkbox — the class-definition card
+    expect(html.match(/class="sel" checked disabled/g) ?? []).toHaveLength(1);
+    // the method-recompile card stays plainly deselectable
+    expect(html).toContain('class="sel" checked aria-label="Include');
+  });
+
   it('collapses diffs by default and offers an expand-all toggle', () => {
     const html = renderRenamePanelHtml({
       oldName: 'count',
@@ -131,6 +146,18 @@ describe('rename panel interactions', () => {
 
     expect(document.getElementById('count')?.textContent).toBe('3');
     expect(document.getElementById('selcount')?.textContent).toBe('3');
+  });
+
+  it('renders the class-definition checkbox disabled so it cannot be deselected', () => {
+    mount([method({ id: '1' }), classDef]);
+
+    const defCb = document.querySelector('li.change[data-id="9"] .sel') as HTMLInputElement;
+    const methodCb = document.querySelector('li.change[data-id="1"] .sel') as HTMLInputElement;
+
+    expect(defCb.disabled).toBe(true);
+    expect(defCb.checked).toBe(true);
+    // a real click cannot toggle a disabled input, so it can never be deselected
+    expect(methodCb.disabled).toBe(false);
   });
 
   it('drops a change from the count when unchecked', () => {
@@ -222,5 +249,32 @@ describe('rename panel interactions', () => {
     toggleAll.click();
     expect(hidden()).toBe(3);
     expect(toggleAll.textContent).toBe('Expand all');
+  });
+
+  it('a double-click on Apply posts exactly one apply and disables the button', () => {
+    const { vscode } = mount([method({ id: '1' }), classDef]);
+    const apply = document.getElementById('apply') as HTMLButtonElement;
+
+    apply.click();
+    apply.click();
+
+    const applies = vscode.postMessage.mock.calls.filter(
+      (c) => (c[0] as { command: string }).command === 'apply',
+    );
+    expect(applies).toHaveLength(1);
+    expect(apply.disabled).toBe(true);
+  });
+
+  it('a checkbox change while applying cannot re-enable Apply', () => {
+    mount([method({ id: '1' }), method({ id: '2', selector: 'baz' })]);
+    const apply = document.getElementById('apply') as HTMLButtonElement;
+    apply.click();
+    expect(apply.disabled).toBe(true);
+
+    const cb = document.querySelector<HTMLInputElement>('li.change[data-id="2"] .sel')!;
+    cb.checked = false;
+    cb.dispatchEvent(new Event('change'));
+
+    expect(apply.disabled).toBe(true);
   });
 });

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-vi.mock('vscode', () => import('../../__mocks__/vscode'));
+vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 vi.mock('../../browserQueries', () => ({
   analyzeExtractSelection: vi.fn(),
   startExtractMethodPreview: vi.fn(),
@@ -242,5 +242,26 @@ describe('extract-method command', () => {
     await extractMethodCommand(sessions);
 
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(expect.stringContaining('boom'));
+  });
+
+  // An expired preview token answers `applied:0` with an EMPTY `failed`, so it parses
+  // cleanly — without the `result.error` check it reached the success path.
+  it('reports an expired preview token instead of taking the success path', async () => {
+    installEditor();
+    vi.mocked(queries.analyzeExtractSelection).mockResolvedValue(analysis());
+    vi.mocked(vscode.window.showInputBox).mockResolvedValue('helper');
+    vi.mocked(queries.startExtractMethodPreview).mockResolvedValue(startEnvelope());
+    vi.mocked(showExtractMethodPanel).mockResolvedValue({
+      applied: 0,
+      failed: [],
+      error: 'preview session expired',
+    });
+
+    await extractMethodCommand(sessions);
+
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining('preview session expired'),
+    );
+    expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
   });
 });

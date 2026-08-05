@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 // databaseForLogin now imports versionsMatch from processManager, which pulls
 // in vscode; mock it so this pure-logic test still runs headless.
-vi.mock('vscode', () => import('../__mocks__/vscode'));
+vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 import { findDatabaseForLogin } from '../databaseForLogin';
 import { DEFAULT_LOGIN, GemStoneLogin } from '../loginTypes';
 import { GemStoneDatabase } from '../sysadminTypes';

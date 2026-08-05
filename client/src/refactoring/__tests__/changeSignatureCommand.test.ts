@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-vi.mock('vscode', () => import('../../__mocks__/vscode'));
+vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 vi.mock('../../browserQueries', () => ({
   analyzeChangeSignature: vi.fn(),
   startChangeSignaturePreview: vi.fn(),
@@ -216,6 +216,30 @@ describe('beginChangeSignature (shared flow)', () => {
     expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
       expect.stringContaining('NOT committed'),
     );
+  });
+
+  // An expired preview token answers `applied:0` with an EMPTY `failed`, so it parses
+  // cleanly. `onApplied` refreshes/reopens editors on the NEW selector, so it must not run
+  // when the selector never actually changed.
+  it('reports an expired preview token and does not call onApplied', async () => {
+    vi.mocked(queries.analyzeChangeSignature).mockResolvedValue(analysis());
+    vi.mocked(showChangeSignatureEditor).mockResolvedValue(edit);
+    vi.mocked(queries.startChangeSignaturePreview).mockResolvedValue(startEnvelope());
+    vi.mocked(showChangeSignaturePanel).mockResolvedValue({
+      applied: 0,
+      failed: [],
+      error: 'preview session expired',
+    });
+    const onApplied = vi.fn();
+
+    const applied = await beginChangeSignature(target, { session: session(), onApplied });
+
+    expect(applied).toBe(false);
+    expect(onApplied).not.toHaveBeenCalled();
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining('preview session expired'),
+    );
+    expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
   });
 
   it('does not call onApplied when the preview is cancelled', async () => {

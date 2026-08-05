@@ -8,7 +8,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-vi.mock('vscode', () => import('../__mocks__/vscode'));
+vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 // Delegate browserQueries so we can observe which tool ran without invoking
 // real GCI. The integration we care about is: MCP client → socket → McpServer
 // → registerMcpTools → getSession() → browserQueries.*
@@ -69,15 +69,14 @@ vi.mock('../pythonQueries', () => ({
 }));
 
 import * as net from 'net';
-import * as crypto from 'crypto';
-import * as os from 'os';
-import * as path from 'path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 import { McpSocketServer } from '../mcpSocketServer';
 import { ActiveSession } from '../sessionManager';
 import * as queries from '../browserQueries';
+import { temporarySidecarPath } from './support/file';
+import { temporarySocketPath } from './support/socket';
 
 // ── A minimal client Transport that wraps a raw socket ───────────────────
 
@@ -151,15 +150,8 @@ describe('McpSocketServer integration', () => {
     session = makeMockSession();
     server = new McpSocketServer({
       getSession: () => session,
-      // Randomize per test so parallel runs don't collide on the fixed socket path.
-      socketPath: path.join(
-        os.tmpdir(),
-        `jasper-mcp-test-${crypto.randomBytes(6).toString('hex')}.sock`,
-      ),
-      sidecarPath: path.join(
-        os.tmpdir(),
-        `jasper-mcp-owner-${crypto.randomBytes(6).toString('hex')}.json`,
-      ),
+      socketPath: temporarySocketPath(),
+      sidecarPath: temporarySidecarPath(),
     });
     await server.start();
     vi.clearAllMocks();

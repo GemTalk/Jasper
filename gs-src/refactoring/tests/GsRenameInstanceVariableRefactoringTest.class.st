@@ -80,7 +80,12 @@ GsRenameInstanceVariableRefactoringTest >> setUp [
 	 assignment, a genuine read alongside a shadowing block argument (mixed), a
 	 fully shadowing block argument (blockOnly), a method that touches only the
 	 sibling variable (getOther), a selector spelled like the variable (count),
-	 and a subclass read (doubleCount)."
+	 and a subclass read (doubleCount).
+
+	 makeOne / describe are CLASS-side and cannot touch an instance variable at
+	 all, so no change set will ever mention them; they exist so the apply tests
+	 can prove the class side survives the reshape. Likewise getOther and
+	 subLabel are instance methods no change set mentions."
 	| base sub |
 	super setUp.
 	base := Object
@@ -103,7 +108,10 @@ GsRenameInstanceVariableRefactoringTest >> setUp [
 	self compile: 'mixed | s | s := count. ^[:count | count + 1] value: s' in: base.
 	self compile: 'blockOnly ^[:count | count * count] value: 3' in: base.
 	self compile: 'getOther ^other' in: base.
-	self compile: 'doubleCount ^count * 2' in: sub
+	self compile: 'doubleCount ^count * 2' in: sub.
+	self compile: 'subLabel ^''sub''' in: sub.
+	self compile: 'makeOne ^self new' in: base class.
+	self compile: 'describe ^''base''' in: sub class
 ]
 
 { #category : 'fixture' }
@@ -240,4 +248,104 @@ GsRenameInstanceVariableRefactoringTest >> testStagesOneChangePerAffectedMethodP
 
 	self assert: recompiles size equals: 5.
 	self assert: (self classDefinitionChangeIn: cs) notNil
+]
+
+{ #category : 'asserting' }
+GsRenameInstanceVariableRefactoringTest >> assertSelectorsOf: aClass include: selectorArray [
+	"Every selector in selectorArray is still installed on aClass. Named
+	 explicitly rather than by count so a failure says WHICH method vanished."
+	selectorArray do: [:sel |
+		self
+			assert: (aClass compiledMethodAt: sel environmentId: 0 otherwise: nil) notNil
+			description: aClass name asString, '>>', sel asString, ' did not survive the apply']
+]
+
+{ #category : 'fixture' }
+GsRenameInstanceVariableRefactoringTest >> applyRenameCountTo: aName deselected: idArray [
+	"Run the whole refactoring -- preview then apply -- and answer the apply
+	 result envelope. Nothing commits."
+	| ref |
+	ref := GsRenameInstanceVariableRefactoring
+		class: self baseFixture
+		renameInstVar: 'count'
+		to: aName.
+	ref changeSet.
+	^ref applyDeselected: idArray
+]
+
+{ #category : 'tests - apply' }
+GsRenameInstanceVariableRefactoringTest >> testApplyKeepsEveryMethodOnBothSidesOfTheDefiningClass [
+	"Reshaping a class creates a new class version whose method dictionary starts
+	 EMPTY, so only what is copied forward survives. The change set names just the
+	 methods that access the variable -- getOther (instance) and makeOne (class
+	 side) appear in no change set, and are exactly what a naive class-definition
+	 recompile destroys."
+	| base |
+	self applyRenameCountTo: 'tally' deselected: #().
+	base := self baseFixture.
+
+	self assertSelectorsOf: base include: #(combine count increment mixed blockOnly getOther).
+	self assertSelectorsOf: base class include: #(makeOne).
+	self assert: (base instVarNames includesIdentical: #tally).
+	self deny: (base instVarNames includesIdentical: #count)
+]
+
+{ #category : 'tests - apply' }
+GsRenameInstanceVariableRefactoringTest >> testApplyKeepsEveryMethodOnBothSidesOfTheSubclass [
+	"The subclass is re-versioned too when its superclass is reshaped, so it needs
+	 the same survival guarantee. subLabel and describe reference nothing."
+	| sub |
+	self applyRenameCountTo: 'tally' deselected: #().
+	sub := self subFixture.
+
+	self assertSelectorsOf: sub include: #(doubleCount subLabel).
+	self assertSelectorsOf: sub class include: #(describe)
+]
+
+{ #category : 'tests - apply' }
+GsRenameInstanceVariableRefactoringTest >> testApplyRewritesTheAccessingMethodsToTheNewName [
+	"Surviving is not enough -- the accessing methods must also carry the new name."
+	| base |
+	self applyRenameCountTo: 'tally' deselected: #().
+	base := self baseFixture.
+
+	self
+		assert: (base compiledMethodAt: #combine environmentId: 0 otherwise: nil) sourceString
+		includesSubstring: 'tally'.
+	self
+		deny: (base compiledMethodAt: #combine environmentId: 0 otherwise: nil) sourceString
+		includesSubstring: 'count'
+]
+
+{ #category : 'tests - apply' }
+GsRenameInstanceVariableRefactoringTest >> testApplyKeepsTheCategoryOfACarriedForwardMethod [
+	"A method copied onto the new class version without its category silently
+	 lands in 'as yet unclassified'. getOther is carried forward, not recompiled."
+	| base |
+	self applyRenameCountTo: 'tally' deselected: #().
+	base := self baseFixture.
+
+	self
+		assert: (base categoryOfSelector: #getOther environmentId: 0) asString
+		equals: 'fixture'
+]
+
+{ #category : 'tests - apply' }
+GsRenameInstanceVariableRefactoringTest >> testApplyDropsOnlyTheDeselectedMethod [
+	"Deselecting an accessing method is a deliberate choice to lose it -- but it
+	 must lose ONLY that method."
+	| ref combineId base |
+	ref := GsRenameInstanceVariableRefactoring
+		class: self baseFixture
+		renameInstVar: 'count'
+		to: 'tally'.
+	combineId := (ref changeSet changes
+		detect: [:c | c kind = #methodRecompile and: [c selector = #combine]]) id.
+
+	ref applyDeselected: (Array with: combineId).
+	base := self baseFixture.
+
+	self assert: (base compiledMethodAt: #combine environmentId: 0 otherwise: nil) isNil.
+	self assertSelectorsOf: base include: #(count increment mixed blockOnly getOther).
+	self assertSelectorsOf: base class include: #(makeOne)
 ]

@@ -122,13 +122,14 @@ export default tseslint.config(
   {
     // Vitest-specific best-practice rules, scoped to test files across all
     // workspaces. Only a subset of `vitest.configs.recommended` is enabled:
-    // the rest (expect-expect, no-conditional-expect, no-standalone-expect,
-    // no-mocks-import, no-disabled-tests) currently have real violations
-    // across ~90 test files that need separate triage before they can be
-    // turned on.
+    // `no-conditional-expect` has been triaged and turned on; the rest
+    // (expect-expect, no-standalone-expect, no-mocks-import,
+    // no-disabled-tests) currently have real violations across ~90 test
+    // files that need separate triage before they can be turned on.
     files: ['**/__tests__/**/*.test.ts'],
     plugins: { vitest },
     rules: {
+      'vitest/no-conditional-expect': 'error',
       'vitest/no-commented-out-tests': 'error',
       'vitest/no-focused-tests': 'error',
       'vitest/no-identical-title': 'error',
@@ -142,6 +143,13 @@ export default tseslint.config(
       'vitest/valid-expect-in-promise': 'error',
       'vitest/valid-title': 'error',
     },
+  },
+  {
+    // client/src/__tests__/gci/** is mid-migration to a different test
+    // approach; no-conditional-expect violations there are being replaced,
+    // not fixed in place.
+    files: ['client/src/__tests__/gci/**/*.test.ts'],
+    rules: { 'vitest/no-conditional-expect': 'off' },
   },
   // Disables stylistic ESLint rules that would conflict with Prettier; must stay last.
   eslintConfigPrettier,

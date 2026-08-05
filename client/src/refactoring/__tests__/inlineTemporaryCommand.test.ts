@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-vi.mock('vscode', () => import('../../__mocks__/vscode'));
+vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 vi.mock('../../browserQueries', () => ({
   analyzeInlineTemporary: vi.fn(),
   startInlineTemporaryPreview: vi.fn(),
@@ -214,5 +214,25 @@ describe('inline-temporary command', () => {
     await inlineTemporaryCommand(sessions);
 
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(expect.stringContaining('boom'));
+  });
+
+  // An expired preview token answers `applied:0` with an EMPTY `failed`, so it parses
+  // cleanly — without the `result.error` check it reached the success path.
+  it('reports an expired preview token instead of taking the success path', async () => {
+    installEditor();
+    vi.mocked(queries.analyzeInlineTemporary).mockResolvedValue(analysis());
+    vi.mocked(queries.startInlineTemporaryPreview).mockResolvedValue(startEnvelope());
+    vi.mocked(showInlineTemporaryPanel).mockResolvedValue({
+      applied: 0,
+      failed: [],
+      error: 'preview session expired',
+    });
+
+    await inlineTemporaryCommand(sessions);
+
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining('preview session expired'),
+    );
+    expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
   });
 });

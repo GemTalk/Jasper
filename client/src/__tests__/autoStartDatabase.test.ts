@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 // This module's chain now reaches versionsMatch via processManager, which pulls
 // in vscode; mock it so the injected-deps test still runs headless.
-vi.mock('vscode', () => import('../__mocks__/vscode'));
+vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 import { maybeStartDatabaseAndRetry, AutoStartDeps } from '../autoStartDatabase';
 import { DEFAULT_LOGIN, GemStoneLogin } from '../loginTypes';
 import { GemStoneDatabase, GemStoneProcess } from '../sysadminTypes';

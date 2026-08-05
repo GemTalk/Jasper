@@ -1,0 +1,328 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
+vi.mock('../../browserQueries', () => ({
+  analyzeInstVar: vi.fn(),
+  startInstVarPreview: vi.fn(),
+  pageInstVarPreview: vi.fn(),
+  applyInstVar: vi.fn(),
+  clearInstVarPreview: vi.fn(),
+  abortSessionTransaction: vi.fn(),
+  sessionNeedsCommit: vi.fn(),
+}));
+vi.mock('../instVarRefactorPanel', () => ({
+  showInstVarRefactorPanel: vi.fn(),
+}));
+
+import * as vscode from 'vscode';
+import * as queries from '../../browserQueries';
+import { showInstVarRefactorPanel } from '../instVarRefactorPanel';
+import { runInstVarRefactor, InstVarRefactorRequest } from '../instVarRefactorCommand';
+import type { ActiveSession } from '../../sessionManager';
+import type { ApplyResult } from '../instVarRefactorPreview';
+
+/**
+ * Drives the add / remove instance-variable COMMAND orchestrator (not the engine). Pins the
+ * ensure-engine → pre-flight → preview → panel → apply → report flow and the "always say why
+ * nothing happened" contract: engine-unavailable, a failed pre-flight, an analysis decline, a
+ * failed preview (with token cleanup), an out-of-scope or empty preview (with cleanup), user
+ * cancel, the dropped-methods / committed notes, and the loadPage / apply / abort / cleanup
+ * callbacks the command wires into the panel. Apply FAILURES (a stranded partial reshape, an
+ * expired token, a zero-change apply) are surfaced inside the panel now, not here — the panel
+ * resolves undefined for all of them — so their coverage lives in the panel / preview tests; the
+ * command's only remaining stake is the abort handler it hands the panel. The parsers run for
+ * real; only the GCI queries and the preview panel are mocked.
+ */
+
+const req = (over: Partial<InstVarRefactorRequest> = {}): InstVarRefactorRequest => ({
+  session: { id: 1, rbSupportAvailable: true } as unknown as ActiveSession,
+  op: 'add',
+  className: 'Foo',
+  ivarName: 'bar',
+  dict: 1,
+  ...over,
+});
+
+const analysisJson = (over: Record<string, unknown> = {}): string =>
+  JSON.stringify({
+    decline: null,
+    operation: 'add',
+    sourceClass: 'Foo',
+    affectedCount: 2,
+    willNotRecompileCount: 0,
+    ...over,
+  });
+
+const change = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+  id: 'c1',
+  kind: 'classDefinitionEdit',
+  className: 'Foo',
+  dictName: 'UserGlobals',
+  oldSource: "instVarNames: #('a')",
+  newSource: "instVarNames: #('a' 'bar')",
+  ...over,
+});
+
+const startJson = (over: Record<string, unknown> = {}): string =>
+  JSON.stringify({
+    token: 'tok',
+    total: 2,
+    sourceClass: 'Foo',
+    outOfScope: {
+      decline: null,
+      willNotRecompile: [],
+      actedOnClass: 'Foo',
+      note: null,
+    },
+    page: {
+      changes: [change(), change({ id: 'c2', kind: 'classReparent', className: 'FooSub' })],
+      nextOffset: 3,
+      done: true,
+    },
+    ...over,
+  });
+
+const applied = (over: Partial<ApplyResult> = {}): ApplyResult => ({
+  applied: 2,
+  failed: [],
+  dropped: [],
+  committed: false,
+  ...over,
+});
+
+beforeEach(() => vi.clearAllMocks());
+
+describe('add / remove instance variable command', () => {
+  it('does not run a pre-flight when the engine is unavailable and the user declines install', async () => {
+    vi.mocked(vscode.window.showInformationMessage).mockResolvedValue(undefined);
+
+    const outcome = await runInstVarRefactor(
+      req({ session: { id: 1, rbSupportAvailable: false } as ActiveSession }),
+    );
+
+    expect(outcome).toBeUndefined();
+    expect(queries.analyzeInstVar).not.toHaveBeenCalled();
+  });
+
+  it('reports a failed pre-flight and never opens the preview', async () => {
+    vi.mocked(queries.analyzeInstVar).mockRejectedValue(new Error('boom'));
+
+    const outcome = await runInstVarRefactor(req());
+
+    expect(outcome).toBeUndefined();
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(expect.stringContaining('boom'));
+    expect(queries.startInstVarPreview).not.toHaveBeenCalled();
+  });
+
+  it('refuses an analysis decline and never opens the preview', async () => {
+    vi.mocked(queries.analyzeInstVar).mockResolvedValue(
+      analysisJson({ decline: 'Foo already has an instance variable of that name.' }),
+    );
+
+    const outcome = await runInstVarRefactor(req());
+
+    expect(outcome).toBeUndefined();
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+      expect.stringContaining('already has an instance variable'),
+    );
+    expect(queries.startInstVarPreview).not.toHaveBeenCalled();
+  });
+
+  it('reports a failed preview and clears the preview token', async () => {
+    vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson());
+    vi.mocked(queries.startInstVarPreview).mockRejectedValue(new Error('kaboom'));
+
+    const outcome = await runInstVarRefactor(req());
+
+    expect(outcome).toBeUndefined();
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(expect.stringContaining('kaboom'));
+    expect(queries.clearInstVarPreview).toHaveBeenCalled();
+    expect(showInstVarRefactorPanel).not.toHaveBeenCalled();
+  });
+
+  it('refuses an out-of-scope decline from the preview and clears the token', async () => {
+    vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson());
+    vi.mocked(queries.startInstVarPreview).mockResolvedValue(
+      startJson({
+        outOfScope: {
+          decline: 'Out of scope here.',
+          willNotRecompile: [],
+          actedOnClass: 'Foo',
+          note: null,
+        },
+      }),
+    );
+
+    const outcome = await runInstVarRefactor(req());
+
+    expect(outcome).toBeUndefined();
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+      expect.stringContaining('Out of scope'),
+    );
+    expect(queries.clearInstVarPreview).toHaveBeenCalled();
+    expect(showInstVarRefactorPanel).not.toHaveBeenCalled();
+  });
+
+  it('refuses when the preview has nothing to change and clears the token', async () => {
+    vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson());
+    vi.mocked(queries.startInstVarPreview).mockResolvedValue(
+      startJson({ total: 0, page: { changes: [], nextOffset: 1, done: true } }),
+    );
+
+    const outcome = await runInstVarRefactor(req());
+
+    expect(outcome).toBeUndefined();
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+      expect.stringContaining('Nothing to change'),
+    );
+    expect(queries.clearInstVarPreview).toHaveBeenCalled();
+    expect(showInstVarRefactorPanel).not.toHaveBeenCalled();
+  });
+
+  it('does nothing further when the user cancels the preview', async () => {
+    vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson());
+    vi.mocked(queries.startInstVarPreview).mockResolvedValue(startJson());
+    vi.mocked(showInstVarRefactorPanel).mockResolvedValue(undefined);
+
+    const outcome = await runInstVarRefactor(req());
+
+    expect(outcome).toBeUndefined();
+    expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
+    expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
+  });
+
+  it('hands the panel an abort handler that aborts the session transaction', async () => {
+    vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson());
+    vi.mocked(queries.startInstVarPreview).mockResolvedValue(startJson());
+    vi.mocked(showInstVarRefactorPanel).mockResolvedValue(undefined);
+
+    await runInstVarRefactor(req());
+    vi.mocked(showInstVarRefactorPanel).mock.calls[0][2].abort();
+
+    expect(queries.abortSessionTransaction).toHaveBeenCalledOnce();
+  });
+
+  it('hands the panel a live needs-commit probe over the session', async () => {
+    vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson());
+    vi.mocked(queries.startInstVarPreview).mockResolvedValue(startJson());
+    vi.mocked(showInstVarRefactorPanel).mockResolvedValue(undefined);
+    vi.mocked(queries.sessionNeedsCommit).mockReturnValue(true);
+
+    await runInstVarRefactor(req());
+    const probe = vi.mocked(showInstVarRefactorPanel).mock.calls[0][2].sessionNeedsCommit;
+
+    expect(probe?.()).toBe(true);
+    expect(queries.sessionNeedsCommit).toHaveBeenCalled();
+  });
+
+  it('titles an add and reports success', async () => {
+    vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson());
+    vi.mocked(queries.startInstVarPreview).mockResolvedValue(startJson());
+    vi.mocked(showInstVarRefactorPanel).mockResolvedValue(applied());
+
+    const outcome = await runInstVarRefactor(req({ op: 'add', ivarName: 'bar', className: 'Foo' }));
+
+    expect(outcome).toEqual({ applied: 2, committed: false, dropped: [] });
+    expect(vi.mocked(showInstVarRefactorPanel).mock.calls[0][0]).toBe('Add bar to Foo');
+    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+      expect.stringContaining('Add bar to Foo'),
+    );
+  });
+
+  it('titles a remove and reports success', async () => {
+    vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson({ operation: 'remove' }));
+    vi.mocked(queries.startInstVarPreview).mockResolvedValue(startJson());
+    vi.mocked(showInstVarRefactorPanel).mockResolvedValue(applied());
+
+    await runInstVarRefactor(req({ op: 'remove', ivarName: 'bar', className: 'Foo' }));
+
+    expect(vi.mocked(showInstVarRefactorPanel).mock.calls[0][0]).toBe('Remove bar from Foo');
+  });
+
+  it('notes the dropped methods and pluralizes when several did not recompile', async () => {
+    vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson({ operation: 'remove' }));
+    vi.mocked(queries.startInstVarPreview).mockResolvedValue(startJson());
+    vi.mocked(showInstVarRefactorPanel).mockResolvedValue(
+      applied({
+        dropped: [
+          { className: 'Foo', selector: 'combine' },
+          { className: 'FooSub', selector: 'doubleCount' },
+        ],
+      }),
+    );
+
+    const outcome = await runInstVarRefactor(req({ op: 'remove' }));
+
+    expect(outcome?.dropped).toHaveLength(2);
+    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+      expect.stringContaining('2 methods did not recompile and were dropped'),
+    );
+  });
+
+  it('uses the singular form when exactly one method did not recompile', async () => {
+    vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson({ operation: 'remove' }));
+    vi.mocked(queries.startInstVarPreview).mockResolvedValue(startJson());
+    vi.mocked(showInstVarRefactorPanel).mockResolvedValue(
+      applied({ dropped: [{ className: 'Foo', selector: 'combine' }] }),
+    );
+
+    await runInstVarRefactor(req({ op: 'remove' }));
+
+    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+      expect.stringContaining('1 method did not recompile and was dropped'),
+    );
+  });
+
+  it('reports that the change was committed when a committing option ran', async () => {
+    vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson());
+    vi.mocked(queries.startInstVarPreview).mockResolvedValue(startJson());
+    vi.mocked(showInstVarRefactorPanel).mockResolvedValue(applied({ committed: true }));
+
+    const outcome = await runInstVarRefactor(req());
+
+    expect(outcome?.committed).toBe(true);
+    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+      expect.stringContaining('Committed.'),
+    );
+  });
+
+  it('wires the panel loadPage / apply / cleanup callbacks to the GCI queries', async () => {
+    vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson());
+    vi.mocked(queries.startInstVarPreview).mockResolvedValue(startJson());
+    vi.mocked(queries.pageInstVarPreview).mockResolvedValue(
+      JSON.stringify({ changes: [change()], nextOffset: 4, done: false }),
+    );
+    vi.mocked(queries.applyInstVar).mockResolvedValue(
+      JSON.stringify({ applied: 1, failed: [], dropped: [], committed: true }),
+    );
+    vi.mocked(showInstVarRefactorPanel).mockResolvedValue(applied());
+
+    await runInstVarRefactor(req());
+
+    // The command mints its own preview token and threads it through every call.
+    const token = vi.mocked(queries.startInstVarPreview).mock.calls[0][4];
+    const ops = vi.mocked(showInstVarRefactorPanel).mock.calls[0][2];
+
+    const page = await ops.loadPage(3);
+    expect(queries.pageInstVarPreview).toHaveBeenCalledWith(
+      expect.anything(),
+      token,
+      3,
+      expect.any(Number),
+    );
+    expect(page.done).toBe(false);
+
+    const result = await ops.apply(['disallowGciStore'], true, false);
+    expect(queries.applyInstVar).toHaveBeenCalledWith(
+      expect.anything(),
+      token,
+      [],
+      ['disallowGciStore'],
+      true,
+      false,
+    );
+    expect(result.committed).toBe(true);
+
+    ops.cleanup();
+    expect(queries.clearInstVarPreview).toHaveBeenCalledWith(expect.anything(), token);
+  });
+});

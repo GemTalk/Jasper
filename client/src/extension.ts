@@ -72,6 +72,8 @@ import {
 } from './rowanDependency';
 import { shouldLoadAfterAddingDependency } from './rowanLoadPrompt';
 import { RowanDecorationProvider } from './rowanDecorations';
+import { ExplorerEmptyVarDecorationProvider } from './explorerVarDecorations';
+import { ActiveEditorDecorationProvider } from './activeEditorDecoration';
 import { findMethodInClass } from './commands/findMethodInClass';
 import { loadClassPickItems } from './commands/classPicker';
 import { GlobalsBrowser } from './globalsBrowser';
@@ -90,6 +92,7 @@ import {
   closeGemstoneTabsForSession,
   installStaleGemstoneTabReaper,
   buildMethodUri,
+  parseUri,
 } from './gemstoneFileSystemProvider';
 import { openWorkspace } from './workspace';
 import { openTutorialNotebook } from './tutorialNotebook';
@@ -764,9 +767,20 @@ export function activate(context: vscode.ExtensionContext) {
   // Set language mode for gemstone:// documents
   context.subscriptions.push(
     vscode.workspace.onDidOpenTextDocument((doc) => {
-      if (doc.uri.scheme === 'gemstone') {
-        vscode.languages.setTextDocumentLanguage(doc, 'gemstone-smalltalk');
+      if (doc.uri.scheme !== 'gemstone') return;
+      // A class comment is prose, not code: give it its own language so it word-
+      // wraps (see configurationDefaults) and isn't syntax-highlighted as Smalltalk.
+      // Everything else gemstone:// is source.
+      let isComment = false;
+      try {
+        isComment = parseUri(doc.uri).kind === 'comment';
+      } catch {
+        /* unrecognized URI — treat as source */
       }
+      vscode.languages.setTextDocumentLanguage(
+        doc,
+        isComment ? 'gemstone-class-comment' : 'gemstone-smalltalk',
+      );
     }),
   );
 
@@ -1131,6 +1145,66 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.commands.executeCommand('gemstone.openDocument', uri);
     }
   }
+
+  // Commit / Abort a session, with the same confirmations and post-action
+  // refreshes whether invoked from the Sessions tree (a session item) or the
+  // GemStone Explorer toolbar (the currently selected session).
+  const commitSession = async (session: ActiveSession): Promise<void> => {
+    if (fileInManager.hasUnsavedChanges(session)) {
+      const choice = await vscode.window.showWarningMessage(
+        'Exported .gs files have unsaved edits that will be overwritten.',
+        { modal: true },
+        'Commit Anyway',
+      );
+      if (choice !== 'Commit Anyway') return;
+    }
+    try {
+      const { success, err } = sessionManager.commit(session.id);
+      if (success) {
+        vscode.window.showInformationMessage(`Session ${session.id}: Commit succeeded.`);
+        await exportManager.refreshSession(session);
+        SystemBrowser.refresh(session.id);
+      } else {
+        vscode.window.showErrorMessage(
+          `Session ${session.id}: Commit failed — ${err.message || `error ${err.number}`}`,
+        );
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      vscode.window.showErrorMessage(`Commit failed: ${msg}`);
+    }
+  };
+
+  const abortSession = async (session: ActiveSession): Promise<void> => {
+    const message = abortConfirmMessage(
+      queries.sessionNeedsCommit(session),
+      fileInManager.hasUnsavedChanges(session),
+    );
+    if (message) {
+      const choice = await vscode.window.showWarningMessage(
+        message,
+        { modal: true },
+        'Abort Anyway',
+      );
+      if (choice !== 'Abort Anyway') return;
+    }
+    try {
+      const { success, err } = sessionManager.abort(session.id);
+      if (success) {
+        vscode.window.showInformationMessage(`Session ${session.id}: Abort succeeded.`);
+        await exportManager.refreshSession(session);
+        SystemBrowser.refresh(session.id);
+        explorer.onSessionAborted(session.id);
+      } else {
+        vscode.window.showErrorMessage(
+          `Session ${session.id}: Abort failed — ${err.message || `error ${err.number}`}`,
+        );
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      vscode.window.showErrorMessage(`Abort failed: ${msg}`);
+    }
+  };
 
   // ── Commands ───────────────────────────────────────────
   context.subscriptions.push(
@@ -1597,65 +1671,32 @@ export function activate(context: vscode.ExtensionContext) {
       }
     }),
 
-    vscode.commands.registerCommand('gemstone.sessionCommit', async (item: GemStoneSessionItem) => {
-      if (fileInManager.hasUnsavedChanges(item.activeSession)) {
-        const choice = await vscode.window.showWarningMessage(
-          'Exported .gs files have unsaved edits that will be overwritten.',
-          { modal: true },
-          'Commit Anyway',
-        );
-        if (choice !== 'Commit Anyway') return;
+    vscode.commands.registerCommand('gemstone.sessionCommit', (item: GemStoneSessionItem) =>
+      commitSession(item.activeSession),
+    ),
+
+    vscode.commands.registerCommand('gemstone.sessionAbort', (item: GemStoneSessionItem) =>
+      abortSession(item.activeSession),
+    ),
+
+    // Explorer toolbar variants: act on the currently selected session so Commit /
+    // Abort are reachable without switching to the Sessions view.
+    vscode.commands.registerCommand('gemstone.explorer.commit', () => {
+      const session = sessionManager.getSelectedSession();
+      if (!session) {
+        vscode.window.showErrorMessage('No active GemStone session to commit.');
+        return;
       }
-      try {
-        const { success, err } = sessionManager.commit(item.activeSession.id);
-        if (success) {
-          vscode.window.showInformationMessage(
-            `Session ${item.activeSession.id}: Commit succeeded.`,
-          );
-          await exportManager.refreshSession(item.activeSession);
-          SystemBrowser.refresh(item.activeSession.id);
-        } else {
-          vscode.window.showErrorMessage(
-            `Session ${item.activeSession.id}: Commit failed — ${err.message || `error ${err.number}`}`,
-          );
-        }
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        vscode.window.showErrorMessage(`Commit failed: ${msg}`);
-      }
+      return commitSession(session);
     }),
 
-    vscode.commands.registerCommand('gemstone.sessionAbort', async (item: GemStoneSessionItem) => {
-      const message = abortConfirmMessage(
-        queries.sessionNeedsCommit(item.activeSession),
-        fileInManager.hasUnsavedChanges(item.activeSession),
-      );
-      if (message) {
-        const choice = await vscode.window.showWarningMessage(
-          message,
-          { modal: true },
-          'Abort Anyway',
-        );
-        if (choice !== 'Abort Anyway') return;
+    vscode.commands.registerCommand('gemstone.explorer.abort', () => {
+      const session = sessionManager.getSelectedSession();
+      if (!session) {
+        vscode.window.showErrorMessage('No active GemStone session to abort.');
+        return;
       }
-      try {
-        const { success, err } = sessionManager.abort(item.activeSession.id);
-        if (success) {
-          vscode.window.showInformationMessage(
-            `Session ${item.activeSession.id}: Abort succeeded.`,
-          );
-          await exportManager.refreshSession(item.activeSession);
-          SystemBrowser.refresh(item.activeSession.id);
-          explorer.onSessionAborted(item.activeSession.id);
-        } else {
-          vscode.window.showErrorMessage(
-            `Session ${item.activeSession.id}: Abort failed — ${err.message || `error ${err.number}`}`,
-          );
-        }
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        vscode.window.showErrorMessage(`Abort failed: ${msg}`);
-      }
+      return abortSession(session);
     }),
 
     vscode.commands.registerCommand('gemstone.openBrowser', async (item?: GemStoneSessionItem) => {
@@ -2847,6 +2888,8 @@ export function activate(context: vscode.ExtensionContext) {
   };
   refreshRowanWorkspaceContext();
   refreshRowanProjectView();
+  const activeEditorDecorations = new ActiveEditorDecorationProvider();
+  activeEditorDecorations.setActiveEditor(vscode.window.activeTextEditor?.document.uri);
   context.subscriptions.push(
     rowanProjectView,
     vscode.window.createTreeView('gemstoneRowan', {
@@ -2854,6 +2897,16 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     // Git-view-style M/A/D badges + label tinting for Rowan rows.
     vscode.window.registerFileDecorationProvider(new RowanDecorationProvider()),
+    // Grays the "instance/class variables" header the Explorer shows for an empty
+    // variable side.
+    vscode.window.registerFileDecorationProvider(new ExplorerEmptyVarDecorationProvider()),
+    // Tints the Methods-pane / Open-Editors row backing the active editor, so the
+    // selected method reads as connected to its source even when the tree isn't
+    // focused (its selection goes muted grey then).
+    vscode.window.registerFileDecorationProvider(activeEditorDecorations),
+    vscode.window.onDidChangeActiveTextEditor((ed) =>
+      activeEditorDecorations.setActiveEditor(ed?.document.uri),
+    ),
     // Loaded-projects section tracks the connected stone; so does whether each
     // dependency is marked as being in the image.
     sessionManager.onDidChangeSelection(() => {
@@ -3605,7 +3658,6 @@ export function activate(context: vscode.ExtensionContext) {
         const gsPath = sysadminStorage.getGemstonePath(db.config.version);
         if (gsPath) {
           const ext = process.platform === 'darwin' ? 'dylib' : 'so';
-          const fs = await import('fs');
           const libPath = path.join(gsPath, 'lib', `libgcits-${db.config.version}-64.${ext}`);
           if (fs.existsSync(libPath)) {
             await storage.setGciLibraryPath(db.config.version, libPath);

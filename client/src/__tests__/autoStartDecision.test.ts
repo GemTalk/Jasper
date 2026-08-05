@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 // autoStartDecision now imports versionsMatch from processManager, which pulls
 // in vscode; mock it so these pure-logic cases still run headless.
-vi.mock('vscode', () => import('../__mocks__/vscode'));
+vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 import { inspectDatabaseProcesses, classifyStartNeed } from '../autoStartDecision';
 import { GemStoneDatabase, GemStoneProcess } from '../sysadminTypes';
 

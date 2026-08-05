@@ -6,6 +6,7 @@ import { runNbCall } from './nbRunner';
 import { QueryExecutor } from './queries/types';
 
 // Read-path shared queries.
+import { abortTransaction as sharedAbortTransaction } from './queries/abortTransaction';
 import { getMethodSource as sharedGetMethodSource } from './queries/getMethodSource';
 import { getBaseMethodSource as sharedGetBaseMethodSource } from './queries/getBaseMethodSource';
 import { getDictionaryNames as sharedGetDictionaryNames } from './queries/getDictionaryNames';
@@ -36,7 +37,11 @@ import {
   getClassVersions as sharedGetClassVersions,
   ClassVersionInfo,
 } from './refactoring/queries/getClassVersions';
-import { previewRenameInstVar as sharedPreviewRenameInstVar } from './refactoring/queries/previewRenameInstVar';
+import {
+  startRenameInstVarPreview as sharedStartRenameInstVarPreview,
+  applyRenameInstVar as sharedApplyRenameInstVar,
+  clearRenameInstVarPreview as sharedClearRenameInstVarPreview,
+} from './refactoring/queries/previewRenameInstVar';
 import {
   startRenameMethodPreview as sharedStartRenameMethodPreview,
   pageRenameMethodPreview as sharedPageRenameMethodPreview,
@@ -102,6 +107,14 @@ import {
   applyMoveMethod as sharedApplyMoveMethod,
   clearMoveMethodPreview as sharedClearMoveMethodPreview,
 } from './refactoring/queries/previewMoveMethod';
+import {
+  InstVarOp,
+  analyzeInstVar as sharedAnalyzeInstVar,
+  startInstVarPreview as sharedStartInstVarPreview,
+  pageInstVarPreview as sharedPageInstVarPreview,
+  applyInstVar as sharedApplyInstVar,
+  clearInstVarPreview as sharedClearInstVarPreview,
+} from './refactoring/queries/previewInstVar';
 import {
   analyzeExtractTemporary as sharedAnalyzeExtractTemporary,
   startExtractTemporaryPreview as sharedStartExtractTemporaryPreview,
@@ -404,6 +417,15 @@ export function sessionNeedsCommit(session: ActiveSession): boolean | undefined 
 }
 
 /**
+ * Abort the session's transaction, discarding EVERY uncommitted change in it — not just
+ * whatever the caller happens to be undoing. Callers must have told the user that, and
+ * should probe {@link sessionNeedsCommit} first when they need to say how much is at stake.
+ */
+export function abortSessionTransaction(session: ActiveSession): string {
+  return sharedAbortTransaction(defaultQueryExecutorUsing(session));
+}
+
+/**
  * Binds a session to the {@link QueryExecutor} shape shared queries expect,
  * backed by {@link executeFetchString}. This is the shared entry point used
  * across browserQueries, pythonQueries, and sunitQueries.
@@ -684,20 +706,34 @@ export function getClassVersions(
   return sharedGetClassVersions(defaultQueryExecutorUsing(session), dict);
 }
 
-export function previewRenameInstVar(
+export function startRenameInstVarPreview(
   session: ActiveSession,
   className: string,
   oldName: string,
   newName: string,
+  token: string,
   dict?: number | string,
 ): string {
-  return sharedPreviewRenameInstVar(
+  return sharedStartRenameInstVarPreview(
     defaultQueryExecutorUsing(session),
     className,
     oldName,
     newName,
+    token,
     dict,
   );
+}
+
+export function applyRenameInstVar(
+  session: ActiveSession,
+  token: string,
+  deselectedIds: string[],
+): string {
+  return sharedApplyRenameInstVar(defaultQueryExecutorUsing(session), token, deselectedIds);
+}
+
+export function clearRenameInstVarPreview(session: ActiveSession, token: string): string {
+  return sharedClearRenameInstVarPreview(defaultQueryExecutorUsing(session), token);
 }
 
 // Paginated rename-method preview: fetched NON-BLOCKING so a slow build shows a
@@ -1263,6 +1299,65 @@ export function applyMoveMethod(
 
 export function clearMoveMethodPreview(session: ActiveSession, token: string): string {
   return sharedClearMoveMethodPreview(defaultQueryExecutorUsing(session), token);
+}
+
+// Add / remove instance-variable (V1) preview: pre-flight analysis (decline reason,
+// affected count, how many methods will not recompile), paginated start/page fetched
+// NON-BLOCKING, server-side apply. The structural change never commits; migrate /
+// delete-history do (and are opt-in). `options` (or null) replaces the acted-on class's
+// class options.
+export function analyzeInstVar(
+  session: ActiveSession,
+  op: InstVarOp,
+  className: string,
+  ivarName: string,
+  dict?: number | string,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Analysing…');
+  return sharedAnalyzeInstVar(exec, op, className, ivarName, dict);
+}
+
+export function startInstVarPreview(
+  session: ActiveSession,
+  op: InstVarOp,
+  className: string,
+  ivarName: string,
+  token: string,
+  maxBytes: number,
+  dict?: number | string,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Previewing…');
+  return sharedStartInstVarPreview(exec, op, className, ivarName, token, maxBytes, dict);
+}
+
+export function pageInstVarPreview(
+  session: ActiveSession,
+  token: string,
+  offset: number,
+  maxBytes: number,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Loading more changes…');
+  return sharedPageInstVarPreview(exec, token, offset, maxBytes);
+}
+
+export function applyInstVar(
+  session: ActiveSession,
+  token: string,
+  deselectedIds: string[],
+  options: string[] | null,
+  migrate: boolean,
+  deleteHistory: boolean,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Applying…');
+  return sharedApplyInstVar(exec, token, deselectedIds, options, migrate, deleteHistory);
+}
+
+export function clearInstVarPreview(session: ActiveSession, token: string): string {
+  return sharedClearInstVarPreview(defaultQueryExecutorUsing(session), token);
 }
 
 // Extract-temporary (M3) preview: pre-flight analysis, paginated start/page fetched
