@@ -192,6 +192,38 @@ r := (System myUserProfile symbolList objectNamed: #GsMoveMethodRefactoringTest)
     expect(includesSelector(TARGET, 'callsSuper')).toBe(false);
   });
 
+  it('stages nothing when every selected method is non-movable', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+
+    defineFixture();
+    const token = `xmmit-none-${SOURCE}`;
+
+    const start = parseStartPreview(
+      await startMoveMethodPreview(
+        asyncExec,
+        SOURCE,
+        ['callsSuper'],
+        false,
+        TARGET,
+        false,
+        token,
+        PREVIEW_PAGE_BYTES,
+        userIndex(),
+      ),
+    );
+
+    expect(start.total).toBe(0);
+    expect(start.movableCount).toBe(0);
+    expect(start.skippedMethods.map((s) => s.selector)).toContain('callsSuper');
+
+    const result = parseApplyResult(await applyMoveMethod(asyncExec, token, []));
+    expect(result.applied).toBe(0);
+    expect(result.failed).toEqual([]);
+
+    expect(includesSelector(SOURCE, 'callsSuper')).toBe(true);
+    expect(includesSelector(TARGET, 'callsSuper')).toBe(false);
+  });
+
   it('flips an instance method to the class side of its own class', async (ctx) => {
     requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
