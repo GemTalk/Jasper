@@ -32,7 +32,9 @@ COPY package.json package-lock.json ./
 COPY client/package.json ./client/
 COPY server/package.json ./server/
 COPY mcp-server/package.json ./mcp-server/
-RUN npm ci
+# The base image's bundled npm (11.13.0) is below the repo's devEngines floor
+# (>=11.16.0), so npm ci itself would fail with EBADDEVENGINES.
+RUN npm install -g npm@11.17.0 && npm ci
 
 # Install GemStone/S 64 Bit for the in-container stone. This layer depends only
 # on the provisioning scripts, so it caches across source edits (it downloads
