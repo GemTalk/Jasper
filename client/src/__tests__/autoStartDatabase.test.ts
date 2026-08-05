@@ -348,3 +348,46 @@ describe('maybeStartDatabaseAndRetry — housekeeping', () => {
     expect(messages.some((m) => /connect/i.test(m))).toBe(true);
   });
 });
+
+// Reporting the outcome is this flow's whole contract, and the steps above only
+// guard the failures they expect. It runs inside a VS Code command, where an
+// escaping rejection becomes a bare "command failed" notification that names
+// neither the login nor the reason — strictly worse than the error it replaced.
+describe('maybeStartDatabaseAndRetry — an unanticipated failure', () => {
+  it('is reported rather than thrown when remembering the preference fails', async () => {
+    const deps = makeDeps({
+      confirm: vi.fn(async () => 'never' as const),
+      setMode: vi.fn(async () => {
+        throw new Error('Unable to write to User Settings');
+      }),
+    });
+
+    await expect(run(deps)).resolves.toBeUndefined();
+
+    expect(deps.showError).toHaveBeenCalledWith(expect.stringContaining(ORIGINAL_ERROR));
+  });
+
+  it('is reported rather than thrown when the database list cannot be read', async () => {
+    const deps = makeDeps({
+      getDatabases: vi.fn(() => {
+        throw new Error('EACCES: permission denied');
+      }),
+    });
+
+    await expect(run(deps)).resolves.toBeUndefined();
+
+    expect(deps.showError).toHaveBeenCalledWith(expect.stringContaining(ORIGINAL_ERROR));
+  });
+
+  it('names what went wrong, so the cause is not swallowed along with it', async () => {
+    const deps = makeDeps({
+      getDatabases: vi.fn(() => {
+        throw new Error('EACCES: permission denied');
+      }),
+    });
+
+    await run(deps);
+
+    expect(deps.showError).toHaveBeenCalledWith(expect.stringContaining('EACCES'));
+  });
+});

@@ -1498,6 +1498,14 @@ export function activate(context: vscode.ExtensionContext) {
               }
             },
           );
+        } catch (e: unknown) {
+          // The recovery flow reports its own outcome, so reaching here means
+          // something outside it failed. Keep the net anyway: a command handler
+          // that rejects shows only "command failed", with nothing about which
+          // login or why.
+          const msg = e instanceof Error ? e.message : String(e);
+          vscode.window.showErrorMessage(`Login failed: ${msg}`);
+          return;
         } finally {
           treeProvider.setConnecting(item.index, false);
           connectingStatus.dispose();

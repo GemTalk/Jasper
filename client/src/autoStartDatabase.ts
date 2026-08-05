@@ -60,6 +60,23 @@ export async function maybeStartDatabaseAndRetry(
   originalError: string,
   deps: AutoStartDeps,
 ): Promise<void> {
+  try {
+    await recoverLogin(login, originalError, deps);
+  } catch (e: unknown) {
+    // The steps below only guard the failures they expect, and this runs inside
+    // a VS Code command, where an escaping rejection becomes a bare "command
+    // failed" notification naming neither the login nor the reason. So anything
+    // unanticipated — an unwritable settings.json, an unreadable database root —
+    // still leaves through the error the user was owed in the first place.
+    deps.showError(`${originalError}\n\nRecovering from it also failed: ${messageOf(e)}`);
+  }
+}
+
+async function recoverLogin(
+  login: GemStoneLogin,
+  originalError: string,
+  deps: AutoStartDeps,
+): Promise<void> {
   const db = findDatabaseForLogin(login, deps.getDatabases());
   if (!db) {
     // Not a Jasper-managed local database — nothing we can start.
