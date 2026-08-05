@@ -7,7 +7,7 @@ vi.mock('../browserQueries', () => ({}));
 
 import type * as vscode from 'vscode';
 import { ExplorerController, MethodItem } from '../gemstoneExplorer';
-import { Uri, window, commands, workspace } from '../__mocks__/vscode';
+import { Uri, window, commands, workspace, languages } from '../__mocks__/vscode';
 import type { SessionManager, ActiveSession } from '../sessionManager';
 
 // Structural mirror of the (unexported) SelectorInfo the tree items carry.
@@ -115,6 +115,19 @@ describe('ExplorerController.openMethod', () => {
     expect(showTextDocument).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ preview: true, preserveFocus: true }),
+    );
+  });
+
+  it('tags the doc as gemstone-smalltalk before showing it (so CodeLens does not pop in)', async () => {
+    const ctl = makeController();
+    const setLang = languages.setTextDocumentLanguage as ReturnType<typeof vi.fn>;
+
+    await ctl.openMethod(methodItem(), 'preview');
+
+    expect(setLang).toHaveBeenCalledWith(expect.anything(), 'gemstone-smalltalk');
+    // Language is set before the doc is shown in the (reused) preview editor.
+    expect(setLang.mock.invocationCallOrder[0]).toBeLessThan(
+      showTextDocument.mock.invocationCallOrder[0],
     );
   });
 

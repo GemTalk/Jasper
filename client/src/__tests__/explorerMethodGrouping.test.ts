@@ -9,7 +9,12 @@ import {
   __resetConfig,
   __setConfig,
 } from '../__mocks__/vscode';
-import { ExplorerController, MethodCategoryItem, MethodItem } from '../gemstoneExplorer';
+import {
+  ExplorerController,
+  MethodCategoryItem,
+  MethodItem,
+  FilterChipItem,
+} from '../gemstoneExplorer';
 import { ALL_METHODS_CATEGORY } from '../systemBrowser';
 import type { SessionManager, ActiveSession } from '../sessionManager';
 import type { EnvCategoryLine } from '../browserQueries';
@@ -114,10 +119,12 @@ describe('Methods pane category grouping', () => {
     const ctl = makeController();
     setMethodFilter(ctl, 'at');
 
-    const children = ctl.methodProvider.getChildren();
+    // The filter chip leads the list; the rest are the pruned category rows.
+    const [chip, ...rest] = ctl.methodProvider.getChildren();
 
-    expect(children.every((c) => c instanceof MethodCategoryItem)).toBe(true);
-    const cats = (children as MethodCategoryItem[]).map((c) => c.category);
+    expect(chip).toBeInstanceOf(FilterChipItem);
+    expect(rest.every((c) => c instanceof MethodCategoryItem)).toBe(true);
+    const cats = (rest as MethodCategoryItem[]).map((c) => c.category);
     expect(cats).toContain('accessing');
     expect(cats).not.toContain('printing');
   });
@@ -149,10 +156,12 @@ describe('Methods pane category grouping', () => {
     const ctl = makeController();
     setMethodFilter(ctl, 'at');
 
-    const children = ctl.methodProvider.getChildren();
+    // Chip leads; the rest are the flat matching method rows.
+    const [chip, ...rest] = ctl.methodProvider.getChildren();
 
-    expect(children.every((c) => c instanceof MethodItem)).toBe(true);
-    expect((children as MethodItem[]).map((c) => c.info.selector)).toEqual(['at:']);
+    expect(chip).toBeInstanceOf(FilterChipItem);
+    expect(rest.every((c) => c instanceof MethodItem)).toBe(true);
+    expect((rest as MethodItem[]).map((c) => c.info.selector)).toEqual(['at:']);
   });
 
   it('keeps the title-toggle context key in step with the setting', () => {

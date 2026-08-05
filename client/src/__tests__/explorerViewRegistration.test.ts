@@ -69,3 +69,27 @@ describe('GemStone Explorer Class Hierarchy pane', () => {
     expect(src).toContain(`createTreeView('${HIERARCHY}'`);
   });
 });
+
+// A command referenced from a menu (title bar, row context, palette) but never
+// declared in contributes.commands shows up only at runtime as "command not
+// found". Guard our own gemstone.* commands so a new menu entry can't drift out
+// of sync with its declaration.
+describe('command manifest consistency', () => {
+  const declared = new Set<string>(
+    (pkg.contributes.commands as Array<{ command: string }>).map((c) => c.command),
+  );
+  const menus = pkg.contributes.menus as Record<string, Array<{ command?: string }>>;
+  const menuCommands = new Set<string>();
+  for (const group of Object.values(menus)) {
+    for (const item of group) if (item.command) menuCommands.add(item.command);
+  }
+
+  it('declares every gemstone command that a menu references', () => {
+    const missing = [...menuCommands]
+      .filter((c) => c.startsWith('gemstone'))
+      .filter((c) => !declared.has(c))
+      .sort();
+
+    expect(missing).toEqual([]);
+  });
+});

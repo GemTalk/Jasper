@@ -34,6 +34,7 @@ const executeCommand = commands.executeCommand as ReturnType<typeof vi.fn>;
 function attachViews(ctl: ExplorerController, methodSelection: unknown[] = []) {
   const pane = () => ({
     description: '',
+    message: undefined as string | undefined,
     reveal: vi.fn(async () => {}),
     selection: [] as unknown[],
   });
@@ -138,13 +139,13 @@ describe('Methods pane header', () => {
     expect(method.description).toBe('class');
   });
 
-  it('shows the active filter label instead of the side while filtering', () => {
+  it('keeps naming the side in the header while filtering (the filter shows as a chip row)', () => {
     const ctl = makeController();
     const method = attachViews(ctl);
     setMethodFilter(ctl, 'at');
 
     ctl.setMethodSide(true);
 
-    expect(method.description).toBe('Filter: at');
+    expect(method.description).toBe('class');
   });
 });

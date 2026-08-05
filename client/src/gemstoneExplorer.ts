@@ -15,6 +15,13 @@ import {
   tabInputUri,
 } from './gemstoneFileSystemProvider';
 import { filterMatches } from './explorerFilter';
+import {
+  parseMethodFilter,
+  methodMatchesFilter as matchesMethodFilter,
+  ivarAccessMark as computeIvarAccessMark,
+  ivarIdentifierRanges,
+  MethodFilter,
+} from './explorerMethodFilter';
 import { DoubleClickDetector } from './explorerDoubleClick';
 import { categoryChildNodes, categoryParentPath, categoryMatches } from './explorerCategories';
 import { registerExplorerOpenEditors } from './explorerOpenEditors';
@@ -85,6 +92,14 @@ const VIEW_CLASSES = 'gemstoneExplorerClasses';
 const VIEW_METHODS = 'gemstoneExplorerMethods';
 // Panes that support the live filter (the Hierarchy pane doesn't).
 const EXPLORER_VIEWS = [VIEW_DICTS, VIEW_CATEGORIES, VIEW_CLASSES, VIEW_METHODS];
+
+// Highlights the filtered instance variable(s) in an opened method source while a
+// reads:/writes:/accesses: filter is active — theme-aware, styled like a search
+// match. One shared type for the extension's lifetime (disposed in activation).
+const ivarHighlightDecoration = vscode.window.createTextEditorDecorationType({
+  backgroundColor: new vscode.ThemeColor('editor.findMatchHighlightBackground'),
+  borderRadius: '2px',
+});
 
 // How the Explorer should open a gemstone:// source editor:
 //   - 'preview': a single-click NAVIGATION open — VS Code's own preview tab (the
@@ -370,6 +385,9 @@ export class MethodItem extends vscode.TreeItem {
     // FileDecoration (the "shown in the active editor" tint) — the label and icon
     // are still set explicitly below, so it doesn't affect how the row renders.
     resourceUri?: vscode.Uri,
+    // Under an active reads:/writes:/accesses: ivar filter, the row's role for the
+    // filtered ivar: 'r' (reads), 'w' (writes), or 'rw' (both). Shown as a glyph.
+    accessMark?: 'r' | 'w' | 'rw',
   ) {
     super(info.selector, vscode.TreeItemCollapsibleState.None);
     this.id = `msel:${isMeta}:${displayCategory ?? ''}:${info.selector}`;
@@ -387,6 +405,7 @@ export class MethodItem extends vscode.TreeItem {
     // Indicators (tree items can't render italics, so we surface override/
     // session state via a compact glyph description + an explanatory tooltip).
     const marks: string[] = [];
+    if (accessMark) marks.push(accessMark);
     if (info.overrideBits & 1) marks.push('▲');
     if (info.overrideBits & 2) marks.push('▼');
     if (info.sessionBit === 1) marks.push('+');
@@ -437,7 +456,27 @@ export class MethodItem extends vscode.TreeItem {
   }
 }
 
-type MethodNode = MethodCategoryItem | MethodItem;
+// A "filter chip" root row shown while a pane's filter is active: a funnel icon,
+// the label "Filter", and the pattern in grey description text — visually
+// distinct from method/selector rows. Clicking it re-opens the filter editor;
+// its inline ✕ clears the filter. Carries the owning view id so one clear
+// command serves every pane.
+export class FilterChipItem extends vscode.TreeItem {
+  constructor(
+    public readonly viewId: string,
+    pattern: string,
+  ) {
+    super('Filter', vscode.TreeItemCollapsibleState.None);
+    this.id = `filterchip:${viewId}`;
+    this.description = pattern;
+    this.iconPath = new vscode.ThemeIcon('filter-filled');
+    this.contextValue = 'explorerFilterChip';
+    this.tooltip = `Active filter: ${pattern} — click to edit, ✕ to clear`;
+    this.command = { command: `${viewId}.filter`, title: '' };
+  }
+}
+
+type MethodNode = MethodCategoryItem | MethodItem | FilterChipItem;
 
 // ── Hierarchy pane ───────────────────────────────────────────────────────────
 // Shows the selected class's lineage: superclasses (root-first) → the class
@@ -567,9 +606,11 @@ function methodSelection(
 // Views the controller updates with the current selection (shown as the greyed
 // description beside each pane title).
 interface ExplorerViews {
-  dict: vscode.TreeView<DictItem>;
-  category: vscode.TreeView<ClassCategoryItem>;
-  klass: vscode.TreeView<ClassNode>;
+  // The filterable panes can each lead with a FilterChipItem row (MethodNode
+  // already includes it).
+  dict: vscode.TreeView<DictItem | FilterChipItem>;
+  category: vscode.TreeView<ClassCategoryItem | FilterChipItem>;
+  klass: vscode.TreeView<ClassNode | FilterChipItem>;
   hierarchy: vscode.TreeView<HierarchyItem>;
   method: vscode.TreeView<MethodNode>;
 }
@@ -602,6 +643,13 @@ export class ExplorerController {
   private classVersions = new Map<string, queries.ClassVersionInfo>();
   // Per-method metadata for the selected class; fetched once per class.
   private envLines: queries.EnvCategoryLine[] = [];
+  // Per-method instance-variable read/write map for the selected class, keyed
+  // `${isMeta}:${selector}`. Lazily loaded (only when a reads:/writes:/accesses:
+  // filter is actually used) and cached per class; see methodIvarAccess.
+  private ivarAccessCache?: {
+    key: string;
+    map: Map<string, queries.MethodInstVarAccess>;
+  };
   private views?: ExplorerViews;
   // Active filter pattern per pane (view id → pattern); empty/absent = no filter.
   private readonly filters = new Map<string, string>();
@@ -675,12 +723,11 @@ export class ExplorerController {
     this.views.klass.description = compose(VIEW_CLASSES, this.state.className);
     this.views.hierarchy.description = this.state.className ?? '';
     // The side (instance/class) is a title toggle rather than a tree row now, so
-    // name it in the header. Don't append the selected selector — the grayed
-    // "instance · roll" just clutters, and the selection is already highlighted in
-    // the tree. A live filter still shows its "Filter: …" label (matching the
-    // other panes), otherwise the header is just the side.
-    const side = this._showClassMethods ? 'class' : 'instance';
-    this.views.method.description = compose(VIEW_METHODS, undefined, side);
+    // keep it in the header description; don't append the selected selector (the
+    // grayed "instance · roll" just clutters, and the selection is already
+    // highlighted in the tree). The active filter is shown by the filter-chip row
+    // at the top of the tree (see MethodProvider), not in the header.
+    this.views.method.description = this._showClassMethods ? 'class' : 'instance';
   }
 
   getFilter(viewId: string): string | undefined {
@@ -713,6 +760,8 @@ export class ExplorerController {
     );
     this.providerFor(viewId).refresh();
     this.syncTitles();
+    // A changed Methods filter changes which ivar (if any) is highlighted.
+    if (viewId === VIEW_METHODS) this.refreshIvarHighlights();
   }
 
   clearFilter(viewId: string): void {
@@ -740,6 +789,24 @@ export class ExplorerController {
       box.dispose();
     });
     box.show();
+  }
+
+  // From an instance-variable row's context menu: filter the Methods pane to the
+  // methods that read / write / reference that ivar, by seeding the matching
+  // reads:/writes:/accesses: token. Selects the ivar's OWN class first (selecting
+  // an ivar row is otherwise inert, so the pane could still be showing another
+  // class — which would filter the wrong method list and find nothing), then
+  // switches to the instance side, since instance variables are only accessed by
+  // instance-side methods. `selectClass` clears the Methods filter, so seed the
+  // token after it.
+  filterMethodsByIvar(
+    kind: 'reads' | 'writes' | 'accesses',
+    ivarName: string,
+    className: string,
+  ): void {
+    if (className !== this.state.className) this.selectClass(new ClassItem(className), false);
+    this.setMethodSide(false);
+    this.setFilterState(VIEW_METHODS, `${kind}:${ivarName}`);
   }
 
   applyFilter(names: string[], viewId: string): string[] {
@@ -1098,7 +1165,10 @@ export class ExplorerController {
     }
   }
 
-  selectClass(item: ClassItem): void {
+  // `revealHierarchy` false loads the hierarchy data but doesn't reveal (and thus
+  // can't force-open) the Hierarchy pane — used when selecting the class is a
+  // side effect (e.g. filtering methods by one of its ivars), not a navigation.
+  selectClass(item: ClassItem, revealHierarchy = true): void {
     this.state.className = item.className;
     this.state.selectedSelector = undefined;
     this.state.selectedIsMeta = undefined;
@@ -1115,7 +1185,7 @@ export class ExplorerController {
     this.loadHierarchy();
     this.methodProvider.refresh();
     this.hierarchyProvider.refresh();
-    void this.revealHierarchySelf();
+    if (revealHierarchy) void this.revealHierarchySelf();
     this.syncTitles();
     // NOTE: a plain class click no longer auto-opens the definition editor —
     // that cluttered the editor area with a definition tab per class browsed.
@@ -2618,7 +2688,9 @@ export class ExplorerController {
     // matches are visible without hand-expanding each folder.
     const hasMatch = (category: string) =>
       filter === undefined ||
-      this.selectorsFor(isMeta, category).some((info) => filterMatches(info.selector, filter));
+      this.selectorsFor(isMeta, category).some((info) =>
+        this.methodMatchesFilter(isMeta, info.selector, filter),
+      );
     const expanded = filter !== undefined;
     if (filter !== undefined) combined = combined.filter(hasMatch);
     const items: MethodCategoryItem[] = [];
@@ -2642,8 +2714,116 @@ export class ExplorerController {
   // category grouping is off, or when a filter is narrowing the list.
   flatMethods(isMeta: boolean, filter?: string): MethodItem[] {
     return this.selectorsFor(isMeta, ALL_METHODS_CATEGORY)
-      .filter((info) => filter === undefined || filterMatches(info.selector, filter))
-      .map((info) => new MethodItem(isMeta, info, undefined, this.methodSourceUri(isMeta, info)));
+      .filter(
+        (info) => filter === undefined || this.methodMatchesFilter(isMeta, info.selector, filter),
+      )
+      .map(
+        (info) =>
+          new MethodItem(
+            isMeta,
+            info,
+            undefined,
+            this.methodSourceUri(isMeta, info),
+            this.ivarAccessMark(isMeta, info.selector, filter),
+          ),
+      );
+  }
+
+  // Lazily load + cache the per-method instance-variable read/write map for the
+  // current class. Called only when a reads:/writes:/accesses: filter is active,
+  // so plain textual filters never pay for the extra round trip.
+  private methodIvarAccess(): Map<string, queries.MethodInstVarAccess> {
+    const session = this.session();
+    const { className, dictName, dictIndex } = this.state;
+    if (!session || className === undefined || dictIndex === undefined) return new Map();
+    const key = `${session.id}:${dictName}:${dictIndex}:${className}`;
+    if (this.ivarAccessCache?.key === key) return this.ivarAccessCache.map;
+    const map = new Map<string, queries.MethodInstVarAccess>();
+    for (const r of queries.getMethodInstVarAccess(session, dictIndex, className)) {
+      map.set(`${r.isMeta}:${r.selector}`, r);
+    }
+    this.ivarAccessCache = { key, map };
+    return map;
+  }
+
+  // Parse cache — the same raw filter string is matched against every row, so
+  // parse it once per distinct string.
+  private parsedFilter?: { raw: string; filter: MethodFilter };
+  private parseFilter(raw: string): MethodFilter {
+    if (this.parsedFilter?.raw !== raw) this.parsedFilter = { raw, filter: parseMethodFilter(raw) };
+    return this.parsedFilter.filter;
+  }
+
+  // Whether a method row passes the active filter — the selector prefix plus any
+  // reads:/writes:/accesses: ivar tokens. The ivar map is only consulted (and
+  // hence only loaded) when the filter actually carries an ivar token.
+  methodMatchesFilter(isMeta: boolean, selector: string, raw: string): boolean {
+    const filter = this.parseFilter(raw);
+    if (filter.ivar.length === 0) {
+      return filter.selector === undefined || filterMatches(selector, filter.selector);
+    }
+    const access = this.methodIvarAccess().get(`${isMeta}:${selector}`);
+    return matchesMethodFilter(filter, selector, access);
+  }
+
+  // The r/w/rw glyph a method row should show under an active ivar filter, or
+  // undefined when the filter has no ivar token (nothing to mark).
+  ivarAccessMark(isMeta: boolean, selector: string, raw?: string): 'r' | 'w' | 'rw' | undefined {
+    if (raw === undefined) return undefined;
+    const filter = this.parseFilter(raw);
+    if (filter.ivar.length === 0) return undefined;
+    const access = this.methodIvarAccess().get(`${isMeta}:${selector}`);
+    return computeIvarAccessMark(filter, access);
+  }
+
+  // The instance-variable names to highlight in a method-source editor: the ivars
+  // the method actually reads/writes that match an active reads:/writes:/accesses:
+  // token. Empty unless a gemstone:// method source and an ivar filter line up.
+  ivarsToHighlight(uri: vscode.Uri): string[] {
+    if (uri.scheme !== 'gemstone') return [];
+    const raw = this.filters.get(VIEW_METHODS);
+    if (raw === undefined) return [];
+    const filter = this.parseFilter(raw);
+    if (filter.ivar.length === 0) return [];
+    // parts: ['', dictName, className, side, category, selector...]
+    const parts = uri.path.split('/').map((p) => decodeURIComponent(p));
+    if (parts.length < 6) return [];
+    const isMeta = parts[3] === 'class';
+    const selector = unescapeSelectorSlashes(parts.slice(5).join('/'));
+    const access = this.methodIvarAccess().get(`${isMeta}:${selector}`);
+    if (!access) return [];
+    const patterns = filter.ivar.map((c) => c.pattern);
+    return [...new Set([...access.reads, ...access.writes])].filter((n) =>
+      patterns.some((p) => filterMatches(n, p)),
+    );
+  }
+
+  // Highlight (or clear) the filtered ivar identifiers in one editor. When there's
+  // nothing to highlight (the common case — no active ivar filter) just clear,
+  // without reading the document text, so this stays off the editor-open hot path
+  // (it runs on every activation, alongside the async CodeLens render).
+  private applyIvarHighlight(editor?: vscode.TextEditor): void {
+    if (!editor) return;
+    const names = this.ivarsToHighlight(editor.document.uri);
+    if (names.length === 0) {
+      editor.setDecorations(ivarHighlightDecoration, []);
+      return;
+    }
+    const ranges = ivarIdentifierRanges(editor.document.getText(), names).map(
+      ([s, e]) => new vscode.Range(editor.document.positionAt(s), editor.document.positionAt(e)),
+    );
+    editor.setDecorations(ivarHighlightDecoration, ranges);
+  }
+
+  // Re-apply ivar highlighting across every open source editor — after opening a
+  // method or changing the filter, so highlights track the active ivar filter.
+  refreshIvarHighlights(): void {
+    for (const editor of vscode.window.visibleTextEditors) this.applyIvarHighlight(editor);
+  }
+
+  // Highlight in whichever editor just became active (tab switch).
+  highlightActiveEditor(editor?: vscode.TextEditor): void {
+    this.applyIvarHighlight(editor);
   }
 
   // Flip the persistent group-by-category setting (from the title-bar toggle).
@@ -2807,10 +2987,22 @@ export class ExplorerController {
       this.selfOpenedUris.add(uriStr);
     }
     const doc = await vscode.workspace.openTextDocument(uri);
+    // Assign the language BEFORE the doc enters the (reused) preview editor. A
+    // gemstone doc is otherwise language-tagged asynchronously
+    // (onDidOpenTextDocument → setTextDocumentLanguage) — i.e. *after* it's shown —
+    // and that post-show flip re-tokenizes and re-queries CodeLens, which makes the
+    // senders/implementors lens pop in and shove the source down on each new
+    // method. Setting it up front keeps the doc stable when it's shown.
+    if (doc.languageId !== 'gemstone-smalltalk') {
+      await vscode.languages.setTextDocumentLanguage(doc, 'gemstone-smalltalk');
+    }
     // Single-click opens a preview tab and a double-click promotes it to a
     // permanent one (focus stays in the tree so type-to-filter / arrow-nav keep
     // working); the 📌 action pins a real tab so methods can be compared.
     await openGemstoneDocument(doc, mode, this.placement);
+    // Under an active ivar filter, highlight the filtered ivar in the just-opened
+    // source (it may not be the active editor, so refresh all visible editors).
+    this.refreshIvarHighlights();
   }
 
   // Remove a method from its class (the row's 🗑 button). Destructive, so it
@@ -3778,7 +3970,20 @@ abstract class RefreshableProvider<T> implements vscode.TreeDataProvider<T> {
   }
 }
 
-class DictProvider extends RefreshableProvider<DictItem> {
+// Lead a pane's root rows with a filter chip when a filter is active, so every
+// filterable pane shows (and can clear) its filter the same way (see
+// FilterChipItem / MethodProvider). Panes render the chip identically because the
+// chip carries its own view id.
+function withFilterChip<T>(
+  viewId: string,
+  ctl: ExplorerController,
+  rows: T[],
+): (T | FilterChipItem)[] {
+  const filter = ctl.getFilter(viewId);
+  return filter === undefined ? rows : [new FilterChipItem(viewId, filter), ...rows];
+}
+
+class DictProvider extends RefreshableProvider<DictItem | FilterChipItem> {
   constructor(private readonly ctl: ExplorerController) {
     super();
   }
@@ -3786,52 +3991,62 @@ class DictProvider extends RefreshableProvider<DictItem> {
   getParent(): DictItem | undefined {
     return undefined;
   }
-  getChildren(element?: DictItem): DictItem[] {
+  getChildren(element?: DictItem | FilterChipItem): (DictItem | FilterChipItem)[] {
     if (element) return [];
     const session = this.ctl.session();
     if (!session) return [];
-    return queries
+    const rows = queries
       .getDictionaryNames(session)
       .map((name, i) => new DictItem(name, i + 1))
       .filter((d) => filterMatches(d.dictName, this.ctl.getFilter(VIEW_DICTS)));
+    return withFilterChip(VIEW_DICTS, this.ctl, rows);
   }
 }
 
-class CategoryProvider extends RefreshableProvider<ClassCategoryItem> {
+class CategoryProvider extends RefreshableProvider<ClassCategoryItem | FilterChipItem> {
   constructor(private readonly ctl: ExplorerController) {
     super();
   }
-  getParent(element: ClassCategoryItem): ClassCategoryItem | undefined {
+  getParent(element: ClassCategoryItem | FilterChipItem): ClassCategoryItem | undefined {
+    if (element instanceof FilterChipItem) return undefined;
     return this.ctl.categoryParent(element.fullPath);
   }
-  getChildren(element?: ClassCategoryItem): ClassCategoryItem[] {
-    if (this.ctl.state.dictName === undefined) return [];
-    // While filtering, drop the tree and list matching full category paths flat.
-    if (!element && this.ctl.categoryFilterActive()) {
-      return this.ctl.filteredCategoryPaths().map((p) => new ClassCategoryItem(p, p, false));
+  getChildren(
+    element?: ClassCategoryItem | FilterChipItem,
+  ): (ClassCategoryItem | FilterChipItem)[] {
+    if (this.ctl.state.dictName === undefined || element instanceof FilterChipItem) return [];
+    if (!element) {
+      // While filtering, drop the tree and list matching full category paths flat.
+      const rows = this.ctl.categoryFilterActive()
+        ? this.ctl.filteredCategoryPaths().map((p) => new ClassCategoryItem(p, p, false))
+        : this.ctl
+            .categoryChildren(undefined)
+            .map((n) => new ClassCategoryItem(n.segment, n.fullPath, n.hasChildren));
+      return withFilterChip(VIEW_CATEGORIES, this.ctl, rows);
     }
     return this.ctl
-      .categoryChildren(element?.fullPath)
+      .categoryChildren(element.fullPath)
       .map((n) => new ClassCategoryItem(n.segment, n.fullPath, n.hasChildren));
   }
 }
 
-class ClassProvider extends RefreshableProvider<ClassNode> {
+class ClassProvider extends RefreshableProvider<ClassNode | FilterChipItem> {
   constructor(private readonly ctl: ExplorerController) {
     super();
   }
-  getParent(element: ClassNode): ClassNode | undefined {
+  getParent(element: ClassNode | FilterChipItem): ClassNode | undefined {
     if (element instanceof IvarItem) return new VarSideItem(element.className, false);
     if (element instanceof ClassVarItem) return new VarSideItem(element.className, true);
     if (element instanceof VarSideItem) return new ClassItem(element.className);
     return undefined;
   }
-  getChildren(element?: ClassNode): ClassNode[] {
-    if (this.ctl.state.dictName === undefined) return [];
+  getChildren(element?: ClassNode | FilterChipItem): (ClassNode | FilterChipItem)[] {
+    if (this.ctl.state.dictName === undefined || element instanceof FilterChipItem) return [];
     if (!element) {
-      return this.ctl
+      const rows = this.ctl
         .classNames()
         .map((n) => new ClassItem(n, this.ctl.classHasDefinedVars(n), this.ctl.classVersion(n)));
+      return withFilterChip(VIEW_CLASSES, this.ctl, rows);
     }
     // A class expands to an "instance" and/or "class" variable-side node (like the
     // Methods pane's sides), each shown only when that side has variables.
@@ -3886,7 +4101,7 @@ class MethodProvider extends RefreshableProvider<MethodNode> {
         element.displayCategory === SESSION_METHODS_CATEGORY;
       return new MethodCategoryItem(element.isMeta, element.displayCategory, computed);
     }
-    // Category rows are roots (the side is a title toggle, not a tree level).
+    // Category rows and the filter chip are roots.
     return undefined;
   }
   getChildren(element?: MethodNode): MethodNode[] {
@@ -3899,14 +4114,22 @@ class MethodProvider extends RefreshableProvider<MethodNode> {
       // methodCategories). An empty filter is a no-op.
       const isMeta = this.ctl.showClassMethods;
       const filter = this.ctl.getFilter(VIEW_METHODS);
-      if (!this.ctl.groupMethodsByCategory()) return this.ctl.flatMethods(isMeta, filter);
-      return this.ctl.methodCategories(isMeta, filter);
+      const rows: MethodNode[] = !this.ctl.groupMethodsByCategory()
+        ? this.ctl.flatMethods(isMeta, filter)
+        : this.ctl.methodCategories(isMeta, filter);
+      // While filtering, lead with a filter chip (funnel row + inline ✕) so the
+      // active filter reads distinctly from the method rows and can be cleared here.
+      return filter === undefined ? rows : [new FilterChipItem(VIEW_METHODS, filter), ...rows];
     }
     if (element instanceof MethodCategoryItem) {
       const filter = this.ctl.getFilter(VIEW_METHODS);
       return this.ctl
         .selectorsFor(element.isMeta, element.category)
-        .filter((info) => filter === undefined || filterMatches(info.selector, filter))
+        .filter(
+          (info) =>
+            filter === undefined ||
+            this.ctl.methodMatchesFilter(element.isMeta, info.selector, filter),
+        )
         .map(
           (info) =>
             new MethodItem(
@@ -3914,6 +4137,7 @@ class MethodProvider extends RefreshableProvider<MethodNode> {
               info,
               element.category,
               this.ctl.methodSourceUri(element.isMeta, info),
+              this.ctl.ivarAccessMark(element.isMeta, info.selector, filter),
             ),
         );
     }
@@ -4055,10 +4279,12 @@ export function registerGemStoneExplorer(
   });
 
   dictView.onDidChangeSelection((e) => {
-    if (e.selection[0]) ctl.selectDict(e.selection[0]);
+    const node = e.selection[0];
+    if (node instanceof DictItem) ctl.selectDict(node);
   });
   categoryView.onDidChangeSelection((e) => {
-    if (e.selection[0]) ctl.selectClassCategory(e.selection[0]);
+    const node = e.selection[0];
+    if (node instanceof ClassCategoryItem) ctl.selectClassCategory(node);
   });
   classView.onDidChangeSelection((e) => {
     // Only a class row navigates; selecting an ivar child is inert (it's acted on
@@ -4107,6 +4333,14 @@ export function registerGemStoneExplorer(
     // only when that pane has an active filter.
     ...EXPLORER_VIEWS.map((viewId) =>
       vscode.commands.registerCommand(`${viewId}.clearFilter`, () => ctl.clearFilter(viewId)),
+    ),
+    // The filter-chip row's inline ✕ — clears the filter for whichever pane the
+    // chip belongs to (it carries its own view id).
+    vscode.commands.registerCommand(
+      'gemstone.explorer.clearFilterChip',
+      (item?: FilterChipItem) => {
+        if (item instanceof FilterChipItem) ctl.clearFilter(item.viewId);
+      },
     ),
     vscode.commands.registerCommand('gemstone.explorer.openMethodToSide', (node: MethodItem) => {
       if (node instanceof MethodItem) void ctl.openMethod(node, 'pin');
@@ -4207,6 +4441,22 @@ export function registerGemStoneExplorer(
     vscode.commands.registerCommand('gemstone.explorer.renameIvar', (item?: IvarItem) => {
       if (item instanceof IvarItem) void ctl.renameInstVar(item);
     }),
+    // Filter the Methods pane to the readers / writers / references of an ivar
+    // (its row's context menu) — seeds a reads:/writes:/accesses: token.
+    vscode.commands.registerCommand('gemstone.explorer.filterReadersOfIvar', (item?: IvarItem) => {
+      if (item instanceof IvarItem) ctl.filterMethodsByIvar('reads', item.ivarName, item.className);
+    }),
+    vscode.commands.registerCommand('gemstone.explorer.filterWritersOfIvar', (item?: IvarItem) => {
+      if (item instanceof IvarItem)
+        ctl.filterMethodsByIvar('writes', item.ivarName, item.className);
+    }),
+    vscode.commands.registerCommand(
+      'gemstone.explorer.filterReferencesToIvar',
+      (item?: IvarItem) => {
+        if (item instanceof IvarItem)
+          ctl.filterMethodsByIvar('accesses', item.ivarName, item.className);
+      },
+    ),
     // Add / remove an instance variable (V1).
     vscode.commands.registerCommand('gemstone.explorer.addInstVar', (item?: unknown) => {
       if (item instanceof VarSideItem) void ctl.addInstVarFromSide(item);
@@ -4438,8 +4688,10 @@ export function registerGemStoneExplorer(
     // Editor-focus → navigator: when a gemstone:// method/class editor gains
     // focus, cascade the panels to its location.
     vscode.window.onDidChangeActiveTextEditor((editor) => {
+      ctl.highlightActiveEditor(editor);
       if (editor) void ctl.syncToEditor(editor.document.uri);
     }),
+    ivarHighlightDecoration,
   );
 
   return {

@@ -1089,6 +1089,12 @@
         "icon": "$(clear-all)"
       },
       {
+        "command": "gemstone.explorer.clearFilterChip",
+        "title": "Clear Filter",
+        "category": "GemStone",
+        "icon": "$(close)"
+      },
+      {
         "command": "gemstone.explorer.showMethodsFlat",
         "title": "Show Methods Without Categories",
         "category": "GemStone",
@@ -1099,6 +1105,21 @@
         "title": "Group Methods by Category",
         "category": "GemStone",
         "icon": "$(list-tree)"
+      },
+      {
+        "command": "gemstone.explorer.filterReadersOfIvar",
+        "title": "Filter Methods: Readers",
+        "category": "GemStone"
+      },
+      {
+        "command": "gemstone.explorer.filterWritersOfIvar",
+        "title": "Filter Methods: Writers",
+        "category": "GemStone"
+      },
+      {
+        "command": "gemstone.explorer.filterReferencesToIvar",
+        "title": "Filter Methods: References",
+        "category": "GemStone"
       },
       {
         "command": "gemstone.explorer.showClassMethods",
@@ -1827,26 +1848,6 @@
           "group": "navigation@5"
         },
         {
-          "command": "gemstoneExplorerDicts.clearFilter",
-          "when": "view == gemstoneExplorerDicts && gemstone.explorerFiltered.gemstoneExplorerDicts",
-          "group": "navigation@1"
-        },
-        {
-          "command": "gemstoneExplorerCategories.clearFilter",
-          "when": "view == gemstoneExplorerCategories && gemstone.explorerFiltered.gemstoneExplorerCategories",
-          "group": "navigation@1"
-        },
-        {
-          "command": "gemstoneExplorerClasses.clearFilter",
-          "when": "view == gemstoneExplorerClasses && gemstone.explorerFiltered.gemstoneExplorerClasses",
-          "group": "navigation@1"
-        },
-        {
-          "command": "gemstoneExplorerMethods.clearFilter",
-          "when": "view == gemstoneExplorerMethods && gemstone.explorerFiltered.gemstoneExplorerMethods",
-          "group": "navigation@1"
-        },
-        {
           "command": "gemstone.explorer.newDictionary",
           "when": "view == gemstoneExplorerDicts",
           "group": "navigation@6"
@@ -1979,9 +1980,29 @@
           "group": "inline@2"
         },
         {
+          "command": "gemstone.explorer.clearFilterChip",
+          "when": "viewItem == explorerFilterChip",
+          "group": "inline"
+        },
+        {
           "command": "gemstone.explorer.renameIvar",
           "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerIvar/",
           "group": "inline"
+        },
+        {
+          "command": "gemstone.explorer.filterReadersOfIvar",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerIvar/",
+          "group": "1_filter@1"
+        },
+        {
+          "command": "gemstone.explorer.filterWritersOfIvar",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerIvar/",
+          "group": "1_filter@2"
+        },
+        {
+          "command": "gemstone.explorer.filterReferencesToIvar",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerIvar/",
+          "group": "1_filter@3"
         },
         {
           "command": "gemstone.explorer.moveUpInstVar",
