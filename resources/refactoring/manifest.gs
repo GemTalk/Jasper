@@ -64,6 +64,7 @@ m add: (Array with: 'RBWorkspaceNode' with: 15).
 m add: (Array with: 'GsChangeSignatureRefactoring' with: 44).
 m add: (Array with: 'GsClassHistory' with: 13).
 m add: (Array with: 'GsExtractMethodRefactoring' with: 71).
+m add: (Array with: 'GsExtractSuperclassRefactoring' with: 64).
 m add: (Array with: 'GsExtractTemporaryRefactoring' with: 50).
 m add: (Array with: 'GsInlineMethodRefactoring' with: 59).
 m add: (Array with: 'GsInlineTemporaryRefactoring' with: 46).
@@ -72,8 +73,8 @@ m add: (Array with: 'GsInstVarStructureRefactoring' with: 71).
 m add: (Array with: 'GsMoveMethodRefactoring' with: 38).
 m add: (Array with: 'GsPushDownMethodRefactoring' with: 40).
 m add: (Array with: 'GsPushUpMethodRefactoring' with: 43).
-m add: (Array with: 'GsRefactoringChange' with: 28).
-m add: (Array with: 'GsRefactoringChangeSet' with: 18).
+m add: (Array with: 'GsRefactoringChange' with: 29).
+m add: (Array with: 'GsRefactoringChangeSet' with: 19).
 m add: (Array with: 'GsRefactoringEnvironment' with: 19).
 m add: (Array with: 'GsRefactoringJson' with: 3).
 m add: (Array with: 'GsRenameClassRefactoring' with: 54).

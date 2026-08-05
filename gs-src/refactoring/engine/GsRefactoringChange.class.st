@@ -101,6 +101,20 @@ GsRefactoringChange class >> classRenameId: anId dictName: dn className: cn newN
 ]
 
 { #category : 'instance creation' }
+GsRefactoringChange class >> classAddId: anId dictName: dn className: cn superclassName: sn newSource: ns [
+	"A brand-new class to CREATE (extract-superclass inserts a new common parent between a class
+	 and its current superclass). Apply creates the class fresh -- no prior class history --, so
+	 unlike #classReparent there is no old version to version off. `className` is the new class's
+	 name, `newName` carries its superclass name (for the preview label), and `newSource` the
+	 generated class definition. oldSource is nil so the before/after diff renders as an
+	 all-added class."
+	^(self new
+		setId: anId kind: #classAdd dictName: dn className: cn
+		isMeta: false selector: nil category: nil oldSource: nil newSource: ns)
+		setNewName: sn
+]
+
+{ #category : 'instance creation' }
 GsRefactoringChange class >> classReparentId: anId dictName: dn className: cn oldSource: os newSource: ns [
 	"A descendant of a renamed class: it must be recompiled newVersionOf: its current
 	 version so it re-points at the freshly created parent chain (and, for a direct
