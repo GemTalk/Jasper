@@ -19,5 +19,5 @@ d := ${dictExpr}.
 d ifNil: [^ 'Dictionary not found'].
 removed := d removeKey: #'${esc}' ifAbsent: [nil].
 removed ifNil: ['Class not found: ${esc}'] ifNotNil: ['Deleted class: ' , removed name]`;
-  return execute(`deleteClass(${className}, dict: ${dict})`, code);
+  return execute(code);
 }

@@ -72,7 +72,7 @@ export function runFailingTests(
 classes := ${classesExpr}.
 classes size > ${MAX_RUN_CLASSES} ifTrue: [
   ^Error signal: 'runFailingTests: ', classes size printString,
-    ' test classes selected — too many to run in one blocking call (limit ${MAX_RUN_CLASSES}). ',
+    ' test classes selected - too many to run in one blocking call (limit ${MAX_RUN_CLASSES}). ',
     'Narrow the run with classNamePattern (e.g. ''MyApp*'') or pass explicit classNames.'].
 captureMessage := [:t |
   | captured |
@@ -106,7 +106,7 @@ classes do: [:cls |
       nextPutAll: 'error'; tab;
       nextPutAll: (captureMessage value: e); lf]].
 ws contents encodeAsUTF8`;
-  const data = execute('runFailingTests', code);
+  const data = execute(code);
   return splitLines(data).map((line) => {
     const parts = line.split('\t');
     return {

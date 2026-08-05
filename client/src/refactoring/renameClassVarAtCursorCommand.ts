@@ -42,8 +42,7 @@ export async function renameClassVarAtCursorCommand(
   logInfo('[renameClassVar] invoked');
   const target = resolveMethodEditor(sessions, position, 'a class variable');
   if (!target) return;
-  if (!(await ensureRbSupport(target.session.rbSupportAvailable, 'Renaming a class variable')))
-    return;
+  if (!(await ensureRbSupport(target.session, 'Renaming a class variable'))) return;
 
   const word = wordAt(target, 'a class variable');
   if (!word) return;

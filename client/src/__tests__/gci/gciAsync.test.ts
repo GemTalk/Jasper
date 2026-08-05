@@ -16,7 +16,7 @@ describe('GCI Async Execution, Break, and Debugging', () => {
     expect(login.session).not.toBeNull();
     session = login.session;
 
-    OOP_CLASS_STRING = gci.GciTsResolveSymbol(session, 'String', OOP_NIL).result;
+    OOP_CLASS_STRING = gci.resolveSymbol(session, 'String');
   });
 
   afterAll(() => {
@@ -202,7 +202,7 @@ describe('GCI Async Execution, Break, and Debugging', () => {
     it('sends with: with: to Array non-blocking', () => {
       const oop10 = gci.GciTsI64ToOop(session, 10n).result;
       const oop20 = gci.GciTsI64ToOop(session, 20n).result;
-      const OOP_CLASS_ARRAY = gci.GciTsResolveSymbol(session, 'Array', OOP_NIL).result;
+      const OOP_CLASS_ARRAY = gci.resolveSymbol(session, 'Array');
 
       const { success } = gci.GciTsNbPerform(
         session,

@@ -34,7 +34,7 @@ lp isNil ifTrue: [^'ERR' , sep , 'Project ${escapeString(projectName)} is not lo
   on: Error do: [:e | ^'ERR' , sep , e messageText].
 'OK' , sep , '${escapeString(targetDir)}'`;
 
-  const raw = execute(`exportRowanProject(${projectName} -> ${targetDir})`, code);
+  const raw = execute(code);
   const tab = raw.indexOf('\t');
   const status = tab === -1 ? raw.trim() : raw.slice(0, tab);
   const detail = tab === -1 ? '' : raw.slice(tab + 1).trim();

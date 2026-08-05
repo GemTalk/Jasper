@@ -30,7 +30,6 @@ function refreshIfClean(session: ActiveSession): void {
   try {
     queries.executeFetchString(
       session,
-      'mcpRefreshIfClean',
       "System needsCommit ifFalse: [System abortTransaction]. 'ok'",
     );
   } catch {
@@ -198,7 +197,7 @@ export function registerMcpTools(
           session,
           `System commitTransaction
   ifTrue: ['Transaction committed']
-  ifFalse: ['Commit failed — possible conflict. Use abort to reset, then retry.']`,
+  ifFalse: ['Commit failed - possible conflict. Use abort to reset, then retry.']`,
         );
       })({}),
   );
@@ -778,7 +777,7 @@ export function registerMcpTools(
         // pending — silent discard would be far worse than slightly stale state.
         const code = `| ws viewState |
 viewState := System needsCommit
-  ifTrue: ['stale (uncommitted changes — call abort or commit to refresh)']
+  ifTrue: ['stale (uncommitted changes - call abort or commit to refresh)']
   ifFalse: [System abortTransaction. 'refreshed'].
 ws := WriteStream on: String new.
 ws nextPutAll: 'User: '; nextPutAll: System myUserProfile userId asString; lf.
@@ -844,5 +843,5 @@ function formatTestResults(results: TestRunResult[]): string {
 }
 
 function executeString(session: ActiveSession, code: string): string {
-  return queries.executeFetchString(session, 'mcpTool', code);
+  return queries.executeFetchString(session, code);
 }

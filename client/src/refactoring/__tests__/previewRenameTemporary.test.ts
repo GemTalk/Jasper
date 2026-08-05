@@ -88,6 +88,6 @@ describe('rename-temporary preview queries', () => {
 
     clearRenameTemporaryPreview(exec, 'tok');
 
-    expect(exec.mock.calls[0][1]).toBe("GsRenameTemporaryRefactoring clearToken: 'tok'");
+    expect(exec.mock.calls[0][0]).toBe("GsRenameTemporaryRefactoring clearToken: 'tok'");
   });
 });

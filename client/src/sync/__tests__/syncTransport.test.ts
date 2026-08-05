@@ -38,7 +38,7 @@ describe('fetchBlob', () => {
   it('returns a payload that fits in one chunk with a single round trip', () => {
     const { exec } = makeFakeGem('small payload');
     const stats = newStats();
-    const out = fetchBlob(exec, 'manifest', 'BUILD', { chunkChars: 1000 }, stats);
+    const out = fetchBlob(exec, 'manifest', 'BUILD', 1000, stats);
     expect(out).toBe('small payload');
     expect(stats.roundTrips).toBe(1); // prepare only, nothing stored/released
     expect(stats.chars).toBe('small payload'.length);
@@ -49,7 +49,7 @@ describe('fetchBlob', () => {
     const payload = 'x'.repeat(25);
     const { exec } = makeFakeGem(payload);
     const stats = newStats();
-    const out = fetchBlob(exec, 'content', 'BUILD', { chunkChars: 10 }, stats);
+    const out = fetchBlob(exec, 'content', 'BUILD', 10, stats);
     expect(out).toBe(payload);
     // prepare + 2 fetches + release
     expect(stats.roundTrips).toBe(4);
@@ -61,7 +61,7 @@ describe('fetchBlob', () => {
   it('reassembles astral characters split across chunk boundaries by code point', () => {
     const payload = '😀😀😀😀😀'; // 5 code points, 10 UTF-16 units
     const { exec } = makeFakeGem(payload);
-    const out = fetchBlob(exec, 'content', 'BUILD', { chunkChars: 2 });
+    const out = fetchBlob(exec, 'content', 'BUILD', 2);
     expect(out).toBe(payload);
     expect([...out].length).toBe(5);
   });
@@ -69,7 +69,7 @@ describe('fetchBlob', () => {
   it('reports each request through the onRequest callback', () => {
     const { exec } = makeFakeGem('x'.repeat(25));
     const labels: string[] = [];
-    fetchBlob(exec, 'content', 'BUILD', { chunkChars: 10 }, undefined, (t) => labels.push(t.label));
+    fetchBlob(exec, 'content', 'BUILD', 10, undefined, (t) => labels.push(t.label));
     expect(labels).toEqual([
       'content:prepare',
       'content:fetch',
@@ -81,7 +81,7 @@ describe('fetchBlob', () => {
   it('handles an empty payload', () => {
     const { exec } = makeFakeGem('');
     const stats = newStats();
-    const out = fetchBlob(exec, 'manifest', 'BUILD', { chunkChars: 10 }, stats);
+    const out = fetchBlob(exec, 'manifest', 'BUILD', 10, stats);
     expect(out).toBe('');
     expect(stats.roundTrips).toBe(1);
   });

@@ -9,6 +9,75 @@
 
 doit
 | cls |
+cls := Object subclass: 'GsChangeSignatureRefactoring'
+  instVarNames: #('environment' 'definingClass' 'meta' 'oldSelector' 'newSelector' 'newParts' 'permutation' 'newArgNames' 'defaults' 'scopeKind' 'scopeDictName' 'changeSet' 'outOfScopeImplementorCount' 'outOfScopeSenderCount' 'skippedCount' 'skippedMethods' 'scopeClasses' 'analyzed' 'declineString' 'collisionString')
+  classVars: #()
+  classInstVars: #()
+  poolDictionaries: #()
+  inDictionary: GsRefactoring.
+cls category: 'Refactoring-Core'.
+cls comment: '
+Change a method''s signature -- ADD, REMOVE, or REORDER parameters -- across its
+implementors and senders, within a chosen scope, without committing. This is the
+M5 catalog refactoring; it generalizes GsRenameMethodRefactoring (R2), which is
+arity-preserving, to the case where the argument count changes.
+
+The change is expressed as (newParts, permutation, newArgNames, defaults):
+
+  - newParts   the new keyword parts, in new order (each keyword part ends with
+               '':'', a unary selector is one colon-free string, a binary is the
+               operator string). newSelector is their concatenation.
+  - permutation  one entry per NEW argument position: the 1-based OLD argument
+               index it draws from, or 0 for a brand-new parameter (add). An old
+               index absent from permutation is REMOVED. Identity #(1 2 ...) is a
+               pure reorder/rename (permutation at: newIndex = oldArgIndex, the
+               same convention R2 and Pharo use).
+  - newArgNames  one entry per new position: the implementor argument NAME. Only
+               the new-parameter (0) positions are honoured; a reused position
+               keeps each implementor''s own existing argument name (renaming a
+               reused argument is R5''s job, not M5''s).
+  - defaults   one entry per new position: the source string spliced at every
+               send site for a new parameter (0 position); ignored for a reused
+               position (which reuses the old argument expression).
+
+Behaviour-preservation: ADD is safe because the new parameter is unused in the
+body (you wire it in later) and every send supplies a caller default; REORDER is
+always safe (a permutation of existing arguments); REMOVE is safe ONLY when the
+removed parameter is unused in EVERY in-scope implementor body -- if it is used
+the refactoring DECLINES (naming the class). Send-site argument expressions for a
+removed slot are dropped (standard RB semantics).
+
+Comments and string literals are NEVER touched (the rewrite is AST-based, so a
+selector spelling inside a comment or string is not a send). Whitespace/formatting
+preservation, however, differs by side:
+
+  - The implementor HEADER is rewritten with RBMethodNode>>renameSelector:
+    andArguments:, whose changeSourceSelectors:arguments: splices minimally
+    (per-token) when the arity is unchanged and rebuilds the whole signature
+    region when it changes. Body formatting is left byte-identical.
+  - A SEND is rewritten with a hand-rolled whole-region RBStringReplacement over
+    the selector+arguments span (the message-node rename does not register one).
+    Because the region is rebuilt as `part arg part arg ...` with a single space
+    between tokens, a send written across MULTIPLE LINES is collapsed onto one
+    line -- even for a pure reorder. This is an accepted trade-off: rebuilding the
+    whole region is the simple, sound way to handle add/remove (arity changes),
+    and the result is always behaviour-preserving. Only inter-token whitespace in
+    the rewritten send changes; everything else in the sender method is untouched.
+
+Scope (#class / #hierarchy / #dictionary / #wholeSystem) governs which
+implementors/senders are affected; the remainder are counted (out-of-scope) so a
+client can warn. Everything is staged into a GsRefactoringChangeSet: implementors
+as #methodRename (compile under the new selector, then remove the old), senders as
+#methodRecompile. Nothing compiles or commits here.
+'.
+true.
+%
+
+removeallmethods GsChangeSignatureRefactoring
+removeallclassmethods GsChangeSignatureRefactoring
+
+doit
+| cls |
 cls := Object subclass: 'GsClassHistory'
   instVarNames: #()
   classVars: #()
@@ -50,8 +119,411 @@ removeallclassmethods GsClassHistory
 
 doit
 | cls |
+cls := Object subclass: 'GsExtractMethodRefactoring'
+  instVarNames: #('environment' 'definingClass' 'selector' 'isMeta' 'selStart' 'selStop' 'newSelector' 'replaceSimilar' 'changeSet' 'analysisDone' 'selectedNodes' 'isExpression' 'firstStart' 'lastStop' 'argNames' 'returnVar' 'internalTempNames' 'structuralDecline')
+  classVars: #()
+  classInstVars: #()
+  poolDictionaries: #()
+  inDictionary: GsRefactoring.
+cls category: 'Refactoring-Core'.
+cls comment: '
+Extract a selected run of statements -- or a single expression -- from a method
+into a NEW method, replacing the selection with a send to it (M1). This is the
+first non-rename refactoring and the first that CREATES a method: it stages
+exactly two core changes -- a #methodAdd for the extracted method and a
+#methodRecompile for the rewritten original -- plus, when the caller opts in
+(replaceSimilar), one deselectable #methodRecompile per structurally-equivalent
+run found elsewhere in the class + hierarchy (see stageSimilarSitesInto:).
+
+The refactoring is addressed by class + selector + isMeta + a source INTERVAL
+(selStart..selStop, 1-based character offsets into the method source, from the
+editor selection) + the new selector the user typed. The variables the extracted
+code reads from OUTSIDE the selection become the new method''s arguments, in source
+order, keeping their original names (RBReadBeforeWrittenTester decides read-vs-write
+flow). A single variable assigned inside the selection and used afterward becomes
+the new method''s return value (more than one is declined). A method temporary used
+only inside the selection is moved into the new method.
+
+The selection is DECLINED (an empty change set + a declineReason, surfaced in the
+preview, Apply blocked) when it does not resolve to whole statements / a single
+expression, assigns more than one variable used later, contains a ^ return, sends
+to super, uses thisContext, or the new selector''s arity does not match the argument
+count. A new selector already implemented in the hierarchy is a SOFT collision
+WARNING (surfaced, Apply still allowed).
+
+Building the change set compiles nothing and commits nothing. The server-side apply
+compiles the new method and recompiles the rewritten original (add-first) plus any
+selected duplicate sites -- but NEVER commits (the user commits explicitly).
+'.
+true.
+%
+
+removeallmethods GsExtractMethodRefactoring
+removeallclassmethods GsExtractMethodRefactoring
+
+doit
+| cls |
+cls := Object subclass: 'GsExtractTemporaryRefactoring'
+  instVarNames: #('environment' 'definingClass' 'selector' 'isMeta' 'selStart' 'selStop' 'newName' 'replaceAll' 'changeSet' 'analysisDone' 'targetNode' 'declSeq' 'declineString')
+  classVars: #()
+  classInstVars: #()
+  poolDictionaries: #()
+  inDictionary: GsRefactoring.
+cls category: 'Refactoring-Core'.
+cls comment: '
+Extract a selected EXPRESSION from a method into a new temporary variable (M3),
+replacing the occurrence(s) with the temporary. This is method-local: exactly one
+method changes, staged as a single #methodRecompile, with no class-definition edit
+and no cross-method scan.
+
+The refactoring is addressed by class + selector + isMeta + a source INTERVAL
+(selStart..selStop, 1-based character offsets from the editor selection) + the new
+temporary name. Resolution uses the vendored RB AST:
+
+  - RBParser parses the method; `tree bestNodeFor: (selStart to: selStop)` finds the
+    node under the selection. It is accepted only when it is a value expression that
+    is NOT a whole return, NOT an assignment, and NOT a bare variable / pseudo-
+    variable (a literal IS allowed -- naming a magic number). Otherwise the extraction
+    is DECLINED (empty change set + a reason);
+  - the tightest enclosing SEQUENCE (the method body or a block body) that contains
+    the expression''s statement becomes the declaring scope: the new temporary is
+    declared there and ''name := <expr>.'' is inserted immediately before that
+    statement, so evaluation order is preserved;
+  - by default only the selected occurrence is replaced; with replaceAll on, every
+    occurrence in the declaring sequence whose source equals the selected expression''s
+    is replaced and a single assignment is inserted before the earliest.
+
+The new name is refused (surfaced in the preview, Apply blocked) when it would COLLIDE
+with an argument/temporary anywhere in the method, an own or INHERITED instance
+variable, a class variable visible to the class, or a pseudo-variable.
+
+Building the change set compiles nothing and commits nothing. The server-side apply
+recompiles the one method in the stone but never commits (the user commits
+explicitly). There is a single change, so a passed deselection is inert (accepted for
+signature parity with the other refactorings'' applyForToken:deselected: entry point).
+'.
+true.
+%
+
+removeallmethods GsExtractTemporaryRefactoring
+removeallclassmethods GsExtractTemporaryRefactoring
+
+doit
+| cls |
+cls := Object subclass: 'GsInlineMethodRefactoring'
+  instVarNames: #('environment' 'definingClass' 'selector' 'isMeta' 'offset' 'changeSet' 'analysisDone' 'sendNode' 'targetClass' 'targetSelector' 'targetSource' 'targetReturnsValue' 'inlinedExpr' 'lastSender' 'declineString')
+  classVars: #()
+  classInstVars: #()
+  poolDictionaries: #()
+  inDictionary: GsRefactoring.
+cls category: 'Refactoring-Core'.
+cls comment: '
+Inline a single self/super message send at the cursor (M2): replace that one send
+with the called method''s body, substituting the send''s argument expressions for the
+called method''s parameters. The called method is left in place -- EXCEPT when the
+inlined call was its LAST remaining sender, in which case a second, DESELECTABLE
+#methodRemove is staged to delete the now-unused method.
+
+The refactoring is addressed by class + selector + isMeta + a 1-based source OFFSET
+(the editor caret) that lands on a message send. Resolution, all symbol-identity:
+
+  - RBParser parses the editing method; `tree bestNodeFor: (offset to: offset)` then
+    the nearest enclosing RBMessageNode is the send to inline;
+  - the receiver must be self or super, so the target resolves unambiguously by a
+    hierarchy walk (self: from the editing class; super: from its superclass) to the
+    first implementor -- anything else is DECLINED;
+  - the target must reduce to a SINGLE expression (an accessor / computed one-liner):
+    one statement that is ^expr or a bare expr, no temporaries, no early return, no
+    super/thisContext in the body, no pragma. Anything richer is DECLINED (deferred).
+
+The inline is also DECLINED when a target parameter used more than once would be
+handed a side-effecting (non-atomic) argument, or when the send''s value is used but
+the target returns self. Building the change set compiles nothing and commits
+nothing; the server-side apply recompiles the caller (always) and removes the target
+(only when the removal is kept), but NEVER commits (the user commits explicitly).
+'.
+true.
+%
+
+removeallmethods GsInlineMethodRefactoring
+removeallclassmethods GsInlineMethodRefactoring
+
+doit
+| cls |
+cls := Object subclass: 'GsInlineTemporaryRefactoring'
+  instVarNames: #('environment' 'definingClass' 'selector' 'isMeta' 'offset' 'changeSet' 'analysisDone' 'tree' 'varName' 'declScope' 'assignmentNode' 'reads' 'valueSrc' 'valueIsAtomic' 'declineString')
+  classVars: #()
+  classInstVars: #()
+  poolDictionaries: #()
+  inDictionary: GsRefactoring.
+cls category: 'Refactoring-Core'.
+cls comment: '
+Inline a method TEMPORARY that is assigned exactly once (M4), the mirror image of
+extract-temporary: replace every read of the temporary with the assigned expression,
+then delete the declaration and the assignment. This is method-local: exactly one
+method changes, staged as a single #methodRecompile, with no class-definition edit and
+no cross-method scan.
+
+The refactoring is addressed by class + selector + isMeta + a 1-based source OFFSET
+(the editor caret) that lands on the temporary. Resolution uses the vendored RB AST,
+all symbol-identity:
+
+  - RBParser parses the method; the variable node under the caret (probing offset,
+    offset-1, offset+1, M2''s tolerance) names the target;
+  - walking its parent chain to the nearest enclosing scope that declares the name
+    must reach a SEQUENCE (a method/block temporaries list). An argument (declared by
+    a method/block) is DECLINED -- its value comes from the sender; a name that is not
+    a local (an instance/class variable, a global, a pseudo-variable) is DECLINED with
+    a classifying reason.
+
+The temporary must be assigned EXACTLY ONCE, read AT LEAST ONCE, with the assignment a
+direct statement of its declaring sequence and no read before it; a non-atomic value
+read more than once is DECLINED (inlining would evaluate it repeatedly). The assigned
+expression is spliced at each read, parenthesised only where precedence requires it
+(an atomic value never is). The assignment statement is removed (no dangling ''.'') and
+the temporary dropped from its ''| .. |'' clause.
+
+Building the change set compiles nothing and commits nothing. The server-side apply
+recompiles the one method but never commits. There is a single change, so a passed
+deselection is inert (accepted for signature parity with the family''s apply entry).
+'.
+true.
+%
+
+removeallmethods GsInlineTemporaryRefactoring
+removeallclassmethods GsInlineTemporaryRefactoring
+
+doit
+| cls |
+cls := Object subclass: 'GsInstVarStructureRefactoring'
+  instVarNames: #('environment' 'operation' 'definingClass' 'varName' 'methodSelector' 'methodMeta' 'topClass' 'newIvarLists' 'methodRewrite' 'targetClasses' 'moveDirection' 'moveAccessors' 'accessorRemovals' 'accessorAdds' 'migrateInstances' 'removeOldFromHistory' 'changeSet' 'analysisDone' 'decline' 'oldToNew')
+  classVars: #()
+  classInstVars: #()
+  poolDictionaries: #()
+  inDictionary: GsRefactoring.
+cls category: 'Refactoring-Core'.
+cls comment: '
+Instance-variable STRUCTURE changes across a class hierarchy (V2 / V3 / V5), without
+committing. One engine parametrized by an operation, because all three share the same hard
+part: changing a class''s instance-variable list means creating a NEW class VERSION (GemStone
+has no addInstVarName:/removeInstVarName:), which -- like a class rename (R3) -- starts with an
+empty method dictionary and does NOT re-parent existing subclasses. So the apply must, for
+every affected class top-down, create a new version in the same class history with the edited
+own-instVar list, COPY its methods forward, and re-parent it under the freshly created parent
+version. This reuses R3''s newVersionOf: machinery verbatim, generalised from ''''rename the name''''
+to ''''edit the own-instVar list''''.
+
+Three operations:
+
+  - V5 convertTemporary -- promote a method TEMPORARY to an instance variable: add the ivar
+    to the class and drop the temporary''s declaration from the method (its references then
+    resolve to the new ivar). One edited class + one method recompile.
+
+  - V2 pushUp -- move an instance-variable DECLARATION from a subclass up to its immediate
+    superclass. The superclass gains the ivar (edited); the subclass loses it (edited).
+
+  - V3 pushDown -- move an instance variable from a class down into EVERY immediate subclass.
+    The class loses it (edited); each immediate subclass gains it (edited).
+
+  - V4 move -- the GENERAL form the Explorer''s up/down arrows drive: move the declaration from
+    its class to chosen destination class(es) IN THE HIERARCHY. #up carries it to a single chosen
+    SUPERCLASS (any ancestor, not just the immediate one -- pushUp is the immediate-superclass
+    special case); #down carries it to one OR MORE chosen SUBCLASSES (a selected subset at any
+    descendant depth -- pushDown is the all-immediate-subclasses special case). The class always
+    loses it; each destination gains it. An extra precondition beyond push up/down: on a partial
+    push-down every class that ends up WITHOUT the ivar (the source, and any descendant subtree
+    not under a chosen destination) must not still use it in its own methods.
+
+Affected set = the highest edited class + all its descendants, top-down. Each affected class
+gets a new version: an edited class with its computed own-instVar list (a #classDefinitionEdit,
+shown as a definition diff), an unedited descendant with its unchanged list (a #classReparent,
+recompiled only to re-point at the new parent chain). V5 also stages one #methodRecompile.
+
+IMPORTANT semantics (documented, surfaced in the preview):
+  - Existing INSTANCES are NOT migrated: they remain on the prior class version with their data
+    intact (standard GemStone class evolution). Migrating them is a separate, committing step
+    the family does not perform. So the moved ivar''s value is not carried onto live instances.
+  - V2/V3 do not preserve the moved ivar''s per-instance value (the remove+add resets the slot);
+    this is a structural refactoring, matching the classic Refactoring Browser.
+
+Optional (V2/V3): #moveAccessors: true also relocates the ivar''s SIMPLE accessors -- a `^ivar`
+getter and an `ivar := arg` setter, nothing more -- alongside the declaration (staged as
+#methodRemove on the source class + #methodAdd on the target class(es), so they show in the
+preview). A method that is anything but a trivial getter/setter is never touched. An accessor is
+skipped rather than overwriting -- or, on push-up, SHADOWING an inherited -- same-named method on a
+target. Because a simple
+accessor then travels WITH the ivar, on push-down it no longer counts as a blocking own-use of
+the ivar (a non-accessor user still blocks).
+
+The refactoring is all-or-nothing (like rename-class-variable): the class-shape changes and the
+descendant reparents must all apply together or the hierarchy is left inconsistent, so the
+client does not offer per-change deselection and applyDeselected: ignores any deselection.
+Building the change set compiles nothing and commits nothing; the apply compiles in the stone
+but NEVER commits (the user commits explicitly).
+'.
+true.
+%
+
+removeallmethods GsInstVarStructureRefactoring
+removeallclassmethods GsInstVarStructureRefactoring
+
+doit
+| cls |
+cls := Object subclass: 'GsMoveMethodRefactoring'
+  instVarNames: #('environment' 'sourceClass' 'selectors' 'isMeta' 'targetName' 'toMeta' 'targetClass' 'changeSet' 'analysisDone' 'globalDecline' 'declines')
+  classVars: #()
+  classInstVars: #()
+  poolDictionaries: #()
+  inDictionary: GsRefactoring.
+cls category: 'Refactoring-Core'.
+cls comment: '
+Move one OR MORE methods (M6) from a source class/side to a DIFFERENT class -- and/or
+flip instance<->class side -- keeping the selector and the method source verbatim. The
+refactoring is addressed by source class + a COLLECTION of selectors + the source side
+(isMeta), plus a target class name + the target side (toMeta). Single-method move is
+just a one-element collection, so single- and multi-method share one path.
+
+Per selector, moving stages two changes: a #methodAdd on the target (compile the same
+source there, under its original category) and a #methodRemove on the source. Both
+change kinds already exist; no new kind is introduced. Each selector is analysed
+independently; a declined selector is dropped from the change set and reported, so a
+multi-move relocates the movable methods and explains the rest.
+
+A GLOBAL decline (target class not found, or target == source AND same side) empties
+the whole change set. A per-selector decline is recorded when: the source method is
+missing; the target already implements the selector (collision); the method sends super
+(its meaning depends on the source superclass); or the method accesses an instance
+variable the target class does not define (bytecode-precise via instVarsAccessed).
+
+This is the SIMPLEST SOUND variant: the definition is relocated and the selector kept;
+senders are NOT rewritten and no forwarding method is pushed (parked to Later). Building
+the change set compiles nothing and commits nothing; the server-side apply compiles the
+target and removes the source, guarding each removal so a deselected/failed add never
+strands a method in neither class, and NEVER commits (the user commits explicitly).
+'.
+true.
+%
+
+removeallmethods GsMoveMethodRefactoring
+removeallclassmethods GsMoveMethodRefactoring
+
+doit
+| cls |
+cls := Object subclass: 'GsPushDownMethodRefactoring'
+  instVarNames: #('environment' 'sourceClass' 'selectors' 'isMeta' 'subClasses' 'recipients' 'changeSet' 'analysisDone' 'globalDecline' 'declines' 'appliedAddSelectors')
+  classVars: #()
+  classInstVars: #()
+  poolDictionaries: #()
+  inDictionary: GsRefactoring.
+cls category: 'Refactoring-Core'.
+cls comment: '
+Push one OR MORE methods DOWN (M8) from a source class into its immediate SUBCLASSES,
+keeping the selector and the method source verbatim and the same side (instance stays
+instance, class stays class -- no side flip). The refactoring is addressed by the source
+class + a COLLECTION of selectors + the source side (isMeta); the targets (the immediate
+subclasses) are resolved server-side, so the engine -- not the client -- owns the ''''which
+classes'''' logic and can be tested in isolation. Single-method push-down is just a
+one-element collection, so single- and multi-method share one path.
+
+Push-down is the inverse of push-up (M7) and a many-target relative of move-method (M6);
+it reuses the same change kinds and preview/apply/token machinery. Per movable selector it
+stages a #methodAdd on EVERY immediate subclass plus a SINGLE #methodRemove on the source. A
+subclass that does NOT yet understand the selector gets a plain add; a subclass that already
+OVERRIDES it gets an opt-in OVERWRITE add (staged with the existing override''s body + a
+data-loss warning), which the client leaves un-ticked by default so the user consciously
+chooses to replace that override. So one pushed-down selector produces N adds + 1 remove
+(N = the immediate subclass count). Both change kinds already exist; no new kind is
+introduced. Each selector is analysed independently; a declined selector is dropped from the
+change set and reported, so a multi-push relocates the movable methods and explains the rest.
+
+A GLOBAL decline (the source has no subclasses) empties the whole change set. A per-selector
+decline (a HARD skip) is recorded when: the source method is missing; or the method sends
+super (its meaning depends on the source class''''s superclass, which changes once the home
+moves down). A class where EVERY immediate subclass already overrides the selector is NOT a
+decline any more -- it is simply an all-overwrite push the user opts into (or leaves entirely
+un-ticked). Instance-variable access needs no check: the method already lives on the source,
+so every accessed ivar is defined on (or inherited by) the source, and every subclass inherits
+those same ivars.
+
+This is the SIMPLEST SOUND variant: the definition is copied into each immediate subclass
+(overwriting an override only when the user opts in) and removed from the source; senders are
+NOT rewritten and no forwarding method is left behind. NOTE the intended semantics: after
+push-down the source class no longer understands the selector, so this is meant for an
+abstract superclass (or one whose
+direct instances do not use the method). Building the change set compiles nothing and commits
+nothing; the server-side apply compiles each subclass and removes the source, guarding the
+removal so it fires only once EVERY immediate subclass understands the selector (a
+deselected/failed add leaves the source method in place rather than stranding a subclass),
+and NEVER commits (the user commits explicitly).
+'.
+true.
+%
+
+removeallmethods GsPushDownMethodRefactoring
+removeallclassmethods GsPushDownMethodRefactoring
+
+doit
+| cls |
+cls := Object subclass: 'GsPushUpMethodRefactoring'
+  instVarNames: #('environment' 'sourceClass' 'selectors' 'isMeta' 'superClass' 'changeSet' 'analysisDone' 'globalDecline' 'declines' 'appliedAddSelectors')
+  classVars: #()
+  classInstVars: #()
+  poolDictionaries: #()
+  inDictionary: GsRefactoring.
+cls category: 'Refactoring-Core'.
+cls comment: '
+Push one OR MORE methods UP (M7) from a source class to its immediate SUPERCLASS,
+keeping the selector and the method source verbatim and the same side (instance stays
+instance, class stays class -- no side flip). The refactoring is addressed by the source
+class + a COLLECTION of selectors + the source side (isMeta); the target (the superclass)
+is resolved server-side, so the engine -- not the client -- owns the ''''which class'''' logic
+and can be tested in isolation. Single-method push-up is just a one-element collection, so
+single- and multi-method share one path.
+
+Push-up is the special case of move-method (M6) whose target is the source''''s superclass;
+it reuses M6''''s change kinds and preview/apply/token machinery verbatim. Per selector it
+stages a #methodAdd on the superclass (compile the same source there, under its original
+category) and a #methodRemove on the source. Both change kinds already exist; no new kind
+is introduced. Each selector is analysed independently; a declined selector is dropped from
+the change set and reported, so a multi-push relocates the movable methods and explains the
+rest.
+
+When the superclass ALREADY implements the selector, the push is NOT declined: it becomes an
+opt-in OVERWRITE change -- the #methodAdd carries the superclass''s existing body (for a
+before/after diff) plus a data-loss warning, and the client leaves it un-ticked by default so
+the user consciously chooses to replace the inherited definition (consolidating an inherited
+method by pushing up is a common intent). The paired source #methodRemove is guarded on the
+add having actually been applied THIS run (an applied-add set), NOT on a bare
+includesSelector: -- otherwise a deselected overwrite, whose selector the superclass already
+carries, would wrongly strip the source and lose the subclass version.
+
+A GLOBAL decline (the source has no superclass) empties the whole change set. A per-selector
+decline (a HARD skip, not an overwrite) is recorded when: the source method is missing; the
+method sends super (its meaning depends on the source class''''s superclass, which changes when
+the home moves up); the method accesses an instance variable the superclass does not define
+(bytecode-precise via instVarsAccessed -- the ivar lives only on the subclass); or the method
+references a CLASS variable or POOL variable declared only below the superclass (matched by
+identifier name against the shared-var delta). All three variable cases mean the pushed method
+would not even compile on the superclass. Class-INSTANCE variables are covered by the
+instVarsAccessed check on the metaclass side.
+
+This is the SIMPLEST SOUND variant: the definition is relocated to the superclass and the
+selector kept; siblings that inherited nothing now inherit the pushed-up method, senders are
+NOT rewritten and no forwarding method is left behind. Building the change set compiles nothing
+and commits nothing; the server-side apply compiles the superclass and removes the source,
+guarding each removal so a deselected/failed add never strands a method in neither class, and
+NEVER commits (the user commits explicitly).
+'.
+true.
+%
+
+removeallmethods GsPushUpMethodRefactoring
+removeallclassmethods GsPushUpMethodRefactoring
+
+doit
+| cls |
 cls := Object subclass: 'GsRefactoringChange'
-  instVarNames: #('id' 'kind' 'dictName' 'className' 'isMeta' 'selector' 'newSelector' 'newName' 'category' 'oldSource' 'newSource')
+  instVarNames: #('id' 'kind' 'dictName' 'className' 'isMeta' 'selector' 'newSelector' 'newName' 'category' 'oldSource' 'newSource' 'warning')
   classVars: #()
   classInstVars: #()
   poolDictionaries: #()
@@ -394,6 +866,674 @@ removeallclassmethods GsRenameTemporaryRefactoring
 
 ! Class implementations
 
+category: 'private'
+method: GsChangeSignatureRefactoring
+setEnvironment: anEnvironment class: aClass meta: aBool oldSelector: oldSel newParts: partsArray permutation: permArray newArgNames: namesArray defaults: defaultsArray scopeKind: sk scopeDictName: dn
+	environment := anEnvironment.
+	definingClass := aClass.
+	meta := aBool.
+	oldSelector := oldSel asSymbol.
+	newParts := partsArray.
+	permutation := permArray.
+	newArgNames := namesArray.
+	defaults := defaultsArray.
+	scopeKind := sk.
+	scopeDictName := dn.
+	newSelector := self buildNewSelector
+%
+
+category: 'private'
+method: GsChangeSignatureRefactoring
+buildNewSelector
+	| ws |
+	ws := WriteStream on: String new.
+	newParts do: [:p | ws nextPutAll: p].
+	^ws contents asSymbol
+%
+
+category: 'accessing'
+method: GsChangeSignatureRefactoring
+environment
+	^environment
+%
+
+category: 'accessing'
+method: GsChangeSignatureRefactoring
+definingClass
+	^definingClass
+%
+
+category: 'accessing'
+method: GsChangeSignatureRefactoring
+oldSelector
+	^oldSelector
+%
+
+category: 'accessing'
+method: GsChangeSignatureRefactoring
+newSelector
+	^newSelector
+%
+
+category: 'accessing'
+method: GsChangeSignatureRefactoring
+newArity
+	^permutation size
+%
+
+category: 'accessing'
+method: GsChangeSignatureRefactoring
+changeSet
+	"The staged, non-committing change set, computed once and cached. A declined
+	 change stages nothing (the client refuses to open the panel on a decline)."
+	changeSet isNil ifTrue: [changeSet := self buildChangeSet].
+	^changeSet
+%
+
+category: 'building'
+method: GsChangeSignatureRefactoring
+buildChangeSet
+	"Stage a #methodRename for every in-scope implementor and a #methodRecompile for
+	 every in-scope sender, counting the out-of-scope remainder. Compiles nothing and
+	 commits nothing. A hard decline (e.g. removing a used parameter) stages nothing."
+	| cs implementorKeys |
+	cs := GsRefactoringChangeSet new.
+	outOfScopeImplementorCount := 0.
+	outOfScopeSenderCount := 0.
+	skippedCount := 0.
+	skippedMethods := OrderedCollection new.
+	self declineReason ifNotNil: [:r | ^cs].
+	implementorKeys := IdentitySet new.
+	(environment implementorsOf: oldSelector) do: [:m |
+		[| base isMeta |
+		 base := self baseClassOf: m.
+		 isMeta := m inClass isMeta.
+		 (self isClassInScope: base)
+			ifTrue: [
+				implementorKeys add: (self keyForClass: base isMeta: isMeta).
+				self stageImplementorRename: m base: base isMeta: isMeta into: cs]
+			ifFalse: [outOfScopeImplementorCount := outOfScopeImplementorCount + 1]]
+		on: Error do: [:e | skippedCount := skippedCount + 1. self recordSkipped: m]].
+	(environment sendersOf: oldSelector) do: [:m |
+		[| base isMeta |
+		 base := self baseClassOf: m.
+		 isMeta := m inClass isMeta.
+		 ((m selector == oldSelector)
+			and: [implementorKeys includes: (self keyForClass: base isMeta: isMeta)])
+			ifFalse: [
+				(self isClassInScope: base)
+					ifTrue: [self stageSenderRewrite: m base: base isMeta: isMeta into: cs]
+					ifFalse: [outOfScopeSenderCount := outOfScopeSenderCount + 1]]]
+		on: Error do: [:e | skippedCount := skippedCount + 1. self recordSkipped: m]].
+	^cs
+%
+
+category: 'private'
+method: GsChangeSignatureRefactoring
+baseClassOf: aMethod
+	"The non-meta class of aMethod's defining class. GemStone's Metaclass answers its
+	 instance class via #thisClass (NOT Pharo's #instanceClass)."
+	| cls |
+	cls := aMethod inClass.
+	^cls isMeta ifTrue: [cls thisClass] ifFalse: [cls]
+%
+
+category: 'testing'
+method: GsChangeSignatureRefactoring
+isClassInScope: aClass
+	scopeKind == #wholeSystem ifTrue: [^true].
+	scopeKind == #class ifTrue: [^aClass == definingClass].
+	scopeKind == #hierarchy ifTrue: [^self hierarchyScopeClasses includes: aClass].
+	scopeKind == #dictionary ifTrue: [
+		| wanted |
+		wanted := scopeDictName asSymbol.
+		^(environment dictionariesDefiningClassNamed: aClass name)
+			anySatisfy: [:d | d name asSymbol == wanted]].
+	^false
+%
+
+category: 'private'
+method: GsChangeSignatureRefactoring
+hierarchyScopeClasses
+	scopeClasses isNil ifTrue: [
+		scopeClasses := IdentitySet new.
+		scopeClasses add: definingClass.
+		scopeClasses addAll: definingClass allSubclasses.
+		scopeClasses addAll: definingClass allSuperclasses].
+	^scopeClasses
+%
+
+category: 'private'
+method: GsChangeSignatureRefactoring
+keyForClass: aClass isMeta: aBool
+	^Array with: aClass name asString with: aBool
+%
+
+category: 'private'
+method: GsChangeSignatureRefactoring
+dictNameForClass: aClass
+	| dicts |
+	dicts := environment dictionariesDefiningClassNamed: aClass name.
+	^dicts isEmpty ifTrue: [nil] ifFalse: [dicts first name asString]
+%
+
+category: 'preconditions'
+method: GsChangeSignatureRefactoring
+ensureAnalysis
+	analyzed == true ifTrue: [^self].
+	analyzed := true.
+	self computeAnalysis
+%
+
+category: 'preconditions'
+method: GsChangeSignatureRefactoring
+computeAnalysis
+	"Validate the proposed signature and set declineString / collisionString. Declines
+	 (block Apply): a shape mismatch, a duplicate/temporary-colliding argument name, or
+	 removing a parameter that is used in any in-scope implementor body. Collision
+	 (blocks Apply): the new selector already names a DIFFERENT method on the class."
+	| defTarget defMethod defTree defArgs removed finalNames localTemps |
+	declineString := nil.
+	collisionString := nil.
+	"1. shape"
+	(newParts isNil or: [newParts isEmpty])
+		ifTrue: [^declineString := 'the new selector is empty'].
+	(permutation size = newArgNames size and: [permutation size = defaults size])
+		ifFalse: [^declineString := 'the signature arrays are inconsistent'].
+	self newArity = 0
+		ifTrue: [newParts size = 1
+			ifFalse: [^declineString := 'a zero-argument selector must have one part']]
+		ifFalse: [
+			((newParts allSatisfy: [:p | p notEmpty and: [p last = $:]]) and: [newParts size = self newArity])
+				ifFalse: [
+					(self newArity = 1 and: [newParts size = 1 and: [newParts first notEmpty and: [newParts first last ~= $:]]])
+						ifFalse: [^declineString := 'the keyword parts do not match the argument count']]].
+	"2. defining method"
+	defTarget := meta == true ifTrue: [definingClass class] ifFalse: [definingClass].
+	defMethod := defTarget compiledMethodAt: oldSelector otherwise: nil.
+	defMethod isNil ifTrue: [^declineString := 'the method no longer exists'].
+	defTree := RBParser parseMethod: defMethod sourceString onError: [:m :p | nil].
+	defTree isNil ifTrue: [^declineString := 'the method source does not parse'].
+	defArgs := defTree arguments.
+	"3. duplicate / temporary-colliding argument names on the defining implementor"
+	finalNames := (1 to: self newArity) collect: [:i |
+		(permutation at: i) > 0
+			ifTrue: [(defArgs at: (permutation at: i)) name]
+			ifFalse: [(newArgNames at: i) asString]].
+	(finalNames asSet size = finalNames size)
+		ifFalse: [^declineString := 'two parameters would have the same name'].
+	localTemps := IdentitySet new.
+	defTree nodesDo: [:node |
+		node isSequence ifTrue: [node temporaries do: [:t | localTemps add: t name asSymbol]]].
+	(1 to: self newArity) do: [:i |
+		(permutation at: i) = 0 ifTrue: [
+			(localTemps includes: (newArgNames at: i) asSymbol)
+				ifTrue: [^declineString := 'the name ', (newArgNames at: i), ' is already a temporary in this method']]].
+	"3b. a new parameter's default must be present and parseable, or Apply half-applies:
+	 the sender rewrite (RBParser parseExpression:) throws inside buildChangeSet's per-method
+	 error guard, so that sender is silently SKIPPED while the implementor rename still lands
+	 -- new selector compiled, old removed, callers left with a DNU. Block it here."
+	(1 to: self newArity) do: [:i |
+		(permutation at: i) = 0 ifTrue: [| d |
+			d := (defaults at: i) ifNil: [''] ifNotNil: [:x | x asString].
+			d isEmpty
+				ifTrue: [^declineString := 'the new parameter ', (newArgNames at: i) asString, ' needs a default value']
+				ifFalse: [([(RBParser parseExpression: d) notNil] on: Error do: [:e | false]) not
+					ifTrue: [^declineString := 'the default value for ', (newArgNames at: i) asString, ' does not parse']]]].
+	"4. remove of a used parameter, across every in-scope implementor"
+	removed := (1 to: defArgs size) reject: [:k | permutation includes: k].
+	removed notEmpty ifTrue: [
+		(environment implementorsOf: oldSelector) do: [:m |
+			[| base implTree implArgs |
+			 base := self baseClassOf: m.
+			 (self isClassInScope: base) ifTrue: [
+				implTree := RBParser parseMethod: m sourceString onError: [:msg :p | nil].
+				implTree notNil ifTrue: [
+					implArgs := implTree arguments.
+					removed do: [:k |
+						(k <= implArgs size and: [implTree body references: (implArgs at: k) name])
+							ifTrue: [^declineString := 'parameter ', (implArgs at: k) name,
+								' is used in ', base name asString, ' and cannot be removed']]]]]
+			on: Error do: [:e | nil]]].
+	"5. collision: the new selector already names a DIFFERENT method on ANY in-scope
+	 implementor class. In #hierarchy / #wholeSystem scope we rename EVERY in-scope
+	 implementor, so a subclass that already implements newSelector would be silently
+	 overwritten by applyChange: -- check them all, not only the defining class."
+	newSelector ~= oldSelector ifTrue: [
+		(environment implementorsOf: oldSelector) do: [:m |
+			[| base target |
+			 base := self baseClassOf: m.
+			 (self isClassInScope: base) ifTrue: [
+				target := m inClass.
+				(target compiledMethodAt: newSelector otherwise: nil) notNil
+					ifTrue: [collisionString := target name asString, ' already implements ', newSelector asString]]]
+			on: Error do: [:e | nil]]]
+%
+
+category: 'preconditions'
+method: GsChangeSignatureRefactoring
+declineReason
+	"nil if the change can proceed, otherwise a structural reason that blocks Apply."
+	self ensureAnalysis.
+	^declineString
+%
+
+category: 'preconditions'
+method: GsChangeSignatureRefactoring
+newSelectorCollision
+	"nil if the new selector is free, otherwise a reason (it already names a different
+	 method on the class)."
+	self ensureAnalysis.
+	^collisionString
+%
+
+category: 'private'
+method: GsChangeSignatureRefactoring
+stageImplementorRename: aMethod base: base isMeta: isMeta into: aChangeSet
+	"Stage the rename of one implementor: rewrite its signature (reorder/add/remove
+	 parameters per permutation) AND any internal sends of oldSelector, then stage a
+	 #methodRename. No compile, no commit."
+	| oldSrc tree newArgNodes newSrc cat |
+	oldSrc := aMethod sourceString.
+	tree := RBParser parseMethod: oldSrc.
+	newArgNodes := self newArgNodesForImplementorTree: tree.
+	tree renameSelector: newSelector andArguments: newArgNodes.
+	self rewriteSendsOf: oldSelector in: tree source: oldSrc.
+	newSrc := tree newSource.
+	cat := (aMethod inClass categoryOfSelector: oldSelector environmentId: 0)
+		ifNil: ['as yet unclassified'].
+	aChangeSet
+		addMethodRenameInDictionary: (self dictNameForClass: base)
+		className: base name
+		isMeta: isMeta
+		oldSelector: oldSelector
+		newSelector: newSelector
+		category: cat asString
+		oldSource: oldSrc
+		newSource: newSrc
+%
+
+category: 'private'
+method: GsChangeSignatureRefactoring
+newArgNodesForImplementorTree: aMethodTree
+	"The argument variable nodes for the rewritten signature: a reused position keeps
+	 this implementor's own old argument name; a new position (permutation 0) takes the
+	 client-supplied new-parameter name."
+	| oldArgs |
+	oldArgs := aMethodTree arguments.
+	^(1 to: self newArity) collect: [:i |
+		RBVariableNode named: ((permutation at: i) > 0
+			ifTrue: [(oldArgs at: (permutation at: i)) name]
+			ifFalse: [(newArgNames at: i) asString])]
+%
+
+category: 'private'
+method: GsChangeSignatureRefactoring
+stageSenderRewrite: aMethod base: base isMeta: isMeta into: aChangeSet
+	"Stage a recompile of one sender: rewrite its send(s) of oldSelector. The sender
+	 keeps its own selector (a #methodRecompile). Stages nothing if no real send was
+	 rewritten (e.g. a symbol-literal-only reference)."
+	| senderSel oldSrc tree renamed newSrc cat |
+	senderSel := aMethod selector.
+	oldSrc := aMethod sourceString.
+	tree := RBParser parseMethod: oldSrc.
+	renamed := self rewriteSendsOf: oldSelector in: tree source: oldSrc.
+	renamed = 0 ifTrue: [^self].
+	newSrc := tree newSource.
+	cat := (aMethod inClass categoryOfSelector: senderSel environmentId: 0)
+		ifNil: ['as yet unclassified'].
+	aChangeSet
+		addMethodRecompileInDictionary: (self dictNameForClass: base)
+		className: base name
+		isMeta: isMeta
+		selector: senderSel
+		category: cat asString
+		oldSource: oldSrc
+		newSource: newSrc
+%
+
+category: 'private'
+method: GsChangeSignatureRefactoring
+rewriteSendsOf: aSelector in: aTree source: src
+	"Rewrite every send of aSelector at and under aTree, returning how many sends were
+	 rewritten. Zero means the reference was not a real send (e.g. a symbol literal)."
+	| count |
+	count := 0.
+	aTree nodesDo: [:node |
+		(node isMessage and: [node selector == aSelector])
+			ifTrue: [self rewriteSend: node source: src. count := count + 1]].
+	^count
+%
+
+category: 'private'
+method: GsChangeSignatureRefactoring
+rewriteSend: aMessageNode source: src
+	"Rewrite one send of oldSelector in place, minimal-diff: rebuild the whole
+	 selector+arguments region as a single RBStringReplacement (each new argument's
+	 text is the reused old argument's source, or the default string for a new
+	 parameter), AND mutate the node so newSource's reparse-consistency check passes."
+	| parts args argTexts regionStart regionStop region newArgNodes |
+	parts := aMessageNode selectorParts.
+	args := aMessageNode arguments.
+	argTexts := (1 to: self newArity) collect: [:i |
+		(permutation at: i) > 0
+			ifTrue: [src copyFrom: (args at: (permutation at: i)) start to: (args at: (permutation at: i)) stop]
+			ifFalse: [(defaults at: i) asString]].
+	newArgNodes := (1 to: self newArity) collect: [:i |
+		(permutation at: i) > 0
+			ifTrue: [args at: (permutation at: i)]
+			ifFalse: [RBParser parseExpression: (defaults at: i) asString]].
+	regionStart := parts first start.
+	regionStop := args isEmpty ifTrue: [parts last stop] ifFalse: [args last stop].
+	region := WriteStream on: String new.
+	newParts keysAndValuesDo: [:i :p |
+		i = 1 ifFalse: [region space].
+		region nextPutAll: p.
+		i <= self newArity ifTrue: [region space; nextPutAll: (argTexts at: i)]].
+	aMessageNode renameSelector: newSelector andArguments: newArgNodes.
+	aMessageNode addReplacement: (RBStringReplacement
+		replaceFrom: regionStart to: regionStop with: region contents)
+%
+
+category: 'serializing'
+method: GsChangeSignatureRefactoring
+hex2: anInteger
+	| digits |
+	digits := '0123456789abcdef'.
+	^(String with: (digits at: (anInteger // 16) + 1))
+		, (String with: (digits at: (anInteger \\ 16) + 1))
+%
+
+category: 'serializing'
+method: GsChangeSignatureRefactoring
+jsonEscape: aString
+	| ws |
+	ws := WriteStream on: String new.
+	aString do: [:ch | | code |
+		code := ch asInteger.
+		ch == $" ifTrue: [ws nextPutAll: '\"']
+		ifFalse: [ch == $\ ifTrue: [ws nextPutAll: '\\']
+		ifFalse: [code = 10 ifTrue: [ws nextPutAll: '\n']
+		ifFalse: [code = 13 ifTrue: [ws nextPutAll: '\r']
+		ifFalse: [code = 9 ifTrue: [ws nextPutAll: '\t']
+		ifFalse: [code < 32
+			ifTrue: [ws nextPutAll: '\u00'; nextPutAll: (self hex2: code)]
+		ifFalse: [code > 126
+			ifTrue: [code > 65535
+				ifTrue: [ws nextPut: $?]
+				ifFalse: [ws nextPutAll: '\u';
+					nextPutAll: (self hex2: code // 256);
+					nextPutAll: (self hex2: code \\ 256)]]
+			ifFalse: [ws nextPut: ch]]]]]]]].
+	^ws contents
+%
+
+category: 'serializing'
+method: GsChangeSignatureRefactoring
+jsonQuote: aString
+	^'"', (self jsonEscape: aString), '"'
+%
+
+category: 'private'
+method: GsChangeSignatureRefactoring
+recordSkipped: aMethod
+	skippedMethods add: (Array
+		with: aMethod inClass name asString
+		with: aMethod selector asString)
+%
+
+category: 'accessing'
+method: GsChangeSignatureRefactoring
+outOfScopeImplementorCount
+	self changeSet.
+	^outOfScopeImplementorCount
+%
+
+category: 'accessing'
+method: GsChangeSignatureRefactoring
+outOfScopeSenderCount
+	self changeSet.
+	^outOfScopeSenderCount
+%
+
+category: 'serializing'
+method: GsChangeSignatureRefactoring
+skippedMethodsJsonString
+	| ws |
+	self changeSet.
+	ws := WriteStream on: String new.
+	ws nextPut: $[.
+	skippedMethods keysAndValuesDo: [:i :entry |
+		i = 1 ifFalse: [ws nextPut: $,].
+		ws nextPutAll: '{"class":"'; nextPutAll: (self jsonEscape: (entry at: 1)).
+		ws nextPutAll: '","selector":"'; nextPutAll: (self jsonEscape: (entry at: 2)).
+		ws nextPutAll: '"}'].
+	ws nextPut: $].
+	^ws contents
+%
+
+category: 'serializing'
+method: GsChangeSignatureRefactoring
+outOfScopeJsonString
+	"The scope / precondition payload for the preview panel: out-of-scope
+	 implementor/sender counts and skipped count (R2 shape), plus collision and decline
+	 (M-family shape), both of which block Apply."
+	self changeSet.
+	^'{"implementors":', outOfScopeImplementorCount printString,
+	  ',"senders":', outOfScopeSenderCount printString,
+	  ',"skipped":', skippedCount printString,
+	  ',"collision":', (self newSelectorCollision
+		ifNil: ['null'] ifNotNil: [:r | self jsonQuote: r]),
+	  ',"decline":', (self declineReason
+		ifNil: ['null'] ifNotNil: [:r | self jsonQuote: r]),
+	  '}'
+%
+
+category: 'serializing'
+method: GsChangeSignatureRefactoring
+previewJsonString
+	^self changeSet jsonString
+%
+
+category: 'paginated preview'
+method: GsChangeSignatureRefactoring
+pageJsonFrom: startIndex maxBytes: maxBytes
+	"A byte-bounded page of staged changes (with source) starting at startIndex
+	 (1-based); at least one change is always emitted (progress guarantee)."
+	| all ws i |
+	all := self changeSet changes.
+	ws := WriteStream on: String new.
+	ws nextPut: $[.
+	i := startIndex.
+	[i <= all size and: [i = startIndex or: [ws position < maxBytes]]] whileTrue: [
+		i > startIndex ifTrue: [ws nextPut: $,].
+		(all at: i) jsonOn: ws.
+		i := i + 1].
+	ws nextPut: $].
+	^'{"changes":', ws contents,
+	  ',"nextOffset":', i printString,
+	  ',"done":', (i > all size) printString, '}'
+%
+
+category: 'paginated preview'
+method: GsChangeSignatureRefactoring
+startPreviewToken: token maxBytes: maxBytes
+	"Build the change set, stash this refactoring in SessionTemps under token (so later
+	 pages and the apply reuse it), and answer the first page plus totals + warnings.
+	 Nothing is committed."
+	self changeSet.
+	SessionTemps current at: token asSymbol put: self.
+	^'{"token":', (self jsonQuote: token),
+	  ',"total":', self changeSet size printString,
+	  ',"outOfScope":', self outOfScopeJsonString,
+	  ',"skippedMethods":', self skippedMethodsJsonString,
+	  ',"page":', (self pageJsonFrom: 1 maxBytes: maxBytes), '}'
+%
+
+category: 'applying'
+method: GsChangeSignatureRefactoring
+applyChange: aChange
+	"Apply one staged change in the stone WITHOUT committing: compile the new source,
+	 and for a genuine rename (selector actually changed) remove the old method."
+	| cls target |
+	cls := environment classNamed: aChange className.
+	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
+	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
+	target
+		compileMethod: aChange newSource
+		dictionaries: System myUserProfile symbolList
+		category: (aChange category ifNil: ['as yet unclassified']).
+	(aChange kind == #methodRename and: [aChange newSelector ~= aChange selector])
+		ifTrue: [target removeSelector: aChange selector asSymbol]
+%
+
+category: 'applying'
+method: GsChangeSignatureRefactoring
+applyDeselected: deselectedIds
+	"Apply every staged change EXCEPT those whose id is in deselectedIds, in the stone,
+	 WITHOUT committing. Answers an object with the applied count and any failures."
+	| ids applied failures |
+	ids := (deselectedIds collect: [:e | e asSymbol]) asIdentitySet.
+	applied := 0.
+	failures := OrderedCollection new.
+	self changeSet changes do: [:change |
+		(ids includes: change id asSymbol) ifFalse: [
+			[self applyChange: change. applied := applied + 1]
+			on: Error do: [:e |
+				failures add: (Array with: change id with: change className with: e messageText)]]].
+	^'{"applied":', applied printString, ',"failed":[',
+	  ((failures collect: [:f |
+		'{"id":', (self jsonQuote: (f at: 1)),
+		',"label":', (self jsonQuote: (f at: 2)),
+		',"error":', (self jsonQuote: (f at: 3)), '}'])
+			inject: '' into: [:acc :s | acc isEmpty ifTrue: [s] ifFalse: [acc, ',', s]]),
+	  ']}'
+%
+
+category: 'preflight'
+classmethod: GsChangeSignatureRefactoring
+analyzeForClass: aClass selector: aSelector meta: aBool
+	"A pre-flight the client runs before opening the signature editor: the current
+	 selector kind, arity, and argument names of the defining implementor, so the
+	 editor rows can be pre-populated. Answers a decline if the method is absent or
+	 unparseable. No proposed change is known yet, so no collision/remove check here."
+	| target gsMethod tree kind ws |
+	target := aBool ifTrue: [aClass class] ifFalse: [aClass].
+	gsMethod := target compiledMethodAt: aSelector asSymbol otherwise: nil.
+	gsMethod isNil ifTrue: [
+		^'{"selectorKind":"unary","arity":0,"argNames":[],"decline":"the method no longer exists"}'].
+	tree := RBParser parseMethod: gsMethod sourceString onError: [:m :p | nil].
+	tree isNil ifTrue: [
+		^'{"selectorKind":"unary","arity":0,"argNames":[],"decline":"the method source does not parse"}'].
+	kind := tree arguments isEmpty
+		ifTrue: ['unary']
+		ifFalse: [(aSelector asString last = $:) ifTrue: ['keyword'] ifFalse: ['binary']].
+	ws := WriteStream on: String new.
+	ws nextPutAll: '{"selectorKind":"'; nextPutAll: kind.
+	ws nextPutAll: '","arity":'; nextPutAll: tree arguments size printString.
+	ws nextPutAll: ',"argNames":['.
+	tree arguments keysAndValuesDo: [:i :a |
+		i = 1 ifFalse: [ws nextPut: $,].
+		ws nextPut: $"; nextPutAll: (self jsonEscapeString: a name); nextPut: $"].
+	ws nextPutAll: '],"decline":null}'.
+	^ws contents
+%
+
+category: 'serializing'
+classmethod: GsChangeSignatureRefactoring
+jsonEscapeString: aString
+	"Class-side ASCII-only JSON escaping for the analyze payload (no instance yet)."
+	| ws |
+	ws := WriteStream on: String new.
+	aString do: [:ch | | code |
+		code := ch asInteger.
+		(ch == $" or: [ch == $\]) ifTrue: [ws nextPut: $\; nextPut: ch]
+		ifFalse: [(code < 32 or: [code > 126])
+			ifTrue: [ws nextPut: $?]
+			ifFalse: [ws nextPut: ch]]].
+	^ws contents
+%
+
+category: 'instance creation'
+classmethod: GsChangeSignatureRefactoring
+class: aClass meta: aBool changeSelector: oldSel toParts: partsArray permutation: permArray argNames: namesArray defaults: defaultsArray scope: scopeSymbol
+	"scopeSymbol is #class, #hierarchy, or #wholeSystem. For #dictionary use the
+	 dictionaryScope: variant. aBool is whether oldSel is a class-side method."
+	^self
+		environment: GsRefactoringEnvironment new
+		class: aClass
+		meta: aBool
+		oldSelector: oldSel
+		newParts: partsArray
+		permutation: permArray
+		newArgNames: namesArray
+		defaults: defaultsArray
+		scopeKind: scopeSymbol
+		scopeDictName: nil
+%
+
+category: 'instance creation'
+classmethod: GsChangeSignatureRefactoring
+class: aClass meta: aBool changeSelector: oldSel toParts: partsArray permutation: permArray argNames: namesArray defaults: defaultsArray dictionaryScope: dictName
+	"Scope narrowed to a single named SymbolDictionary. aBool is whether oldSel is a
+	 class-side method."
+	^self
+		environment: GsRefactoringEnvironment new
+		class: aClass
+		meta: aBool
+		oldSelector: oldSel
+		newParts: partsArray
+		permutation: permArray
+		newArgNames: namesArray
+		defaults: defaultsArray
+		scopeKind: #dictionary
+		scopeDictName: dictName
+%
+
+category: 'instance creation'
+classmethod: GsChangeSignatureRefactoring
+environment: anEnvironment class: aClass meta: aBool oldSelector: oldSel newParts: partsArray permutation: permArray newArgNames: namesArray defaults: defaultsArray scopeKind: sk scopeDictName: dn
+	^self new
+		setEnvironment: anEnvironment
+		class: aClass
+		meta: aBool
+		oldSelector: oldSel
+		newParts: partsArray
+		permutation: permArray
+		newArgNames: namesArray
+		defaults: defaultsArray
+		scopeKind: sk
+		scopeDictName: dn
+%
+
+category: 'paginated preview'
+classmethod: GsChangeSignatureRefactoring
+pageForToken: token from: startIndex maxBytes: maxBytes
+	"A page from a previously-started preview (see startPreviewToken:maxBytes:), by
+	 token. Answers an error envelope if the preview session has expired."
+	^(SessionTemps current at: token asSymbol ifAbsent: [nil])
+		ifNil: ['{"error":"preview session expired","changes":[],"nextOffset":0,"done":true}']
+		ifNotNil: [:ref | ref pageJsonFrom: startIndex maxBytes: maxBytes]
+%
+
+category: 'paginated preview'
+classmethod: GsChangeSignatureRefactoring
+applyForToken: token deselected: deselectedIds
+	"Apply a previously-started preview (by token), skipping deselectedIds. No commit.
+	 Answers an error envelope if the preview session has expired."
+	^(SessionTemps current at: token asSymbol ifAbsent: [nil])
+		ifNil: ['{"applied":0,"failed":[],"error":"preview session expired"}']
+		ifNotNil: [:ref | ref applyDeselected: deselectedIds]
+%
+
+category: 'paginated preview'
+classmethod: GsChangeSignatureRefactoring
+clearToken: token
+	"Drop a finished preview from SessionTemps."
+	SessionTemps current removeKey: token asSymbol ifAbsent: [].
+	^'ok'
+%
+
 category: 'accessing'
 classmethod: GsClassHistory
 forClassNamed: aName
@@ -609,6 +1749,5550 @@ jsonQuote: aString
 	^'"', (self jsonEscape: aString), '"'
 %
 
+category: 'private'
+method: GsExtractMethodRefactoring
+setEnvironment: anEnvironment class: aClass selector: aSelector meta: aBool selStart: startOffset selStop: stopOffset newSelector: newSelectorString
+	environment := anEnvironment.
+	definingClass := aClass.
+	selector := aSelector asSymbol.
+	isMeta := aBool.
+	selStart := startOffset.
+	selStop := stopOffset.
+	newSelector := newSelectorString asString.
+	replaceSimilar := false.
+	analysisDone := false
+%
+
+category: 'accessing'
+method: GsExtractMethodRefactoring
+replaceSimilar: aBool
+	"Turn on the optional pass that also replaces structurally-equivalent runs in the
+	 class + hierarchy. Off by default."
+	replaceSimilar := aBool
+%
+
+category: 'accessing'
+method: GsExtractMethodRefactoring
+environment
+	^environment
+%
+
+category: 'accessing'
+method: GsExtractMethodRefactoring
+definingClass
+	^definingClass
+%
+
+category: 'accessing'
+method: GsExtractMethodRefactoring
+selector
+	^selector
+%
+
+category: 'accessing'
+method: GsExtractMethodRefactoring
+isMeta
+	^isMeta
+%
+
+category: 'accessing'
+method: GsExtractMethodRefactoring
+newSelector
+	^newSelector
+%
+
+category: 'accessing'
+method: GsExtractMethodRefactoring
+argNames
+	self ensureAnalysis.
+	^argNames
+%
+
+category: 'accessing'
+method: GsExtractMethodRefactoring
+returnVar
+	self ensureAnalysis.
+	^returnVar
+%
+
+category: 'accessing'
+method: GsExtractMethodRefactoring
+changeSet
+	"The staged, non-committing change set, computed once and cached. Empty when the
+	 extraction is declined."
+	changeSet isNil ifTrue: [changeSet := self buildChangeSet].
+	^changeSet
+%
+
+category: 'private'
+method: GsExtractMethodRefactoring
+targetClass
+	"The behaviour that holds (and will hold the new) method: the metaclass for a
+	 class-side method."
+	^isMeta ifTrue: [definingClass class] ifFalse: [definingClass]
+%
+
+category: 'private'
+method: GsExtractMethodRefactoring
+sourceString
+	"The stored source of the method being refactored, or nil if it does not exist."
+	| m |
+	m := self targetClass compiledMethodAt: selector environmentId: 0 otherwise: nil.
+	^m isNil ifTrue: [nil] ifFalse: [m sourceString]
+%
+
+category: 'private'
+method: GsExtractMethodRefactoring
+parseTree
+	"A fresh parse of the method source, or nil if it is missing or unparseable."
+	| src |
+	src := self sourceString.
+	src isNil ifTrue: [^nil].
+	^[RBParser parseMethod: src] on: Error do: [:e | nil]
+%
+
+category: 'private'
+method: GsExtractMethodRefactoring
+isPseudoVariable: aName
+	^#('self' 'super' 'thisContext' 'nil' 'true' 'false') includes: aName asString
+%
+
+category: 'private - scope'
+method: GsExtractMethodRefactoring
+scopeNode: aNode declaresName: aName
+	"Does aNode introduce a scope binding (argument or temporary) for aName?"
+	(aNode isMethod or: [aNode isBlock])
+		ifTrue: [^aNode arguments anySatisfy: [:a | a name = aName]].
+	aNode isSequence
+		ifTrue: [^aNode temporaries anySatisfy: [:t | t name = aName]].
+	^false
+%
+
+category: 'private - scope'
+method: GsExtractMethodRefactoring
+declaringScopeForName: aName from: aNode
+	"The nearest enclosing scope node that declares aName as an argument or temporary,
+	 walking aNode's parent chain outward -- or nil if aName is not a local there."
+	| n |
+	n := aNode.
+	[n notNil] whileTrue: [
+		(self scopeNode: n declaresName: aName) ifTrue: [^n].
+		n := n parent].
+	^nil
+%
+
+category: 'private - scope'
+method: GsExtractMethodRefactoring
+scopeOutsideSelection: aScope
+	"True when aScope (a declaring scope) is NOT fully contained in the selection --
+	 i.e. the binding is declared outside the extracted code (a method/enclosing-block
+	 argument or an outer temporary), the case that turns into an argument or return."
+	^(aScope start >= firstStart and: [aScope stop <= lastStop]) not
+%
+
+category: 'private - analysis'
+method: GsExtractMethodRefactoring
+ensureAnalysis
+	analysisDone ifFalse: [
+		analysisDone := true.
+		[self computeAnalysis] on: Error do: [:e |
+			structuralDecline := 'The selection could not be analysed: ', e messageText]]
+%
+
+category: 'private - analysis'
+method: GsExtractMethodRefactoring
+declineWith: aReason
+	"Record a hard-decline reason and answer nil, so a caller can bail with
+	 ^self declineWith: '...' from inside computeAnalysis."
+	structuralDecline := aReason.
+	^nil
+%
+
+category: 'private - analysis'
+method: GsExtractMethodRefactoring
+computeAnalysis
+	"Resolve the selection to whole statements or a single expression, then classify
+	 the variables it references into arguments (read from outside), a single return
+	 value (assigned inside and used after), and internal temporaries (declared
+	 outside but used only inside). Sets structuralDecline on any hard precondition."
+	| tree stmts node |
+	argNames := OrderedCollection new.
+	internalTempNames := OrderedCollection new.
+	returnVar := nil.
+	isExpression := false.
+	selectedNodes := #().
+	structuralDecline := nil.
+	tree := self parseTree.
+	tree isNil ifTrue: [^self declineWith: 'The method source does not parse.'].
+	stmts := self selectedStatementsIn: tree.
+	stmts notEmpty
+		ifTrue: [
+			selectedNodes := stmts.
+			firstStart := stmts first start.
+			lastStop := stmts last stop]
+		ifFalse: [
+			node := [tree bestNodeFor: (selStart to: selStop)] on: Error do: [:e | nil].
+			(node notNil and: [node isValue and: [node isReturn not
+				and: [node start >= (selStart - 1) and: [node stop <= (selStop + 1)]]]])
+				ifTrue: [
+					isExpression := true.
+					selectedNodes := Array with: node.
+					firstStart := node start.
+					lastStop := node stop]
+				ifFalse: [^self declineWith: 'Select one or more whole statements, or a single expression, to extract.']].
+	self selectionContainsReturn
+		ifTrue: [^self declineWith: 'The selection contains a method return (^); extracting it would change control flow.'].
+	(self selectionReferences: 'super')
+		ifTrue: [^self declineWith: 'The selection sends to super and cannot be moved into a new method.'].
+	(self selectionReferences: 'thisContext')
+		ifTrue: [^self declineWith: 'The selection uses thisContext and cannot be extracted.'].
+	self classifyVariablesIn: tree
+%
+
+category: 'private - analysis'
+method: GsExtractMethodRefactoring
+selectedStatementsIn: tree
+	"The statements of the deepest sequence covering the selection that OVERLAP the
+	 selection interval, in source order. Empty when the selection is not a statement
+	 run (it may be a single expression, resolved separately)."
+	"The statements FULLY inside the selection, taken from the OUTERMOST sequence that
+	 has any. Only whole-statement containment matters -- NOT where the sequence itself
+	 begins -- so selecting the leading indentation of the first line (or a trailing
+	 newline) still resolves. A selection lying strictly within a single statement
+	 (e.g. the inner expression of a ^-return) covers no whole statement here and is
+	 handled as a single-expression extract instead. Picking the outermost qualifying
+	 sequence means selecting a whole control-flow statement extracts that statement,
+	 not the contents of the block nested inside it."
+	| best bestStmts |
+	best := nil.
+	bestStmts := nil.
+	tree nodesDo: [:n |
+		n isSequence ifTrue: [
+			| covered |
+			covered := n statements select: [:s | s start >= selStart and: [s stop <= selStop]].
+			covered notEmpty ifTrue: [
+				(best isNil or: [n start < best start]) ifTrue: [best := n. bestStmts := covered]]]].
+	^bestStmts ifNil: [OrderedCollection new]
+%
+
+category: 'private - analysis'
+method: GsExtractMethodRefactoring
+selectionContainsReturn
+	selectedNodes do: [:top | top nodesDo: [:n | n isReturn ifTrue: [^true]]].
+	^false
+%
+
+category: 'private - analysis'
+method: GsExtractMethodRefactoring
+selectionReferences: aName
+	selectedNodes do: [:top | top nodesDo: [:n |
+		(n isVariable and: [n name = aName]) ifTrue: [^true]]].
+	^false
+%
+
+category: 'private - analysis'
+method: GsExtractMethodRefactoring
+classifyVariablesIn: tree
+	"Fill argNames, returnVar and internalTempNames. external = locals referenced in
+	 the selection whose declaring scope is outside it; a body temporary used only
+	 inside becomes internal; arguments are the read-before-written externals (source
+	 order); the single assigned-and-used-after external is the return value."
+	| external assignedExternal bodyTemps probe rbw returnVars |
+	external := OrderedCollection new.
+	assignedExternal := Set new.
+	selectedNodes do: [:top | top nodesDo: [:n |
+		(n isVariable and: [(self isPseudoVariable: n name) not]) ifTrue: [
+			| scope |
+			scope := self declaringScopeForName: n name from: n.
+			(scope notNil and: [self scopeOutsideSelection: scope])
+				ifTrue: [(external includes: n name) ifFalse: [external add: n name]]].
+		n isAssignment ifTrue: [
+			| scope |
+			scope := self declaringScopeForName: n variable name from: n variable.
+			(scope notNil and: [self scopeOutsideSelection: scope])
+				ifTrue: [assignedExternal add: n variable name]]]].
+	"A method-body temporary used ONLY inside the selection is moved into the new
+	 method rather than passed as an argument."
+	bodyTemps := tree body temporaries collect: [:t | t name].
+	external copy do: [:nm |
+		((bodyTemps includes: nm)
+			and: [(self referencesOf: nm outsideSelectionIn: tree) isEmpty])
+			ifTrue: [internalTempNames add: nm. external remove: nm]].
+	"return value: an external assigned inside and referenced after the selection."
+	returnVars := external select: [:nm |
+		(assignedExternal includes: nm) and: [(self referencesOf: nm afterSelectionIn: tree) notEmpty]].
+	returnVars size > 1 ifTrue: [
+		^self declineWith: 'The selection assigns ', returnVars size printString,
+			' variables used later; a method can return only one.'].
+	returnVar := returnVars isEmpty ifTrue: [nil] ifFalse: [returnVars first].
+	"arguments: the read-before-written externals, in source order."
+	probe := [RBParser parseMethod: 'gsExtractMethodProbe ', self extractedSource]
+		on: Error do: [:e | nil].
+	rbw := probe isNil
+		ifTrue: [external asArray]
+		ifFalse: [RBReadBeforeWrittenTester readBeforeWritten: external asArray in: probe].
+	argNames := external select: [:nm | rbw includes: nm]
+%
+
+category: 'private - analysis'
+method: GsExtractMethodRefactoring
+referencesOf: aName inTree: tree
+	"Every variable-node USE (not a declaration) of aName in tree, as an Array with
+	 source positions, so read/write timing can be judged by position."
+	| decls refs |
+	decls := IdentitySet new.
+	tree nodesDo: [:n |
+		(n isMethod or: [n isBlock]) ifTrue: [n arguments do: [:a | decls add: a]].
+		n isSequence ifTrue: [n temporaries do: [:t | decls add: t]]].
+	refs := OrderedCollection new.
+	tree nodesDo: [:n |
+		(n isVariable and: [n name = aName and: [(decls includes: n) not]])
+			ifTrue: [refs add: n]].
+	^refs
+%
+
+category: 'private - analysis'
+method: GsExtractMethodRefactoring
+referencesOf: aName outsideSelectionIn: tree
+	^(self referencesOf: aName inTree: tree)
+		select: [:r | r start < firstStart or: [r start > lastStop]]
+%
+
+category: 'private - analysis'
+method: GsExtractMethodRefactoring
+referencesOf: aName afterSelectionIn: tree
+	^(self referencesOf: aName inTree: tree) select: [:r | r start > lastStop]
+%
+
+category: 'private - analysis'
+method: GsExtractMethodRefactoring
+extractedSource
+	"The verbatim source of the selected statements / expression."
+	^self sourceString copyFrom: firstStart to: lastStop
+%
+
+category: 'private - selector'
+method: GsExtractMethodRefactoring
+isKeywordSelector
+	^newSelector includes: $:
+%
+
+category: 'private - selector'
+method: GsExtractMethodRefactoring
+isBinarySelector
+	^newSelector notEmpty
+		and: [(newSelector first isLetter or: [newSelector first == $_]) not]
+%
+
+category: 'private - selector'
+method: GsExtractMethodRefactoring
+keywordParts
+	"The keyword parts of a keyword selector, each ending in a colon (e.g. #('at:'
+	 'put:'))."
+	| parts seg |
+	parts := OrderedCollection new.
+	seg := WriteStream on: String new.
+	newSelector do: [:ch |
+		seg nextPut: ch.
+		ch == $: ifTrue: [parts add: seg contents. seg := WriteStream on: String new]].
+	^parts
+%
+
+category: 'private - selector'
+method: GsExtractMethodRefactoring
+expectedArgCount
+	self isKeywordSelector ifTrue: [^self keywordParts size].
+	self isBinarySelector ifTrue: [^1].
+	^0
+%
+
+category: 'private - selector'
+method: GsExtractMethodRefactoring
+newSelectorSymbol
+	^newSelector asSymbol
+%
+
+category: 'private - source'
+method: GsExtractMethodRefactoring
+headerSource
+	"The pattern line of the new method: the selector interleaved with the argument
+	 names (which keep the extracted variables' own names)."
+	| ws parts |
+	self isKeywordSelector ifTrue: [
+		ws := WriteStream on: String new.
+		parts := self keywordParts.
+		1 to: parts size do: [:i |
+			i > 1 ifTrue: [ws nextPut: $ ].
+			ws nextPutAll: (parts at: i); nextPut: $ ; nextPutAll: (argNames at: i)].
+		^ws contents].
+	self isBinarySelector ifTrue: [^newSelector, ' ', (argNames at: 1)].
+	^newSelector
+%
+
+category: 'private - source'
+method: GsExtractMethodRefactoring
+sendSourceWithArgs: argValues
+	"A 'self <selector> ...' send whose arguments are argValues (source strings)."
+	| ws parts |
+	self isKeywordSelector ifTrue: [
+		ws := WriteStream on: String new.
+		ws nextPutAll: 'self'.
+		parts := self keywordParts.
+		1 to: parts size do: [:i |
+			ws nextPut: $ ; nextPutAll: (parts at: i); nextPut: $ ; nextPutAll: (argValues at: i)].
+		^ws contents].
+	self isBinarySelector ifTrue: [^'self ', newSelector, ' ', (argValues at: 1)].
+	^'self ', newSelector
+%
+
+category: 'private - source'
+method: GsExtractMethodRefactoring
+callSendSource
+	^self sendSourceWithArgs: argNames
+%
+
+category: 'private - source'
+method: GsExtractMethodRefactoring
+callText
+	"The text that replaces the selection in the original method: a bare send, an
+	 assignment of the send to the return variable, or (for an expression extract) the
+	 send, parenthesised ONLY when precedence requires it."
+	isExpression ifTrue: [
+		^self expressionNeedsParens
+			ifTrue: ['(', self callSendSource, ')']
+			ifFalse: [self callSendSource]].
+	returnVar notNil ifTrue: [^returnVar, ' := ', self callSendSource].
+	^self callSendSource
+%
+
+category: 'private - source'
+method: GsExtractMethodRefactoring
+expressionNeedsParens
+	"Whether the send replacing an extracted expression must be parenthesised to
+	 preserve meaning. A unary send never needs them; a keyword or binary send does
+	 only when it replaces a SUB-expression (an argument, a receiver, a binary
+	 operand). Replacing a whole return value, assignment value, or statement does
+	 not, so ^total * factor becomes ^self factor: factor -- not ^(self factor: factor)."
+	| node parent |
+	argNames isEmpty ifTrue: [^false].
+	node := selectedNodes first.
+	parent := node parent.
+	parent isNil ifTrue: [^false].
+	parent isReturn ifTrue: [^false].
+	parent isSequence ifTrue: [^false].
+	(parent isAssignment and: [parent value == node]) ifTrue: [^false].
+	^true
+%
+
+category: 'private - source'
+method: GsExtractMethodRefactoring
+newMethodTemps
+	"The temporaries the extracted method must declare: those moved in because they
+	 were used only inside the selection, plus the return variable when it is assigned
+	 (not passed in as an argument) -- otherwise the new method would use an undeclared
+	 variable."
+	| temps |
+	temps := OrderedCollection new.
+	temps addAll: internalTempNames.
+	(returnVar notNil and: [(argNames includes: returnVar) not
+		and: [(temps includes: returnVar) not]])
+		ifTrue: [temps add: returnVar].
+	^temps
+%
+
+category: 'private - source'
+method: GsExtractMethodRefactoring
+newMethodSource
+	"The source of the extracted method: the pattern line, any declared temporaries,
+	 the selected statements verbatim, and a trailing ^returnVar (or ^expression)."
+	| ws lf temps |
+	lf := Character lf.
+	temps := self newMethodTemps.
+	ws := WriteStream on: String new.
+	ws nextPutAll: self headerSource.
+	temps isEmpty ifFalse: [
+		ws nextPut: lf; tab; nextPutAll: '| '.
+		temps do: [:nm | ws nextPutAll: nm; nextPut: $ ].
+		ws nextPut: $|].
+	ws nextPut: lf; tab.
+	isExpression
+		ifTrue: [ws nextPut: $^; nextPutAll: self extractedSource]
+		ifFalse: [
+			ws nextPutAll: self extractedSource.
+			returnVar notNil ifTrue: [ws nextPut: $.; nextPut: lf; tab; nextPut: $^; nextPutAll: returnVar]].
+	^self formatMethod: ws contents
+%
+
+category: 'private - source'
+method: GsExtractMethodRefactoring
+formatMethod: aSource
+	"Reformat a generated method to the canonical RB layout (consistent indentation,
+	 one statement per line) so the extracted method is presented tidily in the
+	 preview and stored tidily on apply. The verbatim source we splice together keeps
+	 each statement's ORIGINAL indentation, which reads raggedly under the new pattern
+	 line; reparsing and reformatting fixes that. Falls back to the raw source if it
+	 does not parse."
+	^[(RBParser parseMethod: aSource) formattedCode] on: Error do: [:e | aSource]
+%
+
+category: 'private - source'
+method: GsExtractMethodRefactoring
+rewrittenOriginalSource
+	"The original method with the selected range replaced by the call, and any moved
+	 temporaries dropped from its temporary declaration. Pure source splicing keyed on
+	 node intervals -- minimal diff, no reformatting."
+	| src spliced |
+	src := self sourceString.
+	spliced := (src copyFrom: 1 to: firstStart - 1), self callText,
+		(src copyFrom: lastStop + 1 to: src size).
+	internalTempNames isEmpty ifTrue: [^spliced].
+	^self removeInternalTempsFromSource: spliced
+%
+
+category: 'private - source'
+method: GsExtractMethodRefactoring
+removeInternalTempsFromSource: aSource
+	"Rebuild the method body's | temps | clause of aSource without the moved
+	 temporaries. Reparses aSource (already valid) to find the temp-bar positions."
+	| tree seq keep clause lb rb |
+	tree := [RBParser parseMethod: aSource] on: Error do: [:e | nil].
+	tree isNil ifTrue: [^aSource].
+	seq := tree body.
+	seq temporaries isEmpty ifTrue: [^aSource].
+	lb := seq leftBar.
+	rb := seq rightBar.
+	(lb isNil or: [rb isNil]) ifTrue: [^aSource].
+	keep := seq temporaries reject: [:t | internalTempNames includes: t name].
+	clause := keep isEmpty
+		ifTrue: ['']
+		ifFalse: ['| ', (keep
+			inject: ''
+			into: [:acc :t | acc isEmpty ifTrue: [t name] ifFalse: [acc, ' ', t name]]), ' |'].
+	^(aSource copyFrom: 1 to: lb - 1), clause, (aSource copyFrom: rb + 1 to: aSource size)
+%
+
+category: 'private'
+method: GsExtractMethodRefactoring
+methodCategory
+	^((self targetClass categoryOfSelector: selector environmentId: 0)
+		ifNil: ['as yet unclassified']) asString
+%
+
+category: 'private'
+method: GsExtractMethodRefactoring
+dictNameForClass: aClass
+	| dicts |
+	dicts := environment dictionariesDefiningClassNamed: aClass name.
+	^dicts isEmpty ifTrue: [nil] ifFalse: [dicts first name asString]
+%
+
+category: 'preconditions'
+method: GsExtractMethodRefactoring
+declineReason
+	"nil if the extraction can proceed, otherwise a reason (structural precondition or
+	 selector-arity mismatch) that blocks Apply."
+	self ensureAnalysis.
+	structuralDecline notNil ifTrue: [^structuralDecline].
+	(newSelector isNil or: [newSelector isEmpty]) ifTrue: [^nil].
+	"Naming the extracted method after the method being extracted FROM is broken: the
+	 new method and the rewritten original would be the same method, so the rewrite
+	 would just call itself. Refuse it outright (not merely the soft collision warning)."
+	self newSelectorSymbol == selector ifTrue: [
+		^'The new method cannot use the same selector as ', selector,
+			' -- that is the method you are extracting from. Choose a different name.'].
+	self expectedArgCount = argNames size ifFalse: [
+		^'The selector ', newSelector, ' expects ', self expectedArgCount printString,
+			' argument(s) but the selection needs ', argNames size printString, '.'].
+	^nil
+%
+
+category: 'preconditions'
+method: GsExtractMethodRefactoring
+collisionWarning
+	"nil, or a SOFT warning (surfaced, not blocking) that the new selector is already
+	 implemented somewhere in the target class + hierarchy -- extracting would override
+	 or shadow it."
+	| sym hierarchy hits |
+	self ensureAnalysis.
+	(newSelector isNil or: [newSelector isEmpty]) ifTrue: [^nil].
+	structuralDecline notNil ifTrue: [^nil].
+	sym := self newSelectorSymbol.
+	hierarchy := IdentitySet new.
+	hierarchy add: self targetClass.
+	hierarchy addAll: self targetClass allSuperclasses.
+	hierarchy addAll: (environment descendantsOf: self targetClass).
+	hits := (environment implementorsOf: sym) select: [:m |
+		hierarchy includes: m inClass].
+	hits isEmpty ifTrue: [^nil].
+	^'The selector ', newSelector, ' is already implemented in the hierarchy (',
+		hits first inClass name asString,
+		(hits size > 1 ifTrue: [' and ', (hits size - 1) printString, ' other(s)'] ifFalse: ['']),
+		'); extracting will override or shadow it.'
+%
+
+category: 'testing'
+method: GsExtractMethodRefactoring
+isSafeVoidShape
+	"The replace-similar pass runs only for a pure void extraction: no return value, no
+	 moved temporaries, and a statement run (not a single expression). Anything else
+	 would need to reproduce assign/return wiring at each duplicate site."
+	self ensureAnalysis.
+	^returnVar isNil and: [internalTempNames isEmpty and: [isExpression not]]
+%
+
+category: 'building'
+method: GsExtractMethodRefactoring
+buildChangeSet
+	"Stage the two core changes (the new method, then the rewritten original) and,
+	 when replaceSimilar is on and the extraction is a safe void shape, one
+	 deselectable recompile per structurally-equivalent run in the hierarchy. Empty
+	 when the extraction is declined. Compiles nothing, commits nothing."
+	| cs dict |
+	cs := GsRefactoringChangeSet new.
+	self ensureAnalysis.
+	self declineReason notNil ifTrue: [^cs].
+	dict := self dictNameForClass: definingClass.
+	cs
+		addMethodAddInDictionary: dict
+		className: definingClass name
+		isMeta: isMeta
+		selector: self newSelectorSymbol
+		category: self methodCategory
+		newSource: self newMethodSource.
+	cs
+		addMethodRecompileInDictionary: dict
+		className: definingClass name
+		isMeta: isMeta
+		selector: selector
+		category: self methodCategory
+		oldSource: self sourceString
+		newSource: self rewrittenOriginalSource.
+	(replaceSimilar and: [self isSafeVoidShape])
+		ifTrue: [self stageSimilarSitesInto: cs].
+	^cs
+%
+
+category: 'building - similar'
+method: GsExtractMethodRefactoring
+stageSimilarSitesInto: cs
+	"Find statement runs elsewhere in the target class + hierarchy that are
+	 structurally equivalent to the extracted selection (ignoring the argument
+	 positions) and stage a deselectable recompile replacing each with a send to the
+	 new method. Best-effort: any method that will not parse or match is skipped."
+	| classes |
+	classes := OrderedCollection new.
+	classes add: self targetClass.
+	classes addAll: self targetClass allSuperclasses.
+	classes addAll: (environment descendantsOf: self targetClass).
+	classes do: [:cls |
+		[(cls selectors ifNil: [#()]) do: [:sel |
+			(cls == self targetClass and: [sel == selector])
+				ifFalse: [self stageSimilarInClass: cls selector: sel into: cs]]]
+			on: Error do: [:e | nil]]
+%
+
+category: 'building - similar'
+method: GsExtractMethodRefactoring
+stageSimilarInClass: cls selector: sel into: cs
+	"Stage at most one duplicate replacement in cls>>sel (the first matching window)."
+	| m src tree stmts n |
+	m := cls compiledMethodAt: sel environmentId: 0 otherwise: nil.
+	m isNil ifTrue: [^self].
+	src := m sourceString.
+	tree := [RBParser parseMethod: src] on: Error do: [:e | nil].
+	tree isNil ifTrue: [^self].
+	stmts := tree body statements.
+	n := selectedNodes size.
+	n = 0 ifTrue: [^self].
+	1 to: stmts size - n + 1 do: [:i |
+		| window binding |
+		window := (i to: i + n - 1) collect: [:j | stmts at: j].
+		binding := Dictionary new.
+		(self matchTemplate: selectedNodes against: window binding: binding) ifTrue: [
+			| fStart lStop call |
+			fStart := window first start.
+			lStop := window last stop.
+			call := self sendSourceWithArgs: (argNames collect: [:nm | binding at: nm ifAbsent: [nm]]).
+			cs
+				addMethodRecompileInDictionary: (self dictNameForClass: cls)
+				className: cls thisClass name
+				isMeta: cls isMeta
+				selector: sel
+				category: ((cls categoryOfSelector: sel environmentId: 0) ifNil: ['as yet unclassified']) asString
+				oldSource: src
+				newSource: ((src copyFrom: 1 to: fStart - 1), call, (src copyFrom: lStop + 1 to: src size)).
+			^self]]
+%
+
+category: 'building - similar'
+method: GsExtractMethodRefactoring
+matchTemplate: templateNodes against: candidateNodes binding: aDict
+	templateNodes size = candidateNodes size ifFalse: [^false].
+	1 to: templateNodes size do: [:i |
+		(self matchNode: (templateNodes at: i) with: (candidateNodes at: i) binding: aDict)
+			ifFalse: [^false]].
+	^true
+%
+
+category: 'building - similar'
+method: GsExtractMethodRefactoring
+matchNode: t with: c binding: aDict
+	"Structural equality of template node t and candidate node c, treating an argument
+	 variable in t as a wildcard bound consistently to a candidate variable/literal."
+	(t isVariable and: [argNames includes: t name]) ifTrue: [
+		| prev csrc |
+		(c isVariable or: [c isLiteralNode]) ifFalse: [^false].
+		csrc := c formattedCode.
+		prev := aDict at: t name ifAbsent: [nil].
+		prev isNil ifTrue: [aDict at: t name put: csrc. ^true].
+		^prev = csrc].
+	t class == c class ifFalse: [^false].
+	t isVariable ifTrue: [^t name = c name].
+	t isLiteralNode ifTrue: [^t formattedCode = c formattedCode].
+	t isMessage ifTrue: [^t selector = c selector and: [self matchChildren: t with: c binding: aDict]].
+	^self matchChildren: t with: c binding: aDict
+%
+
+category: 'building - similar'
+method: GsExtractMethodRefactoring
+matchChildren: t with: c binding: aDict
+	| tc cc |
+	tc := t children.
+	cc := c children.
+	tc size = cc size ifFalse: [^false].
+	1 to: tc size do: [:i |
+		(self matchNode: (tc at: i) with: (cc at: i) binding: aDict) ifFalse: [^false]].
+	^true
+%
+
+category: 'serializing'
+method: GsExtractMethodRefactoring
+analysisJsonString
+	"The pre-flight payload: argument count/names, the return variable, the decline
+	 reason (if any) and whether this is a replace-similar-eligible void shape."
+	self ensureAnalysis.
+	^'{"argCount":', argNames size printString,
+	  ',"argNames":[', (argNames
+		inject: ''
+		into: [:acc :n | acc isEmpty ifTrue: [self jsonQuote: n] ifFalse: [acc, ',', (self jsonQuote: n)]]), ']',
+	  ',"returnVar":', (returnVar ifNil: ['null'] ifNotNil: [:v | self jsonQuote: v]),
+	  ',"safeVoidShape":', self isSafeVoidShape printString,
+	  ',"decline":', (structuralDecline ifNil: ['null'] ifNotNil: [:r | self jsonQuote: r]),
+	  '}'
+%
+
+category: 'serializing'
+method: GsExtractMethodRefactoring
+previewJsonString
+	^self changeSet jsonString
+%
+
+category: 'serializing'
+method: GsExtractMethodRefactoring
+outOfScopeJsonString
+	"The scope / precondition payload for the preview panel, in the family's shape. The
+	 collision (soft, non-blocking) and decline (hard, blocking) reasons ride here."
+	^'{"references":0,"skipped":0,"scope":"hierarchy"',
+	  ',"collision":', (self collisionWarning
+		ifNil: ['null'] ifNotNil: [:reason | self jsonQuote: reason]),
+	  ',"decline":', (self declineReason
+		ifNil: ['null'] ifNotNil: [:reason | self jsonQuote: reason]),
+	  '}'
+%
+
+category: 'paginated preview'
+method: GsExtractMethodRefactoring
+startPreviewToken: token maxBytes: maxBytes
+	"Build the change set, stash this refactoring in SessionTemps under token, and
+	 answer the first page plus totals and precondition warnings. Nothing is committed."
+	self changeSet.
+	SessionTemps current at: token asSymbol put: self.
+	^'{"token":', (self jsonQuote: token),
+	  ',"total":', self changeSet size printString,
+	  ',"newSelector":', (self jsonQuote: newSelector),
+	  ',"outOfScope":', self outOfScopeJsonString,
+	  ',"skippedMethods":[]',
+	  ',"page":', (self pageJsonFrom: 1 maxBytes: maxBytes), '}'
+%
+
+category: 'paginated preview'
+method: GsExtractMethodRefactoring
+pageJsonFrom: startIndex maxBytes: maxBytes
+	"A byte-bounded page of staged changes (with source) from startIndex (1-based). At
+	 least one change is always emitted when any remain."
+	| all ws i |
+	all := self changeSet changes.
+	ws := WriteStream on: String new.
+	ws nextPut: $[.
+	i := startIndex.
+	[i <= all size and: [i = startIndex or: [ws position < maxBytes]]] whileTrue: [
+		i > startIndex ifTrue: [ws nextPut: $,].
+		(all at: i) jsonOn: ws.
+		i := i + 1].
+	ws nextPut: $].
+	^'{"changes":', ws contents,
+	  ',"nextOffset":', i printString,
+	  ',"done":', (i > all size) printString, '}'
+%
+
+category: 'applying'
+method: GsExtractMethodRefactoring
+applyDeselected: deselectedIds
+	"Apply the staged changes in the stone WITHOUT committing. The two CORE changes
+	 (the new method and the rewritten original) are always applied; a deselected id is
+	 honoured only for the optional duplicate-replacement changes. Answers
+	 {applied, failed:[..]}."
+	| applied failures ids |
+	ids := (deselectedIds ifNil: [#()]) asArray.
+	failures := OrderedCollection new.
+	applied := 0.
+	self changeSet changes doWithIndex: [:change :idx |
+		((idx <= 2) or: [(ids includes: change id) not])
+			ifTrue: [
+				[self applyChange: change. applied := applied + 1]
+				on: Error do: [:e |
+					failures add: (Array with: change id with: change className with: e messageText)]]].
+	^'{"applied":', applied printString,
+	  ',"failed":[',
+	  ((failures collect: [:f |
+		'{"id":', (self jsonQuote: (f at: 1)),
+		',"label":', (self jsonQuote: (f at: 2)),
+		',"error":', (self jsonQuote: (f at: 3)), '}'])
+			inject: '' into: [:acc :s | acc isEmpty ifTrue: [s] ifFalse: [acc, ',', s]]),
+	  ']}'
+%
+
+category: 'applying'
+method: GsExtractMethodRefactoring
+applyChange: aChange
+	(aChange kind == #methodAdd or: [aChange kind == #methodRecompile])
+		ifTrue: [^self applyMethodCompile: aChange].
+	^self error: 'Unexpected change kind for extract-method: ', aChange kind printString
+%
+
+category: 'applying'
+method: GsExtractMethodRefactoring
+applyMethodCompile: aChange
+	"Compile the change's new source (a new method for #methodAdd, the rewritten
+	 method for #methodRecompile) in the stone. No commit."
+	| cls target |
+	cls := environment classNamed: aChange className.
+	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
+	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
+	target
+		compileMethod: aChange newSource
+		dictionaries: System myUserProfile symbolList
+		category: (aChange category ifNil: ['as yet unclassified'])
+%
+
+category: 'serializing'
+method: GsExtractMethodRefactoring
+jsonQuote: aString
+	^'"', (self jsonEscape: aString), '"'
+%
+
+category: 'serializing'
+method: GsExtractMethodRefactoring
+jsonEscape: aString
+	"JSON string escaping emitting PURE ASCII (control chars and code points above 126
+	 become \\uXXXX), so the client's non-blocking GCI fetch is never handed a Unicode
+	 result."
+	| ws |
+	ws := WriteStream on: String new.
+	aString do: [:ch | | code |
+		code := ch asInteger.
+		ch == $" ifTrue: [ws nextPutAll: '\"']
+		ifFalse: [ch == $\ ifTrue: [ws nextPutAll: '\\']
+		ifFalse: [code = 10 ifTrue: [ws nextPutAll: '\n']
+		ifFalse: [code = 13 ifTrue: [ws nextPutAll: '\r']
+		ifFalse: [code = 9 ifTrue: [ws nextPutAll: '\t']
+		ifFalse: [code < 32
+			ifTrue: [ws nextPutAll: '\u00'; nextPutAll: (self hex2: code)]
+		ifFalse: [code > 126
+			ifTrue: [code > 65535
+				ifTrue: [ws nextPut: $?]
+				ifFalse: [ws nextPutAll: '\u';
+					nextPutAll: (self hex2: code // 256);
+					nextPutAll: (self hex2: code \\ 256)]]
+			ifFalse: [ws nextPut: ch]]]]]]]].
+	^ws contents
+%
+
+category: 'serializing'
+method: GsExtractMethodRefactoring
+hex2: anInteger
+	| digits |
+	digits := '0123456789abcdef'.
+	^(String with: (digits at: (anInteger // 16) + 1))
+		, (String with: (digits at: (anInteger \\ 16) + 1))
+%
+
+category: 'instance creation'
+classmethod: GsExtractMethodRefactoring
+class: aClass selector: aSelector meta: aBool selStart: startOffset selStop: stopOffset newSelector: newSelectorString
+	"Extract the source between startOffset and stopOffset (1-based, inclusive) of
+	 aClass>>aSelector into a new method named newSelectorString."
+	^self
+		environment: GsRefactoringEnvironment new
+		class: aClass
+		selector: aSelector
+		meta: aBool
+		selStart: startOffset
+		selStop: stopOffset
+		newSelector: newSelectorString
+%
+
+category: 'instance creation'
+classmethod: GsExtractMethodRefactoring
+environment: anEnvironment class: aClass selector: aSelector meta: aBool selStart: startOffset selStop: stopOffset newSelector: newSelectorString
+	^self new
+		setEnvironment: anEnvironment
+		class: aClass
+		selector: aSelector
+		meta: aBool
+		selStart: startOffset
+		selStop: stopOffset
+		newSelector: newSelectorString
+%
+
+category: 'preconditions'
+classmethod: GsExtractMethodRefactoring
+analyzeSelectionForClass: aClass selector: aSelector meta: aBool selStart: startOffset selStop: stopOffset
+	"A pre-flight the client runs before prompting for the new selector: how many
+	 arguments the selection needs, their names, whether it returns a value, whether
+	 it is a safe void shape (eligible for the replace-similar pass), and a decline
+	 reason if the selection itself cannot be extracted. The new selector is not known
+	 yet, so arity/collision are not checked here."
+	^(self
+		class: aClass
+		selector: aSelector
+		meta: aBool
+		selStart: startOffset
+		selStop: stopOffset
+		newSelector: '') analysisJsonString
+%
+
+category: 'paginated preview'
+classmethod: GsExtractMethodRefactoring
+pageForToken: token from: startIndex maxBytes: maxBytes
+	"A page from a previously-started preview (see startPreviewToken:maxBytes:), by
+	 token. Answers an error envelope if the preview session has expired."
+	^(SessionTemps current at: token asSymbol ifAbsent: [nil])
+		ifNil: ['{"error":"preview session expired","changes":[],"nextOffset":0,"done":true}']
+		ifNotNil: [:ref | ref pageJsonFrom: startIndex maxBytes: maxBytes]
+%
+
+category: 'paginated preview'
+classmethod: GsExtractMethodRefactoring
+applyForToken: token deselected: deselectedIds
+	"Apply a previously-started preview (by token). No commit. Answers an error
+	 envelope if the preview session has expired."
+	^(SessionTemps current at: token asSymbol ifAbsent: [nil])
+		ifNil: ['{"applied":0,"failed":[],"error":"preview session expired"}']
+		ifNotNil: [:ref | ref applyDeselected: deselectedIds]
+%
+
+category: 'paginated preview'
+classmethod: GsExtractMethodRefactoring
+clearToken: token
+	"Drop a finished preview from SessionTemps."
+	SessionTemps current removeKey: token asSymbol ifAbsent: [].
+	^'ok'
+%
+
+category: 'private'
+method: GsExtractTemporaryRefactoring
+setEnvironment: anEnvironment class: aClass selector: aSelector meta: aBool selStart: startOffset selStop: stopOffset newName: newNameString
+	environment := anEnvironment.
+	definingClass := aClass.
+	selector := aSelector asSymbol.
+	isMeta := aBool.
+	selStart := startOffset.
+	selStop := stopOffset.
+	newName := newNameString asString.
+	replaceAll := false.
+	analysisDone := false
+%
+
+category: 'accessing'
+method: GsExtractTemporaryRefactoring
+replaceAll: aBool
+	"Replace every identical occurrence of the selected expression in the declaring
+	 sequence, not just the selected one. Off by default."
+	replaceAll := aBool.
+	changeSet := nil
+%
+
+category: 'accessing'
+method: GsExtractTemporaryRefactoring
+environment
+	^environment
+%
+
+category: 'accessing'
+method: GsExtractTemporaryRefactoring
+definingClass
+	^definingClass
+%
+
+category: 'accessing'
+method: GsExtractTemporaryRefactoring
+selector
+	^selector
+%
+
+category: 'accessing'
+method: GsExtractTemporaryRefactoring
+isMeta
+	^isMeta
+%
+
+category: 'accessing'
+method: GsExtractTemporaryRefactoring
+newName
+	^newName
+%
+
+category: 'accessing'
+method: GsExtractTemporaryRefactoring
+changeSet
+	"The staged, non-committing change set, computed once and cached. Empty when the
+	 extraction is declined."
+	changeSet isNil ifTrue: [changeSet := self buildChangeSet].
+	^changeSet
+%
+
+category: 'private'
+method: GsExtractTemporaryRefactoring
+targetClass
+	"The behaviour that holds the method: the metaclass for a class-side method."
+	^isMeta ifTrue: [definingClass class] ifFalse: [definingClass]
+%
+
+category: 'private'
+method: GsExtractTemporaryRefactoring
+sourceString
+	"The stored source of the method being refactored, or nil if it does not exist."
+	| m |
+	m := self targetClass compiledMethodAt: selector environmentId: 0 otherwise: nil.
+	^m isNil ifTrue: [nil] ifFalse: [m sourceString]
+%
+
+category: 'private'
+method: GsExtractTemporaryRefactoring
+parseTree
+	"A fresh parse of the method source, or nil if it is missing or unparseable."
+	| src |
+	src := self sourceString.
+	src isNil ifTrue: [^nil].
+	^[RBParser parseMethod: src] on: Error do: [:e | nil]
+%
+
+category: 'private - analysis'
+method: GsExtractTemporaryRefactoring
+ensureAnalysis
+	analysisDone ifFalse: [
+		analysisDone := true.
+		[self computeAnalysis] on: Error do: [:e |
+			declineString := 'The selection could not be analysed: ', e messageText]]
+%
+
+category: 'private - analysis'
+method: GsExtractTemporaryRefactoring
+declineWith: aReason
+	declineString := aReason.
+	^nil
+%
+
+category: 'private - analysis'
+method: GsExtractTemporaryRefactoring
+computeAnalysis
+	"Resolve the selection to a value expression, classify what would block the
+	 extraction, and record the target node and its declaring sequence."
+	| tree node stmt |
+	declineString := nil.
+	targetNode := nil.
+	declSeq := nil.
+	tree := self parseTree.
+	tree isNil ifTrue: [^self declineWith: 'The method source does not parse.'].
+	node := [tree bestNodeFor: (selStart to: selStop)] on: Error do: [:e | nil].
+	node isNil ifTrue: [^self declineWith: 'Select an expression to extract into a temporary variable.'].
+	node isReturn ifTrue: [^self declineWith: 'Select the expression to extract, not the whole return statement.'].
+	node isValue ifFalse: [^self declineWith: 'Select a single expression to extract into a temporary variable.'].
+	"A bare variable read and an assignment expression ARE extractable (aliasing a
+	 value, or naming an assignment) -- only reject the cases that would not compile or
+	 would change meaning: super/thisContext used alone, the write target of an
+	 assignment, or a variable DECLARATION."
+	node isVariable ifTrue: [
+		(self declineReasonForVariable: node) ifNotNil: [:r | ^self declineWith: r]].
+	(node start >= (selStart - 1) and: [node stop <= (selStop + 1)])
+		ifFalse: [^self declineWith: 'Select a single, whole expression to extract into a temporary variable.'].
+	stmt := self statementNodeFor: node.
+	stmt isNil ifTrue: [^self declineWith: 'The selection is not inside a statement that can be extracted.'].
+	targetNode := node.
+	declSeq := stmt parent
+%
+
+category: 'private - analysis'
+method: GsExtractTemporaryRefactoring
+nodeSource: aNode
+	^self sourceString copyFrom: aNode start to: aNode stop
+%
+
+category: 'private - analysis'
+method: GsExtractTemporaryRefactoring
+declineReasonForVariable: aVariableNode
+	"A bare variable node is a legitimate thing to extract (create a temporary now,
+	 wire it up later) EXCEPT when it would not compile or would silently change
+	 meaning: 'super'/'thisContext' are only valid as a message receiver; the write
+	 target of an assignment is not a value to alias (extracting it would redirect the
+	 assignment); and a declaration in a '| .. |' clause or an argument list is not an
+	 expression. Answers a reason String for those, else nil (extractable)."
+	| p name |
+	name := aVariableNode name.
+	(#('super' 'thisContext') includes: name)
+		ifTrue: [^'''', name, ''' is only valid as a message receiver and cannot be extracted into a temporary.'].
+	p := aVariableNode parent.
+	p isNil ifTrue: [^nil].
+	(p isAssignment and: [p variable == aVariableNode])
+		ifTrue: [^'That is the assignment target; select the value being assigned, or the whole assignment.'].
+	(p isSequence or: [p isMethod or: [p isBlock]])
+		ifTrue: [^'That is a variable declaration, not an expression you can extract.'].
+	^nil
+%
+
+category: 'private - analysis'
+method: GsExtractTemporaryRefactoring
+statementNodeFor: aNode
+	"The node that is a direct child of a sequence and is aNode-or-an-ancestor of it --
+	 i.e. the statement whose evaluation the extraction hoists. Walks aNode's parent
+	 chain until the parent is a sequence."
+	| n |
+	n := aNode.
+	[n notNil] whileTrue: [
+		(n parent notNil and: [n parent isSequence]) ifTrue: [^n].
+		n := n parent].
+	^nil
+%
+
+category: 'private - analysis'
+method: GsExtractTemporaryRefactoring
+topStatementIn: aSequence containing: aNode
+	"The statement that is a DIRECT child of aSequence and is aNode-or-an-ancestor of it
+	 -- walk aNode's parent chain until the parent IS aSequence. nil if aNode is not in
+	 aSequence's subtree. Used to hoist the assignment into the DECLARING sequence even
+	 when the occurrence sits inside a nested block under it."
+	| n |
+	n := aNode.
+	[n notNil] whileTrue: [
+		n parent == aSequence ifTrue: [^n].
+		n := n parent].
+	^nil
+%
+
+category: 'private - analysis'
+method: GsExtractTemporaryRefactoring
+matchingOccurrences
+	"The occurrence nodes to replace: the selected node alone (default), or every node
+	 in the declaring sequence whose verbatim source equals the selected expression's
+	 (replaceAll). The declaring sequence's subtree bounds the scope, so a nested block
+	 under it is included and a sibling block is not."
+	| src exprSrc occs |
+	replaceAll ifFalse: [^OrderedCollection with: targetNode].
+	src := self sourceString.
+	exprSrc := src copyFrom: targetNode start to: targetNode stop.
+	occs := OrderedCollection new.
+	declSeq nodesDo: [:node |
+		(node isValue and: [(src copyFrom: node start to: node stop) = exprSrc])
+			ifTrue: [occs add: node]].
+	^occs
+%
+
+category: 'private - analysis'
+method: GsExtractTemporaryRefactoring
+occurrenceCount
+	"How many identical occurrences of the selected expression are in scope (the count
+	 offered to the user as 'replace all N')."
+	| src exprSrc n |
+	self ensureAnalysis.
+	(declineString notNil or: [targetNode isNil]) ifTrue: [^0].
+	src := self sourceString.
+	exprSrc := src copyFrom: targetNode start to: targetNode stop.
+	n := 0.
+	declSeq nodesDo: [:node |
+		(node isValue and: [(src copyFrom: node start to: node stop) = exprSrc])
+			ifTrue: [n := n + 1]].
+	^n
+%
+
+category: 'preconditions'
+method: GsExtractTemporaryRefactoring
+declineReason
+	"nil if the extraction can proceed, otherwise a reason (a structural precondition)
+	 that blocks Apply."
+	self ensureAnalysis.
+	^declineString
+%
+
+category: 'preconditions'
+method: GsExtractTemporaryRefactoring
+newNameCollision
+	"nil if the new name is free, otherwise a short reason. The name collides when it
+	 already names an argument or temporary anywhere in the method, an own or inherited
+	 instance variable, a class variable visible to the class, or a pseudo-variable.
+	 Identifier-shape validation is the client input box's job."
+	| sym |
+	self ensureAnalysis.
+	(newName isNil or: [newName isEmpty]) ifTrue: [^nil].
+	sym := newName asSymbol.
+	(self isPseudoVariable: sym)
+		ifTrue: [^'the name ', newName, ' is a reserved pseudo-variable'].
+	(self localNames includes: sym)
+		ifTrue: [^'the name ', newName, ' is already an argument or temporary in this method'].
+	((definingClass allInstVarNames collect: [:e | e asSymbol]) includes: sym)
+		ifTrue: [^'the name ', newName, ' is already an instance variable'].
+	(self visibleClassVarNames includes: sym)
+		ifTrue: [^'the name ', newName, ' is already a class variable'].
+	^nil
+%
+
+category: 'preconditions'
+method: GsExtractTemporaryRefactoring
+isPseudoVariable: aSymbol
+	^#(#self #super #thisContext #nil #true #false) includes: aSymbol
+%
+
+category: 'preconditions'
+method: GsExtractTemporaryRefactoring
+localNames
+	"Every argument and temporary name declared anywhere in the method, as a Set of
+	 Symbols. From a fresh parse, so it is never affected by change-set tree mutation."
+	| names tree |
+	names := IdentitySet new.
+	tree := self parseTree.
+	tree ifNil: [^names].
+	tree nodesDo: [:node |
+		(node isMethod or: [node isBlock])
+			ifTrue: [node arguments do: [:a | names add: a name asSymbol]].
+		node isSequence
+			ifTrue: [node temporaries do: [:t | names add: t name asSymbol]]].
+	^names
+%
+
+category: 'preconditions'
+method: GsExtractTemporaryRefactoring
+visibleClassVarNames
+	"Every class-variable name visible in a method of the defining class: the class's
+	 own class variables plus every superclass's, as a Set of Symbols."
+	| names classes |
+	names := IdentitySet new.
+	classes := OrderedCollection new.
+	classes add: definingClass.
+	classes addAll: definingClass allSuperclasses.
+	classes do: [:cls | cls classVarNames do: [:n | names add: n asSymbol]].
+	^names
+%
+
+category: 'building'
+method: GsExtractTemporaryRefactoring
+buildChangeSet
+	"Parse the method, rewrite the source (occurrence(s) replaced by the temporary, a
+	 leading assignment inserted, the temporary declared) and stage a SINGLE
+	 #methodRecompile. Empty when the extraction is declined. Compiles nothing, commits
+	 nothing. A collision is surfaced (not applied) -- the client blocks Apply."
+	| cs |
+	cs := GsRefactoringChangeSet new.
+	self ensureAnalysis.
+	declineString notNil ifTrue: [^cs].
+	cs
+		addMethodRecompileInDictionary: (self dictNameForClass: definingClass)
+		className: definingClass name
+		isMeta: isMeta
+		selector: selector
+		category: self methodCategory
+		oldSource: self sourceString
+		newSource: self rewrittenSource.
+	^cs
+%
+
+category: 'building - source'
+method: GsExtractTemporaryRefactoring
+rewrittenSource
+	"The method source with the occurrence(s) replaced by the temporary, a leading
+	 'name := expr.' inserted before the earliest occurrence's statement, and the
+	 temporary declared in the enclosing sequence. Minimal-diff string splicing."
+	| src occs earliest insertStmt exprSrc indent assignText edits pass1 |
+	src := self sourceString.
+	"When the SELECTED expression IS an entire statement (a bare expression-statement --
+	 e.g. an assignment or a void send whose value is discarded), hoisting a separate
+	 'name := expr.' and replacing the occurrence would leave a degenerate 'name.'
+	 statement. Instead just turn the statement itself into 'name := expr'. This applies
+	 regardless of replaceAll: replacing several whole-statement occurrences with bare
+	 'name.' statements would be degenerate AND would change how often a side-effecting
+	 statement runs, so a whole-statement selection is always single (M2)."
+	(targetNode parent notNil and: [targetNode parent isSequence])
+		ifTrue: [^self rewrittenSourcePrefixingStatement: targetNode].
+	occs := self matchingOccurrences.
+	earliest := occs inject: occs first into: [:a :b | b start < a start ifTrue: [b] ifFalse: [a]].
+	"The hoisted assignment + temp declaration MUST land in the SELECTED occurrence's
+	 declaring sequence (declSeq), so every replaced occurrence -- including ones in a
+	 nested block under declSeq -- can see the temporary. Resolve the insertion point to
+	 the statement that is a DIRECT child of declSeq; using the nearest enclosing sequence
+	 would, for a nested-block occurrence, wrongly declare the temp inside the inner block
+	 and leave the outer occurrences undeclared (H1)."
+	insertStmt := (self topStatementIn: declSeq containing: earliest)
+		ifNil: [self statementNodeFor: earliest].
+	exprSrc := src copyFrom: targetNode start to: targetNode stop.
+	indent := self indentBefore: insertStmt start in: src.
+	assignText := newName, ' := ', exprSrc, '.', (String with: Character lf), indent.
+	edits := OrderedCollection new.
+	occs do: [:n | edits add: (Array with: n start with: n stop with: newName)].
+	edits add: (Array with: insertStmt start with: insertStmt start - 1 with: assignText).
+	pass1 := self applyEdits: edits to: src.
+	^self addTemporaryToDeclaringSequenceIn: pass1
+%
+
+category: 'building - source'
+method: GsExtractTemporaryRefactoring
+rewrittenSourcePrefixingStatement: aNode
+	"The whole-statement case: prefix 'name := ' onto the statement (so 'price := 5'
+	 becomes 'temp := price := 5') and declare the temporary. No hoisted assignment, no
+	 degenerate bare read."
+	| src pass1 |
+	src := self sourceString.
+	pass1 := self applyEdits: (OrderedCollection with:
+		(Array with: aNode start with: aNode start - 1 with: newName, ' := ')) to: src.
+	^self addTemporaryToDeclaringSequenceIn: pass1
+%
+
+category: 'building - source'
+method: GsExtractTemporaryRefactoring
+applyEdits: editTriples to: aString
+	"Apply {start, stop, replacementText} triples to aString by pure splicing, in
+	 descending start order (ties by descending stop), so each edit's coordinates stay
+	 valid against the original string. A pure insertion has stop = start - 1."
+	| sorted s |
+	sorted := editTriples asSortedCollection: [:a :b |
+		(a at: 1) = (b at: 1)
+			ifTrue: [(a at: 2) >= (b at: 2)]
+			ifFalse: [(a at: 1) > (b at: 1)]].
+	s := aString.
+	sorted do: [:e |
+		s := (s copyFrom: 1 to: (e at: 1) - 1), (e at: 3), (s copyFrom: (e at: 2) + 1 to: s size)].
+	^s
+%
+
+category: 'building - source'
+method: GsExtractTemporaryRefactoring
+indentBefore: aPos in: aString
+	"The run of spaces/tabs at the start of the line containing aPos (its indentation)."
+	| i lineStart ws j |
+	i := aPos - 1.
+	[i >= 1 and: [((aString at: i) ~= Character lf) and: [(aString at: i) ~= Character cr]]]
+		whileTrue: [i := i - 1].
+	lineStart := i + 1.
+	ws := WriteStream on: String new.
+	j := lineStart.
+	[j < aPos and: [((aString at: j) = Character space) or: [(aString at: j) = Character tab]]]
+		whileTrue: [ws nextPut: (aString at: j). j := j + 1].
+	^ws contents
+%
+
+category: 'building - source'
+method: GsExtractTemporaryRefactoring
+addTemporaryToDeclaringSequenceIn: aSource
+	"Declare the new temporary in the sequence that now holds the 'name := ...'
+	 assignment: reparse the (valid) source, find the unique assignment to the fresh
+	 name, and splice its sequence's '| .. |' clause -- extending an existing clause or
+	 creating one when the sequence had no temporaries."
+	| tree assign seq lb rb clause firstStmt pos indent |
+	tree := [RBParser parseMethod: aSource] on: Error do: [:e | nil].
+	tree isNil ifTrue: [^aSource].
+	assign := nil.
+	tree nodesDo: [:n | (n isAssignment and: [n variable name = newName]) ifTrue: [assign := n]].
+	assign isNil ifTrue: [^aSource].
+	seq := assign parent.
+	[seq notNil and: [seq isSequence not]] whileTrue: [seq := seq parent].
+	seq isNil ifTrue: [^aSource].
+	seq temporaries isEmpty ifFalse: [
+		lb := seq leftBar.
+		rb := seq rightBar.
+		(lb isNil or: [rb isNil]) ifTrue: [^aSource].
+		clause := '| ', ((seq temporaries collect: [:t | t name])
+			inject: '' into: [:acc :nm | acc isEmpty ifTrue: [nm] ifFalse: [acc, ' ', nm]]),
+			' ', newName, ' |'.
+		^(aSource copyFrom: 1 to: lb - 1), clause, (aSource copyFrom: rb + 1 to: aSource size)].
+	seq statements isEmpty ifTrue: [^aSource].
+	firstStmt := seq statements first.
+	pos := firstStmt start.
+	indent := self indentBefore: pos in: aSource.
+	^(aSource copyFrom: 1 to: pos - 1),
+	  '| ', newName, ' |', (String with: Character lf), indent,
+	  (aSource copyFrom: pos to: aSource size)
+%
+
+category: 'private'
+method: GsExtractTemporaryRefactoring
+methodCategory
+	^((self targetClass categoryOfSelector: selector environmentId: 0)
+		ifNil: ['as yet unclassified']) asString
+%
+
+category: 'private'
+method: GsExtractTemporaryRefactoring
+dictNameForClass: aClass
+	| dicts |
+	dicts := environment dictionariesDefiningClassNamed: aClass name.
+	^dicts isEmpty ifTrue: [nil] ifFalse: [dicts first name asString]
+%
+
+category: 'serializing'
+method: GsExtractTemporaryRefactoring
+analysisJsonString
+	"The pre-flight payload: how many occurrences are in scope and any decline reason."
+	self ensureAnalysis.
+	^'{"occurrenceCount":', self occurrenceCount printString,
+	  ',"decline":', (declineString ifNil: ['null'] ifNotNil: [:r | self jsonQuote: r]),
+	  '}'
+%
+
+category: 'serializing'
+method: GsExtractTemporaryRefactoring
+previewJsonString
+	^self changeSet jsonString
+%
+
+category: 'serializing'
+method: GsExtractTemporaryRefactoring
+outOfScopeJsonString
+	"The scope / precondition payload for the preview panel, in the family's shape. The
+	 collision (surfaced, blocks Apply) and decline reasons ride here."
+	^'{"references":0,"skipped":0,"scope":"method"',
+	  ',"collision":', (self newNameCollision
+		ifNil: ['null'] ifNotNil: [:reason | self jsonQuote: reason]),
+	  ',"decline":', (self declineReason
+		ifNil: ['null'] ifNotNil: [:reason | self jsonQuote: reason]),
+	  '}'
+%
+
+category: 'paginated preview'
+method: GsExtractTemporaryRefactoring
+startPreviewToken: token maxBytes: maxBytes
+	"Build the change set, stash this refactoring in SessionTemps under token, and
+	 answer the first page plus totals and precondition warnings. Nothing is committed."
+	self changeSet.
+	SessionTemps current at: token asSymbol put: self.
+	^'{"token":', (self jsonQuote: token),
+	  ',"total":', self changeSet size printString,
+	  ',"newName":', (self jsonQuote: newName),
+	  ',"occurrenceCount":', self occurrenceCount printString,
+	  ',"outOfScope":', self outOfScopeJsonString,
+	  ',"skippedMethods":[]',
+	  ',"page":', (self pageJsonFrom: 1 maxBytes: maxBytes), '}'
+%
+
+category: 'paginated preview'
+method: GsExtractTemporaryRefactoring
+pageJsonFrom: startIndex maxBytes: maxBytes
+	"A byte-bounded page of staged changes (with source) from startIndex (1-based). At
+	 least one change is always emitted when any remain."
+	| all ws i |
+	all := self changeSet changes.
+	ws := WriteStream on: String new.
+	ws nextPut: $[.
+	i := startIndex.
+	[i <= all size and: [i = startIndex or: [ws position < maxBytes]]] whileTrue: [
+		i > startIndex ifTrue: [ws nextPut: $,].
+		(all at: i) jsonOn: ws.
+		i := i + 1].
+	ws nextPut: $].
+	^'{"changes":', ws contents,
+	  ',"nextOffset":', i printString,
+	  ',"done":', (i > all size) printString, '}'
+%
+
+category: 'applying'
+method: GsExtractTemporaryRefactoring
+applyDeselected: deselectedIds
+	"Apply the staged change in the stone WITHOUT committing. A single #methodRecompile,
+	 so deselectedIds is inert -- accepted only for signature parity with the other
+	 refactorings' apply entry point. Answers {applied, failed:[..]}."
+	| applied failures |
+	failures := OrderedCollection new.
+	applied := 0.
+	self changeSet changes do: [:change |
+		[self applyChange: change. applied := applied + 1]
+		on: Error do: [:e |
+			failures add: (Array with: change id with: change className with: e messageText)]].
+	^'{"applied":', applied printString,
+	  ',"failed":[',
+	  ((failures collect: [:f |
+		'{"id":', (self jsonQuote: (f at: 1)),
+		',"label":', (self jsonQuote: (f at: 2)),
+		',"error":', (self jsonQuote: (f at: 3)), '}'])
+			inject: '' into: [:acc :s | acc isEmpty ifTrue: [s] ifFalse: [acc, ',', s]]),
+	  ']}'
+%
+
+category: 'applying'
+method: GsExtractTemporaryRefactoring
+applyChange: aChange
+	aChange kind == #methodRecompile ifTrue: [^self applyMethodRecompile: aChange].
+	^self error: 'Unexpected change kind for extract-temporary: ', aChange kind printString
+%
+
+category: 'applying'
+method: GsExtractTemporaryRefactoring
+applyMethodRecompile: aChange
+	"Recompile the one method with its rewritten source. No commit."
+	| cls target |
+	cls := environment classNamed: aChange className.
+	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
+	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
+	target
+		compileMethod: aChange newSource
+		dictionaries: System myUserProfile symbolList
+		category: (aChange category ifNil: ['as yet unclassified'])
+%
+
+category: 'serializing'
+method: GsExtractTemporaryRefactoring
+jsonQuote: aString
+	^'"', (self jsonEscape: aString), '"'
+%
+
+category: 'serializing'
+method: GsExtractTemporaryRefactoring
+jsonEscape: aString
+	"JSON string escaping emitting PURE ASCII (control chars and code points above 126
+	 become \\uXXXX), so the client's non-blocking GCI fetch is never handed a Unicode
+	 result."
+	| ws |
+	ws := WriteStream on: String new.
+	aString do: [:ch | | code |
+		code := ch asInteger.
+		ch == $" ifTrue: [ws nextPutAll: '\"']
+		ifFalse: [ch == $\ ifTrue: [ws nextPutAll: '\\']
+		ifFalse: [code = 10 ifTrue: [ws nextPutAll: '\n']
+		ifFalse: [code = 13 ifTrue: [ws nextPutAll: '\r']
+		ifFalse: [code = 9 ifTrue: [ws nextPutAll: '\t']
+		ifFalse: [code < 32
+			ifTrue: [ws nextPutAll: '\u00'; nextPutAll: (self hex2: code)]
+		ifFalse: [code > 126
+			ifTrue: [code > 65535
+				ifTrue: [ws nextPut: $?]
+				ifFalse: [ws nextPutAll: '\u';
+					nextPutAll: (self hex2: code // 256);
+					nextPutAll: (self hex2: code \\ 256)]]
+			ifFalse: [ws nextPut: ch]]]]]]]].
+	^ws contents
+%
+
+category: 'serializing'
+method: GsExtractTemporaryRefactoring
+hex2: anInteger
+	| digits |
+	digits := '0123456789abcdef'.
+	^(String with: (digits at: (anInteger // 16) + 1))
+		, (String with: (digits at: (anInteger \\ 16) + 1))
+%
+
+category: 'instance creation'
+classmethod: GsExtractTemporaryRefactoring
+class: aClass selector: aSelector meta: aBool selStart: startOffset selStop: stopOffset newName: newNameString
+	"Extract the expression between startOffset and stopOffset (1-based, inclusive) of
+	 aClass>>aSelector into a new temporary named newNameString."
+	^self
+		environment: GsRefactoringEnvironment new
+		class: aClass
+		selector: aSelector
+		meta: aBool
+		selStart: startOffset
+		selStop: stopOffset
+		newName: newNameString
+%
+
+category: 'instance creation'
+classmethod: GsExtractTemporaryRefactoring
+environment: anEnvironment class: aClass selector: aSelector meta: aBool selStart: startOffset selStop: stopOffset newName: newNameString
+	^self new
+		setEnvironment: anEnvironment
+		class: aClass
+		selector: aSelector
+		meta: aBool
+		selStart: startOffset
+		selStop: stopOffset
+		newName: newNameString
+%
+
+category: 'preconditions'
+classmethod: GsExtractTemporaryRefactoring
+analyzeSelectionForClass: aClass selector: aSelector meta: aBool selStart: startOffset selStop: stopOffset
+	"A pre-flight the client runs before prompting for the new name: how many identical
+	 occurrences of the selected expression exist in the declaring scope (so a
+	 'replace all N' option can be offered) and a decline reason if the selection cannot
+	 be extracted. The new name is not known yet, so no collision is checked here."
+	^(self
+		class: aClass
+		selector: aSelector
+		meta: aBool
+		selStart: startOffset
+		selStop: stopOffset
+		newName: '') analysisJsonString
+%
+
+category: 'paginated preview'
+classmethod: GsExtractTemporaryRefactoring
+pageForToken: token from: startIndex maxBytes: maxBytes
+	"A page from a previously-started preview (see startPreviewToken:maxBytes:), by
+	 token. Answers an error envelope if the preview session has expired."
+	^(SessionTemps current at: token asSymbol ifAbsent: [nil])
+		ifNil: ['{"error":"preview session expired","changes":[],"nextOffset":0,"done":true}']
+		ifNotNil: [:ref | ref pageJsonFrom: startIndex maxBytes: maxBytes]
+%
+
+category: 'paginated preview'
+classmethod: GsExtractTemporaryRefactoring
+applyForToken: token deselected: deselectedIds
+	"Apply a previously-started preview (by token). No commit. Answers an error
+	 envelope if the preview session has expired."
+	^(SessionTemps current at: token asSymbol ifAbsent: [nil])
+		ifNil: ['{"applied":0,"failed":[],"error":"preview session expired"}']
+		ifNotNil: [:ref | ref applyDeselected: deselectedIds]
+%
+
+category: 'paginated preview'
+classmethod: GsExtractTemporaryRefactoring
+clearToken: token
+	"Drop a finished preview from SessionTemps."
+	SessionTemps current removeKey: token asSymbol ifAbsent: [].
+	^'ok'
+%
+
+category: 'private'
+method: GsInlineMethodRefactoring
+setEnvironment: anEnvironment class: aClass selector: aSelector meta: aBool atOffset: anOffset
+	environment := anEnvironment.
+	definingClass := aClass.
+	selector := aSelector asSymbol.
+	isMeta := aBool.
+	offset := anOffset.
+	analysisDone := false
+%
+
+category: 'accessing'
+method: GsInlineMethodRefactoring
+environment
+	^environment
+%
+
+category: 'accessing'
+method: GsInlineMethodRefactoring
+definingClass
+	^definingClass
+%
+
+category: 'accessing'
+method: GsInlineMethodRefactoring
+selector
+	^selector
+%
+
+category: 'accessing'
+method: GsInlineMethodRefactoring
+isMeta
+	^isMeta
+%
+
+category: 'accessing'
+method: GsInlineMethodRefactoring
+targetSelector
+	self ensureAnalysis.
+	^targetSelector
+%
+
+category: 'accessing'
+method: GsInlineMethodRefactoring
+changeSet
+	"The staged, non-committing change set, computed once and cached. Empty when the
+	 inline is declined."
+	changeSet isNil ifTrue: [changeSet := self buildChangeSet].
+	^changeSet
+%
+
+category: 'private'
+method: GsInlineMethodRefactoring
+sourceBehavior
+	"The behaviour that holds the method being edited: the metaclass for a class-side
+	 method."
+	^isMeta ifTrue: [definingClass class] ifFalse: [definingClass]
+%
+
+category: 'private'
+method: GsInlineMethodRefactoring
+editingMethod
+	^self sourceBehavior compiledMethodAt: selector environmentId: 0 otherwise: nil
+%
+
+category: 'private'
+method: GsInlineMethodRefactoring
+sourceString
+	"The stored source of the method being edited, or nil if it does not exist."
+	| m |
+	m := self editingMethod.
+	^m isNil ifTrue: [nil] ifFalse: [m sourceString]
+%
+
+category: 'private'
+method: GsInlineMethodRefactoring
+parseTree
+	"A fresh parse of the editing method source, or nil if it is missing or unparseable."
+	| src |
+	src := self sourceString.
+	src isNil ifTrue: [^nil].
+	^[RBParser parseMethod: src] on: Error do: [:e | nil]
+%
+
+category: 'private - analysis'
+method: GsInlineMethodRefactoring
+ensureAnalysis
+	analysisDone ifFalse: [
+		analysisDone := true.
+		[self computeAnalysis] on: Error do: [:e |
+			declineString := 'The inline could not be analysed: ', e messageText]]
+%
+
+category: 'private - analysis'
+method: GsInlineMethodRefactoring
+declineWith: aReason
+	"Record a hard-decline reason and answer nil, so a caller can bail with
+	 ^self declineWith: '...' from inside computeAnalysis."
+	declineString := aReason.
+	^nil
+%
+
+category: 'private - analysis'
+method: GsInlineMethodRefactoring
+computeAnalysis
+	"Resolve the send at offset, require a self/super receiver and a single-expression
+	 target, build the inlined expression (arguments substituted), then decide whether
+	 this was the target's last sender. Sets declineString on any hard precondition."
+	| tree msg recv |
+	declineString := nil.
+	lastSender := false.
+	inlinedExpr := nil.
+	tree := self parseTree.
+	tree isNil ifTrue: [^self declineWith: 'The method source does not parse.'].
+	msg := self messageSendAtOffsetIn: tree.
+	msg isNil ifTrue: [^self declineWith: 'Place the cursor on a message send to inline it.'].
+	sendNode := msg.
+	(self isCascadeNode: msg parent)
+		ifTrue: [^self declineWith: 'Inlining a cascaded send is not supported.'].
+	recv := msg receiver.
+	(self isSelfOrSuper: recv)
+		ifFalse: [^self declineWith: 'Inline Method works only on a self or super send; the class of an arbitrary receiver is not known, so the method being called cannot be determined.'].
+	self resolveTargetForReceiver: recv.
+	declineString notNil ifTrue: [^nil].
+	self computeInline.
+	declineString notNil ifTrue: [^nil].
+	self computeLastSender
+%
+
+category: 'private - analysis'
+method: GsInlineMethodRefactoring
+messageSendAtOffsetIn: tree
+	"The message-send node under the caret. Tolerant of a caret that sits just past
+	 the selector -- e.g. at the END of a double-clicked word, where the offset lands
+	 on the following '.' or space rather than inside the send -- by also probing one
+	 character to the left, then one to the right. Answers nil when no probe lands on
+	 a send."
+	| positions |
+	positions := OrderedCollection new.
+	positions add: offset.
+	offset > 1 ifTrue: [positions add: offset - 1].
+	positions add: offset + 1.
+	positions do: [:pos | | node msg |
+		node := [tree bestNodeFor: (pos to: pos)] on: Error do: [:e | nil].
+		node notNil ifTrue: [
+			msg := self enclosingMessageOf: node.
+			msg notNil ifTrue: [^msg]]].
+	^nil
+%
+
+category: 'private - analysis'
+method: GsInlineMethodRefactoring
+enclosingMessageOf: aNode
+	"The nearest enclosing message-send node of aNode (aNode itself if it is one),
+	 walking the parent chain -- or nil if there is no enclosing send."
+	| n |
+	n := aNode.
+	[n notNil] whileTrue: [
+		n isMessage ifTrue: [^n].
+		n := n parent].
+	^nil
+%
+
+category: 'private - analysis'
+method: GsInlineMethodRefactoring
+isCascadeNode: aNode
+	"True if aNode is a cascade node. Guarded so it works whether or not the vendored
+	 AST defines #isCascade."
+	^aNode notNil and: [
+		[aNode isCascade] on: Error do: [:e | aNode class name asString = 'RBCascadeNode']]
+%
+
+category: 'private - analysis'
+method: GsInlineMethodRefactoring
+isSelfOrSuper: aNode
+	| s |
+	(aNode notNil and: [aNode isVariable]) ifFalse: [^false].
+	s := aNode name asSymbol.
+	^s == #self or: [s == #super]
+%
+
+category: 'private - analysis'
+method: GsInlineMethodRefactoring
+receiverIsSuper
+	^sendNode receiver name asSymbol == #super
+%
+
+category: 'private - analysis'
+method: GsInlineMethodRefactoring
+resolveTargetForReceiver: recv
+	"Resolve the send's selector to its implementor: for a self send, from the editing
+	 class up; for a super send, from the editing class's superclass up. Sets
+	 targetClass / targetSelector / targetSource, or declines when no implementor is
+	 found or its source is unavailable."
+	| startClass impl |
+	targetSelector := sendNode selector.
+	startClass := self receiverIsSuper
+		ifTrue: [self sourceBehavior superclass]
+		ifFalse: [self sourceBehavior].
+	impl := self implementorFrom: startClass.
+	impl isNil ifTrue: [^self declineWith: 'No implementor of #', targetSelector asString, ' was found in the hierarchy.'].
+	targetClass := impl.
+	targetSource := (targetClass compiledMethodAt: targetSelector environmentId: 0 otherwise: nil)
+		ifNil: [nil] ifNotNil: [:m | m sourceString].
+	targetSource isNil ifTrue: [^self declineWith: 'The target method source is unavailable.']
+%
+
+category: 'private - analysis'
+method: GsInlineMethodRefactoring
+implementorFrom: aClass
+	"The first class at or above aClass that implements targetSelector, or nil."
+	| c |
+	c := aClass.
+	[c notNil] whileTrue: [
+		(c includesSelector: targetSelector) ifTrue: [^c].
+		c := c superclass].
+	^nil
+%
+
+category: 'private - analysis'
+method: GsInlineMethodRefactoring
+computeInline
+	"Parse the target, require the single-expression shape, and build inlinedExpr with
+	 the send's arguments substituted for the target's parameters. Declines on any
+	 unsupported shape or unsafe substitution."
+	| ttree stmts stmt exprNode params |
+	ttree := [RBParser parseMethod: targetSource] on: Error do: [:e | nil].
+	ttree isNil ifTrue: [^self declineWith: 'The target method source does not parse.'].
+	(self treeHasPragma: ttree)
+		ifTrue: [^self declineWith: 'The target method is a primitive or has a pragma and cannot be inlined.'].
+	stmts := ttree body statements.
+	stmts size = 1
+		ifFalse: [^self declineWith: 'Inline Method supports a single-expression method; ', targetSelector asString, ' has ', stmts size printString, ' statements.'].
+	ttree body temporaries isEmpty
+		ifFalse: [^self declineWith: 'The target method declares temporaries; multi-statement inlining is not supported yet.'].
+	stmt := stmts first.
+	stmt isReturn
+		ifTrue: [targetReturnsValue := true. exprNode := stmt value]
+		ifFalse: [targetReturnsValue := false. exprNode := stmt].
+	(self node: exprNode containsReturn: true)
+		ifTrue: [^self declineWith: 'The target method has an early return and cannot be inlined.'].
+	(self node: exprNode referencesName: 'super')
+		ifTrue: [^self declineWith: 'The target method sends to super and cannot be inlined here.'].
+	(self node: exprNode referencesName: 'thisContext')
+		ifTrue: [^self declineWith: 'The target method uses thisContext and cannot be inlined.'].
+	(self sendValueIsUsed and: [targetReturnsValue not])
+		ifTrue: [^self declineWith: 'The method ', targetSelector asString, ' does not return a value, but its result is used here.'].
+	params := ttree arguments collect: [:a | a name].
+	self buildInlinedExprFrom: exprNode params: params
+%
+
+category: 'private - analysis'
+method: GsInlineMethodRefactoring
+node: aNode containsReturn: aBool
+	"True if aNode or any descendant is a return node (a ^ inside the extracted
+	 expression, e.g. within a block)."
+	aNode nodesDo: [:n | n isReturn ifTrue: [^true]].
+	^false
+%
+
+category: 'private - analysis'
+method: GsInlineMethodRefactoring
+node: aNode referencesName: aName
+	"True if aNode or any descendant is a variable node named aName."
+	aNode nodesDo: [:n | (n isVariable and: [n name = aName]) ifTrue: [^true]].
+	^false
+%
+
+category: 'private - analysis'
+method: GsInlineMethodRefactoring
+treeHasPragma: aTree
+	| p |
+	p := [aTree pragmas] on: Error do: [:e | nil].
+	^p notNil and: [p notEmpty]
+%
+
+category: 'private - analysis'
+method: GsInlineMethodRefactoring
+sendValueIsUsed
+	"True when the value produced by the send is consumed -- it is a return value, an
+	 assignment value, or a message receiver/argument -- rather than a bare statement
+	 whose value is discarded."
+	| p |
+	p := sendNode parent.
+	p isNil ifTrue: [^false].
+	p isSequence ifTrue: [^false].
+	^true
+%
+
+category: 'private - analysis'
+method: GsInlineMethodRefactoring
+buildInlinedExprFrom: exprNode params: params
+	"Build inlinedExpr from the target's body expression, splicing each parameter's
+	 occurrence with the send's corresponding argument source (a non-atomic argument
+	 parenthesised). Declines when a parameter used more than once would duplicate a
+	 side-effecting argument."
+	| exprSrc base occs |
+	exprSrc := targetSource copyFrom: exprNode start to: exprNode stop.
+	base := exprNode start.
+	occs := OrderedCollection new.
+	exprNode nodesDo: [:n |
+		(n isVariable and: [params includes: n name]) ifTrue: [occs add: n]].
+	"a parameter used more than once must be given a side-effect-free (atomic) argument"
+	1 to: params size do: [:i | | pname count |
+		pname := params at: i.
+		count := (occs select: [:o | o name = pname]) size.
+		(count > 1 and: [(self isAtomicArg: (sendNode arguments at: i)) not])
+			ifTrue: [^self declineWith: 'The argument for ', pname, ' would be evaluated ', count printString,
+				' times but is not a simple value; inlining it could change behaviour.']].
+	"splice the occurrences, highest offset first so earlier offsets stay valid"
+	(occs asSortedCollection: [:a :b | a start > b start]) do: [:n | | idx argSrc localStart localStop |
+		idx := params indexOf: n name.
+		argSrc := self argumentSourceFor: (sendNode arguments at: idx).
+		localStart := n start - base + 1.
+		localStop := n stop - base + 1.
+		exprSrc := (exprSrc copyFrom: 1 to: localStart - 1), argSrc, (exprSrc copyFrom: localStop + 1 to: exprSrc size)].
+	inlinedExpr := exprSrc
+%
+
+category: 'private - analysis'
+method: GsInlineMethodRefactoring
+argumentSourceFor: argNode
+	"The verbatim source of a send argument, parenthesised unless it is an atom."
+	| src |
+	src := self sourceString copyFrom: argNode start to: argNode stop.
+	^(self isAtomicArg: argNode) ifTrue: [src] ifFalse: ['(', src, ')']
+%
+
+category: 'private - analysis'
+method: GsInlineMethodRefactoring
+isAtomicArg: argNode
+	"An argument safe to substitute even at more than one position: a variable
+	 (incl. self/super/instVar), or a literal. Anything else may have side effects."
+	argNode isLiteralNode ifTrue: [^true].
+	^argNode isVariable
+%
+
+category: 'private - analysis'
+method: GsInlineMethodRefactoring
+computeLastSender
+	"The inline removes the target's last live send when the ONLY method sending the
+	 target selector is the one being edited AND it sends it exactly once (the
+	 occurrence at the caret). sendersOf: is whole-system and selector-based, so this
+	 is conservative: it never proposes a delete while any other sender remains."
+	| senders editing count |
+	editing := self editingMethod.
+	senders := [environment sendersOf: targetSelector] on: Error do: [:e | #()].
+	count := 0.
+	self parseTree ifNotNil: [:tree |
+		tree nodesDo: [:n | (n isMessage and: [n selector == targetSelector]) ifTrue: [count := count + 1]]].
+	lastSender := (senders allSatisfy: [:m | self sender: m isEditingMethod: editing])
+		and: [count = 1]
+%
+
+category: 'private - analysis'
+method: GsInlineMethodRefactoring
+sender: aMethod isEditingMethod: editing
+	"True if aMethod (a sender of the target selector) IS the method being edited,
+	 identified by selector + defining class rather than object identity."
+	^[aMethod selector == selector and: [aMethod inClass == self sourceBehavior]]
+		on: Error do: [:e | aMethod == editing]
+%
+
+category: 'private - source'
+method: GsInlineMethodRefactoring
+rewrittenSource
+	"The editing method with the send's source interval replaced by the inlined
+	 expression (parenthesised only where precedence requires it). Minimal-diff source
+	 splicing keyed on the node interval -- no reformatting."
+	| src |
+	src := self sourceString.
+	^(src copyFrom: 1 to: sendNode start - 1), self callText, (src copyFrom: sendNode stop + 1 to: src size)
+%
+
+category: 'private - source'
+method: GsInlineMethodRefactoring
+callText
+	^self sendNeedsParens
+		ifTrue: ['(', inlinedExpr, ')']
+		ifFalse: [inlinedExpr]
+%
+
+category: 'private - source'
+method: GsInlineMethodRefactoring
+sendNeedsParens
+	"Whether the inlined expression must be parenthesised to preserve meaning where the
+	 send sat. An atomic result never needs them; otherwise a send replacing a whole
+	 return value, assignment value, or statement does not, but one replacing a
+	 sub-expression (an argument, a receiver, a binary operand) does."
+	| parent |
+	self inlinedExprIsAtomic ifTrue: [^false].
+	parent := sendNode parent.
+	parent isNil ifTrue: [^false].
+	parent isReturn ifTrue: [^false].
+	parent isSequence ifTrue: [^false].
+	(parent isAssignment and: [parent value == sendNode]) ifTrue: [^false].
+	^true
+%
+
+category: 'private - source'
+method: GsInlineMethodRefactoring
+inlinedExprIsAtomic
+	"True when the inlined expression is a single variable or literal, so it never
+	 needs parentheses in a sub-expression position."
+	| node |
+	node := [RBParser parseExpression: inlinedExpr] on: Error do: [:e | nil].
+	node isNil ifTrue: [^false].
+	^node isVariable or: [node isLiteralNode]
+%
+
+category: 'private'
+method: GsInlineMethodRefactoring
+methodCategory
+	^((self sourceBehavior categoryOfSelector: selector environmentId: 0)
+		ifNil: ['as yet unclassified']) asString
+%
+
+category: 'private'
+method: GsInlineMethodRefactoring
+categoryOfClass: aBehavior selector: aSelector
+	^((aBehavior categoryOfSelector: aSelector environmentId: 0)
+		ifNil: ['as yet unclassified']) asString
+%
+
+category: 'private'
+method: GsInlineMethodRefactoring
+dictNameForClass: aClass
+	| dicts |
+	dicts := environment dictionariesDefiningClassNamed: aClass name.
+	^dicts isEmpty ifTrue: [nil] ifFalse: [dicts first name asString]
+%
+
+category: 'preconditions'
+method: GsInlineMethodRefactoring
+declineReason
+	"nil if the send can be inlined, otherwise a reason that blocks Apply."
+	self ensureAnalysis.
+	^declineString
+%
+
+category: 'testing'
+method: GsInlineMethodRefactoring
+isLastSender
+	"True when the inlined call was the target method's last live sender, so a delete
+	 of the now-unused target is offered."
+	self ensureAnalysis.
+	^lastSender == true
+%
+
+category: 'building'
+method: GsInlineMethodRefactoring
+buildChangeSet
+	"Stage the caller recompile and, when the inline removed the target's last sender,
+	 a deselectable removal of the target. Empty when the inline is declined. Compiles
+	 nothing, commits nothing."
+	| cs |
+	cs := GsRefactoringChangeSet new.
+	self ensureAnalysis.
+	declineString notNil ifTrue: [^cs].
+	cs
+		addMethodRecompileInDictionary: (self dictNameForClass: definingClass)
+		className: definingClass name
+		isMeta: isMeta
+		selector: selector
+		category: self methodCategory
+		oldSource: self sourceString
+		newSource: self rewrittenSource.
+	lastSender ifTrue: [
+		cs
+			addMethodRemoveInDictionary: (self dictNameForClass: targetClass thisClass)
+			className: targetClass thisClass name
+			isMeta: targetClass isMeta
+			selector: targetSelector
+			category: (self categoryOfClass: targetClass selector: targetSelector)
+			oldSource: targetSource].
+	^cs
+%
+
+category: 'serializing'
+method: GsInlineMethodRefactoring
+analysisJsonString
+	"The pre-flight payload: the target class + selector, whether a delete will be
+	 offered, and the decline reason (if any)."
+	self ensureAnalysis.
+	^'{"targetClass":', ((declineString notNil or: [targetClass isNil])
+			ifTrue: ['null'] ifFalse: [self jsonQuote: targetClass thisClass name asString]),
+	  ',"targetSelector":', ((declineString notNil or: [targetSelector isNil])
+			ifTrue: ['null'] ifFalse: [self jsonQuote: targetSelector asString]),
+	  ',"lastSender":', (lastSender == true) printString,
+	  ',"decline":', (declineString ifNil: ['null'] ifNotNil: [:r | self jsonQuote: r]),
+	  '}'
+%
+
+category: 'serializing'
+method: GsInlineMethodRefactoring
+previewJsonString
+	^self changeSet jsonString
+%
+
+category: 'serializing'
+method: GsInlineMethodRefactoring
+outOfScopeJsonString
+	"The scope / precondition payload for the preview panel, in the family's shape.
+	 Inlining introduces no shadowing, so collision is always null; a hard decline
+	 (which blocks Apply) rides here."
+	^'{"references":0,"skipped":0,"scope":"method","collision":null,"decline":',
+	  (self declineReason ifNil: ['null'] ifNotNil: [:r | self jsonQuote: r]),
+	  '}'
+%
+
+category: 'paginated preview'
+method: GsInlineMethodRefactoring
+startPreviewToken: token maxBytes: maxBytes
+	"Build the change set, stash this refactoring in SessionTemps under token, and
+	 answer the first page plus totals and precondition warnings. Nothing is committed."
+	self changeSet.
+	SessionTemps current at: token asSymbol put: self.
+	^'{"token":', (self jsonQuote: token),
+	  ',"total":', self changeSet size printString,
+	  ',"targetSelector":', (targetSelector isNil ifTrue: ['null'] ifFalse: [self jsonQuote: targetSelector asString]),
+	  ',"lastSender":', self isLastSender printString,
+	  ',"outOfScope":', self outOfScopeJsonString,
+	  ',"skippedMethods":[]',
+	  ',"page":', (self pageJsonFrom: 1 maxBytes: maxBytes), '}'
+%
+
+category: 'paginated preview'
+method: GsInlineMethodRefactoring
+pageJsonFrom: startIndex maxBytes: maxBytes
+	"A byte-bounded page of staged changes (with source) from startIndex (1-based). At
+	 least one change is always emitted when any remain."
+	| all ws i |
+	all := self changeSet changes.
+	ws := WriteStream on: String new.
+	ws nextPut: $[.
+	i := startIndex.
+	[i <= all size and: [i = startIndex or: [ws position < maxBytes]]] whileTrue: [
+		i > startIndex ifTrue: [ws nextPut: $,].
+		(all at: i) jsonOn: ws.
+		i := i + 1].
+	ws nextPut: $].
+	^'{"changes":', ws contents,
+	  ',"nextOffset":', i printString,
+	  ',"done":', (i > all size) printString, '}'
+%
+
+category: 'applying'
+method: GsInlineMethodRefactoring
+applyDeselected: deselectedIds
+	"Apply the staged changes in the stone WITHOUT committing. The caller recompile
+	 (change 1) is ALWAYS applied; a deselected id is honoured only for the optional
+	 target removal (change 2), so unticking it leaves the target in place. Answers
+	 {applied, failed:[..]}."
+	| applied failures ids |
+	ids := (deselectedIds ifNil: [#()]) asArray.
+	failures := OrderedCollection new.
+	applied := 0.
+	self changeSet changes doWithIndex: [:change :idx |
+		((idx = 1) or: [(ids includes: change id) not])
+			ifTrue: [
+				[self applyChange: change. applied := applied + 1]
+				on: Error do: [:e |
+					failures add: (Array with: change id with: change className with: e messageText)]]].
+	^'{"applied":', applied printString,
+	  ',"failed":[',
+	  ((failures collect: [:f |
+		'{"id":', (self jsonQuote: (f at: 1)),
+		',"label":', (self jsonQuote: (f at: 2)),
+		',"error":', (self jsonQuote: (f at: 3)), '}'])
+			inject: '' into: [:acc :s | acc isEmpty ifTrue: [s] ifFalse: [acc, ',', s]]),
+	  ']}'
+%
+
+category: 'applying'
+method: GsInlineMethodRefactoring
+applyChange: aChange
+	aChange kind == #methodRecompile ifTrue: [^self applyMethodRecompile: aChange].
+	aChange kind == #methodRemove ifTrue: [^self applyMethodRemove: aChange].
+	^self error: 'Unexpected change kind for inline-method: ', aChange kind printString
+%
+
+category: 'applying'
+method: GsInlineMethodRefactoring
+applyMethodRecompile: aChange
+	"Recompile the caller with its rewritten (inlined) source. No commit."
+	| cls target |
+	cls := environment classNamed: aChange className.
+	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
+	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
+	target
+		compileMethod: aChange newSource
+		dictionaries: System myUserProfile symbolList
+		category: (aChange category ifNil: ['as yet unclassified'])
+%
+
+category: 'applying'
+method: GsInlineMethodRefactoring
+applyMethodRemove: aChange
+	"Remove the now-unused target method. No commit."
+	| cls target |
+	cls := environment classNamed: aChange className.
+	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
+	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
+	target removeSelector: aChange selector asSymbol
+%
+
+category: 'serializing'
+method: GsInlineMethodRefactoring
+jsonQuote: aString
+	^'"', (self jsonEscape: aString), '"'
+%
+
+category: 'serializing'
+method: GsInlineMethodRefactoring
+jsonEscape: aString
+	"JSON string escaping emitting PURE ASCII (control chars and code points above 126
+	 become \\uXXXX), so the client's non-blocking GCI fetch is never handed a Unicode
+	 result."
+	| ws |
+	ws := WriteStream on: String new.
+	aString do: [:ch | | code |
+		code := ch asInteger.
+		ch == $" ifTrue: [ws nextPutAll: '\"']
+		ifFalse: [ch == $\ ifTrue: [ws nextPutAll: '\\']
+		ifFalse: [code = 10 ifTrue: [ws nextPutAll: '\n']
+		ifFalse: [code = 13 ifTrue: [ws nextPutAll: '\r']
+		ifFalse: [code = 9 ifTrue: [ws nextPutAll: '\t']
+		ifFalse: [code < 32
+			ifTrue: [ws nextPutAll: '\u00'; nextPutAll: (self hex2: code)]
+		ifFalse: [code > 126
+			ifTrue: [code > 65535
+				ifTrue: [ws nextPut: $?]
+				ifFalse: [ws nextPutAll: '\u';
+					nextPutAll: (self hex2: code // 256);
+					nextPutAll: (self hex2: code \\ 256)]]
+			ifFalse: [ws nextPut: ch]]]]]]]].
+	^ws contents
+%
+
+category: 'serializing'
+method: GsInlineMethodRefactoring
+hex2: anInteger
+	| digits |
+	digits := '0123456789abcdef'.
+	^(String with: (digits at: (anInteger // 16) + 1))
+		, (String with: (digits at: (anInteger \\ 16) + 1))
+%
+
+category: 'instance creation'
+classmethod: GsInlineMethodRefactoring
+class: aClass selector: aSelector meta: aBool atOffset: anOffset
+	"Inline the self/super send at anOffset (a 1-based character index into
+	 aClass>>aSelector's source)."
+	^self
+		environment: GsRefactoringEnvironment new
+		class: aClass
+		selector: aSelector
+		meta: aBool
+		atOffset: anOffset
+%
+
+category: 'instance creation'
+classmethod: GsInlineMethodRefactoring
+environment: anEnvironment class: aClass selector: aSelector meta: aBool atOffset: anOffset
+	^self new
+		setEnvironment: anEnvironment
+		class: aClass
+		selector: aSelector
+		meta: aBool
+		atOffset: anOffset
+%
+
+category: 'preconditions'
+classmethod: GsInlineMethodRefactoring
+analyzeSendForClass: aClass selector: aSelector meta: aBool atOffset: anOffset
+	"A pre-flight the client runs before opening the preview: the target class and
+	 selector the send resolves to, whether the inlined call is the target's last
+	 sender (so a delete will be offered), and a decline reason if the send cannot be
+	 inlined."
+	^(self
+		class: aClass
+		selector: aSelector
+		meta: aBool
+		atOffset: anOffset) analysisJsonString
+%
+
+category: 'paginated preview'
+classmethod: GsInlineMethodRefactoring
+pageForToken: token from: startIndex maxBytes: maxBytes
+	"A page from a previously-started preview (see startPreviewToken:maxBytes:), by
+	 token. Answers an error envelope if the preview session has expired."
+	^(SessionTemps current at: token asSymbol ifAbsent: [nil])
+		ifNil: ['{"error":"preview session expired","changes":[],"nextOffset":0,"done":true}']
+		ifNotNil: [:ref | ref pageJsonFrom: startIndex maxBytes: maxBytes]
+%
+
+category: 'paginated preview'
+classmethod: GsInlineMethodRefactoring
+applyForToken: token deselected: deselectedIds
+	"Apply a previously-started preview (by token). No commit. Answers an error
+	 envelope if the preview session has expired."
+	^(SessionTemps current at: token asSymbol ifAbsent: [nil])
+		ifNil: ['{"applied":0,"failed":[],"error":"preview session expired"}']
+		ifNotNil: [:ref | ref applyDeselected: deselectedIds]
+%
+
+category: 'paginated preview'
+classmethod: GsInlineMethodRefactoring
+clearToken: token
+	"Drop a finished preview from SessionTemps."
+	SessionTemps current removeKey: token asSymbol ifAbsent: [].
+	^'ok'
+%
+
+category: 'private'
+method: GsInlineTemporaryRefactoring
+setEnvironment: anEnvironment class: aClass selector: aSelector meta: aBool atOffset: anOffset
+	environment := anEnvironment.
+	definingClass := aClass.
+	selector := aSelector asSymbol.
+	isMeta := aBool.
+	offset := anOffset.
+	analysisDone := false
+%
+
+category: 'accessing'
+method: GsInlineTemporaryRefactoring
+environment
+	^environment
+%
+
+category: 'accessing'
+method: GsInlineTemporaryRefactoring
+definingClass
+	^definingClass
+%
+
+category: 'accessing'
+method: GsInlineTemporaryRefactoring
+selector
+	^selector
+%
+
+category: 'accessing'
+method: GsInlineTemporaryRefactoring
+isMeta
+	^isMeta
+%
+
+category: 'accessing'
+method: GsInlineTemporaryRefactoring
+changeSet
+	"The staged, non-committing change set, computed once and cached. Empty when the
+	 inline is declined."
+	changeSet isNil ifTrue: [changeSet := self buildChangeSet].
+	^changeSet
+%
+
+category: 'private'
+method: GsInlineTemporaryRefactoring
+targetClass
+	"The behaviour that holds the method: the metaclass for a class-side method."
+	^isMeta ifTrue: [definingClass class] ifFalse: [definingClass]
+%
+
+category: 'private'
+method: GsInlineTemporaryRefactoring
+sourceString
+	"The stored source of the method being refactored, or nil if it does not exist."
+	| m |
+	m := self targetClass compiledMethodAt: selector environmentId: 0 otherwise: nil.
+	^m isNil ifTrue: [nil] ifFalse: [m sourceString]
+%
+
+category: 'private'
+method: GsInlineTemporaryRefactoring
+parseTree
+	"A fresh parse of the method source, or nil if it is missing or unparseable."
+	| src |
+	src := self sourceString.
+	src isNil ifTrue: [^nil].
+	^[RBParser parseMethod: src] on: Error do: [:e | nil]
+%
+
+category: 'private - scope'
+method: GsInlineTemporaryRefactoring
+scopeNode: aNode declaresName: aName
+	"Does aNode introduce a scope binding for aName? A method/block declares arguments;
+	 a sequence declares temporaries."
+	"Compare by symbol identity (never a raw String =), so a Unicode variable name on a
+	 3.6.x stone never trips error 2718 -- matching the sibling GsRenameTemporaryRefactoring."
+	| sym |
+	sym := aName asSymbol.
+	(aNode isMethod or: [aNode isBlock])
+		ifTrue: [^aNode arguments anySatisfy: [:a | a name asSymbol == sym]].
+	aNode isSequence
+		ifTrue: [^aNode temporaries anySatisfy: [:t | t name asSymbol == sym]].
+	^false
+%
+
+category: 'private - scope'
+method: GsInlineTemporaryRefactoring
+declaringScopeForName: aName from: aNode
+	"The nearest enclosing scope node that declares aName, walking aNode's parent chain
+	 outward -- or nil if aName is not a local there."
+	| n |
+	n := aNode.
+	[n notNil] whileTrue: [
+		(self scopeNode: n declaresName: aName) ifTrue: [^n].
+		n := n parent].
+	^nil
+%
+
+category: 'private - analysis'
+method: GsInlineTemporaryRefactoring
+variableNodeAtOffsetIn: aTree
+	"The variable node under the caret, tolerant of a caret just past the name (M2's
+	 offset / offset-1 / offset+1 probe). Answers nil when no probe lands on a variable."
+	| positions |
+	positions := OrderedCollection new.
+	positions add: offset.
+	offset > 1 ifTrue: [positions add: offset - 1].
+	positions add: offset + 1.
+	positions do: [:pos | | node |
+		node := [aTree bestNodeFor: (pos to: pos)] on: Error do: [:e | nil].
+		(node notNil and: [node isVariable]) ifTrue: [^node]].
+	^nil
+%
+
+category: 'private - analysis'
+method: GsInlineTemporaryRefactoring
+ensureAnalysis
+	analysisDone ifFalse: [
+		analysisDone := true.
+		[self computeAnalysis] on: Error do: [:e |
+			declineString := 'The inline could not be analysed: ', e messageText]]
+%
+
+category: 'private - analysis'
+method: GsInlineTemporaryRefactoring
+declineWith: aReason
+	declineString := aReason.
+	^nil
+%
+
+category: 'private - analysis'
+method: GsInlineTemporaryRefactoring
+computeAnalysis
+	"Resolve the temporary at offset, require the single-assignment / at-least-one-read
+	 shape, and record the assignment's value and the read occurrences. Sets
+	 declineString on any hard precondition."
+	| occ scope declNodes assigns varSym |
+	declineString := nil.
+	varName := nil.
+	declScope := nil.
+	assignmentNode := nil.
+	reads := OrderedCollection new.
+	tree := self parseTree.
+	tree isNil ifTrue: [^self declineWith: 'The method source does not parse.'].
+	occ := self variableNodeAtOffsetIn: tree.
+	occ isNil ifTrue: [^self declineWith: 'Place the cursor on the temporary variable you want to inline.'].
+	varName := occ name.
+	(self isPseudoVariable: varName asSymbol)
+		ifTrue: [^self declineWith: '''', varName, ''' is a reserved variable and cannot be inlined.'].
+	scope := self declaringScopeForName: varName from: occ.
+	scope isNil ifTrue: [^self declineNonLocal].
+	scope isSequence
+		ifFalse: [^self declineWith: '''', varName, ''' is an argument; its value is supplied by the sender and cannot be inlined.'].
+	declScope := scope.
+	"declaration nodes (args + temps) are not reads"
+	declNodes := IdentitySet new.
+	tree nodesDo: [:n |
+		(n isMethod or: [n isBlock]) ifTrue: [n arguments do: [:a | declNodes add: a]].
+		n isSequence ifTrue: [n temporaries do: [:t | declNodes add: t]]].
+	"assignments to the temp bound to this scope, and reads (non-declaration variable
+	 uses of the name bound to this scope that are not an assignment's LHS)."
+	"Symbol identity throughout (never String =) -- see scopeNode:declaresName:."
+	varSym := varName asSymbol.
+	assigns := OrderedCollection new.
+	tree nodesDo: [:n |
+		(n isAssignment
+			and: [n variable name asSymbol == varSym
+			and: [(self declaringScopeForName: varName from: n variable) == declScope]])
+			ifTrue: [assigns add: n]].
+	tree nodesDo: [:n |
+		(n isVariable
+			and: [n name asSymbol == varSym
+			and: [(declNodes includes: n) not
+			and: [(self declaringScopeForName: varName from: n) == declScope]]])
+			ifTrue: [(assigns anySatisfy: [:a | a variable == n]) ifFalse: [reads add: n]]].
+	assigns isEmpty ifTrue: [^self declineWith: '''', varName, ''' is never assigned a value, so there is nothing to inline.'].
+	assigns size > 1 ifTrue: [^self declineWith: '''', varName, ''' is assigned more than once; Inline Temporary supports a temporary assigned exactly once.'].
+	reads isEmpty ifTrue: [^self declineWith: '''', varName, ''' is never read; there is nothing to inline.'].
+	assignmentNode := assigns first.
+	(declScope statements anySatisfy: [:s | s == assignmentNode])
+		ifFalse: [^self declineWith: '''', varName, ''' is assigned inside a nested block or conditional; its value may not always be set, so it cannot be inlined.'].
+	(reads anySatisfy: [:r | r start < assignmentNode stop])
+		ifTrue: [^self declineWith: '''', varName, ''' is used before it is assigned; inlining could change its value.'].
+	valueSrc := self sourceString copyFrom: assignmentNode value start to: assignmentNode value stop.
+	valueIsAtomic := self isAtomicSource: valueSrc.
+	(valueIsAtomic not and: [reads size > 1])
+		ifTrue: [^self declineWith: '''', varName, ''' is used ', reads size printString,
+			' times and its value is not a simple expression; inlining it could evaluate it repeatedly and change behaviour.']
+%
+
+category: 'private - analysis'
+method: GsInlineTemporaryRefactoring
+declineNonLocal
+	"The name at the caret is not a method-local. Classify it (instance variable, class
+	 variable, global) so the decline reason points the user elsewhere."
+	| sym |
+	sym := varName asSymbol.
+	((definingClass allInstVarNames collect: [:e | e asSymbol]) includes: sym)
+		ifTrue: [^self declineWith: '''', varName, ''' is an instance variable; only a method or block temporary can be inlined.'].
+	(self visibleClassVarNames includes: sym)
+		ifTrue: [^self declineWith: '''', varName, ''' is a class variable; only a method or block temporary can be inlined.'].
+	((environment symbolList objectNamed: sym) notNil)
+		ifTrue: [^self declineWith: '''', varName, ''' is a global; only a method or block temporary can be inlined.'].
+	^self declineWith: '''', varName, ''' is not a temporary at that position (it may be a message selector or an undeclared name).'
+%
+
+category: 'private - analysis'
+method: GsInlineTemporaryRefactoring
+visibleClassVarNames
+	| names classes |
+	names := IdentitySet new.
+	classes := OrderedCollection new.
+	classes add: definingClass.
+	classes addAll: definingClass allSuperclasses.
+	classes do: [:cls | cls classVarNames do: [:n | names add: n asSymbol]].
+	^names
+%
+
+category: 'private - analysis'
+method: GsInlineTemporaryRefactoring
+isPseudoVariable: aSymbol
+	^#(#self #super #thisContext #nil #true #false) includes: aSymbol
+%
+
+category: 'private - analysis'
+method: GsInlineTemporaryRefactoring
+isAtomicSource: aString
+	"True when the value expression is a lone variable or literal, so it never needs
+	 parentheses at a sub-expression position and may be substituted more than once."
+	| node |
+	node := [RBParser parseExpression: aString] on: Error do: [:e | nil].
+	node isNil ifTrue: [^false].
+	^node isVariable or: [node isLiteralNode]
+%
+
+category: 'preconditions'
+method: GsInlineTemporaryRefactoring
+declineReason
+	"nil if the temporary can be inlined, otherwise a reason that blocks Apply."
+	self ensureAnalysis.
+	^declineString
+%
+
+category: 'building'
+method: GsInlineTemporaryRefactoring
+buildChangeSet
+	"Rewrite the source (reads replaced by the value, assignment removed, temporary
+	 dropped from its declaration) and stage a SINGLE #methodRecompile. Empty when the
+	 inline is declined. Compiles nothing, commits nothing."
+	| cs |
+	cs := GsRefactoringChangeSet new.
+	self ensureAnalysis.
+	declineString notNil ifTrue: [^cs].
+	cs
+		addMethodRecompileInDictionary: (self dictNameForClass: definingClass)
+		className: definingClass name
+		isMeta: isMeta
+		selector: selector
+		category: self methodCategory
+		oldSource: self sourceString
+		newSource: self rewrittenSource.
+	^cs
+%
+
+category: 'building - source'
+method: GsInlineTemporaryRefactoring
+rewrittenSource
+	"The method source with each read replaced by the (parenthesised-as-needed) value,
+	 the assignment statement removed, and the temporary dropped from its declaration.
+	 Minimal-diff string splicing over disjoint intervals."
+	| src edits rem |
+	src := self sourceString.
+	edits := OrderedCollection new.
+	reads do: [:r |
+		edits add: (Array with: r start with: r stop with: (self valueTextFor: r))].
+	rem := self removalIntervalFor: assignmentNode in: src.
+	edits add: (Array with: (rem at: 1) with: (rem at: 2) with: '').
+	edits add: self declarationEdit.
+	^self applyEdits: edits to: src
+%
+
+category: 'building - source'
+method: GsInlineTemporaryRefactoring
+valueTextFor: aReadNode
+	"The value source spliced at aReadNode, parenthesised only where precedence
+	 requires: an atomic value never needs parens; otherwise parens unless the read is a
+	 whole return value, assignment value, or bare statement."
+	^(self readNeedsParens: aReadNode)
+		ifTrue: ['(', valueSrc, ')']
+		ifFalse: [valueSrc]
+%
+
+category: 'building - source'
+method: GsInlineTemporaryRefactoring
+readNeedsParens: aReadNode
+	| parent |
+	valueIsAtomic ifTrue: [^false].
+	parent := aReadNode parent.
+	parent isNil ifTrue: [^false].
+	parent isReturn ifTrue: [^false].
+	parent isSequence ifTrue: [^false].
+	(parent isAssignment and: [parent value == aReadNode]) ifTrue: [^false].
+	^true
+%
+
+category: 'building - source'
+method: GsInlineTemporaryRefactoring
+removalIntervalFor: aStatement in: src
+	"The source interval to delete for aStatement: the statement, its trailing '.'
+	 separator, and -- only when the rest of the line is whitespace -- the line's
+	 leading indentation and newline, so no dangling '.' or blank line is left. Never
+	 crosses into another statement sharing the line."
+	| start stop p q r leadingWs |
+	start := aStatement start.
+	p := aStatement start.
+	[p > 1 and: [((src at: p - 1) ~= Character lf) and: [(src at: p - 1) ~= Character cr]]]
+		whileTrue: [p := p - 1].
+	leadingWs := (p to: aStatement start - 1) allSatisfy: [:i |
+		((src at: i) = Character space) or: [(src at: i) = Character tab]].
+	leadingWs ifTrue: [start := p].
+	stop := aStatement stop.
+	q := stop.
+	[q < src size and: [((src at: q + 1) = Character space) or: [(src at: q + 1) = Character tab]]]
+		whileTrue: [q := q + 1].
+	(q < src size and: [(src at: q + 1) = $.])
+		ifTrue: [
+			q := q + 1.
+			r := q.
+			[r < src size and: [((src at: r + 1) = Character space) or: [(src at: r + 1) = Character tab]]]
+				whileTrue: [r := r + 1].
+			(r < src size and: [((src at: r + 1) = Character lf) or: [(src at: r + 1) = Character cr]])
+				ifTrue: [
+					r := r + 1.
+					(r < src size and: [(src at: r) = Character cr and: [(src at: r + 1) = Character lf]])
+						ifTrue: [r := r + 1].
+					stop := r]
+				ifFalse: [stop := q]].
+	^Array with: start with: stop
+%
+
+category: 'building - source'
+method: GsInlineTemporaryRefactoring
+declarationEdit
+	"The {start, stop, text} triple that removes the temporary from its declaring
+	 sequence's '| .. |' clause -- dropping the whole clause when it was the only
+	 temporary."
+	| lb rb keep |
+	lb := declScope leftBar.
+	rb := declScope rightBar.
+	(lb isNil or: [rb isNil]) ifTrue: [^Array with: 1 with: 0 with: ''].
+	keep := declScope temporaries reject: [:t | t name asSymbol == varName asSymbol].
+	keep isEmpty ifTrue: [^Array with: lb with: rb with: ''].
+	^Array with: lb with: rb with:
+		('| ', (keep inject: '' into: [:acc :t | acc isEmpty ifTrue: [t name] ifFalse: [acc, ' ', t name]]), ' |')
+%
+
+category: 'building - source'
+method: GsInlineTemporaryRefactoring
+applyEdits: editTriples to: aString
+	"Apply {start, stop, text} triples by pure splicing, in descending start order (ties
+	 by descending stop), so each edit's original coordinates stay valid. A pure removal
+	 has an empty text; a no-op has stop = start - 1 and empty text."
+	| sorted s |
+	sorted := editTriples asSortedCollection: [:a :b |
+		(a at: 1) = (b at: 1)
+			ifTrue: [(a at: 2) >= (b at: 2)]
+			ifFalse: [(a at: 1) > (b at: 1)]].
+	s := aString.
+	sorted do: [:e |
+		s := (s copyFrom: 1 to: (e at: 1) - 1), (e at: 3), (s copyFrom: (e at: 2) + 1 to: s size)].
+	^s
+%
+
+category: 'private'
+method: GsInlineTemporaryRefactoring
+methodCategory
+	^((self targetClass categoryOfSelector: selector environmentId: 0)
+		ifNil: ['as yet unclassified']) asString
+%
+
+category: 'private'
+method: GsInlineTemporaryRefactoring
+dictNameForClass: aClass
+	| dicts |
+	dicts := environment dictionariesDefiningClassNamed: aClass name.
+	^dicts isEmpty ifTrue: [nil] ifFalse: [dicts first name asString]
+%
+
+category: 'serializing'
+method: GsInlineTemporaryRefactoring
+analysisJsonString
+	"The pre-flight payload: the temporary's name and any decline reason."
+	self ensureAnalysis.
+	^'{"name":', ((declineString notNil or: [varName isNil])
+			ifTrue: ['null'] ifFalse: [self jsonQuote: varName]),
+	  ',"decline":', (declineString ifNil: ['null'] ifNotNil: [:r | self jsonQuote: r]),
+	  '}'
+%
+
+category: 'serializing'
+method: GsInlineTemporaryRefactoring
+previewJsonString
+	^self changeSet jsonString
+%
+
+category: 'serializing'
+method: GsInlineTemporaryRefactoring
+outOfScopeJsonString
+	"The scope / precondition payload for the preview panel, in the family's shape.
+	 Inlining introduces no shadowing, so collision is always null; a hard decline rides
+	 here."
+	^'{"references":0,"skipped":0,"scope":"method","collision":null,"decline":',
+	  (self declineReason ifNil: ['null'] ifNotNil: [:r | self jsonQuote: r]),
+	  '}'
+%
+
+category: 'paginated preview'
+method: GsInlineTemporaryRefactoring
+startPreviewToken: token maxBytes: maxBytes
+	"Build the change set, stash this refactoring in SessionTemps under token, and
+	 answer the first page plus totals and precondition warnings. Nothing is committed."
+	self changeSet.
+	SessionTemps current at: token asSymbol put: self.
+	^'{"token":', (self jsonQuote: token),
+	  ',"total":', self changeSet size printString,
+	  ',"name":', (varName isNil ifTrue: ['null'] ifFalse: [self jsonQuote: varName]),
+	  ',"outOfScope":', self outOfScopeJsonString,
+	  ',"skippedMethods":[]',
+	  ',"page":', (self pageJsonFrom: 1 maxBytes: maxBytes), '}'
+%
+
+category: 'paginated preview'
+method: GsInlineTemporaryRefactoring
+pageJsonFrom: startIndex maxBytes: maxBytes
+	"A byte-bounded page of staged changes (with source) from startIndex (1-based). At
+	 least one change is always emitted when any remain."
+	| all ws i |
+	all := self changeSet changes.
+	ws := WriteStream on: String new.
+	ws nextPut: $[.
+	i := startIndex.
+	[i <= all size and: [i = startIndex or: [ws position < maxBytes]]] whileTrue: [
+		i > startIndex ifTrue: [ws nextPut: $,].
+		(all at: i) jsonOn: ws.
+		i := i + 1].
+	ws nextPut: $].
+	^'{"changes":', ws contents,
+	  ',"nextOffset":', i printString,
+	  ',"done":', (i > all size) printString, '}'
+%
+
+category: 'applying'
+method: GsInlineTemporaryRefactoring
+applyDeselected: deselectedIds
+	"Apply the staged change in the stone WITHOUT committing. A single #methodRecompile,
+	 so deselectedIds is inert. Answers {applied, failed:[..]}."
+	| applied failures |
+	failures := OrderedCollection new.
+	applied := 0.
+	self changeSet changes do: [:change |
+		[self applyChange: change. applied := applied + 1]
+		on: Error do: [:e |
+			failures add: (Array with: change id with: change className with: e messageText)]].
+	^'{"applied":', applied printString,
+	  ',"failed":[',
+	  ((failures collect: [:f |
+		'{"id":', (self jsonQuote: (f at: 1)),
+		',"label":', (self jsonQuote: (f at: 2)),
+		',"error":', (self jsonQuote: (f at: 3)), '}'])
+			inject: '' into: [:acc :s | acc isEmpty ifTrue: [s] ifFalse: [acc, ',', s]]),
+	  ']}'
+%
+
+category: 'applying'
+method: GsInlineTemporaryRefactoring
+applyChange: aChange
+	aChange kind == #methodRecompile ifTrue: [^self applyMethodRecompile: aChange].
+	^self error: 'Unexpected change kind for inline-temporary: ', aChange kind printString
+%
+
+category: 'applying'
+method: GsInlineTemporaryRefactoring
+applyMethodRecompile: aChange
+	"Recompile the one method with its rewritten source. No commit."
+	| cls target |
+	cls := environment classNamed: aChange className.
+	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
+	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
+	target
+		compileMethod: aChange newSource
+		dictionaries: System myUserProfile symbolList
+		category: (aChange category ifNil: ['as yet unclassified'])
+%
+
+category: 'serializing'
+method: GsInlineTemporaryRefactoring
+jsonQuote: aString
+	^'"', (self jsonEscape: aString), '"'
+%
+
+category: 'serializing'
+method: GsInlineTemporaryRefactoring
+jsonEscape: aString
+	"JSON string escaping emitting PURE ASCII (control chars and code points above 126
+	 become \\uXXXX), so the client's non-blocking GCI fetch is never handed a Unicode
+	 result."
+	| ws |
+	ws := WriteStream on: String new.
+	aString do: [:ch | | code |
+		code := ch asInteger.
+		ch == $" ifTrue: [ws nextPutAll: '\"']
+		ifFalse: [ch == $\ ifTrue: [ws nextPutAll: '\\']
+		ifFalse: [code = 10 ifTrue: [ws nextPutAll: '\n']
+		ifFalse: [code = 13 ifTrue: [ws nextPutAll: '\r']
+		ifFalse: [code = 9 ifTrue: [ws nextPutAll: '\t']
+		ifFalse: [code < 32
+			ifTrue: [ws nextPutAll: '\u00'; nextPutAll: (self hex2: code)]
+		ifFalse: [code > 126
+			ifTrue: [code > 65535
+				ifTrue: [ws nextPut: $?]
+				ifFalse: [ws nextPutAll: '\u';
+					nextPutAll: (self hex2: code // 256);
+					nextPutAll: (self hex2: code \\ 256)]]
+			ifFalse: [ws nextPut: ch]]]]]]]].
+	^ws contents
+%
+
+category: 'serializing'
+method: GsInlineTemporaryRefactoring
+hex2: anInteger
+	| digits |
+	digits := '0123456789abcdef'.
+	^(String with: (digits at: (anInteger // 16) + 1))
+		, (String with: (digits at: (anInteger \\ 16) + 1))
+%
+
+category: 'instance creation'
+classmethod: GsInlineTemporaryRefactoring
+class: aClass selector: aSelector meta: aBool atOffset: anOffset
+	"Inline the temporary at anOffset (a 1-based character index into aClass>>aSelector's
+	 source)."
+	^self
+		environment: GsRefactoringEnvironment new
+		class: aClass
+		selector: aSelector
+		meta: aBool
+		atOffset: anOffset
+%
+
+category: 'instance creation'
+classmethod: GsInlineTemporaryRefactoring
+environment: anEnvironment class: aClass selector: aSelector meta: aBool atOffset: anOffset
+	^self new
+		setEnvironment: anEnvironment
+		class: aClass
+		selector: aSelector
+		meta: aBool
+		atOffset: anOffset
+%
+
+category: 'preconditions'
+classmethod: GsInlineTemporaryRefactoring
+analyzeTempForClass: aClass selector: aSelector meta: aBool atOffset: anOffset
+	"A pre-flight the client runs before opening the preview: the temporary's name and a
+	 decline reason if it cannot be inlined."
+	^(self
+		class: aClass
+		selector: aSelector
+		meta: aBool
+		atOffset: anOffset) analysisJsonString
+%
+
+category: 'paginated preview'
+classmethod: GsInlineTemporaryRefactoring
+pageForToken: token from: startIndex maxBytes: maxBytes
+	"A page from a previously-started preview (see startPreviewToken:maxBytes:), by
+	 token. Answers an error envelope if the preview session has expired."
+	^(SessionTemps current at: token asSymbol ifAbsent: [nil])
+		ifNil: ['{"error":"preview session expired","changes":[],"nextOffset":0,"done":true}']
+		ifNotNil: [:ref | ref pageJsonFrom: startIndex maxBytes: maxBytes]
+%
+
+category: 'paginated preview'
+classmethod: GsInlineTemporaryRefactoring
+applyForToken: token deselected: deselectedIds
+	"Apply a previously-started preview (by token). No commit. Answers an error
+	 envelope if the preview session has expired."
+	^(SessionTemps current at: token asSymbol ifAbsent: [nil])
+		ifNil: ['{"applied":0,"failed":[],"error":"preview session expired"}']
+		ifNotNil: [:ref | ref applyDeselected: deselectedIds]
+%
+
+category: 'paginated preview'
+classmethod: GsInlineTemporaryRefactoring
+clearToken: token
+	"Drop a finished preview from SessionTemps."
+	SessionTemps current removeKey: token asSymbol ifAbsent: [].
+	^'ok'
+%
+
+category: 'private'
+method: GsInstVarStructureRefactoring
+setEnvironment: anEnvironment operation: anOp class: aClass varName: aName selector: aSelector meta: aBool
+	environment := anEnvironment.
+	operation := anOp.
+	definingClass := aClass.
+	varName := aName asString.
+	methodSelector := aSelector isNil ifTrue: [nil] ifFalse: [aSelector asSymbol].
+	methodMeta := aBool.
+	targetClasses := nil.
+	moveDirection := nil.
+	moveAccessors := false.
+	accessorRemovals := OrderedCollection new.
+	accessorAdds := OrderedCollection new.
+	migrateInstances := false.
+	removeOldFromHistory := false.
+	analysisDone := false
+%
+
+category: 'private'
+method: GsInstVarStructureRefactoring
+setMoveTargets: anArrayOfClasses direction: aSymbol
+	"The #move operation's destination class(es) and direction (#up / #down). Answers self."
+	targetClasses := anArrayOfClasses.
+	moveDirection := aSymbol.
+	^self
+%
+
+category: 'accessing'
+method: GsInstVarStructureRefactoring
+effectiveDirection
+	"The direction the ivar travels, unified across the fixed push operations and the general
+	 #move. #up (toward superclasses) or #down (toward subclasses)."
+	operation == #pushUp ifTrue: [^#up].
+	operation == #pushDown ifTrue: [^#down].
+	^moveDirection
+%
+
+category: 'accessing'
+method: GsInstVarStructureRefactoring
+migrateInstances: mi removeOldFromHistory: rh
+	"Opt-in, class-rename-parity persistent options (both default false):
+	  - migrateInstances: migrate every old-version instance of each reversioned class to its
+	    new version -- REQUIRES a commit, so the apply commits when it is on;
+	  - removeOldFromHistory: prune the superseded versions from each reversioned class's
+	    history -- also commits.
+	 With both off the apply never commits (matching the rest of the family). Answers self."
+	migrateInstances := mi.
+	removeOldFromHistory := rh.
+	^self
+%
+
+category: 'accessing'
+method: GsInstVarStructureRefactoring
+moveAccessors: aBool
+	"V2/V3 opt-in: also move the pushed ivar's SIMPLE accessors (a `^ivar` getter and an
+	 `ivar := arg` setter) along with the declaration. Anything that isn't a trivial
+	 getter/setter is never moved. Answers self so senders can chain before analysis."
+	moveAccessors := aBool.
+	^self
+%
+
+category: 'accessing'
+method: GsInstVarStructureRefactoring
+moveAccessors
+	^moveAccessors == true
+%
+
+category: 'accessing'
+method: GsInstVarStructureRefactoring
+environment
+	^environment
+%
+
+category: 'accessing'
+method: GsInstVarStructureRefactoring
+operation
+	^operation
+%
+
+category: 'accessing'
+method: GsInstVarStructureRefactoring
+topClass
+	self ensureAnalysis.
+	^topClass
+%
+
+category: 'private'
+method: GsInstVarStructureRefactoring
+ownInstVarsOf: aClass
+	"aClass's OWN instance-variable names (not inherited), as an Array of Strings."
+	^aClass instVarNames collect: [:e | e asString]
+%
+
+category: 'private'
+method: GsInstVarStructureRefactoring
+allInstVarsOf: aClass
+	^aClass allInstVarNames collect: [:e | e asString]
+%
+
+category: 'private - analysis'
+method: GsInstVarStructureRefactoring
+ensureAnalysis
+	analysisDone ifFalse: [
+		analysisDone := true.
+		[self computeAnalysis] on: Error do: [:e |
+			decline := 'The change could not be analysed: ', e messageText]]
+%
+
+category: 'private - analysis'
+method: GsInstVarStructureRefactoring
+computeAnalysis
+	"Set decline (nil when viable), topClass, newIvarLists (class name -> new own-ivar
+	 Array), and, for V5, methodRewrite. Dispatches on the operation."
+	decline := nil.
+	newIvarLists := Dictionary new.
+	accessorRemovals := OrderedCollection new.
+	accessorAdds := OrderedCollection new.
+	operation == #convertTemp ifTrue: [^self analyzeConvertTemp].
+	operation == #pushUp ifTrue: [^self analyzePushUp].
+	operation == #pushDown ifTrue: [^self analyzePushDown].
+	operation == #move ifTrue: [^self analyzeMove].
+	decline := 'Unknown operation: ', operation printString
+%
+
+category: 'private - analysis'
+method: GsInstVarStructureRefactoring
+analyzeConvertTemp
+	"V5: the method must declare varName as a method-level temporary, and varName must not
+	 already be an instance variable of the class."
+	| behavior method src tree names remaining newDecl newSrc |
+	topClass := definingClass.
+	methodMeta ifTrue: [
+		"A class-side (meta) method's temporary can't become an INSTANCE variable (the class
+		 method can't reference it), and this engine only edits instance-side ivar lists. Decline
+		 rather than corrupt (add an unreachable ivar + recompile the class method against it)."
+		^decline := 'Cannot convert #', varName, ': converting a temporary in a class-side method to an instance variable is not supported.'].
+	((self allInstVarsOf: definingClass) includes: varName) ifTrue: [
+		^decline := 'Cannot convert #', varName, ': it is already an instance variable of ', definingClass name asString, '.'].
+	behavior := methodMeta ifTrue: [definingClass class] ifFalse: [definingClass].
+	method := behavior compiledMethodAt: methodSelector environmentId: 0 otherwise: nil.
+	method isNil ifTrue: [
+		^decline := 'Cannot convert #', varName, ': the method #', methodSelector asString, ' was not found.'].
+	src := method sourceString.
+	tree := [RBParser parseMethod: src] on: Error do: [:e | nil].
+	tree isNil ifTrue: [
+		^decline := 'Cannot convert #', varName, ': the method source does not parse.'].
+	names := tree body temporaries collect: [:t | t name asString].
+	(names includes: varName) ifFalse: [
+		^decline := 'Cannot convert #', varName, ': it is not a method-level temporary of #', methodSelector asString, '.'].
+	remaining := names reject: [:n | n = varName].
+	newDecl := remaining isEmpty
+		ifTrue: ['']
+		ifFalse: ['| ', (self spaceList: remaining), ' |'].
+	newSrc := (src copyFrom: 1 to: tree body leftBar - 1),
+		newDecl,
+		(src copyFrom: tree body rightBar + 1 to: src size).
+	methodRewrite := Array with: definingClass name asString with: methodSelector with: methodMeta with: src with: newSrc.
+	newIvarLists at: definingClass name asString put: ((self ownInstVarsOf: definingClass) copyWith: varName)
+%
+
+category: 'private - analysis'
+method: GsInstVarStructureRefactoring
+analyzePushUp
+	"V2: varName must be an OWN ivar of definingClass; its immediate superclass (and its
+	 ancestors) must not already define it; and no OTHER descendant of that superclass may
+	 own a same-named ivar (it would collide with the newly inherited one)."
+	| sup |
+	((self ownInstVarsOf: definingClass) includes: varName) ifFalse: [
+		^decline := 'Cannot push up ', varName, ': it is not an instance variable declared in ', definingClass name asString, '.'].
+	sup := definingClass superclass.
+	sup isNil ifTrue: [
+		^decline := 'Cannot push up ', varName, ': ', definingClass name asString, ' has no superclass.'].
+	((self allInstVarsOf: sup) includes: varName) ifTrue: [
+		^decline := 'Cannot push up ', varName, ': ', sup name asString, ' already defines an instance variable of that name.'].
+	(self otherDescendant: definingClass ofTop: sup ownsIvar: varName) ifNotNil: [:cls |
+		^decline := 'Cannot push up ', varName, ': ', cls, ' also declares an instance variable of that name, which would collide once it is inherited.'].
+	topClass := sup.
+	newIvarLists at: definingClass name asString put: ((self ownInstVarsOf: definingClass) reject: [:n | n = varName]).
+	newIvarLists at: sup name asString put: ((self ownInstVarsOf: sup) copyWith: varName).
+	self moveAccessors ifTrue: [self planAccessorMovesFrom: definingClass to: (Array with: sup)]
+%
+
+category: 'private - analysis'
+method: GsInstVarStructureRefactoring
+analyzePushDown
+	"V3: varName must be an OWN ivar of definingClass; the class's own methods must not
+	 access it (removing it would leave them undeclared); it must have subclasses; and no
+	 proper descendant may already own a same-named ivar (it would collide once inherited)."
+	| subs users |
+	((self ownInstVarsOf: definingClass) includes: varName) ifFalse: [
+		^decline := 'Cannot push down ', varName, ': it is not an instance variable declared in ', definingClass name asString, '.'].
+	subs := (definingClass subclasses ifNil: [#()]) asArray.
+	subs isEmpty ifTrue: [
+		^decline := 'Cannot push down ', varName, ': ', definingClass name asString, ' has no subclasses.'].
+	users := environment instanceMethodsAccessing: varName inClass: definingClass.
+	"When moving accessors, the class's own SIMPLE accessors of varName no longer block the
+	 push-down -- they move down with the ivar instead of dangling. Non-accessor users still block."
+	self moveAccessors ifTrue: [
+		| accessorSels |
+		accessorSels := (self simpleAccessorsOf: definingClass forIvar: varName) collect: [:a | a at: 1].
+		users := users reject: [:sel | accessorSels includes: sel]].
+	users isEmpty ifFalse: [
+		^decline := 'Cannot push down ', varName, ': ', definingClass name asString,
+			' still uses it in ', users size printString, ' of its own method(s): ',
+			(self selectorListString: users), '.'].
+	(self anyDescendantOf: definingClass ownsIvar: varName) ifNotNil: [:cls |
+		^decline := 'Cannot push down ', varName, ': ', cls, ' already declares an instance variable of that name.'].
+	topClass := definingClass.
+	newIvarLists at: definingClass name asString put: ((self ownInstVarsOf: definingClass) reject: [:n | n = varName]).
+	subs do: [:sub |
+		newIvarLists at: sub name asString put: ((self ownInstVarsOf: sub) copyWith: varName)].
+	self moveAccessors ifTrue: [self planAccessorMovesFrom: definingClass to: subs]
+%
+
+category: 'private - analysis'
+method: GsInstVarStructureRefactoring
+analyzeMove
+	"V4: move varName from definingClass to the destination class(es) in targetClasses. This is
+	 the general form the Explorer's up/down arrows drive: #up carries the declaration to a single
+	 chosen SUPERCLASS (like V2 push-up, but to any ancestor, not just the immediate one); #down
+	 carries it to one OR MORE chosen SUBCLASSES (like V3 push-down, but to a selected subset, and
+	 to any descendant depth). varName must be definingClass's own ivar. On #up the target's
+	 ancestry must not already define the name and no OTHER descendant of the target may own it
+	 (collision on inherit). On #down no descendant of definingClass may already own it, and no
+	 chosen target may sit under another chosen target (the ancestor target already covers it). In both
+	 directions every class that ends up WITHOUT the ivar must not still use it in its own methods."
+	| def dir sup losing |
+	def := definingClass.
+	dir := moveDirection.
+	((self ownInstVarsOf: def) includes: varName) ifFalse: [
+		^decline := 'Cannot move ', varName, ': it is not an instance variable declared in ', def name asString, '.'].
+	(targetClasses isNil or: [targetClasses isEmpty]) ifTrue: [
+		^decline := 'Cannot move ', varName, ': no destination class was chosen.'].
+	(targetClasses anySatisfy: [:t | t isNil]) ifTrue: [
+		^decline := 'Cannot move ', varName, ': a destination class could not be found.'].
+	(targetClasses includes: def) ifTrue: [
+		^decline := 'Cannot move ', varName, ' to ', def name asString, ': that is the class it already lives in.'].
+	dir == #up
+		ifTrue: [
+			targetClasses size = 1 ifFalse: [
+				^decline := 'Cannot move ', varName, ' up to more than one superclass.'].
+			sup := targetClasses first.
+			(self isAncestor: sup of: def) ifFalse: [
+				^decline := 'Cannot move ', varName, ' up: ', sup name asString, ' is not a superclass of ', def name asString, '.'].
+			((self allInstVarsOf: sup) includes: varName) ifTrue: [
+				^decline := 'Cannot move ', varName, ' up: ', sup name asString, ' already defines an instance variable of that name.'].
+			(self otherDescendant: def ofTop: sup ownsIvar: varName) ifNotNil: [:cls |
+				^decline := 'Cannot move ', varName, ' up: ', cls, ' also declares an instance variable of that name, which would collide once it is inherited.'].
+			topClass := sup]
+		ifFalse: [
+			dir == #down
+				ifTrue: [
+					targetClasses do: [:t |
+						(self isAncestor: def of: t) ifFalse: [
+							^decline := 'Cannot move ', varName, ' down: ', t name asString, ' is not a subclass of ', def name asString, '.']].
+					"The picker lists descendants at any depth, so a chosen target can itself sit under
+					 another chosen target. That would declare the ivar on the child while it also inherits
+					 it from the freshly-edited ancestor -- a double declaration GemStone rejects at apply.
+					 The ancestor target already delivers the ivar there by inheritance, so decline rather
+					 than build a plan that fails; the user should drop the redundant target."
+					targetClasses do: [:t | | cover |
+						cover := targetClasses detect: [:other | other ~~ t and: [self isAncestor: other of: t]] ifNone: [nil].
+						cover ifNotNil: [
+							^decline := 'Cannot move ', varName, ' down: ', t name asString, ' is already a subclass of ', cover name asString, ', which was also chosen; drop the redundant target.']].
+					(self anyDescendantOf: def ownsIvar: varName) ifNotNil: [:cls |
+						^decline := 'Cannot move ', varName, ' down: ', cls, ' already declares an instance variable of that name.'].
+					topClass := def]
+				ifFalse: [
+					^decline := 'Cannot move ', varName, ': unknown direction ', dir printString]].
+	"Every class that ends up without the ivar must not still use it in its own methods (it would
+	 compile against an undeclared variable). On #up nobody loses it (the subtree inherits it from
+	 higher up), so this only bites #down to a subset. definingClass's own simple accessors are
+	 excepted when they are being moved with the ivar. Checked BEFORE the plan below is recorded so
+	 a declined move leaves the instance with nothing half-built."
+	losing := self classesLosingVar: targetClasses.
+	losing do: [:cls | | users |
+		users := environment instanceMethodsAccessing: varName inClass: cls.
+		(cls == def and: [self moveAccessors]) ifTrue: [
+			| accessorSels |
+			accessorSels := (self simpleAccessorsOf: def forIvar: varName) collect: [:a | a at: 1].
+			users := users reject: [:sel | accessorSels includes: sel]].
+		users isEmpty ifFalse: [
+			^decline := 'Cannot move ', varName, ': ', cls name asString,
+				' still uses it in ', users size printString, ' of its own method(s): ',
+				(self selectorListString: users), '.']].
+	newIvarLists at: def name asString put: ((self ownInstVarsOf: def) reject: [:n | n = varName]).
+	targetClasses do: [:t |
+		newIvarLists at: t name asString put: ((self ownInstVarsOf: t) copyWith: varName)].
+	self moveAccessors ifTrue: [self planAccessorMovesFrom: def to: targetClasses]
+%
+
+category: 'private - analysis'
+method: GsInstVarStructureRefactoring
+classesLosingVar: targets
+	"The classes that HAVE varName now (definingClass and every descendant, via own or inherited)
+	 but will NOT after the move -- i.e. neither a target nor a descendant of a target. On #up this
+	 is empty (a chosen ancestor's subtree is a superset of definingClass's); on a partial #down it
+	 is definingClass plus any descendant subtree not under a chosen target."
+	| having keep |
+	having := OrderedCollection new.
+	having add: definingClass.
+	having addAll: (environment descendantsOf: definingClass).
+	keep := IdentitySet new.
+	targets do: [:t | keep add: t. keep addAll: (environment descendantsOf: t)].
+	^having reject: [:c | keep includes: c]
+%
+
+category: 'private - analysis'
+method: GsInstVarStructureRefactoring
+isAncestor: aClass of: aSubclass
+	"True if aClass is a proper superclass of aSubclass. Walks superclass links only, so it needs
+	 no version-specific hierarchy primitive."
+	| c |
+	c := aSubclass superclass.
+	[c notNil] whileTrue: [
+		c == aClass ifTrue: [^true].
+		c := c superclass].
+	^false
+%
+
+category: 'private - analysis'
+method: GsInstVarStructureRefactoring
+otherDescendant: aSkip ofTop: aTop ownsIvar: aName
+	"The name of a descendant of aTop (other than aSkip) that owns an ivar named aName, or
+	 nil."
+	(environment descendantsOf: aTop) do: [:cls |
+		(cls ~~ aSkip and: [(self ownInstVarsOf: cls) includes: aName])
+			ifTrue: [^cls name asString]].
+	^nil
+%
+
+category: 'private - analysis'
+method: GsInstVarStructureRefactoring
+anyDescendantOf: aTop ownsIvar: aName
+	"The name of any descendant of aTop that owns an ivar named aName, or nil."
+	(environment descendantsOf: aTop) do: [:cls |
+		((self ownInstVarsOf: cls) includes: aName) ifTrue: [^cls name asString]].
+	^nil
+%
+
+category: 'private - analysis'
+method: GsInstVarStructureRefactoring
+ancestorsOf: aClass
+	"aClass's proper superclasses, immediate-first. Walks superclass links only, so it needs no
+	 version-specific hierarchy primitive (matching #isAncestor:of:)."
+	| out c |
+	out := OrderedCollection new.
+	c := aClass superclass.
+	[c notNil] whileTrue: [out add: c. c := c superclass].
+	^out
+%
+
+category: 'private - accessors'
+method: GsInstVarStructureRefactoring
+planAccessorMovesFrom: srcClass to: destClasses
+	"Record the SIMPLE accessors of varName on srcClass to move alongside the ivar: remove
+	 each from srcClass and add it to the target class(es). Never overwrites -- or, on push-up,
+	 SHADOWS -- an existing same-named method on a target: for push-up the target (superclass) is
+	 rejected when it OR any of its ancestors already implements the selector (installing the
+	 accessor there would shadow the inherited one for the whole subtree, a behaviour change an
+	 own-dictionary includesSelector: check would miss); for push-down the own-dictionary check
+	 suffices (the accessor is leaving srcClass). A rejected target is skipped. On push-up (the
+	 ivar stays reachable via inheritance) an accessor is left in place unless the superclass can
+	 receive it; on push-down (the ivar leaves srcClass) the accessor must be removed from
+	 srcClass regardless, and added to each subclass that doesn't already define it."
+	(self simpleAccessorsOf: srcClass forIvar: varName) do: [:a |
+		| sel src cat targets |
+		sel := a at: 1. src := a at: 2. cat := a at: 3.
+		targets := destClasses reject: [:t |
+			self effectiveDirection == #up
+				ifTrue: [self class: t orAncestorImplements: sel]
+				ifFalse: [t includesSelector: sel]].
+		(self effectiveDirection == #up and: [targets isEmpty])
+			ifFalse: [
+				accessorRemovals add: (Array with: sel with: srcClass name asString with: src with: cat).
+				targets do: [:t |
+					accessorAdds add: (Array with: sel with: t name asString with: src with: cat)]]]
+%
+
+category: 'private - accessors'
+method: GsInstVarStructureRefactoring
+class: aClass orAncestorImplements: sel
+	"True if aClass OR any of its superclasses implements sel. Used on push-up so a moved
+	 accessor never shadows an implementation the target already inherits -- an own-dictionary
+	 includesSelector: would miss an inherited one. Walks superclass links only (includesSelector:
+	 + superclass), so it needs no version-specific hierarchy primitive."
+	| c |
+	c := aClass.
+	[c notNil] whileTrue: [
+		(c includesSelector: sel) ifTrue: [^true].
+		c := c superclass].
+	^false
+%
+
+category: 'private - accessors'
+method: GsInstVarStructureRefactoring
+simpleAccessorsOf: aClass forIvar: aName
+	"aClass's OWN instance-side simple accessors of aName, as Arrays {selector, source,
+	 category}. A simple accessor is a `^aName` getter or an `aName := arg` setter and nothing
+	 more (see #simpleAccessorKindOf:forVar:); anything with extra logic is excluded."
+	| result |
+	result := OrderedCollection new.
+	aClass selectors do: [:sel |
+		| m tree |
+		m := aClass compiledMethodAt: sel environmentId: 0 otherwise: nil.
+		m notNil ifTrue: [
+			tree := [RBParser parseMethod: m sourceString] on: Error do: [:e | nil].
+			(tree notNil and: [(self simpleAccessorKindOf: tree forVar: aName) notNil]) ifTrue: [
+				result add: (Array
+					with: sel
+					with: m sourceString
+					with: ((aClass categoryOfSelector: sel environmentId: 0) ifNil: ['accessing']) asString)]]].
+	^result
+%
+
+category: 'private - accessors'
+method: GsInstVarStructureRefactoring
+simpleAccessorKindOf: tree forVar: v
+	"#getter if tree is exactly `^v`; #setter if it is exactly `v := arg` (optionally followed
+	 by `^self`/`^v`/`^arg`) for the method's single argument; nil otherwise. No temporaries
+	 allowed. Purely structural so a same-named literal or a computed body never qualifies."
+	| body stmts first argName |
+	body := tree body.
+	body temporaries isEmpty ifFalse: [^nil].
+	stmts := body statements.
+	(tree argumentNames isEmpty and: [stmts size = 1 and: [stmts first isReturn
+		and: [stmts first value isVariable and: [stmts first value name = v]]]])
+		ifTrue: [^#getter].
+	tree argumentNames size = 1 ifTrue: [
+		argName := tree argumentNames first asString.
+		(stmts size between: 1 and: 2) ifTrue: [
+			first := stmts first.
+			(first isAssignment and: [first variable name = v
+				and: [first value isVariable and: [first value name = argName]]]) ifTrue: [
+				stmts size = 1 ifTrue: [^#setter].
+				(stmts last isReturn and: [stmts last value isVariable and: [
+					(stmts last value name = 'self')
+						or: [(stmts last value name = v) or: [stmts last value name = argName]]]])
+					ifTrue: [^#setter]]]].
+	^nil
+%
+
+category: 'private'
+method: GsInstVarStructureRefactoring
+dictNameForClassNamed: aName
+	| dicts |
+	dicts := environment dictionariesDefiningClassNamed: aName.
+	^dicts isEmpty ifTrue: [nil] ifFalse: [dicts first name asString]
+%
+
+category: 'private'
+method: GsInstVarStructureRefactoring
+selectorListString: aCollectionOfSelectors
+	"A comma-separated, #-prefixed list of selectors for a decline message,
+	 e.g. #perimeter, #area."
+	^aCollectionOfSelectors
+		inject: ''
+		into: [:acc :s |
+			acc isEmpty
+				ifTrue: ['#', s asString]
+				ifFalse: [acc, ', #', s asString]]
+%
+
+category: 'private'
+method: GsInstVarStructureRefactoring
+spaceList: aCollection
+	^aCollection inject: '' into: [:acc :s | acc isEmpty ifTrue: [s] ifFalse: [acc, ' ', s]]
+%
+
+category: 'private'
+method: GsInstVarStructureRefactoring
+isEditedClassNamed: aName
+	^newIvarLists includesKey: aName
+%
+
+category: 'private'
+method: GsInstVarStructureRefactoring
+dictNameForClass: aClass
+	^self dictNameForClassNamed: aClass name
+%
+
+category: 'preconditions'
+method: GsInstVarStructureRefactoring
+decline
+	self ensureAnalysis.
+	^decline
+%
+
+category: 'building'
+method: GsInstVarStructureRefactoring
+changeSet
+	changeSet isNil ifTrue: [changeSet := self buildChangeSet].
+	^changeSet
+%
+
+category: 'building'
+method: GsInstVarStructureRefactoring
+buildChangeSet
+	"Stage, top-down, a #classDefinitionEdit for each edited class and a #classReparent for
+	 every other descendant of the top class (recompiled only to re-point at the new parent
+	 chain), then -- for V5 -- one #methodRecompile. Compiles nothing, commits nothing."
+	| cs affected |
+	cs := GsRefactoringChangeSet new.
+	self ensureAnalysis.
+	decline notNil ifTrue: [^cs].
+	affected := OrderedCollection new.
+	affected add: topClass.
+	affected addAll: (environment descendantsOf: topClass).
+	affected do: [:cls | self stageClassChange: cls into: cs].
+	accessorRemovals do: [:r |
+		cs
+			addMethodRemoveInDictionary: (self dictNameForClassNamed: (r at: 2))
+			className: (r at: 2)
+			isMeta: false
+			selector: (r at: 1)
+			category: (r at: 4)
+			oldSource: (r at: 3)].
+	accessorAdds do: [:a |
+		cs
+			addMethodAddInDictionary: (self dictNameForClassNamed: (a at: 2))
+			className: (a at: 2)
+			isMeta: false
+			selector: (a at: 1)
+			category: (a at: 4)
+			newSource: (a at: 3)].
+	methodRewrite ifNotNil: [self stageMethodRewriteInto: cs].
+	^cs
+%
+
+category: 'building'
+method: GsInstVarStructureRefactoring
+stageClassChange: aClass into: cs
+	| dn oldDef |
+	dn := self dictNameForClass: aClass.
+	oldDef := aClass definition.
+	(self isEditedClassNamed: aClass name asString)
+		ifTrue: [cs
+			addClassDefinitionEditInDictionary: dn
+			className: aClass name asString
+			oldSource: oldDef
+			newSource: (self definitionWithIvars: (newIvarLists at: aClass name asString) in: oldDef)]
+		ifFalse: [cs
+			addClassReparentInDictionary: dn
+			className: aClass name asString
+			oldSource: oldDef
+			newSource: oldDef]
+%
+
+category: 'building'
+method: GsInstVarStructureRefactoring
+stageMethodRewriteInto: cs
+	"V5: recompile the source method with the converted temporary's declaration removed."
+	| cat behavior |
+	behavior := methodMeta ifTrue: [definingClass class] ifFalse: [definingClass].
+	cat := (behavior categoryOfSelector: methodSelector environmentId: 0) ifNil: ['as yet unclassified'].
+	cs
+		addMethodRecompileInDictionary: (self dictNameForClass: definingClass)
+		className: (methodRewrite at: 1)
+		isMeta: (methodRewrite at: 3)
+		selector: (methodRewrite at: 2)
+		category: cat asString
+		oldSource: (methodRewrite at: 4)
+		newSource: (methodRewrite at: 5)
+%
+
+category: 'source rewriting'
+method: GsInstVarStructureRefactoring
+definitionWithIvars: anIvarList in: defString
+	"defString with the instVarNames: clause's parenthesised list replaced by anIvarList
+	 (quoted). For the before/after diff only -- the apply computes the list directly."
+	| marker start openParen closeParen ws |
+	marker := 'instVarNames:'.
+	start := defString indexOfSubCollection: marker.
+	start = 0 ifTrue: [^defString].
+	openParen := defString indexOf: $( startingAt: start.
+	openParen = 0 ifTrue: [^defString].
+	closeParen := defString indexOf: $) startingAt: openParen.
+	closeParen = 0 ifTrue: [^defString].
+	ws := WriteStream on: String new.
+	ws nextPutAll: (defString copyFrom: 1 to: openParen).
+	anIvarList keysAndValuesDo: [:i :n |
+		i = 1 ifFalse: [ws nextPut: $ ].
+		ws nextPutAll: ''''; nextPutAll: n asString; nextPutAll: ''''].
+	ws nextPutAll: (defString copyFrom: closeParen to: defString size).
+	^ws contents
+%
+
+category: 'serializing'
+method: GsInstVarStructureRefactoring
+analysisJsonString
+	"The pre-flight payload: the decline reason (nil when viable), the top edited class, and
+	 the number of classes that will be recompiled."
+	self ensureAnalysis.
+	^'{"decline":', (decline ifNil: ['null'] ifNotNil: [:r | self jsonQuote: r]),
+	  ',"topClass":', (decline notNil ifTrue: ['null'] ifFalse: [self jsonQuote: topClass name asString]),
+	  ',"affectedCount":', (decline notNil ifTrue: ['0'] ifFalse: [self changeSet size printString]),
+	  '}'
+%
+
+category: 'serializing'
+method: GsInstVarStructureRefactoring
+previewJsonString
+	^self changeSet jsonString
+%
+
+category: 'serializing'
+method: GsInstVarStructureRefactoring
+outOfScopeJsonString
+	"The precondition / warning payload for the preview panel, in the family's shape. A hard
+	 decline (which blocks Apply) rides in `decline`; a note explains the reparent + no-migrate
+	 semantics."
+	^'{"references":0,"skipped":0,"scope":"hierarchy","collision":null,"decline":',
+	  (decline ifNil: ['null'] ifNotNil: [:r | self jsonQuote: r]),
+	  ',"note":', (self jsonQuote: 'By default existing instances keep their prior version. Enable "Migrate existing instances" below to move them to the new version (this commits).'), '}'
+%
+
+category: 'serializing'
+method: GsInstVarStructureRefactoring
+startPreviewToken: token maxBytes: maxBytes
+	self changeSet.
+	SessionTemps current at: token asSymbol put: self.
+	^'{"token":', (self jsonQuote: token),
+	  ',"total":', self changeSet size printString,
+	  ',"topClass":', (decline notNil ifTrue: ['null'] ifFalse: [self jsonQuote: topClass name asString]),
+	  ',"outOfScope":', self outOfScopeJsonString,
+	  ',"page":', (self pageJsonFrom: 1 maxBytes: maxBytes), '}'
+%
+
+category: 'paginated preview'
+method: GsInstVarStructureRefactoring
+pageJsonFrom: startIndex maxBytes: maxBytes
+	| all ws i |
+	all := self changeSet changes.
+	ws := WriteStream on: String new.
+	ws nextPut: $[.
+	i := startIndex.
+	[i <= all size and: [i = startIndex or: [ws position < maxBytes]]] whileTrue: [
+		i > startIndex ifTrue: [ws nextPut: $,].
+		(all at: i) jsonOn: ws.
+		i := i + 1].
+	ws nextPut: $].
+	^'{"changes":', ws contents,
+	  ',"nextOffset":', i printString,
+	  ',"done":', (i > all size) printString, '}'
+%
+
+category: 'applying'
+method: GsInstVarStructureRefactoring
+applyDeselected: deselectedIds
+	"Apply EVERY staged change in the stone. An instance-variable structure change is
+	 ALL-OR-NOTHING (the class-shape edits and the descendant reparents must move together),
+	 so a deselection is ignored. By default NOTHING is committed. The opt-in persistent
+	 options mirror rename-class: when migrateInstances or removeOldFromHistory is on AND the
+	 structural apply had zero failures, commit (so the new versions are durable), then migrate
+	 each old-version's instances to its new version / prune superseded versions, then commit
+	 again. A partly-failed apply is never committed -- but because the loop keeps going past a
+	 failed change, the changes that DID apply remain in the uncommitted transaction, leaving the
+	 hierarchy half-reversioned; the caller must ABORT the transaction to discard them (mirrors
+	 GsRenameClassRefactoring>>applyDeselected:). Answers
+	 {applied, failed:[..], committed, migratedFailures}."
+	| applied failures migrated committed |
+	self ensureAnalysis.
+	oldToNew := IdentityDictionary new.
+	failures := OrderedCollection new.
+	applied := 0.
+	self changeSet changes do: [:change |
+		[self applyChange: change. applied := applied + 1]
+		on: Error do: [:e |
+			failures add: (Array with: change id with: change className with: e messageText)]].
+	migrated := 0.
+	committed := false.
+	((migrateInstances or: [removeOldFromHistory]) and: [failures isEmpty]) ifTrue: [
+		"Commit the structural change FIRST so the new versions are persistent (migrating
+		 already-committed instances to a version created in this same uncommitted transaction
+		 is a no-op), then migrate/prune and commit again."
+		[System commitTransaction. committed := true] on: Error do: [:e |
+			failures add: (Array with: 'commit' with: topClass name asString with: e messageText)].
+		committed ifTrue: [
+			migrateInstances ifTrue: [migrated := self migrateAllInstances].
+			"Pruning a version that still has instances raises (e.g. remove-history WITHOUT migrate);
+			 catch it and report as a failure rather than letting it propagate out of the apply."
+			removeOldFromHistory ifTrue: [
+				[self pruneSupersededVersions] on: Error do: [:e |
+					failures add: (Array with: 'removeOldFromHistory' with: topClass name asString with: e messageText)]].
+			[System commitTransaction] on: Error do: [:e |
+				failures add: (Array with: 'commit' with: topClass name asString with: e messageText)]]].
+	^'{"applied":', applied printString,
+	  ',"committed":', committed printString,
+	  ',"migratedFailures":', migrated printString,
+	  ',"failed":[',
+	  ((failures collect: [:f |
+		'{"id":', (self jsonQuote: (f at: 1)),
+		',"label":', (self jsonQuote: (f at: 2)),
+		',"error":', (self jsonQuote: (f at: 3)), '}'])
+			inject: '' into: [:acc :s | acc isEmpty ifTrue: [s] ifFalse: [acc, ',', s]]),
+	  ']}'
+%
+
+category: 'applying'
+method: GsInstVarStructureRefactoring
+migrateAllInstances
+	"Migrate every instance of each superseded version (the keys of oldToNew: the top edited
+	 class and each reversioned descendant) to its new version. Answers the number of instances
+	 that FAILED to migrate (migrateInstancesTo: answers five sets; set 1 is empty, sets 2..5 are
+	 failures). A migrateInstancesTo: that RAISES is counted as at least one failure.
+
+	 MOST-DERIVED FIRST: a subclass instance is also an instance of its (old) superclass version,
+	 so migrating an ancestor before the subclass would report that not-yet-moved instance as a
+	 failure. Sorting deepest-first means each instance is migrated by its OWN class, and an
+	 ancestor's migrateInstancesTo: then sees none of them. Does not commit -- the caller commits."
+	| failed |
+	failed := 0.
+	(oldToNew keys asSortedCollection: [:a :b | a allSuperclasses size >= b allSuperclasses size])
+		do: [:old | | new |
+			new := oldToNew at: old.
+			[| report |
+			 report := old migrateInstancesTo: new.
+			 2 to: report size do: [:i | failed := failed + (report at: i) size].
+			 "migrateInstancesTo: requires a CLEAN transaction: if the prior class's migration is
+			  still uncommitted, the next one raises TransactionError (rtErrAbortWouldLoseData). So
+			  commit after each class's migration, not just once at the end."
+			 System commitTransaction]
+			on: Error do: [:e | failed := failed + 1]].
+	^failed
+%
+
+category: 'applying'
+method: GsInstVarStructureRefactoring
+pruneSupersededVersions
+	"Remove the superseded versions from each reversioned class's history, leaving only the
+	 current (new) version. Guards on identity so the new version is never removed. Does not
+	 commit -- the caller commits."
+	oldToNew valuesDo: [:new | | hist |
+		hist := new classHistory.
+		hist asArray do: [:v | v == new ifFalse: [hist removeVersion: v]]]
+%
+
+category: 'applying'
+method: GsInstVarStructureRefactoring
+applyChange: aChange
+	(aChange kind == #classDefinitionEdit or: [aChange kind == #classReparent])
+		ifTrue: [^self applyClassChange: aChange].
+	aChange kind == #methodRecompile ifTrue: [^self applyMethodRecompile: aChange].
+	aChange kind == #methodRemove ifTrue: [^self applyMethodRemove: aChange].
+	aChange kind == #methodAdd ifTrue: [^self applyMethodAdd: aChange].
+	^self error: 'Unexpected change kind for instVar-structure: ', aChange kind printString
+%
+
+category: 'applying'
+method: GsInstVarStructureRefactoring
+applyMethodRemove: aChange
+	"Accessor move: ensure the moved accessor is absent from its (freshly versioned) source
+	 class. #copyMethodsFrom:to: already skips carrying it forward, so this is normally a no-op;
+	 the guard also keeps re-application idempotent and avoids removeSelector: on an absent one."
+	| cls target sel |
+	cls := environment classNamed: aChange className.
+	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
+	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
+	sel := aChange selector asSymbol.
+	(target includesSelector: sel) ifTrue: [target removeSelector: sel]
+%
+
+category: 'applying'
+method: GsInstVarStructureRefactoring
+applyMethodAdd: aChange
+	"Accessor move: compile the accessor onto its (freshly versioned) target class."
+	| cls target |
+	cls := environment classNamed: aChange className.
+	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
+	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
+	target
+		compileMethod: aChange newSource
+		dictionaries: System myUserProfile symbolList
+		category: (aChange category ifNil: ['accessing'])
+%
+
+category: 'applying'
+method: GsInstVarStructureRefactoring
+applyClassChange: aChange
+	"Create a new version of the named class -- under the freshly created parent version,
+	 with its computed own-instVar list -- copy its methods forward, and record the
+	 old->new mapping so its own descendants re-parent onto it. No commit."
+	| old parentNew list new |
+	old := environment classNamed: aChange className.
+	old isNil ifTrue: [^self error: 'Class not found: ', aChange className].
+	parentNew := oldToNew at: old superclass ifAbsent: [old superclass].
+	list := newIvarLists at: aChange className ifAbsent: [self ownInstVarsOf: old].
+	new := self makeNewVersionOf: old superclass: parentNew instVarNames: list.
+	self copyMethodsFrom: old to: new.
+	oldToNew at: old put: new
+%
+
+category: 'applying'
+method: GsInstVarStructureRefactoring
+makeNewVersionOf: old superclass: sup instVarNames: ivars
+	"Create a new version in old's class history, under sup, with own-instVar list ivars and
+	 all of old's other shape (format, class vars, class-instance vars, pools, comment). Uses
+	 the FORMAT-taking primitive so byte/pointer/NSC/invariant bits survive, and threads
+	 inClassHistory: so class-var VALUES and the category carry forward. Same primitive R3
+	 uses for a rename/reparent."
+	^sup
+		_subclass: old name asString
+		instVarNames: (ivars collect: [:e | e asString])
+		format: old format
+		classVars: (old classVarNames collect: [:e | e asString])
+		classInstVars: (old class instVarNames collect: [:e | e asString])
+		poolDictionaries: old sharedPools
+		inDictionary: (self dictObjectFor: old)
+		inClassHistory: old classHistory
+		description: ([old commentForFileout] on: Error do: [:e | ''])
+		options: #()
+%
+
+category: 'applying'
+method: GsInstVarStructureRefactoring
+copyMethodsFrom: old to: new
+	"Copy every method of old (both sides) verbatim onto new -- a new class version starts
+	 with an empty method dictionary, so this carries the behaviour forward. The V5 method
+	 rewrite is applied afterwards, as its own #methodRecompile, so it overwrites the verbatim
+	 copy. Accessors being MOVED OUT of old (V2/V3 moveAccessors) are NOT copied: on a push-down
+	 old no longer owns the ivar, so copying its `^ivar` accessor would compile an undeclared
+	 reference -- the accessor is instead added to the target class as its own #methodAdd."
+	| skip |
+	skip := self accessorRemovalSelectorsFor: old name asString.
+	old selectors do: [:sel |
+		(skip includes: sel) ifFalse: [self copyMethod: sel from: old to: new]].
+	old class selectors do: [:sel | self copyMethod: sel from: old class to: new class]
+%
+
+category: 'private - accessors'
+method: GsInstVarStructureRefactoring
+accessorRemovalSelectorsFor: aClassName
+	"The set of (instance-side) selectors being moved OUT of the named class, so
+	 #copyMethodsFrom:to: can skip carrying them onto the new version."
+	| set |
+	set := IdentitySet new.
+	accessorRemovals do: [:r |
+		(r at: 2) = aClassName ifTrue: [set add: (r at: 1)]].
+	^set
+%
+
+category: 'applying'
+method: GsInstVarStructureRefactoring
+copyMethod: sel from: srcCls to: dstCls
+	| m cat |
+	m := srcCls compiledMethodAt: sel environmentId: 0 otherwise: nil.
+	m isNil ifTrue: [^self].
+	cat := (srcCls categoryOfSelector: sel environmentId: 0) ifNil: ['as yet unclassified'].
+	dstCls
+		compileMethod: m sourceString
+		dictionaries: System myUserProfile symbolList
+		category: cat asString
+%
+
+category: 'applying'
+method: GsInstVarStructureRefactoring
+applyMethodRecompile: aChange
+	"Recompile the converted method (V5) with the temporary declaration removed, onto the
+	 current (freshly versioned) class."
+	| cls target |
+	cls := environment classNamed: aChange className.
+	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
+	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
+	target
+		compileMethod: aChange newSource
+		dictionaries: System myUserProfile symbolList
+		category: (aChange category ifNil: ['as yet unclassified'])
+%
+
+category: 'applying'
+method: GsInstVarStructureRefactoring
+dictObjectFor: aClass
+	"The actual SymbolDictionary object that defines aClass's name, for inDictionary:."
+	| dicts |
+	dicts := environment dictionariesDefiningClassNamed: aClass name.
+	^dicts isEmpty
+		ifTrue: [environment symbolList objectNamed: #UserGlobals]
+		ifFalse: [dicts first]
+%
+
+category: 'serializing'
+method: GsInstVarStructureRefactoring
+jsonQuote: aString
+	^'"', (self jsonEscape: aString), '"'
+%
+
+category: 'serializing'
+method: GsInstVarStructureRefactoring
+jsonEscape: aString
+	"JSON string escaping emitting PURE ASCII (control chars and code points above 126 become
+	 \\uXXXX), so the client's non-blocking GCI fetch is never handed a Unicode result."
+	| ws |
+	ws := WriteStream on: String new.
+	aString do: [:ch | | code |
+		code := ch asInteger.
+		ch == $" ifTrue: [ws nextPutAll: '\"']
+		ifFalse: [ch == $\ ifTrue: [ws nextPutAll: '\\']
+		ifFalse: [code = 10 ifTrue: [ws nextPutAll: '\n']
+		ifFalse: [code = 13 ifTrue: [ws nextPutAll: '\r']
+		ifFalse: [code = 9 ifTrue: [ws nextPutAll: '\t']
+		ifFalse: [code < 32
+			ifTrue: [ws nextPutAll: '\u00'; nextPutAll: (self hex2: code)]
+		ifFalse: [code > 126
+			ifTrue: [code > 65535
+				ifTrue: [ws nextPut: $?]
+				ifFalse: [ws nextPutAll: '\u';
+					nextPutAll: (self hex2: code // 256);
+					nextPutAll: (self hex2: code \\ 256)]]
+			ifFalse: [ws nextPut: ch]]]]]]]].
+	^ws contents
+%
+
+category: 'serializing'
+method: GsInstVarStructureRefactoring
+hex2: anInteger
+	| digits |
+	digits := '0123456789abcdef'.
+	^(String with: (digits at: (anInteger // 16) + 1))
+		, (String with: (digits at: (anInteger \\ 16) + 1))
+%
+
+category: 'instance creation'
+classmethod: GsInstVarStructureRefactoring
+class: aClass convertTemporary: aName inMethod: aSelector meta: aBool
+	"V5: promote the method temporary aName (in aClass>>aSelector, the aBool side) to an
+	 instance variable of aClass."
+	^self new
+		setEnvironment: GsRefactoringEnvironment new
+		operation: #convertTemp
+		class: aClass
+		varName: aName
+		selector: aSelector
+		meta: aBool
+%
+
+category: 'instance creation'
+classmethod: GsInstVarStructureRefactoring
+class: aClass pushUpInstVar: aName
+	"V2: move aClass's own instance variable aName up to its immediate superclass."
+	^self new
+		setEnvironment: GsRefactoringEnvironment new
+		operation: #pushUp
+		class: aClass
+		varName: aName
+		selector: nil
+		meta: false
+%
+
+category: 'instance creation'
+classmethod: GsInstVarStructureRefactoring
+class: aClass pushDownInstVar: aName
+	"V3: move aClass's own instance variable aName down into every immediate subclass."
+	^self new
+		setEnvironment: GsRefactoringEnvironment new
+		operation: #pushDown
+		class: aClass
+		varName: aName
+		selector: nil
+		meta: false
+%
+
+category: 'instance creation'
+classmethod: GsInstVarStructureRefactoring
+class: aClass moveInstVar: aName toClasses: classNames direction: aSymbol
+	"V4 (generalised push up/down): move aClass's own instance variable aName to the named
+	 destination class(es). aSymbol is #up (classNames is a single ancestor of aClass) or #down
+	 (classNames are descendants of aClass, one or many). Each name is resolved WITHIN aClass's own
+	 lineage first -- its superclasses for #up, its descendants for #down -- so a name shadowed
+	 across dictionaries binds the class that is genuinely in aClass's hierarchy rather than an
+	 unrelated global first match. A name nowhere in the lineage falls back to a global lookup so
+	 analysis can still report the friendlier 'is not a superclass/subclass' decline; an unresolved
+	 name yields nil and declines as a destination that could not be found."
+	| ref env dir lineage targets |
+	env := GsRefactoringEnvironment new.
+	dir := aSymbol asSymbol.
+	ref := self new
+		setEnvironment: env
+		operation: #move
+		class: aClass
+		varName: aName
+		selector: nil
+		meta: false.
+	lineage := dir == #up
+		ifTrue: [ref ancestorsOf: aClass]
+		ifFalse: [env descendantsOf: aClass].
+	targets := classNames collect: [:n |
+		(lineage detect: [:c | c name asString = n asString] ifNone: [nil])
+			ifNil: [env classNamed: n asString]].
+	^ref setMoveTargets: targets direction: dir
+%
+
+category: 'instance creation'
+classmethod: GsInstVarStructureRefactoring
+environment: anEnvironment operation: anOp class: aClass varName: aName selector: aSelector meta: aBool
+	^self new
+		setEnvironment: anEnvironment
+		operation: anOp
+		class: aClass
+		varName: aName
+		selector: aSelector
+		meta: aBool
+%
+
+category: 'preconditions'
+classmethod: GsInstVarStructureRefactoring
+analyzeClass: aClass convertTemporary: aName inMethod: aSelector meta: aBool
+	^(self class: aClass convertTemporary: aName inMethod: aSelector meta: aBool) analysisJsonString
+%
+
+category: 'preconditions'
+classmethod: GsInstVarStructureRefactoring
+analyzeClass: aClass pushUpInstVar: aName
+	^(self class: aClass pushUpInstVar: aName) analysisJsonString
+%
+
+category: 'preconditions'
+classmethod: GsInstVarStructureRefactoring
+analyzeClass: aClass pushDownInstVar: aName
+	^(self class: aClass pushDownInstVar: aName) analysisJsonString
+%
+
+category: 'preconditions'
+classmethod: GsInstVarStructureRefactoring
+analyzeClass: aClass moveInstVar: aName toClasses: classNames direction: aSymbol
+	^(self class: aClass moveInstVar: aName toClasses: classNames direction: aSymbol) analysisJsonString
+%
+
+category: 'paginated preview'
+classmethod: GsInstVarStructureRefactoring
+pageForToken: token from: startIndex maxBytes: maxBytes
+	^(SessionTemps current at: token asSymbol ifAbsent: [nil])
+		ifNil: ['{"error":"preview session expired","changes":[],"nextOffset":0,"done":true}']
+		ifNotNil: [:ref | ref pageJsonFrom: startIndex maxBytes: maxBytes]
+%
+
+category: 'paginated preview'
+classmethod: GsInstVarStructureRefactoring
+applyForToken: token deselected: deselectedIds
+	^self applyForToken: token deselected: deselectedIds migrateInstances: false removeOldFromHistory: false
+%
+
+category: 'paginated preview'
+classmethod: GsInstVarStructureRefactoring
+applyForToken: token deselected: deselectedIds migrateInstances: mi removeOldFromHistory: rh
+	"Apply the previewed change under token, carrying the opt-in persistent options chosen in
+	 the preview panel. With both off nothing commits."
+	^(SessionTemps current at: token asSymbol ifAbsent: [nil])
+		ifNil: ['{"applied":0,"committed":false,"migratedFailures":0,"failed":[],"error":"preview session expired"}']
+		ifNotNil: [:ref |
+			ref migrateInstances: mi removeOldFromHistory: rh.
+			ref applyDeselected: deselectedIds]
+%
+
+category: 'paginated preview'
+classmethod: GsInstVarStructureRefactoring
+clearToken: token
+	SessionTemps current removeKey: token asSymbol ifAbsent: [].
+	^'ok'
+%
+
+category: 'private'
+method: GsMoveMethodRefactoring
+setEnvironment: anEnvironment sourceClass: aClass selectors: aCollection meta: aBool toClassNamed: aName toMeta: metaBool
+	environment := anEnvironment.
+	sourceClass := aClass.
+	selectors := aCollection collect: [:s | s asSymbol].
+	isMeta := aBool.
+	targetName := aName asString.
+	toMeta := metaBool.
+	analysisDone := false
+%
+
+category: 'accessing'
+method: GsMoveMethodRefactoring
+environment
+	^environment
+%
+
+category: 'accessing'
+method: GsMoveMethodRefactoring
+selectors
+	^selectors
+%
+
+category: 'private'
+method: GsMoveMethodRefactoring
+sourceBehavior
+	"The behaviour that holds the methods being moved: the metaclass for a class-side
+	 source."
+	^isMeta ifTrue: [sourceClass class] ifFalse: [sourceClass]
+%
+
+category: 'private'
+method: GsMoveMethodRefactoring
+targetBehavior
+	"The behaviour the methods move to. Only valid once analysis has resolved
+	 targetClass."
+	^toMeta ifTrue: [targetClass class] ifFalse: [targetClass]
+%
+
+category: 'private - analysis'
+method: GsMoveMethodRefactoring
+ensureAnalysis
+	analysisDone ifFalse: [
+		analysisDone := true.
+		[self computeAnalysis] on: Error do: [:e |
+			globalDecline := 'The move could not be analysed: ', e messageText]]
+%
+
+category: 'private - analysis'
+method: GsMoveMethodRefactoring
+computeAnalysis
+	"Resolve the target class, reject a global no-op, then record a per-selector decline
+	 (nil when movable)."
+	globalDecline := nil.
+	declines := Dictionary new.
+	targetClass := environment classNamed: targetName.
+	targetClass isNil ifTrue: [
+		^globalDecline := 'Target class ', targetName, ' was not found.'].
+	(targetClass == sourceClass and: [toMeta == isMeta]) ifTrue: [
+		^globalDecline := 'The source and target are the same class and side; nothing to move.'].
+	selectors do: [:sel | declines at: sel put: (self computeDeclineFor: sel)]
+%
+
+category: 'private - analysis'
+method: GsMoveMethodRefactoring
+computeDeclineFor: aSelector
+	"nil if aSelector can move to the target, otherwise a reason. Checks, in order:
+	 method exists on the source, no collision on the target, no super send, and every
+	 accessed instance variable exists on the target."
+	| method src tree accessed targetVars missing |
+	method := self sourceBehavior compiledMethodAt: aSelector environmentId: 0 otherwise: nil.
+	method isNil ifTrue: [
+		^'Cannot move #', aSelector asString, ': it is not defined in ', sourceClass name asString, '.'].
+	(self targetBehavior includesSelector: aSelector) ifTrue: [
+		^'Cannot move #', aSelector asString, ': ', targetClass name asString, ' already defines it.'].
+	src := method sourceString.
+	tree := [RBParser parseMethod: src] on: Error do: [:e | nil].
+	(tree notNil and: [self tree: tree referencesName: 'super']) ifTrue: [
+		^'Cannot move #', aSelector asString, ': it sends super, whose meaning depends on the source class''s superclass.'].
+	accessed := [method instVarsAccessed] on: Error do: [:e | #()].
+	targetVars := self targetBehavior allInstVarNames collect: [:n | n asSymbol].
+	missing := accessed reject: [:v | targetVars includes: v asSymbol].
+	missing isEmpty ifFalse: [
+		^'Cannot move #', aSelector asString, ': it uses instance variable(s) not defined in the target (',
+			(self commaList: (missing collect: [:v | v asString])), ').'].
+	^nil
+%
+
+category: 'private - analysis'
+method: GsMoveMethodRefactoring
+tree: aTree referencesName: aName
+	"True if aTree or any descendant is a variable node named aName."
+	aTree nodesDo: [:n | (n isVariable and: [n name = aName]) ifTrue: [^true]].
+	^false
+%
+
+category: 'private'
+method: GsMoveMethodRefactoring
+commaList: aCollection
+	^aCollection
+		inject: ''
+		into: [:acc :s | acc isEmpty ifTrue: [s] ifFalse: [acc, ', ', s]]
+%
+
+category: 'private'
+method: GsMoveMethodRefactoring
+dictNameForClass: aClass
+	| dicts |
+	dicts := environment dictionariesDefiningClassNamed: aClass name.
+	^dicts isEmpty ifTrue: [nil] ifFalse: [dicts first name asString]
+%
+
+category: 'private'
+method: GsMoveMethodRefactoring
+categoryOfSelector: aSelector
+	^((self sourceBehavior categoryOfSelector: aSelector environmentId: 0)
+		ifNil: ['as yet unclassified']) asString
+%
+
+category: 'preconditions'
+method: GsMoveMethodRefactoring
+globalDecline
+	"nil if the move as a whole is viable, otherwise a reason that empties the change
+	 set (target missing, or a same-class same-side no-op)."
+	self ensureAnalysis.
+	^globalDecline
+%
+
+category: 'preconditions'
+method: GsMoveMethodRefactoring
+declineFor: aSelector
+	"nil if aSelector will move, otherwise the per-selector (or inherited global)
+	 reason it will not."
+	self ensureAnalysis.
+	globalDecline notNil ifTrue: [^globalDecline].
+	^declines at: aSelector asSymbol ifAbsent: [nil]
+%
+
+category: 'accessing'
+method: GsMoveMethodRefactoring
+movableSelectors
+	"The selectors that will actually move, preserving request order."
+	self ensureAnalysis.
+	globalDecline notNil ifTrue: [^#()].
+	^selectors select: [:sel | (declines at: sel ifAbsent: [nil]) isNil]
+%
+
+category: 'accessing'
+method: GsMoveMethodRefactoring
+movableCount
+	^self movableSelectors size
+%
+
+category: 'building'
+method: GsMoveMethodRefactoring
+changeSet
+	"The staged, non-committing change set, computed once and cached. Empty on a global
+	 decline; otherwise two changes (add + remove) per movable selector."
+	changeSet isNil ifTrue: [changeSet := self buildChangeSet].
+	^changeSet
+%
+
+category: 'building'
+method: GsMoveMethodRefactoring
+buildChangeSet
+	| cs |
+	cs := GsRefactoringChangeSet new.
+	self ensureAnalysis.
+	globalDecline notNil ifTrue: [^cs].
+	self movableSelectors do: [:sel | self stageMoveOf: sel into: cs].
+	^cs
+%
+
+category: 'building'
+method: GsMoveMethodRefactoring
+stageMoveOf: aSelector into: cs
+	"Stage the add-on-target then the remove-from-source for one movable selector."
+	| method src cat |
+	method := self sourceBehavior compiledMethodAt: aSelector environmentId: 0 otherwise: nil.
+	src := method sourceString.
+	cat := self categoryOfSelector: aSelector.
+	cs
+		addMethodAddInDictionary: (self dictNameForClass: targetClass)
+		className: targetClass name asString
+		isMeta: toMeta
+		selector: aSelector
+		category: cat
+		newSource: src.
+	cs
+		addMethodRemoveInDictionary: (self dictNameForClass: sourceClass)
+		className: sourceClass name asString
+		isMeta: isMeta
+		selector: aSelector
+		category: cat
+		oldSource: src
+%
+
+category: 'serializing'
+method: GsMoveMethodRefactoring
+analysisJsonString
+	"The pre-flight payload: the target class, the movable count, a global decline (if
+	 any), and a per-selector {selector, decline} array."
+	| ws |
+	self ensureAnalysis.
+	ws := WriteStream on: String new.
+	ws nextPutAll: '{"targetClass":';
+		nextPutAll: (targetClass isNil ifTrue: ['null'] ifFalse: [self jsonQuote: targetClass name asString]).
+	ws nextPutAll: ',"globalDecline":';
+		nextPutAll: (globalDecline ifNil: ['null'] ifNotNil: [:r | self jsonQuote: r]).
+	ws nextPutAll: ',"movableCount":'; nextPutAll: self movableCount printString.
+	ws nextPutAll: ',"selectors":['.
+	selectors keysAndValuesDo: [:i :sel |
+		i = 1 ifFalse: [ws nextPut: $,].
+		ws nextPutAll: '{"selector":'; nextPutAll: (self jsonQuote: sel asString).
+		ws nextPutAll: ',"decline":';
+			nextPutAll: ((self declineFor: sel) ifNil: ['null'] ifNotNil: [:r | self jsonQuote: r]).
+		ws nextPut: $}].
+	ws nextPutAll: ']}'.
+	^ws contents
+%
+
+category: 'serializing'
+method: GsMoveMethodRefactoring
+previewJsonString
+	^self changeSet jsonString
+%
+
+category: 'serializing'
+method: GsMoveMethodRefactoring
+outOfScopeJsonString
+	"The scope / precondition payload for the preview panel, in the family's shape. A
+	 hard global decline (which blocks Apply) rides here; per-selector skips ride in
+	 skippedMethods."
+	^'{"references":0,"skipped":', (selectors size - self movableCount) printString,
+	  ',"scope":"class","collision":null,"decline":',
+	  (globalDecline ifNil: ['null'] ifNotNil: [:r | self jsonQuote: r]),
+	  '}'
+%
+
+category: 'serializing'
+method: GsMoveMethodRefactoring
+skippedMethodsJsonString
+	"The declined selectors + reasons, for the preview panel to explain what will NOT
+	 move."
+	| ws first |
+	self ensureAnalysis.
+	ws := WriteStream on: String new.
+	ws nextPut: $[.
+	first := true.
+	selectors do: [:sel | | reason |
+		reason := self declineFor: sel.
+		(reason notNil and: [globalDecline isNil]) ifTrue: [
+			first ifFalse: [ws nextPut: $,].
+			first := false.
+			ws nextPutAll: '{"selector":'; nextPutAll: (self jsonQuote: sel asString).
+			ws nextPutAll: ',"reason":'; nextPutAll: (self jsonQuote: reason); nextPut: $}]].
+	ws nextPut: $].
+	^ws contents
+%
+
+category: 'paginated preview'
+method: GsMoveMethodRefactoring
+startPreviewToken: token maxBytes: maxBytes
+	"Build the change set, stash this refactoring in SessionTemps under token, and
+	 answer the first page plus totals and precondition warnings. Nothing is committed."
+	self changeSet.
+	SessionTemps current at: token asSymbol put: self.
+	^'{"token":', (self jsonQuote: token),
+	  ',"total":', self changeSet size printString,
+	  ',"targetClass":', (targetClass isNil ifTrue: ['null'] ifFalse: [self jsonQuote: targetClass name asString]),
+	  ',"movableCount":', self movableCount printString,
+	  ',"outOfScope":', self outOfScopeJsonString,
+	  ',"skippedMethods":', self skippedMethodsJsonString,
+	  ',"page":', (self pageJsonFrom: 1 maxBytes: maxBytes), '}'
+%
+
+category: 'paginated preview'
+method: GsMoveMethodRefactoring
+pageJsonFrom: startIndex maxBytes: maxBytes
+	"A byte-bounded page of staged changes (with source) from startIndex (1-based). At
+	 least one change is always emitted when any remain."
+	| all ws i |
+	all := self changeSet changes.
+	ws := WriteStream on: String new.
+	ws nextPut: $[.
+	i := startIndex.
+	[i <= all size and: [i = startIndex or: [ws position < maxBytes]]] whileTrue: [
+		i > startIndex ifTrue: [ws nextPut: $,].
+		(all at: i) jsonOn: ws.
+		i := i + 1].
+	ws nextPut: $].
+	^'{"changes":', ws contents,
+	  ',"nextOffset":', i printString,
+	  ',"done":', (i > all size) printString, '}'
+%
+
+category: 'applying'
+method: GsMoveMethodRefactoring
+applyDeselected: deselectedIds
+	"Apply the staged changes in the stone WITHOUT committing. A deselected id is
+	 skipped. Removals are additionally guarded (see applyMethodRemove:) so a skipped or
+	 failed add never strands a method in neither class. Answers {applied, failed:[..]}."
+	| applied failures ids |
+	ids := (deselectedIds ifNil: [#()]) asArray.
+	failures := OrderedCollection new.
+	applied := 0.
+	self changeSet changes do: [:change |
+		(ids includes: change id)
+			ifFalse: [
+				[(self applyChange: change) ifTrue: [applied := applied + 1]]
+				on: Error do: [:e |
+					failures add: (Array with: change id with: change className with: e messageText)]]].
+	^'{"applied":', applied printString,
+	  ',"failed":[',
+	  ((failures collect: [:f |
+		'{"id":', (self jsonQuote: (f at: 1)),
+		',"label":', (self jsonQuote: (f at: 2)),
+		',"error":', (self jsonQuote: (f at: 3)), '}'])
+			inject: '' into: [:acc :s | acc isEmpty ifTrue: [s] ifFalse: [acc, ',', s]]),
+	  ']}'
+%
+
+category: 'applying'
+method: GsMoveMethodRefactoring
+applyChange: aChange
+	"Answer true when the change was applied, false when it was safely skipped."
+	aChange kind == #methodAdd ifTrue: [^self applyMethodAdd: aChange].
+	aChange kind == #methodRemove ifTrue: [^self applyMethodRemove: aChange].
+	^self error: 'Unexpected change kind for move-method: ', aChange kind printString
+%
+
+category: 'applying'
+method: GsMoveMethodRefactoring
+applyMethodAdd: aChange
+	"Compile the moved method onto the target class/side. No commit."
+	| cls target |
+	cls := environment classNamed: aChange className.
+	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
+	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
+	target
+		compileMethod: aChange newSource
+		dictionaries: System myUserProfile symbolList
+		category: (aChange category ifNil: ['as yet unclassified']).
+	^true
+%
+
+category: 'applying'
+method: GsMoveMethodRefactoring
+applyMethodRemove: aChange
+	"Remove the method from the source -- but ONLY once the target actually holds it, so
+	 a deselected or failed add never leaves the method in neither class. No commit."
+	| cls target |
+	(self targetBehavior includesSelector: aChange selector asSymbol) ifFalse: [^false].
+	cls := environment classNamed: aChange className.
+	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
+	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
+	target removeSelector: aChange selector asSymbol.
+	^true
+%
+
+category: 'serializing'
+method: GsMoveMethodRefactoring
+jsonQuote: aString
+	^'"', (self jsonEscape: aString), '"'
+%
+
+category: 'serializing'
+method: GsMoveMethodRefactoring
+jsonEscape: aString
+	"JSON string escaping emitting PURE ASCII (control chars and code points above 126
+	 become \\uXXXX), so the client's non-blocking GCI fetch is never handed a Unicode
+	 result."
+	| ws |
+	ws := WriteStream on: String new.
+	aString do: [:ch | | code |
+		code := ch asInteger.
+		ch == $" ifTrue: [ws nextPutAll: '\"']
+		ifFalse: [ch == $\ ifTrue: [ws nextPutAll: '\\']
+		ifFalse: [code = 10 ifTrue: [ws nextPutAll: '\n']
+		ifFalse: [code = 13 ifTrue: [ws nextPutAll: '\r']
+		ifFalse: [code = 9 ifTrue: [ws nextPutAll: '\t']
+		ifFalse: [code < 32
+			ifTrue: [ws nextPutAll: '\u00'; nextPutAll: (self hex2: code)]
+		ifFalse: [code > 126
+			ifTrue: [code > 65535
+				ifTrue: [ws nextPut: $?]
+				ifFalse: [ws nextPutAll: '\u';
+					nextPutAll: (self hex2: code // 256);
+					nextPutAll: (self hex2: code \\ 256)]]
+			ifFalse: [ws nextPut: ch]]]]]]]].
+	^ws contents
+%
+
+category: 'serializing'
+method: GsMoveMethodRefactoring
+hex2: anInteger
+	| digits |
+	digits := '0123456789abcdef'.
+	^(String with: (digits at: (anInteger // 16) + 1))
+		, (String with: (digits at: (anInteger \\ 16) + 1))
+%
+
+category: 'instance creation'
+classmethod: GsMoveMethodRefactoring
+sourceClass: aClass selectors: aCollection meta: aBool toClassNamed: aName toMeta: metaBool
+	"Move aCollection of selectors from aClass (the aBool side) to the metaBool side of
+	 the class named aName."
+	^self
+		environment: GsRefactoringEnvironment new
+		sourceClass: aClass
+		selectors: aCollection
+		meta: aBool
+		toClassNamed: aName
+		toMeta: metaBool
+%
+
+category: 'instance creation'
+classmethod: GsMoveMethodRefactoring
+environment: anEnvironment sourceClass: aClass selectors: aCollection meta: aBool toClassNamed: aName toMeta: metaBool
+	^self new
+		setEnvironment: anEnvironment
+		sourceClass: aClass
+		selectors: aCollection
+		meta: aBool
+		toClassNamed: aName
+		toMeta: metaBool
+%
+
+category: 'preconditions'
+classmethod: GsMoveMethodRefactoring
+analyzeForClass: aClass selectors: aCollection meta: aBool toClassNamed: aName toMeta: metaBool
+	"A pre-flight the client runs before opening the preview: the target class, a
+	 per-selector decline reason (nil when movable), and the count that will move."
+	^(self
+		sourceClass: aClass
+		selectors: aCollection
+		meta: aBool
+		toClassNamed: aName
+		toMeta: metaBool) analysisJsonString
+%
+
+category: 'paginated preview'
+classmethod: GsMoveMethodRefactoring
+pageForToken: token from: startIndex maxBytes: maxBytes
+	"A page from a previously-started preview (see startPreviewToken:maxBytes:), by
+	 token. Answers an error envelope if the preview session has expired."
+	^(SessionTemps current at: token asSymbol ifAbsent: [nil])
+		ifNil: ['{"error":"preview session expired","changes":[],"nextOffset":0,"done":true}']
+		ifNotNil: [:ref | ref pageJsonFrom: startIndex maxBytes: maxBytes]
+%
+
+category: 'paginated preview'
+classmethod: GsMoveMethodRefactoring
+applyForToken: token deselected: deselectedIds
+	"Apply a previously-started preview (by token). No commit. Answers an error
+	 envelope if the preview session has expired."
+	^(SessionTemps current at: token asSymbol ifAbsent: [nil])
+		ifNil: ['{"applied":0,"failed":[],"error":"preview session expired"}']
+		ifNotNil: [:ref | ref applyDeselected: deselectedIds]
+%
+
+category: 'paginated preview'
+classmethod: GsMoveMethodRefactoring
+clearToken: token
+	"Drop a finished preview from SessionTemps."
+	SessionTemps current removeKey: token asSymbol ifAbsent: [].
+	^'ok'
+%
+
+category: 'private'
+method: GsPushDownMethodRefactoring
+setEnvironment: anEnvironment sourceClass: aClass selectors: aCollection meta: aBool
+	environment := anEnvironment.
+	sourceClass := aClass.
+	selectors := aCollection collect: [:s | s asSymbol].
+	isMeta := aBool.
+	analysisDone := false
+%
+
+category: 'accessing'
+method: GsPushDownMethodRefactoring
+environment
+	^environment
+%
+
+category: 'accessing'
+method: GsPushDownMethodRefactoring
+selectors
+	^selectors
+%
+
+category: 'private'
+method: GsPushDownMethodRefactoring
+sourceBehavior
+	"The behaviour that holds the methods being pushed: the metaclass for a class-side
+	 source."
+	^isMeta ifTrue: [sourceClass class] ifFalse: [sourceClass]
+%
+
+category: 'private'
+method: GsPushDownMethodRefactoring
+behaviorFor: aClass
+	"The relevant side of a subclass (its metaclass for a class-side push)."
+	^isMeta ifTrue: [aClass class] ifFalse: [aClass]
+%
+
+category: 'private - analysis'
+method: GsPushDownMethodRefactoring
+ensureAnalysis
+	analysisDone ifFalse: [
+		analysisDone := true.
+		[self computeAnalysis] on: Error do: [:e |
+			globalDecline := 'The push-down could not be analysed: ', e messageText]]
+%
+
+category: 'private - analysis'
+method: GsPushDownMethodRefactoring
+computeAnalysis
+	"Resolve the immediate subclasses, reject a class with none, then record a
+	 per-selector decline (nil when movable) and, for movable selectors, the subclasses
+	 that will receive a copy (those not already overriding it)."
+	globalDecline := nil.
+	declines := Dictionary new.
+	recipients := Dictionary new.
+	subClasses := (sourceClass subclasses ifNil: [#()]) asArray.
+	subClasses isEmpty ifTrue: [
+		^globalDecline := 'Cannot push down: ', sourceClass name asString, ' has no subclasses.'].
+	selectors do: [:sel | self analyzeSelector: sel]
+%
+
+category: 'private - analysis'
+method: GsPushDownMethodRefactoring
+analyzeSelector: aSelector
+	"Record the decline reason (nil when movable) and the receiving subclasses for one
+	 selector. EVERY immediate subclass is a recipient: those that do not yet understand
+	 the selector get a fresh copy; those that already override it get an opt-in OVERWRITE
+	 (staged with the existing body + a data-loss warning), so a class where every subclass
+	 overrides is no longer a hard decline -- it is just an all-overwrite push the user
+	 opts into. Only a missing source method or a super-send is a hard decline."
+	| method src tree |
+	method := self sourceBehavior compiledMethodAt: aSelector environmentId: 0 otherwise: nil.
+	method isNil ifTrue: [
+		^declines at: aSelector put:
+			'Cannot push down #', aSelector asString, ': it is not defined in ', sourceClass name asString, '.'].
+	src := method sourceString.
+	tree := [RBParser parseMethod: src] on: Error do: [:e | nil].
+	(tree notNil and: [self tree: tree referencesName: 'super']) ifTrue: [
+		^declines at: aSelector put:
+			'Cannot push down #', aSelector asString, ': it sends super, whose meaning depends on the class''s superclass.'].
+	recipients at: aSelector put: subClasses.
+	declines at: aSelector put: nil
+%
+
+category: 'private - analysis'
+method: GsPushDownMethodRefactoring
+tree: aTree referencesName: aName
+	"True if aTree or any descendant is a variable node named aName."
+	aTree nodesDo: [:n | (n isVariable and: [n name = aName]) ifTrue: [^true]].
+	^false
+%
+
+category: 'private'
+method: GsPushDownMethodRefactoring
+dictNameForClass: aClass
+	| dicts |
+	dicts := environment dictionariesDefiningClassNamed: aClass name.
+	^dicts isEmpty ifTrue: [nil] ifFalse: [dicts first name asString]
+%
+
+category: 'private'
+method: GsPushDownMethodRefactoring
+categoryOfSelector: aSelector
+	^((self sourceBehavior categoryOfSelector: aSelector environmentId: 0)
+		ifNil: ['as yet unclassified']) asString
+%
+
+category: 'preconditions'
+method: GsPushDownMethodRefactoring
+globalDecline
+	"nil if the push-down as a whole is viable, otherwise a reason that empties the
+	 change set (the source has no subclasses)."
+	self ensureAnalysis.
+	^globalDecline
+%
+
+category: 'preconditions'
+method: GsPushDownMethodRefactoring
+declineFor: aSelector
+	"nil if aSelector will move, otherwise the per-selector (or inherited global)
+	 reason it will not."
+	self ensureAnalysis.
+	globalDecline notNil ifTrue: [^globalDecline].
+	^declines at: aSelector asSymbol ifAbsent: [nil]
+%
+
+category: 'accessing'
+method: GsPushDownMethodRefactoring
+recipientsFor: aSelector
+	"The immediate subclasses that will receive aSelector (empty for a declined or unknown
+	 selector). Includes subclasses that already override it -- those receive an opt-in
+	 OVERWRITE rather than a fresh add."
+	self ensureAnalysis.
+	^recipients at: aSelector asSymbol ifAbsent: [#()]
+%
+
+category: 'private - analysis'
+method: GsPushDownMethodRefactoring
+existingSourceIn: aSubclass for: aSelector
+	"If aSubclass ALREADY overrides aSelector on this side, its current source (which
+	 pushing down will OVERWRITE); nil otherwise."
+	| beh |
+	beh := self behaviorFor: aSubclass.
+	(beh includesSelector: aSelector) ifFalse: [^nil].
+	^(beh compiledMethodAt: aSelector environmentId: 0 otherwise: nil)
+		ifNil: [nil] ifNotNil: [:m | m sourceString]
+%
+
+category: 'preconditions'
+method: GsPushDownMethodRefactoring
+overwriteWarningFor: aSelector
+	"A data-loss summary if pushing aSelector down would OVERWRITE an existing override in
+	 one or more subclasses; nil otherwise. nil for a declined selector or global decline."
+	| overs |
+	self ensureAnalysis.
+	globalDecline notNil ifTrue: [^nil].
+	(self declineFor: aSelector) notNil ifTrue: [^nil].
+	overs := (self recipientsFor: aSelector) select: [:s | (self behaviorFor: s) includesSelector: aSelector].
+	overs isEmpty ifTrue: [^nil].
+	^'Pushing down overwrites the existing override in ', overs size printString,
+	  ' subclass', (overs size = 1 ifTrue: [''] ifFalse: ['es']), ' -- lost unless left un-ticked.'
+%
+
+category: 'accessing'
+method: GsPushDownMethodRefactoring
+movableSelectors
+	"The selectors that will actually move, preserving request order."
+	self ensureAnalysis.
+	globalDecline notNil ifTrue: [^#()].
+	^selectors select: [:sel | (declines at: sel ifAbsent: [nil]) isNil]
+%
+
+category: 'accessing'
+method: GsPushDownMethodRefactoring
+movableCount
+	^self movableSelectors size
+%
+
+category: 'building'
+method: GsPushDownMethodRefactoring
+changeSet
+	"The staged, non-committing change set, computed once and cached. Empty on a global
+	 decline; otherwise, per movable selector, one add per receiving subclass plus one
+	 remove from the source."
+	changeSet isNil ifTrue: [changeSet := self buildChangeSet].
+	^changeSet
+%
+
+category: 'building'
+method: GsPushDownMethodRefactoring
+buildChangeSet
+	| cs |
+	cs := GsRefactoringChangeSet new.
+	self ensureAnalysis.
+	globalDecline notNil ifTrue: [^cs].
+	self movableSelectors do: [:sel | self stagePushOf: sel into: cs].
+	^cs
+%
+
+category: 'building'
+method: GsPushDownMethodRefactoring
+stagePushOf: aSelector into: cs
+	"Stage an add on every receiving subclass -- an OVERWRITE (carrying the existing body +
+	 a data-loss warning) for a subclass that already overrides the selector, a plain add
+	 otherwise -- then a single remove from the source."
+	| method src cat |
+	method := self sourceBehavior compiledMethodAt: aSelector environmentId: 0 otherwise: nil.
+	src := method sourceString.
+	cat := self categoryOfSelector: aSelector.
+	(self recipientsFor: aSelector) do: [:sub | | existing |
+		existing := self existingSourceIn: sub for: aSelector.
+		existing isNil
+			ifTrue: [cs
+				addMethodAddInDictionary: (self dictNameForClass: sub)
+				className: sub name asString
+				isMeta: isMeta
+				selector: aSelector
+				category: cat
+				newSource: src]
+			ifFalse: [cs
+				addMethodOverwriteInDictionary: (self dictNameForClass: sub)
+				className: sub name asString
+				isMeta: isMeta
+				selector: aSelector
+				category: cat
+				oldSource: existing
+				newSource: src
+				warning: 'Pushing down overwrites ', sub name asString, '>>', aSelector asString, ' -- its current override is lost.']].
+	cs
+		addMethodRemoveInDictionary: (self dictNameForClass: sourceClass)
+		className: sourceClass name asString
+		isMeta: isMeta
+		selector: aSelector
+		category: cat
+		oldSource: src
+%
+
+category: 'serializing'
+method: GsPushDownMethodRefactoring
+analysisJsonString
+	"The pre-flight payload: a null targetClass (many subclasses), the movable count, a
+	 global decline (if any), and a per-selector {selector, decline} array."
+	| ws |
+	self ensureAnalysis.
+	ws := WriteStream on: String new.
+	ws nextPutAll: '{"targetClass":null'.
+	ws nextPutAll: ',"globalDecline":';
+		nextPutAll: (globalDecline ifNil: ['null'] ifNotNil: [:r | self jsonQuote: r]).
+	ws nextPutAll: ',"movableCount":'; nextPutAll: self movableCount printString.
+	ws nextPutAll: ',"selectors":['.
+	selectors keysAndValuesDo: [:i :sel |
+		i = 1 ifFalse: [ws nextPut: $,].
+		ws nextPutAll: '{"selector":'; nextPutAll: (self jsonQuote: sel asString).
+		ws nextPutAll: ',"decline":';
+			nextPutAll: ((self declineFor: sel) ifNil: ['null'] ifNotNil: [:r | self jsonQuote: r]).
+		ws nextPutAll: ',"warning":';
+			nextPutAll: ((self overwriteWarningFor: sel) ifNil: ['null'] ifNotNil: [:w | self jsonQuote: w]).
+		ws nextPut: $}].
+	ws nextPutAll: ']}'.
+	^ws contents
+%
+
+category: 'serializing'
+method: GsPushDownMethodRefactoring
+previewJsonString
+	^self changeSet jsonString
+%
+
+category: 'serializing'
+method: GsPushDownMethodRefactoring
+outOfScopeJsonString
+	"The scope / precondition payload for the preview panel, in the family's shape. A
+	 hard global decline (which blocks Apply) rides here; per-selector skips ride in
+	 skippedMethods."
+	^'{"references":0,"skipped":', (selectors size - self movableCount) printString,
+	  ',"scope":"class","collision":null,"decline":',
+	  (globalDecline ifNil: ['null'] ifNotNil: [:r | self jsonQuote: r]),
+	  '}'
+%
+
+category: 'serializing'
+method: GsPushDownMethodRefactoring
+skippedMethodsJsonString
+	"The declined selectors + reasons, for the preview panel to explain what will NOT
+	 move."
+	| ws first |
+	self ensureAnalysis.
+	ws := WriteStream on: String new.
+	ws nextPut: $[.
+	first := true.
+	selectors do: [:sel | | reason |
+		reason := self declineFor: sel.
+		(reason notNil and: [globalDecline isNil]) ifTrue: [
+			first ifFalse: [ws nextPut: $,].
+			first := false.
+			ws nextPutAll: '{"selector":'; nextPutAll: (self jsonQuote: sel asString).
+			ws nextPutAll: ',"reason":'; nextPutAll: (self jsonQuote: reason); nextPut: $}]].
+	ws nextPut: $].
+	^ws contents
+%
+
+category: 'paginated preview'
+method: GsPushDownMethodRefactoring
+startPreviewToken: token maxBytes: maxBytes
+	"Build the change set, stash this refactoring in SessionTemps under token, and
+	 answer the first page plus totals and precondition warnings. Nothing is committed."
+	self changeSet.
+	SessionTemps current at: token asSymbol put: self.
+	^'{"token":', (self jsonQuote: token),
+	  ',"total":', self changeSet size printString,
+	  ',"targetClass":null',
+	  ',"movableCount":', self movableCount printString,
+	  ',"outOfScope":', self outOfScopeJsonString,
+	  ',"skippedMethods":', self skippedMethodsJsonString,
+	  ',"page":', (self pageJsonFrom: 1 maxBytes: maxBytes), '}'
+%
+
+category: 'paginated preview'
+method: GsPushDownMethodRefactoring
+pageJsonFrom: startIndex maxBytes: maxBytes
+	"A byte-bounded page of staged changes (with source) from startIndex (1-based). At
+	 least one change is always emitted when any remain."
+	| all ws i |
+	all := self changeSet changes.
+	ws := WriteStream on: String new.
+	ws nextPut: $[.
+	i := startIndex.
+	[i <= all size and: [i = startIndex or: [ws position < maxBytes]]] whileTrue: [
+		i > startIndex ifTrue: [ws nextPut: $,].
+		(all at: i) jsonOn: ws.
+		i := i + 1].
+	ws nextPut: $].
+	^'{"changes":', ws contents,
+	  ',"nextOffset":', i printString,
+	  ',"done":', (i > all size) printString, '}'
+%
+
+category: 'applying'
+method: GsPushDownMethodRefactoring
+applyDeselected: deselectedIds
+	"Apply the staged changes in the stone WITHOUT committing. A deselected id is
+	 skipped. The source removal is guarded (see applyMethodRemove:) so a skipped or
+	 failed subclass add never strands that subclass. Answers {applied, failed:[..]}."
+	| applied failures ids |
+	"Compare ids as Symbols: a deselected id arrives from the client as a String literal,
+	 which on 3.6.x is a Unicode string, and comparing it to the byte-string change id can
+	 raise (the 3.6.2 Unicode-comparison trap). asSymbol canonicalises both sides."
+	ids := ((deselectedIds ifNil: [#()]) collect: [:e | e asSymbol]) asIdentitySet.
+	failures := OrderedCollection new.
+	applied := 0.
+	appliedAddSelectors := Set new.
+	self changeSet changes do: [:change |
+		(ids includes: change id asSymbol)
+			ifFalse: [
+				[(self applyChange: change) ifTrue: [applied := applied + 1]]
+				on: Error do: [:e |
+					failures add: (Array with: change id with: change className with: e messageText)]]].
+	^'{"applied":', applied printString,
+	  ',"failed":[',
+	  ((failures collect: [:f |
+		'{"id":', (self jsonQuote: (f at: 1)),
+		',"label":', (self jsonQuote: (f at: 2)),
+		',"error":', (self jsonQuote: (f at: 3)), '}'])
+			inject: '' into: [:acc :s | acc isEmpty ifTrue: [s] ifFalse: [acc, ',', s]]),
+	  ']}'
+%
+
+category: 'applying'
+method: GsPushDownMethodRefactoring
+applyChange: aChange
+	"Answer true when the change was applied, false when it was safely skipped."
+	aChange kind == #methodAdd ifTrue: [^self applyMethodAdd: aChange].
+	aChange kind == #methodRemove ifTrue: [^self applyMethodRemove: aChange].
+	^self error: 'Unexpected change kind for push-down-method: ', aChange kind printString
+%
+
+category: 'applying'
+method: GsPushDownMethodRefactoring
+applyMethodAdd: aChange
+	"Compile the pushed-down method onto a subclass/side. No commit. Records the selector
+	 as applied so the paired remove fires only when at least one add actually happened
+	 this run (so un-ticking every target is a genuine no-op, even when every subclass
+	 already understood the selector via its own override)."
+	| cls target |
+	cls := environment classNamed: aChange className.
+	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
+	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
+	target
+		compileMethod: aChange newSource
+		dictionaries: System myUserProfile symbolList
+		category: (aChange category ifNil: ['as yet unclassified']).
+	appliedAddSelectors add: aChange selector asSymbol.
+	^true
+%
+
+category: 'applying'
+method: GsPushDownMethodRefactoring
+applyMethodRemove: aChange
+	"Remove the method from the source -- but ONLY once at least one add for this selector
+	 was applied this run AND EVERY immediate subclass understands the selector on its own
+	 (it received a copy or already overrode it). The applied-add clause makes un-ticking
+	 every target a no-op; the all-subclasses clause makes a partial push a copy-down that
+	 leaves the source in place rather than stranding a subclass. No commit."
+	| cls sel |
+	sel := aChange selector asSymbol.
+	(appliedAddSelectors includes: sel) ifFalse: [^false].
+	(subClasses allSatisfy: [:s | (self behaviorFor: s) includesSelector: sel])
+		ifFalse: [^false].
+	cls := environment classNamed: aChange className.
+	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
+	(aChange isMeta ifTrue: [cls class] ifFalse: [cls]) removeSelector: sel.
+	^true
+%
+
+category: 'serializing'
+method: GsPushDownMethodRefactoring
+jsonQuote: aString
+	^'"', (self jsonEscape: aString), '"'
+%
+
+category: 'serializing'
+method: GsPushDownMethodRefactoring
+jsonEscape: aString
+	"JSON string escaping emitting PURE ASCII (control chars and code points above 126
+	 become \\uXXXX), so the client's non-blocking GCI fetch is never handed a Unicode
+	 result."
+	| ws |
+	ws := WriteStream on: String new.
+	aString do: [:ch | | code |
+		code := ch asInteger.
+		ch == $" ifTrue: [ws nextPutAll: '\"']
+		ifFalse: [ch == $\ ifTrue: [ws nextPutAll: '\\']
+		ifFalse: [code = 10 ifTrue: [ws nextPutAll: '\n']
+		ifFalse: [code = 13 ifTrue: [ws nextPutAll: '\r']
+		ifFalse: [code = 9 ifTrue: [ws nextPutAll: '\t']
+		ifFalse: [code < 32
+			ifTrue: [ws nextPutAll: '\u00'; nextPutAll: (self hex2: code)]
+		ifFalse: [code > 126
+			ifTrue: [code > 65535
+				ifTrue: [ws nextPut: $?]
+				ifFalse: [ws nextPutAll: '\u';
+					nextPutAll: (self hex2: code // 256);
+					nextPutAll: (self hex2: code \\ 256)]]
+			ifFalse: [ws nextPut: ch]]]]]]]].
+	^ws contents
+%
+
+category: 'serializing'
+method: GsPushDownMethodRefactoring
+hex2: anInteger
+	| digits |
+	digits := '0123456789abcdef'.
+	^(String with: (digits at: (anInteger // 16) + 1))
+		, (String with: (digits at: (anInteger \\ 16) + 1))
+%
+
+category: 'instance creation'
+classmethod: GsPushDownMethodRefactoring
+sourceClass: aClass selectors: aCollection meta: aBool
+	"Push aCollection of selectors from the aBool side of aClass down into the same side
+	 of aClass's immediate subclasses."
+	^self
+		environment: GsRefactoringEnvironment new
+		sourceClass: aClass
+		selectors: aCollection
+		meta: aBool
+%
+
+category: 'instance creation'
+classmethod: GsPushDownMethodRefactoring
+environment: anEnvironment sourceClass: aClass selectors: aCollection meta: aBool
+	^self new
+		setEnvironment: anEnvironment
+		sourceClass: aClass
+		selectors: aCollection
+		meta: aBool
+%
+
+category: 'preconditions'
+classmethod: GsPushDownMethodRefactoring
+analyzeForClass: aClass selectors: aCollection meta: aBool
+	"A pre-flight the client runs before opening the preview: a per-selector decline
+	 reason (nil when movable) and the count that will move. targetClass is null because
+	 the method lands in many subclasses."
+	^(self
+		sourceClass: aClass
+		selectors: aCollection
+		meta: aBool) analysisJsonString
+%
+
+category: 'paginated preview'
+classmethod: GsPushDownMethodRefactoring
+pageForToken: token from: startIndex maxBytes: maxBytes
+	"A page from a previously-started preview (see startPreviewToken:maxBytes:), by
+	 token. Answers an error envelope if the preview session has expired."
+	^(SessionTemps current at: token asSymbol ifAbsent: [nil])
+		ifNil: ['{"error":"preview session expired","changes":[],"nextOffset":0,"done":true}']
+		ifNotNil: [:ref | ref pageJsonFrom: startIndex maxBytes: maxBytes]
+%
+
+category: 'paginated preview'
+classmethod: GsPushDownMethodRefactoring
+applyForToken: token deselected: deselectedIds
+	"Apply a previously-started preview (by token). No commit. Answers an error
+	 envelope if the preview session has expired."
+	^(SessionTemps current at: token asSymbol ifAbsent: [nil])
+		ifNil: ['{"applied":0,"failed":[],"error":"preview session expired"}']
+		ifNotNil: [:ref | ref applyDeselected: deselectedIds]
+%
+
+category: 'paginated preview'
+classmethod: GsPushDownMethodRefactoring
+clearToken: token
+	"Drop a finished preview from SessionTemps."
+	SessionTemps current removeKey: token asSymbol ifAbsent: [].
+	^'ok'
+%
+
+category: 'private'
+method: GsPushUpMethodRefactoring
+setEnvironment: anEnvironment sourceClass: aClass selectors: aCollection meta: aBool
+	environment := anEnvironment.
+	sourceClass := aClass.
+	selectors := aCollection collect: [:s | s asSymbol].
+	isMeta := aBool.
+	analysisDone := false
+%
+
+category: 'accessing'
+method: GsPushUpMethodRefactoring
+environment
+	^environment
+%
+
+category: 'accessing'
+method: GsPushUpMethodRefactoring
+selectors
+	^selectors
+%
+
+category: 'private'
+method: GsPushUpMethodRefactoring
+sourceBehavior
+	"The behaviour that holds the methods being pushed: the metaclass for a class-side
+	 source."
+	^isMeta ifTrue: [sourceClass class] ifFalse: [sourceClass]
+%
+
+category: 'private'
+method: GsPushUpMethodRefactoring
+targetBehavior
+	"The behaviour the methods move to (the superclass, same side). Only valid once
+	 analysis has resolved superClass."
+	^isMeta ifTrue: [superClass class] ifFalse: [superClass]
+%
+
+category: 'private - analysis'
+method: GsPushUpMethodRefactoring
+ensureAnalysis
+	analysisDone ifFalse: [
+		analysisDone := true.
+		[self computeAnalysis] on: Error do: [:e |
+			globalDecline := 'The push-up could not be analysed: ', e messageText]]
+%
+
+category: 'private - analysis'
+method: GsPushUpMethodRefactoring
+computeAnalysis
+	"Resolve the target superclass, reject a class with no superclass, then record a
+	 per-selector decline (nil when movable)."
+	globalDecline := nil.
+	declines := Dictionary new.
+	superClass := sourceClass superclass.
+	superClass isNil ifTrue: [
+		^globalDecline := 'Cannot push up: ', sourceClass name asString, ' has no superclass.'].
+	selectors do: [:sel | declines at: sel put: (self computeDeclineFor: sel)]
+%
+
+category: 'private - analysis'
+method: GsPushUpMethodRefactoring
+computeDeclineFor: aSelector
+	"nil if aSelector can be pushed up, otherwise a HARD reason. Checks, in order: the
+	 method exists on the source, it does not send super, every accessed instance variable
+	 exists on the superclass, and no referenced class/pool variable is declared only below
+	 the superclass. A collision (the superclass already implements the selector) is NOT a
+	 hard decline: it becomes an opt-in, data-losing OVERWRITE change (see
+	 overwriteWarningFor:), because consolidating an inherited method by pushing up is often
+	 the intent."
+	| method src tree accessed targetVars missing sharedBelow refNames badShared |
+	method := self sourceBehavior compiledMethodAt: aSelector environmentId: 0 otherwise: nil.
+	method isNil ifTrue: [
+		^'Cannot push up #', aSelector asString, ': it is not defined in ', sourceClass name asString, '.'].
+	src := method sourceString.
+	tree := [RBParser parseMethod: src] on: Error do: [:e | nil].
+	(tree notNil and: [self tree: tree referencesName: 'super']) ifTrue: [
+		^'Cannot push up #', aSelector asString, ': it sends super, whose meaning depends on the class''s superclass.'].
+	accessed := [method instVarsAccessed] on: Error do: [:e | #()].
+	targetVars := self targetBehavior allInstVarNames collect: [:n | n asSymbol].
+	missing := accessed reject: [:v | targetVars includes: v asSymbol].
+	missing isEmpty ifFalse: [
+		^'Cannot push up #', aSelector asString, ': it uses instance variable(s) not defined in the superclass (',
+			(self commaList: (missing collect: [:v | v asString])), ').'].
+	"Class variables and pool variables declared only below the superclass (the source's
+	 own, or a pool it alone imports) would be undeclared once the method compiles onto the
+	 superclass. instVarsAccessed does not cover these, so match referenced identifier names
+	 (from the parse tree) against the shared-var delta."
+	sharedBelow := self sharedVarsBelowTarget.
+	sharedBelow isEmpty ifFalse: [
+		refNames := Set new.
+		tree ifNotNil: [tree nodesDo: [:n | n isVariable ifTrue: [refNames add: n name asSymbol]]].
+		badShared := sharedBelow select: [:v | refNames includes: v].
+		badShared isEmpty ifFalse: [
+			^'Cannot push up #', aSelector asString, ': it uses class/pool variable(s) not defined in the superclass (',
+				(self commaList: ((badShared asSortedCollection: [:a :b | a <= b]) asArray collect: [:v | v asString])), ').']].
+	^nil
+%
+
+category: 'private - analysis'
+method: GsPushUpMethodRefactoring
+tree: aTree referencesName: aName
+	"True if aTree or any descendant is a variable node named aName."
+	aTree nodesDo: [:n | (n isVariable and: [n name = aName]) ifTrue: [^true]].
+	^false
+%
+
+category: 'private - analysis'
+method: GsPushUpMethodRefactoring
+sharedVarsBelowTarget
+	"Class-variable + pool-variable names visible to the SOURCE but NOT to the superclass --
+	 i.e. declared on the source (or between it and the superclass) -- as a Set of Symbols. A
+	 pushed-up method referencing any of these would fail to compile on the superclass. Class
+	 variables and pool imports are shared across both sides, so this is independent of isMeta."
+	| below |
+	below := self sharedVarNamesOf: sourceClass.
+	(self sharedVarNamesOf: superClass) do: [:v | below remove: v ifAbsent: []].
+	^below
+%
+
+category: 'private - analysis'
+method: GsPushUpMethodRefactoring
+sharedVarNamesOf: aClass
+	"All class-variable + pool-variable names visible to aClass (own + inherited class vars,
+	 plus every imported pool's keys), as a Set of Symbols. Defensive against a release that
+	 lacks either reflection selector."
+	| names |
+	names := Set new.
+	([aClass allClassVarNames] on: Error do: [:e | #()])
+		do: [:n | names add: n asSymbol].
+	([aClass sharedPools] on: Error do: [:e | #()])
+		do: [:pool | pool keysDo: [:k | names add: k asSymbol]].
+	^names
+%
+
+category: 'private - analysis'
+method: GsPushUpMethodRefactoring
+targetExistingSourceFor: aSelector
+	"If the superclass ALREADY implements aSelector, its current source (which pushing up
+	 will OVERWRITE); nil otherwise. Only meaningful for a movable selector."
+	(self targetBehavior includesSelector: aSelector) ifFalse: [^nil].
+	^(self targetBehavior compiledMethodAt: aSelector environmentId: 0 otherwise: nil)
+		ifNil: [nil] ifNotNil: [:m | m sourceString]
+%
+
+category: 'preconditions'
+method: GsPushUpMethodRefactoring
+overwriteWarningFor: aSelector
+	"A data-loss warning if pushing aSelector up would OVERWRITE a method the superclass
+	 itself defines (its definition is replaced by the pushed-up one); nil otherwise.
+	 nil for a declined selector or a global decline."
+	self ensureAnalysis.
+	globalDecline notNil ifTrue: [^nil].
+	(self declineFor: aSelector) notNil ifTrue: [^nil].
+	(self targetExistingSourceFor: aSelector) isNil ifTrue: [^nil].
+	^'Pushing up overwrites ', superClass name asString, '>>', aSelector asString,
+	  ' -- its current definition is lost.'
+%
+
+category: 'private'
+method: GsPushUpMethodRefactoring
+commaList: aCollection
+	^aCollection
+		inject: ''
+		into: [:acc :s | acc isEmpty ifTrue: [s] ifFalse: [acc, ', ', s]]
+%
+
+category: 'private'
+method: GsPushUpMethodRefactoring
+dictNameForClass: aClass
+	| dicts |
+	dicts := environment dictionariesDefiningClassNamed: aClass name.
+	^dicts isEmpty ifTrue: [nil] ifFalse: [dicts first name asString]
+%
+
+category: 'private'
+method: GsPushUpMethodRefactoring
+categoryOfSelector: aSelector
+	^((self sourceBehavior categoryOfSelector: aSelector environmentId: 0)
+		ifNil: ['as yet unclassified']) asString
+%
+
+category: 'preconditions'
+method: GsPushUpMethodRefactoring
+globalDecline
+	"nil if the push-up as a whole is viable, otherwise a reason that empties the change
+	 set (the source has no superclass)."
+	self ensureAnalysis.
+	^globalDecline
+%
+
+category: 'preconditions'
+method: GsPushUpMethodRefactoring
+declineFor: aSelector
+	"nil if aSelector will move, otherwise the per-selector (or inherited global)
+	 reason it will not."
+	self ensureAnalysis.
+	globalDecline notNil ifTrue: [^globalDecline].
+	^declines at: aSelector asSymbol ifAbsent: [nil]
+%
+
+category: 'accessing'
+method: GsPushUpMethodRefactoring
+superClass
+	self ensureAnalysis.
+	^superClass
+%
+
+category: 'accessing'
+method: GsPushUpMethodRefactoring
+movableSelectors
+	"The selectors that will actually move, preserving request order."
+	self ensureAnalysis.
+	globalDecline notNil ifTrue: [^#()].
+	^selectors select: [:sel | (declines at: sel ifAbsent: [nil]) isNil]
+%
+
+category: 'accessing'
+method: GsPushUpMethodRefactoring
+movableCount
+	^self movableSelectors size
+%
+
+category: 'building'
+method: GsPushUpMethodRefactoring
+changeSet
+	"The staged, non-committing change set, computed once and cached. Empty on a global
+	 decline; otherwise two changes (add + remove) per movable selector."
+	changeSet isNil ifTrue: [changeSet := self buildChangeSet].
+	^changeSet
+%
+
+category: 'building'
+method: GsPushUpMethodRefactoring
+buildChangeSet
+	| cs |
+	cs := GsRefactoringChangeSet new.
+	self ensureAnalysis.
+	globalDecline notNil ifTrue: [^cs].
+	self movableSelectors do: [:sel | self stagePushOf: sel into: cs].
+	^cs
+%
+
+category: 'building'
+method: GsPushUpMethodRefactoring
+stagePushOf: aSelector into: cs
+	"Stage the add-on-superclass then the remove-from-source for one movable selector. If
+	 the superclass already implements the selector, the add is an OVERWRITE (carries the
+	 existing body + a data-loss warning) rather than a plain add."
+	| method src cat existing |
+	method := self sourceBehavior compiledMethodAt: aSelector environmentId: 0 otherwise: nil.
+	src := method sourceString.
+	cat := self categoryOfSelector: aSelector.
+	existing := self targetExistingSourceFor: aSelector.
+	existing isNil
+		ifTrue: [cs
+			addMethodAddInDictionary: (self dictNameForClass: superClass)
+			className: superClass name asString
+			isMeta: isMeta
+			selector: aSelector
+			category: cat
+			newSource: src]
+		ifFalse: [cs
+			addMethodOverwriteInDictionary: (self dictNameForClass: superClass)
+			className: superClass name asString
+			isMeta: isMeta
+			selector: aSelector
+			category: cat
+			oldSource: existing
+			newSource: src
+			warning: (self overwriteWarningFor: aSelector)].
+	cs
+		addMethodRemoveInDictionary: (self dictNameForClass: sourceClass)
+		className: sourceClass name asString
+		isMeta: isMeta
+		selector: aSelector
+		category: cat
+		oldSource: src
+%
+
+category: 'serializing'
+method: GsPushUpMethodRefactoring
+analysisJsonString
+	"The pre-flight payload: the target superclass, the movable count, a global decline
+	 (if any), and a per-selector {selector, decline} array."
+	| ws |
+	self ensureAnalysis.
+	ws := WriteStream on: String new.
+	ws nextPutAll: '{"targetClass":';
+		nextPutAll: (superClass isNil ifTrue: ['null'] ifFalse: [self jsonQuote: superClass name asString]).
+	ws nextPutAll: ',"globalDecline":';
+		nextPutAll: (globalDecline ifNil: ['null'] ifNotNil: [:r | self jsonQuote: r]).
+	ws nextPutAll: ',"movableCount":'; nextPutAll: self movableCount printString.
+	ws nextPutAll: ',"selectors":['.
+	selectors keysAndValuesDo: [:i :sel |
+		i = 1 ifFalse: [ws nextPut: $,].
+		ws nextPutAll: '{"selector":'; nextPutAll: (self jsonQuote: sel asString).
+		ws nextPutAll: ',"decline":';
+			nextPutAll: ((self declineFor: sel) ifNil: ['null'] ifNotNil: [:r | self jsonQuote: r]).
+		ws nextPutAll: ',"warning":';
+			nextPutAll: ((self overwriteWarningFor: sel) ifNil: ['null'] ifNotNil: [:w | self jsonQuote: w]).
+		ws nextPut: $}].
+	ws nextPutAll: ']}'.
+	^ws contents
+%
+
+category: 'serializing'
+method: GsPushUpMethodRefactoring
+previewJsonString
+	^self changeSet jsonString
+%
+
+category: 'serializing'
+method: GsPushUpMethodRefactoring
+outOfScopeJsonString
+	"The scope / precondition payload for the preview panel, in the family's shape. A
+	 hard global decline (which blocks Apply) rides here; per-selector skips ride in
+	 skippedMethods."
+	^'{"references":0,"skipped":', (selectors size - self movableCount) printString,
+	  ',"scope":"class","collision":null,"decline":',
+	  (globalDecline ifNil: ['null'] ifNotNil: [:r | self jsonQuote: r]),
+	  '}'
+%
+
+category: 'serializing'
+method: GsPushUpMethodRefactoring
+skippedMethodsJsonString
+	"The declined selectors + reasons, for the preview panel to explain what will NOT
+	 move."
+	| ws first |
+	self ensureAnalysis.
+	ws := WriteStream on: String new.
+	ws nextPut: $[.
+	first := true.
+	selectors do: [:sel | | reason |
+		reason := self declineFor: sel.
+		(reason notNil and: [globalDecline isNil]) ifTrue: [
+			first ifFalse: [ws nextPut: $,].
+			first := false.
+			ws nextPutAll: '{"selector":'; nextPutAll: (self jsonQuote: sel asString).
+			ws nextPutAll: ',"reason":'; nextPutAll: (self jsonQuote: reason); nextPut: $}]].
+	ws nextPut: $].
+	^ws contents
+%
+
+category: 'paginated preview'
+method: GsPushUpMethodRefactoring
+startPreviewToken: token maxBytes: maxBytes
+	"Build the change set, stash this refactoring in SessionTemps under token, and
+	 answer the first page plus totals and precondition warnings. Nothing is committed."
+	self changeSet.
+	SessionTemps current at: token asSymbol put: self.
+	^'{"token":', (self jsonQuote: token),
+	  ',"total":', self changeSet size printString,
+	  ',"targetClass":', (superClass isNil ifTrue: ['null'] ifFalse: [self jsonQuote: superClass name asString]),
+	  ',"movableCount":', self movableCount printString,
+	  ',"outOfScope":', self outOfScopeJsonString,
+	  ',"skippedMethods":', self skippedMethodsJsonString,
+	  ',"page":', (self pageJsonFrom: 1 maxBytes: maxBytes), '}'
+%
+
+category: 'paginated preview'
+method: GsPushUpMethodRefactoring
+pageJsonFrom: startIndex maxBytes: maxBytes
+	"A byte-bounded page of staged changes (with source) from startIndex (1-based). At
+	 least one change is always emitted when any remain."
+	| all ws i |
+	all := self changeSet changes.
+	ws := WriteStream on: String new.
+	ws nextPut: $[.
+	i := startIndex.
+	[i <= all size and: [i = startIndex or: [ws position < maxBytes]]] whileTrue: [
+		i > startIndex ifTrue: [ws nextPut: $,].
+		(all at: i) jsonOn: ws.
+		i := i + 1].
+	ws nextPut: $].
+	^'{"changes":', ws contents,
+	  ',"nextOffset":', i printString,
+	  ',"done":', (i > all size) printString, '}'
+%
+
+category: 'applying'
+method: GsPushUpMethodRefactoring
+applyDeselected: deselectedIds
+	"Apply the staged changes in the stone WITHOUT committing. A deselected id is
+	 skipped. Removals are additionally guarded (see applyMethodRemove:) so a skipped or
+	 failed add never strands a method in neither class. Answers {applied, failed:[..]}."
+	| applied failures ids |
+	"Compare ids as Symbols: a deselected id arrives from the client as a String literal,
+	 which on 3.6.x is a Unicode string, and comparing it to the byte-string change id can
+	 raise (the 3.6.2 Unicode-comparison trap). asSymbol canonicalises both sides."
+	ids := ((deselectedIds ifNil: [#()]) collect: [:e | e asSymbol]) asIdentitySet.
+	failures := OrderedCollection new.
+	applied := 0.
+	appliedAddSelectors := Set new.
+	self changeSet changes do: [:change |
+		(ids includes: change id asSymbol)
+			ifFalse: [
+				[(self applyChange: change) ifTrue: [applied := applied + 1]]
+				on: Error do: [:e |
+					failures add: (Array with: change id with: change className with: e messageText)]]].
+	^'{"applied":', applied printString,
+	  ',"failed":[',
+	  ((failures collect: [:f |
+		'{"id":', (self jsonQuote: (f at: 1)),
+		',"label":', (self jsonQuote: (f at: 2)),
+		',"error":', (self jsonQuote: (f at: 3)), '}'])
+			inject: '' into: [:acc :s | acc isEmpty ifTrue: [s] ifFalse: [acc, ',', s]]),
+	  ']}'
+%
+
+category: 'applying'
+method: GsPushUpMethodRefactoring
+applyChange: aChange
+	"Answer true when the change was applied, false when it was safely skipped."
+	aChange kind == #methodAdd ifTrue: [^self applyMethodAdd: aChange].
+	aChange kind == #methodRemove ifTrue: [^self applyMethodRemove: aChange].
+	^self error: 'Unexpected change kind for push-up-method: ', aChange kind printString
+%
+
+category: 'applying'
+method: GsPushUpMethodRefactoring
+applyMethodAdd: aChange
+	"Compile the pushed-up method onto the superclass/side. No commit. Records the
+	 selector as applied so the paired remove knows the add actually happened (a plain
+	 includesSelector: check cannot tell an applied push from a pre-existing collision
+	 method, so a deselected OVERWRITE must not trigger the remove)."
+	| cls target |
+	cls := environment classNamed: aChange className.
+	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
+	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
+	target
+		compileMethod: aChange newSource
+		dictionaries: System myUserProfile symbolList
+		category: (aChange category ifNil: ['as yet unclassified']).
+	appliedAddSelectors add: aChange selector asSymbol.
+	^true
+%
+
+category: 'applying'
+method: GsPushUpMethodRefactoring
+applyMethodRemove: aChange
+	"Remove the method from the source -- but ONLY once this run actually compiled the
+	 method onto the superclass, so a deselected or failed add never leaves the method in
+	 neither class. Guarding on the applied-add set (not a bare includesSelector: on the
+	 superclass) is what makes a deselected OVERWRITE safe: the superclass already has a
+	 same-selector method, so includesSelector: would wrongly report the push succeeded
+	 and strip the source. No commit."
+	| cls target |
+	(appliedAddSelectors includes: aChange selector asSymbol) ifFalse: [^false].
+	cls := environment classNamed: aChange className.
+	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
+	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
+	target removeSelector: aChange selector asSymbol.
+	^true
+%
+
+category: 'serializing'
+method: GsPushUpMethodRefactoring
+jsonQuote: aString
+	^'"', (self jsonEscape: aString), '"'
+%
+
+category: 'serializing'
+method: GsPushUpMethodRefactoring
+jsonEscape: aString
+	"JSON string escaping emitting PURE ASCII (control chars and code points above 126
+	 become \\uXXXX), so the client's non-blocking GCI fetch is never handed a Unicode
+	 result."
+	| ws |
+	ws := WriteStream on: String new.
+	aString do: [:ch | | code |
+		code := ch asInteger.
+		ch == $" ifTrue: [ws nextPutAll: '\"']
+		ifFalse: [ch == $\ ifTrue: [ws nextPutAll: '\\']
+		ifFalse: [code = 10 ifTrue: [ws nextPutAll: '\n']
+		ifFalse: [code = 13 ifTrue: [ws nextPutAll: '\r']
+		ifFalse: [code = 9 ifTrue: [ws nextPutAll: '\t']
+		ifFalse: [code < 32
+			ifTrue: [ws nextPutAll: '\u00'; nextPutAll: (self hex2: code)]
+		ifFalse: [code > 126
+			ifTrue: [code > 65535
+				ifTrue: [ws nextPut: $?]
+				ifFalse: [ws nextPutAll: '\u';
+					nextPutAll: (self hex2: code // 256);
+					nextPutAll: (self hex2: code \\ 256)]]
+			ifFalse: [ws nextPut: ch]]]]]]]].
+	^ws contents
+%
+
+category: 'serializing'
+method: GsPushUpMethodRefactoring
+hex2: anInteger
+	| digits |
+	digits := '0123456789abcdef'.
+	^(String with: (digits at: (anInteger // 16) + 1))
+		, (String with: (digits at: (anInteger \\ 16) + 1))
+%
+
+category: 'instance creation'
+classmethod: GsPushUpMethodRefactoring
+sourceClass: aClass selectors: aCollection meta: aBool
+	"Push aCollection of selectors from the aBool side of aClass up to the same side of
+	 aClass's immediate superclass."
+	^self
+		environment: GsRefactoringEnvironment new
+		sourceClass: aClass
+		selectors: aCollection
+		meta: aBool
+%
+
+category: 'instance creation'
+classmethod: GsPushUpMethodRefactoring
+environment: anEnvironment sourceClass: aClass selectors: aCollection meta: aBool
+	^self new
+		setEnvironment: anEnvironment
+		sourceClass: aClass
+		selectors: aCollection
+		meta: aBool
+%
+
+category: 'preconditions'
+classmethod: GsPushUpMethodRefactoring
+analyzeForClass: aClass selectors: aCollection meta: aBool
+	"A pre-flight the client runs before opening the preview: the target superclass, a
+	 per-selector decline reason (nil when movable), and the count that will move."
+	^(self
+		sourceClass: aClass
+		selectors: aCollection
+		meta: aBool) analysisJsonString
+%
+
+category: 'paginated preview'
+classmethod: GsPushUpMethodRefactoring
+pageForToken: token from: startIndex maxBytes: maxBytes
+	"A page from a previously-started preview (see startPreviewToken:maxBytes:), by
+	 token. Answers an error envelope if the preview session has expired."
+	^(SessionTemps current at: token asSymbol ifAbsent: [nil])
+		ifNil: ['{"error":"preview session expired","changes":[],"nextOffset":0,"done":true}']
+		ifNotNil: [:ref | ref pageJsonFrom: startIndex maxBytes: maxBytes]
+%
+
+category: 'paginated preview'
+classmethod: GsPushUpMethodRefactoring
+applyForToken: token deselected: deselectedIds
+	"Apply a previously-started preview (by token). No commit. Answers an error
+	 envelope if the preview session has expired."
+	^(SessionTemps current at: token asSymbol ifAbsent: [nil])
+		ifNil: ['{"applied":0,"failed":[],"error":"preview session expired"}']
+		ifNotNil: [:ref | ref applyDeselected: deselectedIds]
+%
+
+category: 'paginated preview'
+classmethod: GsPushUpMethodRefactoring
+clearToken: token
+	"Drop a finished preview from SessionTemps."
+	SessionTemps current removeKey: token asSymbol ifAbsent: [].
+	^'ok'
+%
+
 category: 'accessing'
 method: GsRefactoringChange
 className
@@ -701,6 +7385,8 @@ jsonOn: aStream
 	self jsonValue: oldSource on: aStream.
 	aStream nextPutAll: ',"newSource":'.
 	self jsonValue: newSource on: aStream.
+	aStream nextPutAll: ',"warning":'.
+	self jsonValue: warning on: aStream.
 	aStream nextPut: $}
 %
 
@@ -731,6 +7417,20 @@ category: 'accessing'
 method: GsRefactoringChange
 oldSource
 	^oldSource
+%
+
+category: 'accessing'
+method: GsRefactoringChange
+warning
+	"A human-readable data-loss warning for this change (e.g. that it overwrites an
+	 existing method whose definition is lost), or nil when the change is non-destructive."
+	^warning
+%
+
+category: 'private'
+method: GsRefactoringChange
+setWarning: aString
+	warning := aString
 %
 
 category: 'accessing'
@@ -797,6 +7497,45 @@ methodRecompileId: anId dictName: dn className: cn isMeta: aBool selector: sel c
 
 category: 'instance creation'
 classmethod: GsRefactoringChange
+methodAddId: anId dictName: dn className: cn isMeta: aBool selector: sel category: cat newSource: ns
+	"A brand-new method to compile (it does not yet exist in the class): apply =
+	 compile newSource, exactly like a recompile. oldSource is nil so the before/after
+	 diff renders as an all-added method. Used by extract-method for the extracted
+	 method."
+	^self new
+		setId: anId kind: #methodAdd dictName: dn className: cn
+		isMeta: aBool selector: sel category: cat oldSource: nil newSource: ns
+%
+
+category: 'instance creation'
+classmethod: GsRefactoringChange
+methodOverwriteId: anId dictName: dn className: cn isMeta: aBool selector: sel category: cat oldSource: os newSource: ns warning: w
+	"A method to compile onto a class that ALREADY defines the selector: apply = compile
+	 newSource, exactly like a #methodAdd (the kind IS #methodAdd, so the apply path is
+	 unchanged). Unlike a plain add, oldSource carries the class's EXISTING definition so
+	 the before/after diff shows what is being replaced, and `warning` explains that
+	 applying this change overwrites (loses) that definition. Used by push-up (onto a
+	 superclass that already implements the selector) and push-down (onto a subclass that
+	 already overrides it) as an opt-in, data-losing change."
+	^(self new
+		setId: anId kind: #methodAdd dictName: dn className: cn
+		isMeta: aBool selector: sel category: cat oldSource: os newSource: ns)
+		setWarning: w
+%
+
+category: 'instance creation'
+classmethod: GsRefactoringChange
+methodRemoveId: anId dictName: dn className: cn isMeta: aBool selector: sel category: cat oldSource: os
+	"A method to REMOVE (inline-method deletes a now-unused target after inlining its
+	 last sender): apply = removeSelector:. newSource is nil so the before/after diff
+	 renders as an all-removed method."
+	^self new
+		setId: anId kind: #methodRemove dictName: dn className: cn
+		isMeta: aBool selector: sel category: cat oldSource: os newSource: nil
+%
+
+category: 'instance creation'
+classmethod: GsRefactoringChange
 methodRenameId: anId dictName: dn className: cn isMeta: aBool oldSelector: oldSel newSelector: newSel category: cat oldSource: os newSource: ns
 	"A method whose selector changes: apply = compile newSource (under newSel),
 	 then remove the old-selector method. `selector` holds the old selector."
@@ -855,6 +7594,52 @@ addMethodRecompileInDictionary: dn className: cn isMeta: aBool selector: sel cat
 	change := GsRefactoringChange
 		methodRecompileId: self nextIdString dictName: dn className: cn
 		isMeta: aBool selector: sel category: cat oldSource: os newSource: ns.
+	changes add: change.
+	^change
+%
+
+category: 'building'
+method: GsRefactoringChangeSet
+addMethodAddInDictionary: dn className: cn isMeta: aBool selector: sel category: cat newSource: ns
+	"Stage a brand-new method (it does not yet exist in the class). Records the change
+	 only; NEVER compiles or commits. Apply compiles newSource just like a recompile;
+	 the nil oldSource makes the diff render as an all-added method. Returns the new
+	 GsRefactoringChange."
+	| change |
+	change := GsRefactoringChange
+		methodAddId: self nextIdString dictName: dn className: cn
+		isMeta: aBool selector: sel category: cat newSource: ns.
+	changes add: change.
+	^change
+%
+
+category: 'building'
+method: GsRefactoringChangeSet
+addMethodOverwriteInDictionary: dn className: cn isMeta: aBool selector: sel category: cat oldSource: os newSource: ns warning: w
+	"Stage a method-add onto a class that ALREADY defines the selector (push-up onto a
+	 superclass that implements it, or push-down onto an overriding subclass). Records the
+	 change only; NEVER compiles or commits. Apply compiles newSource exactly like a plain
+	 add (the kind is #methodAdd); oldSource + warning let the client show what will be
+	 overwritten and flag the data loss so the user can opt in. Returns the new
+	 GsRefactoringChange."
+	| change |
+	change := GsRefactoringChange
+		methodOverwriteId: self nextIdString dictName: dn className: cn
+		isMeta: aBool selector: sel category: cat oldSource: os newSource: ns warning: w.
+	changes add: change.
+	^change
+%
+
+category: 'building'
+method: GsRefactoringChangeSet
+addMethodRemoveInDictionary: dn className: cn isMeta: aBool selector: sel category: cat oldSource: os
+	"Stage the removal of a method (inline-method deletes a now-unused target).
+	 Records the change only; NEVER compiles or commits. Apply calls removeSelector:.
+	 Returns the new GsRefactoringChange."
+	| change |
+	change := GsRefactoringChange
+		methodRemoveId: self nextIdString dictName: dn className: cn
+		isMeta: aBool selector: sel category: cat oldSource: os.
 	changes add: change.
 	^change
 %

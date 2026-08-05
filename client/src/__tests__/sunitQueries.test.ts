@@ -10,20 +10,8 @@ import { ActiveSession } from '../sessionManager';
 import { GemStoneLogin } from '../loginTypes';
 import * as sunit from '../sunitQueries';
 
-const noErr = {
-  number: 0,
-  message: '',
-  context: 0n,
-  category: 0,
-  fatal: false,
-  argCount: 0,
-  exceptionObj: 0n,
-  args: [],
-};
-
 function createMockSession(executeFetchData = ''): ActiveSession {
   const mockGci = {
-    GciTsResolveSymbol: vi.fn(() => ({ result: 1000n, err: { ...noErr } })),
     executeAndFetchString: vi.fn(() => executeFetchData),
     GciTsCallInProgress: vi.fn(() => ({ result: 0 })),
   };

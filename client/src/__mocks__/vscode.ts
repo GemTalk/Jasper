@@ -491,6 +491,9 @@ export class Range {
       this.end = endOrChar as Position;
     }
   }
+  get isEmpty(): boolean {
+    return this.start.line === this.end.line && this.start.character === this.end.character;
+  }
 }
 
 export class CodeLens {

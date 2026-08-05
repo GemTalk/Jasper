@@ -34,7 +34,6 @@ const methodListPayload = '0\tprinting\tfoo\n1\taccessing\tbar\n';
 
 function createMockSession(): ActiveSession {
   const mockGci = {
-    GciTsResolveSymbol: vi.fn(() => ({ result: 1000n, err: { ...noErr } })),
     GciTsPerform: vi.fn(() => ({ result: 2000n, err: { ...noErr } })),
     GciTsNewString: vi.fn(() => ({ result: 3000n, err: { ...noErr } })),
     GciTsNewSymbol: vi.fn(() => ({ result: 4000n, err: { ...noErr } })),

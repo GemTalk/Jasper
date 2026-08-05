@@ -42,24 +42,12 @@ function createPrintStringSession(
   };
 }
 
-function createFullPrintSession(data = '', resolveErrNumber = 0, execErrNumber = 0): ActiveSession {
+function createFullPrintSession(data = '', execThrows = false): ActiveSession {
   const mockGci = {
-    GciTsResolveSymbol: vi.fn(() => ({
-      result: resolveErrNumber === 0 ? 1000n : 0n,
-      err: {
-        ...noErr,
-        number: resolveErrNumber,
-        message: resolveErrNumber === 0 ? '' : 'symbol not found',
-      },
-    })),
-    GciTsExecuteFetchBytes: vi.fn(() => ({
-      data,
-      err: {
-        ...noErr,
-        number: execErrNumber,
-        message: execErrNumber === 0 ? '' : 'execution failed',
-      },
-    })),
+    executeAndFetchString: vi.fn(() => {
+      if (execThrows) throw new Error('execution failed');
+      return data;
+    }),
   };
   return {
     id: 1,
@@ -167,23 +155,17 @@ describe('fetchFullPrintString', () => {
     expect(fetchFullPrintString(session, 1000n)).toBe('this is the full print string');
   });
 
-  it('returns error string when GciTsResolveSymbol fails', () => {
+  it('surfaces the underlying error message when the execute fails', () => {
     expect.assertions(1);
-    const session = createFullPrintSession('', 2010);
-    expect(fetchFullPrintString(session, 1000n)).toBe('<error: cannot resolve Utf8>');
-  });
-
-  it('returns error string when GciTsExecuteFetchBytes fails', () => {
-    expect.assertions(1);
-    const session = createFullPrintSession('', 0, 2010);
-    expect(fetchFullPrintString(session, 1000n)).toContain('<error:');
+    const session = createFullPrintSession('', true);
+    expect(fetchFullPrintString(session, 1000n)).toBe('<error: execution failed>');
   });
 
   it('embeds the oop in emitted Smalltalk', () => {
     expect.assertions(1);
     const session = createFullPrintSession('result');
     fetchFullPrintString(session, 99999n);
-    const mockExec = session.gci.GciTsExecuteFetchBytes as ReturnType<typeof vi.fn>;
+    const mockExec = session.gci.executeAndFetchString as ReturnType<typeof vi.fn>;
     const code = mockExec.mock.calls[0][1] as string;
     expect(code).toContain('99999');
   });

@@ -33,6 +33,15 @@ describe('editor/context menu', () => {
     ]);
   });
 
+  it('does not add the RB refactorings as top-level context items (they live under Refactor…)', () => {
+    const commands = editorContext.map((item) => item.command);
+
+    expect(commands).not.toContain('gemstone.explorer.extractMethod');
+    expect(commands).not.toContain('gemstone.explorer.inlineMethod');
+    expect(commands).not.toContain('gemstone.explorer.extractTemporary');
+    expect(commands).not.toContain('gemstone.explorer.inlineTemporary');
+  });
+
   it('shows "Display It" in gemstone documents when code execution is available', () => {
     expect(getMenuItem('gemstone.displayIt')?.when).toBe(
       `editorTextFocus && resourceLangId == gemstone-smalltalk && !gemstone.executing`,

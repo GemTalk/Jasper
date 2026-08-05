@@ -38,7 +38,7 @@ import {
   buildEnhancedInspectorPerfQuickPickItems,
   RESET_LABEL,
   COPY_LABEL,
-} from './enhancedInspectorPerfTracker';
+} from './enhancedInspector/enhancedInspectorPerfTracker';
 import { CodeExecutor } from './codeExecutor';
 import { SystemBrowser } from './systemBrowser';
 import {
@@ -76,11 +76,11 @@ import { findMethodInClass } from './commands/findMethodInClass';
 import { loadClassPickItems } from './commands/classPicker';
 import { GlobalsBrowser } from './globalsBrowser';
 import { CommentBrowser } from './commentBrowser';
-import { EnhancedInspector } from './enhancedInspector';
+import { EnhancedInspector } from './enhancedInspector/enhancedInspector';
 import { maybeOfferServerSupport, runInstallServerSupport } from './optionalSupportOffer';
-import { refreshEnhancedInspectorAvailable } from './enhancedInspectorAvailability';
+import { refreshEnhancedInspectorAvailable } from './enhancedInspector/enhancedInspectorAvailability';
 import { refreshRefactoringSupportAvailable } from './refactoring/refactoringAvailability';
-import { supportsEnhancedInspector } from './enhancedInspectorInstall';
+import { supportsEnhancedInspector } from './enhancedInspector/enhancedInspectorInstall';
 import { DebuggerPanel } from './debuggerPanel';
 import { InlineValuesCodeLensProvider } from './inlineValuesCodeLens';
 import {
@@ -97,6 +97,11 @@ import { GemStoneDebugSession } from './gemstoneDebugSession';
 import { InspectorTreeProvider, InspectorNode } from './inspectorTreeProvider';
 import { registerGemStoneExplorer } from './gemstoneExplorer';
 import { renameTemporaryCommand } from './refactoring/renameTemporaryCommand';
+import { convertTempToInstVarCommand } from './refactoring/instVarStructureCommand';
+import { extractMethodCommand } from './refactoring/extractMethodCommand';
+import { inlineMethodCommand } from './refactoring/inlineMethodCommand';
+import { extractTemporaryCommand } from './refactoring/extractTemporaryCommand';
+import { inlineTemporaryCommand } from './refactoring/inlineTemporaryCommand';
 import { RefactorCodeActionProvider } from './refactoring/renameRefactorCodeActions';
 import { GemStoneWorkspaceSymbolProvider } from './gemstoneSymbolProvider';
 import { GemStoneDefinitionProvider } from './gemstoneDefinitionProvider';
@@ -1207,6 +1212,42 @@ export function activate(context: vscode.ExtensionContext) {
         position instanceof vscode.Position ? position : undefined,
       );
     }),
+
+    // Convert the temporary at the cursor into an instance variable (V5).
+    vscode.commands.registerCommand('gemstone.convertTempToInstVar', async (position?: unknown) => {
+      await convertTempToInstVarCommand(
+        sessionManager,
+        position instanceof vscode.Position ? position : undefined,
+      );
+    }),
+
+    vscode.commands.registerCommand('gemstone.explorer.extractMethod', async () => {
+      await extractMethodCommand(sessionManager);
+    }),
+
+    vscode.commands.registerCommand(
+      'gemstone.explorer.inlineMethod',
+      async (position?: unknown) => {
+        await inlineMethodCommand(
+          sessionManager,
+          position instanceof vscode.Position ? position : undefined,
+        );
+      },
+    ),
+
+    vscode.commands.registerCommand('gemstone.explorer.extractTemporary', async () => {
+      await extractTemporaryCommand(sessionManager);
+    }),
+
+    vscode.commands.registerCommand(
+      'gemstone.explorer.inlineTemporary',
+      async (position?: unknown) => {
+        await inlineTemporaryCommand(
+          sessionManager,
+          position instanceof vscode.Position ? position : undefined,
+        );
+      },
+    ),
 
     vscode.commands.registerCommand('gemstone.configureAutoStartDatabase', async () => {
       await configureAutoStartDatabase();
@@ -3638,7 +3679,7 @@ export function activate(context: vscode.ExtensionContext) {
           .getDatabases()
           .find((d) => d.config.stoneName === session.login.stone);
         const backedUp = await runLogicalBackup({
-          execute: (label, code) => queries.executeFetchString(session, label, code),
+          execute: (code) => queries.executeFetchString(session, code),
           runBackup: (code) =>
             queries.executeFetchStringNb(
               session,
@@ -3696,7 +3737,7 @@ export function activate(context: vscode.ExtensionContext) {
           return;
         }
         const backedUp = await runOnlineExtentBackup({
-          execute: (label, code) => queries.executeFetchString(session, label, code),
+          execute: (code) => queries.executeFetchString(session, code),
           stoneName: session.login.stone,
           dbPath: db.path,
           dataDir: path.join(db.path, 'data'),
@@ -3784,9 +3825,7 @@ export function activate(context: vscode.ExtensionContext) {
           dbPath: managed.path,
           backupFile,
           hasFileControl: () =>
-            hasFileControlPrivilege((label, code) =>
-              queries.executeFetchString(session, label, code),
-            ),
+            hasFileControlPrivilege((code) => queries.executeFetchString(session, code)),
           closeCurrentSession: async () => {
             sessionManager.logout(sessionId);
           },

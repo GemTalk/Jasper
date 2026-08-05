@@ -18,11 +18,13 @@ Loads enhanced inspector support into a plain-vanilla GemStone server.
 ## Scripts
 
 - **`load_enhanced_inspector_support.sh`** — loads the seven `.gs` files into a running stone. This is all you need.
-- **`update_enhanced_inspector_support.sh`** — refreshes the `.gs` files from the feenk project checkouts in `$ROWAN_PROJECTS_HOME`. Run this when the feenk projects have been updated.
+- **`update_enhanced_inspector_support.sh`** — refreshes the `.gs` files from the upstream project checkouts in `$ROWAN_PROJECTS_HOME`. Run this when the upstream projects have been updated.
+- **`apply_jasper_transforms.sh`** — re-applies Jasper's post-processing (attribution headers, Globals→Published placement) to the payload files. Invoked automatically by the update script; run it manually only if you edited the payload files some other way.
 
 ## Updating the .gs Files
 
-Set `$ROWAN_PROJECTS_HOME` to the directory containing the four feenk project clones,
+Set `$ROWAN_PROJECTS_HOME` to the directory containing the four project clones
+(three feenk projects plus GemTalk's RemoteServiceReplication),
 pull the latest from each repo (see the comments in that script for the repo list),
 then run the update script:
 ```

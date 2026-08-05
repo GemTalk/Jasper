@@ -31,8 +31,7 @@ describe('forking a gem (integration)', () => {
   });
 
   const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
-  const execute = (label: string, code: string): string =>
-    browserQueries.executeFetchString(session(), label, code);
+  const execute = (code: string): string => browserQueries.executeFetchString(session(), code);
 
   // The NetLDI this stone actually uses, as the harness itself connects through.
   const gemNrs = (): string => process.env.VITE_GEMSTONE_GEM_NRS!;
@@ -53,17 +52,25 @@ describe('forking a gem (integration)', () => {
   it('gives the new gem a session distinct from this one', (ctx) => {
     if (!supported()) return ctx.skip();
 
-    const mine = execute('mySession', 'GsCurrentSession currentSession serialNumber printString');
+    // Compare stone session ids, not serial numbers. forkGemRunning answers the
+    // fork's `stoneSessionId` — its slot in the session table — so this session
+    // must be read the same way (`System session`). A session's `serialNumber`
+    // is a separate counter, so comparing one against the other is meaningless:
+    // they collide by coincidence (a harness whose serial is 5 against a fork
+    // that lands in slot 5), which is exactly what made this test flaky. Both
+    // sessions are live at the moment the fork's id is read, and two live
+    // sessions can never occupy the same slot, so this comparison is now exact.
+    const mySession = execute('System session printString');
 
     const id = forkGemRunning(execute, 'System sleep: 1', gemNrs());
 
-    expect(id.trim()).not.toBe(mine.trim());
+    expect(id.trim()).not.toBe(mySession.trim());
   });
 
   it('runs the gem as the user who asked, never SystemUser', (ctx) => {
     if (!supported()) return ctx.skip();
 
-    const me = execute('me', 'System myUserProfile userId').trim();
+    const me = execute('System myUserProfile userId').trim();
 
     // The gem logs in with a one-time password minted for this same user, so a
     // successful fork is itself the evidence — minting for anyone else would

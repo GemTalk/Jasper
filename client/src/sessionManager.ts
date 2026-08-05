@@ -1,9 +1,9 @@
 import * as vscode from 'vscode';
 import { GciLibrary, GciError } from './gciLibrary';
 import { OOP_NIL } from './gciConstants';
-import { GemStoneLogin, gemNrsFor, loginLabel } from './loginTypes';
+import { GemStoneLogin, gemNrsFor, loginLabel, stoneNrsFor } from './loginTypes';
 import { logInfo } from './gciLog';
-import { wrapWithEnhancedInspectorPerfProxy } from './enhancedInspectorPerfTracker';
+import { wrapWithEnhancedInspectorPerfProxy } from './enhancedInspector/enhancedInspectorPerfTracker';
 import { installTranscriptSink } from './transcriptSink';
 
 // How often the non-blocking login path polls GciTsNbLoginFinished. Small enough
@@ -197,7 +197,7 @@ export class SessionManager {
     }
 
     const gci = this.getGciLibrary(libraryPath);
-    const stoneNrs = `!tcp@${login.gem_host}#server!${login.stone}`;
+    const stoneNrs = stoneNrsFor(login);
     const gemNrs = gemNrsFor(login);
     return { gci, stoneNrs, gemNrs };
   }
@@ -337,7 +337,7 @@ export class SessionManager {
     login: GemStoneLogin,
     gci: GciLibrary,
   ): { session: ActiveSession; logout: () => void } {
-    const stoneNrs = `!tcp@${login.gem_host}#server!${login.stone}`;
+    const stoneNrs = stoneNrsFor(login);
     const gemNrs = gemNrsFor(login);
 
     const result = gci.GciTsLogin(

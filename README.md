@@ -157,9 +157,11 @@ With an active session, execute Smalltalk code from any editor:
 
 | Command | macOS | Windows/Linux | Description |
 |---------|-------|---------------|-------------|
-| Display It | Cmd+K D | Ctrl+K D | Evaluate selection and insert result inline |
+| Display It | Cmd+K D | Ctrl+K D | Evaluate selection and show the result inline |
 | Execute It | Cmd+K E | Ctrl+K E | Evaluate selection silently |
 | Inspect It | Cmd+K I | Ctrl+K I | Evaluate selection and show result in Inspector |
+
+By default, **Display It** shows its result as a non-destructive inline overlay — an annotation that is not part of the document, so the file is never modified. Hover the result for **Copy** and **Expand** actions; **Enter** inserts the full result into the document, **Backspace** or **Escape** dismisses it. Set `gemstone.displayItMode` to `"insert"` for the classic behavior of inserting the result as editable text.
 
 Long-running expressions show a progress notification with soft-break and hard-break options. The **GemStone Transcript** output channel captures transcript output from the session.
 
@@ -187,6 +189,10 @@ Context menu operations include:
 ### Object Inspector
 
 The **Inspector** sidebar view displays GemStone objects with drill-down into named and indexed instance variables. Pin objects via **Inspect It** or by clicking globals in the browser. Large collections are paginated.
+
+#### Enhanced Inspector
+
+With the optional server-side support installed (GemStone 3.7.5+), **Inspect It** opens the **Enhanced Inspector** instead: a miller-column panel with rich, per-class object views in the style of Glamorous Toolkit. On stones without the support — or older GemStone versions — Jasper falls back to the classic sidebar inspector. When you connect to a stone that lacks the support, Jasper offers to install it (together with the refactoring engine); the `gemstone.serverSupport.autoInstall` setting (`ask` / `always` / `never`) controls that prompt.
 
 ### Search and Navigation
 
@@ -241,7 +247,7 @@ Jasper keeps a local mirror of a session's classes as `.gs` files in Topaz forma
 
 The mirror syncs **incrementally**: Jasper diffs a server-side manifest of per-class hashes against the last sync and re-fetches only what changed, so login/commit/abort stay fast even on a large schema over a slow connection. It's kept across logout (reconnecting re-syncs the difference) and is updated immediately as you edit, so search reflects a change before you commit. A per-login **Sync classes** toggle (on by default) turns the mirror off for slow/remote connections, where server-side search still works.
 
-Exported `.gs` files are **read-only on disk** (`chmod 0o444`) — not for editing. Edit methods through the **System Browser**, which round-trips through the `gemstone://` virtual filesystem and compiles on save. Creating a new `.gs` file under a dictionary directory does still file in a class template; deleting one deletes the class in GemStone.
+Exported `.gs` files are **read-only on disk** by default (`chmod 0o444`) — not for editing; disabling `gemstone.classSync.readOnlyMirror` skips the permission changes, roughly halving the filesystem operations per class on slow or network filesystems. Edit methods through the **System Browser**, which round-trips through the `gemstone://` virtual filesystem and compiles on save. Creating a new `.gs` file under a dictionary directory does still file in a class template; deleting one deletes the class in GemStone.
 
 ## Claude / MCP Integration
 
@@ -295,7 +301,10 @@ The Smalltalk formatter has eleven knobs under `gemstoneSmalltalk.formatter.*` (
 | `gemstone.rootPath` | `~/Documents/GemStone` | Root directory for GemStone installations and databases |
 | `gemstone.gciLibraries` | `{}` | Map of GemStone versions to GCI library paths |
 | `gemstone.exportPath` | `""` | Root path for class file export (supports `{workspaceRoot}`) |
+| `gemstone.classSync.readOnlyMirror` | true | Write exported `.gs` mirror files as read-only; turn off to speed up syncing on slow or network filesystems |
+| `gemstone.displayItMode` | `overlay` | How Display It shows its result: `overlay` (non-destructive annotation) or `insert` (into the document) |
 | `gemstone.maxEnvironment` | 0 | Method environments to display in browser |
+| `gemstone.serverSupport.autoInstall` | `ask` | What to do when a stone lacks the optional server-side support (Enhanced Inspector, refactoring engine): `ask`, `always`, or `never` |
 | `gemstone.sessionMode` | `single` | Concurrent sessions allowed: `single` (default) or `multiple` (beta — reveals the Sessions panel) |
 | `jasper.mcp.httpPort` | 27101 | Port on 127.0.0.1 where Jasper serves the MCP HTTPS/SSE surface |
 | `jasper.mcp.registerWithClaudeDesktop` | true | Auto-register the jasper MCP server in Claude Desktop's global config |

@@ -8,10 +8,7 @@ import { escapeString } from '../../queries/util';
 // the methods added/removed/modified relative to the previous version. Built on
 // GemStone's native classHistory, so it is this-stone-only and read-only.
 export function getClassHistory(execute: QueryExecutor, className: string): string {
-  return execute(
-    `getClassHistory(${className})`,
-    `GsClassHistory forClassNamed: '${escapeString(className)}'`,
-  );
+  return execute(`GsClassHistory forClassNamed: '${escapeString(className)}'`);
 }
 
 // Restore a historical version's shape + methods as a NEW version under the
@@ -22,10 +19,7 @@ export function revertClassToVersion(
   className: string,
   index: number,
 ): string {
-  return execute(
-    `revertClassToVersion(${className} -> [${index}])`,
-    `GsClassHistory revertClassNamed: '${escapeString(className)}' toIndex: ${index}`,
-  );
+  return execute(`GsClassHistory revertClassNamed: '${escapeString(className)}' toIndex: ${index}`);
 }
 
 // Remove the version at `index` from a class's class history (it no longer
@@ -36,8 +30,5 @@ export function removeClassVersion(
   className: string,
   index: number,
 ): string {
-  return execute(
-    `removeClassVersion(${className} -> [${index}])`,
-    `GsClassHistory removeVersionOf: '${escapeString(className)}' index: ${index}`,
-  );
+  return execute(`GsClassHistory removeVersionOf: '${escapeString(className)}' index: ${index}`);
 }

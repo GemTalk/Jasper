@@ -93,7 +93,7 @@ describe('getAllClassNames', () => {
   it('emits a query that lists every (dictionary, key) pair without an identity filter', () => {
     const execute = vi.fn<QueryExecutor>(() => '');
     getAllClassNames(execute);
-    const code = execute.mock.calls[0][1];
+    const code = execute.mock.calls[0][0];
     expect(code).not.toContain('IdentitySet');
     expect(code).not.toContain('seen');
   });
@@ -192,7 +192,7 @@ describe('getClassEnvironments', () => {
   it('emits the session-detection primitives (transient/persistent dicts, at:otherwise:)', () => {
     const execute = vi.fn<QueryExecutor>(() => '');
     getClassEnvironments(execute, 1, 'Object', 0);
-    const code = execute.mock.calls[0][1];
+    const code = execute.mock.calls[0][0];
     expect(code).toContain('transientMethodDictForEnv:');
     expect(code).toContain('persistentMethodDictForEnv:');
     expect(code).toContain('at: each otherwise: nil'); // NOT includesKey: on the transient dict
@@ -201,7 +201,7 @@ describe('getClassEnvironments', () => {
   it('embeds dictIndex, escaped class name, and maxEnv', () => {
     const execute = vi.fn<QueryExecutor>(() => '');
     getClassEnvironments(execute, 3, "Foo'Bar", 2);
-    const code = execute.mock.calls[0][1];
+    const code = execute.mock.calls[0][0];
     expect(code).toContain('symbolList at: 3');
     expect(code).toContain("#'Foo''Bar'");
     expect(code).toContain('envs := 2');
@@ -213,7 +213,7 @@ describe('getClassEnvironments', () => {
     // detection is exercised by a live-GCI smoke test, not this unit test.
     const execute = vi.fn<QueryExecutor>(() => '');
     getClassEnvironments(execute, 1, 'Array', 0);
-    const code = execute.mock.calls[0][1];
+    const code = execute.mock.calls[0][0];
     expect(code).toContain('whichClassIncludesSelector:'); // walks all ancestors
     expect(code).toContain('allSubclasses'); // walks all descendants
     expect(code).not.toContain('lookupSelector:'); // the rejected approach
@@ -224,7 +224,7 @@ describe('getBaseMethodSource', () => {
   it('reads the persistent (base) method, not the merged/session view', () => {
     const execute = vi.fn<QueryExecutor>(() => 'isVowel\n  ^ base');
     getBaseMethodSource(execute, 'Character', false, 'isVowel', 0);
-    const code = execute.mock.calls[0][1];
+    const code = execute.mock.calls[0][0];
     expect(code).toContain('persistentMethodDictForEnv: 0');
     expect(code).toContain("at: #'isVowel' otherwise: nil");
     expect(code).not.toContain('compiledMethodAt:'); // that would return the override
@@ -233,20 +233,20 @@ describe('getBaseMethodSource', () => {
   it('targets the metaclass for a class-side selector', () => {
     const execute = vi.fn<QueryExecutor>(() => '');
     getBaseMethodSource(execute, 'Character', true, 'foo', 0);
-    expect(execute.mock.calls[0][1]).toContain('Character class');
+    expect(execute.mock.calls[0][0]).toContain('Character class');
   });
 
   it('threads a non-zero environment id into the persistent lookup', () => {
     const execute = vi.fn<QueryExecutor>(() => '');
     getBaseMethodSource(execute, 'Character', false, 'foo', 2);
-    expect(execute.mock.calls[0][1]).toContain('persistentMethodDictForEnv: 2');
+    expect(execute.mock.calls[0][0]).toContain('persistentMethodDictForEnv: 2');
   });
 
   it('emits ASCII-only source (3.6.x miscompiles non-ASCII: ComStrmSetCursor)', () => {
     const execute = vi.fn<QueryExecutor>(() => '');
     getBaseMethodSource(execute, 'Character', false, 'isVowel', 0);
 
-    const code = execute.mock.calls[0][1];
+    const code = execute.mock.calls[0][0];
     // eslint-disable-next-line no-control-regex -- \x00-\x7F is the intentional ASCII range, not a stray control char
     const asciiOnly = /^[\x00-\x7F]*$/;
     expect(asciiOnly.test(code)).toBe(true);
@@ -274,7 +274,7 @@ describe('getClassHierarchy', () => {
   it('iterates superclasses with do: (root-first), not reverseDo:', () => {
     const exec = vi.fn<QueryExecutor>(() => '');
     getClassHierarchy(exec, 'String');
-    const code = exec.mock.calls[0][1];
+    const code = exec.mock.calls[0][0];
     expect(code).toContain('supers do: [:each |');
     expect(code).not.toContain('supers reverseDo:');
   });
@@ -348,7 +348,7 @@ describe('runFailingTests', () => {
   it('uses the discover-all path when no classNames are given', () => {
     const exec = vi.fn<QueryExecutor>(() => '');
     runFailingTests(exec);
-    const code = exec.mock.calls[0][1];
+    const code = exec.mock.calls[0][0];
     expect(code).toContain('symbolList');
     expect(code).toContain('isSubclassOf: TestCase');
     expect(code).toContain('IdentitySet');
@@ -362,7 +362,7 @@ describe('runFailingTests', () => {
   it('uses the explicit-list path when classNames are given, building the list at runtime', () => {
     const exec = vi.fn<QueryExecutor>(() => '');
     runFailingTests(exec, ['ArrayTest', 'StringTest']);
-    const code = exec.mock.calls[0][1];
+    const code = exec.mock.calls[0][0];
     expect(code).toContain("objectNamed: #'ArrayTest'");
     expect(code).toContain("objectNamed: #'StringTest'");
     expect(code).toContain('reject: [:c | c isNil]');
@@ -371,7 +371,7 @@ describe('runFailingTests', () => {
   it('escapes single quotes in classNames', () => {
     const exec = vi.fn<QueryExecutor>(() => '');
     runFailingTests(exec, ["it's"]);
-    const code = exec.mock.calls[0][1];
+    const code = exec.mock.calls[0][0];
     expect(code).toContain("#'it''s'");
   });
 
@@ -388,7 +388,7 @@ describe('runFailingTests', () => {
   it('does not send #testCase to failure/error wrappers', () => {
     const exec = vi.fn<QueryExecutor>(() => '');
     runFailingTests(exec);
-    const code = exec.mock.calls[0][1];
+    const code = exec.mock.calls[0][0];
     expect(code).not.toMatch(/testCase\s+class\s+name/);
     expect(code).not.toMatch(/testCase\s+selector/);
   });
@@ -401,7 +401,7 @@ describe('runFailingTests', () => {
   it('caps each captured message at 1024 chars to stay under MAX_RESULT', () => {
     const exec = vi.fn<QueryExecutor>(() => '');
     runFailingTests(exec);
-    const code = exec.mock.calls[0][1];
+    const code = exec.mock.calls[0][0];
     expect(code).toContain('s size min: 1024');
   });
 
@@ -415,7 +415,7 @@ describe('runFailingTests', () => {
   it('clips each captured message via copyFrom:to: before the boundary encode', () => {
     const exec = vi.fn<QueryExecutor>(() => '');
     runFailingTests(exec);
-    const code = exec.mock.calls[0][1];
+    const code = exec.mock.calls[0][0];
 
     // Full slice form must be present — the cap is a substring, not just a size calc.
     expect(code).toMatch(/s copyFrom: 1 to: \(s size min: 1024\)/);
@@ -436,7 +436,7 @@ describe('runFailingTests', () => {
   it('wraps DISCOVER_ALL in a block so its temps do not collide with the outer assignment', () => {
     const exec = vi.fn<QueryExecutor>(() => '');
     runFailingTests(exec);
-    const code = exec.mock.calls[0][1];
+    const code = exec.mock.calls[0][0];
     expect(code).toMatch(/classes := \[\| sl seen list \|/);
     expect(code).toContain('] value');
   });
@@ -447,7 +447,7 @@ describe('runFailingTests', () => {
   it('captures exception class and messageText per failing test via re-run', () => {
     const exec = vi.fn<QueryExecutor>(() => '');
     runFailingTests(exec);
-    const code = exec.mock.calls[0][1];
+    const code = exec.mock.calls[0][0];
     expect(code).toContain('on: AbstractException');
     expect(code).toContain('t setUp');
     expect(code).toContain('t perform: t selector');
@@ -465,7 +465,7 @@ describe('runFailingTests', () => {
   it('builds the output as an internal String, encodeAsUTF8 at the boundary', () => {
     const exec = vi.fn<QueryExecutor>(() => '');
     runFailingTests(exec);
-    const code = exec.mock.calls[0][1];
+    const code = exec.mock.calls[0][0];
     expect(code).toContain('WriteStream on: Unicode7 new');
     expect(code).toMatch(/ws contents encodeAsUTF8/);
     // Negative guards: the round-2 Utf8 buffer and the round-3 lossy ASCII
@@ -483,7 +483,7 @@ describe('runFailingTests', () => {
   it('uses matchPattern: with a parsed Array when classNamePattern is given', () => {
     const exec = vi.fn<QueryExecutor>(() => '');
     runFailingTests(exec, undefined, 'Bytes*TestCase');
-    const code = exec.mock.calls[0][1];
+    const code = exec.mock.calls[0][0];
     expect(code).toContain('isSubclassOf: TestCase');
     // The exact parsed form — pinning the literal Array source guards
     // against the parser regressing (e.g. losing the suffix segment).
@@ -497,7 +497,7 @@ describe('runFailingTests', () => {
   it('explicit classNames wins over classNamePattern (precedence)', () => {
     const exec = vi.fn<QueryExecutor>(() => '');
     runFailingTests(exec, ['ArrayTest'], 'Bytes*TestCase');
-    const code = exec.mock.calls[0][1];
+    const code = exec.mock.calls[0][0];
     // classNames path runs (no pattern matching in the snippet).
     expect(code).toContain("objectNamed: #'ArrayTest'");
     expect(code).not.toContain('matchPattern:');
@@ -511,7 +511,7 @@ describe('runFailingTests', () => {
   it('skips abstract TestCase classes in the no-args discovery walk', () => {
     const exec = vi.fn<QueryExecutor>(() => '');
     runFailingTests(exec);
-    const code = exec.mock.calls[0][1];
+    const code = exec.mock.calls[0][0];
     expect(code).toContain('v isAbstract not');
   });
 });
@@ -617,7 +617,7 @@ describe('describeTestFailure', () => {
   it('uses AbstractException for the live exception capture', () => {
     const exec = vi.fn<QueryExecutor>(() => 'status: passed\n');
     describeTestFailure(exec, 'ArrayTest', 'testGood');
-    const code = exec.mock.calls[0][1];
+    const code = exec.mock.calls[0][0];
     expect(code).toContain('on: AbstractException');
     expect(code).not.toMatch(/on: Exception\b/);
   });
@@ -626,7 +626,7 @@ describe('describeTestFailure', () => {
   it('runs setUp / perform / tearDown manually rather than going through TestCase>>run', () => {
     const exec = vi.fn<QueryExecutor>(() => 'status: passed\n');
     describeTestFailure(exec, 'ArrayTest', 'testGood');
-    const code = exec.mock.calls[0][1];
+    const code = exec.mock.calls[0][0];
     expect(code).toContain('tc setUp');
     expect(code).toContain('tc perform:');
     expect(code).toContain('tc tearDown');
@@ -636,7 +636,7 @@ describe('describeTestFailure', () => {
   it('escapes single quotes in className and selector', () => {
     const exec = vi.fn<QueryExecutor>(() => 'status: passed\n');
     describeTestFailure(exec, "Foo'Bar", "test'X");
-    const code = exec.mock.calls[0][1];
+    const code = exec.mock.calls[0][0];
     expect(code).toContain("Foo''Bar");
     expect(code).toContain("test''X");
   });
@@ -647,7 +647,7 @@ describe('describeTestFailure', () => {
   it('toggles GemExceptionSignalCapturesStack around the run and restores after', () => {
     const exec = vi.fn<QueryExecutor>(() => 'status: passed\n');
     describeTestFailure(exec, 'ArrayTest', 'testGood');
-    const code = exec.mock.calls[0][1];
+    const code = exec.mock.calls[0][0];
 
     // Saved before, set true during, restored in ensure: after.
     expect(code).toContain('System gemConfigurationAt: #GemExceptionSignalCapturesStack');
@@ -700,7 +700,7 @@ describe('describeTestFailure', () => {
   it('caps stackReport at 16384 chars', () => {
     const exec = vi.fn<QueryExecutor>(() => 'status: passed\n');
     describeTestFailure(exec, 'X', 'y');
-    const code = exec.mock.calls[0][1];
+    const code = exec.mock.calls[0][0];
     expect(code).toContain('size min: 16384');
   });
 });
@@ -714,7 +714,7 @@ describe('python (Grail) queries', () => {
   it('uses objectNamed: ModuleAst rather than a direct class reference', () => {
     const exec = vi.fn<QueryExecutor>(() => '');
     evalPython(exec, 'x = 1');
-    const code = exec.mock.calls[0][1];
+    const code = exec.mock.calls[0][0];
     expect(code).toContain("objectNamed: #'ModuleAst'");
     expect(code).toContain('dispatcher isNil');
   });
@@ -722,7 +722,7 @@ describe('python (Grail) queries', () => {
   it('emits a graceful "Grail not detected" hint as the nil-branch result', () => {
     const exec = vi.fn<QueryExecutor>(() => '');
     evalPython(exec, 'x = 1');
-    const code = exec.mock.calls[0][1];
+    const code = exec.mock.calls[0][0];
     expect(code).toContain('Grail (GemStone-Python) not detected');
     expect(code).toContain('class ModuleAst not found');
   });
@@ -733,7 +733,7 @@ describe('python (Grail) queries', () => {
   it('eval_python uses ModuleAst evaluateSource: (returns the printed result)', () => {
     const exec = vi.fn<QueryExecutor>(() => '');
     evalPython(exec, 'print(1+2)');
-    const code = exec.mock.calls[0][1];
+    const code = exec.mock.calls[0][0];
     expect(code).toContain('dispatcher evaluateSource: src');
     expect(code).toContain('printString');
   });
@@ -741,7 +741,7 @@ describe('python (Grail) queries', () => {
   it('compile_python uses (ModuleAst parseSource: src) smalltalkSource', () => {
     const exec = vi.fn<QueryExecutor>(() => '');
     compilePython(exec, 'x = 1');
-    const code = exec.mock.calls[0][1];
+    const code = exec.mock.calls[0][0];
     expect(code).toContain('dispatcher parseSource: src');
     expect(code).toContain('smalltalkSource');
   });
@@ -751,7 +751,7 @@ describe('python (Grail) queries', () => {
   it('escapes single quotes in Python source', () => {
     const exec = vi.fn<QueryExecutor>(() => '');
     evalPython(exec, "x = 'hello'");
-    const code = exec.mock.calls[0][1];
+    const code = exec.mock.calls[0][0];
     expect(code).toContain("''hello''");
   });
 
@@ -764,7 +764,7 @@ describe('python (Grail) queries', () => {
   it('wraps the Grail call in an inner on: AlmostOutOfStack do:', () => {
     const exec = vi.fn<QueryExecutor>(() => '');
     evalPython(exec, 'x = 1');
-    const code = exec.mock.calls[0][1];
+    const code = exec.mock.calls[0][0];
     expect(code).toContain('on: AlmostOutOfStack');
     expect(code).toContain("'Error: AlmostOutOfStack");
     // AlmostOutOfStack must appear *before* AbstractException in the source
@@ -780,7 +780,7 @@ describe('python (Grail) queries', () => {
   it('wraps the Grail call in on: AbstractException do:', () => {
     const exec = vi.fn<QueryExecutor>(() => '');
     evalPython(exec, 'x = 1');
-    const code = exec.mock.calls[0][1];
+    const code = exec.mock.calls[0][0];
     expect(code).toContain('on: AbstractException');
     // Build internally with the natural String class (which widens
     // transparently for non-ASCII content), then `encodeAsUTF8` at the boundary
@@ -799,7 +799,7 @@ describe('python (Grail) queries', () => {
   it('does not build the error string via , concatenation (UTF-16 leak guard)', () => {
     const exec = vi.fn<QueryExecutor>(() => '');
     evalPython(exec, 'x = 1');
-    const code = exec.mock.calls[0][1];
+    const code = exec.mock.calls[0][0];
     expect(code).not.toMatch(/'Error: ' , e class name/);
   });
 
@@ -811,7 +811,7 @@ describe('python (Grail) queries', () => {
   it('does not write through a Utf8 stream (Utf8 immutability guard)', () => {
     const exec = vi.fn<QueryExecutor>(() => '');
     evalPython(exec, 'x = 1');
-    const code = exec.mock.calls[0][1];
+    const code = exec.mock.calls[0][0];
     expect(code).not.toContain('WriteStream on: Utf8 new');
   });
 
@@ -823,7 +823,7 @@ describe('python (Grail) queries', () => {
   it('does not use per-char ASCII gating with `?` substitution', () => {
     const exec = vi.fn<QueryExecutor>(() => '');
     evalPython(exec, 'x = 1');
-    const code = exec.mock.calls[0][1];
+    const code = exec.mock.calls[0][0];
     expect(code).not.toContain('asInteger < 128');
     expect(code).not.toContain('ifFalse: [$?]');
   });
@@ -850,7 +850,7 @@ describe('python (Grail) queries', () => {
     const exec = vi.fn<QueryExecutor>(() => '');
     const source = 'def f(n):\n    return n * 2\nf(5)';
     evalPython(exec, source);
-    const code = exec.mock.calls[0][1];
+    const code = exec.mock.calls[0][0];
 
     // The full multi-line body appears inside the Smalltalk string literal
     // with its actual newlines preserved.
@@ -871,7 +871,7 @@ describe('python (Grail) scoped queries — notebook kernel', () => {
   it('evaluates through evaluateSource:usingModuleScope: with a persistent scope', () => {
     const exec = vi.fn<QueryExecutor>(() => '');
     evalPythonInScope(exec, 'x = 1', 'file:///nb/a.ipynb');
-    const code = exec.mock.calls[0][1];
+    const code = exec.mock.calls[0][0];
     expect(code).toContain('dispatcher evaluateSource: src usingModuleScope: scope');
     expect(code).toContain("SessionTemps current at: #'__vscGrailScopes'");
     expect(code).toContain("at: 'file:///nb/a.ipynb' ifAbsentPut: [SymbolDictionary new]");
@@ -883,7 +883,7 @@ describe('python (Grail) scoped queries — notebook kernel', () => {
   it('keeps the detection, stack-guard, and encoding scaffolding', () => {
     const exec = vi.fn<QueryExecutor>(() => '');
     evalPythonInScope(exec, 'x = 1', 'nb');
-    const code = exec.mock.calls[0][1];
+    const code = exec.mock.calls[0][0];
     expect(code).toContain("objectNamed: #'ModuleAst'");
     expect(code).toContain('Grail (GemStone-Python) not detected');
     expect(code.indexOf('on: AlmostOutOfStack')).toBeLessThan(
@@ -898,7 +898,7 @@ describe('python (Grail) scoped queries — notebook kernel', () => {
   it('escapes single quotes in both source and scopeId', () => {
     const exec = vi.fn<QueryExecutor>(() => '');
     evalPythonInScope(exec, "x = 'hi'", "file:///o'brien/nb.ipynb");
-    const code = exec.mock.calls[0][1];
+    const code = exec.mock.calls[0][0];
     expect(code).toContain("''hi''");
     expect(code).toContain("o''brien");
   });
@@ -917,7 +917,7 @@ describe('python (Grail) scoped queries — notebook kernel', () => {
   it('resetPythonScope removes only the given scope and needs no dispatcher', () => {
     const exec = vi.fn<QueryExecutor>(() => '');
     resetPythonScope(exec, 'file:///nb/a.ipynb');
-    const code = exec.mock.calls[0][1];
+    const code = exec.mock.calls[0][0];
     expect(code).toContain("removeKey: 'file:///nb/a.ipynb' ifAbsent: []");
     expect(code).toContain("SessionTemps current at: #'__vscGrailScopes'");
     expect(code).not.toContain('ModuleAst');
@@ -927,7 +927,7 @@ describe('python (Grail) scoped queries — notebook kernel', () => {
   it('resetPythonScope escapes single quotes in scopeId', () => {
     const exec = vi.fn<QueryExecutor>(() => '');
     resetPythonScope(exec, "o'brien");
-    const code = exec.mock.calls[0][1];
+    const code = exec.mock.calls[0][0];
     expect(code).toContain("removeKey: 'o''brien'");
   });
 });
@@ -988,7 +988,7 @@ describe('getGrailStubReflection', () => {
 
     getGrailStubReflection(exec, 'Account', 5);
 
-    const code = exec.mock.calls[0][1];
+    const code = exec.mock.calls[0][0];
     expect(code).toContain('symbolList at: 5');
     expect(code).toContain('canUnderstand:');
   });

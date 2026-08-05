@@ -43,8 +43,7 @@ export async function renameInstVarAtCursorCommand(
   logInfo('[renameIvar] invoked');
   const target = resolveMethodEditor(sessions, position, 'an instance variable');
   if (!target) return;
-  if (!(await ensureRbSupport(target.session.rbSupportAvailable, 'Renaming an instance variable')))
-    return;
+  if (!(await ensureRbSupport(target.session, 'Renaming an instance variable'))) return;
 
   const word = wordAt(target, 'an instance variable');
   if (!word) return;

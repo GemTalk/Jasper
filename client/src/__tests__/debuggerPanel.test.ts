@@ -119,7 +119,7 @@ vi.mock('../debugQueries', () => ({
 
 // Clicking a variable row opens an enhanced inspector — stub the static entry point.
 // create() returns a closable handle so the debugger can close it on dispose.
-vi.mock('../enhancedInspector', () => ({
+vi.mock('../enhancedInspector/enhancedInspector', () => ({
   EnhancedInspector: { create: vi.fn(() => ({ close: vi.fn() })) },
 }));
 
@@ -168,7 +168,7 @@ import {
   inlineHoverMarkdown,
 } from '../debuggerPanel';
 import { InlineValuesCodeLensProvider } from '../inlineValuesCodeLens';
-import { EnhancedInspector } from '../enhancedInspector';
+import { EnhancedInspector } from '../enhancedInspector/enhancedInspector';
 import { SystemBrowser } from '../systemBrowser';
 import { ActiveSession } from '../sessionManager';
 import { GemStoneLogin } from '../loginTypes';

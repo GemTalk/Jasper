@@ -12,9 +12,9 @@ import * as vscode from 'vscode';
 import * as crypto from 'crypto';
 import { StartPreview, PreviewPage, ApplyResult } from './renameMethodPreview';
 import { renderMethodPanelHtml, renderMethodCards } from './renameMethodPanelHtml';
-import { readRefactoringWebviewScript } from './webviewAssets';
+import { readWebviewScript } from '../webviewAssets';
 
-const panelJs = readRefactoringWebviewScript('renameMethodPanelView.js');
+const panelJs = readWebviewScript('renameMethodPanelView.js', 'refactoring');
 
 export interface RenameMethodPanelHandlers {
   /** Fetch the page starting at `offset` (1-based). */

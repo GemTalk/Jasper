@@ -104,4 +104,29 @@ describe('paginated rename-method panel', () => {
 
     expect(vscode.postMessage).toHaveBeenCalledWith({ command: 'apply', deselected: ['1'] });
   });
+
+  it('omits an options key when the panel has no apply-option checkboxes', () => {
+    const { vscode } = mount([change('1', 'a')], 1, true);
+
+    (document.getElementById('apply') as HTMLButtonElement).click();
+
+    expect(vscode.postMessage).toHaveBeenCalledWith({ command: 'apply', deselected: [] });
+  });
+
+  it('collects apply-option checkbox states into the apply message when present', () => {
+    const { vscode } = mount([change('1', 'a')], 1, true);
+    const fieldset = document.createElement('div');
+    fieldset.innerHTML =
+      '<input type="checkbox" class="apply-option" data-opt="migrateInstances" checked>' +
+      '<input type="checkbox" class="apply-option" data-opt="removeOldFromHistory">';
+    document.body.appendChild(fieldset);
+
+    (document.getElementById('apply') as HTMLButtonElement).click();
+
+    expect(vscode.postMessage).toHaveBeenCalledWith({
+      command: 'apply',
+      deselected: [],
+      options: { migrateInstances: true, removeOldFromHistory: false },
+    });
+  });
 });

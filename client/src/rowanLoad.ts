@@ -118,12 +118,25 @@ export function normalizeGitUrl(raw: string): string {
 // cloned too: a Rowan project may vendor its package sources that way (e.g.
 // seaside-rowan), and without them the checkout is unloadable. Rejects with
 // git's stderr on failure.
+// A git subprocess operating on an UNRELATED working copy must not inherit this
+// process's ambient git environment (GIT_DIR, GIT_INDEX_FILE, GIT_WORK_TREE, …).
+// Those get set when we run inside a git hook (e.g. the pre-push test hook), and
+// would make these commands target the WRONG repository — potentially corrupting
+// it. Strip every GIT_* variable so `-C cwd` / the clone dest is authoritative.
+function gitEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  for (const key of Object.keys(env)) {
+    if (key.startsWith('GIT_')) delete env[key];
+  }
+  return env;
+}
+
 export function cloneGitRepo(url: string, dest: string): Promise<void> {
   return new Promise((resolve, reject) => {
     execFile(
       'git',
       ['clone', '--recurse-submodules', url, dest],
-      { timeout: 300_000 },
+      { timeout: 300_000, env: gitEnv() },
       (err, _stdout, stderr) => {
         if (err) reject(new Error((stderr && stderr.trim()) || err.message));
         else resolve();
@@ -134,10 +147,15 @@ export function cloneGitRepo(url: string, dest: string): Promise<void> {
 
 function git(args: string[], cwd: string, timeoutMs = 300_000): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile('git', ['-C', cwd, ...args], { timeout: timeoutMs }, (err, stdout, stderr) => {
-      if (err) reject(new Error((stderr && stderr.trim()) || err.message));
-      else resolve(stdout);
-    });
+    execFile(
+      'git',
+      ['-C', cwd, ...args],
+      { timeout: timeoutMs, env: gitEnv() },
+      (err, stdout, stderr) => {
+        if (err) reject(new Error((stderr && stderr.trim()) || err.message));
+        else resolve(stdout);
+      },
+    );
   });
 }
 

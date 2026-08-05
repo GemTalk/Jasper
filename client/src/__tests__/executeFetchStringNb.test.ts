@@ -15,7 +15,7 @@ function fakeSession(overrides: Record<string, unknown> = {}): ActiveSession {
     login: { stone: 'test-stone' },
     gci: {
       GciTsCallInProgress: vi.fn(() => ({ result: 0, err: { number: 0 } })),
-      GciTsResolveSymbol: vi.fn(() => ({ result: 7n, err: { number: 0 } })),
+      utf8ClassOop: vi.fn(() => 7n),
       GciTsNbExecute: vi.fn(() => ({ success: true, err: { number: 0 } })),
       isAvailable: vi.fn(() => true),
       GciTsNbPoll: vi.fn(() => ({ result: 1, err: { number: 0 } })),

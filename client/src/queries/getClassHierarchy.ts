@@ -1,5 +1,5 @@
 import { QueryExecutor } from './types';
-import { escapeString } from './util';
+import { classLookupExpr } from './util';
 
 export interface ClassHierarchyEntry {
   className: string;
@@ -10,16 +10,21 @@ export interface ClassHierarchyEntry {
 export function getClassHierarchy(
   execute: QueryExecutor,
   className: string,
+  dict?: number | string,
 ): ClassHierarchyEntry[] {
   /**
    * In the Smalltalk code below, allSuperclassesOf: returns root-first ([Object, Collection, ...]),
    *  which is the order we want to render — Object at indent 0, the
    *  immediate parent right above the selected class. The earlier
    *  reverseDo: flipped it leaf-first and put Object at the deepest indent.
+   *
+   * `dict` scopes the class lookup (a 1-based SymbolList index, canonical for Jasper, or a
+   * name); omit it for the unscoped global first-match. Scoping matters when a class name is
+   * shadowed across dictionaries — an unscoped lookup could offer the wrong class's lineage.
    */
   const code = `| organizer class supers subs stream classDict sl |
 organizer := ClassOrganizer new.
-class := System myUserProfile symbolList objectNamed: #'${escapeString(className)}'.
+class := ${classLookupExpr(className, dict)}.
 supers := organizer allSuperclassesOf: class.
 subs := organizer subclassesOf: class.
 sl := System myUserProfile symbolList.
@@ -39,7 +44,7 @@ stream nextPutAll: (classDict at: class ifAbsent: ['']); tab;
     nextPutAll: each name; tab; nextPutAll: 'subclass'; lf].
 stream contents`;
 
-  const raw = execute(`getClassHierarchy(${className})`, code);
+  const raw = execute(code);
   const results: ClassHierarchyEntry[] = [];
   for (const line of raw.split('\n')) {
     if (line.length === 0) continue;

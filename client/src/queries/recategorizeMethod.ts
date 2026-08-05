@@ -12,8 +12,5 @@ export function recategorizeMethod(
 ): string {
   const recv = receiver(className, isMeta, dict);
   const code = `${recv} moveMethod: #'${escapeString(selector)}' toCategory: '${escapeString(newCategory)}'. 'ok'`;
-  return execute(
-    `recategorizeMethod(${receiver(className, isMeta)}>>#${selector} -> '${newCategory}')`,
-    code,
-  );
+  return execute(code);
 }

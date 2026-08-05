@@ -29,9 +29,5 @@ result := target
   category: '${escapeString(category)}'
   environmentId: ${environmentId}.
 'Compiled: ' , target name , ' >> ' , result selector asString`;
-  const label =
-    dict === undefined
-      ? `compileMethod(${isMeta ? className + ' class' : className}, '${category}')`
-      : `compileMethod(${isMeta ? className + ' class' : className}, '${category}', dict: ${dict})`;
-  return execute(label, code);
+  return execute(code);
 }

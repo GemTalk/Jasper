@@ -1,7 +1,7 @@
 import type { GciError } from './gciLibrary';
 import type { ActiveSession } from './sessionManager';
-import { OOP_ILLEGAL, OOP_NIL, OOP_CLASS_STRING } from './gciConstants';
-import { logInfo, logError } from './gciLog';
+import { OOP_ILLEGAL } from './gciConstants';
+import { logError, logInfo } from './gciLog';
 
 /**
  * Jade-style server-side Transcript sink.
@@ -169,20 +169,7 @@ export function drainTranscript(session: ActiveSession): string {
 
 function runFetchString(session: ActiveSession, code: string): string {
   try {
-    const { data, err } = session.gci.GciTsExecuteFetchBytes(
-      session.handle,
-      code,
-      -1,
-      OOP_CLASS_STRING,
-      OOP_ILLEGAL,
-      OOP_NIL,
-      MAX_TRANSCRIPT_FETCH,
-    );
-    if (err.number !== 0) {
-      logError(session.id, `Transcript sink call failed: ${err.message || err.number}`);
-      return '';
-    }
-    return data || '';
+    return session.gci.executeAndFetchString(session.handle, code);
   } catch (e) {
     logError(
       session.id,

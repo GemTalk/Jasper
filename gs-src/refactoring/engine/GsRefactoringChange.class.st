@@ -22,7 +22,8 @@ Class {
 		'newName',
 		'category',
 		'oldSource',
-		'newSource'
+		'newSource',
+		'warning'
 	],
 	#category : 'Refactoring-Core'
 }
@@ -39,6 +40,42 @@ GsRefactoringChange class >> methodRecompileId: anId dictName: dn className: cn 
 	^self new
 		setId: anId kind: #methodRecompile dictName: dn className: cn
 		isMeta: aBool selector: sel category: cat oldSource: os newSource: ns
+]
+
+{ #category : 'instance creation' }
+GsRefactoringChange class >> methodAddId: anId dictName: dn className: cn isMeta: aBool selector: sel category: cat newSource: ns [
+	"A brand-new method to compile (it does not yet exist in the class): apply =
+	 compile newSource, exactly like a recompile. oldSource is nil so the before/after
+	 diff renders as an all-added method. Used by extract-method for the extracted
+	 method."
+	^self new
+		setId: anId kind: #methodAdd dictName: dn className: cn
+		isMeta: aBool selector: sel category: cat oldSource: nil newSource: ns
+]
+
+{ #category : 'instance creation' }
+GsRefactoringChange class >> methodOverwriteId: anId dictName: dn className: cn isMeta: aBool selector: sel category: cat oldSource: os newSource: ns warning: w [
+	"A method to compile onto a class that ALREADY defines the selector: apply = compile
+	 newSource, exactly like a #methodAdd (the kind IS #methodAdd, so the apply path is
+	 unchanged). Unlike a plain add, oldSource carries the class's EXISTING definition so
+	 the before/after diff shows what is being replaced, and `warning` explains that
+	 applying this change overwrites (loses) that definition. Used by push-up (onto a
+	 superclass that already implements the selector) and push-down (onto a subclass that
+	 already overrides it) as an opt-in, data-losing change."
+	^(self new
+		setId: anId kind: #methodAdd dictName: dn className: cn
+		isMeta: aBool selector: sel category: cat oldSource: os newSource: ns)
+		setWarning: w
+]
+
+{ #category : 'instance creation' }
+GsRefactoringChange class >> methodRemoveId: anId dictName: dn className: cn isMeta: aBool selector: sel category: cat oldSource: os [
+	"A method to REMOVE (inline-method deletes a now-unused target after inlining its
+	 last sender): apply = removeSelector:. newSource is nil so the before/after diff
+	 renders as an all-removed method."
+	^self new
+		setId: anId kind: #methodRemove dictName: dn className: cn
+		isMeta: aBool selector: sel category: cat oldSource: os newSource: nil
 ]
 
 { #category : 'instance creation' }
@@ -158,6 +195,8 @@ GsRefactoringChange >> jsonOn: aStream [
 	self jsonValue: oldSource on: aStream.
 	aStream nextPutAll: ',"newSource":'.
 	self jsonValue: newSource on: aStream.
+	aStream nextPutAll: ',"warning":'.
+	self jsonValue: warning on: aStream.
 	aStream nextPut: $}
 ]
 
@@ -184,6 +223,18 @@ GsRefactoringChange >> newSource [
 { #category : 'accessing' }
 GsRefactoringChange >> oldSource [
 	^oldSource
+]
+
+{ #category : 'accessing' }
+GsRefactoringChange >> warning [
+	"A human-readable data-loss warning for this change (e.g. that it overwrites an
+	 existing method whose definition is lost), or nil when the change is non-destructive."
+	^warning
+]
+
+{ #category : 'private' }
+GsRefactoringChange >> setWarning: aString [
+	warning := aString
 ]
 
 { #category : 'accessing' }

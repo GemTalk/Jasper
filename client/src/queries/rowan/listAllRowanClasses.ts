@@ -28,7 +28,7 @@ ws := WriteStream on: Unicode7 new.
   on: Error do: [:e | nil].
 ws contents`;
 
-  const raw = execute('listAllRowanClasses', code);
+  const raw = execute(code);
 
   const classes: RowanClassLocation[] = [];
   for (const line of raw.split('\n')) {

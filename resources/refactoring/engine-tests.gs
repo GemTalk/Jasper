@@ -9,6 +9,51 @@
 
 doit
 | cls |
+cls := TestCase subclass: 'GsChangeSignatureRefactoringTest'
+  instVarNames: #()
+  classVars: #()
+  classInstVars: #()
+  poolDictionaries: #()
+  inDictionary: UserGlobals.
+cls category: 'Refactoring-Tests-Core'.
+cls comment: '
+Correctness of the change-signature refactoring (M5 -- add / remove / reorder
+parameters):
+
+  - REORDER: keyword parts and their arguments move together, in the implementor
+    signature and at every call site; the body binds arguments by name, unchanged;
+  - ADD: a new keyword part + argument is inserted in the signature (the new
+    argument is unused in the body) and every send supplies the caller default;
+    a unary or binary selector can gain a keyword and become keyword;
+  - REMOVE: an UNUSED parameter is dropped from the signature and its argument is
+    dropped at every send; removing a USED parameter DECLINES (naming the class);
+    a one-argument keyword selector can lose its argument and become unary;
+  - a collision (the new selector already names a different method on the class)
+    is surfaced (blocks Apply);
+  - scope (#class / #hierarchy / #wholeSystem) selects the affected implementors
+    and senders, and the out-of-scope remainder is counted;
+  - the selector spelling inside a comment or string literal is NEVER rewritten;
+  - super-sends and cascades are rewritten;
+  - implementors are staged as #methodRename, senders as #methodRecompile;
+  - building the change set compiles nothing and commits nothing;
+  - the paginated preview is byte-bounded, and the server-side apply compiles new
+    / removes old for every change except the deselected ones, without committing;
+  - the pre-flight analyze answers the current selector kind, arity, and argument
+    names so the client can pre-populate the signature editor.
+
+setUp builds a throwaway hierarchy plus an unrelated sender class in UserGlobals
+and tearDown removes them. Fixture selectors are spellings unique to the fixture
+(movePointX:y:, csPing, ~>, csComputeWith:unused:, ...), so an image-wide
+implementor/sender search finds only the fixture.
+'.
+true.
+%
+
+removeallmethods GsChangeSignatureRefactoringTest
+removeallclassmethods GsChangeSignatureRefactoringTest
+
+doit
+| cls |
 cls := TestCase subclass: 'GsClassHistoryTest'
   instVarNames: #()
   classVars: #()
@@ -38,6 +83,366 @@ true.
 
 removeallmethods GsClassHistoryTest
 removeallclassmethods GsClassHistoryTest
+
+doit
+| cls |
+cls := TestCase subclass: 'GsExtractMethodRefactoringTest'
+  instVarNames: #()
+  classVars: #()
+  classInstVars: #()
+  poolDictionaries: #()
+  inDictionary: UserGlobals.
+cls category: 'Refactoring-Tests-Core'.
+cls comment: '
+Correctness of the extract-method refactoring (M1). Extract turns a selected run
+of statements (or a single expression) into a NEW method and replaces the
+selection with a send to it, staging exactly two core changes -- a #methodAdd for
+the extracted method and a #methodRecompile for the rewritten original -- plus,
+when replaceSimilar is on and the extraction is a safe void shape, one deselectable
+#methodRecompile per structurally-equivalent run found in the class + hierarchy.
+
+This suite pins down:
+
+  - a void statement run with no external reads extracts to a unary method + a
+    ''self <sel>'' call;
+  - statements that read outer locals extract to a keyword method taking those as
+    arguments (source order), and a single variable assigned inside and used after
+    becomes the return value (call site: ''var := self <sel> ...'');
+  - a single expression extracts to a ''^expression'' method, the call substituted
+    for the expression in place;
+  - a temporary used only inside the selection is declared in the new method and
+    dropped from the original;
+  - the selection is DECLINED (empty change set + a reason) when it contains a ^
+    return, sends to super, uses thisContext, assigns more than one variable used
+    later, is not a whole-statement / single-expression selection, or the selector
+    arity does not match the argument count;
+  - a new selector already in the hierarchy is a SOFT collision warning that does
+    not block (the change set is still built);
+  - the replace-similar pass finds equivalent runs in the class + hierarchy (arg
+    positions mapped consistently), skips near-misses, is off by default, and is
+    skipped for value-returning extractions;
+  - building the change set compiles nothing and commits nothing; apply creates the
+    new method and rewrites the original (honouring duplicate deselection but never
+    the two core changes) without committing.
+
+setUp builds a throwaway two-class hierarchy in UserGlobals; tearDown removes it.
+'.
+true.
+%
+
+removeallmethods GsExtractMethodRefactoringTest
+removeallclassmethods GsExtractMethodRefactoringTest
+
+doit
+| cls |
+cls := TestCase subclass: 'GsExtractTemporaryRefactoringTest'
+  instVarNames: #()
+  classVars: #()
+  classInstVars: #()
+  poolDictionaries: #()
+  inDictionary: UserGlobals.
+cls category: 'Refactoring-Tests-Core'.
+cls comment: '
+Correctness of the extract-temporary refactoring (M3). Extract Temporary takes a
+selected EXPRESSION in a method, introduces a new temporary assigned to it, and
+replaces the selected occurrence(s) with the temporary. It is method-local: exactly
+one method changes, staged as a single #methodRecompile, with no class-definition
+edit and no cross-method scan.
+
+This suite pins down:
+
+  - a sub-expression (a binary operand) is extracted: a ''name := expr.'' assignment is
+    inserted before the containing statement and the occurrence is replaced by name;
+  - an expression used as a whole return value extracts with the assignment before the
+    return and ''^ name'' after;
+  - a LITERAL can be extracted (naming a magic number);
+  - a bare variable, an assignment, a whole ^return, and a multi-statement selection
+    are DECLINED (empty change set + a reason);
+  - an expression inside a BLOCK declares the temporary in that block, not the method;
+  - replaceAll replaces every identical occurrence in the declaring sequence and
+    inserts a single assignment before the earliest;
+  - the new name COLLIDES (surfaced, not applied) with an existing arg/temp, an own or
+    INHERITED instance variable, a class variable, or a pseudo-variable, and is free
+    otherwise;
+  - a fresh temporary is added to an existing ''| .. |'' clause and a ''| name |'' clause
+    is created when the method had none;
+  - building compiles nothing and commits nothing; apply recompiles the one method and
+    never commits; preview / token round-trip work.
+
+setUp builds a throwaway two-class hierarchy in UserGlobals; tearDown removes it.
+'.
+true.
+%
+
+removeallmethods GsExtractTemporaryRefactoringTest
+removeallclassmethods GsExtractTemporaryRefactoringTest
+
+doit
+| cls |
+cls := TestCase subclass: 'GsInlineMethodRefactoringTest'
+  instVarNames: #()
+  classVars: #()
+  classInstVars: #()
+  poolDictionaries: #()
+  inDictionary: UserGlobals.
+cls category: 'Refactoring-Tests-Core'.
+cls comment: '
+Correctness of the inline-method refactoring (M2). Inline replaces ONE self/super
+message send at the cursor with the called method''s body (arguments substituted),
+staging a single #methodRecompile for the rewritten caller. The called method is
+KEPT -- EXCEPT when the inlined call was its last remaining sender, in which case a
+second, deselectable #methodRemove is staged to delete the now-unused method.
+
+This suite pins down:
+
+  - a self send of a void one-liner used as a statement inlines the body at the
+    site; the target is kept (it has other senders); one #methodRecompile;
+  - a self send whose value is used (target is ^expr) is replaced by the expression,
+    parenthesised only where precedence requires it;
+  - a send with arguments substitutes each argument''s source for the parameter, a
+    non-atomic argument parenthesised, an atomic one bare (even used twice);
+  - a super send resolves the target from the superclass and inlines its body;
+  - the inline is DECLINED (empty change set + a reason) for a non-self/super
+    receiver, no implementor in the hierarchy, a multi-statement / temp-declaring /
+    inner-return target, a target sending super, a side-effecting argument used more
+    than once, a value used where the target returns self, a cascaded send, and a
+    caret that is not on a send;
+  - inlining the LAST sender stages a second #methodRemove for the target, and it is
+    SUPPRESSED when another method (or a second send in the same method) still sends
+    it;
+  - building compiles nothing and commits nothing; apply recompiles the caller
+    (always) and removes the target (only when kept), never committing.
+
+setUp builds a throwaway two-class hierarchy in UserGlobals; tearDown removes it.
+Target selectors that must be the LAST sender in a test use image-unique names
+(gsim...) so no unrelated sender in the image perturbs the count.
+'.
+true.
+%
+
+removeallmethods GsInlineMethodRefactoringTest
+removeallclassmethods GsInlineMethodRefactoringTest
+
+doit
+| cls |
+cls := TestCase subclass: 'GsInlineTemporaryRefactoringTest'
+  instVarNames: #()
+  classVars: #()
+  classInstVars: #()
+  poolDictionaries: #()
+  inDictionary: UserGlobals.
+cls category: 'Refactoring-Tests-Core'.
+cls comment: '
+Correctness of the inline-temporary refactoring (M4), the mirror image of M3. Inline
+Temporary takes a temporary assigned EXACTLY ONCE, replaces every read of it with the
+assigned expression, and deletes the declaration + assignment. It is method-local:
+one method changes, staged as a single #methodRecompile, no class-definition edit and
+no cross-method scan.
+
+This suite pins down:
+
+  - a single-read temporary inlines into a return position with no parentheses;
+  - inlining into a binary operand parenthesises a non-atomic value; an atomic value
+    (a variable) never gets parentheses, even at a sub-expression position;
+  - an atomic value read TWICE inlines safely; a non-atomic value read twice is
+    DECLINED;
+  - an argument, an instance variable, a temp assigned twice, a temp assigned inside a
+    nested block, a temp read before it is assigned, a never-read temp, and a caret
+    not on a variable are all DECLINED (empty change set + a reason);
+  - the declaration is rewritten cleanly: a temp dropped from a multi-temp ''| .. |''
+    clause, and the whole clause removed when it was the only temporary, with no
+    dangling ''.'' left behind;
+  - a temporary declared inside a BLOCK inlines within the block;
+  - building compiles nothing and commits nothing; apply recompiles the one method and
+    never commits; preview / token round-trip work.
+
+setUp builds a throwaway two-class hierarchy in UserGlobals; tearDown removes it.
+'.
+true.
+%
+
+removeallmethods GsInlineTemporaryRefactoringTest
+removeallclassmethods GsInlineTemporaryRefactoringTest
+
+doit
+| cls |
+cls := TestCase subclass: 'GsInstVarStructureRefactoringTest'
+  instVarNames: #()
+  classVars: #()
+  classInstVars: #()
+  poolDictionaries: #()
+  inDictionary: UserGlobals.
+cls category: 'Refactoring-Tests-Core'.
+cls comment: '
+Correctness of the instance-variable structure refactorings (V2 push up, V3 push down, V5
+convert temporary to instance variable). Each edits one or more class definitions'' own-instVar
+lists, which -- because GemStone has no addInstVarName:/removeInstVarName: -- means creating a
+new class version (empty method dictionary, subclasses not auto-reparented). So the apply, for
+every affected class top-down, creates a new version with its computed own-instVar list, copies
+its methods forward, and re-parents it under the new parent chain (the R3 newVersionOf:
+mechanism).
+
+This suite pins down, on a Base -> Mid -> {Leaf, Twig} hierarchy:
+
+  - V5: converting a method temporary adds it as an instance variable and drops its
+    declaration from the method; declines when the name is already an instance variable or is
+    not a method-level temporary;
+  - V2: pushing an own ivar up moves it to the immediate superclass (superclass gains it, the
+    class loses it, siblings still inherit); declines when the name is not the class''s own ivar
+    or when a sibling already declares the same name (collision on inherit);
+  - V3: pushing an own ivar down moves it into every immediate subclass and removes it from the
+    class; declines when the class still uses the ivar in its own methods or has no subclasses;
+  - V4: the general #move -- up to any chosen ancestor, or down to a chosen subset of
+    descendants -- declining a non-ancestor/non-descendant target, a multi-superclass up-move,
+    and a partial push-down that would leave a still-using class without the ivar;
+  - across all four: the whole subtree''s METHODS survive the reversioning, the subtree stays
+    correctly parented, and building compiles/commits nothing.
+
+setUp builds the throwaway hierarchy in UserGlobals; tearDown removes it.
+'.
+true.
+%
+
+removeallmethods GsInstVarStructureRefactoringTest
+removeallclassmethods GsInstVarStructureRefactoringTest
+
+doit
+| cls |
+cls := TestCase subclass: 'GsMoveMethodRefactoringTest'
+  instVarNames: #()
+  classVars: #()
+  classInstVars: #()
+  poolDictionaries: #()
+  inDictionary: UserGlobals.
+cls category: 'Refactoring-Tests-Core'.
+cls comment: '
+Correctness of the move-method refactoring (M6). Move relocates one OR MORE methods
+from a source class/side to a DIFFERENT class -- and/or flips instance<->class side
+-- keeping the selector and the source verbatim. Each selector stages a #methodAdd on
+the target (compile the same source there) plus a #methodRemove on the source. Nothing
+is compiled or committed while building; the server-side apply compiles the target and
+removes the source WITHOUT committing (the user commits explicitly).
+
+This suite pins down:
+
+  - a pure method (no ivar, no super) moves to another class: a #methodAdd on the
+    target carrying the verbatim source + category, and a #methodRemove on the source;
+  - the move is DECLINED (that selector is skipped, with a reason) when: the target
+    class does not exist (a GLOBAL decline that empties the whole change set); the
+    target and side are the same as the source (no-op); the target already implements
+    the selector (collision); the method sends super; or the method accesses an
+    instance variable the target class does not define;
+  - a method that reads an ivar the target ALSO defines moves cleanly; the same method
+    is declined when the target lacks that ivar;
+  - an instance method flips to the class side of its own class (target = source class,
+    other side); the flip is declined for an ivar-reader (the class side has no such
+    instance variable);
+  - a MULTI-selector move moves the movable ones and reports the declined ones;
+  - the analysis pre-flight reports per-selector decline + a movable count;
+  - building compiles nothing and commits nothing; apply relocates the method and
+    removes it from the source, guarding the removal so a deselected/failed add never
+    strands the method in neither class; apply never commits; a token round-trip works.
+
+setUp builds throwaway classes in UserGlobals; tearDown removes them.
+'.
+true.
+%
+
+removeallmethods GsMoveMethodRefactoringTest
+removeallclassmethods GsMoveMethodRefactoringTest
+
+doit
+| cls |
+cls := TestCase subclass: 'GsPushDownMethodRefactoringTest'
+  instVarNames: #()
+  classVars: #()
+  classInstVars: #()
+  poolDictionaries: #()
+  inDictionary: UserGlobals.
+cls category: 'Refactoring-Tests-Core'.
+cls comment: '
+Correctness of the push-down-method refactoring (M8). Push-down relocates one OR MORE
+methods from a source class into its immediate SUBCLASSES, same side, keeping the selector
+and the source verbatim. Per movable selector it stages a #methodAdd on every immediate
+subclass that does not already override the selector (each keeps its own override) plus a
+SINGLE #methodRemove on the source. Nothing is compiled or committed while building; the
+server-side apply compiles the subclasses and removes the source WITHOUT committing.
+
+This suite pins down:
+
+  - a pure method pushes down: one #methodAdd per receiving subclass (verbatim source +
+    category) plus one #methodRemove on the source;
+  - instance-variable access does NOT block a push-down (the subclasses inherit the source''s
+    ivars);
+  - the push is DECLINED (that selector is skipped, with a reason) when: the method sends
+    super; (a class where EVERY subclass already overrides the selector is NOT declined -- it
+    is an all-overwrite push the user opts into);
+  - a subclass that already overrides the selector gets an opt-in OVERWRITE add (existing
+    body + a data-loss warning), NOT a silent skip, and the others get plain adds;
+  - a class with no subclasses (an impossible push) is a GLOBAL decline that empties the
+    change set;
+  - a class-side method pushes down onto each subclass''s class side;
+  - a MULTI-selector push moves the movable ones and reports the declined ones;
+  - the analysis pre-flight reports a null targetClass, a per-selector decline, and a
+    movable count;
+  - building compiles nothing and commits nothing; apply copies the method into each
+    subclass and removes it from the source, guarding the removal so it fires only once
+    every subclass understands the selector (a deselected subclass add leaves the source
+    method in place); apply never commits; a token round-trip works.
+
+setUp builds a throwaway base + two subclasses in UserGlobals; tearDown removes them.
+'.
+true.
+%
+
+removeallmethods GsPushDownMethodRefactoringTest
+removeallclassmethods GsPushDownMethodRefactoringTest
+
+doit
+| cls |
+cls := TestCase subclass: 'GsPushUpMethodRefactoringTest'
+  instVarNames: #()
+  classVars: #()
+  classInstVars: #()
+  poolDictionaries: #()
+  inDictionary: UserGlobals.
+cls category: 'Refactoring-Tests-Core'.
+cls comment: '
+Correctness of the push-up-method refactoring (M7). Push-up relocates one OR MORE
+methods from a source class to its immediate SUPERCLASS, same side, keeping the selector
+and the source verbatim. Each selector stages a #methodAdd on the superclass (compile the
+same source there) plus a #methodRemove on the source. Nothing is compiled or committed
+while building; the server-side apply compiles the superclass and removes the source
+WITHOUT committing (the user commits explicitly).
+
+This suite pins down:
+
+  - a pure method (no ivar, no super) pushes up to the superclass: a #methodAdd on the
+    superclass carrying the verbatim source + category, and a #methodRemove on the source;
+  - the push is DECLINED (that selector is skipped, with a reason) when: the method sends
+    super; or the method accesses an instance variable the superclass does not define;
+  - a collision (the superclass already implements the selector) is NOT declined: it stages
+    an opt-in OVERWRITE add carrying the superclass''s old body + a data-loss warning, and a
+    deselected overwrite must NOT strip the source (regression guard);
+  - a method that reads an ivar the superclass ALSO defines pushes up cleanly; the same
+    method is declined when only the subclass declares that ivar;
+  - a class with no superclass (an impossible push) is a GLOBAL decline that empties the
+    change set;
+  - a class-side method pushes up to the superclass''s class side;
+  - a MULTI-selector push moves the movable ones and reports the declined ones;
+  - the analysis pre-flight reports the target superclass, a per-selector decline, and a
+    movable count;
+  - building compiles nothing and commits nothing; apply relocates the method to the
+    superclass and removes it from the source, guarding the removal so a deselected/failed
+    add never strands the method; apply never commits; a token round-trip works.
+
+setUp builds a throwaway superclass/subclass pair in UserGlobals; tearDown removes them.
+'.
+true.
+%
+
+removeallmethods GsPushUpMethodRefactoringTest
+removeallclassmethods GsPushUpMethodRefactoringTest
 
 doit
 | cls |
@@ -293,6 +698,594 @@ removeallclassmethods GsRenameTemporaryRefactoringTest
 ! Class implementations
 
 category: 'asserting'
+method: GsChangeSignatureRefactoringTest
+assert: aString includesSubstring: aSubstring
+	self assert: (aString indexOfSubCollection: aSubstring) > 0
+%
+
+category: 'asserting'
+method: GsChangeSignatureRefactoringTest
+deny: aString includesSubstring: aSubstring
+	self assert: (aString indexOfSubCollection: aSubstring) = 0
+%
+
+category: 'fixture'
+method: GsChangeSignatureRefactoringTest
+baseFixture
+	^UserGlobals at: #GsCSBase
+%
+
+category: 'fixture'
+method: GsChangeSignatureRefactoringTest
+subFixture
+	^UserGlobals at: #GsCSSub
+%
+
+category: 'fixture'
+method: GsChangeSignatureRefactoringTest
+compile: aSource in: aClass
+	aClass
+		compileMethod: aSource
+		dictionaries: System myUserProfile symbolList
+		category: 'fixture'
+%
+
+category: 'fixture'
+method: GsChangeSignatureRefactoringTest
+implementorChangeFor: aClassName in: aChangeSet
+	^aChangeSet changes
+		detect: [:c | c kind = #methodRename and: [c className asString = aClassName asString]]
+		ifNone: [nil]
+%
+
+category: 'fixture'
+method: GsChangeSignatureRefactoringTest
+senderChangeFor: aSelector in: aChangeSet
+	^aChangeSet changes
+		detect: [:c | c kind = #methodRecompile and: [c selector asString = aSelector asString]]
+		ifNone: [nil]
+%
+
+category: 'fixture'
+method: GsChangeSignatureRefactoringTest
+changePartsTo: partsArray permutation: permArray argNames: namesArray defaults: defArray scope: scopeSymbol
+	"A change to the fixture's #movePointX:y: with the given signature spec."
+	^GsChangeSignatureRefactoring
+		class: self baseFixture
+		meta: false
+		changeSelector: #'movePointX:y:'
+		toParts: partsArray
+		permutation: permArray
+		argNames: namesArray
+		defaults: defArray
+		scope: scopeSymbol
+%
+
+category: 'running'
+method: GsChangeSignatureRefactoringTest
+setUp
+	| base sub other |
+	super setUp.
+	base := Object
+		subclass: 'GsCSBase'
+		instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: UserGlobals.
+	sub := base
+		subclass: 'GsCSSub'
+		instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: UserGlobals.
+	other := Object
+		subclass: 'GsCSOther'
+		instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: UserGlobals.
+	self compile: 'movePointX: x y: y
+	"moves the point -- mentions movePointX:y: in this comment"
+	^Array with: x with: y' in: base.
+	self compile: 'csPing
+	^1' in: base.
+	self compile: '~> aThing
+	^aThing' in: base.
+	self compile: 'caller
+	"a caller of movePointX:y: and csPing"
+	self csPing.
+	^self movePointX: 1 y: 2' in: base.
+	self compile: 'cascadeCaller
+	^self movePointX: 1 y: 2; csPing; yourself' in: base.
+	self compile: 'useBinary
+	^self ~> 5' in: base.
+	self compile: 'csComputeWith: a unused: b
+	^a * 2' in: base.
+	self compile: 'useCompute
+	^self csComputeWith: 5 unused: 9' in: base.
+	self compile: 'csSumA: a b: b
+	^a + b' in: base.
+	self compile: 'csDescribe: aThing
+	^42' in: base.
+	self compile: 'useDescribe
+	^self csDescribe: 7' in: base.
+	self compile: 'existing: p two: q
+	^p' in: base.
+	self compile: 'movePointX: x y: y
+	^super movePointX: x y: y' in: sub.
+	self compile: 'usePoint
+	^GsCSBase new movePointX: 3 y: 4' in: other
+%
+
+category: 'running'
+method: GsChangeSignatureRefactoringTest
+tearDown
+	#('GsCSSub' 'GsCSOther' 'GsCSBase')
+		do: [:nm | UserGlobals removeKey: nm asSymbol ifAbsent: []].
+	super tearDown
+%
+
+category: 'tests - reorder'
+method: GsChangeSignatureRefactoringTest
+testReorderKeywordImplementorSignature
+	| change |
+	change := self implementorChangeFor: 'GsCSBase'
+		in: (self changePartsTo: #('moveY:' 'x:') permutation: #(2 1)
+			argNames: #('' '') defaults: #('' '') scope: #class) changeSet.
+
+	self assert: change newSource includesSubstring: 'moveY: y x: x'.
+	"The body still binds x and y by name, unchanged."
+	self assert: change newSource includesSubstring: '^Array with: x with: y'
+%
+
+category: 'tests - reorder'
+method: GsChangeSignatureRefactoringTest
+testReorderKeywordSenderArguments
+	| change |
+	change := self senderChangeFor: #caller
+		in: (self changePartsTo: #('moveY:' 'x:') permutation: #(2 1)
+			argNames: #('' '') defaults: #('' '') scope: #class) changeSet.
+
+	self assert: change newSource includesSubstring: 'self moveY: 2 x: 1'.
+	self deny: change newSource includesSubstring: 'self movePointX:'
+%
+
+category: 'tests - reorder'
+method: GsChangeSignatureRefactoringTest
+testCommentSpellingIsNotRewritten
+	| impl |
+	impl := self implementorChangeFor: 'GsCSBase'
+		in: (self changePartsTo: #('moveY:' 'x:') permutation: #(2 1)
+			argNames: #('' '') defaults: #('' '') scope: #class) changeSet.
+
+	self assert: impl newSource includesSubstring: 'mentions movePointX:y: in this comment'
+%
+
+category: 'tests - reorder'
+method: GsChangeSignatureRefactoringTest
+testSuperSendIsRewritten
+	| change |
+	change := self implementorChangeFor: 'GsCSSub'
+		in: (self changePartsTo: #('moveY:' 'x:') permutation: #(2 1)
+			argNames: #('' '') defaults: #('' '') scope: #hierarchy) changeSet.
+
+	self assert: change notNil.
+	self assert: change newSource includesSubstring: 'super moveY: y x: x'
+%
+
+category: 'tests - reorder'
+method: GsChangeSignatureRefactoringTest
+testCascadeSendIsRewritten
+	| change |
+	change := self senderChangeFor: #cascadeCaller
+		in: (self changePartsTo: #('moveY:' 'x:') permutation: #(2 1)
+			argNames: #('' '') defaults: #('' '') scope: #wholeSystem) changeSet.
+
+	self assert: change notNil.
+	self assert: change newSource includesSubstring: 'moveY: 2 x: 1'.
+	self deny: change newSource includesSubstring: 'movePointX:'
+%
+
+category: 'tests - add'
+method: GsChangeSignatureRefactoringTest
+testAddParameterToKeywordImplementor
+	| change |
+	change := self implementorChangeFor: 'GsCSBase'
+		in: (self changePartsTo: #('movePointX:' 'y:' 'z:') permutation: #(1 2 0)
+			argNames: #('x' 'y' 'z') defaults: #('' '' 'nil') scope: #class) changeSet.
+
+	self assert: change newSelector asString equals: 'movePointX:y:z:'.
+	self assert: change newSource includesSubstring: 'z: z'.
+	"The new parameter is unused in the body, which is otherwise unchanged."
+	self assert: change newSource includesSubstring: '^Array with: x with: y'
+%
+
+category: 'tests - add'
+method: GsChangeSignatureRefactoringTest
+testAddParameterToKeywordSenderSuppliesDefault
+	| change |
+	change := self senderChangeFor: #caller
+		in: (self changePartsTo: #('movePointX:' 'y:' 'z:') permutation: #(1 2 0)
+			argNames: #('x' 'y' 'z') defaults: #('' '' 'nil') scope: #class) changeSet.
+
+	self assert: change newSource includesSubstring: 'movePointX: 1 y: 2 z: nil'
+%
+
+category: 'tests - add'
+method: GsChangeSignatureRefactoringTest
+testAddParameterToUnaryBecomesKeyword
+	| cs impl sender |
+	cs := (GsChangeSignatureRefactoring
+		class: self baseFixture meta: false changeSelector: #csPing
+		toParts: #('csPingWith:') permutation: #(0)
+		argNames: #('n') defaults: #('42') scope: #wholeSystem) changeSet.
+	impl := self implementorChangeFor: 'GsCSBase' in: cs.
+	sender := self senderChangeFor: #caller in: cs.
+
+	self assert: impl newSelector asString equals: 'csPingWith:'.
+	self assert: impl newSource includesSubstring: 'csPingWith: n'.
+	self assert: sender newSource includesSubstring: 'self csPingWith: 42'
+%
+
+category: 'tests - add'
+method: GsChangeSignatureRefactoringTest
+testAddParameterToBinaryBecomesKeyword
+	| cs impl sender |
+	cs := (GsChangeSignatureRefactoring
+		class: self baseFixture meta: false changeSelector: #'~>'
+		toParts: #('combineWith:' 'and:') permutation: #(1 0)
+		argNames: #('aThing' 'other') defaults: #('' '0') scope: #wholeSystem) changeSet.
+	impl := self implementorChangeFor: 'GsCSBase' in: cs.
+	sender := self senderChangeFor: #useBinary in: cs.
+
+	self assert: impl newSelector asString equals: 'combineWith:and:'.
+	self assert: impl newSource includesSubstring: 'combineWith: aThing and: other'.
+	self assert: sender newSource includesSubstring: 'self combineWith: 5 and: 0'
+%
+
+category: 'tests - remove'
+method: GsChangeSignatureRefactoringTest
+testRemoveUnusedParameterFromImplementor
+	| impl |
+	impl := self implementorChangeFor: 'GsCSBase'
+		in: (GsChangeSignatureRefactoring
+			class: self baseFixture meta: false changeSelector: #'csComputeWith:unused:'
+			toParts: #('csComputeWith:') permutation: #(1)
+			argNames: #('a') defaults: #('') scope: #wholeSystem) changeSet.
+
+	self assert: impl newSelector asString equals: 'csComputeWith:'.
+	self assert: impl newSource includesSubstring: 'csComputeWith: a'.
+	self deny: impl newSource includesSubstring: 'unused:'.
+	self assert: impl newSource includesSubstring: '^a * 2'
+%
+
+category: 'tests - remove'
+method: GsChangeSignatureRefactoringTest
+testRemoveUnusedParameterDropsSenderArgument
+	| sender |
+	sender := self senderChangeFor: #useCompute
+		in: (GsChangeSignatureRefactoring
+			class: self baseFixture meta: false changeSelector: #'csComputeWith:unused:'
+			toParts: #('csComputeWith:') permutation: #(1)
+			argNames: #('a') defaults: #('') scope: #wholeSystem) changeSet.
+
+	self assert: sender newSource includesSubstring: 'self csComputeWith: 5'.
+	self deny: sender newSource includesSubstring: 'unused:'.
+	self deny: sender newSource includesSubstring: '9'
+%
+
+category: 'tests - remove'
+method: GsChangeSignatureRefactoringTest
+testRemoveUsedParameterIsDeclined
+	| ref |
+	ref := GsChangeSignatureRefactoring
+		class: self baseFixture meta: false changeSelector: #'csSumA:b:'
+		toParts: #('csSumA:') permutation: #(1)
+		argNames: #('a') defaults: #('') scope: #wholeSystem.
+
+	self assert: ref declineReason notNil.
+	self assert: ref declineReason includesSubstring: 'used'.
+	self assert: ref changeSet changes isEmpty
+%
+
+category: 'tests - remove'
+method: GsChangeSignatureRefactoringTest
+testRemoveOnlyParameterBecomesUnary
+	| cs impl sender |
+	cs := (GsChangeSignatureRefactoring
+		class: self baseFixture meta: false changeSelector: #'csDescribe:'
+		toParts: #('csDescribe') permutation: #()
+		argNames: #() defaults: #() scope: #wholeSystem) changeSet.
+	impl := self implementorChangeFor: 'GsCSBase' in: cs.
+	sender := self senderChangeFor: #useDescribe in: cs.
+
+	self assert: impl newSelector asString equals: 'csDescribe'.
+	self assert: sender newSource includesSubstring: 'self csDescribe'.
+	self deny: sender newSource includesSubstring: 'csDescribe: 7'
+%
+
+category: 'tests - preconditions'
+method: GsChangeSignatureRefactoringTest
+testCollisionWhenNewSelectorAlreadyExists
+	| ref |
+	ref := self changePartsTo: #('existing:' 'two:') permutation: #(1 2)
+		argNames: #('' '') defaults: #('' '') scope: #class.
+
+	self assert: ref newSelectorCollision notNil.
+	self assert: ref newSelectorCollision includesSubstring: 'existing:two:'
+%
+
+category: 'tests - preconditions'
+method: GsChangeSignatureRefactoringTest
+testDuplicateArgumentNameIsDeclined
+	"Adding a new parameter named the same as a kept argument is declined."
+	| ref |
+	ref := self changePartsTo: #('movePointX:' 'y:' 'z:') permutation: #(1 2 0)
+		argNames: #('x' 'y' 'x') defaults: #('' '' 'nil') scope: #class.
+
+	self assert: ref declineReason notNil.
+	self assert: ref declineReason includesSubstring: 'same name'
+%
+
+category: 'tests - scope'
+method: GsChangeSignatureRefactoringTest
+testClassScopeExcludesSubclassAndUnrelatedSenders
+	| ref cs |
+	ref := self changePartsTo: #('moveY:' 'x:') permutation: #(2 1)
+		argNames: #('' '') defaults: #('' '') scope: #class.
+	cs := ref changeSet.
+
+	self assert: (self implementorChangeFor: 'GsCSBase' in: cs) notNil.
+	self assert: (self implementorChangeFor: 'GsCSSub' in: cs) isNil.
+	self assert: ref outOfScopeImplementorCount equals: 1.
+	self assert: ((cs changes anySatisfy: [:c | c className asString = 'GsCSOther']) not).
+	self assert: ref outOfScopeSenderCount >= 1
+%
+
+category: 'tests - scope'
+method: GsChangeSignatureRefactoringTest
+testHierarchyScopeIncludesSubclassExcludesUnrelated
+	| cs |
+	cs := (self changePartsTo: #('moveY:' 'x:') permutation: #(2 1)
+		argNames: #('' '') defaults: #('' '') scope: #hierarchy) changeSet.
+
+	self assert: (self implementorChangeFor: 'GsCSBase' in: cs) notNil.
+	self assert: (self implementorChangeFor: 'GsCSSub' in: cs) notNil.
+	self assert: ((cs changes anySatisfy: [:c | c className asString = 'GsCSOther']) not)
+%
+
+category: 'tests - staging'
+method: GsChangeSignatureRefactoringTest
+testImplementorStagedAsRenameSenderAsRecompile
+	| cs impl sender |
+	cs := (self changePartsTo: #('moveY:' 'x:') permutation: #(2 1)
+		argNames: #('' '') defaults: #('' '') scope: #wholeSystem) changeSet.
+	impl := self implementorChangeFor: 'GsCSBase' in: cs.
+	sender := self senderChangeFor: #caller in: cs.
+
+	self assert: impl kind equals: #methodRename.
+	self assert: impl selector asString equals: 'movePointX:y:'.
+	self assert: impl newSelector asString equals: 'moveY:x:'.
+	self assert: sender kind equals: #methodRecompile.
+	self assert: sender newSelector isNil
+%
+
+category: 'tests - staging'
+method: GsChangeSignatureRefactoringTest
+testBuildingChangeSetDoesNotCommit
+	| before |
+	before := System needsCommit.
+	(self changePartsTo: #('moveY:' 'x:') permutation: #(2 1)
+		argNames: #('' '') defaults: #('' '') scope: #wholeSystem) changeSet.
+
+	self assert: (self baseFixture compiledMethodAt: #'movePointX:y:' environmentId: 0 otherwise: nil) notNil.
+	self assert: System needsCommit equals: before
+%
+
+category: 'tests - apply'
+method: GsChangeSignatureRefactoringTest
+testServerSideApplyReorderCompilesNewAndRemovesOld
+	| ref base |
+	ref := self changePartsTo: #('moveY:' 'x:') permutation: #(2 1)
+		argNames: #('' '') defaults: #('' '') scope: #class.
+	ref applyDeselected: #().
+	base := self baseFixture.
+
+	self assert: (base compiledMethodAt: #'moveY:x:' environmentId: 0 otherwise: nil) notNil.
+	self assert: (base compiledMethodAt: #'movePointX:y:' environmentId: 0 otherwise: nil) isNil.
+	self assert: (base compiledMethodAt: #caller environmentId: 0 otherwise: nil) sourceString
+		includesSubstring: 'moveY: 2 x: 1'
+%
+
+category: 'tests - apply'
+method: GsChangeSignatureRefactoringTest
+testServerSideApplyAddParameter
+	| ref base |
+	ref := self changePartsTo: #('movePointX:' 'y:' 'z:') permutation: #(1 2 0)
+		argNames: #('x' 'y' 'z') defaults: #('' '' 'nil') scope: #class.
+	ref applyDeselected: #().
+	base := self baseFixture.
+
+	self assert: (base compiledMethodAt: #'movePointX:y:z:' environmentId: 0 otherwise: nil) notNil.
+	self assert: (base compiledMethodAt: #'movePointX:y:' environmentId: 0 otherwise: nil) isNil.
+	self assert: (base compiledMethodAt: #caller environmentId: 0 otherwise: nil) sourceString
+		includesSubstring: 'movePointX: 1 y: 2 z: nil'
+%
+
+category: 'tests - apply'
+method: GsChangeSignatureRefactoringTest
+testServerSideApplyRemoveUnusedParameter
+	| ref base |
+	ref := GsChangeSignatureRefactoring
+		class: self baseFixture meta: false changeSelector: #'csComputeWith:unused:'
+		toParts: #('csComputeWith:') permutation: #(1)
+		argNames: #('a') defaults: #('') scope: #wholeSystem.
+	ref applyDeselected: #().
+	base := self baseFixture.
+
+	self assert: (base compiledMethodAt: #'csComputeWith:' environmentId: 0 otherwise: nil) notNil.
+	self assert: (base compiledMethodAt: #'csComputeWith:unused:' environmentId: 0 otherwise: nil) isNil.
+	self assert: (base compiledMethodAt: #useCompute environmentId: 0 otherwise: nil) sourceString
+		includesSubstring: 'csComputeWith: 5'
+%
+
+category: 'tests - apply'
+method: GsChangeSignatureRefactoringTest
+testServerSideApplyHonoursDeselection
+	| ref base senderId |
+	ref := self changePartsTo: #('moveY:' 'x:') permutation: #(2 1)
+		argNames: #('' '') defaults: #('' '') scope: #class.
+	senderId := (self senderChangeFor: #caller in: ref changeSet) id.
+	ref applyDeselected: (Array with: senderId).
+	base := self baseFixture.
+
+	self assert: (base compiledMethodAt: #'moveY:x:' environmentId: 0 otherwise: nil) notNil.
+	self assert: (base compiledMethodAt: #caller environmentId: 0 otherwise: nil) sourceString
+		includesSubstring: 'movePointX: 1 y: 2'
+%
+
+category: 'tests - preview'
+method: GsChangeSignatureRefactoringTest
+testPaginationReturnsBoundedPagesWithOffsets
+	| ref total firstPage lastPage |
+	ref := self changePartsTo: #('moveY:' 'x:') permutation: #(2 1)
+		argNames: #('' '') defaults: #('' '') scope: #wholeSystem.
+	total := ref changeSet size.
+	self assert: total > 1.
+
+	firstPage := ref pageJsonFrom: 1 maxBytes: 1.
+	self assert: firstPage includesSubstring: '"nextOffset":2'.
+	self assert: firstPage includesSubstring: '"done":false'.
+
+	lastPage := ref pageJsonFrom: total maxBytes: 1000000.
+	self assert: lastPage includesSubstring: '"done":true'
+%
+
+category: 'tests - preview'
+method: GsChangeSignatureRefactoringTest
+testPreviewJsonStringSerializesBothKinds
+	| json |
+	json := (self changePartsTo: #('moveY:' 'x:') permutation: #(2 1)
+		argNames: #('' '') defaults: #('' '') scope: #wholeSystem) previewJsonString.
+
+	self assert: (json isKindOf: String).
+	self assert: json includesSubstring: 'methodRename'.
+	self assert: json includesSubstring: 'methodRecompile'
+%
+
+category: 'tests - preview'
+method: GsChangeSignatureRefactoringTest
+testStartPreviewTokenSurfacesDecline
+	| json |
+	json := (GsChangeSignatureRefactoring
+		class: self baseFixture meta: false changeSelector: #'csSumA:b:'
+		toParts: #('csSumA:') permutation: #(1)
+		argNames: #('a') defaults: #('') scope: #wholeSystem)
+			startPreviewToken: 'csTokDecline' maxBytes: 100000.
+	GsChangeSignatureRefactoring clearToken: 'csTokDecline'.
+
+	self assert: json includesSubstring: '"decline":"parameter b is used'
+%
+
+category: 'tests - analyze'
+method: GsChangeSignatureRefactoringTest
+testAnalyzeForClassReturnsCurrentSignature
+	| json |
+	json := GsChangeSignatureRefactoring
+		analyzeForClass: self baseFixture selector: #'movePointX:y:' meta: false.
+
+	self assert: json includesSubstring: '"selectorKind":"keyword"'.
+	self assert: json includesSubstring: '"arity":2'.
+	self assert: json includesSubstring: '"x"'.
+	self assert: json includesSubstring: '"y"'.
+	self assert: json includesSubstring: '"decline":null'
+%
+
+category: 'tests - analyze'
+method: GsChangeSignatureRefactoringTest
+testAnalyzeDeclinesMissingMethod
+	| json |
+	json := GsChangeSignatureRefactoring
+		analyzeForClass: self baseFixture selector: #'noSuchSelector:' meta: false.
+
+	self assert: json includesSubstring: 'no longer exists'
+%
+
+category: 'tests - analyze'
+method: GsChangeSignatureRefactoringTest
+testAnalyzeReportsUnarySelector
+	| json |
+	json := GsChangeSignatureRefactoring
+		analyzeForClass: self baseFixture selector: #csPing meta: false.
+
+	self assert: json includesSubstring: '"selectorKind":"unary"'.
+	self assert: json includesSubstring: '"arity":0'.
+	self assert: json includesSubstring: '"argNames":[]'
+%
+
+category: 'tests - preconditions'
+method: GsChangeSignatureRefactoringTest
+testCollisionDetectedAcrossHierarchyImplementors
+	"#1: in #hierarchy/#wholeSystem scope EVERY in-scope implementor is renamed, so a subclass
+	 that ALREADY implements the new selector must be flagged -- not only the defining class.
+	 GsCSSub implements movePointX:y: (override) AND moveY:x:; renaming movePointX:y: -> moveY:x:
+	 in hierarchy scope would overwrite GsCSSub's moveY:x:."
+	| ref |
+	self compile: 'moveY: yy x: xx
+	^Array with: yy with: xx' in: self subFixture.
+	ref := self changePartsTo: #('moveY:' 'x:') permutation: #(2 1)
+		argNames: #('' '') defaults: #('' '') scope: #hierarchy.
+
+	self assert: ref newSelectorCollision notNil.
+	self assert: ref newSelectorCollision includesSubstring: 'GsCSSub'
+%
+
+category: 'tests - preconditions'
+method: GsChangeSignatureRefactoringTest
+testEmptyDefaultForNewParameterIsDeclined
+	"#2: a new parameter with no default would make the sender rewrite throw (and the sender be
+	 skipped) while the implementor rename still applies -- a half-apply. Blocked up front."
+	| ref |
+	ref := GsChangeSignatureRefactoring
+		class: self baseFixture meta: false changeSelector: #csPing
+		toParts: #('csPingWith:') permutation: #(0)
+		argNames: #('n') defaults: #('') scope: #wholeSystem.
+
+	self assert: ref declineReason notNil.
+	self assert: ref declineReason includesSubstring: 'default'.
+	self assert: ref changeSet changes isEmpty
+%
+
+category: 'tests - preconditions'
+method: GsChangeSignatureRefactoringTest
+testUnparseableDefaultForNewParameterIsDeclined
+	"#2: a new parameter whose default does not parse is declined for the same reason."
+	| ref |
+	ref := GsChangeSignatureRefactoring
+		class: self baseFixture meta: false changeSelector: #csPing
+		toParts: #('csPingWith:') permutation: #(0)
+		argNames: #('n') defaults: #('1 +') scope: #wholeSystem.
+
+	self assert: ref declineReason notNil.
+	self assert: ref declineReason includesSubstring: 'does not parse'
+%
+
+category: 'tests - reorder'
+method: GsChangeSignatureRefactoringTest
+testMultiLineSenderRegionIsRebuiltOnOneLine
+	"#3: a send written across multiple lines has its selector+args region rebuilt on a single
+	 line (an accepted trade-off of the whole-region rewrite); the reorder is still correct."
+	| change |
+	self compile: 'csMultiCaller
+	^self
+		movePointX: 111
+		y: 222' in: self baseFixture.
+	change := self senderChangeFor: #csMultiCaller
+		in: (self changePartsTo: #('moveY:' 'x:') permutation: #(2 1)
+			argNames: #('' '') defaults: #('' '') scope: #class) changeSet.
+
+	self assert: change notNil.
+	self assert: change newSource includesSubstring: 'moveY: 222 x: 111'
+%
+
+category: 'asserting'
 method: GsClassHistoryTest
 assert: aString includesSubstring: aSubstring
 	self assert: (aString indexOfSubCollection: aSubstring) > 0
@@ -527,6 +1520,4178 @@ method: GsClassHistoryTest
 testRevertOutOfRangeIsError
 	self assert: (GsClassHistory revertClassNamed: 'GsCHFixture' toIndex: 99)
 		includesSubstring: '"error"'
+%
+
+category: 'asserting'
+method: GsExtractMethodRefactoringTest
+assert: aString includesSubstring: aSubstring
+	self assert: (aString indexOfSubCollection: aSubstring) > 0
+%
+
+category: 'fixture'
+method: GsExtractMethodRefactoringTest
+baseFixture
+	^UserGlobals at: #GsEMBase
+%
+
+category: 'fixture'
+method: GsExtractMethodRefactoringTest
+compile: aSource in: aClass
+	[aClass
+		compileMethod: aSource
+		dictionaries: System myUserProfile symbolList
+		category: 'fixture']
+		on: CompileWarning
+		do: [:ex | ex resume: nil]
+%
+
+category: 'asserting'
+method: GsExtractMethodRefactoringTest
+deny: aString includesSubstring: aSubstring
+	self assert: (aString indexOfSubCollection: aSubstring) = 0
+%
+
+category: 'fixture'
+method: GsExtractMethodRefactoringTest
+extractFrom: aClass selector: aSelector select: aSubstring newSelector: newSel
+	"A refactoring extracting the occurrence of aSubstring in aClass>>aSelector into a
+	 new method named newSel."
+	| start |
+	start := (aClass compiledMethodAt: aSelector) sourceString indexOfSubCollection: aSubstring.
+	^GsExtractMethodRefactoring
+		class: aClass
+		selector: aSelector
+		meta: false
+		selStart: start
+		selStop: start + aSubstring size - 1
+		newSelector: newSel
+%
+
+category: 'fixture'
+method: GsExtractMethodRefactoringTest
+addChangeIn: aChangeSet
+	^aChangeSet changes detect: [:c | c kind = #methodAdd] ifNone: [nil]
+%
+
+category: 'fixture'
+method: GsExtractMethodRefactoringTest
+recompileFor: aSelector in: aChangeSet
+	^aChangeSet changes
+		detect: [:c | c kind = #methodRecompile and: [c selector = aSelector]]
+		ifNone: [nil]
+%
+
+category: 'fixture'
+method: GsExtractMethodRefactoringTest
+recompileSelectorsIn: aChangeSet
+	^(aChangeSet changes select: [:c | c kind = #methodRecompile])
+		collect: [:c | c selector]
+%
+
+category: 'fixture'
+method: GsExtractMethodRefactoringTest
+subFixture
+	^UserGlobals at: #GsEMSub
+%
+
+category: 'running'
+method: GsExtractMethodRefactoringTest
+setUp
+	| base sub |
+	super setUp.
+	base := Object
+		subclass: 'GsEMBase'
+		instVarNames: #('count')
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	sub := base
+		subclass: 'GsEMSub'
+		instVarNames: #()
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	"void run, no external reads, no return"
+	self compile: 'doStuff self yourself. self hash. ^count' in: base.
+	"reads two outer arguments + one return variable"
+	self compile: 'combine: a with: b | r | r := a + b. r := r * a. ^r' in: base.
+	"single-expression extract (no arg / one arg)"
+	self compile: 'computeArea ^count * count' in: base.
+	self compile: 'scaleBy: factor ^count * factor' in: base.
+	"an expression extract that is a SUB-expression (a binary operand): parens kept"
+	self compile: 'subExprArg: n ^1 + (n * n)' in: base.
+	"temporary used only inside the selection"
+	self compile: 'report | tmp | tmp := self hash. tmp printString. ^count' in: base.
+	"hard declines"
+	self compile: 'guard self yourself. true ifTrue: [^1]. ^2' in: base.
+	self compile: 'callsSuper ^super hash' in: base.
+	self compile: 'twoOut | a b | a := 1. b := 2. ^a + b' in: base.
+	"replace-similar fixtures (void run 'self yourself. self hash')"
+	self compile: 'helperA self yourself. self hash. ^1' in: base.
+	self compile: 'helperB self yourself. self hash. ^2' in: base.
+	self compile: 'helperX self yourself. self identityHash. ^3' in: base.
+	self compile: 'helperC self yourself. self hash. ^9' in: sub.
+	"replace-similar with an argument mapped across sites"
+	self compile: 'scaleSrc: n self yourself. n printString. ^count' in: base.
+	self compile: 'scaleA: n self yourself. n printString. ^1' in: base.
+	self compile: 'scaleB: m self yourself. m printString. ^2' in: base
+%
+
+category: 'running'
+method: GsExtractMethodRefactoringTest
+tearDown
+	#('GsEMSub' 'GsEMBase')
+		do: [:nm | UserGlobals removeKey: nm asSymbol ifAbsent: []]
+%
+
+category: 'tests - staging'
+method: GsExtractMethodRefactoringTest
+testExtractsVoidRunToUnaryMethod
+	| cs add recompile |
+	cs := (self extractFrom: self baseFixture selector: #doStuff
+		select: 'self yourself. self hash' newSelector: 'sideEffects') changeSet.
+	add := self addChangeIn: cs.
+	recompile := self recompileFor: #doStuff in: cs.
+
+	self assert: add notNil.
+	self assert: add selector equals: #sideEffects.
+	self assert: add newSource includesSubstring: 'sideEffects'.
+	"The extracted method is reformatted (one statement per line), so assert each."
+	self assert: add newSource includesSubstring: 'self yourself'.
+	self assert: add newSource includesSubstring: 'self hash'.
+	self assert: recompile newSource includesSubstring: 'self sideEffects'.
+	self assert: recompile newSource includesSubstring: '^count'.
+	self deny: recompile newSource includesSubstring: 'self yourself'
+%
+
+category: 'tests - staging'
+method: GsExtractMethodRefactoringTest
+testExtractsArgumentsAndReturnValue
+	| ref cs add recompile |
+	ref := self extractFrom: self baseFixture selector: #combine:with:
+		select: 'r := a + b. r := r * a' newSelector: 'sumScaledA:b:'.
+	cs := ref changeSet.
+	add := self addChangeIn: cs.
+	recompile := self recompileFor: #combine:with: in: cs.
+
+	self assert: (ref argNames asArray) equals: #('a' 'b').
+	self assert: ref returnVar equals: 'r'.
+	"new method takes the two read arguments and declares + returns r"
+	self assert: add newSource includesSubstring: 'sumScaledA: a b: b'.
+	self assert: add newSource includesSubstring: '| r |'.
+	self assert: add newSource includesSubstring: 'r := a + b'.
+	self assert: add newSource includesSubstring: '^ r'.
+	"call site assigns the return to r"
+	self assert: recompile newSource includesSubstring: 'r := self sumScaledA: a b: b'.
+	self assert: recompile newSource includesSubstring: '^r'
+%
+
+category: 'tests - staging'
+method: GsExtractMethodRefactoringTest
+testExtractsSingleExpressionWithNoArguments
+	| cs add recompile |
+	cs := (self extractFrom: self baseFixture selector: #computeArea
+		select: 'count * count' newSelector: 'areaValue') changeSet.
+	add := self addChangeIn: cs.
+	recompile := self recompileFor: #computeArea in: cs.
+
+	self assert: add newSource includesSubstring: '^ count * count'.
+	"The send replaces a whole return value, so no parentheses are added."
+	self assert: recompile newSource includesSubstring: '^self areaValue'.
+	self deny: recompile newSource includesSubstring: '(self areaValue)'
+%
+
+category: 'tests - staging'
+method: GsExtractMethodRefactoringTest
+testExtractsSingleExpressionWithAnArgument
+	| ref cs add |
+	ref := self extractFrom: self baseFixture selector: #scaleBy:
+		select: 'count * factor' newSelector: 'scaled:'.
+	cs := ref changeSet.
+	add := self addChangeIn: cs.
+
+	self assert: (ref argNames asArray) equals: #('factor').
+	self assert: add newSource includesSubstring: 'scaled: factor'.
+	self assert: add newSource includesSubstring: '^ count * factor'.
+	"A keyword send replacing a whole return value needs no parentheses."
+	self assert: (self recompileFor: #scaleBy: in: cs) newSource includesSubstring: '^self scaled: factor'.
+	self deny: (self recompileFor: #scaleBy: in: cs) newSource includesSubstring: '(self scaled: factor)'
+%
+
+category: 'tests - staging'
+method: GsExtractMethodRefactoringTest
+testExpressionThatIsASubExpressionKeepsParentheses
+	"Extracting a sub-expression (a binary operand) into a keyword send DOES need
+	 parentheses to preserve precedence: 1 + (n * n) -> 1 + (self squared: n)."
+	| cs |
+	cs := (self extractFrom: self baseFixture selector: #subExprArg:
+		select: 'n * n' newSelector: 'squared:') changeSet.
+
+	self assert: (self recompileFor: #subExprArg: in: cs) newSource includesSubstring: '(self squared: n)'
+%
+
+category: 'tests - staging'
+method: GsExtractMethodRefactoringTest
+testTemporaryUsedOnlyInsideIsMovedIntoNewMethod
+	| cs add recompile |
+	cs := (self extractFrom: self baseFixture selector: #report
+		select: 'tmp := self hash. tmp printString' newSelector: 'doReport') changeSet.
+	add := self addChangeIn: cs.
+	recompile := self recompileFor: #report in: cs.
+
+	self assert: add newSource includesSubstring: '| tmp |'.
+	self assert: add newSource includesSubstring: 'tmp := self hash'.
+	"the temporary is gone from the original method"
+	self deny: recompile newSource includesSubstring: 'tmp'.
+	self assert: recompile newSource includesSubstring: 'self doReport'
+%
+
+category: 'tests - staging'
+method: GsExtractMethodRefactoringTest
+testSelectionIncludingLeadingWhitespaceStillResolves
+	"A selection that starts in the whitespace before the first statement (e.g. the
+	 user dragged from column 0) must still extract -- only whole-statement containment
+	 matters, not where the selection begins relative to the sequence."
+	| cs |
+	cs := (self extractFrom: self baseFixture selector: #doStuff
+		select: ' self yourself. self hash' newSelector: 'sideEffects') changeSet.
+
+	self assert: cs size equals: 2.
+	self assert: (self addChangeIn: cs) notNil
+%
+
+category: 'tests - staging'
+method: GsExtractMethodRefactoringTest
+testStagesMethodAddThenRecompileForTwoCoreChanges
+	| cs |
+	cs := (self extractFrom: self baseFixture selector: #doStuff
+		select: 'self yourself. self hash' newSelector: 'sideEffects') changeSet.
+
+	self assert: cs size equals: 2.
+	self assert: (cs changes at: 1) kind equals: #methodAdd.
+	self assert: (cs changes at: 2) kind equals: #methodRecompile
+%
+
+category: 'tests - staging'
+method: GsExtractMethodRefactoringTest
+testBuildingTheChangeSetChangesNoSourceAndDoesNotCommit
+	| before |
+	before := System needsCommit.
+	(self extractFrom: self baseFixture selector: #doStuff
+		select: 'self yourself. self hash' newSelector: 'sideEffects') changeSet.
+
+	"the stored source is untouched: building the preview compiles nothing"
+	self assert: (self baseFixture compiledMethodAt: #doStuff) sourceString
+		includesSubstring: 'self yourself. self hash'.
+	self assert: System needsCommit equals: before
+%
+
+category: 'tests - decline'
+method: GsExtractMethodRefactoringTest
+testSelectionContainingReturnIsDeclined
+	| ref |
+	ref := self extractFrom: self baseFixture selector: #guard
+		select: 'self yourself. true ifTrue: [^1]' newSelector: 'checkGuard'.
+
+	self assert: ref declineReason notNil.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - decline'
+method: GsExtractMethodRefactoringTest
+testSelectionSendingToSuperIsDeclined
+	| ref |
+	ref := self extractFrom: self baseFixture selector: #callsSuper
+		select: 'super hash' newSelector: 'superHashValue'.
+
+	self assert: ref declineReason notNil.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - decline'
+method: GsExtractMethodRefactoringTest
+testSelectionAssigningTwoVariablesUsedLaterIsDeclined
+	| ref |
+	ref := self extractFrom: self baseFixture selector: #twoOut
+		select: 'a := 1. b := 2' newSelector: 'initAB'.
+
+	self assert: ref declineReason notNil.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - decline'
+method: GsExtractMethodRefactoringTest
+testSelectionNotOnWholeStatementsIsDeclined
+	| ref |
+	ref := GsExtractMethodRefactoring
+		class: self baseFixture selector: #doStuff meta: false
+		selStart: 1 selStop: 1 newSelector: 'nope'.
+
+	self assert: ref declineReason notNil.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - decline'
+method: GsExtractMethodRefactoringTest
+testSelectorArityMismatchIsDeclined
+	"combine's selection needs two arguments; a unary selector cannot host it."
+	| ref |
+	ref := self extractFrom: self baseFixture selector: #combine:with:
+		select: 'r := a + b. r := r * a' newSelector: 'oneWord'.
+
+	self assert: ref declineReason notNil.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - decline'
+method: GsExtractMethodRefactoringTest
+testNewSelectorSameAsSourceMethodIsDeclined
+	"Naming the extracted method after the method being extracted from would make the
+	 rewritten original call itself -- a hard decline, not the soft collision warning."
+	| ref |
+	ref := self extractFrom: self baseFixture selector: #doStuff
+		select: 'self yourself. self hash' newSelector: 'doStuff'.
+
+	self assert: ref declineReason notNil.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - collision'
+method: GsExtractMethodRefactoringTest
+testSelectorAlreadyInHierarchyIsASoftWarningNotADecline
+	"hash is implemented by Object (a superclass); extracting to it warns but is still
+	 offered -- the change set is built."
+	| ref |
+	ref := self extractFrom: self baseFixture selector: #doStuff
+		select: 'self yourself. self hash' newSelector: 'hash'.
+
+	self assert: ref collisionWarning notNil.
+	self assert: ref declineReason isNil.
+	self assert: ref changeSet size equals: 2
+%
+
+category: 'tests - similar'
+method: GsExtractMethodRefactoringTest
+testReplaceSimilarFindsEquivalentRunsInHierarchy
+	| ref cs selectors |
+	ref := self extractFrom: self baseFixture selector: #doStuff
+		select: 'self yourself. self hash' newSelector: 'sideEffects'.
+	ref replaceSimilar: true.
+	cs := ref changeSet.
+	selectors := self recompileSelectorsIn: cs.
+
+	self assert: (selectors includes: #helperA).
+	self assert: (selectors includes: #helperB).
+	self assert: (selectors includes: #helperC).
+	"a near-miss (self identityHash) is NOT rewritten"
+	self deny: (selectors includes: #helperX).
+	"...and the new method + the original rewrite are still there"
+	self assert: (self addChangeIn: cs) notNil.
+	self assert: (selectors includes: #doStuff)
+%
+
+category: 'tests - similar'
+method: GsExtractMethodRefactoringTest
+testReplaceSimilarMapsArgumentsPerSite
+	| ref cs |
+	ref := self extractFrom: self baseFixture selector: #scaleSrc:
+		select: 'self yourself. n printString' newSelector: 'doScale:'.
+	ref replaceSimilar: true.
+	cs := ref changeSet.
+
+	self assert: (self recompileFor: #scaleA: in: cs) newSource includesSubstring: 'self doScale: n'.
+	self assert: (self recompileFor: #scaleB: in: cs) newSource includesSubstring: 'self doScale: m'
+%
+
+category: 'tests - similar'
+method: GsExtractMethodRefactoringTest
+testReplaceSimilarIsOffByDefault
+	| cs |
+	cs := (self extractFrom: self baseFixture selector: #doStuff
+		select: 'self yourself. self hash' newSelector: 'sideEffects') changeSet.
+
+	self assert: cs size equals: 2
+%
+
+category: 'tests - similar'
+method: GsExtractMethodRefactoringTest
+testReplaceSimilarSkippedForValueReturningExtraction
+	"combine returns a value, so it is not a safe void shape -- no duplicate pass."
+	| ref cs |
+	ref := self extractFrom: self baseFixture selector: #combine:with:
+		select: 'r := a + b. r := r * a' newSelector: 'sumScaledA:b:'.
+	ref replaceSimilar: true.
+	cs := ref changeSet.
+
+	self assert: cs size equals: 2
+%
+
+category: 'tests - preview'
+method: GsExtractMethodRefactoringTest
+testPreviewJsonSerializesBothCoreChanges
+	| json |
+	json := (self extractFrom: self baseFixture selector: #doStuff
+		select: 'self yourself. self hash' newSelector: 'sideEffects') previewJsonString.
+
+	self assert: json includesSubstring: 'methodAdd'.
+	self assert: json includesSubstring: 'methodRecompile'
+%
+
+category: 'tests - preview'
+method: GsExtractMethodRefactoringTest
+testStartPreviewCarriesTotalsAndSelectorAndFirstPage
+	| json |
+	json := (self extractFrom: self baseFixture selector: #doStuff
+		select: 'self yourself. self hash' newSelector: 'sideEffects')
+		startPreviewToken: 'm1Tok' maxBytes: 100000.
+	[self assert: json includesSubstring: '"newSelector":"sideEffects"'.
+	 self assert: json includesSubstring: '"total":2'.
+	 self assert: json includesSubstring: '"changes":']
+		ensure: [GsExtractMethodRefactoring clearToken: 'm1Tok']
+%
+
+category: 'tests - preview'
+method: GsExtractMethodRefactoringTest
+testAnalysisPreflightReportsArgumentsAndSafeShape
+	| json |
+	json := GsExtractMethodRefactoring
+		analyzeSelectionForClass: self baseFixture selector: #doStuff meta: false
+		selStart: ((self baseFixture compiledMethodAt: #doStuff) sourceString
+			indexOfSubCollection: 'self yourself. self hash')
+		selStop: ((self baseFixture compiledMethodAt: #doStuff) sourceString
+			indexOfSubCollection: 'self yourself. self hash') + 'self yourself. self hash' size - 1.
+
+	self assert: json includesSubstring: '"argCount":0'.
+	self assert: json includesSubstring: '"safeVoidShape":true'.
+	self assert: json includesSubstring: '"decline":null'
+%
+
+category: 'tests - apply'
+method: GsExtractMethodRefactoringTest
+testApplyCreatesNewMethodAndRewritesOriginal
+	(self extractFrom: self baseFixture selector: #doStuff
+		select: 'self yourself. self hash' newSelector: 'sideEffects') applyDeselected: #().
+
+	self assert: (self baseFixture includesSelector: #sideEffects).
+	self assert: (self baseFixture compiledMethodAt: #sideEffects) sourceString
+		includesSubstring: 'self yourself'.
+	self assert: (self baseFixture compiledMethodAt: #sideEffects) sourceString
+		includesSubstring: 'self hash'.
+	self assert: (self baseFixture compiledMethodAt: #doStuff) sourceString
+		includesSubstring: 'self sideEffects'
+%
+
+category: 'tests - apply'
+method: GsExtractMethodRefactoringTest
+testTokenRoundTripStartThenApplyRecompilesBothMethods
+	"The client path: startPreviewToken stashes the refactoring under a token; a later
+	 applyForToken:deselected: retrieves and applies it. No commit."
+	| ref json before |
+	before := System needsCommit.
+	ref := self extractFrom: self baseFixture selector: #doStuff
+		select: 'self yourself. self hash' newSelector: 'sideEffects'.
+	ref startPreviewToken: 'm1rt' maxBytes: 100000.
+	[json := GsExtractMethodRefactoring applyForToken: 'm1rt' deselected: #().
+	 self assert: json includesSubstring: '"applied":2'.
+	 self assert: (self baseFixture includesSelector: #sideEffects).
+	 self assert: System needsCommit equals: before]
+		ensure: [GsExtractMethodRefactoring clearToken: 'm1rt']
+%
+
+category: 'tests - apply'
+method: GsExtractMethodRefactoringTest
+testPageForTokenReturnsAPageForALiveSession
+	| ref json |
+	ref := self extractFrom: self baseFixture selector: #doStuff
+		select: 'self yourself. self hash' newSelector: 'sideEffects'.
+	ref startPreviewToken: 'm1pg' maxBytes: 100000.
+	[json := GsExtractMethodRefactoring pageForToken: 'm1pg' from: 1 maxBytes: 100000.
+	 self assert: json includesSubstring: '"changes":']
+		ensure: [GsExtractMethodRefactoring clearToken: 'm1pg']
+%
+
+category: 'tests - apply'
+method: GsExtractMethodRefactoringTest
+testPageForTokenOnAnExpiredSessionAnswersAnError
+	self assert: (GsExtractMethodRefactoring pageForToken: 'nope' from: 1 maxBytes: 100)
+		includesSubstring: 'expired'
+%
+
+category: 'tests - apply'
+method: GsExtractMethodRefactoringTest
+testApplyForTokenOnAnExpiredSessionAnswersAnError
+	self assert: (GsExtractMethodRefactoring applyForToken: 'nope' deselected: #())
+		includesSubstring: 'expired'
+%
+
+category: 'tests - apply'
+method: GsExtractMethodRefactoringTest
+testApplyReturnsAppliedCountAndNoFailures
+	| json |
+	json := (self extractFrom: self baseFixture selector: #doStuff
+		select: 'self yourself. self hash' newSelector: 'sideEffects') applyDeselected: #().
+
+	self assert: json includesSubstring: '"applied":2'.
+	self assert: json includesSubstring: '"failed":[]'
+%
+
+category: 'tests - apply'
+method: GsExtractMethodRefactoringTest
+testApplyDoesNotCommit
+	| before |
+	before := System needsCommit.
+	(self extractFrom: self baseFixture selector: #doStuff
+		select: 'self yourself. self hash' newSelector: 'sideEffects') applyDeselected: #().
+
+	self assert: System needsCommit equals: before
+%
+
+category: 'tests - apply'
+method: GsExtractMethodRefactoringTest
+testApplyHonoursDuplicateDeselectionButNotCoreChanges
+	"Deselecting a duplicate-replacement change skips only that site; the two core
+	 changes always apply."
+	| ref cs dupId |
+	ref := self extractFrom: self baseFixture selector: #doStuff
+		select: 'self yourself. self hash' newSelector: 'sideEffects'.
+	ref replaceSimilar: true.
+	cs := ref changeSet.
+	dupId := (cs changes detect: [:c | c kind = #methodRecompile and: [c selector = #helperA]]) id.
+	ref applyDeselected: (Array with: dupId).
+
+	"core changes applied"
+	self assert: (self baseFixture includesSelector: #sideEffects).
+	self assert: (self baseFixture compiledMethodAt: #doStuff) sourceString
+		includesSubstring: 'self sideEffects'.
+	"the deselected duplicate is untouched"
+	self assert: (self baseFixture compiledMethodAt: #helperA) sourceString
+		includesSubstring: 'self yourself. self hash'.
+	"a non-deselected duplicate WAS rewritten"
+	self assert: (self baseFixture compiledMethodAt: #helperB) sourceString
+		includesSubstring: 'self sideEffects'
+%
+
+category: 'asserting'
+method: GsExtractTemporaryRefactoringTest
+assert: aString includesSubstring: aSubstring
+	self assert: (aString indexOfSubCollection: aSubstring) > 0
+%
+
+category: 'asserting'
+method: GsExtractTemporaryRefactoringTest
+deny: aString includesSubstring: aSubstring
+	self assert: (aString indexOfSubCollection: aSubstring) = 0
+%
+
+category: 'fixture'
+method: GsExtractTemporaryRefactoringTest
+baseFixture
+	^UserGlobals at: #GsETBase
+%
+
+category: 'fixture'
+method: GsExtractTemporaryRefactoringTest
+subFixture
+	^UserGlobals at: #GsETSub
+%
+
+category: 'fixture'
+method: GsExtractTemporaryRefactoringTest
+compile: aSource in: aClass
+	[aClass
+		compileMethod: aSource
+		dictionaries: System myUserProfile symbolList
+		category: 'fixture']
+		on: CompileWarning
+		do: [:ex | ex resume: nil]
+%
+
+category: 'fixture'
+method: GsExtractTemporaryRefactoringTest
+extractIn: aClass selector: aSel expr: aSubstring to: aName
+	"A refactoring extracting the expression whose text is aSubstring in aClass>>aSel
+	 (its exact 1-based source interval) into a new temporary named aName."
+	| src start |
+	src := (aClass compiledMethodAt: aSel) sourceString.
+	start := src indexOfSubCollection: aSubstring.
+	^GsExtractTemporaryRefactoring
+		class: aClass
+		selector: aSel
+		meta: false
+		selStart: start
+		selStop: start + aSubstring size - 1
+		newName: aName
+%
+
+category: 'fixture'
+method: GsExtractTemporaryRefactoringTest
+recompileIn: aChangeSet
+	^aChangeSet changes detect: [:c | c kind = #methodRecompile] ifNone: [nil]
+%
+
+category: 'running'
+method: GsExtractTemporaryRefactoringTest
+setUp
+	| base sub |
+	super setUp.
+	base := Object
+		subclass: 'GsETBase'
+		instVarNames: #('count')
+		classVars: #('Registry')
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	sub := base
+		subclass: 'GsETSub'
+		instVarNames: #()
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	"--- expression forms ---"
+	self compile: 'sumParts ^ count * 2 + 100' in: base.
+	self compile: 'justExpr ^ count * 2' in: base.
+	self compile: 'magic ^ 3600 + count' in: base.
+	self compile: 'justVar ^ count' in: base.
+	self compile: 'doAssign count := 5. ^ count' in: base.
+	self compile: 'usesSuper ^ super printString' in: base.
+	self compile: 'multiStmt count := 5. ^ count + 1' in: base.
+	"--- inside a block ---"
+	self compile: 'blockUse ^ #(1 2 3) collect: [:e | e * count + 1]' in: base.
+	"--- replace-all ---"
+	self compile: 'twice ^ count abs + count abs' in: base.
+	"replace-all where an occurrence sits inside a nested block under the method body:
+	 the temp must be declared at METHOD scope, not in the block (H1)."
+	self compile: 'nestedReplaceAll | blk | blk := [:e | e + (count * 2)]. ^ (blk value: 1) + (count * 2)' in: base.
+	"a whole-statement expression that appears more than once: replace-all must NOT leave
+	 bare 'name.' statements (M2)."
+	self compile: 'assignTwice count := 5. count := 5. ^ count' in: base.
+	"the SAME expression in two SIBLING blocks: replace-all is scoped to the selected
+	 occurrence's declaring sequence, so the other block is left untouched (L3)."
+	self compile: 'siblingBlocks | a b | a := [:x | x + count abs]. b := [:y | y + count abs]. ^ (a value: 1) + (b value: 2)' in: base.
+	"--- collisions ---"
+	self compile: 'hasTemp | x | x := count * 2. ^ x' in: base.
+	self compile: 'withArg: a ^ (count * 2) + a' in: base.
+	self compile: 'toIvar ^ 5 * 2' in: base.
+	self compile: 'toClassVar ^ 5 * 2' in: base.
+	self compile: 'freeName ^ 5 * 2' in: base.
+	"--- declaration placement ---"
+	self compile: 'hasTemps | a b | a := count. b := a. ^ (b * 2) + count' in: base.
+	self compile: 'noTemps ^ count * 2 + 1' in: base.
+	"--- subclass (inherited ivar collision) ---"
+	self compile: 'subExtract ^ 5 * 2' in: sub
+%
+
+category: 'running'
+method: GsExtractTemporaryRefactoringTest
+tearDown
+	#('GsETSub' 'GsETBase')
+		do: [:nm | UserGlobals removeKey: nm asSymbol ifAbsent: []]
+%
+
+category: 'tests - extract'
+method: GsExtractTemporaryRefactoringTest
+testExtractsSubExpression
+	| cs recompile |
+	cs := (self extractIn: self baseFixture selector: #sumParts expr: 'count * 2' to: 'doubled') changeSet.
+	recompile := self recompileIn: cs.
+
+	self assert: cs size equals: 1.
+	self assert: recompile newSource includesSubstring: 'doubled := count * 2'.
+	self assert: recompile newSource includesSubstring: 'doubled + 100'
+%
+
+category: 'tests - extract'
+method: GsExtractTemporaryRefactoringTest
+testExtractsWholeReturnValue
+	| recompile |
+	recompile := self recompileIn:
+		(self extractIn: self baseFixture selector: #justExpr expr: 'count * 2' to: 'doubled') changeSet.
+
+	self assert: recompile newSource includesSubstring: 'doubled := count * 2'.
+	self assert: recompile newSource includesSubstring: '^ doubled'
+%
+
+category: 'tests - extract'
+method: GsExtractTemporaryRefactoringTest
+testExtractsLiteral
+	| recompile |
+	recompile := self recompileIn:
+		(self extractIn: self baseFixture selector: #magic expr: '3600' to: 'secondsPerHour') changeSet.
+
+	self assert: recompile newSource includesSubstring: 'secondsPerHour := 3600'.
+	self assert: recompile newSource includesSubstring: 'secondsPerHour + count'
+%
+
+category: 'tests - extract'
+method: GsExtractTemporaryRefactoringTest
+testExtractsExpressionInsideABlockDeclaresTempInTheBlock
+	"The temporary is declared inside the block body (after '[:e |'), not at method level."
+	| recompile src |
+	recompile := self recompileIn:
+		(self extractIn: self baseFixture selector: #blockUse expr: 'e * count' to: 'prod') changeSet.
+	src := recompile newSource.
+
+	self assert: src includesSubstring: 'prod := e * count'.
+	self assert: src includesSubstring: 'prod + 1'.
+	self assert: (src indexOfSubCollection: '| prod |') > (src indexOfSubCollection: '[:e |')
+%
+
+category: 'tests - replace all'
+method: GsExtractTemporaryRefactoringTest
+testReplaceAllReplacesEveryOccurrence
+	| ref recompile |
+	ref := self extractIn: self baseFixture selector: #twice expr: 'count abs' to: 'a'.
+	ref replaceAll: true.
+	recompile := self recompileIn: ref changeSet.
+
+	self assert: recompile newSource includesSubstring: 'a := count abs'.
+	self assert: recompile newSource includesSubstring: '^ a + a'
+%
+
+category: 'tests - replace all'
+method: GsExtractTemporaryRefactoringTest
+testDefaultReplacesOnlyTheSelectedOccurrence
+	| recompile |
+	recompile := self recompileIn:
+		(self extractIn: self baseFixture selector: #twice expr: 'count abs' to: 'a') changeSet.
+
+	self assert: recompile newSource includesSubstring: '^ a + count abs'
+%
+
+category: 'tests - replace all'
+method: GsExtractTemporaryRefactoringTest
+testReplaceAllWithAnOccurrenceInANestedBlockDeclaresTempAtMethodScope
+	"H1: replace-all where one occurrence is inside a nested block must declare the
+	 temporary at METHOD scope (added to the method's | .. | clause), not inside the
+	 block -- otherwise the outer occurrence references an undeclared variable and Apply's
+	 recompile fails. Select the SECOND (method-level) occurrence of 'count * 2'."
+	| src first start ref recompile out |
+	src := (self baseFixture compiledMethodAt: #nestedReplaceAll) sourceString.
+	first := src indexOfSubCollection: 'count * 2'.
+	start := src indexOfSubCollection: 'count * 2' startingAt: first + 'count * 2' size.
+	ref := GsExtractTemporaryRefactoring
+		class: self baseFixture selector: #nestedReplaceAll meta: false
+		selStart: start selStop: start + 'count * 2' size - 1 newName: 'dbl'.
+	ref replaceAll: true.
+	recompile := self recompileIn: ref changeSet.
+	out := recompile newSource.
+
+	"temp added to the METHOD clause (| blk dbl |) -- NOT declared inside the block (which
+	 would leave the method-level occurrence undeclared). The block occurrence is replaced
+	 too. Under the H1 bug the method clause stays | blk | and this fails."
+	self assert: out includesSubstring: 'blk dbl'.
+	self assert: out includesSubstring: 'e + dbl'.
+	self deny: out includesSubstring: '| dbl |'
+%
+
+category: 'tests - replace all'
+method: GsExtractTemporaryRefactoringTest
+testReplaceAllStaysWithinTheDeclaringBlockAndSkipsASiblingBlock
+	"Scope boundary (L3, reconciled with H1): matchingOccurrences scans the SELECTED
+	 occurrence's declaring sequence RECURSIVELY (nodesDo), so an identical expression in a
+	 nested block under it is included, but one in a SIBLING block -- not a descendant -- is
+	 not. Selecting 'count abs' in block a and replacing all must leave block b untouched and
+	 declare the temp in block a."
+	| ref out |
+	ref := self extractIn: self baseFixture selector: #siblingBlocks expr: 'count abs' to: 'ca'.
+	ref replaceAll: true.
+	out := (self recompileIn: ref changeSet) newSource.
+
+	self assert: out includesSubstring: 'x + ca'.
+	self assert: out includesSubstring: 'ca := count abs'.
+	"the sibling block keeps the original expression"
+	self assert: out includesSubstring: 'y + count abs'
+%
+
+category: 'tests - replace all'
+method: GsExtractTemporaryRefactoringTest
+testReplaceAllOnAWholeStatementDoesNotLeaveBareReads
+	"M2: a whole-statement expression that appears more than once must NOT be replaced by
+	 bare 'name.' statements under replace-all -- only the selected statement becomes the
+	 assignment; the source keeps its statement count (no degenerate reads)."
+	| ref recompile |
+	ref := self extractIn: self baseFixture selector: #assignTwice expr: 'count := 5' to: 'tmp'.
+	ref replaceAll: true.
+	recompile := self recompileIn: ref changeSet.
+
+	self assert: recompile newSource includesSubstring: 'tmp := count := 5'.
+	self assert: (RBParser parseMethod: recompile newSource) body statements size equals: 3
+%
+
+category: 'tests - preflight'
+method: GsExtractTemporaryRefactoringTest
+testAnalysisReportsOccurrenceCount
+	| src start json |
+	src := (self baseFixture compiledMethodAt: #twice) sourceString.
+	start := src indexOfSubCollection: 'count abs'.
+	json := GsExtractTemporaryRefactoring
+		analyzeSelectionForClass: self baseFixture
+		selector: #twice
+		meta: false
+		selStart: start
+		selStop: start + 'count abs' size - 1.
+
+	self assert: json includesSubstring: '"occurrenceCount":2'.
+	self assert: json includesSubstring: '"decline":null'
+%
+
+category: 'tests - extract'
+method: GsExtractTemporaryRefactoringTest
+testBareVariableIsExtractable
+	"A bare variable read can be aliased to a new temporary (create it now, wire it up
+	 later) -- this is a legitimate use, not a decline."
+	| ref recompile |
+	ref := self extractIn: self baseFixture selector: #justVar expr: 'count' to: 'c'.
+	recompile := self recompileIn: ref changeSet.
+
+	self assert: ref declineReason isNil.
+	self assert: recompile newSource includesSubstring: 'c := count'.
+	self assert: recompile newSource includesSubstring: '^ c'
+%
+
+category: 'tests - extract'
+method: GsExtractTemporaryRefactoringTest
+testAssignmentExpressionIsExtractable
+	"An assignment IS a value expression, so it can be named: t := count := 5. Because
+	 the selection is the WHOLE statement, the statement becomes the assignment itself --
+	 no degenerate bare 't.' statement is left behind (2 statements, not 3)."
+	| ref recompile |
+	ref := self extractIn: self baseFixture selector: #doAssign expr: 'count := 5' to: 't'.
+	recompile := self recompileIn: ref changeSet.
+
+	self assert: ref declineReason isNil.
+	self assert: recompile newSource includesSubstring: 't := count := 5'.
+	self assert: (RBParser parseMethod: recompile newSource) body statements size equals: 2
+%
+
+category: 'tests - decline'
+method: GsExtractTemporaryRefactoringTest
+testAssignmentTargetIsDeclined
+	"Selecting the WRITE target of an assignment (the leading 'count' in 'count := 5')
+	 is declined -- extracting it would redirect the assignment."
+	| ref |
+	ref := self extractIn: self baseFixture selector: #doAssign expr: 'count' to: 'c'.
+
+	self assert: ref declineReason includesSubstring: 'assignment target'.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - decline'
+method: GsExtractTemporaryRefactoringTest
+testBareSuperIsDeclined
+	"'super' is only valid as a message receiver, so a bare 'super' cannot be extracted."
+	| ref |
+	ref := self extractIn: self baseFixture selector: #usesSuper expr: 'super' to: 'x'.
+
+	self assert: ref declineReason includesSubstring: 'message receiver'.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - extract'
+method: GsExtractTemporaryRefactoringTest
+testSuperSendIsExtractable
+	"The whole 'super printString' send IS extractable (super is the receiver, not
+	 standalone)."
+	| ref recompile |
+	ref := self extractIn: self baseFixture selector: #usesSuper expr: 'super printString' to: 'label'.
+	recompile := self recompileIn: ref changeSet.
+
+	self assert: ref declineReason isNil.
+	self assert: recompile newSource includesSubstring: 'label := super printString'
+%
+
+category: 'tests - decline'
+method: GsExtractTemporaryRefactoringTest
+testWholeReturnSelectionIsDeclined
+	| ref |
+	ref := self extractIn: self baseFixture selector: #justExpr expr: '^ count * 2' to: 'c'.
+
+	self assert: ref declineReason includesSubstring: 'return statement'.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - decline'
+method: GsExtractTemporaryRefactoringTest
+testMultiStatementSelectionIsDeclined
+	| ref |
+	ref := self extractIn: self baseFixture selector: #multiStmt expr: 'count := 5. ^ count' to: 'c'.
+
+	self assert: ref declineReason includesSubstring: 'single expression'.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - collision'
+method: GsExtractTemporaryRefactoringTest
+testCollisionWithExistingTemp
+	| ref |
+	ref := self extractIn: self baseFixture selector: #hasTemp expr: 'count * 2' to: 'x'.
+
+	self assert: ref newNameCollision notNil
+%
+
+category: 'tests - collision'
+method: GsExtractTemporaryRefactoringTest
+testCollisionWithExistingArgument
+	| ref |
+	ref := self extractIn: self baseFixture selector: #withArg: expr: 'count * 2' to: 'a'.
+
+	self assert: ref newNameCollision notNil
+%
+
+category: 'tests - collision'
+method: GsExtractTemporaryRefactoringTest
+testCollisionWithOwnInstanceVariable
+	| ref |
+	ref := self extractIn: self baseFixture selector: #toIvar expr: '5 * 2' to: 'count'.
+
+	self assert: ref newNameCollision notNil
+%
+
+category: 'tests - collision'
+method: GsExtractTemporaryRefactoringTest
+testCollisionWithInheritedInstanceVariable
+	| ref |
+	ref := self extractIn: self subFixture selector: #subExtract expr: '5 * 2' to: 'count'.
+
+	self assert: ref newNameCollision notNil
+%
+
+category: 'tests - collision'
+method: GsExtractTemporaryRefactoringTest
+testCollisionWithClassVariable
+	| ref |
+	ref := self extractIn: self baseFixture selector: #toClassVar expr: '5 * 2' to: 'Registry'.
+
+	self assert: ref newNameCollision notNil
+%
+
+category: 'tests - collision'
+method: GsExtractTemporaryRefactoringTest
+testCollisionWithPseudoVariable
+	| ref |
+	ref := self extractIn: self baseFixture selector: #freeName expr: '5 * 2' to: 'self'.
+
+	self assert: ref newNameCollision notNil
+%
+
+category: 'tests - collision'
+method: GsExtractTemporaryRefactoringTest
+testFreeNameHasNoCollision
+	| ref |
+	ref := self extractIn: self baseFixture selector: #freeName expr: '5 * 2' to: 'freshName'.
+
+	self assert: ref newNameCollision isNil
+%
+
+category: 'tests - declaration'
+method: GsExtractTemporaryRefactoringTest
+testTempAddedToExistingClause
+	| recompile |
+	recompile := self recompileIn:
+		(self extractIn: self baseFixture selector: #hasTemps expr: 'b * 2' to: 'c') changeSet.
+
+	self assert: recompile newSource includesSubstring: 'a b c'
+%
+
+category: 'tests - declaration'
+method: GsExtractTemporaryRefactoringTest
+testTempClauseCreatedWhenNone
+	| recompile |
+	recompile := self recompileIn:
+		(self extractIn: self baseFixture selector: #noTemps expr: 'count * 2' to: 'd') changeSet.
+
+	self assert: recompile newSource includesSubstring: '| d |'
+%
+
+category: 'tests - staging'
+method: GsExtractTemporaryRefactoringTest
+testBuildingTheChangeSetChangesNoSourceAndDoesNotCommit
+	| before |
+	before := System needsCommit.
+	(self extractIn: self baseFixture selector: #justExpr expr: 'count * 2' to: 'doubled') changeSet.
+
+	self assert: (self baseFixture compiledMethodAt: #justExpr) sourceString
+		includesSubstring: '^ count * 2'.
+	self deny: (self baseFixture compiledMethodAt: #justExpr) sourceString
+		includesSubstring: 'doubled'.
+	self assert: System needsCommit equals: before
+%
+
+category: 'tests - preview'
+method: GsExtractTemporaryRefactoringTest
+testPreviewJsonSerializesRecompile
+	| json |
+	json := (self extractIn: self baseFixture selector: #justExpr expr: 'count * 2' to: 'doubled')
+		previewJsonString.
+
+	self assert: json includesSubstring: 'methodRecompile'
+%
+
+category: 'tests - preview'
+method: GsExtractTemporaryRefactoringTest
+testStartPreviewCarriesTotalsAndPage
+	| json |
+	json := (self extractIn: self baseFixture selector: #justExpr expr: 'count * 2' to: 'doubled')
+		startPreviewToken: 'm3Tok' maxBytes: 100000.
+	[self assert: json includesSubstring: '"total":1'.
+	 self assert: json includesSubstring: '"newName":"doubled"'.
+	 self assert: json includesSubstring: '"changes":']
+		ensure: [GsExtractTemporaryRefactoring clearToken: 'm3Tok']
+%
+
+category: 'tests - apply'
+method: GsExtractTemporaryRefactoringTest
+testApplyRecompilesAndDoesNotCommit
+	| before json |
+	before := System needsCommit.
+	json := (self extractIn: self baseFixture selector: #justExpr expr: 'count * 2' to: 'doubled')
+		applyDeselected: #().
+
+	self assert: json includesSubstring: '"applied":1'.
+	self assert: json includesSubstring: '"failed":[]'.
+	self assert: (self baseFixture compiledMethodAt: #justExpr) sourceString
+		includesSubstring: 'doubled := count * 2'.
+	self assert: System needsCommit equals: before
+%
+
+category: 'tests - apply'
+method: GsExtractTemporaryRefactoringTest
+testTokenRoundTripStartThenApply
+	| ref json before |
+	before := System needsCommit.
+	ref := self extractIn: self baseFixture selector: #justExpr expr: 'count * 2' to: 'doubled'.
+	ref startPreviewToken: 'm3rt' maxBytes: 100000.
+	[json := GsExtractTemporaryRefactoring applyForToken: 'm3rt' deselected: #().
+	 self assert: json includesSubstring: '"applied":1'.
+	 self assert: (self baseFixture compiledMethodAt: #justExpr) sourceString
+		includesSubstring: 'doubled := count * 2'.
+	 self assert: System needsCommit equals: before]
+		ensure: [GsExtractTemporaryRefactoring clearToken: 'm3rt']
+%
+
+category: 'tests - apply'
+method: GsExtractTemporaryRefactoringTest
+testPageForTokenOnAnExpiredSessionAnswersAnError
+	self assert: (GsExtractTemporaryRefactoring pageForToken: 'nope' from: 1 maxBytes: 100)
+		includesSubstring: 'expired'
+%
+
+category: 'asserting'
+method: GsInlineMethodRefactoringTest
+assert: aString includesSubstring: aSubstring
+	self assert: (aString indexOfSubCollection: aSubstring) > 0
+%
+
+category: 'asserting'
+method: GsInlineMethodRefactoringTest
+deny: aString includesSubstring: aSubstring
+	self assert: (aString indexOfSubCollection: aSubstring) = 0
+%
+
+category: 'fixture'
+method: GsInlineMethodRefactoringTest
+baseFixture
+	^UserGlobals at: #GsIMBase
+%
+
+category: 'fixture'
+method: GsInlineMethodRefactoringTest
+subFixture
+	^UserGlobals at: #GsIMSub
+%
+
+category: 'fixture'
+method: GsInlineMethodRefactoringTest
+compile: aSource in: aClass
+	[aClass
+		compileMethod: aSource
+		dictionaries: System myUserProfile symbolList
+		category: 'fixture']
+		on: CompileWarning
+		do: [:ex | ex resume: nil]
+%
+
+category: 'fixture'
+method: GsInlineMethodRefactoringTest
+inlineIn: aClass selector: aSelector atSendOf: aSubstring
+	"A refactoring inlining the send whose text begins at aSubstring in
+	 aClass>>aSelector (1-based source offset)."
+	| start |
+	start := (aClass compiledMethodAt: aSelector) sourceString indexOfSubCollection: aSubstring.
+	^GsInlineMethodRefactoring
+		class: aClass
+		selector: aSelector
+		meta: false
+		atOffset: start
+%
+
+category: 'fixture'
+method: GsInlineMethodRefactoringTest
+recompileFor: aSelector in: aChangeSet
+	^aChangeSet changes
+		detect: [:c | c kind = #methodRecompile and: [c selector = aSelector]]
+		ifNone: [nil]
+%
+
+category: 'fixture'
+method: GsInlineMethodRefactoringTest
+removeChangeIn: aChangeSet
+	^aChangeSet changes detect: [:c | c kind = #methodRemove] ifNone: [nil]
+%
+
+category: 'running'
+method: GsInlineMethodRefactoringTest
+setUp
+	| base sub |
+	super setUp.
+	base := Object
+		subclass: 'GsIMBase'
+		instVarNames: #('count')
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	sub := base
+		subclass: 'GsIMSub'
+		instVarNames: #()
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	"--- target methods (the ones inlined) ---"
+	self compile: 'bump count := count + 1' in: base.
+	self compile: 'doubled ^ count * 2' in: base.
+	self compile: 'scaled: f ^ count * f' in: base.
+	self compile: 'addTwice: x ^ x + x' in: base.
+	self compile: 'gsimSolo ^ count' in: base.
+	self compile: 'gsimPair ^ count' in: base.
+	self compile: 'gsimTwice ^ count' in: base.
+	self compile: 'callsSuper ^ super hash' in: base.
+	self compile: 'multiStmt count := 1. ^ count' in: base.
+	self compile: 'withTemp | t | t := count. ^ t' in: base.
+	self compile: 'guarded (count > 0) ifTrue: [^count]' in: base.
+	self compile: 'greet ^ ''hi''' in: base.
+	"--- caller methods (hold the send being inlined) ---"
+	self compile: 'runBump self bump. ^ count' in: base.
+	self compile: 'bumpAgain self bump. ^ 1' in: base.
+	self compile: 'useDoubledSub ^ 1 + self doubled' in: base.
+	self compile: 'justDoubled ^ self doubled' in: base.
+	self compile: 'useScaled ^ self scaled: 3' in: base.
+	self compile: 'useScaledExpr ^ self scaled: 1 + 1' in: base.
+	self compile: 'useSolo ^ self gsimSolo' in: base.
+	self compile: 'callA ^ self gsimPair' in: base.
+	self compile: 'callB ^ self gsimPair' in: base.
+	self compile: 'callsTwice ^ self gsimTwice + self gsimTwice' in: base.
+	self compile: 'useTwiceAtom ^ self addTwice: count' in: base.
+	self compile: 'useTwiceExpr ^ self addTwice: self hash' in: base.
+	self compile: 'useReturnsSelf ^ 1 + self bump' in: base.
+	self compile: 'callOnArg: x ^ x doubled' in: base.
+	self compile: 'doCascade self doubled; yourself' in: base.
+	self compile: 'useMulti ^ self multiStmt' in: base.
+	self compile: 'useTemp ^ self withTemp' in: base.
+	self compile: 'useGuarded self guarded. ^ count' in: base.
+	self compile: 'useSuper self callsSuper. ^ count' in: base.
+	self compile: 'useNoImpl self gsimNoSuchThing. ^ count' in: base.
+	"atomic-bodied target + a send DEEP inside nested blocks + a same-named selector
+	 overridden in the subclass (two implementors in the hierarchy)."
+	self compile: 'val ^ count' in: base.
+	self compile: 'keepVal ^ self val' in: base.
+	self compile: 'receiverUse ^ self val printString' in: base.
+	self compile: 'nestedDeep #(1) do: [:x | x > 0 ifTrue: [ #(2) do: [:y | y + self doubled ] ] ]' in: base.
+	self compile: 'label ^ ''base''' in: base.
+	"--- subclass ---"
+	self compile: 'greetLoud ^ super greet' in: sub.
+	self compile: 'plainGreet ^ self greet' in: sub.
+	self compile: 'label ^ ''sub''' in: sub.
+	self compile: 'announceSelf ^ self label' in: sub.
+	self compile: 'announceSuper2 ^ super label' in: sub.
+	self compile: 'useInherited ^ self val' in: sub
+%
+
+category: 'running'
+method: GsInlineMethodRefactoringTest
+tearDown
+	#('GsIMSub' 'GsIMBase')
+		do: [:nm | UserGlobals removeKey: nm asSymbol ifAbsent: []]
+%
+
+category: 'tests - inline'
+method: GsInlineMethodRefactoringTest
+testInlinesVoidOneLinerAsStatement
+	| cs recompile |
+	cs := (self inlineIn: self baseFixture selector: #runBump atSendOf: 'bump') changeSet.
+	recompile := self recompileFor: #runBump in: cs.
+
+	self assert: cs size equals: 1.
+	self assert: recompile notNil.
+	self assert: recompile newSource includesSubstring: 'count := count + 1'.
+	self deny: recompile newSource includesSubstring: 'self bump'.
+	"the target method is left in place (it has other senders)"
+	self assert: (self removeChangeIn: cs) isNil
+%
+
+category: 'tests - inline'
+method: GsInlineMethodRefactoringTest
+testInlinesValueReturningSendInBinaryOperandKeepsParens
+	"1 + self doubled -> 1 + (count * 2): the send is a sub-expression, so parens."
+	| recompile |
+	recompile := self recompileFor: #useDoubledSub
+		in: (self inlineIn: self baseFixture selector: #useDoubledSub atSendOf: 'doubled') changeSet.
+
+	self assert: recompile newSource includesSubstring: '1 + (count * 2)'
+%
+
+category: 'tests - inline'
+method: GsInlineMethodRefactoringTest
+testInlinesValueReturningSendInReturnPositionNoParens
+	"^ self doubled -> ^ count * 2: replacing a whole return value needs no parens."
+	| recompile |
+	recompile := self recompileFor: #justDoubled
+		in: (self inlineIn: self baseFixture selector: #justDoubled atSendOf: 'doubled') changeSet.
+
+	self assert: recompile newSource includesSubstring: 'count * 2'.
+	self deny: recompile newSource includesSubstring: '(count * 2)'
+%
+
+category: 'tests - inline'
+method: GsInlineMethodRefactoringTest
+testInlinesSendWithLiteralArgument
+	| recompile |
+	recompile := self recompileFor: #useScaled
+		in: (self inlineIn: self baseFixture selector: #useScaled atSendOf: 'scaled:') changeSet.
+
+	self assert: recompile newSource includesSubstring: 'count * 3'
+%
+
+category: 'tests - inline'
+method: GsInlineMethodRefactoringTest
+testInlinesSendWithNonAtomicArgumentParenthesised
+	"self scaled: 1 + 1 -> count * (1 + 1): a compound argument is parenthesised."
+	| recompile |
+	recompile := self recompileFor: #useScaledExpr
+		in: (self inlineIn: self baseFixture selector: #useScaledExpr atSendOf: 'scaled:') changeSet.
+
+	self assert: recompile newSource includesSubstring: 'count * (1 + 1)'
+%
+
+category: 'tests - inline'
+method: GsInlineMethodRefactoringTest
+testInlinesAtomicArgumentUsedTwiceWithoutDecline
+	"addTwice: uses x twice; an atomic argument (count) may be duplicated safely."
+	| ref recompile |
+	ref := self inlineIn: self baseFixture selector: #useTwiceAtom atSendOf: 'addTwice:'.
+	recompile := self recompileFor: #useTwiceAtom in: ref changeSet.
+
+	self assert: ref declineReason isNil.
+	self assert: recompile newSource includesSubstring: 'count + count'
+%
+
+category: 'tests - inline'
+method: GsInlineMethodRefactoringTest
+testInlinesSuperSendResolvingTargetFromSuperclass
+	| recompile |
+	recompile := self recompileFor: #greetLoud
+		in: (self inlineIn: self subFixture selector: #greetLoud atSendOf: 'super greet') changeSet.
+
+	self assert: recompile notNil.
+	self assert: recompile newSource includesSubstring: '''hi'''.
+	self deny: recompile newSource includesSubstring: 'super greet'
+%
+
+category: 'tests - inline'
+method: GsInlineMethodRefactoringTest
+testInlinesSendDeepInsideNestedBlocks
+	"A send buried inside do:/ifTrue:/do: blocks inlines in place regardless of nesting."
+	| recompile |
+	recompile := self recompileFor: #nestedDeep
+		in: (self inlineIn: self baseFixture selector: #nestedDeep atSendOf: 'doubled') changeSet.
+
+	self assert: recompile notNil.
+	self assert: recompile newSource includesSubstring: '(count * 2)'.
+	self deny: recompile newSource includesSubstring: 'self doubled'
+%
+
+category: 'tests - inline'
+method: GsInlineMethodRefactoringTest
+testAtomicResultAsSubExpressionReceiverNeedsNoParens
+	"self val printString -> count printString: an atomic inlined result needs no
+	 parentheses even as a message receiver."
+	| recompile |
+	recompile := self recompileFor: #receiverUse
+		in: (self inlineIn: self baseFixture selector: #receiverUse atSendOf: 'val') changeSet.
+
+	self assert: recompile newSource includesSubstring: 'count printString'.
+	self deny: recompile newSource includesSubstring: '(count'
+%
+
+category: 'tests - hierarchy'
+method: GsInlineMethodRefactoringTest
+testSelfSendResolvesToNearestOverridingImplementor
+	"#label is implemented by BOTH classes; a self send in the subclass resolves to the
+	 subclass's override, not the superclass's."
+	| recompile |
+	recompile := self recompileFor: #announceSelf
+		in: (self inlineIn: self subFixture selector: #announceSelf atSendOf: 'label') changeSet.
+
+	self assert: recompile newSource includesSubstring: '''sub'''.
+	self deny: recompile newSource includesSubstring: '''base'''
+%
+
+category: 'tests - hierarchy'
+method: GsInlineMethodRefactoringTest
+testSuperSendResolvesPastAnOverrideToTheSuperclass
+	"A super send resolves past the subclass's override to the superclass implementor."
+	| recompile |
+	recompile := self recompileFor: #announceSuper2
+		in: (self inlineIn: self subFixture selector: #announceSuper2 atSendOf: 'super label') changeSet.
+
+	self assert: recompile newSource includesSubstring: '''base'''.
+	self deny: recompile newSource includesSubstring: '''sub'''
+%
+
+category: 'tests - hierarchy'
+method: GsInlineMethodRefactoringTest
+testInlinesInheritedMethodViaSelfSend
+	"A self send in the subclass resolves UP to an inherited implementor in the
+	 superclass and inlines its body."
+	| recompile |
+	recompile := self recompileFor: #useInherited
+		in: (self inlineIn: self subFixture selector: #useInherited atSendOf: 'val') changeSet.
+
+	self assert: recompile notNil.
+	self assert: recompile newSource includesSubstring: 'count'.
+	self deny: recompile newSource includesSubstring: 'self val'
+%
+
+category: 'tests - decline'
+method: GsInlineMethodRefactoringTest
+testNonSelfSuperReceiverIsDeclined
+	| ref |
+	ref := self inlineIn: self baseFixture selector: #callOnArg: atSendOf: 'doubled'.
+
+	self assert: ref declineReason notNil.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - decline'
+method: GsInlineMethodRefactoringTest
+testNoImplementorInHierarchyIsDeclined
+	| ref |
+	ref := self inlineIn: self baseFixture selector: #useNoImpl atSendOf: 'gsimNoSuchThing'.
+
+	self assert: ref declineReason notNil.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - decline'
+method: GsInlineMethodRefactoringTest
+testMultiStatementTargetIsDeclined
+	| ref |
+	ref := self inlineIn: self baseFixture selector: #useMulti atSendOf: 'multiStmt'.
+
+	self assert: ref declineReason notNil.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - decline'
+method: GsInlineMethodRefactoringTest
+testTempDeclaringTargetIsDeclined
+	| ref |
+	ref := self inlineIn: self baseFixture selector: #useTemp atSendOf: 'withTemp'.
+
+	self assert: ref declineReason notNil.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - decline'
+method: GsInlineMethodRefactoringTest
+testInnerReturnTargetIsDeclined
+	| ref |
+	ref := self inlineIn: self baseFixture selector: #useGuarded atSendOf: 'guarded'.
+
+	self assert: ref declineReason notNil.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - decline'
+method: GsInlineMethodRefactoringTest
+testTargetSendingSuperIsDeclined
+	| ref |
+	ref := self inlineIn: self baseFixture selector: #useSuper atSendOf: 'callsSuper'.
+
+	self assert: ref declineReason notNil.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - decline'
+method: GsInlineMethodRefactoringTest
+testSideEffectingArgumentUsedTwiceIsDeclined
+	| ref |
+	ref := self inlineIn: self baseFixture selector: #useTwiceExpr atSendOf: 'addTwice:'.
+
+	self assert: ref declineReason notNil.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - decline'
+method: GsInlineMethodRefactoringTest
+testValueUsedButTargetReturnsSelfIsDeclined
+	| ref |
+	ref := self inlineIn: self baseFixture selector: #useReturnsSelf atSendOf: 'bump'.
+
+	self assert: ref declineReason notNil.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - decline'
+method: GsInlineMethodRefactoringTest
+testCascadedSendIsDeclined
+	| ref |
+	ref := self inlineIn: self baseFixture selector: #doCascade atSendOf: 'doubled'.
+
+	self assert: ref declineReason notNil.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - decline'
+method: GsInlineMethodRefactoringTest
+testCaretNotOnASendIsDeclined
+	| ref |
+	ref := GsInlineMethodRefactoring
+		class: self baseFixture selector: #runBump meta: false atOffset: 1.
+
+	self assert: ref declineReason notNil.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - last sender'
+method: GsInlineMethodRefactoringTest
+testLastSenderOffersRemoval
+	| ref cs remove |
+	ref := self inlineIn: self baseFixture selector: #useSolo atSendOf: 'gsimSolo'.
+	cs := ref changeSet.
+	remove := self removeChangeIn: cs.
+
+	self assert: ref isLastSender.
+	self assert: cs size equals: 2.
+	self assert: (self recompileFor: #useSolo in: cs) notNil.
+	self assert: remove notNil.
+	self assert: remove selector equals: #gsimSolo
+%
+
+category: 'tests - last sender'
+method: GsInlineMethodRefactoringTest
+testRemovalSuppressedWhenAnotherMethodSends
+	| ref cs |
+	ref := self inlineIn: self baseFixture selector: #callA atSendOf: 'gsimPair'.
+	cs := ref changeSet.
+
+	self deny: ref isLastSender.
+	self assert: cs size equals: 1.
+	self assert: (self removeChangeIn: cs) isNil
+%
+
+category: 'tests - last sender'
+method: GsInlineMethodRefactoringTest
+testRemovalSuppressedWhenSameMethodSendsTwice
+	| ref cs |
+	ref := self inlineIn: self baseFixture selector: #callsTwice atSendOf: 'gsimTwice'.
+	cs := ref changeSet.
+
+	self deny: ref isLastSender.
+	self assert: cs size equals: 1.
+	self assert: (self removeChangeIn: cs) isNil
+%
+
+category: 'tests - staging'
+method: GsInlineMethodRefactoringTest
+testBuildingTheChangeSetChangesNoSourceAndDoesNotCommit
+	| before |
+	before := System needsCommit.
+	(self inlineIn: self baseFixture selector: #runBump atSendOf: 'bump') changeSet.
+
+	"the stored source is untouched: building the preview compiles nothing"
+	self assert: (self baseFixture compiledMethodAt: #runBump) sourceString
+		includesSubstring: 'self bump'.
+	self assert: System needsCommit equals: before
+%
+
+category: 'tests - preview'
+method: GsInlineMethodRefactoringTest
+testPreviewJsonSerializesRecompileAndRemoveWhenLastSender
+	| json |
+	json := (self inlineIn: self baseFixture selector: #useSolo atSendOf: 'gsimSolo')
+		previewJsonString.
+
+	self assert: json includesSubstring: 'methodRecompile'.
+	self assert: json includesSubstring: 'methodRemove'
+%
+
+category: 'tests - preview'
+method: GsInlineMethodRefactoringTest
+testPreviewJsonHasNoRemoveWhenNotLastSender
+	| json |
+	json := (self inlineIn: self baseFixture selector: #callA atSendOf: 'gsimPair')
+		previewJsonString.
+
+	self assert: json includesSubstring: 'methodRecompile'.
+	self deny: json includesSubstring: 'methodRemove'
+%
+
+category: 'tests - preview'
+method: GsInlineMethodRefactoringTest
+testStartPreviewCarriesTotalsSelectorLastSenderAndPage
+	| json |
+	json := (self inlineIn: self baseFixture selector: #useSolo atSendOf: 'gsimSolo')
+		startPreviewToken: 'm2Tok' maxBytes: 100000.
+	[self assert: json includesSubstring: '"targetSelector":"gsimSolo"'.
+	 self assert: json includesSubstring: '"total":2'.
+	 self assert: json includesSubstring: '"lastSender":true'.
+	 self assert: json includesSubstring: '"changes":']
+		ensure: [GsInlineMethodRefactoring clearToken: 'm2Tok']
+%
+
+category: 'tests - preview'
+method: GsInlineMethodRefactoringTest
+testAnalysisPreflightReportsTargetAndLastSender
+	| src off json |
+	src := (self baseFixture compiledMethodAt: #useSolo) sourceString.
+	off := src indexOfSubCollection: 'gsimSolo'.
+	json := GsInlineMethodRefactoring
+		analyzeSendForClass: self baseFixture selector: #useSolo meta: false atOffset: off.
+
+	self assert: json includesSubstring: '"targetSelector":"gsimSolo"'.
+	self assert: json includesSubstring: '"lastSender":true'.
+	self assert: json includesSubstring: '"decline":null'
+%
+
+category: 'tests - preview'
+method: GsInlineMethodRefactoringTest
+testAnalysisPreflightReportsDeclineForBadSend
+	| src off json |
+	src := (self baseFixture compiledMethodAt: #callOnArg:) sourceString.
+	off := src indexOfSubCollection: 'doubled'.
+	json := GsInlineMethodRefactoring
+		analyzeSendForClass: self baseFixture selector: #callOnArg: meta: false atOffset: off.
+
+	self deny: json includesSubstring: '"decline":null'
+%
+
+category: 'tests - apply'
+method: GsInlineMethodRefactoringTest
+testApplyInlinesAndKeepsTargetWhenNotLastSender
+	| json |
+	json := (self inlineIn: self baseFixture selector: #runBump atSendOf: 'bump')
+		applyDeselected: #().
+
+	self assert: json includesSubstring: '"applied":1'.
+	self assert: json includesSubstring: '"failed":[]'.
+	self assert: (self baseFixture compiledMethodAt: #runBump) sourceString
+		includesSubstring: 'count := count + 1'.
+	"target kept"
+	self assert: (self baseFixture includesSelector: #bump)
+%
+
+category: 'tests - apply'
+method: GsInlineMethodRefactoringTest
+testApplyRemovesTargetWhenLastSenderAndRemovalKept
+	| json |
+	json := (self inlineIn: self baseFixture selector: #useSolo atSendOf: 'gsimSolo')
+		applyDeselected: #().
+
+	self assert: json includesSubstring: '"applied":2'.
+	self assert: (self baseFixture compiledMethodAt: #useSolo) sourceString
+		includesSubstring: 'count'.
+	"the now-unused target is gone"
+	self deny: (self baseFixture includesSelector: #gsimSolo)
+%
+
+category: 'tests - apply'
+method: GsInlineMethodRefactoringTest
+testApplyKeepsTargetWhenRemovalDeselected
+	| ref cs removeId json |
+	ref := self inlineIn: self baseFixture selector: #useSolo atSendOf: 'gsimSolo'.
+	cs := ref changeSet.
+	removeId := (self removeChangeIn: cs) id.
+	json := ref applyDeselected: (Array with: removeId).
+
+	self assert: json includesSubstring: '"applied":1'.
+	"the caller is still inlined, but the target is left in place"
+	self assert: (self baseFixture compiledMethodAt: #useSolo) sourceString
+		includesSubstring: 'count'.
+	self assert: (self baseFixture includesSelector: #gsimSolo)
+%
+
+category: 'tests - apply'
+method: GsInlineMethodRefactoringTest
+testApplyDoesNotCommit
+	| before |
+	before := System needsCommit.
+	(self inlineIn: self baseFixture selector: #runBump atSendOf: 'bump') applyDeselected: #().
+
+	self assert: System needsCommit equals: before
+%
+
+category: 'tests - apply'
+method: GsInlineMethodRefactoringTest
+testTokenRoundTripStartThenApplyRecompilesCaller
+	| ref json before |
+	before := System needsCommit.
+	ref := self inlineIn: self baseFixture selector: #runBump atSendOf: 'bump'.
+	ref startPreviewToken: 'm2rt' maxBytes: 100000.
+	[json := GsInlineMethodRefactoring applyForToken: 'm2rt' deselected: #().
+	 self assert: json includesSubstring: '"applied":1'.
+	 self assert: (self baseFixture compiledMethodAt: #runBump) sourceString
+		includesSubstring: 'count := count + 1'.
+	 self assert: System needsCommit equals: before]
+		ensure: [GsInlineMethodRefactoring clearToken: 'm2rt']
+%
+
+category: 'tests - apply'
+method: GsInlineMethodRefactoringTest
+testPageForTokenReturnsAPageForALiveSession
+	| ref json |
+	ref := self inlineIn: self baseFixture selector: #runBump atSendOf: 'bump'.
+	ref startPreviewToken: 'm2pg' maxBytes: 100000.
+	[json := GsInlineMethodRefactoring pageForToken: 'm2pg' from: 1 maxBytes: 100000.
+	 self assert: json includesSubstring: '"changes":']
+		ensure: [GsInlineMethodRefactoring clearToken: 'm2pg']
+%
+
+category: 'tests - apply'
+method: GsInlineMethodRefactoringTest
+testPageForTokenOnAnExpiredSessionAnswersAnError
+	self assert: (GsInlineMethodRefactoring pageForToken: 'nope' from: 1 maxBytes: 100)
+		includesSubstring: 'expired'
+%
+
+category: 'tests - apply'
+method: GsInlineMethodRefactoringTest
+testApplyForTokenOnAnExpiredSessionAnswersAnError
+	self assert: (GsInlineMethodRefactoring applyForToken: 'nope' deselected: #())
+		includesSubstring: 'expired'
+%
+
+category: 'asserting'
+method: GsInlineTemporaryRefactoringTest
+assert: aString includesSubstring: aSubstring
+	self assert: (aString indexOfSubCollection: aSubstring) > 0
+%
+
+category: 'asserting'
+method: GsInlineTemporaryRefactoringTest
+deny: aString includesSubstring: aSubstring
+	self assert: (aString indexOfSubCollection: aSubstring) = 0
+%
+
+category: 'fixture'
+method: GsInlineTemporaryRefactoringTest
+baseFixture
+	^UserGlobals at: #GsITBase
+%
+
+category: 'fixture'
+method: GsInlineTemporaryRefactoringTest
+compile: aSource in: aClass
+	[aClass
+		compileMethod: aSource
+		dictionaries: System myUserProfile symbolList
+		category: 'fixture']
+		on: CompileWarning
+		do: [:ex | ex resume: nil]
+%
+
+category: 'fixture'
+method: GsInlineTemporaryRefactoringTest
+inlineIn: aClass selector: aSel caretOn: aSubstring
+	"A refactoring inlining the temporary whose occurrence text begins at aSubstring in
+	 aClass>>aSel (1-based source offset). Pass a unique context so the offset lands on
+	 the variable (e.g. its assignment 'tName :=')."
+	| src start |
+	src := (aClass compiledMethodAt: aSel) sourceString.
+	start := src indexOfSubCollection: aSubstring.
+	^GsInlineTemporaryRefactoring
+		class: aClass
+		selector: aSel
+		meta: false
+		atOffset: start
+%
+
+category: 'fixture'
+method: GsInlineTemporaryRefactoringTest
+recompileIn: aChangeSet
+	^aChangeSet changes detect: [:c | c kind = #methodRecompile] ifNone: [nil]
+%
+
+category: 'running'
+method: GsInlineTemporaryRefactoringTest
+setUp
+	| base |
+	super setUp.
+	base := Object
+		subclass: 'GsITBase'
+		instVarNames: #('count' 'factor')
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	"--- inlinable temporaries (unique temp names so caretOn: is unambiguous) ---"
+	self compile: 'oneRead | tRet | tRet := count * 2. ^ tRet' in: base.
+	self compile: 'binOperand | tBin | tBin := count * 2. ^ tBin + 1' in: base.
+	self compile: 'atomicVal | tAt | tAt := count. ^ tAt + 1' in: base.
+	self compile: 'readTwiceAtomic | tTw | tTw := count. ^ tTw + tTw' in: base.
+	self compile: 'readTwiceExpr | tExpr | tExpr := count * 2. ^ tExpr + tExpr' in: base.
+	self compile: 'multiTemp | ma tRm mb | ma := 1. tRm := count * 2. mb := 3. ^ ma + tRm + mb' in: base.
+	self compile: 'blockTemp ^ #(1 2 3) collect: [:e | | tb2 | tb2 := e * count. tb2 + 1]' in: base.
+	"keyword-argument position: the value must be parenthesised (M3)."
+	self compile: 'kwArg | tk | tk := count * factor. ^ Array with: tk' in: base.
+	"two statements on ONE source line: removing the assignment must stop at its '.' and
+	 not swallow the following statement (M4 removalIntervalFor branch)."
+	self compile: 'twoPerLine | tp | tp := count. factor := tp + 1. ^ factor' in: base.
+	"--- declined shapes ---"
+	self compile: 'inlineArg: anArg ^ anArg + count' in: base.
+	self compile: 'inlineIvar ^ count + 1' in: base.
+	self compile: 'twiceAssigned | tw | tw := count. tw := tw + 1. ^ tw' in: base.
+	self compile: 'nestedAssign | tn | (count > 0) ifTrue: [tn := count]. ^ tn' in: base.
+	self compile: 'readBeforeAssign | tb | (count > tb) ifTrue: [^ 1]. tb := count. ^ tb' in: base.
+	self compile: 'neverRead | tnr | tnr := count. ^ count' in: base
+%
+
+category: 'running'
+method: GsInlineTemporaryRefactoringTest
+tearDown
+	UserGlobals removeKey: #GsITBase ifAbsent: []
+%
+
+category: 'tests - inline'
+method: GsInlineTemporaryRefactoringTest
+testInlinesSingleReadIntoReturnNoParens
+	| ref recompile src |
+	ref := self inlineIn: self baseFixture selector: #oneRead caretOn: 'tRet :='.
+	recompile := self recompileIn: ref changeSet.
+	src := recompile newSource.
+
+	self assert: ref changeSet size equals: 1.
+	self assert: src includesSubstring: '^ count * 2'.
+	self deny: src includesSubstring: 'tRet'.
+	"the sole temporary's clause is gone entirely (assert the specific clause is absent,
+	 not that the char '|' appears nowhere -- that would false-fail on a block or a binary
+	 selector)."
+	self deny: src includesSubstring: '| tRet |'
+%
+
+category: 'tests - inline'
+method: GsInlineTemporaryRefactoringTest
+testInlinesIntoBinaryOperandParenthesisesNonAtomic
+	| src |
+	src := (self recompileIn:
+		(self inlineIn: self baseFixture selector: #binOperand caretOn: 'tBin :=') changeSet) newSource.
+
+	self assert: src includesSubstring: '(count * 2) + 1'
+%
+
+category: 'tests - inline'
+method: GsInlineTemporaryRefactoringTest
+testInlinesAtomicValueWithoutParens
+	| src |
+	src := (self recompileIn:
+		(self inlineIn: self baseFixture selector: #atomicVal caretOn: 'tAt :=') changeSet) newSource.
+
+	self assert: src includesSubstring: '^ count + 1'.
+	self deny: src includesSubstring: '(count'
+%
+
+category: 'tests - inline'
+method: GsInlineTemporaryRefactoringTest
+testInlinesAtomicValueReadTwice
+	| ref src |
+	ref := self inlineIn: self baseFixture selector: #readTwiceAtomic caretOn: 'tTw :='.
+	src := (self recompileIn: ref changeSet) newSource.
+
+	self assert: ref declineReason isNil.
+	self assert: src includesSubstring: '^ count + count'
+%
+
+category: 'tests - inline'
+method: GsInlineTemporaryRefactoringTest
+testInlinesTemporaryDeclaredInABlock
+	| src |
+	src := (self recompileIn:
+		(self inlineIn: self baseFixture selector: #blockTemp caretOn: 'tb2 :=') changeSet) newSource.
+
+	self assert: src includesSubstring: '(e * count) + 1'.
+	self deny: src includesSubstring: 'tb2'
+%
+
+category: 'tests - inline'
+method: GsInlineTemporaryRefactoringTest
+testInlinesIntoKeywordArgumentParenthesises
+	"A non-atomic value inlined into a keyword-argument position needs parentheses (M3)."
+	| src |
+	src := (self recompileIn:
+		(self inlineIn: self baseFixture selector: #kwArg caretOn: 'tk :=') changeSet) newSource.
+
+	self assert: src includesSubstring: 'with: (count * factor)'
+%
+
+category: 'tests - declaration'
+method: GsInlineTemporaryRefactoringTest
+testRemovesAssignmentSharingALineWithAnotherStatement
+	"Two statements on one source line: removing 'tp := count.' must stop at its own '.'
+	 and leave the following statement intact (M4 removalIntervalFor branch)."
+	| src |
+	src := (self recompileIn:
+		(self inlineIn: self baseFixture selector: #twoPerLine caretOn: 'tp :=') changeSet) newSource.
+
+	self assert: src includesSubstring: 'factor := count + 1'.
+	self deny: src includesSubstring: 'tp'
+%
+
+category: 'tests - declaration'
+method: GsInlineTemporaryRefactoringTest
+testDropsTempFromMultiTempClause
+	| src |
+	src := (self recompileIn:
+		(self inlineIn: self baseFixture selector: #multiTemp caretOn: 'tRm :=') changeSet) newSource.
+
+	self assert: src includesSubstring: '| ma mb |'.
+	self assert: src includesSubstring: '(count * 2)'.
+	self deny: src includesSubstring: 'tRm'
+%
+
+category: 'tests - decline'
+method: GsInlineTemporaryRefactoringTest
+testNonAtomicValueReadTwiceIsDeclined
+	| ref |
+	ref := self inlineIn: self baseFixture selector: #readTwiceExpr caretOn: 'tExpr :='.
+
+	self assert: ref declineReason includesSubstring: 'not a simple expression'.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - decline'
+method: GsInlineTemporaryRefactoringTest
+testArgumentIsDeclined
+	| ref |
+	ref := self inlineIn: self baseFixture selector: #inlineArg: caretOn: 'anArg +'.
+
+	self assert: ref declineReason includesSubstring: 'argument'.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - decline'
+method: GsInlineTemporaryRefactoringTest
+testInstanceVariableIsDeclined
+	| ref |
+	ref := self inlineIn: self baseFixture selector: #inlineIvar caretOn: 'count +'.
+
+	self assert: ref declineReason includesSubstring: 'instance variable'.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - decline'
+method: GsInlineTemporaryRefactoringTest
+testTempAssignedTwiceIsDeclined
+	| ref |
+	ref := self inlineIn: self baseFixture selector: #twiceAssigned caretOn: 'tw :='.
+
+	self assert: ref declineReason includesSubstring: 'more than once'.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - decline'
+method: GsInlineTemporaryRefactoringTest
+testTempAssignedInNestedBlockIsDeclined
+	| ref |
+	ref := self inlineIn: self baseFixture selector: #nestedAssign caretOn: 'tn :='.
+
+	self assert: ref declineReason includesSubstring: 'nested block'.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - decline'
+method: GsInlineTemporaryRefactoringTest
+testTempReadBeforeAssignmentIsDeclined
+	| ref |
+	ref := self inlineIn: self baseFixture selector: #readBeforeAssign caretOn: 'tb :='.
+
+	self assert: ref declineReason includesSubstring: 'before it is assigned'.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - decline'
+method: GsInlineTemporaryRefactoringTest
+testNeverReadTempIsDeclined
+	| ref |
+	ref := self inlineIn: self baseFixture selector: #neverRead caretOn: 'tnr :='.
+
+	self assert: ref declineReason includesSubstring: 'never read'.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - decline'
+method: GsInlineTemporaryRefactoringTest
+testCaretNotOnAVariableIsDeclined
+	| ref |
+	ref := GsInlineTemporaryRefactoring
+		class: self baseFixture selector: #oneRead meta: false atOffset: 1.
+
+	self assert: ref declineReason includesSubstring: 'cursor on the temporary'.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - preflight'
+method: GsInlineTemporaryRefactoringTest
+testAnalysisReportsInlinableTemp
+	| src off json |
+	src := (self baseFixture compiledMethodAt: #oneRead) sourceString.
+	off := src indexOfSubCollection: 'tRet :='.
+	json := GsInlineTemporaryRefactoring
+		analyzeTempForClass: self baseFixture selector: #oneRead meta: false atOffset: off.
+
+	self assert: json includesSubstring: '"name":"tRet"'.
+	self assert: json includesSubstring: '"decline":null'
+%
+
+category: 'tests - preflight'
+method: GsInlineTemporaryRefactoringTest
+testAnalysisReportsDeclineForArgument
+	| src off json |
+	src := (self baseFixture compiledMethodAt: #inlineArg:) sourceString.
+	off := src indexOfSubCollection: 'anArg +'.
+	json := GsInlineTemporaryRefactoring
+		analyzeTempForClass: self baseFixture selector: #inlineArg: meta: false atOffset: off.
+
+	self deny: json includesSubstring: '"decline":null'
+%
+
+category: 'tests - staging'
+method: GsInlineTemporaryRefactoringTest
+testBuildingTheChangeSetChangesNoSourceAndDoesNotCommit
+	| before |
+	before := System needsCommit.
+	(self inlineIn: self baseFixture selector: #oneRead caretOn: 'tRet :=') changeSet.
+
+	self assert: (self baseFixture compiledMethodAt: #oneRead) sourceString
+		includesSubstring: 'tRet'.
+	self assert: System needsCommit equals: before
+%
+
+category: 'tests - preview'
+method: GsInlineTemporaryRefactoringTest
+testPreviewJsonSerializesRecompile
+	| json |
+	json := (self inlineIn: self baseFixture selector: #oneRead caretOn: 'tRet :=')
+		previewJsonString.
+
+	self assert: json includesSubstring: 'methodRecompile'
+%
+
+category: 'tests - preview'
+method: GsInlineTemporaryRefactoringTest
+testStartPreviewCarriesTotalsAndPage
+	| json |
+	json := (self inlineIn: self baseFixture selector: #oneRead caretOn: 'tRet :=')
+		startPreviewToken: 'm4Tok' maxBytes: 100000.
+	[self assert: json includesSubstring: '"total":1'.
+	 self assert: json includesSubstring: '"name":"tRet"'.
+	 self assert: json includesSubstring: '"changes":']
+		ensure: [GsInlineTemporaryRefactoring clearToken: 'm4Tok']
+%
+
+category: 'tests - apply'
+method: GsInlineTemporaryRefactoringTest
+testApplyRecompilesAndDoesNotCommit
+	| before json |
+	before := System needsCommit.
+	json := (self inlineIn: self baseFixture selector: #oneRead caretOn: 'tRet :=')
+		applyDeselected: #().
+
+	self assert: json includesSubstring: '"applied":1'.
+	self assert: json includesSubstring: '"failed":[]'.
+	self assert: (self baseFixture compiledMethodAt: #oneRead) sourceString
+		includesSubstring: '^ count * 2'.
+	self deny: (self baseFixture compiledMethodAt: #oneRead) sourceString
+		includesSubstring: 'tRet'.
+	self assert: System needsCommit equals: before
+%
+
+category: 'tests - apply'
+method: GsInlineTemporaryRefactoringTest
+testTokenRoundTripStartThenApply
+	| ref json before |
+	before := System needsCommit.
+	ref := self inlineIn: self baseFixture selector: #oneRead caretOn: 'tRet :='.
+	ref startPreviewToken: 'm4rt' maxBytes: 100000.
+	[json := GsInlineTemporaryRefactoring applyForToken: 'm4rt' deselected: #().
+	 self assert: json includesSubstring: '"applied":1'.
+	 self assert: (self baseFixture compiledMethodAt: #oneRead) sourceString
+		includesSubstring: '^ count * 2'.
+	 self assert: System needsCommit equals: before]
+		ensure: [GsInlineTemporaryRefactoring clearToken: 'm4rt']
+%
+
+category: 'tests - apply'
+method: GsInlineTemporaryRefactoringTest
+testApplyForTokenOnAnExpiredSessionAnswersAnError
+	self assert: (GsInlineTemporaryRefactoring applyForToken: 'nope' deselected: #())
+		includesSubstring: 'expired'
+%
+
+category: 'asserting'
+method: GsInstVarStructureRefactoringTest
+assert: aString includesSubstring: aSubstring
+	self assert: (aString indexOfSubCollection: aSubstring) > 0
+%
+
+category: 'asserting'
+method: GsInstVarStructureRefactoringTest
+deny: aString includesSubstring: aSubstring
+	self assert: (aString indexOfSubCollection: aSubstring) = 0
+%
+
+category: 'asserting'
+method: GsInstVarStructureRefactoringTest
+assert: aCollection includes: anObject
+	self assert: (aCollection includes: anObject)
+%
+
+category: 'asserting'
+method: GsInstVarStructureRefactoringTest
+deny: aCollection includes: anObject
+	self assert: (aCollection includes: anObject) not
+%
+
+category: 'fixture'
+method: GsInstVarStructureRefactoringTest
+compile: aSource in: aClass
+	[aClass
+		compileMethod: aSource
+		dictionaries: System myUserProfile symbolList
+		category: 'fixture']
+		on: CompileWarning
+		do: [:ex | ex resume: nil]
+%
+
+category: 'fixture'
+method: GsInstVarStructureRefactoringTest
+classNamed: aName
+	^UserGlobals at: aName asSymbol
+%
+
+category: 'fixture'
+method: GsInstVarStructureRefactoringTest
+ownIvarsOf: aName
+	^(self classNamed: aName) instVarNames collect: [:e | e asString]
+%
+
+category: 'fixture'
+method: GsInstVarStructureRefactoringTest
+allIvarsOf: aName
+	^(self classNamed: aName) allInstVarNames collect: [:e | e asString]
+%
+
+category: 'fixture'
+method: GsInstVarStructureRefactoringTest
+editChangeFor: aName in: cs
+	^cs changes
+		detect: [:c | c kind = #classDefinitionEdit and: [c className = aName]]
+		ifNone: [nil]
+%
+
+category: 'running'
+method: GsInstVarStructureRefactoringTest
+setUp
+	| base mid |
+	base := Object
+		subclass: 'GsVSBase'
+		instVarNames: #('shared')
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	mid := base
+		subclass: 'GsVSMid'
+		instVarNames: #('mid' 'pushable')
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	mid
+		subclass: 'GsVSLeaf'
+		instVarNames: #('leaf' 'dup')
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	mid
+		subclass: 'GsVSTwig'
+		instVarNames: #('dup')
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	self compile: 'baseM ^ shared' in: base.
+	self compile: 'compute | t | t := shared. ^ t' in: base.
+	self compile: 'midM ^ mid' in: mid.
+	self compile: 'leafM ^ leaf' in: (self classNamed: 'GsVSLeaf')
+%
+
+category: 'running'
+method: GsInstVarStructureRefactoringTest
+tearDown
+	#('GsVSLeaf' 'GsVSTwig' 'GsVSMid' 'GsVSBase')
+		do: [:nm | UserGlobals removeKey: nm asSymbol ifAbsent: []]
+%
+
+category: 'tests - V5 convert temp'
+method: GsInstVarStructureRefactoringTest
+testConvertTempStagesIvarEditAndMethodRecompile
+	| ref cs edit recompile |
+	ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSBase') convertTemporary: 't' inMethod: #compute meta: false.
+	cs := ref changeSet.
+	edit := self editChangeFor: 'GsVSBase' in: cs.
+	recompile := cs changes detect: [:c | c kind = #methodRecompile] ifNone: [nil].
+
+	self assert: (ref decline) isNil.
+	self assert: edit notNil.
+	self assert: edit newSource includesSubstring: '''t'''.
+	self assert: recompile notNil.
+	self deny: recompile newSource includesSubstring: '| t |'
+%
+
+category: 'tests - V5 convert temp'
+method: GsInstVarStructureRefactoringTest
+testConvertTempAppliesAddingIvarAndDroppingDecl
+	| json |
+	json := (GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSBase') convertTemporary: 't' inMethod: #compute meta: false)
+		applyDeselected: #().
+
+	self deny: json includesSubstring: '"failed":[{'.
+	self assert: (self ownIvarsOf: 'GsVSBase') includes: 't'.
+	self deny: (((self classNamed: 'GsVSBase') compiledMethodAt: #compute environmentId: 0 otherwise: nil) sourceString) includesSubstring: '| t |'.
+	"the subtree survived the reversioning"
+	self assert: ((self classNamed: 'GsVSBase') includesSelector: #baseM).
+	self assert: ((self classNamed: 'GsVSMid') includesSelector: #midM).
+	self assert: ((self classNamed: 'GsVSLeaf') includesSelector: #leafM).
+	self assert: (self allIvarsOf: 'GsVSLeaf') includes: 't'
+%
+
+category: 'tests - V5 convert temp'
+method: GsInstVarStructureRefactoringTest
+testConvertTempDeclinesWhenAlreadyAnIvar
+	| ref |
+	ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSBase') convertTemporary: 'shared' inMethod: #baseM meta: false.
+
+	self assert: ref decline notNil.
+	self assert: ref decline includesSubstring: 'already an instance variable'.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - V5 convert temp'
+method: GsInstVarStructureRefactoringTest
+testConvertTempDeclinesWhenNotATemporary
+	| ref |
+	ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSBase') convertTemporary: 'nope' inMethod: #compute meta: false.
+
+	self assert: ref decline notNil.
+	self assert: ref decline includesSubstring: 'not a method-level temporary'.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - V5 convert temp'
+method: GsInstVarStructureRefactoringTest
+testConvertTempDeclinesForAClassSideMethod
+	"A class-side (meta) method's temporary cannot become an instance variable -- decline rather
+	 than add an unreachable ivar and recompile the class method against it."
+	| ref |
+	self compile: 'baseClassM | c | c := 1. ^c' in: (self classNamed: 'GsVSBase') class.
+	ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSBase') convertTemporary: 'c' inMethod: #baseClassM meta: true.
+
+	self assert: ref decline notNil.
+	self assert: ref decline includesSubstring: 'class-side method'.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - V5 convert temp'
+method: GsInstVarStructureRefactoringTest
+testConvertTempDeclinesWhenMethodNotFound
+	| ref |
+	ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSBase') convertTemporary: 't' inMethod: #noSuchSelector meta: false.
+
+	self assert: ref decline notNil.
+	self assert: ref decline includesSubstring: 'was not found'.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - V2 push up'
+method: GsInstVarStructureRefactoringTest
+testPushUpMovesIvarToSuperclass
+	| ref cs |
+	ref := GsInstVarStructureRefactoring class: (self classNamed: 'GsVSLeaf') pushUpInstVar: 'leaf'.
+	cs := ref changeSet.
+
+	self assert: ref decline isNil.
+	self assert: (self editChangeFor: 'GsVSMid' in: cs) notNil.
+	self assert: (self editChangeFor: 'GsVSLeaf' in: cs) notNil
+%
+
+category: 'tests - V2 push up'
+method: GsInstVarStructureRefactoringTest
+testPushUpAppliesMovingTheDeclaration
+	| json |
+	json := (GsInstVarStructureRefactoring class: (self classNamed: 'GsVSLeaf') pushUpInstVar: 'leaf')
+		applyDeselected: #().
+
+	self deny: json includesSubstring: '"failed":[{'.
+	self assert: (self ownIvarsOf: 'GsVSMid') includes: 'leaf'.
+	self deny: (self ownIvarsOf: 'GsVSLeaf') includes: 'leaf'.
+	self assert: (self allIvarsOf: 'GsVSLeaf') includes: 'leaf'.
+	self assert: ((self classNamed: 'GsVSLeaf') includesSelector: #leafM).
+	self assert: ((self classNamed: 'GsVSMid') includesSelector: #midM)
+%
+
+category: 'tests - V2 push up'
+method: GsInstVarStructureRefactoringTest
+testPushUpDeclinesWhenNotAnOwnIvar
+	| ref |
+	"shared is inherited by Leaf, not declared on it."
+	ref := GsInstVarStructureRefactoring class: (self classNamed: 'GsVSLeaf') pushUpInstVar: 'shared'.
+
+	self assert: ref decline notNil.
+	self assert: ref decline includesSubstring: 'not an instance variable declared in'.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - V2 push up'
+method: GsInstVarStructureRefactoringTest
+testPushUpDeclinesOnSiblingCollision
+	| ref |
+	"Both Leaf and GsVSTwig declare 'dup'; pushing Leaf's up to Mid would collide on GsVSTwig."
+	ref := GsInstVarStructureRefactoring class: (self classNamed: 'GsVSLeaf') pushUpInstVar: 'dup'.
+
+	self assert: ref decline notNil.
+	self assert: ref decline includesSubstring: 'collide'.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - V3 push down'
+method: GsInstVarStructureRefactoringTest
+testPushDownMovesIvarIntoEverySubclass
+	| ref cs |
+	ref := GsInstVarStructureRefactoring class: (self classNamed: 'GsVSMid') pushDownInstVar: 'pushable'.
+	cs := ref changeSet.
+
+	self assert: ref decline isNil.
+	self assert: (self editChangeFor: 'GsVSMid' in: cs) notNil.
+	self assert: (self editChangeFor: 'GsVSLeaf' in: cs) notNil.
+	self assert: (self editChangeFor: 'GsVSTwig' in: cs) notNil
+%
+
+category: 'tests - V3 push down'
+method: GsInstVarStructureRefactoringTest
+testPushDownAppliesMovingTheDeclaration
+	| json |
+	json := (GsInstVarStructureRefactoring class: (self classNamed: 'GsVSMid') pushDownInstVar: 'pushable')
+		applyDeselected: #().
+
+	self deny: json includesSubstring: '"failed":[{'.
+	self deny: (self ownIvarsOf: 'GsVSMid') includes: 'pushable'.
+	self assert: (self ownIvarsOf: 'GsVSLeaf') includes: 'pushable'.
+	self assert: (self ownIvarsOf: 'GsVSTwig') includes: 'pushable'.
+	self assert: ((self classNamed: 'GsVSMid') includesSelector: #midM).
+	self assert: ((self classNamed: 'GsVSLeaf') includesSelector: #leafM)
+%
+
+category: 'tests - V3 push down'
+method: GsInstVarStructureRefactoringTest
+testPushDownDeclinesWhenClassStillUsesIt
+	| ref |
+	"midM reads 'mid', so removing it from Mid would leave that method undeclared."
+	ref := GsInstVarStructureRefactoring class: (self classNamed: 'GsVSMid') pushDownInstVar: 'mid'.
+
+	self assert: ref decline notNil.
+	self assert: ref decline includesSubstring: 'still uses it'.
+	self assert: ref decline includesSubstring: '#midM'.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - V3 push down'
+method: GsInstVarStructureRefactoringTest
+testPushDownDeclinesWhenNoSubclasses
+	| ref |
+	ref := GsInstVarStructureRefactoring class: (self classNamed: 'GsVSLeaf') pushDownInstVar: 'leaf'.
+
+	self assert: ref decline notNil.
+	self assert: ref decline includesSubstring: 'no subclasses'.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - staging'
+method: GsInstVarStructureRefactoringTest
+testBuildingCompilesNothingAndDoesNotCommit
+	| before |
+	before := System needsCommit.
+	(GsInstVarStructureRefactoring class: (self classNamed: 'GsVSMid') pushDownInstVar: 'pushable') changeSet.
+
+	self deny: (self ownIvarsOf: 'GsVSLeaf') includes: 'pushable'.
+	self assert: System needsCommit equals: before
+%
+
+category: 'tests - preview'
+method: GsInstVarStructureRefactoringTest
+testStartPreviewCarriesTotalsAndPage
+	| json |
+	json := (GsInstVarStructureRefactoring class: (self classNamed: 'GsVSMid') pushDownInstVar: 'pushable')
+		startPreviewToken: 'vsTok' maxBytes: 100000.
+	[self assert: json includesSubstring: '"topClass":"GsVSMid"'.
+	 self assert: json includesSubstring: '"changes":'.
+	 self assert: json includesSubstring: 'classDefinitionEdit']
+		ensure: [GsInstVarStructureRefactoring clearToken: 'vsTok']
+%
+
+category: 'tests - preview'
+method: GsInstVarStructureRefactoringTest
+testAnalysisReportsDeclineAndTopClass
+	| ok bad |
+	ok := GsInstVarStructureRefactoring analyzeClass: (self classNamed: 'GsVSMid') pushDownInstVar: 'pushable'.
+	bad := GsInstVarStructureRefactoring analyzeClass: (self classNamed: 'GsVSMid') pushDownInstVar: 'mid'.
+
+	self assert: ok includesSubstring: '"decline":null'.
+	self assert: ok includesSubstring: '"topClass":"GsVSMid"'.
+	self assert: bad includesSubstring: 'still uses it'
+%
+
+category: 'tests - apply'
+method: GsInstVarStructureRefactoringTest
+testApplyDoesNotCommit
+	| before |
+	before := System needsCommit.
+	(GsInstVarStructureRefactoring class: (self classNamed: 'GsVSBase') convertTemporary: 't' inMethod: #compute meta: false)
+		applyDeselected: #().
+
+	self assert: System needsCommit equals: before
+%
+
+category: 'tests - apply'
+method: GsInstVarStructureRefactoringTest
+testApplyForTokenOnAnExpiredSessionAnswersAnError
+	self assert: (GsInstVarStructureRefactoring applyForToken: 'nope' deselected: #())
+		includesSubstring: 'expired'
+%
+
+category: 'tests - apply'
+method: GsInstVarStructureRefactoringTest
+testPageForTokenOnAnExpiredSessionAnswersAnError
+	self assert: (GsInstVarStructureRefactoring pageForToken: 'nope' from: 1 maxBytes: 1000)
+		includesSubstring: 'expired'
+%
+
+category: 'tests - V4 move'
+method: GsInstVarStructureRefactoringTest
+testMoveUpToAGrandparentAncestor
+	"#up carries the declaration to ANY chosen ancestor, not just the immediate superclass.
+	 Moving Leaf's 'leaf' to Base (its grandparent): Base gains it, Leaf loses its own copy
+	 (still reachable by inheritance)."
+	| ref cs |
+	ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSLeaf') moveInstVar: 'leaf' toClasses: #('GsVSBase') direction: #up.
+	cs := ref changeSet.
+
+	self assert: ref decline isNil.
+	self assert: ref topClass name asString equals: 'GsVSBase'.
+	self assert: (self editChangeFor: 'GsVSBase' in: cs) notNil.
+	self assert: (self editChangeFor: 'GsVSLeaf' in: cs) notNil
+%
+
+category: 'tests - V4 move'
+method: GsInstVarStructureRefactoringTest
+testMoveUpAppliesToAncestor
+	| json |
+	json := (GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSLeaf') moveInstVar: 'leaf' toClasses: #('GsVSBase') direction: #up)
+		applyDeselected: #().
+
+	self deny: json includesSubstring: '"failed":[{'.
+	self assert: (self ownIvarsOf: 'GsVSBase') includes: 'leaf'.
+	self deny: (self ownIvarsOf: 'GsVSLeaf') includes: 'leaf'.
+	self assert: (self allIvarsOf: 'GsVSLeaf') includes: 'leaf'.
+	"the leaf reader still resolves against the now-inherited ivar"
+	self assert: ((self classNamed: 'GsVSLeaf') includesSelector: #leafM)
+%
+
+category: 'tests - V4 move'
+method: GsInstVarStructureRefactoringTest
+testMoveUpDeclinesWhenTargetIsNotAnAncestor
+	| ref |
+	ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSLeaf') moveInstVar: 'leaf' toClasses: #('GsVSTwig') direction: #up.
+
+	self assert: ref decline notNil.
+	self assert: ref decline includesSubstring: 'is not a superclass of'.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - V4 move'
+method: GsInstVarStructureRefactoringTest
+testMoveUpDeclinesOnMoreThanOneSuperclass
+	| ref |
+	ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSLeaf') moveInstVar: 'leaf' toClasses: #('GsVSMid' 'GsVSBase') direction: #up.
+
+	self assert: ref decline notNil.
+	self assert: ref decline includesSubstring: 'more than one superclass'.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - V4 move'
+method: GsInstVarStructureRefactoringTest
+testMoveUpDeclinesOnSiblingCollision
+	"'dup' is owned by both Leaf and GsVSTwig; pushing Leaf's up to Mid would collide with GsVSTwig's
+	 once inherited."
+	| ref |
+	ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSLeaf') moveInstVar: 'dup' toClasses: #('GsVSMid') direction: #up.
+
+	self assert: ref decline notNil.
+	self assert: ref decline includesSubstring: 'GsVSTwig'.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - V4 move'
+method: GsInstVarStructureRefactoringTest
+testMoveDownToASelectedSubset
+	"#down carries the declaration to a CHOSEN subset of subclasses (unlike push-down, which
+	 goes to every immediate subclass). Moving Mid's 'pushable' to only Leaf: Leaf gains it,
+	 Mid and GsVSTwig end up without it."
+	| json |
+	json := (GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSMid') moveInstVar: 'pushable' toClasses: #('GsVSLeaf') direction: #down)
+		applyDeselected: #().
+
+	self deny: json includesSubstring: '"failed":[{'.
+	self deny: (self ownIvarsOf: 'GsVSMid') includes: 'pushable'.
+	self assert: (self ownIvarsOf: 'GsVSLeaf') includes: 'pushable'.
+	self deny: (self ownIvarsOf: 'GsVSTwig') includes: 'pushable'.
+	self deny: (self allIvarsOf: 'GsVSTwig') includes: 'pushable'
+%
+
+category: 'tests - V4 move'
+method: GsInstVarStructureRefactoringTest
+testMoveDownToMultipleSelectedSubclasses
+	| ref cs |
+	ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSMid') moveInstVar: 'pushable' toClasses: #('GsVSLeaf' 'GsVSTwig') direction: #down.
+	cs := ref changeSet.
+
+	self assert: ref decline isNil.
+	self assert: (self editChangeFor: 'GsVSMid' in: cs) notNil.
+	self assert: (self editChangeFor: 'GsVSLeaf' in: cs) notNil.
+	self assert: (self editChangeFor: 'GsVSTwig' in: cs) notNil
+%
+
+category: 'tests - V4 move'
+method: GsInstVarStructureRefactoringTest
+testMoveDownDeclinesWhenAnUnselectedSubtreeStillUsesIt
+	"A partial push-down leaves the unselected subtree WITHOUT the ivar; if a class there still
+	 reads it, the move is declined (it would compile against an undeclared variable)."
+	| ref |
+	self compile: 'usesPush ^ pushable' in: (self classNamed: 'GsVSTwig').
+	ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSMid') moveInstVar: 'pushable' toClasses: #('GsVSLeaf') direction: #down.
+
+	self assert: ref decline notNil.
+	self assert: ref decline includesSubstring: 'GsVSTwig'.
+	self assert: ref decline includesSubstring: '#usesPush'.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - V4 move'
+method: GsInstVarStructureRefactoringTest
+testMoveDownDeclinesWhenATargetIsUnderAnotherTarget
+	"The #down picker lists descendants at any depth, so a user can tick both a class and one of its
+	 own descendants. Moving Base's 'shared' down to BOTH GsVSMid and GsVSLeaf (which descends from
+	 GsVSMid) would declare the ivar on Leaf while it also inherits it from the freshly-edited Mid --
+	 a double declaration GemStone rejects at apply. Analysis declines instead, recording nothing."
+	| ref |
+	ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSBase') moveInstVar: 'shared' toClasses: #('GsVSMid' 'GsVSLeaf') direction: #down.
+
+	self assert: ref decline notNil.
+	self assert: ref decline includesSubstring: 'GsVSLeaf'.
+	self assert: ref decline includesSubstring: 'GsVSMid'.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - V4 move'
+method: GsInstVarStructureRefactoringTest
+testMoveDeclinesWhenNotAnOwnIvar
+	| ref |
+	"'shared' is Base's ivar, only inherited by Mid."
+	ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSMid') moveInstVar: 'shared' toClasses: #('GsVSBase') direction: #up.
+
+	self assert: ref decline notNil.
+	self assert: ref decline includesSubstring: 'not an instance variable declared in GsVSMid'.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - V4 move'
+method: GsInstVarStructureRefactoringTest
+testMoveDeclinesWhenNoDestinationChosen
+	| ref |
+	ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSMid') moveInstVar: 'pushable' toClasses: #() direction: #down.
+
+	self assert: ref decline notNil.
+	self assert: ref decline includesSubstring: 'no destination class'.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - V4 move'
+method: GsInstVarStructureRefactoringTest
+testMoveAnalysisReportsDeclineAndTopClass
+	| ok bad |
+	ok := GsInstVarStructureRefactoring
+		analyzeClass: (self classNamed: 'GsVSMid') moveInstVar: 'pushable' toClasses: #('GsVSLeaf') direction: #down.
+	bad := GsInstVarStructureRefactoring
+		analyzeClass: (self classNamed: 'GsVSLeaf') moveInstVar: 'leaf' toClasses: #('GsVSTwig') direction: #up.
+
+	self assert: ok includesSubstring: '"decline":null'.
+	self assert: ok includesSubstring: '"topClass":"GsVSMid"'.
+	self assert: bad includesSubstring: 'is not a superclass of'
+%
+
+category: 'tests - V4 move'
+method: GsInstVarStructureRefactoringTest
+testMoveUpMovesSimpleAccessorsToAncestor
+	"moveAccessors also works through the general #move: a `^ivar` getter travels to the chosen
+	 ancestor. Mid gets a simple getter for 'pushable'; move it up to Base."
+	| ref cs |
+	self compile: 'pushable ^ pushable' in: (self classNamed: 'GsVSMid').
+	ref := (GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSMid') moveInstVar: 'pushable' toClasses: #('GsVSBase') direction: #up)
+		moveAccessors: true.
+	cs := ref changeSet.
+
+	self assert: ref decline isNil.
+	self assert: (cs changes anySatisfy: [:c | c kind = #methodAdd and: [c className = 'GsVSBase' and: [c selector = #pushable]]]).
+	self assert: (cs changes anySatisfy: [:c | c kind = #methodRemove and: [c className = 'GsVSMid' and: [c selector = #pushable]]])
+%
+
+category: 'tests - V4 move'
+method: GsInstVarStructureRefactoringTest
+testMoveUpBindsLineageClassNotASameNamedShadowInAnotherDictionary
+	"#2 dictionary scoping: a destination name resolves within the source's OWN lineage, not by
+	 unscoped global first-match. Bind an unrelated GsVSBase in a dictionary AHEAD of UserGlobals so a
+	 global lookup returns that shadow (which is not an ancestor of GsVSMid). Moving GsVSMid's own
+	 'mid' up to 'GsVSBase' must still bind the REAL lineage GsVSBase and succeed -- the old unscoped
+	 lookup bound the shadow and declined 'is not a superclass'. This is the exact case the lineage
+	 fix was written for, and the only test that fails if it is reverted (see issue #356)."
+	| shadow ref |
+	shadow := SymbolDictionary new.
+	System myUserProfile insertDictionary: shadow at: 1.
+	[Object
+		subclass: 'GsVSBase'
+		instVarNames: #()
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: shadow.
+	ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSMid') moveInstVar: 'mid' toClasses: #('GsVSBase') direction: #up.
+
+	self assert: ref decline isNil.
+	self assert: ref topClass name asString equals: 'GsVSBase'.
+	self assert: (self editChangeFor: 'GsVSBase' in: ref changeSet) notNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+%
+
+category: 'tests - V4 move'
+method: GsInstVarStructureRefactoringTest
+testMoveDownBindsLineageClassNotASameNamedShadowInAnotherDictionary
+	"#2 dictionary scoping, #down half: the down lineage resolves through the source's DESCENDANTS,
+	 a different code path than #up's ancestor walk. Bind an unrelated GsVSLeaf in a dictionary AHEAD
+	 of UserGlobals so a global lookup returns that shadow (which is not a subclass of GsVSMid).
+	 Moving GsVSMid's own 'pushable' down to 'GsVSLeaf' must still bind the REAL descendant GsVSLeaf
+	 and succeed -- the old unscoped lookup bound the shadow and declined 'is not a subclass'."
+	| shadow ref |
+	shadow := SymbolDictionary new.
+	System myUserProfile insertDictionary: shadow at: 1.
+	[Object
+		subclass: 'GsVSLeaf'
+		instVarNames: #()
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: shadow.
+	ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSMid') moveInstVar: 'pushable' toClasses: #('GsVSLeaf') direction: #down.
+
+	self assert: ref decline isNil.
+	self assert: (self editChangeFor: 'GsVSLeaf' in: ref changeSet) notNil]
+		ensure: [System myUserProfile removeDictionaryAt: 1]
+%
+
+category: 'tests - V4 move'
+method: GsInstVarStructureRefactoringTest
+testMoveUpToANonImmediateAncestor
+	"V4 moves up to ANY chosen ancestor, not just the immediate superclass. GsVSLeaf's 'leaf' moves
+	 up to GsVSBase -- its grandparent, skipping GsVSMid -- so the declaration lands on GsVSBase (from
+	 which GsVSLeaf still inherits it) and leaves GsVSLeaf's own list."
+	| ref cs |
+	ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSLeaf') moveInstVar: 'leaf' toClasses: #('GsVSBase') direction: #up.
+	cs := ref changeSet.
+
+	self assert: ref decline isNil.
+	self assert: ref topClass name asString equals: 'GsVSBase'.
+	self assert: (self editChangeFor: 'GsVSBase' in: cs) notNil.
+	self assert: (self editChangeFor: 'GsVSLeaf' in: cs) notNil
+%
+
+category: 'tests - V4 move'
+method: GsInstVarStructureRefactoringTest
+testMoveApplyDoesNotCommit
+	| before |
+	before := System needsCommit.
+	(GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSMid') moveInstVar: 'pushable' toClasses: #('GsVSLeaf') direction: #down)
+		applyDeselected: #().
+
+	self assert: System needsCommit equals: before
+%
+
+category: 'tests - V4 move'
+method: GsInstVarStructureRefactoringTest
+testMoveDownPartialMovesAccessorToSelectedSubclassOnly
+	"A partial #down with moveAccessors removes the source's simple accessor and adds it only to
+	 the CHOSEN subclass -- not to the unselected sibling (which loses the ivar entirely)."
+	| mid cs |
+	mid := self classNamed: 'GsVSMid'.
+	self compile: 'pushable ^ pushable' in: mid.
+	cs := ((GsInstVarStructureRefactoring
+		class: mid moveInstVar: 'pushable' toClasses: #('GsVSLeaf') direction: #down)
+		moveAccessors: true) changeSet.
+
+	self assert: (cs changes anySatisfy: [:c | c kind = #methodRemove and: [c className = 'GsVSMid' and: [c selector = #pushable]]]).
+	self assert: (cs changes anySatisfy: [:c | c kind = #methodAdd and: [c className = 'GsVSLeaf' and: [c selector = #pushable]]]).
+	self deny: (cs changes anySatisfy: [:c | c kind = #methodAdd and: [c className = 'GsVSTwig']])
+%
+
+category: 'tests - V2/V3 move accessors'
+method: GsInstVarStructureRefactoringTest
+testPushUpMovesSimpleAccessorsToSuperclass
+	"With moveAccessors, a `^ivar` getter and an `ivar := arg` setter travel up with the
+	 declaration; a non-trivial method that uses the ivar is left behind (it still works via
+	 the now-inherited ivar)."
+	| mid json |
+	mid := self classNamed: 'GsVSMid'.
+	self compile: 'pushable ^ pushable' in: mid.
+	self compile: 'pushable: aValue pushable := aValue' in: mid.
+	self compile: 'usesPushable ^ pushable + 1' in: mid.
+
+	json := ((GsInstVarStructureRefactoring class: mid pushUpInstVar: 'pushable') moveAccessors: true)
+		applyDeselected: #().
+
+	self deny: json includesSubstring: '"failed":[{'.
+	self assert: (self ownIvarsOf: 'GsVSBase') includes: 'pushable'.
+	self deny: (self ownIvarsOf: 'GsVSMid') includes: 'pushable'.
+	self assert: ((self classNamed: 'GsVSBase') includesSelector: #pushable).
+	self assert: ((self classNamed: 'GsVSBase') includesSelector: #'pushable:').
+	self deny: ((self classNamed: 'GsVSMid') includesSelector: #pushable).
+	self deny: ((self classNamed: 'GsVSMid') includesSelector: #'pushable:').
+	self assert: ((self classNamed: 'GsVSMid') includesSelector: #usesPushable)
+%
+
+category: 'tests - V2/V3 move accessors'
+method: GsInstVarStructureRefactoringTest
+testPushUpWithoutMoveAccessorsLeavesAccessorsInPlace
+	"Default behaviour is unchanged: without opting in, the accessors stay on the subclass."
+	| mid json |
+	mid := self classNamed: 'GsVSMid'.
+	self compile: 'pushable ^ pushable' in: mid.
+
+	json := (GsInstVarStructureRefactoring class: mid pushUpInstVar: 'pushable') applyDeselected: #().
+
+	self deny: json includesSubstring: '"failed":[{'.
+	self assert: ((self classNamed: 'GsVSMid') includesSelector: #pushable).
+	self deny: ((self classNamed: 'GsVSBase') includesSelector: #pushable)
+%
+
+category: 'tests - V2/V3 move accessors'
+method: GsInstVarStructureRefactoringTest
+testPushUpLeavesAccessorWhenSuperclassAlreadyImplementsIt
+	"Never overwrite an existing same-named method on the target: if the superclass already
+	 implements the accessor selector, the subclass's accessor is left in place."
+	| base mid json |
+	base := self classNamed: 'GsVSBase'.
+	mid := self classNamed: 'GsVSMid'.
+	self compile: 'pushable ^ pushable' in: mid.
+	self compile: 'pushable ^ 99' in: base.
+
+	json := ((GsInstVarStructureRefactoring class: mid pushUpInstVar: 'pushable') moveAccessors: true)
+		applyDeselected: #().
+
+	self deny: json includesSubstring: '"failed":[{'.
+	self assert: ((self classNamed: 'GsVSMid') includesSelector: #pushable).
+	self assert: (((self classNamed: 'GsVSBase') compiledMethodAt: #pushable environmentId: 0 otherwise: nil) sourceString)
+		includesSubstring: '99'
+%
+
+category: 'tests - V2/V3 move accessors'
+method: GsInstVarStructureRefactoringTest
+testPushUpLeavesAccessorWhenSuperclassInheritsIt
+	"The shadow guard extends to INHERITED implementations, not just the immediate superclass's
+	 own dictionary. GsVSBase implements #leafM and the push-up target GsVSMid does not; the
+	 fixture's `leafM ^ leaf` is a simple getter of `leaf`, but installing it on GsVSMid would
+	 shadow the inherited GsVSBase>>leafM for the whole subtree, so the ivar still moves up while
+	 the accessor is left on GsVSLeaf."
+	| leaf base json |
+	base := self classNamed: 'GsVSBase'.
+	leaf := self classNamed: 'GsVSLeaf'.
+	self compile: 'leafM ^ 99' in: base.
+
+	json := ((GsInstVarStructureRefactoring class: leaf pushUpInstVar: 'leaf') moveAccessors: true)
+		applyDeselected: #().
+
+	self deny: json includesSubstring: '"failed":[{'.
+	"the ivar moved up..."
+	self assert: (self ownIvarsOf: 'GsVSMid') includes: 'leaf'.
+	self deny: (self ownIvarsOf: 'GsVSLeaf') includes: 'leaf'.
+	"...but the accessor was NOT installed on GsVSMid (it would shadow the inherited GsVSBase>>leafM)"
+	self deny: ((self classNamed: 'GsVSMid') includesSelector: #leafM).
+	self assert: ((self classNamed: 'GsVSLeaf') includesSelector: #leafM).
+	"GsVSBase's own #leafM is untouched"
+	self assert: (((self classNamed: 'GsVSBase') compiledMethodAt: #leafM environmentId: 0 otherwise: nil) sourceString)
+		includesSubstring: '99'
+%
+
+category: 'tests - V2/V3 move accessors'
+method: GsInstVarStructureRefactoringTest
+testPushUpStagesAccessorMoveChanges
+	"The accessor move is surfaced as visible #methodRemove (source) + #methodAdd (target) rows."
+	| mid cs remove add |
+	mid := self classNamed: 'GsVSMid'.
+	self compile: 'pushable ^ pushable' in: mid.
+
+	cs := ((GsInstVarStructureRefactoring class: mid pushUpInstVar: 'pushable') moveAccessors: true) changeSet.
+	remove := cs changes detect: [:c | c kind = #methodRemove and: [c selector = #pushable]] ifNone: [nil].
+	add := cs changes detect: [:c | c kind = #methodAdd and: [c selector = #pushable]] ifNone: [nil].
+
+	self assert: remove notNil.
+	self assert: remove className equals: 'GsVSMid'.
+	self assert: add notNil.
+	self assert: add className equals: 'GsVSBase'
+%
+
+category: 'tests - V2/V3 move accessors'
+method: GsInstVarStructureRefactoringTest
+testPushDownMovesSimpleAccessorsIntoEverySubclass
+	"midM (`^mid`) is a simple getter of `mid`, so with moveAccessors the push-down is no longer
+	 blocked: the getter moves down into every immediate subclass and is removed from the class."
+	| mid ref json |
+	mid := self classNamed: 'GsVSMid'.
+	ref := (GsInstVarStructureRefactoring class: mid pushDownInstVar: 'mid') moveAccessors: true.
+
+	self assert: ref decline isNil.
+	json := ref applyDeselected: #().
+
+	self deny: json includesSubstring: '"failed":[{'.
+	self deny: (self ownIvarsOf: 'GsVSMid') includes: 'mid'.
+	self assert: (self ownIvarsOf: 'GsVSLeaf') includes: 'mid'.
+	self assert: (self ownIvarsOf: 'GsVSTwig') includes: 'mid'.
+	self deny: ((self classNamed: 'GsVSMid') includesSelector: #midM).
+	self assert: ((self classNamed: 'GsVSLeaf') includesSelector: #midM).
+	self assert: ((self classNamed: 'GsVSTwig') includesSelector: #midM)
+%
+
+category: 'tests - V2/V3 move accessors'
+method: GsInstVarStructureRefactoringTest
+testPushDownNonAccessorUserStillBlocksEvenWithMoveAccessors
+	"Only SIMPLE accessors are exempt from the push-down block: a non-trivial method that uses
+	 the ivar still prevents the push-down, even with moveAccessors on."
+	| mid ref |
+	mid := self classNamed: 'GsVSMid'.
+	self compile: 'usesMid ^ mid + 1' in: mid.
+
+	ref := (GsInstVarStructureRefactoring class: mid pushDownInstVar: 'mid') moveAccessors: true.
+
+	self assert: ref decline notNil.
+	self assert: ref decline includesSubstring: 'still uses it'
+%
+
+category: 'tests - migrate + history options'
+method: GsInstVarStructureRefactoringTest
+testApplyReportsNotCommittedByDefault
+	"With neither persistent option on, the apply never commits and says so."
+	| json |
+	json := (GsInstVarStructureRefactoring class: (self classNamed: 'GsVSMid') pushDownInstVar: 'pushable')
+		applyDeselected: #().
+
+	self assert: json includesSubstring: '"committed":false'.
+	self assert: json includesSubstring: '"migratedFailures":0'.
+	self deny: json includesSubstring: '"failed":[{'
+%
+
+category: 'tests - migrate + history options'
+method: GsInstVarStructureRefactoringTest
+testMigrateAllInstancesNeverRaisesWithoutACommit
+	"migrateAllInstances must answer an Integer failure count and never propagate an exception.
+	 Here the structural change is uncommitted, so migrateInstancesTo: raises (it needs a clean
+	 transaction) -- the method must CATCH and count it. The real apply commits before migrating;
+	 the full migrate+commit path is exercised via the GCI/MCP round trip, which cannot run in a
+	 no-commit SUnit test."
+	| ref result |
+	ref := GsInstVarStructureRefactoring class: (self classNamed: 'GsVSMid') pushDownInstVar: 'pushable'.
+	ref applyDeselected: #().
+	result := ref migrateAllInstances.
+
+	self assert: (result isKindOf: Integer).
+	self assert: result >= 0
+%
+
+category: 'tests - migrate + history options'
+method: GsInstVarStructureRefactoringTest
+testPruneSupersededVersionsTrimsHistoryToCurrent
+	"Reversioning leaves each edited class with >1 history entry; the remove-old-from-history
+	 option (exercised here without the commit) trims it to just the current version."
+	| ref new |
+	ref := GsInstVarStructureRefactoring class: (self classNamed: 'GsVSMid') pushDownInstVar: 'pushable'.
+	ref applyDeselected: #().
+	new := UserGlobals at: #GsVSMid.
+	self assert: new classHistory size > 1.
+
+	ref pruneSupersededVersions.
+
+	self assert: new classHistory size equals: 1.
+	self assert: (new classHistory at: 1) == new
+%
+
+category: 'tests - accessor detection'
+method: GsInstVarStructureRefactoringTest
+testPushUpMovesAGetterThatCarriesAComment
+	"A method comment must not defeat simple-accessor detection (the parser ignores it)."
+	| mid |
+	mid := self classNamed: 'GsVSMid'.
+	self compile: 'pushable "the pushable value" ^ pushable' in: mid.
+
+	((GsInstVarStructureRefactoring class: mid pushUpInstVar: 'pushable') moveAccessors: true)
+		applyDeselected: #().
+
+	self assert: ((self classNamed: 'GsVSBase') includesSelector: #pushable).
+	self deny: ((self classNamed: 'GsVSMid') includesSelector: #pushable)
+%
+
+category: 'tests - accessor detection'
+method: GsInstVarStructureRefactoringTest
+testPushUpMovesASetterEndingInReturnSelf
+	"A setter of the form `ivar := arg. ^self` is still a simple setter."
+	| mid |
+	mid := self classNamed: 'GsVSMid'.
+	self compile: 'pushable: aValue pushable := aValue. ^self' in: mid.
+
+	((GsInstVarStructureRefactoring class: mid pushUpInstVar: 'pushable') moveAccessors: true)
+		applyDeselected: #().
+
+	self assert: ((self classNamed: 'GsVSBase') includesSelector: #'pushable:').
+	self deny: ((self classNamed: 'GsVSMid') includesSelector: #'pushable:')
+%
+
+category: 'tests - accessor detection'
+method: GsInstVarStructureRefactoringTest
+testPushUpLeavesALazyInitGetterBehind
+	"A getter with any extra logic (here a lazy init) is NOT a simple accessor: it is left on
+	 the subclass, which still works via the now-inherited ivar."
+	| mid |
+	mid := self classNamed: 'GsVSMid'.
+	self compile: 'pushable ^ pushable ifNil: [pushable := 0]' in: mid.
+
+	((GsInstVarStructureRefactoring class: mid pushUpInstVar: 'pushable') moveAccessors: true)
+		applyDeselected: #().
+
+	self assert: ((self classNamed: 'GsVSMid') includesSelector: #pushable).
+	self deny: ((self classNamed: 'GsVSBase') includesSelector: #pushable)
+%
+
+category: 'tests - accessor detection'
+method: GsInstVarStructureRefactoringTest
+testPushUpLeavesAMultiStatementSetterBehind
+	"A setter that does more than the bare assignment is not simple and is left in place."
+	| mid |
+	mid := self classNamed: 'GsVSMid'.
+	self compile: 'pushable: aValue Transcript show: ''set''. pushable := aValue' in: mid.
+
+	((GsInstVarStructureRefactoring class: mid pushUpInstVar: 'pushable') moveAccessors: true)
+		applyDeselected: #().
+
+	self assert: ((self classNamed: 'GsVSMid') includesSelector: #'pushable:').
+	self deny: ((self classNamed: 'GsVSBase') includesSelector: #'pushable:')
+%
+
+category: 'asserting'
+method: GsMoveMethodRefactoringTest
+assert: aString includesSubstring: aSubstring
+	self assert: (aString indexOfSubCollection: aSubstring) > 0
+%
+
+category: 'asserting'
+method: GsMoveMethodRefactoringTest
+deny: aString includesSubstring: aSubstring
+	self assert: (aString indexOfSubCollection: aSubstring) = 0
+%
+
+category: 'fixture'
+method: GsMoveMethodRefactoringTest
+sourceFixture
+	^UserGlobals at: #GsMMSource
+%
+
+category: 'fixture'
+method: GsMoveMethodRefactoringTest
+targetFixture
+	^UserGlobals at: #GsMMTarget
+%
+
+category: 'fixture'
+method: GsMoveMethodRefactoringTest
+noVarFixture
+	^UserGlobals at: #GsMMNoVar
+%
+
+category: 'fixture'
+method: GsMoveMethodRefactoringTest
+compile: aSource in: aClass
+	[aClass
+		compileMethod: aSource
+		dictionaries: System myUserProfile symbolList
+		category: 'fixture']
+		on: CompileWarning
+		do: [:ex | ex resume: nil]
+%
+
+category: 'fixture'
+method: GsMoveMethodRefactoringTest
+moveSelectors: sels to: aTargetName
+	"Move instance-side sels from GsMMSource to the instance side of aTargetName."
+	^GsMoveMethodRefactoring
+		sourceClass: self sourceFixture
+		selectors: sels
+		meta: false
+		toClassNamed: aTargetName
+		toMeta: false
+%
+
+category: 'fixture'
+method: GsMoveMethodRefactoringTest
+move: aSelector to: aTargetName
+	^self moveSelectors: (Array with: aSelector) to: aTargetName
+%
+
+category: 'fixture'
+method: GsMoveMethodRefactoringTest
+addChangeFor: aSelector in: aChangeSet
+	^aChangeSet changes
+		detect: [:c | c kind = #methodAdd and: [c selector = aSelector]]
+		ifNone: [nil]
+%
+
+category: 'fixture'
+method: GsMoveMethodRefactoringTest
+removeChangeFor: aSelector in: aChangeSet
+	^aChangeSet changes
+		detect: [:c | c kind = #methodRemove and: [c selector = aSelector]]
+		ifNone: [nil]
+%
+
+category: 'running'
+method: GsMoveMethodRefactoringTest
+setUp
+	| source target novar |
+	super setUp.
+	source := Object
+		subclass: 'GsMMSource'
+		instVarNames: #('balance')
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	target := Object
+		subclass: 'GsMMTarget'
+		instVarNames: #('balance')
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	novar := Object
+		subclass: 'GsMMNoVar'
+		instVarNames: #()
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	"--- source instance methods ---"
+	self compile: 'pureCompute ^ 40 + 2' in: source.
+	self compile: 'greet ^ ''hi''' in: source.
+	self compile: 'usesBalance ^ balance' in: source.
+	self compile: 'callsSuper ^ super hash' in: source.
+	self compile: 'existing ^ 2' in: source.
+	"--- target already implements #existing (collision) ---"
+	self compile: 'existing ^ 1' in: target
+%
+
+category: 'running'
+method: GsMoveMethodRefactoringTest
+tearDown
+	#('GsMMSource' 'GsMMTarget' 'GsMMNoVar')
+		do: [:nm | UserGlobals removeKey: nm asSymbol ifAbsent: []]
+%
+
+category: 'tests - move'
+method: GsMoveMethodRefactoringTest
+testMovesPureMethodStagesAddAndRemove
+	| ref cs add remove |
+	ref := self move: #pureCompute to: 'GsMMTarget'.
+	cs := ref changeSet.
+	add := self addChangeFor: #pureCompute in: cs.
+	remove := self removeChangeFor: #pureCompute in: cs.
+
+	self assert: cs size equals: 2.
+	self assert: add notNil.
+	self assert: add className equals: 'GsMMTarget'.
+	self assert: add newSource includesSubstring: '40 + 2'.
+	self assert: remove notNil.
+	self assert: remove className equals: 'GsMMSource'.
+	self assert: (ref declineFor: #pureCompute) isNil
+%
+
+category: 'tests - move'
+method: GsMoveMethodRefactoringTest
+testMovedAddPreservesCategory
+	| add |
+	add := self addChangeFor: #pureCompute in: (self move: #pureCompute to: 'GsMMTarget') changeSet.
+
+	self assert: add category equals: 'fixture'
+%
+
+category: 'tests - decline'
+method: GsMoveMethodRefactoringTest
+testMissingTargetIsGlobalDeclineAndEmptyChangeSet
+	| ref |
+	ref := self move: #pureCompute to: 'GsMMNoSuchClass'.
+
+	self assert: ref globalDecline notNil.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - decline'
+method: GsMoveMethodRefactoringTest
+testSameClassSameSideIsNoOpDecline
+	| ref |
+	ref := self move: #pureCompute to: 'GsMMSource'.
+
+	self assert: ref globalDecline notNil.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - decline'
+method: GsMoveMethodRefactoringTest
+testCollisionIsDeclined
+	| ref |
+	ref := self move: #existing to: 'GsMMTarget'.
+
+	self assert: (ref declineFor: #existing) notNil.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - decline'
+method: GsMoveMethodRefactoringTest
+testSuperSenderIsDeclined
+	| ref |
+	ref := self move: #callsSuper to: 'GsMMTarget'.
+
+	self assert: (ref declineFor: #callsSuper) notNil.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - ivar'
+method: GsMoveMethodRefactoringTest
+testIvarReaderMovesWhenTargetHasTheIvar
+	| ref |
+	ref := self move: #usesBalance to: 'GsMMTarget'.
+
+	self assert: (ref declineFor: #usesBalance) isNil.
+	self assert: ref changeSet size equals: 2
+%
+
+category: 'tests - ivar'
+method: GsMoveMethodRefactoringTest
+testIvarReaderDeclinedWhenTargetLacksTheIvar
+	| ref |
+	ref := self move: #usesBalance to: 'GsMMNoVar'.
+
+	self assert: (ref declineFor: #usesBalance) notNil.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - side flip'
+method: GsMoveMethodRefactoringTest
+testInstanceToClassSideFlipMovesPure
+	| ref cs add remove |
+	ref := GsMoveMethodRefactoring
+		sourceClass: self sourceFixture
+		selectors: (Array with: #pureCompute)
+		meta: false
+		toClassNamed: 'GsMMSource'
+		toMeta: true.
+	cs := ref changeSet.
+	add := self addChangeFor: #pureCompute in: cs.
+	remove := self removeChangeFor: #pureCompute in: cs.
+
+	self assert: cs size equals: 2.
+	self assert: add isMeta.
+	self deny: remove isMeta
+%
+
+category: 'tests - side flip'
+method: GsMoveMethodRefactoringTest
+testInstanceToClassSideFlipDeclinesIvarReader
+	| ref |
+	ref := GsMoveMethodRefactoring
+		sourceClass: self sourceFixture
+		selectors: (Array with: #usesBalance)
+		meta: false
+		toClassNamed: 'GsMMSource'
+		toMeta: true.
+
+	self assert: (ref declineFor: #usesBalance) notNil.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - multi'
+method: GsMoveMethodRefactoringTest
+testMultiMoveMovesMovableAndSkipsDeclined
+	| ref cs |
+	ref := self moveSelectors: #(#pureCompute #callsSuper #greet) to: 'GsMMTarget'.
+	cs := ref changeSet.
+
+	"pureCompute + greet move (2 changes each); callsSuper is skipped"
+	self assert: cs size equals: 4.
+	self assert: (self addChangeFor: #pureCompute in: cs) notNil.
+	self assert: (self addChangeFor: #greet in: cs) notNil.
+	self assert: (self addChangeFor: #callsSuper in: cs) isNil.
+	self assert: (ref declineFor: #callsSuper) notNil
+%
+
+category: 'tests - preflight'
+method: GsMoveMethodRefactoringTest
+testAnalysisPreflightReportsPerSelectorAndMovableCount
+	| json |
+	json := GsMoveMethodRefactoring
+		analyzeForClass: self sourceFixture
+		selectors: #(#pureCompute #callsSuper)
+		meta: false
+		toClassNamed: 'GsMMTarget'
+		toMeta: false.
+
+	self assert: json includesSubstring: '"targetClass":"GsMMTarget"'.
+	self assert: json includesSubstring: '"movableCount":1'.
+	self assert: json includesSubstring: '"selector":"pureCompute"'.
+	self assert: json includesSubstring: '"selector":"callsSuper"'
+%
+
+category: 'tests - staging'
+method: GsMoveMethodRefactoringTest
+testBuildingChangeSetCompilesNothingAndDoesNotCommit
+	| before |
+	before := System needsCommit.
+	(self move: #pureCompute to: 'GsMMTarget') changeSet.
+
+	"source still has it; target does not; nothing committed"
+	self assert: (self sourceFixture includesSelector: #pureCompute).
+	self deny: (self targetFixture includesSelector: #pureCompute).
+	self assert: System needsCommit equals: before
+%
+
+category: 'tests - preview'
+method: GsMoveMethodRefactoringTest
+testPreviewJsonSerializesAddAndRemove
+	| json |
+	json := (self move: #pureCompute to: 'GsMMTarget') previewJsonString.
+
+	self assert: json includesSubstring: 'methodAdd'.
+	self assert: json includesSubstring: 'methodRemove'
+%
+
+category: 'tests - preview'
+method: GsMoveMethodRefactoringTest
+testStartPreviewCarriesTotalsAndPage
+	| json |
+	json := (self move: #pureCompute to: 'GsMMTarget')
+		startPreviewToken: 'm6Tok' maxBytes: 100000.
+	[self assert: json includesSubstring: '"targetClass":"GsMMTarget"'.
+	 self assert: json includesSubstring: '"total":2'.
+	 self assert: json includesSubstring: '"movableCount":1'.
+	 self assert: json includesSubstring: '"changes":']
+		ensure: [GsMoveMethodRefactoring clearToken: 'm6Tok']
+%
+
+category: 'tests - apply'
+method: GsMoveMethodRefactoringTest
+testApplyRelocatesMethodAndRemovesFromSource
+	| json |
+	json := (self move: #pureCompute to: 'GsMMTarget') applyDeselected: #().
+
+	self assert: json includesSubstring: '"applied":2'.
+	self assert: (self targetFixture includesSelector: #pureCompute).
+	self deny: (self sourceFixture includesSelector: #pureCompute)
+%
+
+category: 'tests - apply'
+method: GsMoveMethodRefactoringTest
+testApplyDoesNotCommit
+	| before |
+	before := System needsCommit.
+	(self move: #pureCompute to: 'GsMMTarget') applyDeselected: #().
+
+	self assert: System needsCommit equals: before
+%
+
+category: 'tests - apply'
+method: GsMoveMethodRefactoringTest
+testDeselectingAddGuardsTheRemove
+	"Unticking the #methodAdd must NOT strand the method: the guarded remove is
+	 skipped because the target never received the method."
+	| ref cs addId json |
+	ref := self move: #pureCompute to: 'GsMMTarget'.
+	cs := ref changeSet.
+	addId := (self addChangeFor: #pureCompute in: cs) id.
+	json := ref applyDeselected: (Array with: addId).
+
+	self assert: (self sourceFixture includesSelector: #pureCompute).
+	self deny: (self targetFixture includesSelector: #pureCompute)
+%
+
+category: 'tests - apply'
+method: GsMoveMethodRefactoringTest
+testTokenRoundTripStartThenApply
+	| ref json before |
+	before := System needsCommit.
+	ref := self move: #pureCompute to: 'GsMMTarget'.
+	ref startPreviewToken: 'm6rt' maxBytes: 100000.
+	[json := GsMoveMethodRefactoring applyForToken: 'm6rt' deselected: #().
+	 self assert: json includesSubstring: '"applied":2'.
+	 self assert: (self targetFixture includesSelector: #pureCompute).
+	 self assert: System needsCommit equals: before]
+		ensure: [GsMoveMethodRefactoring clearToken: 'm6rt']
+%
+
+category: 'tests - apply'
+method: GsMoveMethodRefactoringTest
+testApplyForTokenOnAnExpiredSessionAnswersAnError
+	self assert: (GsMoveMethodRefactoring applyForToken: 'nope' deselected: #())
+		includesSubstring: 'expired'
+%
+
+category: 'tests - apply'
+method: GsMoveMethodRefactoringTest
+testPageForTokenOnAnExpiredSessionAnswersAnError
+	self assert: (GsMoveMethodRefactoring pageForToken: 'nope' from: 1 maxBytes: 100)
+		includesSubstring: 'expired'
+%
+
+category: 'asserting'
+method: GsPushDownMethodRefactoringTest
+assert: aString includesSubstring: aSubstring
+	self assert: (aString indexOfSubCollection: aSubstring) > 0
+%
+
+category: 'asserting'
+method: GsPushDownMethodRefactoringTest
+deny: aString includesSubstring: aSubstring
+	self assert: (aString indexOfSubCollection: aSubstring) = 0
+%
+
+category: 'fixture'
+method: GsPushDownMethodRefactoringTest
+baseFixture
+	^UserGlobals at: #GsPDBase
+%
+
+category: 'fixture'
+method: GsPushDownMethodRefactoringTest
+aFixture
+	^UserGlobals at: #GsPDA
+%
+
+category: 'fixture'
+method: GsPushDownMethodRefactoringTest
+bFixture
+	^UserGlobals at: #GsPDB
+%
+
+category: 'fixture'
+method: GsPushDownMethodRefactoringTest
+compile: aSource in: aClass
+	[aClass
+		compileMethod: aSource
+		dictionaries: System myUserProfile symbolList
+		category: 'fixture']
+		on: CompileWarning
+		do: [:ex | ex resume: nil]
+%
+
+category: 'fixture'
+method: GsPushDownMethodRefactoringTest
+pushSelectors: sels
+	"Push instance-side sels from GsPDBase down into its subclasses."
+	^GsPushDownMethodRefactoring
+		sourceClass: self baseFixture
+		selectors: sels
+		meta: false
+%
+
+category: 'fixture'
+method: GsPushDownMethodRefactoringTest
+push: aSelector
+	^self pushSelectors: (Array with: aSelector)
+%
+
+category: 'fixture'
+method: GsPushDownMethodRefactoringTest
+sourceIn: aClass for: aSelector
+	"The instance-side source of aSelector in aClass, or '' if absent."
+	^(aClass compiledMethodAt: aSelector environmentId: 0 otherwise: nil)
+		ifNil: [''] ifNotNil: [:m | m sourceString]
+%
+
+category: 'fixture'
+method: GsPushDownMethodRefactoringTest
+addChangeFor: aSelector in: aChangeSet
+	^aChangeSet changes
+		detect: [:c | c kind = #methodAdd and: [c selector = aSelector]]
+		ifNone: [nil]
+%
+
+category: 'fixture'
+method: GsPushDownMethodRefactoringTest
+addChangeFor: aSelector inClass: aName in: aChangeSet
+	^aChangeSet changes
+		detect: [:c | c kind = #methodAdd and: [c selector = aSelector and: [c className = aName]]]
+		ifNone: [nil]
+%
+
+category: 'fixture'
+method: GsPushDownMethodRefactoringTest
+removeChangeFor: aSelector in: aChangeSet
+	^aChangeSet changes
+		detect: [:c | c kind = #methodRemove and: [c selector = aSelector]]
+		ifNone: [nil]
+%
+
+category: 'fixture'
+method: GsPushDownMethodRefactoringTest
+addCountFor: aSelector in: aChangeSet
+	^(aChangeSet changes select: [:c | c kind = #methodAdd and: [c selector = aSelector]]) size
+%
+
+category: 'running'
+method: GsPushDownMethodRefactoringTest
+setUp
+	| base a b |
+	base := Object
+		subclass: 'GsPDBase'
+		instVarNames: #('state')
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	a := base
+		subclass: 'GsPDA'
+		instVarNames: #()
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	b := base
+		subclass: 'GsPDB'
+		instVarNames: #()
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	"--- base instance methods (candidates to push down) ---"
+	self compile: 'pureCompute ^ 40 + 2' in: base.
+	self compile: 'greet ^ ''hi''' in: base.
+	self compile: 'usesState ^ state' in: base.
+	self compile: 'callsSuper ^ super hash' in: base.
+	self compile: 'overriddenByA ^ ''base''' in: base.
+	self compile: 'overriddenByAll ^ ''base''' in: base.
+	"--- A overrides overriddenByA + overriddenByAll; B overrides only overriddenByAll ---"
+	self compile: 'overriddenByA ^ ''a''' in: a.
+	self compile: 'overriddenByAll ^ ''a''' in: a.
+	self compile: 'overriddenByAll ^ ''b''' in: b.
+	"--- class-side method to push down ---"
+	self compile: 'makeOne ^ self new' in: base class
+%
+
+category: 'running'
+method: GsPushDownMethodRefactoringTest
+tearDown
+	#('GsPDA' 'GsPDB' 'GsPDBase')
+		do: [:nm | UserGlobals removeKey: nm asSymbol ifAbsent: []]
+%
+
+category: 'tests - push'
+method: GsPushDownMethodRefactoringTest
+testPushesPureMethodStagesAddPerSubclassAndOneRemove
+	| ref cs |
+	ref := self push: #pureCompute.
+	cs := ref changeSet.
+
+	"two subclasses both lack it -> 2 adds + 1 remove"
+	self assert: cs size equals: 3.
+	self assert: (self addCountFor: #pureCompute in: cs) equals: 2.
+	self assert: (self addChangeFor: #pureCompute inClass: 'GsPDA' in: cs) notNil.
+	self assert: (self addChangeFor: #pureCompute inClass: 'GsPDB' in: cs) notNil.
+	self assert: (self removeChangeFor: #pureCompute in: cs) className equals: 'GsPDBase'.
+	self assert: (ref declineFor: #pureCompute) isNil
+%
+
+category: 'tests - push'
+method: GsPushDownMethodRefactoringTest
+testPushedAddPreservesSourceAndCategory
+	| add |
+	add := self addChangeFor: #pureCompute inClass: 'GsPDA' in: (self push: #pureCompute) changeSet.
+
+	self assert: add newSource includesSubstring: '40 + 2'.
+	self assert: add category equals: 'fixture'
+%
+
+category: 'tests - ivar'
+method: GsPushDownMethodRefactoringTest
+testIvarReaderPushesDown
+	| ref |
+	"#usesState reads 'state' on the base; subclasses inherit it -- movable."
+	ref := self push: #usesState.
+
+	self assert: (ref declineFor: #usesState) isNil.
+	self assert: (self addCountFor: #usesState in: ref changeSet) equals: 2
+%
+
+category: 'tests - decline'
+method: GsPushDownMethodRefactoringTest
+testNoSubclassesIsGlobalDecline
+	| ref |
+	"GsPDA is a leaf -- pushing down from it is impossible."
+	ref := GsPushDownMethodRefactoring sourceClass: self aFixture selectors: #(#overriddenByA) meta: false.
+
+	self assert: ref globalDecline notNil.
+	self assert: ref globalDecline includesSubstring: 'subclasses'.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - decline'
+method: GsPushDownMethodRefactoringTest
+testSuperSenderIsDeclined
+	| ref |
+	ref := self push: #callsSuper.
+
+	self assert: (ref declineFor: #callsSuper) notNil.
+	self assert: (ref declineFor: #callsSuper) includesSubstring: 'super'.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - overwrite'
+method: GsPushDownMethodRefactoringTest
+testEveryoneOverridesIsMovableAsOverwrites
+	"#overriddenByAll is overridden by BOTH subclasses -- no longer a decline; it stages an
+	 opt-in overwrite add for each, plus one remove."
+	| ref cs addA addB |
+	ref := self push: #overriddenByAll.
+	cs := ref changeSet.
+	addA := self addChangeFor: #overriddenByAll inClass: 'GsPDA' in: cs.
+	addB := self addChangeFor: #overriddenByAll inClass: 'GsPDB' in: cs.
+
+	self assert: (ref declineFor: #overriddenByAll) isNil.
+	self assert: cs size equals: 3.
+	self assert: (self addCountFor: #overriddenByAll in: cs) equals: 2.
+	self assert: addA warning notNil.
+	self assert: addB warning notNil.
+	self assert: (ref overwriteWarningFor: #overriddenByAll) notNil
+%
+
+category: 'tests - overwrite'
+method: GsPushDownMethodRefactoringTest
+testOverridingSubclassBecomesOverwriteRow
+	"#overriddenByA is overridden only by A -- B gets a plain add, A gets an opt-in
+	 overwrite (not a silent skip)."
+	| ref cs addA addB |
+	ref := self push: #overriddenByA.
+	cs := ref changeSet.
+	addA := self addChangeFor: #overriddenByA inClass: 'GsPDA' in: cs.
+	addB := self addChangeFor: #overriddenByA inClass: 'GsPDB' in: cs.
+
+	self assert: (ref declineFor: #overriddenByA) isNil.
+	self assert: cs size equals: 3.
+	self assert: (self addCountFor: #overriddenByA in: cs) equals: 2.
+	self assert: addA notNil.
+	self assert: addA warning notNil.
+	self assert: addB notNil.
+	self assert: addB warning isNil
+%
+
+category: 'tests - overwrite'
+method: GsPushDownMethodRefactoringTest
+testApplyingOverwriteReplacesSubclassOverride
+	"Opting in to overwrite A's override: A receives the base body, B receives it too, and
+	 the source is removed (every subclass now understands it on its own)."
+	| json |
+	json := (self push: #overriddenByA) applyDeselected: #().
+
+	self assert: json includesSubstring: '"applied":3'.
+	self assert: (self sourceIn: self aFixture for: #overriddenByA) includesSubstring: 'base'.
+	self assert: (self bFixture includesSelector: #overriddenByA).
+	self deny: (self baseFixture includesSelector: #overriddenByA)
+%
+
+category: 'tests - overwrite'
+method: GsPushDownMethodRefactoringTest
+testDeselectingOverwriteKeepsSubclassOverride
+	"Leaving A's overwrite un-ticked keeps A's own override; B still gets the copy and the
+	 source is removed (A already understands it via its override, B via the copy)."
+	| ref cs addAId |
+	ref := self push: #overriddenByA.
+	cs := ref changeSet.
+	addAId := (self addChangeFor: #overriddenByA inClass: 'GsPDA' in: cs) id.
+	ref applyDeselected: (Array with: addAId).
+
+	self deny: (self sourceIn: self aFixture for: #overriddenByA) includesSubstring: 'base'.
+	self assert: (self bFixture includesSelector: #overriddenByA).
+	self deny: (self baseFixture includesSelector: #overriddenByA)
+%
+
+category: 'tests - side'
+method: GsPushDownMethodRefactoringTest
+testClassSideMethodPushesDown
+	| ref cs |
+	ref := GsPushDownMethodRefactoring
+		sourceClass: self baseFixture
+		selectors: (Array with: #makeOne)
+		meta: true.
+	cs := ref changeSet.
+
+	self assert: cs size equals: 3.
+	self assert: (self addCountFor: #makeOne in: cs) equals: 2.
+	self assert: (self addChangeFor: #makeOne inClass: 'GsPDA' in: cs) isMeta.
+	self assert: (self removeChangeFor: #makeOne in: cs) isMeta
+%
+
+category: 'tests - multi'
+method: GsPushDownMethodRefactoringTest
+testMultiPushMovesMovableAndSkipsDeclined
+	| ref cs |
+	ref := self pushSelectors: #(#pureCompute #callsSuper #greet).
+	cs := ref changeSet.
+
+	"pureCompute + greet each push into 2 subclasses (2 adds + 1 remove each = 6);
+	 callsSuper is skipped"
+	self assert: cs size equals: 6.
+	self assert: (self addCountFor: #pureCompute in: cs) equals: 2.
+	self assert: (self addCountFor: #greet in: cs) equals: 2.
+	self assert: (self addChangeFor: #callsSuper in: cs) isNil.
+	self assert: (ref declineFor: #callsSuper) notNil
+%
+
+category: 'tests - preflight'
+method: GsPushDownMethodRefactoringTest
+testAnalysisPreflightReportsPerSelectorAndMovableCount
+	| json |
+	json := GsPushDownMethodRefactoring
+		analyzeForClass: self baseFixture
+		selectors: #(#pureCompute #callsSuper)
+		meta: false.
+
+	self assert: json includesSubstring: '"targetClass":null'.
+	self assert: json includesSubstring: '"movableCount":1'.
+	self assert: json includesSubstring: '"selector":"pureCompute"'.
+	self assert: json includesSubstring: '"selector":"callsSuper"'
+%
+
+category: 'tests - staging'
+method: GsPushDownMethodRefactoringTest
+testBuildingChangeSetCompilesNothingAndDoesNotCommit
+	| before |
+	before := System needsCommit.
+	(self push: #pureCompute) changeSet.
+
+	"base still has it; subclasses do not; nothing committed"
+	self assert: (self baseFixture includesSelector: #pureCompute).
+	self deny: (self aFixture includesSelector: #pureCompute).
+	self assert: System needsCommit equals: before
+%
+
+category: 'tests - preview'
+method: GsPushDownMethodRefactoringTest
+testPreviewJsonSerializesAddAndRemove
+	| json |
+	json := (self push: #pureCompute) previewJsonString.
+
+	self assert: json includesSubstring: 'methodAdd'.
+	self assert: json includesSubstring: 'methodRemove'
+%
+
+category: 'tests - preview'
+method: GsPushDownMethodRefactoringTest
+testStartPreviewCarriesTotalsAndPage
+	| json |
+	json := (self push: #pureCompute)
+		startPreviewToken: 'm8Tok' maxBytes: 100000.
+	[self assert: json includesSubstring: '"targetClass":null'.
+	 self assert: json includesSubstring: '"total":3'.
+	 self assert: json includesSubstring: '"movableCount":1'.
+	 self assert: json includesSubstring: '"changes":']
+		ensure: [GsPushDownMethodRefactoring clearToken: 'm8Tok']
+%
+
+category: 'tests - apply'
+method: GsPushDownMethodRefactoringTest
+testApplyRelocatesMethodIntoSubclassesAndRemovesFromSource
+	| json |
+	json := (self push: #pureCompute) applyDeselected: #().
+
+	self assert: json includesSubstring: '"applied":3'.
+	self assert: (self aFixture includesSelector: #pureCompute).
+	self assert: (self bFixture includesSelector: #pureCompute).
+	self deny: (self baseFixture includesSelector: #pureCompute)
+%
+
+category: 'tests - apply'
+method: GsPushDownMethodRefactoringTest
+testApplyDoesNotCommit
+	| before |
+	before := System needsCommit.
+	(self push: #pureCompute) applyDeselected: #().
+
+	self assert: System needsCommit equals: before
+%
+
+category: 'tests - apply'
+method: GsPushDownMethodRefactoringTest
+testDeselectingOneSubclassAddGuardsTheRemove
+	"Unticking one subclass's #methodAdd must NOT strand it: the guarded remove is
+	 skipped because not every subclass received the method, so the source keeps it."
+	| ref cs addBId |
+	ref := self push: #pureCompute.
+	cs := ref changeSet.
+	addBId := (self addChangeFor: #pureCompute inClass: 'GsPDB' in: cs) id.
+	ref applyDeselected: (Array with: addBId).
+
+	self assert: (self baseFixture includesSelector: #pureCompute).
+	self assert: (self aFixture includesSelector: #pureCompute).
+	self deny: (self bFixture includesSelector: #pureCompute)
+%
+
+category: 'tests - apply'
+method: GsPushDownMethodRefactoringTest
+testTokenRoundTripStartThenApply
+	| ref json before |
+	before := System needsCommit.
+	ref := self push: #pureCompute.
+	ref startPreviewToken: 'm8rt' maxBytes: 100000.
+	[json := GsPushDownMethodRefactoring applyForToken: 'm8rt' deselected: #().
+	 self assert: json includesSubstring: '"applied":3'.
+	 self assert: (self aFixture includesSelector: #pureCompute).
+	 self assert: System needsCommit equals: before]
+		ensure: [GsPushDownMethodRefactoring clearToken: 'm8rt']
+%
+
+category: 'tests - apply'
+method: GsPushDownMethodRefactoringTest
+testApplyForTokenOnAnExpiredSessionAnswersAnError
+	self assert: (GsPushDownMethodRefactoring applyForToken: 'nope' deselected: #())
+		includesSubstring: 'expired'
+%
+
+category: 'tests - apply'
+method: GsPushDownMethodRefactoringTest
+testPageForTokenOnAnExpiredSessionAnswersAnError
+	self assert: (GsPushDownMethodRefactoring pageForToken: 'nope' from: 1 maxBytes: 100)
+		includesSubstring: 'expired'
+%
+
+category: 'asserting'
+method: GsPushUpMethodRefactoringTest
+assert: aString includesSubstring: aSubstring
+	self assert: (aString indexOfSubCollection: aSubstring) > 0
+%
+
+category: 'asserting'
+method: GsPushUpMethodRefactoringTest
+deny: aString includesSubstring: aSubstring
+	self assert: (aString indexOfSubCollection: aSubstring) = 0
+%
+
+category: 'fixture'
+method: GsPushUpMethodRefactoringTest
+superFixture
+	^UserGlobals at: #GsPUSuper
+%
+
+category: 'fixture'
+method: GsPushUpMethodRefactoringTest
+subFixture
+	^UserGlobals at: #GsPUSub
+%
+
+category: 'fixture'
+method: GsPushUpMethodRefactoringTest
+compile: aSource in: aClass
+	[aClass
+		compileMethod: aSource
+		dictionaries: System myUserProfile symbolList
+		category: 'fixture']
+		on: CompileWarning
+		do: [:ex | ex resume: nil]
+%
+
+category: 'fixture'
+method: GsPushUpMethodRefactoringTest
+pushSelectors: sels
+	"Push instance-side sels from GsPUSub up to GsPUSuper."
+	^GsPushUpMethodRefactoring
+		sourceClass: self subFixture
+		selectors: sels
+		meta: false
+%
+
+category: 'fixture'
+method: GsPushUpMethodRefactoringTest
+push: aSelector
+	^self pushSelectors: (Array with: aSelector)
+%
+
+category: 'fixture'
+method: GsPushUpMethodRefactoringTest
+sourceIn: aClass for: aSelector
+	"The instance-side source of aSelector in aClass, or '' if absent."
+	^(aClass compiledMethodAt: aSelector environmentId: 0 otherwise: nil)
+		ifNil: [''] ifNotNil: [:m | m sourceString]
+%
+
+category: 'fixture'
+method: GsPushUpMethodRefactoringTest
+addChangeFor: aSelector in: aChangeSet
+	^aChangeSet changes
+		detect: [:c | c kind = #methodAdd and: [c selector = aSelector]]
+		ifNone: [nil]
+%
+
+category: 'fixture'
+method: GsPushUpMethodRefactoringTest
+removeChangeFor: aSelector in: aChangeSet
+	^aChangeSet changes
+		detect: [:c | c kind = #methodRemove and: [c selector = aSelector]]
+		ifNone: [nil]
+%
+
+category: 'running'
+method: GsPushUpMethodRefactoringTest
+setUp
+	| sup sub |
+	sup := Object
+		subclass: 'GsPUSuper'
+		instVarNames: #('shared')
+		classVars: #('SharedCVar')
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	sub := sup
+		subclass: 'GsPUSub'
+		instVarNames: #('own')
+		classVars: #('SubOnlyCVar')
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	"--- subclass instance methods (candidates to push up) ---"
+	self compile: 'pureCompute ^ 40 + 2' in: sub.
+	self compile: 'greet ^ ''hi''' in: sub.
+	self compile: 'usesShared ^ shared' in: sub.
+	self compile: 'usesOwn ^ own' in: sub.
+	self compile: 'usesSharedCVar ^ SharedCVar' in: sub.
+	self compile: 'usesSubCVar ^ SubOnlyCVar' in: sub.
+	self compile: 'callsSuper ^ super hash' in: sub.
+	self compile: 'existing ^ 2' in: sub.
+	self compile: 'quoteAndBackslash ^ ''a"b\c''' in: sub.
+	"--- superclass already implements #existing (collision) ---"
+	self compile: 'existing ^ 1' in: sup.
+	"--- class-side method to push up ---"
+	self compile: 'buildOne ^ self new' in: sub class
+%
+
+category: 'running'
+method: GsPushUpMethodRefactoringTest
+tearDown
+	#('GsPUSub' 'GsPUSuper')
+		do: [:nm | UserGlobals removeKey: nm asSymbol ifAbsent: []]
+%
+
+category: 'tests - push'
+method: GsPushUpMethodRefactoringTest
+testPushesPureMethodStagesAddAndRemove
+	| ref cs add remove |
+	ref := self push: #pureCompute.
+	cs := ref changeSet.
+	add := self addChangeFor: #pureCompute in: cs.
+	remove := self removeChangeFor: #pureCompute in: cs.
+
+	self assert: cs size equals: 2.
+	self assert: add notNil.
+	self assert: add className equals: 'GsPUSuper'.
+	self assert: add newSource includesSubstring: '40 + 2'.
+	self assert: remove notNil.
+	self assert: remove className equals: 'GsPUSub'.
+	self assert: (ref declineFor: #pureCompute) isNil
+%
+
+category: 'tests - push'
+method: GsPushUpMethodRefactoringTest
+testPushedAddPreservesCategory
+	| add |
+	add := self addChangeFor: #pureCompute in: (self push: #pureCompute) changeSet.
+
+	self assert: add category equals: 'fixture'
+%
+
+category: 'tests - push'
+method: GsPushUpMethodRefactoringTest
+testTargetSuperclassResolved
+	self assert: (self push: #pureCompute) superClass name asString equals: 'GsPUSuper'
+%
+
+category: 'tests - decline'
+method: GsPushUpMethodRefactoringTest
+testNoSuperclassIsGlobalDecline
+	| ref |
+	"Object has no superclass; pushing up from it is impossible."
+	ref := GsPushUpMethodRefactoring sourceClass: Object selectors: #(#hash) meta: false.
+
+	self assert: ref globalDecline notNil.
+	self assert: ref globalDecline includesSubstring: 'superclass'.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - ivar'
+method: GsPushUpMethodRefactoringTest
+testSharedClassVarReaderPushesUp
+	| ref |
+	"#usesSharedCVar reads SharedCVar, declared on the superclass -- movable."
+	ref := self push: #usesSharedCVar.
+
+	self assert: (ref declineFor: #usesSharedCVar) isNil.
+	self assert: ref changeSet size equals: 2
+%
+
+category: 'tests - ivar'
+method: GsPushUpMethodRefactoringTest
+testSubclassOnlyClassVarReaderDeclined
+	| ref |
+	"#usesSubCVar reads SubOnlyCVar, declared only on the subclass -- would not compile on
+	 the superclass, so it is a hard decline (not an overwrite)."
+	ref := self push: #usesSubCVar.
+
+	self assert: (ref declineFor: #usesSubCVar) notNil.
+	self assert: (ref declineFor: #usesSubCVar) includesSubstring: 'class/pool variable'.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - overwrite'
+method: GsPushUpMethodRefactoringTest
+testCollisionIsMovableAsOverwrite
+	"The superclass already defines #existing -- pushing up is NOT declined; it stages an
+	 opt-in overwrite add carrying the superclass's old body + a data-loss warning."
+	| ref cs add |
+	ref := self push: #existing.
+	cs := ref changeSet.
+	add := self addChangeFor: #existing in: cs.
+
+	self assert: (ref declineFor: #existing) isNil.
+	self assert: cs size equals: 2.
+	self assert: add notNil.
+	self assert: add warning notNil.
+	self assert: add warning includesSubstring: 'overwrites'.
+	self assert: add oldSource includesSubstring: '1'.
+	self assert: add newSource includesSubstring: '2'.
+	self assert: (ref overwriteWarningFor: #existing) notNil
+%
+
+category: 'tests - overwrite'
+method: GsPushUpMethodRefactoringTest
+testApplyingOverwriteReplacesSuperclassMethod
+	"Applying the overwrite compiles the pushed body onto the superclass (replacing its old
+	 definition) and removes the source."
+	| json |
+	json := (self push: #existing) applyDeselected: #().
+
+	self assert: json includesSubstring: '"applied":2'.
+	self assert: (self superFixture includesSelector: #existing).
+	self assert: (self sourceIn: self superFixture for: #existing) includesSubstring: '2'.
+	self deny: (self subFixture includesSelector: #existing)
+%
+
+category: 'tests - overwrite'
+method: GsPushUpMethodRefactoringTest
+testDeselectingOverwriteDoesNotStripSource
+	"Regression: un-ticking the overwrite add must NOT remove the source. The superclass
+	 already defines the selector, so a bare includesSelector: guard would wrongly fire the
+	 remove and lose the subclass version. The applied-add guard prevents that."
+	| ref cs addId |
+	ref := self push: #existing.
+	cs := ref changeSet.
+	addId := (self addChangeFor: #existing in: cs) id.
+	ref applyDeselected: (Array with: addId).
+
+	self assert: (self subFixture includesSelector: #existing).
+	self assert: (self superFixture includesSelector: #existing).
+	self assert: (self sourceIn: self superFixture for: #existing) includesSubstring: '1'
+%
+
+category: 'tests - decline'
+method: GsPushUpMethodRefactoringTest
+testSuperSenderIsDeclined
+	| ref |
+	ref := self push: #callsSuper.
+
+	self assert: (ref declineFor: #callsSuper) notNil.
+	self assert: (ref declineFor: #callsSuper) includesSubstring: 'super'.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - ivar'
+method: GsPushUpMethodRefactoringTest
+testSharedIvarReaderPushesUp
+	| ref |
+	"#usesShared reads 'shared', which the superclass declares -- movable."
+	ref := self push: #usesShared.
+
+	self assert: (ref declineFor: #usesShared) isNil.
+	self assert: ref changeSet size equals: 2
+%
+
+category: 'tests - ivar'
+method: GsPushUpMethodRefactoringTest
+testOwnIvarReaderDeclined
+	| ref |
+	"#usesOwn reads 'own', declared only on the subclass -- cannot push up."
+	ref := self push: #usesOwn.
+
+	self assert: (ref declineFor: #usesOwn) notNil.
+	self assert: (ref declineFor: #usesOwn) includesSubstring: 'instance variable'.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - side'
+method: GsPushUpMethodRefactoringTest
+testClassSideMethodPushesUp
+	| ref cs add remove |
+	ref := GsPushUpMethodRefactoring
+		sourceClass: self subFixture
+		selectors: (Array with: #buildOne)
+		meta: true.
+	cs := ref changeSet.
+	add := self addChangeFor: #buildOne in: cs.
+	remove := self removeChangeFor: #buildOne in: cs.
+
+	self assert: cs size equals: 2.
+	self assert: add isMeta.
+	self assert: add className equals: 'GsPUSuper'.
+	self assert: remove isMeta.
+	self assert: remove className equals: 'GsPUSub'
+%
+
+category: 'tests - multi'
+method: GsPushUpMethodRefactoringTest
+testMultiPushMovesMovableAndSkipsDeclined
+	| ref cs |
+	ref := self pushSelectors: #(#pureCompute #callsSuper #greet).
+	cs := ref changeSet.
+
+	"pureCompute + greet move (2 changes each); callsSuper is skipped"
+	self assert: cs size equals: 4.
+	self assert: (self addChangeFor: #pureCompute in: cs) notNil.
+	self assert: (self addChangeFor: #greet in: cs) notNil.
+	self assert: (self addChangeFor: #callsSuper in: cs) isNil.
+	self assert: (ref declineFor: #callsSuper) notNil
+%
+
+category: 'tests - preflight'
+method: GsPushUpMethodRefactoringTest
+testAnalysisPreflightReportsTargetPerSelectorAndMovableCount
+	| json |
+	json := GsPushUpMethodRefactoring
+		analyzeForClass: self subFixture
+		selectors: #(#pureCompute #callsSuper)
+		meta: false.
+
+	self assert: json includesSubstring: '"targetClass":"GsPUSuper"'.
+	self assert: json includesSubstring: '"movableCount":1'.
+	self assert: json includesSubstring: '"selector":"pureCompute"'.
+	self assert: json includesSubstring: '"selector":"callsSuper"'
+%
+
+category: 'tests - staging'
+method: GsPushUpMethodRefactoringTest
+testBuildingChangeSetCompilesNothingAndDoesNotCommit
+	| before |
+	before := System needsCommit.
+	(self push: #pureCompute) changeSet.
+
+	"subclass still has it; superclass does not; nothing committed"
+	self assert: (self subFixture includesSelector: #pureCompute).
+	self deny: (self superFixture includesSelector: #pureCompute).
+	self assert: System needsCommit equals: before
+%
+
+category: 'tests - preview'
+method: GsPushUpMethodRefactoringTest
+testPreviewJsonSerializesAddAndRemove
+	| json |
+	json := (self push: #pureCompute) previewJsonString.
+
+	self assert: json includesSubstring: 'methodAdd'.
+	self assert: json includesSubstring: 'methodRemove'
+%
+
+category: 'tests - preview'
+method: GsPushUpMethodRefactoringTest
+testPreviewJsonEscapesQuoteAndBackslash
+	"A source containing a double-quote and a backslash must be JSON-escaped by the engine's
+	 jsonEscape: (backslash-quote and backslash-backslash), or the client JSON.parse chokes."
+	| json |
+	json := (self push: #quoteAndBackslash) previewJsonString.
+
+	self assert: json includesSubstring: '\"'.
+	self assert: json includesSubstring: '\\'
+%
+
+category: 'tests - preview'
+method: GsPushUpMethodRefactoringTest
+testPaginationSpansMultiplePages
+	"With a tiny byte budget the preview pages one change at a time: the first page reports
+	 done:false + the next offset, and a later page reports done:true. Exercises the engine's
+	 real byte-bounded slicing, not just a single all-in-one page."
+	| ref first |
+	ref := self pushSelectors: #(#pureCompute #greet #usesShared).
+	ref startPreviewToken: 'm7pg' maxBytes: 1.
+	[first := GsPushUpMethodRefactoring pageForToken: 'm7pg' from: 1 maxBytes: 1.
+	 self assert: first includesSubstring: '"done":false'.
+	 self assert: first includesSubstring: '"nextOffset":2'.
+	 self assert: (GsPushUpMethodRefactoring pageForToken: 'm7pg' from: 6 maxBytes: 1)
+		includesSubstring: '"done":true']
+		ensure: [GsPushUpMethodRefactoring clearToken: 'm7pg']
+%
+
+category: 'tests - creation'
+method: GsPushUpMethodRefactoringTest
+testEnvironmentCtorSetsEnvironment
+	"The environment:sourceClass:selectors:meta: creation path stores the supplied
+	 environment (used for symbol-dict / multi-environment scope) and still builds."
+	| env ref |
+	env := GsRefactoringEnvironment new.
+	ref := GsPushUpMethodRefactoring
+		environment: env
+		sourceClass: self subFixture
+		selectors: #(#pureCompute)
+		meta: false.
+
+	self assert: ref environment == env.
+	self assert: ref changeSet size equals: 2
+%
+
+category: 'tests - preview'
+method: GsPushUpMethodRefactoringTest
+testStartPreviewCarriesTotalsAndPage
+	| json |
+	json := (self push: #pureCompute)
+		startPreviewToken: 'm7Tok' maxBytes: 100000.
+	[self assert: json includesSubstring: '"targetClass":"GsPUSuper"'.
+	 self assert: json includesSubstring: '"total":2'.
+	 self assert: json includesSubstring: '"movableCount":1'.
+	 self assert: json includesSubstring: '"changes":']
+		ensure: [GsPushUpMethodRefactoring clearToken: 'm7Tok']
+%
+
+category: 'tests - apply'
+method: GsPushUpMethodRefactoringTest
+testApplyRelocatesMethodAndRemovesFromSource
+	| json |
+	json := (self push: #pureCompute) applyDeselected: #().
+
+	self assert: json includesSubstring: '"applied":2'.
+	self assert: (self superFixture includesSelector: #pureCompute).
+	self deny: (self subFixture includesSelector: #pureCompute)
+%
+
+category: 'tests - apply'
+method: GsPushUpMethodRefactoringTest
+testApplyDoesNotCommit
+	| before |
+	before := System needsCommit.
+	(self push: #pureCompute) applyDeselected: #().
+
+	self assert: System needsCommit equals: before
+%
+
+category: 'tests - apply'
+method: GsPushUpMethodRefactoringTest
+testDeselectingAddGuardsTheRemove
+	"Unticking the #methodAdd must NOT strand the method: the guarded remove is
+	 skipped because the superclass never received the method."
+	| ref cs addId |
+	ref := self push: #pureCompute.
+	cs := ref changeSet.
+	addId := (self addChangeFor: #pureCompute in: cs) id.
+	ref applyDeselected: (Array with: addId).
+
+	self assert: (self subFixture includesSelector: #pureCompute).
+	self deny: (self superFixture includesSelector: #pureCompute)
+%
+
+category: 'tests - apply'
+method: GsPushUpMethodRefactoringTest
+testTokenRoundTripStartThenApply
+	| ref json before |
+	before := System needsCommit.
+	ref := self push: #pureCompute.
+	ref startPreviewToken: 'm7rt' maxBytes: 100000.
+	[json := GsPushUpMethodRefactoring applyForToken: 'm7rt' deselected: #().
+	 self assert: json includesSubstring: '"applied":2'.
+	 self assert: (self superFixture includesSelector: #pureCompute).
+	 self assert: System needsCommit equals: before]
+		ensure: [GsPushUpMethodRefactoring clearToken: 'm7rt']
+%
+
+category: 'tests - apply'
+method: GsPushUpMethodRefactoringTest
+testApplyForTokenOnAnExpiredSessionAnswersAnError
+	self assert: (GsPushUpMethodRefactoring applyForToken: 'nope' deselected: #())
+		includesSubstring: 'expired'
+%
+
+category: 'tests - apply'
+method: GsPushUpMethodRefactoringTest
+testPageForTokenOnAnExpiredSessionAnswersAnError
+	self assert: (GsPushUpMethodRefactoring pageForToken: 'nope' from: 1 maxBytes: 100)
+		includesSubstring: 'expired'
 %
 
 category: 'tests'

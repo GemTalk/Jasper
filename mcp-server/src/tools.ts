@@ -141,8 +141,7 @@ export function registerTools(rawServer: McpServer, session: McpSession): void {
   const server = withMcpErrorMap(rawServer) as unknown as McpServer;
 
   // Bind this session into the QueryExecutor shape shared queries expect.
-  // Label is used only for client-side logging, ignored here.
-  const exec: QueryExecutor = (_label, code) => session.executeFetchString(code);
+  const exec: QueryExecutor = (code) => session.executeFetchString(code);
 
   // Tools are registered in alphabetical order.
 
@@ -971,7 +970,7 @@ export function registerTools(rawServer: McpServer, session: McpSession): void {
         // be far more harmful than reporting slightly stale state.
         const code = `| ws viewState |
 viewState := System needsCommit
-  ifTrue: ['stale (uncommitted changes — call abort or commit to refresh)']
+  ifTrue: ['stale (uncommitted changes - call abort or commit to refresh)']
   ifFalse: [System abortTransaction. 'refreshed'].
 ws := WriteStream on: String new.
 ws nextPutAll: 'User: '; nextPutAll: System myUserProfile userId asString; lf.

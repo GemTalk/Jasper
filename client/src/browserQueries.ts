@@ -45,6 +45,22 @@ import {
   RenameMethodScope,
 } from './refactoring/queries/previewRenameMethod';
 import {
+  analyzeChangeSignature as sharedAnalyzeChangeSignature,
+  startChangeSignaturePreview as sharedStartChangeSignaturePreview,
+  pageChangeSignaturePreview as sharedPageChangeSignaturePreview,
+  applyChangeSignature as sharedApplyChangeSignature,
+  clearChangeSignaturePreview as sharedClearChangeSignaturePreview,
+  ChangeSignatureScope,
+} from './refactoring/queries/previewChangeSignature';
+import {
+  analyzePushMethod as sharedAnalyzePushMethod,
+  startPushMethodPreview as sharedStartPushMethodPreview,
+  pagePushMethodPreview as sharedPagePushMethodPreview,
+  applyPushMethod as sharedApplyPushMethod,
+  clearPushMethodPreview as sharedClearPushMethodPreview,
+  PushDirection,
+} from './refactoring/queries/previewPushMethod';
+import {
   startRenameClassPreview as sharedStartRenameClassPreview,
   pageRenameClassPreview as sharedPageRenameClassPreview,
   applyRenameClass as sharedApplyRenameClass,
@@ -65,6 +81,55 @@ import {
   clearRenameTemporaryPreview as sharedClearRenameTemporaryPreview,
   renameTemporaryDeclineReason as sharedRenameTemporaryDeclineReason,
 } from './refactoring/queries/previewRenameTemporary';
+import {
+  analyzeExtractSelection as sharedAnalyzeExtractSelection,
+  startExtractMethodPreview as sharedStartExtractMethodPreview,
+  pageExtractMethodPreview as sharedPageExtractMethodPreview,
+  applyExtractMethod as sharedApplyExtractMethod,
+  clearExtractMethodPreview as sharedClearExtractMethodPreview,
+} from './refactoring/queries/previewExtractMethod';
+import {
+  analyzeInlineSend as sharedAnalyzeInlineSend,
+  startInlineMethodPreview as sharedStartInlineMethodPreview,
+  pageInlineMethodPreview as sharedPageInlineMethodPreview,
+  applyInlineMethod as sharedApplyInlineMethod,
+  clearInlineMethodPreview as sharedClearInlineMethodPreview,
+} from './refactoring/queries/previewInlineMethod';
+import {
+  analyzeMoveMethod as sharedAnalyzeMoveMethod,
+  startMoveMethodPreview as sharedStartMoveMethodPreview,
+  pageMoveMethodPreview as sharedPageMoveMethodPreview,
+  applyMoveMethod as sharedApplyMoveMethod,
+  clearMoveMethodPreview as sharedClearMoveMethodPreview,
+} from './refactoring/queries/previewMoveMethod';
+import {
+  analyzeExtractTemporary as sharedAnalyzeExtractTemporary,
+  startExtractTemporaryPreview as sharedStartExtractTemporaryPreview,
+  pageExtractTemporaryPreview as sharedPageExtractTemporaryPreview,
+  applyExtractTemporary as sharedApplyExtractTemporary,
+  clearExtractTemporaryPreview as sharedClearExtractTemporaryPreview,
+} from './refactoring/queries/previewExtractTemporary';
+import {
+  analyzeInlineTemporary as sharedAnalyzeInlineTemporary,
+  startInlineTemporaryPreview as sharedStartInlineTemporaryPreview,
+  pageInlineTemporaryPreview as sharedPageInlineTemporaryPreview,
+  applyInlineTemporary as sharedApplyInlineTemporary,
+  clearInlineTemporaryPreview as sharedClearInlineTemporaryPreview,
+} from './refactoring/queries/previewInlineTemporary';
+import {
+  analyzeInstVarStructure as sharedAnalyzeInstVarStructure,
+  startInstVarStructurePreview as sharedStartInstVarStructurePreview,
+  pageInstVarStructurePreview as sharedPageInstVarStructurePreview,
+  applyInstVarStructure as sharedApplyInstVarStructure,
+  clearInstVarStructurePreview as sharedClearInstVarStructurePreview,
+  IvarStructureOp,
+  ConvertTempArgs,
+  MoveArgs,
+} from './refactoring/queries/previewInstVarStructure';
+import {
+  getClassDescendantNames as sharedGetClassDescendantNames,
+  DescendantClass,
+} from './refactoring/queries/getClassDescendantNames';
 import {
   getClassHistory as sharedGetClassHistory,
   revertClassToVersion as sharedRevertClassToVersion,
@@ -132,6 +197,8 @@ export type { ClassNameEntry } from './queries/getAllClassNames';
 export type { ClassCategoryEntry } from './queries/getClassesWithCategory';
 export type { EnvCategoryLine } from './queries/getClassEnvironments';
 export type { ClassHierarchyEntry } from './queries/getClassHierarchy';
+export type { DescendantClass } from './refactoring/queries/getClassDescendantNames';
+export type { MoveArgs } from './refactoring/queries/previewInstVarStructure';
 export type { MethodEntry } from './queries/getMethodList';
 export type { StepPointSelectorInfo } from './queries/getStepPointSelectorRanges';
 export type { MethodSearchResult } from './queries/methodSearch';
@@ -151,9 +218,6 @@ export type { ClassVersionInfo } from './refactoring/queries/getClassVersions';
 
 const MAX_RESULT = 256 * 1024;
 
-// Cache resolved OOP_CLASS_Utf8 per session handle (Node.js strings are UTF-8 when passed via koffi)
-const classUtf8Cache = new Map<unknown, bigint>();
-
 export class BrowserQueryError extends Error {
   constructor(
     message: string,
@@ -164,15 +228,7 @@ export class BrowserQueryError extends Error {
 }
 
 function resolveClassUtf8(session: ActiveSession): bigint {
-  let oop = classUtf8Cache.get(session.handle);
-  if (oop !== undefined) return oop;
-  const { result, err } = session.gci.GciTsResolveSymbol(session.handle, 'Utf8', OOP_NIL);
-  if (err.number !== 0) {
-    throw new BrowserQueryError(err.message || `Cannot resolve Utf8 class`, err.number);
-  }
-  oop = result;
-  classUtf8Cache.set(session.handle, oop);
-  return oop;
+  return session.gci.utf8ClassOop(session.handle);
 }
 
 // Evaluates `code` and fetches its result as a UTF-8 string via
@@ -180,7 +236,7 @@ function resolveClassUtf8(session: ActiveSession): bigint {
 // result as UTF-8 in Smalltalk before paging it out, so results decode
 // correctly regardless of their original encoding and are not capped at a
 // single fixed-size buffer.
-export function executeFetchString(session: ActiveSession, label: string, code: string): string {
+export function executeFetchString(session: ActiveSession, code: string): string {
   // Check if session is busy with an async operation (e.g., Display It)
   const { result: inProgress } = session.gci.GciTsCallInProgress(session.handle);
   if (inProgress !== 0) {
@@ -296,7 +352,6 @@ export function checkEnhancedInspectorAvailable(session: ActiveSession): boolean
   try {
     const result = executeFetchString(
       session,
-      'checkEnhancedInspectorAvailable',
       "[GtRemotePhlowViewedObject notNil printString] on: Error do: [:e | 'false']",
     );
     return result.trim() === 'true';
@@ -321,7 +376,6 @@ export function checkRefactoringSupportAvailable(session: ActiveSession): boolea
   try {
     const result = executeFetchString(
       session,
-      'checkRefactoringSupportAvailable',
       "(System myUserProfile symbolList objectNamed: 'GsRenameInstanceVariableRefactoring') notNil printString",
     );
     return result.trim() === 'true';
@@ -340,11 +394,7 @@ export function checkRefactoringSupportAvailable(session: ActiveSession): boolea
  */
 export function sessionNeedsCommit(session: ActiveSession): boolean | undefined {
   try {
-    const result = executeFetchString(
-      session,
-      'sessionNeedsCommit',
-      'System needsCommit printString',
-    ).trim();
+    const result = executeFetchString(session, 'System needsCommit printString').trim();
     if (result === 'true') return true;
     if (result === 'false') return false;
     return undefined;
@@ -365,7 +415,7 @@ export function sessionNeedsCommit(session: ActiveSession): boolean | undefined 
  * compile or execute, or the result cannot be resolved to a String.
  */
 export function defaultQueryExecutorUsing(activeSession: ActiveSession): QueryExecutor {
-  return (label, code) => executeFetchString(activeSession, label, code);
+  return (code) => executeFetchString(activeSession, code);
 }
 
 // ── Read-only queries (thin delegates to client/src/queries/) ─────────────
@@ -553,8 +603,20 @@ export function getAllClassNames(session: ActiveSession) {
   return sharedGetAllClassNames(defaultQueryExecutorUsing(session));
 }
 
-export function getClassHierarchy(session: ActiveSession, className: string) {
-  return sharedGetClassHierarchy(defaultQueryExecutorUsing(session), className);
+export function getClassHierarchy(
+  session: ActiveSession,
+  className: string,
+  dict?: number | string,
+) {
+  return sharedGetClassHierarchy(defaultQueryExecutorUsing(session), className, dict);
+}
+
+export function getClassDescendantNames(
+  session: ActiveSession,
+  className: string,
+  dict?: number | string,
+): DescendantClass[] {
+  return sharedGetClassDescendantNames(defaultQueryExecutorUsing(session), className, dict);
 }
 
 export function fileOutClass(
@@ -690,6 +752,150 @@ export function applyRenameMethod(
 
 export function clearRenameMethodPreview(session: ActiveSession, token: string): string {
   return sharedClearRenameMethodPreview(defaultQueryExecutorUsing(session), token);
+}
+
+// Change-method-signature (M5) wrappers: mirror the rename-method ones, adding a
+// pre-flight analyze (to pre-populate the signature editor) and the arity-changing
+// argNames/defaults/meta arguments. Paginated preview fetched NON-BLOCKING; apply is
+// server-side (no commit).
+export function analyzeChangeSignature(
+  session: ActiveSession,
+  className: string,
+  selector: string,
+  isMeta: boolean,
+  dict?: number | string,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Analysing signature…');
+  return sharedAnalyzeChangeSignature(exec, className, selector, isMeta, dict);
+}
+
+export function startChangeSignaturePreview(
+  session: ActiveSession,
+  className: string,
+  oldSelector: string,
+  newParts: string[],
+  permutation: number[],
+  argNames: string[],
+  defaults: string[],
+  scope: ChangeSignatureScope,
+  token: string,
+  maxBytes: number,
+  isMeta: boolean,
+  dict?: number | string,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, `Previewing signature change of ${oldSelector}…`);
+  return sharedStartChangeSignaturePreview(
+    exec,
+    className,
+    oldSelector,
+    newParts,
+    permutation,
+    argNames,
+    defaults,
+    scope,
+    token,
+    maxBytes,
+    isMeta,
+    dict,
+  );
+}
+
+export function pageChangeSignaturePreview(
+  session: ActiveSession,
+  token: string,
+  offset: number,
+  maxBytes: number,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Loading more changes…');
+  return sharedPageChangeSignaturePreview(exec, token, offset, maxBytes);
+}
+
+export function applyChangeSignature(
+  session: ActiveSession,
+  token: string,
+  deselectedIds: string[],
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Applying signature change…');
+  return sharedApplyChangeSignature(exec, token, deselectedIds);
+}
+
+export function clearChangeSignaturePreview(session: ActiveSession, token: string): string {
+  return sharedClearChangeSignaturePreview(defaultQueryExecutorUsing(session), token);
+}
+
+// Push-up / push-down method (M7 / M8) wrappers: mirror the move-method shape but with
+// the target(s) resolved server-side (the superclass, or the immediate subclasses).
+// Paginated preview fetched NON-BLOCKING; apply is server-side (no commit).
+export function analyzePushMethod(
+  session: ActiveSession,
+  direction: PushDirection,
+  sourceClass: string,
+  selectors: string[],
+  isMeta: boolean,
+  dict?: number | string,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Analysing push…');
+  return sharedAnalyzePushMethod(exec, direction, sourceClass, selectors, isMeta, dict);
+}
+
+export function startPushMethodPreview(
+  session: ActiveSession,
+  direction: PushDirection,
+  sourceClass: string,
+  selectors: string[],
+  isMeta: boolean,
+  token: string,
+  maxBytes: number,
+  dict?: number | string,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, `Previewing push of ${sourceClass}…`);
+  return sharedStartPushMethodPreview(
+    exec,
+    direction,
+    sourceClass,
+    selectors,
+    isMeta,
+    token,
+    maxBytes,
+    dict,
+  );
+}
+
+export function pagePushMethodPreview(
+  session: ActiveSession,
+  direction: PushDirection,
+  token: string,
+  offset: number,
+  maxBytes: number,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Loading more changes…');
+  return sharedPagePushMethodPreview(exec, direction, token, offset, maxBytes);
+}
+
+export function applyPushMethod(
+  session: ActiveSession,
+  direction: PushDirection,
+  token: string,
+  deselectedIds: string[],
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Applying push…');
+  return sharedApplyPushMethod(exec, direction, token, deselectedIds);
+}
+
+export function clearPushMethodPreview(
+  session: ActiveSession,
+  direction: PushDirection,
+  token: string,
+): string {
+  return sharedClearPushMethodPreview(defaultQueryExecutorUsing(session), direction, token);
 }
 
 // Paginated rename-class preview: fetched NON-BLOCKING (progress + responsive),
@@ -854,6 +1060,419 @@ export function renameTemporaryDeclineReason(
     offset,
     dict,
   );
+}
+
+// Extract-method (M1) preview: pre-flight analysis, paginated start/page fetched
+// NON-BLOCKING, server-side apply. The two core changes always apply; the apply
+// passes the deselected DUPLICATE ids only.
+export function analyzeExtractSelection(
+  session: ActiveSession,
+  className: string,
+  selector: string,
+  isMeta: boolean,
+  selStart: number,
+  selStop: number,
+  dict?: number | string,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Analysing selection…');
+  return sharedAnalyzeExtractSelection(exec, className, selector, isMeta, selStart, selStop, dict);
+}
+
+export function startExtractMethodPreview(
+  session: ActiveSession,
+  className: string,
+  selector: string,
+  isMeta: boolean,
+  selStart: number,
+  selStop: number,
+  newSelector: string,
+  replaceSimilar: boolean,
+  token: string,
+  maxBytes: number,
+  dict?: number | string,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, `Previewing extract of ${newSelector}…`);
+  return sharedStartExtractMethodPreview(
+    exec,
+    className,
+    selector,
+    isMeta,
+    selStart,
+    selStop,
+    newSelector,
+    replaceSimilar,
+    token,
+    maxBytes,
+    dict,
+  );
+}
+
+export function pageExtractMethodPreview(
+  session: ActiveSession,
+  token: string,
+  offset: number,
+  maxBytes: number,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Loading more changes…');
+  return sharedPageExtractMethodPreview(exec, token, offset, maxBytes);
+}
+
+export function applyExtractMethod(
+  session: ActiveSession,
+  token: string,
+  deselectedIds: string[],
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Applying extraction…');
+  return sharedApplyExtractMethod(exec, token, deselectedIds);
+}
+
+export function clearExtractMethodPreview(session: ActiveSession, token: string): string {
+  return sharedClearExtractMethodPreview(defaultQueryExecutorUsing(session), token);
+}
+
+export function analyzeInlineSend(
+  session: ActiveSession,
+  className: string,
+  selector: string,
+  isMeta: boolean,
+  offset: number,
+  dict?: number | string,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Analysing send…');
+  return sharedAnalyzeInlineSend(exec, className, selector, isMeta, offset, dict);
+}
+
+export function startInlineMethodPreview(
+  session: ActiveSession,
+  className: string,
+  selector: string,
+  isMeta: boolean,
+  offset: number,
+  token: string,
+  maxBytes: number,
+  dict?: number | string,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Previewing inline…');
+  return sharedStartInlineMethodPreview(
+    exec,
+    className,
+    selector,
+    isMeta,
+    offset,
+    token,
+    maxBytes,
+    dict,
+  );
+}
+
+export function pageInlineMethodPreview(
+  session: ActiveSession,
+  token: string,
+  offset: number,
+  maxBytes: number,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Loading more changes…');
+  return sharedPageInlineMethodPreview(exec, token, offset, maxBytes);
+}
+
+export function applyInlineMethod(
+  session: ActiveSession,
+  token: string,
+  deselectedIds: string[],
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Applying inline…');
+  return sharedApplyInlineMethod(exec, token, deselectedIds);
+}
+
+export function clearInlineMethodPreview(session: ActiveSession, token: string): string {
+  return sharedClearInlineMethodPreview(defaultQueryExecutorUsing(session), token);
+}
+
+// Move-method (M6) preview: pre-flight analysis (which selectors move, and why the
+// rest can't), paginated start/page fetched NON-BLOCKING, server-side apply. Per
+// movable selector a methodAdd (on the target) + a methodRemove (from the source);
+// apply passes an empty deselected set (every change is required).
+export function analyzeMoveMethod(
+  session: ActiveSession,
+  sourceClass: string,
+  selectors: string[],
+  isMeta: boolean,
+  targetName: string,
+  toMeta: boolean,
+  dict?: number | string,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Analysing move…');
+  return sharedAnalyzeMoveMethod(exec, sourceClass, selectors, isMeta, targetName, toMeta, dict);
+}
+
+export function startMoveMethodPreview(
+  session: ActiveSession,
+  sourceClass: string,
+  selectors: string[],
+  isMeta: boolean,
+  targetName: string,
+  toMeta: boolean,
+  token: string,
+  maxBytes: number,
+  dict?: number | string,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Previewing move…');
+  return sharedStartMoveMethodPreview(
+    exec,
+    sourceClass,
+    selectors,
+    isMeta,
+    targetName,
+    toMeta,
+    token,
+    maxBytes,
+    dict,
+  );
+}
+
+export function pageMoveMethodPreview(
+  session: ActiveSession,
+  token: string,
+  offset: number,
+  maxBytes: number,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Loading more changes…');
+  return sharedPageMoveMethodPreview(exec, token, offset, maxBytes);
+}
+
+export function applyMoveMethod(
+  session: ActiveSession,
+  token: string,
+  deselectedIds: string[],
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Applying move…');
+  return sharedApplyMoveMethod(exec, token, deselectedIds);
+}
+
+export function clearMoveMethodPreview(session: ActiveSession, token: string): string {
+  return sharedClearMoveMethodPreview(defaultQueryExecutorUsing(session), token);
+}
+
+// Extract-temporary (M3) preview: pre-flight analysis, paginated start/page fetched
+// NON-BLOCKING, server-side apply. Method-local, a single methodRecompile change,
+// all-or-nothing (apply passes an empty deselected set).
+export function analyzeExtractTemporary(
+  session: ActiveSession,
+  className: string,
+  selector: string,
+  isMeta: boolean,
+  selStart: number,
+  selStop: number,
+  dict?: number | string,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Analysing selection…');
+  return sharedAnalyzeExtractTemporary(exec, className, selector, isMeta, selStart, selStop, dict);
+}
+
+export function startExtractTemporaryPreview(
+  session: ActiveSession,
+  className: string,
+  selector: string,
+  isMeta: boolean,
+  selStart: number,
+  selStop: number,
+  newName: string,
+  replaceAll: boolean,
+  token: string,
+  maxBytes: number,
+  dict?: number | string,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, `Previewing extract of ${newName}…`);
+  return sharedStartExtractTemporaryPreview(
+    exec,
+    className,
+    selector,
+    isMeta,
+    selStart,
+    selStop,
+    newName,
+    replaceAll,
+    token,
+    maxBytes,
+    dict,
+  );
+}
+
+export function pageExtractTemporaryPreview(
+  session: ActiveSession,
+  token: string,
+  offset: number,
+  maxBytes: number,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Loading more changes…');
+  return sharedPageExtractTemporaryPreview(exec, token, offset, maxBytes);
+}
+
+export function applyExtractTemporary(session: ActiveSession, token: string): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Applying extraction…');
+  return sharedApplyExtractTemporary(exec, token);
+}
+
+export function clearExtractTemporaryPreview(session: ActiveSession, token: string): string {
+  return sharedClearExtractTemporaryPreview(defaultQueryExecutorUsing(session), token);
+}
+
+// Inline-temporary (M4) preview: pre-flight analysis, paginated start/page fetched
+// NON-BLOCKING, server-side apply. Method-local, a single methodRecompile change,
+// all-or-nothing (apply passes an empty deselected set).
+export function analyzeInlineTemporary(
+  session: ActiveSession,
+  className: string,
+  selector: string,
+  isMeta: boolean,
+  offset: number,
+  dict?: number | string,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Analysing temporary…');
+  return sharedAnalyzeInlineTemporary(exec, className, selector, isMeta, offset, dict);
+}
+
+export function startInlineTemporaryPreview(
+  session: ActiveSession,
+  className: string,
+  selector: string,
+  isMeta: boolean,
+  offset: number,
+  token: string,
+  maxBytes: number,
+  dict?: number | string,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Previewing inline…');
+  return sharedStartInlineTemporaryPreview(
+    exec,
+    className,
+    selector,
+    isMeta,
+    offset,
+    token,
+    maxBytes,
+    dict,
+  );
+}
+
+export function pageInlineTemporaryPreview(
+  session: ActiveSession,
+  token: string,
+  offset: number,
+  maxBytes: number,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Loading more changes…');
+  return sharedPageInlineTemporaryPreview(exec, token, offset, maxBytes);
+}
+
+export function applyInlineTemporary(session: ActiveSession, token: string): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Applying inline…');
+  return sharedApplyInlineTemporary(exec, token);
+}
+
+export function clearInlineTemporaryPreview(session: ActiveSession, token: string): string {
+  return sharedClearInlineTemporaryPreview(defaultQueryExecutorUsing(session), token);
+}
+
+// Instance-variable structure (V2 push up / V3 push down / V5 convert temporary) wrappers.
+// One engine parametrized by operation; new class versions are created server-side (no
+// commit). Paginated preview fetched NON-BLOCKING.
+export function analyzeInstVarStructure(
+  session: ActiveSession,
+  op: IvarStructureOp,
+  className: string,
+  varName: string,
+  dict?: number | string,
+  extra?: ConvertTempArgs,
+  moveAccessors = false,
+  move?: MoveArgs,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Analysing…');
+  return sharedAnalyzeInstVarStructure(
+    exec,
+    op,
+    className,
+    varName,
+    dict,
+    extra,
+    moveAccessors,
+    move,
+  );
+}
+
+export function startInstVarStructurePreview(
+  session: ActiveSession,
+  op: IvarStructureOp,
+  className: string,
+  varName: string,
+  token: string,
+  maxBytes: number,
+  dict?: number | string,
+  extra?: ConvertTempArgs,
+  moveAccessors = false,
+  move?: MoveArgs,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, `Previewing change to ${className}…`);
+  return sharedStartInstVarStructurePreview(
+    exec,
+    op,
+    className,
+    varName,
+    token,
+    maxBytes,
+    dict,
+    extra,
+    moveAccessors,
+    move,
+  );
+}
+
+export function pageInstVarStructurePreview(
+  session: ActiveSession,
+  token: string,
+  offset: number,
+  maxBytes: number,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Loading more changes…');
+  return sharedPageInstVarStructurePreview(exec, token, offset, maxBytes);
+}
+
+export function applyInstVarStructure(
+  session: ActiveSession,
+  token: string,
+  migrateInstances = false,
+  removeOldFromHistory = false,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Applying change…');
+  return sharedApplyInstVarStructure(exec, token, migrateInstances, removeOldFromHistory);
+}
+
+export function clearInstVarStructurePreview(session: ActiveSession, token: string): string {
+  return sharedClearInstVarStructurePreview(defaultQueryExecutorUsing(session), token);
 }
 
 // Class-definition history (native classHistory, this-stone-only, read-only) and

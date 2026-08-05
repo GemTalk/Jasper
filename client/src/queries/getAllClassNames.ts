@@ -24,7 +24,7 @@ sl := System myUserProfile symbolList.
       ws nextPutAll: idx printString; tab; nextPutAll: dict name; tab; nextPutAll: k; lf]]].
 ws contents`;
 
-  const raw = execute('getAllClassNames', code);
+  const raw = execute(code);
   const results: ClassNameEntry[] = [];
   for (const line of raw.split('\n')) {
     if (line.length === 0) continue;

@@ -15,32 +15,30 @@
  *
  * The entry point is `installRefactoringFeature`, called by the unified
  * optional-support offer (optionalSupportOffer.ts) as one leg of the bundle
- * install. The SystemUser-session helpers mirror enhancedInspectorCommand.ts;
- * they are duplicated rather than shared to keep the two install paths
- * independent (a later cleanup could extract them).
+ * install. The SystemUser-session helpers already come from
+ * serverPlugin/systemUserAuth.ts, shared with enhancedInspectorCommand.ts.
  */
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { ActiveSession, SessionManager } from '../sessionManager';
-import { sessionNeedsCommit } from '../browserQueries';
 import { refreshRefactoringSupportAvailable } from './refactoringAvailability';
 import {
   installRefactoringSupport,
   isRefactoringSupportInstalled,
   REFACTORING_PAYLOAD_FILES,
-  messageOf,
 } from './refactoringInstall';
+import {
+  obtainSystemUserSession,
+  refreshWorkingSessionAfterInstall,
+} from '../serverPlugin/systemUserAuth';
+import { pluginFeatures } from '../serverPlugin/pluginFeatures';
 
-// GemStone's default SystemUser password. Tried first so a stock stone installs
-// in one step; on failure we prompt. See the note in enhancedInspectorCommand.ts
-// about why this is not written as `password = '...'` (secret-scan false hit).
-const DEFAULT_SYSTEMUSER_PW = 'swordfish';
-
-// Payload location relative to the extension root. `resources/` ships in the
-// packaged VSIX (unlike `gs-src/`, which is .vscodeignore'd), so the same path
-// resolves in both the F5 dev host and an installed extension.
-const PAYLOAD_SUBDIR = path.join('resources', 'refactoring');
+// Payload location relative to the extension root, from the shared feature
+// registry (the single source of truth). `resources/` ships in the packaged
+// VSIX (unlike `gs-src/`, which is .vscodeignore'd), so the same path resolves
+// in both the F5 dev host and an installed extension.
+const PAYLOAD_SUBDIR = pluginFeatures.refactoring.payloadSubdir;
 
 /** Lazily-created output channel for the loader's completeness report. */
 let reportChannel: vscode.OutputChannel | undefined;
@@ -49,106 +47,6 @@ function getReportChannel(): vscode.OutputChannel {
     reportChannel = vscode.window.createOutputChannel('GemStone Refactoring');
   }
   return reportChannel;
-}
-
-/**
- * Open a transient SystemUser session on the SAME GciLibrary as `base`, reusing
- * its connection coordinates and overriding only the GemStone user. Deliberately
- * NOT registered with the SessionManager. Caller logs it out.
- */
-function loginAsSystemUser(base: ActiveSession, password: string): ActiveSession {
-  const { login } = base;
-  const stoneNrs = `!tcp@${login.gem_host}#server!${login.stone}`;
-  const gemNrs = `!tcp@${login.gem_host}#netldi:${login.netldi}#task!gemnetobject`;
-  const result = base.gci.GciTsLogin(
-    stoneNrs,
-    login.host_user || null,
-    login.host_password || null,
-    false,
-    gemNrs,
-    'SystemUser',
-    password,
-    0,
-    0,
-  );
-  if (!result.session) {
-    throw new Error(result.err.message || `SystemUser login failed (error ${result.err.number})`);
-  }
-  return {
-    id: -1,
-    gci: base.gci,
-    handle: result.session,
-    login: { ...login, gs_user: 'SystemUser', gs_password: password },
-    stoneVersion: base.stoneVersion,
-  };
-}
-
-/**
- * Obtain a SystemUser session on `base`'s connection. Tries the stock default
- * password first. When `interactive` is false (the auto-install path), a rejected
- * default is a silent miss — the caller decides how to surface it — rather than a
- * password prompt the user never asked for.
- */
-async function obtainSystemUserSession(
-  base: ActiveSession,
-  interactive: boolean,
-): Promise<ActiveSession | undefined> {
-  try {
-    return loginAsSystemUser(base, DEFAULT_SYSTEMUSER_PW);
-  } catch {
-    // Default password rejected — fall through and ask for it.
-  }
-  if (!interactive) return undefined;
-  const password = await vscode.window.showInputBox({
-    prompt: `SystemUser password for "${base.login.stone}" (required to install the refactoring engine)`,
-    password: true,
-    ignoreFocusOut: true,
-  });
-  if (password === undefined) return undefined; // user cancelled
-  try {
-    return loginAsSystemUser(base, password);
-  } catch (e: unknown) {
-    vscode.window.showErrorMessage(`Could not log in as SystemUser: ${messageOf(e)}`);
-    return undefined;
-  }
-}
-
-/**
- * The working session won't see the newly-committed classes until its view is
- * refreshed (an abort). When it has no uncommitted work — always the case right
- * after a login — refresh silently. Only when there ARE uncommitted changes do
- * we ask first, since the abort would discard them.
- */
-async function refreshWorkingSessionAfterInstall(
-  base: ActiveSession,
-  sessionManager: SessionManager,
-): Promise<boolean> {
-  const needsCommit = sessionNeedsCommit(base);
-  if (needsCommit === false) {
-    return safeAbortWorkingSession(base, sessionManager);
-  }
-  const detail = needsCommit
-    ? 'This discards this session’s uncommitted changes.'
-    : 'Any uncommitted changes in this session will be discarded.';
-  const choice = await vscode.window.showInformationMessage(
-    `Refactoring engine installed. Refresh this session to load it? ${detail}`,
-    'Refresh',
-    'Later',
-  );
-  if (choice === 'Refresh') {
-    return safeAbortWorkingSession(base, sessionManager);
-  }
-  return false;
-}
-
-/** Abort (refresh) the working session, tolerating a session that was logged out
- *  while the install ran. Returns true only when the view was actually refreshed. */
-function safeAbortWorkingSession(base: ActiveSession, sessionManager: SessionManager): boolean {
-  try {
-    return sessionManager.abort(base.id).success;
-  } catch {
-    return false;
-  }
 }
 
 /**
@@ -181,7 +79,7 @@ async function performInstall(
 
   const reinstall = isRefactoringSupportInstalled(base);
 
-  const sys = await obtainSystemUserSession(base, interactive);
+  const sys = await obtainSystemUserSession(base, interactive, 'the refactoring engine');
   if (!sys) {
     // Interactive: the user cancelled or the failure was already reported.
     // Auto: the default password was not accepted — explain how to proceed
@@ -231,7 +129,11 @@ async function performInstall(
     return false;
   }
 
-  const refreshed = await refreshWorkingSessionAfterInstall(base, sessionManager);
+  const refreshed = await refreshWorkingSessionAfterInstall(
+    base,
+    sessionManager,
+    'Refactoring engine installed.',
+  );
   if (refreshed) {
     refreshRefactoringSupportAvailable(base);
     void vscode.commands.executeCommand(

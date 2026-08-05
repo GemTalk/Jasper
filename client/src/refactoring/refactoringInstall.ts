@@ -34,6 +34,13 @@
 import { ActiveSession } from '../sessionManager';
 import { executeFetchString, checkRefactoringSupportAvailable } from '../browserQueries';
 import { compareGemStoneVersions } from '../gemStoneVersion';
+import {
+  gemCanRead,
+  gsStringLiteral,
+  messageOf,
+  safeAbort,
+  yieldToEventLoop,
+} from '../serverPlugin/installHelpers';
 
 /**
  * The bootstrap file the client files in itself: it defines `GsRefactoringLoader`
@@ -132,7 +139,6 @@ export async function installRefactoringSupport(
   try {
     executeFetchString(
       session,
-      'install:refactoring-loader',
       // Must end in a byte object (a String): executeFetchString fetches the
       // result via GciTsExecuteFetchBytes, so a non-byte result raises 2103.
       `${fileInExpr(session, serverPath(REFACTORING_LOADER_FILE))}. 'ok'`,
@@ -156,7 +162,6 @@ export async function installRefactoringSupport(
   try {
     raw = executeFetchString(
       session,
-      'install:refactoring-load',
       '| ldr | ' +
         `ldr := GsRefactoringLoader loadFromServerDir: ${gsStringLiteral(payloadDir)}. ` +
         "(ldr allOk ifTrue: ['OK'] ifFalse: ['FAIL']), (String with: Character lf), ldr reportString",
@@ -213,44 +218,4 @@ export function supportsServerUtf8FileIn(stoneVersion: string | undefined): bool
   } catch {
     return false;
   }
-}
-
-/** Whether the gem process can read the file at `serverPath`. */
-function gemCanRead(session: ActiveSession, serverPath: string): boolean {
-  try {
-    const r = executeFetchString(
-      session,
-      'gemCanRead',
-      `[(GsFile existsOnServer: ${gsStringLiteral(serverPath)}) printString] ` +
-        "on: Error do: [:e | 'false']",
-    );
-    return r.trim() === 'true';
-  } catch {
-    return false;
-  }
-}
-
-/** Render a JS string as a GemStone string literal: single quotes doubled and
- *  the whole value wrapped in quotes. */
-function gsStringLiteral(s: string): string {
-  return `'${s.replace(/'/g, "''")}'`;
-}
-
-/** Yield to the event loop so the progress notification can paint between the
- *  (synchronous) server calls. */
-function yieldToEventLoop(): Promise<void> {
-  return new Promise<void>((resolve) => setImmediate(resolve));
-}
-
-function safeAbort(session: ActiveSession): void {
-  try {
-    session.gci.GciTsAbort(session.handle);
-  } catch {
-    // Best-effort rollback; the caller closes the session regardless.
-  }
-}
-
-/** Extract a human-readable message from a thrown value. */
-export function messageOf(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
 }

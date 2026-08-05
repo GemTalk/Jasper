@@ -27,7 +27,7 @@ const OK_REPORT =
 
 // Default: gem can read everything, the loader file-in succeeds, the loader run
 // reports success ("OK" verdict line + a report).
-function happyPath(_s: unknown, _label: string, code: string): string {
+function happyPath(_s: unknown, code: string): string {
   if (code.includes('existsOnServer')) return 'true';
   if (code.includes('loadFromServerDir')) return `OK\n${OK_REPORT}`;
   if (code.includes('GsFileIn')) return 'ok';
@@ -88,10 +88,10 @@ describe('installRefactoringSupport', () => {
   it('files in the loader before driving it', async () => {
     const { session } = createMockSession();
     const order: string[] = [];
-    executeFetchStringMock.mockImplementation((s, label, code: string) => {
+    executeFetchStringMock.mockImplementation((s, code: string) => {
       if (code.includes('GsFileIn')) order.push('file-in');
       if (code.includes('loadFromServerDir')) order.push('run');
-      return happyPath(s, label, code);
+      return happyPath(s, code);
     });
 
     await installRefactoringSupport(session, PAYLOAD_DIR);
@@ -105,7 +105,7 @@ describe('installRefactoringSupport', () => {
     await installRefactoringSupport(session, PAYLOAD_DIR);
 
     const runCalls = executeFetchStringMock.mock.calls.filter((c) =>
-      String(c[2]).includes('loadFromServerDir'),
+      String(c[1]).includes('loadFromServerDir'),
     );
     expect(runCalls).toHaveLength(1);
   });
@@ -116,7 +116,7 @@ describe('installRefactoringSupport', () => {
     await installRefactoringSupport(session, PAYLOAD_DIR);
 
     const fileInCode = String(
-      executeFetchStringMock.mock.calls.find((c) => String(c[2]).includes('GsFileIn'))?.[2],
+      executeFetchStringMock.mock.calls.find((c) => String(c[1]).includes('GsFileIn'))?.[1],
     );
     expect(fileInCode).toContain('on: #serverUtf8File to: nil');
     expect(fileInCode).toContain(REFACTORING_LOADER_FILE);
@@ -128,7 +128,7 @@ describe('installRefactoringSupport', () => {
     await installRefactoringSupport(session, PAYLOAD_DIR);
 
     const fileInCode = String(
-      executeFetchStringMock.mock.calls.find((c) => String(c[2]).includes('GsFileIn'))?.[2],
+      executeFetchStringMock.mock.calls.find((c) => String(c[1]).includes('GsFileIn'))?.[1],
     );
     expect(fileInCode).toContain('fromServerPath:');
     expect(fileInCode).not.toContain('serverUtf8File');
@@ -136,9 +136,9 @@ describe('installRefactoringSupport', () => {
 
   it('fails clearly without running the loader when the gem cannot read the payload', async () => {
     const { session } = createMockSession();
-    executeFetchStringMock.mockImplementation((s, label, code: string) => {
+    executeFetchStringMock.mockImplementation((s, code: string) => {
       if (code.includes('existsOnServer')) return 'false';
-      return happyPath(s, label, code);
+      return happyPath(s, code);
     });
 
     const result = await installRefactoringSupport(session, PAYLOAD_DIR);
@@ -146,16 +146,16 @@ describe('installRefactoringSupport', () => {
     expect(result.success).toBe(false);
     expect(result.message).toContain('cannot read');
     const ranLoader = executeFetchStringMock.mock.calls.some((c) =>
-      String(c[2]).includes('loadFromServerDir'),
+      String(c[1]).includes('loadFromServerDir'),
     );
     expect(ranLoader).toBe(false);
   });
 
   it('rolls back and reports failure when the loader file-in raises', async () => {
     const { session, abort } = createMockSession();
-    executeFetchStringMock.mockImplementation((s, label, code: string) => {
+    executeFetchStringMock.mockImplementation((s, code: string) => {
       if (code.includes('GsFileIn')) throw new Error('compile failed');
-      return happyPath(s, label, code);
+      return happyPath(s, code);
     });
 
     const result = await installRefactoringSupport(session, PAYLOAD_DIR);
@@ -167,9 +167,9 @@ describe('installRefactoringSupport', () => {
 
   it('rolls back and reports failure when the loader cannot even run', async () => {
     const { session, abort } = createMockSession();
-    executeFetchStringMock.mockImplementation((s, label, code: string) => {
+    executeFetchStringMock.mockImplementation((s, code: string) => {
       if (code.includes('loadFromServerDir')) throw new Error('session dropped');
-      return happyPath(s, label, code);
+      return happyPath(s, code);
     });
 
     const result = await installRefactoringSupport(session, PAYLOAD_DIR);
@@ -183,9 +183,9 @@ describe('installRefactoringSupport', () => {
     const failReport =
       '[GsRefactoring]   [FAIL] Classes present -- missing: RBParser\n' +
       '[GsRefactoring] INCOMPLETE -- one or more checks failed (see above).\n';
-    executeFetchStringMock.mockImplementation((s, label, code: string) => {
+    executeFetchStringMock.mockImplementation((s, code: string) => {
       if (code.includes('loadFromServerDir')) return `FAIL\n${failReport}`;
-      return happyPath(s, label, code);
+      return happyPath(s, code);
     });
 
     const result = await installRefactoringSupport(session, PAYLOAD_DIR);
@@ -210,12 +210,12 @@ describe('installRefactoringSupport', () => {
   it('checks that the gem can read every payload file, not just the loader', async () => {
     const { session } = createMockSession();
     const checked: string[] = [];
-    executeFetchStringMock.mockImplementation((s, label, code: string) => {
+    executeFetchStringMock.mockImplementation((s, code: string) => {
       if (code.includes('existsOnServer')) {
         const f = REFACTORING_PAYLOAD_FILES.find((name) => code.includes(name));
         if (f) checked.push(f);
       }
-      return happyPath(s, label, code);
+      return happyPath(s, code);
     });
 
     await installRefactoringSupport(session, PAYLOAD_DIR);

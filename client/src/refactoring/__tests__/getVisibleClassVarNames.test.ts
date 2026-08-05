@@ -13,7 +13,7 @@ describe("a class's visible class-variable names", () => {
 
     getVisibleClassVarNames(execute, 'R5Demo');
 
-    const code = execute.mock.calls[0][1];
+    const code = execute.mock.calls[0][0];
     expect(code).toContain('allSuperclasses');
     expect(code).toContain('classVarNames');
   });
@@ -23,7 +23,7 @@ describe("a class's visible class-variable names", () => {
 
     getVisibleClassVarNames(execute, 'R5Demo', 5);
 
-    expect(execute.mock.calls[0][1]).toContain('symbolList at: 5');
+    expect(execute.mock.calls[0][0]).toContain('symbolList at: 5');
   });
 
   it('returns nothing for an unbound class name', () => {

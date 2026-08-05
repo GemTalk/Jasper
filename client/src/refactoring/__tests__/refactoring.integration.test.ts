@@ -7,9 +7,16 @@ vi.mock('vscode', () => import('../../__mocks__/vscode'));
 import { useIntegrationTest } from '../../__tests__/useIntegrationTest';
 import { GciLibrary } from '../../gciLibrary';
 import * as q from '../../browserQueries';
+import { BrowserQueryError } from '../../browserQueries';
 import { previewRenameInstVar } from '../queries/previewRenameInstVar';
 import { parseRenameChanges, RenameChange } from '../renameInstVarPreview';
 import type { ActiveSession } from '../../sessionManager';
+import { testActiveSession } from '../../__tests__/testActiveSession';
+import {
+  requireServerPluginFeature,
+  requireServerPluginFeatureAbsent,
+} from '../../__tests__/requireServerPluginFeature';
+import { pluginFeatures } from '../../serverPlugin/pluginFeatures';
 
 /**
  * Automatic GCI integration test for the rename-instance-variable round trip:
@@ -35,14 +42,8 @@ describe('rename instance variable (integration)', () => {
     handle = testContext.session;
   });
 
-  const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
-  const exec = (code: string): string => q.executeFetchString(session(), 'refactoring-it', code);
-  // previewRenameInstVar wants a QueryExecutor `(label, code) => string` and calls it
-  // as `execute(label, code)`. Adapt to the two-arg shape (a single-arg `exec` would
-  // send the label as code), forwarding the descriptive label so query logging matches
-  // production.
-  const execQuery = (label: string, code: string): string =>
-    q.executeFetchString(session(), label, code);
+  const session = (): ActiveSession => testActiveSession(gci, handle);
+  const exec = (code: string): string => q.executeFetchString(session(), code);
 
   const engineLoaded = (): boolean => q.checkRefactoringSupportAvailable(session());
   const rbEnginePresent = (): boolean =>
@@ -98,12 +99,12 @@ describe('rename instance variable (integration)', () => {
   });
 
   it('rewrites references across the defining class and its subclass', (ctx) => {
-    if (!engineLoaded()) ctx.skip('refactoring engine not loaded in this stone');
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
     defineCounterHierarchy();
 
     const changes = parseRenameChanges(
-      previewRenameInstVar(execQuery, COUNTER, 'count', 'tally', userIndex()),
+      previewRenameInstVar(exec, COUNTER, 'count', 'tally', userIndex()),
     );
 
     expect(changeFor(changes, COUNTER, 'increment')?.newSource).toContain('tally := tally + 1');
@@ -112,12 +113,12 @@ describe('rename instance variable (integration)', () => {
   });
 
   it('rewrites the instance-variable list in the class definition', (ctx) => {
-    if (!engineLoaded()) ctx.skip('refactoring engine not loaded in this stone');
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
     defineCounterHierarchy();
 
     const changes = parseRenameChanges(
-      previewRenameInstVar(execQuery, COUNTER, 'count', 'tally', userIndex()),
+      previewRenameInstVar(exec, COUNTER, 'count', 'tally', userIndex()),
     );
 
     const classDef = changes.find((c) => c.kind === 'classDefinitionEdit');
@@ -127,13 +128,27 @@ describe('rename instance variable (integration)', () => {
   });
 
   it('builds the preview without committing', (ctx) => {
-    if (!engineLoaded()) ctx.skip('refactoring engine not loaded in this stone');
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
     defineCounterHierarchy();
     const needsCommitBefore = exec('System needsCommit printString').trim();
 
-    previewRenameInstVar(execQuery, COUNTER, 'count', 'tally', userIndex());
+    previewRenameInstVar(exec, COUNTER, 'count', 'tally', userIndex());
 
     expect(exec('System needsCommit printString').trim()).toBe(needsCommitBefore);
+  });
+
+  // Degradation assertion: without the engine loaded, the preview query references
+  // a class that doesn't exist, so it must surface a clear error rather than
+  // silently no-op-ing or returning a malformed change-set the client would
+  // mis-render.
+  it('surfaces a clear error instead of a malformed preview when the engine is not loaded', (ctx) => {
+    requireServerPluginFeatureAbsent(pluginFeatures.refactoring, ctx, session());
+
+    defineCounterHierarchy();
+
+    expect(() => previewRenameInstVar(exec, COUNTER, 'count', 'tally', userIndex())).toThrow(
+      BrowserQueryError,
+    );
   });
 });
