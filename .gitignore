@@ -43,3 +43,9 @@ acceptance/.features-gen/
 
 # Refactoring design / TDD stage docs — local working notes, kept out of the repo
 gs-src/refactoring/design/
+
+# GCI native-library trace logs from the on-demand `gci` test project. Normally
+# cleaned up after a run, but kept (with the .gci-trace-keep marker) when a gci
+# test fails — so they can linger as untracked files. Never commit them.
+gci*trace.log
+.gci-trace-keep
