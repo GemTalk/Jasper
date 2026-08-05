@@ -12,56 +12,40 @@ import { GCI_LIBRARY_PATH, STONE_NRS, GEM_NRS, GS_USER, GS_PASSWORD } from './gc
 import { ActiveSession } from '../../sessionManager';
 import { GemStoneLogin } from '../../loginTypes';
 import * as q from '../../browserQueries';
-import {
-  analyzeInstVar,
-  startInstVarPreview,
-  applyInstVar,
-} from '../../refactoring/queries/previewInstVar';
+import { startInstVarPreview, applyInstVar } from '../../refactoring/queries/previewInstVar';
 import { PREVIEW_PAGE_BYTES } from '../../refactoring/queries/previewRenameMethod';
-import {
-  parseAnalysis,
-  parseStartPreview,
-  parseApplyResult,
-} from '../../refactoring/instVarRefactorPreview';
+import { parseStartPreview, parseApplyResult } from '../../refactoring/instVarRefactorPreview';
 
 /**
- * On-demand GCI e2e for the add / remove instance-variable (V1) refactoring, over the
- * real GCI transport (`npm run test:gci`). Drives the actual client query builders +
- * parsers against a live stone: add an ivar and confirm the class carries it; remove one
- * that methods use and confirm those methods are reported and dropped.
+ * On-demand GCI e2e for the COMMITTING paths of the add / remove instance-variable (V1)
+ * refactoring, over the real GCI transport (`npm run test:gci`).
  *
- * WHY THIS IS STILL AN on-demand gci SUITE (issue #360, "can this migrate to
- * useIntegrationTest?"): the three NON-committing scenarios below are already covered by the
- * automatic integration suite, which does run in CI — see
- * `refactoring/__tests__/refactoringInstVar.integration.test.ts` (add, remove + drop, decline
- * duplicate, plus the engine's GS SUnit suite). What is unique here are the two COMMITTING
- * tests. `useIntegrationTest` aborts after every test to keep them isolated, and an abort
- * cannot undo a commit, so a committing test can only live there by cleaning up after itself
- * and committing that cleanup — which is what these two do. That is technically possible under
- * the harness; it is the harness's "never commit" invariant, not a technical blocker, that
- * keeps them out. Moving them is a policy call for the CI-migration work, not this file.
+ * WHY THIS IS STILL AN on-demand gci SUITE: every non-committing scenario has moved to the
+ * automatic integration suite, which runs in CI across the release matrix — see
+ * `refactoring/__tests__/refactoringInstVar.integration.test.ts` (add, remove + selective
+ * copy-forward, shadowed-temporary prediction, decline duplicate, decline a name a subclass
+ * declares, plus the engine's GS SUnit suite). What remains here are the three scenarios that
+ * COMMIT: `useIntegrationTest` aborts after every test to keep tests isolated, and an abort
+ * cannot undo a commit, so these can only move once the CI migration settles a
+ * commit-and-compensate story for the harness (a transient session, or a test that commits its
+ * own cleanup). That is a policy call about the harness's "never commit" invariant, not a
+ * technical blocker.
  *
  * Guarded on the refactoring engine being installed (the queries reference the in-stone
- * `GsInstVarRefactoring`); the tests skip with a reason otherwise. The non-committing tests are
- * transient (they roll back with `System abortTransaction` in a `finally`); the two committing
- * tests (migrate instances / delete history) instead remove the class they created — and commit
- * that removal — in their `finally`, since an abort cannot undo a commit. All Smalltalk is
- * ASCII-only for 3.6.x.
+ * `GsInstVarRefactoring`); the tests skip, with a reason, otherwise. Each test is self-cleaning
+ * — it removes the committed class (and any persisted instance) and commits that removal in
+ * `finally`, leaving no residue. All Smalltalk is ASCII-only for 3.6.x.
  */
-describe('add / remove instance variable (gci e2e)', () => {
+describe('instance-variable refactoring, committing paths (gci e2e)', () => {
   let gci: GciLibrary;
   let session: ActiveSession;
   let enginePresent = false;
 
   // NB: `executeFetchString` sends #encodeAsUTF8 to whatever the code evaluates to, so every
-  // `exec` here must end in a String. `System abortTransaction` / `commitTransaction` answer
-  // the System class (and some primitives a Boolean), neither of which understands it — hence
-  // the trailing `. 'ok'` on the mutating calls below, matching the sibling gci suites.
+  // `exec` here must end in a String. `System commitTransaction` answers the System class,
+  // which does not understand it — hence the trailing `. 'ok'` on the mutating calls below.
   const exec = (code: string): string => q.executeFetchString(session, code);
   const asyncExec = (_label: string, code: string): Promise<string> => Promise.resolve(exec(code));
-
-  const BASE = 'GciIvBase';
-  const SUB = 'GciIvSub';
 
   const userIndex = (): number =>
     parseInt(
@@ -75,27 +59,6 @@ describe('add / remove instance variable (gci e2e)', () => {
 
   const hasIvar = (cls: string, name: string): boolean =>
     exec(`(${cls} instVarNames includes: #${name}) printString`).trim() === 'true';
-
-  const includesSelector = (cls: string, sel: string): boolean =>
-    exec(`(${cls} includesSelector: #${sel}) printString`).trim() === 'true';
-
-  const defineFixture = (): void => {
-    q.compileClassDefinition(
-      session,
-      `Object subclass: '${BASE}' instVarNames: #(count other) classVars: #() ` +
-        'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
-    );
-    q.compileClassDefinition(
-      session,
-      `${BASE} subclass: '${SUB}' instVarNames: #() classVars: #() ` +
-        'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
-    );
-    q.compileMethod(session, BASE, false, 'accessing', 'combine\n\t^ count + other');
-    // Deliberately touches `other` only, never `count` — the control for the selective
-    // copy-forward assertion in the remove test: removing `count` must NOT drop this.
-    q.compileMethod(session, BASE, false, 'accessing', 'getOther\n\t^ other');
-    q.compileMethod(session, SUB, false, 'accessing', 'doubleCount\n\t^ count * 2');
-  };
 
   beforeAll(() => {
     gci = new GciLibrary(GCI_LIBRARY_PATH);
@@ -119,180 +82,12 @@ describe('add / remove instance variable (gci e2e)', () => {
     gci?.close();
   });
 
-  it('adds an instance variable and versions the subtree', async (ctx) => {
-    if (!enginePresent) return ctx.skip();
-
-    try {
-      defineFixture();
-
-      const analysis = parseAnalysis(
-        await analyzeInstVar(asyncExec, 'add', BASE, 'tally', userIndex()),
-      );
-      expect(analysis.decline).toBeNull();
-      expect(analysis.affectedCount).toBe(2); // base + sub
-
-      const start = parseStartPreview(
-        await startInstVarPreview(
-          asyncExec,
-          'add',
-          BASE,
-          'tally',
-          'gci-iv-add',
-          PREVIEW_PAGE_BYTES,
-          userIndex(),
-        ),
-      );
-      const result = parseApplyResult(
-        await applyInstVar(asyncExec, 'gci-iv-add', [], null, false, false),
-      );
-      expect(start.total).toBe(2);
-      expect(result.failed).toEqual([]);
-      expect(result.committed).toBe(false);
-
-      expect(hasIvar(BASE, 'tally')).toBe(true);
-    } finally {
-      exec("System abortTransaction. 'ok'");
-    }
-  });
-
-  it('warns up front that a method whose temp shadows the new variable will not recompile', async (ctx) => {
-    if (!enginePresent) return ctx.skip();
-
-    try {
-      defineFixture();
-      // A SUB method with a METHOD-LEVEL temporary named `tally`: once `tally` becomes an
-      // inherited instance variable, that declaration shadows it. The preview must surface the
-      // method up front so it is not silently dropped at apply.
-      //
-      // We assert the PREDICTION only, not an apply drop: whether the shadowed recompile hard-fails
-      // or merely warns can vary by stone/version, but the source-based prediction is deterministic
-      // and is the contract this covers. (The apply-drops-exactly-the-predicted-method invariant is
-      // pinned in the GS SUnit suite, which runs in-stone on both boundaries.)
-      q.compileMethod(
-        session,
-        SUB,
-        false,
-        'accessing',
-        'shadowsTally\n\t| tally |\n\ttally := 1.\n\t^ tally',
-      );
-
-      const analysis = parseAnalysis(
-        await analyzeInstVar(asyncExec, 'add', BASE, 'tally', userIndex()),
-      );
-      expect(analysis.decline).toBeNull();
-
-      const start = parseStartPreview(
-        await startInstVarPreview(
-          asyncExec,
-          'add',
-          BASE,
-          'tally',
-          'gci-iv-add-shadow',
-          PREVIEW_PAGE_BYTES,
-          userIndex(),
-        ),
-      );
-
-      const shadowed = start.outOfScope.willNotRecompile.find((m) => m.selector === 'shadowsTally');
-      expect(shadowed).toBeDefined();
-      expect(shadowed?.className).toBe(SUB);
-      // A sibling method that only USES another ivar (`count`) must not be over-reported.
-      expect(start.outOfScope.willNotRecompile.map((m) => m.selector)).not.toContain('doubleCount');
-    } finally {
-      exec("System abortTransaction. 'ok'");
-    }
-  });
-
-  it('removes an instance variable, reporting and dropping the methods that used it', async (ctx) => {
-    if (!enginePresent) return ctx.skip();
-
-    try {
-      defineFixture();
-
-      const start = parseStartPreview(
-        await startInstVarPreview(
-          asyncExec,
-          'remove',
-          BASE,
-          'count',
-          'gci-iv-remove',
-          PREVIEW_PAGE_BYTES,
-          userIndex(),
-        ),
-      );
-      expect(start.outOfScope.willNotRecompile.map((m) => m.selector)).toEqual(
-        expect.arrayContaining(['combine', 'doubleCount']),
-      );
-
-      const result = parseApplyResult(
-        await applyInstVar(asyncExec, 'gci-iv-remove', [], null, false, false),
-      );
-      expect(result.failed).toEqual([]);
-      expect(result.dropped.map((m) => m.selector)).toEqual(
-        expect.arrayContaining(['combine', 'doubleCount']),
-      );
-
-      expect(hasIvar(BASE, 'count')).toBe(false);
-      expect(includesSelector(BASE, 'combine')).toBe(false);
-
-      // Copy-forward is SELECTIVE, not all-or-nothing: `getOther` never referenced `count`,
-      // so it must survive onto the new class version and must not be reported as dropped.
-      expect(includesSelector(BASE, 'getOther')).toBe(true);
-      expect(result.dropped.map((m) => m.selector)).not.toContain('getOther');
-    } finally {
-      exec("System abortTransaction. 'ok'");
-    }
-  });
-
-  it('declines adding a duplicate instance variable', async (ctx) => {
-    if (!enginePresent) return ctx.skip();
-
-    try {
-      defineFixture();
-
-      const analysis = parseAnalysis(
-        await analyzeInstVar(asyncExec, 'add', BASE, 'count', userIndex()),
-      );
-      expect(analysis.decline).toBeTruthy();
-    } finally {
-      exec("System abortTransaction. 'ok'");
-    }
-  });
-
-  it('declines a name a subclass already declares, naming the subclass, before any preview', async (ctx) => {
-    if (!enginePresent) return ctx.skip();
-
-    try {
-      q.compileClassDefinition(
-        session,
-        `Object subclass: '${BASE}' instVarNames: #() classVars: #() ` +
-          'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
-      );
-      q.compileClassDefinition(
-        session,
-        `${BASE} subclass: '${SUB}' instVarNames: #(mine) classVars: #() ` +
-          'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
-      );
-
-      const analysis = parseAnalysis(
-        await analyzeInstVar(asyncExec, 'add', BASE, 'mine', userIndex()),
-      );
-
-      expect(analysis.decline).toBeTruthy();
-      expect(analysis.decline).toContain(SUB);
-    } finally {
-      exec("System abortTransaction. 'ok'");
-    }
-  });
-
   // The committing paths (migrate instances / delete history) can only be verified end to end
   // here: the engine commits the structural change first (migrateInstancesTo: needs a clean
-  // transaction), so an abort-isolated unit/SUnit test cannot observe them. Each test is
-  // self-cleaning — it removes the committed class (and any persisted instance) and commits that
-  // removal in `finally`, leaving no residue — since `System abortTransaction` cannot undo a commit.
+  // transaction), so an abort-isolated unit/SUnit test cannot observe them.
 
   it('migrates existing instances onto the new version and commits when migrate is requested', async (ctx) => {
-    if (!enginePresent) return ctx.skip();
+    if (!enginePresent) return ctx.skip('GsInstVarRefactoring is not installed on this stone');
 
     const CLS = 'GciIvMig';
     try {
@@ -340,7 +135,7 @@ describe('add / remove instance variable (gci e2e)', () => {
   });
 
   it('deletes prior versions from the class history and commits when delete-history is requested', async (ctx) => {
-    if (!enginePresent) return ctx.skip();
+    if (!enginePresent) return ctx.skip('GsInstVarRefactoring is not installed on this stone');
 
     const CLS = 'GciIvHist';
     try {
@@ -380,7 +175,7 @@ describe('add / remove instance variable (gci e2e)', () => {
   // first failure, leave the transaction alone (it never aborts — that would discard the user's
   // other in-flight work), and report the partial state for the client's abort recommendation.
   it('stops at the first failure and reports the partial apply without aborting', async (ctx) => {
-    if (!enginePresent) return ctx.skip();
+    if (!enginePresent) return ctx.skip('GsInstVarRefactoring is not installed on this stone');
 
     const RB_BASE = 'GciIvRbBase';
     const RB_SUB = 'GciIvRbSub';

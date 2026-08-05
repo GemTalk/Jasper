@@ -13,28 +13,30 @@ import { ActiveSession } from '../../sessionManager';
 import { GemStoneLogin } from '../../loginTypes';
 import * as q from '../../browserQueries';
 import {
-  analyzeInstVarStructure,
   startInstVarStructurePreview,
   applyInstVarStructure,
 } from '../../refactoring/queries/previewInstVarStructure';
 import { PREVIEW_PAGE_BYTES } from '../../refactoring/queries/previewRenameMethod';
-import {
-  parseAnalysis,
-  parseStartPreview,
-  parseApplyResult,
-} from '../../refactoring/instVarStructurePreview';
+import { parseStartPreview, parseApplyResult } from '../../refactoring/instVarStructurePreview';
 
 /**
- * On-demand GCI end-to-end test (`npm run test:gci`) for the instance-variable structure
- * refactorings (V2 push up, V3 push down, V5 convert temporary). Drives the real query
- * builders + parsers against a live stone over the GCI transport, then rolls everything
- * back.
+ * On-demand GCI end-to-end test (`npm run test:gci`) for the one instance-variable structure
+ * scenario that COMMITS: pushing an ivar up with instance migration requested.
  *
- * GUARDED on the engine being loaded: on a bare stone each test skips with a reason. Fully
- * transient — every test aborts the transaction in a `finally`, so the new class versions
- * and fixture classes never commit.
+ * WHY THIS IS STILL AN on-demand gci SUITE: every transient scenario this file used to cover
+ * (push up, push down, convert temporary, moving a simple accessor along) now lives in
+ * `refactoring/__tests__/refactoringInstVarStructure.integration.test.ts`, which runs in CI
+ * across the release matrix and asserts a superset. What remains is the migrate-instances path:
+ * the engine commits the structural change first (migrateInstancesTo: needs a clean
+ * transaction), and `useIntegrationTest` aborts after every test — an abort cannot undo a
+ * commit. Moving it needs a commit-and-compensate story for the harness, which is a policy
+ * decision about its "never commit" invariant rather than a technical blocker.
+ *
+ * GUARDED on the engine being loaded: on a bare stone the test skips, with a reason. It is
+ * self-cleaning — it removes the committed fixture classes and the persisted instance, and
+ * commits that removal, in `finally`. All emitted Smalltalk is ASCII-only for 3.6.x.
  */
-describe('instance-variable structure (gci e2e)', () => {
+describe('instance-variable structure, committing path (gci e2e)', () => {
   let gci: GciLibrary;
   let session: ActiveSession;
   let enginePresent = false;
@@ -63,7 +65,6 @@ describe('instance-variable structure (gci e2e)', () => {
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
     );
     q.compileMethod(session, MID, false, 'accessing', 'midM\n\t^mid');
-    q.compileMethod(session, MID, false, 'accessing', 'compute\n\t| t |\n\tt := mid.\n\t^t');
     q.compileMethod(session, LEAF, false, 'accessing', 'leafM\n\t^leaf');
   };
 
@@ -75,15 +76,11 @@ describe('instance-variable structure (gci e2e)', () => {
       `(${cls} compiledMethodAt: #'${selector}' environmentId: 0 otherwise: nil) notNil printString`,
     ).trim() === 'true';
 
-  const abort = (): void => {
-    // Must end in a String: executeFetchString sends #encodeAsUTF8 to whatever the code
-    // evaluates to, and `System abortTransaction` answers the System class, which does not
-    // understand it. Same idiom as the sibling gci suites.
-    exec("System abortTransaction. 'ok'");
-  };
-
-  // Remove the fixture classes (+ any stray migrate-test instance) and COMMIT — used to clean
-  // up the one test that must commit. Best-effort; safe to call when they don't exist.
+  // Remove the fixture classes (+ the migrate-test instance) and COMMIT, since
+  // `System abortTransaction` cannot undo a commit. Best-effort; safe when they don't exist.
+  //
+  // Must end in a String: executeFetchString sends #encodeAsUTF8 to whatever the code evaluates
+  // to, and `System commitTransaction` answers the System class, which does not understand it.
   const removeFixtureAndCommit = (): void => {
     exec(
       `#(#VsE2eInst #${LEAF} #${MID} #${BASE}) do: [:s | UserGlobals removeKey: s ifAbsent: []]. ` +
@@ -113,122 +110,9 @@ describe('instance-variable structure (gci e2e)', () => {
     gci?.close();
   });
 
-  it('pushes an ivar up to the superclass, then rolls back', async (ctx) => {
-    if (!enginePresent) return ctx.skip();
-
-    try {
-      defineFixture();
-      const analysis = parseAnalysis(
-        await analyzeInstVarStructure(asyncExec, 'pushUp', LEAF, 'leaf'),
-      );
-      expect(analysis.decline).toBeNull();
-
-      parseStartPreview(
-        await startInstVarStructurePreview(
-          asyncExec,
-          'pushUp',
-          LEAF,
-          'leaf',
-          'vs-e2e-up',
-          PREVIEW_PAGE_BYTES,
-        ),
-      );
-      const result = parseApplyResult(await applyInstVarStructure(asyncExec, 'vs-e2e-up'));
-
-      expect(result.failed).toEqual([]);
-      expect(ownIvars(MID)).toContain("'leaf'");
-      expect(ownIvars(LEAF)).not.toContain("'leaf'");
-    } finally {
-      abort();
-    }
-  });
-
-  it('pushes an ivar down into the subclasses, then rolls back', async (ctx) => {
-    if (!enginePresent) return ctx.skip();
-
-    try {
-      defineFixture();
-      parseStartPreview(
-        await startInstVarStructurePreview(
-          asyncExec,
-          'pushDown',
-          MID,
-          'pushable',
-          'vs-e2e-down',
-          PREVIEW_PAGE_BYTES,
-        ),
-      );
-      const result = parseApplyResult(await applyInstVarStructure(asyncExec, 'vs-e2e-down'));
-
-      expect(result.failed).toEqual([]);
-      expect(ownIvars(LEAF)).toContain("'pushable'");
-      expect(ownIvars(MID)).not.toContain("'pushable'");
-    } finally {
-      abort();
-    }
-  });
-
-  it('moves a simple accessor up with the ivar, then rolls back', async (ctx) => {
-    if (!enginePresent) return ctx.skip();
-
-    try {
-      defineFixture();
-      parseStartPreview(
-        await startInstVarStructurePreview(
-          asyncExec,
-          'pushUp',
-          MID,
-          'mid',
-          'vs-e2e-acc',
-          PREVIEW_PAGE_BYTES,
-          undefined,
-          undefined,
-          true,
-        ),
-      );
-      // Accessor move alone never commits.
-      const result = parseApplyResult(await applyInstVarStructure(asyncExec, 'vs-e2e-acc'));
-
-      expect(result.failed).toEqual([]);
-      expect(result.committed).toBe(false);
-      expect(ownIvars(BASE)).toContain("'mid'");
-      // midM (`^mid`) moved up to BASE; the non-accessor `compute` stayed on MID.
-      expect(definesSelector(BASE, 'midM')).toBe(true);
-      expect(definesSelector(MID, 'midM')).toBe(false);
-      expect(definesSelector(MID, 'compute')).toBe(true);
-    } finally {
-      abort();
-    }
-  });
-
-  it('converts a method temporary to an instance variable, then rolls back', async (ctx) => {
-    if (!enginePresent) return ctx.skip();
-
-    try {
-      defineFixture();
-      parseStartPreview(
-        await startInstVarStructurePreview(
-          asyncExec,
-          'convertTemp',
-          MID,
-          't',
-          'vs-e2e-ct',
-          PREVIEW_PAGE_BYTES,
-          undefined,
-          { selector: 'compute', isMeta: false, varName: 't' },
-        ),
-      );
-      const result = parseApplyResult(await applyInstVarStructure(asyncExec, 'vs-e2e-ct'));
-
-      expect(result.failed).toEqual([]);
-      expect(ownIvars(MID)).toContain("'t'");
-    } finally {
-      abort();
-    }
-  });
-
   it('migrates existing instances to the new version and commits (opt-in)', async (ctx) => {
-    if (!enginePresent) return ctx.skip();
+    if (!enginePresent)
+      return ctx.skip('GsInstVarStructureRefactoring is not installed on this stone');
 
     try {
       // The fixture + a live instance must be COMMITTED before migrating: migrateInstancesTo:
@@ -260,6 +144,9 @@ describe('instance-variable structure (gci e2e)', () => {
       expect(exec(`((UserGlobals at: #VsE2eInst) class == ${LEAF}) printString`).trim()).toBe(
         'true',
       );
+      // Instance migration re-versions LEAF and MID; their methods must survive the reshape.
+      expect(definesSelector(LEAF, 'leafM')).toBe(true);
+      expect(definesSelector(MID, 'midM')).toBe(true);
     } finally {
       removeFixtureAndCommit();
     }

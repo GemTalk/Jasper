@@ -42,9 +42,35 @@ Tests run in random order; the seed is printed at the top of the output. Reprodu
 
 ## Integration tests
 
-Tests using `useIntegrationTest` require a live GemStone instance so plain `npm test` needs a running stone. Run `npm run test:server:start` once to provision one; it writes connection details to `.env.test` (which the user may override with `.env.test.local`). CI runs these as a matrix over `client/.gemstone-integration-releases.json`. The deep GCI binding suite (`npm run test:gci`) is separate.
+Tests using `useIntegrationTest` require a live GemStone instance so plain `npm test` needs a running stone. Run `npm run test:server:start` once to provision one; it writes connection details to `.env.test` (which the user may override with `.env.test.local`). CI runs these as a matrix over `client/.gemstone-integration-releases.json`.
 
 GCI session/oop values are koffi `External` pointer wrappers with no enumerable properties, so vitest's deep equality (`toEqual`, and therefore `expect(spy).toHaveBeenCalledWith(someSession, ...)`) cannot tell two *different* sessions or oops apart — it treats any two of them as equal regardless of the underlying native pointer. To assert *which* session/oop a call received, pull the argument out of `spy.mock.calls` and compare with `toBe` (reference equality) instead.
+
+### Choosing where a stone-dependent test lives
+
+The **default home** is a `*.integration.test.ts` using `useIntegrationTest`, co-located in the `__tests__/` dir next to the code it exercises (raw `GciTsXxx` wrapper tests → `client/src/gciLibrary/__tests__/`). Those run in CI over the whole release matrix, in both passes.
+
+The on-demand `client/src/__tests__/gci/` project **never runs in CI** (see `.claude/rules/client/gci.md`) and is being migrated away. Add a test there only when the harness genuinely cannot host it:
+
+- it must **commit** — the harness aborts every test, and an abort cannot undo a commit;
+- it needs **exclusive access to the stone**, or destroys and restores the whole repository;
+- it drives a **session lifecycle** beyond `login` / `logout` / `withTransientSession` (e.g. many logins with varying flags), or installs process-wide state once for a whole file;
+- it makes a **single blocking GCI call** that can outlast the CI budget and that vitest cannot interrupt, so a hang takes out the whole job;
+- it writes into `process.cwd()` and its cleanup is only registered by the `gci` project.
+
+**These are not reasons** — each already has a mechanism that runs in CI:
+
+- *needs the server plugin in the image* → gate it (see below). CI runs the suite twice, once bare and once with the plugin installed, so both worlds are covered.
+- *needs Rowan or Grail in the image* → probe for it live and `ctx.skip(reason)` when absent, the way `rowanExportFixpoint.integration.test.ts` does with `listRowanProjects(exec).available`. Unlike the server plugin, there is no CI pass with Rowan/Grail installed yet, so such a test currently always skips in CI — that's a known gap, not a reason to write it in `gci/` instead.
+- *needs a class, method, or test-case fixture a bare vendor extent lacks* → create it in the test; the auto-abort rolls it back.
+- *depends on behavior that differs by stone version* → a version-applicability gate resolved off the session, never a hardcoded `stoneVersion` literal.
+- *needs `SystemUser` or different credentials* → `login({ user: 'SystemUser' })`.
+
+A test whose assertion **branches on what the live stone happens to contain** doesn't belong in `gci/` either — it needs a bounded, deterministic fixture. An `if (present) … else …` that asserts both branches passes no matter which one ran, so it can never fail.
+
+A case that can be written with `useIntegrationTest` MUST be written that way, and only that way. Before adding to `gci/`, grep `client/src/**/__tests__/*.integration.test.ts` for a sibling that already covers it and extend that instead. When a file mixes both kinds, split it: the CI-runnable assertions move out, and only the part that cannot run in CI stays behind.
+
+Whenever a test skips, skip it with a reason — `ctx.skip(reason)`. A bare `return` reports as **passed**, which hides the test from CI's skip report, and a bare `ctx.skip()` reports without saying why.
 
 ### Tests that depend on the server plugin
 
