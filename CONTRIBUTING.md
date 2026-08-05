@@ -88,7 +88,7 @@ Before pushing changes, ensure `npm run lint && npm run format:check && npm run 
 It **only compiles `client/out` when that directory is missing** — if a build already exists (from another branch, or edits made without `watch`), it launches with that build as-is, even if it's stale. To make sure you're running current code:
 
 - Run `npm run watch` in another terminal for live reload (then "Developer: Reload Window" in the dev window after edits), or
-- Force a one-off rebuild first: `npm run compile:client` (or `rm -rf client/out` to guarantee a clean recompile).
+- Force a rebuild first: `npm run compile:clean && npm run compile` to guarantee a clean recompile.
 
 ### Optional local git hooks
 

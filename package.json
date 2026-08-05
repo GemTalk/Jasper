@@ -2558,7 +2558,8 @@
   "scripts": {
     "vscode:prepublish": "npm run bundle",
     "compile": "npm run compile:client && npm run compile:bin && npm run compile:server && npm run compile:mcp",
-    "compile:client": "tsc -p client/tsconfig.json",
+    "compile:client": "npm run compile --workspace client",
+    "compile:clean": "npm run compile:clean --workspaces",
     "compile:bin": "tsc -p client/tsconfig.bin.json",
     "compile:server": "tsc -p server/tsconfig.json",
     "compile:mcp": "tsc -p mcp-server/tsconfig.json",

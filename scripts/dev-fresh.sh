@@ -58,7 +58,7 @@ fi
 # Build the extension if it isn't compiled yet (skip when using `npm run watch`).
 if [ ! -f client/out/extension.js ]; then
   echo "client/out not built - compiling (use 'npm run watch' for live reload)..."
-  npm run compile:client
+  npm run compile:fresh --workspace client
 fi
 
 # Warn (don't block) if the compiled bundle looks older than the TypeScript
@@ -75,7 +75,7 @@ if [ -n "$newer" ]; then
   echo "${bold}${yellow}##########################################################${reset}"
   echo "${bold}${yellow}#${reset} $newer is newer than the compiled bundle."
   echo "${bold}${yellow}#${reset} Run 'npm run watch' (live), 'npm run compile:client',"
-  echo "${bold}${yellow}#${reset} or 'rm -rf client/out' to force a rebuild."
+  echo "${bold}${yellow}#${reset} or 'npm run compile:clean && npm run compile' to force a clean rebuild."
   echo ""
 fi
 

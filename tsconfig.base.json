@@ -4,6 +4,7 @@
     "module": "node16",
     "lib": ["ES2024", "ESNext.Array", "ESNext.Collection", "ESNext.Iterator"],
     "strict": true,
+    "incremental": true,
     "sourceMap": true,
     "declaration": true,
     "skipLibCheck": true,

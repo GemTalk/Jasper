@@ -3,7 +3,8 @@
   "compilerOptions": {
     "outDir": "./out",
     "rootDir": "./src",
-    "allowJs": true
+    "allowJs": true,
+    "tsBuildInfoFile": "../node_modules/.cache/tsc/client.tsbuildinfo"
   },
   "include": ["src/**/*.ts", "src/gemStoneVersion.js"]
 }
