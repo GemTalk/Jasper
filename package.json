@@ -1351,6 +1351,18 @@
         "icon": "$(history)"
       },
       {
+        "command": "gemstone.explorer.insertSuperclass",
+        "title": "Insert Superclass…",
+        "category": "GemStone",
+        "icon": "$(add)"
+      },
+      {
+        "command": "gemstone.explorer.extractSuperclass",
+        "title": "Extract Superclass…",
+        "category": "GemStone",
+        "icon": "$(type-hierarchy-super)"
+      },
+      {
         "command": "gemstone.downloadVersion",
         "title": "Download",
         "category": "GemStone Admin",
@@ -1644,6 +1656,14 @@
         },
         {
           "command": "gemstone.explorer.classHistory",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.insertSuperclass",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.extractSuperclass",
           "when": "false"
         },
         {
@@ -2033,6 +2053,16 @@
           "group": "3_refactor@1"
         },
         {
+          "command": "gemstone.explorer.insertSuperclass",
+          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass",
+          "group": "3_refactor@2"
+        },
+        {
+          "command": "gemstone.explorer.extractSuperclass",
+          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass",
+          "group": "3_refactor@3"
+        },
+        {
           "command": "gemstone.explorer.openHierarchyDefinition",
           "when": "view == gemstoneExplorerHierarchy && viewItem == explorerHierClass",
           "group": "inline@1"
@@ -2051,6 +2081,16 @@
           "command": "gemstone.explorer.classHistory",
           "when": "view == gemstoneExplorerHierarchy && viewItem == explorerHierClass",
           "group": "3_refactor@1"
+        },
+        {
+          "command": "gemstone.explorer.insertSuperclass",
+          "when": "view == gemstoneExplorerHierarchy && viewItem == explorerHierClass",
+          "group": "3_refactor@2"
+        },
+        {
+          "command": "gemstone.explorer.extractSuperclass",
+          "when": "view == gemstoneExplorerHierarchy && viewItem == explorerHierClass",
+          "group": "3_refactor@3"
         },
         {
           "command": "gemstone.generateGrailStub",

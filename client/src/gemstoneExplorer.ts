@@ -53,6 +53,10 @@ import { showRenameMethodPanel } from './refactoring/renameMethodPanel';
 import { beginChangeSignature, changeSignatureCommand } from './refactoring/changeSignatureCommand';
 import { moveInstVar as moveInstVarFlow } from './refactoring/instVarStructureCommand';
 import { pushMethod } from './refactoring/pushMethodCommand';
+import {
+  insertSuperclassCommand,
+  extractSuperclassCommand,
+} from './refactoring/extractSuperclassCommand';
 import { PushDirection } from './refactoring/queries/previewPushMethod';
 import {
   parseStartPreview as parseStartClassPreview,
@@ -484,7 +488,9 @@ type MethodNode = MethodSideItem | MethodCategoryItem | MethodItem;
 // ── Hierarchy pane ───────────────────────────────────────────────────────────
 // Shows the selected class's lineage: superclasses (root-first) → the class
 // itself → its immediate subclasses. Clicking any row navigates to that class.
-class HierarchyItem extends vscode.TreeItem {
+// Exported so the Explorer controller tests can construct a genuine hierarchy-node item — the
+// insert/extract-superclass handlers branch on `instanceof HierarchyItem` to resolve the dictionary.
+export class HierarchyItem extends vscode.TreeItem {
   constructor(
     public readonly className: string,
     public readonly dictName: string,
@@ -2259,8 +2265,10 @@ export class ExplorerController {
   }
 
   // Validate a proposed rename target: the name's format AND that it isn't already
-  // bound to another global in the stone (so we reject a collision up front and let
-  // the user pick another name, per Eric's UX). Returns an error string or undefined.
+  // bound to another global in the stone. Runs as the rename input's live validator
+  // (showRenameClassEditor), so catching a collision here surfaces it inline while the
+  // user is still typing — they correct the name in place, instead of the rename starting
+  // and failing server-side with a costlier, later error. Returns an error string or undefined.
   private validateRenameTarget(newName: string, oldName: string): string | undefined {
     const fmt = validateNewClassName(newName, oldName);
     if (fmt) return fmt;
@@ -2435,6 +2443,28 @@ export class ExplorerController {
       `Renamed class '${oldName}' → '${newName}' (${result.applied} change` +
         `${result.applied === 1 ? '' : 's'}). ${commitNote}`,
     );
+  }
+
+  // V6 Insert Superclass: slide a new empty class between this class and its current
+  // superclass (server-side new class versions, no commit). Reveals the new class after.
+  async insertSuperclass(item: ClassItem | HierarchyItem): Promise<void> {
+    const session = this.session();
+    if (!session) return;
+    // A hierarchy node may name a class outside the current dictionary; a class row uses it.
+    const dict = item instanceof HierarchyItem ? undefined : this.state.dictIndex;
+    const outcome = await insertSuperclassCommand({ session, className: item.className, dict });
+    if (outcome) await this.refreshAfterClassReshape(outcome.newClass);
+  }
+
+  // V7 Extract Superclass: insert a new common superclass above this class and chosen sibling
+  // classes, hoisting chosen shared members up into it (server-side, no commit). Reveals the
+  // new class after.
+  async extractSuperclass(item: ClassItem | HierarchyItem): Promise<void> {
+    const session = this.session();
+    if (!session) return;
+    const dict = item instanceof HierarchyItem ? undefined : this.state.dictIndex;
+    const outcome = await extractSuperclassCommand({ session, className: item.className, dict });
+    if (outcome) await this.refreshAfterClassReshape(outcome.newClass);
   }
 
   // Rename this class variable across its defining class and every subclass — both
@@ -4340,6 +4370,28 @@ export function registerGemStoneExplorer(
         void ctl.classHistory(item).catch((e: unknown) => {
           const msg = e instanceof Error ? e.message : String(e);
           void vscode.window.showErrorMessage(`Class history failed: ${msg}`);
+        });
+      },
+    ),
+    // Insert an empty superclass above a class (context menu on a class row or hierarchy node).
+    vscode.commands.registerCommand(
+      'gemstone.explorer.insertSuperclass',
+      (item?: ClassItem | HierarchyItem) => {
+        if (!(item instanceof ClassItem) && !(item instanceof HierarchyItem)) return;
+        void ctl.insertSuperclass(item).catch((e: unknown) => {
+          const msg = e instanceof Error ? e.message : String(e);
+          void vscode.window.showErrorMessage(`Insert superclass failed: ${msg}`);
+        });
+      },
+    ),
+    // Extract a common superclass above a class + chosen siblings, hoisting shared members.
+    vscode.commands.registerCommand(
+      'gemstone.explorer.extractSuperclass',
+      (item?: ClassItem | HierarchyItem) => {
+        if (!(item instanceof ClassItem) && !(item instanceof HierarchyItem)) return;
+        void ctl.extractSuperclass(item).catch((e: unknown) => {
+          const msg = e instanceof Error ? e.message : String(e);
+          void vscode.window.showErrorMessage(`Extract superclass failed: ${msg}`);
         });
       },
     ),
