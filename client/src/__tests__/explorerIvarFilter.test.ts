@@ -12,8 +12,15 @@ vi.mock('../browserQueries', () => ({
 
 import { Uri, Position, window, __resetConfig, __setConfig } from '../__mocks__/vscode';
 import { ExplorerController, MethodItem, FilterChipItem } from '../gemstoneExplorer';
+import { getMethodInstVarAccess } from '../browserQueries';
 import type { SessionManager, ActiveSession } from '../sessionManager';
 import type { EnvCategoryLine } from '../browserQueries';
+
+const ivarQuery = getMethodInstVarAccess as ReturnType<typeof vi.fn>;
+
+function setEnvLines(ctl: ExplorerController, lines: EnvCategoryLine[]): void {
+  (ctl as unknown as { envLines: EnvCategoryLine[] }).envLines = lines;
+}
 
 const GROUP_KEY = 'explorer.groupMethodsByCategory';
 const VIEW_METHODS = 'gemstoneExplorerMethods';
@@ -98,6 +105,24 @@ describe('Methods pane instance-variable filter', () => {
 
     expect(selectors(rows)).toEqual(['count', 'count:']);
     expect(rows.every((r) => r.description === '')).toBe(true);
+  });
+
+  it('reloads the ivar map when the method list is reloaded (no stale cache)', () => {
+    const ctl = makeController();
+    setMethodFilter(ctl, 'reads:count');
+
+    methodItems(ctl); // builds + caches the ivar map
+    const afterFirst = ivarQuery.mock.calls.length;
+    expect(afterFirst).toBeGreaterThan(0);
+
+    // Same class, same filter, but the method list was reloaded (new envLines
+    // array — as after an edit/refresh): the cache must not be reused.
+    setEnvLines(ctl, [
+      { isMeta: false, envId: 0, category: 'accessing', selectors: ['count', 'count:', 'size'] },
+    ]);
+    methodItems(ctl);
+
+    expect(ivarQuery.mock.calls.length).toBeGreaterThan(afterFirst);
   });
 });
 

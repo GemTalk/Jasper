@@ -18,27 +18,34 @@ export function getMethodInstVarAccess(
   execute: QueryExecutor,
   dictIndex: number,
   className: string,
+  maxEnv: number,
 ): MethodInstVarAccess[] {
   // One line per accessing method: <isMeta 0|1> TAB <selector> TAB
   // <reads, comma-joined> TAB <writes, comma-joined>. Names come straight from
   // the compiled method, so they include in-scope inherited ivars by name.
+  // Scans environments 0..maxEnv (matching the method list); a selector is
+  // reported once per side, the first environment that defines it winning.
   const code = `| class stream |
 class := (System myUserProfile symbolList at: ${dictIndex}) at: #'${escapeString(className)}'.
 stream := WriteStream on: Unicode7 new.
 { class. class class. } doWithIndex: [:eachClass :idx |
-  | isMeta |
+  | isMeta seen |
   isMeta := idx = 2.
-  eachClass selectors asSortedCollection do: [:sel |
-    | m rd wr |
-    m := eachClass compiledMethodAt: sel environmentId: 0 otherwise: nil.
-    m ifNotNil: [
-      rd := m instVarsRead. wr := m instVarsWritten.
-      (rd isEmpty and: [wr isEmpty]) ifFalse: [
-        stream nextPutAll: (isMeta ifTrue: ['1'] ifFalse: ['0']); tab; nextPutAll: sel; tab.
-        rd asSortedCollection do: [:n | stream nextPutAll: n] separatedBy: [stream nextPut: $,].
-        stream tab.
-        wr asSortedCollection do: [:n | stream nextPutAll: n] separatedBy: [stream nextPut: $,].
-        stream lf ] ] ] ].
+  seen := IdentitySet new.
+  0 to: ${maxEnv} do: [:env |
+    (eachClass _unifiedCategorys: env) valuesDo: [:selectors |
+      selectors do: [:sel |
+        (seen includes: sel) ifFalse: [ | m rd wr |
+          seen add: sel.
+          m := eachClass compiledMethodAt: sel environmentId: env otherwise: nil.
+          m ifNotNil: [
+            rd := m instVarsRead. wr := m instVarsWritten.
+            (rd isEmpty and: [wr isEmpty]) ifFalse: [
+              stream nextPutAll: (isMeta ifTrue: ['1'] ifFalse: ['0']); tab; nextPutAll: sel; tab.
+              rd asSortedCollection do: [:n | stream nextPutAll: n] separatedBy: [stream nextPut: $,].
+              stream tab.
+              wr asSortedCollection do: [:n | stream nextPutAll: n] separatedBy: [stream nextPut: $,].
+              stream lf ] ] ] ] ] ] ].
 stream contents`;
 
   const raw = execute(code);

@@ -651,9 +651,13 @@ export class ExplorerController {
   private envLines: queries.EnvCategoryLine[] = [];
   // Per-method instance-variable read/write map for the selected class, keyed
   // `${isMeta}:${selector}`. Lazily loaded (only when a reads:/writes:/accesses:
-  // filter is actually used) and cached per class; see methodIvarAccess.
+  // filter is actually used); see methodIvarAccess. Cache validity is tied to the
+  // `envLines` array *identity* — envLines is replaced on every method-list reload
+  // (class switch, refresh, post-edit reloadIfCurrent), so a changed reference
+  // means the class's methods may have changed and the map must be rebuilt. This
+  // auto-invalidates without having to touch each envLines-assignment site.
   private ivarAccessCache?: {
-    key: string;
+    envLines: queries.EnvCategoryLine[];
     map: Map<string, queries.MethodInstVarAccess>;
   };
   private views?: ExplorerViews;
@@ -753,17 +757,12 @@ export class ExplorerController {
     }
   }
 
-  // Set (or clear, with an empty pattern) a pane's filter: updates the map, the
-  // `gemstone.explorerFiltered.<viewId>` context key that shows/hides its Clear
-  // button, then refreshes the pane and titles.
+  // Set (or clear, with an empty pattern) a pane's filter: update the map, then
+  // refresh the pane and titles. Clearing is offered via the in-pane filter chip
+  // (see FilterChipItem), so no context key is needed to gate a title Clear button.
   private setFilterState(viewId: string, pattern: string | undefined): void {
     if (pattern) this.filters.set(viewId, pattern);
     else this.filters.delete(viewId);
-    void vscode.commands.executeCommand(
-      'setContext',
-      `gemstone.explorerFiltered.${viewId}`,
-      !!pattern,
-    );
     this.providerFor(viewId).refresh();
     this.syncTitles();
     // A changed Methods filter changes which ivar (if any) is highlighted.
@@ -2764,15 +2763,15 @@ export class ExplorerController {
   // so plain textual filters never pay for the extra round trip.
   private methodIvarAccess(): Map<string, queries.MethodInstVarAccess> {
     const session = this.session();
-    const { className, dictName, dictIndex } = this.state;
+    const { className, dictIndex } = this.state;
     if (!session || className === undefined || dictIndex === undefined) return new Map();
-    const key = `${session.id}:${dictName}:${dictIndex}:${className}`;
-    if (this.ivarAccessCache?.key === key) return this.ivarAccessCache.map;
+    // Valid as long as the method list (envLines) hasn't been reloaded since.
+    if (this.ivarAccessCache?.envLines === this.envLines) return this.ivarAccessCache.map;
     const map = new Map<string, queries.MethodInstVarAccess>();
-    for (const r of queries.getMethodInstVarAccess(session, dictIndex, className)) {
+    for (const r of queries.getMethodInstVarAccess(session, dictIndex, className, this.maxEnv())) {
       map.set(`${r.isMeta}:${r.selector}`, r);
     }
-    this.ivarAccessCache = { key, map };
+    this.ivarAccessCache = { envLines: this.envLines, map };
     return map;
   }
 
@@ -4359,8 +4358,8 @@ export function registerGemStoneExplorer(
     ...EXPLORER_VIEWS.map((viewId) =>
       vscode.commands.registerCommand(`${viewId}.filter`, () => ctl.beginFilter(viewId)),
     ),
-    // Clear buttons: shown (via the gemstone.explorerFiltered.<viewId> context key)
-    // only when that pane has an active filter.
+    // Per-pane clear-filter command (palette / programmatic). The in-pane filter
+    // chip's ✕ is the primary affordance now (see clearFilterChip below).
     ...EXPLORER_VIEWS.map((viewId) =>
       vscode.commands.registerCommand(`${viewId}.clearFilter`, () => ctl.clearFilter(viewId)),
     ),

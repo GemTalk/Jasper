@@ -11,6 +11,7 @@ describe('getMethodInstVarAccess', () => {
       vi.fn<QueryExecutor>(() => raw),
       1,
       'Association',
+      0,
     );
 
     expect(rows).toEqual([
@@ -28,6 +29,7 @@ describe('getMethodInstVarAccess', () => {
       vi.fn<QueryExecutor>(() => raw),
       1,
       'C',
+      0,
     );
 
     expect(rows).toEqual([{ isMeta: false, selector: 'key', reads: ['key'], writes: [] }]);

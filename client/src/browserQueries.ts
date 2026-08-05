@@ -577,8 +577,14 @@ export function getMethodInstVarAccess(
   session: ActiveSession,
   dictIndex: number,
   className: string,
+  maxEnv: number,
 ) {
-  return sharedGetMethodInstVarAccess(defaultQueryExecutorUsing(session), dictIndex, className);
+  return sharedGetMethodInstVarAccess(
+    defaultQueryExecutorUsing(session),
+    dictIndex,
+    className,
+    maxEnv,
+  );
 }
 
 export function getMethodSource(

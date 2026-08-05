@@ -45,7 +45,7 @@ describe('getMethodInstVarAccess (integration)', () => {
   it('reports each method reader / writer / both / neither', () => {
     defineFixture();
 
-    const rows = q.getMethodInstVarAccess(session(), dictIndex(), CLS);
+    const rows = q.getMethodInstVarAccess(session(), dictIndex(), CLS, 0);
     const by = (selector: string) => rows.find((r) => !r.isMeta && r.selector === selector);
 
     expect(by('ivaCount')).toMatchObject({ reads: ['count'], writes: [] });
