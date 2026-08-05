@@ -2634,6 +2634,7 @@
     "dev:fresh:keep-installs": "bash scripts/dev-fresh.sh --keep-installs",
     "serve:seaside": "bash scripts/serve-seaside.sh",
     "lint:github:workflows": "bash scripts/lint-workflow-timeouts.sh",
+    "lint:supply-chain": "node scripts/lint-supply-chain.mjs",
     "//lint": "Results are cached under node_modules/.cache/eslint/, keyed on file content; run lint:cache:clear to force a full re-check.",
     "lint": "eslint . --cache --cache-location node_modules/.cache/eslint/.eslintcache --cache-strategy content",
     "lint:fix": "eslint . --fix --cache --cache-location node_modules/.cache/eslint/.eslintcache --cache-strategy content",
@@ -2695,5 +2696,13 @@
   "overrides": {
     "fast-uri": "^3.1.5",
     "js-yaml": "^4.3.1"
+  },
+  "allowScripts": {
+    "esbuild@0.28.1": true,
+    "koffi@2.16.2": true,
+    "@vscode/vsce-sign@2.0.9": true,
+    "lefthook@2.1.10": true,
+    "keytar@7.9.0": true,
+    "fsevents": false
   }
 }

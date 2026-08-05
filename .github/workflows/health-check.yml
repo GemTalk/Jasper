@@ -87,7 +87,7 @@ jobs:
           advanced-security: false
 
   lint:
-    name: Lint & Format TypeScript
+    name: Lint & Format
     timeout-minutes: 5
     runs-on: ubuntu-latest
     steps:
@@ -111,6 +111,8 @@ jobs:
         run: npm run format:check
       - name: Lint
         run: npm run lint
+      - name: Supply-chain config check
+        run: npm run lint:supply-chain
 
   health-check:
     timeout-minutes: 5

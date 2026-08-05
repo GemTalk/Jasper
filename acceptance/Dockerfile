@@ -28,7 +28,7 @@ WORKDIR /app
 # Install dependencies first, keyed only on the manifests, so edits to source
 # don't bust the (slow) npm ci layer. All workspace manifests are needed for the
 # workspace-aware install.
-COPY package.json package-lock.json ./
+COPY package.json package-lock.json .npmrc ./
 COPY client/package.json ./client/
 COPY server/package.json ./server/
 COPY mcp-server/package.json ./mcp-server/
