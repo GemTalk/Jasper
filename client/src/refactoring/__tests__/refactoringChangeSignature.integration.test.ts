@@ -103,6 +103,8 @@ describe('change method signature (integration)', () => {
     expect(enginePresent()).toBe(q.checkRefactoringSupportAvailable(session()));
   });
 
+  // One blocking exec runs an entire in-stone SUnit suite; under a busy shared
+  // stone that can exceed vitest's default 5s and flake a push. Give it room.
   it('runs the change-signature GS SUnit suite in-stone with zero failures', (ctx) => {
     requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
@@ -112,7 +114,7 @@ r := (System myUserProfile symbolList objectNamed: #GsChangeSignatureRefactoring
 (r failures size + r errors size) printString`;
 
     expect(exec(code).trim()).toBe('0');
-  });
+  }, 30_000);
 
   it('pre-flight analyses the method arity and argument names', async (ctx) => {
     requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
