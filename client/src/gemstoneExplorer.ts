@@ -332,37 +332,19 @@ type ClassNode = ClassItem | VarSideItem | IvarItem | ClassVarItem;
 
 // Method pane is a 3-level tree: side ▸ method-category ▸ selector.
 // Exported for unit tests that drive the New Method / category flows.
-export class MethodSideItem extends vscode.TreeItem {
-  constructor(public readonly isMeta: boolean) {
-    // Instance side opens expanded (so ALL METHODS shows immediately); the
-    // class side starts collapsed to keep the default view focused.
-    super(
-      isMeta ? 'class' : 'instance',
-      isMeta ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.Expanded,
-    );
-    this.id = `mside:${isMeta}`;
-    // Both instance/class side headers use the class icon — distinct from the
-    // per-method rows (symbol-method) so a header doesn't read as a method.
-    this.iconPath = new vscode.ThemeIcon('symbol-class');
-    // Hosts the per-side "+" (add method category) inline action — a distinct
-    // value per side so each shows its own titled command. Deliberately does NOT
-    // contain the substring "explorerMethod" so it can't match the method-row
-    // menu regexes (/^explorerMethod/, /explorerMethod/).
-    this.contextValue = isMeta ? 'explorerSideClass' : 'explorerSideInstance';
-  }
-}
-
 export class MethodCategoryItem extends vscode.TreeItem {
   constructor(
     public readonly isMeta: boolean,
     public readonly category: string,
     public readonly computed: boolean,
+    // Open the node up front. ALL METHODS always does (it's the landing view);
+    // the rest do while a filter is active, so matches show without expanding
+    // every folder by hand.
+    forceExpanded = false,
   ) {
-    // ALL METHODS is the default landing view — expand it so selecting a class
-    // immediately lists every method.
     super(
       category,
-      category === ALL_METHODS_CATEGORY
+      category === ALL_METHODS_CATEGORY || forceExpanded
         ? vscode.TreeItemCollapsibleState.Expanded
         : vscode.TreeItemCollapsibleState.Collapsed,
     );
@@ -378,8 +360,8 @@ export class MethodCategoryItem extends vscode.TreeItem {
 
 export class MethodItem extends vscode.TreeItem {
   // `displayCategory` is the category node this row is shown *under* (a real
-  // category, ALL METHODS, SESSION METHODS, or undefined when flattened by a
-  // filter). It's needed so MethodProvider.getParent can walk up for reveal().
+  // category, ALL METHODS, SESSION METHODS, or undefined when category grouping is
+  // off). It's needed so MethodProvider.getParent can walk up for reveal().
   constructor(
     public readonly isMeta: boolean,
     public readonly info: SelectorInfo,
@@ -455,7 +437,7 @@ export class MethodItem extends vscode.TreeItem {
   }
 }
 
-type MethodNode = MethodSideItem | MethodCategoryItem | MethodItem;
+type MethodNode = MethodCategoryItem | MethodItem;
 
 // ── Hierarchy pane ───────────────────────────────────────────────────────────
 // Shows the selected class's lineage: superclasses (root-first) → the class
@@ -692,23 +674,13 @@ export class ExplorerController {
     this.views.category.description = compose(VIEW_CATEGORIES, this.state.classCategory);
     this.views.klass.description = compose(VIEW_CLASSES, this.state.className);
     this.views.hierarchy.description = this.state.className ?? '';
-    // The Methods header reflects what is *currently* selected in the tree — not
-    // the last method that happened to be opened. So when the filter input is
-    // cleared (backspaced to empty) or dismissed with nothing selected, the
-    // header goes blank — matching the other three panes — rather than a stale
-    // selector or a redundant class name. See `currentMethodSelector`.
-    this.views.method.description = compose(VIEW_METHODS, this.currentMethodSelector());
-  }
-
-  // The selector of the method row currently selected in the Methods pane, or
-  // undefined when nothing (or a non-method row) is selected. Reads the live
-  // TreeView selection so it can't go stale. Falls back to the last-opened
-  // selector only when the view can't report a selection (e.g. under test mocks).
-  private currentMethodSelector(): string | undefined {
-    const selection = this.views?.method.selection;
-    if (!selection) return this.state.selectedSelector;
-    const item = selection.find((n) => n instanceof MethodItem);
-    return item?.info.selector;
+    // The side (instance/class) is a title toggle rather than a tree row now, so
+    // name it in the header. Don't append the selected selector — the grayed
+    // "instance · roll" just clutters, and the selection is already highlighted in
+    // the tree. A live filter still shows its "Filter: …" label (matching the
+    // other panes), otherwise the header is just the side.
+    const side = this._showClassMethods ? 'class' : 'instance';
+    this.views.method.description = compose(VIEW_METHODS, undefined, side);
   }
 
   getFilter(viewId: string): string | undefined {
@@ -932,16 +904,7 @@ export class ExplorerController {
       const info = this.selectorsFor(revealMethod.isMeta, ALL_METHODS_CATEGORY).find(
         (i) => i.selector === revealMethod.selector,
       );
-      if (info) {
-        try {
-          await this.views?.method.reveal(
-            new MethodItem(revealMethod.isMeta, info, info.category),
-            { select: true, focus: false, expand: true },
-          );
-        } catch {
-          /* ignore */
-        }
-      }
+      if (info) await this.revealMethodRow(revealMethod.isMeta, info);
     }
   }
 
@@ -2639,20 +2602,114 @@ export class ExplorerController {
 
   // Method categories for one side, with the computed ALL/SESSION rows on top,
   // plus any just-created (still empty) categories from the + button.
-  methodCategories(isMeta: boolean): MethodCategoryItem[] {
+  methodCategories(isMeta: boolean, filter?: string): MethodCategoryItem[] {
     const lines = this.envLines.filter((l) => l.isMeta === isMeta);
     const real = [...new Set(lines.map((l) => l.category).filter((c) => c && c.length))];
     const fresh = [...this.newMethodCategories[isMeta ? 'meta' : 'instance']].filter(
       (c) => !real.includes(c),
     );
-    const combined = [...real, ...fresh].sort((a, b) => a.localeCompare(b));
+    let combined = [...real, ...fresh].sort((a, b) => a.localeCompare(b));
     if (lines.length === 0 && combined.length === 0) return [];
     const hasSession = lines.some(
       (l) => l.sessionMethodBits && Object.keys(l.sessionMethodBits).length > 0,
     );
-    const items = [new MethodCategoryItem(isMeta, ALL_METHODS_CATEGORY, true)];
-    if (hasSession) items.push(new MethodCategoryItem(isMeta, SESSION_METHODS_CATEGORY, true));
-    return items.concat(combined.map((c) => new MethodCategoryItem(isMeta, c, false)));
+    // With a filter set and categories visible, keep the category structure but
+    // drop categories with no matching selector, and expand what remains so the
+    // matches are visible without hand-expanding each folder.
+    const hasMatch = (category: string) =>
+      filter === undefined ||
+      this.selectorsFor(isMeta, category).some((info) => filterMatches(info.selector, filter));
+    const expanded = filter !== undefined;
+    if (filter !== undefined) combined = combined.filter(hasMatch);
+    const items: MethodCategoryItem[] = [];
+    if (hasMatch(ALL_METHODS_CATEGORY))
+      items.push(new MethodCategoryItem(isMeta, ALL_METHODS_CATEGORY, true, expanded));
+    if (hasSession && hasMatch(SESSION_METHODS_CATEGORY))
+      items.push(new MethodCategoryItem(isMeta, SESSION_METHODS_CATEGORY, true, expanded));
+    return items.concat(combined.map((c) => new MethodCategoryItem(isMeta, c, false, expanded)));
+  }
+
+  // Whether the Methods pane groups selectors under their categories. Off = a
+  // flat list of the class's methods (the category tree level is dropped). Backed
+  // by a setting so the title-bar toggle both flips the view AND persists it.
+  groupMethodsByCategory(): boolean {
+    return vscode.workspace
+      .getConfiguration('gemstone')
+      .get<boolean>('explorer.groupMethodsByCategory', true);
+  }
+
+  // All of one side's methods as flat rows (no category parent) — used when
+  // category grouping is off, or when a filter is narrowing the list.
+  flatMethods(isMeta: boolean, filter?: string): MethodItem[] {
+    return this.selectorsFor(isMeta, ALL_METHODS_CATEGORY)
+      .filter((info) => filter === undefined || filterMatches(info.selector, filter))
+      .map((info) => new MethodItem(isMeta, info, undefined, this.methodSourceUri(isMeta, info)));
+  }
+
+  // Flip the persistent group-by-category setting (from the title-bar toggle).
+  // Writing the setting fires the config-change listener that calls
+  // syncMethodGrouping, so the view and the saved preference stay in step.
+  async setGroupMethodsByCategory(group: boolean): Promise<void> {
+    await vscode.workspace
+      .getConfiguration('gemstone')
+      .update('explorer.groupMethodsByCategory', group, vscode.ConfigurationTarget.Global);
+  }
+
+  // Keep the `gemstone.explorer.methodsGrouped` context key (which title toggle
+  // shows) in step with the setting, and re-render the pane.
+  syncMethodGrouping(): void {
+    void vscode.commands.executeCommand(
+      'setContext',
+      'gemstone.explorer.methodsGrouped',
+      this.groupMethodsByCategory(),
+    );
+    this.methodProvider.refresh();
+  }
+
+  // Which method side the Methods pane shows — instance (default) or class. The
+  // pane shows ONE side at a time; this is a per-session toggle from the title bar
+  // that carries across class selections until flipped or the window reloads.
+  private _showClassMethods = false;
+  get showClassMethods(): boolean {
+    return this._showClassMethods;
+  }
+
+  // Switch the pane to a side, re-rendering only when it actually changed. Called
+  // by the title toggle and before revealing a row that lives on the other side.
+  setMethodSide(isMeta: boolean): void {
+    const changed = this._showClassMethods !== isMeta;
+    this._showClassMethods = isMeta;
+    this.syncMethodSide();
+    if (changed) {
+      this.methodProvider.refresh();
+      this.syncTitles();
+    }
+  }
+
+  // Mirror the active side into the `gemstone.explorer.methodSideIsClass` context
+  // key that selects which title toggle (Show Class / Show Instance) is visible.
+  syncMethodSide(): void {
+    void vscode.commands.executeCommand(
+      'setContext',
+      'gemstone.explorer.methodSideIsClass',
+      this._showClassMethods,
+    );
+  }
+
+  // Reveal + select a method row, honoring the pane's current view state: switch
+  // to the method's side (the pane shows one side at a time) and drop the category
+  // parent when grouping is off, so the built node's id matches the rendered row.
+  private async revealMethodRow(isMeta: boolean, info: SelectorInfo): Promise<void> {
+    this.setMethodSide(isMeta);
+    const displayCategory = this.groupMethodsByCategory() ? info.category : undefined;
+    try {
+      await this.views?.method.reveal(
+        new MethodItem(isMeta, info, displayCategory, this.methodSourceUri(isMeta, info)),
+        { select: true, focus: false, expand: true },
+      );
+    } catch {
+      /* ignore */
+    }
   }
 
   // Selectors under a category (real or computed) with per-method metadata.
@@ -2945,15 +3002,8 @@ export class ExplorerController {
         (i) => i.selector === opts.revealMethod!.selector,
       );
       if (info) {
-        try {
-          await this.views?.method.reveal(
-            new MethodItem(opts.revealMethod.isMeta, info, info.category),
-            { select: true, focus: false, expand: true },
-          );
-          this.syncTitles();
-        } catch {
-          /* ignore */
-        }
+        await this.revealMethodRow(opts.revealMethod.isMeta, info);
+        this.syncTitles();
       }
     }
   }
@@ -3015,15 +3065,8 @@ export class ExplorerController {
           (i) => i.selector === revealMethod.selector,
         );
         if (info) {
-          try {
-            await this.views?.method.reveal(
-              new MethodItem(revealMethod.isMeta, info, info.category),
-              { select: true, focus: false, expand: true },
-            );
-            this.syncTitles();
-          } catch {
-            /* ignore */
-          }
+          await this.revealMethodRow(revealMethod.isMeta, info);
+          this.syncTitles();
         }
       }
       return;
@@ -3261,22 +3304,10 @@ export class ExplorerController {
       void vscode.window.showWarningMessage('Select a class first.');
       return;
     }
-    // Palette: honor the last-touched side, else ask so either an instance or a
-    // class method can be created regardless of what's selected.
-    let isMeta: boolean;
-    if (this.state.selectedIsMeta !== undefined) {
-      isMeta = this.state.selectedIsMeta;
-    } else {
-      const pick = await vscode.window.showQuickPick(
-        [
-          { label: 'Instance method', meta: false },
-          { label: 'Class method', meta: true },
-        ],
-        { placeHolder: `New method on ${this.state.className}` },
-      );
-      if (!pick) return;
-      isMeta = pick.meta;
-    }
+    // Honor the last-touched side, else default to the side the Methods pane is
+    // currently showing (the instance/class title toggle) — a new method lands on
+    // the side you're looking at.
+    const isMeta = this.state.selectedIsMeta ?? this.showClassMethods;
     const category =
       this.state.selectedIsMeta === isMeta && this.state.selectedMethodCategory
         ? this.state.selectedMethodCategory
@@ -3369,13 +3400,7 @@ export class ExplorerController {
     );
     if (!added) return;
     this.pendingNewMethod = undefined;
-    this.views?.method
-      .reveal(new MethodItem(pending.isMeta, added, added.category), {
-        select: true,
-        focus: false,
-        expand: true,
-      })
-      .then(undefined, () => {});
+    void this.revealMethodRow(pending.isMeta, added);
   }
 
   // ── Drag & drop ─────────────────────────────────────────────────────────────
@@ -3849,49 +3874,39 @@ class MethodProvider extends RefreshableProvider<MethodNode> {
   constructor(private readonly ctl: ExplorerController) {
     super();
   }
-  // Walk up the side ▸ category ▸ selector tree so TreeView.reveal can locate a
-  // method row (used by editor-focus → navigator sync). Nodes match by their
-  // stable ids, so freshly-built parents resolve to the rendered ones.
+  // Walk up the category ▸ selector tree so TreeView.reveal can locate a method
+  // row (used by editor-focus → navigator sync). The instance/class side is a
+  // title-bar toggle, not a tree level, so a category is a root. Nodes match by
+  // their stable ids, so freshly-built parents resolve to the rendered ones.
   getParent(element: MethodNode): MethodNode | undefined {
     if (element instanceof MethodItem) {
-      if (element.displayCategory === undefined) return new MethodSideItem(element.isMeta);
+      if (element.displayCategory === undefined) return undefined;
       const computed =
         element.displayCategory === ALL_METHODS_CATEGORY ||
         element.displayCategory === SESSION_METHODS_CATEGORY;
       return new MethodCategoryItem(element.isMeta, element.displayCategory, computed);
     }
-    if (element instanceof MethodCategoryItem) return new MethodSideItem(element.isMeta);
+    // Category rows are roots (the side is a title toggle, not a tree level).
     return undefined;
   }
   getChildren(element?: MethodNode): MethodNode[] {
     if (this.ctl.state.className === undefined) return [];
 
     if (!element) {
-      return [new MethodSideItem(false), new MethodSideItem(true)];
-    }
-    if (element instanceof MethodSideItem) {
-      // With a filter active, drop the category grouping and show matching
-      // selectors directly under each side — "everything starting with r".
+      // Roots are the active side's rows. Filtering respects the grouping setting:
+      // categories off → a flat list of matching selectors; categories on → the
+      // category structure, pruned to categories that contain a match (see
+      // methodCategories). An empty filter is a no-op.
+      const isMeta = this.ctl.showClassMethods;
       const filter = this.ctl.getFilter(VIEW_METHODS);
-      if (filter) {
-        return this.ctl
-          .selectorsFor(element.isMeta, ALL_METHODS_CATEGORY)
-          .filter((info) => filterMatches(info.selector, filter))
-          .map(
-            (info) =>
-              new MethodItem(
-                element.isMeta,
-                info,
-                undefined,
-                this.ctl.methodSourceUri(element.isMeta, info),
-              ),
-          );
-      }
-      return this.ctl.methodCategories(element.isMeta);
+      if (!this.ctl.groupMethodsByCategory()) return this.ctl.flatMethods(isMeta, filter);
+      return this.ctl.methodCategories(isMeta, filter);
     }
     if (element instanceof MethodCategoryItem) {
+      const filter = this.ctl.getFilter(VIEW_METHODS);
       return this.ctl
         .selectorsFor(element.isMeta, element.category)
+        .filter((info) => filter === undefined || filterMatches(info.selector, filter))
         .map(
           (info) =>
             new MethodItem(
@@ -4005,6 +4020,11 @@ export function registerGemStoneExplorer(
     );
   };
   syncActiveContext();
+  // Seed the Methods-pane grouping context key (which title toggle shows) from the
+  // saved setting, and keep it in step if the setting changes elsewhere.
+  ctl.syncMethodGrouping();
+  // Seed the instance/class side context key (defaults to instance).
+  ctl.syncMethodSide();
 
   const dictView = vscode.window.createTreeView('gemstoneExplorerDicts', {
     treeDataProvider: ctl.dictProvider,
@@ -4051,14 +4071,13 @@ export function registerGemStoneExplorer(
   });
   methodView.onDidChangeSelection((e) => {
     const node = e.selection[0];
-    // Record the side / category context so New Method(-Category) default there.
+    // Record the category context so New Method(-Category) defaults there. The
+    // side is the title-bar toggle now, not a selectable row.
     if (node instanceof MethodItem) {
       ctl.recordMethodContext(node.isMeta, node.info.category);
       void ctl.openMethod(node);
     } else if (node instanceof MethodCategoryItem) {
       ctl.recordMethodContext(node.isMeta, node.computed ? undefined : node.category);
-    } else if (node instanceof MethodSideItem) {
-      ctl.recordMethodContext(node.isMeta, undefined);
     }
   });
 
@@ -4153,6 +4172,28 @@ export function registerGemStoneExplorer(
     vscode.commands.registerCommand('gemstone.explorer.methodClicked', (node?: MethodItem) => {
       if (node instanceof MethodItem) ctl.handleMethodClick(node);
     }),
+    // Methods-pane title toggle: group under categories, or list methods flat.
+    // Both write the persistent setting; the config listener re-renders the pane.
+    vscode.commands.registerCommand(
+      'gemstone.explorer.groupMethodsByCategory',
+      () => void ctl.setGroupMethodsByCategory(true),
+    ),
+    vscode.commands.registerCommand(
+      'gemstone.explorer.showMethodsFlat',
+      () => void ctl.setGroupMethodsByCategory(false),
+    ),
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration('gemstone.explorer.groupMethodsByCategory'))
+        ctl.syncMethodGrouping();
+    }),
+    // Methods-pane title toggle: show the instance side or the class side (the
+    // pane shows one at a time; the side level is no longer a tree row).
+    vscode.commands.registerCommand('gemstone.explorer.showClassMethods', () =>
+      ctl.setMethodSide(true),
+    ),
+    vscode.commands.registerCommand('gemstone.explorer.showInstanceMethods', () =>
+      ctl.setMethodSide(false),
+    ),
     // Generate a Grail (.py) stub for a class — Classes/Hierarchy menus and the
     // Command Palette all route here.
     vscode.commands.registerCommand(
@@ -4355,8 +4396,14 @@ export function registerGemStoneExplorer(
     vscode.commands.registerCommand('gemstone.explorer.newClassMethodCategory', () =>
       ctl.newMethodCategory(true),
     ),
+    // Methods-pane title "+": add a category to whichever side the pane is
+    // currently showing (the instance/class level is a title toggle now).
+    vscode.commands.registerCommand('gemstone.explorer.newMethodCategory', () =>
+      ctl.newMethodCategory(ctl.showClassMethods),
+    ),
     // From a category row, file the new method straight into that category;
-    // from the palette (no item), infer side + category from the selection.
+    // from the palette / title bar (no item), infer side + category from the
+    // active side and selection.
     vscode.commands.registerCommand('gemstone.explorer.newMethod', (item?: MethodCategoryItem) =>
       ctl.newMethod(item instanceof MethodCategoryItem ? item : undefined),
     ),
