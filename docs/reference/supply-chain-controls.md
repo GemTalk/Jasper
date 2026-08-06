@@ -45,6 +45,16 @@ npm i <pkg> --min-release-age=0
 
 The resulting error if the override isn't used reads like a normal `ETARGET`/`notarget` ("No matching version found for x@y with a date before …") — it looks like the version doesn't exist, not like a cooldown block. That's not documented anywhere else, so it's worth keeping here.
 
+## CI-only checks
+
+Three additional checks run in the `lint` job (not `.npmrc` settings, so not enforced on a developer's local install):
+
+| Check | Command | What it catches |
+|---|---|---|
+| `lockfile-lint` | `npm run lint:lockfile` | Bad `resolved` host, non-HTTPS URL, missing `integrity`, or a `resolved` URL whose path names a different package than the lockfile entry's own key (`--validate-package-names` — the dependency-confusion/substitution case: an entry claiming to be `mime` but actually resolving to some other package's tarball). See [lockfile-lint's docs](https://github.com/lirantal/lockfile-lint) for flag semantics |
+| `npm audit signatures` | `npm audit signatures` | Missing or invalid registry signatures/attestations across the full tree, checked against the lockfile's declared `version` for each entry — see npm's [`audit signatures` docs](https://docs.npmjs.com/cli/v11/commands/npm-audit#signatures). |
+| Version-vs-`resolved` drift | `npm run lint:supply-chain` | A lockfile entry whose `version` field disagrees with the version embedded in its `resolved` tarball filename. Neither of the above checks reliably catches this: `lockfile-lint` never looks at `version` at all, and `npm audit signatures` only fails *incidentally*, when the falsely-claimed version happens not to exist in the registry. This check is the only one that looks at whether an entry describes the artifact it points at, regardless of whether a phantom version happens to exist. |
+
 ## Known gaps
 
 - **`rhysd/actionlint` docker digest** — pinned by SHA256 digest in `health-check.yml`'s `lint-workflows` job, but Dependabot's `github-actions` ecosystem scans `uses:` only, so this digest is a manual bump.
