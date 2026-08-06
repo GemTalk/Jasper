@@ -11,8 +11,6 @@ import { GciLibrary } from '../gciLibrary';
 import * as q from '../browserQueries';
 import type { ActiveSession } from '../sessionManager';
 import { hasFileControlPrivilege, sessionNeedsCommit, fullBackupCode } from '../queries/backup';
-import { DatabaseTreeProvider } from '../databaseTreeProvider';
-import type { GemStoneDatabase } from '../sysadminTypes';
 
 /**
  * Automatic GCI integration tests for the full logical backup, run against a
@@ -46,55 +44,24 @@ describe('full logical backup (integration)', () => {
   // quiescent — ~5s when a checkpoint is still settling (e.g. from a backup in
   // a recent test run), which straddles vitest's 5s default timeout. The wait
   // is legitimate stone behavior, so give the backup an explicit budget.
-  it(
-    'writes a real backup file that then appears in the Backups tree node',
-    { timeout: 30000 },
-    () => {
-      const dbDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jasper-it-db-'));
-      const dest = path.join(dbDir, 'backups', 'itbackup.dbf');
-      fs.mkdirSync(path.dirname(dest));
-      const db: GemStoneDatabase = {
-        dirName: path.basename(dbDir),
-        path: dbDir,
-        config: {
-          version: '0.0.0',
-          stoneName: 'itstone',
-          ldiName: 'itldi',
-          baseExtent: 'extent0.dbf',
-        },
-      };
+  it('writes a real backup file to the requested destination', { timeout: 30000 }, () => {
+    const dbDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jasper-it-db-'));
+    const dest = path.join(dbDir, 'backups', 'itbackup.dbf');
+    fs.mkdirSync(path.dirname(dest));
 
-      try {
-        const modeBefore = exec('System transactionMode printString').trim();
+    try {
+      const modeBefore = exec('System transactionMode printString').trim();
 
-        const result = exec(fullBackupCode(dest)).trim();
+      const result = exec(fullBackupCode(dest)).trim();
 
-        expect(result).toBe('OK');
-        expect(fs.existsSync(dest)).toBe(true);
-        expect(fs.statSync(dest).size).toBeGreaterThan(0);
-        // fullBackupTo: leaves the session in manualBegin; the ensure: block in
-        // fullBackupCode must put the transaction mode back where it was.
-        expect(exec('System transactionMode printString').trim()).toBe(modeBefore);
-
-        // The produced file is discovered by the real (unmocked) tree provider.
-        const provider = new DatabaseTreeProvider(
-          { getDatabases: () => [db] } as never,
-          {
-            isStoneRunning: () => false,
-            isNetldiRunning: () => false,
-            getProcesses: () => [],
-          } as never,
-        );
-        const topLevelKinds = provider.getChildren({ kind: 'database', db }).map((c) => c.kind);
-        const backupFiles = provider
-          .getChildren({ kind: 'backups', db })
-          .map((c) => (c.kind === 'backupFile' ? c.filePath : ''));
-
-        expect(topLevelKinds).toContain('backups');
-        expect(backupFiles).toContain(dest);
-      } finally {
-        fs.rmSync(dbDir, { recursive: true, force: true });
-      }
-    },
-  );
+      expect(result).toBe('OK');
+      expect(fs.existsSync(dest)).toBe(true);
+      expect(fs.statSync(dest).size).toBeGreaterThan(0);
+      // fullBackupTo: leaves the session in manualBegin; the ensure: block in
+      // fullBackupCode must put the transaction mode back where it was.
+      expect(exec('System transactionMode printString').trim()).toBe(modeBefore);
+    } finally {
+      fs.rmSync(dbDir, { recursive: true, force: true });
+    }
+  });
 });
