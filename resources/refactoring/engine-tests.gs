@@ -835,6 +835,32 @@ true.
 removeallmethods GsRenameTemporaryRefactoringTest
 removeallclassmethods GsRenameTemporaryRefactoringTest
 
+doit
+| cls |
+cls := TestCase subclass: 'GsSplitClassRefactoringTest'
+  instVarNames: #()
+  classVars: #()
+  classInstVars: #()
+  poolDictionaries: #()
+  inDictionary: UserGlobals.
+cls category: 'Refactoring-Tests-Core'.
+cls comment: '
+Tests for GsSplitClassRefactoring (V8 split class / extract class).
+
+Fixture (built in setUp, torn down after): GsSCSource with own ivars keepA keepB extractC extractD
+and a subclass GsSCSub. Methods that touch only the extract set are MOVABLE (sumExtract,
+readExtractC, writeExtractC:); methods touching the retained set are not (doubleKeep, readKeepB).
+Extracting #(extractC extractD) into GsSCComponent is the clean-cut case. Decline tests add a
+straddling / super-sending / retained-calling method, or a subclass use, or a bad name.
+
+Fixture names are substring-safe against the decline keywords, and all emitted Smalltalk is ASCII.
+'.
+true.
+%
+
+removeallmethods GsSplitClassRefactoringTest
+removeallclassmethods GsSplitClassRefactoringTest
+
 ! Class implementations
 
 category: 'asserting'
@@ -9761,6 +9787,300 @@ testApplyDoesNotCommit
 	before := System needsCommit.
 	(self renameComputeTempTo: 'sum') applyDeselected: #().
 	self assert: System needsCommit equals: before
+%
+
+category: 'running'
+method: GsSplitClassRefactoringTest
+setUp
+	| sl src sub |
+	sl := System myUserProfile symbolList.
+	src := Object
+		subclass: 'GsSCSource'
+		instVarNames: #('keepA' 'keepB' 'extractC' 'extractD')
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	src compileMethod: 'sumExtract ^extractC + extractD' dictionaries: sl category: 'tests'.
+	src compileMethod: 'readExtractC ^extractC' dictionaries: sl category: 'tests'.
+	src compileMethod: 'writeExtractC: v extractC := v' dictionaries: sl category: 'tests'.
+	src compileMethod: 'doubleKeep ^keepA * 2' dictionaries: sl category: 'tests'.
+	src compileMethod: 'readKeepB ^keepB' dictionaries: sl category: 'tests'.
+	sub := src
+		subclass: 'GsSCSub'
+		instVarNames: #()
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	sub compileMethod: 'subKeep ^keepA' dictionaries: sl category: 'tests'
+%
+
+category: 'running'
+method: GsSplitClassRefactoringTest
+tearDown
+	#(#GsSCSub #GsSCSource #GsSCComponent #GsSplitClassProbe) do: [:nm |
+		UserGlobals removeKey: nm ifAbsent: []]
+%
+
+category: 'private'
+method: GsSplitClassRefactoringTest
+source
+	^UserGlobals at: #GsSCSource
+%
+
+category: 'private'
+method: GsSplitClassRefactoringTest
+component
+	^UserGlobals at: #GsSCComponent ifAbsent: [nil]
+%
+
+category: 'private'
+method: GsSplitClassRefactoringTest
+ref
+	"A clean-cut split: extract #(extractC extractD) into GsSCComponent."
+	^GsSplitClassRefactoring
+		class: self source
+		splitIntoClassNamed: 'GsSCComponent'
+		extractingInstVars: #('extractC' 'extractD')
+		inDictionary: nil
+%
+
+category: 'private'
+method: GsSplitClassRefactoringTest
+compileOnSource: aSource
+	(self source) compileMethod: aSource dictionaries: System myUserProfile symbolList category: 'tests'
+%
+
+category: 'private'
+method: GsSplitClassRefactoringTest
+changeOfKind: aKind for: aClassName in: cs
+	^cs changes detect: [:c | c kind = aKind and: [c className = aClassName]] ifNone: [nil]
+%
+
+category: 'tests - analysis'
+method: GsSplitClassRefactoringTest
+testAnalyzeComputesMovableMethods
+	| r |
+	r := self ref.
+	self assert: r decline isNil.
+	self assert: r movableSelectors size = 3.
+	self assert: (r movableSelectors includes: #readExtractC).
+	self assert: (r movableSelectors includes: #sumExtract).
+	self deny: (r movableSelectors includes: #doubleKeep)
+%
+
+category: 'tests - analysis'
+method: GsSplitClassRefactoringTest
+testAnalysisJsonReportsMovableCountAndNoDecline
+	| json |
+	json := self ref analysisJsonString.
+	self assert: (json includesString: '"decline":null').
+	self assert: (json includesString: '"movableCount":3')
+%
+
+category: 'tests - analysis'
+method: GsSplitClassRefactoringTest
+testCandidatesListSourceOwnIvars
+	| json |
+	json := GsSplitClassRefactoring candidatesForClass: self source.
+	self assert: (json includesString: 'extractC').
+	self assert: (json includesString: 'keepA')
+%
+
+category: 'tests - preview'
+method: GsSplitClassRefactoringTest
+testPreviewStagesClassAddForComponent
+	| add |
+	add := self changeOfKind: #classAdd for: 'GsSCComponent' in: self ref changeSet.
+	self deny: add isNil.
+	self assert: (add newSource includesString: 'extractC')
+%
+
+category: 'tests - preview'
+method: GsSplitClassRefactoringTest
+testPreviewStagesSourceReversionAddingComponentIvar
+	| edit |
+	edit := self changeOfKind: #classDefinitionEdit for: 'GsSCSource' in: self ref changeSet.
+	self deny: edit isNil.
+	self assert: (edit newSource includesString: 'gsSCComponent').
+	self deny: (edit newSource includesString: 'extractC')
+%
+
+category: 'tests - preview'
+method: GsSplitClassRefactoringTest
+testPreviewStagesMovedMethodOntoComponent
+	self assert: (self ref changeSet changes anySatisfy: [:c |
+		c kind = #methodAdd and: [c className = 'GsSCComponent' and: [c selector = #readExtractC]]])
+%
+
+category: 'tests - preview'
+method: GsSplitClassRefactoringTest
+testPreviewStagesAccessorAndDelegatorsOnSource
+	| cs |
+	cs := self ref changeSet.
+	self assert: (cs changes anySatisfy: [:c |
+		c kind = #methodAdd and: [c className = 'GsSCSource' and: [c selector = #gsSCComponent]]]).
+	self assert: (cs changes anySatisfy: [:c |
+		c kind = #methodAdd and: [c className = 'GsSCSource' and: [c selector = #readExtractC
+			and: [c newSource includesString: 'self gsSCComponent']]]])
+%
+
+category: 'tests - preview'
+method: GsSplitClassRefactoringTest
+testBuildingCreatesNothingInTheStone
+	self ref changeSet.
+	self assert: self component isNil
+%
+
+category: 'tests - declines'
+method: GsSplitClassRefactoringTest
+testDeclinesStraddlingMethod
+	self compileOnSource: 'usesBoth ^extractC + keepA'.
+	self assert: (self ref decline includesString: 'stay behind').
+	self assert: (self ref decline includesString: 'usesBoth')
+%
+
+category: 'tests - declines'
+method: GsSplitClassRefactoringTest
+testDeclinesSuperSendingMovableMethod
+	self compileOnSource: 'superMovable ^extractC + super hash'.
+	self assert: (self ref decline includesString: 'sends super').
+	self assert: (self ref decline includesString: 'superMovable')
+%
+
+category: 'tests - declines'
+method: GsSplitClassRefactoringTest
+testDeclinesMovableCallingRetainedMethod
+	self compileOnSource: 'movableCallsKeep ^extractC + self doubleKeep'.
+	self assert: (self ref decline includesString: 'doubleKeep').
+	self assert: (self ref decline includesString: 'stays behind')
+%
+
+category: 'tests - declines'
+method: GsSplitClassRefactoringTest
+testDeclinesWhenSubclassUsesExtractedIvar
+	(UserGlobals at: #GsSCSub)
+		compileMethod: 'subUsesExtract ^extractC'
+		dictionaries: System myUserProfile symbolList
+		category: 'tests'.
+	self assert: (self ref decline includesString: 'subclass GsSCSub').
+	self assert: (self ref decline includesString: 'extracted instance variable')
+%
+
+category: 'tests - declines'
+method: GsSplitClassRefactoringTest
+testDeclinesExistingClassName
+	| r |
+	r := GsSplitClassRefactoring class: self source splitIntoClassNamed: 'GsSCSource' extractingInstVars: #('extractC') inDictionary: nil.
+	self assert: (r decline includesString: 'already exists')
+%
+
+category: 'tests - declines'
+method: GsSplitClassRefactoringTest
+testDeclinesInvalidClassName
+	| r |
+	r := GsSplitClassRefactoring class: self source splitIntoClassNamed: 'lowercase' extractingInstVars: #('extractC') inDictionary: nil.
+	self assert: (r decline includesString: 'not a valid class name')
+%
+
+category: 'tests - declines'
+method: GsSplitClassRefactoringTest
+testDeclinesEmptyExtractSet
+	| r |
+	r := GsSplitClassRefactoring class: self source splitIntoClassNamed: 'GsSCComponent' extractingInstVars: #() inDictionary: nil.
+	self assert: (r decline includesString: 'no instance variables were chosen')
+%
+
+category: 'tests - declines'
+method: GsSplitClassRefactoringTest
+testDeclinesNonOwnIvar
+	| r |
+	r := GsSplitClassRefactoring class: self source splitIntoClassNamed: 'GsSCComponent' extractingInstVars: #('notAnIvar') inDictionary: nil.
+	self assert: (r decline includesString: 'not an instance variable')
+%
+
+category: 'tests - declines'
+method: GsSplitClassRefactoringTest
+testDeclinesComponentIvarNameCollision
+	| r |
+	"Decapitalising 'KeepA' yields 'keepA', which already exists on the source."
+	r := GsSplitClassRefactoring class: self source splitIntoClassNamed: 'KeepA' extractingInstVars: #('extractC') inDictionary: nil.
+	self assert: (r decline includesString: 'already has an instance variable')
+%
+
+category: 'tests - apply'
+method: GsSplitClassRefactoringTest
+testApplyCreatesComponentWithExtractedIvars
+	self ref applyDeselected: #().
+	self deny: self component isNil.
+	self assert: ((self component instVarNames collect: [:e | e asString]) includes: 'extractC').
+	self assert: ((self component instVarNames collect: [:e | e asString]) includes: 'extractD')
+%
+
+category: 'tests - apply'
+method: GsSplitClassRefactoringTest
+testApplyMovesMethodsAndDelegatesFromSource
+	| src |
+	self ref applyDeselected: #().
+	self assert: (self component includesSelector: #readExtractC).
+	self assert: (self source includesSelector: #readExtractC).
+	src := (self source compiledMethodAt: #readExtractC environmentId: 0 otherwise: nil) sourceString.
+	self assert: (src includesString: 'self gsSCComponent')
+%
+
+category: 'tests - apply'
+method: GsSplitClassRefactoringTest
+testApplyReshapesSourceIvars
+	self ref applyDeselected: #().
+	self deny: ((self source instVarNames collect: [:e | e asString]) includes: 'extractC').
+	self assert: ((self source instVarNames collect: [:e | e asString]) includes: 'gsSCComponent').
+	self assert: ((self source instVarNames collect: [:e | e asString]) includes: 'keepA')
+%
+
+category: 'tests - apply'
+method: GsSplitClassRefactoringTest
+testApplyAddsLazyAccessor
+	| src |
+	self ref applyDeselected: #().
+	self assert: (self source includesSelector: #gsSCComponent).
+	src := (self source compiledMethodAt: #gsSCComponent environmentId: 0 otherwise: nil) sourceString.
+	self assert: (src includesString: 'ifNil:')
+%
+
+category: 'tests - apply'
+method: GsSplitClassRefactoringTest
+testApplyPreservesBehaviorThroughDelegator
+	| s |
+	self ref applyDeselected: #().
+	s := self source new.
+	s writeExtractC: 7.
+	self assert: (s readExtractC) = 7
+%
+
+category: 'tests - apply'
+method: GsSplitClassRefactoringTest
+testApplyLeavesRetainedMethodOnSource
+	self ref applyDeselected: #().
+	self assert: (self source includesSelector: #doubleKeep).
+	self assert: (self source includesSelector: #readKeepB)
+%
+
+category: 'tests - apply'
+method: GsSplitClassRefactoringTest
+testApplyReparentsSubclass
+	self ref applyDeselected: #().
+	self assert: ((UserGlobals at: #GsSCSub) superclass == self source).
+	self assert: ((UserGlobals at: #GsSCSub) includesSelector: #subKeep)
+%
+
+category: 'tests - apply'
+method: GsSplitClassRefactoringTest
+testApplyDoesNotCommit
+	| result |
+	result := self ref applyDeselected: #().
+	self assert: (result includesString: '"committed":false').
+	self deny: (result includesString: '"error"')
 %
 
 ! Extension methods

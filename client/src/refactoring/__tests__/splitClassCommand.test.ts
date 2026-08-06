@@ -1,0 +1,264 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
+vi.mock('../../browserQueries', () => ({
+  candidatesForSplitClass: vi.fn(),
+  analyzeSplitClass: vi.fn(),
+  startSplitClassPreview: vi.fn(),
+  pageSplitClassPreview: vi.fn(),
+  applySplitClass: vi.fn(),
+  clearSplitClassPreview: vi.fn(),
+}));
+vi.mock('../splitClassPanel', () => ({
+  showSplitClassPanel: vi.fn(),
+}));
+
+import * as vscode from 'vscode';
+import * as queries from '../../browserQueries';
+import { showSplitClassPanel } from '../splitClassPanel';
+import { splitClassCommand, SplitClassContext } from '../splitClassCommand';
+import type { ActiveSession } from '../../sessionManager';
+
+/**
+ * Drives the split-class COMMAND orchestrator (not the engine). Pins the gate → candidate list →
+ * ivar multi-pick → name prompt → pre-flight → preview → apply flow and the "say why nothing
+ * happened" branches: engine unavailable, no ivars, empty/cancelled pick, name cancellation, an
+ * analysis decline (stops before the panel), and a failed / zero-applied apply (no false success).
+ * The parsers run for real; only the queries and the panel are mocked.
+ */
+
+const ctx = (over: Partial<SplitClassContext> = {}): SplitClassContext => ({
+  session: { id: 1, rbSupportAvailable: true } as unknown as ActiveSession,
+  className: 'Person',
+  dict: 3,
+  ...over,
+});
+
+const candidatesJson = (over: Record<string, unknown> = {}): string =>
+  JSON.stringify({
+    sourceClass: 'Person',
+    instVars: [{ name: 'street' }, { name: 'city' }],
+    ...over,
+  });
+
+const analysisJson = (over: Record<string, unknown> = {}): string =>
+  JSON.stringify({
+    decline: null,
+    newClass: 'Address',
+    sourceClass: 'Person',
+    movableCount: 2,
+    affectedCount: 3,
+    ...over,
+  });
+
+const startJson = (over: Record<string, unknown> = {}): string =>
+  JSON.stringify({
+    token: 'tok',
+    total: 3,
+    newClass: 'Address',
+    sourceClass: 'Person',
+    outOfScope: { decline: null, note: null },
+    page: {
+      changes: [
+        {
+          id: '1',
+          kind: 'classAdd',
+          className: 'Address',
+          isMeta: false,
+          selector: null,
+          category: null,
+          oldSource: '',
+          newSource: 'x',
+        },
+      ],
+      nextOffset: 2,
+      done: true,
+    },
+    ...over,
+  });
+
+const setOpenDocs = (docs: unknown[]): void => {
+  (vscode.workspace as unknown as { textDocuments: unknown[] }).textDocuments = docs;
+};
+
+beforeEach(() => vi.clearAllMocks());
+afterEach(() => setOpenDocs([]));
+
+describe('split class command', () => {
+  it('gates on RB support first and does nothing when the engine is unavailable', async () => {
+    const outcome = await splitClassCommand(
+      ctx({ session: { id: 1, rbSupportAvailable: false } as ActiveSession }),
+    );
+
+    expect(outcome).toBeUndefined();
+    expect(queries.candidatesForSplitClass).not.toHaveBeenCalled();
+  });
+
+  it('informs and stops when the class has no own instance variables', async () => {
+    vi.mocked(queries.candidatesForSplitClass).mockResolvedValue(candidatesJson({ instVars: [] }));
+
+    const outcome = await splitClassCommand(ctx());
+
+    expect(outcome).toBeUndefined();
+    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+      expect.stringContaining('no own instance variables'),
+    );
+    expect(vscode.window.showQuickPick).not.toHaveBeenCalled();
+  });
+
+  it('does nothing when the ivar pick is cancelled', async () => {
+    vi.mocked(queries.candidatesForSplitClass).mockResolvedValue(candidatesJson());
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValue(undefined);
+
+    const outcome = await splitClassCommand(ctx());
+
+    expect(outcome).toBeUndefined();
+    expect(vscode.window.showInputBox).not.toHaveBeenCalled();
+  });
+
+  it('does nothing when the ivar pick is empty', async () => {
+    vi.mocked(queries.candidatesForSplitClass).mockResolvedValue(candidatesJson());
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValue([] as never);
+
+    const outcome = await splitClassCommand(ctx());
+
+    expect(outcome).toBeUndefined();
+    expect(vscode.window.showInputBox).not.toHaveBeenCalled();
+  });
+
+  it('does nothing when the name prompt is cancelled', async () => {
+    vi.mocked(queries.candidatesForSplitClass).mockResolvedValue(candidatesJson());
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValue(['street'] as never);
+    vi.mocked(vscode.window.showInputBox).mockResolvedValue(undefined);
+
+    const outcome = await splitClassCommand(ctx());
+
+    expect(outcome).toBeUndefined();
+    expect(queries.analyzeSplitClass).not.toHaveBeenCalled();
+  });
+
+  it('threads the chosen ivars + new name into analyze, then applies and reports', async () => {
+    vi.mocked(queries.candidatesForSplitClass).mockResolvedValue(candidatesJson());
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValue(['street', 'city'] as never);
+    vi.mocked(vscode.window.showInputBox).mockResolvedValue('Address');
+    vi.mocked(queries.analyzeSplitClass).mockResolvedValue(analysisJson());
+    vi.mocked(queries.startSplitClassPreview).mockResolvedValue(startJson());
+    vi.mocked(showSplitClassPanel).mockResolvedValue({ applied: 6, failed: [] });
+
+    const outcome = await splitClassCommand(ctx());
+
+    expect(outcome).toEqual({ newClass: 'Address', applied: 6 });
+    const [, className, newName, extractIvars] = vi.mocked(queries.analyzeSplitClass).mock.calls[0];
+    expect(className).toBe('Person');
+    expect(newName).toBe('Address');
+    expect(extractIvars).toEqual(['street', 'city']);
+  });
+
+  it('refuses an analysis decline and never opens the panel', async () => {
+    vi.mocked(queries.candidatesForSplitClass).mockResolvedValue(candidatesJson());
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValue(['street'] as never);
+    vi.mocked(vscode.window.showInputBox).mockResolvedValue('Address');
+    vi.mocked(queries.analyzeSplitClass).mockResolvedValue(
+      analysisJson({ decline: 'a class named Address already exists' }),
+    );
+
+    const outcome = await splitClassCommand(ctx());
+
+    expect(outcome).toBeUndefined();
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+      expect.stringContaining('already exists'),
+    );
+    expect(queries.startSplitClassPreview).not.toHaveBeenCalled();
+    expect(showSplitClassPanel).not.toHaveBeenCalled();
+  });
+
+  it('reports a failed apply and does not claim success', async () => {
+    vi.mocked(queries.candidatesForSplitClass).mockResolvedValue(candidatesJson());
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValue(['street'] as never);
+    vi.mocked(vscode.window.showInputBox).mockResolvedValue('Address');
+    vi.mocked(queries.analyzeSplitClass).mockResolvedValue(analysisJson());
+    vi.mocked(queries.startSplitClassPreview).mockResolvedValue(startJson());
+    vi.mocked(showSplitClassPanel).mockResolvedValue({
+      applied: 1,
+      failed: [{ id: '2', label: 'Person>>#foo', error: 'boom' }],
+    });
+
+    const outcome = await splitClassCommand(ctx());
+
+    expect(outcome).toBeUndefined();
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(expect.stringContaining('boom'));
+    expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
+  });
+
+  it('treats zero applied changes as a failure, not a success', async () => {
+    vi.mocked(queries.candidatesForSplitClass).mockResolvedValue(candidatesJson());
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValue(['street'] as never);
+    vi.mocked(vscode.window.showInputBox).mockResolvedValue('Address');
+    vi.mocked(queries.analyzeSplitClass).mockResolvedValue(analysisJson());
+    vi.mocked(queries.startSplitClassPreview).mockResolvedValue(startJson());
+    vi.mocked(showSplitClassPanel).mockResolvedValue({ applied: 0, failed: [] });
+
+    const outcome = await splitClassCommand(ctx());
+
+    expect(outcome).toBeUndefined();
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining('applied no changes'),
+    );
+    expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
+  });
+
+  it('surfaces an apply error envelope as a failure', async () => {
+    vi.mocked(queries.candidatesForSplitClass).mockResolvedValue(candidatesJson());
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValue(['street'] as never);
+    vi.mocked(vscode.window.showInputBox).mockResolvedValue('Address');
+    vi.mocked(queries.analyzeSplitClass).mockResolvedValue(analysisJson());
+    vi.mocked(queries.startSplitClassPreview).mockResolvedValue(startJson());
+    vi.mocked(showSplitClassPanel).mockResolvedValue({
+      applied: 0,
+      failed: [],
+      error: 'engine blew up',
+    });
+
+    const outcome = await splitClassCommand(ctx());
+
+    expect(outcome).toBeUndefined();
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining('engine blew up'),
+    );
+  });
+
+  it('saves dirty gemstone method editors before analyzing, leaving other buffers alone', async () => {
+    const dirtyMethod = vi.fn(async () => true);
+    const cleanMethod = vi.fn(async () => true);
+    const dirtyFile = vi.fn(async () => true);
+    setOpenDocs([
+      { isDirty: true, uri: { scheme: 'gemstone' }, save: dirtyMethod },
+      { isDirty: false, uri: { scheme: 'gemstone' }, save: cleanMethod },
+      { isDirty: true, uri: { scheme: 'file' }, save: dirtyFile },
+    ]);
+    vi.mocked(queries.candidatesForSplitClass).mockResolvedValue(candidatesJson());
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValue(['street'] as never);
+    vi.mocked(vscode.window.showInputBox).mockResolvedValue('Address');
+    vi.mocked(queries.analyzeSplitClass).mockResolvedValue(analysisJson());
+    vi.mocked(queries.startSplitClassPreview).mockResolvedValue(startJson());
+    vi.mocked(showSplitClassPanel).mockResolvedValue({ applied: 1, failed: [] });
+
+    await splitClassCommand(ctx());
+
+    expect(dirtyMethod).toHaveBeenCalledTimes(1);
+    expect(cleanMethod).not.toHaveBeenCalled();
+    expect(dirtyFile).not.toHaveBeenCalled();
+    expect(queries.analyzeSplitClass).toHaveBeenCalled();
+  });
+
+  it('aborts before analyzing when a dirty method buffer will not save', async () => {
+    setOpenDocs([{ isDirty: true, uri: { scheme: 'gemstone' }, save: vi.fn(async () => false) }]);
+    vi.mocked(queries.candidatesForSplitClass).mockResolvedValue(candidatesJson());
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValue(['street'] as never);
+    vi.mocked(vscode.window.showInputBox).mockResolvedValue('Address');
+
+    const outcome = await splitClassCommand(ctx());
+
+    expect(outcome).toBeUndefined();
+    expect(queries.analyzeSplitClass).not.toHaveBeenCalled();
+  });
+});

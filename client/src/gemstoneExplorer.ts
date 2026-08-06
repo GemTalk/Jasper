@@ -57,6 +57,7 @@ import {
   insertSuperclassCommand,
   extractSuperclassCommand,
 } from './refactoring/extractSuperclassCommand';
+import { splitClassCommand } from './refactoring/splitClassCommand';
 import { PushDirection } from './refactoring/queries/previewPushMethod';
 import {
   parseStartPreview as parseStartClassPreview,
@@ -2467,6 +2468,17 @@ export class ExplorerController {
     if (outcome) await this.refreshAfterClassReshape(outcome.newClass);
   }
 
+  // V8 Split Class: extract a chosen set of this class's own instance variables (and the methods
+  // that use them) into a new component class, leaving the source with a lazy accessor +
+  // delegating stubs (server-side, no commit). Reveals the new class after.
+  async splitClass(item: ClassItem | HierarchyItem): Promise<void> {
+    const session = this.session();
+    if (!session) return;
+    const dict = item instanceof HierarchyItem ? undefined : this.state.dictIndex;
+    const outcome = await splitClassCommand({ session, className: item.className, dict });
+    if (outcome) await this.refreshAfterClassReshape(outcome.newClass);
+  }
+
   // Rename this class variable across its defining class and every subclass — both
   // the instance and class side — via the server-side engine (R4). The apply is
   // value-preserving (the shared class-variable VALUE carries across) and
@@ -4392,6 +4404,17 @@ export function registerGemStoneExplorer(
         void ctl.extractSuperclass(item).catch((e: unknown) => {
           const msg = e instanceof Error ? e.message : String(e);
           void vscode.window.showErrorMessage(`Extract superclass failed: ${msg}`);
+        });
+      },
+    ),
+    // Split a class: extract chosen instance variables + their methods into a new component class.
+    vscode.commands.registerCommand(
+      'gemstone.explorer.splitClass',
+      (item?: ClassItem | HierarchyItem) => {
+        if (!(item instanceof ClassItem) && !(item instanceof HierarchyItem)) return;
+        void ctl.splitClass(item).catch((e: unknown) => {
+          const msg = e instanceof Error ? e.message : String(e);
+          void vscode.window.showErrorMessage(`Split class failed: ${msg}`);
         });
       },
     ),
