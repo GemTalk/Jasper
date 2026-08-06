@@ -225,7 +225,17 @@ export const window = {
     panel.title = title;
     return panel;
   }),
-  showTextDocument: vi.fn(async () => createMockTextEditor()),
+  showTextDocument: vi.fn(async (_a: unknown, b?: unknown) => {
+    const editor = createMockTextEditor();
+    let col: number | undefined;
+    if (typeof b === 'number') col = b;
+    else if (b && typeof b === 'object' && 'viewColumn' in b)
+      col = (b as { viewColumn?: number }).viewColumn;
+    // Resolve Active (-1) / Beside (-2) / unspecified to a concrete column, as real
+    // VS Code does, so callers can record the column an editor actually landed in.
+    editor.viewColumn = col === undefined || col < 0 ? 1 : col;
+    return editor;
+  }),
   showNotebookDocument: vi.fn(async (doc: unknown) => ({ notebook: doc })),
   showErrorMessage: vi.fn(),
   showInformationMessage: vi.fn(),
@@ -313,7 +323,11 @@ export const window = {
   showOpenDialog: vi.fn(),
   showSaveDialog: vi.fn(),
   tabGroups: {
-    all: [] as { viewColumn?: number; tabs: { input: unknown; isDirty?: boolean }[] }[],
+    all: [] as {
+      viewColumn?: number;
+      activeTab?: { input: unknown; isDirty?: boolean; isPinned?: boolean };
+      tabs: { input: unknown; isDirty?: boolean; isPinned?: boolean }[];
+    }[],
     close: vi.fn(),
     onDidChangeTabs: vi.fn(() => ({ dispose: vi.fn() })),
   },
@@ -535,6 +549,12 @@ export class CodeActionKind {
   static readonly QuickFix = new CodeActionKind('quickfix');
   static readonly Refactor = new CodeActionKind('refactor');
   static readonly Source = new CodeActionKind('source');
+  append(parts: string): CodeActionKind {
+    return new CodeActionKind(this.value ? `${this.value}.${parts}` : parts);
+  }
+  contains(other: CodeActionKind): boolean {
+    return this.value === other.value || other.value.startsWith(`${this.value}.`);
+  }
 }
 
 export class CodeAction {

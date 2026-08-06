@@ -13,7 +13,10 @@ has an apply-path test.
 
 - **[GS SUnit]** in `gs-src/refactoring/tests/` — apply the change set, then assert the resulting
   state of the stone, not the change set that was staged.
-- **[GCI on-demand]** in `client/src/__tests__/gci/` — drive apply through the client path end to end.
+- **[GCI integration]** in `client/src/refactoring/__tests__/*.integration.test.ts` — drive apply
+  through the client path end to end, gated with `requireServerPluginFeature`. This is the default
+  home: it runs in CI over the whole release matrix. Only a scenario that must COMMIT belongs in the
+  on-demand `client/src/__tests__/gci/` project, since the integration harness aborts every test.
 - Both boundaries: 3.6.2 **and** 3.7.5.
 
 ## What an apply test must assert
@@ -42,4 +45,6 @@ its preview looks.
 - `GsRenameClassRefactoring>>copyMethodsFrom:to:` — the copy-forward that makes survival possible.
 - `GsInstVarRefactoringTest>>testApplyRemoveDropsBrokenMethodsAndReportsThem` — asserts the broken
   method is gone AND an unrelated one survives.
-- `client/src/__tests__/gci/gciInstVar.e2e.test.ts` — the client-side apply shape.
+- `client/src/refactoring/__tests__/refactoringInstVar.integration.test.ts` — the client-side apply
+  shape: reports the methods that will not recompile, drops exactly those, and asserts an unrelated
+  method survived the new class version.

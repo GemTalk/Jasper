@@ -6,6 +6,8 @@ vi.mock('../../browserQueries', () => ({
   pageInstVarPreview: vi.fn(),
   applyInstVar: vi.fn(),
   clearInstVarPreview: vi.fn(),
+  abortSessionTransaction: vi.fn(),
+  sessionNeedsCommit: vi.fn(),
 }));
 vi.mock('../instVarRefactorPanel', () => ({
   showInstVarRefactorPanel: vi.fn(),
@@ -23,9 +25,12 @@ import type { ApplyResult } from '../instVarRefactorPreview';
  * ensure-engine → pre-flight → preview → panel → apply → report flow and the "always say why
  * nothing happened" contract: engine-unavailable, a failed pre-flight, an analysis decline, a
  * failed preview (with token cleanup), an out-of-scope or empty preview (with cleanup), user
- * cancel, a failed apply, the dropped-methods / committed notes, and the loadPage / apply /
- * cleanup callbacks the command wires into the panel. The parsers run for real; only the GCI
- * queries and the preview panel are mocked.
+ * cancel, the dropped-methods / committed notes, and the loadPage / apply / abort / cleanup
+ * callbacks the command wires into the panel. Apply FAILURES (a stranded partial reshape, an
+ * expired token, a zero-change apply) are surfaced inside the panel now, not here — the panel
+ * resolves undefined for all of them — so their coverage lives in the panel / preview tests; the
+ * command's only remaining stake is the abort handler it hands the panel. The parsers run for
+ * real; only the GCI queries and the preview panel are mocked.
  */
 
 const req = (over: Partial<InstVarRefactorRequest> = {}): InstVarRefactorRequest => ({
@@ -185,20 +190,28 @@ describe('add / remove instance variable command', () => {
     expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
   });
 
-  it('reports a failed apply and returns no outcome', async () => {
+  it('hands the panel an abort handler that aborts the session transaction', async () => {
     vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson());
     vi.mocked(queries.startInstVarPreview).mockResolvedValue(startJson());
-    vi.mocked(showInstVarRefactorPanel).mockResolvedValue(
-      applied({
-        applied: 0,
-        failed: [{ id: 'c1', label: 'Foo (definition edited)', error: 'boom' }],
-      }),
-    );
+    vi.mocked(showInstVarRefactorPanel).mockResolvedValue(undefined);
 
-    const outcome = await runInstVarRefactor(req());
+    await runInstVarRefactor(req());
+    vi.mocked(showInstVarRefactorPanel).mock.calls[0][2].abort();
 
-    expect(outcome).toBeUndefined();
-    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(expect.stringContaining('boom'));
+    expect(queries.abortSessionTransaction).toHaveBeenCalledOnce();
+  });
+
+  it('hands the panel a live needs-commit probe over the session', async () => {
+    vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson());
+    vi.mocked(queries.startInstVarPreview).mockResolvedValue(startJson());
+    vi.mocked(showInstVarRefactorPanel).mockResolvedValue(undefined);
+    vi.mocked(queries.sessionNeedsCommit).mockReturnValue(true);
+
+    await runInstVarRefactor(req());
+    const probe = vi.mocked(showInstVarRefactorPanel).mock.calls[0][2].sessionNeedsCommit;
+
+    expect(probe?.()).toBe(true);
+    expect(queries.sessionNeedsCommit).toHaveBeenCalled();
   });
 
   it('titles an add and reports success', async () => {

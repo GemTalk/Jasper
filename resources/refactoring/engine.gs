@@ -163,6 +163,65 @@ removeallclassmethods GsExtractMethodRefactoring
 
 doit
 | cls |
+cls := Object subclass: 'GsExtractSuperclassRefactoring'
+  instVarNames: #('environment' 'anchorClass' 'newName' 'dictNameOrNil' 'siblingNames' 'hoistMethods' 'hoistInstVars' 'sharedParent' 'extractedClasses' 'newClass' 'changeSet' 'analysisDone' 'decline' 'oldToNew')
+  classVars: #()
+  classInstVars: #()
+  poolDictionaries: #()
+  inDictionary: GsRefactoring.
+cls category: 'Refactoring-Core'.
+cls comment: '
+Insert a new common superclass (V6) and, optionally, hoist shared members up into it (V7),
+without committing.
+
+V6 Insert Superclass slides a NEW, empty class in between one class and its current superclass:
+`Object -> Dog` becomes `Object -> New -> Dog`. V7 Extract Superclass does the same above a chosen
+set of SIBLING classes and pulls their common instance variables and methods up into the new
+parent, removing the duplication. V6 is the degenerate case of V7 -- extract above ONE class,
+hoisting ZERO members -- so ONE engine serves both, driven from two thin client commands.
+
+The apply core is a direct generalisation of GsInstVarStructureRefactoring (the same
+reversion-by-newVersionOf: machinery, because GemStone has no reparent/addInstVarName: primitive)
+plus ONE new change kind, #classAdd, for the brand-new superclass (which has no prior class
+history). For every extracted class and its descendant subtree, top-down, apply creates a new
+class version, copies its methods forward, and re-parents it -- the extracted classes onto the NEW
+superclass, their descendants onto their own freshly-versioned ancestor. Hoisted instance
+variables move onto the new superclass (and off each extracted class); hoisted methods are added to
+the new superclass and skipped when copying each extracted class forward.
+
+Shared parent (S) = the anchor class''s immediate superclass. The extracted set = the anchor plus
+the chosen siblings, which MUST all be immediate subclasses of S (extract only inserts above
+same-parent siblings, keeping the new class''s own superclass unambiguous). Sibling names resolve
+within S''s own subclasses first, so a same-named class in another dictionary is never grabbed.
+
+Member CLASSIFICATION (candidateMethods / candidateInstVars) drives the client''s checklist but not
+the apply: a method common+identical across the extracted set is ''identical'' (pre-checked); common
+but differing is ''divergent''; present in only some is ''partial''; one that sends super, or touches
+an instance variable not being hoisted (and not on S), or a class/pool variable below S, is
+''unhoistable''. Only identical members are pre-checked, and only when there is a sibling to
+deduplicate against -- so V6 (no siblings) defaults to hoisting nothing (a pure insert). A member
+the client nonetheless asks to hoist which the engine finds unhoistable is a global decline (it
+would not compile on the new superclass).
+
+Preconditions (global declines that empty the change set, surfaced in the preview banner): the
+anchor has no superclass (nothing to slot the new class under); a class named newName already
+exists; a chosen sibling does not resolve or is not an immediate subclass of S; a hoisted ivar is
+not the anchor''s own ivar, or already collides on S; a hoisted method is missing on the anchor or
+is unhoistable.
+
+Apply is ALL-OR-NOTHING (the class creation, the reparents and the hoists must move together), so
+the client offers no per-change deselection and applyDeselected: ignores any deselection. Existing
+INSTANCES are not migrated (they keep their prior version, standard GemStone class evolution).
+Building compiles nothing and commits nothing; the apply compiles in the stone but NEVER commits.
+'.
+true.
+%
+
+removeallmethods GsExtractSuperclassRefactoring
+removeallclassmethods GsExtractSuperclassRefactoring
+
+doit
+| cls |
 cls := Object subclass: 'GsExtractTemporaryRefactoring'
   instVarNames: #('environment' 'definingClass' 'selector' 'isMeta' 'selStart' 'selStop' 'newName' 'replaceAll' 'changeSet' 'analysisDone' 'targetNode' 'declSeq' 'declineString')
   classVars: #()
@@ -296,7 +355,7 @@ removeallclassmethods GsInlineTemporaryRefactoring
 doit
 | cls |
 cls := Object subclass: 'GsInstVarRefactoring'
-  instVarNames: #('environment' 'operation' 'definingClass' 'varName' 'newIvarLists' 'affected' 'willNotRecompile' 'editedOptions' 'changeSet' 'analysisDone' 'decline' 'oldToNew' 'dropped' 'committed')
+  instVarNames: #('environment' 'operation' 'definingClass' 'varName' 'newIvarLists' 'affected' 'willNotRecompile' 'editedOptions' 'changeSet' 'analysisDone' 'decline' 'oldToNew' 'dropped' 'committed' 'partiallyApplied' 'applied')
   classVars: #()
   classInstVars: #()
   poolDictionaries: #()
@@ -330,11 +389,16 @@ Two things the family did not surface before, both required here:
     option list a given class''s new version is built with. (The panel does not surface options
     for editing; editedOptions is plumbing for a future options editor and is left nil.)
 
-  - METHODS THAT WILL NOT RECOMPILE. A method that references a removed instance variable no
-    longer resolves the name; GemStone will not compile a reference to an undeclared lowercase
-    identifier, so such a method fails to compile and is silently DROPPED from the new version. The
-    set is predicted (without compiling) from bytecode-level instance-variable access, surfaced in
-    the preview as willNotRecompile, and reported (dropped) after apply.
+  - METHODS THAT WILL NOT RECOMPILE, predicted (without compiling) for BOTH operations, surfaced in
+    the preview as willNotRecompile, and reported (dropped) after apply. Two distinct causes:
+      * #remove -- the method references the removed variable, so the name no longer resolves.
+        Found by bytecode-level instance-variable access (GsNMethod>>instVarsAccessed).
+      * #add    -- the method declares a method-level TEMPORARY or an ARGUMENT of the name the new
+        variable is about to occupy. GemStone refuses that shadowing declaration (verified on 3.6.2
+        and 3.7.5), and compileMethod: answers an error Array rather than raising, so the method is
+        simply not installed. Found by parsing each method''s source, since a compiled method keeps
+        no temporary/argument names. Block arguments and block temporaries may shadow freely and are
+        deliberately NOT reported.
 
 IMPORTANT commit semantics (surfaced in the preview):
   - The structural change (new versions + method copy-forward + reparents) NEVER commits on its own.
@@ -2718,6 +2782,835 @@ clearToken: token
 %
 
 category: 'private'
+method: GsExtractSuperclassRefactoring
+setEnvironment: anEnvironment class: anAnchor name: aName dict: aDictOrNil siblings: sibs methods: methods instVars: ivars
+	environment := anEnvironment.
+	anchorClass := anAnchor.
+	newName := aName asString.
+	dictNameOrNil := aDictOrNil isNil ifTrue: [nil] ifFalse: [aDictOrNil asString].
+	siblingNames := (sibs ifNil: [#()]) collect: [:e | e asString].
+	hoistMethods := (methods ifNil: [#()]) collect: [:e | e asSymbol].
+	hoistInstVars := (ivars ifNil: [#()]) collect: [:e | e asString].
+	analysisDone := false
+%
+
+category: 'accessing'
+method: GsExtractSuperclassRefactoring
+environment
+	^environment
+%
+
+category: 'accessing'
+method: GsExtractSuperclassRefactoring
+extractedClasses
+	self ensureAnalysis.
+	^extractedClasses
+%
+
+category: 'accessing'
+method: GsExtractSuperclassRefactoring
+sharedParent
+	self ensureAnalysis.
+	^sharedParent
+%
+
+category: 'private'
+method: GsExtractSuperclassRefactoring
+ownInstVarsOf: aClass
+	^aClass instVarNames collect: [:e | e asString]
+%
+
+category: 'private'
+method: GsExtractSuperclassRefactoring
+allInstVarsOf: aClass
+	^aClass allInstVarNames collect: [:e | e asString]
+%
+
+category: 'private'
+method: GsExtractSuperclassRefactoring
+sourceOf: aSelector in: aClass
+	| m |
+	m := aClass compiledMethodAt: aSelector environmentId: 0 otherwise: nil.
+	^m isNil ifTrue: [nil] ifFalse: [m sourceString]
+%
+
+category: 'private'
+method: GsExtractSuperclassRefactoring
+categoryOf: aSelector in: aClass
+	^((aClass categoryOfSelector: aSelector environmentId: 0) ifNil: ['as yet unclassified']) asString
+%
+
+category: 'private - analysis'
+method: GsExtractSuperclassRefactoring
+ensureAnalysis
+	analysisDone ifFalse: [
+		analysisDone := true.
+		[self computeAnalysis] on: Error do: [:e |
+			decline := 'The extract-superclass could not be analysed: ', e messageText]]
+%
+
+category: 'private - analysis'
+method: GsExtractSuperclassRefactoring
+computeAnalysis
+	"Resolve the shared parent S and the extracted set, reject the global preconditions, then
+	 validate the requested hoist sets. Sets decline (nil when viable), sharedParent and
+	 extractedClasses."
+	decline := nil.
+	extractedClasses := OrderedCollection new.
+	sharedParent := anchorClass superclass.
+	sharedParent isNil ifTrue: [
+		^decline := 'Cannot extract a superclass above ', anchorClass name asString, ': it has no superclass.'].
+	(environment classNamed: newName) notNil ifTrue: [
+		^decline := 'Cannot extract superclass ', newName, ': a class of that name already exists.'].
+	extractedClasses add: anchorClass.
+	siblingNames do: [:nm | | sib |
+		sib := self resolveSibling: nm.
+		sib isNil ifTrue: [
+			^decline := 'Cannot extract superclass: ', nm, ' is not a subclass of ', sharedParent name asString, '.'].
+		sib == anchorClass ifFalse: [
+			(extractedClasses includes: sib) ifFalse: [extractedClasses add: sib]]].
+	self validateHoistInstVars.
+	decline notNil ifTrue: [^decline].
+	self validateHoistMethods
+%
+
+category: 'private - analysis'
+method: GsExtractSuperclassRefactoring
+resolveSibling: aName
+	"The immediate subclass of the shared parent named aName -- resolved within S's OWN
+	 subclasses first (lineage-safe), so a same-named class in another dictionary is never
+	 grabbed. nil if no immediate subclass of S has that name."
+	^(sharedParent subclasses ifNil: [#()])
+		detect: [:c | c name asString = aName]
+		ifNone: [nil]
+%
+
+category: 'private - analysis'
+method: GsExtractSuperclassRefactoring
+validateHoistInstVars
+	"Every hoisted ivar must be the anchor's OWN ivar, must not already be defined on S (a
+	 double declaration once the new class -- a child of S -- declares it), and must not be OWNED
+	 BY A DESCENDANT of any extracted class.
+
+	 That last one is why this walks downwards. Hoisting puts the name on the new superclass, so
+	 every descendant inherits it; a descendant that also declares the name itself would be
+	 re-versioned with a duplicate declaration and GemStone rejects it. Without this check the
+	 rejection surfaced from applyClassChange: PART-WAY THROUGH the apply, leaving the new class
+	 created and some reparents done -- the half-applied state the user then has to abort. The
+	 class comment sells these as global declines that empty the change set, so it belongs here."
+	| own supAll |
+	own := self ownInstVarsOf: anchorClass.
+	supAll := self allInstVarsOf: sharedParent.
+	hoistInstVars do: [:v |
+		(own includes: v) ifFalse: [
+			^decline := 'Cannot hoist instance variable ', v, ': it is not declared in ', anchorClass name asString, '.'].
+		(supAll includes: v) ifTrue: [
+			^decline := 'Cannot hoist instance variable ', v, ': ', sharedParent name asString, ' already defines it.'].
+		(self descendantDeclaring: v) ifNotNil: [:owner |
+			^decline := 'Cannot hoist instance variable ', v, ': ', owner name asString, ' already declares it.']]
+%
+
+category: 'private - analysis'
+method: GsExtractSuperclassRefactoring
+descendantDeclaring: anIvarName
+	"The first descendant of an extracted class that declares anIvarName as its OWN instance
+	 variable, or nil. The extracted classes themselves are skipped -- the anchor is supposed to
+	 own the name (it is what gets hoisted), and a sibling losing its own copy is the point."
+	extractedClasses do: [:cls |
+		(environment descendantsOf: cls) do: [:d |
+			((extractedClasses includes: d) not
+				and: [(self ownInstVarsOf: d) includes: anIvarName])
+					ifTrue: [^d]]].
+	^nil
+%
+
+category: 'private - analysis'
+method: GsExtractSuperclassRefactoring
+validateHoistMethods
+	"Every hoisted method must be implemented by the anchor and be hoistable onto the new
+	 superclass given the instance variables ACTUALLY being hoisted (plus whatever S provides)."
+	| visible |
+	visible := self visibleIvarSymbolsWith: hoistInstVars.
+	hoistMethods do: [:sel |
+		(anchorClass includesSelector: sel) ifFalse: [
+			^decline := 'Cannot hoist #', sel asString, ': it is not defined in ', anchorClass name asString, '.'].
+		(self hoistabilityReasonFor: sel visibleIvars: visible) ifNotNil: [:reason |
+			^decline := reason]]
+%
+
+category: 'private - analysis'
+method: GsExtractSuperclassRefactoring
+visibleIvarSymbolsWith: anIvarList
+	"The instance variables an ivar-list would make VISIBLE on the new superclass: that list
+	 plus everything S already provides, as a Set of Symbols."
+	| visible |
+	visible := Set new.
+	anIvarList do: [:v | visible add: v asSymbol].
+	(self allInstVarsOf: sharedParent) do: [:v | visible add: v asSymbol].
+	^visible
+%
+
+category: 'private - analysis'
+method: GsExtractSuperclassRefactoring
+hoistabilityReasonFor: aSelector visibleIvars: visibleSet
+	"nil if the anchor's #aSelector can be hoisted onto the new superclass given visibleSet (the
+	 instance variables that will be reachable there); otherwise a reason. A method is
+	 unhoistable when it sends super (its meaning depends on the class's superclass, which changes
+	 when the home moves up), accesses an instance variable not in visibleSet, or references a
+	 class/pool variable declared only below S -- in each case it would not compile on the new
+	 superclass. Mirrors push-up's checks."
+	| src tree accessed missing sharedBelow refNames badShared |
+	src := self sourceOf: aSelector in: anchorClass.
+	src isNil ifTrue: [^'Cannot hoist #', aSelector asString, ': it is not defined in ', anchorClass name asString, '.'].
+	tree := [RBParser parseMethod: src] on: Error do: [:e | nil].
+	(tree notNil and: [self tree: tree referencesName: 'super']) ifTrue: [
+		^'Cannot hoist #', aSelector asString, ': it sends super, whose meaning depends on the class''s superclass.'].
+	accessed := [(anchorClass compiledMethodAt: aSelector environmentId: 0 otherwise: nil) instVarsAccessed] on: Error do: [:e | #()].
+	missing := accessed reject: [:v | visibleSet includes: v asSymbol].
+	missing isEmpty ifFalse: [
+		^'Cannot hoist #', aSelector asString, ': it uses instance variable(s) not available on the new superclass (',
+			(self commaList: (missing collect: [:v | v asString])), ').'].
+	sharedBelow := self sharedVarsBelowParent.
+	sharedBelow isEmpty ifFalse: [
+		refNames := Set new.
+		tree ifNotNil: [tree nodesDo: [:n | n isVariable ifTrue: [refNames add: n name asSymbol]]].
+		badShared := sharedBelow select: [:v | refNames includes: v].
+		badShared isEmpty ifFalse: [
+			^'Cannot hoist #', aSelector asString, ': it uses class/pool variable(s) not defined on the new superclass (',
+				(self commaList: ((badShared asSortedCollection: [:a :b | a <= b]) asArray collect: [:v | v asString])), ').']].
+	^nil
+%
+
+category: 'private - analysis'
+method: GsExtractSuperclassRefactoring
+sharedVarsBelowParent
+	"Class-variable + pool-variable names visible to the anchor but NOT to S -- a hoisted method
+	 referencing any of these would not compile on the new class (a child of S)."
+	| below |
+	below := self sharedVarNamesOf: anchorClass.
+	(self sharedVarNamesOf: sharedParent) do: [:v | below remove: v ifAbsent: []].
+	^below
+%
+
+category: 'private - analysis'
+method: GsExtractSuperclassRefactoring
+sharedVarNamesOf: aClass
+	| names |
+	names := Set new.
+	([aClass allClassVarNames] on: Error do: [:e | #()]) do: [:n | names add: n asSymbol].
+	([aClass sharedPools] on: Error do: [:e | #()]) do: [:pool | pool keysDo: [:k | names add: k asSymbol]].
+	^names
+%
+
+category: 'private - analysis'
+method: GsExtractSuperclassRefactoring
+tree: aTree referencesName: aName
+	aTree nodesDo: [:n | (n isVariable and: [n name = aName]) ifTrue: [^true]].
+	^false
+%
+
+category: 'private'
+method: GsExtractSuperclassRefactoring
+commaList: aCollection
+	^aCollection inject: '' into: [:acc :s | acc isEmpty ifTrue: [s] ifFalse: [acc, ', ', s]]
+%
+
+category: 'private'
+method: GsExtractSuperclassRefactoring
+spaceList: aCollection
+	^aCollection inject: '' into: [:acc :s | acc isEmpty ifTrue: [s asString] ifFalse: [acc, ' ', s asString]]
+%
+
+category: 'preconditions'
+method: GsExtractSuperclassRefactoring
+decline
+	self ensureAnalysis.
+	^decline
+%
+
+category: 'classification'
+method: GsExtractSuperclassRefactoring
+candidateMethods
+	"Classified method hoist candidates across the extracted set E = anchor + siblings. A
+	 candidate is a selector the ANCHOR implements (instance side). Answers an OrderedCollection
+	 of Arrays {selector, kindSymbol, reasonStringOrNil}: #unhoistable (super/foreign var),
+	 #identical (every class in E implements it byte-identically), #divergent (every class in E
+	 implements it but a source differs), or #partial (only some of E implement it)."
+	| result visible |
+	self ensureAnalysis.
+	result := OrderedCollection new.
+	decline notNil ifTrue: [^result].
+	"Classify methods OPTIMISTICALLY: assume the identical instance variables (the ones checked
+	 by default) will be hoisted too, so a shared accessor reads as hoistable rather than being
+	 flagged for an ivar that will in fact travel up with it. Apply-time validation uses the
+	 ACTUAL chosen ivar set, so an inconsistent selection (hoist the accessor, not the ivar) still
+	 declines."
+	visible := self visibleIvarSymbolsWith: self identicalCandidateIvarNames.
+	(anchorClass selectors asSortedCollection: [:a :b | a asString <= b asString]) do: [:sel | | reason anchorSrc all differs |
+		reason := self hoistabilityReasonFor: sel visibleIvars: visible.
+		reason notNil
+			ifTrue: [result add: (Array with: sel with: #unhoistable with: reason)]
+			ifFalse: [
+				anchorSrc := self sourceOf: sel in: anchorClass.
+				all := extractedClasses allSatisfy: [:c | c includesSelector: sel].
+				all
+					ifFalse: [result add: (Array with: sel with: #partial with: nil)]
+					ifTrue: [
+						differs := extractedClasses anySatisfy: [:c | (self sourceOf: sel in: c) ~= anchorSrc].
+						result add: (Array with: sel with: (differs ifTrue: [#divergent] ifFalse: [#identical]) with: nil)]]].
+	^result
+%
+
+category: 'classification'
+method: GsExtractSuperclassRefactoring
+candidateInstVars
+	"Classified instance-variable hoist candidates: each OWN ivar of the anchor, as Arrays
+	 {name, kindSymbol}: #unhoistable (S already defines it), #identical (owned by every class in
+	 E), or #partial (owned by only some of E)."
+	| result |
+	self ensureAnalysis.
+	result := OrderedCollection new.
+	decline notNil ifTrue: [^result].
+	(self ownInstVarsOf: anchorClass) do: [:v | | all |
+		((self allInstVarsOf: sharedParent) includes: v)
+			ifTrue: [result add: (Array with: v with: #unhoistable)]
+			ifFalse: [
+				all := extractedClasses allSatisfy: [:c | (self ownInstVarsOf: c) includes: v].
+				result add: (Array with: v with: (all ifTrue: [#identical] ifFalse: [#partial]))]].
+	^result
+%
+
+category: 'classification'
+method: GsExtractSuperclassRefactoring
+identicalCandidateIvarNames
+	"The own ivars of the anchor that every extracted class also owns -- the ones hoisted by
+	 default -- as an Array of Strings. Used to classify method hoistability optimistically."
+	^(self ownInstVarsOf: anchorClass) select: [:v |
+		((self allInstVarsOf: sharedParent) includes: v) not
+			and: [extractedClasses allSatisfy: [:c | (self ownInstVarsOf: c) includes: v]]]
+%
+
+category: 'classification'
+method: GsExtractSuperclassRefactoring
+defaultChecksMember: aKind
+	"Only 'identical' members are pre-checked, and only when there is a sibling to deduplicate
+	 against (so a single-anchor V6 defaults to hoisting nothing -- a pure insert)."
+	^aKind == #identical and: [siblingNames notEmpty]
+%
+
+category: 'building'
+method: GsExtractSuperclassRefactoring
+changeSet
+	changeSet isNil ifTrue: [changeSet := self buildChangeSet].
+	^changeSet
+%
+
+category: 'building'
+method: GsExtractSuperclassRefactoring
+buildChangeSet
+	"Stage: the #classAdd for the new superclass; then, per extracted class top-down, a
+	 #classDefinitionEdit re-parenting it under the new class (with the hoisted ivars removed)
+	 followed by a #classReparent for every descendant; then the hoisted methods as #methodAdd
+	 on the new class + #methodRemove on each extracted class that implements them. Compiles
+	 nothing, commits nothing."
+	| cs dn |
+	cs := GsRefactoringChangeSet new.
+	self ensureAnalysis.
+	decline notNil ifTrue: [^cs].
+	dn := self newClassDictName.
+	cs
+		addClassAddInDictionary: dn
+		className: newName
+		superclassName: sharedParent name asString
+		newSource: self newClassDefinition.
+	extractedClasses do: [:e |
+		self stageExtractedEdit: e into: cs.
+		(environment descendantsOf: e) do: [:d | self stageReparent: d into: cs]].
+	hoistMethods do: [:sel | self stageHoistOf: sel into: cs].
+	^cs
+%
+
+category: 'building'
+method: GsExtractSuperclassRefactoring
+stageExtractedEdit: aClass into: cs
+	"A #classDefinitionEdit re-parenting aClass under the new superclass, with the hoisted ivars
+	 dropped from its own list."
+	| oldDef newList |
+	oldDef := aClass definition.
+	newList := (self ownInstVarsOf: aClass) reject: [:n | hoistInstVars includes: n].
+	cs
+		addClassDefinitionEditInDictionary: (self dictNameForClass: aClass)
+		className: aClass name asString
+		oldSource: oldDef
+		newSource: (self definitionText: oldDef superclass: newName ivars: newList)
+%
+
+category: 'building'
+method: GsExtractSuperclassRefactoring
+stageReparent: aClass into: cs
+	"A #classReparent for a descendant of an extracted class: recompiled only to re-point at its
+	 freshly-versioned ancestor. Its own definition text is unchanged."
+	| oldDef |
+	oldDef := aClass definition.
+	cs
+		addClassReparentInDictionary: (self dictNameForClass: aClass)
+		className: aClass name asString
+		oldSource: oldDef
+		newSource: oldDef
+%
+
+category: 'building'
+method: GsExtractSuperclassRefactoring
+stageHoistOf: aSelector into: cs
+	"Add the hoisted method (from the anchor's source) onto the new superclass, and stage a
+	 #methodRemove from every extracted class that implements it (for the preview; apply skips
+	 it on copy-forward, so the remove is a guarded no-op)."
+	| src cat |
+	src := self sourceOf: aSelector in: anchorClass.
+	cat := self categoryOf: aSelector in: anchorClass.
+	cs
+		addMethodAddInDictionary: (self newClassDictName)
+		className: newName
+		isMeta: false
+		selector: aSelector
+		category: cat
+		newSource: src.
+	extractedClasses do: [:e |
+		(e includesSelector: aSelector) ifTrue: [
+			cs
+				addMethodRemoveInDictionary: (self dictNameForClass: e)
+				className: e name asString
+				isMeta: false
+				selector: aSelector
+				category: (self categoryOf: aSelector in: e)
+				oldSource: (self sourceOf: aSelector in: e)]]
+%
+
+category: 'building'
+method: GsExtractSuperclassRefactoring
+definitionText: oldDef superclass: supName ivars: ivarList
+	"oldDef rewritten to name supName as the superclass and ivarList as the own-instVar list.
+	 Display-only (the apply computes both directly); replaces the leading superclass token and
+	 the instVarNames: list."
+	| idx s |
+	s := oldDef.
+	idx := s indexOfSubCollection: 'subclass:'.
+	idx > 0 ifTrue: [s := supName, ' ', (s copyFrom: idx to: s size)].
+	^self definitionWithIvars: ivarList in: s
+%
+
+category: 'building'
+method: GsExtractSuperclassRefactoring
+definitionWithIvars: anIvarList in: defString
+	"defString with the instVarNames: clause's parenthesised list replaced by anIvarList
+	 (quoted). Mirrors GsInstVarStructureRefactoring; display-only."
+	| marker start openParen closeParen ws |
+	marker := 'instVarNames:'.
+	start := defString indexOfSubCollection: marker.
+	start = 0 ifTrue: [^defString].
+	openParen := defString indexOf: $( startingAt: start.
+	openParen = 0 ifTrue: [^defString].
+	closeParen := defString indexOf: $) startingAt: openParen.
+	closeParen = 0 ifTrue: [^defString].
+	ws := WriteStream on: String new.
+	ws nextPutAll: (defString copyFrom: 1 to: openParen).
+	anIvarList keysAndValuesDo: [:i :n |
+		i = 1 ifFalse: [ws nextPut: $ ].
+		ws nextPutAll: ''''; nextPutAll: n asString; nextPutAll: ''''].
+	ws nextPutAll: (defString copyFrom: closeParen to: defString size).
+	^ws contents
+%
+
+category: 'building'
+method: GsExtractSuperclassRefactoring
+newClassDefinition
+	"A generated class definition for the new superclass (display-only)."
+	^sharedParent name asString, ' subclass: ''', newName, '''
+	instVarNames: #(', (self quotedList: hoistInstVars), ')
+	classVars: #()
+	classInstVars: #()
+	poolDictionaries: #()
+	inDictionary: ', self newClassDictName
+%
+
+category: 'building'
+method: GsExtractSuperclassRefactoring
+quotedList: aCollection
+	"aCollection as a space-separated list of single-quoted names, e.g. 'name' 'age'."
+	| ws q |
+	q := String with: $'.
+	ws := WriteStream on: String new.
+	aCollection keysAndValuesDo: [:i :n |
+		i = 1 ifFalse: [ws nextPut: $ ].
+		ws nextPutAll: q; nextPutAll: n asString; nextPutAll: q].
+	^ws contents
+%
+
+category: 'private'
+method: GsExtractSuperclassRefactoring
+newClassDictName
+	"The dictionary the new class is filed in: the caller's choice, else the anchor's own
+	 dictionary."
+	dictNameOrNil ifNotNil: [:dn | ^dn].
+	^self dictNameForClass: anchorClass
+%
+
+category: 'private'
+method: GsExtractSuperclassRefactoring
+dictNameForClass: aClass
+	| dicts |
+	dicts := environment dictionariesDefiningClassNamed: aClass name.
+	^dicts isEmpty ifTrue: ['UserGlobals'] ifFalse: [dicts first name asString]
+%
+
+category: 'serializing'
+method: GsExtractSuperclassRefactoring
+analysisJsonString
+	"The pre-flight payload: the decline reason (nil when viable), the new class name, the
+	 shared parent, and the number of staged changes."
+	self ensureAnalysis.
+	^'{"decline":', (decline ifNil: ['null'] ifNotNil: [:r | self jsonQuote: r]),
+	  ',"newClass":', (self jsonQuote: newName),
+	  ',"sharedParent":', (decline notNil ifTrue: ['null'] ifFalse: [self jsonQuote: sharedParent name asString]),
+	  ',"affectedCount":', (decline notNil ifTrue: ['0'] ifFalse: [self changeSet size printString]),
+	  '}'
+%
+
+category: 'serializing'
+method: GsExtractSuperclassRefactoring
+candidatesJsonString
+	"The classified member candidates for the preview checklist: methods and instance variables,
+	 each with its classification kind, a defaultChecked flag, and (methods) an unhoistable
+	 reason. Plus the resolved sibling set and any global decline."
+	| ws first |
+	self ensureAnalysis.
+	ws := WriteStream on: String new.
+	ws nextPutAll: '{"decline":'; nextPutAll: (decline ifNil: ['null'] ifNotNil: [:r | self jsonQuote: r]).
+	ws nextPutAll: ',"sharedParent":';
+		nextPutAll: (decline notNil ifTrue: ['null'] ifFalse: [self jsonQuote: sharedParent name asString]).
+	ws nextPutAll: ',"methods":['.
+	first := true.
+	self candidateMethods do: [:m |
+		first ifFalse: [ws nextPut: $,]. first := false.
+		ws nextPutAll: '{"selector":'; nextPutAll: (self jsonQuote: (m at: 1) asString).
+		ws nextPutAll: ',"kind":'; nextPutAll: (self jsonQuote: (m at: 2) asString).
+		ws nextPutAll: ',"defaultChecked":'; nextPutAll: (self defaultChecksMember: (m at: 2)) printString.
+		ws nextPutAll: ',"reason":'; nextPutAll: ((m at: 3) ifNil: ['null'] ifNotNil: [:r | self jsonQuote: r]).
+		ws nextPut: $}].
+	ws nextPutAll: '],"instVars":['.
+	first := true.
+	self candidateInstVars do: [:v |
+		first ifFalse: [ws nextPut: $,]. first := false.
+		ws nextPutAll: '{"name":'; nextPutAll: (self jsonQuote: (v at: 1) asString).
+		ws nextPutAll: ',"kind":'; nextPutAll: (self jsonQuote: (v at: 2) asString).
+		ws nextPutAll: ',"defaultChecked":'; nextPutAll: (self defaultChecksMember: (v at: 2)) printString.
+		ws nextPut: $}].
+	ws nextPutAll: ']}'.
+	^ws contents
+%
+
+category: 'serializing'
+method: GsExtractSuperclassRefactoring
+previewJsonString
+	^self changeSet jsonString
+%
+
+category: 'serializing'
+method: GsExtractSuperclassRefactoring
+outOfScopeJsonString
+	"The precondition / warning payload for the preview panel, in the family's shape."
+	^'{"references":0,"skipped":0,"scope":"hierarchy","collision":null,"decline":',
+	  (decline ifNil: ['null'] ifNotNil: [:r | self jsonQuote: r]),
+	  ',"note":', (self jsonQuote: 'Existing instances keep their prior class version and are not migrated.'), '}'
+%
+
+category: 'paginated preview'
+method: GsExtractSuperclassRefactoring
+startPreviewToken: token maxBytes: maxBytes
+	self changeSet.
+	SessionTemps current at: token asSymbol put: self.
+	^'{"token":', (self jsonQuote: token),
+	  ',"total":', self changeSet size printString,
+	  ',"newClass":', (self jsonQuote: newName),
+	  ',"sharedParent":', (decline notNil ifTrue: ['null'] ifFalse: [self jsonQuote: sharedParent name asString]),
+	  ',"outOfScope":', self outOfScopeJsonString,
+	  ',"page":', (self pageJsonFrom: 1 maxBytes: maxBytes), '}'
+%
+
+category: 'paginated preview'
+method: GsExtractSuperclassRefactoring
+pageJsonFrom: startIndex maxBytes: maxBytes
+	| all ws i |
+	all := self changeSet changes.
+	ws := WriteStream on: String new.
+	ws nextPut: $[.
+	i := startIndex.
+	[i <= all size and: [i = startIndex or: [ws position < maxBytes]]] whileTrue: [
+		i > startIndex ifTrue: [ws nextPut: $,].
+		(all at: i) jsonOn: ws.
+		i := i + 1].
+	ws nextPut: $].
+	^'{"changes":', ws contents,
+	  ',"nextOffset":', i printString,
+	  ',"done":', (i > all size) printString, '}'
+%
+
+category: 'applying'
+method: GsExtractSuperclassRefactoring
+applyDeselected: deselectedIds
+	"Apply EVERY staged change in the stone. Extract-superclass is ALL-OR-NOTHING (the class
+	 creation, the reparents and the hoists must move together), so a deselection is ignored.
+	 NOTHING is committed. If the loop passes a failed change, the changes that DID apply remain
+	 in the uncommitted transaction; the caller must ABORT to discard them. Answers
+	 {applied, failed:[..], committed}."
+	| applied failures |
+	self ensureAnalysis.
+	"Defence in depth: the client gates on the analysis before ever applying, but a declined ref
+	 must not answer a success-shaped envelope. Surface the reason via error (nothing applied)."
+	decline notNil ifTrue: [
+		^'{"applied":0,"committed":false,"failed":[],"error":', (self jsonQuote: decline), '}'].
+	oldToNew := IdentityDictionary new.
+	newClass := nil.
+	failures := OrderedCollection new.
+	applied := 0.
+	self changeSet changes do: [:change |
+		[self applyChange: change. applied := applied + 1]
+		on: Error do: [:e |
+			failures add: (Array with: change id with: change className with: e messageText)]].
+	^'{"applied":', applied printString,
+	  ',"committed":false',
+	  ',"failed":[',
+	  ((failures collect: [:f |
+		'{"id":', (self jsonQuote: (f at: 1)),
+		',"label":', (self jsonQuote: (f at: 2)),
+		',"error":', (self jsonQuote: (f at: 3)), '}'])
+			inject: '' into: [:acc :s | acc isEmpty ifTrue: [s] ifFalse: [acc, ',', s]]),
+	  ']}'
+%
+
+category: 'applying'
+method: GsExtractSuperclassRefactoring
+applyChange: aChange
+	aChange kind == #classAdd ifTrue: [^self applyClassAdd: aChange].
+	(aChange kind == #classDefinitionEdit or: [aChange kind == #classReparent])
+		ifTrue: [^self applyClassChange: aChange].
+	aChange kind == #methodAdd ifTrue: [^self applyMethodAdd: aChange].
+	aChange kind == #methodRemove ifTrue: [^self applyMethodRemove: aChange].
+	^self error: 'Unexpected change kind for extract-superclass: ', aChange kind printString
+%
+
+category: 'applying'
+method: GsExtractSuperclassRefactoring
+applyClassAdd: aChange
+	"Create the new superclass fresh under the shared parent, with the hoisted ivars as its own
+	 list. A brand-new class (no inClassHistory:), so a plain subclass: creation."
+	newClass := sharedParent
+		subclass: newName
+		instVarNames: (hoistInstVars collect: [:e | e asString])
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: (self dictObjectForNewClass).
+	oldToNew at: newClass put: newClass
+%
+
+category: 'applying'
+method: GsExtractSuperclassRefactoring
+applyClassChange: aChange
+	"Create a new version of the named class under its new parent -- the new superclass for an
+	 extracted class, its own freshly-versioned ancestor for a descendant -- with the computed
+	 own-instVar list, copy its methods forward (skipping the hoisted selectors for an extracted
+	 class), and record the old->new mapping."
+	| old isExtracted parentNew list new skip |
+	old := environment classNamed: aChange className.
+	old isNil ifTrue: [^self error: 'Class not found: ', aChange className].
+	isExtracted := aChange kind == #classDefinitionEdit.
+	parentNew := isExtracted
+		ifTrue: [newClass]
+		ifFalse: [oldToNew at: old superclass ifAbsent: [old superclass]].
+	list := isExtracted
+		ifTrue: [(self ownInstVarsOf: old) reject: [:n | hoistInstVars includes: n]]
+		ifFalse: [self ownInstVarsOf: old].
+	skip := isExtracted ifTrue: [hoistMethods] ifFalse: [#()].
+	new := self makeNewVersionOf: old superclass: parentNew instVarNames: list.
+	self copyMethodsFrom: old to: new skipping: skip.
+	oldToNew at: old put: new
+%
+
+category: 'applying'
+method: GsExtractSuperclassRefactoring
+makeNewVersionOf: old superclass: sup instVarNames: ivars
+	"A new version in old's class history, under sup, with own-instVar list ivars and all of
+	 old's other shape. Same format-preserving primitive GsInstVarStructureRefactoring uses."
+	^sup
+		_subclass: old name asString
+		instVarNames: (ivars collect: [:e | e asString])
+		format: old format
+		classVars: (old classVarNames collect: [:e | e asString])
+		classInstVars: (old class instVarNames collect: [:e | e asString])
+		poolDictionaries: old sharedPools
+		inDictionary: (self dictObjectFor: old)
+		inClassHistory: old classHistory
+		description: ([old commentForFileout] on: Error do: [:e | ''])
+		options: #()
+%
+
+category: 'applying'
+method: GsExtractSuperclassRefactoring
+copyMethodsFrom: old to: new skipping: skipSelectors
+	"Copy every method of old (both sides) onto new, EXCEPT the skipSelectors (instance-side
+	 hoisted methods that move to the new superclass instead)."
+	old selectors do: [:sel |
+		(skipSelectors includes: sel) ifFalse: [self copyMethod: sel from: old to: new]].
+	old class selectors do: [:sel | self copyMethod: sel from: old class to: new class]
+%
+
+category: 'applying'
+method: GsExtractSuperclassRefactoring
+copyMethod: sel from: srcCls to: dstCls
+	| m cat |
+	m := srcCls compiledMethodAt: sel environmentId: 0 otherwise: nil.
+	m isNil ifTrue: [^self].
+	cat := (srcCls categoryOfSelector: sel environmentId: 0) ifNil: ['as yet unclassified'].
+	dstCls
+		compileMethod: m sourceString
+		dictionaries: System myUserProfile symbolList
+		category: cat asString
+%
+
+category: 'applying'
+method: GsExtractSuperclassRefactoring
+applyMethodAdd: aChange
+	"Compile a hoisted method onto the new superclass."
+	| target |
+	target := aChange className = newName
+		ifTrue: [newClass]
+		ifFalse: [environment classNamed: aChange className].
+	target isNil ifTrue: [^self error: 'Class not found: ', aChange className].
+	target
+		compileMethod: aChange newSource
+		dictionaries: System myUserProfile symbolList
+		category: (aChange category ifNil: ['as yet unclassified'])
+%
+
+category: 'applying'
+method: GsExtractSuperclassRefactoring
+applyMethodRemove: aChange
+	"A hoisted method's removal from an extracted class. copyMethodsFrom:to:skipping: already
+	 left it off the new version, so this is a guarded no-op that keeps re-application idempotent."
+	| cls sel |
+	cls := environment classNamed: aChange className.
+	cls isNil ifTrue: [^self].
+	sel := aChange selector asSymbol.
+	(cls includesSelector: sel) ifTrue: [cls removeSelector: sel]
+%
+
+category: 'applying'
+method: GsExtractSuperclassRefactoring
+dictObjectFor: aClass
+	| dicts |
+	dicts := environment dictionariesDefiningClassNamed: aClass name.
+	^dicts isEmpty
+		ifTrue: [environment symbolList objectNamed: #UserGlobals]
+		ifFalse: [dicts first]
+%
+
+category: 'applying'
+method: GsExtractSuperclassRefactoring
+dictObjectForNewClass
+	"The SymbolDictionary the new class is filed in: the caller's choice by name, else the
+	 anchor's own dictionary."
+	dictNameOrNil ifNotNil: [:dn |
+		^(environment symbolList objectNamed: dn asSymbol)
+			ifNil: [self dictObjectFor: anchorClass]].
+	^self dictObjectFor: anchorClass
+%
+
+category: 'serializing'
+method: GsExtractSuperclassRefactoring
+jsonQuote: aString
+	^GsRefactoringJson jsonQuote: aString
+%
+
+category: 'serializing'
+method: GsExtractSuperclassRefactoring
+jsonEscape: aString
+	^GsRefactoringJson jsonEscape: aString
+%
+
+category: 'serializing'
+method: GsExtractSuperclassRefactoring
+hex2: anInteger
+	^GsRefactoringJson hex2: anInteger
+%
+
+category: 'instance creation'
+classmethod: GsExtractSuperclassRefactoring
+class: anAnchor extractSuperclassNamed: aName inDictionary: aDictOrNil siblings: sibs hoistMethods: methods hoistInstVars: ivars
+	"V7 (and V6 as the no-sibling/no-member case): extract a new superclass aName above anAnchor
+	 and the chosen sibling classes (sibs, names NOT including the anchor), hoisting the given
+	 instance-side selectors (methods) and own instance variables (ivars) up into it."
+	^self new
+		setEnvironment: GsRefactoringEnvironment new
+		class: anAnchor
+		name: aName
+		dict: aDictOrNil
+		siblings: sibs
+		methods: methods
+		instVars: ivars
+%
+
+category: 'instance creation'
+classmethod: GsExtractSuperclassRefactoring
+class: anAnchor insertSuperclassNamed: aName inDictionary: aDictOrNil
+	"V6: insert a new EMPTY superclass aName above anAnchor only (no siblings, no members)."
+	^self
+		class: anAnchor
+		extractSuperclassNamed: aName
+		inDictionary: aDictOrNil
+		siblings: #()
+		hoistMethods: #()
+		hoistInstVars: #()
+%
+
+category: 'preconditions'
+classmethod: GsExtractSuperclassRefactoring
+analyzeClass: anAnchor extractSuperclassNamed: aName siblings: sibs hoistMethods: methods hoistInstVars: ivars
+	^(self class: anAnchor extractSuperclassNamed: aName inDictionary: nil siblings: sibs hoistMethods: methods hoistInstVars: ivars) analysisJsonString
+%
+
+category: 'preconditions'
+classmethod: GsExtractSuperclassRefactoring
+candidatesForClass: anAnchor siblings: sibs
+	"The classified hoist candidates (methods + instance variables) the preview checklist
+	 renders, computed BEFORE any hoist set is chosen. Answers the candidates JSON."
+	^(self class: anAnchor extractSuperclassNamed: 'GsExtractSuperclassProbe' inDictionary: nil siblings: sibs hoistMethods: #() hoistInstVars: #()) candidatesJsonString
+%
+
+category: 'paginated preview'
+classmethod: GsExtractSuperclassRefactoring
+pageForToken: token from: startIndex maxBytes: maxBytes
+	^(SessionTemps current at: token asSymbol ifAbsent: [nil])
+		ifNil: ['{"error":"preview session expired","changes":[],"nextOffset":0,"done":true}']
+		ifNotNil: [:ref | ref pageJsonFrom: startIndex maxBytes: maxBytes]
+%
+
+category: 'paginated preview'
+classmethod: GsExtractSuperclassRefactoring
+applyForToken: token deselected: deselectedIds
+	^(SessionTemps current at: token asSymbol ifAbsent: [nil])
+		ifNil: ['{"applied":0,"committed":false,"failed":[],"error":"preview session expired"}']
+		ifNotNil: [:ref | ref applyDeselected: deselectedIds]
+%
+
+category: 'paginated preview'
+classmethod: GsExtractSuperclassRefactoring
+clearToken: token
+	SessionTemps current removeKey: token asSymbol ifAbsent: [].
+	^'ok'
+%
+
+category: 'private'
 method: GsExtractTemporaryRefactoring
 setEnvironment: anEnvironment class: aClass selector: aSelector meta: aBool selStart: startOffset selStop: stopOffset newName: newNameString
 	environment := anEnvironment.
@@ -4694,12 +5587,17 @@ allClassVarsOf: aClass
 category: 'private'
 method: GsInstVarRefactoring
 isValidIvarName: aString
-	"A syntactically valid Smalltalk instance-variable name: a letter or underscore followed by
-	 letters, digits, or underscores."
+	"A syntactically valid Smalltalk instance-variable name: a LOWERCASE letter or an underscore,
+	 followed by letters, digits, or underscores.
+
+	 The first character must not be uppercase. A capitalised identifier in a method body reads as a
+	 global (or a class/class-variable name), so an uppercase instance variable is confusing and
+	 shadow-prone -- `Tally` used to pass. The client's fast-fail regex in instVarRefactorCommand.ts
+	 enforces the same rule; this predicate is the authority."
 	| first |
 	aString isEmpty ifTrue: [^false].
 	first := aString at: 1.
-	(first isLetter or: [first == $_]) ifFalse: [^false].
+	((first isLetter and: [first isLowercase]) or: [first == $_]) ifFalse: [^false].
 	^aString allSatisfy: [:ch | ch isLetter or: [ch isDigit or: [ch == $_]]]
 %
 
@@ -4730,15 +5628,32 @@ category: 'private - analysis'
 method: GsInstVarRefactoring
 analyzeAdd
 	"V1 add: varName must be a valid identifier not already visible as an instance variable of
-	 definingClass, and not shadowing a class variable in the hierarchy."
+	 definingClass, not shadowing a class variable in the hierarchy, and not already declared as an
+	 own instance variable by any subclass -- once inherited from definingClass it would collide
+	 with the subclass's own copy, which the class-creation primitive rejects."
+	| conflicts names |
 	(self isValidIvarName: varName) ifFalse: [
-		^decline := 'Cannot add ', varName printString, ': it is not a valid instance-variable name.'].
+		^decline := 'Cannot add ', varName printString, ': an instance-variable name must start with a lowercase letter or an underscore, followed by letters, digits, or underscores.'].
 	((self allInstVarsOf: definingClass) includes: varName) ifTrue: [
 		^decline := 'Cannot add ', varName, ': ', definingClass name asString, ' already has an instance variable of that name.'].
 	((self allClassVarsOf: definingClass) includes: varName) ifTrue: [
 		^decline := 'Cannot add ', varName, ': a class variable of that name is visible to ', definingClass name asString, ', which it would shadow.'].
+	"A subclass that already declares varName as its OWN instance variable would end up with two
+	 of that name once the new one is inherited. That fails mid-apply (error 2271), so decline up
+	 front and name the offenders rather than let the reshape strand a half-versioned subtree."
+	conflicts := (environment descendantsOf: definingClass)
+		select: [:d | (self ownInstVarsOf: d) includes: varName].
+	conflicts notEmpty ifTrue: [
+		names := (conflicts collect: [:c | c name asString])
+			inject: '' into: [:acc :s | acc isEmpty ifTrue: [s] ifFalse: [acc, ', ', s]].
+		^decline := 'Cannot add ', varName, ': ',
+			(conflicts size = 1 ifTrue: ['subclass '] ifFalse: ['subclasses ']), names,
+			(conflicts size = 1 ifTrue: [' already declares'] ifFalse: [' already declare']),
+			' an instance variable of that name; adding it to ', definingClass name asString,
+			' would duplicate that variable.'].
 	newIvarLists at: definingClass name asString put: ((self ownInstVarsOf: definingClass) copyWith: varName).
-	self computeAffectedFrom: (Array with: definingClass)
+	self computeAffectedFrom: (Array with: definingClass).
+	self recordWillNotRecompileShadowedBy: definingClass
 %
 
 category: 'private - analysis'
@@ -4794,6 +5709,20 @@ recordWillNotRecompileLosing: aScopeClass
 	| accessors |
 	accessors := environment classesAndSelectorsAccessing: varName inHierarchyOf: aScopeClass.
 	accessors do: [:assoc | willNotRecompile add: assoc]
+%
+
+category: 'private - analysis'
+method: GsInstVarRefactoring
+recordWillNotRecompileShadowedBy: aScopeClass
+	"Record class -> sorted selectors of the instance methods in aScopeClass's hierarchy that already
+	 declare a method-level TEMPORARY or an ARGUMENT named varName. Once the new instance variable
+	 becomes visible to the subtree, GemStone refuses that shadowing declaration, so those methods do
+	 not recompile onto the new class version and are dropped -- exactly like the methods that lose a
+	 removed variable. Predicting them here is what stops the preview claiming '0 will not recompile'
+	 and then silently dropping them."
+	| shadowers |
+	shadowers := environment classesAndSelectorsShadowing: varName inHierarchyOf: aScopeClass.
+	shadowers do: [:assoc | willNotRecompile add: assoc]
 %
 
 category: 'private'
@@ -4947,12 +5876,18 @@ method: GsInstVarRefactoring
 outOfScopeJsonString
 	"The precondition / warning payload for the preview panel, in the family's shape. A hard
 	 decline (which blocks Apply) rides in `decline`; willNotRecompile lists the methods that will
-	 be dropped; note warns about the commit semantics of migrate/delete-history."
+	 be dropped; note warns about the commit semantics of migrate/delete-history.
+
+	 sessionHasUncommittedChanges reports `System needsCommit` as the preview is built. The
+	 committing options (migrate instances / delete history) call `System commitTransaction`, which
+	 commits the WHOLE session transaction -- not just the change we staged -- so when this is true
+	 the client warns that the user's other uncommitted work will be committed along with it."
 	self ensureAnalysis.
 	^'{"references":0,"skipped":0,"scope":"hierarchy","collision":null,"decline":',
 	  (decline ifNil: ['null'] ifNotNil: [:r | self jsonQuote: r]),
 	  ',"willNotRecompile":', self willNotRecompileJsonString,
 	  ',"actedOnClass":', (self jsonQuote: self actedOnClassName),
+	  ',"sessionHasUncommittedChanges":', (System needsCommit ifTrue: ['true'] ifFalse: ['false']),
 	  ',"note":', (self jsonQuote: 'The structural change does not commit. Migrating instances and deleting history DO commit the transaction; nothing else does.'),
 	  '}'
 %
@@ -4996,21 +5931,49 @@ applyDeselected: deselectedIds options: optsArray migrate: aBool deleteHistory: 
 	 keeps them. If migrate or deleteHistory is true the structural change is COMMITTED first (the
 	 substrate requires a clean transaction to migrate), then the committing step(s) run and commit.
 	 Answers {applied, failed:[..], dropped:[..], committed:bool}."
-	| applied failures |
+	"`applied` is an instance variable (not a temp) so applyClassChange: can bump it the moment a
+	 version is staged; reset it here per apply."
+	| failures changes index |
 	self ensureAnalysis.
 	"nil optsArray keeps the acted-on class's current options; an Array (even empty) sets them."
 	editedOptions := optsArray isNil ifTrue: [nil] ifFalse: [optsArray collect: [:e | e asString]].
 	oldToNew := IdentityDictionary new.
 	dropped := OrderedCollection new.
 	committed := false.
+	partiallyApplied := false.
 	failures := OrderedCollection new.
 	applied := 0.
-	self changeSet changes do: [:change |
-		[self applyChange: change. applied := applied + 1]
-		on: Error do: [:e |
-			failures add: (Array with: change id with: change className with: e messageText)]].
-	(failures isEmpty and: [aBool or: [dBool]]) ifTrue: [
-		self commitStructuralThenMigrate: aBool deleteHistory: dBool on: failures].
+	"STOP at the first failure. The change set is all-or-nothing and each class is re-parented onto
+	 the new version of its parent, so carrying on past a failure would version later classes onto a
+	 stale oldToNew entry and leave a half-reshaped subtree behind."
+	changes := self changeSet changes.
+	index := 1.
+	[failures isEmpty and: [index <= changes size]] whileTrue: [
+		| change |
+		change := changes at: index.
+		"applied is bumped inside applyClassChange: the instant makeNewVersionOf: stages a version,
+		 NOT here after applyChange: returns -- copyMethodsFrom: runs after the version already
+		 exists, so a raise there would otherwise leave a staged (method-less) version behind while
+		 applied stayed 0, making partiallyApplied read false and the client say 'Nothing was
+		 applied.' over a stranded reshape."
+		[self applyChange: change]
+			on: Error do: [:e |
+				failures add: (Array with: change id with: change className with: e messageText)].
+		index := index + 1].
+	failures isEmpty ifTrue: [
+		(aBool or: [dBool]) ifTrue: [
+			self commitStructuralThenMigrate: aBool deleteHistory: dBool on: failures]].
+	"partiallyApplied means a failure left work behind -- classes already versioned in the
+	 transaction, or already committed if the failure struck AFTER the commit (a migrate /
+	 delete-history step that raised). Compute it once here, from what actually applied, regardless
+	 of WHICH stage failed: setting it only on the structural-failure branch let a commit/migrate
+	 failure answer partiallyApplied:false, so the client wrongly reported 'Nothing was applied.'
+	 when whole classes had in fact been versioned (and possibly committed).
+
+	 The engine still does NOT abort -- that would discard any work the user had in flight before
+	 this refactoring started, which is not ours to throw away -- so the client keys its abort
+	 recommendation off this and says what an abort would cost."
+	partiallyApplied := failures notEmpty and: [applied > 0].
 	^'{"applied":', applied printString,
 	  ',"failed":[',
 	  ((failures collect: [:f |
@@ -5023,25 +5986,64 @@ applyDeselected: deselectedIds options: optsArray migrate: aBool deleteHistory: 
 		'{"class":', (self jsonQuote: (d at: 1) asString),
 		',"selector":', (self jsonQuote: (d at: 2) asString), '}'])
 			inject: '' into: [:acc :s | acc isEmpty ifTrue: [s] ifFalse: [acc, ',', s]]),
-	  '],"committed":', (committed ifTrue: ['true'] ifFalse: ['false']), '}'
+	  '],"committed":', (committed ifTrue: ['true'] ifFalse: ['false']),
+	  ',"partiallyApplied":', (partiallyApplied ifTrue: ['true'] ifFalse: ['false']), '}'
 %
 
 category: 'applying'
 method: GsInstVarRefactoring
 commitStructuralThenMigrate: aBool deleteHistory: dBool on: failures
 	"With the structural change applied in the transaction, commit it (migrateInstancesTo: needs a
-	 clean transaction), then -- if asked -- migrate instances of each old version to its new one
-	 and commit, and delete every prior version from each versioned class's history and commit."
+	 clean transaction), then -- if asked -- migrate instances of each old version to its new one and
+	 delete every prior version from each versioned class's history.
+
+	 migrateInstancesTo: reports instances it could NOT migrate in its RETURN VALUE (five sets: set 1
+	 migrated, sets 2..5 failures) and does not raise on a partial failure, so migrateAllInstances
+	 inspects those reports and answers a failure count; a nonzero count is folded into failures
+	 rather than silently swallowed as a clean success. Prior versions are pruned only when nothing
+	 was left stranded -- deleting the version whose instances did not migrate would orphan them."
 	[System commitTransaction.
 	 committed := true.
-	 aBool ifTrue: [
-		oldToNew keysAndValuesDo: [:old :new | old migrateInstancesTo: new].
-		System commitTransaction].
-	 dBool ifTrue: [
+	 aBool ifTrue: [ | failed |
+		failed := self migrateAllInstances.
+		failed > 0 ifTrue: [
+			failures add: (Array with: 'migrate' with: 'migrate'
+				with: failed printString,
+					(failed = 1
+						ifTrue: [' instance could not be migrated to the new class version']
+						ifFalse: [' instances could not be migrated to the new class version']))]].
+	 (dBool and: [failures isEmpty]) ifTrue: [
 		oldToNew valuesDo: [:new | self deletePriorVersionsOf: new].
 		System commitTransaction]]
 	on: Error do: [:e |
 		failures add: (Array with: 'commit' with: 'commit' with: e messageText)]
+%
+
+category: 'applying'
+method: GsInstVarRefactoring
+migrateAllInstances
+	"Migrate every instance of each superseded version (the keys of oldToNew) to its new version.
+	 Answers the number of instances that FAILED to migrate. migrateInstancesTo: answers five sets
+	 (set 1 = migrated, sets 2..5 = failures) and does NOT raise on a partial failure, so its report
+	 must be summed; a migrateInstancesTo: that DOES raise is counted as at least one failure and is
+	 never propagated. Mirrors GsInstVarStructureRefactoring>>migrateAllInstances.
+
+	 MOST-DERIVED FIRST: a subclass instance is also an instance of its old superclass version, so
+	 migrating an ancestor before the subclass would report that not-yet-moved instance as a failure.
+	 Deepest-first means each instance is migrated by its own class. migrateInstancesTo: also needs a
+	 CLEAN transaction, so commit after each class, not once at the end. The caller has already
+	 committed the structural change."
+	| failed |
+	failed := 0.
+	(oldToNew keys asSortedCollection: [:a :b | a allSuperclasses size >= b allSuperclasses size])
+		do: [:old | | new |
+			new := oldToNew at: old.
+			[| report |
+			 report := old migrateInstancesTo: new.
+			 2 to: report size do: [:i | failed := failed + (report at: i) size].
+			 System commitTransaction]
+			on: Error do: [:e | failed := failed + 1]].
+	^failed
 %
 
 category: 'applying'
@@ -5076,6 +6078,10 @@ applyClassChange: aChange
 	parentNew := oldToNew at: old superclass ifAbsent: [old superclass].
 	list := newIvarLists at: aChange className ifAbsent: [self ownInstVarsOf: old].
 	new := self makeNewVersionOf: old superclass: parentNew instVarNames: list options: (self optionsForApply: old).
+	"Count it as applied HERE, the moment the version is staged -- before copyMethodsFrom:, which
+	 could raise. If it does, this class's new version is already a real staged mutation, so the
+	 apply is genuinely partial and partiallyApplied must reflect that."
+	applied := applied + 1.
 	self copyMethodsFrom: old to: new.
 	oldToNew at: old put: new
 %
@@ -8002,6 +9008,21 @@ classRenameId: anId dictName: dn className: cn newName: nn oldSource: os newSour
 
 category: 'instance creation'
 classmethod: GsRefactoringChange
+classAddId: anId dictName: dn className: cn superclassName: sn newSource: ns
+	"A brand-new class to CREATE (extract-superclass inserts a new common parent between a class
+	 and its current superclass). Apply creates the class fresh -- no prior class history --, so
+	 unlike #classReparent there is no old version to version off. `className` is the new class's
+	 name, `newName` carries its superclass name (for the preview label), and `newSource` the
+	 generated class definition. oldSource is nil so the before/after diff renders as an
+	 all-added class."
+	^(self new
+		setId: anId kind: #classAdd dictName: dn className: cn
+		isMeta: false selector: nil category: nil oldSource: nil newSource: ns)
+		setNewName: sn
+%
+
+category: 'instance creation'
+classmethod: GsRefactoringChange
 classReparentId: anId dictName: dn className: cn oldSource: os newSource: ns
 	"A descendant of a renamed class: it must be recompiled newVersionOf: its current
 	 version so it re-points at the freshly created parent chain (and, for a direct
@@ -8112,6 +9133,20 @@ addClassRenameInDictionary: dn className: cn newName: nn oldSource: os newSource
 	change := GsRefactoringChange
 		classRenameId: self nextIdString dictName: dn className: cn
 		newName: nn oldSource: os newSource: ns.
+	changes add: change.
+	^change
+%
+
+category: 'building'
+method: GsRefactoringChangeSet
+addClassAddInDictionary: dn className: cn superclassName: sn newSource: ns
+	"Stage the creation of a brand-new class (extract-superclass's inserted common parent).
+	 Records the change only; NEVER compiles or commits. Apply creates the class fresh under
+	 superclassName. Returns the new GsRefactoringChange."
+	| change |
+	change := GsRefactoringChange
+		classAddId: self nextIdString dictName: dn className: cn
+		superclassName: sn newSource: ns.
 	changes add: change.
 	^change
 %
@@ -8398,6 +9433,71 @@ instanceMethodsAccessing: anInstVarName inClass: aClass
 		(m notNil and: [m instVarsAccessed includes: sym])
 			ifTrue: [result add: sel]].
 	^result asSortedCollection asArray
+%
+
+category: 'instance variables'
+method: GsRefactoringEnvironment
+classesAndSelectorsShadowing: anInstVarName inHierarchyOf: aClass
+	"The add-instVar collision set: for aClass and every subclass, an Association
+	 class -> sorted selectors of the OWN instance methods that already declare a
+	 method-level TEMPORARY or a method ARGUMENT of that name. Classes with no such
+	 method are omitted.
+
+	 Those methods stop compiling the moment an instance variable of the name becomes
+	 visible to them. Verified against live 3.6.2 and 3.7.5 stones: a method temporary
+	 or argument that shadows an instance variable is REFUSED (compileMethod: answers an
+	 error Array instead of raising, and the method is not installed), while a BLOCK
+	 argument or a block-level temporary of the same name is accepted at any nesting --
+	 hence only the method's own arguments and its top-level temporaries count here.
+
+	 Source-based: a compiled method keeps no temporary/argument NAMES (there is no
+	 #temporaryNames on GsNMethod), so each method's source is parsed. A method whose
+	 source does not parse is skipped rather than guessed at. Read-only."
+	| sym result classesToScan |
+	sym := anInstVarName asSymbol.
+	result := OrderedCollection new.
+	classesToScan := OrderedCollection new.
+	classesToScan add: aClass.
+	classesToScan addAll: aClass allSubclasses.
+	classesToScan do: [:cls | | sels |
+		sels := self instanceMethodsShadowing: sym inClass: cls.
+		sels isEmpty ifFalse: [result add: cls -> sels]].
+	^result
+%
+
+category: 'instance variables'
+method: GsRefactoringEnvironment
+instanceMethodsShadowing: anInstVarName inClass: aClass
+	"Selectors of aClass's OWN instance methods (environment 0) whose source declares a
+	 method argument or a method-level temporary named anInstVarName, sorted. See
+	 #classesAndSelectorsShadowing:inHierarchyOf: for why only those two forms count."
+	| sym name result |
+	sym := anInstVarName asSymbol.
+	name := anInstVarName asString.
+	result := OrderedCollection new.
+	aClass selectors do: [:sel | | m src tree |
+		m := aClass compiledMethodAt: sel environmentId: 0 otherwise: nil.
+		m isNil ifFalse: [
+			src := m sourceString.
+			"Cheap pre-filter: a method can only DECLARE the name if the name appears in its source
+			 at all. This runs on every add-preview over the whole subtree, so it keeps the parse --
+			 by far the expensive part -- off the overwhelming majority of methods."
+			(src indexOfSubCollection: name) > 0 ifTrue: [
+				tree := [RBParser parseMethod: src] on: Error do: [:e | nil].
+				(tree notNil and: [self methodNode: tree declares: sym])
+					ifTrue: [result add: sel]]]].
+	^result asSortedCollection asArray
+%
+
+category: 'private'
+method: GsRefactoringEnvironment
+methodNode: aMethodNode declares: aSymbol
+	"Whether aMethodNode's own arguments or top-level temporaries bind aSymbol. Block
+	 arguments and block temporaries are deliberately NOT consulted -- GemStone lets those
+	 shadow an instance variable."
+	(aMethodNode arguments anySatisfy: [:a | a name asSymbol == aSymbol]) ifTrue: [^true].
+	aMethodNode body isNil ifTrue: [^false].
+	^aMethodNode body temporaries anySatisfy: [:t | t name asSymbol == aSymbol]
 %
 
 category: 'private'

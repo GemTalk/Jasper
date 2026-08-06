@@ -110,6 +110,24 @@ function receiverClassName(oop: bigint): string {
   return 'Object';
 }
 
+function expectNoMultiWordSelectors(session: ActiveSession): void {
+  const performCalls = (session.gci.GciTsPerform as ReturnType<typeof vi.fn>).mock.calls;
+  const selectorStrs = performCalls
+    .map((call) => call[3] as string | null)
+    .filter((s): s is string => s !== null);
+  expect(selectorStrs.length).toBeGreaterThan(0);
+  for (const selector of selectorStrs) {
+    expect(selector).not.toContain(' ');
+  }
+
+  const fetchBytesCalls = (session.gci.GciTsPerformFetchBytes as ReturnType<typeof vi.fn>).mock
+    .calls;
+  for (const call of fetchBytesCalls) {
+    const selector = call[2] as string;
+    expect(selector).not.toContain(' ');
+  }
+}
+
 describe('debugQueries', () => {
   describe('getStepPoint', () => {
     const GS_PROCESS = 9000n;
@@ -221,18 +239,7 @@ describe('debugQueries', () => {
       const session = createMockSession();
       debug.getObjectClassName(session, RECEIVER_OOP);
 
-      const performCalls = (session.gci.GciTsPerform as ReturnType<typeof vi.fn>).mock.calls;
-      for (const call of performCalls) {
-        const selectorStr = call[3] as string | null;
-        if (selectorStr) expect(selectorStr).not.toContain(' ');
-      }
-
-      const fetchBytesCalls = (session.gci.GciTsPerformFetchBytes as ReturnType<typeof vi.fn>).mock
-        .calls;
-      for (const call of fetchBytesCalls) {
-        const selector = call[2] as string;
-        expect(selector).not.toContain(' ');
-      }
+      expectNoMultiWordSelectors(session);
     });
   });
 
@@ -502,18 +509,7 @@ describe('debugQueries', () => {
       const session = createMockSession();
       debug.getInstVarNames(session, RECEIVER_OOP);
 
-      const performCalls = (session.gci.GciTsPerform as ReturnType<typeof vi.fn>).mock.calls;
-      for (const call of performCalls) {
-        const selectorStr = call[3] as string | null;
-        if (selectorStr) expect(selectorStr).not.toContain(' ');
-      }
-
-      const fetchBytesCalls = (session.gci.GciTsPerformFetchBytes as ReturnType<typeof vi.fn>).mock
-        .calls;
-      for (const call of fetchBytesCalls) {
-        const selector = call[2] as string;
-        expect(selector).not.toContain(' ');
-      }
+      expectNoMultiWordSelectors(session);
     });
   });
 

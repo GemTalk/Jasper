@@ -26,6 +26,7 @@ const ITEM_CONTEXT = 'explorerOpenEditorItem';
 // Group headers, in display order. Only non-empty groups are shown.
 const GROUPS: { kind: OpenEditorKind; label: string; icon: string }[] = [
   { kind: 'class', label: 'Classes', icon: 'symbol-class' },
+  { kind: 'comment', label: 'Comments', icon: 'book' },
   { kind: 'method', label: 'Methods', icon: 'symbol-method' },
 ];
 
@@ -95,7 +96,7 @@ class OpenEditorsProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
   getChildren(element?: vscode.TreeItem): vscode.TreeItem[] {
     const entries = openEntries();
     if (!element) {
-      // Top level: one header per non-empty group (Classes, then Methods).
+      // Top level: one header per non-empty group (Classes, Comments, Methods).
       return GROUPS.filter((g) => entries.some((e) => e.kind === g.kind)).map(
         (g) => new GroupItem(g.kind, g.label),
       );

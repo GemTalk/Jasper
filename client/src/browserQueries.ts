@@ -6,6 +6,7 @@ import { runNbCall } from './nbRunner';
 import { QueryExecutor } from './queries/types';
 
 // Read-path shared queries.
+import { abortTransaction as sharedAbortTransaction } from './queries/abortTransaction';
 import { getMethodSource as sharedGetMethodSource } from './queries/getMethodSource';
 import { getBaseMethodSource as sharedGetBaseMethodSource } from './queries/getBaseMethodSource';
 import { getDictionaryNames as sharedGetDictionaryNames } from './queries/getDictionaryNames';
@@ -142,6 +143,16 @@ import {
   getClassDescendantNames as sharedGetClassDescendantNames,
   DescendantClass,
 } from './refactoring/queries/getClassDescendantNames';
+import { getSiblingClassNames as sharedGetSiblingClassNames } from './refactoring/queries/getSiblingClassNames';
+import {
+  analyzeExtractSuperclass as sharedAnalyzeExtractSuperclass,
+  candidatesForExtractSuperclass as sharedCandidatesForExtractSuperclass,
+  startExtractSuperclassPreview as sharedStartExtractSuperclassPreview,
+  pageExtractSuperclassPreview as sharedPageExtractSuperclassPreview,
+  applyExtractSuperclass as sharedApplyExtractSuperclass,
+  clearExtractSuperclassPreview as sharedClearExtractSuperclassPreview,
+  HoistSets,
+} from './refactoring/queries/previewExtractSuperclass';
 import {
   getClassHistory as sharedGetClassHistory,
   revertClassToVersion as sharedRevertClassToVersion,
@@ -416,6 +427,15 @@ export function sessionNeedsCommit(session: ActiveSession): boolean | undefined 
 }
 
 /**
+ * Abort the session's transaction, discarding EVERY uncommitted change in it — not just
+ * whatever the caller happens to be undoing. Callers must have told the user that, and
+ * should probe {@link sessionNeedsCommit} first when they need to say how much is at stake.
+ */
+export function abortSessionTransaction(session: ActiveSession): string {
+  return sharedAbortTransaction(defaultQueryExecutorUsing(session));
+}
+
+/**
  * Binds a session to the {@link QueryExecutor} shape shared queries expect,
  * backed by {@link executeFetchString}. This is the shared entry point used
  * across browserQueries, pythonQueries, and sunitQueries.
@@ -629,6 +649,14 @@ export function getClassDescendantNames(
   dict?: number | string,
 ): DescendantClass[] {
   return sharedGetClassDescendantNames(defaultQueryExecutorUsing(session), className, dict);
+}
+
+export function getSiblingClassNames(
+  session: ActiveSession,
+  className: string,
+  dict?: number | string,
+): string[] {
+  return sharedGetSiblingClassNames(defaultQueryExecutorUsing(session), className, dict);
 }
 
 export function fileOutClass(
@@ -1558,6 +1586,78 @@ export function applyInstVarStructure(
 
 export function clearInstVarStructurePreview(session: ActiveSession, token: string): string {
   return sharedClearInstVarStructurePreview(defaultQueryExecutorUsing(session), token);
+}
+
+// Extract-superclass (V6 insert superclass / V7 extract superclass) wrappers. One engine
+// (GsExtractSuperclassRefactoring) drives both; the new superclass is created server-side (no
+// commit). Paginated preview fetched NON-BLOCKING.
+export function candidatesForExtractSuperclass(
+  session: ActiveSession,
+  className: string,
+  siblings: string[],
+  dict?: number | string,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Classifying members…');
+  return sharedCandidatesForExtractSuperclass(exec, className, siblings, dict);
+}
+
+export function analyzeExtractSuperclass(
+  session: ActiveSession,
+  className: string,
+  newName: string,
+  siblings: string[],
+  hoist: HoistSets,
+  dict?: number | string,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Analysing…');
+  return sharedAnalyzeExtractSuperclass(exec, className, newName, siblings, hoist, dict);
+}
+
+export function startExtractSuperclassPreview(
+  session: ActiveSession,
+  className: string,
+  newName: string,
+  siblings: string[],
+  hoist: HoistSets,
+  token: string,
+  maxBytes: number,
+  dict?: number | string,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, `Previewing new superclass for ${className}…`);
+  return sharedStartExtractSuperclassPreview(
+    exec,
+    className,
+    newName,
+    siblings,
+    hoist,
+    token,
+    maxBytes,
+    dict,
+  );
+}
+
+export function pageExtractSuperclassPreview(
+  session: ActiveSession,
+  token: string,
+  offset: number,
+  maxBytes: number,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Loading more changes…');
+  return sharedPageExtractSuperclassPreview(exec, token, offset, maxBytes);
+}
+
+export function applyExtractSuperclass(session: ActiveSession, token: string): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Applying change…');
+  return sharedApplyExtractSuperclass(exec, token);
+}
+
+export function clearExtractSuperclassPreview(session: ActiveSession, token: string): string {
+  return sharedClearExtractSuperclassPreview(defaultQueryExecutorUsing(session), token);
 }
 
 // Class-definition history (native classHistory, this-stone-only, read-only) and

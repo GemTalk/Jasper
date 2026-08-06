@@ -21,12 +21,17 @@ import { pluginFeatures } from '../../serverPlugin/pluginFeatures';
  *  1. The engine's GS SUnit suite, filed in from the built payload and run in-stone.
  *  2. A client round trip through the real query builders + parsers: add an ivar and
  *     confirm the class carries it; remove one that methods use and confirm those methods
- *     are reported (will-not-recompile) and dropped.
+ *     are reported (will-not-recompile) and dropped while an unrelated method survives;
+ *     predict a shadowed temporary; and decline a name a subclass already declares.
+ *
+ * The committing paths (migrate instances, delete history, and a mid-apply failure over a
+ * committed fixture) cannot live here — the harness aborts after every test and an abort
+ * cannot undo a commit — so they stay in `__tests__/gci/gciInstVar.e2e.test.ts`.
  *
  * Gated via the shared server-plugin feature gate; the engine-dependent tests run in the
  * plugin-installed pass and skip, with a reason, against a bare stone. Fully transient:
- * the harness aborts each test, so nothing is committed (migrate / delete-history, which
- * would commit, are never requested here). All emitted Smalltalk is ASCII-only for 3.6.x.
+ * the harness aborts each test, and neither migrate nor delete-history is ever requested
+ * here. All emitted Smalltalk is ASCII-only for 3.6.x.
  */
 describe('add / remove instance variable (integration)', () => {
   let gci: GciLibrary;
@@ -83,6 +88,9 @@ describe('add / remove instance variable (integration)', () => {
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
     );
     q.compileMethod(session(), BASE, false, 'accessing', 'combine\n\t^ count + other');
+    // Deliberately touches `other` only, never `count` — the control for the selective
+    // copy-forward assertion in the remove test: removing `count` must NOT drop this.
+    q.compileMethod(session(), BASE, false, 'accessing', 'getOther\n\t^ other');
     q.compileMethod(session(), SUB, false, 'accessing', 'doubleCount\n\t^ count * 2');
   };
 
@@ -112,7 +120,7 @@ r := (System myUserProfile symbolList objectNamed: #GsInstVarRefactoringTest) su
     expect(analysis.decline).toBeNull();
     expect(analysis.affectedCount).toBe(2);
 
-    parseStartPreview(
+    const start = parseStartPreview(
       await startInstVarPreview(
         asyncExec,
         'add',
@@ -123,6 +131,7 @@ r := (System myUserProfile symbolList objectNamed: #GsInstVarRefactoringTest) su
         userIndex(),
       ),
     );
+    expect(start.total).toBe(2); // base + sub are both re-versioned
     const result = parseApplyResult(
       await applyInstVar(asyncExec, 'xivit-add', [], null, false, false),
     );
@@ -159,6 +168,72 @@ r := (System myUserProfile symbolList objectNamed: #GsInstVarRefactoringTest) su
     );
     expect(hasIvar(BASE, 'count')).toBe(false);
     expect(includesSelector(BASE, 'combine')).toBe(false);
+
+    // Copy-forward is SELECTIVE, not all-or-nothing: `getOther` never referenced `count`,
+    // so it must survive onto the new class version and must not be reported as dropped.
+    expect(includesSelector(BASE, 'getOther')).toBe(true);
+    expect(result.dropped.map((m) => m.selector)).not.toContain('getOther');
+  });
+
+  it('warns up front that a method whose temp shadows the new variable will not recompile', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+
+    defineFixture();
+    // A SUB method with a METHOD-LEVEL temporary named `tally`: once `tally` becomes an
+    // inherited instance variable, that declaration shadows it. The preview must surface the
+    // method up front so it is not silently dropped at apply.
+    //
+    // This asserts the PREDICTION only, not an apply drop: whether the shadowed recompile
+    // hard-fails or merely warns can vary by stone/version, but the source-based prediction is
+    // deterministic and is the contract this covers. (The apply-drops-exactly-the-predicted-
+    // method invariant is pinned in the GS SUnit suite above.)
+    q.compileMethod(
+      session(),
+      SUB,
+      false,
+      'accessing',
+      'shadowsTally\n\t| tally |\n\ttally := 1.\n\t^ tally',
+    );
+
+    const start = parseStartPreview(
+      await startInstVarPreview(
+        asyncExec,
+        'add',
+        BASE,
+        'tally',
+        'xivit-add-shadow',
+        PREVIEW_PAGE_BYTES,
+        userIndex(),
+      ),
+    );
+
+    const shadowed = start.outOfScope.willNotRecompile.find((m) => m.selector === 'shadowsTally');
+    expect(shadowed).toBeDefined();
+    expect(shadowed?.className).toBe(SUB);
+    // A sibling method that only USES another ivar (`count`) must not be over-reported.
+    expect(start.outOfScope.willNotRecompile.map((m) => m.selector)).not.toContain('doubleCount');
+  });
+
+  it('declines a name a subclass already declares, naming the subclass, before any preview', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+
+    q.compileClassDefinition(
+      session(),
+      `Object subclass: '${BASE}' instVarNames: #() classVars: #() ` +
+        'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
+    );
+    q.compileClassDefinition(
+      session(),
+      `${BASE} subclass: '${SUB}' instVarNames: #(mine) classVars: #() ` +
+        'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
+    );
+
+    const analysis = parseAnalysis(
+      await analyzeInstVar(asyncExec, 'add', BASE, 'mine', userIndex()),
+    );
+
+    expect(analysis.decline).toBeTruthy();
+    expect(analysis.decline).toContain(SUB);
   });
 
   it('declines adding a duplicate instance variable', async (ctx) => {

@@ -5,7 +5,17 @@ import {
   parsePage,
   parseApplyResult,
   instVarChangeLabel,
+  describeApplyFailure,
 } from '../instVarRefactorPreview';
+import type { ApplyResult } from '../instVarRefactorPreview';
+
+const applyResult = (over: Partial<ApplyResult> = {}): ApplyResult => ({
+  applied: 2,
+  failed: [],
+  dropped: [],
+  committed: false,
+  ...over,
+});
 
 describe('instance-variable refactor preview parsing', () => {
   it('parses a viable add analysis', () => {
@@ -111,6 +121,45 @@ describe('instance-variable refactor preview parsing', () => {
     expect(r.committed).toBe(false);
   });
 
+  it('parses the partially-applied flag on a failed apply', () => {
+    // Something was staged before the failure: the transaction holds a partial reshape.
+    const staged = parseApplyResult(
+      '{"applied":1,"failed":[{"id":"2","label":"Sub","error":"boom"}],"dropped":[],"committed":false,"partiallyApplied":true}',
+    );
+    expect(staged.partiallyApplied).toBe(true);
+
+    // The very first change failed: nothing staged, nothing to abort.
+    const nothingStaged = parseApplyResult(
+      '{"applied":0,"failed":[{"id":"1","label":"Foo","error":"boom"}],"dropped":[],"committed":false,"partiallyApplied":false}',
+    );
+    expect(nothingStaged.partiallyApplied).toBe(false);
+  });
+
+  // An engine older than this change omits the field; undefined (not false) so the caller can
+  // tell "nothing was staged" from "the engine did not say".
+  it('leaves the partially-applied flag undefined when the engine omits it', () => {
+    const r = parseApplyResult('{"applied":2,"failed":[],"dropped":[],"committed":false}');
+    expect(r.partiallyApplied).toBeUndefined();
+  });
+
+  it('parses the session-has-uncommitted-changes flag from the preview', () => {
+    const envelope = (extra: string): string =>
+      `{"token":"t","total":1,"sourceClass":"Foo","outOfScope":{"decline":null,` +
+      `"willNotRecompile":[],"actedOnClass":"Foo","note":null${extra}},` +
+      `"page":{"changes":[],"nextOffset":1,"done":true}}`;
+
+    expect(
+      parseStartPreview(envelope(',"sessionHasUncommittedChanges":true')).outOfScope
+        .sessionHasUncommittedChanges,
+    ).toBe(true);
+    expect(
+      parseStartPreview(envelope(',"sessionHasUncommittedChanges":false')).outOfScope
+        .sessionHasUncommittedChanges,
+    ).toBe(false);
+    // Absent (an older engine) reads as false — no warning rather than a false alarm.
+    expect(parseStartPreview(envelope('')).outOfScope.sessionHasUncommittedChanges).toBe(false);
+  });
+
   it('labels edited vs reparented changes', () => {
     expect(
       instVarChangeLabel({
@@ -132,5 +181,112 @@ describe('instance-variable refactor preview parsing', () => {
         newSource: '',
       }),
     ).toMatch(/recompiled/);
+  });
+});
+
+describe('describing an apply failure for the preview panel', () => {
+  it('treats a clean apply as a success (no failure to show)', () => {
+    expect(describeApplyFailure(applyResult({ applied: 2 }), false)).toBeNull();
+  });
+
+  it('offers an abort and names what is stranded when a partial reshape was staged', () => {
+    const failure = describeApplyFailure(
+      applyResult({
+        applied: 1,
+        failed: [{ id: 'c2', label: 'Sub (recompiled)', error: 'boom' }],
+        partiallyApplied: true,
+      }),
+      false,
+    );
+
+    expect(failure).toEqual({
+      canAbort: true,
+      message: expect.stringContaining('1 class was already versioned and remains'),
+    });
+    expect(failure?.message).toContain('Sub (recompiled): boom');
+  });
+
+  it('pluralizes the stranded-class count', () => {
+    const failure = describeApplyFailure(
+      applyResult({
+        applied: 3,
+        failed: [{ id: 'c4', label: 'Leaf (recompiled)', error: 'boom' }],
+        partiallyApplied: true,
+      }),
+      false,
+    );
+
+    expect(failure?.message).toContain('3 classes were already versioned and remain');
+  });
+
+  it('spells out that an abort also discards other uncommitted work in a dirty session', () => {
+    const failure = describeApplyFailure(
+      applyResult({
+        applied: 1,
+        failed: [{ id: 'c2', label: 'Sub (recompiled)', error: 'boom' }],
+        partiallyApplied: true,
+      }),
+      true,
+    );
+
+    expect(failure?.message).toContain('every other uncommitted change in this session');
+  });
+
+  it('does not offer an abort, and says the change is committed, when the failure struck after the commit', () => {
+    const failure = describeApplyFailure(
+      applyResult({
+        applied: 3,
+        failed: [{ id: 'commit', label: 'commit', error: 'migrate boom' }],
+        committed: true,
+        partiallyApplied: true,
+      }),
+      false,
+    );
+
+    expect(failure?.canAbort).toBe(false);
+    expect(failure?.message).toContain('committed');
+    expect(failure?.message).toContain('cannot undo');
+    expect(failure?.message).not.toContain('remain in your transaction');
+  });
+
+  it('assumes a stranded change when an older engine omits the partial-state flag', () => {
+    const failure = describeApplyFailure(
+      applyResult({ applied: 1, failed: [{ id: 'c2', label: 'Sub', error: 'boom' }] }),
+      false,
+    );
+
+    expect(failure?.canAbort).toBe(true);
+  });
+
+  it('does not offer an abort when the first change failed and nothing was staged', () => {
+    const failure = describeApplyFailure(
+      applyResult({
+        applied: 0,
+        failed: [{ id: 'c1', label: 'Foo (definition edited)', error: 'boom' }],
+        partiallyApplied: false,
+      }),
+      false,
+    );
+
+    expect(failure).toEqual({
+      canAbort: false,
+      message: expect.stringContaining('Nothing was applied.'),
+    });
+  });
+
+  it('surfaces a whole-apply error (an expired token) with no abort offered', () => {
+    const failure = describeApplyFailure(
+      applyResult({ applied: 0, failed: [], error: 'preview session expired' }),
+      false,
+    );
+
+    expect(failure).toEqual({ canAbort: false, message: 'preview session expired' });
+  });
+
+  it('treats a zero-change apply with no error as a failure', () => {
+    expect(describeApplyFailure(applyResult({ applied: 0 }), false)).toEqual({
+      canAbort: false,
+      message: expect.stringContaining('Nothing was applied.'),
+    });
   });
 });

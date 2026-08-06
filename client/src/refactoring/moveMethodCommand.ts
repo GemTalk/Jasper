@@ -149,6 +149,14 @@ export async function moveMethod(req: MoveMethodRequest): Promise<MoveOutcome | 
   });
   if (!result) return undefined;
 
+  // A whole-apply error (an expired preview token) answers `applied:0` with an empty
+  // `failed`, so it parses cleanly and would otherwise reach the success toast. Nothing
+  // changed, so no abort advice.
+  if (result.error) {
+    void vscode.window.showErrorMessage(`Move failed: ${result.error}`);
+    return undefined;
+  }
+
   if (result.failed.length > 0) {
     const first = result.failed[0];
     void vscode.window.showErrorMessage(`Move failed: ${first.label}: ${first.error}`);

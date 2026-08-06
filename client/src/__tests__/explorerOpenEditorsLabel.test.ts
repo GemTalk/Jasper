@@ -48,7 +48,7 @@ describe('classifyGemstoneUri', () => {
     expect(classifyGemstoneUri(parsed)).toEqual({ kind: 'class', label: 'Array' });
   });
 
-  it('omits a class comment editor', () => {
+  it('labels a class comment by its class name under the comment group', () => {
     const parsed = {
       kind: 'comment',
       sessionId: 1,
@@ -56,7 +56,7 @@ describe('classifyGemstoneUri', () => {
       className: 'Array',
     } as ParsedUri;
 
-    expect(classifyGemstoneUri(parsed)).toBeUndefined();
+    expect(classifyGemstoneUri(parsed)).toEqual({ kind: 'comment', label: 'Array' });
   });
 
   it('omits the new-class template', () => {

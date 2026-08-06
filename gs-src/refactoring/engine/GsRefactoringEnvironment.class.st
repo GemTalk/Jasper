@@ -211,6 +211,68 @@ GsRefactoringEnvironment >> instanceMethodsAccessing: anInstVarName inClass: aCl
 	^result asSortedCollection asArray
 ]
 
+{ #category : 'instance variables' }
+GsRefactoringEnvironment >> classesAndSelectorsShadowing: anInstVarName inHierarchyOf: aClass [
+	"The add-instVar collision set: for aClass and every subclass, an Association
+	 class -> sorted selectors of the OWN instance methods that already declare a
+	 method-level TEMPORARY or a method ARGUMENT of that name. Classes with no such
+	 method are omitted.
+
+	 Those methods stop compiling the moment an instance variable of the name becomes
+	 visible to them. Verified against live 3.6.2 and 3.7.5 stones: a method temporary
+	 or argument that shadows an instance variable is REFUSED (compileMethod: answers an
+	 error Array instead of raising, and the method is not installed), while a BLOCK
+	 argument or a block-level temporary of the same name is accepted at any nesting --
+	 hence only the method's own arguments and its top-level temporaries count here.
+
+	 Source-based: a compiled method keeps no temporary/argument NAMES (there is no
+	 #temporaryNames on GsNMethod), so each method's source is parsed. A method whose
+	 source does not parse is skipped rather than guessed at. Read-only."
+	| sym result classesToScan |
+	sym := anInstVarName asSymbol.
+	result := OrderedCollection new.
+	classesToScan := OrderedCollection new.
+	classesToScan add: aClass.
+	classesToScan addAll: aClass allSubclasses.
+	classesToScan do: [:cls | | sels |
+		sels := self instanceMethodsShadowing: sym inClass: cls.
+		sels isEmpty ifFalse: [result add: cls -> sels]].
+	^result
+]
+
+{ #category : 'instance variables' }
+GsRefactoringEnvironment >> instanceMethodsShadowing: anInstVarName inClass: aClass [
+	"Selectors of aClass's OWN instance methods (environment 0) whose source declares a
+	 method argument or a method-level temporary named anInstVarName, sorted. See
+	 #classesAndSelectorsShadowing:inHierarchyOf: for why only those two forms count."
+	| sym name result |
+	sym := anInstVarName asSymbol.
+	name := anInstVarName asString.
+	result := OrderedCollection new.
+	aClass selectors do: [:sel | | m src tree |
+		m := aClass compiledMethodAt: sel environmentId: 0 otherwise: nil.
+		m isNil ifFalse: [
+			src := m sourceString.
+			"Cheap pre-filter: a method can only DECLARE the name if the name appears in its source
+			 at all. This runs on every add-preview over the whole subtree, so it keeps the parse --
+			 by far the expensive part -- off the overwhelming majority of methods."
+			(src indexOfSubCollection: name) > 0 ifTrue: [
+				tree := [RBParser parseMethod: src] on: Error do: [:e | nil].
+				(tree notNil and: [self methodNode: tree declares: sym])
+					ifTrue: [result add: sel]]]].
+	^result asSortedCollection asArray
+]
+
+{ #category : 'private' }
+GsRefactoringEnvironment >> methodNode: aMethodNode declares: aSymbol [
+	"Whether aMethodNode's own arguments or top-level temporaries bind aSymbol. Block
+	 arguments and block temporaries are deliberately NOT consulted -- GemStone lets those
+	 shadow an instance variable."
+	(aMethodNode arguments anySatisfy: [:a | a name asSymbol == aSymbol]) ifTrue: [^true].
+	aMethodNode body isNil ifTrue: [^false].
+	^aMethodNode body temporaries anySatisfy: [:t | t name asSymbol == aSymbol]
+]
+
 { #category : 'private' }
 GsRefactoringEnvironment >> setSymbolList: aSymbolList [
 	symbolList := aSymbolList

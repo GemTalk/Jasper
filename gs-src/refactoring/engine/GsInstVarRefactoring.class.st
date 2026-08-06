@@ -26,11 +26,16 @@ Two things the family did not surface before, both required here:
     option list a given class's new version is built with. (The panel does not surface options
     for editing; editedOptions is plumbing for a future options editor and is left nil.)
 
-  - METHODS THAT WILL NOT RECOMPILE. A method that references a removed instance variable no
-    longer resolves the name; GemStone will not compile a reference to an undeclared lowercase
-    identifier, so such a method fails to compile and is silently DROPPED from the new version. The
-    set is predicted (without compiling) from bytecode-level instance-variable access, surfaced in
-    the preview as willNotRecompile, and reported (dropped) after apply.
+  - METHODS THAT WILL NOT RECOMPILE, predicted (without compiling) for BOTH operations, surfaced in
+    the preview as willNotRecompile, and reported (dropped) after apply. Two distinct causes:
+      * #remove -- the method references the removed variable, so the name no longer resolves.
+        Found by bytecode-level instance-variable access (GsNMethod>>instVarsAccessed).
+      * #add    -- the method declares a method-level TEMPORARY or an ARGUMENT of the name the new
+        variable is about to occupy. GemStone refuses that shadowing declaration (verified on 3.6.2
+        and 3.7.5), and compileMethod: answers an error Array rather than raising, so the method is
+        simply not installed. Found by parsing each method's source, since a compiled method keeps
+        no temporary/argument names. Block arguments and block temporaries may shadow freely and are
+        deliberately NOT reported.
 
 IMPORTANT commit semantics (surfaced in the preview):
   - The structural change (new versions + method copy-forward + reparents) NEVER commits on its own.
@@ -59,7 +64,9 @@ Class {
 		'decline',
 		'oldToNew',
 		'dropped',
-		'committed'
+		'committed',
+		'partiallyApplied',
+		'applied'
 	],
 	#category : 'Refactoring-Core'
 }
@@ -170,12 +177,17 @@ GsInstVarRefactoring >> allClassVarsOf: aClass [
 
 { #category : 'private' }
 GsInstVarRefactoring >> isValidIvarName: aString [
-	"A syntactically valid Smalltalk instance-variable name: a letter or underscore followed by
-	 letters, digits, or underscores."
+	"A syntactically valid Smalltalk instance-variable name: a LOWERCASE letter or an underscore,
+	 followed by letters, digits, or underscores.
+
+	 The first character must not be uppercase. A capitalised identifier in a method body reads as a
+	 global (or a class/class-variable name), so an uppercase instance variable is confusing and
+	 shadow-prone -- `Tally` used to pass. The client's fast-fail regex in instVarRefactorCommand.ts
+	 enforces the same rule; this predicate is the authority."
 	| first |
 	aString isEmpty ifTrue: [^false].
 	first := aString at: 1.
-	(first isLetter or: [first == $_]) ifFalse: [^false].
+	((first isLetter and: [first isLowercase]) or: [first == $_]) ifFalse: [^false].
 	^aString allSatisfy: [:ch | ch isLetter or: [ch isDigit or: [ch == $_]]]
 ]
 
@@ -203,15 +215,32 @@ GsInstVarRefactoring >> computeAnalysis [
 { #category : 'private - analysis' }
 GsInstVarRefactoring >> analyzeAdd [
 	"V1 add: varName must be a valid identifier not already visible as an instance variable of
-	 definingClass, and not shadowing a class variable in the hierarchy."
+	 definingClass, not shadowing a class variable in the hierarchy, and not already declared as an
+	 own instance variable by any subclass -- once inherited from definingClass it would collide
+	 with the subclass's own copy, which the class-creation primitive rejects."
+	| conflicts names |
 	(self isValidIvarName: varName) ifFalse: [
-		^decline := 'Cannot add ', varName printString, ': it is not a valid instance-variable name.'].
+		^decline := 'Cannot add ', varName printString, ': an instance-variable name must start with a lowercase letter or an underscore, followed by letters, digits, or underscores.'].
 	((self allInstVarsOf: definingClass) includes: varName) ifTrue: [
 		^decline := 'Cannot add ', varName, ': ', definingClass name asString, ' already has an instance variable of that name.'].
 	((self allClassVarsOf: definingClass) includes: varName) ifTrue: [
 		^decline := 'Cannot add ', varName, ': a class variable of that name is visible to ', definingClass name asString, ', which it would shadow.'].
+	"A subclass that already declares varName as its OWN instance variable would end up with two
+	 of that name once the new one is inherited. That fails mid-apply (error 2271), so decline up
+	 front and name the offenders rather than let the reshape strand a half-versioned subtree."
+	conflicts := (environment descendantsOf: definingClass)
+		select: [:d | (self ownInstVarsOf: d) includes: varName].
+	conflicts notEmpty ifTrue: [
+		names := (conflicts collect: [:c | c name asString])
+			inject: '' into: [:acc :s | acc isEmpty ifTrue: [s] ifFalse: [acc, ', ', s]].
+		^decline := 'Cannot add ', varName, ': ',
+			(conflicts size = 1 ifTrue: ['subclass '] ifFalse: ['subclasses ']), names,
+			(conflicts size = 1 ifTrue: [' already declares'] ifFalse: [' already declare']),
+			' an instance variable of that name; adding it to ', definingClass name asString,
+			' would duplicate that variable.'].
 	newIvarLists at: definingClass name asString put: ((self ownInstVarsOf: definingClass) copyWith: varName).
-	self computeAffectedFrom: (Array with: definingClass)
+	self computeAffectedFrom: (Array with: definingClass).
+	self recordWillNotRecompileShadowedBy: definingClass
 ]
 
 { #category : 'private - analysis' }
@@ -263,6 +292,19 @@ GsInstVarRefactoring >> recordWillNotRecompileLosing: aScopeClass [
 	| accessors |
 	accessors := environment classesAndSelectorsAccessing: varName inHierarchyOf: aScopeClass.
 	accessors do: [:assoc | willNotRecompile add: assoc]
+]
+
+{ #category : 'private - analysis' }
+GsInstVarRefactoring >> recordWillNotRecompileShadowedBy: aScopeClass [
+	"Record class -> sorted selectors of the instance methods in aScopeClass's hierarchy that already
+	 declare a method-level TEMPORARY or an ARGUMENT named varName. Once the new instance variable
+	 becomes visible to the subtree, GemStone refuses that shadowing declaration, so those methods do
+	 not recompile onto the new class version and are dropped -- exactly like the methods that lose a
+	 removed variable. Predicting them here is what stops the preview claiming '0 will not recompile'
+	 and then silently dropping them."
+	| shadowers |
+	shadowers := environment classesAndSelectorsShadowing: varName inHierarchyOf: aScopeClass.
+	shadowers do: [:assoc | willNotRecompile add: assoc]
 ]
 
 { #category : 'private' }
@@ -402,12 +444,18 @@ GsInstVarRefactoring >> willNotRecompileJsonString [
 GsInstVarRefactoring >> outOfScopeJsonString [
 	"The precondition / warning payload for the preview panel, in the family's shape. A hard
 	 decline (which blocks Apply) rides in `decline`; willNotRecompile lists the methods that will
-	 be dropped; note warns about the commit semantics of migrate/delete-history."
+	 be dropped; note warns about the commit semantics of migrate/delete-history.
+
+	 sessionHasUncommittedChanges reports `System needsCommit` as the preview is built. The
+	 committing options (migrate instances / delete history) call `System commitTransaction`, which
+	 commits the WHOLE session transaction -- not just the change we staged -- so when this is true
+	 the client warns that the user's other uncommitted work will be committed along with it."
 	self ensureAnalysis.
 	^'{"references":0,"skipped":0,"scope":"hierarchy","collision":null,"decline":',
 	  (decline ifNil: ['null'] ifNotNil: [:r | self jsonQuote: r]),
 	  ',"willNotRecompile":', self willNotRecompileJsonString,
 	  ',"actedOnClass":', (self jsonQuote: self actedOnClassName),
+	  ',"sessionHasUncommittedChanges":', (System needsCommit ifTrue: ['true'] ifFalse: ['false']),
 	  ',"note":', (self jsonQuote: 'The structural change does not commit. Migrating instances and deleting history DO commit the transaction; nothing else does.'),
 	  '}'
 ]
@@ -448,21 +496,49 @@ GsInstVarRefactoring >> applyDeselected: deselectedIds options: optsArray migrat
 	 keeps them. If migrate or deleteHistory is true the structural change is COMMITTED first (the
 	 substrate requires a clean transaction to migrate), then the committing step(s) run and commit.
 	 Answers {applied, failed:[..], dropped:[..], committed:bool}."
-	| applied failures |
+	"`applied` is an instance variable (not a temp) so applyClassChange: can bump it the moment a
+	 version is staged; reset it here per apply."
+	| failures changes index |
 	self ensureAnalysis.
 	"nil optsArray keeps the acted-on class's current options; an Array (even empty) sets them."
 	editedOptions := optsArray isNil ifTrue: [nil] ifFalse: [optsArray collect: [:e | e asString]].
 	oldToNew := IdentityDictionary new.
 	dropped := OrderedCollection new.
 	committed := false.
+	partiallyApplied := false.
 	failures := OrderedCollection new.
 	applied := 0.
-	self changeSet changes do: [:change |
-		[self applyChange: change. applied := applied + 1]
-		on: Error do: [:e |
-			failures add: (Array with: change id with: change className with: e messageText)]].
-	(failures isEmpty and: [aBool or: [dBool]]) ifTrue: [
-		self commitStructuralThenMigrate: aBool deleteHistory: dBool on: failures].
+	"STOP at the first failure. The change set is all-or-nothing and each class is re-parented onto
+	 the new version of its parent, so carrying on past a failure would version later classes onto a
+	 stale oldToNew entry and leave a half-reshaped subtree behind."
+	changes := self changeSet changes.
+	index := 1.
+	[failures isEmpty and: [index <= changes size]] whileTrue: [
+		| change |
+		change := changes at: index.
+		"applied is bumped inside applyClassChange: the instant makeNewVersionOf: stages a version,
+		 NOT here after applyChange: returns -- copyMethodsFrom: runs after the version already
+		 exists, so a raise there would otherwise leave a staged (method-less) version behind while
+		 applied stayed 0, making partiallyApplied read false and the client say 'Nothing was
+		 applied.' over a stranded reshape."
+		[self applyChange: change]
+			on: Error do: [:e |
+				failures add: (Array with: change id with: change className with: e messageText)].
+		index := index + 1].
+	failures isEmpty ifTrue: [
+		(aBool or: [dBool]) ifTrue: [
+			self commitStructuralThenMigrate: aBool deleteHistory: dBool on: failures]].
+	"partiallyApplied means a failure left work behind -- classes already versioned in the
+	 transaction, or already committed if the failure struck AFTER the commit (a migrate /
+	 delete-history step that raised). Compute it once here, from what actually applied, regardless
+	 of WHICH stage failed: setting it only on the structural-failure branch let a commit/migrate
+	 failure answer partiallyApplied:false, so the client wrongly reported 'Nothing was applied.'
+	 when whole classes had in fact been versioned (and possibly committed).
+
+	 The engine still does NOT abort -- that would discard any work the user had in flight before
+	 this refactoring started, which is not ours to throw away -- so the client keys its abort
+	 recommendation off this and says what an abort would cost."
+	partiallyApplied := failures notEmpty and: [applied > 0].
 	^'{"applied":', applied printString,
 	  ',"failed":[',
 	  ((failures collect: [:f |
@@ -475,24 +551,62 @@ GsInstVarRefactoring >> applyDeselected: deselectedIds options: optsArray migrat
 		'{"class":', (self jsonQuote: (d at: 1) asString),
 		',"selector":', (self jsonQuote: (d at: 2) asString), '}'])
 			inject: '' into: [:acc :s | acc isEmpty ifTrue: [s] ifFalse: [acc, ',', s]]),
-	  '],"committed":', (committed ifTrue: ['true'] ifFalse: ['false']), '}'
+	  '],"committed":', (committed ifTrue: ['true'] ifFalse: ['false']),
+	  ',"partiallyApplied":', (partiallyApplied ifTrue: ['true'] ifFalse: ['false']), '}'
 ]
 
 { #category : 'applying' }
 GsInstVarRefactoring >> commitStructuralThenMigrate: aBool deleteHistory: dBool on: failures [
 	"With the structural change applied in the transaction, commit it (migrateInstancesTo: needs a
-	 clean transaction), then -- if asked -- migrate instances of each old version to its new one
-	 and commit, and delete every prior version from each versioned class's history and commit."
+	 clean transaction), then -- if asked -- migrate instances of each old version to its new one and
+	 delete every prior version from each versioned class's history.
+
+	 migrateInstancesTo: reports instances it could NOT migrate in its RETURN VALUE (five sets: set 1
+	 migrated, sets 2..5 failures) and does not raise on a partial failure, so migrateAllInstances
+	 inspects those reports and answers a failure count; a nonzero count is folded into failures
+	 rather than silently swallowed as a clean success. Prior versions are pruned only when nothing
+	 was left stranded -- deleting the version whose instances did not migrate would orphan them."
 	[System commitTransaction.
 	 committed := true.
-	 aBool ifTrue: [
-		oldToNew keysAndValuesDo: [:old :new | old migrateInstancesTo: new].
-		System commitTransaction].
-	 dBool ifTrue: [
+	 aBool ifTrue: [ | failed |
+		failed := self migrateAllInstances.
+		failed > 0 ifTrue: [
+			failures add: (Array with: 'migrate' with: 'migrate'
+				with: failed printString,
+					(failed = 1
+						ifTrue: [' instance could not be migrated to the new class version']
+						ifFalse: [' instances could not be migrated to the new class version']))]].
+	 (dBool and: [failures isEmpty]) ifTrue: [
 		oldToNew valuesDo: [:new | self deletePriorVersionsOf: new].
 		System commitTransaction]]
 	on: Error do: [:e |
 		failures add: (Array with: 'commit' with: 'commit' with: e messageText)]
+]
+
+{ #category : 'applying' }
+GsInstVarRefactoring >> migrateAllInstances [
+	"Migrate every instance of each superseded version (the keys of oldToNew) to its new version.
+	 Answers the number of instances that FAILED to migrate. migrateInstancesTo: answers five sets
+	 (set 1 = migrated, sets 2..5 = failures) and does NOT raise on a partial failure, so its report
+	 must be summed; a migrateInstancesTo: that DOES raise is counted as at least one failure and is
+	 never propagated. Mirrors GsInstVarStructureRefactoring>>migrateAllInstances.
+
+	 MOST-DERIVED FIRST: a subclass instance is also an instance of its old superclass version, so
+	 migrating an ancestor before the subclass would report that not-yet-moved instance as a failure.
+	 Deepest-first means each instance is migrated by its own class. migrateInstancesTo: also needs a
+	 CLEAN transaction, so commit after each class, not once at the end. The caller has already
+	 committed the structural change."
+	| failed |
+	failed := 0.
+	(oldToNew keys asSortedCollection: [:a :b | a allSuperclasses size >= b allSuperclasses size])
+		do: [:old | | new |
+			new := oldToNew at: old.
+			[| report |
+			 report := old migrateInstancesTo: new.
+			 2 to: report size do: [:i | failed := failed + (report at: i) size].
+			 System commitTransaction]
+			on: Error do: [:e | failed := failed + 1]].
+	^failed
 ]
 
 { #category : 'applying' }
@@ -524,6 +638,10 @@ GsInstVarRefactoring >> applyClassChange: aChange [
 	parentNew := oldToNew at: old superclass ifAbsent: [old superclass].
 	list := newIvarLists at: aChange className ifAbsent: [self ownInstVarsOf: old].
 	new := self makeNewVersionOf: old superclass: parentNew instVarNames: list options: (self optionsForApply: old).
+	"Count it as applied HERE, the moment the version is staged -- before copyMethodsFrom:, which
+	 could raise. If it does, this class's new version is already a real staged mutation, so the
+	 apply is genuinely partial and partiallyApplied must reflect that."
+	applied := applied + 1.
 	self copyMethodsFrom: old to: new.
 	oldToNew at: old put: new
 ]

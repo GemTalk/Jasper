@@ -1,7 +1,7 @@
 import type { ParsedUri } from './gemstoneFileSystemProvider';
 
-// The two kinds of GemStone source editor the Open Editors pane groups by.
-export type OpenEditorKind = 'class' | 'method';
+// The kinds of GemStone editor the Open Editors pane groups by.
+export type OpenEditorKind = 'class' | 'comment' | 'method';
 
 export interface OpenEditorEntry {
   kind: OpenEditorKind;
@@ -12,9 +12,10 @@ export interface OpenEditorEntry {
 // a class-definition editor ('class', labelled by class name) or a method
 // source editor ('method', labelled `Class>>selector` — `Class (class)>>…` for
 // the class side, with a " (base)" suffix when it shows the persistent base
-// source). Returns undefined for tabs that are not a browsable class/method
-// source — a class comment, the new-class / new-method templates, or the
-// read-only override-diff comparison view — so the pane omits them.
+// source) or a class comment editor ('comment', labelled by class name).
+// Returns undefined for tabs that are not browsable — the new-class / new-method
+// templates or the read-only override-diff comparison view — so the pane omits
+// them.
 export function classifyGemstoneUri(parsed: ParsedUri): OpenEditorEntry | undefined {
   switch (parsed.kind) {
     case 'method': {
@@ -26,6 +27,7 @@ export function classifyGemstoneUri(parsed: ParsedUri): OpenEditorEntry | undefi
     case 'definition':
       return { kind: 'class', label: parsed.className };
     case 'comment':
+      return { kind: 'comment', label: parsed.className };
     case 'new-class':
     case 'new-method':
       return undefined;

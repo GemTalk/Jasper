@@ -44,6 +44,10 @@
     "configurationDefaults": {
       "[gemstone-smalltalk]": {
         "editor.minimap.enabled": false
+      },
+      "[gemstone-class-comment]": {
+        "editor.wordWrap": "on",
+        "editor.minimap.enabled": false
       }
     },
     "languages": [
@@ -83,6 +87,12 @@
           "text/x-gemstone-smalltalk"
         ],
         "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "gemstone-class-comment",
+        "aliases": [
+          "GemStone Class Comment"
+        ]
       },
       {
         "id": "ston",
@@ -979,6 +989,18 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "gemstone.explorer.commit",
+        "title": "Commit",
+        "category": "GemStone",
+        "icon": "$(check)"
+      },
+      {
+        "command": "gemstone.explorer.abort",
+        "title": "Abort",
+        "category": "GemStone",
+        "icon": "$(discard)"
+      },
+      {
         "command": "gemstone.explorer.revealOpenEditor",
         "title": "Reveal Open Editor",
         "category": "GemStone"
@@ -997,14 +1019,20 @@
       },
       {
         "command": "gemstone.explorer.openSelectedMethodToSide",
-        "title": "Open Method to the Side",
+        "title": "Pin Method",
         "category": "GemStone"
       },
       {
         "command": "gemstone.explorer.openMethodToSide",
-        "title": "Open Method to the Side",
+        "title": "Pin Method",
         "category": "GemStone",
-        "icon": "$(split-horizontal)"
+        "icon": "$(pin)"
+      },
+      {
+        "command": "gemstone.explorer.removeMethod",
+        "title": "Remove Method",
+        "category": "GemStone",
+        "icon": "$(trash)"
       },
       {
         "command": "gemstoneExplorerDicts.filter",
@@ -1084,14 +1112,38 @@
         "icon": "$(add)"
       },
       {
-        "command": "gemstone.explorer.newMethodCategory",
-        "title": "New Method Category",
+        "command": "gemstone.explorer.newInstanceMethodCategory",
+        "title": "New Instance Method Category",
         "category": "GemStone",
         "icon": "$(new-folder)"
       },
       {
+        "command": "gemstone.explorer.newClassMethodCategory",
+        "title": "New Class Method Category",
+        "category": "GemStone",
+        "icon": "$(new-folder)"
+      },
+      {
+        "command": "gemstone.explorer.renameMethodCategory",
+        "title": "Rename Method Category…",
+        "category": "GemStone",
+        "icon": "$(edit)"
+      },
+      {
         "command": "gemstone.explorer.newMethod",
         "title": "New Method",
+        "category": "GemStone",
+        "icon": "$(add)"
+      },
+      {
+        "command": "gemstone.explorer.newInstanceMethod",
+        "title": "New Instance Method",
+        "category": "GemStone",
+        "icon": "$(add)"
+      },
+      {
+        "command": "gemstone.explorer.newClassMethod",
+        "title": "New Class Method",
         "category": "GemStone",
         "icon": "$(add)"
       },
@@ -1123,15 +1175,27 @@
       },
       {
         "command": "gemstone.explorer.openDefinitionToSide",
-        "title": "Open Class Definition to the Side",
+        "title": "Pin Definition",
         "category": "GemStone",
-        "icon": "$(go-to-file)"
+        "icon": "$(pin)"
+      },
+      {
+        "command": "gemstone.explorer.openComment",
+        "title": "Pin Comment",
+        "category": "GemStone",
+        "icon": "$(book)"
+      },
+      {
+        "command": "gemstone.explorer.openHierarchyComment",
+        "title": "Pin Comment",
+        "category": "GemStone",
+        "icon": "$(book)"
       },
       {
         "command": "gemstone.explorer.openHierarchyDefinition",
-        "title": "Open Class Definition to the Side",
+        "title": "Pin Definition",
         "category": "GemStone",
-        "icon": "$(go-to-file)"
+        "icon": "$(pin)"
       },
       {
         "command": "gemstone.explorer.classClicked",
@@ -1285,6 +1349,18 @@
         "title": "Class History…",
         "category": "GemStone",
         "icon": "$(history)"
+      },
+      {
+        "command": "gemstone.explorer.insertSuperclass",
+        "title": "Insert Superclass…",
+        "category": "GemStone",
+        "icon": "$(add)"
+      },
+      {
+        "command": "gemstone.explorer.extractSuperclass",
+        "title": "Extract Superclass…",
+        "category": "GemStone",
+        "icon": "$(type-hierarchy-super)"
       },
       {
         "command": "gemstone.downloadVersion",
@@ -1515,6 +1591,14 @@
           "when": "false"
         },
         {
+          "command": "gemstone.explorer.commit",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.abort",
+          "when": "false"
+        },
+        {
           "command": "gemstone.explorer.removeDictionary",
           "when": "false"
         },
@@ -1575,6 +1659,14 @@
           "when": "false"
         },
         {
+          "command": "gemstone.explorer.insertSuperclass",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.extractSuperclass",
+          "when": "false"
+        },
+        {
           "command": "gemstone.explorer.revealOpenEditor",
           "when": "false"
         },
@@ -1584,6 +1676,10 @@
         },
         {
           "command": "gemstone.explorer.openSelectedMethodToSide",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.removeMethod",
           "when": "false"
         },
         {
@@ -1647,7 +1743,17 @@
         {
           "command": "gemstone.explorer.refresh",
           "when": "view == gemstoneExplorerDicts",
-          "group": "navigation"
+          "group": "navigation@3"
+        },
+        {
+          "command": "gemstone.explorer.commit",
+          "when": "view == gemstoneExplorerDicts",
+          "group": "navigation@4"
+        },
+        {
+          "command": "gemstone.explorer.abort",
+          "when": "view == gemstoneExplorerDicts",
+          "group": "navigation@5"
         },
         {
           "command": "gemstone.explorer.closeAllOpenEditors",
@@ -1697,7 +1803,7 @@
         {
           "command": "gemstone.explorer.newDictionary",
           "when": "view == gemstoneExplorerDicts",
-          "group": "navigation@2"
+          "group": "navigation@6"
         },
         {
           "command": "gemstone.explorer.newClassCategory",
@@ -1715,14 +1821,9 @@
           "group": "navigation@3"
         },
         {
-          "command": "gemstone.explorer.newMethod",
-          "when": "view == gemstoneExplorerMethods",
-          "group": "navigation@2"
-        },
-        {
-          "command": "gemstone.explorer.newMethodCategory",
-          "when": "view == gemstoneExplorerMethods",
-          "group": "navigation@3"
+          "command": "gemstone.explorer.openComment",
+          "when": "view == gemstoneExplorerClasses",
+          "group": "navigation@4"
         },
         {
           "command": "gemstone.openWalkthrough",
@@ -1824,7 +1925,12 @@
         {
           "command": "gemstone.explorer.openDefinitionToSide",
           "when": "view == gemstoneExplorerClasses && viewItem == explorerClass",
-          "group": "inline"
+          "group": "inline@1"
+        },
+        {
+          "command": "gemstone.explorer.openComment",
+          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass",
+          "group": "inline@2"
         },
         {
           "command": "gemstone.explorer.renameIvar",
@@ -1872,6 +1978,36 @@
           "group": "inline"
         },
         {
+          "command": "gemstone.explorer.newInstanceMethodCategory",
+          "when": "view == gemstoneExplorerMethods && viewItem == explorerSideInstance",
+          "group": "inline@1"
+        },
+        {
+          "command": "gemstone.explorer.newInstanceMethod",
+          "when": "view == gemstoneExplorerMethods && viewItem == explorerSideInstance",
+          "group": "inline@2"
+        },
+        {
+          "command": "gemstone.explorer.newClassMethodCategory",
+          "when": "view == gemstoneExplorerMethods && viewItem == explorerSideClass",
+          "group": "inline@1"
+        },
+        {
+          "command": "gemstone.explorer.newClassMethod",
+          "when": "view == gemstoneExplorerMethods && viewItem == explorerSideClass",
+          "group": "inline@2"
+        },
+        {
+          "command": "gemstone.explorer.renameMethodCategory",
+          "when": "view == gemstoneExplorerMethods && viewItem == explorerProtocol",
+          "group": "inline@1"
+        },
+        {
+          "command": "gemstone.explorer.newMethod",
+          "when": "view == gemstoneExplorerMethods && viewItem == explorerProtocol",
+          "group": "inline@2"
+        },
+        {
           "command": "gemstone.explorer.moveMethodToClass",
           "when": "view == gemstoneExplorerMethods && viewItem =~ /explorerMethod/",
           "group": "3_refactor@1"
@@ -1897,9 +2033,19 @@
           "group": "inline@5"
         },
         {
+          "command": "gemstone.explorer.removeMethod",
+          "when": "view == gemstoneExplorerMethods && viewItem =~ /^explorerMethod/",
+          "group": "inline@6"
+        },
+        {
+          "command": "gemstone.explorer.removeMethod",
+          "when": "view == gemstoneExplorerMethods && viewItem =~ /^explorerMethod/",
+          "group": "9_danger@0"
+        },
+        {
           "command": "gemstone.explorer.renameClass",
           "when": "view == gemstoneExplorerClasses && viewItem == explorerClass",
-          "group": "inline"
+          "group": "inline@3"
         },
         {
           "command": "gemstone.explorer.classHistory",
@@ -1907,19 +2053,29 @@
           "group": "3_refactor@1"
         },
         {
+          "command": "gemstone.explorer.insertSuperclass",
+          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass",
+          "group": "3_refactor@2"
+        },
+        {
+          "command": "gemstone.explorer.extractSuperclass",
+          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass",
+          "group": "3_refactor@3"
+        },
+        {
           "command": "gemstone.explorer.openHierarchyDefinition",
           "when": "view == gemstoneExplorerHierarchy && viewItem == explorerHierClass",
-          "group": "inline"
+          "group": "inline@1"
+        },
+        {
+          "command": "gemstone.explorer.openHierarchyComment",
+          "when": "view == gemstoneExplorerHierarchy && viewItem == explorerHierClass",
+          "group": "inline@2"
         },
         {
           "command": "gemstone.explorer.renameClass",
           "when": "view == gemstoneExplorerHierarchy && viewItem == explorerHierClass",
-          "group": "inline"
-        },
-        {
-          "command": "gemstone.explorer.openHierarchyDefinition",
-          "when": "view == gemstoneExplorerHierarchy && viewItem == explorerHierClass",
-          "group": "1_open@1"
+          "group": "inline@3"
         },
         {
           "command": "gemstone.explorer.classHistory",
@@ -1927,14 +2083,14 @@
           "group": "3_refactor@1"
         },
         {
-          "command": "gemstone.explorer.openDefinition",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass",
-          "group": "1_open@1"
+          "command": "gemstone.explorer.insertSuperclass",
+          "when": "view == gemstoneExplorerHierarchy && viewItem == explorerHierClass",
+          "group": "3_refactor@2"
         },
         {
-          "command": "gemstone.explorer.openDefinitionToSide",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass",
-          "group": "1_open@2"
+          "command": "gemstone.explorer.extractSuperclass",
+          "when": "view == gemstoneExplorerHierarchy && viewItem == explorerHierClass",
+          "group": "3_refactor@3"
         },
         {
           "command": "gemstone.generateGrailStub",
@@ -2347,10 +2503,14 @@
     "dev:fresh:keep-installs": "bash scripts/dev-fresh.sh --keep-installs",
     "serve:seaside": "bash scripts/serve-seaside.sh",
     "lint:github:workflows": "bash scripts/lint-workflow-timeouts.sh",
-    "lint": "eslint .",
-    "lint:fix": "eslint . --fix",
-    "format": "prettier --write \"**/*.{ts,mts,cts,js,mjs,cjs}\"",
-    "format:check": "prettier --check \"**/*.{ts,mts,cts,js,mjs,cjs}\"",
+    "//lint": "Results are cached under node_modules/.cache/eslint/, keyed on file content; run lint:cache:clear to force a full re-check.",
+    "lint": "eslint . --cache --cache-location node_modules/.cache/eslint/.eslintcache --cache-strategy content",
+    "lint:fix": "eslint . --fix --cache --cache-location node_modules/.cache/eslint/.eslintcache --cache-strategy content",
+    "lint:cache:clear": "rm -rf node_modules/.cache/eslint",
+    "//format": "Results are cached under node_modules/.cache/prettier/, keyed on file content; run format:cache:clear to force a full re-check.",
+    "format": "prettier --write --cache \"**/*.{ts,mts,cts,js,mjs,cjs}\"",
+    "format:check": "prettier --check --cache \"**/*.{ts,mts,cts,js,mjs,cjs}\"",
+    "format:cache:clear": "rm -rf node_modules/.cache/prettier",
     "//hooks:install": "Opt-in: installs local git pre-commit hooks (lefthook.yml) that lint staged files before each commit. Not run automatically by `npm install` — CI is the gate regardless of whether a dev installs these.",
     "hooks:install": "lefthook install",
     "hooks:uninstall": "lefthook uninstall",
@@ -2401,7 +2561,7 @@
     "koffi": "^2.15.1"
   },
   "overrides": {
-    "fast-uri": "^3.1.4",
+    "fast-uri": "^3.1.5",
     "js-yaml": "^4.3.0"
   }
 }

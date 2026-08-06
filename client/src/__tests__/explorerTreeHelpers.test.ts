@@ -10,19 +10,20 @@ describe('variable-side grouping under a class', () => {
     expect(sides[1].names).toEqual(['Rate']);
   });
 
-  it('shows only the instance side when there are no class variables', () => {
+  it('still shows both sides when there are no class variables, leaving the class side empty', () => {
     const sides = variableSides(['count'], []);
 
-    expect(sides).toHaveLength(1);
-    expect(sides[0].isMeta).toBe(false);
+    expect(sides.map((s) => s.isMeta)).toEqual([false, true]);
+    expect(sides[0].names).toEqual(['count']);
+    expect(sides[1].names).toEqual([]);
   });
 
-  it('shows only the class side when there are no instance variables', () => {
+  it('still shows both sides when there are no instance variables, leaving the instance side empty', () => {
     const sides = variableSides([], ['Rate', 'Minimum']);
 
-    expect(sides).toHaveLength(1);
-    expect(sides[0].isMeta).toBe(true);
-    expect(sides[0].names).toEqual(['Rate', 'Minimum']);
+    expect(sides.map((s) => s.isMeta)).toEqual([false, true]);
+    expect(sides[0].names).toEqual([]);
+    expect(sides[1].names).toEqual(['Rate', 'Minimum']);
   });
 
   it('shows nothing when a class defines neither kind', () => {
