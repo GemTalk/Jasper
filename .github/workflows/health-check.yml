@@ -113,6 +113,10 @@ jobs:
         run: npm run lint
       - name: Supply-chain config check
         run: npm run lint:supply-chain
+      - name: Lockfile lint
+        run: npm run lint:lockfile
+      - name: Audit registry signatures
+        run: npm audit signatures
 
   health-check:
     timeout-minutes: 5
