@@ -115,7 +115,6 @@ import { getGciLog } from './gciLog';
 import { GemStoneCodeLensProvider } from './gemstoneCodeLensProvider';
 import * as queries from './browserQueries';
 import { SysadminStorage } from './sysadminStorage';
-import { GemStoneDatabase } from './sysadminTypes';
 import { appendSysadmin, getSysadminChannel } from './sysadminChannel';
 import { VersionManager } from './versionManager';
 import { VersionTreeProvider, VersionItem } from './versionTreeProvider';
@@ -3684,7 +3683,7 @@ export function activate(context: vscode.ExtensionContext) {
         const db = sysadminStorage
           .getDatabases()
           .find((d) => d.config.stoneName === session.login.stone);
-        const backedUp = await runLogicalBackup({
+        await runLogicalBackup({
           execute: (code) => queries.executeFetchString(session, code),
           runBackup: (code) =>
             queries.executeFetchStringNb(
@@ -3697,9 +3696,6 @@ export function activate(context: vscode.ExtensionContext) {
           stoneName: session.login.stone,
           dbPath: db?.path,
         });
-        // Re-read the Databases tree so the new backup (and the Backups node, if
-        // this was the first one) shows up without a manual refresh.
-        if (backedUp) refreshAdminViews();
       },
     ),
 
@@ -3758,35 +3754,12 @@ export function activate(context: vscode.ExtensionContext) {
 
     vscode.commands.registerCommand(
       'gemstone.fullLogicalRestore',
-      async (item?: GemStoneSessionItem | DatabaseNode) => {
-        // Two entry points: the Sessions view button (a GemStoneSessionItem) and
-        // a right-click on a backup-file node in the Databases tree. Either way we
-        // need a LIVE session (for credentials to re-login through the restore's
-        // stop/start cycle) and a locally-managed database (the restore must run
-        // on the stone's own host).
-        let session: ActiveSession | undefined;
-        let backupFile: string | undefined;
-        let db: GemStoneDatabase | undefined;
-
-        if (item instanceof GemStoneSessionItem) {
-          session = item.activeSession;
-        } else if (item && 'kind' in item && item.kind === 'backupFile') {
-          backupFile = item.filePath;
-          db = item.db;
-          session = sessionManager
-            .getSessions()
-            .find((s) => s.login.stone === db!.config.stoneName);
-          if (!session) {
-            vscode.window.showWarningMessage(
-              `A full logical restore runs over a live session (it needs your login to reconnect ` +
-                `through the stone restart). Log in to "${db.config.stoneName}" first, then try again.`,
-              { modal: true },
-            );
-            return;
-          }
-        } else {
-          session = sessionManager.getSelectedSession();
-        }
+      async (item?: GemStoneSessionItem) => {
+        // A restore runs over GCI against the connected stone (it needs a LIVE
+        // session for credentials to re-login through the stop/start cycle), so
+        // it operates on the session clicked in the Sessions tree, or the
+        // selected session when invoked from the palette.
+        const session = item ? item.activeSession : sessionManager.getSelectedSession();
         if (!session) {
           vscode.window.showInformationMessage(
             'No GemStone session to restore. Connect a session to the stone you want to restore first.',
@@ -3794,9 +3767,11 @@ export function activate(context: vscode.ExtensionContext) {
           return;
         }
 
-        db =
-          db ??
-          sysadminStorage.getDatabases().find((d) => d.config.stoneName === session.login.stone);
+        // Restore also needs a locally-managed database (it must run on the
+        // stone's own host).
+        const db = sysadminStorage
+          .getDatabases()
+          .find((d) => d.config.stoneName === session.login.stone);
         if (!db) {
           vscode.window.showErrorMessage(
             `Full logical restore currently requires a database created through Jasper's Databases ` +
@@ -3829,7 +3804,6 @@ export function activate(context: vscode.ExtensionContext) {
         const restored = await runLogicalRestore({
           stoneName: managed.config.stoneName,
           dbPath: managed.path,
-          backupFile,
           hasFileControl: () =>
             hasFileControlPrivilege((code) => queries.executeFetchString(session, code)),
           closeCurrentSession: async () => {
