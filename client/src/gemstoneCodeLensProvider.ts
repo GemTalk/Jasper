@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { SessionManager, ActiveSession } from './sessionManager';
 import { parseTopazDocument } from './topazFileIn';
 import { extractSelector } from './systemBrowser';
+import { parseMethodUri } from './gemstoneFileSystemProvider';
 import * as queries from './browserQueries';
 
 interface CodeLensData {
@@ -90,25 +91,11 @@ export class GemStoneCodeLensProvider implements vscode.CodeLensProvider, vscode
   }
 
   private provideGemstoneCodeLenses(document: vscode.TextDocument): vscode.CodeLens[] {
-    const lenses: vscode.CodeLens[] = [];
+    const method = parseMethodUri(document.uri);
+    if (!method) return [];
 
-    try {
-      const uri = document.uri;
-      const parts = uri.path.split('/').map(decodeURIComponent);
-      // Method: /dict/class/side/category/selector (6 parts, first is empty)
-      if (parts.length === 6) {
-        const selector = parts[5];
-        const className = parts[2];
-        const isMeta = parts[3] === 'class';
-
-        const range = new vscode.Range(new vscode.Position(0, 0), new vscode.Position(0, 0));
-        lenses.push(...this.makeMethodLenses(range, selector, className, isMeta));
-      }
-    } catch {
-      // URI parse error — skip
-    }
-
-    return lenses;
+    const range = new vscode.Range(new vscode.Position(0, 0), new vscode.Position(0, 0));
+    return this.makeMethodLenses(range, method.selector, method.className, method.isMeta);
   }
 
   // Emit the senders + implementors pair on the same range, in that order.
