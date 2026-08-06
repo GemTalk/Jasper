@@ -11,9 +11,11 @@ import {
   buildNewMethodUri,
   buildMethodUri,
   parseUri,
+  parseMethodUri,
   listOpenGemstoneTabs,
   tabInputUri,
 } from './gemstoneFileSystemProvider';
+import type { ParsedUri } from './gemstoneFileSystemProvider';
 import { filterMatches } from './explorerFilter';
 import {
   parseMethodFilter,
@@ -1471,6 +1473,16 @@ export class ExplorerController {
     }
   }
 
+  // Re-reveal the current class when the Hierarchy pane reappears. reveals are
+  // skipped while the pane is hidden — either collapsed, or the whole Explorer
+  // container is off-screen (revealHierarchySelf's visible guard) — so a class
+  // navigated to while it was hidden would otherwise leave the pane on a stale
+  // selection until the next navigation. Only acts on becoming visible, so it
+  // never forces a deliberately-collapsed pane open.
+  onHierarchyVisibilityChanged(visible: boolean): void {
+    if (visible) void this.revealHierarchySelf();
+  }
+
   hierarchyParent(element: HierarchyItem): HierarchyItem | undefined {
     if (element.role === 'subclass') {
       const selfIdx = this.hierChain.length - 1;
@@ -2814,12 +2826,9 @@ export class ExplorerController {
     if (raw === undefined) return [];
     const filter = this.parseFilter(raw);
     if (filter.ivar.length === 0) return [];
-    // parts: ['', dictName, className, side, category, selector...]
-    const parts = uri.path.split('/').map((p) => decodeURIComponent(p));
-    if (parts.length < 6) return [];
-    const isMeta = parts[3] === 'class';
-    const selector = unescapeSelectorSlashes(parts.slice(5).join('/'));
-    const access = this.methodIvarAccess().get(`${isMeta}:${selector}`);
+    const method = parseMethodUri(uri);
+    if (!method) return [];
+    const access = this.methodIvarAccess().get(`${method.isMeta}:${method.selector}`);
     if (!access) return [];
     const patterns = filter.ivar.map((c) => c.pattern);
     return [...new Set([...access.reads, ...access.writes])].filter((n) =>
@@ -2890,6 +2899,11 @@ export class ExplorerController {
     this._showClassMethods = isMeta;
     this.syncMethodSide();
     if (changed) {
+      // Keep the recorded selection side in step with the visible side so New
+      // Method lands on the side you're now looking at (the old selection is on
+      // the other side); its category no longer applies, so drop it too.
+      this.state.selectedIsMeta = isMeta;
+      this.state.selectedMethodCategory = undefined;
       this.methodProvider.refresh();
       this.syncTitles();
     }
@@ -3246,20 +3260,19 @@ export class ExplorerController {
     const session = this.session();
     if (!session || String(session.id) !== uri.authority) return;
 
-    const parts = uri.path.split('/').map((p) => decodeURIComponent(p));
-    // parts: ['', dictName, className, side|'definition', category, selector...]
-    const dictName = parts[1];
-    const className = parts[2];
-    if (!dictName || !className || className === 'new-class') return;
-
-    let revealMethod: { selector: string; isMeta: boolean } | undefined;
-    if (parts.length >= 6) {
-      const selector = unescapeSelectorSlashes(parts.slice(5).join('/'));
-      if (selector === 'new-method') return; // unsaved template
-      revealMethod = { selector, isMeta: parts[3] === 'class' };
-    } else if (parts[3] !== 'definition') {
-      return; // not a recognizable method/definition URI
+    // Only a saved method or a class definition drives the navigator; a comment
+    // or a new-* template (and anything unparseable) is left alone.
+    let parsed: ParsedUri;
+    try {
+      parsed = parseUri(uri);
+    } catch {
+      return;
     }
+    if (parsed.kind !== 'method' && parsed.kind !== 'definition') return;
+    const { dictName, className } = parsed;
+
+    const revealMethod =
+      parsed.kind === 'method' ? { selector: parsed.selector, isMeta: parsed.isMeta } : undefined;
 
     // Already showing this class: just (re)reveal the method row / refresh title.
     if (this.state.className === className && this.state.dictName === dictName) {
@@ -4147,8 +4160,9 @@ class MethodProvider extends RefreshableProvider<MethodNode> {
         ? this.ctl.flatMethods(isMeta, filter)
         : this.ctl.methodCategories(isMeta, filter);
       // While filtering, lead with a filter chip (funnel row + inline ✕) so the
-      // active filter reads distinctly from the method rows and can be cleared here.
-      return filter === undefined ? rows : [new FilterChipItem(VIEW_METHODS, filter), ...rows];
+      // active filter reads distinctly from the method rows and can be cleared
+      // here — the same helper the other three panes use.
+      return withFilterChip(VIEW_METHODS, this.ctl, rows);
     }
     if (element instanceof MethodCategoryItem) {
       const filter = this.ctl.getFilter(VIEW_METHODS);
@@ -4324,6 +4338,7 @@ export function registerGemStoneExplorer(
   hierarchyView.onDidChangeSelection((e) => {
     if (e.selection[0]) ctl.selectHierarchyNode(e.selection[0]);
   });
+  hierarchyView.onDidChangeVisibility((e) => ctl.onHierarchyVisibilityChanged(e.visible));
   methodView.onDidChangeSelection((e) => {
     const node = e.selection[0];
     // Record the category context so New Method(-Category) defaults there. The

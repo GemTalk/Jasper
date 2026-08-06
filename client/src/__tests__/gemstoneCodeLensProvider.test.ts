@@ -96,6 +96,20 @@ name: aString
       expect(lenses).toHaveLength(2); // 1 method × 2 lenses
     });
 
+    it('returns no lenses for an unsaved new-method template', () => {
+      const doc = {
+        uri: Uri.parse('gemstone://1/UserGlobals/MyClass/instance/accessing/new-method'),
+        getText: () => 'messageSelector\n  ^ self',
+        languageId: 'gemstone-smalltalk',
+        lineAt: vi.fn(),
+        lineCount: 2,
+      } as unknown as TextDocument;
+
+      const lenses = provider.provideCodeLenses(doc);
+
+      expect(lenses).toHaveLength(0);
+    });
+
     it('returns no lenses for empty files', () => {
       const doc = createMockDocument('');
       const lenses = provider.provideCodeLenses(doc);

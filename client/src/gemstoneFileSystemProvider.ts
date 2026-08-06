@@ -158,6 +158,48 @@ export function parseUri(uri: vscode.Uri): ParsedUri {
   throw vscode.FileSystemError.FileNotFound(uri);
 }
 
+// A saved method's coordinates, recovered from its gemstone:// source URI.
+export interface MethodUriRef {
+  sessionId: number;
+  dictName: string;
+  className: string;
+  isMeta: boolean;
+  selector: string;
+  environmentId: number;
+  dictIndex?: number;
+  // True for a read-only base / session-override diff view (its selector has
+  // already been un-labelled). Callers that mutate the method — e.g. setting a
+  // breakpoint — skip these; read-only consumers (highlighting, code lenses)
+  // ignore the flag and use the real selector.
+  diffView: boolean;
+}
+
+// Parse a gemstone:// method-source URI into its method coordinates, or null
+// when the URI isn't a saved method: a non-gemstone scheme, a definition /
+// comment / new-* template, or an unparseable path. The one reverse of the
+// method-URI format, so callers don't re-split the path by hand and re-acquire
+// the slash-selector and diff-label bugs that hand-rolled parse carries.
+export function parseMethodUri(uri: vscode.Uri): MethodUriRef | null {
+  if (uri.scheme !== 'gemstone') return null;
+  let parsed: ParsedUri;
+  try {
+    parsed = parseUri(uri);
+  } catch {
+    return null;
+  }
+  if (parsed.kind !== 'method') return null;
+  return {
+    sessionId: parsed.sessionId,
+    dictName: parsed.dictName,
+    className: parsed.className,
+    isMeta: parsed.isMeta,
+    selector: parsed.selector,
+    environmentId: parsed.environmentId,
+    dictIndex: parsed.dictIndex,
+    diffView: parsed.diffView ?? false,
+  };
+}
+
 export function buildNewMethodUri(
   sessionId: number,
   dictName: string,

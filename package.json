@@ -2001,7 +2001,7 @@
         },
         {
           "command": "gemstone.explorer.clearFilterChip",
-          "when": "viewItem == explorerFilterChip",
+          "when": "view =~ /^gemstoneExplorer/ && viewItem == explorerFilterChip",
           "group": "inline"
         },
         {
@@ -2151,12 +2151,12 @@
         },
         {
           "command": "gemstone.explorer.insertSuperclass",
-          "when": "view == gemstoneExplorerHierarchy && viewItem == explorerHierClass",
+          "when": "view == gemstoneExplorerClassHierarchy && viewItem == explorerHierClass",
           "group": "3_refactor@2"
         },
         {
           "command": "gemstone.explorer.extractSuperclass",
-          "when": "view == gemstoneExplorerHierarchy && viewItem == explorerHierClass",
+          "when": "view == gemstoneExplorerClassHierarchy && viewItem == explorerHierClass",
           "group": "3_refactor@3"
         },
         {

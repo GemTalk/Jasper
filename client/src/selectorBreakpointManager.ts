@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { SessionManager, ActiveSession } from './sessionManager';
+import { parseMethodUri, MethodUriRef } from './gemstoneFileSystemProvider';
 import * as queries from './browserQueries';
 import { StepPointSelectorInfo } from './browserQueries';
 
@@ -8,13 +9,6 @@ interface TrackedSelectorBreakpoint {
   selectorOffset: number;
   selectorLength: number;
   selectorText: string;
-}
-
-interface MethodRef {
-  className: string;
-  isMeta: boolean;
-  selector: string;
-  environmentId: number;
 }
 
 const decorationType = vscode.window.createTextEditorDecorationType({
@@ -53,8 +47,8 @@ export class SelectorBreakpointManager {
 
     const uri = editor.document.uri;
     const uriKey = uri.toString();
-    const method = this.parseMethodUri(uri);
-    if (!method) return;
+    const method = parseMethodUri(uri);
+    if (!method || method.diffView) return;
 
     const infos = this.getSelectorInfos(session, uri, method, editor.document.getText());
     if (!infos || infos.length === 0) {
@@ -177,7 +171,7 @@ export class SelectorBreakpointManager {
   private getSelectorInfos(
     session: ActiveSession,
     uri: vscode.Uri,
-    method: MethodRef,
+    method: MethodUriRef,
     source?: string,
   ): StepPointSelectorInfo[] | null {
     const uriKey = uri.toString();
@@ -210,19 +204,6 @@ export class SelectorBreakpointManager {
         this.refreshDecorations(editor);
       }
     }
-  }
-
-  private parseMethodUri(uri: vscode.Uri): MethodRef | null {
-    if (uri.scheme !== 'gemstone') return null;
-    const parts = uri.path.split('/').map(decodeURIComponent);
-    if (parts.length < 6) return null;
-    const envMatch = uri.query?.match(/env=(\d+)/);
-    return {
-      className: parts[2],
-      isMeta: parts[3] === 'class',
-      selector: parts[5],
-      environmentId: envMatch ? parseInt(envMatch[1], 10) : 0,
-    };
   }
 }
 

@@ -121,6 +121,68 @@ describe('Methods pane instance/class side toggle', () => {
   });
 });
 
+// Capture which side/category New Method files into without driving the real
+// compile: replace the private createNewMethod with a spy and read its args.
+function stubCreateNewMethod(ctl: ExplorerController): ReturnType<typeof vi.fn> {
+  const spy = vi.fn(async () => {});
+  (ctl as unknown as { createNewMethod: typeof spy }).createNewMethod = spy;
+  return spy;
+}
+
+describe('New Method follows the visible side after the title toggle flips', () => {
+  it('files on the default instance side before any selection or toggle', async () => {
+    const ctl = makeController();
+    const create = stubCreateNewMethod(ctl);
+
+    await ctl.newMethod();
+
+    expect(create).toHaveBeenCalledWith(false, 'as yet unclassified');
+  });
+
+  it('files on the class side when the toggle shows class, even after an instance method was selected', async () => {
+    const ctl = makeController();
+    const create = stubCreateNewMethod(ctl);
+    ctl.recordMethodContext(false, 'accessing');
+
+    ctl.setMethodSide(true);
+    await ctl.newMethod();
+
+    expect(create).toHaveBeenCalledWith(true, 'as yet unclassified');
+  });
+
+  it('files on the instance side when the toggle shows instance, even after a class method was selected', async () => {
+    const ctl = makeController();
+    const create = stubCreateNewMethod(ctl);
+    ctl.setMethodSide(true);
+    ctl.recordMethodContext(true, 'instance creation');
+
+    ctl.setMethodSide(false);
+    await ctl.newMethod();
+
+    expect(create).toHaveBeenCalledWith(false, 'as yet unclassified');
+  });
+
+  it('brings the recorded side in step with the visible side and drops the stale category', () => {
+    const ctl = makeController();
+    ctl.recordMethodContext(false, 'accessing');
+
+    ctl.setMethodSide(true);
+
+    expect(ctl.state.selectedIsMeta).toBe(true);
+    expect(ctl.state.selectedMethodCategory).toBeUndefined();
+  });
+
+  it('still reuses the selected category when the visible side never changed', async () => {
+    const ctl = makeController();
+    const create = stubCreateNewMethod(ctl);
+    ctl.recordMethodContext(false, 'accessing');
+
+    await ctl.newMethod();
+
+    expect(create).toHaveBeenCalledWith(false, 'accessing');
+  });
+});
+
 describe('Methods pane header', () => {
   it('names the instance side and does not append the selected selector', () => {
     const ctl = makeController();

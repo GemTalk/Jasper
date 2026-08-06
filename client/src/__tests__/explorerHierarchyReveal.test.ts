@@ -65,3 +65,27 @@ describe('ExplorerController.revealHierarchySelf', () => {
     expect(hierarchy.reveal).not.toHaveBeenCalled();
   });
 });
+
+describe('ExplorerController re-reveals when the Hierarchy pane reappears', () => {
+  it('catches up on a class navigated to while the pane was hidden', async () => {
+    const ctl = makeController();
+    const hierarchy = withHierarchyView(ctl, false);
+    await ctl.revealHierarchySelf();
+    expect(hierarchy.reveal).not.toHaveBeenCalled();
+
+    hierarchy.visible = true;
+    ctl.onHierarchyVisibilityChanged(true);
+
+    await vi.waitFor(() => expect(hierarchy.reveal).toHaveBeenCalledTimes(1));
+  });
+
+  it('does not re-reveal when the pane is being hidden', async () => {
+    const ctl = makeController();
+    const hierarchy = withHierarchyView(ctl, true);
+
+    ctl.onHierarchyVisibilityChanged(false);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(hierarchy.reveal).not.toHaveBeenCalled();
+  });
+});
