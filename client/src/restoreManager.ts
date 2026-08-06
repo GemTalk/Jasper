@@ -35,10 +35,6 @@ export interface LogicalRestoreDeps {
   // machine as the stone), so this is always known; the safety copy of the
   // current extent lands under <dbPath>/backups/backupExtents.
   dbPath: string;
-  // Server-side path to the backup .dbf to restore from. Pre-selected when the
-  // restore was launched from a backup-file tree node; omitted for the Sessions
-  // view button, in which case the manager prompts with an open dialog.
-  backupFile?: string;
 
   // Pre-flight against the CURRENT live session, before it is torn down. A
   // restore requires the FileControl privilege.
@@ -159,20 +155,16 @@ export async function runLogicalRestore(deps: LogicalRestoreDeps): Promise<boole
     return false;
   }
 
-  // Choose the backup file (unless the tree node already pinned one).
-  let backupFile = deps.backupFile;
-  if (!backupFile) {
-    const defaultDir = path.join(deps.dbPath, 'backups');
-    const picked = await vscode.window.showOpenDialog({
-      title: `Full Logical Restore of ${deps.stoneName}`,
-      defaultUri: vscode.Uri.file(defaultDir),
-      canSelectMany: false,
-      openLabel: 'Restore',
-      filters: BACKUP_FILTERS,
-    });
-    if (!picked?.[0]) return false;
-    backupFile = picked[0].fsPath;
-  }
+  const defaultDir = path.join(deps.dbPath, 'backups');
+  const picked = await vscode.window.showOpenDialog({
+    title: `Full Logical Restore of ${deps.stoneName}`,
+    defaultUri: vscode.Uri.file(defaultDir),
+    canSelectMany: false,
+    openLabel: 'Restore',
+    filters: BACKUP_FILTERS,
+  });
+  if (!picked?.[0]) return false;
+  const backupFile = picked[0].fsPath;
 
   // Fresh extent (default) reclaims space; in-place keeps the existing bloat.
   const extentChoice = await vscode.window.showQuickPick([FRESH_EXTENT, IN_PLACE], {

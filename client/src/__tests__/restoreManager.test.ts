@@ -38,7 +38,6 @@ function makeDeps(overrides?: Partial<LogicalRestoreDeps>) {
   const deps: LogicalRestoreDeps = {
     stoneName: 'gs64stone',
     dbPath: '/root/db-1',
-    backupFile: '/root/db-1/backups/backup.dbf',
     hasFileControl: vi.fn(() => true),
     closeCurrentSession: vi.fn(async () => {}),
     stopStone: vi.fn(async () => {}),
@@ -175,8 +174,8 @@ describe('runLogicalRestore', () => {
     expect(deps.stopStone).not.toHaveBeenCalled();
   });
 
-  it('prompts for a backup file when none was pre-selected', async () => {
-    const { deps } = makeDeps({ backupFile: undefined });
+  it('prompts for a backup file to restore from', async () => {
+    const { deps } = makeDeps();
 
     const ok = await runLogicalRestore(deps);
 
@@ -185,7 +184,7 @@ describe('runLogicalRestore', () => {
   });
 
   it('is cancelled without teardown when the backup-file dialog is dismissed', async () => {
-    const { deps } = makeDeps({ backupFile: undefined });
+    const { deps } = makeDeps();
     vi.mocked(vscode.window.showOpenDialog).mockResolvedValue(undefined);
 
     const ok = await runLogicalRestore(deps);
