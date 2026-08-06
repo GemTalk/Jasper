@@ -54,6 +54,12 @@ mcp-server/node_modules/**
 !node_modules/koffi/index.d.ts
 !node_modules/koffi/LICENSE.txt
 !node_modules/koffi/build/**
+# The GemStone Manager webview draws every icon with the codicon font, which a
+# webview does not get for free — it is loaded from disk at runtime via
+# asWebviewUri. These two files must survive the node_modules exclusion above or
+# every glyph in that panel renders as a blank box.
+!node_modules/@vscode/codicons/dist/codicon.css
+!node_modules/@vscode/codicons/dist/codicon.ttf
 
 client/src/**
 # listFilter.js, methodListView.js, debuggerView.js, and enhancedInspectorColumns.js are read at runtime
@@ -66,6 +72,7 @@ client/src/**
 !client/src/methodListView.js
 !client/src/debuggerView.js
 !client/src/browserColumnResize.js
+!client/src/gemstoneManagerView.js
 !client/src/enhancedInspector/enhancedInspectorColumns.js
 !client/src/refactoring/renameInstVarPanelView.js
 !client/src/refactoring/renameMethodEditorView.js

@@ -1727,6 +1727,12 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "gemstone.openManager",
+        "title": "GemStone Manager",
+        "category": "GemStone Admin",
+        "icon": "$(settings-gear)"
+      },
+      {
         "command": "gemstone.startStone",
         "title": "Start Stone",
         "category": "GemStone Admin",
@@ -2929,6 +2935,7 @@
     "vscode-textmate": "^9.3.2"
   },
   "dependencies": {
+    "@vscode/codicons": "^0.0.45",
     "@vscode/debugadapter": "^1.68.0",
     "koffi": "^2.15.1"
   },

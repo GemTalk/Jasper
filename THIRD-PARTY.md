@@ -69,3 +69,35 @@ SOFTWARE.
 >   not the Refactoring Browser AST vendored here (a distinct Brant/Roberts
 >   lineage), so only the Pharo Project copyright above is reproduced for this
 >   component. See the linked `LICENSE` for the complete picture.
+
+---
+
+## Microsoft codicons (icon font)
+
+- **What:** the icon font the GemStone Manager panel draws every glyph with —
+  `codicon.ttf` and the `codicon.css` that declares its `@font-face` and glyph
+  classes. A webview inherits none of VS Code's own fonts, so the panel loads
+  these two files itself through `asWebviewUri`.
+- **Where in this repo:** not vendored. Taken as the `@vscode/codicons`
+  production dependency and shipped **verbatim in the `.vsix`** from
+  `node_modules/@vscode/codicons/dist/`, which two `!` lines in `.vscodeignore`
+  keep out of the wholesale `node_modules/**` exclusion.
+- **Origin:** <https://github.com/microsoft/vscode-codicons>.
+- **License:** the icons are **CC BY 4.0** (the package's `LICENSE`, and its
+  `license` field); the accompanying code is **MIT** (its `LICENSE-CODE`). Only
+  the font and its stylesheet ship here, so the CC BY 4.0 attribution below is
+  what applies.
+- **Modifications:** none — both files ship byte-for-byte as published.
+
+### Attribution (CC BY 4.0)
+
+```
+Copyright (c) Microsoft Corporation.
+"codicons" by Microsoft, licensed under CC BY 4.0:
+https://creativecommons.org/licenses/by/4.0/
+```
+
+> Note: the two shipped files are pinned by a guard in
+> `client/src/__tests__/vscodeignoreShippedAssets.test.ts` — losing either the
+> whitelist or the production dependency would leave every glyph in the panel a
+> blank box, and only in the packaged extension.

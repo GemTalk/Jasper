@@ -92,8 +92,8 @@ export function getSharedMemory(): Promise<{ shmmax: number; shmall: number } | 
  * Whether a shared-memory reading clears the 1 GB a stone needs, and how to say
  * how much there is. The one place that knows the divisors and the threshold:
  * the Start Stone preflight gates on it, Quick Setup warns on it, and the OS
- * view displays it, so a reading they disagree about is a machine one calls
- * ready and another refuses.
+ * view and the manager both display it, so a reading they disagree about is a
+ * machine one calls ready and another refuses.
  */
 export function sharedMemoryStatus(mem: { shmmax: number; shmall: number } | undefined): {
   configured: boolean;
