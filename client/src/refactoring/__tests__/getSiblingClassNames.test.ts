@@ -15,8 +15,21 @@ describe('sibling-class-names query', () => {
 
     const code = exec.mock.calls[0][0] as string;
     expect(code).toContain('cls superclass');
-    expect(code).toContain('c == cls ifFalse:');
+    expect(code).toContain('c == cls');
     expect(names).toEqual(['Cat', 'Fish']);
+  });
+
+  // The offered names are intersected with the parent's OWN `subclasses`, because that is the
+  // collection the engine's `resolveSibling:` searches — anything offered from outside it would
+  // be declined after the user had already picked members and named the class.
+  it('only offers siblings the engine lookup will also find', () => {
+    const exec = vi.fn().mockReturnValue('');
+
+    getSiblingClassNames(exec, 'Dog', 3);
+
+    const code = exec.mock.calls[0][0] as string;
+    expect(code).toContain('sup subclasses');
+    expect(code).toContain('tracked detect:');
   });
 
   it('returns an empty list when the class has no siblings', () => {

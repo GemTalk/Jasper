@@ -140,10 +140,18 @@ function parsePageObject(env: Record<string, unknown>): ExtractSuperPreviewPage 
   };
 }
 
+/** Map the engine's classification onto a MemberKind, FAILING CLOSED.
+ *
+ *  An unrecognised kind — a classification a future engine grows, or a truncated/garbled payload
+ *  — becomes `'unhoistable'`, which `buildMemberPicks` withholds from the checklist. Defaulting
+ *  to an offerable kind instead (`'partial'`) would put a member we cannot classify in front of
+ *  the user as opt-in-able, without knowing whether it compiles on the new superclass. The worst
+ *  case here is a member the user has to hoist another way; the worst case the other way is a
+ *  hoist we did not understand. */
 function toMemberKind(v: unknown): MemberKind {
   return v === 'identical' || v === 'divergent' || v === 'partial' || v === 'unhoistable'
     ? v
-    : 'partial';
+    : 'unhoistable';
 }
 
 /** Parse the member-candidate classification. Throws on a bare error string. */

@@ -165,7 +165,7 @@ GsExtractSuperclassRefactoringTest >> testInsertEmptySuperclassApplies [
 	json := (GsExtractSuperclassRefactoring class: (self classNamed: 'GsESDog') insertSuperclassNamed: 'GsESPet' inDictionary: nil)
 		applyDeselected: #().
 
-	self deny: json includesSubstring: '"failed":[{'.
+	self assert: json includesSubstring: '"failed":[]'.
 	"the new class slots between Animal and Dog"
 	self assert: (self classNamed: 'GsESPet') superclass name asString equals: 'GsESAnimal'.
 	self assert: (self classNamed: 'GsESDog') superclass name asString equals: 'GsESPet'.
@@ -200,6 +200,78 @@ GsExtractSuperclassRefactoringTest >> testInsertDoesNotMigrateExistingInstances 
 ]
 
 { #category : 'tests - V7 extract' }
+GsExtractSuperclassRefactoringTest >> testExtractHoistsDivergentMethodAnchorVersionWins [
+	"The design decision worth pinning: when the anchor and a sibling BOTH implement the selector
+	 with DIFFERENT source, hoisting it keeps the ANCHOR's version and the sibling loses its own,
+	 inheriting the anchor's behaviour. That is the outcome most likely to surprise someone, and
+	 the one a future change is most likely to break silently. #describe is 'a dog' on GsESDog and
+	 'a cat' on GsESCat."
+	| json |
+	json := (GsExtractSuperclassRefactoring
+		class: (self classNamed: 'GsESDog')
+		extractSuperclassNamed: 'GsESPet' inDictionary: nil
+		siblings: #('GsESCat') hoistMethods: #(#describe) hoistInstVars: #())
+		applyDeselected: #().
+
+	self assert: json includesSubstring: '"failed":[]'.
+	self assert: ((self classNamed: 'GsESPet') includesSelector: #describe).
+	self deny: ((self classNamed: 'GsESDog') includesSelector: #describe).
+	"The sibling's OWN divergent version is gone..."
+	self deny: ((self classNamed: 'GsESCat') includesSelector: #describe).
+	"...and it now answers the anchor's, not its own."
+	self assert: (self classNamed: 'GsESCat') new describe equals: 'a dog'.
+	self assert: (self classNamed: 'GsESDog') new describe equals: 'a dog'
+]
+
+{ #category : 'tests - V7 extract' }
+GsExtractSuperclassRefactoringTest >> testExtractDeclinesHoistingAnIvarADescendantAlreadyOwns [
+	"Hoisting puts the name on the NEW superclass, so every class under it inherits the name --
+	 including the subtrees of the siblings being extracted. A class down there that already
+	 declares the name would be re-versioned with a duplicate declaration, which GemStone rejects.
+
+	 Note the reachable shape: it cannot be a descendant of the ANCHOR, because GemStone already
+	 forbids a subclass from redeclaring an ivar its ancestor owns -- the fixture could not even be
+	 built that way. It has to be a descendant of a SIBLING, owning an ivar that sibling does NOT
+	 have but the anchor is hoisting. GsESDog owns 'bark'; GsESCat does not; so a subclass of
+	 GsESCat may legally own 'bark' today, and hoisting 'bark' would collide with it.
+
+	 Before the precondition existed, that collision surfaced from applyClassChange: PART-WAY
+	 THROUGH the apply, leaving the new class created and some reparents done."
+	| ref |
+	(self classNamed: 'GsESCat')
+		subclass: 'GsESKitten'
+		instVarNames: #('bark')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: UserGlobals.
+	[ref := GsExtractSuperclassRefactoring
+		class: (self classNamed: 'GsESDog')
+		extractSuperclassNamed: 'GsESPet' inDictionary: nil
+		siblings: #('GsESCat') hoistMethods: #() hoistInstVars: #('bark').
+
+	 self assert: ref decline notNil.
+	 self assert: ref decline includesSubstring: 'GsESKitten'.
+	 self assert: ref decline includesSubstring: 'already declares it'.
+	 "A global decline empties the change set, so nothing is created."
+	 self assert: ref changeSet changes isEmpty.
+	 self deny: (UserGlobals includesKey: #GsESPet)]
+		ensure: [UserGlobals removeKey: #GsESKitten ifAbsent: []]
+]
+
+{ #category : 'tests - V7 extract' }
+GsExtractSuperclassRefactoringTest >> testExtractStillHoistsWhenOnlyTheSiblingOwnsTheIvar [
+	"The guard must not over-reach: a SIBLING being extracted alongside the anchor is expected to
+	 own the name too (that is the whole point -- it loses its copy and inherits the hoisted one),
+	 so it must not be mistaken for a blocking descendant."
+	| ref |
+	ref := GsExtractSuperclassRefactoring
+		class: (self classNamed: 'GsESDog')
+		extractSuperclassNamed: 'GsESPet' inDictionary: nil
+		siblings: #('GsESCat') hoistMethods: #() hoistInstVars: #('name').
+
+	self assert: ref decline isNil
+]
+
+{ #category : 'tests - V7 extract' }
 GsExtractSuperclassRefactoringTest >> testExtractHoistsIdenticalMethod [
 	| json |
 	json := (GsExtractSuperclassRefactoring
@@ -208,7 +280,7 @@ GsExtractSuperclassRefactoringTest >> testExtractHoistsIdenticalMethod [
 		siblings: #('GsESCat') hoistMethods: #(#eat) hoistInstVars: #())
 		applyDeselected: #().
 
-	self deny: json includesSubstring: '"failed":[{'.
+	self assert: json includesSubstring: '"failed":[]'.
 	self assert: ((self classNamed: 'GsESPet') includesSelector: #eat).
 	self deny: ((self classNamed: 'GsESDog') includesSelector: #eat).
 	self deny: ((self classNamed: 'GsESCat') includesSelector: #eat).
@@ -233,7 +305,7 @@ GsExtractSuperclassRefactoringTest >> testExtractWithSiblingReparentsDeepSubtree
 		siblings: #('GsESCat') hoistMethods: #(#eat) hoistInstVars: #())
 		applyDeselected: #().
 
-	self deny: json includesSubstring: '"failed":[{'.
+	self assert: json includesSubstring: '"failed":[]'.
 	"depth 1: the grandchild reparents onto the anchor's new version"
 	self assert: (self classNamed: 'GsESPuppy') superclass name asString equals: 'GsESDog'.
 	self assert: ((self classNamed: 'GsESPuppy') includesSelector: #puppyM).
@@ -255,7 +327,7 @@ GsExtractSuperclassRefactoringTest >> testExtractHoistsIdenticalInstVar [
 		siblings: #('GsESCat') hoistMethods: #() hoistInstVars: #('name'))
 		applyDeselected: #().
 
-	self deny: json includesSubstring: '"failed":[{'.
+	self assert: json includesSubstring: '"failed":[]'.
 	self assert: (self ownIvarsOf: 'GsESPet') includes: 'name'.
 	self deny: (self ownIvarsOf: 'GsESDog') includes: 'name'.
 	self deny: (self ownIvarsOf: 'GsESCat') includes: 'name'.
@@ -275,7 +347,7 @@ GsExtractSuperclassRefactoringTest >> testExtractHoistsMethodAndItsIvarTogether 
 		siblings: #('GsESCat') hoistMethods: #(#nameGetter) hoistInstVars: #('name'))
 		applyDeselected: #().
 
-	self deny: json includesSubstring: '"failed":[{'.
+	self assert: json includesSubstring: '"failed":[]'.
 	self assert: ((self classNamed: 'GsESPet') includesSelector: #nameGetter).
 	self assert: (self ownIvarsOf: 'GsESPet') includes: 'name'.
 	self assert: ((self classNamed: 'GsESDog') canUnderstand: #nameGetter)
@@ -291,7 +363,7 @@ GsExtractSuperclassRefactoringTest >> testExtractFromSingleAnchorHoistsChosenMet
 		siblings: #() hoistMethods: #(#eat) hoistInstVars: #())
 		applyDeselected: #().
 
-	self deny: json includesSubstring: '"failed":[{'.
+	self assert: json includesSubstring: '"failed":[]'.
 	self assert: ((self classNamed: 'GsESPet') includesSelector: #eat).
 	self deny: ((self classNamed: 'GsESDog') includesSelector: #eat).
 	self assert: ((self classNamed: 'GsESDog') canUnderstand: #eat)
@@ -474,7 +546,10 @@ GsExtractSuperclassRefactoringTest >> testApplyIsAllOrNothingIgnoringDeselection
 	[GsExtractSuperclassRefactoring applyForToken: 'esTok' deselected: #('1' '2' '3')]
 		ensure: [GsExtractSuperclassRefactoring clearToken: 'esTok'].
 
-	self assert: (UserGlobals includesKey: #GsESPet)
+	self assert: (UserGlobals includesKey: #GsESPet).
+	"...and the REPARENT survived the deselection too, which is the all-or-nothing property this
+	 test is named for -- the new class existing only shows the first change went through."
+	self assert: (self classNamed: 'GsESDog') superclass name asString equals: 'GsESPet'
 ]
 
 { #category : 'tests - apply' }
@@ -504,7 +579,7 @@ GsExtractSuperclassRefactoringTest >> testApplyReportsNotCommitted [
 		applyDeselected: #().
 
 	self assert: json includesSubstring: '"committed":false'.
-	self deny: json includesSubstring: '"failed":[{'
+	self assert: json includesSubstring: '"failed":[]'
 ]
 
 { #category : 'tests - apply' }

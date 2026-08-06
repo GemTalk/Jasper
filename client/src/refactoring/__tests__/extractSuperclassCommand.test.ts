@@ -8,6 +8,7 @@ vi.mock('../../browserQueries', () => ({
   pageExtractSuperclassPreview: vi.fn(),
   applyExtractSuperclass: vi.fn(),
   clearExtractSuperclassPreview: vi.fn(),
+  globalNameInUse: vi.fn(() => false),
 }));
 vi.mock('../extractSuperclassPanel', () => ({
   showExtractSuperclassPanel: vi.fn(),
@@ -253,5 +254,48 @@ describe('extract superclass command', () => {
 
     expect(outcome).toBeUndefined();
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(expect.stringContaining('boom'));
+  });
+
+  // The new-superclass name must be checked against the SYMBOL LIST, not just its format. The
+  // engine's collision precondition uses `environment classNamed:`, which answers nil for a
+  // non-class global — so a name bound to, say, a collection passes the precondition and the
+  // apply then rebinds that key to the new class, destroying the global. Mirrors the rename
+  // guard (ExplorerController.validateRenameTarget).
+  describe('new-superclass name validation', () => {
+    const validatorFrom = (): ((v: string) => string | undefined) => {
+      const opts = vi.mocked(vscode.window.showInputBox).mock.calls[0][0] as {
+        validateInput: (v: string) => string | undefined;
+      };
+      return opts.validateInput;
+    };
+
+    it('rejects a name already bound to a global, while the user is still typing', async () => {
+      vi.mocked(vscode.window.showInputBox).mockResolvedValue(undefined);
+      vi.mocked(queries.globalNameInUse).mockReturnValue(true);
+
+      await insertSuperclassCommand(ctx());
+
+      expect(validatorFrom()('Pet')).toMatch(/already in use/);
+      expect(queries.globalNameInUse).toHaveBeenCalledWith(expect.anything(), 'Pet');
+    });
+
+    it('accepts a well-formed name that is not in use', async () => {
+      vi.mocked(vscode.window.showInputBox).mockResolvedValue(undefined);
+      vi.mocked(queries.globalNameInUse).mockReturnValue(false);
+
+      await insertSuperclassCommand(ctx());
+
+      expect(validatorFrom()('Pet')).toBeUndefined();
+    });
+
+    it('reports a format problem without a round trip to the stone', async () => {
+      vi.mocked(vscode.window.showInputBox).mockResolvedValue(undefined);
+      vi.mocked(queries.globalNameInUse).mockClear();
+
+      await insertSuperclassCommand(ctx());
+
+      expect(validatorFrom()('lowercase')).toMatch(/uppercase letter/);
+      expect(queries.globalNameInUse).not.toHaveBeenCalled();
+    });
   });
 });

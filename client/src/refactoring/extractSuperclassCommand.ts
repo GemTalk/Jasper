@@ -69,13 +69,38 @@ async function flushDirtyMethodBuffers(): Promise<boolean> {
   return true;
 }
 
-async function promptNewClassName(anchor: string): Promise<string | undefined> {
+/** Validate a proposed new-superclass name: its FORMAT, and that the name is not already bound
+ *  to a global anywhere on the symbol list.
+ *
+ *  The format check alone is not enough. The engine's collision precondition resolves the name
+ *  with `environment classNamed:`, which answers nil for anything that is not a Class — so a
+ *  name bound to a NON-class global (say `UserGlobals at: #Pet` holding a collection or a
+ *  constant) passes both the format check and the precondition, and the apply's
+ *  `subclass: newName … inDictionary:` then rebinds that key to the new class, silently
+ *  destroying the existing global.
+ *
+ *  Mirrors ExplorerController's rename guard (`validateRenameTarget`), which layers the same
+ *  `globalNameInUse` probe on top of its format check. Runs as the input box's live validator,
+ *  so the collision surfaces inline while the user is still typing. */
+function validateNewSuperclassName(session: ActiveSession, name: string): string | undefined {
+  const fmt = validateClassName(name);
+  if (fmt) return fmt;
+  if (queries.globalNameInUse(session, name.trim())) {
+    return `The name ${name.trim()} is already in use. Choose another.`;
+  }
+  return undefined;
+}
+
+async function promptNewClassName(
+  session: ActiveSession,
+  anchor: string,
+): Promise<string | undefined> {
   const name = await vscode.window.showInputBox({
     title: `New superclass for ${anchor}`,
     prompt: 'Name of the new superclass to insert',
     placeHolder: 'e.g. AbstractShape',
     ignoreFocusOut: true,
-    validateInput: (v) => validateClassName(v) ?? undefined,
+    validateInput: (v) => validateNewSuperclassName(session, v),
   });
   return name?.trim();
 }
@@ -245,7 +270,7 @@ export async function insertSuperclassCommand(
   logInfo(`[insertSuperclass] ${ctx.className}`);
   if (!(await ensureRbSupport(ctx.session, 'Inserting a superclass'))) return undefined;
 
-  const newName = await promptNewClassName(ctx.className);
+  const newName = await promptNewClassName(ctx.session, ctx.className);
   if (!newName) return undefined;
 
   return runExtractSuperclass(
@@ -279,7 +304,7 @@ export async function extractSuperclassCommand(
   }
 
   // 2. Name the new superclass.
-  const newName = await promptNewClassName(ctx.className);
+  const newName = await promptNewClassName(ctx.session, ctx.className);
   if (!newName) return undefined;
 
   // The engine classifies and hoists by reading each class's STORED method source, so flush any
