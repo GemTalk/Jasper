@@ -6,9 +6,12 @@ import * as vscode from 'vscode';
 import { runLogicalRestore, LogicalRestoreDeps, RestoreSession } from '../restoreManager';
 import { RESTORE_NO_LOGOUT_MARKER } from '../queries/restore';
 
-// `showQuickPick` is overloaded; production passes a `string[]`, but `vi.mocked`
-// types the mock via the (last) `QuickPickItem` overload. Narrow to the string
-// overload once so impls/return values type-check without `any`.
+// `showQuickPick` is overloaded; the fresh-extent-vs-in-place choice passes a
+// `string[]`, but `vi.mocked` types the mock via the (last) `QuickPickItem`
+// overload. Narrow to the string overload once so impls/return values
+// type-check without `any` — fine even for tests exercising the backup-file
+// quick pick (an object-item call), since picking `items[0]`/`items[1]` or
+// resolving `undefined` doesn't depend on the item shape.
 const mockShowQuickPick = vi.mocked(vscode.window.showQuickPick) as unknown as Mock<
   (items: readonly string[]) => Promise<string | undefined>
 >;
@@ -37,12 +40,14 @@ function makeDeps(overrides?: Partial<LogicalRestoreDeps>) {
   const session = makeSession();
   const deps: LogicalRestoreDeps = {
     stoneName: 'gs64stone',
-    dbPath: '/root/db-1',
     hasFileControl: vi.fn(() => true),
+    listBackupFiles: vi.fn(() => ['/root/db-1/backups/backup.dbf']),
     closeCurrentSession: vi.fn(async () => {}),
     stopStone: vi.fn(async () => {}),
     startStone: vi.fn(async () => {}),
-    copyCurrentExtentAside: vi.fn(async () => {}),
+    copyCurrentExtentAside: vi.fn(
+      async () => '/root/db-1/backups/backupExtents/extent0_preRestore_gs64stone.dbf',
+    ),
     swapInFreshExtent: vi.fn(async () => {}),
     loginAsDefaultAdmin: vi.fn(async () => session),
     loginAsSessionUser: vi.fn(async () => session),
@@ -59,9 +64,6 @@ describe('runLogicalRestore', () => {
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(
       'Restore' as unknown as vscode.MessageItem,
     );
-    vi.mocked(vscode.window.showOpenDialog).mockResolvedValue([
-      vscode.Uri.file('/root/db-1/backups/backup.dbf'),
-    ]);
     vi.mocked(vscode.window.showInformationMessage).mockResolvedValue(undefined);
   });
 
@@ -76,6 +78,7 @@ describe('runLogicalRestore', () => {
     });
     vi.mocked(deps.copyCurrentExtentAside).mockImplementation(async () => {
       order.push('copy');
+      return '/root/db-1/backups/backupExtents/extent0_preRestore_gs64stone.dbf';
     });
     vi.mocked(deps.swapInFreshExtent).mockImplementation(async () => {
       order.push('swap');
@@ -94,15 +97,14 @@ describe('runLogicalRestore', () => {
     expect(session.run.mock.calls.some(([, code]) => code.includes('commitRestore'))).toBe(true);
   });
 
-  it('preserves the current extent under backups/backupExtents with a stone-stamped name', async () => {
+  it('names the safety copy after the stone, with a sortable timestamp', async () => {
     const { deps } = makeDeps();
 
     await runLogicalRestore(deps);
 
-    const destPath = vi.mocked(deps.copyCurrentExtentAside).mock.calls[0][0];
-    expect(destPath).toContain('/root/db-1/backups/backupExtents/');
-    expect(destPath).toContain('extent0_preRestore_gs64stone');
-    expect(destPath.endsWith('.dbf')).toBe(true);
+    const fileName = vi.mocked(deps.copyCurrentExtentAside).mock.calls[0][0];
+    expect(fileName).toContain('extent0_preRestore_gs64stone');
+    expect(fileName.endsWith('.dbf')).toBe(true);
   });
 
   it('authenticates as the default admin when restoring into a fresh extent', async () => {
@@ -116,7 +118,10 @@ describe('runLogicalRestore', () => {
 
   it('restores onto the current extent without a fresh extent when that option is chosen', async () => {
     const { deps } = makeDeps();
-    mockShowQuickPick.mockImplementation(async (items) => items[1]);
+    // First quick pick is the backup-file picker (only one item); second is
+    // the fresh-extent-vs-in-place choice, where items[1] is "in place".
+    mockShowQuickPick.mockImplementationOnce(async (items) => items[0]);
+    mockShowQuickPick.mockImplementationOnce(async (items) => items[1]);
 
     const ok = await runLogicalRestore(deps);
 
@@ -175,21 +180,55 @@ describe('runLogicalRestore', () => {
   });
 
   it('prompts for a backup file to restore from', async () => {
-    const { deps } = makeDeps();
+    const { deps } = makeDeps({
+      listBackupFiles: vi.fn(() => ['/data/backups/b.dbf']),
+    });
 
     const ok = await runLogicalRestore(deps);
 
     expect(ok).toBe(true);
-    expect(vscode.window.showOpenDialog).toHaveBeenCalled();
+    expect(vscode.window.showQuickPick).toHaveBeenCalledWith(
+      [{ label: 'b.dbf', filePath: '/data/backups/b.dbf' }],
+      expect.objectContaining({ placeHolder: expect.any(String) }),
+    );
+    expect(deps.copyCurrentExtentAside).toHaveBeenCalled();
   });
 
-  it('is cancelled without teardown when the backup-file dialog is dismissed', async () => {
+  it('is cancelled without teardown when the backup quick pick is dismissed', async () => {
     const { deps } = makeDeps();
-    vi.mocked(vscode.window.showOpenDialog).mockResolvedValue(undefined);
+    mockShowQuickPick.mockResolvedValueOnce(undefined);
 
     const ok = await runLogicalRestore(deps);
 
     expect(ok).toBe(false);
+    expect(deps.stopStone).not.toHaveBeenCalled();
+  });
+
+  it('stops with an explanatory error when the stone reports no backups', async () => {
+    const { deps } = makeDeps({ listBackupFiles: vi.fn(() => []) });
+
+    const ok = await runLogicalRestore(deps);
+
+    expect(ok).toBe(false);
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining('No backup files found'),
+    );
+    expect(deps.stopStone).not.toHaveBeenCalled();
+  });
+
+  it('stops with an explanatory error when listing backups fails', async () => {
+    const { deps } = makeDeps({
+      listBackupFiles: vi.fn(() => {
+        throw new Error('gci down');
+      }),
+    });
+
+    const ok = await runLogicalRestore(deps);
+
+    expect(ok).toBe(false);
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining('Could not list backup files'),
+    );
     expect(deps.stopStone).not.toHaveBeenCalled();
   });
 
@@ -226,6 +265,22 @@ describe('runLogicalRestore', () => {
     expect(ok).toBe(false);
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
       expect.stringContaining('backupExtents'),
+    );
+  });
+
+  it('does not claim the extent was saved when the failure happens before the safety copy', async () => {
+    const { deps } = makeDeps({
+      stopStone: vi.fn(async () => {
+        throw new Error('stopstone failed');
+      }),
+    });
+
+    const ok = await runLogicalRestore(deps);
+
+    expect(ok).toBe(false);
+    expect(deps.copyCurrentExtentAside).not.toHaveBeenCalled();
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      expect.not.stringContaining('saved under'),
     );
   });
 

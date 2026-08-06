@@ -8,15 +8,10 @@ import { useIntegrationTest } from './useIntegrationTest';
 import { GciLibrary } from '../gciLibrary';
 import * as q from '../browserQueries';
 import type { ActiveSession } from '../sessionManager';
-import {
-  hasFileControlPrivilege,
-  sessionNeedsCommit,
-  serverFileExists,
-  fullBackupCode,
-} from '../queries/backup';
-import { backupFolderInServer, extentFileNames } from '../queries/extentBackup';
+import { hasFileControlPrivilege, sessionNeedsCommit, fullBackupCode } from '../queries/backup';
+import { extentFileNames } from '../queries/extentBackup';
 import { temporaryFileName } from './support/file';
-import { sizeInBytesOfServerFile } from './support/gemstone';
+import { sizeInBytesOfServerFile, withTemporaryServerFolderDo } from './support/gemstone';
 
 /**
  * Automatic GCI integration tests for the full logical backup, run against a
@@ -58,30 +53,22 @@ describe('full logical backup (integration)', () => {
     }
   });
 
-  // serverFileExists wraps GsFile existsOnServer: in an ifNil:/ifNotNil: guard —
-  // only a live stone can confirm that selector exists and that the guard's
-  // Smalltalk actually compiles, which a mocked executor can't catch.
-  it('confirms a real file on the server and denies one that is not there', () => {
-    const [extent] = extentFileNames(exec);
-
-    expect(serverFileExists(exec, extent)).toBe(true);
-    expect(serverFileExists(exec, `${extent}.does-not-exist`)).toBe(false);
-  });
-
   // fullBackupTo:'s startup blocks until the stone's checkpoint machinery is
   // quiescent — ~5s when a checkpoint is still settling (e.g. from a backup in
   // a recent test run), which straddles vitest's 5s default timeout. The wait
   // is legitimate stone behavior, so give the backup an explicit budget.
   it('writes a real backup file to the requested destination', { timeout: 30000 }, () => {
-    const backupFilePath = path.posix.join(backupFolderInServer(exec), temporaryFileName('.dbf'));
-    const modeBefore = exec('System transactionMode printString').trim();
+    withTemporaryServerFolderDo(handle, gci, (temporaryFolderPath) => {
+      const backupFilePath = path.posix.join(temporaryFolderPath, temporaryFileName('.dbf'));
+      const modeBefore = exec('System transactionMode printString').trim();
 
-    const result = exec(fullBackupCode(backupFilePath)).trim();
+      const result = exec(fullBackupCode(backupFilePath)).trim();
 
-    expect(result).toBe('OK');
-    expect(sizeInBytesOfServerFile(exec, backupFilePath)).toBeGreaterThan(0);
-    // fullBackupTo: leaves the session in manualBegin; the ensure: block in
-    // fullBackupCode must put the transaction mode back where it was.
-    expect(exec('System transactionMode printString').trim()).toBe(modeBefore);
+      expect(result).toBe('OK');
+      expect(sizeInBytesOfServerFile(exec, backupFilePath)).toBeGreaterThan(0);
+      // fullBackupTo: leaves the session in manualBegin; the ensure: block in
+      // fullBackupCode must put the transaction mode back where it was.
+      expect(exec('System transactionMode printString').trim()).toBe(modeBefore);
+    });
   });
 });

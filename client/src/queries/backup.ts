@@ -7,7 +7,12 @@
 // the 3.6.x stones too (a non-ASCII byte trips the ComStrmSetCursor bug there).
 import * as path from 'path';
 import { QueryExecutor } from './types';
-import { escapeString } from './util';
+import { escapeString, splitLines } from './util';
+
+// Shared with backupManager (suggested/validated filenames) and restoreManager
+// (filtering the backups directory listing), so it lives here rather than in
+// either caller.
+export const GEMSTONE_BACKUP_EXTENSION = '.dbf';
 
 // `fullBackupTo:` requires the FileControl privilege; without it the stone
 // raises a raw GCI error. Pre-flighting lets us stop with a clear message.
@@ -85,4 +90,39 @@ mode := System transactionMode.
 [ok := SystemRepository fullBackupTo: '${escapeString(backupFilePath)}']
   ensure: [System transactionMode: mode].
 ok ifTrue: ['OK'] ifFalse: ['fullBackupTo: returned false']`;
+}
+
+/**
+ * Existing backup files directly inside `folder`, as full server-side paths —
+ * `GsFile contentsOfDirectory:onClient:` expands each entry to an absolute
+ * path itself, so there is no client-side joining to get wrong. Used by the
+ * restore picker to list what's available without assuming the client can
+ * browse the server's filesystem (only `GsFile` can, on the server's own
+ * behalf).
+ *
+ * `contentsOfDirectory:onClient:` answers nil when the directory does not
+ * exist, which backupFolderInServer documents as a real possibility
+ * (backups/ is not created with the database). That is not distinguished
+ * from "exists but empty" — either way there is nothing to restore from — so
+ * both map to [].
+ *
+ * @param execute - runs the query synchronously against the session.
+ * @param folder - the server-side backups directory, as from backupFolderInServer.
+ */
+export function serverBackupFilePaths(execute: QueryExecutor, folder: string): string[] {
+  const code = `
+    | backupPaths backupFiles result |
+     backupPaths := (GsFile contentsOfDirectory: '${escapeString(folder)}' onClient: false)
+       ifNil: [ #() ]
+       ifNotNil: [ :paths | paths select: [ :path | path endsWith: '${GEMSTONE_BACKUP_EXTENSION}' ] ].
+     backupFiles := backupPaths collect: [ :path | GsFile openReadOnServer: path ].
+
+     result := WriteStream on: String new.
+     [ (backupFiles sortWithBlock: [ :file :anotherFile | file lastModified > anotherFile lastModified ])
+         do: [ :file | result nextPutAll: file pathName; lf ] ]
+       ensure: [ backupFiles do: [ :file | file ifNotNil: [ file close ] ] ].
+
+     result contents`;
+
+  return splitLines(execute(code));
 }
