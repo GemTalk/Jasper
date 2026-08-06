@@ -36,6 +36,7 @@ const CONFIG_ASSERTIONS = [
   ['allow-git', 'none'],
   ['allow-remote', 'none'],
   ['allow-scripts', '', ALLOW_SCRIPTS_HINT],
+  ['min-release-age', '7'],
 ];
 
 function getConfig(key) {
