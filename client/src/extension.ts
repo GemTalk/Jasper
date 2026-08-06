@@ -123,7 +123,8 @@ import { DatabaseTreeProvider, DatabaseNode } from './databaseTreeProvider';
 import { runLogicalBackup } from './backupManager';
 import { runOnlineExtentBackup, resolveExtentBackupSession } from './extentBackupManager';
 import { runLogicalRestore, RestoreSession } from './restoreManager';
-import { hasFileControlPrivilege } from './queries/backup';
+import { hasFileControlPrivilege, serverBackupFilePaths } from './queries/backup';
+import { backupFolderInServer } from './queries/extentBackup';
 import { ProcessManager } from './processManager';
 import { openMcpInspector } from './openMcpInspector';
 import { McpSocketServer, writeClaudeDesktopMcpConfig } from './mcpSocketServer';
@@ -3800,6 +3801,10 @@ export function activate(context: vscode.ExtensionContext) {
           dbPath: managed.path,
           hasFileControl: () =>
             hasFileControlPrivilege((code) => queries.executeFetchString(session, code)),
+          listBackupFiles: () => {
+            const execute = (code: string) => queries.executeFetchString(session, code);
+            return serverBackupFilePaths(execute, backupFolderInServer(execute));
+          },
           closeCurrentSession: async () => {
             sessionManager.logout(sessionId);
           },
@@ -3824,9 +3829,11 @@ export function activate(context: vscode.ExtensionContext) {
           startStone: async () => {
             await processManager.startStone(managed);
           },
-          copyCurrentExtentAside: async (destPath) => {
+          copyCurrentExtentAside: async (fileName) => {
+            const destPath = path.join(managed.path, 'backups', 'backupExtents', fileName);
             wslMkdirSync(path.dirname(destPath), { recursive: true });
             wslImportFileSync(path.join(dataDir, 'extent0.dbf'), destPath);
+            return destPath;
           },
           swapInFreshExtent: async () => {
             if (!gsPath) {

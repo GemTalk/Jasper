@@ -4,7 +4,6 @@ import {
   hasFileControlPrivilege,
   sessionNeedsCommit,
   abortTransaction,
-  serverFileExists,
   fullBackupCode,
 } from '../backup';
 
@@ -50,47 +49,6 @@ describe('full logical backup queries', () => {
       abortTransaction(execute);
 
       expect(execute.mock.calls[0][0]).toContain('System abortTransaction');
-    });
-  });
-
-  describe('existing-backup check', () => {
-    it('reports a file as present when the stone answers true', () => {
-      const execute = vi.fn<QueryExecutor>(() => 'true');
-
-      const exists = serverFileExists(execute, '/data/backups/gs.dbf');
-
-      expect(exists).toBe(true);
-      expect(execute.mock.calls[0][0]).toContain("GsFile existsOnServer: '/data/backups/gs.dbf'");
-    });
-
-    it('reports a file as absent for any non-true answer', () => {
-      const execute = vi.fn<QueryExecutor>(() => 'false');
-
-      expect(serverFileExists(execute, '/data/backups/gs.dbf')).toBe(false);
-    });
-
-    it('lets a Smalltalk-side error propagate rather than reporting the file absent', () => {
-      const execute = vi.fn<QueryExecutor>(() => {
-        throw new Error('permission denied');
-      });
-
-      expect(() => serverFileExists(execute, '/data/backups/gs.dbf')).toThrow('permission denied');
-    });
-
-    it('guards against a nil answer rather than reading it as false', () => {
-      const execute = vi.fn<QueryExecutor>(() => 'true');
-
-      serverFileExists(execute, '/data/backups/gs.dbf');
-
-      expect(execute.mock.calls[0][0]).toContain('ifNil:');
-    });
-
-    it('escapes single quotes in the path it checks', () => {
-      const execute = vi.fn<QueryExecutor>(() => 'false');
-
-      serverFileExists(execute, "/data/o'brien/gs.dbf");
-
-      expect(execute.mock.calls[0][0]).toContain("GsFile existsOnServer: '/data/o''brien/gs.dbf'");
     });
   });
 
