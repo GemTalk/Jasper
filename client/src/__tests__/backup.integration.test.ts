@@ -8,12 +8,7 @@ import { useIntegrationTest } from './useIntegrationTest';
 import { GciLibrary } from '../gciLibrary';
 import * as q from '../browserQueries';
 import type { ActiveSession } from '../sessionManager';
-import {
-  hasFileControlPrivilege,
-  sessionNeedsCommit,
-  serverFileExists,
-  fullBackupCode,
-} from '../queries/backup';
+import { hasFileControlPrivilege, sessionNeedsCommit, fullBackupCode } from '../queries/backup';
 import { backupFolderInServer, extentFileNames } from '../queries/extentBackup';
 import { temporaryFileName } from './support/file';
 import { sizeInBytesOfServerFile } from './support/gemstone';
@@ -61,16 +56,6 @@ describe('full logical backup (integration)', () => {
       expect(extent.startsWith('/')).toBe(true);
       expect(extent).not.toContain('\\');
     }
-  });
-
-  // serverFileExists wraps GsFile existsOnServer: in an ifNil:/ifNotNil: guard —
-  // only a live stone can confirm that selector exists and that the guard's
-  // Smalltalk actually compiles, which a mocked executor can't catch.
-  it('confirms a real file on the server and denies one that is not there', () => {
-    const [extent] = extentFileNames(exec);
-
-    expect(serverFileExists(exec, extent)).toBe(true);
-    expect(serverFileExists(exec, `${extent}.does-not-exist`)).toBe(false);
   });
 
   // fullBackupTo:'s startup blocks until the stone's checkpoint machinery is

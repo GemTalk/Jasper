@@ -12,6 +12,7 @@ import * as backup from './queries/backup';
 import { isWindows, wslPathToWindows } from './wslBridge';
 import { wslExistsSync } from './wslFs';
 import { backupFolderInServer } from './queries/extentBackup';
+import { GEMSTONE_BACKUP_EXTENSION } from './queries/backup';
 import path from 'path';
 
 export interface LogicalBackupDeps {
@@ -24,8 +25,6 @@ export interface LogicalBackupDeps {
   // Stone the session is connected to (used for labels and the default filename).
   stoneName: string;
 }
-
-const GEMSTONE_BACKUP_EXTENSION = '.dbf';
 
 // How long the green success message lingers in the status bar (ms).
 const STATUS_SUCCESS_MS = 6000;
