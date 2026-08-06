@@ -29,6 +29,10 @@ import { fileOutClass as sharedFileOutClass } from './queries/fileOutClass';
 import { describeClass as sharedDescribeClass } from './queries/describeClass';
 import { getInstVarNames as sharedGetInstVarNames } from './queries/getInstVarNames';
 import { getDefinedInstVarNames as sharedGetDefinedInstVarNames } from './queries/getDefinedInstVarNames';
+import {
+  getDefiningClassOfInstVar as sharedGetDefiningClassOfInstVar,
+  DefiningClass,
+} from './refactoring/queries/getDefiningClassOfInstVar';
 import { getDefinedInstVarCounts as sharedGetDefinedInstVarCounts } from './queries/getDefinedInstVarCounts';
 import { getDefinedClassVarNames as sharedGetDefinedClassVarNames } from './refactoring/queries/getDefinedClassVarNames';
 import { getVisibleClassVarNames as sharedGetVisibleClassVarNames } from './refactoring/queries/getVisibleClassVarNames';
@@ -692,6 +696,20 @@ export function getDefinedInstVarCounts(
   dict: number | string,
 ): Map<string, number> {
   return sharedGetDefinedInstVarCounts(defaultQueryExecutorUsing(session), dict);
+}
+
+export function getDefiningClassOfInstVar(
+  session: ActiveSession,
+  className: string,
+  ivarName: string,
+  dict?: number | string,
+): DefiningClass | undefined {
+  return sharedGetDefiningClassOfInstVar(
+    defaultQueryExecutorUsing(session),
+    className,
+    ivarName,
+    dict,
+  );
 }
 
 export function getDefinedClassVarNames(
