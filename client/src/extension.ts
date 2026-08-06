@@ -72,7 +72,11 @@ import { loadClassPickItems } from './commands/classPicker';
 import { GlobalsBrowser } from './globalsBrowser';
 import { CommentBrowser } from './commentBrowser';
 import { EnhancedInspector } from './enhancedInspector/enhancedInspector';
-import { maybeOfferServerSupport, runInstallServerSupport } from './optionalSupportOffer';
+import {
+  maybeOfferServerSupport,
+  runInstallServerSupport,
+  runUninstallServerSupport,
+} from './optionalSupportOffer';
 import { refreshEnhancedInspectorAvailable } from './enhancedInspector/enhancedInspectorAvailability';
 import { refreshRefactoringSupportAvailable } from './refactoring/refactoringAvailability';
 import { supportsEnhancedInspector } from './enhancedInspector/enhancedInspectorInstall';
@@ -823,7 +827,9 @@ export function activate(context: vscode.ExtensionContext) {
     // saved (scheme:gemstone) method editor.
     vscode.languages.registerCodeActionsProvider(
       { scheme: 'gemstone', language: 'gemstone-smalltalk' },
-      new RefactorCodeActionProvider(),
+      new RefactorCodeActionProvider(
+        () => sessionManager.getSelectedSession()?.rbSupportAvailable === true,
+      ),
       { providedCodeActionKinds: RefactorCodeActionProvider.providedCodeActionKinds },
     ),
   );
@@ -970,6 +976,16 @@ export function activate(context: vscode.ExtensionContext) {
       'setContext',
       'gemstone.rbSupportAvailable',
       !!selected && selected.rbSupportAvailable === true,
+    );
+    // Drives the "Uninstall Server Support" menu visibility: it appears only when
+    // at least one optional support (either feature) is actually installed on the
+    // selected stone. The install/uninstall commands refresh this via
+    // `optionalSupportOffer` after they change the latches.
+    vscode.commands.executeCommand(
+      'setContext',
+      'gemstone.serverSupportInstalled',
+      !!selected &&
+        (selected.rbSupportAvailable === true || selected.enhancedInspectorAvailable === true),
     );
   }
   context.subscriptions.push(
@@ -1271,6 +1287,10 @@ export function activate(context: vscode.ExtensionContext) {
 
     vscode.commands.registerCommand('gemstone.installServerSupport', async () => {
       await runInstallServerSupport(sessionManager, context.extensionPath);
+    }),
+
+    vscode.commands.registerCommand('gemstone.uninstallServerSupport', async () => {
+      await runUninstallServerSupport(sessionManager);
     }),
 
     vscode.commands.registerCommand('gemstone.renameTemporary', async (position?: unknown) => {

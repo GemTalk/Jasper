@@ -15,10 +15,11 @@
  * ~one call per file (near-instant), and yields between files keep the host
  * responsive and the progress notification live.
  *
- * The payload installs persistent classes (into Published) plus extension
- * methods on kernel classes, so the session passed here must have write access
- * to those kernel classes — in practice a SystemUser session (set up by the
- * caller; this module is agnostic about how the session was obtained).
+ * The payload installs persistent classes (into the dedicated
+ * `GsEnhancedInspector` dictionary, created and shared here before the file-in)
+ * plus extension methods on kernel classes, so the session passed here must have
+ * write access to those kernel classes — in practice a SystemUser session (set
+ * up by the caller; this module is agnostic about how the session was obtained).
  *
  * Server-side file-in requires the gem to be able to read the files, i.e. share
  * a filesystem with them (a local stone). Remote stones are detected and
@@ -47,6 +48,22 @@ import {
  * on it rather than trying to paper over the platform behavior.
  */
 export const ENHANCED_INSPECTOR_MIN_VERSION = '3.7.5';
+
+/**
+ * The dedicated symbol dictionary the Enhanced Inspector payload classes are
+ * filed into — the isolation counterpart to the refactoring engine's
+ * `GsRefactoring` (see `GsRefactoringLoader class>>dictionaryName`).
+ *
+ * The payload's class declarations name it as a bareword
+ * (`inDictionary: GsEnhancedInspector`, produced by
+ * docs/enhancedInspectorSupport/apply_jasper_transforms.sh), so the installer
+ * creates and binds it — and shares it into every user's symbol list — BEFORE
+ * filing in, exactly as the refactoring loader does. Isolating the classes here
+ * (rather than commingling them in the shared `Published` dictionary, as an
+ * earlier build did) means the whole payload can be removed cleanly by dropping
+ * this one dictionary from every symbol list.
+ */
+export const ENHANCED_INSPECTOR_DICTIONARY = 'GsEnhancedInspector';
 
 /**
  * True when `stoneVersion` supports the Enhanced Inspector, i.e. it is
@@ -93,6 +110,44 @@ export const ENHANCED_INSPECTOR_FILES: readonly string[] = [
   'gtoolkit-remote.gs',
 ];
 
+/**
+ * Server-side snippet run once BEFORE the payload file-in: create the dedicated
+ * `GsEnhancedInspector` dictionary (binding its own name so the payload's
+ * bareword `inDictionary: GsEnhancedInspector` resolves), position it at the END
+ * of the installing user's symbol list (non-shadowing), and share the SAME
+ * dictionary object into every user's symbol list — the mirror of
+ * `GsRefactoringLoader>>ensureDictionary` + `shareDictionary:`.
+ *
+ * It also MIGRATES a stone installed by the earlier `Published`-placement build:
+ * any GToolkit-categorized class still sitting in the shared `Published`
+ * dictionary is removed, so the freshly filed-in copies in `GsEnhancedInspector`
+ * (added at the end of the symbol list) are not shadowed by stale earlier-in-list
+ * copies, and nothing is left behind to survive a later dictionary-drop uninstall.
+ *
+ * Ends in a String so `executeFetchString` can fetch the result. Idempotent.
+ */
+const PREPARE_DICTIONARY_SNIPPET = `
+| sym prof list dict pub |
+sym := #GsEnhancedInspector.
+prof := System myUserProfile.
+list := prof symbolList.
+dict := list detect: [:d | d name == sym] ifNone: [nil].
+dict isNil ifTrue: [
+	dict := SymbolDictionary new name: sym; yourself.
+	dict at: sym put: dict.
+	prof insertDictionary: dict at: list size + 1 ].
+AllUsers do: [:p |
+	(p symbolList detect: [:d | d name == sym] ifNone: [nil]) isNil
+		ifTrue: [ p insertDictionary: dict at: p symbolList size + 1 ] ].
+pub := list detect: [:d | d name == #Published] ifNone: [nil].
+pub notNil ifTrue: [
+	pub keys asArray do: [:k |
+		| v |
+		v := pub at: k ifAbsent: [nil].
+		((v isKindOf: Class) and: [((v category ifNil: ['']) asString beginsWith: 'GToolkit')])
+			ifTrue: [ pub removeKey: k ] ] ].
+'ok'`;
+
 export interface InstallResult {
   /** True only when every file filed in, the commit succeeded, and the
    *  end-state verification passed. */
@@ -115,8 +170,9 @@ export type ProgressReporter = (message: string, increment: number) => void;
  * reached by this session. Checks both a marker class (filed last) and the
  * `Object` dispatch extension, so a partial install fails the check.
  *
- * Resolution walks the session's symbol list, so this works whether the
- * classes were installed into `Published` or `Globals`.
+ * Resolution walks the session's symbol list, so this works wherever the classes
+ * live — the dedicated `GsEnhancedInspector` dictionary (current builds) or a
+ * legacy `Published`/`Globals` placement (older builds).
  */
 export function isEnhancedInspectorInstalled(session: ActiveSession): boolean {
   try {
@@ -152,8 +208,8 @@ export async function installEnhancedInspectorSupport(
 ): Promise<InstallResult> {
   const sep = payloadDir.endsWith('/') ? '' : '/';
   const serverPath = (file: string): string => `${payloadDir}${sep}${file}`;
-  // 7 files + the commit step.
-  const stepIncrement = 100 / (ENHANCED_INSPECTOR_FILES.length + 1);
+  // The prepare-dictionary step + 7 files + the commit step.
+  const stepIncrement = 100 / (ENHANCED_INSPECTOR_FILES.length + 2);
 
   // Fail fast (and clearly) if the gem can't read the payload — e.g. a remote
   // stone whose gem doesn't share this machine's filesystem.
@@ -168,6 +224,24 @@ export async function installEnhancedInspectorSupport(
         `The database's gem cannot read the payload files (${unreadable.join(', ')}) under ` +
         `${payloadDir}. Server-side install requires a local stone whose gem shares this ` +
         'filesystem.',
+    };
+  }
+
+  // Create + share the dedicated dictionary (and migrate any legacy Published
+  // copies) before filing in, so the payload's `inDictionary: GsEnhancedInspector`
+  // bareword resolves and nothing stale shadows the fresh classes.
+  onProgress('Preparing the GsEnhancedInspector dictionary…', stepIncrement);
+  await yieldToEventLoop();
+  try {
+    executeFetchString(session, PREPARE_DICTIONARY_SNIPPET);
+  } catch (e: unknown) {
+    safeAbort(session);
+    return {
+      success: false,
+      committed: false,
+      verified: false,
+      filedIn: [],
+      message: `Could not create the GsEnhancedInspector dictionary: ${messageOf(e)}. No changes were committed.`,
     };
   }
 

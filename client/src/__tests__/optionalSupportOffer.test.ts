@@ -7,6 +7,9 @@ const mocks = vi.hoisted(() => {
     showInformationMessage: vi.fn<(...a: unknown[]) => Promise<string | undefined>>(() =>
       Promise.resolve(undefined),
     ),
+    showWarningMessage: vi.fn<(...a: unknown[]) => Promise<string | undefined>>(() =>
+      Promise.resolve(undefined),
+    ),
     showErrorMessage: vi.fn(),
     update: vi.fn((key: string, value: unknown) => {
       config[key] = value;
@@ -14,6 +17,8 @@ const mocks = vi.hoisted(() => {
     }),
     installEI: vi.fn(() => Promise.resolve(true)),
     installRB: vi.fn(() => Promise.resolve(true)),
+    uninstallEI: vi.fn(() => Promise.resolve(true)),
+    uninstallRB: vi.fn(() => Promise.resolve(true)),
     executeCommand: vi.fn(() => Promise.resolve(undefined)),
   };
 });
@@ -21,6 +26,7 @@ const mocks = vi.hoisted(() => {
 vi.mock('vscode', () => ({
   window: {
     showInformationMessage: mocks.showInformationMessage,
+    showWarningMessage: mocks.showWarningMessage,
     showErrorMessage: mocks.showErrorMessage,
   },
   workspace: {
@@ -41,9 +47,19 @@ vi.mock('../enhancedInspector/enhancedInspectorCommand', () => ({
 vi.mock('../refactoring/refactoringInstallCommand', () => ({
   installRefactoringFeature: mocks.installRB,
 }));
+vi.mock('../enhancedInspector/enhancedInspectorUninstallCommand', () => ({
+  uninstallEnhancedInspectorFeature: mocks.uninstallEI,
+}));
+vi.mock('../refactoring/refactoringUninstallCommand', () => ({
+  uninstallRefactoringFeature: mocks.uninstallRB,
+}));
 
 import { ActiveSession, SessionManager } from '../sessionManager';
-import { maybeOfferServerSupport, runInstallServerSupport } from '../optionalSupportOffer';
+import {
+  maybeOfferServerSupport,
+  runInstallServerSupport,
+  runUninstallServerSupport,
+} from '../optionalSupportOffer';
 
 const AUTO_INSTALL_KEY = 'serverSupport.autoInstall';
 const EXTENSION_PATH = '/ext';
@@ -77,6 +93,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   for (const k of Object.keys(mocks.config)) delete mocks.config[k];
   mocks.showInformationMessage.mockResolvedValue(undefined);
+  mocks.showWarningMessage.mockResolvedValue(undefined);
 });
 
 describe('maybeOfferServerSupport', () => {
@@ -99,16 +116,40 @@ describe('maybeOfferServerSupport', () => {
     expect(mocks.installEI).not.toHaveBeenCalled();
   });
 
-  it('installs both silently without a prompt when the setting is "always"', async () => {
+  it('installs both without a modal prompt when the setting is "always"', async () => {
     mocks.config[AUTO_INSTALL_KEY] = 'always';
     const base = baseSession();
 
     await maybeOfferServerSupport(base, sessionManager, EXTENSION_PATH);
 
-    expect(mocks.showInformationMessage).not.toHaveBeenCalled();
+    const shownModal = mocks.showInformationMessage.mock.calls.some(
+      (c) => typeof c[1] === 'object' && (c[1] as { modal?: boolean } | undefined)?.modal === true,
+    );
+    expect(shownModal).toBe(false);
     expect(mocks.installEI).toHaveBeenCalledWith(base, sessionManager, EXTENSION_PATH, false);
     expect(mocks.installRB).toHaveBeenCalledWith(base, sessionManager, EXTENSION_PATH, false);
     expect(mocks.executeCommand).toHaveBeenCalledWith('gemstone.explorer.refresh');
+  });
+
+  it('confirms success with one consolidated "server support" toast, not one per feature', async () => {
+    mocks.config[AUTO_INSTALL_KEY] = 'always';
+
+    await maybeOfferServerSupport(baseSession(), sessionManager, EXTENSION_PATH);
+
+    const toasts = mocks.showInformationMessage.mock.calls.filter((c) => typeof c[0] === 'string');
+    expect(toasts).toEqual([['GemStone server support installed.']]);
+  });
+
+  it('shows no success toast when a feature fails to install', async () => {
+    mocks.config[AUTO_INSTALL_KEY] = 'always';
+    mocks.installRB.mockResolvedValueOnce(false);
+
+    await maybeOfferServerSupport(baseSession(), sessionManager, EXTENSION_PATH);
+
+    const succeeded = mocks.showInformationMessage.mock.calls.some(
+      (c) => c[0] === 'GemStone server support installed.',
+    );
+    expect(succeeded).toBe(false);
   });
 
   it('reloads the Explorer dictionary list after installing, so a new dictionary appears', async () => {
@@ -217,5 +258,84 @@ describe('runInstallServerSupport', () => {
 
     expect(mocks.installRB).toHaveBeenCalledTimes(1);
     expect(mocks.installEI).not.toHaveBeenCalled();
+  });
+});
+
+describe('runUninstallServerSupport', () => {
+  // A stone with both supports installed.
+  const installed = () =>
+    baseSession({ enhancedInspectorAvailable: true, rbSupportAvailable: true });
+
+  function confirm(button: string | undefined) {
+    mocks.showWarningMessage.mockResolvedValue(button);
+  }
+
+  it('reports an error and removes nothing when no session is selected', async () => {
+    getSelectedSession.mockReturnValue(undefined);
+
+    await runUninstallServerSupport(sessionManager);
+
+    expect(mocks.showErrorMessage).toHaveBeenCalled();
+    expect(mocks.uninstallEI).not.toHaveBeenCalled();
+    expect(mocks.uninstallRB).not.toHaveBeenCalled();
+  });
+
+  it('does nothing but inform the user when no support is installed', async () => {
+    getSelectedSession.mockReturnValue(baseSession());
+
+    await runUninstallServerSupport(sessionManager);
+
+    expect(mocks.showInformationMessage).toHaveBeenCalled();
+    expect(mocks.showWarningMessage).not.toHaveBeenCalled();
+    expect(mocks.uninstallEI).not.toHaveBeenCalled();
+    expect(mocks.uninstallRB).not.toHaveBeenCalled();
+  });
+
+  it('confirms first, then removes every installed support when the user confirms', async () => {
+    getSelectedSession.mockReturnValue(installed());
+    confirm('Uninstall');
+
+    await runUninstallServerSupport(sessionManager);
+
+    expect(mocks.showWarningMessage).toHaveBeenCalled();
+    expect(mocks.uninstallEI).toHaveBeenCalledWith(expect.anything(), sessionManager, true);
+    expect(mocks.uninstallRB).toHaveBeenCalledWith(expect.anything(), sessionManager, true);
+    expect(mocks.executeCommand).toHaveBeenCalledWith('gemstone.explorer.refresh');
+    expect(mocks.showInformationMessage).toHaveBeenCalledWith(
+      'GemStone server support uninstalled.',
+    );
+  });
+
+  it('removes nothing when the user cancels the confirmation', async () => {
+    getSelectedSession.mockReturnValue(installed());
+    confirm(undefined);
+
+    await runUninstallServerSupport(sessionManager);
+
+    expect(mocks.uninstallEI).not.toHaveBeenCalled();
+    expect(mocks.uninstallRB).not.toHaveBeenCalled();
+    expect(mocks.executeCommand).not.toHaveBeenCalled();
+  });
+
+  it('removes only the installed support, leaving an absent one alone', async () => {
+    getSelectedSession.mockReturnValue(
+      baseSession({ enhancedInspectorAvailable: false, rbSupportAvailable: true }),
+    );
+    confirm('Uninstall');
+
+    await runUninstallServerSupport(sessionManager);
+
+    expect(mocks.uninstallRB).toHaveBeenCalledTimes(1);
+    expect(mocks.uninstallEI).not.toHaveBeenCalled();
+  });
+
+  it('shows the confirmation as a modal', async () => {
+    getSelectedSession.mockReturnValue(installed());
+    confirm('Uninstall');
+
+    await runUninstallServerSupport(sessionManager);
+
+    const options = mocks.showWarningMessage.mock.calls[0][1] as { modal?: boolean };
+    expect(options.modal).toBe(true);
   });
 });

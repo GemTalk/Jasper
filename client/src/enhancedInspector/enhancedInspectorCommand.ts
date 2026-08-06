@@ -1,9 +1,9 @@
 /**
  * Server-side install driver for Enhanced Inspector support.
  *
- * The payload installs persistent classes (into Published) plus extension
- * methods on kernel classes, which requires write access to those kernel
- * classes — i.e. SystemUser. The user is normally logged in as DataCurator, so
+ * The payload installs persistent classes (into the dedicated
+ * `GsEnhancedInspector` dictionary) plus extension methods on kernel classes,
+ * which requires write access to those kernel classes — i.e. SystemUser. The user is normally logged in as DataCurator, so
  * this opens a short-lived, unregistered SystemUser session on the same
  * connection, runs the install over it, commits, logs it out, and then offers to
  * refresh the working session so the new code becomes visible.

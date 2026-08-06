@@ -109,6 +109,56 @@ describe('installEnhancedInspectorSupport', () => {
     expect(commit).toHaveBeenCalledTimes(1);
   });
 
+  it('creates and shares the dedicated GsEnhancedInspector dictionary before filing in any payload', async () => {
+    const { session } = createMockSession();
+    const events: string[] = [];
+    executeFetchStringMock.mockImplementation((s, code: string) => {
+      if (code.includes('GsEnhancedInspector') && code.includes('insertDictionary'))
+        events.push('prepare');
+      if (code.includes('GsFileIn fromPath')) events.push('file-in');
+      return happyPath(s, code);
+    });
+
+    await installEnhancedInspectorSupport(session, PAYLOAD_DIR);
+
+    expect(events[0]).toBe('prepare');
+    expect(events.filter((e) => e === 'prepare')).toHaveLength(1);
+    expect(events).toContain('file-in');
+  });
+
+  it('migrates a legacy Published-placed install by sweeping its GToolkit classes while preparing', async () => {
+    const { session } = createMockSession();
+
+    await installEnhancedInspectorSupport(session, PAYLOAD_DIR);
+
+    const prepareCode = String(
+      executeFetchStringMock.mock.calls.find(
+        (c) =>
+          String(c[1]).includes('GsEnhancedInspector') && String(c[1]).includes('insertDictionary'),
+      )?.[1],
+    );
+    expect(prepareCode).toContain('#Published');
+    expect(prepareCode).toContain("beginsWith: 'GToolkit'");
+    expect(prepareCode).toContain('removeKey:');
+  });
+
+  it('aborts without committing when the dictionary cannot be prepared', async () => {
+    const { session, commit, abort } = createMockSession();
+    executeFetchStringMock.mockImplementation((s, code: string) => {
+      if (code.includes('GsEnhancedInspector') && code.includes('insertDictionary')) {
+        throw new Error('insertDictionary failed');
+      }
+      return happyPath(s, code);
+    });
+
+    const result = await installEnhancedInspectorSupport(session, PAYLOAD_DIR);
+
+    expect(result.success).toBe(false);
+    expect(result.message).toContain('GsEnhancedInspector');
+    expect(commit).not.toHaveBeenCalled();
+    expect(abort).toHaveBeenCalledTimes(1);
+  });
+
   it('files the payload in the loader dependency order', async () => {
     const { session } = createMockSession();
     const order: string[] = [];

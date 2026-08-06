@@ -274,7 +274,7 @@
               "Never offer or install the optional support."
             ],
             "default": "ask",
-            "markdownDescription": "What Jasper does when you connect to a stone missing the optional server-side support — the **Enhanced Inspector** (GemStone 3.7.5+) and the **refactoring engine** (all releases), installed together: `ask` shows one Install / Always / Never prompt, `always` installs silently, `never` does nothing. Installing needs a SystemUser login and commits the supporting classes to the database.\n\n▶ [Install GemStone support now](command:gemstone.installServerSupport)"
+            "markdownDescription": "What Jasper does when you connect to a stone missing the optional server-side support — the **Enhanced Inspector** (GemStone 3.7.5+) and the **refactoring engine** (all releases), installed together: `ask` shows one Install / Always / Never prompt, `always` installs silently, `never` does nothing. Installing needs a SystemUser login and commits the supporting classes to the database.\n\n▶ [Install GemStone support now](command:gemstone.installServerSupport)\n\n▶ [Uninstall GemStone support](command:gemstone.uninstallServerSupport) — removes both from the stone (does nothing if neither is installed; also needs a SystemUser login and commits the removal)"
           }
         }
       },
@@ -591,7 +591,7 @@
           {
             "id": "serverSupport",
             "title": "Install optional server support",
-            "description": "Jasper can install two optional server-side supports: the Enhanced Inspector (rich object views, GemStone 3.7.5+) and the refactoring engine (rename instance variable, and more). On connect it offers to install whatever a stone is missing; the `gemstone.serverSupport.autoInstall` setting (ask / always / never) controls that.\n[Install GemStone Support…](command:gemstone.installServerSupport)",
+            "description": "Jasper can install two optional server-side supports: the Enhanced Inspector (rich object views, GemStone 3.7.5+) and the refactoring engine (rename instance variable, and more). On connect it offers to install whatever a stone is missing; the `gemstone.serverSupport.autoInstall` setting (ask / always / never) controls that.\n[Install GemStone Support…](command:gemstone.installServerSupport)\n\n[Uninstall GemStone Support…](command:gemstone.uninstallServerSupport) removes both from the stone (does nothing if neither is installed).",
             "media": {
               "markdown": "resources/walkthrough/enhancedInspector.md"
             },
@@ -744,6 +744,11 @@
       {
         "command": "gemstone.installServerSupport",
         "title": "Install Server Support (Enhanced Inspector + Refactoring)",
+        "category": "GemStone"
+      },
+      {
+        "command": "gemstone.uninstallServerSupport",
+        "title": "Uninstall Server Support (Enhanced Inspector + Refactoring)",
         "category": "GemStone"
       },
       {
@@ -1731,6 +1736,10 @@
           "when": "gemstone.hasActiveSession"
         },
         {
+          "command": "gemstone.uninstallServerSupport",
+          "when": "gemstone.hasActiveSession && gemstone.serverSupportInstalled"
+        },
+        {
           "command": "gemstone.serveSeaside",
           "when": "gemstone.hasActiveSession"
         },
@@ -1762,42 +1771,42 @@
         },
         {
           "command": "gemstoneExplorerDicts.filter",
-          "when": "view == gemstoneExplorerDicts && focusedView == gemstoneExplorerDicts",
+          "when": "view == gemstoneExplorerDicts",
           "group": "navigation@0"
         },
         {
           "command": "gemstoneExplorerCategories.filter",
-          "when": "view == gemstoneExplorerCategories && focusedView == gemstoneExplorerCategories",
+          "when": "view == gemstoneExplorerCategories",
           "group": "navigation@0"
         },
         {
           "command": "gemstoneExplorerClasses.filter",
-          "when": "view == gemstoneExplorerClasses && focusedView == gemstoneExplorerClasses",
+          "when": "view == gemstoneExplorerClasses",
           "group": "navigation@0"
         },
         {
           "command": "gemstoneExplorerMethods.filter",
-          "when": "view == gemstoneExplorerMethods && focusedView == gemstoneExplorerMethods",
+          "when": "view == gemstoneExplorerMethods",
           "group": "navigation@0"
         },
         {
           "command": "gemstoneExplorerDicts.clearFilter",
-          "when": "view == gemstoneExplorerDicts && focusedView == gemstoneExplorerDicts && gemstone.explorerFiltered.gemstoneExplorerDicts",
+          "when": "view == gemstoneExplorerDicts && gemstone.explorerFiltered.gemstoneExplorerDicts",
           "group": "navigation@1"
         },
         {
           "command": "gemstoneExplorerCategories.clearFilter",
-          "when": "view == gemstoneExplorerCategories && focusedView == gemstoneExplorerCategories && gemstone.explorerFiltered.gemstoneExplorerCategories",
+          "when": "view == gemstoneExplorerCategories && gemstone.explorerFiltered.gemstoneExplorerCategories",
           "group": "navigation@1"
         },
         {
           "command": "gemstoneExplorerClasses.clearFilter",
-          "when": "view == gemstoneExplorerClasses && focusedView == gemstoneExplorerClasses && gemstone.explorerFiltered.gemstoneExplorerClasses",
+          "when": "view == gemstoneExplorerClasses && gemstone.explorerFiltered.gemstoneExplorerClasses",
           "group": "navigation@1"
         },
         {
           "command": "gemstoneExplorerMethods.clearFilter",
-          "when": "view == gemstoneExplorerMethods && focusedView == gemstoneExplorerMethods && gemstone.explorerFiltered.gemstoneExplorerMethods",
+          "when": "view == gemstoneExplorerMethods && gemstone.explorerFiltered.gemstoneExplorerMethods",
           "group": "navigation@1"
         },
         {
@@ -1934,47 +1943,47 @@
         },
         {
           "command": "gemstone.explorer.renameIvar",
-          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerIvar/",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerIvar/ && gemstone.rbSupportAvailable",
           "group": "inline"
         },
         {
           "command": "gemstone.explorer.moveUpInstVar",
-          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerIvar/",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerIvar/ && gemstone.rbSupportAvailable",
           "group": "inline@2"
         },
         {
           "command": "gemstone.explorer.moveDownInstVar",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerIvar",
+          "when": "view == gemstoneExplorerClasses && viewItem == explorerIvar && gemstone.rbSupportAvailable",
           "group": "inline@3"
         },
         {
           "command": "gemstone.explorer.removeInstVar",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerIvar",
+          "when": "view == gemstoneExplorerClasses && viewItem == explorerIvar && gemstone.rbSupportAvailable",
           "group": "inline@4"
         },
         {
           "command": "gemstone.explorer.removeInstVar",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerIvar",
+          "when": "view == gemstoneExplorerClasses && viewItem == explorerIvar && gemstone.rbSupportAvailable",
           "group": "3_refactor@1"
         },
         {
           "command": "gemstone.explorer.addInstVar",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerVarSide.instance",
+          "when": "view == gemstoneExplorerClasses && viewItem == explorerVarSide.instance && gemstone.rbSupportAvailable",
           "group": "inline"
         },
         {
           "command": "gemstone.explorer.addInstVar",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass",
+          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass && gemstone.rbSupportAvailable",
           "group": "2_generate@2"
         },
         {
           "command": "gemstone.explorer.renameClassVariable",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerClassVar",
+          "when": "view == gemstoneExplorerClasses && viewItem == explorerClassVar && gemstone.rbSupportAvailable",
           "group": "inline"
         },
         {
           "command": "gemstone.explorer.renameMethod",
-          "when": "view == gemstoneExplorerMethods && viewItem =~ /explorerMethod/",
+          "when": "view == gemstoneExplorerMethods && viewItem =~ /explorerMethod/ && gemstone.rbSupportAvailable",
           "group": "inline"
         },
         {
@@ -2009,27 +2018,27 @@
         },
         {
           "command": "gemstone.explorer.moveMethodToClass",
-          "when": "view == gemstoneExplorerMethods && viewItem =~ /explorerMethod/",
+          "when": "view == gemstoneExplorerMethods && viewItem =~ /explorerMethod/ && gemstone.rbSupportAvailable",
           "group": "3_refactor@1"
         },
         {
           "command": "gemstone.explorer.moveMethodToOtherSide",
-          "when": "view == gemstoneExplorerMethods && viewItem =~ /explorerMethod/",
+          "when": "view == gemstoneExplorerMethods && viewItem =~ /explorerMethod/ && gemstone.rbSupportAvailable",
           "group": "3_refactor@2"
         },
         {
           "command": "gemstone.explorer.changeSignature",
-          "when": "view == gemstoneExplorerMethods && viewItem =~ /explorerMethod/",
+          "when": "view == gemstoneExplorerMethods && viewItem =~ /explorerMethod/ && gemstone.rbSupportAvailable",
           "group": "3_refactor@3"
         },
         {
           "command": "gemstone.explorer.pushUpMethod",
-          "when": "view == gemstoneExplorerMethods && viewItem =~ /explorerMethod/",
+          "when": "view == gemstoneExplorerMethods && viewItem =~ /explorerMethod/ && gemstone.rbSupportAvailable",
           "group": "inline@4"
         },
         {
           "command": "gemstone.explorer.pushDownMethod",
-          "when": "view == gemstoneExplorerMethods && viewItem =~ /explorerMethod/",
+          "when": "view == gemstoneExplorerMethods && viewItem =~ /explorerMethod/ && gemstone.rbSupportAvailable",
           "group": "inline@5"
         },
         {
@@ -2044,22 +2053,22 @@
         },
         {
           "command": "gemstone.explorer.renameClass",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass",
+          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass && gemstone.rbSupportAvailable",
           "group": "inline@3"
         },
         {
           "command": "gemstone.explorer.classHistory",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass",
+          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass && gemstone.rbSupportAvailable",
           "group": "3_refactor@1"
         },
         {
           "command": "gemstone.explorer.insertSuperclass",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass",
+          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass && gemstone.rbSupportAvailable",
           "group": "3_refactor@2"
         },
         {
           "command": "gemstone.explorer.extractSuperclass",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass",
+          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass && gemstone.rbSupportAvailable",
           "group": "3_refactor@3"
         },
         {
@@ -2074,22 +2083,22 @@
         },
         {
           "command": "gemstone.explorer.renameClass",
-          "when": "view == gemstoneExplorerHierarchy && viewItem == explorerHierClass",
+          "when": "view == gemstoneExplorerHierarchy && viewItem == explorerHierClass && gemstone.rbSupportAvailable",
           "group": "inline@3"
         },
         {
           "command": "gemstone.explorer.classHistory",
-          "when": "view == gemstoneExplorerHierarchy && viewItem == explorerHierClass",
+          "when": "view == gemstoneExplorerHierarchy && viewItem == explorerHierClass && gemstone.rbSupportAvailable",
           "group": "3_refactor@1"
         },
         {
           "command": "gemstone.explorer.insertSuperclass",
-          "when": "view == gemstoneExplorerHierarchy && viewItem == explorerHierClass",
+          "when": "view == gemstoneExplorerHierarchy && viewItem == explorerHierClass && gemstone.rbSupportAvailable",
           "group": "3_refactor@2"
         },
         {
           "command": "gemstone.explorer.extractSuperclass",
-          "when": "view == gemstoneExplorerHierarchy && viewItem == explorerHierClass",
+          "when": "view == gemstoneExplorerHierarchy && viewItem == explorerHierClass && gemstone.rbSupportAvailable",
           "group": "3_refactor@3"
         },
         {

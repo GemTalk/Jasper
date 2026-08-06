@@ -25,11 +25,13 @@ import * as path from 'path';
 import { ActiveSession } from '../sessionManager';
 import { checkRefactoringSupportAvailable } from '../browserQueries';
 import { installRefactoringSupport } from '../refactoring/refactoringInstall';
+import { uninstallRefactoringSupport } from '../refactoring/refactoringUninstall';
 import {
   installEnhancedInspectorSupport,
   isEnhancedInspectorInstalled,
   supportsEnhancedInspector,
 } from '../enhancedInspector/enhancedInspectorInstall';
+import { uninstallEnhancedInspectorSupport } from '../enhancedInspector/enhancedInspectorUninstall';
 
 /** Reports incremental progress: a message plus a 0–100 increment for this step. */
 export type ProgressReporter = (message: string, increment: number) => void;
@@ -44,6 +46,15 @@ export interface PluginInstallResult {
   /** A completeness report to surface, when the installer produced one (the
    *  refactoring loader does; the Enhanced Inspector installer does not). */
   report?: string;
+}
+
+/** The unified outcome of a plugin-feature uninstall, flattened from the two
+ *  removers' differently-shaped results down to what every consumer reads. */
+export interface PluginUninstallResult {
+  /** True only when the feature was removed and verified absent afterward. */
+  success: boolean;
+  /** Human-readable summary, suitable for a notification. */
+  message: string;
 }
 
 export interface PluginFeature {
@@ -65,6 +76,10 @@ export interface PluginFeature {
     payloadDir: string,
     onProgress?: ProgressReporter,
   ): Promise<PluginInstallResult>;
+  /** Remove the feature from the stone over a write-capable (SystemUser)
+   *  session. No payload directory: removal is expressed as inline Smalltalk,
+   *  so it needs nothing from disk. */
+  uninstall(session: ActiveSession, onProgress?: ProgressReporter): Promise<PluginUninstallResult>;
 }
 
 /**
@@ -91,6 +106,10 @@ export const pluginFeatures = {
       const r = await installRefactoringSupport(session, payloadDir, onProgress);
       return { success: r.success, message: r.message, report: r.report };
     },
+    uninstall: async (session: ActiveSession, onProgress?: ProgressReporter) => {
+      const r = await uninstallRefactoringSupport(session, onProgress);
+      return { success: r.success, message: r.message };
+    },
   },
   enhancedInspector: {
     id: 'enhancedInspector',
@@ -100,6 +119,10 @@ export const pluginFeatures = {
     probe: isEnhancedInspectorInstalled,
     install: async (session: ActiveSession, payloadDir: string, onProgress?: ProgressReporter) => {
       const r = await installEnhancedInspectorSupport(session, payloadDir, onProgress);
+      return { success: r.success, message: r.message };
+    },
+    uninstall: async (session: ActiveSession, onProgress?: ProgressReporter) => {
+      const r = await uninstallEnhancedInspectorSupport(session, onProgress);
       return { success: r.success, message: r.message };
     },
   },

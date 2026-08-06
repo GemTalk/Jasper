@@ -8,14 +8,17 @@
 #
 #   1. Prepend a per-file attribution header (origin repo, upstream source
 #      path, MIT license) -- required because we vendor third-party code.
-#   2. Rewrite class placement from the shared `Globals` dictionary to the
-#      `Published` dictionary. `Published` is already on every user's symbol
-#      list (current and future users), so the Enhanced Inspector classes are
-#      visible to everyone without polluting `Globals`.
+#   2. Rewrite class placement into the dedicated `GsEnhancedInspector`
+#      dictionary (from upstream's `Globals`, or from the older `Published`
+#      placement this project used before). The Enhanced Inspector installer
+#      creates `GsEnhancedInspector` and shares it into every user's symbol list
+#      (the same isolation the refactoring engine uses with `GsRefactoring`), so
+#      the whole payload can be removed cleanly by dropping that one dictionary
+#      instead of hunting commingled classes out of the shared `Published`.
 #
 # Idempotent: the header is added only when its sentinel is absent, and the
-# Globals->Published substitution matches nothing once already applied. Run
-# either standalone (re-applies to the vendored payload files) or from
+# placement substitution matches nothing once already retargeted. Run either
+# standalone (re-applies to the vendored payload files) or from
 # update_enhanced_inspector_support.sh after it refreshes the files from upstream.
 #
 # The payload .gs files live in resources/enhancedInspector/ (two levels up from
@@ -38,8 +41,14 @@ apply_one() {
         return 0
     fi
 
-    # 1. Globals -> Published (exact, unique token; idempotent once applied)
-    sed -i 's/inDictionary: Globals/inDictionary: Published/g' "$path"
+    # 1. Class placement -> the dedicated GsEnhancedInspector dictionary.
+    #    Accepts upstream's `Globals` or this project's earlier `Published`
+    #    placement; idempotent once already retargeted.
+    sed -i -E 's/inDictionary: (Globals|Published)/inDictionary: GsEnhancedInspector/g' "$path"
+
+    # Refresh the stale placement note in an already-headered file (the header
+    # itself is only prepended when the sentinel is absent, below).
+    sed -i 's/! class placement from Globals to Published\./! class placement from Globals to the dedicated GsEnhancedInspector dictionary./' "$path"
 
     # 2. Prepend the attribution header unless it is already present
     if ! head -1 "$path" | grep -qF "$SENTINEL"; then
@@ -55,7 +64,7 @@ apply_one() {
             echo "! Vendored into Jasper and filed into the stone by the Enhanced Inspector"
             echo "! installer. DO NOT EDIT BY HAND - regenerated from upstream by"
             echo "! update_enhanced_inspector_support.sh, which re-applies this header and rewrites"
-            echo "! class placement from Globals to Published."
+            echo "! class placement from Globals to the dedicated GsEnhancedInspector dictionary."
             echo "! ----------------------------------------------------------------------------"
             cat "$path"
         } > "$tmp"

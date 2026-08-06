@@ -142,7 +142,6 @@ async function performInstall(
       base.rbSupportAvailable === true,
     );
   }
-  vscode.window.showInformationMessage('Refactoring engine installed and verified.');
   return base.rbSupportAvailable === true;
 }
 
