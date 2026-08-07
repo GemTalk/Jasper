@@ -59,6 +59,7 @@ Three additional checks run in the `lint` job (not `.npmrc` settings, so not enf
 ## Known gaps
 
 - **`rhysd/actionlint` docker digest** — pinned by SHA256 digest in `health-check.yml`'s `lint-workflows` job, but Dependabot's `github-actions` ecosystem scans `uses:` only, so this digest is a manual bump.
+- **The exact npm pins in `health-check.yml` and `acceptance/Dockerfile`** — both install `npm@11.17.0`, the npm bundled by `.nvmrc`'s Node, so CI and the acceptance container match a contributor's toolchain rather than running ahead of it. Dependabot's `github-actions` ecosystem scans `uses:` only, not `run:` strings, so neither bumps automatically — re-pin both manually whenever `.nvmrc`'s Node version moves.
 
 ## Sunset conditions
 
