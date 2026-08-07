@@ -273,7 +273,11 @@ GsSplitClassRefactoring >> computeAnalysis [
 			^decline := 'Cannot split off ', newName, ': #', sel asString, ' sends super, whose meaning depends on the source class.'].
 		selfSent := self selfSentSelectorsIn: src.
 		selfSent do: [:s |
-			((movableSelectors includes: s) or: [Object canUnderstand: s]) ifFalse: [
+			"A self-sent selector is safe to leave behind only if it moves too, OR it is understood
+			 by Object AND the source does NOT override it -- else the move would resolve to the
+			 component's inherited Object impl and silently lose the source's override."
+			((movableSelectors includes: s)
+				or: [(sourceClass includesSelector: s) not and: [Object canUnderstand: s]]) ifFalse: [
 				^decline := 'Cannot split off ', newName, ': #', sel asString, ' calls #', s asString, ', which stays behind on ', sourceClass name asString, '.']]].
 	(environment descendantsOf: sourceClass) do: [:d |
 		d selectors do: [:sel |

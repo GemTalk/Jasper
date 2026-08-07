@@ -9,6 +9,7 @@
  * `methodAdd` on the source for the lazy accessor + one delegator per moved method. The refactoring
  * is all-or-nothing, so every row is a CORE row (checked + disabled).
  */
+import { asCount } from './previewCounts';
 
 export type SplitChangeKind = 'classAdd' | 'classDefinitionEdit' | 'classReparent' | 'methodAdd';
 
@@ -73,10 +74,6 @@ export interface SplitAnalysis {
   sourceClass: string | null;
   movableCount: number;
   affectedCount: number;
-}
-
-function asCount(v: unknown): number {
-  return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0;
 }
 
 const KINDS: ReadonlySet<string> = new Set([

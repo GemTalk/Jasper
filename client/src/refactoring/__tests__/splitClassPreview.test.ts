@@ -216,6 +216,15 @@ describe('split-class parsers', () => {
     expect(a.affectedCount).toBe(0);
   });
 
+  it('truncates a fractional count toward zero (shared count contract)', () => {
+    const a = parseAnalysis(
+      JSON.stringify({ decline: null, movableCount: 2.9, affectedCount: 3.1 }),
+    );
+
+    expect(a.movableCount).toBe(2);
+    expect(a.affectedCount).toBe(3);
+  });
+
   it('rejects a candidates payload that is not an envelope', () => {
     expect(() => parseCandidates(JSON.stringify(['street']))).toThrow(/did not return an envelope/);
   });

@@ -9928,6 +9928,7 @@ setUp
 	src compileMethod: 'writeExtractC: v extractC := v' dictionaries: sl category: 'tests'.
 	src compileMethod: 'doubleKeep ^keepA * 2' dictionaries: sl category: 'tests'.
 	src compileMethod: 'readKeepB ^keepB' dictionaries: sl category: 'tests'.
+	src class compileMethod: 'sourceTag ^42' dictionaries: sl category: 'tests'.
 	sub := src
 		subclass: 'GsSCSub'
 		instVarNames: #()
@@ -10088,6 +10089,27 @@ testDeclinesMovableCallingRetainedMethod
 
 category: 'tests - declines'
 method: GsSplitClassRefactoringTest
+testDeclinesMovableSelfSendingSourceOverriddenObjectMethod
+	"A movable method self-sends #printString, which the SOURCE overrides. Moving the method would
+	 resolve #printString to the component's inherited Object impl, silently losing the override, so
+	 the split must decline -- even though Object understands #printString."
+	self compileOnSource: 'printString ^''src'''.
+	self compileOnSource: 'describeExtract ^extractC printString, '' '', self printString'.
+	self assert: (self ref decline includesString: 'printString').
+	self assert: (self ref decline includesString: 'stays behind')
+%
+
+category: 'tests - declines'
+method: GsSplitClassRefactoringTest
+testAllowsMovableSelfSendingNonOverriddenObjectMethod
+	"Control for the override guard: a movable method may self-send an Object selector the source
+	 does NOT override (#hash) -- it safely resolves to Object on the component, so no decline."
+	self compileOnSource: 'hashExtract ^extractC hash + self hash'.
+	self assert: self ref decline isNil
+%
+
+category: 'tests - declines'
+method: GsSplitClassRefactoringTest
 testDeclinesWhenSubclassUsesExtractedIvar
 	(UserGlobals at: #GsSCSub)
 		compileMethod: 'subUsesExtract ^extractC'
@@ -10193,6 +10215,17 @@ testApplyLeavesRetainedMethodOnSource
 	self ref applyDeselected: #().
 	self assert: (self source includesSelector: #doubleKeep).
 	self assert: (self source includesSelector: #readKeepB)
+%
+
+category: 'tests - apply'
+method: GsSplitClassRefactoringTest
+testApplyPreservesClassSideMethods
+	"The reversion re-versions the source, whose metaclass method dictionary starts empty; the
+	 class-side method survives only because copyMethodsFrom:to:skipping: copies the metaclass
+	 forward -- and a reparented subclass still inherits it."
+	self ref applyDeselected: #().
+	self assert: (self source class includesSelector: #sourceTag).
+	self assert: ((UserGlobals at: #GsSCSub) class canUnderstand: #sourceTag)
 %
 
 category: 'tests - apply'
