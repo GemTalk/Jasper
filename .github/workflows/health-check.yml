@@ -166,7 +166,7 @@ jobs:
       # error) — so *any project-scoped* npm invocation on it fails with
       # EBADDEVENGINES, including the innocuous `npm config get cache` that
       # setup-node runs itself to locate the cache directory. That happens
-      # during setup, before the "Pin npm to the lockfile's major version"
+      # during setup, before the "Pin npm to an exact version that owns the lockfile"
       # step below can upgrade npm, so the cache lookup has to be suppressed
       # outright.
       #
@@ -191,8 +191,8 @@ jobs:
         # optional-peer entries (e.g. jsdom's @noble/hashes) that npm 10
         # still expects. npm 10 walks the tree, doesn't find them, and fails
         # `npm ci` with EUSAGE "Missing: ... from lock file". The floor
-        # include job's Node 22 bundles npm 10, so bring it up to the npm
-        # major that owns the lockfile. The `if` restricts this to the Node 22
+        # include job's Node 22 bundles npm 10, so bring it up to an exact
+        # npm 11 that owns the lockfile. The `if` restricts this to the Node 22
         # floor job: the dev jobs leave node-version empty, resolve Node from
         # .nvmrc, and already ship npm 11. Update the guard when the floor
         # moves to a new major — and drop the step entirely once the floor
@@ -202,12 +202,13 @@ jobs:
         # zizmor(adhoc-packages): installing a package outside a lockfile is
         # flagged as supply-chain surface, but no Node 22 release bundles npm
         # 11 (the earliest that does is v24.0.0), so the floor job can't get
-        # it any other way. Pinned to the major, not an exact patch, so a
-        # future Node bump carrying a newer bundled npm doesn't reintroduce
-        # the same lockfile drift one level up.
-      - name: Pin npm to the lockfile's major version
+        # it any other way. Pinned to an exact version rather than the `11`
+        # dist-tag so this leg installs the same toolchain on every run and a
+        # fresh npm release can't change it underneath us — bump it
+        # deliberately, together with the same pin in acceptance/Dockerfile.
+      - name: Pin npm to an exact version that owns the lockfile
         if: startsWith(matrix.node-version, '22.')
-        run: npm install --global npm@11 # zizmor: ignore[adhoc-packages] -- npm 11 owns the lockfile and no Node 22 release bundles it
+        run: npm install --global npm@11.17.0 # zizmor: ignore[adhoc-packages] -- npm 11 owns the lockfile and no Node 22 release bundles it
       - name: Install dependencies
         run: npm ci
       - name: Compile
