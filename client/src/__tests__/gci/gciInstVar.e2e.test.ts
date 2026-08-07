@@ -20,16 +20,20 @@ import { parseStartPreview, parseApplyResult } from '../../refactoring/instVarRe
  * On-demand GCI e2e for the COMMITTING paths of the add / remove instance-variable (V1)
  * refactoring, over the real GCI transport (`npm run test:gci`).
  *
- * WHY THIS IS STILL AN on-demand gci SUITE: every non-committing scenario has moved to the
- * automatic integration suite, which runs in CI across the release matrix — see
+ * WHY THIS IS STILL AN on-demand gci SUITE: every scenario the harness can host has moved to
+ * the automatic integration suite, which runs in CI across the release matrix — see
  * `refactoring/__tests__/refactoringInstVar.integration.test.ts` (add, remove + selective
- * copy-forward, shadowed-temporary prediction, decline duplicate, decline a name a subclass
- * declares, plus the engine's GS SUnit suite). What remains here are the three scenarios that
- * COMMIT: `useIntegrationTest` aborts after every test to keep tests isolated, and an abort
- * cannot undo a commit, so these can only move once the CI migration settles a
- * commit-and-compensate story for the harness (a transient session, or a test that commits its
- * own cleanup). That is a policy call about the harness's "never commit" invariant, not a
- * technical blocker.
+ * copy-forward, partial apply without abort, shadowed-temporary prediction, decline duplicate,
+ * decline a name a subclass declares, plus the engine's GS SUnit suite). What remains here are
+ * the two scenarios on which the ENGINE commits:
+ * `GsInstVarRefactoring>>applyDeselected:options:migrate:deleteHistory:` calls
+ * `commitStructuralThenMigrate:` whenever `migrate` or `deleteHistory` is requested, because
+ * `migrateInstancesTo:` needs a clean transaction. `useIntegrationTest` aborts after every test
+ * to keep tests isolated, and an abort cannot undo a commit, so these can only move once the CI
+ * migration settles a commit-and-compensate story for the harness (a transient session, or a
+ * test that commits its own cleanup). That is a policy call about the harness's "never commit"
+ * invariant, not a technical blocker. Note the discriminator is what the PRODUCTION code does,
+ * not what the test does: a test that merely commits its own fixture belongs in the harness.
  *
  * Guarded on the refactoring engine being installed (the queries reference the in-stone
  * `GsInstVarRefactoring`); the tests skip, with a reason, otherwise. Each test is self-cleaning
@@ -168,65 +172,6 @@ describe('instance-variable refactoring, committing paths (gci e2e)', () => {
       expect(exec(`${CLS} classHistory size printString`).trim()).toBe('1');
     } finally {
       exec(`UserGlobals removeKey: #${CLS} ifAbsent: []. System commitTransaction. 'ok'`);
-    }
-  });
-
-  // A mid-apply failure, end to end against a COMMITTED fixture: the engine must stop at the
-  // first failure, leave the transaction alone (it never aborts — that would discard the user's
-  // other in-flight work), and report the partial state for the client's abort recommendation.
-  it('stops at the first failure and reports the partial apply without aborting', async (ctx) => {
-    if (!enginePresent) return ctx.skip('GsInstVarRefactoring is not installed on this stone');
-
-    const RB_BASE = 'GciIvRbBase';
-    const RB_SUB = 'GciIvRbSub';
-    try {
-      q.compileClassDefinition(
-        session,
-        `Object subclass: '${RB_BASE}' instVarNames: #(x) classVars: #() ` +
-          'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
-      );
-      q.compileClassDefinition(
-        session,
-        `${RB_BASE} subclass: '${RB_SUB}' instVarNames: #() classVars: #() ` +
-          'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
-      );
-      // A method that WOULD be dropped by the apply, so a bogus `dropped` report is detectable.
-      q.compileMethod(session, RB_SUB, false, 'accessing', 'shadowIt | tally | ^tally');
-      exec("System commitTransaction. 'ok'"); // clean session — the engine may now abort
-
-      const start = parseStartPreview(
-        await startInstVarPreview(
-          asyncExec,
-          'add',
-          RB_BASE,
-          'tally',
-          'gci-iv-rollback',
-          PREVIEW_PAGE_BYTES,
-          userIndex(),
-        ),
-      );
-      expect(start.total).toBe(2); // base + sub are both staged
-
-      // Break the SECOND change after the preview was staged: the base will version fine, then
-      // the sub will fail with 'Class not found'. Committed so the session stays clean.
-      exec(`UserGlobals removeKey: #${RB_SUB} ifAbsent: []. System commitTransaction. 'ok'`);
-
-      const result = parseApplyResult(
-        await applyInstVar(asyncExec, 'gci-iv-rollback', [], null, false, false),
-      );
-
-      expect(result.failed.length).toBe(1);
-      expect(result.applied).toBe(1); // the base applied; the sub failed; nothing after it ran
-      expect(result.partiallyApplied).toBe(true);
-      expect(result.committed).toBe(false);
-      // The decisive check: the engine did NOT abort, so the base's new version is still staged
-      // in the transaction — which is exactly why the client tells the user to abort it.
-      expect(hasIvar(RB_BASE, 'tally')).toBe(true);
-    } finally {
-      exec(
-        `#(#${RB_SUB} #${RB_BASE}) do: [:s | UserGlobals removeKey: s ifAbsent: []]. ` +
-          "System commitTransaction. 'ok'",
-      );
     }
   });
 });
