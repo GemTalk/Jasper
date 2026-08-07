@@ -1,3 +1,4 @@
+import { asCount } from './previewCounts';
 /**
  * Pure helpers for the Extract Temporary (M3) preview: parsing the server-side
  * engine's pre-flight analysis, its paginated preview envelope, and the apply
@@ -62,10 +63,6 @@ export interface ApplyResult {
   applied: number;
   failed: { id: string; label: string; error: string }[];
   error?: string;
-}
-
-function asCount(v: unknown): number {
-  return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0;
 }
 
 function parseChange(raw: unknown, i: number): ExtractTemporaryChange {

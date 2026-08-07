@@ -1,3 +1,4 @@
+import { asCount } from './previewCounts';
 /**
  * Pure helpers for the change-method-signature (M5) preview: parsing the
  * server-side engine's combined preview envelope, the pre-flight analysis, and the
@@ -100,10 +101,6 @@ export interface SignatureAnalysis {
   arity: number;
   argNames: string[];
   decline: string | null;
-}
-
-function asCount(v: unknown): number {
-  return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0;
 }
 
 function asStringOrNull(v: unknown): string | null {

@@ -1,3 +1,4 @@
+import { asCount } from './previewCounts';
 /**
  * Pure helpers for the extract-superclass refactorings (V6 insert superclass, V7 extract
  * superclass): parsing the engine's member-candidate classification, the pre-flight analysis,
@@ -88,10 +89,6 @@ export interface ExtractSuperAnalysis {
   newClass: string | null;
   sharedParent: string | null;
   affectedCount: number;
-}
-
-function asCount(v: unknown): number {
-  return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0;
 }
 
 const KINDS: ReadonlySet<string> = new Set([

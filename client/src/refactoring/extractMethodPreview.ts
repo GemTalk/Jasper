@@ -1,3 +1,4 @@
+import { asCount } from './previewCounts';
 /**
  * Pure helpers for the extract-method (M1) preview: parsing the engine's
  * pre-flight analysis, the paginated preview envelope, and the apply result, plus
@@ -70,10 +71,6 @@ export interface ExtractAnalysis {
   returnVar: string | null;
   safeVoidShape: boolean;
   decline: string | null;
-}
-
-function asCount(v: unknown): number {
-  return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0;
 }
 
 function parseChange(raw: unknown, i: number): ExtractChange {

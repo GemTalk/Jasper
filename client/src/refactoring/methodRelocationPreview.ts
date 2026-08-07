@@ -1,3 +1,4 @@
+import { asCount } from './previewCounts';
 /**
  * Shared "method-relocation" preview primitives (RB catalog C2). The move-method (M6)
  * and push-up / push-down (M7 / M8) client families model a relocation as a set of
@@ -80,16 +81,6 @@ export interface RelocationAnalysis<S extends BaseSelectorAnalysis> {
   globalDecline: string | null;
   movableCount: number;
   selectors: S[];
-}
-
-/**
- * Coerce a JSON value to a non-negative count. Anything that is not a finite, non-negative
- * number -- a non-number, a negative, `NaN`, or `Infinity` -- clamps to `0` (rather than
- * throwing or returning `undefined`), so a malformed engine payload degrades to a zero/empty
- * count instead of crashing the parse.
- */
-export function asCount(v: unknown): number {
-  return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0;
 }
 
 /**
