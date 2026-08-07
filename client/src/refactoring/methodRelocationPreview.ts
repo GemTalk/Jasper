@@ -82,6 +82,12 @@ export interface RelocationAnalysis<S extends BaseSelectorAnalysis> {
   selectors: S[];
 }
 
+/**
+ * Coerce a JSON value to a non-negative count. Anything that is not a finite, non-negative
+ * number -- a non-number, a negative, `NaN`, or `Infinity` -- clamps to `0` (rather than
+ * throwing or returning `undefined`), so a malformed engine payload degrades to a zero/empty
+ * count instead of crashing the parse.
+ */
 export function asCount(v: unknown): number {
   return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0;
 }

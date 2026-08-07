@@ -143,6 +143,25 @@ GsInstVarStructureRefactoringTest >> testConvertTempStagesIvarEditAndMethodRecom
 ]
 
 { #category : 'tests - V5 convert temp' }
+GsInstVarStructureRefactoringTest >> testConvertTempSucceedsWhenMethodSourceIsWide [
+	"Regression for the RBScanner wide-source parse gap (#361 / #362): converting a temporary in a
+	 method whose STORED SOURCE carries a non-ASCII (wide) comment must NOT decline. Before the
+	 Character>>isSqueakSeparator compat shim, RBParser parseMethod: DNU'd on wide source, the caller
+	 swallowed it to nil (analyzeConvertTemp: `[RBParser parseMethod: src] on: Error do: [:e | nil]`),
+	 and convert-temp hard-declined 'the method source does not parse'. This drives the WHOLE
+	 refactoring path (not just the parser, as GsRefactoringParseTest does), so a future regression
+	 anywhere along it is caught. The em-dash is built with #codePoint: so THIS test's own source
+	 stays pure ASCII (the 3.6.2 ComStrmSetCursor discipline)."
+	| wide ref |
+	wide := 'computeWide | w | "carry ', (String with: (Character codePoint: 8212)), ' forward" w := shared. ^ w'.
+	self compile: wide in: (self classNamed: 'GsVSBase').
+	ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSBase') convertTemporary: 'w' inMethod: #computeWide meta: false.
+	self assert: ref decline isNil.
+	self deny: ref analysisJsonString includesSubstring: 'does not parse'
+]
+
+{ #category : 'tests - V5 convert temp' }
 GsInstVarStructureRefactoringTest >> testConvertTempAppliesAddingIvarAndDroppingDecl [
 	| json |
 	json := (GsInstVarStructureRefactoring
