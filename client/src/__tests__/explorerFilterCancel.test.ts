@@ -4,6 +4,7 @@ vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 vi.mock('../browserQueries', () => ({}));
 
 import * as vscode from '../__mocks__/vscode';
+import { __setConfig, __resetConfig } from '../__mocks__/vscode';
 import { ExplorerController } from '../gemstoneExplorer';
 import type { SessionManager, ActiveSession } from '../sessionManager';
 import type { EnvCategoryLine } from '../browserQueries';
@@ -37,9 +38,10 @@ function makeController(): ExplorerController {
   return ctl;
 }
 
-/** The filter currently applied to a pane, read from the controller's private map. */
+/** The filter currently applied to a pane. `getFilter` is public — the private-map casts
+ *  elsewhere in these tests exist because there is no public SETTER, but reading has an API. */
 function currentFilter(ctl: ExplorerController, viewId: string): string | undefined {
-  return (ctl as unknown as { filters: Map<string, string> }).filters.get(viewId);
+  return ctl.getFilter(viewId);
 }
 
 /** The InputBox `beginFilter` just created. */
@@ -50,14 +52,13 @@ interface MockInputBox {
   __hide: () => void;
 }
 function lastInputBox(): MockInputBox {
-  const mock = vscode.window.createInputBox as unknown as {
-    mock: { results: { value: MockInputBox }[] };
-  };
-  return mock.mock.results[mock.mock.results.length - 1].value;
+  // The accessor the mock's own doc comment advertises, so the two cannot drift.
+  return vi.mocked(vscode.window.createInputBox).mock.results.at(-1)!.value;
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
+  __resetConfig();
 });
 
 describe('Explorer filter input: accept vs cancel', () => {
@@ -146,5 +147,71 @@ describe('Explorer filter input: accept vs cancel', () => {
 
     expect(currentFilter(ctl, METHODS)).toBeUndefined();
     expect(currentFilter(ctl, CLASSES)).toBe('Dem');
+  });
+
+  // Assert on the ROWS the provider actually returns, not just the filter map — the map entry is
+  // the mechanism, the rendered rows are the behaviour the user sees.
+  it('puts the unfiltered rows back on the pane when the user presses Escape', () => {
+    // Flat (ungrouped) view, so the provider's top level is the selectors themselves rather
+    // than the category nodes.
+    __setConfig('gemstone', 'explorer.groupMethodsByCategory', false);
+    const ctl = makeController();
+    const selectors = () =>
+      (ctl.methodProvider.getChildren() as { label?: string }[]).map((r) => r.label);
+    const before = selectors();
+    expect(before).toEqual(expect.arrayContaining(['at:', 'size']));
+
+    ctl.beginFilter(METHODS);
+    const box = lastInputBox();
+    box.__type('si');
+    // The pane really did narrow, so the restore below is proving something.
+    expect(selectors()).not.toEqual(before);
+
+    box.__hide(); // Escape
+
+    expect(selectors()).toEqual(before);
+  });
+
+  // Regression for the review finding: the restore used to write the pre-edit value back
+  // unconditionally. Selecting a class clears the Methods filter (`selectClass` ->
+  // `clearFilters(VIEW_METHODS)`), and that same click dismisses an open box — so an
+  // unconditional restore re-applied the PREVIOUS class's filter onto the newly selected one.
+  it('does not resurrect its filter when something else changed the pane meanwhile', async () => {
+    const ctl = makeController();
+
+    ctl.beginFilter(METHODS);
+    const first = lastInputBox();
+    first.__type('size');
+    await first.__accept();
+    expect(currentFilter(ctl, METHODS)).toBe('size');
+
+    ctl.beginFilter(METHODS);
+    const second = lastInputBox();
+    second.__type('at');
+
+    // Someone else takes ownership of this pane's filter while the box is still open.
+    ctl.clearFilter(METHODS);
+    expect(currentFilter(ctl, METHODS)).toBeUndefined();
+
+    second.__hide(); // Escape
+
+    expect(currentFilter(ctl, METHODS)).toBeUndefined();
+  });
+
+  // The other half of the guard: cancelling without typing should not churn the pane.
+  it('does not touch the filter when the box is dismissed without an edit', () => {
+    const ctl = makeController();
+    const refreshed: string[] = [];
+    const original = ctl.methodProvider.refresh.bind(ctl.methodProvider);
+    vi.spyOn(ctl.methodProvider, 'refresh').mockImplementation(() => {
+      refreshed.push('methods');
+      original();
+    });
+
+    ctl.beginFilter(METHODS);
+    lastInputBox().__hide(); // Escape, nothing typed
+
+    expect(currentFilter(ctl, METHODS)).toBeUndefined();
+    expect(refreshed).toEqual([]);
   });
 });
