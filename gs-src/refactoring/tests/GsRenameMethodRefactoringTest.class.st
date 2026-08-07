@@ -187,6 +187,46 @@ GsRenameMethodRefactoringTest >> testCommentSpellingIsNotRewritten [
 ]
 
 { #category : 'tests' }
+GsRenameMethodRefactoringTest >> testDictionaryScopeExcludesSameNamedClassInAnotherDictionary [
+	"Regression for issue #328 item 9. A class name bound in two dictionaries
+	 (a shadow) must not stage a duplicate rename for the sibling class: renaming
+	 in dictionary A's scope renames ONLY A's class, and B's same-named class is
+	 counted out of scope rather than staged again. Self-contained: the two shadow
+	 dictionaries are removed in an ensure: so a failure leaks nothing."
+	| sl dictA dictB fooA renames ref cs |
+	sl := System myUserProfile symbolList.
+	dictA := SymbolDictionary new name: #GsRMScopeDictA; yourself.
+	dictB := SymbolDictionary new name: #GsRMScopeDictB; yourself.
+	[sl add: dictA. sl add: dictB.
+	 fooA := Object subclass: 'GsRMShadow'
+		instVarNames: #() classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: dictA.
+	 Object subclass: 'GsRMShadow'
+		instVarNames: #() classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: dictB.
+	 self compile: 'shadowSel ^1' in: fooA.
+	 self compile: 'shadowSel ^2' in: (dictB at: #GsRMShadow).
+	 ref := GsRenameMethodRefactoring
+		class: fooA renameSelector: #shadowSel
+		toParts: #('shadowSel2') permutation: #() dictionaryScope: 'GsRMScopeDictA'.
+	 cs := ref changeSet.
+	 renames := cs changes select: [:c | c kind == #methodRename].
+
+	 "exactly ONE implementor renamed -- not the shadow sibling too"
+	 self assert: renames size equals: 1.
+	 "and it is dictionary A's class (body returns 1), never B's (returns 2)"
+	 self assert: renames first oldSource includesSubstring: '^1'.
+	 self deny: renames first oldSource includesSubstring: '^2'.
+	 "B's same-named implementor is counted out of scope, not silently dropped"
+	 self assert: ref outOfScopeImplementorCount equals: 1]
+		ensure: [
+			dictA removeKey: #GsRMShadow ifAbsent: [].
+			dictB removeKey: #GsRMShadow ifAbsent: [].
+			sl remove: dictA ifAbsent: [].
+			sl remove: dictB ifAbsent: []]
+]
+
+{ #category : 'tests' }
 GsRenameMethodRefactoringTest >> testHierarchyScopeIncludesSubclassExcludesUnrelated [
 	| ref cs |
 	ref := self renamePartsTo: #('moveY:' 'x:') permutation: #(2 1) scope: #hierarchy.

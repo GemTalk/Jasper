@@ -1278,6 +1278,18 @@
         "icon": "$(add)"
       },
       {
+        "command": "gemstone.explorer.addClassVar",
+        "title": "Add Class Variable…",
+        "category": "GemStone",
+        "icon": "$(add)"
+      },
+      {
+        "command": "gemstone.explorer.addAccessors",
+        "title": "Add Accessors",
+        "category": "GemStone",
+        "icon": "$(symbol-method)"
+      },
+      {
         "command": "gemstone.explorer.removeInstVar",
         "title": "Remove Instance Variable…",
         "category": "GemStone",
@@ -1392,6 +1404,12 @@
       {
         "command": "gemstone.renameMethodInEditor",
         "title": "Rename Method in Editor…",
+        "category": "GemStone",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "gemstone.rename",
+        "title": "Rename…",
         "category": "GemStone",
         "icon": "$(edit)"
       },
@@ -1648,6 +1666,22 @@
           "when": "false"
         },
         {
+          "command": "gemstone.renameTemporary",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.renameInstVarAtCursor",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.renameClassVarAtCursor",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.renameMethodInEditor",
+          "when": "false"
+        },
+        {
           "command": "gemstone.explorer.commit",
           "when": "false"
         },
@@ -1665,6 +1699,14 @@
         },
         {
           "command": "gemstone.explorer.addInstVar",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.addClassVar",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.addAccessors",
           "when": "false"
         },
         {
@@ -2050,14 +2092,34 @@
           "group": "inline"
         },
         {
+          "command": "gemstone.explorer.addClassVar",
+          "when": "view == gemstoneExplorerClasses && viewItem == explorerVarSide.class",
+          "group": "inline"
+        },
+        {
           "command": "gemstone.explorer.addInstVar",
           "when": "view == gemstoneExplorerClasses && viewItem == explorerClass",
           "group": "2_generate@2"
         },
         {
+          "command": "gemstone.explorer.addClassVar",
+          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass",
+          "group": "2_generate@3"
+        },
+        {
           "command": "gemstone.explorer.renameClassVariable",
           "when": "view == gemstoneExplorerClasses && viewItem == explorerClassVar",
           "group": "inline"
+        },
+        {
+          "command": "gemstone.explorer.addAccessors",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerIvar/",
+          "group": "2_generate@1"
+        },
+        {
+          "command": "gemstone.explorer.addAccessors",
+          "when": "view == gemstoneExplorerClasses && viewItem == explorerClassVar",
+          "group": "2_generate@1"
         },
         {
           "command": "gemstone.explorer.renameMethod",

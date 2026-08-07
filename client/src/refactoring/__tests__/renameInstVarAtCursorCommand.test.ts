@@ -3,6 +3,7 @@ vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 vi.mock('../../browserQueries', () => ({
   getDefinedInstVarNames: vi.fn(),
   getInstVarNames: vi.fn(),
+  getDefiningClassOfInstVar: vi.fn(),
 }));
 
 import * as vscode from 'vscode';
@@ -11,10 +12,11 @@ import { renameInstVarAtCursorCommand } from '../renameInstVarAtCursorCommand';
 import type { SessionManager } from '../../sessionManager';
 
 /**
- * Drives the editor-triggered rename-instance-variable command so the
- * simple-but-polite contract is pinned down: a defined ivar starts the shared
- * rename flow; an inherited ivar or a non-ivar word declines with a warning that
- * says what the word actually is — the mirror image of the temp/arg decline.
+ * Drives the editor-triggered rename-instance-variable command so its contract is
+ * pinned down: a defined ivar starts the shared rename flow directly; an inherited
+ * ivar is not a dead-end — after a one-line confirm it retargets the rename to the
+ * defining class (across that hierarchy); only a word that is not a visible ivar at
+ * all declines, pointing at the temp/arg rename.
  */
 
 const SOURCE = ['scaleBy: aFactor', '\t^count * aFactor'].join('\n');
@@ -61,6 +63,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(queries.getDefinedInstVarNames).mockReturnValue(['count', 'total']);
   vi.mocked(queries.getInstVarNames).mockReturnValue(['count', 'total', 'inherited1']);
+  vi.mocked(queries.getDefiningClassOfInstVar).mockReturnValue({
+    className: 'BaseDemo',
+    dictIndex: 2,
+  });
 });
 
 describe('rename-instance-variable at cursor', () => {
@@ -78,15 +84,70 @@ describe('rename-instance-variable at cursor', () => {
     expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
   });
 
-  it('declines an inherited instance variable, pointing at the defining class', async () => {
+  it('retargets an inherited instance variable to its defining class once confirmed', async () => {
+    installEditor(new vscode.Position(1, 2)); // on `count`, not defined on this class
+    vi.mocked(queries.getDefinedInstVarNames).mockReturnValue(['total']);
+    vi.mocked(queries.getDefiningClassOfInstVar).mockReturnValue({
+      className: 'BaseDemo',
+      dictIndex: 5,
+    });
+    vi.mocked(vscode.window.showInformationMessage).mockResolvedValue(
+      'Rename on BaseDemo…' as unknown as vscode.MessageItem,
+    );
+    const beginRename = vi.fn(async () => false);
+
+    await renameInstVarAtCursorCommand(sessions, beginRename);
+
+    expect(beginRename).toHaveBeenCalledWith({
+      className: 'BaseDemo',
+      ivarName: 'count',
+      dict: 5,
+    });
+    expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
+  });
+
+  it('does not rename when the retarget confirm is dismissed', async () => {
     installEditor(new vscode.Position(1, 2));
-    vi.mocked(queries.getDefinedInstVarNames).mockReturnValue(['total']); // count not defined here
+    vi.mocked(queries.getDefinedInstVarNames).mockReturnValue(['total']);
+    vi.mocked(vscode.window.showInformationMessage).mockResolvedValue(undefined); // dismissed
+    const beginRename = vi.fn(async () => false);
+
+    await renameInstVarAtCursorCommand(sessions, beginRename);
+
+    expect(beginRename).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the editor dict scope when the defining class is not bound by name', async () => {
+    installEditor(new vscode.Position(1, 2));
+    vi.mocked(queries.getDefinedInstVarNames).mockReturnValue(['total']);
+    vi.mocked(queries.getDefiningClassOfInstVar).mockReturnValue({
+      className: 'BaseDemo',
+      dictIndex: 0,
+    });
+    vi.mocked(vscode.window.showInformationMessage).mockResolvedValue(
+      'Rename on BaseDemo…' as unknown as vscode.MessageItem,
+    );
+    const beginRename = vi.fn(async () => false);
+
+    await renameInstVarAtCursorCommand(sessions, beginRename);
+
+    expect(beginRename).toHaveBeenCalledWith({
+      className: 'BaseDemo',
+      ivarName: 'count',
+      dict: 2, // the editor URI's dict, since dictIndex 0 means "not bound by name"
+    });
+  });
+
+  it('declines an inherited instance variable whose defining class cannot be resolved', async () => {
+    installEditor(new vscode.Position(1, 2));
+    vi.mocked(queries.getDefinedInstVarNames).mockReturnValue(['total']);
+    vi.mocked(queries.getDefiningClassOfInstVar).mockReturnValue(undefined);
     const beginRename = vi.fn(async () => false);
 
     await renameInstVarAtCursorCommand(sessions, beginRename);
 
     expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
-      expect.stringContaining('INHERITED'),
+      expect.stringContaining('could not be resolved'),
     );
     expect(beginRename).not.toHaveBeenCalled();
   });

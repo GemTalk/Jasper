@@ -189,6 +189,90 @@ describe('rename instance variable (integration)', () => {
     ).toThrow(BrowserQueryError);
   });
 
+  // ---- inherited-ivar retarget resolution -------------------------------------
+  // Invoked on an ivar INHERITED by a subclass method, the editor rename command
+  // resolves the defining class and reruns the rename there so a rename is always
+  // reachable from a method. That resolution is `getDefiningClassOfInstVar`; prove
+  // it against the real hierarchy so the hand-written superclass walk + SymbolList
+  // index lookup are exercised on a stone, not just in a unit test with a canned
+  // executor.
+
+  it('resolves an ivar inherited by a subclass to its defining class and binding dictionary', (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+
+    defineCounterHierarchy();
+
+    const defining = q.getDefiningClassOfInstVar(session(), SUB, 'count', userIndex());
+
+    expect(defining).toEqual({ className: COUNTER, dictIndex: userIndex() });
+  });
+
+  it('resolves an ivar to its declaring class even when asked from that class itself', (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+
+    defineCounterHierarchy();
+
+    expect(q.getDefiningClassOfInstVar(session(), COUNTER, 'count', userIndex())?.className).toBe(
+      COUNTER,
+    );
+  });
+
+  it('answers undefined for a word that is not a visible instance variable', (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+
+    defineCounterHierarchy();
+
+    expect(q.getDefiningClassOfInstVar(session(), SUB, 'notAnIvar', userIndex())).toBeUndefined();
+  });
+
+  it('renames an inherited ivar across the whole hierarchy once retargeted to its defining class', (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+
+    defineCounterHierarchy();
+    // Resolve the defining class the way the editor command does when the cursor is
+    // on `count` in a SUB method, then run the rename against THAT class + its dict.
+    const defining = q.getDefiningClassOfInstVar(session(), SUB, 'count', userIndex());
+    if (!defining) throw new Error('expected count to resolve to its defining class');
+    const { token } = parseRenamePreview(
+      startRenameInstVarPreview(
+        exec,
+        defining.className,
+        'count',
+        'tally',
+        'rivRetarget',
+        defining.dictIndex,
+      ),
+    );
+
+    const result = parseRenameApplyResult(applyRenameInstVar(exec, token, []));
+    clearRenameInstVarPreview(exec, token);
+
+    expect(result.failed).toEqual([]);
+    expect(exec(`(${COUNTER} instVarNames includes: #tally) printString`).trim()).toBe('true');
+    // The inherited-referencing subclass method survived the re-version and now
+    // reads the renamed ivar; an unrelated subclass method survives too.
+    expect(selectorsOf(SUB, false).sort()).toEqual(['doubleCount', 'subLabel']);
+    expect(exec(`${SUB} sourceCodeAt: #doubleCount`)).toContain('tally');
+  });
+
+  // ---- class-reference resolution (editor Rename… on a class) -----------------
+  // The unified Rename… resolves a bareword to a class before routing to class
+  // rename. resolveClassReference is engine-independent (objectNamed: + isKindOf:
+  // Class), so these need no plugin gate.
+
+  it('resolves a class reference to the class and its binding dictionary', () => {
+    defineCounterHierarchy();
+
+    expect(q.resolveClassReference(session(), COUNTER)).toEqual({
+      className: COUNTER,
+      dictIndex: userIndex(),
+    });
+  });
+
+  it('does not resolve an unbound name to a class', () => {
+    expect(q.resolveClassReference(session(), 'NoSuchClassXyzzy')).toBeUndefined();
+  });
+
   // ---- apply path -------------------------------------------------------------
   // The preview being right says nothing about what the stone looks like after
   // Apply. Renaming reshapes the class, so every class in the subtree is

@@ -5,11 +5,13 @@
  * (input box → checkbox preview panel → apply, no commit) runs for the editor's
  * class — the same flow the Explorer's ivar-row pencil drives.
  *
- * Simple-but-polite (Eric, 2026-07-21): the Refactor… menu offers the action on
- * any identifier; when the word is NOT an instance variable of this class, a
- * warning toast says what it is instead — inherited (rename belongs to the
- * defining class) or not an ivar at all (use Rename Temporary/Argument) — the
- * mirror image of the temp/arg rename declining in the other direction.
+ * A rename is always reachable from a method editor: a variable DEFINED on the
+ * editor's class renames here directly; an INHERITED one is not a dead-end — its
+ * defining class is resolved and, after a one-line confirm, the rename runs there
+ * (across that class's whole hierarchy), which is where an ivar rename belongs.
+ * Only a word that is not a visible instance variable at all is declined (with a
+ * pointer to Rename Temporary/Argument) — the mirror image of the temp/arg rename
+ * declining in the other direction.
  */
 import * as vscode from 'vscode';
 import { SessionManager } from '../sessionManager';
@@ -23,6 +25,7 @@ import {
   reloadMethodEditor,
   saveIfDirty,
 } from './renameAtCursorShared';
+import { DefiningClass } from './queries/getDefiningClassOfInstVar';
 
 /** What the shared Explorer rename flow needs to start. */
 export interface InstVarRenameTarget {
@@ -53,31 +56,55 @@ export async function renameInstVarAtCursorCommand(
   const { parsed, session, dict } = target;
   const name = word.name;
 
-  // Simple membership pre-check, the mirror image of the temp/arg decline: only a
-  // variable DEFINED on this class proceeds (an inherited one belongs to its
-  // defining class; anything else is not an ivar rename at all).
+  // Classify the word against the stone: DEFINED here renames in place; INHERITED
+  // is retargeted to its defining class (below); anything that is not a visible
+  // instance variable at all is declined. A query failure here is non-fatal — leave
+  // `inherited` unset and fall through, letting the rename flow report "no
+  // references" rather than blocking on a transient probe error.
+  let inherited: DefiningClass | undefined;
   try {
     const defined = queries.getDefinedInstVarNames(session, parsed.className, dict);
     if (!defined.includes(name)) {
-      const all = queries.getInstVarNames(session, parsed.className);
-      if (all.includes(name)) {
-        refuse(
-          `'${name}' is an instance variable INHERITED by ${parsed.className} — rename it on its defining class (its ivar row in the Explorer).`,
-        );
-      } else {
+      const all = queries.getInstVarNames(session, parsed.className, dict);
+      if (!all.includes(name)) {
         refuse(
           `'${name}' is not an instance variable of ${parsed.className}. For a temporary or argument, use Rename Temporary/Argument.`,
         );
+        return;
       }
-      return;
+      inherited = queries.getDefiningClassOfInstVar(session, parsed.className, name, dict);
+      if (!inherited) {
+        refuse(
+          `'${name}' is inherited by ${parsed.className}, but its defining class could not be resolved — rename it from that class's ivar row in the Explorer.`,
+        );
+        return;
+      }
     }
   } catch (e: unknown) {
-    // Non-fatal: fall through — the rename flow itself reports "no references".
     logInfo(
       `[renameIvar] membership pre-check failed (falling through): ${e instanceof Error ? e.message : String(e)}`,
     );
   }
 
-  const applied = await beginRename({ className: parsed.className, ivarName: name, dict });
+  // An inherited ivar renames on its DEFINING class, across that whole hierarchy.
+  // Confirm the retarget first, since the user invoked this from a subclass method
+  // and the rename reaches beyond the class they were looking at. Fall back to the
+  // editor's dict scope only if the defining class is not bound by its own name.
+  let renameTarget: InstVarRenameTarget = { className: parsed.className, ivarName: name, dict };
+  if (inherited) {
+    const PROCEED = `Rename on ${inherited.className}…`;
+    const choice = await vscode.window.showInformationMessage(
+      `'${name}' is defined on ${inherited.className}, not ${parsed.className}. Rename it across ${inherited.className} and its subclasses?`,
+      PROCEED,
+    );
+    if (choice !== PROCEED) return;
+    renameTarget = {
+      className: inherited.className,
+      ivarName: name,
+      dict: inherited.dictIndex > 0 ? inherited.dictIndex : dict,
+    };
+  }
+
+  const applied = await beginRename(renameTarget);
   if (applied) await reloadMethodEditor(target.editor);
 }

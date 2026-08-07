@@ -2,14 +2,19 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 // The controller module pulls in browserQueries (→ native GCI). Stub it; this test drives the
-// add/remove handlers with the command mocked and the tree navigation spied out.
-vi.mock('../browserQueries', () => ({}));
+// add/remove handlers with the command mocked and the tree navigation spied out. The accessor
+// path uses addAccessors + getClassEnvironments, so those are stubbed too.
+vi.mock('../browserQueries', () => ({
+  addAccessors: vi.fn(),
+  getClassEnvironments: vi.fn(() => []),
+}));
 vi.mock('../refactoring/instVarRefactorCommand', () => ({ runInstVarRefactor: vi.fn() }));
 
 import * as vscode from 'vscode';
 import { ExplorerController } from '../gemstoneExplorer';
 import { runInstVarRefactor } from '../refactoring/instVarRefactorCommand';
 import type { InstVarRefactorOutcome } from '../refactoring/instVarRefactorCommand';
+import * as queries from '../browserQueries';
 import type { SessionManager, ActiveSession } from '../sessionManager';
 
 /**
@@ -52,7 +57,12 @@ const outcome = (over: Partial<InstVarRefactorOutcome> = {}): InstVarRefactorOut
   ...over,
 });
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  // Default the accessors prompt to "No accessors" so the add flows through without
+  // generating them; individual tests override to opt in or to escape.
+  vi.mocked(vscode.window.showQuickPick).mockResolvedValue('No accessors' as never);
+});
 
 describe('ExplorerController add instance variable', () => {
   it('does nothing when there is no selected session', async () => {
@@ -120,6 +130,56 @@ describe('ExplorerController add instance variable', () => {
 
     expect(refresh).not.toHaveBeenCalled();
     expect(reveal).not.toHaveBeenCalled();
+  });
+
+  it('cancels the whole add when the accessors prompt is escaped — nothing is added', async () => {
+    const { ctl, refresh } = makeController({} as ActiveSession);
+    vi.mocked(vscode.window.showInputBox).mockResolvedValue('newVar');
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValue(undefined); // escaped
+
+    await ctl.addInstVarOnClass('Foo');
+
+    expect(runInstVarRefactor).not.toHaveBeenCalled();
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it('generates instance-side accessors after adding when the user opts in', async () => {
+    const { ctl } = makeController({} as ActiveSession);
+    vi.mocked(vscode.window.showInputBox).mockResolvedValue('amount');
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValue('Add accessors' as never);
+    vi.mocked(runInstVarRefactor).mockResolvedValue(outcome());
+    vi.mocked(queries.addAccessors).mockReturnValue({ created: 2, skipped: 0, noClass: false });
+
+    await ctl.addInstVarOnClass('Foo');
+
+    expect(queries.addAccessors).toHaveBeenCalledWith(
+      expect.anything(),
+      'Foo',
+      false, // instance side
+      expect.arrayContaining([expect.objectContaining({ selector: 'amount' })]),
+      1,
+    );
+  });
+
+  it('still writes the accessors when the add targets a class that is not the shown one (context-menu path)', async () => {
+    const { ctl } = makeController({} as ActiveSession);
+    ctl.state.className = 'SomethingElse'; // right-clicked a class that wasn't selected
+    vi.mocked(vscode.window.showInputBox).mockResolvedValue('amount');
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValue('Add accessors' as never);
+    vi.mocked(runInstVarRefactor).mockResolvedValue(outcome());
+    vi.mocked(queries.addAccessors).mockReturnValue({ created: 2, skipped: 0, noClass: false });
+
+    await ctl.addInstVarOnClass('Foo');
+
+    // The accessors are compiled regardless of which class the pane currently shows;
+    // only the follow-up reveal is gated on it.
+    expect(queries.addAccessors).toHaveBeenCalledWith(
+      expect.anything(),
+      'Foo',
+      false,
+      expect.arrayContaining([expect.objectContaining({ selector: 'amount' })]),
+      1,
+    );
   });
 });
 

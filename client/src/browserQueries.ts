@@ -30,6 +30,21 @@ import { fileOutClass as sharedFileOutClass } from './queries/fileOutClass';
 import { describeClass as sharedDescribeClass } from './queries/describeClass';
 import { getInstVarNames as sharedGetInstVarNames } from './queries/getInstVarNames';
 import { getDefinedInstVarNames as sharedGetDefinedInstVarNames } from './queries/getDefinedInstVarNames';
+import {
+  getDefiningClassOfInstVar as sharedGetDefiningClassOfInstVar,
+  DefiningClass,
+} from './refactoring/queries/getDefiningClassOfInstVar';
+import { getDefiningClassOfClassVar as sharedGetDefiningClassOfClassVar } from './refactoring/queries/getDefiningClassOfClassVar';
+import { addClassVariable as sharedAddClassVariable } from './refactoring/queries/addClassVariable';
+import {
+  addAccessors as sharedAddAccessors,
+  Accessor,
+  AddAccessorsResult,
+} from './refactoring/queries/addAccessors';
+import {
+  resolveClassReference as sharedResolveClassReference,
+  ClassReference,
+} from './refactoring/queries/resolveClassReference';
 import { getDefinedInstVarCounts as sharedGetDefinedInstVarCounts } from './queries/getDefinedInstVarCounts';
 import { getDefinedClassVarNames as sharedGetDefinedClassVarNames } from './refactoring/queries/getDefinedClassVarNames';
 import { getVisibleClassVarNames as sharedGetVisibleClassVarNames } from './refactoring/queries/getVisibleClassVarNames';
@@ -691,8 +706,12 @@ export function describeClass(
   return sharedDescribeClass(defaultQueryExecutorUsing(session), className, dict);
 }
 
-export function getInstVarNames(session: ActiveSession, className: string): string[] {
-  return sharedGetInstVarNames(defaultQueryExecutorUsing(session), className);
+export function getInstVarNames(
+  session: ActiveSession,
+  className: string,
+  dict?: number | string,
+): string[] {
+  return sharedGetInstVarNames(defaultQueryExecutorUsing(session), className, dict);
 }
 
 export function getDefinedInstVarNames(
@@ -708,6 +727,60 @@ export function getDefinedInstVarCounts(
   dict: number | string,
 ): Map<string, number> {
   return sharedGetDefinedInstVarCounts(defaultQueryExecutorUsing(session), dict);
+}
+
+export function getDefiningClassOfInstVar(
+  session: ActiveSession,
+  className: string,
+  ivarName: string,
+  dict?: number | string,
+): DefiningClass | undefined {
+  return sharedGetDefiningClassOfInstVar(
+    defaultQueryExecutorUsing(session),
+    className,
+    ivarName,
+    dict,
+  );
+}
+
+export function resolveClassReference(
+  session: ActiveSession,
+  name: string,
+): ClassReference | undefined {
+  return sharedResolveClassReference(defaultQueryExecutorUsing(session), name);
+}
+
+export function getDefiningClassOfClassVar(
+  session: ActiveSession,
+  className: string,
+  classVarName: string,
+  dict?: number | string,
+): DefiningClass | undefined {
+  return sharedGetDefiningClassOfClassVar(
+    defaultQueryExecutorUsing(session),
+    className,
+    classVarName,
+    dict,
+  );
+}
+
+export function addClassVariable(
+  session: ActiveSession,
+  className: string,
+  classVarName: string,
+  dict?: number | string,
+): string {
+  return sharedAddClassVariable(defaultQueryExecutorUsing(session), className, classVarName, dict);
+}
+
+export function addAccessors(
+  session: ActiveSession,
+  className: string,
+  isMeta: boolean,
+  accessors: Accessor[],
+  dict?: number | string,
+): AddAccessorsResult {
+  return sharedAddAccessors(defaultQueryExecutorUsing(session), className, isMeta, accessors, dict);
 }
 
 export function getDefinedClassVarNames(
