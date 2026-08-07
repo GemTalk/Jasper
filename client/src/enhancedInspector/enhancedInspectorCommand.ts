@@ -51,14 +51,14 @@ async function performInstall(
   sessionManager: SessionManager,
   extensionPath: string,
   interactive: boolean,
-): Promise<void> {
+): Promise<boolean> {
   const payloadDir = path.join(extensionPath, PAYLOAD_SUBDIR);
   const missing = ENHANCED_INSPECTOR_FILES.filter((f) => !fs.existsSync(path.join(payloadDir, f)));
   if (missing.length > 0) {
     vscode.window.showErrorMessage(
       `Enhanced inspector payload not found in ${payloadDir} (missing: ${missing.join(', ')}).`,
     );
-    return;
+    return false;
   }
 
   const reinstall = isEnhancedInspectorInstalled(base);
@@ -74,7 +74,7 @@ async function performInstall(
           'not accepted. Run "GemStone: Install Server Support" to install it.',
       );
     }
-    return;
+    return false;
   }
 
   let result;
@@ -102,7 +102,7 @@ async function performInstall(
 
   if (!result.success) {
     vscode.window.showErrorMessage(`Enhanced inspector install failed: ${result.message}`);
-    return;
+    return false;
   }
 
   const refreshed = await refreshWorkingSessionAfterInstall(
@@ -111,6 +111,10 @@ async function performInstall(
     'Enhanced inspector installed.',
   );
   if (refreshed) refreshEnhancedInspectorAvailable(base);
+  // Report the verified server-side result, not the refresh latch: a deferred ("Later") refresh
+  // leaves `enhancedInspectorAvailable` stale, and keying the answer on it would suppress the
+  // success toast for a completed install. The latch still governs whether THIS session sees it.
+  return true;
 }
 
 /**
@@ -125,6 +129,8 @@ export async function installEnhancedInspectorFeature(
   extensionPath: string,
   interactive: boolean,
 ): Promise<boolean> {
-  await performInstall(base, sessionManager, extensionPath, interactive);
-  return base.enhancedInspectorAvailable === true;
+  // See performInstall / the uninstall note: return whether the change LANDED ON THE STONE (its
+  // verified server-side result), not whether this session's latch has caught up — otherwise a
+  // deferred ("Later") refresh would suppress the success toast for a completed install.
+  return performInstall(base, sessionManager, extensionPath, interactive);
 }
