@@ -41,6 +41,8 @@ import {
 } from './refactoring/renameInstVarPreview';
 import { showRenameInstVarPanel } from './refactoring/renameInstVarPanel';
 import { renameInstVarAtCursorCommand } from './refactoring/renameInstVarAtCursorCommand';
+import { renameAtCursorCommand } from './refactoring/renameAtCursorCommand';
+import { renameClassAtCursorCommand } from './refactoring/renameClassAtCursorCommand';
 import { runInstVarRefactor } from './refactoring/instVarRefactorCommand';
 import { renameClassVarAtCursorCommand } from './refactoring/renameClassVarAtCursorCommand';
 import {
@@ -2356,9 +2358,19 @@ export class ExplorerController {
   // change set is previewed, any optional reference unchecked, and applied.
   // Invokable from a class row OR a hierarchy-pane class node.
   async renameClass(item: ClassItem | HierarchyItem): Promise<void> {
+    // A hierarchy node may name a class outside the current dictionary, so resolve
+    // it across the whole symbol list; a class-row uses the current dictionary.
+    const dictArg = item instanceof HierarchyItem ? undefined : this.state.dictIndex;
+    await this.renameClassNamed(item.className, dictArg);
+  }
+
+  /** Rename the class `oldName` across the image, resolving it through `dictArg`
+   *  (a 1-based SymbolList index, or undefined to resolve across the whole symbol
+   *  list). Shared by the Explorer class-row / hierarchy pencil and the method
+   *  editor's Rename… when the cursor is on a class reference. */
+  async renameClassNamed(oldName: string, dictArg: number | undefined): Promise<void> {
     const session = this.session();
     if (!session) return;
-    const oldName = item.className;
     if (!(await this.ensureRbSupport('Renaming a class'))) return;
 
     // Renaming a kernel/system class is hazardous (pervasive references; some
@@ -2386,10 +2398,6 @@ export class ExplorerController {
     );
     if (!edit) return;
     const { newName, scope, options } = edit;
-
-    // A hierarchy node may name a class outside the current dictionary, so resolve
-    // it across the whole symbol list; a class-row uses the current dictionary.
-    const dictArg = item instanceof HierarchyItem ? undefined : this.state.dictIndex;
 
     const token = `rcp_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     const safeClear = (): void => {
@@ -4526,12 +4534,31 @@ export function registerGemStoneExplorer(
         void vscode.window.showErrorMessage(`Move down instance variable failed: ${msg}`);
       });
     }),
+    // The single "Rename…" entry: figure out what the cursor is on (selector,
+    // temporary, instance variable, or class variable) and dispatch to the specific
+    // rename below. Consolidates the four rename actions (#328 item 2).
+    vscode.commands.registerCommand('gemstone.rename', (position?: unknown) => {
+      void renameAtCursorCommand(
+        sessionManager,
+        selectorAtPosition,
+        position instanceof vscode.Position ? position : undefined,
+      );
+    }),
     // Rename the instance variable at the cursor in a method source editor (the
     // Refactor… code action / palette) — routes into the same shared flow.
     vscode.commands.registerCommand('gemstone.renameInstVarAtCursor', (position?: unknown) => {
       void renameInstVarAtCursorCommand(
         sessionManager,
         (target) => ctl.renameInstVarNamed(target.className, target.ivarName, target.dict),
+        position instanceof vscode.Position ? position : undefined,
+      );
+    }),
+    // Rename the class referenced at the cursor in a method source editor — routes
+    // into the same shared flow as the Explorer's class-row pencil.
+    vscode.commands.registerCommand('gemstone.renameClassAtCursor', (position?: unknown) => {
+      void renameClassAtCursorCommand(
+        sessionManager,
+        (target) => ctl.renameClassNamed(target.className, target.dict),
         position instanceof vscode.Position ? position : undefined,
       );
     }),

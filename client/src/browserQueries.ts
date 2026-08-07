@@ -34,6 +34,10 @@ import {
   getDefiningClassOfInstVar as sharedGetDefiningClassOfInstVar,
   DefiningClass,
 } from './refactoring/queries/getDefiningClassOfInstVar';
+import {
+  resolveClassReference as sharedResolveClassReference,
+  ClassReference,
+} from './refactoring/queries/resolveClassReference';
 import { getDefinedInstVarCounts as sharedGetDefinedInstVarCounts } from './queries/getDefinedInstVarCounts';
 import { getDefinedClassVarNames as sharedGetDefinedClassVarNames } from './refactoring/queries/getDefinedClassVarNames';
 import { getVisibleClassVarNames as sharedGetVisibleClassVarNames } from './refactoring/queries/getVisibleClassVarNames';
@@ -726,6 +730,13 @@ export function getDefiningClassOfInstVar(
     ivarName,
     dict,
   );
+}
+
+export function resolveClassReference(
+  session: ActiveSession,
+  name: string,
+): ClassReference | undefined {
+  return sharedResolveClassReference(defaultQueryExecutorUsing(session), name);
 }
 
 export function getDefinedClassVarNames(

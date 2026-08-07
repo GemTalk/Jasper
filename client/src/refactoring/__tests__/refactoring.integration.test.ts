@@ -255,6 +255,24 @@ describe('rename instance variable (integration)', () => {
     expect(exec(`${SUB} sourceCodeAt: #doubleCount`)).toContain('tally');
   });
 
+  // ---- class-reference resolution (editor Rename… on a class) -----------------
+  // The unified Rename… resolves a bareword to a class before routing to class
+  // rename. resolveClassReference is engine-independent (objectNamed: + isKindOf:
+  // Class), so these need no plugin gate.
+
+  it('resolves a class reference to the class and its binding dictionary', () => {
+    defineCounterHierarchy();
+
+    expect(q.resolveClassReference(session(), COUNTER)).toEqual({
+      className: COUNTER,
+      dictIndex: userIndex(),
+    });
+  });
+
+  it('does not resolve an unbound name to a class', () => {
+    expect(q.resolveClassReference(session(), 'NoSuchClassXyzzy')).toBeUndefined();
+  });
+
   // ---- apply path -------------------------------------------------------------
   // The preview being right says nothing about what the stone looks like after
   // Apply. Renaming reshapes the class, so every class in the subtree is
