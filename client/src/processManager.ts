@@ -8,6 +8,31 @@ import { DEFAULT_GS_PW } from './loginTypes';
 import { appendSysadmin, showSysadmin } from './sysadminChannel';
 import { needsWsl, windowsPathToWsl, wslSpawn, wslExecSync } from './wslBridge';
 
+/** Decide whether a gslist-reported version matches a database's configured
+ *  version. They usually come from different sources (the gslist Version column
+ *  vs. the version parsed out of the product directory name), so we treat them
+ *  as matching when the shorter one is a dotted-component prefix of the longer
+ *  (e.g. "3.7.4" matches "3.7.4.3"). This keeps genuinely different installs —
+ *  "3.6.2" vs "3.7.5" — distinct, which is what lets the Databases panel tie a
+ *  running stone to the version that actually started it. */
+export function versionsMatch(a: string, b: string): boolean {
+  const as = a.split('.');
+  const bs = b.split('.');
+  const shared = Math.min(as.length, bs.length);
+  for (let i = 0; i < shared; i++) {
+    if (as[i] !== bs[i]) return false;
+  }
+  return shared > 0;
+}
+
+/** Options shared by the process-start commands. */
+export interface StartOptions {
+  /** Whether to reveal the GemStone Admin output channel. Defaults to true —
+   *  pass false when the start is a step inside a larger flow that owns the
+   *  user's attention (see the login auto-start recovery). */
+  reveal?: boolean;
+}
+
 export interface StaleLockReport {
   /** Path to the .LCK file on the host filesystem (a WSL path under Windows). */
   lockPath: string;
@@ -46,23 +71,6 @@ export function classifyPidOwnership(psOutput: string): {
   const lowered = command.toLowerCase();
   const looksLikeServer = /(?:^|[/\s])(?:stoned|netldid)(?:\s|$)/.test(lowered);
   return { pidGone: false, isGemStoneServer: looksLikeServer, command };
-}
-
-/** Decide whether a gslist-reported version matches a database's configured
- *  version. They usually come from different sources (the gslist Version column
- *  vs. the version parsed out of the product directory name), so we treat them
- *  as matching when the shorter one is a dotted-component prefix of the longer
- *  (e.g. "3.7.4" matches "3.7.4.3"). This keeps genuinely different installs —
- *  "3.6.2" vs "3.7.5" — distinct, which is what lets the Databases panel tie a
- *  running stone to the version that actually started it. Exported for testing. */
-export function versionsMatch(a: string, b: string): boolean {
-  const as = a.split('.');
-  const bs = b.split('.');
-  const shared = Math.min(as.length, bs.length);
-  for (let i = 0; i < shared; i++) {
-    if (as[i] !== bs[i]) return false;
-  }
-  return shared > 0;
 }
 
 /** Parse `gslist -cvl` output into structured process records.
@@ -245,7 +253,7 @@ export class ProcessManager {
   }
 
   /** Start a stone */
-  async startStone(db: GemStoneDatabase): Promise<string> {
+  async startStone(db: GemStoneDatabase, opts?: StartOptions): Promise<string> {
     const env = this.getEnvironment(db);
     const gsPath = env.GEMSTONE;
     const dbPath = needsWsl() ? windowsPathToWsl(db.path) : db.path;
@@ -255,6 +263,7 @@ export class ProcessManager {
       ['-l', logPath, db.config.stoneName],
       env,
       `Starting stone ${db.config.stoneName}`,
+      opts,
     );
   }
 
@@ -365,7 +374,7 @@ export class ProcessManager {
     }
   }
 
-  async startNetldi(db: GemStoneDatabase): Promise<string> {
+  async startNetldi(db: GemStoneDatabase, opts?: StartOptions): Promise<string> {
     this.ensureAdequateGemCache(db);
     const env = this.getEnvironment(db);
     const gsPath = env.GEMSTONE;
@@ -377,6 +386,7 @@ export class ProcessManager {
       ['-a', user, '-g', '-l', logPath, db.config.ldiName],
       env,
       `Starting NetLDI ${db.config.ldiName}`,
+      opts,
     );
   }
 
@@ -456,10 +466,15 @@ export class ProcessManager {
     args: string[],
     env: Record<string, string>,
     label: string,
+    opts?: StartOptions,
   ): Promise<string> {
     return new Promise((resolve, reject) => {
       appendSysadmin(`\n--- ${label} ---`);
-      showSysadmin();
+      // Revealing the Admin channel takes focus off the editor. Right for an
+      // explicit Start Stone click; wrong when the start is one step inside a
+      // connect the user is waiting on. Either way the output is still
+      // recorded, so a caller that stays quiet loses nothing but the interruption.
+      if (opts?.reveal !== false) showSysadmin();
       const proc = wslSpawn(cmd, args, env);
       let output = '';
 
@@ -475,12 +490,28 @@ export class ProcessManager {
         appendSysadmin(text.trimEnd());
       });
 
-      proc.on('close', (code) => {
-        if (code !== 0) {
-          reject(new Error(`${label} failed (exit code ${code})\n${output}`));
-        } else {
+      proc.on('close', (code: number | null, signal: string | null) => {
+        if (code === 0) {
           resolve(output);
+          return;
         }
+        // A signal-killed process reports a null exit code, so the plain
+        // "exit code ${code}" wording degrades to the meaningless "exit code
+        // null" — and it is usually killed before writing a word of output, so
+        // the message is all the user gets. macOS does this under memory
+        // pressure (jetsam), which is easy to mistake for a broken database.
+        if (signal) {
+          reject(
+            new Error(
+              `${label} was killed by the operating system (${signal}) before it could report ` +
+                `anything. This is usually memory pressure rather than a problem with the ` +
+                `database; free some memory and try again. Check the log in the database's ` +
+                `log directory if it persists.${output ? `\n${output}` : ''}`,
+            ),
+          );
+          return;
+        }
+        reject(new Error(`${label} failed (exit code ${code})\n${output}`));
       });
 
       proc.on('error', (err) => {

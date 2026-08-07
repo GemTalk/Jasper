@@ -24,6 +24,13 @@ import {
 import { InFlightGuard } from './inFlightGuard';
 import { LoginEditorPanel } from './loginEditorPanel';
 import { SessionManager, ActiveSession } from './sessionManager';
+import { maybeStartDatabaseAndRetry } from './autoStartDatabase';
+import {
+  getAutoStartMode,
+  setAutoStartMode,
+  confirmStartDatabase,
+  configureAutoStartDatabase,
+} from './autoStartPrompt';
 import {
   enhancedInspectorPerfTracker,
   buildEnhancedInspectorPerfStatusBarText,
@@ -1330,6 +1337,10 @@ export function activate(context: vscode.ExtensionContext) {
       },
     ),
 
+    vscode.commands.registerCommand('gemstone.configureAutoStartDatabase', async () => {
+      await configureAutoStartDatabase();
+    }),
+
     vscode.commands.registerCommand('gemstone.resetGettingStarted', async () => {
       await context.globalState.update(GETTING_STARTED_SEEN_KEY, undefined);
       const openNow = 'Open Walkthrough Now';
@@ -1516,7 +1527,20 @@ export function activate(context: vscode.ExtensionContext) {
           sysadminStorage.getGemstonePath(login.version) ?? path.dirname(path.dirname(gciPath));
         process.env.GEMSTONE = gsInstallPath;
 
-        let session;
+        // Spin the login's own row and a status bar item for the whole attempt.
+        // A connect is no longer just a login: it may start the stone and its
+        // NetLDI first, which takes seconds, so the progress notification alone
+        // is not enough to explain why nothing is happening.
+        const resolvedGciPath = gciPath;
+        treeProvider.setConnecting(item.index, true);
+        const connectingStatus = vscode.window.createStatusBarItem(
+          vscode.StatusBarAlignment.Left,
+          0,
+        );
+        connectingStatus.text = `$(sync~spin) GemStone: connecting to ${login.stone}…`;
+        connectingStatus.show();
+
+        let session: ActiveSession | undefined;
         try {
           session = await vscode.window.withProgress(
             {
@@ -1528,22 +1552,66 @@ export function activate(context: vscode.ExtensionContext) {
             // polls) so the notification animates and the window stays responsive
             // during a slow connect; it falls back to the blocking login on
             // Windows / older libraries.
-            () => sessionManager.loginAsync(login, gciPath),
+            async (progress) => {
+              try {
+                return await sessionManager.loginAsync(login, resolvedGciPath);
+              } catch (e: unknown) {
+                // The login may have failed only because its database is not
+                // running. maybeStartDatabaseAndRetry decides whether that is
+                // the case, offers to start it, and reports the outcome —
+                // including re-showing this error untouched when it cannot help.
+                const msg = e instanceof Error ? e.message : String(e);
+                let recovered: ActiveSession | undefined;
+                await maybeStartDatabaseAndRetry(login, `Login failed: ${msg}`, {
+                  getDatabases: () => sysadminStorage.getDatabases(),
+                  refreshProcesses: () => processManager.refreshProcesses(),
+                  // Quiet: the connect's own progress notification and the
+                  // spinner on the login row are the feedback here. Revealing
+                  // the Admin panel mid-login would yank focus off the editor.
+                  startStone: (db) => processManager.startStone(db, { reveal: false }),
+                  startNetldi: (db) => processManager.startNetldi(db, { reveal: false }),
+                  getMode: getAutoStartMode,
+                  setMode: async (mode) => {
+                    await setAutoStartMode(mode);
+                  },
+                  confirm: confirmStartDatabase,
+                  showError: (m) => vscode.window.showErrorMessage(m),
+                  report: (m) => progress.report({ message: m }),
+                  retryLogin: async () => {
+                    recovered = await sessionManager.loginAsync(login, resolvedGciPath);
+                  },
+                  refreshViews: () => refreshAdminViews(),
+                });
+                return recovered;
+              }
+            },
           );
-          refreshEnhancedInspectorAvailable(session);
-          refreshRefactoringSupportAvailable(session);
-          updateRefactoringSupportContext();
-          treeProvider.refresh();
-          vscode.window.showInformationMessage(
-            `Connected to ${login.stone} (${session.stoneVersion}) on ${login.gem_host} as ${login.gs_user}`,
-          );
-          // eslint-disable-next-line @typescript-eslint/no-floating-promises -- FIXME: unhandled floating promise; needs investigation to decide await vs. void vs. .catch before this rule is enabled repo-wide
-          exportManager.exportSession(session, true);
         } catch (e: unknown) {
+          // The recovery flow reports its own outcome, so reaching here means
+          // something outside it failed. Keep the net anyway: a command handler
+          // that rejects shows only "command failed", with nothing about which
+          // login or why.
           const msg = e instanceof Error ? e.message : String(e);
           vscode.window.showErrorMessage(`Login failed: ${msg}`);
           return;
+        } finally {
+          treeProvider.setConnecting(item.index, false);
+          connectingStatus.dispose();
         }
+
+        // Undefined when the login failed and the recovery flow could not (or
+        // was not allowed to) rescue it. It has already reported why.
+        if (!session) return;
+
+        refreshEnhancedInspectorAvailable(session);
+        refreshRefactoringSupportAvailable(session);
+        updateRefactoringSupportContext();
+        treeProvider.refresh();
+        vscode.window.showInformationMessage(
+          `Connected to ${login.stone} (${session.stoneVersion}) on ${login.gem_host} as ${login.gs_user}`,
+        );
+        // eslint-disable-next-line @typescript-eslint/no-floating-promises -- FIXME: unhandled floating promise; needs investigation to decide await vs. void vs. .catch before this rule is enabled repo-wide
+        exportManager.exportSession(session, true);
         // We no longer auto-open a workspace on every connect (it left a dirty,
         // hot-exit-restored buffer behind), nor the Getting Started walkthrough —
         // that now opens on the first activation after install (see
