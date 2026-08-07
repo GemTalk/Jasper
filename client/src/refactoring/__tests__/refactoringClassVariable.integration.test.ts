@@ -244,4 +244,70 @@ r := (System myUserProfile symbolList objectNamed: #GsRenameClassVariableRefacto
       ),
     ).toContain('Counter');
   });
+
+  // ---- inherited-classvar retarget resolution (#328 item 11) ------------------
+  // Invoked on a class variable a subclass method only INHERITS, the editor rename
+  // command resolves the defining class and reruns the rename there. That
+  // resolution is getDefiningClassOfClassVar; prove it against the real hierarchy so
+  // the superclass walk + SymbolList-index lookup are exercised on a stone.
+
+  it('resolves a class variable inherited by a subclass to its defining class and dictionary', (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+
+    defineFixture();
+
+    expect(q.getDefiningClassOfClassVar(session(), SUB, 'Rate', userIndex())).toEqual({
+      className: BASE,
+      dictIndex: userIndex(),
+    });
+  });
+
+  it('resolves a class variable to its declaring class even when asked from that class', (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+
+    defineFixture();
+
+    expect(q.getDefiningClassOfClassVar(session(), BASE, 'Rate', userIndex())?.className).toBe(
+      BASE,
+    );
+  });
+
+  it('answers undefined for a word that is not a visible class variable', (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+
+    defineFixture();
+
+    expect(
+      q.getDefiningClassOfClassVar(session(), SUB, 'NotAClassVar', userIndex()),
+    ).toBeUndefined();
+  });
+
+  it('renames an inherited class variable across the hierarchy when retargeted to its defining class', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+
+    defineFixture();
+    // Resolve the defining class the way the editor command does when the cursor is
+    // on `Rate` in a SUB method, then run the rename against THAT class.
+    const defining = q.getDefiningClassOfClassVar(session(), SUB, 'Rate', userIndex());
+    if (!defining) throw new Error('expected Rate to resolve to its defining class');
+    const token = `rcvit-retarget-${BASE}`;
+
+    await startRenameClassVarPreview(
+      asyncExec,
+      defining.className,
+      'Rate',
+      'Multiplier',
+      token,
+      PREVIEW_PAGE_BYTES,
+      defining.dictIndex,
+    );
+    const result = parseApplyResult(await applyRenameClassVar(asyncExec, token));
+
+    expect(result.failed).toEqual([]);
+    expect(exec(`(${BASE} classVarNames includes: #Multiplier) printString`).trim()).toBe('true');
+    // The inherited-referencing subclass method now reads the renamed class variable.
+    expect(
+      exec(`(${SUB} compiledMethodAt: #useRate environmentId: 0 otherwise: nil) sourceString`),
+    ).toContain('Multiplier');
+  });
 });

@@ -5,28 +5,36 @@
  * rename — the consolidation asked for in issue #328 (item 2).
  *
  * Classification precedence, resolved against the running stone:
- *   1. A message selector (unary/binary/keyword send) OR the method header →
- *      Rename Method. The LSP's selectorAtPosition answers the selector at a send
- *      or pattern position and null at a variable reference, so this is checked
- *      FIRST — a selector that happens to share a name with an instance/class
- *      variable is never misclassified by the name-based checks below.
- *   2. Otherwise the identifier is a variable reference; classify it in scope
- *      order — temporary/argument (which shadows a variable of the same name),
- *      then instance variable (own or inherited), then class variable — and
- *      dispatch to that rename.
- *   3. Otherwise fall through to Rename Class, which renames the token when it
- *      resolves to a class and otherwise declines (a plain global/shared variable
- *      or pseudo-variable has no rename here).
+ *   0. Not on an identifier (whitespace, a binary selector, punctuation) → Rename
+ *      Method, which resolves a sent selector at the cursor or the edited method.
+ *   1. A temporary or argument at that exact offset → Rename Temporary/Argument.
+ *      This is checked FIRST because it is OFFSET-based (position-accurate): a
+ *      method-pattern argument (e.g. `aKey` in `foo: aKey`) is a renamable argument,
+ *      but the AST-based selector probe misreads it as a unary selector — so the
+ *      offset probe must win for it to rename the argument, not the method.
+ *   2. A message selector (unary/binary/keyword send) or the method header, per the
+ *      LSP → Rename Method. Checked before the name-based ivar/classvar tests so a
+ *      selector sharing a name with a variable is never misclassified.
+ *   3. An instance variable (own or inherited) → Rename Instance Variable.
+ *   4. A class variable (own or inherited) → Rename Class Variable.
+ *   5. Otherwise → Rename Class, which renames the token when it resolves to a class
+ *      and otherwise declines (a plain global/shared or pseudo-variable).
  *
  * Dispatch runs the existing per-kind command via executeCommand, so each rename's
- * own flow — including the inherited-ivar retarget and every preview/apply path —
- * is reused unchanged.
+ * own flow — including the inherited-ivar/classvar retarget and every preview/apply
+ * path — is reused unchanged.
  */
 import * as vscode from 'vscode';
 import { SessionManager } from '../sessionManager';
 import * as queries from '../browserQueries';
 import { logInfo } from '../gciLog';
-import { resolveMethodEditor, wordAt, refuse, saveIfDirty } from './renameAtCursorShared';
+import {
+  resolveMethodEditor,
+  wordAt,
+  refuse,
+  saveIfDirty,
+  ensureRbSupport,
+} from './renameAtCursorShared';
 import { SelectorAtPosition } from './renameMethodAtCursorCommand';
 
 /** Resolve the identifier/selector at the cursor and run the rename that applies.
@@ -40,32 +48,29 @@ export async function renameAtCursorCommand(
   logInfo('[rename] invoked');
   const target = resolveMethodEditor(sessions, position, 'a name');
   if (!target) return;
+  // Gate up front: classification calls an engine-backed query
+  // (renameTemporaryDeclineReason references GsRenameTemporaryRefactoring), and
+  // every rename this dispatches to needs the engine anyway — so on a stone without
+  // it, offer to install rather than failing classification with a cryptic message.
+  if (!(await ensureRbSupport(target.session, 'Renaming'))) return;
   const { editor, parsed, session, dict, at } = target;
 
-  // A selector (send or the method header) resolves via the LSP; a variable
-  // reference resolves to null. Checked first so a selector sharing a name with an
-  // ivar/classvar is dispatched as a method rename, not by the name-based checks.
-  let sel: string | null = null;
-  try {
-    sel = await selectorAt(editor.document, at);
-  } catch {
-    // LSP unavailable: fall through to variable classification. If that can't place
-    // the token either, we decline with a generic message rather than guess.
-    logInfo('[rename] selectorAtPosition unavailable; treating the cursor as a variable position');
-  }
-  if (sel) {
+  // Not on an identifier (whitespace, a binary selector, punctuation): let Rename
+  // Method resolve it — a sent binary selector at the cursor, or the edited method.
+  const word = wordAt(target, 'a name');
+  if (!word) {
     await vscode.commands.executeCommand('gemstone.renameMethodInEditor', at);
     return;
   }
 
-  const word = wordAt(target, 'a name');
-  if (!word) return; // wordAt already refused with a helpful message
-
-  // The temporary check reads the STORED source at an offset, so save first (each
+  // The temporary probe reads the STORED source at an offset, so save first (each
   // dispatched command saves too; this keeps the offset aligned for the probe).
   if (!(await saveIfDirty(editor))) return;
   const name = word.name;
   try {
+    // 1. Temporary/argument FIRST — offset-based, so a method-pattern argument or a
+    //    body temp is renamed as a variable rather than mistaken for a selector by
+    //    the AST-based probe below.
     const tempReason = (
       await queries.renameTemporaryDeclineReason(
         session,
@@ -82,18 +87,28 @@ export async function renameAtCursorCommand(
       return;
     }
 
-    if (
-      queries.getDefinedInstVarNames(session, parsed.className, dict).includes(name) ||
-      queries.getInstVarNames(session, parsed.className).includes(name)
-    ) {
-      await vscode.commands.executeCommand('gemstone.renameInstVarAtCursor', at);
+    // 2. A selector (send or the method header) resolves via the LSP; a variable
+    //    reference resolves to null. Checked before the name-based tests so a
+    //    selector sharing a name with an ivar/classvar becomes a method rename.
+    let sel: string | null = null;
+    try {
+      sel = await selectorAt(editor.document, at);
+    } catch {
+      logInfo('[rename] selectorAtPosition unavailable; continuing with variable classification');
+    }
+    if (sel) {
+      await vscode.commands.executeCommand('gemstone.renameMethodInEditor', at);
       return;
     }
 
-    if (
-      queries.getDefinedClassVarNames(session, parsed.className, dict).includes(name) ||
-      queries.getVisibleClassVarNames(session, parsed.className, dict).includes(name)
-    ) {
+    // 3/4. `getInstVarNames` (allInstVarNames) and `getVisibleClassVarNames` already
+    //      include the inherited ones — the retarget lives in each dispatched command
+    //      — so a single visibility query per kind suffices.
+    if (queries.getInstVarNames(session, parsed.className).includes(name)) {
+      await vscode.commands.executeCommand('gemstone.renameInstVarAtCursor', at);
+      return;
+    }
+    if (queries.getVisibleClassVarNames(session, parsed.className, dict).includes(name)) {
       await vscode.commands.executeCommand('gemstone.renameClassVarAtCursor', at);
       return;
     }
@@ -105,8 +120,7 @@ export async function renameAtCursorCommand(
     return;
   }
 
-  // Not a temporary or a variable of the class: fall through to Rename Class, which
-  // renames the token if it resolves to a class and declines otherwise (a plain
-  // global/shared variable or pseudo-variable has no rename here).
+  // 5. Not a temporary, selector, or variable of the class: fall through to Rename
+  //    Class, which renames the token if it resolves to a class and declines otherwise.
   await vscode.commands.executeCommand('gemstone.renameClassAtCursor', at);
 }

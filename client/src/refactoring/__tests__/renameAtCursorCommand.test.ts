@@ -2,9 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 vi.mock('../../browserQueries', () => ({
   renameTemporaryDeclineReason: vi.fn(),
-  getDefinedInstVarNames: vi.fn(),
   getInstVarNames: vi.fn(),
-  getDefinedClassVarNames: vi.fn(),
   getVisibleClassVarNames: vi.fn(),
 }));
 
@@ -72,9 +70,7 @@ function dispatchedCommand(): string | undefined {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(queries.renameTemporaryDeclineReason).mockResolvedValue('not a temporary');
-  vi.mocked(queries.getDefinedInstVarNames).mockReturnValue([]);
   vi.mocked(queries.getInstVarNames).mockReturnValue([]);
-  vi.mocked(queries.getDefinedClassVarNames).mockReturnValue([]);
   vi.mocked(queries.getVisibleClassVarNames).mockReturnValue([]);
 });
 
@@ -93,6 +89,18 @@ describe('unified rename dispatcher', () => {
     vi.mocked(queries.renameTemporaryDeclineReason).mockResolvedValue(''); // it IS a temp
 
     await renameAtCursorCommand(sessions, noSelector, onCount());
+
+    expect(dispatchedCommand()).toBe('gemstone.renameTemporary');
+  });
+
+  it('renames a method-pattern argument as a variable even when the AST probe calls it a selector', async () => {
+    installEditor(onCount());
+    vi.mocked(queries.renameTemporaryDeclineReason).mockResolvedValue(''); // it IS an argument
+    // The AST-based selector probe misreads a method-pattern argument as a unary
+    // selector; the offset-based temporary probe runs first and must win.
+    const selectorSaysItsASelector: SelectorAtPosition = () => Promise.resolve('count');
+
+    await renameAtCursorCommand(sessions, selectorSaysItsASelector, onCount());
 
     expect(dispatchedCommand()).toBe('gemstone.renameTemporary');
   });

@@ -34,6 +34,13 @@ import {
   getDefiningClassOfInstVar as sharedGetDefiningClassOfInstVar,
   DefiningClass,
 } from './refactoring/queries/getDefiningClassOfInstVar';
+import { getDefiningClassOfClassVar as sharedGetDefiningClassOfClassVar } from './refactoring/queries/getDefiningClassOfClassVar';
+import { addClassVariable as sharedAddClassVariable } from './refactoring/queries/addClassVariable';
+import {
+  addAccessors as sharedAddAccessors,
+  Accessor,
+  AddAccessorsResult,
+} from './refactoring/queries/addAccessors';
 import {
   resolveClassReference as sharedResolveClassReference,
   ClassReference,
@@ -737,6 +744,39 @@ export function resolveClassReference(
   name: string,
 ): ClassReference | undefined {
   return sharedResolveClassReference(defaultQueryExecutorUsing(session), name);
+}
+
+export function getDefiningClassOfClassVar(
+  session: ActiveSession,
+  className: string,
+  classVarName: string,
+  dict?: number | string,
+): DefiningClass | undefined {
+  return sharedGetDefiningClassOfClassVar(
+    defaultQueryExecutorUsing(session),
+    className,
+    classVarName,
+    dict,
+  );
+}
+
+export function addClassVariable(
+  session: ActiveSession,
+  className: string,
+  classVarName: string,
+  dict?: number | string,
+): string {
+  return sharedAddClassVariable(defaultQueryExecutorUsing(session), className, classVarName, dict);
+}
+
+export function addAccessors(
+  session: ActiveSession,
+  className: string,
+  isMeta: boolean,
+  accessors: Accessor[],
+  dict?: number | string,
+): AddAccessorsResult {
+  return sharedAddAccessors(defaultQueryExecutorUsing(session), className, isMeta, accessors, dict);
 }
 
 export function getDefinedClassVarNames(

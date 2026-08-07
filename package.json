@@ -1278,6 +1278,18 @@
         "icon": "$(add)"
       },
       {
+        "command": "gemstone.explorer.addClassVar",
+        "title": "Add Class Variable…",
+        "category": "GemStone",
+        "icon": "$(add)"
+      },
+      {
+        "command": "gemstone.explorer.addAccessors",
+        "title": "Add Accessors",
+        "category": "GemStone",
+        "icon": "$(symbol-method)"
+      },
+      {
         "command": "gemstone.explorer.removeInstVar",
         "title": "Remove Instance Variable…",
         "category": "GemStone",
@@ -1668,6 +1680,14 @@
           "when": "false"
         },
         {
+          "command": "gemstone.explorer.addClassVar",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.addAccessors",
+          "when": "false"
+        },
+        {
           "command": "gemstone.explorer.removeInstVar",
           "when": "false"
         },
@@ -2050,14 +2070,34 @@
           "group": "inline"
         },
         {
+          "command": "gemstone.explorer.addClassVar",
+          "when": "view == gemstoneExplorerClasses && viewItem == explorerVarSide.class",
+          "group": "inline"
+        },
+        {
           "command": "gemstone.explorer.addInstVar",
           "when": "view == gemstoneExplorerClasses && viewItem == explorerClass",
           "group": "2_generate@2"
         },
         {
+          "command": "gemstone.explorer.addClassVar",
+          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass",
+          "group": "2_generate@3"
+        },
+        {
           "command": "gemstone.explorer.renameClassVariable",
           "when": "view == gemstoneExplorerClasses && viewItem == explorerClassVar",
           "group": "inline"
+        },
+        {
+          "command": "gemstone.explorer.addAccessors",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerIvar/",
+          "group": "2_generate@1"
+        },
+        {
+          "command": "gemstone.explorer.addAccessors",
+          "when": "view == gemstoneExplorerClasses && viewItem == explorerClassVar",
+          "group": "2_generate@1"
         },
         {
           "command": "gemstone.explorer.renameMethod",
