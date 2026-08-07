@@ -16,6 +16,9 @@
     "vscode-uri": "^3.1.0"
   },
   "scripts": {
+    "compile": "tsc -p tsconfig.json",
+    "compile:clean": "rm -rf out ../node_modules/.cache/tsc/client.tsbuildinfo ../node_modules/.cache/tsc/client-bin.tsbuildinfo",
+    "compile:fresh": "npm run compile:clean && npm run compile",
     "//test": "Runs only the 'default' vitest project (see vitest.config.ts). The 'gci' project is on-demand (needs a live stone) and is excluded here on purpose; run it with `npm run test:gci`. Without --project, vitest would run both projects.",
     "test": "vitest run --project default",
     "test:server:start": "./bin/gs-test-server.sh --start",
