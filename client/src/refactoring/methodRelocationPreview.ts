@@ -1,3 +1,4 @@
+import { asCount } from './previewCounts';
 /**
  * Shared "method-relocation" preview primitives (RB catalog C2). The move-method (M6)
  * and push-up / push-down (M7 / M8) client families model a relocation as a set of
@@ -80,10 +81,6 @@ export interface RelocationAnalysis<S extends BaseSelectorAnalysis> {
   globalDecline: string | null;
   movableCount: number;
   selectors: S[];
-}
-
-export function asCount(v: unknown): number {
-  return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0;
 }
 
 /**

@@ -5272,6 +5272,50 @@ testConvertTempStagesIvarEditAndMethodRecompile
 
 category: 'tests - V5 convert temp'
 method: GsInstVarStructureRefactoringTest
+testConvertTempSucceedsWhenMethodSourceIsWide
+	"Regression for the RBScanner wide-source parse gap (#361 / #362): converting a temporary in a
+	 method whose STORED SOURCE carries a non-ASCII (wide) comment must NOT decline. Before the
+	 Character>>isSqueakSeparator compat shim, RBParser parseMethod: DNU'd on wide source, the caller
+	 swallowed it to nil (analyzeConvertTemp: `[RBParser parseMethod: src] on: Error do: [:e | nil]`),
+	 and convert-temp hard-declined 'the method source does not parse'. This drives the WHOLE
+	 refactoring path (not just the parser, as GsRefactoringParseTest does), so a future regression
+	 anywhere along it is caught. The em-dash is built with #codePoint: so THIS test's own source
+	 stays pure ASCII (the 3.6.2 ComStrmSetCursor discipline)."
+	| emDash wideSource ref cs edit recompile |
+	emDash := String with: (Character codePoint: 8212).
+	wideSource := 'computeWide | w | "carry ', emDash, ' forward" w := shared. ^ w'.
+	self compile: wideSource in: (self classNamed: 'GsVSBase').
+
+	"PRECONDITION: the stored source really is wide. The em-dash is the ONLY thing making this a
+	 wide-source test, so if it ever stopped round-tripping through the compiler -- or compile:in:
+	 (which resumes CompileWarning with nil) quietly swallowed a compile problem -- everything below
+	 would still pass while exercising nothing but ASCII. Fail loudly there instead."
+	self assert: ((self classNamed: 'GsVSBase')
+		compiledMethodAt: #computeWide environmentId: 0 otherwise: nil) sourceString
+			includesSubstring: emDash.
+
+	ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSBase') convertTemporary: 'w' inMethod: #computeWide meta: false.
+	cs := ref changeSet.
+	edit := self editChangeFor: 'GsVSBase' in: cs.
+	recompile := cs changes detect: [:c | c kind = #methodRecompile] ifNone: [nil].
+
+	self assert: ref decline isNil.
+	"Assert the POSITIVE outcome, as testConvertTempStagesIvarEditAndMethodRecompile does for the
+	 ASCII path: the ivar edit and the method recompile are both staged. `decline isNil` alone
+	 already implies the decline text is absent from the analysis JSON, so checking for that string
+	 proved nothing."
+	self assert: edit notNil.
+	self assert: edit newSource includesSubstring: '''w'''.
+	self assert: recompile notNil.
+	self deny: recompile newSource includesSubstring: '| w |'.
+	"The failure mode this path most needs covered: the source PARSES but the rewritten source comes
+	 back with the wide character mangled or truncated. Pin that it survives the round trip."
+	self assert: recompile newSource includesSubstring: emDash
+%
+
+category: 'tests - V5 convert temp'
+method: GsInstVarStructureRefactoringTest
 testConvertTempAppliesAddingIvarAndDroppingDecl
 	| json |
 	json := (GsInstVarStructureRefactoring

@@ -1,3 +1,4 @@
+import { asCount } from './previewCounts';
 /**
  * Pure helpers for the rename-class (R3) preview: parsing the server-side
  * engine's paginated preview envelope and the apply result, and validating a new
@@ -72,10 +73,6 @@ export interface ApplyResult {
   /** Instances that failed to migrate (only meaningful when migrate was on). */
   migratedFailures?: number;
   error?: string;
-}
-
-function asCount(v: unknown): number {
-  return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0;
 }
 
 function parseChange(raw: unknown, i: number): ClassRenameChange {
