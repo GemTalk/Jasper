@@ -784,16 +784,50 @@ export class ExplorerController {
 
   // Open a live filter input for a pane: prefix match, '*' wildcard. Typing
   // filters the pane immediately; an empty value clears the filter.
+  //
+  // Because filtering is live, every keystroke has already changed the pane by the time the
+  // box closes — so cancelling has to be undone explicitly. VS Code fires onDidHide for BOTH
+  // Enter and Escape and onDidAccept only for Enter, so the accepted flag is what tells them
+  // apart. On cancel we restore the filter captured when the box opened, which is the
+  // previously accepted filter when the user was editing an existing one (the box is seeded
+  // from it) rather than simply clearing.
   beginFilter(viewId: string): void {
     const box = vscode.window.createInputBox();
+    const filterBeforeEdit = this.filters.get(viewId);
+    // What this box last wrote, so the cancel path can tell its own edit from someone else's.
+    let lastAppliedByBox = filterBeforeEdit;
+    let accepted = false;
     box.title = 'Filter';
     box.placeholder = 'starts with… (use * as a wildcard)';
-    box.value = this.filters.get(viewId) ?? '';
+    box.value = filterBeforeEdit ?? '';
     this.filteringView = viewId;
     this.syncTitles();
-    box.onDidChangeValue((value) => this.setFilterState(viewId, value.trim() || undefined));
-    box.onDidAccept(() => box.hide());
+    box.onDidChangeValue((value) => {
+      lastAppliedByBox = value.trim() || undefined;
+      this.setFilterState(viewId, lastAppliedByBox);
+    });
+    box.onDidAccept(() => {
+      accepted = true;
+      box.hide();
+    });
     box.onDidHide(() => {
+      // Undo ONLY this box's own edit, and only when there is something to undo.
+      //
+      // Restoring unconditionally was wrong: selecting a class clears the Methods filter
+      // (`selectClass` -> `clearFilters(VIEW_METHODS)`), and that same click is what dismisses an
+      // open filter box — so the restore could re-apply a filter the user typed for the PREVIOUS
+      // class onto the newly selected one. If the live value is no longer what this box set,
+      // someone else owns it now; leave it alone.
+      //
+      // The second guard keeps the common "open the box and press Escape without typing" case a
+      // no-op rather than a needless refresh() + syncTitles() + refreshIvarHighlights() round.
+      if (
+        !accepted &&
+        this.filters.get(viewId) === lastAppliedByBox &&
+        lastAppliedByBox !== filterBeforeEdit
+      ) {
+        this.setFilterState(viewId, filterBeforeEdit);
+      }
       this.filteringView = undefined;
       this.syncTitles();
       box.dispose();
