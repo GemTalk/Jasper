@@ -781,16 +781,29 @@ export class ExplorerController {
 
   // Open a live filter input for a pane: prefix match, '*' wildcard. Typing
   // filters the pane immediately; an empty value clears the filter.
+  //
+  // Because filtering is live, every keystroke has already changed the pane by the time the
+  // box closes — so cancelling has to be undone explicitly. VS Code fires onDidHide for BOTH
+  // Enter and Escape and onDidAccept only for Enter, so the accepted flag is what tells them
+  // apart. On cancel we restore the filter captured when the box opened, which is the
+  // previously accepted filter when the user was editing an existing one (the box is seeded
+  // from it) rather than simply clearing.
   beginFilter(viewId: string): void {
     const box = vscode.window.createInputBox();
+    const filterBeforeEdit = this.filters.get(viewId);
+    let accepted = false;
     box.title = 'Filter';
     box.placeholder = 'starts with… (use * as a wildcard)';
-    box.value = this.filters.get(viewId) ?? '';
+    box.value = filterBeforeEdit ?? '';
     this.filteringView = viewId;
     this.syncTitles();
     box.onDidChangeValue((value) => this.setFilterState(viewId, value.trim() || undefined));
-    box.onDidAccept(() => box.hide());
+    box.onDidAccept(() => {
+      accepted = true;
+      box.hide();
+    });
     box.onDidHide(() => {
+      if (!accepted) this.setFilterState(viewId, filterBeforeEdit);
       this.filteringView = undefined;
       this.syncTitles();
       box.dispose();
