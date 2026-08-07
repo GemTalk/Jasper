@@ -14,6 +14,10 @@
 // tarball (see checkLockfileDrift below). Born from a real incident (see
 // cd0bff1) rather than a hypothetical.
 //
+// And checks that the committed `allowScripts` policy in package.json is
+// version-pinned (see checkAllowScriptsPinned below) — an unpinned allow
+// entry trusts every future version of a package forever.
+//
 //   node scripts/lint-supply-chain.mjs
 
 import { execFileSync } from 'node:child_process';
@@ -139,11 +143,40 @@ function checkLockfileDrift() {
   return failed;
 }
 
+// `npm approve-scripts` writes allowScripts keys as either `name` (unpinned) or
+// `name@version` (pinned) — deny entries are always written unpinned, since
+// denying every version of a package is the point. An unpinned *allow*, though,
+// means npm will run that package's install script on any future version we
+// bump to, no re-review required — silently defeating the re-review-on-bump
+// behavior the rest of this file's checks assume is in place. Scoped packages
+// (e.g. `@vscode/vsce-sign@2.0.9`) start with `@`, so the version separator is
+// searched for after that leading scope character, not from index 0.
+function checkAllowScriptsPinned() {
+  const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
+  let failed = false;
+
+  for (const [key, verdict] of Object.entries(pkg.allowScripts ?? {})) {
+    if (verdict === true && !key.slice(1).includes('@')) {
+      console.error(
+        `✗ allowScripts['${key}'] allows every version — re-run npm approve-scripts to pin it`,
+      );
+      failed = true;
+    }
+  }
+
+  if (!failed) {
+    console.log('✓ every allowScripts allow entry is pinned to a version');
+  }
+
+  return failed;
+}
+
 function main() {
   const configFailed = checkConfig();
   const driftFailed = checkLockfileDrift();
+  const allowScriptsFailed = checkAllowScriptsPinned();
 
-  if (configFailed || driftFailed) {
+  if (configFailed || driftFailed || allowScriptsFailed) {
     process.exit(1);
   }
 }
