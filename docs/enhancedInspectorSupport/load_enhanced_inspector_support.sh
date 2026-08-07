@@ -88,6 +88,25 @@ iferr 1 stk
 iferr 2 exit 1
 login
 fileformat utf8
+run
+"Create the dedicated GsEnhancedInspector dictionary and share it into every
+ user's symbol list BEFORE filing in the payload, so the classes' bareword
+ `inDictionary: GsEnhancedInspector` resolves. Mirrors GsRefactoringLoader's
+ ensureDictionary/shareDictionary for the refactoring engine. Idempotent."
+| sym prof list dict |
+sym := #GsEnhancedInspector.
+prof := System myUserProfile.
+list := prof symbolList.
+dict := list detect: [:d | d name == sym] ifNone: [nil].
+dict isNil ifTrue: [
+  dict := SymbolDictionary new name: sym; yourself.
+  dict at: sym put: dict.
+  prof insertDictionary: dict at: list size + 1 ].
+AllUsers do: [:p |
+  (p symbolList detect: [:d | d name == sym] ifNone: [nil]) isNil
+    ifTrue: [ p insertDictionary: dict at: p symbolList size + 1 ] ].
+true
+%
 input $PAYLOAD_DIR/Announcements.gs
 input $PAYLOAD_DIR/RemoteServiceReplication.gs
 input $PAYLOAD_DIR/STON.gs

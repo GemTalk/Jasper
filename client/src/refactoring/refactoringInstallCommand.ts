@@ -142,8 +142,13 @@ async function performInstall(
       base.rbSupportAvailable === true,
     );
   }
-  vscode.window.showInformationMessage('Refactoring engine installed and verified.');
-  return base.rbSupportAvailable === true;
+  // Report whether the install LANDED ON THE STONE (verified `result.success` above), not whether
+  // this session has caught up. `refreshWorkingSessionAfterInstall` answers false when the user
+  // defers the refresh (uncommitted changes, "Later"), leaving `rbSupportAvailable` stale — keying
+  // the return on that latch made a verified, committed install report failure, so the caller
+  // showed neither a success nor an error toast. The latch still drives the context keys / menu
+  // gating; it just no longer decides this answer. (Mirrors the note in refactoringUninstallCommand.)
+  return true;
 }
 
 /**
