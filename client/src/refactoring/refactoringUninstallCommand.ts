@@ -90,7 +90,13 @@ async function performUninstall(
       base.rbSupportAvailable === true,
     );
   }
-  return base.rbSupportAvailable !== true;
+  // Report whether the removal LANDED ON THE STONE, not whether this session has caught up.
+  // `refreshWorkingSessionAfterInstall` answers false when the user defers the refresh (e.g.
+  // uncommitted changes, "Later"), which leaves `rbSupportAvailable` stale. Keying the return on
+  // that latch made a verified, committed uninstall report failure — the caller then showed
+  // neither a success nor an error toast, so the operation looked like it never happened. The
+  // latch still drives the context keys / menu gating; it just no longer decides this answer.
+  return true;
 }
 
 /**

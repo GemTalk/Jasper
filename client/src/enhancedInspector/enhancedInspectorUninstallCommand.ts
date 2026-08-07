@@ -38,7 +38,7 @@ async function performUninstall(
   base: ActiveSession,
   sessionManager: SessionManager,
   interactive: boolean,
-): Promise<void> {
+): Promise<boolean> {
   const sys = await obtainSystemUserSession(base, interactive, 'enhanced inspector support');
   if (!sys) {
     if (!interactive) {
@@ -47,7 +47,7 @@ async function performUninstall(
           'not accepted. Run "GemStone: Uninstall Server Support" to remove it.',
       );
     }
-    return;
+    return false;
   }
 
   let result;
@@ -73,7 +73,7 @@ async function performUninstall(
 
   if (!result.success) {
     vscode.window.showErrorMessage(`Enhanced inspector uninstall failed: ${result.message}`);
-    return;
+    return false;
   }
 
   const refreshed = await refreshWorkingSessionAfterInstall(
@@ -82,6 +82,10 @@ async function performUninstall(
     'Enhanced inspector uninstalled.',
   );
   if (refreshed) refreshEnhancedInspectorAvailable(base);
+  // See the note in refactoringUninstallCommand: the answer is "did the stone change", which the
+  // verified `result.success` above already establishes. The refresh latch only governs whether
+  // THIS session has noticed yet, which is a different question and must not suppress the toast.
+  return true;
 }
 
 /**
@@ -90,11 +94,10 @@ async function performUninstall(
  * warning if the default is unavailable. Returns whether the support is gone
  * afterward. Called by the unified optional-support bundle uninstall.
  */
-export async function uninstallEnhancedInspectorFeature(
+export function uninstallEnhancedInspectorFeature(
   base: ActiveSession,
   sessionManager: SessionManager,
   interactive: boolean,
 ): Promise<boolean> {
-  await performUninstall(base, sessionManager, interactive);
-  return base.enhancedInspectorAvailable !== true;
+  return performUninstall(base, sessionManager, interactive);
 }

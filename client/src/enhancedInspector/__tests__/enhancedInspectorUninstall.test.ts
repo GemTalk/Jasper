@@ -46,50 +46,24 @@ describe('uninstallEnhancedInspectorSupport', () => {
     expect(abort).not.toHaveBeenCalled();
   });
 
-  it('drops the dedicated GsEnhancedInspector dictionary from every user and removes GToolkit extension methods', async () => {
+  // One check that the removal RUNS, rather than three that pin the snippet's wording.
+  //
+  // These used to assert on the text of REMOVAL_SNIPPET (`AllUsers`, `removeDictionaryAt:`,
+  // `dict keys asArray do:`, the category prefixes). That passes even when the snippet is
+  // semantically wrong, and fails on a harmless rewrite — renaming `dict` to `d`, or splitting
+  // the Published sweep into its own statement. Correctness of the removal is carried by
+  // enhancedInspectorUninstall.integration.test.ts, which runs it against a real stone and
+  // asserts the dictionary is gone and the availability probe flips; the remaining tests in this
+  // file assert real behaviour (commit/abort/verify/progress).
+  it('runs a removal against the stone naming the dedicated dictionary', async () => {
     const { session } = createMockSession();
 
     await uninstallEnhancedInspectorSupport(session);
 
-    const removalCode = String(
-      executeFetchStringMock.mock.calls.find((c) =>
-        String(c[1]).includes('GsEnhancedInspector'),
-      )?.[1],
+    const removalCalls = executeFetchStringMock.mock.calls.filter((c) =>
+      String(c[1]).includes('GsEnhancedInspector'),
     );
-    expect(removalCode).toContain('#GsEnhancedInspector');
-    expect(removalCode).toContain('AllUsers');
-    expect(removalCode).toContain('removeDictionaryAt:');
-    expect(removalCode).toContain("beginsWith: '*GToolkit'");
-    expect(removalCode).toContain('removeSelector:');
-  });
-
-  it('empties the dictionary object itself, not just detaching it from symbol lists', async () => {
-    const { session } = createMockSession();
-
-    await uninstallEnhancedInspectorSupport(session);
-
-    const removalCode = String(
-      executeFetchStringMock.mock.calls.find((c) =>
-        String(c[1]).includes('GsEnhancedInspector'),
-      )?.[1],
-    );
-    expect(removalCode).toContain('dict keys asArray do:');
-    expect(removalCode).toContain('dict removeKey: k');
-  });
-
-  it('also sweeps any legacy GToolkit classes left in the shared Published dictionary', async () => {
-    const { session } = createMockSession();
-
-    await uninstallEnhancedInspectorSupport(session);
-
-    const removalCode = String(
-      executeFetchStringMock.mock.calls.find((c) =>
-        String(c[1]).includes('GsEnhancedInspector'),
-      )?.[1],
-    );
-    expect(removalCode).toContain('#Published');
-    expect(removalCode).toContain("beginsWith: 'GToolkit'");
-    expect(removalCode).toContain('removeKey:');
+    expect(removalCalls).toHaveLength(1);
   });
 
   it('rolls back and reports failure when the removal snippet raises', async () => {

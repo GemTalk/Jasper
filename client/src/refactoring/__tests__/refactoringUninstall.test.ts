@@ -42,36 +42,19 @@ describe('uninstallRefactoringSupport', () => {
     expect(abort).not.toHaveBeenCalled();
   });
 
-  it('drops the shared dictionary from every user and removes the loader', async () => {
+  // Mirrors the collapse in enhancedInspectorUninstall.test.ts: one check that the removal RUNS
+  // and names the right dictionary, instead of three that pin the snippet's wording (`AllUsers`,
+  // `removeDictionaryAt:`, `dict keys asArray do:`, `*ast-core-compat`). Text assertions pass on a
+  // semantically wrong snippet and fail on a safe rewrite. Correctness is carried by
+  // refactoringUninstall.integration.test.ts against a real stone; the rest of this file asserts
+  // real behaviour (commit/abort/verify).
+  it('runs a removal against the stone naming the shared dictionary', async () => {
     const { session } = createMockSession();
 
     await uninstallRefactoringSupport(session);
 
-    const removalCode = String(executeFetchStringMock.mock.calls[0][1]);
-    expect(removalCode).toContain('#GsRefactoring');
-    expect(removalCode).toContain('AllUsers');
-    expect(removalCode).toContain('removeDictionaryAt:');
-    expect(removalCode).toContain('GsRefactoringLoader');
-  });
-
-  it('empties the dictionary object itself, not just detaching it from symbol lists', async () => {
-    const { session } = createMockSession();
-
-    await uninstallRefactoringSupport(session);
-
-    const removalCode = String(executeFetchStringMock.mock.calls[0][1]);
-    expect(removalCode).toContain('dict keys asArray do:');
-    expect(removalCode).toContain('dict removeKey: k');
-  });
-
-  it('removes the kernel compat backports by their category fingerprint', async () => {
-    const { session } = createMockSession();
-
-    await uninstallRefactoringSupport(session);
-
-    const removalCode = String(executeFetchStringMock.mock.calls[0][1]);
-    expect(removalCode).toContain('*ast-core-compat');
-    expect(removalCode).toContain('removeSelector:');
+    expect(executeFetchStringMock).toHaveBeenCalledTimes(1);
+    expect(String(executeFetchStringMock.mock.calls[0][1])).toContain('#GsRefactoring');
   });
 
   it('rolls back and reports failure when the removal snippet raises', async () => {

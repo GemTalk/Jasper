@@ -140,12 +140,23 @@ AllUsers do: [:p |
 	(p symbolList detect: [:d | d name == sym] ifNone: [nil]) isNil
 		ifTrue: [ p insertDictionary: dict at: p symbolList size + 1 ] ].
 pub := list detect: [:d | d name == #Published] ifNone: [nil].
-pub notNil ifTrue: [
+"Legacy migration ONLY. Gate on a marker the earlier build is known to have bound INTO
+ Published -- not on the mere presence of a GToolkit-categorized class -- so a stone that
+ never carried the old placement is never swept. On a fresh install this whole branch is
+ skipped, which is the common case and the one where an over-broad sweep could only do harm."
+(pub notNil and: [pub includesKey: #GtRemotePhlowViewedObject]) ifTrue: [
 	pub keys asArray do: [:k |
 		| v |
 		v := pub at: k ifAbsent: [nil].
-		((v isKindOf: Class) and: [((v category ifNil: ['']) asString beginsWith: 'GToolkit')])
-			ifTrue: [ pub removeKey: k ] ] ].
+		"NB the class categories are a BARE 'GToolkit-...' ('GToolkit-RemotePhlow-DeclarativeViews'
+		 and friends); only the payload's EXTENSION-METHOD categories carry the leading '*'. So the
+		 uninstall snippet's '*GToolkit' anchor cannot be reused here -- it would match no class and
+		 silently skip the migration. The residual risk (a user's own Published class filed under a
+		 GToolkit... category) is accepted because the gate above means this only runs on a stone
+		 that demonstrably carried the old placement."
+		((v isKindOf: Class)
+			and: [((v category ifNil: ['']) asString beginsWith: 'GToolkit-')])
+				ifTrue: [ pub removeKey: k ] ] ].
 'ok'`;
 
 export interface InstallResult {

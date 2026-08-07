@@ -2528,6 +2528,7 @@
     "test:server:stop": "npm run test:server:stop --workspace client",
     "test:server:list": "npm run test:server:list --workspace client",
     "test:server:install-plugin": "tsx client/bin/install-server-plugin.mjs",
+    "test:server:uninstall-plugin": "tsx client/bin/uninstall-server-plugin.mjs",
     "test:server": "npm test --workspace server",
     "test:client": "npm test --workspace client",
     "test:mcp": "npm test --workspace mcp-server",

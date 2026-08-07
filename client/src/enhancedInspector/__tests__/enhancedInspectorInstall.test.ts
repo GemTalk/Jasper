@@ -137,9 +137,32 @@ describe('installEnhancedInspectorSupport', () => {
           String(c[1]).includes('GsEnhancedInspector') && String(c[1]).includes('insertDictionary'),
       )?.[1],
     );
+    // Assert the SHAPE of the migration, not its exact wording: it looks at Published, it is
+    // GATED on a legacy marker actually being bound there (so a stone that never carried the old
+    // placement is never swept), and it removes rather than merely reads.
     expect(prepareCode).toContain('#Published');
-    expect(prepareCode).toContain("beginsWith: 'GToolkit'");
+    expect(prepareCode).toContain('includesKey: #GtRemotePhlowViewedObject');
+    expect(prepareCode).toMatch(/beginsWith: 'GToolkit/);
     expect(prepareCode).toContain('removeKey:');
+  });
+
+  // The gate is the point of the change: the sweep must be reachable ONLY behind the
+  // legacy-marker check, never as an unconditional statement.
+  it('runs the Published sweep only when a legacy install is detected', async () => {
+    const { session } = createMockSession();
+
+    await installEnhancedInspectorSupport(session, PAYLOAD_DIR);
+
+    const prepareCode = String(
+      executeFetchStringMock.mock.calls.find(
+        (c) =>
+          String(c[1]).includes('GsEnhancedInspector') && String(c[1]).includes('insertDictionary'),
+      )?.[1],
+    );
+    const gateAt = prepareCode.indexOf('includesKey: #GtRemotePhlowViewedObject');
+    const sweepAt = prepareCode.indexOf('removeKey:');
+    expect(gateAt).toBeGreaterThan(-1);
+    expect(sweepAt).toBeGreaterThan(gateAt);
   });
 
   it('aborts without committing when the dictionary cannot be prepared', async () => {
