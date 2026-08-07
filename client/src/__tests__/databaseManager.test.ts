@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import * as path from 'path';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 vi.mock('../wslFs');
@@ -77,14 +78,17 @@ describe('DatabaseManager.replaceExtent', () => {
     expect(ok).toBe(true);
     expect(vscode.window.showOpenDialog).toHaveBeenCalledTimes(1);
     expect(wslImportFileSync).toHaveBeenCalledWith(
-      '/seed/mydata.dbf',
-      '/root/db-1/data/extent0.dbf',
+      vscode.Uri.file('/seed/mydata.dbf').fsPath,
+      path.join('/root/db-1', 'data', 'extent0.dbf'),
     );
-    expect(wslChmodSync).toHaveBeenCalledWith('/root/db-1/data/extent0.dbf', 0o644);
+    expect(wslChmodSync).toHaveBeenCalledWith(
+      path.join('/root/db-1', 'data', 'extent0.dbf'),
+      0o644,
+    );
     // Only .dbf files are removed; README.txt is left alone.
-    expect(wslUnlinkSync).toHaveBeenCalledWith('/root/db-1/data/extent0.dbf');
-    expect(wslUnlinkSync).toHaveBeenCalledWith('/root/db-1/data/tranlog1.dbf');
-    expect(wslUnlinkSync).not.toHaveBeenCalledWith('/root/db-1/data/README.txt');
+    expect(wslUnlinkSync).toHaveBeenCalledWith(path.join('/root/db-1', 'data', 'extent0.dbf'));
+    expect(wslUnlinkSync).toHaveBeenCalledWith(path.join('/root/db-1', 'data', 'tranlog1.dbf'));
+    expect(wslUnlinkSync).not.toHaveBeenCalledWith(path.join('/root/db-1', 'data', 'README.txt'));
     const yaml = vi.mocked(wslWriteFileSync).mock.calls[0][1];
     expect(yaml).toContain('baseExtent: "mydata.dbf"');
   });
@@ -101,8 +105,8 @@ describe('DatabaseManager.replaceExtent', () => {
     expect(ok).toBe(true);
     expect(vscode.window.showOpenDialog).not.toHaveBeenCalled();
     expect(wslImportFileSync).toHaveBeenCalledWith(
-      '/gs/bin/extent0.dbf',
-      '/root/db-1/data/extent0.dbf',
+      path.join('/gs', 'bin', 'extent0.dbf'),
+      path.join('/root/db-1', 'data', 'extent0.dbf'),
     );
     const yaml = vi.mocked(wslWriteFileSync).mock.calls[0][1];
     expect(yaml).toContain('baseExtent: "extent0.dbf"');
@@ -120,8 +124,8 @@ describe('DatabaseManager.replaceExtent', () => {
 
     expect(ok).toBe(true);
     expect(wslImportFileSync).toHaveBeenCalledWith(
-      '/seed/mydata.dbf',
-      '/root/db-1/data/extent0.dbf',
+      vscode.Uri.file('/seed/mydata.dbf').fsPath,
+      path.join('/root/db-1', 'data', 'extent0.dbf'),
     );
   });
 
@@ -221,8 +225,8 @@ describe('DatabaseManager.createDatabaseDirect', () => {
     await makeCreateManager().createDatabaseDirect('3.7.4', 'extent0', 'gs64stone', 'gs64ldi');
 
     expect(wslCopyFileSync).toHaveBeenCalledWith(
-      '/gs/data/system.conf',
-      '/root/db-1/conf/default.conf',
+      path.join('/gs', 'data', 'system.conf'),
+      path.join('/root', 'db-1', 'conf', 'default.conf'),
     );
   });
 
@@ -231,7 +235,7 @@ describe('DatabaseManager.createDatabaseDirect', () => {
 
     const systemConf = vi
       .mocked(wslWriteFileSync)
-      .mock.calls.find((c) => String(c[0]).endsWith('conf/system.conf'))![1];
+      .mock.calls.find((c) => String(c[0]).endsWith(path.join('conf', 'system.conf')))![1];
     expect(systemConf).toContain('conf/default.conf');
   });
 
@@ -240,12 +244,14 @@ describe('DatabaseManager.createDatabaseDirect', () => {
 
     const gemConf = vi
       .mocked(wslWriteFileSync)
-      .mock.calls.find((c) => String(c[0]).endsWith('conf/gem.conf'))![1];
+      .mock.calls.find((c) => String(c[0]).endsWith(path.join('conf', 'gem.conf')))![1];
     expect(gemConf).toContain('GEM_TEMPOBJ_CACHE_SIZE = 500000;');
   });
 
   it('skips default.conf and still creates the database when the source is absent', async () => {
-    vi.mocked(wslExistsSync).mockImplementation((p: string) => p !== '/gs/data/system.conf');
+    vi.mocked(wslExistsSync).mockImplementation(
+      (p: string) => p !== path.join('/gs', 'data', 'system.conf'),
+    );
 
     const db = await makeCreateManager().createDatabaseDirect(
       '3.7.4',
@@ -255,8 +261,8 @@ describe('DatabaseManager.createDatabaseDirect', () => {
     );
 
     expect(wslCopyFileSync).not.toHaveBeenCalledWith(
-      '/gs/data/system.conf',
-      '/root/db-1/conf/default.conf',
+      path.join('/gs', 'data', 'system.conf'),
+      path.join('/root', 'db-1', 'conf', 'default.conf'),
     );
     expect(db.dirName).toBe('db-1');
   });
