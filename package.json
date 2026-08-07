@@ -1408,6 +1408,12 @@
         "icon": "$(edit)"
       },
       {
+        "command": "gemstone.rename",
+        "title": "Rename…",
+        "category": "GemStone",
+        "icon": "$(edit)"
+      },
+      {
         "command": "gemstone.explorer.renameClass",
         "title": "Rename Class…",
         "category": "GemStone",
@@ -1657,6 +1663,22 @@
       "commandPalette": [
         {
           "command": "gemstone.explorer.classClicked",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.renameTemporary",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.renameInstVarAtCursor",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.renameClassVarAtCursor",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.renameMethodInEditor",
           "when": "false"
         },
         {

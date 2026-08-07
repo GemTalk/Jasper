@@ -706,8 +706,12 @@ export function describeClass(
   return sharedDescribeClass(defaultQueryExecutorUsing(session), className, dict);
 }
 
-export function getInstVarNames(session: ActiveSession, className: string): string[] {
-  return sharedGetInstVarNames(defaultQueryExecutorUsing(session), className);
+export function getInstVarNames(
+  session: ActiveSession,
+  className: string,
+  dict?: number | string,
+): string[] {
+  return sharedGetInstVarNames(defaultQueryExecutorUsing(session), className, dict);
 }
 
 export function getDefinedInstVarNames(

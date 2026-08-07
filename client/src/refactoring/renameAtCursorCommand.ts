@@ -104,7 +104,7 @@ export async function renameAtCursorCommand(
     // 3/4. `getInstVarNames` (allInstVarNames) and `getVisibleClassVarNames` already
     //      include the inherited ones — the retarget lives in each dispatched command
     //      — so a single visibility query per kind suffices.
-    if (queries.getInstVarNames(session, parsed.className).includes(name)) {
+    if (queries.getInstVarNames(session, parsed.className, dict).includes(name)) {
       await vscode.commands.executeCommand('gemstone.renameInstVarAtCursor', at);
       return;
     }

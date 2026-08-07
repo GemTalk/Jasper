@@ -249,11 +249,11 @@ r := (System myUserProfile symbolList objectNamed: #GsRenameClassVariableRefacto
   // Invoked on a class variable a subclass method only INHERITS, the editor rename
   // command resolves the defining class and reruns the rename there. That
   // resolution is getDefiningClassOfClassVar; prove it against the real hierarchy so
-  // the superclass walk + SymbolList-index lookup are exercised on a stone.
+  // the superclass walk + SymbolList-index lookup are exercised on a stone. These
+  // probes are pure base image (classVarNames / superclass / symbolList), so they
+  // are NOT gated on the refactoring engine — they run in both CI passes.
 
-  it('resolves a class variable inherited by a subclass to its defining class and dictionary', (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
-
+  it('resolves a class variable inherited by a subclass to its defining class and dictionary', () => {
     defineFixture();
 
     expect(q.getDefiningClassOfClassVar(session(), SUB, 'Rate', userIndex())).toEqual({
@@ -262,9 +262,7 @@ r := (System myUserProfile symbolList objectNamed: #GsRenameClassVariableRefacto
     });
   });
 
-  it('resolves a class variable to its declaring class even when asked from that class', (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
-
+  it('resolves a class variable to its declaring class even when asked from that class', () => {
     defineFixture();
 
     expect(q.getDefiningClassOfClassVar(session(), BASE, 'Rate', userIndex())?.className).toBe(
@@ -272,9 +270,7 @@ r := (System myUserProfile symbolList objectNamed: #GsRenameClassVariableRefacto
     );
   });
 
-  it('answers undefined for a word that is not a visible class variable', (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
-
+  it('answers undefined for a word that is not a visible class variable', () => {
     defineFixture();
 
     expect(

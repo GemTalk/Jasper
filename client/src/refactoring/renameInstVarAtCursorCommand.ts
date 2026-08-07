@@ -65,7 +65,7 @@ export async function renameInstVarAtCursorCommand(
   try {
     const defined = queries.getDefinedInstVarNames(session, parsed.className, dict);
     if (!defined.includes(name)) {
-      const all = queries.getInstVarNames(session, parsed.className);
+      const all = queries.getInstVarNames(session, parsed.className, dict);
       if (!all.includes(name)) {
         refuse(
           `'${name}' is not an instance variable of ${parsed.className}. For a temporary or argument, use Rename Temporary/Argument.`,

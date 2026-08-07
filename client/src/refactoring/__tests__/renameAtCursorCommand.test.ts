@@ -14,10 +14,11 @@ import type { SelectorAtPosition } from '../renameMethodAtCursorCommand';
 
 /**
  * Drives the single "Rename…" dispatcher: it classifies what the cursor is on and
- * routes to the matching rename command. Precedence is a selector/method header
- * first (so a selector sharing a name with a variable is never misclassified),
- * then temporary/argument, instance variable, and class variable; a word that is
- * none of those declines.
+ * routes to the matching rename command. Precedence is temporary/argument FIRST
+ * (offset-based, so a method-pattern argument isn't misread as a unary selector),
+ * then a selector/method header, then instance variable, then class variable, then
+ * a class reference; a word that is none of those declines. (See the module doc for
+ * why the offset probe precedes the selector probe.)
  */
 
 const SOURCE = ['scaleBy: aFactor', '\t^count * aFactor'].join('\n');

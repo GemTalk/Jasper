@@ -1831,6 +1831,8 @@ export class ExplorerController {
       return;
     }
 
+    // Adding a class variable does NOT reshape the class (no new version); this is
+    // just the general "class members changed" pane refresh, reused despite its name.
     await this.refreshAfterClassReshape(className);
     // Select the newly-added class variable (its row is under the "class" side); fall
     // back to the class-variable side node, then leave the class selected.
