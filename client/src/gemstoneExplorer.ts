@@ -944,18 +944,42 @@ export class ExplorerController {
       return;
     }
 
+    // Re-resolve the selected dictionary by NAME. A commit elsewhere can remove it
+    // or shift every dictionary's index — e.g. uninstalling the server plugin drops
+    // GsRefactoring / GsEnhancedInspector. If the selected dictionary is gone, don't
+    // reload by its stale index (that would show a different dictionary's classes, or
+    // leave the removed one's classes orphaned in the panes); reset to a default
+    // dictionary so the class/category/hierarchy/method panes reflect the stone.
+    let currentDictIndex = dictIndex;
+    try {
+      const pos = queries.getDictionaryNames(session).indexOf(dictName);
+      if (pos < 0) {
+        this.reset();
+        return;
+      }
+      currentDictIndex = pos + 1;
+      this.state.dictIndex = currentDictIndex;
+    } catch {
+      /* keep the retained index if the dictionary list can't be read */
+    }
+
     // Reload the dictionary's class listing (+ ivar counts) and, when a class is
     // selected, its method environment and hierarchy. Keep stale data on a failed
     // fetch rather than blanking the tree out from under the user.
     try {
-      this.classCategoryEntries = queries.getClassesWithCategory(session, dictIndex);
+      this.classCategoryEntries = queries.getClassesWithCategory(session, currentDictIndex);
     } catch {
       /* keep stale on failure */
     }
     this.loadDefinedIvarCounts();
     if (className !== undefined) {
       try {
-        this.envLines = queries.getClassEnvironments(session, dictIndex, className, this.maxEnv());
+        this.envLines = queries.getClassEnvironments(
+          session,
+          currentDictIndex,
+          className,
+          this.maxEnv(),
+        );
       } catch {
         /* keep stale on failure */
       }

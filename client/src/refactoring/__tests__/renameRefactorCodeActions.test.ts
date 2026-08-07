@@ -15,7 +15,7 @@ function docWith(line: string): vscode.TextDocument {
 }
 
 describe('refactor code actions', () => {
-  const provider = new RefactorCodeActionProvider();
+  const provider = new RefactorCodeActionProvider(() => true);
 
   it('offers the cursor-on-identifier refactorings when the cursor is on an identifier', () => {
     const range = new vscode.Range(new vscode.Position(0, 0), new vscode.Position(0, 0));
@@ -49,6 +49,13 @@ describe('refactor code actions', () => {
     for (const action of actions) {
       expect(action.command?.arguments?.[0]).toBe(range.start);
     }
+  });
+
+  it('offers nothing when the refactoring engine is not installed', () => {
+    const gatedOff = new RefactorCodeActionProvider(() => false);
+    const range = new vscode.Range(new vscode.Position(0, 0), new vscode.Position(0, 5));
+
+    expect(gatedOff.provideCodeActions(docWith('total foo'), range)).toEqual([]);
   });
 
   it('offers only the method rename when the cursor is not on an identifier', () => {

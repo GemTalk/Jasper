@@ -7,7 +7,7 @@
 ! Vendored into Jasper and filed into the stone by the Enhanced Inspector
 ! installer. DO NOT EDIT BY HAND - regenerated from upstream by
 ! update_gemstone_gt_support.sh, which re-applies this header and rewrites
-! class placement from Globals to Published.
+! class placement from Globals to the dedicated GsEnhancedInspector dictionary.
 ! ----------------------------------------------------------------------------
 ! Class Declarations
 ! Generated file, do not Edit
@@ -19,7 +19,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Text';
@@ -37,7 +37,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Text';
@@ -55,7 +55,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-PhlowViews';
@@ -73,7 +73,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-DeclarativeViews';
@@ -91,7 +91,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-DeclarativeViews';
@@ -109,7 +109,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-DeclarativeViews';
@@ -127,7 +127,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-DeclarativeViews';
@@ -145,7 +145,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-DeclarativeViews';
@@ -163,7 +163,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-DeclarativeViews';
@@ -181,7 +181,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-DeclarativeSpecification';
@@ -199,7 +199,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-DeclarativeActions';
@@ -217,7 +217,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-DeclarativeActions';
@@ -235,7 +235,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-DeclarativeActions';
@@ -253,7 +253,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Icons';
@@ -271,7 +271,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Icons';
@@ -289,7 +289,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Icons';
@@ -307,7 +307,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Icons';
@@ -325,7 +325,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Icons';
@@ -343,7 +343,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Icons';
@@ -361,7 +361,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-DeclarativeActions';
@@ -379,7 +379,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-DeclarativeActions';
@@ -397,7 +397,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-InspectorCore';
@@ -415,7 +415,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Text';
@@ -433,7 +433,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Text';
@@ -451,7 +451,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Text';
@@ -469,7 +469,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Text';
@@ -487,7 +487,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Text';
@@ -505,7 +505,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Text';
@@ -523,7 +523,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Text';
@@ -541,7 +541,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Text';
@@ -559,7 +559,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Text';
@@ -577,7 +577,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Text';
@@ -595,7 +595,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Text';
@@ -613,7 +613,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Text';
@@ -631,7 +631,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Text';
@@ -649,7 +649,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Text';
@@ -667,7 +667,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Text';
@@ -685,7 +685,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Text';
@@ -703,7 +703,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Text';
@@ -721,7 +721,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-DeclarativeViews';
@@ -765,7 +765,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-DeclarativeViews';
@@ -783,7 +783,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-DeclarativeViews';
@@ -801,7 +801,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-DeclarativeViews';
@@ -824,7 +824,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-DeclarativeViews';
@@ -842,7 +842,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-DeclarativeViews';
@@ -876,7 +876,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-DeclarativeViews';
@@ -894,7 +894,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-DeclarativeViews';
@@ -919,7 +919,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-DeclarativeViews';
@@ -937,7 +937,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-DeclarativeViews';
@@ -955,7 +955,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-DeclarativeViews';
@@ -973,7 +973,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-DeclarativeViews';
@@ -991,7 +991,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-DeclarativeViews';
@@ -1009,7 +1009,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-PhlowActions';
@@ -1027,7 +1027,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-PhlowActions';
@@ -1045,7 +1045,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-PhlowActions';
@@ -1063,7 +1063,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-PhlowActions';
@@ -1081,7 +1081,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-DeclarativeActions';
@@ -1099,7 +1099,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-PhlowViews';
@@ -1117,7 +1117,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-PhlowViews';
@@ -1135,7 +1135,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-PhlowViews';
@@ -1153,7 +1153,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-PhlowViews';
@@ -1171,7 +1171,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-PhlowViews';
@@ -1189,7 +1189,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-PhlowViews';
@@ -1207,7 +1207,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-PhlowViews';
@@ -1225,7 +1225,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-PhlowViews';
@@ -1243,7 +1243,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-PhlowViews';
@@ -1261,7 +1261,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-PhlowViews';
@@ -1279,7 +1279,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-PhlowViews';
@@ -1297,7 +1297,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-PhlowViews';
@@ -1315,7 +1315,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-PhlowViews';
@@ -1333,7 +1333,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-PhlowViews';
@@ -1351,7 +1351,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-DeclarativeViews';
@@ -1369,7 +1369,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-DeclarativeViews';
@@ -1387,7 +1387,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-DeclarativeViews';
@@ -1405,7 +1405,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-DeclarativeViews';
@@ -1423,7 +1423,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-DeclarativeActions';
@@ -1441,7 +1441,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-DeclarativeActions';
@@ -1459,7 +1459,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Examples';
@@ -1477,7 +1477,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Examples';
@@ -1495,7 +1495,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Examples';
@@ -1513,7 +1513,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Examples';
@@ -1531,7 +1531,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Examples';
@@ -1549,7 +1549,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Examples';
@@ -1567,7 +1567,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Examples';
@@ -1585,7 +1585,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Examples';
@@ -1606,7 +1606,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Examples';
@@ -1624,7 +1624,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Examples';
@@ -1642,7 +1642,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Examples';
@@ -1660,7 +1660,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Examples';
@@ -1678,7 +1678,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Examples';
@@ -1696,7 +1696,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Examples';
@@ -1725,7 +1725,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Examples';
@@ -1743,7 +1743,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Examples';
@@ -1761,7 +1761,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Examples';
@@ -1779,7 +1779,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-DeclarativeViews';
@@ -1797,7 +1797,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-DeclarativeViews';
@@ -1815,7 +1815,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-DeclarativeViews';
@@ -1833,7 +1833,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-DeclarativeViews';
@@ -1851,7 +1851,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-DeclarativeViews';
@@ -1869,7 +1869,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-DeclarativeViews';
@@ -1887,7 +1887,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-DeclarativeViews';
@@ -1905,7 +1905,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-DeclarativeViews';
@@ -1923,7 +1923,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Examples';
@@ -1941,7 +1941,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-DeclarativeViews';
@@ -1959,7 +1959,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-DeclarativeViews';
@@ -1977,7 +1977,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-DeclarativeViews';
@@ -1995,7 +1995,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-DeclarativeViews';
@@ -2014,7 +2014,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-DeclarativeViews';
@@ -2032,7 +2032,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-DeclarativeViews';
@@ -2050,7 +2050,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-DeclarativeViews';
@@ -2068,7 +2068,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-DeclarativeViews';
@@ -2086,7 +2086,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-PhlowViews';
@@ -2104,7 +2104,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-PhlowViews';
@@ -2146,7 +2146,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-PhlowViews';
@@ -2164,7 +2164,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-PhlowViews';
@@ -2182,7 +2182,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-PhlowViews';
@@ -2200,7 +2200,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-PhlowViews';
@@ -2219,7 +2219,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-PhlowViews';
@@ -2242,7 +2242,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-PhlowViews';
@@ -2263,7 +2263,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-PhlowViews';
@@ -2294,7 +2294,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-PhlowViews';
@@ -2319,7 +2319,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-PhlowViews';
@@ -2337,7 +2337,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-PhlowViews';
@@ -2355,7 +2355,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-PhlowViews';
@@ -2373,7 +2373,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-PhlowViews';
@@ -2391,7 +2391,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-PhlowViews';
@@ -2409,7 +2409,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-DeclarativeActions';
@@ -2427,7 +2427,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Examples';
@@ -2445,7 +2445,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Examples';
@@ -2463,7 +2463,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Examples';
@@ -2481,7 +2481,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Text';
@@ -2499,7 +2499,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Text';
@@ -2517,7 +2517,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Text';
@@ -2535,7 +2535,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Text';
@@ -2553,7 +2553,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Text';
@@ -2571,7 +2571,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Text';
@@ -2589,7 +2589,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Text';
@@ -2607,7 +2607,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-Text';
@@ -2625,7 +2625,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-InspectorCore';
@@ -2644,7 +2644,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-GeolifeDemo';
@@ -2662,7 +2662,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-GeolifeDemo';
@@ -2680,7 +2680,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-GeolifeDemo';
@@ -2698,7 +2698,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-GeolifeDemo';
@@ -2716,7 +2716,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-GeolifeDemo';
@@ -2734,7 +2734,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-GeolifeDemo';
@@ -2752,7 +2752,7 @@ doit
 	classVars: #(DEFAULT)
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-GeolifeDemo';
@@ -2770,7 +2770,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-GeolifeDemo';
@@ -2788,7 +2788,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-GeolifeDemo';
@@ -2806,7 +2806,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-GeolifeDemo';
@@ -2824,7 +2824,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-MoviesDemo';
@@ -2842,7 +2842,7 @@ doit
 	classVars: #(DEFAULT)
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-MoviesDemo';
@@ -2860,7 +2860,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-InspectorCore';
@@ -2878,7 +2878,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-RemotePhlow-InspectorCore';

@@ -32,6 +32,8 @@ import { ActiveSession, SessionManager } from './sessionManager';
 import { pluginFeatures } from './serverPlugin/pluginFeatures';
 import { installEnhancedInspectorFeature } from './enhancedInspector/enhancedInspectorCommand';
 import { installRefactoringFeature } from './refactoring/refactoringInstallCommand';
+import { uninstallEnhancedInspectorFeature } from './enhancedInspector/enhancedInspectorUninstallCommand';
+import { uninstallRefactoringFeature } from './refactoring/refactoringUninstallCommand';
 
 export type AutoInstallMode = 'ask' | 'always' | 'never';
 
@@ -67,6 +69,14 @@ export interface ServerSupportFeature {
     extensionPath: string,
     interactive: boolean,
   ): Promise<boolean>;
+  /** Remove once (interactive = may prompt for the SystemUser password). No
+   *  `extensionPath`: removal is inline Smalltalk and needs nothing from disk.
+   *  Returns whether the feature is gone afterward. */
+  uninstall(
+    base: ActiveSession,
+    sessionManager: SessionManager,
+    interactive: boolean,
+  ): Promise<boolean>;
 }
 
 /** The supports offered as a bundle. */
@@ -78,6 +88,7 @@ export const SERVER_SUPPORT_FEATURES: readonly ServerSupportFeature[] = [
     isMissing: (b) => !b.enhancedInspectorAvailable,
     probe: pluginFeatures.enhancedInspector.probe,
     install: installEnhancedInspectorFeature,
+    uninstall: uninstallEnhancedInspectorFeature,
   },
   {
     id: 'refactoring',
@@ -86,6 +97,7 @@ export const SERVER_SUPPORT_FEATURES: readonly ServerSupportFeature[] = [
     isMissing: (b) => !b.rbSupportAvailable,
     probe: pluginFeatures.refactoring.probe,
     install: installRefactoringFeature,
+    uninstall: uninstallRefactoringFeature,
   },
 ];
 
@@ -96,6 +108,42 @@ function missingFeatures(
   return features.filter((f) => f.isApplicable(base) && f.isMissing(base));
 }
 
+/** Refresh the `gemstone.serverSupportInstalled` context key from `base`'s
+ *  latches, so the "Uninstall Server Support" menu appears/disappears right after
+ *  an install or uninstall changes what's present (not only on reconnect). The
+ *  install/uninstall drivers refresh the latches before this runs. */
+function refreshServerSupportInstalledContext(base: ActiveSession): void {
+  void vscode.commands.executeCommand(
+    'setContext',
+    'gemstone.serverSupportInstalled',
+    base.rbSupportAvailable === true || base.enhancedInspectorAvailable === true,
+  );
+}
+
+/**
+ * Show ONE consolidated confirmation for the whole bundle — "GemStone server
+ * support installed/uninstalled." — matching the command wording, instead of a
+ * separate toast per feature. Shown only when every attempted feature succeeded;
+ * a per-feature failure already surfaced its own error notification, so a
+ * "succeeded" toast alongside it would be contradictory. The individual install/
+ * uninstall drivers no longer show their own success toast — this is the single
+ * source of the success message.
+ */
+function announceServerSupportChange(verb: 'installed' | 'uninstalled', outcomes: boolean[]): void {
+  if (outcomes.length > 0 && outcomes.every((ok) => ok)) {
+    vscode.window.showInformationMessage(`GemStone server support ${verb}.`);
+  }
+}
+
+/** Features applicable to this stone that ARE installed — the uninstall targets.
+ *  The inverse of `missingFeatures`: applicable and not missing. */
+function installedFeatures(
+  base: ActiveSession,
+  features: readonly ServerSupportFeature[],
+): ServerSupportFeature[] {
+  return features.filter((f) => f.isApplicable(base) && !f.isMissing(base));
+}
+
 async function installFeatures(
   base: ActiveSession,
   sessionManager: SessionManager,
@@ -103,8 +151,9 @@ async function installFeatures(
   interactive: boolean,
   features: ServerSupportFeature[],
 ): Promise<void> {
+  const outcomes: boolean[] = [];
   for (const f of features) {
-    await f.install(base, sessionManager, extensionPath, interactive);
+    outcomes.push(await f.install(base, sessionManager, extensionPath, interactive));
   }
   // The refactoring-engine install adds a `GsRefactoring` dictionary (and refreshes
   // the working session so it's visible), but the Explorer loaded its dictionary
@@ -115,6 +164,8 @@ async function installFeatures(
   // install just re-reads the unchanged list (retaining the selection) — harmless.
   // The command no-ops gracefully when the Explorer has no active session.
   await vscode.commands.executeCommand('gemstone.explorer.refresh');
+  refreshServerSupportInstalledContext(base);
+  announceServerSupportChange('installed', outcomes);
 }
 
 /**
@@ -194,4 +245,64 @@ export async function runInstallServerSupport(
     return;
   }
   await installFeatures(base, sessionManager, extensionPath, true, applicable);
+}
+
+async function uninstallFeatures(
+  base: ActiveSession,
+  sessionManager: SessionManager,
+  interactive: boolean,
+  features: ServerSupportFeature[],
+): Promise<void> {
+  const outcomes: boolean[] = [];
+  for (const f of features) {
+    outcomes.push(await f.uninstall(base, sessionManager, interactive));
+  }
+  // The refactoring engine removed its `GsRefactoring` dictionary from the stone,
+  // but the Explorer loaded its dictionary list on connect — before this ran — so
+  // the now-gone dictionary will linger in the tree until the list is reloaded.
+  // Reload it now so the Explorer reflects the stone without the user hitting
+  // Refresh. Harmless when nothing dictionary-shaped changed, and the command
+  // no-ops gracefully when the Explorer has no active session.
+  await vscode.commands.executeCommand('gemstone.explorer.refresh');
+  refreshServerSupportInstalledContext(base);
+  announceServerSupportChange('uninstalled', outcomes);
+}
+
+/**
+ * Command Palette entry: uninstall every optional support currently installed on
+ * the selected stone. Only offered when something is installed; always confirms
+ * first (the removal commits and cannot be undone). Mirrors
+ * `runInstallServerSupport` so the two read as a matched pair.
+ */
+export async function runUninstallServerSupport(sessionManager: SessionManager): Promise<void> {
+  const base = sessionManager.getSelectedSession();
+  if (!base) {
+    vscode.window.showErrorMessage('No active GemStone session — connect to a stone first.');
+    return;
+  }
+  const installed = installedFeatures(base, SERVER_SUPPORT_FEATURES);
+  if (installed.length === 0) {
+    vscode.window.showInformationMessage(
+      `No optional GemStone support is installed on "${base.login.stone}".`,
+    );
+    return;
+  }
+
+  const UNINSTALL = 'Uninstall';
+  const names = installed.map((f) => f.label).join(' and ');
+  // Modal (not a toast): a destructive, committed change the user must confirm.
+  // Text mirrors the install offer so the two are recognizably a pair.
+  const choice = await vscode.window.showWarningMessage(
+    `Uninstall optional GemStone support from "${base.login.stone}"?`,
+    {
+      modal: true,
+      detail:
+        `Removes ${names} from this stone.\n\n` +
+        'Uninstalling requires a SystemUser login and commits the removal to the database. ' +
+        'This cannot be undone (you can reinstall later).',
+    },
+    UNINSTALL,
+  );
+  if (choice !== UNINSTALL) return; // Cancelled/dismissed: do nothing.
+  await uninstallFeatures(base, sessionManager, true, installed);
 }
