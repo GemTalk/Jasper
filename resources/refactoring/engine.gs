@@ -12504,9 +12504,10 @@ category: 'building'
 method: GsSplitClassRefactoring
 buildChangeSet
 	"Stage: #classAdd N; the movable methods as #methodAdd on N; a #classDefinitionEdit reversioning
-	 S (drop E, add the component ivar); a #classReparent per descendant; the accessor + a delegator
-	 per moved method as #methodAdd on S; and a #methodRemove per moved method on S (a guarded no-op,
-	 since the reversion copy-forward already omits them). Compiles nothing, commits nothing."
+	 S (drop E, add the component ivar); a #classReparent per descendant; and the accessor + a
+	 delegator per moved method as #methodAdd on S. The reversion's copy-forward already omits the
+	 moved methods from the new S version, so no explicit method removal is staged. Compiles nothing,
+	 commits nothing."
 	| cs dn sn srcDict |
 	cs := GsRefactoringChangeSet new.
 	self ensureAnalysis.
@@ -12763,7 +12764,6 @@ applyChange: aChange
 	(aChange kind == #classDefinitionEdit or: [aChange kind == #classReparent])
 		ifTrue: [^self applyClassChange: aChange].
 	aChange kind == #methodAdd ifTrue: [^self applyMethodAdd: aChange].
-	aChange kind == #methodRemove ifTrue: [^self applyMethodRemove: aChange].
 	^self error: 'Unexpected change kind for split-class: ', aChange kind printString
 %
 
@@ -12855,18 +12855,6 @@ applyMethodAdd: aChange
 		compileMethod: aChange newSource
 		dictionaries: System myUserProfile symbolList
 		category: (aChange category ifNil: ['as yet unclassified'])
-%
-
-category: 'applying'
-method: GsSplitClassRefactoring
-applyMethodRemove: aChange
-	"A moved method's removal from the source. copyMethodsFrom:to:skipping: already left it off the
-	 new version, so this is a guarded no-op that keeps re-application idempotent."
-	| cls sel |
-	cls := environment classNamed: aChange className.
-	cls isNil ifTrue: [^self].
-	sel := aChange selector asSymbol.
-	(cls includesSelector: sel) ifTrue: [cls removeSelector: sel]
 %
 
 category: 'applying'

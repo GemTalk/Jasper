@@ -68,6 +68,24 @@ describe('split-class query builders', () => {
     expect(clearExec.mock.calls[0][0]).toContain("clearToken: 'tok'");
   });
 
+  it('scopes the class lookup by dictionary name when the dict is a string', async () => {
+    const exec = vi.fn().mockResolvedValue('{}');
+
+    await candidatesForSplitClass(exec, 'Person', 'UserGlobals');
+
+    expect(lastCode(exec)).toContain('UserGlobals');
+  });
+
+  it('resolves the class through the symbol list when no dictionary is given', async () => {
+    const exec = vi.fn().mockResolvedValue('{}');
+
+    await candidatesForSplitClass(exec, 'Person');
+
+    const code = lastCode(exec);
+    expect(code).not.toContain('at: 3');
+    expect(code).toContain('GsSplitClassRefactoring candidatesForClass: cls');
+  });
+
   it('escapes a quote in the new class name and in an instance-variable name', async () => {
     const exec = vi.fn().mockResolvedValue('{}');
 

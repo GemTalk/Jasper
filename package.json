@@ -2205,7 +2205,7 @@
         },
         {
           "command": "gemstone.explorer.splitClass",
-          "when": "view == gemstoneExplorerHierarchy && viewItem == explorerHierClass",
+          "when": "view == gemstoneExplorerClassHierarchy && viewItem == explorerHierClass",
           "group": "3_refactor@4"
         },
         {

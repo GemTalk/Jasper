@@ -189,4 +189,81 @@ describe('split-class parsers', () => {
     expect(splitChangeLabel(reparent)).toContain('recompiled');
     expect(splitChangeLabel(defEdit)).toContain('definition');
   });
+
+  it('labels a class-side moved method and a selector-less method defensively', () => {
+    const base: SplitChange = {
+      id: '1',
+      kind: 'methodAdd',
+      dictName: null,
+      className: 'Address',
+      isMeta: true,
+      selector: 'street',
+      category: null,
+      oldSource: '',
+      newSource: 'x',
+    };
+
+    expect(splitChangeLabel(base)).toBe('Address class>>street');
+    expect(splitChangeLabel({ ...base, selector: null })).toBe('Address class>>?');
+  });
+
+  it('clamps a negative or non-numeric count to zero', () => {
+    const a = parseAnalysis(
+      JSON.stringify({ decline: null, movableCount: -4, affectedCount: 'lots' }),
+    );
+
+    expect(a.movableCount).toBe(0);
+    expect(a.affectedCount).toBe(0);
+  });
+
+  it('rejects a candidates payload that is not an envelope', () => {
+    expect(() => parseCandidates(JSON.stringify(['street']))).toThrow(/did not return an envelope/);
+  });
+
+  it('rejects an analysis payload that is not an envelope', () => {
+    expect(() => parseAnalysis(JSON.stringify(42))).toThrow(/did not return an envelope/);
+  });
+
+  it('rejects a start-preview envelope with neither a decline nor a token', () => {
+    expect(() => parseStartPreview(JSON.stringify({ total: 3 }))).toThrow(
+      /did not return a session token/,
+    );
+  });
+
+  it('defaults a missing outOfScope and page on a start preview', () => {
+    const s = parseStartPreview(JSON.stringify({ token: 'tok', total: 0 }));
+
+    expect(s.outOfScope).toEqual({ decline: null, note: null });
+    expect(s.page).toEqual({ changes: [], nextOffset: 0, done: true });
+  });
+
+  it('rejects a page that is not an envelope and one missing its change list', () => {
+    expect(() => parsePage(JSON.stringify('nope'))).toThrow(/did not return an envelope/);
+    expect(() => parsePage(JSON.stringify({ nextOffset: 1 }))).toThrow(/missing its change list/);
+  });
+
+  it('surfaces a page-level engine error string', () => {
+    expect(() => parsePage(JSON.stringify({ error: 'preview session expired' }))).toThrow(
+      /preview session expired/,
+    );
+  });
+
+  it('rejects a malformed change and one missing required fields', () => {
+    expect(() => parsePage(JSON.stringify({ changes: [42] }))).toThrow(/malformed/);
+    expect(() => parsePage(JSON.stringify({ changes: [{ kind: 'methodAdd' }] }))).toThrow(
+      /missing required fields/,
+    );
+  });
+
+  it('rejects an apply payload that is not an envelope', () => {
+    expect(() => parseApplyResult(JSON.stringify('boom'))).toThrow(
+      /did not return a result envelope/,
+    );
+  });
+
+  it('defaults the fields of a failed-change entry that omits them', () => {
+    const r = parseApplyResult(JSON.stringify({ applied: 0, failed: [{}] }));
+
+    expect(r.failed[0]).toEqual({ id: '?', label: '?', error: 'unknown error' });
+  });
 });

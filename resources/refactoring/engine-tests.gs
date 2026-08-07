@@ -9980,6 +9980,13 @@ changeOfKind: aKind for: aClassName in: cs
 	^cs changes detect: [:c | c kind = aKind and: [c className = aClassName]] ifNone: [nil]
 %
 
+category: 'private'
+method: GsSplitClassRefactoringTest
+changeOfKind: aKind for: aClassName in: cs matchingSelector: aSelector
+	^cs changes detect: [:c |
+		c kind = aKind and: [c className = aClassName and: [c selector = aSelector]]] ifNone: [nil]
+%
+
 category: 'tests - analysis'
 method: GsSplitClassRefactoringTest
 testAnalyzeComputesMovableMethods
@@ -10203,6 +10210,98 @@ testApplyDoesNotCommit
 	result := self ref applyDeselected: #().
 	self assert: (result includesString: '"committed":false').
 	self deny: (result includesString: '"error"')
+%
+
+category: 'tests - preview'
+method: GsSplitClassRefactoringTest
+testDelegatorForBinarySelectorWeavesTheArgument
+	"A movable binary method gets a delegator on the source that forwards the operand."
+	| add |
+	self compileOnSource: '* aNumber ^extractC * aNumber'.
+	add := self changeOfKind: #methodAdd for: 'GsSCSource' in: self ref changeSet
+		matchingSelector: #'*'.
+	self deny: add isNil.
+	self assert: (add newSource includesString: '^self gsSCComponent * aNumber')
+%
+
+category: 'tests - preview'
+method: GsSplitClassRefactoringTest
+testDelegatorForKeywordSelectorWeavesEveryArgument
+	"A movable multi-keyword method gets a delegator that re-weaves each keyword and argument."
+	| add |
+	self compileOnSource: 'scaleBy: a and: b ^extractC'.
+	add := self changeOfKind: #methodAdd for: 'GsSCSource' in: self ref changeSet
+		matchingSelector: #'scaleBy:and:'.
+	self deny: add isNil.
+	self assert: (add newSource includesString: 'scaleBy: a and: b').
+	self assert: (add newSource includesString: '^self gsSCComponent scaleBy: a and: b')
+%
+
+category: 'tests - apply'
+method: GsSplitClassRefactoringTest
+testApplyPreservesBehaviorThroughKeywordDelegator
+	"Set an extracted ivar and read it back through a moved keyword method: behavior survives the
+	 delegation even for a method that takes arguments."
+	| s |
+	self compileOnSource: 'sumWith: n ^extractC + n'.
+	self ref applyDeselected: #().
+	s := self source new.
+	s writeExtractC: 10.
+	self assert: (s sumWith: 5) = 15
+%
+
+category: 'tests - preview'
+method: GsSplitClassRefactoringTest
+testPreviewJsonStringSerializesTheChangeSet
+	| json |
+	json := self ref previewJsonString.
+	self assert: (json includesString: 'GsSCComponent').
+	self assert: (json includesString: '"kind"')
+%
+
+category: 'tests - analysis'
+method: GsSplitClassRefactoringTest
+testAnalyzeClassConvenienceReportsMovableCount
+	"The class-side analyzeClass:... convenience answers the same envelope as the instance path."
+	| json |
+	json := GsSplitClassRefactoring
+		analyzeClass: self source
+		splitIntoClassNamed: 'GsSCComponent'
+		extractingInstVars: #('extractC' 'extractD').
+	self assert: (json includesString: '"decline":null').
+	self assert: (json includesString: '"movableCount":3')
+%
+
+category: 'tests - paginated preview'
+method: GsSplitClassRefactoringTest
+testPageForTokenContinuesAndReportsExpiredSession
+	| r firstPage expired |
+	r := self ref.
+	r startPreviewToken: 'v8pagetok' maxBytes: 120.
+	firstPage := GsSplitClassRefactoring pageForToken: 'v8pagetok' from: 1 maxBytes: 120.
+	self assert: (firstPage includesString: '"changes"').
+	expired := GsSplitClassRefactoring pageForToken: 'no-such-token' from: 1 maxBytes: 120.
+	self assert: (expired includesString: 'expired').
+	GsSplitClassRefactoring clearToken: 'v8pagetok'
+%
+
+category: 'tests - paginated preview'
+method: GsSplitClassRefactoringTest
+testApplyForExpiredTokenReportsExpired
+	| result |
+	result := GsSplitClassRefactoring applyForToken: 'no-such-token' deselected: #().
+	self assert: (result includesString: 'expired')
+%
+
+category: 'tests - paginated preview'
+method: GsSplitClassRefactoringTest
+testClearTokenRemovesThePreviewSession
+	| r |
+	r := self ref.
+	r startPreviewToken: 'v8cleartok' maxBytes: 500.
+	self assert: (SessionTemps current at: #v8cleartok ifAbsent: [nil]) notNil.
+	GsSplitClassRefactoring clearToken: 'v8cleartok'.
+	self assert: (SessionTemps current at: #v8cleartok ifAbsent: [nil]) isNil
 %
 
 ! Extension methods

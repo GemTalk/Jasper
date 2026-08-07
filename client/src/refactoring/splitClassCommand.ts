@@ -115,7 +115,15 @@ export async function splitClassCommand(
       ignoreFocusOut: true,
     },
   );
-  if (chosen === undefined || chosen.length === 0) return undefined; // cancelled / nothing picked
+  if (chosen === undefined) return undefined; // Escape / cancelled — stay silent
+  if (chosen.length === 0) {
+    // Confirmed the pick with nothing checked: say why nothing happened, so it doesn't read as a
+    // crash (an Escape is a deliberate back-out and stays silent above).
+    void vscode.window.showInformationMessage(
+      `Split ${className}: no instance variables selected — nothing to extract.`,
+    );
+    return undefined;
+  }
 
   // 3. Name the new component class.
   const newName = await promptNewClassName(className);

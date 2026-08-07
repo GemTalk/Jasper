@@ -141,6 +141,58 @@ describe('showSplitClassPanel', () => {
     await vi.waitFor(() => expect(handlers.loadPage).toHaveBeenCalledTimes(2));
   });
 
+  it('fetches a single page on loadMore and posts it to the webview', async () => {
+    const handlers = {
+      loadPage: vi.fn(async () => ({ changes: [], nextOffset: 3, done: true })),
+      apply: vi.fn(),
+      cleanup: vi.fn(),
+    };
+
+    void showSplitClassPanel('Split Person — extract Address', start, handlers);
+    lastPanel().__emit({ command: 'loadMore' });
+
+    await vi.waitFor(() => expect(handlers.loadPage).toHaveBeenCalledTimes(1));
+    expect(lastPanel().webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'appendChanges', done: true }),
+    );
+  });
+
+  it('reports busy-done when asked to load more after every page is in', async () => {
+    const doneStart: StartSplitPreview = {
+      ...start,
+      page: { ...start.page, done: true, nextOffset: 2 },
+    };
+    const handlers = { loadPage: vi.fn(), apply: vi.fn(), cleanup: vi.fn() };
+
+    void showSplitClassPanel('Split Person — extract Address', doneStart, handlers);
+    lastPanel().__emit({ command: 'loadMore' });
+
+    await vi.waitFor(() =>
+      expect(lastPanel().webview.postMessage).toHaveBeenCalledWith({ command: 'busyDone' }),
+    );
+    expect(handlers.loadPage).not.toHaveBeenCalled();
+  });
+
+  it('ignores a second load request while one is still in flight', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const handlers = {
+      loadPage: vi.fn(async () => {
+        await gate;
+        return { changes: [], nextOffset: 3, done: true };
+      }),
+      apply: vi.fn(),
+      cleanup: vi.fn(),
+    };
+
+    void showSplitClassPanel('Split Person — extract Address', start, handlers);
+    lastPanel().__emit({ command: 'loadMore' });
+    lastPanel().__emit({ command: 'loadMore' });
+    release();
+
+    await vi.waitFor(() => expect(handlers.loadPage).toHaveBeenCalledTimes(1));
+  });
+
   it('surfaces an error and stays open when applying fails (latch cleared for retry)', async () => {
     const handlers = {
       loadPage: vi.fn(),
