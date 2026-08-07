@@ -17,19 +17,6 @@ import { tabInputUri } from './gemstoneFileSystemProvider';
 export class SourceEditorPlacement {
   private readonly owned = new Set<string>();
 
-  // URI (string) of the one reusable, non-preview source tab this browser keeps
-  // for single-click navigation, if any. The next single-click closes it instead
-  // of piling up tabs. We can't use a real preview tab for this — opening one
-  // scrolls the navigator tree (see openGemstoneDocument) — so we mimic its
-  // "single throwaway editor" behavior ourselves.
-  reusableTab?: string;
-
-  // The view-column the reusable tab was actually opened into. Recorded from the
-  // opened editor (not inferred from the URI), because the SAME gemstone:// method
-  // URI can be open in another browser's group too — so when we close the outgoing
-  // transient we must target the column WE put it in, never a foreign copy.
-  reusableColumn?: number;
-
   // `createHome` builds this browser's source region from scratch (e.g. a group
   // below its webview) and returns the column to open into. Required only when
   // homeColumn() is used.
@@ -68,7 +55,7 @@ export class SourceEditorPlacement {
   }
 
   /**
-   * The one editor group that holds this browser's source editors — the transient
+   * The one editor group that holds this browser's source editors — the preview
    * tab and every pinned tab live together here, so they read as one row of tabs.
    * Undefined until the first open, when the caller uses the active group.
    */

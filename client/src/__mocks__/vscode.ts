@@ -320,6 +320,60 @@ export const window = {
     };
     return qp;
   }),
+  // Controllable low-level InputBox, same shape and lifecycle rules as
+  // createQuickPick above. Fire the registered handlers from a test with
+  // `__type(text)` (a keystroke — sets `value` and fires onDidChangeValue),
+  // `__accept()` (Enter) and `__hide()` (Escape). Grab the created instance with
+  // `vi.mocked(vscode.window.createInputBox).mock.results.at(-1).value`.
+  //
+  // The Enter/Escape distinction is the point: real VS Code fires onDidHide for
+  // BOTH, and onDidAccept only for Enter — so a caller that wants to tell an
+  // accepted edit from an abandoned one has to track that itself.
+  createInputBox: vi.fn(() => {
+    let onChange: ((value: string) => void) | undefined;
+    let onAccept: (() => void | Promise<void>) | undefined;
+    let onHide: (() => void) | undefined;
+    let visible = false;
+    const fireHide = () => {
+      if (!visible) return;
+      visible = false;
+      onHide?.();
+    };
+    const box: Record<string, unknown> = {
+      title: '',
+      placeholder: '',
+      prompt: '',
+      value: '',
+      enabled: true,
+      busy: false,
+      onDidChangeValue: vi.fn((h: (value: string) => void) => {
+        onChange = h;
+        return { dispose: vi.fn() };
+      }),
+      onDidAccept: vi.fn((h: () => void | Promise<void>) => {
+        onAccept = h;
+        return { dispose: vi.fn() };
+      }),
+      onDidHide: vi.fn((h: () => void) => {
+        onHide = h;
+        return { dispose: vi.fn() };
+      }),
+      show: vi.fn(() => {
+        visible = true;
+      }),
+      hide: vi.fn(() => fireHide()),
+      dispose: vi.fn(() => fireHide()),
+      __type: (text: string) => {
+        box.value = text;
+        onChange?.(text);
+      },
+      __accept: async () => {
+        await onAccept?.();
+      },
+      __hide: () => fireHide(),
+    };
+    return box;
+  }),
   showOpenDialog: vi.fn(),
   showSaveDialog: vi.fn(),
   tabGroups: {

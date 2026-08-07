@@ -1,3 +1,4 @@
+import { asCount } from './previewCounts';
 /**
  * Pure helpers for the add / remove instance-variable (V1) preview: parsing the engine's
  * pre-flight analysis, the paginated preview envelope, and the apply result. No `vscode`
@@ -81,10 +82,6 @@ export interface InstVarAnalysis {
   sourceClass: string | null;
   affectedCount: number;
   willNotRecompileCount: number;
-}
-
-function asCount(v: unknown): number {
-  return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0;
 }
 
 function parseBroken(raw: unknown): BrokenMethod[] {

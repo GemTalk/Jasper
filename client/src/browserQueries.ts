@@ -20,6 +20,7 @@ import { getDictionaryEntries as sharedGetDictionaryEntries } from './queries/ge
 import { getGlobalsForDictionary as sharedGetGlobalsForDictionary } from './queries/getGlobalsForDictionary';
 import { getMethodCategories as sharedGetMethodCategories } from './queries/getMethodCategories';
 import { getClassEnvironments as sharedGetClassEnvironments } from './queries/getClassEnvironments';
+import { getMethodInstVarAccess as sharedGetMethodInstVarAccess } from './queries/getMethodInstVarAccess';
 import { getClassDefinition as sharedGetClassDefinition } from './queries/getClassDefinition';
 import { getClassComment as sharedGetClassComment } from './queries/getClassComment';
 import { canClassBeWritten as sharedCanClassBeWritten } from './queries/canClassBeWritten';
@@ -227,6 +228,7 @@ export type { GlobalEntry } from './queries/getGlobalsForDictionary';
 export type { ClassNameEntry } from './queries/getAllClassNames';
 export type { ClassCategoryEntry } from './queries/getClassesWithCategory';
 export type { EnvCategoryLine } from './queries/getClassEnvironments';
+export type { MethodInstVarAccess } from './queries/getMethodInstVarAccess';
 export type { ClassHierarchyEntry } from './queries/getClassHierarchy';
 export type { DescendantClass } from './refactoring/queries/getClassDescendantNames';
 export type { MoveArgs } from './refactoring/queries/previewInstVarStructure';
@@ -572,6 +574,20 @@ export function getClassEnvironments(
   maxEnv: number,
 ) {
   return sharedGetClassEnvironments(
+    defaultQueryExecutorUsing(session),
+    dictIndex,
+    className,
+    maxEnv,
+  );
+}
+
+export function getMethodInstVarAccess(
+  session: ActiveSession,
+  dictIndex: number,
+  className: string,
+  maxEnv: number,
+) {
+  return sharedGetMethodInstVarAccess(
     defaultQueryExecutorUsing(session),
     dictIndex,
     className,

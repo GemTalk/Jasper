@@ -39,6 +39,7 @@ import {
   installStaleGemstoneTabReaper,
   escapeSelectorSlashes,
   parseUri,
+  parseMethodUri,
   listOpenGemstoneTabs,
 } from '../gemstoneFileSystemProvider';
 import { SessionManager } from '../sessionManager';
@@ -998,6 +999,63 @@ describe('GemStoneFileSystemProvider', () => {
         'Globals',
       );
     });
+  });
+});
+
+describe('parseMethodUri', () => {
+  it('returns the method coordinates for a saved method source', () => {
+    const uri = Uri.parse('gemstone://1/Globals/Array/class/creation/new%3A?env=2');
+
+    expect(parseMethodUri(uri)).toEqual({
+      sessionId: 1,
+      dictName: 'Globals',
+      className: 'Array',
+      isMeta: true,
+      selector: 'new:',
+      environmentId: 2,
+      dictIndex: undefined,
+      diffView: false,
+    });
+  });
+
+  it('recovers a selector that contains slashes rather than truncating at the first segment', () => {
+    const uri = buildMethodUri({
+      kind: 'method',
+      sessionId: 1,
+      dictName: 'Globals',
+      className: 'Fraction',
+      isMeta: false,
+      category: 'arithmetic',
+      selector: '/',
+      environmentId: 0,
+    });
+
+    expect(parseMethodUri(uri)?.selector).toBe('/');
+  });
+
+  it('strips the base/session-override diff label and marks the view read-only', () => {
+    const uri = Uri.parse('gemstone://1/Globals/Array/instance/accessing/size%20%28base%29');
+
+    const ref = parseMethodUri(uri);
+
+    expect(ref?.selector).toBe('size');
+    expect(ref?.diffView).toBe(true);
+  });
+
+  it('rejects a new-method template URI', () => {
+    const uri = Uri.parse('gemstone://1/Globals/Array/instance/accessing/new-method');
+
+    expect(parseMethodUri(uri)).toBeNull();
+  });
+
+  it('rejects a class-definition URI', () => {
+    const uri = Uri.parse('gemstone://1/Globals/Array/definition');
+
+    expect(parseMethodUri(uri)).toBeNull();
+  });
+
+  it('rejects a non-gemstone URI', () => {
+    expect(parseMethodUri(Uri.parse('file:///tmp/x.st'))).toBeNull();
   });
 });
 
