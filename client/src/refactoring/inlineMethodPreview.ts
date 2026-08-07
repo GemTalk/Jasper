@@ -1,3 +1,4 @@
+import { asCount } from './previewCounts';
 /**
  * Pure helpers for the inline-method (M2) preview: parsing the engine's pre-flight
  * analysis, the paginated preview envelope, and the apply result. No `vscode`
@@ -68,10 +69,6 @@ export interface InlineAnalysis {
   targetSelector: string | null;
   lastSender: boolean;
   decline: string | null;
-}
-
-function asCount(v: unknown): number {
-  return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0;
 }
 
 function parseChange(raw: unknown, i: number): InlineChange {

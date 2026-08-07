@@ -1,13 +1,7 @@
 import * as vscode from 'vscode';
 import { SessionManager, ActiveSession } from './sessionManager';
+import { parseMethodUri } from './gemstoneFileSystemProvider';
 import * as queries from './browserQueries';
-
-interface MethodRef {
-  className: string;
-  isMeta: boolean;
-  selector: string;
-  environmentId: number;
-}
 
 export interface VerifiedBreakpoint {
   stepPoint: number;
@@ -41,8 +35,9 @@ export class BreakpointManager {
     uri: vscode.Uri,
     lines: number[],
   ): VerifiedBreakpoint[] {
-    const method = this.parseMethodUri(uri);
-    if (!method) return lines.map(() => ({ stepPoint: 0, actualLine: 0, verified: false }));
+    const method = parseMethodUri(uri);
+    if (!method || method.diffView)
+      return lines.map(() => ({ stepPoint: 0, actualLine: 0, verified: false }));
 
     try {
       // Clear existing breakpoints on this method
@@ -183,25 +178,6 @@ export class BreakpointManager {
       const lines = allBps.map((bp) => bp.location.range.start.line + 1); // 0-based → 1-based
       this.setBreakpointsForSource(session, uri, lines);
     }
-  }
-
-  private parseMethodUri(uri: vscode.Uri): MethodRef | null {
-    if (uri.scheme !== 'gemstone') return null;
-
-    const parts = uri.path.split('/').map(decodeURIComponent);
-    // parts[0] is '' (leading /)
-    // parts: ['', dictName, className, side, category, selector]
-    if (parts.length < 6) return null;
-
-    const envMatch = uri.query?.match(/env=(\d+)/);
-    const environmentId = envMatch ? parseInt(envMatch[1], 10) : 0;
-
-    return {
-      className: parts[2],
-      isMeta: parts[3] === 'class',
-      selector: parts[5],
-      environmentId,
-    };
   }
 }
 

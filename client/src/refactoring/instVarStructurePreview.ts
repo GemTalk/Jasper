@@ -1,3 +1,4 @@
+import { asCount } from './previewCounts';
 /**
  * Pure helpers for the instance-variable structure refactorings (V2 push up, V3 push
  * down, V5 convert temporary to instance variable): parsing the engine's pre-flight
@@ -75,10 +76,6 @@ export interface IvarAnalysis {
   decline: string | null;
   topClass: string | null;
   affectedCount: number;
-}
-
-function asCount(v: unknown): number {
-  return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0;
 }
 
 function parseChange(raw: unknown, i: number): IvarChange {

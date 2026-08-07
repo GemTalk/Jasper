@@ -1,3 +1,4 @@
+import { asCount } from './previewCounts';
 /**
  * Pure helpers for the rename-method (R2) preview: parsing the server-side
  * engine's combined preview envelope, ordering the changes for a safe apply,
@@ -90,10 +91,6 @@ export interface ApplyResult {
   applied: number;
   failed: { id: string; label: string; error: string }[];
   error?: string;
-}
-
-function asCount(v: unknown): number {
-  return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0;
 }
 
 /** Parse one staged change object; throws on a malformed/unknown entry. */
