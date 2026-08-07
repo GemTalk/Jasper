@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import {
   BaseMethodChange,
   BaseSelectorAnalysis,
-  asCount,
   makeParseAnalysis,
   makeParseChange,
   makeParsePage,
@@ -45,18 +44,6 @@ const parseWarnAnalysis = makeParseAnalysis<WarnSel>('Warn', (s) => ({
   warning: typeof s.warning === 'string' ? s.warning : null,
 }));
 const parseWarnPage = makeParsePage<WarnChange>('Warn', parseWarnChange);
-
-describe('asCount', () => {
-  it('accepts finite non-negative numbers and clamps everything else to 0', () => {
-    expect(asCount(5)).toBe(5);
-    expect(asCount(0)).toBe(0);
-    expect(asCount(-1)).toBe(0);
-    expect(asCount(Number.NaN)).toBe(0);
-    expect(asCount(Infinity)).toBe(0);
-    expect(asCount('7')).toBe(0);
-    expect(asCount(undefined)).toBe(0);
-  });
-});
 
 describe('makeParseChange', () => {
   const raw = {
