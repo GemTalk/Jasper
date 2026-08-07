@@ -61,7 +61,7 @@ function createTemporaryFile(extension: string = ''): string {
  * @returns The full path where a temporary file can be created.
  */
 export function temporaryFilePath(extension: string = ''): string {
-  return path.join(os.tmpdir(), temporaryFileName() + extension);
+  return path.join(os.tmpdir(), temporaryFileName(extension));
 }
 
 /**
@@ -69,8 +69,8 @@ export function temporaryFilePath(extension: string = ''): string {
  *
  * @returns A unique file name in the form `jasper-mcp-tempfile-<random-hex>`.
  */
-function temporaryFileName(): string {
-  return `jasper-mcp-tempfile-${crypto.randomBytes(6).toString('hex')}`;
+export function temporaryFileName(extension: string = ''): string {
+  return `jasper-tempfile-${crypto.randomBytes(6).toString('hex')}${extension}`;
 }
 
 /**

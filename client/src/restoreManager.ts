@@ -1,4 +1,4 @@
-// Orchestrates a logical (object) restore of a stone from a full backup file —
+// Orchestrates a logical (object) restore of a stone from a full backup file,
 // the destructive counterpart to backupManager.ts.
 //
 // Unlike a backup (one call on the live session), a restore spans a whole
@@ -9,7 +9,7 @@
 //
 // The 4046 quirk (see queries/restore.ts): on a full-logging stone,
 // `restoreFromBackup:` raises error 4046 (RestoreBackupSuccess) and auto-logs-out
-// on success. That error number therefore MEANS success — we catch it, reconnect,
+// on success. That error number therefore MEANS success; we catch it, reconnect,
 // and run `commitRestore`. A partial-logging stone instead returns normally
 // (RESTORE_NO_LOGOUT_MARKER) already fully restored, needing no commit step.
 import * as vscode from 'vscode';
@@ -35,14 +35,15 @@ export interface LogicalRestoreDeps {
   // machine as the stone), so this is always known; the safety copy of the
   // current extent lands under <dbPath>/backups/backupExtents.
   dbPath: string;
-  // Server-side path to the backup .dbf to restore from. Pre-selected when the
-  // restore was launched from a backup-file tree node; omitted for the Sessions
-  // view button, in which case the manager prompts with an open dialog.
-  backupFile?: string;
 
   // Pre-flight against the CURRENT live session, before it is torn down. A
   // restore requires the FileControl privilege.
   hasFileControl: () => boolean;
+
+  // Full server-side paths of the stone's existing backup files, queried
+  // against the CURRENT live session (same timing as hasFileControl above).
+  // Populates the quick pick used when `backupFile` isn't pre-selected.
+  listBackupFiles: () => string[];
 
   // Tear down the user's live session so the stone can be stopped cleanly.
   closeCurrentSession: () => Promise<void>;
@@ -50,9 +51,13 @@ export interface LogicalRestoreDeps {
   stopStone: () => Promise<void>;
   startStone: () => Promise<void>;
 
-  // Preserve the current extent to a server-side path (a clean copy — the stone
-  // is stopped when this runs). The manager computes the destination name.
-  copyCurrentExtentAside: (destPath: string) => Promise<void>;
+  // Preserve the current extent to a safety copy (a clean copy: the stone is
+  // stopped when this runs) named `fileName` (a stone-stamped, sortable name
+  // from preRestoreExtentName). Where that lands, and in what path
+  // representation (native, WSL UNC, ...), is entirely up to the
+  // implementation; the manager only ever sees the resolved path it returns,
+  // for the success/failure messages.
+  copyCurrentExtentAside: (fileName: string) => Promise<string>;
   // Replace the current extent with a pristine $GEMSTONE/bin/extent0.dbf. Only
   // called when the user chose a fresh extent (the space-reclaiming default).
   swapInFreshExtent: () => Promise<void>;
@@ -67,11 +72,6 @@ export interface LogicalRestoreDeps {
   loginAsSessionUser: () => Promise<RestoreSession>;
 }
 
-const BACKUP_FILTERS: Record<string, string[]> = {
-  'GemStone backup': ['dbf'],
-  'All files': ['*'],
-};
-
 // How long the green success message lingers in the status bar (ms).
 const STATUS_SUCCESS_MS = 6000;
 const WORKING_COLOR = 'charts.blue';
@@ -79,7 +79,7 @@ const SUCCESS_COLOR = 'charts.green';
 const FAILURE_COLOR = 'charts.red';
 
 // User-facing labels for the fresh-extent choice.
-const FRESH_EXTENT = 'Fresh extent (recommended — reclaims space)';
+const FRESH_EXTENT = 'Fresh extent (recommended: reclaims space)';
 const IN_PLACE = 'Restore onto the current extent';
 
 function errorMessage(e: unknown): string {
@@ -105,15 +105,11 @@ function timestamp(): string {
   );
 }
 
-// Where the current extent is preserved before the restore overwrites it: a
-// smart, sortable name under <dbPath>/backups/backupExtents. Exported for tests.
-export function preRestoreExtentPath(dbPath: string, stoneName: string): string {
-  return path.join(
-    dbPath,
-    'backups',
-    'backupExtents',
-    `extent0_preRestore_${stoneName}_${timestamp()}.dbf`,
-  );
+// A sortable name for the current extent's safety copy, taken before the
+// restore overwrites it. Exported for tests. Where this actually lands is up
+// to copyCurrentExtentAside's implementation. This module has no opinion.
+export function preRestoreExtentName(stoneName: string): string {
+  return `extent0_preRestore_${stoneName}_${timestamp()}.dbf`;
 }
 
 // Runs restoreFromBackup: on a freshly started stone and interprets the outcome.
@@ -159,20 +155,28 @@ export async function runLogicalRestore(deps: LogicalRestoreDeps): Promise<boole
     return false;
   }
 
-  // Choose the backup file (unless the tree node already pinned one).
-  let backupFile = deps.backupFile;
-  if (!backupFile) {
-    const defaultDir = path.join(deps.dbPath, 'backups');
-    const picked = await vscode.window.showOpenDialog({
-      title: `Full Logical Restore of ${deps.stoneName}`,
-      defaultUri: vscode.Uri.file(defaultDir),
-      canSelectMany: false,
-      openLabel: 'Restore',
-      filters: BACKUP_FILTERS,
-    });
-    if (!picked?.[0]) return false;
-    backupFile = picked[0].fsPath;
+  let files: string[];
+  try {
+    files = deps.listBackupFiles();
+  } catch (e) {
+    vscode.window.showErrorMessage(
+      `Could not list backup files for "${deps.stoneName}": ${errorMessage(e)}`,
+    );
+    return false;
   }
+  if (files.length === 0) {
+    vscode.window.showErrorMessage(`No backup files found for "${deps.stoneName}".`);
+    return false;
+  }
+  const picked = await vscode.window.showQuickPick(
+    files.map((filePath) => ({ label: path.posix.basename(filePath), filePath })),
+    {
+      title: `Full Logical Restore of ${deps.stoneName}`,
+      placeHolder: 'Select a backup to restore from',
+    },
+  );
+  if (!picked) return false;
+  const backupFile = picked.filePath;
 
   // Fresh extent (default) reclaims space; in-place keeps the existing bloat.
   const extentChoice = await vscode.window.showQuickPick([FRESH_EXTENT, IN_PLACE], {
@@ -195,19 +199,23 @@ export async function runLogicalRestore(deps: LogicalRestoreDeps): Promise<boole
 
   // A single always-blue status-bar item is the sole progress indicator: it
   // updates per step, then turns green on success or red on failure. We do NOT
-  // use a withProgress notification — it would sit alongside this item in the
+  // use a withProgress notification: it would sit alongside this item in the
   // default gray (reading as "blue & gray"), and notification text cannot be
   // recolored. Plain text, no codicon (an animated $(sync~spin) renders in the
   // default foreground rather than the item's color, which also looks two-toned).
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 0);
   status.color = new vscode.ThemeColor(WORKING_COLOR);
   const step = (message: string) => {
-    status.text = `Restoring "${deps.stoneName}" — ${message}`;
+    status.text = `Restoring "${deps.stoneName}": ${message}`;
   };
   step('closing the current session…');
   status.show();
 
   const login = freshExtent ? deps.loginAsDefaultAdmin : deps.loginAsSessionUser;
+
+  // Set once the safety copy actually completes, so a failure before that
+  // point doesn't falsely claim the current extent was saved somewhere.
+  let savedExtentPath: string | undefined;
 
   try {
     await deps.closeCurrentSession();
@@ -216,7 +224,7 @@ export async function runLogicalRestore(deps: LogicalRestoreDeps): Promise<boole
     await deps.stopStone();
 
     step('saving the current extent aside…');
-    await deps.copyCurrentExtentAside(preRestoreExtentPath(deps.dbPath, deps.stoneName));
+    savedExtentPath = await deps.copyCurrentExtentAside(preRestoreExtentName(deps.stoneName));
 
     if (freshExtent) {
       step('installing a fresh extent…');
@@ -260,8 +268,8 @@ export async function runLogicalRestore(deps: LogicalRestoreDeps): Promise<boole
     status.color = new vscode.ThemeColor(FAILURE_COLOR);
     setTimeout(() => status.dispose(), STATUS_SUCCESS_MS);
     vscode.window.showErrorMessage(
-      `Full logical restore failed: ${errorMessage(e)}. The current extent was saved under ` +
-        `${path.join(deps.dbPath, 'backups', 'backupExtents')}.`,
+      `Full logical restore failed: ${errorMessage(e)}.` +
+        (savedExtentPath ? ` The current extent was saved under ${savedExtentPath}.` : ''),
     );
     return false;
   }
