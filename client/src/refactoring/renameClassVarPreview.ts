@@ -1,3 +1,4 @@
+import { asCount } from './previewCounts';
 /**
  * Pure helpers for the rename-class-variable (R4) preview: parsing the
  * server-side engine's paginated preview envelope and the apply result, and
@@ -68,10 +69,6 @@ export interface ApplyResult {
   applied: number;
   failed: { id: string; label: string; error: string }[];
   error?: string;
-}
-
-function asCount(v: unknown): number {
-  return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0;
 }
 
 function parseChange(raw: unknown, i: number): ClassVarRenameChange {
