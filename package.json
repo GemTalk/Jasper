@@ -129,6 +129,57 @@
     ],
     "configuration": [
       {
+        "title": "Omni Search",
+        "properties": {
+          "gemstone.omniSearch.matchMode": {
+            "type": "string",
+            "enum": ["fuzzy", "substring", "prefix"],
+            "enumDescriptions": [
+              "Subsequence match: the typed characters appear in order (the Quick-Open feel).",
+              "The typed text appears as a contiguous run.",
+              "The result starts with the typed text."
+            ],
+            "default": "fuzzy",
+            "markdownDescription": "How Omni Search matches your query against classes, methods, dictionaries and open editors."
+          },
+          "gemstone.omniSearch.caseSensitive": {
+            "type": "boolean",
+            "default": false,
+            "description": "Match case-sensitively. Off by default."
+          },
+          "gemstone.omniSearch.categories": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": ["classes", "methods", "dictionaries", "openEditors"]
+            },
+            "default": ["classes", "methods", "dictionaries", "openEditors"],
+            "markdownDescription": "Which categories Omni Search includes. Scope a single search on the fly by typing a sigil + space: `c ` classes, `m ` methods, `d ` dictionaries, `e ` open editors."
+          },
+          "gemstone.omniSearch.maxResultsPerCategory": {
+            "type": "number",
+            "default": 20,
+            "minimum": 1,
+            "maximum": 200,
+            "description": "Maximum results shown per category."
+          },
+          "gemstone.omniSearch.debounceMs": {
+            "type": "number",
+            "default": 120,
+            "minimum": 0,
+            "maximum": 2000,
+            "description": "Delay after a keystroke before searching, in milliseconds (throttles per-keystroke stone queries)."
+          },
+          "gemstone.omniSearch.methodMinQueryLength": {
+            "type": "number",
+            "default": 3,
+            "minimum": 1,
+            "maximum": 10,
+            "description": "Minimum characters before the Methods category queries the stone (method search hits the stone per keystroke)."
+          }
+        }
+      },
+      {
         "title": "GemStone",
         "properties": {
           "gemstone.gciLibraries": {
@@ -974,6 +1025,12 @@
         "title": "Find Class…",
         "category": "GemStone",
         "icon": "$(search)"
+      },
+      {
+        "command": "gemstone.omniSearch",
+        "title": "Omni Search…",
+        "category": "GemStone",
+        "icon": "$(search-fuzzy)"
       },
       {
         "command": "gemstone.findMethodInClass",
@@ -2569,6 +2626,12 @@
         "command": "gemstone.findClass",
         "key": "ctrl+k c",
         "mac": "cmd+k c",
+        "when": "gemstone.hasActiveSession"
+      },
+      {
+        "command": "gemstone.omniSearch",
+        "key": "ctrl+alt+o",
+        "mac": "cmd+alt+o",
         "when": "gemstone.hasActiveSession"
       },
       {

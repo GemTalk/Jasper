@@ -34,6 +34,7 @@ import {
 } from './enhancedInspector/enhancedInspectorPerfTracker';
 import { CodeExecutor } from './codeExecutor';
 import { SystemBrowser } from './systemBrowser';
+import { registerOmniSearch } from './omniSearch/omniSearchCommand';
 import {
   startSeasideServer,
   stopSeasideServer,
@@ -2431,6 +2432,8 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.commands.executeCommand('gemstone.openDocument', uri);
       }
     }),
+
+    registerOmniSearch(sessionManager),
 
     vscode.commands.registerCommand('gemstone.findMethodInClass', () =>
       findMethodInClass(sessionManager),
