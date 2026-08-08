@@ -25,9 +25,9 @@ The `package-check` CI job (see `health-check.yml`) exists specifically to catch
 
 [Issue #351](https://github.com/GemTalk/Jasper/issues/351): PR #288 added an override forcing `vscode-languageclient`'s `minimatch` to `^10.2.5` to patch a `brace-expansion` advisory. But the pinned `vscode-languageclient@9` declares `minimatch: ^5.1.0`, so `minimatch@10.2.5` fell outside that range and npm marked the edge `invalid`. `vsce package` aborted while walking production dependencies with:
 
-```
+```text
 npm error code ELSPROBLEMS
 npm error invalid: minimatch@10.2.5 .../node_modules/minimatch
 ```
 
-This silently blocked the release rather than failing at the time the override was added. If you've hit this error, check every entry in `"overrides"` against the rule above. This was the second time this exact pattern broke packaging (the first was the `@hono/node-server` override, reverted in 1.8.9).
+If you've hit this error, check every entry in `"overrides"` against the rule above. (The first occurrence was the `@hono/node-server` override, reverted in 1.8.9.)

@@ -5,6 +5,7 @@ paths:
   - "tsconfig.base.json"
   - "esbuild.mjs"
   - ".github/workflows/health-check.yml"
+  - ".nvmrc"
 ---
 
 # VS Code / Node version pins

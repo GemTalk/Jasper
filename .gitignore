@@ -10,6 +10,10 @@ tsconfig.tsbuildinfo
 .gemstone
 test-results/
 
+# Local env files that may carry GemStone stone credentials — see CONTRIBUTING.md
+.env
+.env.*
+
 # Claude Code: everything under .claude/ is personal/machine-local runtime state
 # by default (locks, checkpoints, mailbox, routines, daemon/registry state, …).
 # Only the curated dirs/files below are un-ignored and shared with the team —
