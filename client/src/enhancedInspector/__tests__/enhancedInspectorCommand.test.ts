@@ -103,6 +103,23 @@ describe('installEnhancedInspectorFeature', () => {
     expect(ok).toBe(true);
   });
 
+  it('reports success (so the caller still toasts) even when the working-session refresh is deferred', async () => {
+    // The install lands + verifies server-side, but the session has uncommitted changes and the
+    // user picks "Later": refreshWorkingSessionAfterInstall returns false and the
+    // enhancedInspectorAvailable latch is left stale. The feature must still report success —
+    // keying it on the latch made a verified install look like a failure, so the bundle showed
+    // neither a success nor an error (issue #384 review).
+    mocks.sessionNeedsCommit.mockReturnValue(true);
+    mocks.showInformationMessage.mockResolvedValueOnce(undefined); // dismiss = not "Refresh" = Later
+    const base = createBaseSession();
+
+    const ok = await install(base, true);
+
+    expect(mocks.installSupport).toHaveBeenCalledTimes(1); // it did run + verify server-side
+    expect(base.enhancedInspectorAvailable).not.toBe(true); // latch intentionally left stale
+    expect(ok).toBe(true); // ...yet the install is reported as landed
+  });
+
   it('reports a clear error and never logs in when the payload files are missing', async () => {
     mocks.existsSync.mockReturnValue(false);
     const base = createBaseSession();

@@ -26,6 +26,20 @@ export function compiledMethodExpr(
   return `(${receiver(className, isMeta, dict)} compiledMethodAt: #'${escapeString(selector)}' environmentId: ${environmentId})`;
 }
 
+// A Smalltalk expression resolving the SymbolDictionary identified by `dict` — a
+// 1-based SymbolList index (unambiguous) or a name (first match). Evaluates to the
+// dictionary, or raises/short-circuits per the collection's own semantics if the
+// name/index is absent; callers that pass a possibly-missing name should `ifNil:`.
+// This is the ONE place that knows how to resolve a dictionary within the symbol
+// list — do not hand-roll `System myUserProfile symbolList at:/objectNamed:` for a
+// caller-supplied dict elsewhere (see the duplication guard test). To resolve a
+// CLASS within a dictionary, use classLookupExpr instead.
+export function dictLookupExpr(dict: number | string): string {
+  return typeof dict === 'number'
+    ? `System myUserProfile symbolList at: ${dict}`
+    : `System myUserProfile symbolList objectNamed: #'${escapeString(dict)}'`;
+}
+
 // Compose a Smalltalk expression that resolves a class by name, optionally
 // scoped to a specific dictionary (by 1-based index or by name). Evaluates to
 // the class OOP, or nil if not found. Callers should `ifNil:` to handle the

@@ -3,6 +3,8 @@ import { QueryExecutor } from '../types';
 import {
   fullLoggingEnabled,
   extentFileNames,
+  extentFolderInServer,
+  backupFolderInServer,
   suspendCheckpoints,
   resumeCheckpoints,
 } from '../extentBackup';
@@ -44,6 +46,78 @@ describe('extentFileNames', () => {
     extentFileNames(exec);
 
     expect(exec.mock.calls[0][0]).toContain('SystemRepository fileNames');
+  });
+});
+
+describe('extentFolderInServer', () => {
+  it('answers the directory holding the stone’s extent', () => {
+    const exec = vi.fn<QueryExecutor>(() => '/root/db-1/data/extent0.dbf\n');
+
+    expect(extentFolderInServer(exec)).toBe('/root/db-1/data');
+  });
+
+  it('answers the first extent’s directory when the repository spans several', () => {
+    const exec = vi.fn<QueryExecutor>(() => '/srv/gs/data/extent0.dbf\n/mnt/fast/extent1.dbf\n');
+
+    expect(extentFolderInServer(exec)).toBe('/srv/gs/data');
+  });
+
+  // Windows is a client-only platform — the stone never runs there — so its
+  // paths stay POSIX even when the client is Windows. Guards against path.posix
+  // here being "simplified" to plain path, whose dirname answers backslashes on
+  // a Windows client.
+  it('answers a POSIX directory, never one in the client’s own separator', () => {
+    const exec = vi.fn<QueryExecutor>(() => '/root/db-1/data/extent0.dbf\n');
+
+    expect(extentFolderInServer(exec)).not.toContain('\\');
+  });
+
+  it('throws when the stone cannot say where its extents are', () => {
+    expect(() => extentFolderInServer(vi.fn<QueryExecutor>(() => ''))).toThrow(
+      'Expected the stone to report at least one extent, got none',
+    );
+  });
+
+  it('throws rather than answering a relative directory', () => {
+    const exec = vi.fn<QueryExecutor>(() => 'data/extent0.dbf\n');
+
+    expect(() => extentFolderInServer(exec)).toThrow(
+      'Expected an absolute extent path from the stone, got "data/extent0.dbf"',
+    );
+  });
+});
+
+describe('backupFolderInServer', () => {
+  // The folder the admin views list and the restore picker reads. A backup written
+  // to the extent directory instead would be invisible to both.
+  it('answers the backups folder alongside the database’s data folder', () => {
+    const exec = vi.fn<QueryExecutor>(() => '/root/db-1/data/extent0.dbf\n');
+
+    expect(backupFolderInServer(exec)).toBe('/root/db-1/backups');
+  });
+
+  // "Replace extent" deletes every .dbf in the extent directory, so a backup kept
+  // there would be destroyed by a routine database reset.
+  it('answers a folder outside the extent folder', () => {
+    const exec = vi.fn<QueryExecutor>(() => '/root/db-1/data/extent0.dbf\n');
+
+    expect(backupFolderInServer(exec)).not.toContain('/data');
+  });
+
+  it('resolves the parent rather than leaving it for the stone to interpret', () => {
+    const exec = vi.fn<QueryExecutor>(() => '/root/db-1/data/extent0.dbf\n');
+
+    expect(backupFolderInServer(exec)).not.toContain('..');
+  });
+
+  it('answers a POSIX path, never one in the client’s own separator', () => {
+    const exec = vi.fn<QueryExecutor>(() => '/root/db-1/data/extent0.dbf\n');
+
+    expect(backupFolderInServer(exec)).not.toContain('\\');
+  });
+
+  it('throws when the stone cannot say where its extents are', () => {
+    expect(() => backupFolderInServer(vi.fn<QueryExecutor>(() => ''))).toThrow();
   });
 });
 

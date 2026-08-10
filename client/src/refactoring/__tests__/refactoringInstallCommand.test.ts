@@ -112,6 +112,24 @@ describe('installRefactoringFeature', () => {
     expect(ok).toBe(true);
   });
 
+  it('reports success (so the caller still toasts) even when the working-session refresh is deferred', async () => {
+    // Server-side install succeeds, but the session has uncommitted changes and the user picks
+    // "Later" on the refresh prompt: refreshWorkingSessionAfterInstall returns false and the
+    // rbSupportAvailable latch is left stale. The feature must still report that the install
+    // LANDED ON THE STONE — keying the return on the latch here made a verified install look like
+    // a failure, so the bundle showed neither a success nor an error (issue #384 review).
+    mocks.sessionNeedsCommit.mockReturnValue(true);
+    mocks.showInformationMessage.mockResolvedValueOnce(undefined); // dismiss = not "Refresh" = Later
+    const base = createBaseSession();
+
+    const ok = await install(base, true);
+
+    expect(mocks.installSupport).toHaveBeenCalledTimes(1); // it did run + verify server-side
+    expect(mocks.refreshAvailable).not.toHaveBeenCalled(); // refresh deferred → latch not relatched
+    expect(base.rbSupportAvailable).toBe(false); // latch intentionally left stale
+    expect(ok).toBe(true); // ...yet the install is reported as landed
+  });
+
   it('reports a clear error and never logs in when the payload files are missing', async () => {
     mocks.existsSync.mockReturnValue(false);
     const base = createBaseSession();

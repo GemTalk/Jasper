@@ -165,14 +165,9 @@ GsInstVarRefactoring >> optionsOf: aClass [
 { #category : 'private' }
 GsInstVarRefactoring >> allClassVarsOf: aClass [
 	"aClass's own and inherited class-variable names, as a Set of Strings. Used to decline an
-	 #add whose name would shadow a class variable inside method bodies."
-	| result cls |
-	result := Set new.
-	cls := aClass.
-	[cls isNil] whileFalse: [
-		(cls classVarNames ifNil: [#()]) do: [:n | result add: n asString].
-		cls := cls superclass].
-	^result
+	 #add whose name would shadow a class variable inside method bodies. Shared with V8 split --
+	 the walk itself lives on the environment so both refactorings ask the same question."
+	^environment classVarNamesVisibleTo: aClass
 ]
 
 { #category : 'private' }
@@ -228,8 +223,7 @@ GsInstVarRefactoring >> analyzeAdd [
 	"A subclass that already declares varName as its OWN instance variable would end up with two
 	 of that name once the new one is inherited. That fails mid-apply (error 2271), so decline up
 	 front and name the offenders rather than let the reshape strand a half-versioned subtree."
-	conflicts := (environment descendantsOf: definingClass)
-		select: [:d | (self ownInstVarsOf: d) includes: varName].
+	conflicts := environment descendantsOf: definingClass declaringInstVar: varName.
 	conflicts notEmpty ifTrue: [
 		names := (conflicts collect: [:c | c name asString])
 			inject: '' into: [:acc :s | acc isEmpty ifTrue: [s] ifFalse: [acc, ', ', s]].

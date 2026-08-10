@@ -22,6 +22,10 @@ import { getMethodCategories as sharedGetMethodCategories } from './queries/getM
 import { getClassEnvironments as sharedGetClassEnvironments } from './queries/getClassEnvironments';
 import { getMethodInstVarAccess as sharedGetMethodInstVarAccess } from './queries/getMethodInstVarAccess';
 import { getClassDefinition as sharedGetClassDefinition } from './queries/getClassDefinition';
+import {
+  getClassCategory as sharedGetClassCategory,
+  classExistsInDictionary as sharedClassExistsInDictionary,
+} from './queries/getClassCategory';
 import { getClassComment as sharedGetClassComment } from './queries/getClassComment';
 import { canClassBeWritten as sharedCanClassBeWritten } from './queries/canClassBeWritten';
 import { getAllClassNames as sharedGetAllClassNames } from './queries/getAllClassNames';
@@ -169,6 +173,14 @@ import {
   clearExtractSuperclassPreview as sharedClearExtractSuperclassPreview,
   HoistSets,
 } from './refactoring/queries/previewExtractSuperclass';
+import {
+  analyzeSplitClass as sharedAnalyzeSplitClass,
+  candidatesForSplitClass as sharedCandidatesForSplitClass,
+  startSplitClassPreview as sharedStartSplitClassPreview,
+  pageSplitClassPreview as sharedPageSplitClassPreview,
+  applySplitClass as sharedApplySplitClass,
+  clearSplitClassPreview as sharedClearSplitClassPreview,
+} from './refactoring/queries/previewSplitClass';
 import {
   getClassHistory as sharedGetClassHistory,
   revertClassToVersion as sharedRevertClassToVersion,
@@ -644,6 +656,22 @@ export function getClassDefinition(
   dict?: number | string,
 ): string {
   return sharedGetClassDefinition(defaultQueryExecutorUsing(session), className, dict);
+}
+
+export function getClassCategory(
+  session: ActiveSession,
+  className: string,
+  dict?: number | string,
+): string {
+  return sharedGetClassCategory(defaultQueryExecutorUsing(session), className, dict);
+}
+
+export function classExistsInDictionary(
+  session: ActiveSession,
+  className: string,
+  dict: number | string,
+): boolean {
+  return sharedClassExistsInDictionary(defaultQueryExecutorUsing(session), className, dict);
 }
 
 export function getClassComment(
@@ -1747,6 +1775,75 @@ export function applyExtractSuperclass(session: ActiveSession, token: string): P
 
 export function clearExtractSuperclassPreview(session: ActiveSession, token: string): string {
   return sharedClearExtractSuperclassPreview(defaultQueryExecutorUsing(session), token);
+}
+
+// Split-class (V8 / extract class) wrappers. GsSplitClassRefactoring extracts a chosen set of the
+// source's own instance variables (and the methods that use them) into a new component class,
+// leaving the source with a lazy accessor + delegators. Created server-side (no commit).
+// Paginated preview fetched NON-BLOCKING.
+export function candidatesForSplitClass(
+  session: ActiveSession,
+  className: string,
+  dict?: number | string,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Reading instance variables…');
+  return sharedCandidatesForSplitClass(exec, className, dict);
+}
+
+export function analyzeSplitClass(
+  session: ActiveSession,
+  className: string,
+  newName: string,
+  extractIvars: string[],
+  dict?: number | string,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Analysing…');
+  return sharedAnalyzeSplitClass(exec, className, newName, extractIvars, dict);
+}
+
+export function startSplitClassPreview(
+  session: ActiveSession,
+  className: string,
+  newName: string,
+  extractIvars: string[],
+  token: string,
+  maxBytes: number,
+  dict?: number | string,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, `Previewing split of ${className}…`);
+  return sharedStartSplitClassPreview(
+    exec,
+    className,
+    newName,
+    extractIvars,
+    token,
+    maxBytes,
+    dict,
+  );
+}
+
+export function pageSplitClassPreview(
+  session: ActiveSession,
+  token: string,
+  offset: number,
+  maxBytes: number,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Loading more changes…');
+  return sharedPageSplitClassPreview(exec, token, offset, maxBytes);
+}
+
+export function applySplitClass(session: ActiveSession, token: string): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Applying change…');
+  return sharedApplySplitClass(exec, token);
+}
+
+export function clearSplitClassPreview(session: ActiveSession, token: string): string {
+  return sharedClearSplitClassPreview(defaultQueryExecutorUsing(session), token);
 }
 
 // Class-definition history (native classHistory, this-stone-only, read-only) and

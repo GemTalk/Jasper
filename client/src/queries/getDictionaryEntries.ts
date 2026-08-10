@@ -1,5 +1,5 @@
 import { QueryExecutor } from './types';
-import { escapeString } from './util';
+import { dictLookupExpr } from './util';
 
 export interface DictEntry {
   isClass: boolean;
@@ -10,10 +10,7 @@ export interface DictEntry {
 // Accepts a dictionary by 1-based index (Jasper's IDE) or by name (MCP
 // clients). With a name, returns [] if no dict by that name exists.
 export function getDictionaryEntries(execute: QueryExecutor, dict: number | string): DictEntry[] {
-  const dictExpr =
-    typeof dict === 'number'
-      ? `System myUserProfile symbolList at: ${dict}`
-      : `System myUserProfile symbolList objectNamed: #'${escapeString(dict)}'`;
+  const dictExpr = dictLookupExpr(dict);
   const code = `| ws dict |
 dict := ${dictExpr}.
 dict ifNil: [^ ''].
