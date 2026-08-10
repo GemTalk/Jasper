@@ -362,4 +362,76 @@ describe('explorer queries (integration)', () => {
       expect(dictIndexOf('JasperItFirst')).toBeGreaterThan(dictIndexOf('JasperItSecond'));
     });
   });
+
+  describe('renameDictionary', () => {
+    it('renames a dictionary in place, keeping its symbol-list position', () => {
+      q.addDictionary(session(), 'JasperItRenameSrc');
+      const before = dictIndexOf('JasperItRenameSrc');
+      expect(before).toBeGreaterThan(0);
+
+      const result = q.renameDictionary(session(), 'JasperItRenameSrc', 'JasperItRenameDst');
+
+      expect(result).toBe('ok');
+      expect(dictIndexOf('JasperItRenameSrc')).toBe(0); // old name gone
+      expect(dictIndexOf('JasperItRenameDst')).toBe(before); // new name, same index
+    });
+
+    it('declines when the new name is already in use, leaving both dictionaries intact', () => {
+      q.addDictionary(session(), 'JasperItRenameA');
+      q.addDictionary(session(), 'JasperItRenameB');
+
+      const result = q.renameDictionary(session(), 'JasperItRenameA', 'JasperItRenameB');
+
+      expect(result).toContain('already in use');
+      expect(dictIndexOf('JasperItRenameA')).toBeGreaterThan(0);
+      expect(dictIndexOf('JasperItRenameB')).toBeGreaterThan(0);
+    });
+
+    it('refuses to rename a system dictionary (UserGlobals)', () => {
+      const before = userIndex();
+      expect(before).toBeGreaterThan(0);
+
+      const result = q.renameDictionary(session(), before, 'JasperItNotUserGlobals');
+
+      expect(result).toContain('system dictionary');
+      expect(dictIndexOf('UserGlobals')).toBe(before);
+      expect(dictIndexOf('JasperItNotUserGlobals')).toBe(0);
+    });
+
+    it('reports "Dictionary not found" for an out-of-range index', () => {
+      const result = q.renameDictionary(session(), 99999, 'JasperItNope');
+      expect(result).toContain('not found');
+    });
+  });
+
+  describe('renameClassCategory', () => {
+    it('renames a class category and its subtree, leaving unrelated categories alone', () => {
+      defineClass('JasperCatExact', 'JasperIt-Cat');
+      defineClass('JasperCatChild', 'JasperIt-Cat-Sub');
+      defineClass('JasperCatOther', 'JasperIt-Other');
+
+      const result = q.renameClassCategory(session(), userIndex(), 'JasperIt-Cat', 'JasperIt-Evt');
+
+      expect(result).toBe('renamed: 2');
+      expect(categoryOf('JasperCatExact')).toBe('JasperIt-Evt');
+      expect(categoryOf('JasperCatChild')).toBe('JasperIt-Evt-Sub');
+      expect(categoryOf('JasperCatOther')).toBe('JasperIt-Other');
+    });
+
+    it('merges into an existing category name (categories are labels, not bindings)', () => {
+      defineClass('JasperCatMoveMe', 'JasperIt-From');
+      defineClass('JasperCatAlready', 'JasperIt-To');
+
+      const result = q.renameClassCategory(session(), userIndex(), 'JasperIt-From', 'JasperIt-To');
+
+      expect(result).toBe('renamed: 1');
+      expect(categoryOf('JasperCatMoveMe')).toBe('JasperIt-To');
+      expect(categoryOf('JasperCatAlready')).toBe('JasperIt-To');
+    });
+
+    it('renames nothing (count 0) when no class is in the category', () => {
+      const result = q.renameClassCategory(session(), userIndex(), 'JasperIt-Nonexistent', 'X');
+      expect(result).toBe('renamed: 0');
+    });
+  });
 });

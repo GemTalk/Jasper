@@ -40,6 +40,7 @@ import {
   validateNewIvarName,
 } from './refactoring/renameInstVarPreview';
 import { showRenameInstVarPanel } from './refactoring/renameInstVarPanel';
+import { supportsServerUtf8FileIn } from './refactoring/refactoringInstall';
 import { renameInstVarAtCursorCommand } from './refactoring/renameInstVarAtCursorCommand';
 import { runInstVarRefactor } from './refactoring/instVarRefactorCommand';
 import { renameClassVarAtCursorCommand } from './refactoring/renameClassVarAtCursorCommand';
@@ -3426,6 +3427,182 @@ export class ExplorerController {
     void vscode.window.setStatusBarMessage(`Removed dictionary ${node.dictName}`, 4000);
   }
 
+  // Rename a dictionary on the symbol list. A SymbolDictionary's name is a
+  // self-referential entry it holds by identity, so the rename is a reflective
+  // swap (see queries/renameDictionary): its symbol-list index does not change and
+  // classes it holds are untouched. Source that names the dictionary literally is
+  // NOT rewritten, so the confirmation calls that out. Nothing is committed.
+  async renameDictionary(node: DictItem): Promise<void> {
+    const session = this.session();
+    if (!session) return;
+    const oldName = node.dictName;
+    const entered = await vscode.window.showInputBox({
+      title: 'Rename Dictionary',
+      prompt: `Rename dictionary "${oldName}" on the symbol list.`,
+      value: oldName,
+      valueSelection: [0, oldName.length],
+      validateInput: (v) => {
+        const t = v.trim();
+        if (t.length === 0) return 'Enter a dictionary name.';
+        if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(t)) {
+          return 'A dictionary name must be a Smalltalk identifier (a letter followed by letters, digits, or underscores).';
+        }
+        return undefined;
+      },
+    });
+    if (entered === undefined) return;
+    const newName = entered.trim();
+    if (newName === oldName) return;
+
+    const confirmed = await vscode.window.showWarningMessage(
+      `Rename dictionary "${oldName}" to "${newName}"?`,
+      {
+        modal: true,
+        detail:
+          `Renames it on this session’s symbol list. Source that names the dictionary literally ` +
+          `(e.g. "objectNamed: #${oldName}") is NOT rewritten. Classes it holds are unaffected, and ` +
+          `nothing is committed until you commit the session.`,
+      },
+      'Rename',
+    );
+    if (confirmed !== 'Rename') return;
+
+    let result: string;
+    try {
+      result = queries.renameDictionary(session, node.dictIndex, newName);
+    } catch (e: unknown) {
+      void vscode.window.showErrorMessage(
+        `Could not rename "${oldName}": ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return;
+    }
+    if (result !== 'ok') {
+      // Server-side refusal (system dictionary, name collision, not found).
+      void vscode.window.showErrorMessage(`Could not rename "${oldName}": ${result}`);
+      return;
+    }
+    // The dictionary keeps its symbol-list position, so its index is unchanged;
+    // redraw the pane and keep the renamed row selected and revealed.
+    this.dictProvider.refresh();
+    const item = new DictItem(newName, node.dictIndex);
+    this.selectDict(item);
+    try {
+      await this.views?.dict.reveal(item, { select: true, focus: true });
+    } catch {
+      /* ignore */
+    }
+    void vscode.window.setStatusBarMessage(`Renamed dictionary ${oldName} → ${newName}`, 4000);
+  }
+
+  // Rename a class category within the selected dictionary. Every class filed
+  // under the category -- exactly, or in its dash-segmented subtree -- is
+  // reassigned server-side via Class>>category: (see queries/renameClassCategory);
+  // nothing is recompiled or committed. A still-empty category that exists only in
+  // the client "fresh" overlay is carried across the rename in the overlay.
+  async renameClassCategory(item: ClassCategoryItem): Promise<void> {
+    const session = this.session();
+    if (!session) return;
+    if (this.state.dictIndex === undefined) {
+      void vscode.window.showWarningMessage('Select a dictionary first.');
+      return;
+    }
+    const dictIndex = this.state.dictIndex;
+    const oldPath = item.fullPath;
+    // Rename only this single node of the dash-segmented category tree, never the
+    // whole path: prompt with the last segment and rebuild the full path from the
+    // unchanged parent. Dashes are rejected so a rename can't graft on new subtree
+    // levels (or a trailing '-' empty category) -- it changes exactly one node, and
+    // the subtree beneath it moves with it (handled by renameClassCategory).
+    const oldSegment = item.segment;
+    const parentPath =
+      oldPath.length > oldSegment.length
+        ? oldPath.slice(0, oldPath.length - oldSegment.length - 1)
+        : '';
+    // Pre-3.7 stones can't compile a doit whose source carries a non-ASCII (wide)
+    // string literal -- the category name is interpolated as a literal, so a wide
+    // name crashes the 3.6.x compiler (`ComStrmSetCursor`, error 1001). 3.7+ handles
+    // UTF-8 source (same boundary as server UTF-8 file-in), so only guard below it,
+    // turning that crash into a clear message. The existing name is guarded here (the
+    // user can't edit it); the new name is also guarded live in validateInput.
+    const blockNonAscii = !supportsServerUtf8FileIn(session.stoneVersion);
+    // Iterate by code point (surrogate-safe) so astral chars are detected too.
+    const hasNonAscii = (s: string): boolean =>
+      [...s].some((ch) => (ch.codePointAt(0) ?? 0) > 0x7f);
+    if (blockNonAscii && hasNonAscii(oldPath)) {
+      void vscode.window.showErrorMessage(
+        `Cannot rename category '${oldPath}': non-ASCII category names aren't supported on GemStone ${session.stoneVersion}. Upgrade to 3.7 or later.`,
+      );
+      return;
+    }
+    const entered = await vscode.window.showInputBox({
+      title: 'Rename Class Category',
+      prompt: parentPath
+        ? `Rename category node '${oldSegment}' under '${parentPath}' and everything beneath it. Not committed automatically.`
+        : `Rename category node '${oldSegment}' and everything beneath it. Not committed automatically.`,
+      value: oldSegment,
+      valueSelection: [0, oldSegment.length],
+      validateInput: (v) => {
+        const t = v.trim();
+        if (t.length === 0) return 'Enter a category name.';
+        if (t.includes('-')) return "Enter a single category node (no '-').";
+        if (blockNonAscii && hasNonAscii(t))
+          return `Non-ASCII names aren't supported on GemStone ${session.stoneVersion} (needs 3.7+).`;
+        return undefined;
+      },
+    });
+    if (entered === undefined) return;
+    const newSegment = entered.trim();
+    if (newSegment === oldSegment) return;
+    const newPath = parentPath ? `${parentPath}-${newSegment}` : newSegment;
+
+    const inSubtree = (c: string): boolean => c === oldPath || c.startsWith(`${oldPath}-`);
+    const hasServerClasses = this.classCategoryEntries.some((e) => inSubtree(e.category));
+    if (hasServerClasses) {
+      let result: string;
+      try {
+        result = queries.renameClassCategory(session, dictIndex, oldPath, newPath);
+      } catch (e) {
+        void vscode.window.showErrorMessage(
+          `Rename class category failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
+        return;
+      }
+      if (result.startsWith('Dictionary not found')) {
+        void vscode.window.showErrorMessage(`Rename class category failed: ${result}`);
+        return;
+      }
+    }
+
+    // Carry empty overlay categories in the subtree across, preserving the suffix.
+    for (const c of [...this.newClassCategories]) {
+      if (inSubtree(c)) {
+        this.newClassCategories.delete(c);
+        this.newClassCategories.add(newPath + c.slice(oldPath.length));
+      }
+    }
+    if (this.state.classCategory !== undefined && inSubtree(this.state.classCategory)) {
+      this.state.classCategory = newPath + this.state.classCategory.slice(oldPath.length);
+    }
+
+    // Class categories changed, so refetch the dictionary's class/category data
+    // and redraw, then reveal the renamed category.
+    this.classCategoryEntries = queries.getClassesWithCategory(session, dictIndex);
+    this.categoryProvider.refresh();
+    this.classProvider.refresh();
+    this.methodProvider.refresh();
+    this.syncTitles();
+    const segment = newPath.split('-').pop() ?? newPath;
+    try {
+      await this.views?.category.reveal(new ClassCategoryItem(segment, newPath, false), {
+        select: true,
+        expand: true,
+      });
+    } catch {
+      /* ignore */
+    }
+    void vscode.window.setStatusBarMessage(`Renamed class category ${oldPath} → ${newPath}`, 4000);
+  }
+
   async newClassCategory(): Promise<void> {
     if (this.state.dictName === undefined) {
       void vscode.window.showWarningMessage('Select a dictionary first.');
@@ -4755,6 +4932,12 @@ export function registerGemStoneExplorer(
     ),
     vscode.commands.registerCommand('gemstone.explorer.removeDictionary', (node?: unknown) => {
       if (node instanceof DictItem) void ctl.removeDictionary(node);
+    }),
+    vscode.commands.registerCommand('gemstone.explorer.renameDictionary', (node?: unknown) => {
+      if (node instanceof DictItem) void ctl.renameDictionary(node);
+    }),
+    vscode.commands.registerCommand('gemstone.explorer.renameClassCategory', (node?: unknown) => {
+      if (node instanceof ClassCategoryItem) void ctl.renameClassCategory(node);
     }),
     // New (+) actions, one per pane.
     vscode.commands.registerCommand('gemstone.explorer.newDictionary', () => ctl.newDictionary()),

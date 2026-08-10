@@ -1156,6 +1156,18 @@
         "category": "GemStone"
       },
       {
+        "command": "gemstone.explorer.renameDictionary",
+        "title": "Rename Dictionary",
+        "category": "GemStone",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "gemstone.explorer.renameClassCategory",
+        "title": "Rename Class Category",
+        "category": "GemStone",
+        "icon": "$(edit)"
+      },
+      {
         "command": "gemstone.explorer.newClassCategory",
         "title": "New Class Category",
         "category": "GemStone",
@@ -1665,6 +1677,14 @@
           "when": "false"
         },
         {
+          "command": "gemstone.explorer.renameDictionary",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.renameClassCategory",
+          "when": "false"
+        },
+        {
           "command": "gemstone.explorer.renameIvar",
           "when": "false"
         },
@@ -1983,6 +2003,21 @@
         }
       ],
       "view/item/context": [
+        {
+          "command": "gemstone.explorer.renameClassCategory",
+          "when": "view == gemstoneExplorerCategories && viewItem == explorerCategory",
+          "group": "inline@0"
+        },
+        {
+          "command": "gemstone.explorer.renameDictionary",
+          "when": "view == gemstoneExplorerDicts && viewItem == explorerDict",
+          "group": "inline@0"
+        },
+        {
+          "command": "gemstone.explorer.renameDictionary",
+          "when": "view == gemstoneExplorerDicts && viewItem == explorerDict",
+          "group": "1_modification@0"
+        },
         {
           "command": "gemstone.explorer.removeDictionary",
           "when": "view == gemstoneExplorerDicts && viewItem == explorerDict",
