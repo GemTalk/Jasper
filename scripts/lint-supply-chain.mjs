@@ -9,6 +9,10 @@
 // config` is devEngines-gated, it fails outright on an npm too old to honor the
 // settings.
 //
+// Most settings are asserted to equal the committed value exactly; `min-release-age` is
+// asserted as a floor, so raising the cooldown is allowed but lowering or disabling it is not
+// (see satisfiesFloor below).
+//
 // Also checks a gap none of `npm ci`, `npm audit signatures`, or lockfile-lint
 // cover: a lockfile entry whose `version` disagrees with its own `resolved`
 // tarball (see checkLockfileDrift below). Born from a real incident (see
@@ -42,12 +46,14 @@ could not carry the fsevents deny even if it were live.
   one-off npx / npm i -g: pass --allow-scripts on that command instead
 `;
 
+// `expected` is an exact match unless `floor` is set — see satisfiesFloor for why
+// min-release-age is the one setting where "different from .npmrc" isn't automatically wrong.
 const CONFIG_ASSERTIONS = [
-  ['strict-allow-scripts', 'true'],
-  ['allow-git', 'none'],
-  ['allow-remote', 'none'],
-  ['allow-scripts', '', ALLOW_SCRIPTS_HINT],
-  ['min-release-age', '7'],
+  { key: 'strict-allow-scripts', expected: 'true' },
+  { key: 'allow-git', expected: 'none' },
+  { key: 'allow-remote', expected: 'none' },
+  { key: 'allow-scripts', expected: '', hint: ALLOW_SCRIPTS_HINT },
+  { key: 'min-release-age', expected: '7', floor: true },
 ];
 
 const REGISTRY_PREFIX = 'https://registry.npmjs.org/';
@@ -61,19 +67,38 @@ function describe(value) {
   return value === '' ? 'unset' : `'${value}'`;
 }
 
+// `min-release-age` is a cooldown length in days, not a switch: raising it is *stricter*, so
+// asserting it equals the committed 7 would fail a developer for being more careful than the
+// repo asks. Every other setting here is a boolean or an enum, where "stricter" has no
+// meaning and exact match is the only sensible comparison — hence the floor is opt-in per
+// assertion rather than the default.
+//
+// Compared numerically, since lexically '10' < '7'. Anything that isn't a number fails,
+// which is what rejects an absent setting: `min-release-age` defaults to null, so unsetting
+// it reads back as the literal string 'null' rather than the empty string the other keys use
+// — and no cooldown at all is exactly the state this assertion exists to catch.
+function satisfiesFloor(actual, floor) {
+  const value = Number(actual);
+  return actual !== '' && Number.isFinite(value) && value >= Number(floor);
+}
+
 function checkConfig() {
   let failed = false;
 
-  for (const [key, expected, hint] of CONFIG_ASSERTIONS) {
+  for (const { key, expected, hint, floor } of CONFIG_ASSERTIONS) {
     const actual = getConfig(key);
-    if (actual !== expected) {
-      console.error(`✗ npm config '${key}' is ${describe(actual)}, expected ${describe(expected)}`);
+    const satisfied = floor ? satisfiesFloor(actual, expected) : actual === expected;
+    if (satisfied) {
+      // Prints the actual value, which for an exact assertion is the expected one anyway but
+      // for a floor is the whole point (a raised cooldown should show the value in effect).
+      console.log(`✓ npm config '${key}' is ${describe(actual)}`);
+    } else {
+      const requirement = floor ? `at least ${describe(expected)}` : describe(expected);
+      console.error(`✗ npm config '${key}' is ${describe(actual)}, expected ${requirement}`);
       if (hint) {
         console.error(hint);
       }
       failed = true;
-    } else {
-      console.log(`✓ npm config '${key}' is ${describe(expected)}`);
     }
   }
 

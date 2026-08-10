@@ -15,7 +15,7 @@ See npm's [config reference](https://docs.npmjs.com/cli/v11/using-npm/config) fo
 | `strict-allow-scripts` | `true` | Fail-closed install-script allowlist: an unreviewed `allowScripts` verdict throws `ESTRICTALLOWSCRIPTS` before reify. |
 | `allow-git` | `none` | No-op today (no git deps in the tree) — exists to block one being introduced. Becomes the npm 12 default. |
 | `allow-remote` | `none` | No-op today — exists to block a non-registry dependency spec being introduced. Still permits the *configured* registry hostname, so a scoped `@foo:registry=` override slips through. Becomes the npm 12 default. |
-| `min-release-age` | `7` | Cooldown before a freshly published version is installable; see [below](#min-release-age-escape-hatch). |
+| `min-release-age` | `7` | Cooldown in days before a freshly published version is installable; see [below](#min-release-age-escape-hatch). `lint:supply-chain` treats this one as a floor rather than an exact value, so a stricter local setting is fine — raising it is safe, lowering or unsetting it is what the check exists to catch. |
 
 ## `allowScripts` (root `package.json`)
 
