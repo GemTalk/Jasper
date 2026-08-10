@@ -2,7 +2,8 @@
   "extends": "../tsconfig.base.json",
   "compilerOptions": {
     "outDir": "./out",
-    "noEmit": true
+    "noEmit": true,
+    "tsBuildInfoFile": "../node_modules/.cache/tsc/mcp.tsbuildinfo"
   },
   "include": [
     "src/**/*.ts",
