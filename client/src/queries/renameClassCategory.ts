@@ -1,5 +1,5 @@
 import { QueryExecutor } from './types';
-import { escapeString } from './util';
+import { escapeString, dictLookupExpr } from './util';
 
 // Rename a class category within one dictionary: reassign every class whose
 // category is `oldPath` -- or lives under it in the dash-segmented category tree
@@ -16,10 +16,7 @@ export function renameClassCategory(
   oldPath: string,
   newPath: string,
 ): string {
-  const dictExpr =
-    typeof dict === 'number'
-      ? `System myUserProfile symbolList at: ${dict} ifAbsent: [nil]`
-      : `System myUserProfile symbolList objectNamed: #'${escapeString(dict)}'`;
+  const dictExpr = dictLookupExpr(dict);
   // Categories are compared via Symbol identity (asSymbol ==), never String `=`:
   // on 3.6.x a category can come back as a wide (Unicode) string and `narrow =
   // wide` raises ArgumentError 2718. Interning normalises the width, so `==` on the

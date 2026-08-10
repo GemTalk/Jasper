@@ -7,7 +7,7 @@ describe('renameDictionary query', () => {
     const out = renameDictionary(exec, 5, 'NewName');
     const code = exec.mock.calls[0][0];
     expect(code).toContain('sl := System myUserProfile symbolList.');
-    expect(code).toContain('d := sl at: 5 ifAbsent: [nil].');
+    expect(code).toContain('d := System myUserProfile symbolList at: 5 ifAbsent: [nil].');
     expect(out).toBe('ok');
   });
 
@@ -15,7 +15,7 @@ describe('renameDictionary query', () => {
     const exec = vi.fn().mockReturnValue('ok');
     renameDictionary(exec, 'OldDict', 'NewDict');
     const code = exec.mock.calls[0][0];
-    expect(code).toContain("d := sl objectNamed: #'OldDict'.");
+    expect(code).toContain("d := System myUserProfile symbolList objectNamed: #'OldDict'.");
   });
 
   it('guards the system dictionaries', () => {
@@ -53,7 +53,7 @@ describe('renameDictionary query', () => {
     const exec = vi.fn().mockReturnValue('ok');
     renameDictionary(exec, "O'ld", "N'ew");
     const code = exec.mock.calls[0][0];
-    expect(code).toContain("sl objectNamed: #'O''ld'");
+    expect(code).toContain("symbolList objectNamed: #'O''ld'");
     expect(code).toContain("newSym := #'N''ew'.");
   });
 });

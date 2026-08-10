@@ -1,5 +1,5 @@
 import { QueryExecutor } from './types';
-import { escapeString } from './util';
+import { escapeString, dictLookupExpr } from './util';
 
 // Rename a SymbolDictionary on the user's symbol list. Not committed automatically.
 //
@@ -22,10 +22,7 @@ export function renameDictionary(
   dict: number | string,
   newName: string,
 ): string {
-  const dictExpr =
-    typeof dict === 'number'
-      ? `sl at: ${dict} ifAbsent: [nil]`
-      : `sl objectNamed: #'${escapeString(dict)}'`;
+  const dictExpr = dictLookupExpr(dict);
   const code = `| sl d newSym oldKey |
 sl := System myUserProfile symbolList.
 d := ${dictExpr}.
