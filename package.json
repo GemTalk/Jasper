@@ -1444,6 +1444,12 @@
         "icon": "$(type-hierarchy-super)"
       },
       {
+        "command": "gemstone.explorer.splitClass",
+        "title": "Split Class…",
+        "category": "GemStone",
+        "icon": "$(split-horizontal)"
+      },
+      {
         "command": "gemstone.downloadVersion",
         "title": "Download",
         "category": "GemStone Admin",
@@ -1753,6 +1759,10 @@
         },
         {
           "command": "gemstone.explorer.extractSuperclass",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.splitClass",
           "when": "false"
         },
         {
@@ -2200,6 +2210,11 @@
           "group": "3_refactor@3"
         },
         {
+          "command": "gemstone.explorer.splitClass",
+          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass && gemstone.rbSupportAvailable",
+          "group": "3_refactor@4"
+        },
+        {
           "command": "gemstone.explorer.openHierarchyDefinition",
           "when": "view == gemstoneExplorerClassHierarchy && viewItem == explorerHierClass",
           "group": "inline@1"
@@ -2228,6 +2243,11 @@
           "command": "gemstone.explorer.extractSuperclass",
           "when": "view == gemstoneExplorerClassHierarchy && viewItem == explorerHierClass && gemstone.rbSupportAvailable",
           "group": "3_refactor@3"
+        },
+        {
+          "command": "gemstone.explorer.splitClass",
+          "when": "view == gemstoneExplorerClassHierarchy && viewItem == explorerHierClass && gemstone.rbSupportAvailable",
+          "group": "3_refactor@4"
         },
         {
           "command": "gemstone.generateGrailStub",
@@ -2425,11 +2445,6 @@
         {
           "command": "gemstone.replaceExtent",
           "when": "view == gemstoneDatabases && viewItem == gemstoneDbStoneStopped",
-          "group": "inline@1"
-        },
-        {
-          "command": "gemstone.fullLogicalRestore",
-          "when": "view == gemstoneDatabases && viewItem == gemstoneDbBackupFile",
           "group": "inline@1"
         },
         {

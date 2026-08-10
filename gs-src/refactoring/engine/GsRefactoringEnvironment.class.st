@@ -141,6 +141,33 @@ GsRefactoringEnvironment >> descendantsOf: aClass [
 	^ordered asArray
 ]
 
+{ #category : 'enumerating' }
+GsRefactoringEnvironment >> descendantsOf: aClass declaringInstVar: aName [
+	"Every descendant of aClass that declares aName as its OWN instance variable. Once aName is
+	 added to aClass each of those descendants would carry two of that name, which the
+	 class-creation primitive rejects (error 2271) -- and it rejects it MID-apply, after earlier
+	 classes have already been versioned. Callers decline up front and name the offenders instead.
+
+	 Shared by every refactoring that introduces an instance variable on an existing class (V1 add,
+	 V8 split), so the check and its cross-version behaviour live in one place. Read-only."
+	^(self descendantsOf: aClass)
+		select: [:d | ((d instVarNames ifNil: [#()]) collect: [:e | e asString]) includes: aName]
+]
+
+{ #category : 'enumerating' }
+GsRefactoringEnvironment >> classVarNamesVisibleTo: aClass [
+	"aClass's own and inherited class-variable names, as a Set of Strings. A new instance variable
+	 of the same name would shadow one of these inside method bodies, so callers decline it.
+	 Read-only."
+	| result cls |
+	result := Set new.
+	cls := aClass.
+	[cls isNil] whileFalse: [
+		(cls classVarNames ifNil: [#()]) do: [:n | result add: n asString].
+		cls := cls superclass].
+	^result
+]
+
 { #category : 'accessing' }
 GsRefactoringEnvironment >> classNamed: aName [
 	"The first class bound to aName across all dictionaries (symbol-list order),
