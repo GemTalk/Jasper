@@ -1,5 +1,5 @@
 import { QueryExecutor } from '../../queries/types';
-import { escapeString, splitLines } from '../../queries/util';
+import { splitLines, dictLookupExpr } from '../../queries/util';
 
 // className → number of class variables DEFINED in that class (not inherited),
 // for every class in a dictionary, in a single round trip. The GemStone Explorer
@@ -11,10 +11,7 @@ export function getDefinedClassVarCounts(
   execute: QueryExecutor,
   dict: number | string,
 ): Map<string, number> {
-  const dictExpr =
-    typeof dict === 'number'
-      ? `System myUserProfile symbolList at: ${dict}`
-      : `System myUserProfile symbolList objectNamed: #'${escapeString(dict)}'`;
+  const dictExpr = dictLookupExpr(dict);
   const code = `| ws dict |
 dict := ${dictExpr}.
 dict ifNil: [^ ''].

@@ -22,6 +22,10 @@ import { getMethodCategories as sharedGetMethodCategories } from './queries/getM
 import { getClassEnvironments as sharedGetClassEnvironments } from './queries/getClassEnvironments';
 import { getMethodInstVarAccess as sharedGetMethodInstVarAccess } from './queries/getMethodInstVarAccess';
 import { getClassDefinition as sharedGetClassDefinition } from './queries/getClassDefinition';
+import {
+  getClassCategory as sharedGetClassCategory,
+  classExistsInDictionary as sharedClassExistsInDictionary,
+} from './queries/getClassCategory';
 import { getClassComment as sharedGetClassComment } from './queries/getClassComment';
 import { canClassBeWritten as sharedCanClassBeWritten } from './queries/canClassBeWritten';
 import { getAllClassNames as sharedGetAllClassNames } from './queries/getAllClassNames';
@@ -631,6 +635,22 @@ export function getClassDefinition(
   dict?: number | string,
 ): string {
   return sharedGetClassDefinition(defaultQueryExecutorUsing(session), className, dict);
+}
+
+export function getClassCategory(
+  session: ActiveSession,
+  className: string,
+  dict?: number | string,
+): string {
+  return sharedGetClassCategory(defaultQueryExecutorUsing(session), className, dict);
+}
+
+export function classExistsInDictionary(
+  session: ActiveSession,
+  className: string,
+  dict: number | string,
+): boolean {
+  return sharedClassExistsInDictionary(defaultQueryExecutorUsing(session), className, dict);
 }
 
 export function getClassComment(

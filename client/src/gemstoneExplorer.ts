@@ -83,7 +83,7 @@ import {
   validateNewClassVarName,
 } from './refactoring/renameClassVarPreview';
 import { showRenameClassVarPanel } from './refactoring/renameClassVarPanel';
-import { variableSides, defaultDictionaryIndex } from './explorerTreeHelpers';
+import { variableSides, defaultDictionaryIndex, categoryContains } from './explorerTreeHelpers';
 import { emptyVarSideUri } from './explorerVarDecorations';
 import {
   parseClassHistory,
@@ -1082,15 +1082,42 @@ export class ExplorerController {
 
   selectClassCategory(item: ClassCategoryItem): void {
     this.state.classCategory = item.fullPath;
-    this.state.className = undefined;
-    this.envLines = [];
-    this.hierChain = [];
-    this.hierSubs = [];
+    // A category node keeps showing (and the classes pane keeps highlighting) a
+    // selected class that still lives under it. Dropping the controller's className
+    // here would desync from that highlight — the row looks selected, yet New
+    // Method and the Hierarchy pane would report "no class selected". So keep the
+    // current class (and its already-loaded hierarchy) when it remains under this
+    // category; only reset when the class is filtered out of view.
+    const keepClass =
+      this.state.className !== undefined &&
+      categoryContains(item.fullPath, this.categoryOfClass(this.state.className));
+    if (!keepClass) {
+      this.state.className = undefined;
+      this.envLines = [];
+      this.hierChain = [];
+      this.hierSubs = [];
+    }
     this.clearFilters(VIEW_CLASSES, VIEW_METHODS);
     this.classProvider.refresh();
     this.hierarchyProvider.refresh();
     this.methodProvider.refresh();
     this.syncTitles();
+  }
+
+  // The class-category of a class as the classes pane currently knows it, or
+  // undefined if not loaded. Used to decide whether a class stays selected when its
+  // category node is clicked (see selectClassCategory).
+  private categoryOfClass(className: string): string | undefined {
+    return this.classCategoryEntries.find((e) => e.className === className)?.category;
+  }
+
+  // The class currently highlighted in the Classes pane, if any. A fallback for
+  // when the controller's className has been cleared (e.g. by a category click)
+  // but a class row is still visually selected — actions should act on what the
+  // user sees selected. Returns undefined if the selection isn't a class row.
+  private selectedClassInTree(): ClassItem | undefined {
+    const node = this.views?.klass.selection?.[0];
+    return node instanceof ClassItem ? node : undefined;
   }
 
   // Record which side / method-category the user last touched in the Methods
@@ -1431,6 +1458,17 @@ export class ExplorerController {
   // the click; two on the same class within the threshold open its definition.
   private readonly classClicks = new DoubleClickDetector(500);
   handleClassClick(className: string): void {
+    // (Re)select the class even when VS Code's tree still shows it highlighted from
+    // a DIFFERENT dictionary: a same-named class in another dictionary shares this
+    // row's tree id (`k:<className>`), so switching dictionaries leaves the row
+    // highlighted while selectDict cleared the controller's className — and clicking
+    // the already-highlighted row fires no onDidChangeSelection, so the hierarchy
+    // would never reload. classClicked fires on EVERY click, so re-sync here. The
+    // matching guard on the classView selection wiring keeps this to exactly one
+    // selectClass per click.
+    if (className !== this.state.className) {
+      this.selectClass(new ClassItem(className));
+    }
     if (this.classClicks.register(className)) {
       void this.openClassDefinition(new ClassItem(className));
     }
@@ -1459,7 +1497,10 @@ export class ExplorerController {
     }
     let entries: queries.ClassHierarchyEntry[];
     try {
-      entries = queries.getClassHierarchy(session, this.state.className);
+      // Scope the lookup to the selected dictionary: without dictIndex, a class
+      // name shadowed across dictionaries resolves to the global first match, so
+      // the Hierarchy pane would show the OTHER dictionary's class's lineage.
+      entries = queries.getClassHierarchy(session, this.state.className, this.state.dictIndex);
     } catch {
       this.hierChain = [];
       this.hierSubs = [];
@@ -3603,6 +3644,139 @@ export class ExplorerController {
     void vscode.window.setStatusBarMessage(`Renamed class category ${oldPath} → ${newPath}`, 4000);
   }
 
+  // Remove a class from its dictionary. `item` comes from the inline trash on a
+  // Classes-pane or Hierarchy-pane row; falls back to the selected class. The delete
+  // is dict-scoped (a shadowed name deletes the one the user sees). If the class has
+  // subclasses it's all-or-none: confirm removing the whole subtree, or cancel.
+  // Nothing is committed — the user commits the session.
+  async removeClass(item?: ClassItem | HierarchyItem): Promise<void> {
+    const session = this.session();
+    if (!session) {
+      void vscode.window.showWarningMessage('No active GemStone session.');
+      return;
+    }
+
+    let className: string | undefined;
+    let dictName: string | undefined;
+    let dictIndex: number | undefined;
+    if (item instanceof ClassItem) {
+      className = item.className;
+      dictName = this.state.dictName;
+      dictIndex = this.state.dictIndex;
+    } else if (item instanceof HierarchyItem) {
+      className = item.className;
+      const resolved = this.resolveClassDict(item.className, item.dictName);
+      dictName = resolved?.dictName;
+      dictIndex = resolved?.dictIndex;
+    } else if (this.state.className !== undefined) {
+      className = this.state.className;
+      dictName = this.state.dictName;
+      dictIndex = this.state.dictIndex;
+    }
+    if (className === undefined || dictName === undefined || dictIndex === undefined) {
+      void vscode.window.showWarningMessage('Select a class first.');
+      return;
+    }
+
+    // Kernel/system classes can't be modified in this repository — guard before prompting.
+    if (!queries.canClassBeWritten(session, className, dictIndex)) {
+      void vscode.window.showWarningMessage(`${className} cannot be modified in this repository.`);
+      return;
+    }
+
+    // The transitive subtree, resolved dict-scoped so a shadowed root walks its OWN
+    // lineage; each descendant carries the dictionary that binds it BY OBJECT IDENTITY
+    // (not by name), so a subclass whose name is shadowed in another dictionary still
+    // resolves to its own class, never a same-named one elsewhere.
+    const descendants = queries.getClassDescendantNames(session, className, dictIndex);
+
+    // Resolve and vet the whole subtree BEFORE prompting, so the all-or-none promise
+    // holds: if any member can't be located in a dictionary or can't be written, abort
+    // deleting nothing rather than half-removing the subtree. The root is already
+    // writable-checked above.
+    const targets: { className: string; dictIndex: number }[] = [{ className, dictIndex }];
+    const blockers: string[] = [];
+    for (const d of descendants) {
+      if (d.dictIndex <= 0) {
+        blockers.push(`${d.className} (not found in any dictionary)`);
+      } else if (!queries.canClassBeWritten(session, d.className, d.dictIndex)) {
+        blockers.push(`${d.className} (not writable)`);
+      } else {
+        targets.push({ className: d.className, dictIndex: d.dictIndex });
+      }
+    }
+    if (blockers.length > 0) {
+      void vscode.window.showErrorMessage(
+        `Cannot remove ${className} and its subclasses (all-or-none) — blocked by: ${blockers.join('; ')}.`,
+      );
+      return;
+    }
+
+    if (descendants.length > 0) {
+      const names = descendants.map((d) => d.className);
+      const preview =
+        names.slice(0, 8).join(', ') + (names.length > 8 ? `, …(+${names.length - 8} more)` : '');
+      const confirmed = await vscode.window.showWarningMessage(
+        `Remove ${className} and all ${names.length} of its subclass${names.length === 1 ? '' : 'es'}?`,
+        {
+          modal: true,
+          detail:
+            `Subclasses: ${preview}\n\n` +
+            'This removes the whole subtree — all or none. Nothing is committed until you commit the session.',
+        },
+        'Remove All',
+      );
+      if (confirmed !== 'Remove All') return;
+    } else {
+      const confirmed = await vscode.window.showWarningMessage(
+        `Remove class ${className} from ${dictName}?`,
+        { modal: true, detail: 'Nothing is committed until you commit the session.' },
+        'Remove',
+      );
+      if (confirmed !== 'Remove') return;
+    }
+
+    const failures: string[] = [];
+    for (const t of targets) {
+      try {
+        const result = queries.deleteClass(session, t.dictIndex, t.className);
+        if (!result.startsWith('Deleted class:')) failures.push(`${t.className}: ${result}`);
+      } catch (e: unknown) {
+        failures.push(`${t.className}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+
+    // Drop the removed class from selection/hierarchy and reload the current dict's
+    // class list so the pane reflects the deletion.
+    if (this.state.className === className) {
+      this.state.className = undefined;
+      this.envLines = [];
+      this.hierChain = [];
+      this.hierSubs = [];
+    }
+    if (this.state.dictIndex !== undefined) {
+      this.classCategoryEntries = queries.getClassesWithCategory(session, this.state.dictIndex);
+      this.loadDefinedIvarCounts();
+    }
+    this.categoryProvider.refresh();
+    this.classProvider.refresh();
+    this.hierarchyProvider.refresh();
+    this.methodProvider.refresh();
+    this.syncTitles();
+
+    if (failures.length > 0) {
+      void vscode.window.showErrorMessage(`Remove class had errors — ${failures.join('; ')}`);
+    } else if (targets.length > 1) {
+      const n = targets.length - 1;
+      void vscode.window.setStatusBarMessage(
+        `Removed ${className} and ${n} subclass${n === 1 ? '' : 'es'}`,
+        4000,
+      );
+    } else {
+      void vscode.window.setStatusBarMessage(`Removed class ${className}`, 4000);
+    }
+  }
+
   async newClassCategory(): Promise<void> {
     if (this.state.dictName === undefined) {
       void vscode.window.showWarningMessage('Select a dictionary first.');
@@ -3768,6 +3942,13 @@ export class ExplorerController {
         target.computed ? 'as yet unclassified' : target.category,
       );
       return;
+    }
+    if (this.state.className === undefined) {
+      // The controller lost its className (e.g. a category click) but a class row
+      // may still be highlighted — adopt it so "New Method" acts on what the user
+      // sees selected (this also reloads its methods and hierarchy).
+      const fromTree = this.selectedClassInTree();
+      if (fromTree) this.selectClass(fromTree);
     }
     if (this.state.className === undefined) {
       void vscode.window.showWarningMessage('Select a class first.');
@@ -4213,7 +4394,7 @@ export class ExplorerController {
     this.maybeRevealNewMethod();
   }
 
-  onExternalClassCompiled(sessionId: number, className: string): void {
+  onExternalClassCompiled(sessionId: number, className: string, dictName?: string): void {
     const session = this.session();
     if (!session || session.id !== sessionId || this.state.dictIndex === undefined) return;
     this.classCategoryEntries = queries.getClassesWithCategory(session, this.state.dictIndex);
@@ -4227,6 +4408,15 @@ export class ExplorerController {
       this.state.dictName !== undefined
     ) {
       void this.revealClass(this.state.dictName, this.state.dictIndex, className);
+      return;
+    }
+    // Otherwise the class was created in a dictionary other than the selected one
+    // — e.g. a new class whose `inDictionary:` names a different dictionary. Jump
+    // the explorer to where the class actually lives so it's revealed there,
+    // rather than leaving the panes on a dictionary that doesn't contain it.
+    const resolved = this.resolveClassDict(className, dictName);
+    if (resolved) {
+      void this.revealClass(resolved.dictName, resolved.dictIndex, className);
     } else {
       this.syncTitles();
     }
@@ -4494,7 +4684,7 @@ class ClassDropController implements vscode.TreeDragAndDropController<ClassNode>
 // for a live panel refresh.
 export interface ExplorerHandle {
   onMethodCompiled(sessionId: number, className: string): void;
-  onClassCompiled(sessionId: number, className: string): void;
+  onClassCompiled(sessionId: number, className: string, dictName?: string): void;
   onSessionAborted(sessionId: number): void;
 }
 
@@ -4566,9 +4756,11 @@ export function registerGemStoneExplorer(
   });
   classView.onDidChangeSelection((e) => {
     // Only a class row navigates; selecting an ivar child is inert (it's acted on
-    // via its inline pencil, not selection).
+    // via its inline pencil, not selection). Skip when the class is already the
+    // selected one so a click doesn't run selectClass twice — the row's classClicked
+    // command also (re)selects; between the two, exactly one runs per click.
     const node = e.selection[0];
-    if (node instanceof ClassItem) ctl.selectClass(node);
+    if (node instanceof ClassItem && node.className !== ctl.state.className) ctl.selectClass(node);
   });
   hierarchyView.onDidChangeSelection((e) => {
     if (e.selection[0]) ctl.selectHierarchyNode(e.selection[0]);
@@ -4631,6 +4823,14 @@ export function registerGemStoneExplorer(
             `Remove method failed: ${e instanceof Error ? e.message : String(e)}`,
           );
         });
+    }),
+    vscode.commands.registerCommand('gemstone.explorer.removeClass', (node?: unknown) => {
+      const item = node instanceof ClassItem || node instanceof HierarchyItem ? node : undefined;
+      void ctl.removeClass(item).catch((e: unknown) => {
+        void vscode.window.showErrorMessage(
+          `Remove class failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      });
     }),
     // Ctrl/Cmd+Enter in the Methods pane: open the selected method in a new
     // source editor to the side (same as the row's ↗ button). Keybindings don't
@@ -5003,7 +5203,8 @@ export function registerGemStoneExplorer(
 
   return {
     onMethodCompiled: (sessionId, className) => ctl.onExternalMethodCompiled(sessionId, className),
-    onClassCompiled: (sessionId, className) => ctl.onExternalClassCompiled(sessionId, className),
+    onClassCompiled: (sessionId, className, dictName) =>
+      ctl.onExternalClassCompiled(sessionId, className, dictName),
     onSessionAborted: (sessionId) => ctl.onSessionAborted(sessionId),
   };
 }

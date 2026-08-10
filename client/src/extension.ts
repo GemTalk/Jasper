@@ -893,7 +893,10 @@ export function activate(context: vscode.ExtensionContext) {
     gemstoneFs.onClassDefinitionCompiled((e) => {
       const parts = e.uri.path.split('/').map(decodeURIComponent);
       if (parts.length >= 3) {
-        explorer.onClassCompiled(parseInt(e.uri.authority, 10), parts[2]);
+        // parts: ['', dictName, className, 'definition'] — pass the dictName so the
+        // explorer can jump to the dictionary the class was actually created in
+        // (which may differ from the selected one for a new-class inDictionary:).
+        explorer.onClassCompiled(parseInt(e.uri.authority, 10), parts[2], parts[1]);
       }
     }),
   );

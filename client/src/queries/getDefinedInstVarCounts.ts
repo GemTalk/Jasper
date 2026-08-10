@@ -1,5 +1,5 @@
 import { QueryExecutor } from './types';
-import { escapeString, splitLines } from './util';
+import { splitLines, dictLookupExpr } from './util';
 
 // className → number of instance variables DEFINED in that class (not inherited),
 // for every class in a dictionary, in a single round trip. The GemStone Explorer
@@ -10,10 +10,7 @@ export function getDefinedInstVarCounts(
   execute: QueryExecutor,
   dict: number | string,
 ): Map<string, number> {
-  const dictExpr =
-    typeof dict === 'number'
-      ? `System myUserProfile symbolList at: ${dict}`
-      : `System myUserProfile symbolList objectNamed: #'${escapeString(dict)}'`;
+  const dictExpr = dictLookupExpr(dict);
   const code = `| ws dict |
 dict := ${dictExpr}.
 dict ifNil: [^ ''].
