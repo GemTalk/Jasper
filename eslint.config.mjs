@@ -11,8 +11,26 @@ import vitest from '@vitest/eslint-plugin';
 // not catch `not.toBeTruthy`, `resolves.toBeTruthy`, etc. Every chain that can
 // reach the matcher has to be listed for the ban to actually hold.
 const RESTRICTED_MODIFIERS = ['', 'not.', 'resolves.', 'rejects.', 'resolves.not.', 'rejects.not.'];
-const banChain = (matcher, message) =>
-  Object.fromEntries(RESTRICTED_MODIFIERS.map((prefix) => [prefix + matcher, message]));
+
+// The advice has to name the matcher that states the intent, which depends on
+// the value's type — so spell the dispatch out rather than saying "be specific"
+// and leaving the reader to pick, since the easiest pick (toBeDefined) is the
+// one that silently changes meaning on a `T | null`.
+const TRUTHY_ADVICE =
+  'Prefer a matcher that states the intent: not.toBeNull() for `T | null`, toBeDefined() for `T | undefined`, toBe(true) for a boolean, toContain(...) for a message.';
+const FALSY_ADVICE =
+  'Prefer a matcher that states the intent: toBeNull(), toBeUndefined(), toBe(false), or toHaveLength(0).';
+
+// A `not.`-bearing chain asserts the opposite of its matcher, so it takes the
+// opposite advice: `not.toBeTruthy()` is a falsy assertion and wants the falsy
+// replacements, not the truthy ones.
+const banChain = (matcher, message, negatedMessage) =>
+  Object.fromEntries(
+    RESTRICTED_MODIFIERS.map((prefix) => [
+      prefix + matcher,
+      prefix.includes('not.') ? negatedMessage : message,
+    ]),
+  );
 
 export default tseslint.config(
   // Keep lint ignores in sync with every `.gitignore` in the repo, instead of
@@ -153,14 +171,8 @@ export default tseslint.config(
       'vitest/no-restricted-matchers': [
         'error',
         {
-          ...banChain(
-            'toBeTruthy',
-            'Prefer a specific matcher: toBeDefined(), not.toBeNull(), toBe(true), toContain(...), etc.',
-          ),
-          ...banChain(
-            'toBeFalsy',
-            'Prefer a specific matcher: toBeUndefined(), toBeNull(), toBe(false), etc.',
-          ),
+          ...banChain('toBeTruthy', TRUTHY_ADVICE, FALSY_ADVICE),
+          ...banChain('toBeFalsy', FALSY_ADVICE, TRUTHY_ADVICE),
         },
       ],
       'vitest/require-local-test-context-for-concurrent-snapshots': 'error',
