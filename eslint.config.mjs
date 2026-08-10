@@ -6,6 +6,14 @@ import eslintConfigPrettier from 'eslint-config-prettier';
 import gitignore from 'eslint-config-flat-gitignore';
 import vitest from '@vitest/eslint-plugin';
 
+// `vitest/no-restricted-matchers` matches the *whole* modifier chain, and for a
+// plain matcher name it compares by exact equality — so a `toBeTruthy` key does
+// not catch `not.toBeTruthy`, `resolves.toBeTruthy`, etc. Every chain that can
+// reach the matcher has to be listed for the ban to actually hold.
+const RESTRICTED_MODIFIERS = ['', 'not.', 'resolves.', 'rejects.', 'resolves.not.', 'rejects.not.'];
+const banChain = (matcher, message) =>
+  Object.fromEntries(RESTRICTED_MODIFIERS.map((prefix) => [prefix + matcher, message]));
+
 export default tseslint.config(
   // Keep lint ignores in sync with every `.gitignore` in the repo, instead of
   // a hand-maintained duplicate list that drifts (e.g. missed `.vscode-test/`
@@ -145,9 +153,14 @@ export default tseslint.config(
       'vitest/no-restricted-matchers': [
         'error',
         {
-          toBeTruthy:
+          ...banChain(
+            'toBeTruthy',
             'Prefer a specific matcher: toBeDefined(), not.toBeNull(), toBe(true), toContain(...), etc.',
-          toBeFalsy: 'Prefer a specific matcher: toBeUndefined(), toBeNull(), toBe(false), etc.',
+          ),
+          ...banChain(
+            'toBeFalsy',
+            'Prefer a specific matcher: toBeUndefined(), toBeNull(), toBe(false), etc.',
+          ),
         },
       ],
       'vitest/require-local-test-context-for-concurrent-snapshots': 'error',
