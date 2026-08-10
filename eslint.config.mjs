@@ -137,6 +137,19 @@ export default tseslint.config(
       'vitest/no-interpolation-in-snapshots': 'error',
       'vitest/no-unneeded-async-expect-function': 'error',
       'vitest/prefer-called-exactly-once-with': 'error',
+      // toBeTruthy/toBeFalsy are vague: they pass for any truthy/falsy value,
+      // so a misuse can assert the wrong thing without failing (e.g. a typo'd
+      // getter that returns '' instead of undefined), and a real failure just
+      // reports "expected truthy, got falsy" instead of showing the value.
+      // Ban them and require a matcher that states the actual intent.
+      'vitest/no-restricted-matchers': [
+        'error',
+        {
+          toBeTruthy:
+            'Prefer a specific matcher: toBeDefined(), not.toBeNull(), toBe(true), toContain(...), etc.',
+          toBeFalsy: 'Prefer a specific matcher: toBeUndefined(), toBeNull(), toBe(false), etc.',
+        },
+      ],
       'vitest/require-local-test-context-for-concurrent-snapshots': 'error',
       'vitest/valid-describe-callback': 'error',
       'vitest/valid-expect': 'error',

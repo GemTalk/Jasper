@@ -292,7 +292,7 @@ r := (System myUserProfile symbolList objectNamed: #GsInstVarRefactoringTest) su
       await analyzeInstVar(asyncExec, 'add', BASE, 'mine', userIndex()),
     );
 
-    expect(analysis.decline).toBeTruthy();
+    expect(analysis.decline).toBeDefined();
     expect(analysis.decline).toContain(SUB);
   });
 
@@ -304,6 +304,6 @@ r := (System myUserProfile symbolList objectNamed: #GsInstVarRefactoringTest) su
     const analysis = parseAnalysis(
       await analyzeInstVar(asyncExec, 'add', BASE, 'count', userIndex()),
     );
-    expect(analysis.decline).toBeTruthy();
+    expect(analysis.decline).toBeDefined();
   });
 });
