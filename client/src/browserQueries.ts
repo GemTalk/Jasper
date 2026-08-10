@@ -159,6 +159,14 @@ import {
   HoistSets,
 } from './refactoring/queries/previewExtractSuperclass';
 import {
+  analyzeSplitClass as sharedAnalyzeSplitClass,
+  candidatesForSplitClass as sharedCandidatesForSplitClass,
+  startSplitClassPreview as sharedStartSplitClassPreview,
+  pageSplitClassPreview as sharedPageSplitClassPreview,
+  applySplitClass as sharedApplySplitClass,
+  clearSplitClassPreview as sharedClearSplitClassPreview,
+} from './refactoring/queries/previewSplitClass';
+import {
   getClassHistory as sharedGetClassHistory,
   revertClassToVersion as sharedRevertClassToVersion,
   removeClassVersion as sharedRemoveClassVersion,
@@ -1694,6 +1702,75 @@ export function applyExtractSuperclass(session: ActiveSession, token: string): P
 
 export function clearExtractSuperclassPreview(session: ActiveSession, token: string): string {
   return sharedClearExtractSuperclassPreview(defaultQueryExecutorUsing(session), token);
+}
+
+// Split-class (V8 / extract class) wrappers. GsSplitClassRefactoring extracts a chosen set of the
+// source's own instance variables (and the methods that use them) into a new component class,
+// leaving the source with a lazy accessor + delegators. Created server-side (no commit).
+// Paginated preview fetched NON-BLOCKING.
+export function candidatesForSplitClass(
+  session: ActiveSession,
+  className: string,
+  dict?: number | string,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Reading instance variables…');
+  return sharedCandidatesForSplitClass(exec, className, dict);
+}
+
+export function analyzeSplitClass(
+  session: ActiveSession,
+  className: string,
+  newName: string,
+  extractIvars: string[],
+  dict?: number | string,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Analysing…');
+  return sharedAnalyzeSplitClass(exec, className, newName, extractIvars, dict);
+}
+
+export function startSplitClassPreview(
+  session: ActiveSession,
+  className: string,
+  newName: string,
+  extractIvars: string[],
+  token: string,
+  maxBytes: number,
+  dict?: number | string,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, `Previewing split of ${className}…`);
+  return sharedStartSplitClassPreview(
+    exec,
+    className,
+    newName,
+    extractIvars,
+    token,
+    maxBytes,
+    dict,
+  );
+}
+
+export function pageSplitClassPreview(
+  session: ActiveSession,
+  token: string,
+  offset: number,
+  maxBytes: number,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Loading more changes…');
+  return sharedPageSplitClassPreview(exec, token, offset, maxBytes);
+}
+
+export function applySplitClass(session: ActiveSession, token: string): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Applying change…');
+  return sharedApplySplitClass(exec, token);
+}
+
+export function clearSplitClassPreview(session: ActiveSession, token: string): string {
+  return sharedClearSplitClassPreview(defaultQueryExecutorUsing(session), token);
 }
 
 // Class-definition history (native classHistory, this-stone-only, read-only) and
