@@ -418,7 +418,7 @@ describe('VersionManager.fetchAvailableVersions', () => {
       expect(versions).toHaveLength(1);
       expect(versions[0].version).toBe('4.0.0');
       expect(versions[0].extracted).toBe(true);
-      expect(Boolean(versions[0].local)).toBe(false); // a real dir, not a symlink — not "(local)"
+      expect(versions[0].local).toBeUndefined(); // a real dir, not a symlink — never marked "(local)"
       expect(versions[0].date).toBe('2026-07-01');
     },
   );

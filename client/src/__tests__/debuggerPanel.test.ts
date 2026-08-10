@@ -3903,7 +3903,7 @@ describe('DebuggerPanel', () => {
         (f: { receiverClass?: string }) => f.receiverClass === 'JasperDebugDemo',
       );
       expect(selfFrames.length).toBeGreaterThan(0);
-      for (const f of selfFrames) expect(Boolean(f.overridable)).toBe(false);
+      for (const f of selfFrames) expect(f.overridable).toBe(false);
     });
 
     it('opens a new-method template for the receiver class + frame selector, with banner help (no init)', async () => {
@@ -4325,7 +4325,7 @@ describe('DebuggerPanel', () => {
         (f: { receiverClass?: string }) => f.receiverClass === 'JasperMakerBase class',
       );
       expect(selfFrames.length).toBeGreaterThan(0);
-      for (const f of selfFrames) expect(Boolean(f.overridable)).toBe(false);
+      for (const f of selfFrames) expect(f.overridable).toBe(false);
     });
 
     it('implementInReceiver opens a CLASS-side new-method template for a metaclass receiver', async () => {
