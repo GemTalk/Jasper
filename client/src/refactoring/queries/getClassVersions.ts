@@ -1,5 +1,5 @@
 import { QueryExecutor } from '../../queries/types';
-import { escapeString, splitLines } from '../../queries/util';
+import { splitLines, dictLookupExpr } from '../../queries/util';
 
 /** A class's position in its class history: the 1-based index of the currently
  *  bound version and the total number of versions. Rendered as `[current/total]`. */
@@ -20,10 +20,7 @@ export function getClassVersions(
   execute: QueryExecutor,
   dict: number | string,
 ): Map<string, ClassVersionInfo> {
-  const dictExpr =
-    typeof dict === 'number'
-      ? `System myUserProfile symbolList at: ${dict}`
-      : `System myUserProfile symbolList objectNamed: #'${escapeString(dict)}'`;
+  const dictExpr = dictLookupExpr(dict);
   const code = `| ws dict |
 dict := ${dictExpr}.
 dict ifNil: [^ ''].

@@ -1046,6 +1046,12 @@
         "icon": "$(trash)"
       },
       {
+        "command": "gemstone.explorer.removeClass",
+        "title": "Remove Class",
+        "category": "GemStone",
+        "icon": "$(trash)"
+      },
+      {
         "command": "gemstoneExplorerDicts.filter",
         "title": "Filter",
         "category": "GemStone",
@@ -1153,7 +1159,8 @@
       {
         "command": "gemstone.explorer.removeDictionary",
         "title": "Remove Dictionary",
-        "category": "GemStone"
+        "category": "GemStone",
+        "icon": "$(trash)"
       },
       {
         "command": "gemstone.explorer.newClassCategory",
@@ -1755,6 +1762,10 @@
           "when": "false"
         },
         {
+          "command": "gemstone.explorer.removeClass",
+          "when": "false"
+        },
+        {
           "command": "gemstone.rowanRemoveRepo",
           "when": "false"
         },
@@ -1996,7 +2007,7 @@
         {
           "command": "gemstone.explorer.removeDictionary",
           "when": "view == gemstoneExplorerDicts && viewItem == explorerDict",
-          "group": "9_danger@0"
+          "group": "inline"
         },
         {
           "command": "gemstone.explorer.openMethodToSide",
@@ -2144,11 +2155,6 @@
           "group": "inline@6"
         },
         {
-          "command": "gemstone.explorer.removeMethod",
-          "when": "view == gemstoneExplorerMethods && viewItem =~ /^explorerMethod/",
-          "group": "9_danger@0"
-        },
-        {
           "command": "gemstone.explorer.renameClass",
           "when": "view == gemstoneExplorerClasses && viewItem == explorerClass && gemstone.rbSupportAvailable",
           "group": "inline@3"
@@ -2217,6 +2223,16 @@
           "command": "gemstone.generateGrailStub",
           "when": "view == gemstoneExplorerClassHierarchy && viewItem == explorerHierClass",
           "group": "2_generate@1"
+        },
+        {
+          "command": "gemstone.explorer.removeClass",
+          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass",
+          "group": "inline@9"
+        },
+        {
+          "command": "gemstone.explorer.removeClass",
+          "when": "view == gemstoneExplorerClassHierarchy && viewItem == explorerHierClass",
+          "group": "inline@9"
         },
         {
           "command": "gemstone.rowanUpdateRepo",
@@ -2394,11 +2410,6 @@
         {
           "command": "gemstone.replaceExtent",
           "when": "view == gemstoneDatabases && viewItem == gemstoneDbStoneStopped",
-          "group": "inline@1"
-        },
-        {
-          "command": "gemstone.fullLogicalRestore",
-          "when": "view == gemstoneDatabases && viewItem == gemstoneDbBackupFile",
           "group": "inline@1"
         },
         {

@@ -1,5 +1,5 @@
 import { QueryExecutor } from './types';
-import { escapeString } from './util';
+import { escapeString, dictLookupExpr } from './util';
 
 // Destructive. Not committed automatically. Accepts a dict by 1-based index
 // or by name — required because deletion must target a specific dictionary
@@ -10,10 +10,7 @@ export function deleteClass(
   className: string,
 ): string {
   const esc = escapeString(className);
-  const dictExpr =
-    typeof dict === 'number'
-      ? `System myUserProfile symbolList at: ${dict}`
-      : `System myUserProfile symbolList objectNamed: #'${escapeString(dict)}'`;
+  const dictExpr = dictLookupExpr(dict);
   const code = `| d removed |
 d := ${dictExpr}.
 d ifNil: [^ 'Dictionary not found'].
