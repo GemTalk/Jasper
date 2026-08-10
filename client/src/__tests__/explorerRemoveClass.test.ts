@@ -5,19 +5,13 @@ vi.mock('../browserQueries', async (orig) => ({
   ...(await orig()),
   canClassBeWritten: vi.fn(() => true),
   getClassDescendantNames: vi.fn(() => []),
-  getAllClassNames: vi.fn(() => []),
   getClassesWithCategory: vi.fn(() => []),
   deleteClass: vi.fn(() => 'Deleted class: X'),
 }));
 
 import { window } from '../__mocks__/vscode';
 import { ExplorerController } from '../gemstoneExplorer';
-import {
-  canClassBeWritten,
-  getClassDescendantNames,
-  getAllClassNames,
-  deleteClass,
-} from '../browserQueries';
+import { canClassBeWritten, getClassDescendantNames, deleteClass } from '../browserQueries';
 import type { SessionManager, ActiveSession } from '../sessionManager';
 
 function makeController(): ExplorerController {
@@ -31,16 +25,25 @@ function makeController(): ExplorerController {
 }
 
 const warn = window.showWarningMessage as ReturnType<typeof vi.fn>;
+const error = window.showErrorMessage as ReturnType<typeof vi.fn>;
 const deleteClassMock = deleteClass as ReturnType<typeof vi.fn>;
 const descendantsMock = getClassDescendantNames as ReturnType<typeof vi.fn>;
-const allClassesMock = getAllClassNames as ReturnType<typeof vi.fn>;
+const writableMock = canClassBeWritten as ReturnType<typeof vi.fn>;
+
+// A descendant now carries the dictionary that binds it (resolved by object identity
+// in the query layer), so removeClass never has to guess by name.
+const descendant = (className: string, dictIndex: number, dictName = 'UserGlobals') => ({
+  className,
+  parentName: 'Doomed',
+  dictIndex,
+  dictName,
+});
 
 beforeEach(() => {
   vi.clearAllMocks();
-  (canClassBeWritten as ReturnType<typeof vi.fn>).mockReturnValue(true);
+  writableMock.mockReturnValue(true);
   deleteClassMock.mockReturnValue('Deleted class: X');
   descendantsMock.mockReturnValue([]);
-  allClassesMock.mockReturnValue([]);
 });
 
 describe('ExplorerController.removeClass', () => {
@@ -52,7 +55,6 @@ describe('ExplorerController.removeClass', () => {
 
     expect(deleteClassMock).toHaveBeenCalledTimes(1);
     expect(deleteClassMock).toHaveBeenCalledWith(expect.anything(), 1, 'Doomed');
-    // The removed class is dropped from selection.
     expect(ctl.state.className).toBeUndefined();
   });
 
@@ -66,18 +68,10 @@ describe('ExplorerController.removeClass', () => {
     expect(ctl.state.className).toBe('Doomed');
   });
 
-  it('removes the whole subtree (all-or-none) when the class has subclasses', async () => {
+  it('removes the whole subtree, deleting each member in its OWN dictionary', async () => {
     const ctl = makeController();
-    descendantsMock.mockReturnValue([
-      { className: 'Sub1', parentName: 'Doomed' },
-      { className: 'Sub2', parentName: 'Sub1' },
-    ]);
-    // Sub2 lives in a different dictionary — each descendant deletes dict-scoped.
-    allClassesMock.mockReturnValue([
-      { className: 'Sub1', dictName: 'UserGlobals', dictIndex: 1 },
-      { className: 'Sub2', dictName: 'OtherDict', dictIndex: 3 },
-      { className: 'Doomed', dictName: 'UserGlobals', dictIndex: 1 },
-    ]);
+    // Sub2 lives in a different dictionary (index 3) than the root (index 1).
+    descendantsMock.mockReturnValue([descendant('Sub1', 1), descendant('Sub2', 3, 'OtherDict')]);
     warn.mockResolvedValueOnce('Remove All');
 
     await ctl.removeClass();
@@ -88,9 +82,48 @@ describe('ExplorerController.removeClass', () => {
     expect(deleteClassMock).toHaveBeenCalledWith(expect.anything(), 1, 'Doomed');
   });
 
+  it('deletes a subclass in its own dictionary even when its name is shadowed elsewhere', async () => {
+    const ctl = makeController();
+    // The real subclass "Shadowed" lives in dict index 3; a different, unrelated class
+    // of the same name lives in dict index 1. The query resolved by object identity,
+    // so the descendant carries dictIndex 3 — deleteClass must target 3, not 1.
+    descendantsMock.mockReturnValue([descendant('Shadowed', 3, 'OtherDict')]);
+    warn.mockResolvedValueOnce('Remove All');
+
+    await ctl.removeClass();
+
+    expect(deleteClassMock).toHaveBeenCalledWith(expect.anything(), 3, 'Shadowed');
+    // Never the shadow in dict 1.
+    expect(deleteClassMock).not.toHaveBeenCalledWith(expect.anything(), 1, 'Shadowed');
+  });
+
+  it('aborts (all-or-none) without deleting when a descendant cannot be located', async () => {
+    const ctl = makeController();
+    descendantsMock.mockReturnValue([descendant('Sub1', 1), descendant('Lost', 0, '')]);
+
+    await ctl.removeClass();
+
+    expect(deleteClassMock).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('all-or-none'));
+    // No confirmation was even offered — we can't deliver the removal.
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('aborts (all-or-none) without deleting when a descendant is not writable', async () => {
+    const ctl = makeController();
+    descendantsMock.mockReturnValue([descendant('Sub1', 1), descendant('Locked', 2, 'Kernel')]);
+    // Root writable; the "Locked" descendant is not.
+    writableMock.mockImplementation((_s: unknown, name: string) => name !== 'Locked');
+
+    await ctl.removeClass();
+
+    expect(deleteClassMock).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('Locked'));
+  });
+
   it('cancels the subtree removal when the all-or-none confirmation is dismissed', async () => {
     const ctl = makeController();
-    descendantsMock.mockReturnValue([{ className: 'Sub1', parentName: 'Doomed' }]);
+    descendantsMock.mockReturnValue([descendant('Sub1', 1)]);
     warn.mockResolvedValueOnce(undefined);
 
     await ctl.removeClass();
@@ -98,9 +131,9 @@ describe('ExplorerController.removeClass', () => {
     expect(deleteClassMock).not.toHaveBeenCalled();
   });
 
-  it('refuses to remove a class that cannot be written in this repository', async () => {
+  it('refuses to remove a root class that cannot be written in this repository', async () => {
     const ctl = makeController();
-    (canClassBeWritten as ReturnType<typeof vi.fn>).mockReturnValue(false);
+    writableMock.mockReturnValue(false);
 
     await ctl.removeClass();
 

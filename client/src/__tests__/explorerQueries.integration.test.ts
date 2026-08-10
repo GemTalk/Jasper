@@ -448,5 +448,69 @@ describe('explorer queries (integration)', () => {
       expect(q.classExistsInDictionary(session(), GADGET, other)).toBe(true);
       expect(q.classExistsInDictionary(session(), GADGET, userIndex())).toBe(false);
     });
+
+    // Compile `super subclass: 'name' ... inDictionary: <dict>` (base-kernel selector).
+    const defineIn = (superName: string, name: string, dict: string): void => {
+      q.compileClassDefinition(
+        session(),
+        `${superName} subclass: '${name}' instVarNames: #() classVars: #() ` +
+          `classInstVars: #() poolDictionaries: #() inDictionary: ${dict}`,
+      );
+    };
+
+    // getClassDescendantNames / Remove Class must resolve each subclass by CLASS OBJECT
+    // IDENTITY, so a subclass whose name is also bound (as an unrelated class) in another
+    // dictionary reports its OWN dictionary — never the same-named stranger. (Fixes the
+    // show-stopper on PR #397: a name-keyed lookup would delete the wrong class.)
+    const ROOT = 'JasperItRoot';
+    const LEAF = 'JasperItLeaf';
+
+    it('getClassDescendantNames reports a subclass in its own dictionary, not a same-named stranger', () => {
+      q.addDictionary(session(), 'JasperItAlt');
+      const alt = dictIndexOf('JasperItAlt');
+      defineIn('Object', ROOT, 'UserGlobals');
+      defineIn(ROOT, LEAF, 'UserGlobals'); // the real subclass, in UserGlobals
+      defineIn('Object', LEAF, 'JasperItAlt'); // unrelated class, same name, different dictionary
+
+      const descendants = q.getClassDescendantNames(session(), ROOT, userIndex());
+
+      expect(descendants).toHaveLength(1);
+      expect(descendants[0].className).toBe(LEAF);
+      expect(descendants[0].dictIndex).toBe(userIndex());
+      expect(descendants[0].dictIndex).not.toBe(alt);
+    });
+
+    it('getClassDescendantNames reports a subclass that lives in a different dictionary than its root', () => {
+      q.addDictionary(session(), 'JasperItAlt');
+      const alt = dictIndexOf('JasperItAlt');
+      defineIn('Object', ROOT, 'UserGlobals');
+      defineIn(ROOT, 'JasperItChild', 'JasperItAlt'); // subclass bound in another dictionary
+
+      const descendants = q.getClassDescendantNames(session(), ROOT, userIndex());
+
+      expect(descendants).toHaveLength(1);
+      expect(descendants[0].className).toBe('JasperItChild');
+      expect(descendants[0].dictIndex).toBe(alt);
+    });
+
+    it('deleting a subtree by each descendant’s reported dictionary spares a same-named stranger', () => {
+      q.addDictionary(session(), 'JasperItAlt');
+      const alt = dictIndexOf('JasperItAlt');
+      defineIn('Object', ROOT, 'UserGlobals');
+      defineIn(ROOT, LEAF, 'UserGlobals'); // real subclass
+      defineIn('Object', LEAF, 'JasperItAlt'); // unrelated same-named class
+
+      // Delete the subtree the way Remove Class does: each descendant by its OWN
+      // reported dictionary index, then the root.
+      for (const d of q.getClassDescendantNames(session(), ROOT, userIndex())) {
+        q.deleteClass(session(), d.dictIndex, d.className);
+      }
+      q.deleteClass(session(), userIndex(), ROOT);
+
+      // The real subclass and root are gone; the unrelated same-named class survives.
+      expect(q.classExistsInDictionary(session(), LEAF, userIndex())).toBe(false);
+      expect(q.classExistsInDictionary(session(), ROOT, userIndex())).toBe(false);
+      expect(q.classExistsInDictionary(session(), LEAF, alt)).toBe(true);
+    });
   });
 });

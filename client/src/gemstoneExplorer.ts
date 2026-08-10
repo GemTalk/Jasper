@@ -3507,8 +3507,33 @@ export class ExplorerController {
       return;
     }
 
-    // The transitive subtree, resolved dict-scoped so a shadowed root walks its OWN lineage.
+    // The transitive subtree, resolved dict-scoped so a shadowed root walks its OWN
+    // lineage; each descendant carries the dictionary that binds it BY OBJECT IDENTITY
+    // (not by name), so a subclass whose name is shadowed in another dictionary still
+    // resolves to its own class, never a same-named one elsewhere.
     const descendants = queries.getClassDescendantNames(session, className, dictIndex);
+
+    // Resolve and vet the whole subtree BEFORE prompting, so the all-or-none promise
+    // holds: if any member can't be located in a dictionary or can't be written, abort
+    // deleting nothing rather than half-removing the subtree. The root is already
+    // writable-checked above.
+    const targets: { className: string; dictIndex: number }[] = [{ className, dictIndex }];
+    const blockers: string[] = [];
+    for (const d of descendants) {
+      if (d.dictIndex <= 0) {
+        blockers.push(`${d.className} (not found in any dictionary)`);
+      } else if (!queries.canClassBeWritten(session, d.className, d.dictIndex)) {
+        blockers.push(`${d.className} (not writable)`);
+      } else {
+        targets.push({ className: d.className, dictIndex: d.dictIndex });
+      }
+    }
+    if (blockers.length > 0) {
+      void vscode.window.showErrorMessage(
+        `Cannot remove ${className} and its subclasses (all-or-none) — blocked by: ${blockers.join('; ')}.`,
+      );
+      return;
+    }
 
     if (descendants.length > 0) {
       const names = descendants.map((d) => d.className);
@@ -3533,23 +3558,6 @@ export class ExplorerController {
       );
       if (confirmed !== 'Remove') return;
     }
-
-    // Delete each descendant (resolving its own dictionary — a subclass may live in
-    // another one) then the class itself.
-    const targets: { className: string; dictName: string; dictIndex: number }[] = [];
-    if (descendants.length > 0) {
-      const dictOf = new Map<string, { dictName: string; dictIndex: number }>();
-      for (const e of queries.getAllClassNames(session)) {
-        if (!dictOf.has(e.className)) {
-          dictOf.set(e.className, { dictName: e.dictName, dictIndex: e.dictIndex });
-        }
-      }
-      for (const d of descendants) {
-        const where = dictOf.get(d.className);
-        if (where) targets.push({ className: d.className, ...where });
-      }
-    }
-    targets.push({ className, dictName, dictIndex });
 
     const failures: string[] = [];
     for (const t of targets) {
