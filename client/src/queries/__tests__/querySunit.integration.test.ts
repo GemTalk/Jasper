@@ -25,11 +25,14 @@ import { describeTestFailure } from '../describeTestFailure';
 import { discoverAllTestClasses } from './discoverAllTestClasses';
 import {
   installSunitProbeFixture,
+  installGuardProbeClasses,
+  SUNIT_GUARD_PROBE_PATTERN,
   SUNIT_PROBE_TEST_CLASS,
   SUNIT_PROBE_PASSING_SELECTOR,
   SUNIT_PROBE_FAILING_SELECTOR,
   SUNIT_PROBE_ERRORING_SELECTOR,
 } from './sunitProbeFixture';
+import { MAX_RUN_CLASSES } from '../runFailingTests';
 
 describe('SUnit queries (integration)', () => {
   let gci: GciLibrary;
@@ -120,6 +123,30 @@ describe('SUnit queries (integration)', () => {
       expect(probeFailures.length).toBeGreaterThanOrEqual(2);
     });
 
+    // The blocking-call guard (MAX_RUN_CLASSES): an oversized selection must be
+    // refused in Smalltalk BEFORE any suite runs, so one call can never block the
+    // session on hundreds of suites. Tripped with a bounded, deterministic fixture
+    // of (limit + 1) throwaway TestCase subclasses rather than by branching on how
+    // many the live image happens to have — the image-size branch is exactly what
+    // kept the old smoke test out of CI (it ran every suite in one ~46s blocking
+    // call on the within-cap branch). Guard fires first, so nothing runs.
+    it('refuses an oversized run before executing any suite', () => {
+      installGuardProbeClasses(exec, MAX_RUN_CLASSES + 1);
+
+      expect(() => runFailingTests(exec, undefined, SUNIT_GUARD_PROBE_PATTERN)).toThrow(
+        /too many to run|Narrow the run/,
+      );
+    });
+
+    it('runs a selection at the cap boundary without tripping the guard', () => {
+      installGuardProbeClasses(exec, MAX_RUN_CLASSES);
+
+      // Exactly at the limit is allowed (guard is strictly greater-than); the
+      // classes have no test methods, so this returns no failures — the point is
+      // that it does NOT throw the "too many to run" guard.
+      expect(() => runFailingTests(exec, undefined, SUNIT_GUARD_PROBE_PATTERN)).not.toThrow();
+    });
+
     // The no-args path walks every TestCase subclass in the symbolList
     // (DISCOVER_ALL_TEST_CLASSES) and runs each one's suite. We deliberately
     // do NOT exercise that end-to-end here — running the whole stone's suite
@@ -162,13 +189,12 @@ describe('SUnit queries (integration)', () => {
       expect(abstract).toEqual([]);
     });
 
-    // The blocking-call guard (MAX_RUN_CLASSES) is NOT covered here. Asserting
-    // it end-to-end means branching on the live image's size, and the
-    // within-cap branch runs every discovered suite in one un-interruptible GCI
-    // call — too slow for CI on some stones, and unkillable by a vitest
-    // timeout. It's parked in the on-demand gci project
-    // (src/__tests__/gci/querySunitRunLimit.smoke.test.ts) pending a redesign
-    // that trips the guard deterministically; see that file's header.
+    // The blocking-call guard (MAX_RUN_CLASSES) is covered above by
+    // 'refuses an oversized run before executing any suite' and the cap-boundary
+    // test, using a bounded, deterministic fixture (installGuardProbeClasses).
+    // That replaced the old image-size-branching smoke test — which ran every
+    // discovered suite in one un-interruptible GCI call on its within-cap branch
+    // and so could not run in CI — now deleted.
   });
 
   describe('describeTestFailure', () => {

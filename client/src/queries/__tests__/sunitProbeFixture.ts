@@ -42,3 +42,26 @@ export const SUNIT_PROBE_ERRORING_SELECTOR = 'testErrors';
 export function installSunitProbeFixture(exec: QueryExecutor): void {
   exec(SETUP_SOURCE);
 }
+
+// Glob matching the guard-probe classes installed by installGuardProbeClasses.
+export const SUNIT_GUARD_PROBE_PATTERN = 'JasperGuardProbe*';
+
+// Install `count` throwaway TestCase subclasses matching SUNIT_GUARD_PROBE_PATTERN.
+// Used to trip runFailingTests' MAX_RUN_CLASSES blocking-call guard DETERMINISTICALLY
+// — independent of however many TestCase subclasses the live image happens to carry,
+// which is what made the old image-size-branching smoke test unfit for CI. The classes
+// carry no test methods: the guard fires before any suite runs, so nothing blocks.
+// Transient — the harness's per-test abort rolls them back.
+export function installGuardProbeClasses(exec: QueryExecutor, count: number): void {
+  exec(`1 to: ${count} do: [:i | | nm |
+  nm := 'JasperGuardProbe' , i printString.
+  (UserGlobals includesKey: nm asSymbol) ifFalse: [
+    TestCase
+      subclass: nm
+      instVarNames: #()
+      classVars: #()
+      classInstVars: #()
+      poolDictionaries: #()
+      inDictionary: UserGlobals]].
+'ok'`);
+}
