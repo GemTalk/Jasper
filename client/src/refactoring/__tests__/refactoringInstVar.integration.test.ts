@@ -22,11 +22,12 @@ import { pluginFeatures } from '../../serverPlugin/pluginFeatures';
  *  2. A client round trip through the real query builders + parsers: add an ivar and
  *     confirm the class carries it; remove one that methods use and confirm those methods
  *     are reported (will-not-recompile) and dropped while an unrelated method survives;
- *     predict a shadowed temporary; and decline a name a subclass already declares.
+ *     stop at the first failure of a partial apply without aborting; predict a shadowed
+ *     temporary; and decline a name a subclass already declares.
  *
- * The committing paths (migrate instances, delete history, and a mid-apply failure over a
- * committed fixture) cannot live here — the harness aborts after every test and an abort
- * cannot undo a commit — so they stay in `__tests__/gci/gciInstVar.e2e.test.ts`.
+ * The committing paths (migrate instances, delete history) cannot live here — on those the
+ * engine itself commits, and the harness aborts after every test, which cannot undo a commit
+ * — so they stay in `__tests__/gci/gciInstVar.e2e.test.ts`.
  *
  * Gated via the shared server-plugin feature gate; the engine-dependent tests run in the
  * plugin-installed pass and skip, with a reason, against a bare stone. Fully transient:
@@ -173,6 +174,65 @@ r := (System myUserProfile symbolList objectNamed: #GsInstVarRefactoringTest) su
     // so it must survive onto the new class version and must not be reported as dropped.
     expect(includesSelector(BASE, 'getOther')).toBe(true);
     expect(result.dropped.map((m) => m.selector)).not.toContain('getOther');
+  });
+
+  it('stops at the first failure and reports the partial apply without aborting', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+
+    // Its own fixture, kept apart from the shared one: this test deletes the subclass.
+    const FAIL_BASE = 'XIvItFailBase';
+    const FAIL_SUB = 'XIvItFailSub';
+    q.compileClassDefinition(
+      session(),
+      `Object subclass: '${FAIL_BASE}' instVarNames: #(x) classVars: #() ` +
+        'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
+    );
+    q.compileClassDefinition(
+      session(),
+      `${FAIL_BASE} subclass: '${FAIL_SUB}' instVarNames: #() classVars: #() ` +
+        'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
+    );
+    // A method that WOULD be dropped by the apply, so a bogus `dropped` report is detectable.
+    q.compileMethod(session(), FAIL_SUB, false, 'accessing', 'shadowIt | tally | ^tally');
+    // A pre-existing method on the base, unrelated to `tally`, so its copy-forward survival
+    // on the class that actually re-versions during this partial apply is exercised too —
+    // not just on a clean, fully-successful apply.
+    q.compileMethod(session(), FAIL_BASE, false, 'accessing', 'keepMe\n\t^ x');
+
+    const start = parseStartPreview(
+      await startInstVarPreview(
+        asyncExec,
+        'add',
+        FAIL_BASE,
+        'tally',
+        'xivit-partial-apply',
+        PREVIEW_PAGE_BYTES,
+        userIndex(),
+      ),
+    );
+    expect(start.total).toBe(2); // base + sub are both staged
+
+    // Break the SECOND change after the preview was staged: the base will version fine, then
+    // the sub will fail with 'Class not found'. The session sees its own uncommitted removal.
+    exec(`UserGlobals removeKey: #${FAIL_SUB} ifAbsent: []. 'ok'`);
+
+    const result = parseApplyResult(
+      await applyInstVar(asyncExec, 'xivit-partial-apply', [], null, false, false),
+    );
+
+    expect(result.failed.length).toBe(1);
+    expect(result.failed[0].label).toBe(FAIL_SUB);
+    expect(result.applied).toBe(1); // the base applied; the sub failed; nothing after it ran
+    expect(result.dropped).toEqual([]); // shadowIt never ran, so it must not be reported dropped
+    expect(result.partiallyApplied).toBe(true);
+    expect(result.committed).toBe(false);
+    // The decisive check: the engine did NOT abort, so the base's new version is still staged
+    // in the transaction — which is exactly why the client tells the user to abort it.
+    expect(hasIvar(FAIL_BASE, 'tally')).toBe(true);
+    // Copy-forward survival on the class that actually succeeded mid-partial-apply: `keepMe`
+    // predates this apply and never referenced `tally`, so it must ride along onto the base's
+    // new version just as it would on a clean, fully-successful apply.
+    expect(includesSelector(FAIL_BASE, 'keepMe')).toBe(true);
   });
 
   it('warns up front that a method whose temp shadows the new variable will not recompile', async (ctx) => {
