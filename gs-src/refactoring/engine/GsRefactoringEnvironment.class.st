@@ -151,7 +151,7 @@ GsRefactoringEnvironment >> descendantsOf: aClass declaringInstVar: aName [
 	 Shared by every refactoring that introduces an instance variable on an existing class (V1 add,
 	 V8 split), so the check and its cross-version behaviour live in one place. Read-only."
 	^(self descendantsOf: aClass)
-		select: [:d | ((d instVarNames ifNil: [#()]) collect: [:e | e asString]) includes: aName]
+		select: [:d | (self ownInstVarNamesOf: d) includes: aName]
 ]
 
 { #category : 'enumerating' }
@@ -166,6 +166,31 @@ GsRefactoringEnvironment >> classVarNamesVisibleTo: aClass [
 		(cls classVarNames ifNil: [#()]) do: [:n | result add: n asString].
 		cls := cls superclass].
 	^result
+]
+
+{ #category : 'instance variables' }
+GsRefactoringEnvironment >> ownInstVarNamesOf: aClass [
+	"aClass's OWN instance-variable names (not inherited), as an Array of Strings, in
+	 declaration order -- which is the order a class-creation change must preserve.
+
+	 Strings, not the Symbols #instVarNames answers, because every caller compares them
+	 against a name that arrived as a String from the client. Comparing a Symbol against
+	 such a String can silently answer false on 3.6.x (the Unicode-comparison trap), so
+	 normalising here is what makes those comparisons hold across releases.
+
+	 Shared by every refactoring that reasons about instance-variable structure --
+	 add/remove, push up/down/move, extract superclass, split class -- so the
+	 normalisation lives in one place. Read-only."
+	^(aClass instVarNames ifNil: [#()]) collect: [:e | e asString]
+]
+
+{ #category : 'instance variables' }
+GsRefactoringEnvironment >> allInstVarNamesOf: aClass [
+	"aClass's own AND inherited instance-variable names, as an Array of Strings, inherited
+	 first -- the slot order of an instance. Callers use it to ask whether a name is already
+	 visible to aClass (its own or any superclass's). See #ownInstVarNamesOf: for why these
+	 are Strings. Read-only."
+	^(aClass allInstVarNames ifNil: [#()]) collect: [:e | e asString]
 ]
 
 { #category : 'accessing' }

@@ -563,10 +563,13 @@ Correctness of the read-only all-dictionaries environment: class resolution
 and enumeration span every dictionary (not just UserGlobals); instance-variable
 access is found for reads and writes across a class hierarchy and excludes
 methods that never touch the variable; the instance-variable name argument
-accepts a String or a Symbol; and the queries never dirty the transaction.
+accepts a String or a Symbol; the own/all instance-variable-name queries answer
+Strings in declaration order and separate a class''s own slots from its inherited
+ones; and the queries never dirty the transaction.
 
 setUp builds a throwaway three-class hierarchy in UserGlobals and tearDown
-removes it, so the assertions have known, self-contained answers.
+removes it, so the assertions have known, self-contained answers. The subclass
+declares its own instance variable so own-vs-inherited is distinguishable.
 '.
 true.
 %
@@ -7448,8 +7451,9 @@ method: GsRefactoringEnvironmentTest
 setUp
 	"A tiny throwaway hierarchy so the instance-variable queries have known,
 	 self-contained answers: a superclass defining 'alpha' with a reader, a
-	 writer and a non-accessing method; a subclass that reads the inherited
-	 'alpha'; and a sibling subclass that never touches it."
+	 writer and a non-accessing method; a subclass declaring its own 'beta' and
+	 'gamma' that reads the inherited 'alpha'; and a sibling subclass that declares
+	 nothing and never touches it."
 	| supr sl |
 	sl := System myUserProfile symbolList.
 	supr := Object
@@ -7464,7 +7468,7 @@ setUp
 	supr compileMethod: 'noTouch ^42' dictionaries: sl category: 'tests'.
 	(supr
 		subclass: 'GsRefEnvFixtureSub'
-		instVarNames: #()
+		instVarNames: #('beta' 'gamma')
 		classVars: #()
 		classInstVars: #()
 		poolDictionaries: #()
@@ -7512,12 +7516,46 @@ testAllClassesSpansEveryDictionaryWithoutDuplicates
 
 category: 'tests'
 method: GsRefactoringEnvironmentTest
+testAllInstVarNamesListsInheritedNamesBeforeOwnOnes
+	"Inherited first, then the class's own -- the slot order of an instance, which a
+	 class-creation change has to reproduce."
+	| env |
+	env := GsRefactoringEnvironment new.
+
+	self assert: (env allInstVarNamesOf: self superFixture) asArray
+		equals: #('alpha').
+	self assert: (env allInstVarNamesOf: self subFixture) asArray
+		equals: #('alpha' 'beta' 'gamma')
+%
+
+category: 'tests'
+method: GsRefactoringEnvironmentTest
+testAllInstVarNamesOfAClassWithNoInstVarsIsEmpty
+	self assert: (GsRefactoringEnvironment new allInstVarNamesOf: Object) isEmpty
+%
+
+category: 'tests'
+method: GsRefactoringEnvironmentTest
 testClassNamedResolvesClassesFromAnyDictionary
 	| env |
 	env := GsRefactoringEnvironment new.
 
 	self assert: (env classNamed: #Object) == Object.
 	self assert: (env classNamed: #GsRefEnvFixtureSuper) == self superFixture
+%
+
+category: 'tests'
+method: GsRefactoringEnvironmentTest
+testDescendantsDeclaringInstVarFindsOnlyTheRedeclaringSubclasses
+	"The V1-add / V8-split collision check: only a descendant that declares the name as its
+	 OWN instance variable counts. 'beta' is declared by the subclass; 'alpha' is declared by
+	 the superclass itself and merely inherited, so no descendant answers for it."
+	| env |
+	env := GsRefactoringEnvironment new.
+
+	self assert: ((env descendantsOf: self superFixture declaringInstVar: 'beta')
+		collect: [:c | c name asString]) asArray equals: #('GsRefEnvFixtureSub').
+	self assert: (env descendantsOf: self superFixture declaringInstVar: 'alpha') isEmpty
 %
 
 category: 'tests'
@@ -7578,6 +7616,47 @@ testInstVarNameArgumentAcceptsAStringOrASymbol
 
 category: 'tests'
 method: GsRefactoringEnvironmentTest
+testInstVarNameQueriesAnswerStringsNotSymbols
+	"#instVarNames / #allInstVarNames answer Symbols, but every caller compares the result
+	 against a name that arrived as a String from the client, and on 3.6.x that comparison
+	 can silently answer false (the Unicode-comparison trap). Normalising to Strings is what
+	 makes those comparisons hold, so it is asserted rather than assumed."
+	| env |
+	env := GsRefactoringEnvironment new.
+
+	(env ownInstVarNamesOf: self subFixture) do: [:each |
+		self assert: each isString.
+		self deny: each isSymbol].
+	(env allInstVarNamesOf: self subFixture) do: [:each |
+		self assert: each isString.
+		self deny: each isSymbol].
+	self assert: ((env ownInstVarNamesOf: self superFixture) includes: 'alpha')
+%
+
+category: 'tests'
+method: GsRefactoringEnvironmentTest
+testOwnInstVarNamesExcludesInheritedOnes
+	"Own means declared here: the subclass answers its own two and not the inherited 'alpha'."
+	| own |
+	own := GsRefactoringEnvironment new ownInstVarNamesOf: self subFixture.
+
+	self assert: own asArray equals: #('beta' 'gamma').
+	self deny: (own includes: 'alpha')
+%
+
+category: 'tests'
+method: GsRefactoringEnvironmentTest
+testOwnInstVarNamesIsEmptyForASubclassThatDeclaresNone
+	"The sibling declares nothing of its own, yet still inherits 'alpha'."
+	| env |
+	env := GsRefactoringEnvironment new.
+
+	self assert: (env ownInstVarNamesOf: self noAccessFixture) isEmpty.
+	self assert: ((env allInstVarNamesOf: self noAccessFixture) includes: 'alpha')
+%
+
+category: 'tests'
+method: GsRefactoringEnvironmentTest
 testReadOnlyQueriesDoNotChangeCommitState
 	| env before |
 	env := GsRefactoringEnvironment new.
@@ -7587,8 +7666,28 @@ testReadOnlyQueriesDoNotChangeCommitState
 	env classNamed: #Object.
 	env instanceMethodsAccessing: #alpha inClass: self superFixture.
 	env classesAndSelectorsAccessing: #alpha inHierarchyOf: self superFixture.
+	env ownInstVarNamesOf: self subFixture.
+	env allInstVarNamesOf: self subFixture.
+	env descendantsOf: self superFixture declaringInstVar: 'beta'.
 
 	self assert: System needsCommit equals: before
+%
+
+category: 'tests'
+method: GsRefactoringEnvironmentTest
+testTheInstVarNameQueriesHaveExactlyOneImplementationEach
+	"Issue #401: these one-liners used to be copy-pasted into four engine classes, which is
+	 how they could drift apart. Each now has a single implementation, on the environment --
+	 assert that, so a re-introduced copy (or a revived #ownInstVarsOf: / #allInstVarsOf:)
+	 fails here instead of silently diverging again."
+	| env |
+	env := GsRefactoringEnvironment new.
+
+	#(#ownInstVarNamesOf: #allInstVarNamesOf:) do: [:sel |
+		self assert: ((env implementorsOf: sel) collect: [:m | m inClass])
+			equals: (Array with: GsRefactoringEnvironment)].
+	#(#ownInstVarsOf: #allInstVarsOf:) do: [:sel |
+		self assert: (env implementorsOf: sel) isEmpty]
 %
 
 category: 'tests'
