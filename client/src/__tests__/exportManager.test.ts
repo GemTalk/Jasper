@@ -68,7 +68,7 @@ const h = vi.hoisted(() => {
 
   // syncClassBuildExpr: resolve dict by name, return `idx \t hash \n source`.
   const classPayload = (img: FakeImage, code: string): string => {
-    const dn = code.match(/name asString = '((?:[^']|'')*)'/);
+    const dn = code.match(/name asSymbol == #'((?:[^']|'')*)'/);
     const cn = code.match(/at: #'((?:[^']|'')*)'/);
     if (!dn || !cn) return '';
     const dictName = dn[1].replace(/''/g, "'");

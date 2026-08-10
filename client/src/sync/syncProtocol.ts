@@ -112,7 +112,7 @@ export function syncClassBuildExpr(dictName: string, className: string): string 
   | sl idx |
   sl := System myUserProfile symbolList.
   idx := 0.
-  1 to: sl size do: [:i | (idx = 0 and: [(sl at: i) name asString = '${escapeString(dictName)}']) ifTrue: [idx := i]].
+  1 to: sl size do: [:i | (idx = 0 and: [(sl at: i) name asSymbol == #'${escapeString(dictName)}']) ifTrue: [idx := i]].
   idx = 0
     ifTrue: ['']
     ifFalse: [

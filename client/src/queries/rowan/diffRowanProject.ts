@@ -37,9 +37,9 @@ ws := WriteStream on: Unicode7 new.
 patches do: [:assoc | | pkg |
   pkg := assoc key.
   assoc value operations do: [:op | | c |
-    c := op class name = 'CypressAddition'
+    c := op class name asSymbol == #CypressAddition
       ifTrue: ['I']
-      ifFalse: [op class name = 'CypressRemoval' ifTrue: ['D'] ifFalse: ['M']].
+      ifFalse: [op class name asSymbol == #CypressRemoval ifTrue: ['D'] ifFalse: ['M']].
     ws nextPutAll: c; tab; nextPutAll: pkg asString; tab;
        nextPutAll: ([op definition printString] on: Error do: [:e | '?']); lf]].
 ws contents`;
