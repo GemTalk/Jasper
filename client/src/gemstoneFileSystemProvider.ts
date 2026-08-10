@@ -5,6 +5,13 @@ import { BrowserQueryError } from './browserQueries';
 import { ExportManager } from './exportManager';
 import { logInfo } from './gciLog';
 import { receiver } from './queries/util';
+import {
+  splitOutCategory,
+  withCategoryLine,
+  classNameFromDefinition,
+  dictNameFromDefinition,
+  DEFAULT_CLASS_CATEGORY,
+} from './classDefinitionText';
 
 // A binary selector can contain '/', but a slash in a URI path segment (raw or
 // %2F-encoded) is collapsed by VS Code's path normalization, losing the
@@ -490,7 +497,11 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
     const parsed = parseUri(uri);
 
     if (parsed.kind === 'new-class') {
-      const categoryLine = parsed.category ? `\n  category: '${parsed.category}'` : '';
+      // A new class always gets an editable category line, so the user can set a
+      // category regardless of the explorer's selection. Pre-fill the selected
+      // category when there was one, else GemStone's default 'User Classes'.
+      const category = parsed.category ?? DEFAULT_CLASS_CATEGORY;
+      const categoryLine = `\n  category: '${category.replace(/'/g, "''")}'`;
       const template = `Object subclass: 'NameOfClass'
   instVarNames: #()
   classVars: #()
@@ -534,13 +545,15 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
             );
         break;
       }
-      case 'definition':
-        text = queries.getClassDefinition(
-          session,
-          parsed.className,
-          parsed.dictIndex ?? parsed.dictName,
-        );
+      case 'definition': {
+        // GemStone's `definition` omits the category; show it on its own line so
+        // it's visible and editable (the save path applies it separately).
+        const dictRef = parsed.dictIndex ?? parsed.dictName;
+        const definition = queries.getClassDefinition(session, parsed.className, dictRef);
+        const category = queries.getClassCategory(session, parsed.className, dictRef);
+        text = withCategoryLine(definition, category);
         break;
+      }
       case 'comment':
         text = queries.getClassComment(
           session,
@@ -686,7 +699,52 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
     source: string,
     session: ActiveSession,
   ) {
-    const className = queries.compileClassDefinition(session, source);
+    // The editor shows the category on its own line, but no GemStone image can
+    // compile it inside the subclass message (the 8-keyword
+    // subclass:…inDictionary:category:options: selector raises MessageNotUnderstood
+    // on base stones). Strip the category line, compile the always-valid
+    // definition, then apply the category via Class>>category:.
+    const { source: defSource, category } = splitOutCategory(source);
+    // A new-class definition may name a dictionary other than the one selected in
+    // the explorer (the user can edit the `inDictionary:` line). The class is
+    // created wherever that line says, so every post-compile step — existence
+    // check, recategorize, sync, reopen — must target THAT dictionary, not the
+    // selected one (parsed.dictName), or they look the class up in the wrong place
+    // (LookupError / "Class not found").
+    const targetDictName: string =
+      parsed.kind === 'new-class'
+        ? (dictNameFromDefinition(defSource) ?? parsed.dictName)
+        : parsed.dictName;
+    const dictRef: number | string =
+      parsed.kind === 'definition' ? (parsed.dictIndex ?? parsed.dictName) : targetDictName;
+
+    // A NEW-class save must not silently redefine an existing class in the target
+    // dictionary. (Editing an existing class's definition is a deliberate
+    // redefinition, so this guard is new-class only.)
+    if (parsed.kind === 'new-class') {
+      const intended = classNameFromDefinition(defSource);
+      if (intended && queries.classExistsInDictionary(session, intended, dictRef)) {
+        throw new BrowserQueryError(
+          `A class named ${intended} already exists in ${targetDictName} — not overwriting it. ` +
+            `Choose a different name, or edit the existing class from its own definition editor.`,
+        );
+      }
+    }
+
+    const className = queries.compileClassDefinition(session, defSource);
+
+    // Apply the category the subclass message could not carry. A failure here must
+    // not lose the freshly compiled class, so it's logged, not thrown.
+    if (category !== undefined && category.length > 0) {
+      try {
+        queries.recategorizeClass(session, className, category, dictRef);
+      } catch (e: unknown) {
+        logInfo(
+          `[FS] recategorize ${className} → '${category}' failed: ` +
+            `${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    }
 
     // An existing but non-writable class recompiles transiently (like a session
     // method) without persisting, yet GemStone reports success — warn instead
@@ -711,15 +769,16 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
     // Use the name GemStone returned, not parsed.className: for a new-class URI the segment is
     // a placeholder, and editing a definition with a different class name creates a new class —
     // in both cases, parsed.className does not reflect the class that was actually created.
-    void this.exportManager?.syncClass(session, parsed.dictName, className);
+    void this.exportManager?.syncClass(session, targetDictName, className);
 
     // Preserve the dictionary index (when the edited URI carried one) so the
     // reopened definition tab targets the same dictionary and matches the tab
-    // being replaced.
+    // being replaced. For a new class, target the dictionary the definition named
+    // (targetDictName), which may differ from the selected one.
     const dictIndex = parsed.kind === 'definition' ? parsed.dictIndex : undefined;
     const definitionUri = buildClassDefinitionUri(
       parsed.sessionId,
-      parsed.dictName,
+      targetDictName,
       className,
       dictIndex,
     );

@@ -220,6 +220,27 @@ describe('explorer queries (integration)', () => {
     });
   });
 
+  describe('getClassCategory', () => {
+    it('returns the class category the definition editor shows on its own line', () => {
+      defineClass(WIDGET, 'JasperIt-Shown');
+
+      expect(q.getClassCategory(session(), WIDGET, userIndex())).toBe('JasperIt-Shown');
+    });
+
+    it('returns empty for a class that cannot be found', () => {
+      expect(q.getClassCategory(session(), 'JasperItNoSuchClass', userIndex())).toBe('');
+    });
+  });
+
+  describe('classExistsInDictionary', () => {
+    it('is true for a class present in the dictionary and false otherwise', () => {
+      defineWidget();
+
+      expect(q.classExistsInDictionary(session(), WIDGET, userIndex())).toBe(true);
+      expect(q.classExistsInDictionary(session(), 'JasperItAbsent', userIndex())).toBe(false);
+    });
+  });
+
   describe('recategorizeMethod', () => {
     it('moves a method into another existing category', () => {
       defineWidget();
@@ -360,6 +381,72 @@ describe('explorer queries (integration)', () => {
       q.moveDictionaryDown(session(), dictIndexOf('JasperItFirst'));
 
       expect(dictIndexOf('JasperItFirst')).toBeGreaterThan(dictIndexOf('JasperItSecond'));
+    });
+  });
+
+  // Shadowed class names — the same name bound in two dictionaries. This session's
+  // Explorer fixes (hierarchy pane, class deletion, and creating a class in a
+  // non-selected dictionary) rely on the query layer resolving by the SELECTED
+  // dictionary index rather than the global first match. These prove that
+  // dict-scoping end-to-end on a live stone.
+  describe('dictionary-scoped resolution for a shadowed class name', () => {
+    const SHADOW = 'JasperItShadowed';
+
+    // Bind SHADOW twice: an Object subclass in UserGlobals and an Array subclass in
+    // a second dictionary. Returns the second dictionary's 1-based index.
+    const defineShadowPair = (): number => {
+      q.compileClassDefinition(
+        session(),
+        `Object subclass: '${SHADOW}' instVarNames: #() classVars: #() ` +
+          `classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals`,
+      );
+      q.addDictionary(session(), 'JasperItShadowDict');
+      const shadowIdx = dictIndexOf('JasperItShadowDict');
+      q.compileClassDefinition(
+        session(),
+        `Array subclass: '${SHADOW}' instVarNames: #() classVars: #() ` +
+          `classInstVars: #() poolDictionaries: #() inDictionary: JasperItShadowDict`,
+      );
+      return shadowIdx;
+    };
+
+    const superclassesOf = (dict: number): string[] =>
+      q
+        .getClassHierarchy(session(), SHADOW, dict)
+        .filter((e) => e.kind === 'superclass')
+        .map((e) => e.className);
+
+    it('getClassHierarchy returns the lineage of the shadow in the given dictionary (G)', () => {
+      const shadowIdx = defineShadowPair();
+
+      // The UserGlobals shadow is a plain Object subclass — no Array in its lineage.
+      expect(superclassesOf(userIndex())).toContain('Object');
+      expect(superclassesOf(userIndex())).not.toContain('Array');
+      // The other dictionary's shadow is an Array subclass — Array is an ancestor.
+      expect(superclassesOf(shadowIdx)).toContain('Array');
+    });
+
+    it('deleteClass removes only the shadow in the targeted dictionary (I)', () => {
+      const shadowIdx = defineShadowPair();
+
+      q.deleteClass(session(), shadowIdx, SHADOW);
+
+      expect(q.classExistsInDictionary(session(), SHADOW, shadowIdx)).toBe(false);
+      expect(q.classExistsInDictionary(session(), SHADOW, userIndex())).toBe(true);
+    });
+
+    it('compileClassDefinition creates the class in the dictionary its inDictionary: names (F)', () => {
+      q.addDictionary(session(), 'JasperItOther');
+      const other = dictIndexOf('JasperItOther');
+
+      q.compileClassDefinition(
+        session(),
+        `Object subclass: '${GADGET}' instVarNames: #() classVars: #() ` +
+          `classInstVars: #() poolDictionaries: #() inDictionary: JasperItOther`,
+      );
+
+      expect(q.classExistsInDictionary(session(), GADGET, other)).toBe(true);
+      expect(q.classExistsInDictionary(session(), GADGET, userIndex())).toBe(false);
     });
   });
 });
