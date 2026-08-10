@@ -74,9 +74,9 @@ describe('ExplorerController add instance variable', () => {
     const validate = opts?.validateInput as (v: string) => string | undefined;
     expect(validate('goodName')).toBeUndefined();
     expect(validate('_ok9')).toBeUndefined();
-    expect(validate('9bad')).toBeDefined();
-    expect(validate('has space')).toBeDefined();
-    expect(validate('  ')).toBeDefined();
+    expect(validate('9bad')).toContain('lowercase');
+    expect(validate('has space')).toContain('lowercase');
+    expect(validate('  ')).toContain('Enter a name');
     // Kept in step with the engine's isValidIvarName: an UPPERCASE first letter reads as a global
     // and must be rejected here too, not just declined after a round trip (#360 item 5). Assert the
     // *word* the engine's testAddDeclinesUppercaseFirstLetter also pins, so the two stay in step and
