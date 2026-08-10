@@ -2030,6 +2030,11 @@
           "group": "inline@0"
         },
         {
+          "command": "gemstone.explorer.renameClassCategory",
+          "when": "view == gemstoneExplorerCategories && viewItem == explorerCategory",
+          "group": "1_modification@0"
+        },
+        {
           "command": "gemstone.explorer.renameDictionary",
           "when": "view == gemstoneExplorerDicts && viewItem == explorerDict",
           "group": "inline@0"

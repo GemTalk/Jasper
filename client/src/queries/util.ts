@@ -59,6 +59,16 @@ export function classLookupExpr(className: string, dict?: number | string): stri
   // Prefer a 1-based SymbolList index (unambiguous — two dictionaries can share a
   // name). A number scopes to exactly that dictionary; a name is a best-effort
   // fallback for callers that only have a name (e.g. some MCP tools).
+  //
+  // NB: unlike dictLookupExpr (above), the index branch here does NOT `ifAbsent:` the
+  // outer `at:` — an out-of-range dictionary index raises rather than answering nil.
+  // That's deliberate: a numeric dict index always comes from Jasper's own tree (a
+  // live SymbolList position), so out-of-range means a programming error worth
+  // surfacing, not a user-supplied name that may legitimately be absent. The name
+  // branch below DOES guard, because a name genuinely may not resolve. (Guarding the
+  // index branch would also mean threading an extra `ifNotNil:` so `nil at:ifAbsent:`
+  // doesn't DNU.) The inner `at: #'class' ifAbsent: [nil]` still returns nil when the
+  // dictionary exists but the class isn't in it.
   if (typeof dict === 'number') {
     return `(System myUserProfile symbolList at: ${dict}) at: #'${esc}' ifAbsent: [nil]`;
   }

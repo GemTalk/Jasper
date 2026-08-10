@@ -17,11 +17,19 @@ function makeController(session: ActiveSession | undefined) {
     getSelectedSession: () => session,
   } as unknown as SessionManager;
   const ctl = new ExplorerController(sessionManager);
-  // selectDict fans out into many queries against a live session; stub it (and the
-  // provider redraw) so the success path can be asserted without that machinery.
+  // selectDict / refreshRetainingSelection fan out into many queries against a live
+  // session, and the tab sweep touches the tab API; stub them so the success path can
+  // be asserted without that machinery.
   const selectDict = vi.spyOn(ctl, 'selectDict').mockImplementation(() => {});
+  const refreshRetaining = vi.spyOn(ctl, 'refreshRetainingSelection').mockResolvedValue(undefined);
+  const closeStaleTabs = vi
+    .spyOn(
+      ctl as unknown as { closeStaleTabsForRenamedDictionary: () => Promise<void> },
+      'closeStaleTabsForRenamedDictionary',
+    )
+    .mockResolvedValue(undefined);
   const refresh = vi.spyOn(ctl.dictProvider, 'refresh').mockImplementation(() => {});
-  return { ctl, selectDict, refresh };
+  return { ctl, selectDict, refreshRetaining, closeStaleTabs, refresh };
 }
 
 describe('ExplorerController.renameDictionary', () => {
@@ -89,21 +97,41 @@ describe('ExplorerController.renameDictionary', () => {
     expect(selectDict).not.toHaveBeenCalled();
   });
 
-  it('renames by index, then refreshes, reselects and reports on success', async () => {
-    const { ctl, refresh, selectDict } = makeController({} as ActiveSession);
+  it('renames by index, sweeps stale tabs, refreshes and reports on success', async () => {
+    const { ctl, refresh, selectDict, closeStaleTabs } = makeController({} as ActiveSession);
     vi.mocked(vscode.window.showInputBox).mockResolvedValue('NewDict');
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue('Rename' as never);
     vi.mocked(queries.renameDictionary).mockReturnValue('ok');
     await ctl.renameDictionary(NODE);
     expect(queries.renameDictionary).toHaveBeenCalledWith(expect.anything(), 3, 'NewDict');
+    // Stale editor tabs for the old name are swept (MED-1).
+    expect(closeStaleTabs).toHaveBeenCalledWith(expect.anything(), 'MyDict');
     expect(refresh).toHaveBeenCalledTimes(1);
-    expect(selectDict).toHaveBeenCalledTimes(1);
-    // The reselected row keeps the same index and carries the new name.
-    expect(selectDict.mock.calls[0][0]).toMatchObject({ dictName: 'NewDict', dictIndex: 3 });
+    // No longer resets the selection via selectDict (LOW-5).
+    expect(selectDict).not.toHaveBeenCalled();
     expect(vscode.window.setStatusBarMessage).toHaveBeenCalledWith(
       expect.stringContaining('NewDict'),
       expect.any(Number),
     );
     expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
+  });
+
+  it('retains the class/method selection when renaming the currently-selected dictionary (LOW-5)', async () => {
+    const { ctl, selectDict, refreshRetaining } = makeController({} as ActiveSession);
+    // The node being renamed IS the dictionary the user is browsing.
+    ctl.state.dictIndex = 3;
+    ctl.state.dictName = 'MyDict';
+    vi.mocked(vscode.window.showInputBox).mockResolvedValue('NewDict');
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValue('Rename' as never);
+    vi.mocked(queries.renameDictionary).mockReturnValue('ok');
+
+    await ctl.renameDictionary(NODE);
+
+    // Keeps the place via refreshRetainingSelection, not selectDict, and the state
+    // now carries the new name (same index).
+    expect(refreshRetaining).toHaveBeenCalledTimes(1);
+    expect(selectDict).not.toHaveBeenCalled();
+    expect(ctl.state.dictName).toBe('NewDict');
+    expect(ctl.state.dictIndex).toBe(3);
   });
 });

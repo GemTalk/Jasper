@@ -4,11 +4,13 @@ import { renameDictionary } from '../renameDictionary';
 describe('renameDictionary query', () => {
   it('resolves the target by 1-based symbol-list index', () => {
     const exec = vi.fn().mockReturnValue('ok');
-    const out = renameDictionary(exec, 5, 'NewName');
+    renameDictionary(exec, 5, 'NewName');
     const code = exec.mock.calls[0][0];
     expect(code).toContain('sl := System myUserProfile symbolList.');
     expect(code).toContain('d := System myUserProfile symbolList at: 5 ifAbsent: [nil].');
-    expect(out).toBe('ok');
+    // The doit answers 'ok' on success — assert the code's terminal expression, not
+    // the mock's canned return (which would be a tautology).
+    expect(code.trimEnd().endsWith("'ok'")).toBe(true);
   });
 
   it('resolves the target by current name when given a string', () => {

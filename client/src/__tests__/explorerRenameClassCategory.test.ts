@@ -176,21 +176,76 @@ describe('ExplorerController.renameClassCategory', () => {
     expect(grabValidate()('日本')).toBeUndefined();
   });
 
-  it('renames a still-empty overlay-only category without a server round-trip', async () => {
-    // No server classes under the category, so the server query must not run.
+  it('always runs the query (never gates on the cached view) and reports success for an overlay-only category (MED-3)', async () => {
+    // No server classes the client knows of under the category, but the query still
+    // runs (the cache could be stale); the server answers renamed: 0 harmlessly.
     const { ctl } = makeController({} as ActiveSession, [
       { className: 'Baz', category: 'Unrelated' },
     ]);
     vi.mocked(vscode.window.showInputBox).mockResolvedValue('Events');
+    vi.mocked(queries.renameClassCategory).mockReturnValue('renamed: 0');
 
     await ctl.renameClassCategory(NODE);
 
-    expect(queries.renameClassCategory).not.toHaveBeenCalled();
-    // Still redraws (overlay carry) and refetches for consistency.
+    expect(queries.renameClassCategory).toHaveBeenCalledWith(
+      expect.anything(),
+      3,
+      'Announcements',
+      'Events',
+    );
     expect(queries.getClassesWithCategory).toHaveBeenCalled();
+    // The client didn't expect classes here, so renamed: 0 is fine — success shown.
     expect(vscode.window.setStatusBarMessage).toHaveBeenCalledWith(
       expect.stringContaining('Events'),
       expect.any(Number),
     );
+    expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
+  });
+
+  it('warns instead of reporting success when the server moved 0 but the client expected classes (stale view, MED-2)', async () => {
+    const { ctl } = makeController({} as ActiveSession, [
+      { className: 'Foo', category: 'Announcements' },
+    ]);
+    vi.mocked(vscode.window.showInputBox).mockResolvedValue('Events');
+    vi.mocked(queries.renameClassCategory).mockReturnValue('renamed: 0');
+
+    await ctl.renameClassCategory(NODE);
+
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+      expect.stringContaining('out of date'),
+    );
+    expect(vscode.window.setStatusBarMessage).not.toHaveBeenCalled();
+  });
+
+  it('warns about classes skipped because their category could not be read (LOW-2)', async () => {
+    const { ctl } = makeController({} as ActiveSession, [
+      { className: 'Foo', category: 'Announcements' },
+    ]);
+    vi.mocked(vscode.window.showInputBox).mockResolvedValue('Events');
+    vi.mocked(queries.renameClassCategory).mockReturnValue('renamed: 2 skipped: 1');
+
+    await ctl.renameClassCategory(NODE);
+
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+      expect.stringContaining('could not be read'),
+    );
+    expect(vscode.window.setStatusBarMessage).not.toHaveBeenCalled();
+  });
+
+  it('treats an unrecognised payload as an error, not success (MED-2)', async () => {
+    const { ctl } = makeController({} as ActiveSession, [
+      { className: 'Foo', category: 'Announcements' },
+    ]);
+    vi.mocked(vscode.window.showInputBox).mockResolvedValue('Events');
+    vi.mocked(queries.renameClassCategory).mockReturnValue('unexpected server reply');
+
+    await ctl.renameClassCategory(NODE);
+
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining('unexpected server reply'),
+    );
+    // Bailed before refetch / success.
+    expect(queries.getClassesWithCategory).not.toHaveBeenCalled();
+    expect(vscode.window.setStatusBarMessage).not.toHaveBeenCalled();
   });
 });

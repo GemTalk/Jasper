@@ -1235,6 +1235,42 @@ export class ExplorerController {
     }
   }
 
+  // After a dictionary is renamed, every open editor URI for a class in it still
+  // embeds the OLD dictionary name (parseUri(uri).dictName), so saving one would
+  // resolve a dictionary that no longer exists under that name. Close the clean stale
+  // tabs; leave dirty ones open (never discard unsaved work) but warn about them.
+  private async closeStaleTabsForRenamedDictionary(
+    session: ActiveSession,
+    oldName: string,
+  ): Promise<void> {
+    let dirty = 0;
+    for (const { tab, uri } of listOpenGemstoneTabs()) {
+      let parsed;
+      try {
+        parsed = parseUri(uri);
+      } catch {
+        continue;
+      }
+      if (parsed.sessionId !== session.id || parsed.dictName !== oldName) continue;
+      if (tab.isDirty) {
+        dirty += 1;
+        continue;
+      }
+      try {
+        await vscode.window.tabGroups.close(tab);
+      } catch {
+        /* best-effort: a failed close just leaves the (now stale) tab open */
+      }
+    }
+    if (dirty > 0) {
+      void vscode.window.showWarningMessage(
+        `${dirty} unsaved editor${dirty === 1 ? '' : 's'} still reference${dirty === 1 ? 's' : ''} ` +
+          `the old dictionary name '${oldName}'. Save or close ${dirty === 1 ? 'it' : 'them'} — a save ` +
+          `under the old name will fail with "dictionary not found".`,
+      );
+    }
+  }
+
   // True when className still defines selector on the given side (its OWN method), used to
   // decide whether a source-method editor is stale after a push. On any query error, assume
   // it is still defined (do not close the editor).
@@ -3534,13 +3570,21 @@ export class ExplorerController {
       void vscode.window.showErrorMessage(`Could not rename "${oldName}": ${result}`);
       return;
     }
-    // The dictionary keeps its symbol-list position, so its index is unchanged;
-    // redraw the pane and keep the renamed row selected and revealed.
+    // Open editor tabs for classes in this dictionary still embed the OLD name in
+    // their URIs; close the clean ones and warn about unsaved ones (MED-1).
+    await this.closeStaleTabsForRenamedDictionary(session, oldName);
+    // The dictionary keeps its symbol-list position, so its index is unchanged. Redraw
+    // the pane; if the user was browsing this dictionary, keep their class/method
+    // selection (LOW-5) by updating its name in state and refreshing-retaining rather
+    // than selectDict (which resets it). Reveal the renamed row WITHOUT re-selecting
+    // it — a select would fire selectDict and clear the retained selection.
     this.dictProvider.refresh();
-    const item = new DictItem(newName, node.dictIndex);
-    this.selectDict(item);
+    if (this.state.dictIndex === node.dictIndex) {
+      this.state.dictName = newName;
+      await this.refreshRetainingSelection();
+    }
     try {
-      await this.views?.dict.reveal(item, { select: true, focus: true });
+      await this.views?.dict.reveal(new DictItem(newName, node.dictIndex), { select: false });
     } catch {
       /* ignore */
     }
@@ -3609,21 +3653,45 @@ export class ExplorerController {
     const newPath = parentPath ? `${parentPath}-${newSegment}` : newSegment;
 
     const inSubtree = (c: string): boolean => c === oldPath || c.startsWith(`${oldPath}-`);
-    const hasServerClasses = this.classCategoryEntries.some((e) => inSubtree(e.category));
-    if (hasServerClasses) {
-      let result: string;
-      try {
-        result = queries.renameClassCategory(session, dictIndex, oldPath, newPath);
-      } catch (e) {
-        void vscode.window.showErrorMessage(
-          `Rename class category failed: ${e instanceof Error ? e.message : String(e)}`,
-        );
-        return;
-      }
-      if (result.startsWith('Dictionary not found')) {
-        void vscode.window.showErrorMessage(`Rename class category failed: ${result}`);
-        return;
-      }
+    // Always run the query rather than gating on the cached classCategoryEntries: the
+    // cache can be stale — another session may have filed a class into this category
+    // since the last refresh — and the query answers `renamed: 0` harmlessly when
+    // nothing matches (MED-3). Remember what the client *believed* was there so a
+    // zero count can be flagged as a likely stale view instead of silent success.
+    const clientExpectedClasses = this.classCategoryEntries.some((e) => inSubtree(e.category));
+    let result: string;
+    try {
+      result = queries.renameClassCategory(session, dictIndex, oldPath, newPath);
+    } catch (e) {
+      void vscode.window.showErrorMessage(
+        `Rename class category failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return;
+    }
+    // Success is exactly `renamed: <n>` (optionally ` skipped: <m>`). Anything else —
+    // 'Dictionary not found', or an unrecognised payload — is a failure and must not
+    // fall through to the success message (MED-2).
+    const renamedMatch = /^renamed: (\d+)(?: skipped: (\d+))?$/.exec(result);
+    if (!renamedMatch) {
+      void vscode.window.showErrorMessage(`Rename class category failed: ${result}`);
+      return;
+    }
+    const renamedCount = parseInt(renamedMatch[1], 10);
+    const skippedCount = renamedMatch[2] ? parseInt(renamedMatch[2], 10) : 0;
+    // Warn (instead of reporting success) when the server moved nothing though the
+    // client thought the category had classes — a stale view (MED-2/MED-3) — or when
+    // some classes were skipped because their category couldn't be read (LOW-2).
+    let warned = false;
+    if (renamedCount === 0 && clientExpectedClasses) {
+      warned = true;
+      void vscode.window.showWarningMessage(
+        `No classes were moved for category '${oldPath}' — the view may have been out of date. Refreshed.`,
+      );
+    } else if (skippedCount > 0) {
+      warned = true;
+      void vscode.window.showWarningMessage(
+        `Renamed '${oldPath}' → '${newPath}', but ${skippedCount} class${skippedCount === 1 ? '' : 'es'} could not be read and ${skippedCount === 1 ? 'was' : 'were'} left unchanged.`,
+      );
     }
 
     // Carry empty overlay categories in the subtree across, preserving the suffix.
@@ -3653,7 +3721,12 @@ export class ExplorerController {
     } catch {
       /* ignore */
     }
-    void vscode.window.setStatusBarMessage(`Renamed class category ${oldPath} → ${newPath}`, 4000);
+    if (!warned) {
+      void vscode.window.setStatusBarMessage(
+        `Renamed class category ${oldPath} → ${newPath}`,
+        4000,
+      );
+    }
   }
 
   // Remove a class from its dictionary. `item` comes from the inline trash on a

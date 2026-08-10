@@ -26,10 +26,23 @@ describe('renameClassCategory query', () => {
     expect(code).toContain("prefix := oldCat , '-'.");
     // exact match via Unicode-safe Symbol identity (not String `=`; see 2718)
     expect(code).toContain('cat asSymbol == oldSym');
-    // subtree: prefix compare (Symbol identity) + suffix-preserving reassignment
+    // subtree: prefix compare (Symbol identity) + suffix-preserving reassignment.
+    // '>=' (not '>') so a category named exactly 'Old-' (size = prefix size) is
+    // treated as a subtree member rather than being left behind (LOW-1).
+    expect(code).toContain('cat size >= prefix size');
     expect(code).toContain('(cat copyFrom: 1 to: prefix size) asSymbol == prefixSym');
     expect(code).toContain('v category: newCat , (cat copyFrom: oldCat size + 1 to: cat size)');
     expect(code).toContain('dict keysAndValuesDo:');
+  });
+
+  it('counts classes it could not read and reports them as skipped (LOW-2)', () => {
+    const exec = vi.fn().mockReturnValue('renamed: 3 skipped: 1');
+    renameClassCategory(exec, 3, 'Old', 'New');
+    const code = exec.mock.calls[0][0];
+    // An unreadable category increments a skipped counter instead of being ignored,
+    // and the payload surfaces it so a partial rename doesn't look complete.
+    expect(code).toContain('skipped := skipped + 1');
+    expect(code).toContain("' skipped: ' , skipped printString");
   });
 
   it('guards a missing dictionary', () => {
