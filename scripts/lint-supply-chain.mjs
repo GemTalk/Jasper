@@ -2,7 +2,8 @@
 //
 // Asserts npm's install-script supply-chain controls are actually in effect,
 // not just present in .npmrc. Every config assertion reads through `npm config
-// get` rather than parsing the file, which is both simpler and strictly
+// get` (one batched call, see getConfigs) rather than parsing the file, which is
+// both simpler and strictly
 // stronger: it sees the merged, effective value, so it also catches an override
 // from a user .npmrc, an npm_config_* env var, or npm's `key[]=` array syntax
 // (which a naive `key=` grep of .npmrc misses entirely). And because `npm
@@ -58,8 +59,36 @@ const CONFIG_ASSERTIONS = [
 
 const REGISTRY_PREFIX = 'https://registry.npmjs.org/';
 
-function getConfig(key) {
-  return execFileSync('npm', ['config', 'get', key], { encoding: 'utf8' }).trim();
+// One spawn for every key rather than one per key: npm's cold start dominates this script
+// (~0.38s for five sequential gets vs ~0.08s batched), and lintSupplyChain.test.ts runs the
+// whole script once per case. Asked for multiple keys npm prints `key=value` lines instead of
+// a bare value, but each value is byte-identical to the single-key form — including the
+// literal 'null' an unset min-release-age reads back as, and the comma-joined form of an
+// array setting. (`npm config list --json` would batch too, but it hands back JSON types —
+// true/7/[] instead of 'true'/'7'/'' — which every comparison and message below would have to
+// re-stringify.) npm's own warnings go to stderr, so only key=value lines reach here.
+function getConfigs(keys) {
+  const output = execFileSync('npm', ['config', 'get', ...keys], { encoding: 'utf8' });
+  const values = new Map();
+
+  for (const line of output.split('\n')) {
+    const separator = line.indexOf('=');
+    if (separator !== -1) {
+      values.set(line.slice(0, separator), line.slice(separator + 1).trim());
+    }
+  }
+
+  // A key we asked for going missing means the output shape assumed above has changed. That
+  // has to surface as itself: left as undefined it would read as a plain assertion failure and
+  // be indistinguishable from the control actually being off, which is the one lie this
+  // script must never tell.
+  for (const key of keys) {
+    if (!values.has(key)) {
+      throw new Error(`Unexpected npm config output: no value for '${key}'`);
+    }
+  }
+
+  return values;
 }
 
 // An unset config reads back as the empty string, which `is ''` renders confusingly.
@@ -83,10 +112,11 @@ function satisfiesFloor(actual, floor) {
 }
 
 function checkConfig() {
+  const values = getConfigs(CONFIG_ASSERTIONS.map(({ key }) => key));
   let failed = false;
 
   for (const { key, expected, hint, floor } of CONFIG_ASSERTIONS) {
-    const actual = getConfig(key);
+    const actual = values.get(key);
     const satisfied = floor ? satisfiesFloor(actual, expected) : actual === expected;
     if (satisfied) {
       // Prints the actual value, which for an exact assertion is the expected one anyway but

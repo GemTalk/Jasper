@@ -1,8 +1,8 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
-import * as os from 'node:os';
 import * as path from 'node:path';
+import { withTemporaryFolderDo } from './support/file';
 
 // Tests for scripts/lint-supply-chain.mjs — the guard that asserts npm's install-script
 // supply-chain controls are actually in effect and that the lockfile / allowScripts policy
@@ -18,7 +18,7 @@ import * as path from 'node:path';
 // its internals AND importing a file outside client/tsconfig.json's rootDir (which tsc
 // rejects), for no gain in coverage.
 //
-// Each case costs one `node` + five `npm config get` spawns, roughly half a second.
+// Each case costs one `node` + one batched `npm config get` spawn.
 //
 // __dirname is client/src/__tests__, so the repo root is three levels up.
 const SCRIPT = path.resolve(__dirname, '..', '..', '..', 'scripts', 'lint-supply-chain.mjs');
@@ -42,14 +42,6 @@ interface Fixture {
   env?: Record<string, string>;
 }
 
-const tempDirs: string[] = [];
-
-afterEach(() => {
-  for (const dir of tempDirs.splice(0)) {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
 // Runs the script against a synthetic repo. The child's environment is scrubbed of every
 // npm_config_* variable, because `npm test` exports this repo's own npm config that way and
 // it would otherwise leak past the fixture's .npmrc and decide the config assertions for us.
@@ -57,45 +49,46 @@ afterEach(() => {
 // paths — npm refuses to load one file at two levels), so a developer's ~/.npmrc can neither
 // rescue nor break a case.
 function runLint({ npmrc = COMPLIANT_NPMRC, packageJson = {}, lockfile = {}, env = {} }: Fixture) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lint-supply-chain-'));
-  tempDirs.push(dir);
+  return withTemporaryFolderDo((dir) => {
+    fs.writeFileSync(
+      path.join(dir, 'package.json'),
+      JSON.stringify({ name: 'fixture', version: '0.0.0', ...packageJson }),
+    );
+    fs.writeFileSync(
+      path.join(dir, 'package-lock.json'),
+      JSON.stringify({ packages: {}, ...lockfile }),
+    );
+    fs.writeFileSync(path.join(dir, '.npmrc'), npmrc);
+    fs.writeFileSync(path.join(dir, 'user.npmrc'), '');
+    fs.writeFileSync(path.join(dir, 'global.npmrc'), '');
 
-  fs.writeFileSync(
-    path.join(dir, 'package.json'),
-    JSON.stringify({ name: 'fixture', version: '0.0.0', ...packageJson }),
-  );
-  fs.writeFileSync(
-    path.join(dir, 'package-lock.json'),
-    JSON.stringify({ packages: {}, ...lockfile }),
-  );
-  fs.writeFileSync(path.join(dir, '.npmrc'), npmrc);
-  fs.writeFileSync(path.join(dir, 'user.npmrc'), '');
-  fs.writeFileSync(path.join(dir, 'global.npmrc'), '');
+    const inherited = Object.fromEntries(
+      Object.entries(process.env).filter(([key]) => !key.toLowerCase().startsWith('npm_config_')),
+    );
 
-  const inherited = Object.fromEntries(
-    Object.entries(process.env).filter(([key]) => !key.toLowerCase().startsWith('npm_config_')),
-  );
+    const result = spawnSync(process.execPath, [SCRIPT], {
+      cwd: dir,
+      encoding: 'utf8',
+      env: {
+        ...inherited,
+        npm_config_userconfig: path.join(dir, 'user.npmrc'),
+        npm_config_globalconfig: path.join(dir, 'global.npmrc'),
+        ...env,
+      },
+    });
 
-  const result = spawnSync(process.execPath, [SCRIPT], {
-    cwd: dir,
-    encoding: 'utf8',
-    env: {
-      ...inherited,
-      npm_config_userconfig: path.join(dir, 'user.npmrc'),
-      npm_config_globalconfig: path.join(dir, 'global.npmrc'),
-      ...env,
-    },
+    return { status: result.status, stdout: result.stdout, stderr: result.stderr };
   });
-
-  return { status: result.status, stdout: result.stdout, stderr: result.stderr };
 }
 
-// A lockfile entry as npm writes one for a registry package that is internally consistent.
-function entry(name: string, version: string) {
+// A lockfile entry as npm writes one for a registry package. `resolvedVersion` defaults to
+// `version`, giving the internally-consistent entry; passing a different one produces the
+// version/tarball drift the script exists to catch.
+function entry(name: string, version: string, resolvedVersion: string = version) {
   const unscoped = name.split('/').pop();
   return {
     version,
-    resolved: `https://registry.npmjs.org/${name}/-/${unscoped}-${version}.tgz`,
+    resolved: `https://registry.npmjs.org/${name}/-/${unscoped}-${resolvedVersion}.tgz`,
     integrity: 'sha512-fixture',
   };
 }
@@ -233,11 +226,7 @@ describe('lint-supply-chain: lockfile version/tarball drift', () => {
     const { status, stderr } = runLint({
       lockfile: {
         packages: {
-          'node_modules/mime': {
-            version: '1.6.0',
-            resolved: 'https://registry.npmjs.org/mime/-/mime-2.0.0.tgz',
-            integrity: 'sha512-fixture',
-          },
+          'node_modules/mime': entry('mime', '1.6.0', '2.0.0'),
         },
       },
     });
@@ -256,11 +245,7 @@ describe('lint-supply-chain: lockfile version/tarball drift', () => {
     const { status, stderr } = runLint({
       lockfile: {
         packages: {
-          'node_modules/a/node_modules/mime': {
-            version: '1.6.0',
-            resolved: 'https://registry.npmjs.org/mime/-/mime-2.0.0.tgz',
-            integrity: 'sha512-fixture',
-          },
+          'node_modules/a/node_modules/mime': entry('mime', '1.6.0', '2.0.0'),
         },
       },
     });
@@ -273,11 +258,7 @@ describe('lint-supply-chain: lockfile version/tarball drift', () => {
     const { status, stderr } = runLint({
       lockfile: {
         packages: {
-          'node_modules/@vscode/vsce-sign': {
-            version: '2.0.9',
-            resolved: 'https://registry.npmjs.org/@vscode/vsce-sign/-/vsce-sign-3.0.0.tgz',
-            integrity: 'sha512-fixture',
-          },
+          'node_modules/@vscode/vsce-sign': entry('@vscode/vsce-sign', '2.0.9', '3.0.0'),
         },
       },
     });
@@ -387,10 +368,7 @@ describe('lint-supply-chain: exit status', () => {
       packageJson: { allowScripts: { esbuild: true } },
       lockfile: {
         packages: {
-          'node_modules/mime': {
-            version: '1.6.0',
-            resolved: 'https://registry.npmjs.org/mime/-/mime-2.0.0.tgz',
-          },
+          'node_modules/mime': entry('mime', '1.6.0', '2.0.0'),
         },
       },
     });
