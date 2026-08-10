@@ -26,14 +26,11 @@ export function classExistsInDictionary(
   className: string,
   dict: number | string,
 ): boolean {
-  const dictExpr =
-    typeof dict === 'number'
-      ? `System myUserProfile symbolList at: ${dict} ifAbsent: [nil]`
-      : `System myUserProfile symbolList objectNamed: #'${escapeString(dict)}'`;
-  const code = `| d v |
-d := ${dictExpr}.
-d ifNil: [^ 'false'].
-v := d at: #'${escapeString(className)}' ifAbsent: [nil].
-(v notNil and: [v isBehavior]) printString`;
-  return execute(code).trim() === 'true';
+  // Resolve the class within the dictionary via the shared classLookupExpr (which
+  // already handles both the index and the name form and the missing-dictionary
+  // case), then confirm it's actually a class — a plain global of the same name
+  // must not count as "exists". classLookupExpr is a keyword-message expression, so
+  // parenthesize it before sending ifNil:ifNotNil:.
+  const expr = `(${classLookupExpr(className, dict)}) ifNil: [false] ifNotNil: [:v | v isBehavior]`;
+  return execute(`(${expr}) printString`).trim() === 'true';
 }

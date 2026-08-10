@@ -733,17 +733,25 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
 
     const className = queries.compileClassDefinition(session, defSource);
 
-    // Apply the category the subclass message could not carry. A failure here must
-    // not lose the freshly compiled class, so it's logged, not thrown.
-    if (category !== undefined && category.length > 0) {
-      try {
-        queries.recategorizeClass(session, className, category, dictRef);
-      } catch (e: unknown) {
-        logInfo(
-          `[FS] recategorize ${className} → '${category}' failed: ` +
-            `${e instanceof Error ? e.message : String(e)}`,
-        );
+    // Apply the category the subclass message could not carry — always, including an
+    // empty value: the editor always shows a `category:` line, so deleting/emptying it
+    // is how the user clears the class's category (skipping the empty case would keep
+    // the old category and read as a reverted edit on reopen). A failure here must not
+    // lose the freshly compiled class, so it's logged, not thrown.
+    const desiredCategory = category ?? '';
+    try {
+      const result = queries.recategorizeClass(session, className, desiredCategory, dictRef);
+      // recategorizeClass reports soft failures (e.g. the class not resolving in
+      // dictRef) by RETURNING a status string rather than throwing — surface it so the
+      // typed category isn't silently dropped behind a "saved" message.
+      if (!result.startsWith('Recategorized:')) {
+        logInfo(`[FS] recategorize ${className} → '${desiredCategory}' did not apply: ${result}`);
       }
+    } catch (e: unknown) {
+      logInfo(
+        `[FS] recategorize ${className} → '${desiredCategory}' failed: ` +
+          `${e instanceof Error ? e.message : String(e)}`,
+      );
     }
 
     // An existing but non-writable class recompiles transiently (like a session

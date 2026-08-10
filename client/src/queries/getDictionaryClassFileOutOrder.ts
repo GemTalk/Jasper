@@ -1,5 +1,5 @@
 import { QueryExecutor } from './types';
-import { escapeString, splitLines } from './util';
+import { splitLines, dictLookupExpr } from './util';
 
 // Class names in a dictionary, ordered so that a class always appears after any
 // of its superclasses (ascending inheritance depth, then name). Filing the
@@ -12,10 +12,7 @@ export function getDictionaryClassFileOutOrder(
   execute: QueryExecutor,
   dict: number | string,
 ): string[] {
-  const dictExpr =
-    typeof dict === 'number'
-      ? `System myUserProfile symbolList at: ${dict}`
-      : `System myUserProfile symbolList objectNamed: #'${escapeString(dict)}'`;
+  const dictExpr = dictLookupExpr(dict);
   const code = `| ws dict |
 dict := ${dictExpr}.
 dict ifNil: [^ ''].

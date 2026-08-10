@@ -24,6 +24,12 @@ vi.mock('../browserQueries', () => ({
   canClassBeWritten: vi.fn(() => true),
 }));
 
+// Keep the real gciLog but spy logInfo so the recategorize soft-failure log is observable.
+vi.mock('../gciLog', async (orig) => ({
+  ...(await orig()),
+  logInfo: vi.fn(),
+}));
+
 import {
   Uri,
   FilePermission,
@@ -32,6 +38,7 @@ import {
   TabInputText,
   TabInputTextDiff,
 } from '../__mocks__/vscode';
+import { logInfo } from '../gciLog';
 import {
   GemStoneFileSystemProvider,
   buildMethodUri,
@@ -524,6 +531,41 @@ describe('GemStoneFileSystemProvider', () => {
         'MyClass',
         'User Classes',
         'UserGlobals',
+      );
+    });
+
+    it('clears the category (recategorize with empty) when the category line is removed', () => {
+      // The editor always shows a category: line; deleting it is how the user clears
+      // the category. An absent line must still recategorize (to ''), not be skipped.
+      const uri = Uri.parse('gemstone://1/UserGlobals/new-class');
+      const source = "Object subclass: 'MyClass'\n  inDictionary: UserGlobals\n  options: #()";
+      vi.mocked(queries.compileClassDefinition).mockReturnValueOnce('MyClass');
+      vi.mocked(queries.recategorizeClass).mockReturnValueOnce('Recategorized: MyClass');
+
+      provider.writeFile(uri, encode(source), { create: true, overwrite: true });
+
+      expect(queries.recategorizeClass).toHaveBeenCalledWith(
+        expect.anything(),
+        'MyClass',
+        '',
+        expect.anything(),
+      );
+    });
+
+    it('logs a recategorize soft-failure (returned status) and still reports the save succeeded', () => {
+      const uri = Uri.parse('gemstone://1/UserGlobals/new-class');
+      const source =
+        "Object subclass: 'MyClass'\n  inDictionary: UserGlobals\n  category: 'Widgets'\n  options: #()";
+      vi.mocked(queries.compileClassDefinition).mockReturnValueOnce('MyClass');
+      // recategorizeClass reports a soft failure by RETURNING (not throwing).
+      vi.mocked(queries.recategorizeClass).mockReturnValueOnce('Class not found: MyClass');
+
+      provider.writeFile(uri, encode(source), { create: true, overwrite: true });
+
+      expect(logInfo).toHaveBeenCalledWith(expect.stringContaining('did not apply'));
+      // The soft failure must not block the class creation.
+      expect(window.showInformationMessage).toHaveBeenCalledWith(
+        expect.stringContaining('Class created'),
       );
     });
 
