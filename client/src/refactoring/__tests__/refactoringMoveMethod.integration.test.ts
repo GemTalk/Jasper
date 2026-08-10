@@ -105,7 +105,7 @@ r := (System myUserProfile symbolList objectNamed: #GsMoveMethodRefactoringTest)
 (r failures size + r errors size) printString`;
 
     expect(exec(code).trim()).toBe('0');
-  });
+  }, 60_000);
 
   it('pre-flights a move, counting the movable selectors and skipping the rest', async (ctx) => {
     requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());

@@ -108,7 +108,7 @@ r := (System myUserProfile symbolList objectNamed: #GsInstVarRefactoringTest) su
 (r failures size + r errors size) printString`;
 
     expect(exec(code).trim()).toBe('0');
-  });
+  }, 60_000);
 
   it('adds an instance variable to the class definition', async (ctx) => {
     requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());

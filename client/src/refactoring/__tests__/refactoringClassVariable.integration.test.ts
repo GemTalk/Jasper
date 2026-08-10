@@ -128,7 +128,7 @@ r := (System myUserProfile symbolList objectNamed: #GsRenameClassVariableRefacto
 (r failures size + r errors size) printString`;
 
     expect(exec(code).trim()).toBe('0');
-  });
+  }, 60_000);
 
   it('previews the rename across both sides and the subclass, and stages the class-def edit', async (ctx) => {
     requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());

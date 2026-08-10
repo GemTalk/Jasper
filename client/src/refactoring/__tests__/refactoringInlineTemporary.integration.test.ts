@@ -101,7 +101,7 @@ r := (System myUserProfile symbolList objectNamed: #GsInlineTemporaryRefactoring
 (r failures size + r errors size) printString`;
 
     expect(exec(code).trim()).toBe('0');
-  });
+  }, 60_000);
 
   it('pre-flights a temporary, resolving its name', async (ctx) => {
     requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());

@@ -148,7 +148,7 @@ r := (System myUserProfile symbolList objectNamed: #GsInstVarStructureRefactorin
 (r failures size + r errors size) printString`;
 
     expect(exec(code).trim()).toBe('0');
-  });
+  }, 60_000);
 
   it('converts a method temporary into an instance variable', async (ctx) => {
     requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());

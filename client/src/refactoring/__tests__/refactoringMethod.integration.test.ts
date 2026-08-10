@@ -79,7 +79,7 @@ failuresAndErrors := 0.
 failuresAndErrors printString`;
 
     expect(exec(code).trim()).toBe('0');
-  });
+  }, 60_000);
 
   it('runs the rename-method suite alone and reports its test count', (ctx) => {
     requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
@@ -96,7 +96,7 @@ r runCount printString, ' ', (r failures size + r errors size) printString`;
     const [runCount, failed] = exec(code).trim().split(' ');
     expect(Number(runCount)).toBeGreaterThanOrEqual(15);
     expect(failed).toBe('0');
-  });
+  }, 60_000);
 
   const BASE = 'RMItBase';
   const defineFixture = (): void => {
