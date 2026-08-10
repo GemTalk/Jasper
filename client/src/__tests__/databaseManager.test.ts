@@ -19,6 +19,7 @@ import { DatabaseManager } from '../databaseManager';
 import { GemStoneDatabase } from '../sysadminTypes';
 import { SysadminStorage } from '../sysadminStorage';
 import { ProcessManager } from '../processManager';
+import { uriFsPath } from './support/uri';
 
 // ── Helpers ────────────────────────────────────────────────
 
@@ -57,29 +58,6 @@ function makeManager(overrides?: {
 /** Pick the QuickPick item at `index` (preserving object identity). */
 function pickItem(index: number): void {
   vi.mocked(vscode.window.showQuickPick).mockImplementation(async (items) => (await items)[index]);
-}
-
-/**
- * Mirrors `vscode.Uri#fsPath`'s platform-dependent output, for building the
- * "expected" side of an assertion against a path that came from a
- * `vscode.Uri`'s `fsPath` getter rather than from `path.join`.
- *
- * @remarks
- * `Uri#fsPath` is a separate implementation from `path.join`. Both swap `/`
- * for `\` on Windows, but they are not interchangeable in general:
- * `fsPath` lowercases a leading drive letter and treats a leading `//` as
- * a network-share authority, neither of which `path.join`/`normalize`
- * does. Asserting against `path.join`'s output instead of this helper
- * would happen to match for simple inputs, recreating the same "two
- * different functions, hope they agree" risk this helper exists to
- * eliminate — call the exact getter production reads, not a lookalike, so
- * expected tracks actual by construction, not by luck.
- *
- * @param rawPath - The POSIX-style path passed to `vscode.Uri.file(...)` when building the mocked value.
- * @returns The value `.fsPath` returns for that URI on this platform.
- */
-function uriFsPath(rawPath: string): string {
-  return vscode.Uri.file(rawPath).fsPath;
 }
 
 describe('DatabaseManager.replaceExtent', () => {

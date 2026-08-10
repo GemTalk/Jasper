@@ -140,6 +140,7 @@ vi.mock('../browserQueries', () => ({
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
+import { uriFsPath } from './support/uri';
 import * as debug from '../debugQueries';
 import * as queries from '../browserQueries';
 import {
@@ -918,7 +919,7 @@ describe('DebuggerPanel', () => {
       const opened = vi
         .mocked(vscode.workspace.openTextDocument)
         .mock.calls.at(-1)![0] as vscode.Uri;
-      expect(opened.fsPath).toBe('/Users/me/.jasper/stacks/x.txt');
+      expect(opened.fsPath).toBe(uriFsPath('/Users/me/.jasper/stacks/x.txt'));
       expect(vscode.window.showTextDocument).toHaveBeenCalledWith(
         expect.anything(),
         expect.objectContaining({ preview: false }),
