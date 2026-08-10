@@ -9942,7 +9942,7 @@ setUp
 category: 'running'
 method: GsSplitClassRefactoringTest
 tearDown
-	#(#GsSCSub #GsSCSource #GsSCComponent #GsSplitClassProbe) do: [:nm |
+	#(#GsSCSub2 #GsSCSub #GsSCSource #GsSCComponent #GsSplitClassProbe) do: [:nm |
 		UserGlobals removeKey: nm ifAbsent: []]
 %
 
@@ -10160,6 +10160,79 @@ testDeclinesComponentIvarNameCollision
 	self assert: (r decline includesString: 'already has an instance variable')
 %
 
+category: 'tests - declines'
+method: GsSplitClassRefactoringTest
+testDeclinesSubclassDeclaringComponentIvar
+	"A subclass that already declares the component ivar would carry two of that name once it is
+	 inherited from the reversioned source -- which the class-creation primitive rejects (error
+	 2271) MID-apply, after the component class and every moved method already exist. Decline up
+	 front and NAME the offender, mirroring V1 add. Note the subclass is named GsSCSub2, not
+	 GsSCSub: the assertion below checks for the offender's name, and GsSCSub is a substring of
+	 every other name here."
+	| r |
+	self source
+		subclass: 'GsSCSub2'
+		instVarNames: #('gsSCComponent')
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	r := self ref.
+	self assert: (r decline includesString: 'GsSCSub2').
+	self assert: (r decline includesString: 'already declares').
+	self assert: (r decline includesString: 'gsSCComponent')
+%
+
+category: 'tests - declines'
+method: GsSplitClassRefactoringTest
+testDeclinesClassVariableShadowedByComponentIvar
+	"The component ivar is a NEW instance variable on the source, so a class variable of the same
+	 name visible to the source would be shadowed inside every method body. Same precondition V1
+	 add applies, asked through the same shared environment query."
+	| r |
+	self source addClassVarName: #gsSCComponent.
+	r := self ref.
+	self assert: (r decline includesString: 'class variable').
+	self assert: (r decline includesString: 'shadow')
+%
+
+category: 'tests - analysis guards'
+method: GsSplitClassRefactoringTest
+testIvarsAccessedAnswersNilWhenTheMethodCannotBeRead
+	"NIL, not #(). 'We could not read this method' is a different claim from 'it touches no
+	 instance variable', and computeAnalysis declines on the first while happily leaving a method
+	 behind on the second -- so the two must never collapse together."
+	self assert: (self ref ivarsAccessedBy: #noSuchSelectorHere in: self source) isNil.
+	self deny: (self ref ivarsAccessedBy: #readExtractC in: self source) isNil
+%
+
+category: 'tests - analysis guards'
+method: GsSplitClassRefactoringTest
+testParsesRejectsSourceRbParserCannotRead
+	"The super / retained-self-send guards both answer permissively on a parse failure, so
+	 computeAnalysis gates them on #parses: and declines instead. RBParser is a re-implementation,
+	 so a method carrying a construct it does not handle is the realistic trigger."
+	self deny: (self ref parses: nil).
+	self deny: (self ref parses: 'readExtractC ^ ^ ^').
+	self assert: (self ref parses: 'readExtractC ^extractC')
+%
+
+category: 'tests - analysis guards'
+method: GsSplitClassRefactoringTest
+testArgNamesRaisesRatherThanBuildingAnEmptyPattern
+	"Answering #() here made selectorText:args: emit an empty keyword pattern, so the delegator
+	 source came out as `^self comp ` and only failed at compile time DURING apply, stranding a
+	 half-applied split. Raise instead, so the apply reports it."
+	| names |
+	self should: [self ref argNamesFor: #noSuchSelectorHere in: self source] raise: Error.
+
+	"Compare as Symbols: the parser answers argument names as Unicode-capable strings, and a raw
+	 String = against them raises error 2718 on 3.6.x."
+	names := (self ref argNamesFor: #'writeExtractC:' in: self source) collect: [:e | e asSymbol].
+	self assert: names size = 1.
+	self assert: (names at: 1) == #v
+%
+
 category: 'tests - apply'
 method: GsSplitClassRefactoringTest
 testApplyCreatesComponentWithExtractedIvars
@@ -10207,6 +10280,56 @@ testApplyPreservesBehaviorThroughDelegator
 	s := self source new.
 	s writeExtractC: 7.
 	self assert: (s readExtractC) = 7
+%
+
+category: 'tests - apply'
+method: GsSplitClassRefactoringTest
+testDelegatorForAMethodWithNoReturnStillAnswersTheSource
+	"#writeExtractC: has no return, so before the split it answered the SOURCE. A delegator that
+	 forwards with `^` would answer whatever the moved method answers -- which is now the COMPONENT,
+	 because a method falling off its end answers its receiver. That silently changes S's external
+	 API for every caller that chains on the result, and hands the caller the component object the
+	 has-a encapsulation is meant to hide."
+	| s |
+	self ref applyDeselected: #().
+
+	s := self source new.
+
+	self assert: (s writeExtractC: 7) == s.
+	self deny: (s writeExtractC: 7) == (s gsSCComponent)
+%
+
+category: 'tests - apply'
+method: GsSplitClassRefactoringTest
+testDelegatorForAMethodWithAReturnStillForwardsTheValue
+	"The mirror of the test above: dropping the `^` unconditionally would break every method whose
+	 answer is the point, so #readExtractC must still forward its value."
+	| s |
+	self ref applyDeselected: #().
+
+	s := self source new.
+	s writeExtractC: 7.
+
+	self assert: s readExtractC = 7
+%
+
+category: 'tests - building'
+method: GsSplitClassRefactoringTest
+testDelegatorOmitsTheCaretOnlyForMethodsThatAnswerSelf
+	"Pins the discriminator directly, so a regression shows up as this test rather than as a
+	 puzzling identity failure in the apply tests above."
+	| r |
+	r := self ref.
+	self assert: (r answersSelf: #'writeExtractC:' in: self source).
+	self deny: (r answersSelf: #readExtractC in: self source).
+
+	"An explicit `^self` answers the receiver just as falling off the end does."
+	self compileOnSource: 'explicitSelfReturn extractC := 1. ^self'.
+	self assert: (r answersSelf: #explicitSelfReturn in: self source).
+
+	"A return of anything else is the method's real answer and must be forwarded."
+	self compileOnSource: 'mixedReturn extractC isNil ifTrue: [^0]. ^extractC'.
+	self deny: (r answersSelf: #mixedReturn in: self source)
 %
 
 category: 'tests - apply'

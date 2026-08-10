@@ -357,9 +357,11 @@ describe('split class command', () => {
 
     const opts = vi.mocked(vscode.window.showInputBox).mock.calls[0][0];
     const validate = opts?.validateInput as (v: string) => string | undefined;
-    expect(validate('')).toBeTruthy();
-    expect(validate('lowercase')).toBeTruthy();
-    expect(validate('9x')).toBeTruthy();
+    // Assert the message the user actually sees, not just that some message came back — a
+    // regression to a different (or generic) rejection reason has to fail here.
+    expect(validate('')).toContain('Enter a class name');
+    expect(validate('lowercase')).toContain('uppercase letter');
+    expect(validate('9x')).toContain('uppercase letter');
     expect(validate('Address')).toBeUndefined();
   });
 });

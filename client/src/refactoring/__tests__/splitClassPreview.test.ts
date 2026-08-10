@@ -35,6 +35,19 @@ describe('split-class parsers', () => {
     expect(c.instVars).toEqual([]);
   });
 
+  it('drops a candidate whose name is not a string rather than offering a placeholder', () => {
+    // A placeholder would be pickable in the quick pick and sent back to the engine verbatim,
+    // so the user's split would fail with "... is not an instance variable of Person."
+    const c = parseCandidates(
+      JSON.stringify({
+        sourceClass: 'Person',
+        instVars: [{ name: 'street' }, { name: 42 }, { name: null }, {}, { name: 'zip' }],
+      }),
+    );
+
+    expect(c.instVars.map((v) => v.name)).toEqual(['street', 'zip']);
+  });
+
   it('reads a viable pre-flight analysis', () => {
     const a = parseAnalysis(
       JSON.stringify({

@@ -129,7 +129,10 @@ export function parseCandidates(json: string): SplitCandidates {
   const instVars = Array.isArray(env.instVars)
     ? env.instVars
         .filter((v): v is Record<string, unknown> => typeof v === 'object' && v !== null)
-        .map((v) => ({ name: typeof v.name === 'string' ? v.name : '?' }))
+        // DROP a candidate whose name isn't a string rather than naming it '?'. A placeholder is
+        // still pickable in the quick pick and goes straight back to the engine as an extract
+        // ivar, landing the user on "Cannot split: ? is not an instance variable of Person."
+        .flatMap((v) => (typeof v.name === 'string' ? [{ name: v.name }] : []))
     : [];
   return {
     sourceClass: typeof env.sourceClass === 'string' ? env.sourceClass : null,

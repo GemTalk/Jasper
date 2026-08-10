@@ -5616,14 +5616,9 @@ category: 'private'
 method: GsInstVarRefactoring
 allClassVarsOf: aClass
 	"aClass's own and inherited class-variable names, as a Set of Strings. Used to decline an
-	 #add whose name would shadow a class variable inside method bodies."
-	| result cls |
-	result := Set new.
-	cls := aClass.
-	[cls isNil] whileFalse: [
-		(cls classVarNames ifNil: [#()]) do: [:n | result add: n asString].
-		cls := cls superclass].
-	^result
+	 #add whose name would shadow a class variable inside method bodies. Shared with V8 split --
+	 the walk itself lives on the environment so both refactorings ask the same question."
+	^environment classVarNamesVisibleTo: aClass
 %
 
 category: 'private'
@@ -5683,8 +5678,7 @@ analyzeAdd
 	"A subclass that already declares varName as its OWN instance variable would end up with two
 	 of that name once the new one is inherited. That fails mid-apply (error 2271), so decline up
 	 front and name the offenders rather than let the reshape strand a half-versioned subtree."
-	conflicts := (environment descendantsOf: definingClass)
-		select: [:d | (self ownInstVarsOf: d) includes: varName].
+	conflicts := environment descendantsOf: definingClass declaringInstVar: varName.
 	conflicts notEmpty ifTrue: [
 		names := (conflicts collect: [:c | c name asString])
 			inject: '' into: [:acc :s | acc isEmpty ifTrue: [s] ifFalse: [acc, ', ', s]].
@@ -9402,6 +9396,35 @@ descendantsOf: aClass
 	^ordered asArray
 %
 
+category: 'enumerating'
+method: GsRefactoringEnvironment
+descendantsOf: aClass declaringInstVar: aName
+	"Every descendant of aClass that declares aName as its OWN instance variable. Once aName is
+	 added to aClass each of those descendants would carry two of that name, which the
+	 class-creation primitive rejects (error 2271) -- and it rejects it MID-apply, after earlier
+	 classes have already been versioned. Callers decline up front and name the offenders instead.
+
+	 Shared by every refactoring that introduces an instance variable on an existing class (V1 add,
+	 V8 split), so the check and its cross-version behaviour live in one place. Read-only."
+	^(self descendantsOf: aClass)
+		select: [:d | ((d instVarNames ifNil: [#()]) collect: [:e | e asString]) includes: aName]
+%
+
+category: 'enumerating'
+method: GsRefactoringEnvironment
+classVarNamesVisibleTo: aClass
+	"aClass's own and inherited class-variable names, as a Set of Strings. A new instance variable
+	 of the same name would shadow one of these inside method bodies, so callers decline it.
+	 Read-only."
+	| result cls |
+	result := Set new.
+	cls := aClass.
+	[cls isNil] whileFalse: [
+		(cls classVarNames ifNil: [#()]) do: [:n | result add: n asString].
+		cls := cls superclass].
+	^result
+%
+
 category: 'accessing'
 method: GsRefactoringEnvironment
 classNamed: aName
@@ -12326,7 +12349,21 @@ categoryOf: aSelector in: aClass
 category: 'private'
 method: GsSplitClassRefactoring
 ivarsAccessedBy: aSelector in: aClass
-	^[(aClass compiledMethodAt: aSelector environmentId: 0 otherwise: nil) instVarsAccessed] on: Error do: [:e | #()]
+	"The instance variables aSelector's compiled method touches, or NIL when the method cannot be
+	 read at all (no compiled method in environment 0, or reflection raising). NIL rather than #(),
+	 because 'we do not know what this method touches' is not the same claim as 'it touches
+	 nothing' -- and every caller here uses the answer to assert safety, so the two must not be
+	 confused. Callers decline on nil."
+	^[(aClass compiledMethodAt: aSelector environmentId: 0 otherwise: nil) instVarsAccessed] on: Error do: [:e | nil]
+%
+
+category: 'private'
+method: GsSplitClassRefactoring
+parses: src
+	"True when src is a method source RBParser can read. The clean-cut guards below are all
+	 permissive on a parse failure, so callers gate on this and decline instead."
+	src isNil ifTrue: [^false].
+	^([RBParser parseMethod: src] on: Error do: [:e | nil]) notNil
 %
 
 category: 'private'
@@ -12379,6 +12416,9 @@ isValidClassName: aString
 category: 'private'
 method: GsSplitClassRefactoring
 methodSource: src referencesName: aName
+	"CALLERS MUST GATE ON #parses: FIRST. A missing or unparseable source answers false here, which
+	 on a safety guard reads as 'no, it does not send super' -- the permissive answer. computeAnalysis
+	 declines such a method up front so this fallback is unreachable from it; keep it that way."
 	| tree found |
 	src isNil ifTrue: [^false].
 	tree := [RBParser parseMethod: src] on: Error do: [:e | nil].
@@ -12391,7 +12431,9 @@ methodSource: src referencesName: aName
 category: 'private'
 method: GsSplitClassRefactoring
 selfSentSelectorsIn: src
-	"The selectors sent to self / super in src, as a Set of Symbols."
+	"The selectors sent to self / super in src, as a Set of Symbols. CALLERS MUST GATE ON #parses:
+	 FIRST -- an unparseable source answers an empty set, which reads as 'sends nothing to self'
+	 and sails past the retained-self-send guard."
 	| tree sels |
 	sels := Set new.
 	src isNil ifTrue: [^sels].
@@ -12406,11 +12448,17 @@ selfSentSelectorsIn: src
 category: 'private'
 method: GsSplitClassRefactoring
 argNamesFor: aSelector in: aClass
+	"The argument names of aSelector's source. RAISES when the source is missing or unparseable
+	 rather than answering #(): for a keyword selector an empty argument list makes
+	 selectorText:args: emit an empty pattern, so the delegator source comes out as `^self comp `
+	 and only fails at compile time during apply, stranding a half-applied split. computeAnalysis
+	 has already declined an unparseable movable method, so reaching this is a source that changed
+	 between the preview and the apply -- which the apply should report, not paper over."
 	| src tree |
 	src := self sourceOf: aSelector in: aClass.
-	src isNil ifTrue: [^#()].
-	tree := [RBParser parseMethod: src] on: Error do: [:e | nil].
-	tree isNil ifTrue: [^#()].
+	tree := src isNil ifTrue: [nil] ifFalse: [[RBParser parseMethod: src] on: Error do: [:e | nil]].
+	tree isNil ifTrue: [
+		^self error: 'Cannot build the delegator for #', aSelector asString, ': its source is missing or no longer parses.'].
 	^tree arguments collect: [:a | a name]
 %
 
@@ -12448,7 +12496,7 @@ computeAnalysis
 	"Validate the name + extract set, derive the component ivar, compute the movable methods, then
 	 run the clean-cut preconditions. Sets decline (nil when viable), componentIvarName and
 	 movableSelectors."
-	| own extractSyms |
+	| own extractSyms ivarConflicts movable |
 	decline := nil.
 	(self isValidClassName: newName) ifFalse: [
 		^decline := 'Cannot split: ', newName, ' is not a valid class name.'].
@@ -12463,10 +12511,34 @@ computeAnalysis
 	componentIvarName := self decapitalize: newName.
 	((self allInstVarsOf: sourceClass) includes: componentIvarName) ifTrue: [
 		^decline := 'Cannot split: the source already has an instance variable named ', componentIvarName, '.'].
+	"The component ivar is a NEW instance variable on the source, so it faces the same two
+	 collisions V1 add declines -- a class variable it would shadow, and a subclass that already
+	 declares that name (error 2271, raised MID-apply once the component class and every moved
+	 method already exist). Both questions are asked through the shared environment queries so V1
+	 and V8 cannot drift apart."
+	((environment classVarNamesVisibleTo: sourceClass) includes: componentIvarName) ifTrue: [
+		^decline := 'Cannot split: a class variable named ', componentIvarName, ' is visible to ',
+			sourceClass name asString, ', which the new instance variable would shadow.'].
+	ivarConflicts := environment descendantsOf: sourceClass declaringInstVar: componentIvarName.
+	ivarConflicts notEmpty ifTrue: [
+		^decline := 'Cannot split: ',
+			(ivarConflicts size = 1 ifTrue: ['subclass '] ifFalse: ['subclasses ']),
+			(self commaList: ((ivarConflicts collect: [:c | c name asString]) asSortedCollection: [:a :b | a <= b])),
+			(ivarConflicts size = 1 ifTrue: [' already declares'] ifFalse: [' already declare']),
+			' an instance variable named ', componentIvarName, '; adding it to ',
+			sourceClass name asString, ' would duplicate that variable.'].
 	extractSyms := self extractSymbolSet.
-	movableSelectors := (sourceClass selectors select: [:sel |
-		(self ivarsAccessedBy: sel in: sourceClass) anySatisfy: [:v | extractSyms includes: v asSymbol]])
-			asSortedCollection: [:a :b | a asString <= b asString].
+	"One pass: a method we cannot read is a DECLINE, not a method that touches nothing. Answering
+	 #() there would silently leave it behind on the source while the reversion removes the very
+	 instance variables it may use -- and the whole MVP is 'decline anything that isn't a clean
+	 cut'. The message names the selector so a rare refusal explains itself."
+	movable := OrderedCollection new.
+	sourceClass selectors do: [:sel | | acc |
+		acc := self ivarsAccessedBy: sel in: sourceClass.
+		acc isNil ifTrue: [
+			^decline := 'Cannot split off ', newName, ': #', sel asString, ' could not be analysed.'].
+		(acc anySatisfy: [:v | extractSyms includes: v asSymbol]) ifTrue: [movable add: sel]].
+	movableSelectors := movable asSortedCollection: [:a :b | a asString <= b asString].
 	movableSelectors do: [:sel | | accessed retained src selfSent |
 		accessed := self ivarsAccessedBy: sel in: sourceClass.
 		retained := accessed reject: [:v | extractSyms includes: v asSymbol].
@@ -12474,6 +12546,12 @@ computeAnalysis
 			^decline := 'Cannot split off ', newName, ': #', sel asString, ' also uses instance variable(s) that stay behind (',
 				(self commaList: ((retained collect: [:v | v asString]) asSortedCollection: [:a :b | a <= b])), ').'].
 		src := self sourceOf: sel in: sourceClass.
+		"Gate BOTH source-level guards below on the source actually parsing. RBParser is a
+		 re-implementation, so a method carrying a GemStone-ism it does not handle is the realistic
+		 trigger -- and both guards answer permissively on a parse failure (false / an empty set),
+		 which would sail a method with a super send or a retained self send straight through."
+		(self parses: src) ifFalse: [
+			^decline := 'Cannot split off ', newName, ': the source of #', sel asString, ' could not be parsed.'].
 		(self methodSource: src referencesName: 'super') ifTrue: [
 			^decline := 'Cannot split off ', newName, ': #', sel asString, ' sends super, whose meaning depends on the source class.'].
 		selfSent := self selfSentSelectorsIn: src.
@@ -12485,8 +12563,14 @@ computeAnalysis
 				or: [(sourceClass includesSelector: s) not and: [Object canUnderstand: s]]) ifFalse: [
 				^decline := 'Cannot split off ', newName, ': #', sel asString, ' calls #', s asString, ', which stays behind on ', sourceClass name asString, '.']]].
 	(environment descendantsOf: sourceClass) do: [:d |
-		d selectors do: [:sel |
-			((self ivarsAccessedBy: sel in: d) anySatisfy: [:v | extractSyms includes: v asSymbol]) ifTrue: [
+		d selectors do: [:sel | | acc |
+			acc := self ivarsAccessedBy: sel in: d.
+			"Same reasoning as the source sweep: this guard asserts a NEGATIVE (no subclass touches
+			 an extracted variable), and a method we cannot read cannot support that claim."
+			acc isNil ifTrue: [
+				^decline := 'Cannot split off ', newName, ': #', sel asString, ' on subclass ',
+					d name asString, ' could not be analysed.'].
+			(acc anySatisfy: [:v | extractSyms includes: v asSymbol]) ifTrue: [
 				^decline := 'Cannot split off ', newName, ': subclass ', d name asString, ' uses an extracted instance variable in #', sel asString, '.']]]
 %
 
@@ -12637,10 +12721,45 @@ accessorSource
 category: 'building'
 method: GsSplitClassRefactoring
 delegatorSourceFor: aSelector
-	"A delegating stub forwarding to the component: `foo: a ^self n foo: a`."
+	"A delegating stub forwarding to the component: `foo: a ^self n foo: a`.
+
+	 The `^` is DROPPED when the moved method answers self on every path we can see, because a
+	 Smalltalk method that falls off its end answers the RECEIVER -- and after the move the
+	 receiver is the component, not the source. `^self comp street: aString` would therefore make
+	 `person street: 'x'` evaluate to the ScItAddress rather than the person: it breaks the
+	 unchanged-external-API promise for anything that chains on the result, and it leaks the
+	 component object out of S's API, which is precisely what the has-a encapsulation exists to
+	 prevent. Setters are the most common movable shape, so this is the common case, not an edge.
+
+	 Without the `^` the delegator itself falls off its end and answers the source again.
+
+	 KNOWN LIMITATION: a method that returns a value on one path and falls through on another still
+	 forwards, so its fall-through path answers the component. Detecting that needs a per-path
+	 analysis this MVP does not do -- and it is no worse than before this fix."
 	| text |
 	text := self selectorText: aSelector args: (self argNamesFor: aSelector in: sourceClass).
+	(self answersSelf: aSelector in: sourceClass)
+		ifTrue: [^text, self nl, self tab, 'self ', componentIvarName, ' ', text].
 	^text, self nl, self tab, '^self ', componentIvarName, ' ', text
+%
+
+category: 'private'
+method: GsSplitClassRefactoring
+answersSelf: aSelector in: aClass
+	"True when aSelector's method answers its receiver on every path we can see: it has no return
+	 at all (it falls off its end), or every return it does have is a literal `^self`. Those are the
+	 methods whose delegator must NOT forward with `^` -- see delegatorSourceFor:.
+
+	 A return of anything else means the value is the method's real answer and must be forwarded."
+	| src tree answersSelf |
+	src := self sourceOf: aSelector in: aClass.
+	(self parses: src) ifFalse: [^false].
+	tree := RBParser parseMethod: src.
+	answersSelf := true.
+	tree nodesDo: [:n |
+		(n isReturn and: [(n value isVariable and: [n value name = 'self']) not])
+			ifTrue: [answersSelf := false]].
+	^answersSelf
 %
 
 category: 'private'
