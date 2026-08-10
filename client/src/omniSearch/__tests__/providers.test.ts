@@ -4,7 +4,7 @@ import { NEVER_CANCELLED, OmniConfig } from '../omniTypes';
 import { createClassesProvider } from '../providers/classesProvider';
 import { createDictionariesProvider } from '../providers/dictionariesProvider';
 import { createOpenEditorsProvider } from '../providers/openEditorsProvider';
-import { createMethodsProvider } from '../providers/methodsProvider';
+import { createMethodsProvider, SERVER_OVERFETCH } from '../providers/methodsProvider';
 import { ClassNameEntry } from '../../queries/getAllClassNames';
 import { SelectorSearchResult } from '../../queries/searchSelectors';
 
@@ -17,14 +17,14 @@ describe('classesProvider', () => {
     { dictIndex: 3, dictName: 'Python', className: 'object' },
   ];
 
-  it('primes once from the loader, then matches client-side without reloading', () => {
+  it('loads the corpus in prime(), then matches client-side WITHOUT reloading on each search', () => {
     const load = vi.fn(() => entries);
     const p = createClassesProvider(42, load);
     void p.prime?.(NEVER_CANCELLED);
-    void p.prime?.(NEVER_CANCELLED);
     const r1 = p.search('oc', cfg(), NEVER_CANCELLED) as ReturnType<typeof Array.prototype.slice>;
     const r2 = p.search('obj', cfg(), NEVER_CANCELLED);
-    expect(load).toHaveBeenCalledTimes(2); // prime reloads; search does not
+    // Load happened once (in prime); neither search re-queried — this is the caching guarantee.
+    expect(load).toHaveBeenCalledTimes(1);
     expect((r1 as { label: string }[])[0].label).toBe('OrderedCollection');
     expect((r2 as { label: string }[]).map((x) => x.label)).toContain('Object');
   });
@@ -122,7 +122,12 @@ describe('methodsProvider', () => {
       description?: string;
       action: { kind: string; selector: string; isMeta: boolean };
     }[];
-    expect(runSearch).toHaveBeenCalledWith('add', OMNI_DEFAULTS.maxResultsPerCategory, true);
+    // Over-fetches (SERVER_OVERFETCH ×) so ranking has a wider pool, then client-caps.
+    expect(runSearch).toHaveBeenCalledWith(
+      'add',
+      OMNI_DEFAULTS.maxResultsPerCategory * SERVER_OVERFETCH,
+      true,
+    );
     const add = results.find((r) => r.label === 'OrderedCollection>>add:');
     expect(add).toBeTruthy();
     expect(add?.description).toBe('Globals · adding');

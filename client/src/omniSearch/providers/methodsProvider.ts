@@ -18,6 +18,12 @@ export type SelectorSearchRunner = (
   ignoreCase: boolean,
 ) => SelectorSearchResult[];
 
+/** Over-fetch factor: request this many × the displayed cap from the server, so ranking has a
+ *  wider pool to pick the best matches from (see search()). */
+export const SERVER_OVERFETCH = 4;
+/** Hard ceiling on the server slice, to bound the scan cost regardless of maxResultsPerCategory. */
+export const MAX_SERVER_LIMIT = 200;
+
 function labelFor(r: SelectorSearchResult): string {
   return `${r.className}${r.isMeta ? ' class' : ''}>>${r.selector}`;
 }
@@ -32,7 +38,11 @@ export function createMethodsProvider(
       const term = query.trim();
       if (term.length < cfg.methodMinQueryLength) return [];
 
-      const rows = runSearch(term, cfg.maxResultsPerCategory, !cfg.caseSensitive);
+      // Fetch a WIDER server slice than we display, then rank + cap client-side. The server scan is
+      // substring-match in symbol-list order (not by relevance), so a high-quality selector match
+      // could sit past a tight cutoff and never reach us; over-fetching lets the ranking surface it.
+      const serverLimit = Math.min(cfg.maxResultsPerCategory * SERVER_OVERFETCH, MAX_SERVER_LIMIT);
+      const rows = runSearch(term, serverLimit, !cfg.caseSensitive);
       const out: OmniResult[] = [];
       for (const r of rows) {
         const m = match(term, r.selector, {

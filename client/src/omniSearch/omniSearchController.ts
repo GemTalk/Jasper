@@ -132,7 +132,10 @@ export function createOmniController(deps: OmniControllerDeps): OmniController {
     const { scopeId, term } = parseScope(rawValue, config.enabledCategories);
     qp.placeholder = placeholderFor(scopeId);
     // Empty term: show nothing rather than dumping the whole image (recents is a follow-up).
+    // Bump the generation so any in-flight search is superseded — otherwise a slow query dispatched
+    // just before the field was cleared would resolve and repopulate the just-emptied list.
     if (term.length === 0) {
+      ++generation;
       qp.items = [];
       qp.busy = false;
       return;
@@ -168,8 +171,17 @@ export function createOmniController(deps: OmniControllerDeps): OmniController {
     debounce = setTimeout(() => void refresh(value), config.debounceMs);
   }
 
+  const track = (d: vscode.Disposable | undefined): void => {
+    if (d) disposables.push(d);
+  };
+
   async function start(): Promise<void> {
+    qp.placeholder = placeholderFor(null);
+    qp.matchOnDescription = false;
+    qp.matchOnDetail = false;
+
     // Prime load-once providers concurrently (best-effort; a failing prime just yields no results).
+    qp.busy = true;
     await Promise.all(
       providers.map(async (p) => {
         try {
@@ -179,20 +191,24 @@ export function createOmniController(deps: OmniControllerDeps): OmniController {
         }
       }),
     );
-    qp.placeholder = placeholderFor(null);
-    qp.matchOnDescription = false;
-    qp.matchOnDetail = false;
+    qp.busy = false;
 
-    qp.onDidChangeValue?.((v: string) => scheduleRefresh(v));
-    qp.onDidAccept?.(() => {
-      const picked = qp.selectedItems[0];
-      if (picked?.result) {
-        const r = picked.result;
-        qp.hide();
-        void activate(r);
-      }
-    });
-    qp.onDidHide?.(() => dispose());
+    track(qp.onDidChangeValue?.((v: string) => scheduleRefresh(v)));
+    track(
+      qp.onDidAccept?.(() => {
+        const picked = qp.selectedItems[0];
+        if (picked?.result) {
+          const r = picked.result;
+          qp.hide();
+          // Activation touches vscode + the fs-provider (buildMethodUri can throw, showTextDocument
+          // can reject) — route any failure to onError instead of an unhandled rejection.
+          void Promise.resolve(activate(r)).catch((e: unknown) =>
+            deps.onError?.(e instanceof Error ? e.message : String(e)),
+          );
+        }
+      }),
+    );
+    track(qp.onDidHide?.(() => dispose()));
     qp.show();
   }
 

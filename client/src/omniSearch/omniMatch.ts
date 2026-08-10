@@ -29,7 +29,8 @@ export interface MatchOptions {
 }
 
 export interface MatchResult {
-  /** Higher is better. Always >= 0. An empty query yields score 0 (a neutral "match all"). */
+  /** Higher is better; only meaningful relative to other results (a very scattered match may be
+   *  negative). An empty query yields exactly 0 (a neutral "match all"). */
   score: number;
   /** Matched `[start, end)` ranges in the original target, ascending and coalesced. */
   ranges: Array<[number, number]>;
@@ -87,7 +88,10 @@ function scoreFrom(target: string, indices: number[]): MatchResult {
   score += gaps * W_GAP;
   // Reward a match that covers more of a short target (tight, high-signal hits rank first).
   score += Math.round((W_SHORTNESS * indices.length) / target.length);
-  return { score: Math.max(0, score), ranges: coalesce(indices) };
+  // NOT clamped to >= 0: a very scattered match may score below zero, and keeping the raw value
+  // preserves the relative order between two poor matches (and never collides with the empty-query
+  // neutral 0, which is returned on a separate path before we ever get here).
+  return { score, ranges: coalesce(indices) };
 }
 
 function matchPrefix(q: string, t: string): number[] | null {

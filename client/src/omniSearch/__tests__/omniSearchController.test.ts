@@ -178,4 +178,24 @@ describe('createOmniController', () => {
 
     expect(qp.items.filter((i) => i.result).map((i) => i.result!.label)).toEqual(['FreshHit']);
   });
+
+  it('does NOT let an in-flight search repopulate the list after the field is cleared', async () => {
+    // Regression for the empty-term generation-bump fix: clearing the box must supersede a query
+    // that was dispatched just before, so its late result can't flash stale hits back in.
+    const calls: Array<(r: OmniResult[]) => void> = [];
+    const provider: OmniProvider = {
+      category: CATEGORY_BY_ID.classes,
+      search: () => new Promise<OmniResult[]>((res) => calls.push(res)),
+    };
+    const { qp, ctl } = makeController([provider]);
+    await ctl.start();
+
+    const inflight = ctl.refresh('Order'); // dispatches a (pending) search
+    await ctl.refresh('   '); // user clears the field → must bump generation
+    expect(qp.items).toEqual([]);
+    calls[0]([result('classes', 'StaleHit')]); // the old search finally resolves
+    await inflight;
+
+    expect(qp.items).toEqual([]); // still cleared — the stale result was discarded
+  });
 });
