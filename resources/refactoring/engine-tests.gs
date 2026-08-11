@@ -7560,6 +7560,19 @@ testDescendantsDeclaringInstVarFindsOnlyTheRedeclaringSubclasses
 
 category: 'tests'
 method: GsRefactoringEnvironmentTest
+testDescendantsDeclaringInstVarAcceptsAStringOrASymbol
+	"The name is compared against normalised Strings, so a Symbol argument must be normalised too
+	 or it would hit the 3.6.x Unicode-comparison trap on the argument side and answer empty. Match
+	 #instanceMethodsAccessing:inClass:, which already accepts either."
+	| env |
+	env := GsRefactoringEnvironment new.
+
+	self assert: (env descendantsOf: self superFixture declaringInstVar: #beta)
+		equals: (env descendantsOf: self superFixture declaringInstVar: 'beta')
+%
+
+category: 'tests'
+method: GsRefactoringEnvironmentTest
 testDictionariesDefiningNameReflectWhereTheClassLives
 	| env |
 	env := GsRefactoringEnvironment new.
@@ -7624,6 +7637,11 @@ testInstVarNameQueriesAnswerStringsNotSymbols
 	| env |
 	env := GsRefactoringEnvironment new.
 
+	"Pin the precondition: the loops below prove nothing if the query ever answers empty, so
+	 assert non-empty first -- otherwise a regression to #() would pass this test vacuously."
+	self deny: (env ownInstVarNamesOf: self subFixture) isEmpty.
+	self deny: (env allInstVarNamesOf: self subFixture) isEmpty.
+
 	(env ownInstVarNamesOf: self subFixture) do: [:each |
 		self assert: each isString.
 		self deny: each isSymbol].
@@ -7679,15 +7697,32 @@ testTheInstVarNameQueriesHaveExactlyOneImplementationEach
 	"Issue #401: these one-liners used to be copy-pasted into four engine classes, which is
 	 how they could drift apart. Each now has a single implementation, on the environment --
 	 assert that, so a re-introduced copy (or a revived #ownInstVarsOf: / #allInstVarsOf:)
-	 fails here instead of silently diverging again."
-	| env |
+	 fails here instead of silently diverging again.
+
+	 #implementorsOf: asks the RUNNING stone, so this asserts the state of the INSTALLED engine,
+	 not the source on this branch. A failure right after editing source usually means the stone's
+	 engine is stale -- reinstall it (npm run test:server:install-plugin) before reading it as a
+	 real regression.
+
+	 The revived-copy check is scoped to the four engine classes that once held the copies, not the
+	 whole image: #ownInstVarsOf: / #allInstVarsOf: are generic enough that an unrelated class
+	 adopting one should not fail a test guarding THIS drift."
+	| env engineClasses |
 	env := GsRefactoringEnvironment new.
+	engineClasses := Array
+		with: GsExtractSuperclassRefactoring
+		with: GsInstVarRefactoring
+		with: GsInstVarStructureRefactoring
+		with: GsSplitClassRefactoring.
 
 	#(#ownInstVarNamesOf: #allInstVarNamesOf:) do: [:sel |
 		self assert: ((env implementorsOf: sel) collect: [:m | m inClass])
 			equals: (Array with: GsRefactoringEnvironment)].
 	#(#ownInstVarsOf: #allInstVarsOf:) do: [:sel |
-		self assert: (env implementorsOf: sel) isEmpty]
+		| implementorClasses |
+		implementorClasses := (env implementorsOf: sel) collect: [:m | m inClass].
+		engineClasses do: [:cls |
+			self deny: (implementorClasses includes: cls)]]
 %
 
 category: 'tests'

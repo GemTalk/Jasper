@@ -149,9 +149,15 @@ GsRefactoringEnvironment >> descendantsOf: aClass declaringInstVar: aName [
 	 classes have already been versioned. Callers decline up front and name the offenders instead.
 
 	 Shared by every refactoring that introduces an instance variable on an existing class (V1 add,
-	 V8 split), so the check and its cross-version behaviour live in one place. Read-only."
+	 V8 split), so the check and its cross-version behaviour live in one place. Read-only.
+
+	 aName is normalised to a String because #ownInstVarNamesOf: answers Strings; a caller passing a
+	 Symbol would otherwise hit the same 3.6.x Unicode-comparison trap on the argument side and get a
+	 silently empty answer. Both #instVarNameArgument callers already accept either, so we match that."
+	| name |
+	name := aName asString.
 	^(self descendantsOf: aClass)
-		select: [:d | (self ownInstVarNamesOf: d) includes: aName]
+		select: [:d | (self ownInstVarNamesOf: d) includes: name]
 ]
 
 { #category : 'enumerating' }
@@ -180,7 +186,11 @@ GsRefactoringEnvironment >> ownInstVarNamesOf: aClass [
 
 	 Shared by every refactoring that reasons about instance-variable structure --
 	 add/remove, push up/down/move, extract superclass, split class -- so the
-	 normalisation lives in one place. Read-only."
+	 normalisation lives in one place. Read-only.
+
+	 The ifNil: guard is defensive only: a live class always answers an Array from #instVarNames, so
+	 nil is not expected to be reachable here. It mirrors the guard #descendantsOf:declaringInstVar:
+	 already carried and keeps the answer an empty Array rather than raising if that ever changes."
 	^(aClass instVarNames ifNil: [#()]) collect: [:e | e asString]
 ]
 

@@ -152,14 +152,6 @@ GsInstVarRefactoring >> optionsOf: aClass [
 ]
 
 { #category : 'private' }
-GsInstVarRefactoring >> allClassVarsOf: aClass [
-	"aClass's own and inherited class-variable names, as a Set of Strings. Used to decline an
-	 #add whose name would shadow a class variable inside method bodies. Shared with V8 split --
-	 the walk itself lives on the environment so both refactorings ask the same question."
-	^environment classVarNamesVisibleTo: aClass
-]
-
-{ #category : 'private' }
 GsInstVarRefactoring >> isValidIvarName: aString [
 	"A syntactically valid Smalltalk instance-variable name: a LOWERCASE letter or an underscore,
 	 followed by letters, digits, or underscores.
@@ -207,7 +199,7 @@ GsInstVarRefactoring >> analyzeAdd [
 		^decline := 'Cannot add ', varName printString, ': an instance-variable name must start with a lowercase letter or an underscore, followed by letters, digits, or underscores.'].
 	((environment allInstVarNamesOf: definingClass) includes: varName) ifTrue: [
 		^decline := 'Cannot add ', varName, ': ', definingClass name asString, ' already has an instance variable of that name.'].
-	((self allClassVarsOf: definingClass) includes: varName) ifTrue: [
+	((environment classVarNamesVisibleTo: definingClass) includes: varName) ifTrue: [
 		^decline := 'Cannot add ', varName, ': a class variable of that name is visible to ', definingClass name asString, ', which it would shadow.'].
 	"A subclass that already declares varName as its OWN instance variable would end up with two
 	 of that name once the new one is inherited. That fails mid-apply (error 2271), so decline up
