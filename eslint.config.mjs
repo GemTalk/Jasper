@@ -6,6 +6,32 @@ import eslintConfigPrettier from 'eslint-config-prettier';
 import gitignore from 'eslint-config-flat-gitignore';
 import vitest from '@vitest/eslint-plugin';
 
+// `vitest/no-restricted-matchers` matches the *whole* modifier chain, and for a
+// plain matcher name it compares by exact equality — so a `toBeTruthy` key does
+// not catch `not.toBeTruthy`, `resolves.toBeTruthy`, etc. Every chain that can
+// reach the matcher has to be listed for the ban to actually hold.
+const RESTRICTED_MODIFIERS = ['', 'not.', 'resolves.', 'rejects.', 'resolves.not.', 'rejects.not.'];
+
+// The advice has to name the matcher that states the intent, which depends on
+// the value's type — so spell the dispatch out rather than saying "be specific"
+// and leaving the reader to pick, since the easiest pick (toBeDefined) is the
+// one that silently changes meaning on a `T | null`.
+const TRUTHY_ADVICE =
+  'Prefer a matcher that states the intent: not.toBeNull() for `T | null`, toBeDefined() for `T | undefined`, toBe(true) for a boolean, toContain(...) for a message.';
+const FALSY_ADVICE =
+  'Prefer a matcher that states the intent: toBeNull(), toBeUndefined(), toBe(false), or toHaveLength(0).';
+
+// A `not.`-bearing chain asserts the opposite of its matcher, so it takes the
+// opposite advice: `not.toBeTruthy()` is a falsy assertion and wants the falsy
+// replacements, not the truthy ones.
+const banChain = (matcher, message, negatedMessage) =>
+  Object.fromEntries(
+    RESTRICTED_MODIFIERS.map((prefix) => [
+      prefix + matcher,
+      prefix.includes('not.') ? negatedMessage : message,
+    ]),
+  );
+
 export default tseslint.config(
   // Keep lint ignores in sync with every `.gitignore` in the repo, instead of
   // a hand-maintained duplicate list that drifts (e.g. missed `.vscode-test/`
@@ -137,6 +163,18 @@ export default tseslint.config(
       'vitest/no-interpolation-in-snapshots': 'error',
       'vitest/no-unneeded-async-expect-function': 'error',
       'vitest/prefer-called-exactly-once-with': 'error',
+      // toBeTruthy/toBeFalsy are vague: they pass for any truthy/falsy value,
+      // so a misuse can assert the wrong thing without failing (e.g. a typo'd
+      // getter that returns '' instead of undefined), and a real failure just
+      // reports "expected truthy, got falsy" instead of showing the value.
+      // Ban them and require a matcher that states the actual intent.
+      'vitest/no-restricted-matchers': [
+        'error',
+        {
+          ...banChain('toBeTruthy', TRUTHY_ADVICE, FALSY_ADVICE),
+          ...banChain('toBeFalsy', FALSY_ADVICE, TRUTHY_ADVICE),
+        },
+      ],
       'vitest/require-local-test-context-for-concurrent-snapshots': 'error',
       'vitest/valid-describe-callback': 'error',
       'vitest/valid-expect': 'error',

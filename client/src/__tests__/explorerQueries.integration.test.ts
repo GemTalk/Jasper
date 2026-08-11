@@ -220,6 +220,27 @@ describe('explorer queries (integration)', () => {
     });
   });
 
+  describe('getClassCategory', () => {
+    it('returns the class category the definition editor shows on its own line', () => {
+      defineClass(WIDGET, 'JasperIt-Shown');
+
+      expect(q.getClassCategory(session(), WIDGET, userIndex())).toBe('JasperIt-Shown');
+    });
+
+    it('returns empty for a class that cannot be found', () => {
+      expect(q.getClassCategory(session(), 'JasperItNoSuchClass', userIndex())).toBe('');
+    });
+  });
+
+  describe('classExistsInDictionary', () => {
+    it('is true for a class present in the dictionary and false otherwise', () => {
+      defineWidget();
+
+      expect(q.classExistsInDictionary(session(), WIDGET, userIndex())).toBe(true);
+      expect(q.classExistsInDictionary(session(), 'JasperItAbsent', userIndex())).toBe(false);
+    });
+  });
+
   describe('recategorizeMethod', () => {
     it('moves a method into another existing category', () => {
       defineWidget();
@@ -360,6 +381,238 @@ describe('explorer queries (integration)', () => {
       q.moveDictionaryDown(session(), dictIndexOf('JasperItFirst'));
 
       expect(dictIndexOf('JasperItFirst')).toBeGreaterThan(dictIndexOf('JasperItSecond'));
+    });
+  });
+
+  describe('renameDictionary', () => {
+    it('renames a dictionary in place, keeping its symbol-list position', () => {
+      q.addDictionary(session(), 'JasperItRenameSrc');
+      const before = dictIndexOf('JasperItRenameSrc');
+      expect(before).toBeGreaterThan(0);
+
+      const result = q.renameDictionary(session(), 'JasperItRenameSrc', 'JasperItRenameDst');
+
+      expect(result).toBe('ok');
+      expect(dictIndexOf('JasperItRenameSrc')).toBe(0); // old name gone
+      expect(dictIndexOf('JasperItRenameDst')).toBe(before); // new name, same index
+    });
+
+    it('keeps the classes it holds reachable under the new name', () => {
+      q.addDictionary(session(), 'JasperItRenameSrc');
+      const srcIdx = dictIndexOf('JasperItRenameSrc');
+      expect(srcIdx).toBeGreaterThan(0);
+      // File a class INTO that dictionary (not UserGlobals), so the rename has real
+      // contents to preserve. Only a live stone can confirm the self-entry swap left
+      // them reachable — that's the point of asserting it here rather than in a unit test.
+      q.compileClassDefinition(
+        session(),
+        `Object subclass: 'JasperItHeld' instVarNames: #() classVars: #() ` +
+          `classInstVars: #() poolDictionaries: #() ` +
+          `inDictionary: (System myUserProfile symbolList objectNamed: #'JasperItRenameSrc')`,
+      );
+      expect(q.getClassNames(session(), srcIdx)).toContain('JasperItHeld');
+
+      const result = q.renameDictionary(session(), 'JasperItRenameSrc', 'JasperItRenameDst');
+      expect(result).toBe('ok');
+
+      // The class is still there, now found under the NEW name (both via the query
+      // and by resolving the dictionary itself under the new name).
+      const dstIdx = dictIndexOf('JasperItRenameDst');
+      expect(q.getClassNames(session(), dstIdx)).toContain('JasperItHeld');
+      expect(
+        exec(
+          `((System myUserProfile symbolList objectNamed: #'JasperItRenameDst') ` +
+            `includesKey: #'JasperItHeld') printString`,
+        ).trim(),
+      ).toBe('true');
+    });
+
+    it('declines when the new name is already in use, leaving both dictionaries intact', () => {
+      q.addDictionary(session(), 'JasperItRenameA');
+      q.addDictionary(session(), 'JasperItRenameB');
+
+      const result = q.renameDictionary(session(), 'JasperItRenameA', 'JasperItRenameB');
+
+      expect(result).toContain('already in use');
+      expect(dictIndexOf('JasperItRenameA')).toBeGreaterThan(0);
+      expect(dictIndexOf('JasperItRenameB')).toBeGreaterThan(0);
+    });
+
+    it('refuses to rename a system dictionary (UserGlobals)', () => {
+      const before = userIndex();
+      expect(before).toBeGreaterThan(0);
+
+      const result = q.renameDictionary(session(), before, 'JasperItNotUserGlobals');
+
+      expect(result).toContain('system dictionary');
+      expect(dictIndexOf('UserGlobals')).toBe(before);
+      expect(dictIndexOf('JasperItNotUserGlobals')).toBe(0);
+    });
+
+    it('reports "Dictionary not found" for an out-of-range index', () => {
+      const result = q.renameDictionary(session(), 99999, 'JasperItNope');
+      expect(result).toContain('not found');
+    });
+  });
+
+  describe('renameClassCategory', () => {
+    it('renames a class category and its subtree, leaving unrelated categories alone', () => {
+      defineClass('JasperCatExact', 'JasperIt-Cat');
+      defineClass('JasperCatChild', 'JasperIt-Cat-Sub');
+      defineClass('JasperCatOther', 'JasperIt-Other');
+
+      const result = q.renameClassCategory(session(), userIndex(), 'JasperIt-Cat', 'JasperIt-Evt');
+
+      expect(result).toBe('renamed: 2');
+      expect(categoryOf('JasperCatExact')).toBe('JasperIt-Evt');
+      expect(categoryOf('JasperCatChild')).toBe('JasperIt-Evt-Sub');
+      expect(categoryOf('JasperCatOther')).toBe('JasperIt-Other');
+    });
+
+    it('merges into an existing category name (categories are labels, not bindings)', () => {
+      defineClass('JasperCatMoveMe', 'JasperIt-From');
+      defineClass('JasperCatAlready', 'JasperIt-To');
+
+      const result = q.renameClassCategory(session(), userIndex(), 'JasperIt-From', 'JasperIt-To');
+
+      expect(result).toBe('renamed: 1');
+      expect(categoryOf('JasperCatMoveMe')).toBe('JasperIt-To');
+      expect(categoryOf('JasperCatAlready')).toBe('JasperIt-To');
+    });
+
+    it('renames nothing (count 0) when no class is in the category', () => {
+      const result = q.renameClassCategory(session(), userIndex(), 'JasperIt-Nonexistent', 'X');
+      expect(result).toBe('renamed: 0');
+    });
+  });
+
+  // Shadowed class names — the same name bound in two dictionaries. This session's
+  // Explorer fixes (hierarchy pane, class deletion, and creating a class in a
+  // non-selected dictionary) rely on the query layer resolving by the SELECTED
+  // dictionary index rather than the global first match. These prove that
+  // dict-scoping end-to-end on a live stone.
+  describe('dictionary-scoped resolution for a shadowed class name', () => {
+    const SHADOW = 'JasperItShadowed';
+
+    // Bind SHADOW twice: an Object subclass in UserGlobals and an Array subclass in
+    // a second dictionary. Returns the second dictionary's 1-based index.
+    const defineShadowPair = (): number => {
+      q.compileClassDefinition(
+        session(),
+        `Object subclass: '${SHADOW}' instVarNames: #() classVars: #() ` +
+          `classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals`,
+      );
+      q.addDictionary(session(), 'JasperItShadowDict');
+      const shadowIdx = dictIndexOf('JasperItShadowDict');
+      q.compileClassDefinition(
+        session(),
+        `Array subclass: '${SHADOW}' instVarNames: #() classVars: #() ` +
+          `classInstVars: #() poolDictionaries: #() inDictionary: JasperItShadowDict`,
+      );
+      return shadowIdx;
+    };
+
+    const superclassesOf = (dict: number): string[] =>
+      q
+        .getClassHierarchy(session(), SHADOW, dict)
+        .filter((e) => e.kind === 'superclass')
+        .map((e) => e.className);
+
+    it('getClassHierarchy returns the lineage of the shadow in the given dictionary (G)', () => {
+      const shadowIdx = defineShadowPair();
+
+      // The UserGlobals shadow is a plain Object subclass — no Array in its lineage.
+      expect(superclassesOf(userIndex())).toContain('Object');
+      expect(superclassesOf(userIndex())).not.toContain('Array');
+      // The other dictionary's shadow is an Array subclass — Array is an ancestor.
+      expect(superclassesOf(shadowIdx)).toContain('Array');
+    });
+
+    it('deleteClass removes only the shadow in the targeted dictionary (I)', () => {
+      const shadowIdx = defineShadowPair();
+
+      q.deleteClass(session(), shadowIdx, SHADOW);
+
+      expect(q.classExistsInDictionary(session(), SHADOW, shadowIdx)).toBe(false);
+      expect(q.classExistsInDictionary(session(), SHADOW, userIndex())).toBe(true);
+    });
+
+    it('compileClassDefinition creates the class in the dictionary its inDictionary: names (F)', () => {
+      q.addDictionary(session(), 'JasperItOther');
+      const other = dictIndexOf('JasperItOther');
+
+      q.compileClassDefinition(
+        session(),
+        `Object subclass: '${GADGET}' instVarNames: #() classVars: #() ` +
+          `classInstVars: #() poolDictionaries: #() inDictionary: JasperItOther`,
+      );
+
+      expect(q.classExistsInDictionary(session(), GADGET, other)).toBe(true);
+      expect(q.classExistsInDictionary(session(), GADGET, userIndex())).toBe(false);
+    });
+
+    // Compile `super subclass: 'name' ... inDictionary: <dict>` (base-kernel selector).
+    const defineIn = (superName: string, name: string, dict: string): void => {
+      q.compileClassDefinition(
+        session(),
+        `${superName} subclass: '${name}' instVarNames: #() classVars: #() ` +
+          `classInstVars: #() poolDictionaries: #() inDictionary: ${dict}`,
+      );
+    };
+
+    // getClassDescendantNames / Remove Class must resolve each subclass by CLASS OBJECT
+    // IDENTITY, so a subclass whose name is also bound (as an unrelated class) in another
+    // dictionary reports its OWN dictionary — never the same-named stranger. (Fixes the
+    // show-stopper on PR #397: a name-keyed lookup would delete the wrong class.)
+    const ROOT = 'JasperItRoot';
+    const LEAF = 'JasperItLeaf';
+
+    it('getClassDescendantNames reports a subclass in its own dictionary, not a same-named stranger', () => {
+      q.addDictionary(session(), 'JasperItAlt');
+      const alt = dictIndexOf('JasperItAlt');
+      defineIn('Object', ROOT, 'UserGlobals');
+      defineIn(ROOT, LEAF, 'UserGlobals'); // the real subclass, in UserGlobals
+      defineIn('Object', LEAF, 'JasperItAlt'); // unrelated class, same name, different dictionary
+
+      const descendants = q.getClassDescendantNames(session(), ROOT, userIndex());
+
+      expect(descendants).toHaveLength(1);
+      expect(descendants[0].className).toBe(LEAF);
+      expect(descendants[0].dictIndex).toBe(userIndex());
+      expect(descendants[0].dictIndex).not.toBe(alt);
+    });
+
+    it('getClassDescendantNames reports a subclass that lives in a different dictionary than its root', () => {
+      q.addDictionary(session(), 'JasperItAlt');
+      const alt = dictIndexOf('JasperItAlt');
+      defineIn('Object', ROOT, 'UserGlobals');
+      defineIn(ROOT, 'JasperItChild', 'JasperItAlt'); // subclass bound in another dictionary
+
+      const descendants = q.getClassDescendantNames(session(), ROOT, userIndex());
+
+      expect(descendants).toHaveLength(1);
+      expect(descendants[0].className).toBe('JasperItChild');
+      expect(descendants[0].dictIndex).toBe(alt);
+    });
+
+    it('deleting a subtree by each descendant’s reported dictionary spares a same-named stranger', () => {
+      q.addDictionary(session(), 'JasperItAlt');
+      const alt = dictIndexOf('JasperItAlt');
+      defineIn('Object', ROOT, 'UserGlobals');
+      defineIn(ROOT, LEAF, 'UserGlobals'); // real subclass
+      defineIn('Object', LEAF, 'JasperItAlt'); // unrelated same-named class
+
+      // Delete the subtree the way Remove Class does: each descendant by its OWN
+      // reported dictionary index, then the root.
+      for (const d of q.getClassDescendantNames(session(), ROOT, userIndex())) {
+        q.deleteClass(session(), d.dictIndex, d.className);
+      }
+      q.deleteClass(session(), userIndex(), ROOT);
+
+      // The real subclass and root are gone; the unrelated same-named class survives.
+      expect(q.classExistsInDictionary(session(), LEAF, userIndex())).toBe(false);
+      expect(q.classExistsInDictionary(session(), ROOT, userIndex())).toBe(false);
+      expect(q.classExistsInDictionary(session(), LEAF, alt)).toBe(true);
     });
   });
 });

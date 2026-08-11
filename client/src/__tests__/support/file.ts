@@ -29,12 +29,16 @@ export async function withTemporaryFileDo(
  * function, and cleans it up (recursively) afterward on a best-effort basis:
  * a failed deletion is logged, never thrown, so it can't mask a failure from
  * the consumer.
+ *
+ * Returns whatever the consumer returns, so a caller that needs a value out of
+ * the folder (file contents, a subprocess result) can produce it inside and
+ * still get crash-safe cleanup.
  */
-export function withTemporaryFolderDo(consumer: (pathToFolder: string) => void): void {
+export function withTemporaryFolderDo<T>(consumer: (pathToFolder: string) => T): T {
   const temporaryFolderPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jasper-test-temp-folder-'));
 
   try {
-    consumer(temporaryFolderPath);
+    return consumer(temporaryFolderPath);
   } finally {
     safelyRemovePath(temporaryFolderPath);
   }
@@ -61,7 +65,7 @@ function createTemporaryFile(extension: string = ''): string {
  * @returns The full path where a temporary file can be created.
  */
 export function temporaryFilePath(extension: string = ''): string {
-  return path.join(os.tmpdir(), temporaryFileName() + extension);
+  return path.join(os.tmpdir(), temporaryFileName(extension));
 }
 
 /**
@@ -69,8 +73,8 @@ export function temporaryFilePath(extension: string = ''): string {
  *
  * @returns A unique file name in the form `jasper-mcp-tempfile-<random-hex>`.
  */
-function temporaryFileName(): string {
-  return `jasper-mcp-tempfile-${crypto.randomBytes(6).toString('hex')}`;
+export function temporaryFileName(extension: string = ''): string {
+  return `jasper-tempfile-${crypto.randomBytes(6).toString('hex')}${extension}`;
 }
 
 /**
