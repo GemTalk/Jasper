@@ -2,6 +2,16 @@ export function escapeString(s: string): string {
   return s.replace(/'/g, "''");
 }
 
+// Unicode7 gotcha for generated Smalltalk (GemStone 3.6.x). Every string literal inside a
+// GCI-executed doit compiles to Unicode7, and comparing an image-derived value against one
+// misbehaves: `Symbol = 'lit'` silently answers false, and `String = 'lit'` raises ArgumentError
+// 2718 — so class/method/dictionary sync and export failed outright on 3.6.x clients (issues #399,
+// #400). The safe idiom is to compare interned Symbols: `someName asSymbol == #Lit`. When the
+// image value may be nil (e.g. an unnamed SymbolDictionary — `SymbolDictionary new name` is nil),
+// go through asString first: `name asString asSymbol == #Lit`, so nil answers #nil instead of a
+// `nil asSymbol` doesNotUnderstand. Never write a plain `= 'literal'` against an image-derived
+// value in a doit; 3.7.x tolerates it, so a reverted idiom only breaks at a 3.6.x client site.
+
 // A Smalltalk expression for the class (or its metaclass) that receives a
 // method-level operation. `dict` (a 1-based SymbolList index, or a name) scopes
 // the resolution to a specific dictionary so the same key in two dictionaries

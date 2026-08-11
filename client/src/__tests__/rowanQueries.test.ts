@@ -149,6 +149,19 @@ describe('diffRowanProject', () => {
       error: 'could not read disk',
     });
   });
+
+  // `op class name` is a Symbol; on 3.6.x a string literal inside a GCI doit is
+  // Unicode7, and `Symbol = Unicode7` answers false silently — so both add/remove
+  // branches fell through to 'M'. The classifier must compare interned Symbols.
+  // Regression guard for issue #400 (diff mislabelled every row 'M' on 3.6.x).
+  it('classifies operations by interned Symbol, not string (3.6.x Unicode7 safety)', () => {
+    const exec = executor('');
+    diffRowanProject(exec, 'STON');
+    const code = exec.mock.calls[0][0];
+    expect(code).toContain('op class name asSymbol == #CypressAddition');
+    expect(code).toContain('op class name asSymbol == #CypressRemoval');
+    expect(code).not.toMatch(/class name = '/);
+  });
 });
 
 describe('formatRowanDiff', () => {

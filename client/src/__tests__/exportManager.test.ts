@@ -68,9 +68,17 @@ const h = vi.hoisted(() => {
 
   // syncClassBuildExpr: resolve dict by name, return `idx \t hash \n source`.
   const classPayload = (img: FakeImage, code: string): string => {
-    const dn = code.match(/name asString = '((?:[^']|'')*)'/);
+    const dn = code.match(/name asString asSymbol == #'((?:[^']|'')*)'/);
     const cn = code.match(/at: #'((?:[^']|'')*)'/);
-    if (!dn || !cn) return '';
+    // This fake tracks the generated class-build idiom by hand. If it drifts (e.g. syncClassBuildExpr
+    // changes how it names the dictionary or class), fail loudly HERE rather than returning '' — an
+    // empty payload silently reads as "class not found" and surfaces as a puzzling sync result several
+    // assertions later. classPayload is only called for 'class'-labeled codes, so a miss is a harness
+    // bug, not a valid input.
+    if (!dn || !cn)
+      throw new Error(
+        `exportManager test fake: class-build idiom not recognized — retarget classPayload's regex to match syncClassBuildExpr. Code was:\n${code}`,
+      );
     const dictName = dn[1].replace(/''/g, "'");
     const className = cn[1].replace(/''/g, "'");
     const c = img.classes.find(
