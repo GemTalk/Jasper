@@ -289,17 +289,6 @@ GsInstVarStructureRefactoring >> topClass [
 	^topClass
 ]
 
-{ #category : 'private' }
-GsInstVarStructureRefactoring >> ownInstVarsOf: aClass [
-	"aClass's OWN instance-variable names (not inherited), as an Array of Strings."
-	^aClass instVarNames collect: [:e | e asString]
-]
-
-{ #category : 'private' }
-GsInstVarStructureRefactoring >> allInstVarsOf: aClass [
-	^aClass allInstVarNames collect: [:e | e asString]
-]
-
 { #category : 'private - analysis' }
 GsInstVarStructureRefactoring >> ensureAnalysis [
 	analysisDone ifFalse: [
@@ -334,7 +323,7 @@ GsInstVarStructureRefactoring >> analyzeConvertTemp [
 		 method can't reference it), and this engine only edits instance-side ivar lists. Decline
 		 rather than corrupt (add an unreachable ivar + recompile the class method against it)."
 		^decline := 'Cannot convert #', varName, ': converting a temporary in a class-side method to an instance variable is not supported.'].
-	((self allInstVarsOf: definingClass) includes: varName) ifTrue: [
+	((environment allInstVarNamesOf: definingClass) includes: varName) ifTrue: [
 		^decline := 'Cannot convert #', varName, ': it is already an instance variable of ', definingClass name asString, '.'].
 	behavior := methodMeta ifTrue: [definingClass class] ifFalse: [definingClass].
 	method := behavior compiledMethodAt: methodSelector environmentId: 0 otherwise: nil.
@@ -355,7 +344,7 @@ GsInstVarStructureRefactoring >> analyzeConvertTemp [
 		newDecl,
 		(src copyFrom: tree body rightBar + 1 to: src size).
 	methodRewrite := Array with: definingClass name asString with: methodSelector with: methodMeta with: src with: newSrc.
-	newIvarLists at: definingClass name asString put: ((self ownInstVarsOf: definingClass) copyWith: varName)
+	newIvarLists at: definingClass name asString put: ((environment ownInstVarNamesOf: definingClass) copyWith: varName)
 ]
 
 { #category : 'private - analysis' }
@@ -364,18 +353,18 @@ GsInstVarStructureRefactoring >> analyzePushUp [
 	 ancestors) must not already define it; and no OTHER descendant of that superclass may
 	 own a same-named ivar (it would collide with the newly inherited one)."
 	| sup |
-	((self ownInstVarsOf: definingClass) includes: varName) ifFalse: [
+	((environment ownInstVarNamesOf: definingClass) includes: varName) ifFalse: [
 		^decline := 'Cannot push up ', varName, ': it is not an instance variable declared in ', definingClass name asString, '.'].
 	sup := definingClass superclass.
 	sup isNil ifTrue: [
 		^decline := 'Cannot push up ', varName, ': ', definingClass name asString, ' has no superclass.'].
-	((self allInstVarsOf: sup) includes: varName) ifTrue: [
+	((environment allInstVarNamesOf: sup) includes: varName) ifTrue: [
 		^decline := 'Cannot push up ', varName, ': ', sup name asString, ' already defines an instance variable of that name.'].
 	(self otherDescendant: definingClass ofTop: sup ownsIvar: varName) ifNotNil: [:cls |
 		^decline := 'Cannot push up ', varName, ': ', cls, ' also declares an instance variable of that name, which would collide once it is inherited.'].
 	topClass := sup.
-	newIvarLists at: definingClass name asString put: ((self ownInstVarsOf: definingClass) reject: [:n | n = varName]).
-	newIvarLists at: sup name asString put: ((self ownInstVarsOf: sup) copyWith: varName).
+	newIvarLists at: definingClass name asString put: ((environment ownInstVarNamesOf: definingClass) reject: [:n | n = varName]).
+	newIvarLists at: sup name asString put: ((environment ownInstVarNamesOf: sup) copyWith: varName).
 	self moveAccessors ifTrue: [self planAccessorMovesFrom: definingClass to: (Array with: sup)]
 ]
 
@@ -385,7 +374,7 @@ GsInstVarStructureRefactoring >> analyzePushDown [
 	 access it (removing it would leave them undeclared); it must have subclasses; and no
 	 proper descendant may already own a same-named ivar (it would collide once inherited)."
 	| subs users |
-	((self ownInstVarsOf: definingClass) includes: varName) ifFalse: [
+	((environment ownInstVarNamesOf: definingClass) includes: varName) ifFalse: [
 		^decline := 'Cannot push down ', varName, ': it is not an instance variable declared in ', definingClass name asString, '.'].
 	subs := (definingClass subclasses ifNil: [#()]) asArray.
 	subs isEmpty ifTrue: [
@@ -404,9 +393,9 @@ GsInstVarStructureRefactoring >> analyzePushDown [
 	(self anyDescendantOf: definingClass ownsIvar: varName) ifNotNil: [:cls |
 		^decline := 'Cannot push down ', varName, ': ', cls, ' already declares an instance variable of that name.'].
 	topClass := definingClass.
-	newIvarLists at: definingClass name asString put: ((self ownInstVarsOf: definingClass) reject: [:n | n = varName]).
+	newIvarLists at: definingClass name asString put: ((environment ownInstVarNamesOf: definingClass) reject: [:n | n = varName]).
 	subs do: [:sub |
-		newIvarLists at: sub name asString put: ((self ownInstVarsOf: sub) copyWith: varName)].
+		newIvarLists at: sub name asString put: ((environment ownInstVarNamesOf: sub) copyWith: varName)].
 	self moveAccessors ifTrue: [self planAccessorMovesFrom: definingClass to: subs]
 ]
 
@@ -424,7 +413,7 @@ GsInstVarStructureRefactoring >> analyzeMove [
 	| def dir sup losing |
 	def := definingClass.
 	dir := moveDirection.
-	((self ownInstVarsOf: def) includes: varName) ifFalse: [
+	((environment ownInstVarNamesOf: def) includes: varName) ifFalse: [
 		^decline := 'Cannot move ', varName, ': it is not an instance variable declared in ', def name asString, '.'].
 	(targetClasses isNil or: [targetClasses isEmpty]) ifTrue: [
 		^decline := 'Cannot move ', varName, ': no destination class was chosen.'].
@@ -439,7 +428,7 @@ GsInstVarStructureRefactoring >> analyzeMove [
 			sup := targetClasses first.
 			(self isAncestor: sup of: def) ifFalse: [
 				^decline := 'Cannot move ', varName, ' up: ', sup name asString, ' is not a superclass of ', def name asString, '.'].
-			((self allInstVarsOf: sup) includes: varName) ifTrue: [
+			((environment allInstVarNamesOf: sup) includes: varName) ifTrue: [
 				^decline := 'Cannot move ', varName, ' up: ', sup name asString, ' already defines an instance variable of that name.'].
 			(self otherDescendant: def ofTop: sup ownsIvar: varName) ifNotNil: [:cls |
 				^decline := 'Cannot move ', varName, ' up: ', cls, ' also declares an instance variable of that name, which would collide once it is inherited.'].
@@ -480,9 +469,9 @@ GsInstVarStructureRefactoring >> analyzeMove [
 			^decline := 'Cannot move ', varName, ': ', cls name asString,
 				' still uses it in ', users size printString, ' of its own method(s): ',
 				(self selectorListString: users), '.']].
-	newIvarLists at: def name asString put: ((self ownInstVarsOf: def) reject: [:n | n = varName]).
+	newIvarLists at: def name asString put: ((environment ownInstVarNamesOf: def) reject: [:n | n = varName]).
 	targetClasses do: [:t |
-		newIvarLists at: t name asString put: ((self ownInstVarsOf: t) copyWith: varName)].
+		newIvarLists at: t name asString put: ((environment ownInstVarNamesOf: t) copyWith: varName)].
 	self moveAccessors ifTrue: [self planAccessorMovesFrom: def to: targetClasses]
 ]
 
@@ -518,7 +507,7 @@ GsInstVarStructureRefactoring >> otherDescendant: aSkip ofTop: aTop ownsIvar: aN
 	"The name of a descendant of aTop (other than aSkip) that owns an ivar named aName, or
 	 nil."
 	(environment descendantsOf: aTop) do: [:cls |
-		(cls ~~ aSkip and: [(self ownInstVarsOf: cls) includes: aName])
+		(cls ~~ aSkip and: [(environment ownInstVarNamesOf: cls) includes: aName])
 			ifTrue: [^cls name asString]].
 	^nil
 ]
@@ -527,7 +516,7 @@ GsInstVarStructureRefactoring >> otherDescendant: aSkip ofTop: aTop ownsIvar: aN
 GsInstVarStructureRefactoring >> anyDescendantOf: aTop ownsIvar: aName [
 	"The name of any descendant of aTop that owns an ivar named aName, or nil."
 	(environment descendantsOf: aTop) do: [:cls |
-		((self ownInstVarsOf: cls) includes: aName) ifTrue: [^cls name asString]].
+		((environment ownInstVarNamesOf: cls) includes: aName) ifTrue: [^cls name asString]].
 	^nil
 ]
 
@@ -949,7 +938,7 @@ GsInstVarStructureRefactoring >> applyClassChange: aChange [
 	old := environment classNamed: aChange className.
 	old isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	parentNew := oldToNew at: old superclass ifAbsent: [old superclass].
-	list := newIvarLists at: aChange className ifAbsent: [self ownInstVarsOf: old].
+	list := newIvarLists at: aChange className ifAbsent: [environment ownInstVarNamesOf: old].
 	new := self makeNewVersionOf: old superclass: parentNew instVarNames: list.
 	self copyMethodsFrom: old to: new.
 	oldToNew at: old put: new
