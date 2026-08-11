@@ -8892,6 +8892,22 @@ setNewName: aString
 
 category: 'accessing'
 method: GsRefactoringChange
+failureLabel
+	"How this change names itself when it lands in an apply result's `failed` list.
+	 A method change answers the METHOD -- the failure list exists so the user can go
+	 open what did not survive, and a bare class name does not say which one. A
+	 structural change (a class-definition edit) has no selector, so it answers the
+	 class name it already did."
+	| cls |
+	cls := className asString.
+	selector isNil ifTrue: [^cls].
+	^isMeta == true
+		ifTrue: [cls, ' class>>', selector asString]
+		ifFalse: [cls, '>>', selector asString]
+%
+
+category: 'accessing'
+method: GsRefactoringChange
 selector
 	^selector
 %
@@ -9540,8 +9556,10 @@ compile: source into: aBehavior category: aCategory
 		dictionaries: System myUserProfile symbolList
 		category: aCategory.
 	result isNil ifTrue: [^self].
+	"An unexpected shape is exactly when whoever debugs this most needs to see what came
+	 back, and compileErrorTextFrom: already falls back to a printString for it."
 	(result isKindOf: Array)
-		ifFalse: [^self error: 'did not recompile'].
+		ifFalse: [^self error: 'did not recompile: ', (self compileErrorTextFrom: result)].
 	result isEmpty ifTrue: [^self].
 	self error: 'did not recompile: ', (self compileErrorTextFrom: result first)
 %
@@ -10094,7 +10112,7 @@ applyDeselected: deselectedIds
 			ifFalse: [
 				[self applyChange: change. applied := applied + 1]
 				on: Error do: [:e |
-					failures add: (Array with: change id with: change className with: e messageText)]]].
+					failures add: (Array with: change id with: change failureLabel with: e messageText)]]].
 	migrated := 0.
 	committed := false.
 	((migrateInstances or: [removeOldFromHistory]) and: [failures isEmpty]) ifTrue: [
@@ -10770,7 +10788,7 @@ applyDeselected: deselectedIds
 	self changeSet changes do: [:change |
 		[self applyChange: change. applied := applied + 1]
 		on: Error do: [:e |
-			failures add: (Array with: change id with: change className with: e messageText)]].
+			failures add: (Array with: change id with: change failureLabel with: e messageText)]].
 	^'{"applied":', applied printString,
 	  ',"failed":[',
 	  ((failures collect: [:f |
@@ -11637,7 +11655,7 @@ applyDeselected: deselectedIds
 		(ids includes: change id asSymbol) ifFalse: [
 			[self applyChange: change. applied := applied + 1]
 			on: Error do: [:e |
-				failures add: (Array with: change id with: change className with: e messageText)]]].
+				failures add: (Array with: change id with: change failureLabel with: e messageText)]]].
 	^'{"applied":', applied printString, ',"failed":[',
 	  ((failures collect: [:f |
 		'{"id":', (self jsonQuote: (f at: 1)),

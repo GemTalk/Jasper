@@ -555,7 +555,7 @@ GsRenameClassRefactoring >> applyDeselected: deselectedIds [
 			ifFalse: [
 				[self applyChange: change. applied := applied + 1]
 				on: Error do: [:e |
-					failures add: (Array with: change id with: change className with: e messageText)]]].
+					failures add: (Array with: change id with: change failureLabel with: e messageText)]]].
 	migrated := 0.
 	committed := false.
 	((migrateInstances or: [removeOldFromHistory]) and: [failures isEmpty]) ifTrue: [

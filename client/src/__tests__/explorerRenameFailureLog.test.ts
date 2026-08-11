@@ -1,3 +1,11 @@
+/**
+ * Pins the WIRING between a rename apply that reports un-recompilable methods and the
+ * persistent "GemStone GCI" output channel: the toast can name only the first failure
+ * and then vanishes, so the full set must reach the durable log. `formatRenameFailureLog`
+ * is unit-tested on its own (renameFailureLog.test.ts); this drives the rename-method
+ * call site end to end so the wiring — and the action label that says WHICH rename the
+ * block belongs to — cannot be dropped unnoticed.
+ */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
@@ -16,6 +24,7 @@ const { gciChannel } = vi.hoisted(() => ({
 }));
 vi.mock('../gciLog', () => ({
   logInfo: vi.fn(),
+  logWarning: vi.fn(),
   logError: vi.fn(),
   getGciLog: vi.fn(() => gciChannel),
   _resetGciLogForTests: vi.fn(),
@@ -25,17 +34,9 @@ import * as vscode from 'vscode';
 import { ExplorerController } from '../gemstoneExplorer';
 import { showRenameMethodEditor } from '../refactoring/renameMethodEditor';
 import { showRenameMethodPanel } from '../refactoring/renameMethodPanel';
-import { logInfo } from '../gciLog';
+import { logWarning } from '../gciLog';
 import type { SessionManager, ActiveSession } from '../sessionManager';
 
-/**
- * Pins the WIRING between a rename apply that reports un-recompilable methods and the
- * persistent "GemStone GCI" output channel: the toast can name only the first failure
- * and then vanishes, so the full set must reach the durable log. `formatRenameFailureLog`
- * is unit-tested on its own (renameFailureLog.test.ts); this drives the rename-method
- * call site end to end so the wiring — and the action label that says WHICH rename the
- * block belongs to — cannot be dropped unnoticed.
- */
 function makeController(): ExplorerController {
   const session = { rbSupportAvailable: true } as unknown as ActiveSession;
   const sessionManager = {
@@ -92,8 +93,8 @@ describe('a rename that leaves methods un-recompiled logs them all', () => {
     const applied = await renameMethod(makeController());
 
     expect(applied).toBe(true);
-    expect(vi.mocked(logInfo)).toHaveBeenCalledTimes(1);
-    const logged = String(vi.mocked(logInfo).mock.calls[0][0]);
+    expect(vi.mocked(logWarning)).toHaveBeenCalledTimes(1);
+    const logged = String(vi.mocked(logWarning).mock.calls[0][0]);
     expect(logged).toContain('Account>>balance: undeclared variable');
     expect(logged).toContain('Account>>deposit:: parse error');
     expect(logged).toContain('Account class>>new: undeclared variable');
@@ -117,12 +118,15 @@ describe('a rename that leaves methods un-recompiled logs them all', () => {
     expect(gciChannel.show).toHaveBeenCalledWith(true);
   });
 
-  it('leaves the channel alone when the user dismisses the toast', async () => {
+  it('offers the button but reveals nothing when the user dismisses the toast', async () => {
     applyReturns([{ id: 'a', label: 'Account>>balance', error: 'undeclared variable' }]);
 
     await renameMethod(makeController());
     await Promise.resolve();
 
+    // Both halves matter: without the first, this passes just as happily when the toast
+    // never went out or the .then stopped firing altogether.
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(expect.any(String), 'Show Details');
     expect(gciChannel.show).not.toHaveBeenCalled();
   });
 
@@ -131,7 +135,9 @@ describe('a rename that leaves methods un-recompiled logs them all', () => {
 
     await renameMethod(makeController());
 
-    expect(String(vi.mocked(logInfo).mock.calls[0][0])).toContain("Rename method 'area' → 'size'");
+    expect(String(vi.mocked(logWarning).mock.calls[0][0])).toContain(
+      "Rename method 'area' → 'size'",
+    );
   });
 
   it('logs nothing when every method recompiled', async () => {
@@ -140,6 +146,6 @@ describe('a rename that leaves methods un-recompiled logs them all', () => {
     const applied = await renameMethod(makeController());
 
     expect(applied).toBe(true);
-    expect(vi.mocked(logInfo)).not.toHaveBeenCalled();
+    expect(vi.mocked(logWarning)).not.toHaveBeenCalled();
   });
 });

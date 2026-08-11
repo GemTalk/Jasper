@@ -8168,7 +8168,14 @@ testServerSideApplyReportsAnExternalMethodThatCannotRecompile
 	json := (self renameTo: 'GsRCRenamed' scope: #wholeSystem) applyDeselected: #().
 
 	self deny: json includesSubstring: '"failed":[]'.
-	self assert: json includesSubstring: 'did not recompile'
+	self assert: json includesSubstring: 'did not recompile'.
+	"Pin WHICH change failed. #wholeSystem stages a change per referencing method, so a
+	 bare 'something failed' would also hold if usesBase recompiled fine and an unrelated
+	 fixture method broke -- green for the wrong reason, and the negative control would not
+	 catch it either."
+	self assert: json includesSubstring: 'GsRCOther>>usesBase'.
+	"...and that the rest of the rename still went through: only the one method failed."
+	self deny: json includesSubstring: '"applied":0'
 %
 
 category: 'tests'

@@ -364,7 +364,7 @@ GsRenameMethodRefactoring >> applyDeselected: deselectedIds [
 		(ids includes: change id asSymbol) ifFalse: [
 			[self applyChange: change. applied := applied + 1]
 			on: Error do: [:e |
-				failures add: (Array with: change id with: change className with: e messageText)]]].
+				failures add: (Array with: change id with: change failureLabel with: e messageText)]]].
 	^'{"applied":', applied printString, ',"failed":[',
 	  ((failures collect: [:f |
 		'{"id":', (self jsonQuote: (f at: 1)),

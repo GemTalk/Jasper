@@ -40,8 +40,8 @@ import {
   validateNewIvarName,
 } from './refactoring/renameInstVarPreview';
 import { showRenameInstVarPanel } from './refactoring/renameInstVarPanel';
-import { formatRenameFailureLog } from './refactoring/renameFailureLog';
-import { getGciLog, logInfo } from './gciLog';
+import { formatRenameFailureLog, formatRenameFailureToast } from './refactoring/renameFailureLog';
+import { getGciLog, logWarning } from './gciLog';
 import { supportsServerUtf8FileIn } from './refactoring/refactoringInstall';
 import { renameInstVarAtCursorCommand } from './refactoring/renameInstVarAtCursorCommand';
 import { runInstVarRefactor } from './refactoring/instVarRefactorCommand';
@@ -2129,27 +2129,23 @@ export class ExplorerController {
     return applied;
   }
 
-  // After a rename apply reports methods that could not be recompiled onto the new
-  // class version, list ALL of them in the persistent "GemStone GCI" output channel.
-  // The apply toast can only name the first (a notification truncates and vanishes);
-  // this gives the user the complete set to go fix, per the rename-family hardening
-  // goal of a durable warning surface rather than a disappearing one. `action` must
-  // name WHAT was renamed — the channel is durable and shared, so two renames in a
-  // session otherwise leave two indistinguishable blocks.
-  private logRenameFailures(action: string, failed: RenameApplyResult['failed']): void {
-    const line = formatRenameFailureLog(action, failed);
-    if (line) logInfo(line);
-  }
-
-  // Report a rename that left methods behind. A notification collapses newlines and
-  // truncates, so it can only ever name ONE method however it is worded — the list
-  // proper is in the channel (logRenameFailures above). Rather than tell the user to go
-  // find that channel, carry a button that reveals it, the same 'Show Details' idiom
-  // `logJasperError` uses in extension.ts.
-  private showRenameFailureToast(message: string): void {
-    void vscode.window.showErrorMessage(message, SHOW_RENAME_DETAILS).then((choice) => {
-      if (choice === SHOW_RENAME_DETAILS) getGciLog().show(true);
-    });
+  // Report a rename that left methods behind: the FULL list to the persistent "GemStone
+  // GCI" channel, and a notification that names the first and offers a button onto the
+  // rest. Both are built from the same `action` + result, so they cannot disagree about
+  // what happened. A notification collapses newlines and truncates, so it can never be
+  // the durable artifact however it is worded -- hence the channel, and hence the button
+  // rather than an instruction to go find it ('Show Details', the idiom logJasperError
+  // uses in extension.ts). `action` must name WHAT was renamed: the channel is durable
+  // and shared, so two renames in a session otherwise leave two indistinguishable blocks.
+  private reportRenameFailures(action: string, result: RenameApplyResult): void {
+    if (result.failed.length === 0) return; // nothing to report; the toast names failed[0]
+    const block = formatRenameFailureLog(action, result.failed);
+    if (block) logWarning(block);
+    void vscode.window
+      .showErrorMessage(formatRenameFailureToast(action, result), SHOW_RENAME_DETAILS)
+      .then((choice) => {
+        if (choice === SHOW_RENAME_DETAILS) getGciLog().show(true);
+      });
   }
 
   // Apply the rename SERVER-SIDE, without committing. The engine re-versions the
@@ -2206,15 +2202,9 @@ export class ExplorerController {
       return false;
     }
     if (result.failed.length > 0) {
-      this.logRenameFailures(
+      this.reportRenameFailures(
         `Rename instance variable '${oldName}' → '${newName}' in ${className}`,
-        result.failed,
-      );
-      this.showRenameFailureToast(
-        `Renamed '${oldName}' → '${newName}', but ${result.failed.length} method(s) did not ` +
-          `recompile onto the new class version: ${result.failed[0].label}` +
-          (result.failed.length > 1 ? ` (+${result.failed.length - 1} more)` : '') +
-          '. Compiled but NOT committed — abort if this is not what you wanted.',
+        result,
       );
       return true;
     }
@@ -2363,13 +2353,7 @@ export class ExplorerController {
     await this.refreshRenamedSelectorEditors(oldSelector, newSelector);
 
     if (result.failed.length > 0) {
-      const first = result.failed[0];
-      this.logRenameFailures(`Rename method '${oldSelector}' → '${newSelector}'`, result.failed);
-      this.showRenameFailureToast(
-        `Rename applied ${result.applied} change(s); ${result.failed.length} failed: ` +
-          `${first.label}: ${first.error}` +
-          (result.failed.length > 1 ? ` (+${result.failed.length - 1} more)` : ''),
-      );
+      this.reportRenameFailures(`Rename method '${oldSelector}' → '${newSelector}'`, result);
       return true;
     }
     void vscode.window.showInformationMessage(
@@ -2629,13 +2613,7 @@ export class ExplorerController {
     await this.refreshAfterClassReshape(newName);
 
     if (result.failed.length > 0) {
-      const first = result.failed[0];
-      this.logRenameFailures(`Rename class '${oldName}' → '${newName}'`, result.failed);
-      this.showRenameFailureToast(
-        `Rename applied ${result.applied} change(s); ${result.failed.length} failed: ` +
-          `${first.label}: ${first.error}` +
-          (result.failed.length > 1 ? ` (+${result.failed.length - 1} more)` : ''),
-      );
+      this.reportRenameFailures(`Rename class '${oldName}' → '${newName}'`, result);
       return;
     }
     const migrateNote =
@@ -2827,15 +2805,9 @@ export class ExplorerController {
     }
 
     if (result.failed.length > 0) {
-      const first = result.failed[0];
-      this.logRenameFailures(
+      this.reportRenameFailures(
         `Rename class variable '${oldName}' → '${newName}' in ${className}`,
-        result.failed,
-      );
-      this.showRenameFailureToast(
-        `Rename applied ${result.applied} change(s); ${result.failed.length} failed: ` +
-          `${first.label}: ${first.error}` +
-          (result.failed.length > 1 ? ` (+${result.failed.length - 1} more)` : ''),
+        result,
       );
       return true;
     }

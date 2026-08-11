@@ -321,8 +321,10 @@ GsRefactoringEnvironment >> compile: source into: aBehavior category: aCategory 
 		dictionaries: System myUserProfile symbolList
 		category: aCategory.
 	result isNil ifTrue: [^self].
+	"An unexpected shape is exactly when whoever debugs this most needs to see what came
+	 back, and compileErrorTextFrom: already falls back to a printString for it."
 	(result isKindOf: Array)
-		ifFalse: [^self error: 'did not recompile'].
+		ifFalse: [^self error: 'did not recompile: ', (self compileErrorTextFrom: result)].
 	result isEmpty ifTrue: [^self].
 	self error: 'did not recompile: ', (self compileErrorTextFrom: result first)
 ]
