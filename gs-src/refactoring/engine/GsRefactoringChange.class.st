@@ -265,6 +265,21 @@ GsRefactoringChange >> setNewName: aString [
 ]
 
 { #category : 'accessing' }
+GsRefactoringChange >> failureLabel [
+	"How this change names itself when it lands in an apply result's `failed` list.
+	 A method change answers the METHOD -- the failure list exists so the user can go
+	 open what did not survive, and a bare class name does not say which one. A
+	 structural change (a class-definition edit) has no selector, so it answers the
+	 class name it already did."
+	| cls |
+	cls := className asString.
+	selector isNil ifTrue: [^cls].
+	^isMeta == true
+		ifTrue: [cls, ' class>>', selector asString]
+		ifFalse: [cls, '>>', selector asString]
+]
+
+{ #category : 'accessing' }
 GsRefactoringChange >> selector [
 	^selector
 ]
