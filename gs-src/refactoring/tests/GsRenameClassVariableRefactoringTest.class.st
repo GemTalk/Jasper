@@ -134,7 +134,7 @@ GsRenameClassVariableRefactoringTest >> subFixture [
 
 { #category : 'running' }
 GsRenameClassVariableRefactoringTest >> tearDown [
-	#('GsRCVSub' 'GsRCVBase')
+	#('GsRCVSub' 'GsRCVBase' 'GsRCVGone')
 		do: [:nm | UserGlobals removeKey: nm asSymbol ifAbsent: []]
 ]
 
@@ -494,6 +494,26 @@ GsRenameClassVariableRefactoringTest >> testApplyReturnsAppliedCountAndNoFailure
 
 	self assert: json includesSubstring: '"applied":8'.
 	self assert: json includesSubstring: '"failed":[]'
+]
+
+{ #category : 'tests - apply' }
+GsRenameClassVariableRefactoringTest >> testApplyReportsAMethodThatCannotRecompile [
+	"compileMethod: ANSWERS its errors instead of raising, so an apply that ignored the
+	 return value counted a method that never recompiled as APPLIED and reported clean
+	 success -- leaving that method bound to the OLD, now-detached association. Compile a
+	 reference method against a scaffold global, remove the global so its source no longer
+	 compiles, and assert the apply reports the failure instead of swallowing it."
+	| json |
+	UserGlobals at: #GsRCVGone put: 7.
+	self compile: 'broken ^Counter + GsRCVGone' in: self baseFixture.
+	UserGlobals removeKey: #GsRCVGone.
+
+	json := (self refactoringRenameCounterTo: 'Tally') applyDeselected: #().
+
+	self deny: json includesSubstring: '"failed":[]'.
+	self assert: json includesSubstring: 'did not recompile'.
+	"The other eight changes still applied -- one bad method does not stop the rename."
+	self assert: json includesSubstring: '"applied":8'
 ]
 
 { #category : 'tests - preview' }

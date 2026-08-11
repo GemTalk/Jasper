@@ -119,7 +119,7 @@ GsRenameMethodRefactoringTest >> subFixture [
 
 { #category : 'running' }
 GsRenameMethodRefactoringTest >> tearDown [
-	#('GsRMSub' 'GsRMOther' 'GsRMBase')
+	#('GsRMSub' 'GsRMOther' 'GsRMBase' 'GsRMGone')
 		do: [:nm | UserGlobals removeKey: nm asSymbol ifAbsent: []].
 	super tearDown
 ]
@@ -273,6 +273,33 @@ GsRenameMethodRefactoringTest >> testServerSideApplyCompilesNewAndRemovesOld [
 	"The sender was recompiled in place to call the new selector."
 	self assert: (base compiledMethodAt: #caller environmentId: 0 otherwise: nil) sourceString
 		includesSubstring: 'moveY: 2 x: 1'
+]
+
+{ #category : 'tests' }
+GsRenameMethodRefactoringTest >> testServerSideApplyKeepsTheOldMethodWhenTheNewOneWillNotCompile [
+	"The apply compiles the new source and THEN removes the old selector. compileMethod:
+	 answers its errors rather than raising, so an unchecked apply deleted the old method
+	 without installing its replacement -- outright method loss, reported as success. The
+	 sender is made un-compilable by removing a global it was compiled against; the failure
+	 must be reported and `caller` must still exist."
+	| ref base json |
+	UserGlobals at: #GsRMGone put: 7.
+	self compile: 'caller
+	"a caller of movePointX:y: and ping"
+	self ping.
+	^(self movePointX: 1 y: 2) , GsRMGone' in: self baseFixture.
+	UserGlobals removeKey: #GsRMGone.
+	ref := self renamePartsTo: #('moveY:' 'x:') permutation: #(2 1) scope: #class.
+
+	json := ref applyDeselected: #().
+	base := self baseFixture.
+
+	self deny: json includesSubstring: '"failed":[]'.
+	self assert: json includesSubstring: 'did not recompile'.
+	"Nothing was destroyed on the way: the un-recompilable sender is still installed."
+	self assert: (base compiledMethodAt: #caller environmentId: 0 otherwise: nil) notNil.
+	"And the rename itself still went through for the implementor."
+	self assert: (base compiledMethodAt: #'moveY:x:' environmentId: 0 otherwise: nil) notNil
 ]
 
 { #category : 'tests' }
