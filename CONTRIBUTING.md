@@ -68,6 +68,12 @@ Follow these steps in order after cloning the repo:
 
 See [docs/how-to/raising-the-version-floor.md](docs/how-to/raising-the-version-floor.md) for the policy behind this floor and the steps to raise it.
 
+## npm version
+
+Separately from the runtime floor above, this repo requires **npm ≥ 11.16.0** on the dev toolchain (enforced by `devEngines` in `package.json`). `nvm use` satisfies it via `.nvmrc`; if you manage Node another way, run `npm i -g npm@11` instead. An npm below the floor fails with `EBADDEVENGINES`.
+
+`.npmrc` enforces `strict-allow-scripts`, so installing an unreviewed dependency's install script fails with `ESTRICTALLOWSCRIPTS`. See [docs/how-to/add-a-dependency-with-install-scripts.md](docs/how-to/add-a-dependency-with-install-scripts.md) for the approval steps.
+
 ## Build and test
 
 - Lint: `npm run lint`

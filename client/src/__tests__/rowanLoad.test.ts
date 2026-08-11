@@ -155,12 +155,25 @@ describe('updateGitRepo', () => {
   const g = (args: string[], cwd: string) =>
     execFileSync('git', args, { cwd, stdio: 'pipe', env: gitEnv() });
 
+  // Holds the folder `setup()` builds its repos under, so it is removed even when the test
+  // fails: the paths it hands back are used after it returns, so it cannot own its own
+  // cleanup with a try/finally.
+  let base: string | undefined;
+
+  afterEach(() => {
+    if (base !== undefined) {
+      fs.rmSync(base, { recursive: true, force: true });
+      base = undefined;
+    }
+  });
+
   // A bare remote, plus a clone of it. Advancing the remote is done through a
   // throwaway second clone so the first clone genuinely lags behind.
   function setup(): { remote: string; clone: string; bump: () => void } {
-    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'rowan-git-'));
-    const seed = path.join(base, 'seed');
-    const remote = path.join(base, 'remote.git');
+    const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'rowan-git-'));
+    base = folder;
+    const seed = path.join(folder, 'seed');
+    const remote = path.join(folder, 'remote.git');
     fs.mkdirSync(seed);
     g(['init', '-q', '-b', 'main'], seed);
     g(['config', 'user.email', 't@t'], seed);
@@ -168,15 +181,15 @@ describe('updateGitRepo', () => {
     fs.writeFileSync(path.join(seed, 'a.txt'), 'one\n');
     g(['add', '-A'], seed);
     g(['commit', '-qm', 'one'], seed);
-    g(['clone', '-q', '--bare', seed, remote], base);
+    g(['clone', '-q', '--bare', seed, remote], folder);
 
-    const clone = path.join(base, 'clone');
-    g(['clone', '-q', remote, clone], base);
+    const clone = path.join(folder, 'clone');
+    g(['clone', '-q', remote, clone], folder);
 
     let n = 1;
     const bump = () => {
-      const pusher = path.join(base, `pusher-${n}`);
-      g(['clone', '-q', remote, pusher], base);
+      const pusher = path.join(folder, `pusher-${n}`);
+      g(['clone', '-q', remote, pusher], folder);
       g(['config', 'user.email', 't@t'], pusher);
       g(['config', 'user.name', 'T'], pusher);
       fs.writeFileSync(path.join(pusher, 'a.txt'), `rev-${n}\n`);
