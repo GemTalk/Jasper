@@ -28,15 +28,30 @@ export function compiledMethodExpr(
 
 // A Smalltalk expression resolving the SymbolDictionary identified by `dict` — a
 // 1-based SymbolList index (unambiguous) or a name (first match). Evaluates to the
-// dictionary, or raises/short-circuits per the collection's own semantics if the
-// name/index is absent; callers that pass a possibly-missing name should `ifNil:`.
+// dictionary, or **nil** when there is no such dictionary (an out-of-range index or
+// an unbound name) — both branches are uniformly nil-on-absent, so callers just
+// `ifNil:` to handle the missing case with a clean refusal string.
+//
+// Why the numeric branch answers nil rather than letting the raw `at:` raise: a
+// numeric index does come from Jasper's own tree (a live SymbolList position), so
+// out-of-range only happens when that tree has gone stale — a dictionary earlier in
+// the list was removed and this node hasn't refreshed yet. Letting `at:` raise there
+// doesn't produce a tidy "programming error" — it unwinds the doit before the caller's
+// `ifNil:` guard, and executeFetchString rethrows the raw GemStone index-out-of-range
+// as a walkback notification. Answering nil instead lets the caller show its clean
+// refusal (and a refresh recovers). The one cost: a stale index resolves as an *empty*
+// dictionary in the read queries (getClassNames et al. answer '' on nil), which looks
+// like a dictionary that legitimately has no classes — also self-correcting on refresh.
+// classLookupExpr (below) shares this preference for a clean answer over a walkback but
+// deliberately lands the opposite way on its numeric branch — see its NB for why.
+//
 // This is the ONE place that knows how to resolve a dictionary within the symbol
 // list — do not hand-roll `System myUserProfile symbolList at:/objectNamed:` for a
-// caller-supplied dict elsewhere (see the duplication guard test). To resolve a
-// CLASS within a dictionary, use classLookupExpr instead.
+// caller-supplied dict elsewhere (see the duplication guard test). To resolve a CLASS
+// within a dictionary, use classLookupExpr instead.
 export function dictLookupExpr(dict: number | string): string {
   return typeof dict === 'number'
-    ? `System myUserProfile symbolList at: ${dict}`
+    ? `System myUserProfile symbolList at: ${dict} ifAbsent: [nil]`
     : `System myUserProfile symbolList objectNamed: #'${escapeString(dict)}'`;
 }
 
@@ -58,6 +73,21 @@ export function classLookupExpr(className: string, dict?: number | string): stri
   // Prefer a 1-based SymbolList index (unambiguous — two dictionaries can share a
   // name). A number scopes to exactly that dictionary; a name is a best-effort
   // fallback for callers that only have a name (e.g. some MCP tools).
+  //
+  // NB: unlike dictLookupExpr (above), the index branch here does NOT `ifAbsent:` the
+  // outer `at:` — an out-of-range dictionary index raises rather than answering nil.
+  // Both helpers prefer a clean answer over a raw walkback; they diverge only because
+  // guarding is cheap for one and awkward for the other. dictLookupExpr returns the
+  // dictionary directly, so `at: N ifAbsent: [nil]` is a trivial nil-on-absent. Here the
+  // outer `at:` is the RECEIVER of a further `at: #'class' ifAbsent:`, so nil-guarding it
+  // would mean wrapping the whole thing in `ifNotNil:` (else `nil at:ifAbsent:` DNUs) —
+  // structure the string branch below already has to carry, but the index branch would
+  // otherwise not. We accept the raise on the index branch because out-of-range there is
+  // the same rare stale-tree race dictLookupExpr describes (a live SymbolList position
+  // whose tree hasn't refreshed), recoverable by a refresh — not worth the extra wrap on
+  // the common path. The name branch DOES guard, because a name genuinely may not resolve.
+  // The inner `at: #'class' ifAbsent: [nil]` still returns nil when the dictionary exists
+  // but the class isn't in it.
   if (typeof dict === 'number') {
     return `(System myUserProfile symbolList at: ${dict}) at: #'${esc}' ifAbsent: [nil]`;
   }
