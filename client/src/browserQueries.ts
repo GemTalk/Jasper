@@ -219,6 +219,8 @@ import { deleteClass as sharedDeleteClass } from './queries/deleteClass';
 import { moveClass as sharedMoveClass } from './queries/moveClass';
 import { addDictionary as sharedAddDictionary } from './queries/addDictionary';
 import { removeDictionary as sharedRemoveDictionary } from './queries/removeDictionary';
+import { renameDictionary as sharedRenameDictionary } from './queries/renameDictionary';
+import { renameClassCategory as sharedRenameClassCategory } from './queries/renameClassCategory';
 import { moveDictionaryUp as sharedMoveDictionaryUp } from './queries/moveDictionaryUp';
 import { moveDictionaryDown as sharedMoveDictionaryDown } from './queries/moveDictionaryDown';
 import { setBreakAtStepPoint as sharedSetBreakAtStepPoint } from './queries/setBreakAtStepPoint';
@@ -2038,6 +2040,23 @@ export function addDictionary(session: ActiveSession, dictName: string): string 
 
 export function removeDictionary(session: ActiveSession, dict: number | string): string {
   return sharedRemoveDictionary(defaultQueryExecutorUsing(session), dict);
+}
+
+export function renameDictionary(
+  session: ActiveSession,
+  dict: number | string,
+  newName: string,
+): string {
+  return sharedRenameDictionary(defaultQueryExecutorUsing(session), dict, newName);
+}
+
+export function renameClassCategory(
+  session: ActiveSession,
+  dict: number | string,
+  oldPath: string,
+  newPath: string,
+): string {
+  return sharedRenameClassCategory(defaultQueryExecutorUsing(session), dict, oldPath, newPath);
 }
 
 export function moveDictionaryUp(session: ActiveSession, dictIndex: number): string {

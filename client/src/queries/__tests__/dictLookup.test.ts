@@ -3,8 +3,8 @@ import { dictLookupExpr } from '../util';
 import { classExistsInDictionary } from '../getClassCategory';
 
 describe('dictLookupExpr', () => {
-  it('resolves a dictionary by 1-based SymbolList index', () => {
-    expect(dictLookupExpr(3)).toBe('System myUserProfile symbolList at: 3');
+  it('resolves a dictionary by 1-based SymbolList index (nil if out of range)', () => {
+    expect(dictLookupExpr(3)).toBe('System myUserProfile symbolList at: 3 ifAbsent: [nil]');
   });
 
   it('resolves a dictionary by name, doubling single quotes', () => {
