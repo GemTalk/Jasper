@@ -7,11 +7,11 @@ import { asCount } from './previewCounts';
  * replacing the byte-identical private copies each simple family carried.
  *
  * Refactorings that can COMMIT (the class-reshape family: rename-class,
- * extract-superclass, instVar add/remove and structure) return a SUPERSET with
- * `committed` / `migratedFailures`; those keep their own parser for now. A later
- * step can express those as this base plus an `extend` hook (the shape C2's
- * `makeParseChange` already uses for method-relocation changes). No `vscode`
- * dependency, so it unit-tests directly.
+ * extract-superclass, split-class, instVar add/remove and structure) return a
+ * SUPERSET with `committed` / `migratedFailures` / `dropped`; they get the same
+ * base through `parseApplyResultWith` and contribute only their extra fields, so
+ * the envelope validation, the `failed` filtering and the `asCount` clamp have
+ * exactly one implementation. No `vscode` dependency, so it unit-tests directly.
  */
 export interface ApplyResult {
   applied: number;
@@ -20,6 +20,19 @@ export interface ApplyResult {
 }
 
 export function parseApplyResult(json: string): ApplyResult {
+  return parseApplyResultWith(json, () => ({}));
+}
+
+/**
+ * `parseApplyResult` for a family whose apply answers a SUPERSET of the envelope.
+ * `extend` receives the already-validated raw envelope and answers only the extra
+ * fields; the base is parsed here, once. Mirrors `makeParseChange` in
+ * methodRelocationPreview (RB catalog C2), which does the same for preview changes.
+ */
+export function parseApplyResultWith<T extends ApplyResult>(
+  json: string,
+  extend: (env: Record<string, unknown>) => Omit<T, keyof ApplyResult>,
+): T {
   const parsed: unknown = JSON.parse(json);
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
     throw new Error('Apply did not return a result envelope.');
@@ -34,9 +47,10 @@ export function parseApplyResult(json: string): ApplyResult {
           error: typeof f.error === 'string' ? f.error : 'unknown error',
         }))
     : [];
-  return {
+  const base: ApplyResult = {
     applied: asCount(env.applied),
     failed,
     error: typeof env.error === 'string' ? env.error : undefined,
   };
+  return { ...base, ...extend(env) } as T;
 }
