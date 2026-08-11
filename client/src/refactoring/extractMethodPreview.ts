@@ -1,4 +1,6 @@
 import { asCount } from './previewCounts';
+export { parseApplyResult } from './previewEnvelope';
+export type { ApplyResult } from './previewEnvelope';
 /**
  * Pure helpers for the extract-method (M1) preview: parsing the engine's
  * pre-flight analysis, the paginated preview envelope, and the apply result, plus
@@ -54,12 +56,6 @@ export interface StartExtractPreview {
   newSelector: string;
   outOfScope: ExtractOutOfScope;
   page: PreviewPage;
-}
-
-export interface ApplyResult {
-  applied: number;
-  failed: { id: string; label: string; error: string }[];
-  error?: string;
 }
 
 /** The engine pre-flight: how many arguments the selection needs (and their
@@ -168,28 +164,6 @@ export function parsePage(json: string): PreviewPage {
     throw new Error('Extract preview page did not return an envelope.');
   }
   return parsePageObject(parsed as Record<string, unknown>);
-}
-
-export function parseApplyResult(json: string): ApplyResult {
-  const parsed: unknown = JSON.parse(json);
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    throw new Error('Apply did not return a result envelope.');
-  }
-  const env = parsed as Record<string, unknown>;
-  const failed = Array.isArray(env.failed)
-    ? env.failed
-        .filter((f): f is Record<string, unknown> => typeof f === 'object' && f !== null)
-        .map((f) => ({
-          id: typeof f.id === 'string' ? f.id : '?',
-          label: typeof f.label === 'string' ? f.label : '?',
-          error: typeof f.error === 'string' ? f.error : 'unknown error',
-        }))
-    : [];
-  return {
-    applied: asCount(env.applied),
-    failed,
-    error: typeof env.error === 'string' ? env.error : undefined,
-  };
 }
 
 /** A human label for a preview row. The extracted method (`methodAdd`) is tagged
