@@ -1,0 +1,40 @@
+version: 2
+updates:
+  - package-ecosystem: 'npm'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+    groups:
+      # Listed first so it wins the match: keeps every ESTRICTALLOWSCRIPTS-
+      # triggering bump in one recognizable PR per cycle. @vscode/vsce-sign
+      # and keytar are deliberately excluded — they're transitive, and
+      # Dependabot never names them directly.
+      install-scripts:
+        patterns:
+          - 'esbuild'
+          - 'koffi'
+          - 'lefthook'
+          - '@vscode/vsce'
+          - 'ovsx'
+      dev-dependencies:
+        dependency-type: 'development'
+        update-types:
+          - 'minor'
+          - 'patch'
+      prod-dependencies:
+        dependency-type: 'production'
+        update-types:
+          - 'minor'
+          - 'patch'
+
+  - package-ecosystem: 'github-actions'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+    groups:
+      github-actions:
+        patterns:
+          - '*'

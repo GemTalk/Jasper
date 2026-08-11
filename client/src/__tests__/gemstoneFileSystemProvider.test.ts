@@ -14,11 +14,20 @@ vi.mock('../browserQueries', () => ({
   getMethodSource: vi.fn(() => 'at: index\n  ^self basicAt: index'),
   getBaseMethodSource: vi.fn(() => 'isVowel\n  ^ base impl'),
   getClassDefinition: vi.fn(() => "Object subclass: 'Array'\n  instVarNames: #()"),
+  getClassCategory: vi.fn(() => ''),
+  classExistsInDictionary: vi.fn(() => false),
+  recategorizeClass: vi.fn(),
   getClassComment: vi.fn(() => 'An ordered collection.'),
   compileMethod: vi.fn(() => 'Compiled: Array >> at:'),
   compileClassDefinition: vi.fn(),
   setClassComment: vi.fn(),
   canClassBeWritten: vi.fn(() => true),
+}));
+
+// Keep the real gciLog but spy logInfo so the recategorize soft-failure log is observable.
+vi.mock('../gciLog', async (orig) => ({
+  ...(await orig()),
+  logInfo: vi.fn(),
 }));
 
 import {
@@ -29,6 +38,7 @@ import {
   TabInputText,
   TabInputTextDiff,
 } from '../__mocks__/vscode';
+import { logInfo } from '../gciLog';
 import {
   GemStoneFileSystemProvider,
   buildMethodUri,
@@ -294,6 +304,18 @@ describe('GemStoneFileSystemProvider', () => {
       expect(content).toContain('inDictionary: UserGlobals');
     });
 
+    it('new-class template always includes an editable category line, defaulting to User Classes when none was selected', () => {
+      const uri = Uri.parse('gemstone://1/UserGlobals/new-class');
+      const content = new TextDecoder().decode(provider.readFile(uri));
+      expect(content).toContain("category: 'User Classes'\n  options: #()");
+    });
+
+    it('new-class template pre-fills the selected category when one was passed', () => {
+      const uri = Uri.parse('gemstone://1/UserGlobals/new-class?category=Kernel-Numbers');
+      const content = new TextDecoder().decode(provider.readFile(uri));
+      expect(content).toContain("category: 'Kernel-Numbers'\n  options: #()");
+    });
+
     it('returns new-method template', () => {
       const uri = Uri.parse('gemstone://1/Globals/Array/instance/accessing/new-method');
       const content = new TextDecoder().decode(provider.readFile(uri));
@@ -475,6 +497,127 @@ describe('GemStoneFileSystemProvider', () => {
       expect(collection.set).toHaveBeenCalledWith(
         newClassUri,
         expect.arrayContaining([expect.objectContaining({ message: 'Class not found' })]),
+      );
+    });
+
+    it('shows the class category on its own line (Class>>definition omits it)', () => {
+      vi.mocked(queries.getClassDefinition).mockReturnValueOnce(
+        "Object subclass: 'Array'\n  inDictionary: Globals\n  options: #()",
+      );
+      vi.mocked(queries.getClassCategory).mockReturnValueOnce('Collections-Ordered');
+
+      const content = new TextDecoder().decode(
+        provider.readFile(Uri.parse('gemstone://1/Globals/Array/definition')),
+      );
+
+      expect(content).toContain("category: 'Collections-Ordered'\n  options: #()");
+      expect(queries.getClassCategory).toHaveBeenCalledWith(expect.anything(), 'Array', 'Globals');
+    });
+
+    it('strips the category line before compiling and applies it via recategorizeClass', () => {
+      const uri = Uri.parse('gemstone://1/UserGlobals/new-class');
+      const source =
+        "Object subclass: 'MyClass'\n  inDictionary: UserGlobals\n  category: 'User Classes'\n  options: #()";
+      vi.mocked(queries.compileClassDefinition).mockReturnValueOnce('MyClass');
+
+      provider.writeFile(uri, encode(source), { create: true, overwrite: true });
+
+      // The compiled source must NOT carry a category: keyword — no base image has
+      // the 8-keyword subclass:…category:options: selector.
+      const compiledSource = vi.mocked(queries.compileClassDefinition).mock.calls[0][1];
+      expect(compiledSource).not.toContain('category:');
+      expect(queries.recategorizeClass).toHaveBeenCalledWith(
+        expect.anything(),
+        'MyClass',
+        'User Classes',
+        'UserGlobals',
+      );
+    });
+
+    it('clears the category (recategorize with empty) when the category line is removed', () => {
+      // The editor always shows a category: line; deleting it is how the user clears
+      // the category. An absent line must still recategorize (to ''), not be skipped.
+      const uri = Uri.parse('gemstone://1/UserGlobals/new-class');
+      const source = "Object subclass: 'MyClass'\n  inDictionary: UserGlobals\n  options: #()";
+      vi.mocked(queries.compileClassDefinition).mockReturnValueOnce('MyClass');
+      vi.mocked(queries.recategorizeClass).mockReturnValueOnce('Recategorized: MyClass');
+
+      provider.writeFile(uri, encode(source), { create: true, overwrite: true });
+
+      expect(queries.recategorizeClass).toHaveBeenCalledWith(
+        expect.anything(),
+        'MyClass',
+        '',
+        expect.anything(),
+      );
+    });
+
+    it('logs a recategorize soft-failure (returned status) and still reports the save succeeded', () => {
+      const uri = Uri.parse('gemstone://1/UserGlobals/new-class');
+      const source =
+        "Object subclass: 'MyClass'\n  inDictionary: UserGlobals\n  category: 'Widgets'\n  options: #()";
+      vi.mocked(queries.compileClassDefinition).mockReturnValueOnce('MyClass');
+      // recategorizeClass reports a soft failure by RETURNING (not throwing).
+      vi.mocked(queries.recategorizeClass).mockReturnValueOnce('Class not found: MyClass');
+
+      provider.writeFile(uri, encode(source), { create: true, overwrite: true });
+
+      expect(logInfo).toHaveBeenCalledWith(expect.stringContaining('did not apply'));
+      // The soft failure must not block the class creation.
+      expect(window.showInformationMessage).toHaveBeenCalledWith(
+        expect.stringContaining('Class created'),
+      );
+    });
+
+    it('targets the dictionary named by inDictionary:, not the selected one, for a new class', async () => {
+      // URI dictionary is Globals (the selected one), but the definition names
+      // UserGlobals — the class is created there, so the existence check,
+      // recategorize, and reopened definition tab must all target UserGlobals.
+      const uri = Uri.parse('gemstone://1/Globals/new-class');
+      const source =
+        "Object subclass: 'Fnoodle'\n  inDictionary: UserGlobals\n  category: 'Collections-Internals'\n  options: #()";
+      vi.mocked(queries.compileClassDefinition).mockReturnValueOnce('Fnoodle');
+      const listener = vi.fn();
+      provider.onClassDefinitionCompiled(listener);
+
+      provider.writeFile(uri, encode(source), { create: true, overwrite: true });
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(queries.classExistsInDictionary).toHaveBeenCalledWith(
+        expect.anything(),
+        'Fnoodle',
+        'UserGlobals',
+      );
+      expect(queries.recategorizeClass).toHaveBeenCalledWith(
+        expect.anything(),
+        'Fnoodle',
+        'Collections-Internals',
+        'UserGlobals',
+      );
+      const firedUri: Uri = listener.mock.calls[0][0].uri;
+      expect(firedUri.path).toBe('/UserGlobals/Fnoodle/definition/Fnoodle');
+    });
+
+    it('refuses a new-class save that would overwrite an existing class in the dictionary', async () => {
+      const uri = Uri.parse('gemstone://1/UserGlobals/new-class');
+      vi.mocked(queries.classExistsInDictionary).mockReturnValueOnce(true);
+      const listener = vi.fn();
+      provider.onClassDefinitionCompiled(listener);
+
+      provider.writeFile(uri, encode("Object subclass: 'Existing'\n  inDictionary: UserGlobals"), {
+        create: true,
+        overwrite: true,
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(queries.compileClassDefinition).not.toHaveBeenCalled();
+      expect(listener).not.toHaveBeenCalled();
+      const collection = vi.mocked(languages.createDiagnosticCollection).mock.results[0].value;
+      expect(collection.set).toHaveBeenCalledWith(
+        uri,
+        expect.arrayContaining([
+          expect.objectContaining({ message: expect.stringContaining('already exists') }),
+        ]),
       );
     });
 

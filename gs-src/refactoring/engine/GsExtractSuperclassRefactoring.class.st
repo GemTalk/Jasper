@@ -153,16 +153,6 @@ GsExtractSuperclassRefactoring >> sharedParent [
 ]
 
 { #category : 'private' }
-GsExtractSuperclassRefactoring >> ownInstVarsOf: aClass [
-	^aClass instVarNames collect: [:e | e asString]
-]
-
-{ #category : 'private' }
-GsExtractSuperclassRefactoring >> allInstVarsOf: aClass [
-	^aClass allInstVarNames collect: [:e | e asString]
-]
-
-{ #category : 'private' }
 GsExtractSuperclassRefactoring >> sourceOf: aSelector in: aClass [
 	| m |
 	m := aClass compiledMethodAt: aSelector environmentId: 0 otherwise: nil.
@@ -229,8 +219,8 @@ GsExtractSuperclassRefactoring >> validateHoistInstVars [
 	 created and some reparents done -- the half-applied state the user then has to abort. The
 	 class comment sells these as global declines that empty the change set, so it belongs here."
 	| own supAll |
-	own := self ownInstVarsOf: anchorClass.
-	supAll := self allInstVarsOf: sharedParent.
+	own := environment ownInstVarNamesOf: anchorClass.
+	supAll := environment allInstVarNamesOf: sharedParent.
 	hoistInstVars do: [:v |
 		(own includes: v) ifFalse: [
 			^decline := 'Cannot hoist instance variable ', v, ': it is not declared in ', anchorClass name asString, '.'].
@@ -248,7 +238,7 @@ GsExtractSuperclassRefactoring >> descendantDeclaring: anIvarName [
 	extractedClasses do: [:cls |
 		(environment descendantsOf: cls) do: [:d |
 			((extractedClasses includes: d) not
-				and: [(self ownInstVarsOf: d) includes: anIvarName])
+				and: [(environment ownInstVarNamesOf: d) includes: anIvarName])
 					ifTrue: [^d]]].
 	^nil
 ]
@@ -273,7 +263,7 @@ GsExtractSuperclassRefactoring >> visibleIvarSymbolsWith: anIvarList [
 	| visible |
 	visible := Set new.
 	anIvarList do: [:v | visible add: v asSymbol].
-	(self allInstVarsOf: sharedParent) do: [:v | visible add: v asSymbol].
+	(environment allInstVarNamesOf: sharedParent) do: [:v | visible add: v asSymbol].
 	^visible
 ]
 
@@ -389,11 +379,11 @@ GsExtractSuperclassRefactoring >> candidateInstVars [
 	self ensureAnalysis.
 	result := OrderedCollection new.
 	decline notNil ifTrue: [^result].
-	(self ownInstVarsOf: anchorClass) do: [:v | | all |
-		((self allInstVarsOf: sharedParent) includes: v)
+	(environment ownInstVarNamesOf: anchorClass) do: [:v | | all |
+		((environment allInstVarNamesOf: sharedParent) includes: v)
 			ifTrue: [result add: (Array with: v with: #unhoistable)]
 			ifFalse: [
-				all := extractedClasses allSatisfy: [:c | (self ownInstVarsOf: c) includes: v].
+				all := extractedClasses allSatisfy: [:c | (environment ownInstVarNamesOf: c) includes: v].
 				result add: (Array with: v with: (all ifTrue: [#identical] ifFalse: [#partial]))]].
 	^result
 ]
@@ -402,9 +392,9 @@ GsExtractSuperclassRefactoring >> candidateInstVars [
 GsExtractSuperclassRefactoring >> identicalCandidateIvarNames [
 	"The own ivars of the anchor that every extracted class also owns -- the ones hoisted by
 	 default -- as an Array of Strings. Used to classify method hoistability optimistically."
-	^(self ownInstVarsOf: anchorClass) select: [:v |
-		((self allInstVarsOf: sharedParent) includes: v) not
-			and: [extractedClasses allSatisfy: [:c | (self ownInstVarsOf: c) includes: v]]]
+	^(environment ownInstVarNamesOf: anchorClass) select: [:v |
+		((environment allInstVarNamesOf: sharedParent) includes: v) not
+			and: [extractedClasses allSatisfy: [:c | (environment ownInstVarNamesOf: c) includes: v]]]
 ]
 
 { #category : 'classification' }
@@ -450,7 +440,7 @@ GsExtractSuperclassRefactoring >> stageExtractedEdit: aClass into: cs [
 	 dropped from its own list."
 	| oldDef newList |
 	oldDef := aClass definition.
-	newList := (self ownInstVarsOf: aClass) reject: [:n | hoistInstVars includes: n].
+	newList := (environment ownInstVarNamesOf: aClass) reject: [:n | hoistInstVars includes: n].
 	cs
 		addClassDefinitionEditInDictionary: (self dictNameForClass: aClass)
 		className: aClass name asString
@@ -724,8 +714,8 @@ GsExtractSuperclassRefactoring >> applyClassChange: aChange [
 		ifTrue: [newClass]
 		ifFalse: [oldToNew at: old superclass ifAbsent: [old superclass]].
 	list := isExtracted
-		ifTrue: [(self ownInstVarsOf: old) reject: [:n | hoistInstVars includes: n]]
-		ifFalse: [self ownInstVarsOf: old].
+		ifTrue: [(environment ownInstVarNamesOf: old) reject: [:n | hoistInstVars includes: n]]
+		ifFalse: [environment ownInstVarNamesOf: old].
 	skip := isExtracted ifTrue: [hoistMethods] ifFalse: [#()].
 	new := self makeNewVersionOf: old superclass: parentNew instVarNames: list.
 	self copyMethodsFrom: old to: new skipping: skip.

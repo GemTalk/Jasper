@@ -37,9 +37,12 @@ ws := WriteStream on: Unicode7 new.
 patches do: [:assoc | | pkg |
   pkg := assoc key.
   assoc value operations do: [:op | | c |
-    c := op class name = 'CypressAddition'
+    "Unicode7 idiom (see escapeString in queries/util.ts): a string literal inside a GCI doit is
+     Unicode7 on 3.6.x, so compare the image-derived class name as an interned Symbol via asSymbol
+     == #Lit -- a plain = against a string literal raises ArgumentError 2718 on a 3.6.x client."
+    c := op class name asSymbol == #CypressAddition
       ifTrue: ['I']
-      ifFalse: [op class name = 'CypressRemoval' ifTrue: ['D'] ifFalse: ['M']].
+      ifFalse: [op class name asSymbol == #CypressRemoval ifTrue: ['D'] ifFalse: ['M']].
     ws nextPutAll: c; tab; nextPutAll: pkg asString; tab;
        nextPutAll: ([op definition printString] on: Error do: [:e | '?']); lf]].
 ws contents`;

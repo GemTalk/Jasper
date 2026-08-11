@@ -146,33 +146,9 @@ GsInstVarRefactoring >> varName [
 ]
 
 { #category : 'private' }
-GsInstVarRefactoring >> ownInstVarsOf: aClass [
-	"aClass's OWN instance-variable names (not inherited), as an Array of Strings."
-	^aClass instVarNames collect: [:e | e asString]
-]
-
-{ #category : 'private' }
-GsInstVarRefactoring >> allInstVarsOf: aClass [
-	^aClass allInstVarNames collect: [:e | e asString]
-]
-
-{ #category : 'private' }
 GsInstVarRefactoring >> optionsOf: aClass [
 	"aClass's own class-creation options, as an Array of Strings (e.g. #('selfCanBeSpecial'))."
 	^(aClass _optionsArray ifNil: [#()]) collect: [:e | e asString]
-]
-
-{ #category : 'private' }
-GsInstVarRefactoring >> allClassVarsOf: aClass [
-	"aClass's own and inherited class-variable names, as a Set of Strings. Used to decline an
-	 #add whose name would shadow a class variable inside method bodies."
-	| result cls |
-	result := Set new.
-	cls := aClass.
-	[cls isNil] whileFalse: [
-		(cls classVarNames ifNil: [#()]) do: [:n | result add: n asString].
-		cls := cls superclass].
-	^result
 ]
 
 { #category : 'private' }
@@ -221,15 +197,14 @@ GsInstVarRefactoring >> analyzeAdd [
 	| conflicts names |
 	(self isValidIvarName: varName) ifFalse: [
 		^decline := 'Cannot add ', varName printString, ': an instance-variable name must start with a lowercase letter or an underscore, followed by letters, digits, or underscores.'].
-	((self allInstVarsOf: definingClass) includes: varName) ifTrue: [
+	((environment allInstVarNamesOf: definingClass) includes: varName) ifTrue: [
 		^decline := 'Cannot add ', varName, ': ', definingClass name asString, ' already has an instance variable of that name.'].
-	((self allClassVarsOf: definingClass) includes: varName) ifTrue: [
+	((environment classVarNamesVisibleTo: definingClass) includes: varName) ifTrue: [
 		^decline := 'Cannot add ', varName, ': a class variable of that name is visible to ', definingClass name asString, ', which it would shadow.'].
 	"A subclass that already declares varName as its OWN instance variable would end up with two
 	 of that name once the new one is inherited. That fails mid-apply (error 2271), so decline up
 	 front and name the offenders rather than let the reshape strand a half-versioned subtree."
-	conflicts := (environment descendantsOf: definingClass)
-		select: [:d | (self ownInstVarsOf: d) includes: varName].
+	conflicts := environment descendantsOf: definingClass declaringInstVar: varName.
 	conflicts notEmpty ifTrue: [
 		names := (conflicts collect: [:c | c name asString])
 			inject: '' into: [:acc :s | acc isEmpty ifTrue: [s] ifFalse: [acc, ', ', s]].
@@ -238,7 +213,7 @@ GsInstVarRefactoring >> analyzeAdd [
 			(conflicts size = 1 ifTrue: [' already declares'] ifFalse: [' already declare']),
 			' an instance variable of that name; adding it to ', definingClass name asString,
 			' would duplicate that variable.'].
-	newIvarLists at: definingClass name asString put: ((self ownInstVarsOf: definingClass) copyWith: varName).
+	newIvarLists at: definingClass name asString put: ((environment ownInstVarNamesOf: definingClass) copyWith: varName).
 	self computeAffectedFrom: (Array with: definingClass).
 	self recordWillNotRecompileShadowedBy: definingClass
 ]
@@ -247,9 +222,9 @@ GsInstVarRefactoring >> analyzeAdd [
 GsInstVarRefactoring >> analyzeRemove [
 	"V1 remove: varName must be an OWN instance variable of definingClass. Every method (defining
 	 class and descendants) that accesses it will lose it -- those are the willNotRecompile set."
-	((self ownInstVarsOf: definingClass) includes: varName) ifFalse: [
+	((environment ownInstVarNamesOf: definingClass) includes: varName) ifFalse: [
 		^decline := 'Cannot remove ', varName, ': it is not an instance variable declared in ', definingClass name asString, '.'].
-	newIvarLists at: definingClass name asString put: ((self ownInstVarsOf: definingClass) reject: [:n | n = varName]).
+	newIvarLists at: definingClass name asString put: ((environment ownInstVarNamesOf: definingClass) reject: [:n | n = varName]).
 	self computeAffectedFrom: (Array with: definingClass).
 	self recordWillNotRecompileLosing: definingClass
 ]
@@ -374,7 +349,7 @@ GsInstVarRefactoring >> previewDefinitionFor: aClass oldDef: defString [
 	 are not surfaced for editing in the panel."
 	^self replaceListClause: 'instVarNames:'
 		in: defString
-		with: (newIvarLists at: aClass name asString ifAbsent: [self ownInstVarsOf: aClass])
+		with: (newIvarLists at: aClass name asString ifAbsent: [environment ownInstVarNamesOf: aClass])
 ]
 
 { #category : 'building' }
@@ -636,7 +611,7 @@ GsInstVarRefactoring >> applyClassChange: aChange [
 	old := environment classNamed: aChange className.
 	old isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	parentNew := oldToNew at: old superclass ifAbsent: [old superclass].
-	list := newIvarLists at: aChange className ifAbsent: [self ownInstVarsOf: old].
+	list := newIvarLists at: aChange className ifAbsent: [environment ownInstVarNamesOf: old].
 	new := self makeNewVersionOf: old superclass: parentNew instVarNames: list options: (self optionsForApply: old).
 	"Count it as applied HERE, the moment the version is staged -- before copyMethodsFrom:, which
 	 could raise. If it does, this class's new version is already a real staged mutation, so the

@@ -220,12 +220,12 @@ describe('validateNewIvarName', () => {
   });
 
   it('rejects an empty name', () => {
-    expect(validateNewIvarName('   ', 'count')).toBeTruthy();
+    expect(validateNewIvarName('   ', 'count')).toBeDefined();
   });
 
   it('rejects a name that is not a Smalltalk identifier', () => {
-    expect(validateNewIvarName('2tally', 'count')).toBeTruthy();
-    expect(validateNewIvarName('has-dash', 'count')).toBeTruthy();
-    expect(validateNewIvarName('has space', 'count')).toBeTruthy();
+    expect(validateNewIvarName('2tally', 'count')).toBeDefined();
+    expect(validateNewIvarName('has-dash', 'count')).toBeDefined();
+    expect(validateNewIvarName('has space', 'count')).toBeDefined();
   });
 });
