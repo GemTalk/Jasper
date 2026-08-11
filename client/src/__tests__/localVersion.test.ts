@@ -360,7 +360,11 @@ describe('VersionManager.fetchAvailableVersions', () => {
   it('excludes remote versions older than the minimum supported gemstone version', async () => {
     const storage = new SysadminStorage();
     const manager = new VersionManager(storage);
-    const platformKey = storage.getPlatformKey();
+    // getCatalogPlatformKey, not getPlatformKey: production matches the
+    // catalog against the former, which falls back to 'x86_64.Linux' when
+    // there's no local server platform (e.g. Windows without WSL). Building
+    // the fixture with getPlatformKey would diverge from that on such hosts.
+    const platformKey = storage.getCatalogPlatformKey();
     const ext = storage.getDownloadExtension();
 
     const html = [
@@ -376,7 +380,7 @@ describe('VersionManager.fetchAvailableVersions', () => {
     expect(versions.map((v) => v.version)).toEqual(['3.7.0', '3.6.2']);
   });
 
-  it('keeps a local version even when it is older than 3.6.2', async () => {
+  onSupportedPosixIt('keeps a local version even when it is older than 3.6.2', async () => {
     const storage = new SysadminStorage();
     const manager = new VersionManager(storage);
     const suffix = storage.getPlatformSuffix();
