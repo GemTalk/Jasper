@@ -155,10 +155,10 @@
             "type": "array",
             "items": {
               "type": "string",
-              "enum": ["classes", "methods", "dictionaries", "openEditors"]
+              "enum": ["classes", "methods", "dictionaries"]
             },
-            "default": ["classes", "methods", "dictionaries", "openEditors"],
-            "markdownDescription": "Which categories Omni Search includes. Scope a single search on the fly by typing a sigil + space: `c ` classes, `m ` methods, `d ` dictionaries, `e ` open editors."
+            "default": ["classes", "methods", "dictionaries"],
+            "markdownDescription": "Which categories Omni Search includes. Narrow a single search on the fly with the category buttons in the picker's title bar; the Clear-filter button resets to searching everything."
           },
           "gemstone.omniSearch.maxResultsPerCategory": {
             "type": "number",
@@ -2705,9 +2705,18 @@
       },
       {
         "command": "gemstone.omniSearch",
-        "key": "ctrl+alt+o",
-        "mac": "cmd+alt+o",
-        "when": "gemstone.hasActiveSession"
+        "key": "shift+enter",
+        "when": "gemstone.hasActiveSession && !terminalFocus"
+      },
+      {
+        "command": "gemstone.omniSearch.references",
+        "key": "alt+enter",
+        "when": "gemstone.omniSearchActive"
+      },
+      {
+        "command": "gemstone.omniSearch.back",
+        "key": "left",
+        "when": "gemstone.omniSearchInPivot"
       },
       {
         "command": "gemstone.findMethodInClass",

@@ -3299,6 +3299,27 @@ export class ExplorerController {
     await this.revealClass(chosen.dictName, chosen.dictIndex, chosen.className);
   }
 
+  // Reveal+select a dictionary row by name in the Dictionaries pane (used by Omni
+  // Search). Resolves the 1-based symbol-list index from the live list, cascades
+  // the panes to that dictionary, and highlights its row. Warns on an unknown name.
+  async revealDictionaryByName(name: string): Promise<void> {
+    const session = await this.sessionManager.resolveSession();
+    if (!session) return;
+    const names = queries.getDictionaryNames(session);
+    const idx = names.indexOf(name);
+    if (idx < 0) {
+      void vscode.window.showWarningMessage(`No dictionary matching "${name}".`);
+      return;
+    }
+    const item = new DictItem(name, idx + 1);
+    this.selectDict(item);
+    try {
+      await this.views?.dict.reveal(item, { select: true, focus: true });
+    } catch {
+      /* ignore */
+    }
+  }
+
   // Set the cascade state to a specific class and reveal it across the panes.
   // Never opens the class-definition editor — that's an explicit action now (the
   // class-row button / menu). `opts.revealMethod` reveals+selects a method row.
@@ -4928,6 +4949,10 @@ export function registerGemStoneExplorer(
     // title button or the command palette).
     vscode.commands.registerCommand('gemstone.explorer.findClass', (name?: string) =>
       ctl.findClass(typeof name === 'string' ? name : undefined),
+    ),
+    // Reveal+select a dictionary row by name (Omni Search dictionary results).
+    vscode.commands.registerCommand('gemstone.explorer.revealDictionary', (name?: string) =>
+      typeof name === 'string' ? ctl.revealDictionaryByName(name) : undefined,
     ),
     // Open a class's definition editor (inline button / menu on the class row —
     // a plain class click no longer auto-opens it; a double-click does).

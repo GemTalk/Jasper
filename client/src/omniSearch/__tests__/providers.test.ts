@@ -3,7 +3,6 @@ import { OMNI_DEFAULTS } from '../omniConfig';
 import { NEVER_CANCELLED, OmniConfig } from '../omniTypes';
 import { createClassesProvider } from '../providers/classesProvider';
 import { createDictionariesProvider } from '../providers/dictionariesProvider';
-import { createOpenEditorsProvider } from '../providers/openEditorsProvider';
 import { createMethodsProvider, SERVER_OVERFETCH } from '../providers/methodsProvider';
 import { ClassNameEntry } from '../../queries/getAllClassNames';
 import { SelectorSearchResult } from '../../queries/searchSelectors';
@@ -73,22 +72,6 @@ describe('dictionariesProvider', () => {
   });
 });
 
-describe('openEditorsProvider', () => {
-  it('is local (no prime) and focuses the tab uri', () => {
-    const p = createOpenEditorsProvider(() => [
-      { label: 'OrderedCollection', uri: 'gemstone://1/Globals/OrderedCollection/definition' },
-      { label: 'add:', uri: 'gemstone://1/Globals/OrderedCollection/instance/adding/add:' },
-    ]);
-    expect(p.prime).toBeUndefined();
-    const results = p.search('add', cfg(), NEVER_CANCELLED) as { label: string; action: unknown }[];
-    expect(results[0].label).toBe('add:');
-    expect(results[0].action).toEqual({
-      kind: 'focusEditor',
-      uri: 'gemstone://1/Globals/OrderedCollection/instance/adding/add:',
-    });
-  });
-});
-
 describe('methodsProvider', () => {
   const rows: SelectorSearchResult[] = [
     {
@@ -129,7 +112,7 @@ describe('methodsProvider', () => {
       true,
     );
     const add = results.find((r) => r.label === 'OrderedCollection>>add:');
-    expect(add).toBeTruthy();
+    expect(add).toBeDefined();
     expect(add?.description).toBe('Globals · adding');
     expect(add?.action).toMatchObject({ kind: 'openMethod', selector: 'add:', isMeta: false });
   });

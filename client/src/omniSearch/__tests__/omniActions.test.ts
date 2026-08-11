@@ -9,7 +9,6 @@ function handlers(): OmniActionHandlers & { calls: Record<string, unknown[]> } {
     openClass: vi.fn((a) => void (calls.openClass = [a])),
     openMethod: vi.fn((a) => void (calls.openMethod = [a])),
     revealDictionary: vi.fn((a) => void (calls.revealDictionary = [a])),
-    focusEditor: vi.fn((a) => void (calls.focusEditor = [a])),
   };
 }
 
@@ -29,7 +28,6 @@ describe('runOmniAction', () => {
         dictIndex: 0,
       },
       { kind: 'revealDictionary', sessionId: 1, dictName: 'Published' },
-      { kind: 'focusEditor', uri: 'gemstone://1/Globals/Array/definition' },
     ];
     for (const action of cases) {
       const h = handlers();

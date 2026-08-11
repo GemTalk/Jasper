@@ -8,7 +8,7 @@
  */
 import * as vscode from 'vscode';
 import { SessionManager, ActiveSession } from '../sessionManager';
-import { defaultQueryExecutorUsing } from '../browserQueries';
+import { defaultQueryExecutorUsing, sendersOf, referencesToObject } from '../browserQueries';
 import { getAllClassNames } from '../queries/getAllClassNames';
 import { getDictionaryNames } from '../queries/getDictionaryNames';
 import { searchSelectors } from '../queries/searchSelectors';
@@ -20,24 +20,25 @@ import { runOmniAction, OmniActionHandlers } from './omniActions';
 import { createClassesProvider } from './providers/classesProvider';
 import { createDictionariesProvider } from './providers/dictionariesProvider';
 import { createMethodsProvider } from './providers/methodsProvider';
-import { createOpenEditorsProvider, OpenTab } from './providers/openEditorsProvider';
-import { createOmniController, OmniQuickItem } from './omniSearchController';
+import {
+  createOmniController,
+  OmniController,
+  OmniQuickItem,
+  ReferenceView,
+} from './omniSearchController';
+import { referenceRequestFor, methodRowsToResults } from './references';
 
-const EXPLORER_DICTS_VIEW = 'gemstoneExplorerDicts';
+/** Context key that's true only while the Omni Search picker is open, so the Alt+Enter keybinding
+ *  for references fires there and nowhere else. */
+const OMNI_ACTIVE_CONTEXT = 'gemstone.omniSearchActive';
 
-/** Currently open `gemstone:` editor tabs, as provider input. */
-export function listGemstoneTabs(): OpenTab[] {
-  const tabs: OpenTab[] = [];
-  for (const group of vscode.window.tabGroups.all) {
-    for (const tab of group.tabs) {
-      const input = tab.input;
-      if (input instanceof vscode.TabInputText && input.uri.scheme === 'gemstone') {
-        tabs.push({ label: tab.label, uri: input.uri.toString() });
-      }
-    }
-  }
-  return tabs;
-}
+/** Context key that's true only while the reference view is showing, so the Left-arrow "back"
+ *  keybinding fires only in the pivot (elsewhere Left is normal cursor movement). */
+const OMNI_IN_PIVOT_CONTEXT = 'gemstone.omniSearchInPivot';
+
+/** The controller for the currently-open picker, so the (global) references command can act on its
+ *  highlighted row. Cleared when the picker hides. */
+let activeController: OmniController | undefined;
 
 /** The vscode/SystemBrowser side of activating a result. */
 export function buildOmniHandlers(): OmniActionHandlers {
@@ -69,14 +70,27 @@ export function buildOmniHandlers(): OmniActionHandlers {
       });
       void vscode.commands.executeCommand('gemstone.openDocument', uri);
     },
-    revealDictionary() {
-      // No `gemstone:` document exists for a dictionary; focus the Explorer's Dictionaries pane so
-      // the user lands on the list. A precise reveal-and-select is a follow-up.
-      void vscode.commands.executeCommand(`${EXPLORER_DICTS_VIEW}.focus`);
+    revealDictionary(a) {
+      // Cascade the Explorer to the named dictionary and select its row (the command resolves the
+      // symbol-list index and reveals it — a bare pane `.focus` would not select the dictionary).
+      void vscode.commands.executeCommand('gemstone.explorer.revealDictionary', a.dictName);
     },
-    focusEditor(a) {
-      void vscode.window.showTextDocument(vscode.Uri.parse(a.uri), { preview: false });
-    },
+  };
+}
+
+/** Load the references/senders of a result: senders of a method's selector, or references to a
+ *  class. Returns null for a non-referenceable result (e.g. a dictionary). */
+export function resolveReferencesUsing(
+  session: ActiveSession,
+): (result: OmniResult) => ReferenceView | null {
+  return (result) => {
+    const req = referenceRequestFor(result);
+    if (!req) return null;
+    const rows =
+      req.kind === 'senders'
+        ? sendersOf(session, req.selector, req.environmentId)
+        : referencesToObject(session, req.className, req.environmentId);
+    return { title: req.title, results: methodRowsToResults(rows, session.id) };
   };
 }
 
@@ -89,7 +103,6 @@ export function buildProviders(session: ActiveSession, enabled: readonly string[
       searchSelectors(exec, term, { limit, ignoreCase }),
     ),
     createDictionariesProvider(session.id, () => getDictionaryNames(exec)),
-    createOpenEditorsProvider(listGemstoneTabs),
   ];
   return all.filter((p) => enabled.includes(p.category.id));
 }
@@ -102,7 +115,6 @@ export async function runOmniSearch(sessionManager: SessionManager): Promise<voi
   const providers = buildProviders(session, config.enabledCategories);
 
   const qp = vscode.window.createQuickPick<OmniQuickItem>();
-  qp.title = 'Omni Search';
   qp.ignoreFocusOut = false;
 
   const handlers = buildOmniHandlers();
@@ -113,13 +125,34 @@ export async function runOmniSearch(sessionManager: SessionManager): Promise<voi
     providers,
     config,
     activate,
+    resolveReferences: resolveReferencesUsing(session),
+    onPivotChange: (inPivot) =>
+      void vscode.commands.executeCommand('setContext', OMNI_IN_PIVOT_CONTEXT, inPivot),
     onError: (message) => vscode.window.showErrorMessage(`Omni Search: ${message}`),
   });
+
+  // Make Alt+Enter (references of the highlighted row) reachable only while this picker is open.
+  activeController = controller;
+  void vscode.commands.executeCommand('setContext', OMNI_ACTIVE_CONTEXT, true);
+  qp.onDidHide(() => {
+    void vscode.commands.executeCommand('setContext', OMNI_ACTIVE_CONTEXT, false);
+    void vscode.commands.executeCommand('setContext', OMNI_IN_PIVOT_CONTEXT, false);
+    if (activeController === controller) activeController = undefined;
+  });
+
   await controller.start();
 }
 
 export function registerOmniSearch(sessionManager: SessionManager): vscode.Disposable {
-  return vscode.commands.registerCommand('gemstone.omniSearch', () =>
-    runOmniSearch(sessionManager),
+  return vscode.Disposable.from(
+    vscode.commands.registerCommand('gemstone.omniSearch', () => runOmniSearch(sessionManager)),
+    // Alt+Enter inside the picker: pivot to references/senders of the highlighted row.
+    vscode.commands.registerCommand('gemstone.omniSearch.references', () =>
+      activeController?.pivotActiveItem(),
+    ),
+    // Left arrow while in the reference view: go back to the search results (the ← button's key).
+    vscode.commands.registerCommand('gemstone.omniSearch.back', () =>
+      activeController?.exitPivot(),
+    ),
   );
 }

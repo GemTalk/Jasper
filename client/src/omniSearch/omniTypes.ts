@@ -9,24 +9,21 @@
 
 import { MatchMode } from './omniMatch';
 
-export type OmniCategoryId = 'classes' | 'methods' | 'dictionaries' | 'openEditors';
+export type OmniCategoryId = 'classes' | 'methods' | 'dictionaries';
 
 export interface OmniCategory {
   id: OmniCategoryId;
   /** Human label shown as the group separator, e.g. "Classes". */
   label: string;
-  /** VS Code codicon id (no `$(...)`), e.g. "symbol-class". */
+  /** VS Code codicon id (no `$(...)`), e.g. "symbol-class". Also the scope button's icon. */
   icon: string;
-  /** Single-char prefix sigil that scopes the field to this category, e.g. "c". */
-  sigil: string;
 }
 
 /** Categories in display order. The order also drives the grouped result layout. */
 export const OMNI_CATEGORIES: readonly OmniCategory[] = [
-  { id: 'classes', label: 'Classes', icon: 'symbol-class', sigil: 'c' },
-  { id: 'methods', label: 'Methods', icon: 'symbol-method', sigil: 'm' },
-  { id: 'dictionaries', label: 'Dictionaries', icon: 'symbol-namespace', sigil: 'd' },
-  { id: 'openEditors', label: 'Open Editors', icon: 'go-to-file', sigil: 'e' },
+  { id: 'classes', label: 'Classes', icon: 'symbol-class' },
+  { id: 'methods', label: 'Methods', icon: 'symbol-method' },
+  { id: 'dictionaries', label: 'Dictionaries', icon: 'symbol-namespace' },
 ];
 
 /** Category lookup by id (all ids are known at compile time, so this is total). */
@@ -49,8 +46,7 @@ export type OmniAction =
       environmentId: number;
       dictIndex: number;
     }
-  | { kind: 'revealDictionary'; sessionId: number; dictName: string }
-  | { kind: 'focusEditor'; uri: string };
+  | { kind: 'revealDictionary'; sessionId: number; dictName: string };
 
 export interface OmniResult {
   categoryId: OmniCategoryId;
@@ -88,6 +84,6 @@ export interface OmniProvider {
   category: OmniCategory;
   /** Optional one-time load when the picker opens (load-once providers cache their corpus here). */
   prime?(token: OmniCancel): Promise<void> | void;
-  /** Ranked, already-limited results for `query` (the sigil prefix, if any, is already stripped). */
+  /** Ranked, already-limited results for `query` (the raw, trimmed search term). */
   search(query: string, cfg: OmniConfig, token: OmniCancel): Promise<OmniResult[]> | OmniResult[];
 }

@@ -11,7 +11,6 @@ export interface OmniActionHandlers {
   openClass(action: ByKind<'openClass'>): void | Promise<void>;
   openMethod(action: ByKind<'openMethod'>): void | Promise<void>;
   revealDictionary(action: ByKind<'revealDictionary'>): void | Promise<void>;
-  focusEditor(action: ByKind<'focusEditor'>): void | Promise<void>;
 }
 
 function assertNever(x: never): never {
@@ -31,9 +30,6 @@ export async function runOmniAction(
       return;
     case 'revealDictionary':
       await handlers.revealDictionary(action);
-      return;
-    case 'focusEditor':
-      await handlers.focusEditor(action);
       return;
     default:
       assertNever(action);

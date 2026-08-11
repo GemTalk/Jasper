@@ -3,12 +3,15 @@ vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 
 import * as vscode from 'vscode';
 import {
-  parseScope,
+  buildScopeButtons,
+  titleForScope,
   providersInScope,
   gatherResults,
   buildItems,
   createOmniController,
+  OmniControllerDeps,
   OmniQuickItem,
+  ReferenceView,
 } from '../omniSearchController';
 import { OMNI_DEFAULTS } from '../omniConfig';
 import {
@@ -22,7 +25,13 @@ import {
 const cfg = (over: Partial<OmniConfig> = {}): OmniConfig => ({ ...OMNI_DEFAULTS, ...over });
 
 function result(categoryId: OmniResult['categoryId'], label: string, score = 1): OmniResult {
-  return { categoryId, label, score, ranges: [], action: { kind: 'focusEditor', uri: label } };
+  return {
+    categoryId,
+    label,
+    score,
+    ranges: [],
+    action: { kind: 'revealDictionary', sessionId: 1, dictName: label },
+  };
 }
 
 /** A fake provider for a category returning a fixed list, recording prime()/search() calls. */
@@ -46,29 +55,40 @@ function fakeProvider(
 
 /** The subset of QuickPick the controller touches, as the mock exposes it. */
 interface MockQP {
+  title: string;
   placeholder: string;
+  value: string;
   busy: boolean;
+  buttons: readonly unknown[];
   matchOnDescription: boolean;
   matchOnDetail: boolean;
   items: OmniQuickItem[];
   selectedItems: OmniQuickItem[];
+  activeItems: OmniQuickItem[];
   show: ReturnType<typeof vi.fn>;
   hide: ReturnType<typeof vi.fn>;
   __accept: () => Promise<void>;
 }
 
-describe('parseScope', () => {
-  const enabled = OMNI_DEFAULTS.enabledCategories;
-  it('strips a valid, enabled sigil into a scope + term', () => {
-    expect(parseScope('c Order', enabled)).toEqual({ scopeId: 'classes', term: 'Order' });
-    expect(parseScope('M at:', enabled)).toEqual({ scopeId: 'methods', term: 'at:' });
+describe('buildScopeButtons', () => {
+  it('shows one button per enabled category and no clear button when nothing is filtered', () => {
+    const buttons = buildScopeButtons(OMNI_DEFAULTS.enabledCategories, null);
+
+    expect(buttons.map((b) => b.scopeId)).toEqual(['classes', 'methods', 'dictionaries']);
+    expect(buttons.every((b) => typeof b.tooltip === 'string' && b.tooltip.length > 0)).toBe(true);
   });
-  it('treats an unknown or disabled sigil as part of the term', () => {
-    expect(parseScope('x foo', enabled)).toEqual({ scopeId: null, term: 'x foo' });
-    expect(parseScope('c foo', ['methods'])).toEqual({ scopeId: null, term: 'c foo' });
+
+  it('prepends a clear-filter button while a scope is active', () => {
+    const buttons = buildScopeButtons(OMNI_DEFAULTS.enabledCategories, 'methods');
+
+    expect(buttons.map((b) => b.scopeId)).toEqual([null, 'classes', 'methods', 'dictionaries']);
   });
-  it('returns the trimmed term with no scope for a plain query', () => {
-    expect(parseScope('  Order  ', enabled)).toEqual({ scopeId: null, term: 'Order' });
+});
+
+describe('titleForScope', () => {
+  it('names the active category, or plain "Omni Search" for all', () => {
+    expect(titleForScope(null)).toBe('Omni Search');
+    expect(titleForScope('methods')).toBe('Omni Search — Methods');
   });
 });
 
@@ -111,9 +131,31 @@ describe('buildItems', () => {
   it('omits a separator for a category with no results', () => {
     expect(buildItems([result('classes', 'A')]).map((i) => i.label)).toEqual(['Classes', 'A']);
   });
+
+  it('puts a reference button on a method row but not on a dictionary row', () => {
+    const items = buildItems([
+      methodResult('Object>>printString'),
+      {
+        categoryId: 'dictionaries',
+        label: 'UserGlobals',
+        score: 1,
+        ranges: [],
+        action: { kind: 'revealDictionary', sessionId: 1, dictName: 'UserGlobals' },
+      },
+    ]);
+
+    const method = items.find((i) => i.result?.label === 'Object>>printString');
+    const dict = items.find((i) => i.result?.label === 'UserGlobals');
+    expect(method?.buttons?.length).toBe(1);
+    expect(dict?.buttons).toBeUndefined();
+  });
 });
 
-function makeController(providers: OmniProvider[], over: Partial<OmniConfig> = {}) {
+function makeController(
+  providers: OmniProvider[],
+  over: Partial<OmniConfig> = {},
+  resolveReferences?: OmniControllerDeps['resolveReferences'],
+) {
   const qp = vscode.window.createQuickPick() as unknown as MockQP;
   const activate = vi.fn();
   const ctl = createOmniController({
@@ -121,8 +163,31 @@ function makeController(providers: OmniProvider[], over: Partial<OmniConfig> = {
     providers,
     config: cfg({ debounceMs: 0, ...over }),
     activate,
+    resolveReferences,
   });
   return { qp, activate, ctl };
+}
+
+/** A method OmniResult (opens the method) — the shape reference rows and method hits share. */
+function methodResult(label: string): OmniResult {
+  const [className, selector] = label.split('>>');
+  return {
+    categoryId: 'methods',
+    label,
+    score: 0,
+    ranges: [],
+    action: {
+      kind: 'openMethod',
+      sessionId: 1,
+      dictName: 'Globals',
+      className,
+      isMeta: false,
+      category: '',
+      selector,
+      environmentId: 0,
+      dictIndex: 0,
+    },
+  };
 }
 
 describe('createOmniController', () => {
@@ -132,6 +197,139 @@ describe('createOmniController', () => {
     await ctl.start();
     expect(cls.primedCount()).toBe(1);
     expect(qp.show).toHaveBeenCalled();
+  });
+
+  it('publishes a category button each and the unfiltered title on start', async () => {
+    const { qp, ctl } = makeController([fakeProvider('classes', []), fakeProvider('methods', [])], {
+      enabledCategories: ['classes', 'methods'],
+    });
+    await ctl.start();
+    expect(qp.title).toBe('Omni Search');
+    expect(qp.buttons.length).toBe(2); // Classes + Methods, no clear button yet
+  });
+
+  it('shows a clear-filter button while scoped and removes it when the filter is cleared', async () => {
+    const { qp, ctl } = makeController([fakeProvider('classes', []), fakeProvider('methods', [])], {
+      enabledCategories: ['classes', 'methods'],
+    });
+    await ctl.start();
+    expect(qp.buttons.length).toBe(2);
+
+    await ctl.setScope('methods');
+    expect(qp.buttons.length).toBe(3); // clear + Classes + Methods
+    expect((qp.buttons as ReadonlyArray<{ scopeId: unknown }>)[0].scopeId).toBeNull();
+
+    await ctl.setScope(null);
+    expect(qp.buttons.length).toBe(2); // clear button gone
+  });
+
+  it('narrows the search to the scoped category and re-runs the current term', async () => {
+    const cls = fakeProvider('classes', [result('classes', 'OrderedCollection')]);
+    const methods = fakeProvider('methods', [result('methods', 'Object>>printString')]);
+    const { qp, ctl } = makeController([cls, methods]);
+    await ctl.start();
+    await ctl.refresh('pr');
+
+    await ctl.setScope('methods');
+
+    expect(cls.searched).toEqual(['pr']); // not searched again once scoped out
+    expect(methods.searched).toEqual(['pr', 'pr']); // searched on refresh, then on the re-run
+    expect(qp.title).toBe('Omni Search — Methods');
+    expect(qp.items.some((i) => i.result?.categoryId === 'classes')).toBe(false);
+  });
+
+  it('widens back to all categories when scope is set to null', async () => {
+    const cls = fakeProvider('classes', [result('classes', 'OrderedCollection')]);
+    const methods = fakeProvider('methods', [result('methods', 'Object>>printString')]);
+    const { qp, ctl } = makeController([cls, methods]);
+    await ctl.start();
+    await ctl.refresh('pr');
+    await ctl.setScope('methods');
+
+    await ctl.setScope(null);
+
+    expect(qp.title).toBe('Omni Search');
+    expect(qp.items.some((i) => i.result?.categoryId === 'classes')).toBe(true);
+  });
+
+  it('pivots to references: breadcrumb title, a Back button, and the reference rows', async () => {
+    const view: ReferenceView = {
+      title: 'References to OrderedCollection',
+      results: [methodResult('Foo>>usesOc')],
+    };
+    const resolve = vi.fn(() => view);
+    const { qp, ctl } = makeController([fakeProvider('classes', [])], {}, resolve);
+    await ctl.start();
+
+    await ctl.pivotToReferences(result('classes', 'OrderedCollection'));
+
+    expect(resolve).toHaveBeenCalled();
+    expect(qp.title).toBe('References to OrderedCollection');
+    expect((qp.buttons as ReadonlyArray<{ back?: boolean }>)[0].back).toBe(true);
+    expect(qp.items.some((i) => i.result?.label === 'Foo>>usesOc')).toBe(true);
+  });
+
+  it('filters the reference rows as you type, and Back restores the prior search', async () => {
+    const cls = fakeProvider('classes', [result('classes', 'OrderedCollection')]);
+    const view: ReferenceView = {
+      title: 'Senders of bar',
+      results: [methodResult('Foo>>bar'), methodResult('Zed>>bar')],
+    };
+    const { qp, ctl } = makeController([cls], {}, () => view);
+    await ctl.start();
+    await ctl.refresh('Order');
+
+    await ctl.pivotToReferences(result('classes', 'OrderedCollection'));
+    await ctl.refresh('Foo');
+    expect(qp.items.filter((i) => i.result).map((i) => i.result!.label)).toEqual(['Foo>>bar']);
+
+    await ctl.exitPivot();
+    expect(qp.title).toBe('Omni Search');
+    expect(qp.items.some((i) => i.result?.label === 'OrderedCollection')).toBe(true);
+  });
+
+  it('pivots on the highlighted row for the Alt+Enter path', async () => {
+    const view: ReferenceView = { title: 'Senders of foo', results: [methodResult('X>>y')] };
+    const { qp, ctl } = makeController([fakeProvider('methods', [])], {}, () => view);
+    await ctl.start();
+    qp.activeItems = [{ label: 'A>>foo', result: methodResult('A>>foo') }];
+
+    await ctl.pivotActiveItem();
+
+    expect(qp.title).toBe('Senders of foo');
+    expect(qp.items.some((i) => i.result?.label === 'X>>y')).toBe(true);
+  });
+
+  it('signals pivot enter/exit so the Left-arrow back binding can scope itself', async () => {
+    const onPivotChange = vi.fn();
+    const view: ReferenceView = { title: 'Senders of x', results: [methodResult('A>>x')] };
+    const qp = vscode.window.createQuickPick() as unknown as MockQP;
+    const ctl = createOmniController({
+      quickPick: qp as unknown as vscode.QuickPick<OmniQuickItem>,
+      providers: [fakeProvider('methods', [])],
+      config: cfg({ debounceMs: 0 }),
+      activate: vi.fn(),
+      resolveReferences: () => view,
+      onPivotChange,
+    });
+    await ctl.start();
+
+    await ctl.pivotToReferences(methodResult('A>>x'));
+    expect(onPivotChange).toHaveBeenLastCalledWith(true);
+
+    await ctl.exitPivot();
+    expect(onPivotChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it('does nothing on Alt+Enter when no row is highlighted', async () => {
+    const resolve = vi.fn();
+    const { qp, ctl } = makeController([fakeProvider('methods', [])], {}, resolve);
+    await ctl.start();
+    qp.activeItems = [];
+
+    await ctl.pivotActiveItem();
+
+    expect(resolve).not.toHaveBeenCalled();
   });
 
   it('refresh() populates grouped items for a term and clears them for an empty term', async () => {

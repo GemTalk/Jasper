@@ -29,15 +29,16 @@ Global "search anything browsable" for the GemStone IDE — the Jasper answer to
    VS Code user to "feel at home" — QuickPick is that.
 
 2. **Provider-per-category model** (mirrors Spotter processors). `OmniProvider` = `{ id, label,
-icon, isEnabled, search(query, token) }`. Basic providers: **Classes, Methods, Dictionaries,
-   Open Editors**. Adding a category later (senders/implementors, commands, settings, globals) is a
-   new provider — no controller change.
+icon, isEnabled, search(query, token) }`. Basic providers: **Classes, Methods, Dictionaries**.
+   Adding a category later (senders/implementors, commands, settings, globals) is a new provider —
+   no controller change. (An Open Editors provider shipped initially but was **dropped** — the open-tab
+   list is tiny, and VS Code's own Open Editors view already covers it, so filtering/searching it here
+   was noise.)
 
 3. **Load-once vs per-query providers** (performance — omni runs on every keystroke):
    - _Classes_, _Dictionaries_: enumerate the stone **once** when the picker opens, then match
      **client-side** on each keystroke (reuses the existing `getAllClassNames` / `getDictionaryNames`
      approach that `Find Class` already uses — a proven, fast pattern).
-   - _Open Editors_: purely local (`vscode.window.tabGroups`), instant, no stone.
    - _Methods_: the selector space is too large to preload, so this provider queries the stone
      **per search term** (debounced, min query length), reusing the `methodSearch` machinery.
 
@@ -47,16 +48,30 @@ icon, isEnabled, search(query, token) }`. Basic providers: **Classes, Methods, D
    `…caseSensitive`). Ranges are returned for future highlighting.
 
 5. **Trigger.** VS Code cannot bind _double-tap-Shift_ (keybindings are chords, not
-   double-taps), so we ship a command `gemstone.omniSearch` + a default keybinding
-   (`ctrl+alt+o` / `cmd+alt+o`, configurable) + a palette entry, and a title button on the Explorer.
-   The double-Shift aspiration is noted as a follow-up (would need a fragile keystroke hack).
+   double-taps), so we ship a command `gemstone.omniSearch` + a default keybinding **`shift+enter`**
+   (`when: gemstone.hasActiveSession && !terminalFocus` — a Jasper window, not the terminal),
+   configurable, plus a palette entry. Trade-off: Shift+Enter is shadowed inside other text-input
+   boxes (e.g. the SCM commit field); the conflict-free fallback is a `ctrl+k` chord. The double-Shift
+   aspiration is noted as a follow-up (would need a fragile keystroke hack). The primary-gesture hints
+   ("Enter to open · Alt+Enter for references") ride in the **placeholder**, not the title — greyed and
+   gone as soon as you type, keeping the title focused on the filter.
+
+5b. **Reference Search (Wishlist Task 1).** A result you find can pivot to "who references it": a
+   **method** row → **senders** of its selector, a **class** row → **references to** it (via the shared
+   `sendersOf`/`referencesToObject` queries). Two entry points, both minimal-friction: the per-row **↗
+   button** (`onDidTriggerItemButton`), and **`alt+enter`** on the highlighted row — a keybinding gated
+   on a `gemstone.omniSearchActive` context key set only while the picker is open, dispatched to the
+   open controller's `pivotActiveItem`. The pivot swaps the title to a breadcrumb + a Back button;
+   typing filters the reference rows client-side; Back restores the prior search. (`references.ts` is
+   the pure glue; the controller owns the pivot state.)
 
 6. **Scope filtering** ("filter buttons on top", per the issue). Native QuickPick can't render a row
-   of labeled toggle buttons, so scope is expressed two VS-Code-native ways:
-   - **Title buttons** (one per category + "All"), which set the active scope and update the title.
-   - **Prefix sigils** typed into the field: `c ` classes · `m ` methods · `d ` dictionaries ·
-     `e ` open editors (shown in the placeholder). Empty prefix = all enabled categories.
-     The labeled-button-row look is part of the Phase-2 webview.
+   of labeled toggle buttons or a pressed state, so scope is expressed with **title buttons**: one
+   icon button per enabled category plus an "All" button (`buildScopeButtons`). Clicking one narrows
+   the search to that category and re-runs the current term; the active scope is reflected in the
+   picker **title** (`Omni Search — Methods`), since the buttons themselves can't show which is
+   selected. The labeled filter-button row (and any typed-prefix scoping) is part of the Phase-2
+   webview.
 
 ## Module map (`client/src/omniSearch/`)
 
@@ -67,7 +82,6 @@ icon, isEnabled, search(query, token) }`. Basic providers: **Classes, Methods, D
 | `omniConfig.ts`                     | read `gemstone.omniSearch.*` → typed `OmniConfig`          | no        | ✅                       |
 | `providers/classesProvider.ts`      | classes (load-once + match)                                | preload   | ✅ (match/parse)         |
 | `providers/dictionariesProvider.ts` | dictionaries (load-once + match)                           | preload   | ✅                       |
-| `providers/openEditorsProvider.ts`  | open `gemstone:` tabs (local)                              | no        | ✅                       |
 | `providers/methodsProvider.ts`      | selector search (per-query)                                | per-query | ✅ (builder/parse)       |
 | `omniSearchController.ts`           | QuickPick orchestration: debounce, scope, group, activate  | no        | ✅ (mocked QP+providers) |
 | `omniSearchCommand.ts`              | entry: resolve session, wire providers, show               | no        | thin                     |
