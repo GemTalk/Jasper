@@ -178,6 +178,12 @@ describe('updateGitRepo', () => {
     g(['init', '-q', '-b', 'main'], seed);
     g(['config', 'user.email', 't@t'], seed);
     g(['config', 'user.name', 'T'], seed);
+    // Force LF checkouts regardless of the host's core.autocrlf: this file is
+    // tracked, so it travels with every clone (remote, clone, each pusher)
+    // and applies no matter which process performs the checkout, unlike a
+    // core.autocrlf override on the git commands here, which wouldn't reach
+    // updateGitRepo's own checkout.
+    fs.writeFileSync(path.join(seed, '.gitattributes'), '* text=auto eol=lf\n');
     fs.writeFileSync(path.join(seed, 'a.txt'), 'one\n');
     g(['add', '-A'], seed);
     g(['commit', '-qm', 'one'], seed);
