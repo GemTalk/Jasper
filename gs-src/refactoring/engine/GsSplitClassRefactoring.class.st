@@ -110,16 +110,6 @@ GsSplitClassRefactoring >> movableSelectors [
 ]
 
 { #category : 'private' }
-GsSplitClassRefactoring >> ownInstVarsOf: aClass [
-	^aClass instVarNames collect: [:e | e asString]
-]
-
-{ #category : 'private' }
-GsSplitClassRefactoring >> allInstVarsOf: aClass [
-	^aClass allInstVarNames collect: [:e | e asString]
-]
-
-{ #category : 'private' }
 GsSplitClassRefactoring >> sourceOf: aSelector in: aClass [
 	| m |
 	m := aClass compiledMethodAt: aSelector environmentId: 0 otherwise: nil.
@@ -275,12 +265,12 @@ GsSplitClassRefactoring >> computeAnalysis [
 		^decline := 'Cannot split: a class named ', newName, ' already exists.'].
 	extractIvars isEmpty ifTrue: [
 		^decline := 'Cannot split: no instance variables were chosen to extract.'].
-	own := self ownInstVarsOf: sourceClass.
+	own := environment ownInstVarNamesOf: sourceClass.
 	extractIvars do: [:v |
 		(own includes: v) ifFalse: [
 			^decline := 'Cannot split: ', v, ' is not an instance variable of ', sourceClass name asString, '.']].
 	componentIvarName := self decapitalize: newName.
-	((self allInstVarsOf: sourceClass) includes: componentIvarName) ifTrue: [
+	((environment allInstVarNamesOf: sourceClass) includes: componentIvarName) ifTrue: [
 		^decline := 'Cannot split: the source already has an instance variable named ', componentIvarName, '.'].
 	"The component ivar is a NEW instance variable on the source, so it faces the same two
 	 collisions V1 add declines -- a class variable it would shadow, and a subclass that already
@@ -415,7 +405,7 @@ GsSplitClassRefactoring >> buildChangeSet [
 
 { #category : 'building' }
 GsSplitClassRefactoring >> retainedOwnIvars [
-	^(self ownInstVarsOf: sourceClass) reject: [:n | extractIvars includes: n]
+	^(environment ownInstVarNamesOf: sourceClass) reject: [:n | extractIvars includes: n]
 ]
 
 { #category : 'building' }
@@ -554,7 +544,7 @@ GsSplitClassRefactoring >> candidatesJsonString [
 	ws nextPutAll: '{"sourceClass":'; nextPutAll: (self jsonQuote: sourceClass name asString).
 	ws nextPutAll: ',"instVars":['.
 	first := true.
-	(self ownInstVarsOf: sourceClass) do: [:v |
+	(environment ownInstVarNamesOf: sourceClass) do: [:v |
 		first ifFalse: [ws nextPut: $,]. first := false.
 		ws nextPutAll: '{"name":'; nextPutAll: (self jsonQuote: v); nextPut: $}].
 	ws nextPutAll: ']}'.
@@ -667,7 +657,7 @@ GsSplitClassRefactoring >> applyClassChange: aChange [
 		ifFalse: [oldToNew at: old superclass ifAbsent: [old superclass]].
 	list := isSource
 		ifTrue: [self sourceIvarsAfterSplit]
-		ifFalse: [self ownInstVarsOf: old].
+		ifFalse: [environment ownInstVarNamesOf: old].
 	skip := isSource ifTrue: [movableSelectors] ifFalse: [#()].
 	new := self makeNewVersionOf: old superclass: parentNew instVarNames: list.
 	self copyMethodsFrom: old to: new skipping: skip.

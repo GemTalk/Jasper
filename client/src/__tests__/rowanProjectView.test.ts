@@ -13,6 +13,7 @@ import {
   RowanDependencyGroupItem,
 } from '../rowanProjectView';
 import { addProjectDependency } from '../rowanDependency';
+import { uriFsPath } from './support/uri';
 
 const dirs: string[] = [];
 
@@ -137,7 +138,9 @@ describe('RowanProjectTreeProvider', () => {
 
     const [row] = provider.getChildren(dependencyGroup(provider));
 
-    expect(row.resourceUri?.fsPath).toBe(path.join(dir, 'rowan', 'projects', 'SharedKit.ston'));
+    expect(row.resourceUri?.fsPath).toBe(
+      uriFsPath(path.join(dir, 'rowan', 'projects', 'SharedKit.ston')),
+    );
   });
 
   it('shows the revision a git dependency is pinned to', () => {
