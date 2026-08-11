@@ -36,7 +36,7 @@ describe('findRowanLoadSpecs', () => {
 
     expect(specs).toHaveLength(1);
     expect(specs[0].name).toBe('LoadMe');
-    expect(specs[0].path.endsWith('rowan/specs/LoadMe.ston')).toBe(true);
+    expect(specs[0].path.endsWith(path.join('rowan', 'specs', 'LoadMe.ston'))).toBe(true);
   });
 
   it('ignores .ston files that are not load specs', () => {
