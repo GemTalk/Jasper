@@ -77,5 +77,26 @@ describe('full logical backup queries', () => {
       expect(code).toContain('mode := System transactionMode');
       expect(code).toContain('ensure: [System transactionMode: mode]');
     });
+
+    // createServerDirectory: is a plain single-level mkdir. Targeting the full
+    // file path instead of its directory doesn't merely fail to help — when the
+    // directory already exists, it succeeds at creating a directory named after
+    // the .dbf file itself, exactly where fullBackupTo: then needs to open a
+    // file, so the backup fails every time the folder already exists (the
+    // common case, on every backup after the first).
+    it('creates the destination’s directory, not the destination file itself', () => {
+      const code = fullBackupCode('/root/db-1/backups/gs64stone.dbf');
+
+      expect(code).toContain("GsFile createServerDirectory: '/root/db-1/backups'");
+      expect(code).not.toContain(
+        "GsFile createServerDirectory: '/root/db-1/backups/gs64stone.dbf'",
+      );
+    });
+
+    it('escapes single quotes in the directory it creates', () => {
+      const code = fullBackupCode("/data/o'brien/gs.dbf");
+
+      expect(code).toContain("GsFile createServerDirectory: '/data/o''brien'");
+    });
   });
 });

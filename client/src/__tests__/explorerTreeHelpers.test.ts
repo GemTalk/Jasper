@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { variableSides, defaultDictionaryIndex } from '../explorerTreeHelpers';
+import { variableSides, defaultDictionaryIndex, categoryContains } from '../explorerTreeHelpers';
 
 describe('variable-side grouping under a class', () => {
   it('shows an instance side then a class side when both kinds exist', () => {
@@ -42,5 +42,24 @@ describe('default dictionary selection on connect', () => {
 
   it('selects nothing when there are no dictionaries', () => {
     expect(defaultDictionaryIndex([])).toBe(-1);
+  });
+});
+
+describe('categoryContains (keep a class selected when its category node is clicked)', () => {
+  it('matches the exact category', () => {
+    expect(categoryContains('User Classes', 'User Classes')).toBe(true);
+  });
+
+  it('matches a class in the dash-segmented subtree', () => {
+    expect(categoryContains('Collections', 'Collections-Dictionaries')).toBe(true);
+  });
+
+  it('does not match a different category or a mere prefix without the dash', () => {
+    expect(categoryContains('User Classes', 'Kernel-Objects')).toBe(false);
+    expect(categoryContains('Coll', 'Collections')).toBe(false);
+  });
+
+  it('does not match when the class has no category', () => {
+    expect(categoryContains('User Classes', undefined)).toBe(false);
   });
 });

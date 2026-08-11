@@ -402,7 +402,7 @@ describe('OsConfigTreeProvider', () => {
         expect(item.label).toContain('not configured');
         expect(item.collapsibleState).toBe(vscode.TreeItemCollapsibleState.Expanded);
         expect(themeIconId(item)).toBe('warning');
-        expect(item.tooltip).toBeTruthy();
+        expect(item.tooltip).toBeDefined();
       });
 
       it('uses "≥ 1" gbLabel in label', () => {

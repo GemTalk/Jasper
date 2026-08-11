@@ -5,8 +5,14 @@
 // backup itself is long-running, so the caller runs `fullBackupCode` through a
 // non-blocking executor. All emitted Smalltalk is ASCII-only so it compiles on
 // the 3.6.x stones too (a non-ASCII byte trips the ComStrmSetCursor bug there).
+import * as path from 'path';
 import { QueryExecutor } from './types';
-import { escapeString } from './util';
+import { escapeString, splitLines } from './util';
+
+// Shared with backupManager (suggested/validated filenames) and restoreManager
+// (filtering the backups directory listing), so it lives here rather than in
+// either caller.
+export const GEMSTONE_BACKUP_EXTENSION = '.dbf';
 
 // `fullBackupTo:` requires the FileControl privilege; without it the stone
 // raises a raw GCI error. Pre-flighting lets us stop with a clear message.
@@ -30,18 +36,93 @@ export function abortTransaction(execute: QueryExecutor): void {
   execute("System abortTransaction. 'aborted'");
 }
 
-// Smalltalk for a full backup to a server-side path. Returned verbatim as a
-// String (not a printString) so it can be run through the non-blocking executor,
-// which fetches chars directly. Evaluates to 'OK' on success.
-//
-// fullBackupTo: leaves the session in manualBegin mode on completion; we capture
-// the session's transaction mode up front and restore it afterward (via ensure:,
-// so it is restored even if the backup raises) so the user's session is left the
-// way they had it.
-export function fullBackupCode(serverPath: string): string {
+/**
+ * `fullBackupTo:` overwrites an existing file at `filePath` with no warning
+ * of its own, so the caller can check first and confirm before triggering a
+ * backup that would silently clobber one. `existsOnServer:` answers true or
+ * false normally; a raised error (e.g. a permission issue on the containing
+ * directory) is left to propagate as-is, since the caller is already set up
+ * to report a failed pre-flight check.
+ *
+ * @param execute - runs the pre-flight check synchronously against the session.
+ * @param filePath - the destination path to check for, as the stone would see it.
+ * @throws if `existsOnServer:` answers nil. That isn't a case it's documented
+ *   to produce, so rather than let it read as falsy (false), it's turned into
+ *   an explicit error: there's nothing this function can do with an answer it
+ *   doesn't understand.
+ */
+export function serverFileExists(execute: QueryExecutor, filePath: string): boolean {
+  return (
+    execute(
+      `(GsFile existsOnServer: '${escapeString(filePath)}')
+       ifNil: [ self error: 'Failed to check if a file exists on the server' ]
+       ifNotNil: [ :exists | exists printString ]`,
+    ).trim() === 'true'
+  );
+}
+
+/**
+ * Smalltalk for a full backup to a server-side path. Returned verbatim as a
+ * String (not a printString) so it can be run through the non-blocking executor,
+ * which fetches chars directly. Evaluates to 'OK' on success.
+ *
+ * backups/ is not created with the database, and fullBackupTo: won't create it,
+ * so this creates the destination's parent directory up front — on the stone
+ * itself (GsFile createServerDirectory:), so it holds for a local, WSL-hosted,
+ * or remote stone alike, with no client-side path guessing. createServerDirectory:
+ * is a bare statement, deliberately unchecked: if the directory already exists it
+ * is a harmless no-op (returns nil, raises nothing), and if it still can't be
+ * created (e.g. its own parent is missing), fullBackupTo: below fails with its
+ * own clear error — no need to duplicate that as a separate return code here.
+ *
+ * fullBackupTo: leaves the session in manualBegin mode on completion; we capture
+ * the session's transaction mode up front and restore it afterward (via ensure:,
+ * so it is restored even if the backup raises) so the user's session is left the
+ * way they had it.
+ *
+ * @param backupFilePath - the server-side destination path for the backup file.
+ */
+export function fullBackupCode(backupFilePath: string): string {
+  const backupFileFolder = path.posix.dirname(backupFilePath);
   return `| mode ok |
+GsFile createServerDirectory: '${escapeString(backupFileFolder)}'.
 mode := System transactionMode.
-[ok := SystemRepository fullBackupTo: '${escapeString(serverPath)}']
+[ok := SystemRepository fullBackupTo: '${escapeString(backupFilePath)}']
   ensure: [System transactionMode: mode].
 ok ifTrue: ['OK'] ifFalse: ['fullBackupTo: returned false']`;
+}
+
+/**
+ * Existing backup files directly inside `folder`, as full server-side paths —
+ * `GsFile contentsOfDirectory:onClient:` expands each entry to an absolute
+ * path itself, so there is no client-side joining to get wrong. Used by the
+ * restore picker to list what's available without assuming the client can
+ * browse the server's filesystem (only `GsFile` can, on the server's own
+ * behalf).
+ *
+ * `contentsOfDirectory:onClient:` answers nil when the directory does not
+ * exist, which backupFolderInServer documents as a real possibility
+ * (backups/ is not created with the database). That is not distinguished
+ * from "exists but empty" — either way there is nothing to restore from — so
+ * both map to [].
+ *
+ * @param execute - runs the query synchronously against the session.
+ * @param folder - the server-side backups directory, as from backupFolderInServer.
+ */
+export function serverBackupFilePaths(execute: QueryExecutor, folder: string): string[] {
+  const code = `
+    | backupPaths backupFiles result |
+     backupPaths := (GsFile contentsOfDirectory: '${escapeString(folder)}' onClient: false)
+       ifNil: [ #() ]
+       ifNotNil: [ :paths | paths select: [ :path | path endsWith: '${GEMSTONE_BACKUP_EXTENSION}' ] ].
+     backupFiles := backupPaths collect: [ :path | GsFile openReadOnServer: path ].
+
+     result := WriteStream on: String new.
+     [ (backupFiles sortWithBlock: [ :file :anotherFile | file lastModified > anotherFile lastModified ])
+         do: [ :file | result nextPutAll: file pathName; lf ] ]
+       ensure: [ backupFiles do: [ :file | file ifNotNil: [ file close ] ] ].
+
+     result contents`;
+
+  return splitLines(execute(code));
 }

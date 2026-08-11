@@ -1593,7 +1593,7 @@ describe('DebuggerView.renderDnu (create-method-from-DNU)', () => {
     const bar = document.getElementById('dnuBar')!;
     api().renderDnu(bar, { selector: 'fourtyTwo:bar:', className: 'SmallInteger', isMeta: false });
     const btn = bar.querySelector('button.dnu-btn') as HTMLButtonElement;
-    expect(btn).toBeTruthy();
+    expect(btn).not.toBeNull();
     expect(btn.textContent).toBe('Create #fourtyTwo:bar: in SmallInteger');
   });
 
@@ -1630,7 +1630,7 @@ describe('DebuggerView.renderSubclassResp (subclassResponsibility implement acti
     const bar = document.getElementById('dnuBar')!;
     api().renderSubclassResp(bar, { selector: 'foo' });
     const btn = bar.querySelector('button.dnu-btn') as HTMLButtonElement;
-    expect(btn).toBeTruthy();
+    expect(btn).not.toBeNull();
     expect(btn.textContent).toBe('Implement #foo');
   });
 
@@ -1666,7 +1666,7 @@ describe('DebuggerView init — DNU button wiring', () => {
 
   it('a "banner" message sets the error text and clears the Create button (no re-render)', () => {
     const { refs } = setup(STACK, { selector: 'foo:', className: 'Array', isMeta: false });
-    expect(refs.dnuBar!.querySelector('button.dnu-btn')).toBeTruthy();
+    expect(refs.dnuBar!.querySelector('button.dnu-btn')).not.toBeNull();
     window.dispatchEvent(
       new MessageEvent('message', {
         data: { command: 'banner', text: 'Fill in the body, then save (Ctrl+S).' },

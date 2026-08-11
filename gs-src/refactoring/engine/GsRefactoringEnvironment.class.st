@@ -141,6 +141,68 @@ GsRefactoringEnvironment >> descendantsOf: aClass [
 	^ordered asArray
 ]
 
+{ #category : 'enumerating' }
+GsRefactoringEnvironment >> descendantsOf: aClass declaringInstVar: aName [
+	"Every descendant of aClass that declares aName as its OWN instance variable. Once aName is
+	 added to aClass each of those descendants would carry two of that name, which the
+	 class-creation primitive rejects (error 2271) -- and it rejects it MID-apply, after earlier
+	 classes have already been versioned. Callers decline up front and name the offenders instead.
+
+	 Shared by every refactoring that introduces an instance variable on an existing class (V1 add,
+	 V8 split), so the check and its cross-version behaviour live in one place. Read-only.
+
+	 aName is normalised to a String because #ownInstVarNamesOf: answers Strings; a caller passing a
+	 Symbol would otherwise hit the same 3.6.x Unicode-comparison trap on the argument side and get a
+	 silently empty answer. Both #instVarNameArgument callers already accept either, so we match that."
+	| name |
+	name := aName asString.
+	^(self descendantsOf: aClass)
+		select: [:d | (self ownInstVarNamesOf: d) includes: name]
+]
+
+{ #category : 'enumerating' }
+GsRefactoringEnvironment >> classVarNamesVisibleTo: aClass [
+	"aClass's own and inherited class-variable names, as a Set of Strings. A new instance variable
+	 of the same name would shadow one of these inside method bodies, so callers decline it.
+	 Read-only."
+	| result cls |
+	result := Set new.
+	cls := aClass.
+	[cls isNil] whileFalse: [
+		(cls classVarNames ifNil: [#()]) do: [:n | result add: n asString].
+		cls := cls superclass].
+	^result
+]
+
+{ #category : 'instance variables' }
+GsRefactoringEnvironment >> ownInstVarNamesOf: aClass [
+	"aClass's OWN instance-variable names (not inherited), as an Array of Strings, in
+	 declaration order -- which is the order a class-creation change must preserve.
+
+	 Strings, not the Symbols #instVarNames answers, because every caller compares them
+	 against a name that arrived as a String from the client. Comparing a Symbol against
+	 such a String can silently answer false on 3.6.x (the Unicode-comparison trap), so
+	 normalising here is what makes those comparisons hold across releases.
+
+	 Shared by every refactoring that reasons about instance-variable structure --
+	 add/remove, push up/down/move, extract superclass, split class -- so the
+	 normalisation lives in one place. Read-only.
+
+	 The ifNil: guard is defensive only: a live class always answers an Array from #instVarNames, so
+	 nil is not expected to be reachable here. It mirrors the guard #descendantsOf:declaringInstVar:
+	 already carried and keeps the answer an empty Array rather than raising if that ever changes."
+	^(aClass instVarNames ifNil: [#()]) collect: [:e | e asString]
+]
+
+{ #category : 'instance variables' }
+GsRefactoringEnvironment >> allInstVarNamesOf: aClass [
+	"aClass's own AND inherited instance-variable names, as an Array of Strings, inherited
+	 first -- the slot order of an instance. Callers use it to ask whether a name is already
+	 visible to aClass (its own or any superclass's). See #ownInstVarNamesOf: for why these
+	 are Strings. Read-only."
+	^(aClass allInstVarNames ifNil: [#()]) collect: [:e | e asString]
+]
+
 { #category : 'accessing' }
 GsRefactoringEnvironment >> classNamed: aName [
 	"The first class bound to aName across all dictionaries (symbol-list order),

@@ -88,10 +88,29 @@ import { ClassBrowser } from '../classBrowser';
 import { CommentBrowser } from '../commentBrowser';
 import type { ActiveSession } from '../sessionManager';
 import type { ExportManager } from '../exportManager';
+import { uriFsPath } from './support/uri';
 
 // ── Helpers ──────────────────────────────────────────────────
 
 const SESSION_ROOT = path.join('/tmp', 'gemstone', 'localhost', 'gs64stone', 'DataCurator');
+
+/**
+ * The path a per-class file-out file lands at when writing "as many files",
+ * alongside the chosen loader file.
+ *
+ * @remarks
+ * `handleFileOutDictionaryMany` derives each class file's path with
+ * `path.join(path.dirname(uri.fsPath), file.fileName)` (systemBrowser.ts).
+ * Reproducing that same chain here, rather than a hardcoded literal, keeps
+ * the expected value correct on every platform's separator.
+ *
+ * @param loaderRawPath - The POSIX-style path passed to `vscode.Uri.file(...)` for the chosen loader file.
+ * @param fileName - The per-class file's name, e.g. `Object.gs`.
+ * @returns The path the per-class file is expected to be written to.
+ */
+function fileOutPath(loaderRawPath: string, fileName: string): string {
+  return path.join(path.dirname(uriFsPath(loaderRawPath)), fileName);
+}
 
 function makeSession(id = 1, label = 'test'): ActiveSession {
   return {
@@ -1516,7 +1535,11 @@ describe('SystemBrowser', () => {
       await vi.waitFor(() =>
         expect(queries.fileOutClass).toHaveBeenCalledWith(session, 'Array', 1),
       );
-      expect(fs.writeFileSync).toHaveBeenCalledWith('/out/Array.gs', '! Array file-out', 'utf8');
+      expect(fs.writeFileSync).toHaveBeenCalledWith(
+        uriFsPath('/out/Array.gs'),
+        '! Array file-out',
+        'utf8',
+      );
     });
 
     it('defaults a test class file name to its subject', async () => {
@@ -1555,16 +1578,24 @@ describe('SystemBrowser', () => {
 
       await vi.waitFor(() =>
         expect(fs.writeFileSync).toHaveBeenCalledWith(
-          '/out/Object.gs',
+          fileOutPath('/out/UserGlobals.gs', 'Object.gs'),
           '! Object file-out',
           'utf8',
         ),
       );
-      expect(fs.writeFileSync).toHaveBeenCalledWith('/out/Animal.gs', '! Animal file-out', 'utf8');
-      expect(fs.writeFileSync).toHaveBeenCalledWith('/out/Dog.gs', '! Dog file-out', 'utf8');
+      expect(fs.writeFileSync).toHaveBeenCalledWith(
+        fileOutPath('/out/UserGlobals.gs', 'Animal.gs'),
+        '! Animal file-out',
+        'utf8',
+      );
+      expect(fs.writeFileSync).toHaveBeenCalledWith(
+        fileOutPath('/out/UserGlobals.gs', 'Dog.gs'),
+        '! Dog file-out',
+        'utf8',
+      );
       const loader = vi
         .mocked(fs.writeFileSync)
-        .mock.calls.find((c) => c[0] === '/out/UserGlobals.gs')![1];
+        .mock.calls.find((c) => c[0] === uriFsPath('/out/UserGlobals.gs'))![1];
       expect(loader).toContain('input Object.gs\ninput Animal.gs\ninput Dog.gs\n');
     });
 
@@ -1581,14 +1612,14 @@ describe('SystemBrowser', () => {
 
       await vi.waitFor(() =>
         expect(fs.writeFileSync).toHaveBeenCalledWith(
-          '/out/UserGlobals.gs',
+          uriFsPath('/out/UserGlobals.gs'),
           expect.anything(),
           'utf8',
         ),
       );
       const loader = vi
         .mocked(fs.writeFileSync)
-        .mock.calls.find((c) => c[0] === '/out/UserGlobals.gs')![1] as string;
+        .mock.calls.find((c) => c[0] === uriFsPath('/out/UserGlobals.gs'))![1] as string;
       expect(loader).toContain("at: #'Dog' put: nil");
       expect(loader.indexOf('input Object.gs')).toBeGreaterThan(
         loader.indexOf("at: #'Dog' put: nil"),
