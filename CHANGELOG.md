@@ -4,6 +4,10 @@ All notable changes to the **GemStone Smalltalk** extension will be documented i
 
 ## [Unreleased]
 
+### Changed
+
+- **GemStone Explorer: clearer filtering, and no more "All methods" pseudo-category.** The filter controls now use a funnel icon (funnel = filter, magnifier = find), matching the funnel on the "filter is active" row, which is now labelled `Filter:` so an active filter is easier to notice. The filter box no longer implies you must press Enter — it filters as you type, and says so. Method **categories** are now filterable, not just selectors: typing `acc` surfaces the `accessing` category with its methods, in both the grouped and flat views. The Explorer's find action is titled **Find Class in Explorer** (it does its work in the Explorer, and is no longer confusable with the global **Find Class…**), and the flat-view toggle reads **Don't Group Methods by Category** rather than "Show Methods Without Categories", which sounded like it listed only uncategorized methods. The **`** ALL METHODS **`** pseudo-category is gone: it duplicated what the real categories already showed and, being first and expanded by default, pushed them below the fold — every method is still listed under its own category, and the flat/grouped toggle remains the see-everything view. ([#387](https://github.com/GemTalk/Jasper/issues/387))
+
 ## [1.8.10] - 2026-07-31
 
 ### Added

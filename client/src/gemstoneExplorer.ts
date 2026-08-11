@@ -360,14 +360,15 @@ export class MethodCategoryItem extends vscode.TreeItem {
     public readonly isMeta: boolean,
     public readonly category: string,
     public readonly computed: boolean,
-    // Open the node up front. ALL METHODS always does (it's the landing view);
-    // the rest do while a filter is active, so matches show without expanding
-    // every folder by hand.
+    // Open the node up front. Categories do this while a filter is active, so matches
+    // show without expanding every folder by hand. (Before #387 item 10 the ALL METHODS
+    // row also forced itself open as the landing view; that row is gone, so nothing is
+    // expanded by default any more and the real categories start at the top.)
     forceExpanded = false,
   ) {
     super(
       category,
-      category === ALL_METHODS_CATEGORY || forceExpanded
+      forceExpanded
         ? vscode.TreeItemCollapsibleState.Expanded
         : vscode.TreeItemCollapsibleState.Collapsed,
     );
@@ -383,8 +384,8 @@ export class MethodCategoryItem extends vscode.TreeItem {
 
 export class MethodItem extends vscode.TreeItem {
   // `displayCategory` is the category node this row is shown *under* (a real
-  // category, ALL METHODS, SESSION METHODS, or undefined when category grouping is
-  // off). It's needed so MethodProvider.getParent can walk up for reveal().
+  // category, SESSION METHODS, or undefined when category grouping is off). It's
+  // needed so MethodProvider.getParent can walk up for reveal().
   constructor(
     public readonly isMeta: boolean,
     public readonly info: SelectorInfo,
@@ -465,16 +466,20 @@ export class MethodItem extends vscode.TreeItem {
 }
 
 // A "filter chip" root row shown while a pane's filter is active: a funnel icon,
-// the label "Filter", and the pattern in grey description text — visually
+// the label "Filter:", and the pattern in grey description text — visually
 // distinct from method/selector rows. Clicking it re-opens the filter editor;
 // its inline ✕ clears the filter. Carries the owning view id so one clear
 // command serves every pane.
+//
+// The label keeps its colon: seeing the pattern is easy, but NOTICING that a
+// filter is on at all is the hard part, and "Filter: foo*" reads as a statement
+// about the pane where a bare "Filter foo*" reads like a button (#387 item 4).
 export class FilterChipItem extends vscode.TreeItem {
   constructor(
     public readonly viewId: string,
     pattern: string,
   ) {
-    super('Filter', vscode.TreeItemCollapsibleState.None);
+    super('Filter:', vscode.TreeItemCollapsibleState.None);
     this.id = `filterchip:${viewId}`;
     this.description = pattern;
     this.iconPath = new vscode.ThemeIcon('filter-filled');
@@ -798,6 +803,13 @@ export class ExplorerController {
     let accepted = false;
     box.title = 'Filter';
     box.placeholder = 'starts with… (use * as a wildcard)';
+    // Set an explicit prompt. Left unset, VS Code fills the prompt line with its own
+    // "press Enter to confirm / Escape to cancel" hint, which tells the user nothing
+    // filters until Enter — but this box filters on every keystroke
+    // (onDidChangeValue -> setFilterState). The live behaviour is the one worth
+    // keeping, so correct the message instead (#387 item 5). Escape still cancels and
+    // restores the previous filter, which is why it stays in the text.
+    box.prompt = 'Filters as you type — Escape to cancel';
     box.value = filterBeforeEdit ?? '';
     this.filteringView = viewId;
     this.syncTitles();
@@ -2859,7 +2871,7 @@ export class ExplorerController {
     });
   }
 
-  // Method categories for one side, with the computed ALL/SESSION rows on top,
+  // Method categories for one side, with the computed SESSION row on top,
   // plus any just-created (still empty) categories from the + button.
   methodCategories(isMeta: boolean, filter?: string): MethodCategoryItem[] {
     const lines = this.envLines.filter((l) => l.isMeta === isMeta);
@@ -2875,16 +2887,28 @@ export class ExplorerController {
     // With a filter set and categories visible, keep the category structure but
     // drop categories with no matching selector, and expand what remains so the
     // matches are visible without hand-expanding each folder.
+    // A category survives the filter when its OWN name matches (#387 item 7) or when
+    // any selector inside it matches. Name-matching first: it is a string compare,
+    // where the selector scan can pull in the ivar-access map.
     const hasMatch = (category: string) =>
       filter === undefined ||
+      this.methodCategoryMatchesFilter(category, filter) ||
       this.selectorsFor(isMeta, category).some((info) =>
         this.methodMatchesFilter(isMeta, info.selector, filter),
       );
     const expanded = filter !== undefined;
     if (filter !== undefined) combined = combined.filter(hasMatch);
     const items: MethodCategoryItem[] = [];
-    if (hasMatch(ALL_METHODS_CATEGORY))
-      items.push(new MethodCategoryItem(isMeta, ALL_METHODS_CATEGORY, true, expanded));
+    // No ALL METHODS pseudo-category row (#387 item 10). It duplicated what the real
+    // categories already show — for an uncategorized class it listed exactly what "as
+    // yet unclassified" lists — and being first AND expanded by default it pushed the
+    // real categories below the fold, so switching classes meant scrolling before any
+    // category was visible. Every method is still reachable under its own category (the
+    // pseudo-category's contents were only ever "selectors that have a category"), and
+    // the flat/grouped toggle remains the see-everything view.
+    //
+    // ALL_METHODS_CATEGORY itself stays: selectorsFor() still uses it as the
+    // enumerate-every-selector lookup key that reveal and the flat view depend on.
     if (hasSession && hasMatch(SESSION_METHODS_CATEGORY))
       items.push(new MethodCategoryItem(isMeta, SESSION_METHODS_CATEGORY, true, expanded));
     return items.concat(combined.map((c) => new MethodCategoryItem(isMeta, c, false, expanded)));
@@ -2904,7 +2928,15 @@ export class ExplorerController {
   flatMethods(isMeta: boolean, filter?: string): MethodItem[] {
     return this.selectorsFor(isMeta, ALL_METHODS_CATEGORY)
       .filter(
-        (info) => filter === undefined || this.methodMatchesFilter(isMeta, info.selector, filter),
+        (info) =>
+          filter === undefined ||
+          this.methodMatchesFilter(isMeta, info.selector, filter) ||
+          // A category-name match keeps that category's methods here too (#387 item 7).
+          // Without this, filtering 'accessing' listed the category in grouped mode and
+          // then emptied the pane the moment the user turned grouping off, even though
+          // the filter had not changed. Ivar-token filters are excluded for free --
+          // methodCategoryMatchesFilter answers false for them.
+          this.methodCategoryMatchesFilter(info.category, filter),
       )
       .map(
         (info) =>
@@ -2953,6 +2985,20 @@ export class ExplorerController {
     }
     const access = this.methodIvarAccess().get(`${isMeta}:${selector}`);
     return matchesMethodFilter(filter, selector, access);
+  }
+
+  // Whether a method CATEGORY's own name passes the active filter (#387 item 7).
+  // The browser offers category quick-filters, so typing 'acc' in the Methods pane
+  // should surface the 'accessing' category, not just selectors starting with 'acc'.
+  //
+  // Deliberately false for a filter carrying reads:/writes:/accesses: tokens: those
+  // ask a question about a method's bytecode, which a category name cannot answer, so
+  // an ivar filter keeps its current selector-only meaning rather than dragging in
+  // whole categories whose NAME happens to look like the ivar.
+  methodCategoryMatchesFilter(category: string, raw: string): boolean {
+    const filter = this.parseFilter(raw);
+    if (filter.ivar.length > 0) return false;
+    return filter.selector !== undefined && filterMatches(category, filter.selector);
   }
 
   // The r/w/rw glyph a method row should show under an active ivar filter, or
@@ -4676,11 +4722,18 @@ class MethodProvider extends RefreshableProvider<MethodNode> {
     }
     if (element instanceof MethodCategoryItem) {
       const filter = this.ctl.getFilter(VIEW_METHODS);
+      // When the CATEGORY NAME is what matched the filter, show everything inside it
+      // (#387 item 7). Filtering the selectors too would render the category the user
+      // just searched for as an empty folder, since its methods generally do not start
+      // with their category's name.
+      const nameMatched =
+        filter !== undefined && this.ctl.methodCategoryMatchesFilter(element.category, filter);
       return this.ctl
         .selectorsFor(element.isMeta, element.category)
         .filter(
           (info) =>
             filter === undefined ||
+            nameMatched ||
             this.ctl.methodMatchesFilter(element.isMeta, info.selector, filter),
         )
         .map(

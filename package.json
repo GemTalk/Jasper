@@ -1059,25 +1059,25 @@
         "command": "gemstoneExplorerDicts.filter",
         "title": "Filter",
         "category": "GemStone",
-        "icon": "$(search)"
+        "icon": "$(filter)"
       },
       {
         "command": "gemstoneExplorerCategories.filter",
         "title": "Filter",
         "category": "GemStone",
-        "icon": "$(search)"
+        "icon": "$(filter)"
       },
       {
         "command": "gemstoneExplorerClasses.filter",
         "title": "Filter",
         "category": "GemStone",
-        "icon": "$(search)"
+        "icon": "$(filter)"
       },
       {
         "command": "gemstoneExplorerMethods.filter",
         "title": "Filter",
         "category": "GemStone",
-        "icon": "$(search)"
+        "icon": "$(filter)"
       },
       {
         "command": "gemstoneExplorerDicts.clearFilter",
@@ -1111,7 +1111,7 @@
       },
       {
         "command": "gemstone.explorer.showMethodsFlat",
-        "title": "Show Methods Without Categories",
+        "title": "Don't Group Methods by Category",
         "category": "GemStone",
         "icon": "$(list-flat)"
       },
@@ -1150,9 +1150,9 @@
       },
       {
         "command": "gemstone.explorer.findClass",
-        "title": "Find Class in Browser Panels",
+        "title": "Find Class in Explorer",
         "category": "GemStone",
-        "icon": "$(search-fuzzy)"
+        "icon": "$(search)"
       },
       {
         "command": "gemstone.explorer.newDictionary",
