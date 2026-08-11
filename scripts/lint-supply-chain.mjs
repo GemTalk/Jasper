@@ -25,7 +25,7 @@
 //
 //   node scripts/lint-supply-chain.mjs
 
-import { execFileSync } from 'node:child_process';
+import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 
 // package.json's `allowScripts` is the single source of truth for the install-script
@@ -68,7 +68,7 @@ const REGISTRY_PREFIX = 'https://registry.npmjs.org/';
 // true/7/[] instead of 'true'/'7'/'' — which every comparison and message below would have to
 // re-stringify.) npm's own warnings go to stderr, so only key=value lines reach here.
 function getConfigs(keys) {
-  const output = execFileSync('npm', ['config', 'get', ...keys], { encoding: 'utf8' });
+  const output = execSync(`npm config get ${keys.join(' ')}`, { encoding: 'utf8' });
   const values = new Map();
 
   for (const line of output.split('\n')) {
