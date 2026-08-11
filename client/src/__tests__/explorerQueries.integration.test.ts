@@ -397,6 +397,36 @@ describe('explorer queries (integration)', () => {
       expect(dictIndexOf('JasperItRenameDst')).toBe(before); // new name, same index
     });
 
+    it('keeps the classes it holds reachable under the new name', () => {
+      q.addDictionary(session(), 'JasperItRenameSrc');
+      const srcIdx = dictIndexOf('JasperItRenameSrc');
+      expect(srcIdx).toBeGreaterThan(0);
+      // File a class INTO that dictionary (not UserGlobals), so the rename has real
+      // contents to preserve. Only a live stone can confirm the self-entry swap left
+      // them reachable — that's the point of asserting it here rather than in a unit test.
+      q.compileClassDefinition(
+        session(),
+        `Object subclass: 'JasperItHeld' instVarNames: #() classVars: #() ` +
+          `classInstVars: #() poolDictionaries: #() ` +
+          `inDictionary: (System myUserProfile symbolList objectNamed: #'JasperItRenameSrc')`,
+      );
+      expect(q.getClassNames(session(), srcIdx)).toContain('JasperItHeld');
+
+      const result = q.renameDictionary(session(), 'JasperItRenameSrc', 'JasperItRenameDst');
+      expect(result).toBe('ok');
+
+      // The class is still there, now found under the NEW name (both via the query
+      // and by resolving the dictionary itself under the new name).
+      const dstIdx = dictIndexOf('JasperItRenameDst');
+      expect(q.getClassNames(session(), dstIdx)).toContain('JasperItHeld');
+      expect(
+        exec(
+          `((System myUserProfile symbolList objectNamed: #'JasperItRenameDst') ` +
+            `includesKey: #'JasperItHeld') printString`,
+        ).trim(),
+      ).toBe('true');
+    });
+
     it('declines when the new name is already in use, leaving both dictionaries intact', () => {
       q.addDictionary(session(), 'JasperItRenameA');
       q.addDictionary(session(), 'JasperItRenameB');

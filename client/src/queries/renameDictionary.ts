@@ -6,8 +6,9 @@ import { escapeString, dictLookupExpr } from './util';
 // A SymbolDictionary has no `name` slot: its name is a self-referential entry
 // (`#Name -> theDict`) held inside the dictionary itself, and every symbol list
 // holds the dictionary BY IDENTITY. So renaming is a two-step swap of that
-// self-entry -- add the new one, drop the old -- after which the dictionary
-// resolves under the new name for every session automatically (once committed).
+// self-entry -- `name:` installs the new self-entry, then `removeKey:` drops the
+// old key -- after which the dictionary resolves under the new name for every
+// session automatically (once committed).
 //
 // This does NOT rewrite source that names the dictionary literally (e.g.
 // `objectNamed: #OldName`, or the dictionary referenced as a bareword global):
@@ -27,6 +28,7 @@ export function renameDictionary(
 sl := System myUserProfile symbolList.
 d := ${dictExpr}.
 d ifNil: [^ 'Dictionary not found'].
+(d isKindOf: SymbolDictionary) ifFalse: [^ 'Not a dictionary'].
 ((d == Globals) or: [(d == Published) or: [d == UserGlobals]])
   ifTrue: [^ 'Cannot rename a system dictionary (Globals, Published, or UserGlobals)'].
 newSym := #'${escapeString(newName)}'.

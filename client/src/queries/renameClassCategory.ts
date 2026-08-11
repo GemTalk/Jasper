@@ -24,8 +24,14 @@ export function renameClassCategory(
   // - Categories are compared via Symbol identity (asSymbol ==), never String `=`: on
   //   3.6.x a category can come back as a wide (Unicode) string and `narrow = wide`
   //   raises ArgumentError 2718; interning normalises the width so `==` is Unicode-safe.
-  // - A class whose category can't be read increments `skipped` (not silently ignored),
-  //   surfaced in the payload so a partial rename doesn't look complete (LOW-2).
+  // - A class whose category can't be read -- OR can't be reassigned (authorization, a
+  //   read-only segment, a corrupt class object) -- increments `skipped` (not silently
+  //   ignored) and the loop continues. Guarding the WRITE the same way as the read matters:
+  //   otherwise one stubborn class unwinds the whole doit mid-loop, leaving the server with
+  //   the category half-renamed while the tree still shows the old names (the client shows
+  //   the error and deliberately does not refetch). `skipped` is surfaced in the payload so
+  //   a partial rename doesn't look complete, and `renamed: N skipped: M` is already handled
+  //   client-side. Nothing is committed either way, so a bad row is recoverable (LOW-2).
   // - The subtree test uses `>=` (not `>`): a category named exactly `<old>-` has
   //   size = prefix size, so `>=` treats it as a subtree member (suffix `-`) rather
   //   than matching neither branch and being left behind (LOW-1).
@@ -45,12 +51,15 @@ dict keysAndValuesDo: [:k :v |
     cat := [v category asString] on: Error do: [:e | skipped := skipped + 1. nil].
     cat ifNotNil: [
       (cat size = oldCat size and: [cat asSymbol == oldSym])
-        ifTrue: [v category: newCat. count := count + 1]
+        ifTrue: [
+          [v category: newCat. count := count + 1]
+            on: Error do: [:e | skipped := skipped + 1]]
         ifFalse: [
           (cat size >= prefix size and: [(cat copyFrom: 1 to: prefix size) asSymbol == prefixSym])
             ifTrue: [
-              v category: newCat , (cat copyFrom: oldCat size + 1 to: cat size).
-              count := count + 1]]]]].
+              [v category: newCat , (cat copyFrom: oldCat size + 1 to: cat size).
+              count := count + 1]
+                on: Error do: [:e | skipped := skipped + 1]]]]]].
 skipped = 0
   ifTrue: ['renamed: ' , count printString]
   ifFalse: ['renamed: ' , count printString , ' skipped: ' , skipped printString]`;

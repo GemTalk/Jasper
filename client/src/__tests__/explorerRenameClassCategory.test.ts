@@ -49,13 +49,20 @@ describe('ExplorerController.renameClassCategory', () => {
     expect(queries.renameClassCategory).not.toHaveBeenCalled();
   });
 
-  it('does nothing when the prompt is cancelled or unchanged', async () => {
+  it('does nothing when the name prompt is cancelled', async () => {
     const { ctl } = makeController({} as ActiveSession, [
       { className: 'Foo', category: 'Announcements' },
     ]);
-    vi.mocked(vscode.window.showInputBox).mockResolvedValueOnce(undefined);
+    vi.mocked(vscode.window.showInputBox).mockResolvedValue(undefined);
     await ctl.renameClassCategory(NODE);
-    vi.mocked(vscode.window.showInputBox).mockResolvedValueOnce('Announcements');
+    expect(queries.renameClassCategory).not.toHaveBeenCalled();
+  });
+
+  it('does nothing when the name is unchanged', async () => {
+    const { ctl } = makeController({} as ActiveSession, [
+      { className: 'Foo', category: 'Announcements' },
+    ]);
+    vi.mocked(vscode.window.showInputBox).mockResolvedValue('Announcements');
     await ctl.renameClassCategory(NODE);
     expect(queries.renameClassCategory).not.toHaveBeenCalled();
   });
@@ -247,5 +254,47 @@ describe('ExplorerController.renameClassCategory', () => {
     // Bailed before refetch / success.
     expect(queries.getClassesWithCategory).not.toHaveBeenCalled();
     expect(vscode.window.setStatusBarMessage).not.toHaveBeenCalled();
+  });
+
+  it('carries newClassCategories overlay entries and remaps state.classCategory across the rename, preserving suffixes', async () => {
+    // Client-side bookkeeping the server never sees: empty (overlay) categories the
+    // user added, and the currently-selected category. Both must follow the rename,
+    // with the suffix below the renamed node preserved (suffix-slicing is easy to get
+    // off by one). Seed some in the subtree and one outside it.
+    const { ctl } = makeController({} as ActiveSession, [
+      { className: 'Foo', category: 'Announcements' },
+    ]);
+    const overlay = (ctl as unknown as { newClassCategories: Set<string> }).newClassCategories;
+    overlay.add('Announcements'); // the renamed node itself
+    overlay.add('Announcements-Core-Empty'); // a descendant, suffix '-Core-Empty'
+    overlay.add('Unrelated-Empty'); // outside the subtree — must be left alone
+    ctl.state.classCategory = 'Announcements-Core'; // selection inside the renamed subtree
+
+    vi.mocked(vscode.window.showInputBox).mockResolvedValue('Events');
+    vi.mocked(queries.renameClassCategory).mockReturnValue('renamed: 1');
+
+    await ctl.renameClassCategory(NODE);
+
+    // Subtree overlay entries move onto the new prefix (suffix preserved); the
+    // unrelated one is untouched.
+    expect([...overlay].sort()).toEqual(['Events', 'Events-Core-Empty', 'Unrelated-Empty']);
+    // The selected category is remapped onto the new path, suffix preserved.
+    expect(ctl.state.classCategory).toBe('Events-Core');
+  });
+
+  it('leaves state.classCategory alone when the selection is outside the renamed subtree', async () => {
+    const { ctl } = makeController({} as ActiveSession, [
+      { className: 'Foo', category: 'Announcements' },
+    ]);
+    ctl.state.classCategory = 'Announcementss-Core'; // shares a prefix but is NOT in the subtree
+
+    vi.mocked(vscode.window.showInputBox).mockResolvedValue('Events');
+    vi.mocked(queries.renameClassCategory).mockReturnValue('renamed: 1');
+
+    await ctl.renameClassCategory(NODE);
+
+    // `Announcementss-Core` starts with `Announcements` but not `Announcements-`, so it
+    // is not a subtree member and must be left unchanged (guards the `startsWith` edge).
+    expect(ctl.state.classCategory).toBe('Announcementss-Core');
   });
 });

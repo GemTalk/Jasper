@@ -3,9 +3,22 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 // The controller pulls in browserQueries; stub only what renameDictionary touches.
 vi.mock('../browserQueries', () => ({ renameDictionary: vi.fn() }));
+// Keep the real filesystem-provider exports, but make the two the tab sweep uses
+// (listOpenGemstoneTabs + parseUri) overridable so the sweep can be driven with
+// synthetic tabs. They default to the real implementations, so other tests are
+// unaffected; the sweep test overrides them.
+vi.mock('../gemstoneFileSystemProvider', async (importActual) => {
+  const actual = await importActual<typeof import('../gemstoneFileSystemProvider')>();
+  return {
+    ...actual,
+    listOpenGemstoneTabs: vi.fn(actual.listOpenGemstoneTabs),
+    parseUri: vi.fn(actual.parseUri),
+  };
+});
 
 import * as vscode from 'vscode';
 import * as queries from '../browserQueries';
+import { listOpenGemstoneTabs, parseUri } from '../gemstoneFileSystemProvider';
 import { ExplorerController } from '../gemstoneExplorer';
 import type { SessionManager, ActiveSession } from '../sessionManager';
 
@@ -133,5 +146,92 @@ describe('ExplorerController.renameDictionary', () => {
     expect(selectDict).not.toHaveBeenCalled();
     expect(ctl.state.dictName).toBe('NewDict');
     expect(ctl.state.dictIndex).toBe(3);
+  });
+});
+
+// The success-path tests above spy `closeStaleTabsForRenamedDictionary` out entirely,
+// so the MED-1 sweep itself (session/dirty/parse filtering) had no coverage — the one
+// place a rename can silently close someone's open editor. Drive it directly here.
+describe('ExplorerController.closeStaleTabsForRenamedDictionary (sweep)', () => {
+  const SESSION = { id: 7 } as unknown as ActiveSession;
+
+  // A synthetic gemstone tab: the sweep reads only tab.isDirty and, via parseUri,
+  // the uri's { sessionId, dictName }. `parsed: 'throw'` makes parseUri raise.
+  function tab(isDirty: boolean, parsed: { sessionId: number; dictName: string } | 'throw') {
+    return { tab: { isDirty }, uri: { parsed } };
+  }
+
+  function sweepController() {
+    const sessionManager = { getSelectedSession: () => undefined } as unknown as SessionManager;
+    const ctl = new ExplorerController(sessionManager);
+    return ctl as unknown as {
+      closeStaleTabsForRenamedDictionary: (s: ActiveSession, oldName: string) => Promise<void>;
+    };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(parseUri).mockImplementation((u: unknown) => {
+      const p = (u as { parsed: { sessionId: number; dictName: string } | 'throw' }).parsed;
+      if (p === 'throw') throw new Error('unparseable uri');
+      return p as never;
+    });
+  });
+
+  it('closes clean matching tabs, leaves dirty ones open, and skips other sessions / unparseable uris', async () => {
+    const cleanMatch = tab(false, { sessionId: 7, dictName: 'MyDict' });
+    const dirtyMatch = tab(true, { sessionId: 7, dictName: 'MyDict' });
+    const otherSession = tab(false, { sessionId: 99, dictName: 'MyDict' });
+    const otherDict = tab(false, { sessionId: 7, dictName: 'Other' });
+    const unparseable = tab(false, 'throw');
+    vi.mocked(listOpenGemstoneTabs).mockReturnValue([
+      cleanMatch,
+      dirtyMatch,
+      otherSession,
+      otherDict,
+      unparseable,
+    ] as never);
+
+    await sweepController().closeStaleTabsForRenamedDictionary(SESSION, 'MyDict');
+
+    // Only the clean, same-session, same-name tab is closed.
+    expect(vscode.window.tabGroups.close).toHaveBeenCalledTimes(1);
+    expect(vscode.window.tabGroups.close).toHaveBeenCalledWith(cleanMatch.tab);
+    // The dirty match is left open but warned about (singular).
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledTimes(1);
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+      expect.stringContaining('MyDict'),
+    );
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+      expect.stringContaining('1 unsaved editor'),
+    );
+  });
+
+  it('closes all clean matches and warns in the plural when several dirty tabs remain', async () => {
+    vi.mocked(listOpenGemstoneTabs).mockReturnValue([
+      tab(false, { sessionId: 7, dictName: 'MyDict' }),
+      tab(false, { sessionId: 7, dictName: 'MyDict' }),
+      tab(true, { sessionId: 7, dictName: 'MyDict' }),
+      tab(true, { sessionId: 7, dictName: 'MyDict' }),
+    ] as never);
+
+    await sweepController().closeStaleTabsForRenamedDictionary(SESSION, 'MyDict');
+
+    expect(vscode.window.tabGroups.close).toHaveBeenCalledTimes(2);
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+      expect.stringContaining('2 unsaved editors'),
+    );
+  });
+
+  it('closes nothing and does not warn when no tab references the old name', async () => {
+    vi.mocked(listOpenGemstoneTabs).mockReturnValue([
+      tab(false, { sessionId: 7, dictName: 'Other' }),
+      tab(false, { sessionId: 99, dictName: 'MyDict' }),
+    ] as never);
+
+    await sweepController().closeStaleTabsForRenamedDictionary(SESSION, 'MyDict');
+
+    expect(vscode.window.tabGroups.close).not.toHaveBeenCalled();
+    expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
   });
 });

@@ -2051,7 +2051,7 @@
         {
           "command": "gemstone.explorer.removeDictionary",
           "when": "view == gemstoneExplorerDicts && viewItem == explorerDict",
-          "group": "inline"
+          "group": "inline@1"
         },
         {
           "command": "gemstone.explorer.openMethodToSide",
