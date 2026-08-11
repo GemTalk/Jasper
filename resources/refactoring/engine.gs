@@ -9468,6 +9468,43 @@ instanceMethodsShadowing: anInstVarName inClass: aClass
 	^result asSortedCollection asArray
 %
 
+category: 'compiling'
+method: GsRefactoringEnvironment
+compile: source into: aBehavior category: aCategory
+	"Compile one method onto aBehavior and RAISE when it does not compile.
+
+	 Behavior>>compileMethod:dictionaries:category: reports a compile failure in its RETURN
+	 VALUE -- nil (or an empty Array) on success, an Array of error tuples otherwise -- and
+	 does NOT signal. An unchecked send therefore reads as success while the method is never
+	 installed: the caller counts it as applied and the user is told nothing. Raising puts the
+	 failure back onto the path every apply loop already guards with on: Error do:, so it is
+	 recorded in `failed` and reported like any other."
+	| result |
+	result := aBehavior
+		compileMethod: source
+		dictionaries: System myUserProfile symbolList
+		category: aCategory.
+	result isNil ifTrue: [^self].
+	(result isKindOf: Array)
+		ifFalse: [^self error: 'did not recompile'].
+	result isEmpty ifTrue: [^self].
+	self error: 'did not recompile: ', (self compileErrorTextFrom: result first)
+%
+
+category: 'private'
+method: GsRefactoringEnvironment
+compileErrorTextFrom: aTuple
+	"Readable text for one compiler error tuple -- (number, offset, message, nil, symbol) --
+	 falling back to a printString when it is not shaped as expected."
+	| text sym |
+	(aTuple isKindOf: Array) ifFalse: [^aTuple printString].
+	text := (aTuple size >= 3 and: [(aTuple at: 3) notNil])
+		ifTrue: [(aTuple at: 3) asString]
+		ifFalse: ['compile error'].
+	sym := aTuple size >= 5 ifTrue: [aTuple at: 5] ifFalse: [nil].
+	^sym isNil ifTrue: [text] ifFalse: [text, ' (', sym asString, ')']
+%
+
 category: 'private'
 method: GsRefactoringEnvironment
 methodNode: aMethodNode declares: aSymbol
@@ -10112,9 +10149,11 @@ applyMethodRecompile: aChange
 	cls := environment classNamed: aChange className.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
-	target
-		compileMethod: aChange newSource
-		dictionaries: System myUserProfile symbolList
+	"Through the environment, which RAISES on a compile failure -- an unchecked send would
+	 leave this referencing method naming the OLD class while reporting clean success."
+	environment
+		compile: aChange newSource
+		into: target
 		category: (aChange category ifNil: ['as yet unclassified'])
 %
 
@@ -10724,9 +10763,12 @@ applyMethodRecompile: aChange
 	cls := environment classNamed: aChange className.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
-	target
-		compileMethod: aChange newSource
-		dictionaries: System myUserProfile symbolList
+	"Through the environment, which RAISES on a compile failure -- compileMethod: only
+	 answers its errors, so an unchecked send would leave this method un-recompiled and
+	 still bound to the OLD class-variable association while reporting clean success."
+	environment
+		compile: aChange newSource
+		into: target
 		category: (aChange category ifNil: ['as yet unclassified'])
 %
 
@@ -11512,9 +11554,12 @@ applyChange: aChange
 	cls := environment classNamed: aChange className.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
-	target
-		compileMethod: aChange newSource
-		dictionaries: System myUserProfile symbolList
+	"Through the environment, which RAISES on a compile failure. Critical here: the old
+	 selector is removed below, so an unchecked compile that failed would DELETE the method
+	 without installing its replacement -- outright method loss reported as success."
+	environment
+		compile: aChange newSource
+		into: target
 		category: (aChange category ifNil: ['as yet unclassified']).
 	(aChange kind == #methodRename and: [aChange newSelector ~= aChange selector])
 		ifTrue: [target removeSelector: aChange selector asSymbol]

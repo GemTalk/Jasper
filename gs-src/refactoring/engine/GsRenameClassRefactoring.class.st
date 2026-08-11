@@ -659,9 +659,11 @@ GsRenameClassRefactoring >> applyMethodRecompile: aChange [
 	cls := environment classNamed: aChange className.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
-	target
-		compileMethod: aChange newSource
-		dictionaries: System myUserProfile symbolList
+	"Through the environment, which RAISES on a compile failure -- an unchecked send would
+	 leave this referencing method naming the OLD class while reporting clean success."
+	environment
+		compile: aChange newSource
+		into: target
 		category: (aChange category ifNil: ['as yet unclassified'])
 ]
 

@@ -105,7 +105,7 @@ GsRenameClassRefactoringTest >> subFixture [
 
 { #category : 'running' }
 GsRenameClassRefactoringTest >> tearDown [
-	#('GsRCSub' 'GsRCOther' 'GsRCBase' 'GsRCRenamed')
+	#('GsRCSub' 'GsRCOther' 'GsRCBase' 'GsRCRenamed' 'GsRCGone')
 		do: [:nm | UserGlobals removeKey: nm asSymbol ifAbsent: []].
 	super tearDown
 ]
@@ -192,6 +192,25 @@ GsRenameClassRefactoringTest >> testNewNameCollisionDetected [
 	ref := self renameTo: 'GsRCOther' scope: #wholeSystem.
 	self assert: ref newNameCollision notNil.
 	self assert: ref outOfScopeJsonString includesSubstring: 'already in use'
+]
+
+{ #category : 'tests' }
+GsRenameClassRefactoringTest >> testServerSideApplyReportsAnExternalMethodThatCannotRecompile [
+	"An EXTERNAL referencing method is recompiled in place with the new class name.
+	 compileMethod: answers its errors rather than raising, so an unchecked apply counted a
+	 method that never recompiled as applied -- leaving it naming a class that no longer
+	 exists while reporting clean success. Make the external referencer un-compilable by
+	 removing a global it was compiled against and assert the apply reports it."
+	| json |
+	UserGlobals at: #GsRCGone put: 7.
+	self compile: 'usesBase "makes a GsRCBase" ^(Array with: GsRCBase new) , GsRCGone'
+		in: (UserGlobals at: #GsRCOther).
+	UserGlobals removeKey: #GsRCGone.
+
+	json := (self renameTo: 'GsRCRenamed' scope: #wholeSystem) applyDeselected: #().
+
+	self deny: json includesSubstring: '"failed":[]'.
+	self assert: json includesSubstring: 'did not recompile'
 ]
 
 { #category : 'tests' }

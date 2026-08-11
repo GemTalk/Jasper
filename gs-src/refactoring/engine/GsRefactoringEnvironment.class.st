@@ -243,6 +243,41 @@ GsRefactoringEnvironment >> instanceMethodsShadowing: anInstVarName inClass: aCl
 	^result asSortedCollection asArray
 ]
 
+{ #category : 'compiling' }
+GsRefactoringEnvironment >> compile: source into: aBehavior category: aCategory [
+	"Compile one method onto aBehavior and RAISE when it does not compile.
+
+	 Behavior>>compileMethod:dictionaries:category: reports a compile failure in its RETURN
+	 VALUE -- nil (or an empty Array) on success, an Array of error tuples otherwise -- and
+	 does NOT signal. An unchecked send therefore reads as success while the method is never
+	 installed: the caller counts it as applied and the user is told nothing. Raising puts the
+	 failure back onto the path every apply loop already guards with on: Error do:, so it is
+	 recorded in `failed` and reported like any other."
+	| result |
+	result := aBehavior
+		compileMethod: source
+		dictionaries: System myUserProfile symbolList
+		category: aCategory.
+	result isNil ifTrue: [^self].
+	(result isKindOf: Array)
+		ifFalse: [^self error: 'did not recompile'].
+	result isEmpty ifTrue: [^self].
+	self error: 'did not recompile: ', (self compileErrorTextFrom: result first)
+]
+
+{ #category : 'private' }
+GsRefactoringEnvironment >> compileErrorTextFrom: aTuple [
+	"Readable text for one compiler error tuple -- (number, offset, message, nil, symbol) --
+	 falling back to a printString when it is not shaped as expected."
+	| text sym |
+	(aTuple isKindOf: Array) ifFalse: [^aTuple printString].
+	text := (aTuple size >= 3 and: [(aTuple at: 3) notNil])
+		ifTrue: [(aTuple at: 3) asString]
+		ifFalse: ['compile error'].
+	sym := aTuple size >= 5 ifTrue: [aTuple at: 5] ifFalse: [nil].
+	^sym isNil ifTrue: [text] ifFalse: [text, ' (', sym asString, ')']
+]
+
 { #category : 'private' }
 GsRefactoringEnvironment >> methodNode: aMethodNode declares: aSymbol [
 	"Whether aMethodNode's own arguments or top-level temporaries bind aSymbol. Block
