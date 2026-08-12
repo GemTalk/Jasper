@@ -109,6 +109,20 @@ export function useIntegrationTest(callback: UseIntegrationTestCallback) {
     if (!session) return;
 
     try {
+      // Checked before the cleanup below on purpose: if the commit guard is no longer armed, that means a test
+      // committed and left the session dirty, so the cleanup below is not guaranteed to succeed. Bail out early
+      const commitGuardStillArmed = gciLibrary.executeAndRelease(
+        session,
+        'System commitsDisabledUntilLogout',
+        (oop) => gciLibrary.isTrueOop(oop),
+      );
+
+      if (!commitGuardStillArmed) {
+        throw new Error(
+          `useIntegrationTest: the commit guard was no longer armed at the end of "${expect.getState().currentTestName}" — this is a harness bug, not a mid-test abort (the guard cannot be dropped). Failing the rest of this file since every remaining test would run against an unguarded session.`,
+        );
+      }
+
       gciLibrary.abortTransaction(session);
       gciLibrary.resetNonTransactionalSessionState(session);
     } catch (error) {
@@ -131,6 +145,7 @@ export function useIntegrationTest(callback: UseIntegrationTestCallback) {
       options?.user ?? process.env.VITE_GEMSTONE_USER!,
       process.env.VITE_GEMSTONE_PASSWORD!,
     );
+    armCommitGuard(session);
 
     callback({
       gciLibrary,
@@ -176,10 +191,65 @@ export function useIntegrationTest(callback: UseIntegrationTestCallback) {
     );
 
     try {
+      armCommitGuard(transientSession);
       callback(transientSession);
     } finally {
       gciLibrary.logout(transientSession);
     }
+  }
+
+  /**
+   * Arms GemStone's own session-level commit guard, so any commit attempted by a
+   * test — or by the production code it exercises — fails at the commit site
+   * with TransactionError 2249 instead of leaking state past the harness's abort.
+   *
+   * Session-scoped and irreversible: there is no `enableCommits`, and the only
+   * exit is logout. That is why it is armed once per session here rather than
+   * per test, and why every session the harness creates must go through it.
+   *
+   * Deliberately strict: arming is required to be *this* harness's doing. If
+   * GemStone reports commits were already disabled -- by this user's profile,
+   * or by a stone that is mid-restore -- the commit invariant happens to hold,
+   * but it holds for a reason the harness did not establish and cannot vouch
+   * for. Rather than run a whole matrix pass under a guard it did not arm, the
+   * harness fails loudly so the environment gets explained.
+   */
+  function armCommitGuard(aSession: unknown) {
+    let armedNewly: boolean;
+    try {
+      armedNewly = gciLibrary.executeAndRelease(
+        aSession,
+        `System disableCommitsWithReason: 'jasper-test-harness: integration tests must not commit'`,
+        (oop) => gciLibrary.isTrueOop(oop),
+      );
+    } catch (error) {
+      // `cause` keeps the original error — stack included — linked to this one, which
+      // vitest prints under a "Caused by:" heading. Its message is also inlined here so
+      // the failure reads completely even through reporters that only show the message.
+      // A non-Error throw has no message, so it gets described by type and value rather
+      // than through JSON.stringify, which renders `undefined` for several such values.
+      const cause =
+        error instanceof Error
+          ? error.message
+          : `a non-Error value of type ${typeof error} was thrown (${String(error)})`;
+
+      throw new Error(
+        `useIntegrationTest: could not arm the "no commits allowed" guard on this session. Cause: ${cause}`,
+        { cause: error },
+      );
+    }
+
+    if (!armedNewly) {
+      throw new Error(
+        `useIntegrationTest: GemStone reports commits were already disabled on this fresh session, so the "no commits allowed" guard is not this harness's doing. This is an unexpected environment, and the harness refuses to run under a guard it did not arm. Usual causes: this user's UserProfile has "disableCommits" set, or the stone is mid-restore. Check the stone and the credentials in .env.test (or .env.test.local).`,
+      );
+    }
+
+    // Arming is a doit, so it caches the Utf8 class oop and leaves oops in the
+    // PureExportSet: a session would reach its first test already dirty, and
+    // arming would be observable by tests that assert otherwise. Resetting here
+    // hands every session over in the state a bare login leaves behind.
+    gciLibrary.resetNonTransactionalSessionState(aSession);
   }
 
   /**
@@ -203,7 +273,7 @@ export function useIntegrationTest(callback: UseIntegrationTestCallback) {
 
             If the environment is already set up, refer to the original error below for more details.
             -----------------------------------------------------------------------------------------
-           
+
             `;
 
       if (error instanceof Error) {
