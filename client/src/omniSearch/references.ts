@@ -11,7 +11,7 @@
  * Dictionaries have no reference sense, so they yield no request (and get no button).
  */
 import { MethodSearchResult } from '../queries/methodSearch';
-import { OmniResult } from './omniTypes';
+import { OmniCategoryId, OmniResult } from './omniTypes';
 
 export type ReferenceRequest =
   | { title: string; kind: 'senders'; selector: string; environmentId: number }
@@ -36,16 +36,29 @@ export function referenceRequestFor(result: OmniResult): ReferenceRequest | null
       environmentId: 0,
     };
   }
+  if (a.kind === 'revealGlobal') {
+    // A global is referenceable by its name, exactly like a class (referencesToObject takes any
+    // symbol-list name), so "who uses this variable?" works from a global hit too.
+    return {
+      title: `References to ${a.name}`,
+      kind: 'references',
+      className: a.name,
+      environmentId: 0,
+    };
+  }
   return null;
 }
 
-/** Shape reference-query rows into method OmniResults (label `Class>>selector`, opens the method). */
+/** Shape method-search rows into method OmniResults (label `Class>>selector`, opens the method).
+ *  `categoryId` lets non-method sources (e.g. the Source scope) group their method hits under their
+ *  own separator while still opening the method. */
 export function methodRowsToResults(
   rows: readonly MethodSearchResult[],
   sessionId: number,
+  categoryId: OmniCategoryId = 'methods',
 ): OmniResult[] {
   return rows.map((r) => ({
-    categoryId: 'methods',
+    categoryId,
     label: `${r.className}${r.isMeta ? ' class' : ''}>>${r.selector}`,
     description: r.category ? `${r.dictName} · ${r.category}` : r.dictName,
     score: 0,

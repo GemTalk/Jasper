@@ -155,10 +155,26 @@
             "type": "array",
             "items": {
               "type": "string",
-              "enum": ["classes", "methods", "dictionaries"]
+              "enum": [
+                "classes",
+                "methods",
+                "dictionaries",
+                "globals",
+                "source",
+                "literals",
+                "categories"
+              ]
             },
-            "default": ["classes", "methods", "dictionaries"],
-            "markdownDescription": "Which categories Omni Search includes. Narrow a single search on the fly with the category buttons in the picker's title bar; the Clear-filter button resets to searching everything."
+            "default": [
+              "classes",
+              "methods",
+              "dictionaries",
+              "globals",
+              "source",
+              "literals",
+              "categories"
+            ],
+            "markdownDescription": "Which categories Omni Search includes. Narrow a single search on the fly with the category buttons in the picker's title bar; the Clear-filter button resets to searching everything. **Source** (full method-source search) and **Literals** (methods referencing a compilable literal you type, e.g. `#at:put:`) are heavyweight, so they never run in the default search — pick their button to use them."
           },
           "gemstone.omniSearch.maxResultsPerCategory": {
             "type": "number",

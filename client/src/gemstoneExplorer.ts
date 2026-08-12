@@ -3330,6 +3330,30 @@ export class ExplorerController {
     }
   }
 
+  // Reveal+select a class-category node by path in the Categories pane (used by Omni Search). Selects
+  // the home dictionary first (so its categories load + the classes pane filters to the category),
+  // then selects and reveals the category node itself.
+  async revealCategoryByPath(dictName: string, categoryPath: string): Promise<void> {
+    const session = await this.sessionManager.resolveSession();
+    if (!session) return;
+    const names = queries.getDictionaryNames(session);
+    const idx = names.indexOf(dictName);
+    if (idx < 0) {
+      void vscode.window.showWarningMessage(`No dictionary matching "${dictName}".`);
+      return;
+    }
+    this.selectDict(new DictItem(dictName, idx + 1));
+    const segment = categoryPath.split('-').pop() ?? categoryPath;
+    const catItem = new ClassCategoryItem(segment, categoryPath, false);
+    this.selectClassCategory(catItem);
+    try {
+      await this.views?.dict.reveal(new DictItem(dictName, idx + 1), { select: true });
+      await this.views?.category.reveal(catItem, { select: true, focus: true, expand: true });
+    } catch {
+      /* ignore */
+    }
+  }
+
   // Set the cascade state to a specific class and reveal it across the panes.
   // Never opens the class-definition editor — that's an explicit action now (the
   // class-row button / menu). `opts.revealMethod` reveals+selects a method row.
@@ -4963,6 +4987,14 @@ export function registerGemStoneExplorer(
     // Reveal+select a dictionary row by name (Omni Search dictionary results).
     vscode.commands.registerCommand('gemstone.explorer.revealDictionary', (name?: string) =>
       typeof name === 'string' ? ctl.revealDictionaryByName(name) : undefined,
+    ),
+    // Reveal+select a class-category node by dict + path (Omni Search category results).
+    vscode.commands.registerCommand(
+      'gemstone.explorer.revealCategory',
+      (dictName?: string, categoryPath?: string) =>
+        typeof dictName === 'string' && typeof categoryPath === 'string'
+          ? ctl.revealCategoryByPath(dictName, categoryPath)
+          : undefined,
     ),
     // Open a class's definition editor (inline button / menu on the class row —
     // a plain class click no longer auto-opens it; a double-click does).

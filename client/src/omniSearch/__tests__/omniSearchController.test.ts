@@ -70,18 +70,40 @@ interface MockQP {
   __accept: () => Promise<void>;
 }
 
+const scopeIds = (buttons: readonly unknown[]): (string | null)[] =>
+  buttons
+    .filter(
+      (b): b is { scopeId: string | null } => typeof b === 'object' && b !== null && 'scopeId' in b,
+    )
+    .map((b) => b.scopeId);
+
 describe('buildScopeButtons', () => {
   it('shows one button per enabled category and no clear button when nothing is filtered', () => {
     const buttons = buildScopeButtons(OMNI_DEFAULTS.enabledCategories, null);
 
-    expect(buttons.map((b) => b.scopeId)).toEqual(['classes', 'methods', 'dictionaries']);
+    expect(scopeIds(buttons)).toEqual([...OMNI_DEFAULTS.enabledCategories]);
     expect(buttons.every((b) => typeof b.tooltip === 'string' && b.tooltip.length > 0)).toBe(true);
   });
 
   it('prepends a clear-filter button while a scope is active', () => {
     const buttons = buildScopeButtons(OMNI_DEFAULTS.enabledCategories, 'methods');
 
-    expect(buttons.map((b) => b.scopeId)).toEqual([null, 'classes', 'methods', 'dictionaries']);
+    expect(scopeIds(buttons)).toEqual([null, ...OMNI_DEFAULTS.enabledCategories]);
+  });
+
+  it('draws a divider (a button with no scopeId) between the filter and search groups', () => {
+    const buttons = buildScopeButtons(OMNI_DEFAULTS.enabledCategories, null);
+
+    const dividerIndex = buttons.findIndex((b) => !('scopeId' in b));
+    expect(dividerIndex).toBeGreaterThan(0); // after the filter buttons
+    // Everything before the divider filters; everything after starts a search.
+    expect(scopeIds(buttons.slice(0, dividerIndex))).toEqual([
+      'classes',
+      'methods',
+      'dictionaries',
+      'globals',
+    ]);
+    expect(scopeIds(buttons.slice(dividerIndex + 1))).toEqual(['source', 'literals', 'categories']);
   });
 });
 
@@ -97,6 +119,12 @@ describe('providersInScope', () => {
     const ps = [fakeProvider('classes', []), fakeProvider('methods', [])];
     expect(providersInScope(ps, null)).toHaveLength(2);
     expect(providersInScope(ps, 'methods').map((p) => p.category.id)).toEqual(['methods']);
+  });
+
+  it('excludes an explicit-only category from the all-scope fan-out but runs it when scoped', () => {
+    const ps = [fakeProvider('classes', []), fakeProvider('source', [])];
+    expect(providersInScope(ps, null).map((p) => p.category.id)).toEqual(['classes']);
+    expect(providersInScope(ps, 'source').map((p) => p.category.id)).toEqual(['source']);
   });
 });
 
@@ -205,7 +233,8 @@ describe('createOmniController', () => {
     });
     await ctl.start();
     expect(qp.title).toBe('Omni Search');
-    expect(qp.buttons.length).toBe(2); // Classes + Methods, no clear button yet
+    // Classes + Methods + the case-sensitivity toggle (no clear yet; no divider without a search cat).
+    expect(scopeIds(qp.buttons)).toEqual(['classes', 'methods']);
   });
 
   it('shows a clear-filter button while scoped and removes it when the filter is cleared', async () => {
@@ -213,14 +242,87 @@ describe('createOmniController', () => {
       enabledCategories: ['classes', 'methods'],
     });
     await ctl.start();
-    expect(qp.buttons.length).toBe(2);
+    expect(scopeIds(qp.buttons)).toEqual(['classes', 'methods']);
 
     await ctl.setScope('methods');
-    expect(qp.buttons.length).toBe(3); // clear + Classes + Methods
-    expect((qp.buttons as ReadonlyArray<{ scopeId: unknown }>)[0].scopeId).toBeNull();
+    expect(scopeIds(qp.buttons)).toEqual([null, 'classes', 'methods']); // clear prepended
+    expect((qp.buttons as ReadonlyArray<{ scopeId?: unknown }>)[0].scopeId).toBeNull();
 
     await ctl.setScope(null);
-    expect(qp.buttons.length).toBe(2); // clear button gone
+    expect(scopeIds(qp.buttons)).toEqual(['classes', 'methods']); // clear gone
+  });
+
+  it('toggles case-sensitivity for subsequent searches', async () => {
+    let seen: boolean | undefined;
+    const provider: OmniProvider = {
+      category: CATEGORY_BY_ID.classes,
+      search: (_q, c) => {
+        seen = c.caseSensitive;
+        return [];
+      },
+    };
+    const { qp, ctl } = makeController([provider]);
+    await ctl.start();
+
+    await ctl.refresh('x');
+    expect(seen).toBe(false); // default from settings
+
+    await ctl.toggleCase();
+    expect(seen).toBe(true); // toggle re-runs the search with the new setting
+    expect(qp.title).toContain('Aa'); // ON is shown in the title, not just the button tooltip
+
+    await ctl.toggleCase();
+    expect(qp.title).not.toContain('Aa'); // OFF removes the marker
+  });
+
+  it('appends a Load more row when a scoped search fills its cap, and grows on loadMore', async () => {
+    const pool = Array.from({ length: 100 }, (_, i) => result('classes', `C${i}`));
+    const provider: OmniProvider = {
+      category: CATEGORY_BY_ID.classes,
+      search: (_q, c) => pool.slice(0, c.maxResultsPerCategory),
+    };
+    const { qp, ctl } = makeController([provider], { maxResultsPerCategory: 5 });
+    await ctl.start();
+    await ctl.setScope('classes');
+
+    await ctl.refresh('C');
+    const rows = () => qp.items.filter((i) => i.result).length;
+    expect(rows()).toBe(5);
+    expect(qp.items.some((i) => i.loadMore)).toBe(true);
+    expect(qp.items.some((i) => i.loadAll)).toBe(true); // both rows offered
+    expect(qp.items.find((i) => i.loadMore)?.detail).toContain('Showing 5'); // running count
+
+    await ctl.loadMore();
+    expect(rows()).toBe(10); // cap grew by the base page size
+  });
+
+  it('loadAll shows everything and drops the load rows', async () => {
+    const pool = Array.from({ length: 42 }, (_, i) => result('classes', `C${i}`));
+    const provider: OmniProvider = {
+      category: CATEGORY_BY_ID.classes,
+      search: (_q, c) => pool.slice(0, c.maxResultsPerCategory),
+    };
+    const { qp, ctl } = makeController([provider], { maxResultsPerCategory: 5 });
+    await ctl.start();
+    await ctl.setScope('classes');
+    await ctl.refresh('C');
+
+    await ctl.loadAll();
+    expect(qp.items.filter((i) => i.result).length).toBe(42); // all of them
+    expect(qp.items.some((i) => i.loadMore || i.loadAll)).toBe(false); // nothing left to load
+  });
+
+  it('offers Load more in the all-scope when any category fills its cap', async () => {
+    const pool = Array.from({ length: 100 }, (_, i) => result('classes', `C${i}`));
+    const provider: OmniProvider = {
+      category: CATEGORY_BY_ID.classes,
+      search: (_q, c) => pool.slice(0, c.maxResultsPerCategory),
+    };
+    const { qp, ctl } = makeController([provider], { maxResultsPerCategory: 5 });
+    await ctl.start(); // no scope set — the all-scope
+
+    await ctl.refresh('C');
+    expect(qp.items.some((i) => i.loadMore)).toBe(true);
   });
 
   it('narrows the search to the scoped category and re-runs the current term', async () => {

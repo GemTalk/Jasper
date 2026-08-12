@@ -136,3 +136,21 @@ describe('compareMatches — total order', () => {
     ]);
   });
 });
+
+describe('case sensitivity', () => {
+  it('folds case when caseSensitive is false (Foo matches foo)', () => {
+    expect(match('foo', 'FooBar', { mode: 'substring', caseSensitive: false })).not.toBeNull();
+  });
+
+  it('respects case when caseSensitive is true', () => {
+    expect(match('foo', 'FooBar', { mode: 'substring', caseSensitive: true })).toBeNull();
+    expect(match('Foo', 'FooBar', { mode: 'substring', caseSensitive: true })).not.toBeNull();
+  });
+
+  it('fuzzy skips a wrong-case char when case-sensitive (the K2 behaviour)', () => {
+    // "InfoOrbit" has only one lowercase 'o' (in "Info") plus a capital 'O'.
+    // Insensitive folds the capital O and matches f-o-O; sensitive needs three lowercase → no match.
+    expect(match('foo', 'InfoOrbit', { mode: 'fuzzy', caseSensitive: false })).not.toBeNull();
+    expect(match('foo', 'InfoOrbit', { mode: 'fuzzy', caseSensitive: true })).toBeNull();
+  });
+});

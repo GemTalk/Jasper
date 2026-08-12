@@ -9,6 +9,8 @@ function handlers(): OmniActionHandlers & { calls: Record<string, unknown[]> } {
     openClass: vi.fn((a) => void (calls.openClass = [a])),
     openMethod: vi.fn((a) => void (calls.openMethod = [a])),
     revealDictionary: vi.fn((a) => void (calls.revealDictionary = [a])),
+    revealGlobal: vi.fn((a) => void (calls.revealGlobal = [a])),
+    revealCategory: vi.fn((a) => void (calls.revealCategory = [a])),
   };
 }
 
@@ -28,6 +30,20 @@ describe('runOmniAction', () => {
         dictIndex: 0,
       },
       { kind: 'revealDictionary', sessionId: 1, dictName: 'Published' },
+      {
+        kind: 'revealGlobal',
+        sessionId: 1,
+        dictName: 'Globals',
+        name: 'Transcript',
+        className: 'GsTerminalStream',
+      },
+      {
+        kind: 'revealCategory',
+        sessionId: 1,
+        dictName: 'Globals',
+        dictIndex: 1,
+        category: 'Kernel',
+      },
     ];
     for (const action of cases) {
       const h = handlers();

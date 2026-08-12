@@ -63,6 +63,29 @@ describe('referenceRequestFor', () => {
     });
   });
 
+  it('asks for references to a global row by its name', () => {
+    const globalResult: OmniResult = {
+      categoryId: 'globals',
+      label: 'Transcript',
+      score: 1,
+      ranges: [],
+      action: {
+        kind: 'revealGlobal',
+        sessionId: 1,
+        dictName: 'Globals',
+        name: 'Transcript',
+        className: 'GsTerminalStream',
+      },
+    };
+
+    expect(referenceRequestFor(globalResult)).toEqual({
+      title: 'References to Transcript',
+      kind: 'references',
+      className: 'Transcript',
+      environmentId: 0,
+    });
+  });
+
   it('has no reference sense for a dictionary row', () => {
     expect(referenceRequestFor(dictResult)).toBeNull();
   });

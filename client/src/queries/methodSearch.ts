@@ -141,3 +141,66 @@ ${methodSerialization(environmentId)}`;
 
   return parseMethodSearchResults(execute(code));
 }
+
+// Methods that reference the VALUE of a user-typed, compilable literal expression — e.g. `#at:put:`,
+// `42`, `$a`, `#{Globals.Object}`. The expression is compiled and evaluated on the server (it is
+// intentionally raw, not escaped — it IS Smalltalk source), then `referencesToObject:` finds the
+// literal frame. Interned literals (symbols, SmallIntegers, characters, specials, globals) match;
+// a fresh String/Array literal is a distinct object each compile and so matches nothing. A
+// malformed expression makes `execute` raise a compile error, which the caller handles.
+export function referencesToLiteral(
+  execute: QueryExecutor,
+  literalExpr: string,
+  environmentId: number = 0,
+): MethodSearchResult[] {
+  const code = `| methods stream limit classDict sl lit |
+lit := ${literalExpr}.
+methods := (ClassOrganizer new referencesToObject: lit).
+${methodSerialization(environmentId)}`;
+
+  return parseMethodSearchResults(execute(code));
+}
+
+// Methods that use a symbol as a DATA literal, NOT as a message send. `referencesToLiteral:` (and
+// `referencesToObject:`) find both — a selector send puts the symbol in the literal frame too — so
+// we subtract the senders. e.g. #size: ~2104 literal-frame refs, ~2090 senders → ~14 pure literal
+// uses. `symbolExpr` is a raw, compilable `#...` expression (evaluated on the server).
+export function literalSymbolReferences(
+  execute: QueryExecutor,
+  symbolExpr: string,
+  environmentId: number = 0,
+): MethodSearchResult[] {
+  const code = `| symLit lit sends methods stream limit classDict sl |
+symLit := ${symbolExpr}.
+lit := (ClassOrganizer new referencesToLiteral: symLit) at: 1.
+sends := (ClassOrganizer new sendersOf: symLit) at: 1.
+methods := lit reject: [:m | sends includes: m].
+${methodSerialization(environmentId)}`;
+
+  return parseMethodSearchResults(execute(code));
+}
+
+// Methods that contain the text as an actual STRING LITERAL (not merely somewhere in source — a
+// comment, a selector, a #symbol). We take the source-substring candidates (fast, indexed) and keep
+// only those whose literal frame holds a matching String (excluding Symbols). `text` is the raw
+// content (already unquoted by the caller).
+export function stringLiteralReferences(
+  execute: QueryExecutor,
+  text: string,
+  ignoreCase: boolean,
+  environmentId: number = 0,
+): MethodSearchResult[] {
+  const esc = escapeString(text);
+  const code = `| ic needle candidates methods stream limit classDict sl |
+ic := ${ignoreCase}.
+needle := ic ifTrue: ['${esc}' asLowercase] ifFalse: ['${esc}'].
+candidates := (ClassOrganizer new substringSearch: '${esc}' ignoreCase: ic) at: 1.
+methods := candidates select: [:m |
+  (m literals detect: [:l |
+    (l isKindOf: String) and: [l isSymbol not and: [
+      (ic ifTrue: [l asString asLowercase] ifFalse: [l asString]) includesString: needle]]]
+    ifNone: [nil]) notNil].
+${methodSerialization(environmentId)}`;
+
+  return parseMethodSearchResults(execute(code));
+}

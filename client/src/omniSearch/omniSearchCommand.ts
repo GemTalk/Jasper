@@ -10,8 +10,15 @@ import * as vscode from 'vscode';
 import { SessionManager, ActiveSession } from '../sessionManager';
 import { defaultQueryExecutorUsing, sendersOf, referencesToObject } from '../browserQueries';
 import { getAllClassNames } from '../queries/getAllClassNames';
+import { getAllGlobalNames } from '../queries/getAllGlobalNames';
+import { getAllClassCategories } from '../queries/getAllClassCategories';
 import { getDictionaryNames } from '../queries/getDictionaryNames';
 import { searchSelectors } from '../queries/searchSelectors';
+import {
+  searchMethodSource,
+  literalSymbolReferences,
+  stringLiteralReferences,
+} from '../queries/methodSearch';
 import { SystemBrowser } from '../systemBrowser';
 import { buildMethodUri } from '../gemstoneFileSystemProvider';
 import { readOmniConfig } from './omniConfig';
@@ -20,6 +27,10 @@ import { runOmniAction, OmniActionHandlers } from './omniActions';
 import { createClassesProvider } from './providers/classesProvider';
 import { createDictionariesProvider } from './providers/dictionariesProvider';
 import { createMethodsProvider } from './providers/methodsProvider';
+import { createGlobalsProvider } from './providers/globalsProvider';
+import { createSourceProvider } from './providers/sourceProvider';
+import { createLiteralsProvider } from './providers/literalsProvider';
+import { createCategoriesProvider } from './providers/categoriesProvider';
 import {
   createOmniController,
   OmniController,
@@ -75,6 +86,20 @@ export function buildOmniHandlers(): OmniActionHandlers {
       // symbol-list index and reveals it — a bare pane `.focus` would not select the dictionary).
       void vscode.commands.executeCommand('gemstone.explorer.revealDictionary', a.dictName);
     },
+    revealGlobal(a) {
+      // Jump to the class of the global's value (e.g. Transcript → its stream class) — more useful
+      // than landing in the whole dictionary. findClass resolves the class's home dict + reveals it.
+      void vscode.commands.executeCommand('gemstone.explorer.findClass', a.className);
+    },
+    revealCategory(a) {
+      // Select the category's home dictionary, then select + reveal the category node (and filter the
+      // classes pane to it) — not just land in the dictionary.
+      void vscode.commands.executeCommand(
+        'gemstone.explorer.revealCategory',
+        a.dictName,
+        a.category,
+      );
+    },
   };
 }
 
@@ -103,6 +128,16 @@ export function buildProviders(session: ActiveSession, enabled: readonly string[
       searchSelectors(exec, term, { limit, ignoreCase }),
     ),
     createDictionariesProvider(session.id, () => getDictionaryNames(exec)),
+    createGlobalsProvider(session.id, () => getAllGlobalNames(exec)),
+    createSourceProvider(session.id, (term, ignoreCase) =>
+      searchMethodSource(exec, term, ignoreCase),
+    ),
+    createLiteralsProvider(
+      session.id,
+      (symbolExpr) => literalSymbolReferences(exec, symbolExpr),
+      (text, ignoreCase) => stringLiteralReferences(exec, text, ignoreCase),
+    ),
+    createCategoriesProvider(session.id, () => getAllClassCategories(exec)),
   ];
   return all.filter((p) => enabled.includes(p.category.id));
 }

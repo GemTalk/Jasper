@@ -11,6 +11,8 @@ export interface OmniActionHandlers {
   openClass(action: ByKind<'openClass'>): void | Promise<void>;
   openMethod(action: ByKind<'openMethod'>): void | Promise<void>;
   revealDictionary(action: ByKind<'revealDictionary'>): void | Promise<void>;
+  revealGlobal(action: ByKind<'revealGlobal'>): void | Promise<void>;
+  revealCategory(action: ByKind<'revealCategory'>): void | Promise<void>;
 }
 
 function assertNever(x: never): never {
@@ -30,6 +32,12 @@ export async function runOmniAction(
       return;
     case 'revealDictionary':
       await handlers.revealDictionary(action);
+      return;
+    case 'revealGlobal':
+      await handlers.revealGlobal(action);
+      return;
+    case 'revealCategory':
+      await handlers.revealCategory(action);
       return;
     default:
       assertNever(action);

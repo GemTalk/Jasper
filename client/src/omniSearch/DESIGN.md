@@ -29,18 +29,24 @@ Global "search anything browsable" for the GemStone IDE — the Jasper answer to
    VS Code user to "feel at home" — QuickPick is that.
 
 2. **Provider-per-category model** (mirrors Spotter processors). `OmniProvider` = `{ id, label,
-icon, isEnabled, search(query, token) }`. Basic providers: **Classes, Methods, Dictionaries**.
-   Adding a category later (senders/implementors, commands, settings, globals) is a new provider —
-   no controller change. (An Open Editors provider shipped initially but was **dropped** — the open-tab
-   list is tiny, and VS Code's own Open Editors view already covers it, so filtering/searching it here
-   was noise.)
+icon, isEnabled, search(query, token) }`. Providers: **Classes, Methods, Dictionaries, Globals** in
+   the default fan-out, plus the **explicit-only** **Source, Literals, Categories** (see #3). Adding a
+   category is a new provider — no controller change. (An Open Editors provider shipped initially but
+   was **dropped** — the open-tab list is tiny and VS Code's own Open Editors view covers it.)
 
-3. **Load-once vs per-query providers** (performance — omni runs on every keystroke):
-   - _Classes_, _Dictionaries_: enumerate the stone **once** when the picker opens, then match
-     **client-side** on each keystroke (reuses the existing `getAllClassNames` / `getDictionaryNames`
-     approach that `Find Class` already uses — a proven, fast pattern).
+3. **Load-once vs per-query vs explicit-only providers** (performance — omni runs on every keystroke):
+   - _Classes_, _Dictionaries_, _Globals_: enumerate the stone **once** when the picker opens
+     (`getAllClassNames` / `getDictionaryNames` / `getAllGlobalNames`), then match **client-side**.
    - _Methods_: the selector space is too large to preload, so this provider queries the stone
      **per search term** (debounced, min query length), reusing the `methodSearch` machinery.
+   - **Explicit-only** categories (`OmniCategory.explicitOnly`) are **excluded from the all-scope
+     fan-out** — they run only when the user picks that scope button, so heavyweight work never fires
+     on a plain search:
+     - _Source_ — full method-source substring (`searchMethodSource`), per-keystroke-when-scoped.
+     - _Literals_ — user types a **compilable expression**; `referencesToLiteral` compiles it and
+       finds methods referencing that value (interned literals match; a fresh String won't).
+     - _Categories_ — class-category names; a whole-image scan (`getAllClassCategories`) so it
+       **lazy-loads on first search**, not on picker open.
 
 4. **Pluggable, savable match algorithm** (the issue asks for this). A pure matcher
    (`omniMatch.ts`) with modes `fuzzy` (subsequence, default) | `substring` | `prefix`, plus

@@ -9,7 +9,8 @@
 
 import { MatchMode } from './omniMatch';
 
-export type OmniCategoryId = 'classes' | 'methods' | 'dictionaries';
+export type OmniCategoryId =
+  'classes' | 'methods' | 'dictionaries' | 'globals' | 'source' | 'literals' | 'categories';
 
 export interface OmniCategory {
   id: OmniCategoryId;
@@ -17,6 +18,13 @@ export interface OmniCategory {
   label: string;
   /** VS Code codicon id (no `$(...)`), e.g. "symbol-class". Also the scope button's icon. */
   icon: string;
+  /** When true, this category is NOT part of the default "all" fan-out — it only runs when the user
+   *  explicitly scopes to it. For heavyweight searches (full method-source scan) that shouldn't fire
+   *  on every keystroke of a plain search. */
+  explicitOnly?: boolean;
+  /** Placeholder instruction shown while scoped here — teaches what to type (with an example) for
+   *  the explicit-only searches, which start a search rather than filter existing results. */
+  searchHint?: string;
 }
 
 /** Categories in display order. The order also drives the grouped result layout. */
@@ -24,6 +32,32 @@ export const OMNI_CATEGORIES: readonly OmniCategory[] = [
   { id: 'classes', label: 'Classes', icon: 'symbol-class' },
   { id: 'methods', label: 'Methods', icon: 'symbol-method' },
   { id: 'dictionaries', label: 'Dictionaries', icon: 'symbol-namespace' },
+  { id: 'globals', label: 'Globals', icon: 'symbol-variable' },
+  {
+    id: 'source',
+    label: 'Source',
+    icon: 'file-code',
+    explicitOnly: true,
+    searchHint: 'Type text to find inside method source',
+  },
+  {
+    id: 'literals',
+    label: 'Literals',
+    icon: 'symbol-constant',
+    explicitOnly: true,
+    // Finds LITERAL uses only (not senders / not source text): a #symbol used as data, or a 'string'
+    // literal. e.g. #at:put: as a literal, or the string 'no such element'.
+    searchHint:
+      "Type a #symbol or 'string' to find its literal uses, e.g. #at:put: or 'no such element'",
+  },
+  // Class categories are a whole-image scan to build; explicitOnly + lazy load keeps picker-open fast.
+  {
+    id: 'categories',
+    label: 'Categories',
+    icon: 'symbol-folder',
+    explicitOnly: true,
+    searchHint: 'Type a class-category name, e.g. Kernel-Objects',
+  },
 ];
 
 /** Category lookup by id (all ids are known at compile time, so this is total). */
@@ -46,7 +80,15 @@ export type OmniAction =
       environmentId: number;
       dictIndex: number;
     }
-  | { kind: 'revealDictionary'; sessionId: number; dictName: string };
+  | { kind: 'revealDictionary'; sessionId: number; dictName: string }
+  | { kind: 'revealGlobal'; sessionId: number; dictName: string; name: string; className: string }
+  | {
+      kind: 'revealCategory';
+      sessionId: number;
+      dictName: string;
+      dictIndex: number;
+      category: string;
+    };
 
 export interface OmniResult {
   categoryId: OmniCategoryId;

@@ -5,6 +5,9 @@ import {
   sendersOf,
   implementorsOf,
   referencesToObject,
+  referencesToLiteral,
+  literalSymbolReferences,
+  stringLiteralReferences,
   hierarchyImplementorsOf,
 } from '../methodSearch';
 
@@ -91,6 +94,40 @@ describe('referencesToObject', () => {
     const code = execute.mock.calls[0][0];
     expect(code).toContain('referencesToObject:');
     expect(code).toContain("objectNamed: #'MyGlobal'");
+  });
+});
+
+describe('referencesToLiteral', () => {
+  it('compiles the raw expression as the literal, then referencesToObject: on it', () => {
+    const execute = vi.fn<QueryExecutor>(() => '');
+    referencesToLiteral(execute, '#at:put:');
+    const code = execute.mock.calls[0][0];
+    expect(code).toContain('lit := #at:put:.');
+    expect(code).toContain('referencesToObject: lit');
+  });
+});
+
+describe('literalSymbolReferences', () => {
+  it('subtracts the senders from the literal-frame refs (data-literal uses only)', () => {
+    const execute = vi.fn<QueryExecutor>(() => '');
+    literalSymbolReferences(execute, '#size');
+    const code = execute.mock.calls[0][0];
+    expect(code).toContain('symLit := #size.');
+    expect(code).toContain('referencesToLiteral: symLit');
+    expect(code).toContain('sendersOf: symLit');
+    expect(code).toContain('reject:');
+  });
+});
+
+describe('stringLiteralReferences', () => {
+  it('filters source candidates to those holding a matching String literal (excludes symbols)', () => {
+    const execute = vi.fn<QueryExecutor>(() => '');
+    stringLiteralReferences(execute, 'no such element', true);
+    const code = execute.mock.calls[0][0];
+    expect(code).toContain('substringSearch:');
+    expect(code).toContain('m literals detect:');
+    expect(code).toContain('isSymbol not');
+    expect(code).toContain("'no such element'");
   });
 });
 

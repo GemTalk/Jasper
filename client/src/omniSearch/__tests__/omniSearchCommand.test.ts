@@ -19,4 +19,35 @@ describe('buildOmniHandlers', () => {
       'V8SplitDemo',
     );
   });
+
+  it('jumps a global to the class of its value, not to the dictionary', () => {
+    void buildOmniHandlers().revealGlobal({
+      kind: 'revealGlobal',
+      sessionId: 1,
+      dictName: 'Globals',
+      name: 'Transcript',
+      className: 'GsTerminalStream',
+    });
+
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+      'gemstone.explorer.findClass',
+      'GsTerminalStream',
+    );
+  });
+
+  it('reveals a class category via dict + path, not just the dictionary', () => {
+    void buildOmniHandlers().revealCategory({
+      kind: 'revealCategory',
+      sessionId: 1,
+      dictName: 'Globals',
+      dictIndex: 1,
+      category: 'Kernel-Objects',
+    });
+
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+      'gemstone.explorer.revealCategory',
+      'Globals',
+      'Kernel-Objects',
+    );
+  });
 });

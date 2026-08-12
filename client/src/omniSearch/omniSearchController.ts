@@ -20,6 +20,7 @@ import {
   CATEGORY_BY_ID,
   OMNI_CATEGORIES,
   OmniCancel,
+  OmniCategory,
   OmniCategoryId,
   OmniConfig,
   OmniProvider,
@@ -30,6 +31,10 @@ import { referenceRequestFor } from './references';
 
 export interface OmniQuickItem extends vscode.QuickPickItem {
   result?: OmniResult;
+  /** True on the synthetic "Load more…" row appended when a search fills its display cap. */
+  loadMore?: boolean;
+  /** True on the synthetic "Load all" row (jumps the cap to everything). */
+  loadAll?: boolean;
 }
 
 /** A result the reference pivot loaded: its breadcrumb title + the reference rows. */
@@ -52,29 +57,52 @@ export interface ScopeButton extends vscode.QuickInputButton {
 export function buildScopeButtons(
   enabled: readonly OmniCategoryId[],
   activeScope: OmniCategoryId | null,
-): ScopeButton[] {
-  const perCategory: ScopeButton[] = OMNI_CATEGORIES.filter((c) => enabled.includes(c.id)).map(
-    (c) => ({
-      iconPath: new vscode.ThemeIcon(c.icon),
-      tooltip: `Filter to ${c.label.toLowerCase()}`,
-      scopeId: c.id,
-    }),
-  );
-  if (activeScope === null) return perCategory;
-  const clear: ScopeButton = {
-    iconPath: new vscode.ThemeIcon('clear-all'),
-    tooltip: 'Clear filter — search everything',
-    scopeId: null,
-  };
-  return [clear, ...perCategory];
+): vscode.QuickInputButton[] {
+  const toButton = (c: OmniCategory): ScopeButton => ({
+    iconPath: new vscode.ThemeIcon(c.icon),
+    // Explicit-only categories START a search (you must pick them first); the rest FILTER the live
+    // results. The verb signals which is which, reinforced by the divider between the two groups.
+    tooltip: c.explicitOnly
+      ? `Search ${c.label.toLowerCase()}…`
+      : `Filter to ${c.label.toLowerCase()}`,
+    scopeId: c.id,
+  });
+  const cats = OMNI_CATEGORIES.filter((c) => enabled.includes(c.id));
+  const filters = cats.filter((c) => !c.explicitOnly).map(toButton);
+  const searches = cats.filter((c) => c.explicitOnly).map(toButton);
+
+  const buttons: vscode.QuickInputButton[] = [];
+  if (activeScope !== null) {
+    const clear: ScopeButton = {
+      iconPath: new vscode.ThemeIcon('clear-all'),
+      tooltip: 'Clear filter — search everything',
+      scopeId: null,
+    };
+    buttons.push(clear);
+  }
+  buttons.push(...filters);
+  // A non-interactive divider marking the boundary between the FILTER buttons (left) and the SEARCH
+  // buttons (right, which start a heavyweight search). QuickPick can't group title buttons, so this
+  // pseudo-button just draws the line; it has no scopeId, so a click on it is ignored.
+  if (filters.length > 0 && searches.length > 0) {
+    buttons.push({
+      iconPath: new vscode.ThemeIcon('kebab-vertical'),
+      tooltip: 'Left: filters · Right: searches — pick one to start a search',
+    });
+  }
+  buttons.push(...searches);
+  return buttons;
 }
 
-/** The enabled providers that are in scope: all of them, or just the scoped one. */
+/** The enabled providers that are in scope. Under the all-scope (`null`), explicit-only categories
+ *  (heavyweight, e.g. Source) are excluded so they don't run on every keystroke — they only fire when
+ *  the user scopes directly to them. When a scope is set, exactly that category runs. */
 export function providersInScope(
   providers: readonly OmniProvider[],
   scopeId: OmniCategoryId | null,
 ): OmniProvider[] {
-  return providers.filter((p) => scopeId === null || p.category.id === scopeId);
+  if (scopeId === null) return providers.filter((p) => !p.category.explicitOnly);
+  return providers.filter((p) => p.category.id === scopeId);
 }
 
 /** Run each in-scope provider and collect its results (each already ranked + capped). */
@@ -157,14 +185,28 @@ export interface OmniController {
   pivotActiveItem(): Promise<void>;
   /** Leave the reference view and restore the prior search (exposed for tests + the Back button). */
   exitPivot(): Promise<void>;
+  /** Toggle case-sensitive matching and re-run (exposed for tests + the case toggle button). */
+  toggleCase(): Promise<void>;
+  /** Grow the scoped result cap and re-run (exposed for tests + the "Load more…" row). */
+  loadMore(): Promise<void>;
+  /** Jump the result cap to everything and re-run (exposed for tests + the "Load all" row). */
+  loadAll(): Promise<void>;
   dispose(): void;
 }
+
+// "Load all" jumps the display cap here — big enough to mean "everything" in practice; the true
+// ceiling is each provider's own server fetch cap (a few hundred), so this never runs away.
+const LOAD_ALL_LIMIT = 100_000;
 
 const SCOPE_LABEL: Record<OmniCategoryId | 'all', string> = {
   all: 'everything',
   classes: 'classes',
   methods: 'methods',
   dictionaries: 'dictionaries',
+  globals: 'globals',
+  source: 'source',
+  literals: 'literals',
+  categories: 'categories',
 };
 
 /** Picker title reflecting the active scope, e.g. `Omni Search` (all) or `Omni Search — Methods`. */
@@ -183,18 +225,71 @@ export function createOmniController(deps: OmniControllerDeps): OmniController {
   // When non-null, the list is showing the references/senders of a result (a "pivot"), not a live
   // search. Typing filters within these rows; the Back button restores the prior search.
   let pivot: ReferenceView | null = null;
+  // Live case-sensitivity (seeded from settings, toggled by the case button).
+  let caseSensitive = config.caseSensitive;
+  // Per-search display cap; grows when the user clicks "Load more…", resets when the term changes.
+  let scopeLimit = config.maxResultsPerCategory;
+
+  // The effective config for a search run: the static settings, overlaid with the live case toggle
+  // and the current (possibly grown-by-"Load more") result cap.
+  const effectiveConfig = (): OmniConfig => ({
+    ...config,
+    caseSensitive,
+    maxResultsPerCategory: scopeLimit,
+  });
 
   // The gesture hints ride in the (greyed) placeholder, not the title: it teaches on open and then
   // disappears as soon as you type — once learned, it's out of the way, and the title stays focused
-  // on the filter. Alt+Enter is advertised here too (see the `gemstone.omniSearch.references` cmd).
-  const placeholderFor = (id: OmniCategoryId | null): string =>
-    `Search ${SCOPE_LABEL[id ?? 'all']}…   Enter to open · Alt+Enter for references`;
+  // on the filter. An explicit-only scope shows its own instruction (what to type + an example) so it
+  // reads as a search you start, not a filter over existing rows.
+  const placeholderFor = (id: OmniCategoryId | null): string => {
+    if (id) {
+      const hint = CATEGORY_BY_ID[id].searchHint;
+      if (hint) return `${hint}   ·   Enter to open`;
+    }
+    return `Search ${SCOPE_LABEL[id ?? 'all']}…   Enter to open · Alt+Enter for references`;
+  };
 
   const backButton = (): vscode.QuickInputButton & { back: true } => ({
     iconPath: new vscode.ThemeIcon('arrow-left'),
     tooltip: 'Back to search',
     back: true,
   });
+
+  const caseButton = (): vscode.QuickInputButton & { toggleCase: true } => ({
+    iconPath: new vscode.ThemeIcon('case-sensitive'),
+    tooltip: caseSensitive
+      ? 'Case-sensitive matching: ON — click to turn off'
+      : 'Case-sensitive matching: OFF — click to turn on',
+    toggleCase: true,
+  });
+
+  // The full title-bar button set for the search view: the scope buttons (+ divider) plus the
+  // case-sensitivity toggle on the end.
+  const searchButtons = (): vscode.QuickInputButton[] => [
+    ...buildScopeButtons(config.enabledCategories, scopeId),
+    caseButton(),
+  ];
+
+  // The two "load" rows shown when a search filled its cap. Both carry the running shown-count so the
+  // user sees how many are on screen; "Load all" jumps to everything (bounded by the server fetch
+  // caps) so they don't have to click "Load more" repeatedly.
+  const loadMoreItem = (shown: number): OmniQuickItem => ({
+    label: '$(chevron-down) Load more…',
+    detail: `Showing ${shown} — more available`,
+    alwaysShow: true,
+    loadMore: true,
+  });
+  const loadAllItem = (shown: number): OmniQuickItem => ({
+    label: '$(unfold) Load all',
+    detail: `Showing ${shown} — more available`,
+    alwaysShow: true,
+    loadAll: true,
+  });
+
+  // Append a visible case-sensitivity marker to a title when it's ON (the button alone gives no
+  // at-a-glance state). Nothing is added in the default OFF state, so the title stays clean.
+  const decorateTitle = (base: string): string => (caseSensitive ? `${base}   ·   Aa` : base);
 
   /** Client-side filter of the pivot rows by the typed term (empty term = show them all). */
   function filterPivot(rows: readonly OmniResult[], term: string): OmniResult[] {
@@ -203,7 +298,7 @@ export function createOmniController(deps: OmniControllerDeps): OmniController {
     for (const r of rows) {
       const m = match(term, r.label, {
         mode: config.matchMode,
-        caseSensitive: config.caseSensitive,
+        caseSensitive,
       });
       if (m) scored.push({ ...r, score: m.score, ranges: m.ranges });
     }
@@ -241,9 +336,18 @@ export function createOmniController(deps: OmniControllerDeps): OmniController {
     qp.busy = true;
     try {
       const inScope = providersInScope(providers, scopeId);
-      const results = await gatherResults(term, inScope, config, token);
+      const results = await gatherResults(term, inScope, effectiveConfig(), token);
       if (token.isCancelled) return; // a newer keystroke superseded this run
-      qp.items = buildItems(results);
+      const items = buildItems(results);
+      // Offer "Load more" whenever ANY category filled its cap (so it works in the all-scope too, not
+      // just a single scope). Growing the cap re-runs every in-scope provider with more headroom.
+      const perCategory = new Map<string, number>();
+      for (const r of results)
+        perCategory.set(r.categoryId, (perCategory.get(r.categoryId) ?? 0) + 1);
+      if ([...perCategory.values()].some((n) => n >= scopeLimit)) {
+        items.push(loadMoreItem(results.length), loadAllItem(results.length));
+      }
+      qp.items = items;
     } catch (e: unknown) {
       if (!token.isCancelled) {
         qp.items = [];
@@ -265,9 +369,29 @@ export function createOmniController(deps: OmniControllerDeps): OmniController {
 
   async function setScope(newScope: OmniCategoryId | null): Promise<void> {
     scopeId = newScope;
-    qp.title = titleForScope(scopeId);
+    scopeLimit = config.maxResultsPerCategory; // a fresh scope starts at the base cap
+    qp.title = decorateTitle(titleForScope(scopeId));
     // Rebuild so the Clear-filter button appears/disappears with the active scope.
-    qp.buttons = buildScopeButtons(config.enabledCategories, scopeId);
+    qp.buttons = searchButtons();
+    await refresh(lastRawValue);
+  }
+
+  async function toggleCase(): Promise<void> {
+    caseSensitive = !caseSensitive;
+    qp.title = decorateTitle(titleForScope(scopeId)); // show/hide the "Aa" marker
+    qp.buttons = searchButtons(); // refresh the toggle's tooltip
+    await refresh(lastRawValue);
+  }
+
+  async function loadMore(): Promise<void> {
+    // Grow the cap and re-run WITHOUT going through onDidChangeValue (which would reset it).
+    scopeLimit += config.maxResultsPerCategory;
+    await refresh(lastRawValue);
+  }
+
+  async function loadAll(): Promise<void> {
+    // Jump the cap to effectively everything (real ceiling is the providers' server fetch caps).
+    scopeLimit = LOAD_ALL_LIMIT;
     await refresh(lastRawValue);
   }
 
@@ -280,7 +404,7 @@ export function createOmniController(deps: OmniControllerDeps): OmniController {
       if (!view) return; // not referenceable — leave the current list as-is
       pivot = view;
       deps.onPivotChange?.(true);
-      qp.title = view.title; // breadcrumb, e.g. "Senders of printString"
+      qp.title = decorateTitle(view.title); // breadcrumb, e.g. "Senders of printString"
       qp.buttons = [backButton()];
       qp.value = ''; // fresh filter box over the reference rows
       qp.placeholder = 'Filter these results · ← back to search';
@@ -301,8 +425,8 @@ export function createOmniController(deps: OmniControllerDeps): OmniController {
     if (!pivot) return;
     pivot = null;
     deps.onPivotChange?.(false);
-    qp.title = titleForScope(scopeId);
-    qp.buttons = buildScopeButtons(config.enabledCategories, scopeId);
+    qp.title = decorateTitle(titleForScope(scopeId));
+    qp.buttons = searchButtons();
     qp.value = lastRawValue;
     await refresh(lastRawValue);
   }
@@ -312,11 +436,11 @@ export function createOmniController(deps: OmniControllerDeps): OmniController {
   };
 
   async function start(): Promise<void> {
-    qp.title = titleForScope(scopeId);
+    qp.title = decorateTitle(titleForScope(scopeId));
     qp.placeholder = placeholderFor(scopeId);
     qp.matchOnDescription = false;
     qp.matchOnDetail = false;
-    qp.buttons = buildScopeButtons(config.enabledCategories, scopeId);
+    qp.buttons = searchButtons();
 
     // Prime load-once providers concurrently (best-effort; a failing prime just yields no results).
     qp.busy = true;
@@ -331,11 +455,18 @@ export function createOmniController(deps: OmniControllerDeps): OmniController {
     );
     qp.busy = false;
 
-    track(qp.onDidChangeValue?.((v: string) => scheduleRefresh(v)));
+    track(
+      qp.onDidChangeValue?.((v: string) => {
+        scopeLimit = config.maxResultsPerCategory; // a new term starts back at the base cap
+        scheduleRefresh(v);
+      }),
+    );
     track(
       qp.onDidTriggerButton?.((button: vscode.QuickInputButton) => {
         if ('back' in button) void exitPivot();
+        else if ('toggleCase' in button) void toggleCase();
         else if ('scopeId' in button) void setScope((button as ScopeButton).scopeId);
+        // A button with none of those (the divider) is inert.
       }),
     );
     track(
@@ -346,6 +477,14 @@ export function createOmniController(deps: OmniControllerDeps): OmniController {
     track(
       qp.onDidAccept?.(() => {
         const picked = qp.selectedItems[0];
+        if (picked?.loadMore) {
+          void loadMore();
+          return;
+        }
+        if (picked?.loadAll) {
+          void loadAll();
+          return;
+        }
         if (picked?.result) {
           const r = picked.result;
           qp.hide();
@@ -369,5 +508,16 @@ export function createOmniController(deps: OmniControllerDeps): OmniController {
     qp.dispose();
   }
 
-  return { start, refresh, setScope, pivotToReferences, pivotActiveItem, exitPivot, dispose };
+  return {
+    start,
+    refresh,
+    setScope,
+    pivotToReferences,
+    pivotActiveItem,
+    exitPivot,
+    toggleCase,
+    loadMore,
+    loadAll,
+    dispose,
+  };
 }
