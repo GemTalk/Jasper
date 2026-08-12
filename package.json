@@ -257,6 +257,22 @@
             "description": "What to do after adding a dependency to the open Rowan project while a database is connected. Adding a dependency only writes files on disk; the database does not have the code until the project is loaded. Only applies while connected. The buttons on the prompt update this setting.",
             "scope": "window"
           },
+          "gemstone.autoStartDatabase": {
+            "type": "string",
+            "enum": [
+              "ask",
+              "always",
+              "never"
+            ],
+            "enumDescriptions": [
+              "When a login fails because its database is not running, offer to start the database and then connect.",
+              "Start a stopped database and connect, without asking.",
+              "Never offer to start a database; report the login failure as-is."
+            ],
+            "default": "ask",
+            "description": "What to do when a login fails because the database it connects to is not running. Only applies to local databases Jasper manages — a remote or hand-rolled stone is never started. Starting a database starts both its stone and its NetLDI. The buttons on the prompt update this setting.",
+            "scope": "application"
+          },
           "gemstone.displayItMode": {
             "type": "string",
             "enum": [
@@ -754,6 +770,11 @@
       {
         "command": "gemstone.installServerSupport",
         "title": "Install Server Support (Enhanced Inspector + Refactoring)",
+        "category": "GemStone"
+      },
+      {
+        "command": "gemstone.configureAutoStartDatabase",
+        "title": "Configure Database Auto-Start…",
         "category": "GemStone"
       },
       {
