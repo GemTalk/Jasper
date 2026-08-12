@@ -184,6 +184,22 @@ describe('parseRenameApplyResult', () => {
 
     expect(result.error).toBe('preview session expired');
   });
+
+  // This parser used to be a private copy that had drifted from the rest of the family
+  // (RB catalog C3): a missing id answered '' and `applied` was never clamped. Both now
+  // come from the shared envelope, so pin the normalized behaviour.
+  it("defaults a missing failure id to '?', like every other refactoring", () => {
+    const result = parseRenameApplyResult(
+      JSON.stringify({ applied: 1, failed: [{ label: 'Foo>>bar', error: 'boom' }] }),
+    );
+
+    expect(result.failed[0].id).toBe('?');
+  });
+
+  it('clamps a nonsensical applied count to 0 rather than passing it through', () => {
+    expect(parseRenameApplyResult(JSON.stringify({ applied: -3, failed: [] })).applied).toBe(0);
+    expect(parseRenameApplyResult(JSON.stringify({ applied: 'lots', failed: [] })).applied).toBe(0);
+  });
 });
 
 describe('changeLabel', () => {

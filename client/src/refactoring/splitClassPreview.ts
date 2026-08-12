@@ -10,6 +10,7 @@
  * is all-or-nothing, so every row is a CORE row (checked + disabled).
  */
 import { asCount } from './previewCounts';
+import { ApplyResult, parseApplyResultWith } from './previewEnvelope';
 
 export type SplitChangeKind = 'classAdd' | 'classDefinitionEdit' | 'classReparent' | 'methodAdd';
 
@@ -59,11 +60,8 @@ export interface StartSplitPreview {
   page: SplitPreviewPage;
 }
 
-export interface SplitApplyResult {
-  applied: number;
-  failed: { id: string; label: string; error: string }[];
+export interface SplitApplyResult extends ApplyResult {
   committed?: boolean;
-  error?: string;
 }
 
 /** The engine pre-flight: a decline reason (nil when viable), the new class name, the source, the
@@ -209,26 +207,7 @@ export function parsePage(json: string): SplitPreviewPage {
 }
 
 export function parseApplyResult(json: string): SplitApplyResult {
-  const parsed: unknown = JSON.parse(json);
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    throw new Error('Apply did not return a result envelope.');
-  }
-  const env = parsed as Record<string, unknown>;
-  const failed = Array.isArray(env.failed)
-    ? env.failed
-        .filter((f): f is Record<string, unknown> => typeof f === 'object' && f !== null)
-        .map((f) => ({
-          id: typeof f.id === 'string' ? f.id : '?',
-          label: typeof f.label === 'string' ? f.label : '?',
-          error: typeof f.error === 'string' ? f.error : 'unknown error',
-        }))
-    : [];
-  return {
-    applied: asCount(env.applied),
-    failed,
-    committed: env.committed === true,
-    error: typeof env.error === 'string' ? env.error : undefined,
-  };
+  return parseApplyResultWith(json, (env) => ({ committed: env.committed === true }));
 }
 
 /** A human label for a preview row. */

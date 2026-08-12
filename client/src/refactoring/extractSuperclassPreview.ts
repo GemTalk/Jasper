@@ -1,4 +1,5 @@
 import { asCount } from './previewCounts';
+import { ApplyResult, parseApplyResultWith } from './previewEnvelope';
 /**
  * Pure helpers for the extract-superclass refactorings (V6 insert superclass, V7 extract
  * superclass): parsing the engine's member-candidate classification, the pre-flight analysis,
@@ -75,11 +76,8 @@ export interface StartExtractSuperPreview {
   page: ExtractSuperPreviewPage;
 }
 
-export interface ExtractSuperApplyResult {
-  applied: number;
-  failed: { id: string; label: string; error: string }[];
+export interface ExtractSuperApplyResult extends ApplyResult {
   committed?: boolean;
-  error?: string;
 }
 
 /** The engine pre-flight: a decline reason (nil when viable), the new class name, the shared
@@ -253,26 +251,7 @@ export function parsePage(json: string): ExtractSuperPreviewPage {
 }
 
 export function parseApplyResult(json: string): ExtractSuperApplyResult {
-  const parsed: unknown = JSON.parse(json);
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    throw new Error('Apply did not return a result envelope.');
-  }
-  const env = parsed as Record<string, unknown>;
-  const failed = Array.isArray(env.failed)
-    ? env.failed
-        .filter((f): f is Record<string, unknown> => typeof f === 'object' && f !== null)
-        .map((f) => ({
-          id: typeof f.id === 'string' ? f.id : '?',
-          label: typeof f.label === 'string' ? f.label : '?',
-          error: typeof f.error === 'string' ? f.error : 'unknown error',
-        }))
-    : [];
-  return {
-    applied: asCount(env.applied),
-    failed,
-    committed: env.committed === true,
-    error: typeof env.error === 'string' ? env.error : undefined,
-  };
+  return parseApplyResultWith(json, (env) => ({ committed: env.committed === true }));
 }
 
 /** A human label for a preview row. */
