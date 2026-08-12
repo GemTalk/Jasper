@@ -1,4 +1,5 @@
 import { asCount } from './previewCounts';
+import { ApplyResult, parseApplyResultWith } from './previewEnvelope';
 /**
  * Pure helpers for the instance-variable structure refactorings (V2 push up, V3 push
  * down, V5 convert temporary to instance variable): parsing the engine's pre-flight
@@ -60,14 +61,11 @@ export interface StartIvarPreview {
   page: IvarPreviewPage;
 }
 
-export interface IvarApplyResult {
-  applied: number;
-  failed: { id: string; label: string; error: string }[];
+export interface IvarApplyResult extends ApplyResult {
   /** True when the apply committed (only the migrate / remove-old-history options commit). */
   committed?: boolean;
   /** Instances that failed to migrate (only meaningful when migrate was on). */
   migratedFailures?: number;
-  error?: string;
 }
 
 /** The engine pre-flight: a decline reason (nil when viable), the top edited class, and
@@ -185,27 +183,10 @@ export function parsePage(json: string): IvarPreviewPage {
 }
 
 export function parseApplyResult(json: string): IvarApplyResult {
-  const parsed: unknown = JSON.parse(json);
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    throw new Error('Apply did not return a result envelope.');
-  }
-  const env = parsed as Record<string, unknown>;
-  const failed = Array.isArray(env.failed)
-    ? env.failed
-        .filter((f): f is Record<string, unknown> => typeof f === 'object' && f !== null)
-        .map((f) => ({
-          id: typeof f.id === 'string' ? f.id : '?',
-          label: typeof f.label === 'string' ? f.label : '?',
-          error: typeof f.error === 'string' ? f.error : 'unknown error',
-        }))
-    : [];
-  return {
-    applied: asCount(env.applied),
-    failed,
+  return parseApplyResultWith(json, (env) => ({
     committed: env.committed === true,
     migratedFailures: asCount(env.migratedFailures),
-    error: typeof env.error === 'string' ? env.error : undefined,
-  };
+  }));
 }
 
 /** A human label for a preview row. */
