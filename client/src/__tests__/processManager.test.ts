@@ -436,7 +436,7 @@ describe('ProcessManager', () => {
       await expect(promise).rejects.not.toThrow(/exit code null/);
     });
 
-    it('explains a silent kill, since the process wrote nothing to go on', async () => {
+    it('blames memory pressure for a SIGKILL, which is what jetsam does', async () => {
       setPlatform('darwin');
       const proc = makeChildProcess(null, 'SIGKILL');
       mockSpawnReturn(proc);
@@ -445,7 +445,23 @@ describe('ProcessManager', () => {
       const promise = manager.startNetldi(makeDatabase());
       proc.finish();
 
-      await expect(promise).rejects.toThrow(/killed by the operating system|memory|log/i);
+      await expect(promise).rejects.toThrow(/memory/i);
+    });
+
+    // A signal is not evidence of memory pressure on its own: a SIGSEGV means a
+    // broken install and a SIGTERM means someone ran kill. Naming memory for
+    // those sends the reader looking in the wrong place.
+    it('names the signal without blaming memory when it is not a SIGKILL', async () => {
+      setPlatform('darwin');
+      const proc = makeChildProcess(null, 'SIGSEGV');
+      mockSpawnReturn(proc);
+
+      const manager = new ProcessManager(makeStorage());
+      const promise = manager.startNetldi(makeDatabase());
+      proc.finish();
+
+      await expect(promise).rejects.toThrow(/SIGSEGV/);
+      await expect(promise).rejects.not.toThrow(/memory/i);
     });
 
     // The Admin output channel is force-revealed on every start, which yanks

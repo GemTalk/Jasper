@@ -498,15 +498,23 @@ export class ProcessManager {
         // A signal-killed process reports a null exit code, so the plain
         // "exit code ${code}" wording degrades to the meaningless "exit code
         // null" — and it is usually killed before writing a word of output, so
-        // the message is all the user gets. macOS does this under memory
-        // pressure (jetsam), which is easy to mistake for a broken database.
+        // the message is all the user gets.
         if (signal) {
+          // Only SIGKILL earns the memory-pressure advice: macOS jetsam kills
+          // that way under pressure, and it is easy to mistake for a broken
+          // database. Any other signal — a SIGSEGV from a broken install, a
+          // SIGTERM from someone running kill — has its own cause, and pointing
+          // at memory would send the user looking in the wrong place.
+          const advice =
+            signal === 'SIGKILL'
+              ? `This is usually memory pressure rather than a problem with the database; ` +
+                `free some memory and try again. Check the log in the database's log ` +
+                `directory if it persists.`
+              : `Check the log in the database's log directory for what it was doing.`;
           reject(
             new Error(
-              `${label} was killed by the operating system (${signal}) before it could report ` +
-                `anything. This is usually memory pressure rather than a problem with the ` +
-                `database; free some memory and try again. Check the log in the database's ` +
-                `log directory if it persists.${output ? `\n${output}` : ''}`,
+              `${label} was killed by ${signal} before it could report anything. ` +
+                `${advice}${output ? `\n${output}` : ''}`,
             ),
           );
           return;

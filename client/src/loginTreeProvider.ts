@@ -73,21 +73,29 @@ export class LoginTreeProvider implements vscode.TreeDataProvider<LoginTreeNode>
     sessionManager?.onDidChangeSelection(() => this.refresh());
   }
 
-  // Logins with a connect attempt in flight, by position in getLogins(). Held
-  // here rather than derived because nothing else knows about an attempt that
-  // has not produced a session yet.
-  private connecting = new Set<number>();
+  // Logins with a connect attempt in flight, by identity. Held here rather than
+  // derived because nothing else knows about an attempt that has not produced a
+  // session yet — and by identity rather than by position because it outlives a
+  // render: starting a stone and its NetLDI takes seconds, the tree stays
+  // interactive throughout, and a login deleted or reordered meanwhile would
+  // otherwise leave the spinner on whichever login inherited the slot, with
+  // nothing able to clear it.
+  private connecting = new Set<string>();
 
   refresh(): void {
     this._onDidChangeTreeData.fire(undefined);
   }
 
   /** Show or hide the spinner on a login's row while a connect runs. */
-  setConnecting(index: number, connecting: boolean): void {
+  setConnecting(
+    login: Pick<GemStoneLogin, 'gs_user' | 'stone' | 'gem_host'>,
+    connecting: boolean,
+  ): void {
+    const key = loginLabel(login);
     if (connecting) {
-      this.connecting.add(index);
+      this.connecting.add(key);
     } else {
-      this.connecting.delete(index);
+      this.connecting.delete(key);
     }
     this.refresh();
   }
@@ -107,7 +115,7 @@ export class LoginTreeProvider implements vscode.TreeDataProvider<LoginTreeNode>
             l,
             i,
             sessionsForLogin(i, logins, sessions).length > 0,
-            this.connecting.has(i),
+            this.connecting.has(loginLabel(l)),
           ),
       );
     }

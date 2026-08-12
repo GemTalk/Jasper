@@ -86,6 +86,24 @@ describe('findDatabaseForLogin', () => {
     ).toBe(db);
   });
 
+  it('treats the IPv6 loopback as local', () => {
+    const db = makeDb('db-1', { stoneName: 'alpha', version: '3.7.5' });
+
+    expect(
+      findDatabaseForLogin(makeLogin({ stone: 'alpha', version: '3.7.5', gem_host: '::1' }), [db]),
+    ).toBe(db);
+  });
+
+  it('treats a bracketed IPv6 loopback as local', () => {
+    const db = makeDb('db-1', { stoneName: 'alpha', version: '3.7.5' });
+
+    expect(
+      findDatabaseForLogin(makeLogin({ stone: 'alpha', version: '3.7.5', gem_host: '[::1]' }), [
+        db,
+      ]),
+    ).toBe(db);
+  });
+
   it('returns undefined when no database has that stone name', () => {
     expect(
       findDatabaseForLogin(makeLogin({ stone: 'nope' }), [makeDb('db-1', { stoneName: 'alpha' })]),

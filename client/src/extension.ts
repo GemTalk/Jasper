@@ -148,6 +148,7 @@ import { ensureSelfSignedCert, trustCertCommand } from './tlsCert';
 import { ProcessTreeProvider, ProcessItem } from './processTreeProvider';
 import { OsConfigTreeProvider } from './sharedMemoryTreeProvider';
 import { ensureStonePreconditions } from './stonePreconditions';
+import { isLocalHost } from './databaseForLogin';
 import { runQuickSetup } from './quickSetup';
 import {
   isWindows,
@@ -1554,8 +1555,10 @@ export function activate(context: vscode.ExtensionContext) {
         // A connect is no longer just a login: it may start the stone and its
         // NetLDI first, which takes seconds, so the progress notification alone
         // is not enough to explain why nothing is happening.
+        // Copied to a const because `gciPath` is a `let`, and TypeScript widens
+        // it back to `string | undefined` inside the async closure below.
         const resolvedGciPath = gciPath;
-        treeProvider.setConnecting(item.index, true);
+        treeProvider.setConnecting(item.login, true);
         const connectingStatus = vscode.window.createStatusBarItem(
           vscode.StatusBarAlignment.Left,
           0,
@@ -1618,7 +1621,7 @@ export function activate(context: vscode.ExtensionContext) {
           vscode.window.showErrorMessage(`Login failed: ${msg}`);
           return;
         } finally {
-          treeProvider.setConnecting(item.index, false);
+          treeProvider.setConnecting(item.login, false);
           connectingStatus.dispose();
         }
 
@@ -1658,7 +1661,7 @@ export function activate(context: vscode.ExtensionContext) {
         return;
       }
       const host = session.login.gem_host;
-      if (host !== 'localhost' && host !== '127.0.0.1') {
+      if (!isLocalHost(host)) {
         vscode.window.showErrorMessage(
           'Serve Seaside currently supports a local stone (the server runs where the stone does).',
         );

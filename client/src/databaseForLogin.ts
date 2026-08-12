@@ -3,12 +3,23 @@ import { GemStoneDatabase } from './sysadminTypes';
 import { versionsMatch } from './processManager';
 
 /**
+ * True when a host name means this machine. `::1` counts: it is the IPv6
+ * loopback, and a login on it would otherwise read as remote and quietly lose
+ * the auto-start offer — the user would just see the original login failure
+ * again, with nothing explaining why. NRS spellings bracket the address, so
+ * both forms are accepted.
+ */
+export function isLocalHost(host: string): boolean {
+  return host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]';
+}
+
+/**
  * True when a login targets a stone on this machine. Only a local stone can be
  * started by Jasper — starting a remote one would mean running `startstone`
  * over there, which the extension has no way to do.
  */
 export function isLocalLogin(login: Pick<GemStoneLogin, 'gem_host'>): boolean {
-  return login.gem_host === 'localhost' || login.gem_host === '127.0.0.1';
+  return isLocalHost(login.gem_host);
 }
 
 /**
