@@ -1,11 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
-import * as path from 'path';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 
 import { useIntegrationTest } from '../../__tests__/useIntegrationTest';
 import { GciLibrary } from '../../gciLibrary';
 import * as q from '../../browserQueries';
-import { escapeString } from '../../queries/util';
 import {
   analyzePushMethod,
   startPushMethodPreview,
@@ -16,6 +14,7 @@ import { parseAnalysis, parseStartPreview, parseApplyResult } from '../pushMetho
 import type { ActiveSession } from '../../sessionManager';
 import { requireServerPluginFeature } from '../../__tests__/requireServerPluginFeature';
 import { pluginFeatures } from '../../serverPlugin/pluginFeatures';
+import { fileInEngineTestsExpr } from './support/refactoring';
 
 /**
  * Automatic GCI integration test for the push-up / push-down method (M7 / M8)
@@ -51,14 +50,6 @@ describe('push method up/down (integration)', () => {
       '((System myUserProfile symbolList objectNamed: #GsPushUpMethodRefactoring) notNil and: ' +
         '[(System myUserProfile symbolList objectNamed: #GsPushDownMethodRefactoring) notNil]) printString',
     ).trim() === 'true';
-
-  const engineTestsPayload = (): string =>
-    path.resolve(__dirname, '../../../../resources/refactoring/engine-tests.gs');
-
-  const fileInTests = (): string => {
-    const p = escapeString(engineTestsPayload());
-    return `[GsFileIn fromServerPath: '${p}'] on: Error do: [:e | GsFileIn fromPath: '${p}' on: #serverUtf8File to: nil].`;
-  };
 
   const BASE = 'PumItBase';
   const SUBA = 'PumItA';
@@ -114,7 +105,7 @@ describe('push method up/down (integration)', () => {
     requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
     const code = `| r |
-${fileInTests()}
+${fileInEngineTestsExpr()}
 r := (System myUserProfile symbolList objectNamed: #GsPushUpMethodRefactoringTest) suite run.
 (r failures size + r errors size) printString`;
 
@@ -125,7 +116,7 @@ r := (System myUserProfile symbolList objectNamed: #GsPushUpMethodRefactoringTes
     requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
     const code = `| r |
-${fileInTests()}
+${fileInEngineTestsExpr()}
 r := (System myUserProfile symbolList objectNamed: #GsPushDownMethodRefactoringTest) suite run.
 (r failures size + r errors size) printString`;
 

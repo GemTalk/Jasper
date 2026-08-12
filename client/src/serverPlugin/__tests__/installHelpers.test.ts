@@ -15,7 +15,7 @@ vi.mock('../../browserQueries', () => ({
 import { needsWsl } from '../../wslBridge';
 import { toLocalGemPath } from '../installHelpers';
 
-describe('toGemPath', () => {
+describe('toLocalGemPath', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
