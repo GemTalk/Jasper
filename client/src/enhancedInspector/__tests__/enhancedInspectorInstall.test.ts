@@ -8,8 +8,13 @@ vi.mock('../../browserQueries', () => ({
   executeFetchString: vi.fn(),
 }));
 
+vi.mock('../../wslBridge', () => ({
+  needsWsl: vi.fn(() => false),
+}));
+
 import { ActiveSession } from '../../sessionManager';
 import { executeFetchString } from '../../browserQueries';
+import { needsWsl } from '../../wslBridge';
 import {
   installEnhancedInspectorSupport,
   isEnhancedInspectorInstalled,
@@ -180,6 +185,24 @@ describe('installEnhancedInspectorSupport', () => {
     expect(result.message).toContain('GsEnhancedInspector');
     expect(commit).not.toHaveBeenCalled();
     expect(abort).toHaveBeenCalledTimes(1);
+  });
+
+  it('translates a Windows-style payload path to its WSL mount before it reaches the gem', async () => {
+    vi.mocked(needsWsl).mockReturnValueOnce(true);
+    const { session } = createMockSession();
+
+    await installEnhancedInspectorSupport(
+      session,
+      'D:\\a\\Jasper\\Jasper\\resources\\enhancedInspector',
+    );
+
+    const fileInCode = String(
+      executeFetchStringMock.mock.calls.find((c) =>
+        String(c[1]).includes('GsFileIn fromPath'),
+      )?.[1],
+    );
+    expect(fileInCode).toContain('/mnt/d/a/Jasper/Jasper/resources/enhancedInspector');
+    expect(fileInCode).not.toContain('D:\\');
   });
 
   it('files the payload in the loader dependency order', async () => {

@@ -5,8 +5,13 @@ vi.mock('../../browserQueries', () => ({
   checkRefactoringSupportAvailable: vi.fn(),
 }));
 
+vi.mock('../../wslBridge', () => ({
+  needsWsl: vi.fn(() => false),
+}));
+
 import { ActiveSession } from '../../sessionManager';
 import { executeFetchString, checkRefactoringSupportAvailable } from '../../browserQueries';
+import { needsWsl } from '../../wslBridge';
 import {
   installRefactoringSupport,
   isRefactoringSupportInstalled,
@@ -149,6 +154,29 @@ describe('installRefactoringSupport', () => {
       String(c[1]).includes('loadFromServerDir'),
     );
     expect(ranLoader).toBe(false);
+  });
+
+  it('translates a Windows-style payload path to its WSL mount before it reaches the gem', async () => {
+    vi.mocked(needsWsl).mockReturnValueOnce(true);
+    const { session } = createMockSession();
+
+    await installRefactoringSupport(session, 'D:\\a\\Jasper\\Jasper\\resources\\refactoring');
+
+    const loaderCode = String(
+      executeFetchStringMock.mock.calls.find((c) =>
+        String(c[1]).includes('loadFromServerDir'),
+      )?.[1],
+    );
+    expect(loaderCode).toContain('/mnt/d/a/Jasper/Jasper/resources/refactoring');
+    expect(loaderCode).not.toContain('D:\\');
+
+    const fileInCode = String(
+      executeFetchStringMock.mock.calls.find((c) => String(c[1]).includes('GsFileIn'))?.[1],
+    );
+    expect(fileInCode).toContain(
+      '/mnt/d/a/Jasper/Jasper/resources/refactoring/refactoring-loader.gs',
+    );
+    expect(fileInCode).not.toContain('D:\\');
   });
 
   it('rolls back and reports failure when the loader file-in raises', async () => {
