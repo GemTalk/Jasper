@@ -88,8 +88,6 @@ export interface StartPreview {
   page: PreviewPage;
 }
 
-/** The result of a server-side apply. */
-
 /** Parse one staged change object; throws on a malformed/unknown entry. */
 function parseChange(raw: unknown, i: number): MethodRenameChange {
   if (typeof raw !== 'object' || raw === null) {
@@ -191,8 +189,6 @@ export function parsePage(json: string): PreviewPage {
   }
   return parsePageObject(parsed as Record<string, unknown>);
 }
-
-/** Parse a server-side apply result. */
 
 /** A human label for a preview row: "Foo>>bar:baz:" or "Foo class>>bar:baz:". */
 export function methodChangeLabel(change: MethodRenameChange): string {

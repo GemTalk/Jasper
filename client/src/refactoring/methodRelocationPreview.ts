@@ -232,7 +232,6 @@ export function makeParsePage<C extends BaseMethodChange>(
   };
 }
 
-/** Parse an apply result. Identical across families. */
 export { parseApplyResult } from './previewEnvelope';
 
 /** The "Class[ class]>>selector" stem shared by every relocation row label. */

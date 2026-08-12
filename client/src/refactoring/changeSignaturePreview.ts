@@ -87,8 +87,6 @@ export interface StartPreview {
   page: PreviewPage;
 }
 
-/** The result of a server-side apply. */
-
 /** The pre-flight analysis of the method being edited: enough to pre-populate the
  *  signature editor's rows (current parts + arg names) without parsing on the
  *  client. `decline` is non-null when the method can't be analysed at all (absent /
@@ -209,8 +207,6 @@ export function parsePage(json: string): PreviewPage {
   }
   return parsePageObject(parsed as Record<string, unknown>);
 }
-
-/** Parse a server-side apply result. */
 
 /** Parse the pre-flight analysis envelope. Throws on a malformed payload; a bare
  *  error string (JSON.parse failure) surfaces as an error to the caller. */

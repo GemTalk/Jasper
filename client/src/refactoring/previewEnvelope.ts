@@ -19,6 +19,17 @@ export interface ApplyResult {
   error?: string;
 }
 
+/**
+ * Parse a server-side apply result. Throws only when the payload is not a JSON object
+ * (a malformed envelope is a bug, not a user-facing outcome); everything inside it is
+ * coerced rather than rejected — `applied` is clamped to a non-negative count, a
+ * non-array or malformed `failed` degrades to an empty list, and a missing field in a
+ * failure entry falls back to `'?'` / `'unknown error'`. A whole-apply failure the
+ * engine reports (an expired preview token, say) arrives as `error`, not as a throw.
+ *
+ * Most families reach this through a bare re-export, which carries no doc comment of
+ * its own — so this block is what their call sites see.
+ */
 export function parseApplyResult(json: string): ApplyResult {
   return parseApplyResultWith(json, () => ({}));
 }

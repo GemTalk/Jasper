@@ -60,21 +60,22 @@ export function parseRenamePreview(json: string): RenamePreview {
   return { token: env.token, changes: parseRenameChanges(JSON.stringify(env.changes)) };
 }
 
-/** The apply result: how many classes were re-versioned, and anything that
- *  failed to recompile onto its new class version. */
 /**
- * Structurally the family-wide envelope (RB catalog C3) — kept as a named alias so
- * rename-instVar call sites and their tests read unchanged.
+ * The apply result: how many classes were re-versioned, and anything that failed to
+ * recompile onto its new class version. Structurally the family-wide envelope, so it
+ * is a named alias (RB catalog C3) — call sites and their tests read unchanged.
  */
 export type RenameApplyResult = ApplyResult;
 
-/** Parse the engine's apply envelope, `{"applied":N,"failed":[..]}`. A malformed
- *  payload is reported as an error rather than silently read as success. */
 /**
- * Was a private copy that had DRIFTED from every other family: a missing failure `id`
- * defaulted to '' rather than '?', and `applied` was read with a raw number check rather
- * than `asCount`, so a negative or non-numeric count was never clamped to 0. Normalized
- * onto the shared parser (C3) — a deliberate behaviour change, pinned by tests.
+ * Parse the engine's apply envelope, `{"applied":N,"failed":[..]}`. A malformed payload
+ * is reported as an error rather than silently read as success; see `parseApplyResult`
+ * for exactly what is coerced.
+ *
+ * This was a private copy that had DRIFTED from every other family — a missing failure
+ * `id` defaulted to '' rather than '?', and `applied` was read with a raw number check
+ * rather than `asCount`, so a negative or non-numeric count was never clamped to 0. It
+ * is now the shared parser (C3), a deliberate behaviour change pinned by tests.
  */
 export const parseRenameApplyResult = parseApplyResult;
 
