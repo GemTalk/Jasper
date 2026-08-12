@@ -2450,7 +2450,7 @@ export function activate(context: vscode.ExtensionContext) {
       }
     }),
 
-    registerOmniSearch(sessionManager),
+    registerOmniSearch(sessionManager, context),
 
     vscode.commands.registerCommand('gemstone.findMethodInClass', () =>
       findMethodInClass(sessionManager),

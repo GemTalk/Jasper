@@ -289,11 +289,73 @@ export async function runOmniSearch(
   await controller.start();
 }
 
-export function registerOmniSearch(sessionManager: SessionManager): vscode.Disposable {
+/** globalState flag: the one-time "Shift+Enter opens GemStone Search" tip has been shown. */
+const SEARCH_TIP_SHOWN_KEY = 'gemstone.gemstoneSearchTipShown';
+
+export function registerOmniSearch(
+  sessionManager: SessionManager,
+  context?: vscode.ExtensionContext,
+): vscode.Disposable {
   // The bottom-panel view provider is registered up-front (before any session) and resolves its
   // session lazily; the command reveals it when `ui: "panel"` is selected.
   const viewProvider = new OmniSearchViewProvider(buildViewContextResolver(sessionManager));
+
+  // Discoverability clue #1 (persistent): a status-bar button that opens GemStone Search and, via its
+  // tooltip, teaches the Shift+Enter shortcut that works from anywhere in a session. Shown only while
+  // a session is active (the shortcut's own `when`).
+  const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+  status.text = '$(search-fuzzy) GemStone Search';
+  status.command = 'gemstone.omniSearch';
+  status.tooltip = new vscode.MarkdownString(
+    'Search classes, methods, globals, source, literals & categories.\n\nPress **Shift+Enter** from anywhere.',
+  );
+  const syncStatus = (): void => {
+    if (sessionManager.getSessions().length > 0) status.show();
+    else status.hide();
+  };
+
+  // Discoverability clue #2 (one-time): the first time a session becomes active, nudge the user with
+  // the shortcut in case the status bar goes unnoticed. Never repeats (globalState).
+  const maybeTip = (): void => {
+    if (!context || context.globalState.get<boolean>(SEARCH_TIP_SHOWN_KEY)) return;
+    if (sessionManager.getSessions().length === 0) return;
+    void context.globalState.update(SEARCH_TIP_SHOWN_KEY, true);
+    void vscode.window
+      .showInformationMessage(
+        'Tip: press Shift+Enter to open GemStone Search — find classes, methods, globals and more from anywhere.',
+        'Open now',
+      )
+      .then((pick) => {
+        if (pick === 'Open now') void vscode.commands.executeCommand('gemstone.omniSearch');
+      });
+  };
+
+  // Discoverability clue #3: switch to the GemStone Search panel the first time a session becomes
+  // active (a 0 -> active transition = a login, NOT a switch between existing sessions), so the search
+  // is right there ready to type. Only when the panel is the chosen UI (nothing to reveal otherwise).
+  let hadSession = sessionManager.getSessions().length > 0;
+  const onSelection = (): void => {
+    const nowActive = sessionManager.getSessions().length > 0;
+    syncStatus();
+    maybeTip();
+    if (nowActive && !hadSession) {
+      const ui = vscode.workspace
+        .getConfiguration('gemstone.omniSearch')
+        .get<string>('ui', 'panel');
+      // Defer the reveal: `selectSession` fires THIS event BEFORE it sets the `gemstone.hasActiveSession`
+      // context that gates the view's `when` clause, so focusing synchronously finds no view to reveal.
+      // A short delay lets the context propagate (and the login flow settle) before we switch tabs.
+      if (ui === 'panel') setTimeout(() => void viewProvider.focus(), 400);
+    }
+    hadSession = nowActive;
+  };
+
+  syncStatus();
+  maybeTip();
+
   return vscode.Disposable.from(
+    status,
+    sessionManager.onDidChangeSelection(onSelection),
     vscode.window.registerWebviewViewProvider(OMNI_VIEW_ID, viewProvider, {
       webviewOptions: { retainContextWhenHidden: true },
     }),
