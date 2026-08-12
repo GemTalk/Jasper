@@ -33,6 +33,9 @@ docs/**
 !docs/windows-wsl.md
 !docs/formatter.md
 
+# Vendor snapshots of GCI headers, for reference while developing — not shipped.
+vendor/**
+
 # Server-side Smalltalk source (the refactoring engine, its vendored AST, tests,
 # and build tooling). This is source-of-truth, not runtime: the extension files
 # the *generated* payloads under resources/refactoring/ (ast-core.gs, compat.gs,
