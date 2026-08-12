@@ -10,7 +10,11 @@ import { parseAnalysis, parseStartPreview, parseApplyResult } from '../instVarRe
 import type { ActiveSession } from '../../sessionManager';
 import { requireServerPluginFeature } from '../../__tests__/requireServerPluginFeature';
 import { pluginFeatures } from '../../serverPlugin/pluginFeatures';
-import { fileInEngineTestsExpr } from './support/refactoring';
+import {
+  fileInEngineTestsExpr,
+  userIndex as userIndexProbe,
+  hasIvar as hasIvarProbe,
+} from './support/refactoring';
 
 /**
  * Automatic GCI integration test for the add / remove instance-variable (V1) refactoring,
@@ -50,21 +54,12 @@ describe('add / remove instance variable (integration)', () => {
       '(System myUserProfile symbolList objectNamed: #GsInstVarRefactoring) notNil printString',
     ).trim() === 'true';
 
-  const userIndex = (): number =>
-    parseInt(
-      exec(
-        `| sl d | sl := System myUserProfile symbolList. ` +
-          `d := sl detect: [:x | x name = #'UserGlobals'] ifNone: [nil]. ` +
-          `(d ifNil: [0] ifNotNil: [sl indexOf: d]) printString`,
-      ),
-      10,
-    );
+  const userIndex = (): number => userIndexProbe(exec);
 
   const BASE = 'XIvItBase';
   const SUB = 'XIvItSub';
 
-  const hasIvar = (cls: string, name: string): boolean =>
-    exec(`(${cls} instVarNames includes: #${name}) printString`).trim() === 'true';
+  const hasIvar = (cls: string, name: string): boolean => hasIvarProbe(exec, cls, name);
   const includesSelector = (cls: string, sel: string): boolean =>
     exec(`(${cls} includesSelector: #${sel}) printString`).trim() === 'true';
 
