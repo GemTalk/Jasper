@@ -133,8 +133,19 @@
     ],
     "configuration": [
       {
-        "title": "Omni Search",
+        "title": "GemStone Search",
         "properties": {
+          "gemstone.omniSearch.ui": {
+            "type": "string",
+            "enum": ["spotter", "panel", "quickpick"],
+            "enumDescriptions": [
+              "Editor-tab Spotter: a webview in an editor tab with labeled scope tabs, a source-preview pane, own match highlighting, and an always-on case indicator.",
+              "Bottom-panel view (default): the same webview docked in the panel strip (next to Terminal/Output). Stays out of the way; results open in the editor area above it.",
+              "Phase-1 Quick Pick: the native VS Code picker with title-bar scope buttons."
+            ],
+            "default": "panel",
+            "markdownDescription": "Which GemStone Search experience to open: the **bottom panel** view (default), the editor-tab **Spotter**, or the classic **Quick Pick**."
+          },
           "gemstone.omniSearch.matchMode": {
             "type": "string",
             "enum": ["fuzzy", "substring", "prefix"],
@@ -192,10 +203,10 @@
           },
           "gemstone.omniSearch.methodMinQueryLength": {
             "type": "number",
-            "default": 3,
+            "default": 2,
             "minimum": 1,
             "maximum": 10,
-            "description": "Minimum characters before the Methods category queries the stone (method search hits the stone per keystroke)."
+            "description": "Minimum characters before the Methods category queries the stone (method search hits the stone per keystroke). Raise it if per-keystroke method search feels slow on a large stone; lower it (to 1) to search selectors from the first character."
           }
         }
       },
@@ -432,9 +443,24 @@
           "title": "GemStone Explorer",
           "icon": "resources/gemstone-browser.svg"
         }
+      ],
+      "panel": [
+        {
+          "id": "gemstoneOmniSearchPanel",
+          "title": "GemStone Search",
+          "icon": "$(search)"
+        }
       ]
     },
     "views": {
+      "gemstoneOmniSearchPanel": [
+        {
+          "id": "gemstoneOmniSearchView",
+          "name": "GemStone Search",
+          "type": "webview",
+          "when": "gemstone.hasActiveSession"
+        }
+      ],
       "gemstoneExplorer": [
         {
           "id": "gemstoneExplorerOpenEditors",
@@ -1048,7 +1074,7 @@
       },
       {
         "command": "gemstone.omniSearch",
-        "title": "Omni Search…",
+        "title": "GemStone Search…",
         "category": "GemStone",
         "icon": "$(search-fuzzy)"
       },

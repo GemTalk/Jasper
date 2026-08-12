@@ -8,7 +8,13 @@
  */
 import * as vscode from 'vscode';
 import { SessionManager, ActiveSession } from '../sessionManager';
-import { defaultQueryExecutorUsing, sendersOf, referencesToObject } from '../browserQueries';
+import {
+  defaultQueryExecutorUsing,
+  sendersOf,
+  referencesToObject,
+  getMethodSource,
+  getClassDefinition,
+} from '../browserQueries';
 import { getAllClassNames } from '../queries/getAllClassNames';
 import { getAllGlobalNames } from '../queries/getAllGlobalNames';
 import { getAllClassCategories } from '../queries/getAllClassCategories';
@@ -38,6 +44,8 @@ import {
   ReferenceView,
 } from './omniSearchController';
 import { referenceRequestFor, methodRowsToResults } from './references';
+import { OmniSearchPanel } from './omniSearchPanel';
+import { OmniSearchViewProvider, OmniViewContext, OMNI_VIEW_ID } from './omniSearchViewProvider';
 
 /** Context key that's true only while the Omni Search picker is open, so the Alt+Enter keybinding
  *  for references fires there and nowhere else. */
@@ -51,8 +59,19 @@ const OMNI_IN_PIVOT_CONTEXT = 'gemstone.omniSearchInPivot';
  *  highlighted row. Cleared when the picker hides. */
 let activeController: OmniController | undefined;
 
-/** The vscode/SystemBrowser side of activating a result. */
-export function buildOmniHandlers(): OmniActionHandlers {
+/** Where a result should open. The QuickPick passes nothing (open in the active group, the prior
+ *  behavior); the Spotter passes `Beside` + a `preserveFocus` flag so a result opens beside the
+ *  panel — optionally without stealing focus from the search field. */
+export interface OmniOpenOptions {
+  viewColumn?: vscode.ViewColumn;
+  preserveFocus?: boolean;
+  /** false → open a regular, persistent editor (not a throwaway preview tab). */
+  preview?: boolean;
+}
+
+/** The vscode/SystemBrowser side of activating a result. `openOptions` is threaded to the document
+ *  open so the Spotter can open beside itself; omitted → the classic active-group open. */
+export function buildOmniHandlers(openOptions?: OmniOpenOptions): OmniActionHandlers {
   return {
     openClass(a) {
       if (!SystemBrowser.navigateToClass(a.sessionId, a.dictName, a.className, a.dictIndex)) {
@@ -62,7 +81,7 @@ export function buildOmniHandlers(): OmniActionHandlers {
             `/${encodeURIComponent(a.className)}` +
             `/definition?dict=${a.dictIndex}`,
         );
-        void vscode.commands.executeCommand('gemstone.openDocument', uri);
+        void vscode.commands.executeCommand('gemstone.openDocument', uri, openOptions);
       }
     },
     openMethod(a) {
@@ -79,7 +98,7 @@ export function buildOmniHandlers(): OmniActionHandlers {
         // resolves by name (0 would be an invalid 1-based SymbolList index).
         dictIndex: a.dictIndex > 0 ? a.dictIndex : undefined,
       });
-      void vscode.commands.executeCommand('gemstone.openDocument', uri);
+      void vscode.commands.executeCommand('gemstone.openDocument', uri, openOptions);
     },
     revealDictionary(a) {
       // Cascade the Explorer to the named dictionary and select its row (the command resolves the
@@ -142,12 +161,104 @@ export function buildProviders(session: ActiveSession, enabled: readonly string[
   return all.filter((p) => enabled.includes(p.category.id));
 }
 
-export async function runOmniSearch(sessionManager: SessionManager): Promise<void> {
+/** Source text to preview for a result in the preview pane: a method's source, a class (or global's
+ *  class) definition. Reveal-only actions (dictionary / category) have no source → ''. Runs
+ *  synchronously against the session; the host wraps the call so a failure just shows no preview. */
+export function buildPreviewSource(session: ActiveSession): (result: OmniResult) => string {
+  return (result) => {
+    const a = result.action;
+    if (a.kind === 'openMethod') {
+      return getMethodSource(
+        session,
+        a.className,
+        a.isMeta,
+        a.selector,
+        a.environmentId,
+        a.dictIndex > 0 ? a.dictIndex : a.dictName,
+      );
+    }
+    if (a.kind === 'openClass') {
+      return getClassDefinition(session, a.className, a.dictIndex);
+    }
+    if (a.kind === 'revealGlobal') {
+      // Preview the class of the global's value (e.g. Transcript → its stream class definition).
+      return getClassDefinition(session, a.className);
+    }
+    return '';
+  };
+}
+
+/** A non-prompting resolver of the current session's Omni deps for the bottom-panel view — used when
+ *  the view lazily (re)builds its engine. Prefers the selected session; falls back to the sole
+ *  session; returns null (→ "log in" notice) when there's nothing to search. The view's activation
+ *  opens results normally (in the editor area above the docked panel), so it needs no beside/close. */
+export function buildViewContextResolver(
+  sessionManager: SessionManager,
+): () => Promise<OmniViewContext | null> {
+  return async () => {
+    const sessions = sessionManager.getSessions();
+    const session =
+      sessionManager.getSelectedSession() ?? (sessions.length === 1 ? sessions[0] : undefined);
+    if (!session) return null;
+    const config = readOmniConfig(vscode.workspace.getConfiguration('gemstone.omniSearch'));
+    return {
+      sessionId: session.id,
+      deps: {
+        providers: buildProviders(session, config.enabledCategories),
+        config,
+        resolveReferences: resolveReferencesUsing(session),
+        activate: (result) => runOmniAction(result.action, buildOmniHandlers()),
+        previewSource: buildPreviewSource(session),
+        onError: (message) => vscode.window.showErrorMessage(`Omni Search: ${message}`),
+      },
+    };
+  };
+}
+
+export async function runOmniSearch(
+  sessionManager: SessionManager,
+  viewProvider?: OmniSearchViewProvider,
+): Promise<void> {
+  // Which GemStone Search UI to open: the bottom-PANEL view (default), the editor-tab Spotter, or the
+  // Phase-1 QuickPick. The panel view resolves its own session lazily, so branch before resolveSession.
+  const ui = vscode.workspace.getConfiguration('gemstone.omniSearch').get<string>('ui', 'panel');
+  if (ui === 'panel' && viewProvider) {
+    await viewProvider.focus();
+    return;
+  }
+
   const session = await sessionManager.resolveSession();
   if (!session) return;
 
   const config = readOmniConfig(vscode.workspace.getConfiguration('gemstone.omniSearch'));
   const providers = buildProviders(session, config.enabledCategories);
+
+  if (ui === 'spotter') {
+    OmniSearchPanel.show({
+      providers,
+      config,
+      resolveReferences: resolveReferencesUsing(session),
+      // When pinned the Spotter stays open, so results open BESIDE it as a regular (non-preview)
+      // source editor (preserveFocus keeps you in the field for Ctrl+Enter); unpinned it behaves like
+      // the dialog and opens in the active group (a preview tab is fine — the dialog dismisses).
+      activate: (result, opts) =>
+        runOmniAction(
+          result.action,
+          buildOmniHandlers(
+            opts.beside
+              ? {
+                  viewColumn: vscode.ViewColumn.Beside,
+                  preserveFocus: opts.preserveFocus,
+                  preview: false,
+                }
+              : undefined,
+          ),
+        ),
+      previewSource: buildPreviewSource(session),
+      onError: (message) => vscode.window.showErrorMessage(`Omni Search: ${message}`),
+    });
+    return;
+  }
 
   const qp = vscode.window.createQuickPick<OmniQuickItem>();
   qp.ignoreFocusOut = false;
@@ -179,8 +290,16 @@ export async function runOmniSearch(sessionManager: SessionManager): Promise<voi
 }
 
 export function registerOmniSearch(sessionManager: SessionManager): vscode.Disposable {
+  // The bottom-panel view provider is registered up-front (before any session) and resolves its
+  // session lazily; the command reveals it when `ui: "panel"` is selected.
+  const viewProvider = new OmniSearchViewProvider(buildViewContextResolver(sessionManager));
   return vscode.Disposable.from(
-    vscode.commands.registerCommand('gemstone.omniSearch', () => runOmniSearch(sessionManager)),
+    vscode.window.registerWebviewViewProvider(OMNI_VIEW_ID, viewProvider, {
+      webviewOptions: { retainContextWhenHidden: true },
+    }),
+    vscode.commands.registerCommand('gemstone.omniSearch', () =>
+      runOmniSearch(sessionManager, viewProvider),
+    ),
     // Alt+Enter inside the picker: pivot to references/senders of the highlighted row.
     vscode.commands.registerCommand('gemstone.omniSearch.references', () =>
       activeController?.pivotActiveItem(),

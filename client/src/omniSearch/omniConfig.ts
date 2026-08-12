@@ -22,7 +22,11 @@ export const OMNI_DEFAULTS: OmniConfig = {
   enabledCategories: [...ALL_CATEGORY_IDS],
   maxResultsPerCategory: 20,
   debounceMs: 120,
-  methodMinQueryLength: 3,
+  // Methods hit the stone per keystroke, so we don't search selectors until the term is at least
+  // this long. 2 lets a short lead like "si" surface methods (so the lowercase-first ranking has
+  // methods to promote); 1-char selector scans across the whole image are too heavy, so they stay
+  // off. Raise this via settings if per-keystroke method search feels slow on a large stone.
+  methodMinQueryLength: 2,
 };
 
 function clampInt(v: unknown, min: number, max: number, fallback: number): number {

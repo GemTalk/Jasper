@@ -3346,11 +3346,35 @@ export class ExplorerController {
     const segment = categoryPath.split('-').pop() ?? categoryPath;
     const catItem = new ClassCategoryItem(segment, categoryPath, false);
     this.selectClassCategory(catItem);
+
+    // If the category isn't actually in this dictionary's loaded forest, say so — otherwise the jump
+    // silently appears to do nothing (the reported "strange spot").
+    if (
+      !this.allCategoryPaths().some((p) => p === categoryPath || p.startsWith(`${categoryPath}-`))
+    ) {
+      void vscode.window.showWarningMessage(
+        `Category "${categoryPath}" was not found in ${dictName}.`,
+      );
+      return;
+    }
+
+    // Surface the Class Categories view FIRST. When it lives in a collapsed/hidden sidebar,
+    // TreeView.reveal() can no-op — which is exactly how an Omni category jump looked like it landed
+    // nowhere (a flat dictionary reveal is less sensitive, so dictionary jumps still worked). Focusing
+    // the view makes the subsequent nested reveal land on the real node.
+    try {
+      await vscode.commands.executeCommand('gemstoneExplorerCategories.focus');
+    } catch {
+      /* the view id may be absent in some hosts — fall through to the best-effort reveal */
+    }
     try {
       await this.views?.dict.reveal(new DictItem(dictName, idx + 1), { select: true });
       await this.views?.category.reveal(catItem, { select: true, focus: true, expand: true });
-    } catch {
-      /* ignore */
+    } catch (e) {
+      // No longer swallowed silently: log it so a future failure is diagnosable from the GCI log.
+      logWarning(
+        `Omni category reveal failed for ${dictName}/${categoryPath}: ${e instanceof Error ? e.message : String(e)}`,
+      );
     }
   }
 

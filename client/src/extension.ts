@@ -1235,10 +1235,24 @@ export function activate(context: vscode.ExtensionContext) {
 
   // ── Commands ───────────────────────────────────────────
   context.subscriptions.push(
-    vscode.commands.registerCommand('gemstone.openDocument', async (uri: vscode.Uri) => {
-      const doc = await vscode.workspace.openTextDocument(uri);
-      await vscode.window.showTextDocument(doc, { preview: true });
-    }),
+    vscode.commands.registerCommand(
+      'gemstone.openDocument',
+      async (
+        uri: vscode.Uri,
+        opts?: { viewColumn?: vscode.ViewColumn; preserveFocus?: boolean; preview?: boolean },
+      ) => {
+        const doc = await vscode.workspace.openTextDocument(uri);
+        // `opts` is optional and back-compatible: existing callers pass only the uri and get the
+        // prior behavior (preview in the active group). Omni Search's Spotter passes a column +
+        // preserveFocus so a result opens BESIDE the panel, and (when pinned) preview:false so it's
+        // a regular, persistent source editor rather than a throwaway preview tab.
+        await vscode.window.showTextDocument(doc, {
+          preview: opts?.preview ?? true,
+          viewColumn: opts?.viewColumn,
+          preserveFocus: opts?.preserveFocus,
+        });
+      },
+    ),
 
     vscode.commands.registerCommand('gemstone.addLogin', () => {
       // eslint-disable-next-line @typescript-eslint/no-floating-promises -- FIXME: unhandled floating promise; needs investigation to decide await vs. void vs. .catch before this rule is enabled repo-wide

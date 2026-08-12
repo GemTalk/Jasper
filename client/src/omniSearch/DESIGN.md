@@ -111,6 +111,45 @@ New shared query (if needed) lives under `client/src/queries/` per repo conventi
 - **#387 items 1–5 (funnel=filter, magnifier=find, wording):** the "find" affordance #387 wants to
   free up is the same entry point #377 adds. Kept out of this branch; noted for the #377/#387 work.
 
+## Phase 2 — the webview "Spotter" (`ui: spotter`, default)
+
+Phase 2 replaces the QuickPick CHROME with a webview panel while keeping the exact search behaviour.
+The setting **`gemstone.omniSearch.ui`** switches between `spotter` (default) and `quickpick` so the
+two can be A/B compared; the command/keybinding (`gemstone.omniSearch`, Shift+Enter) is unchanged.
+
+- **`omniEngine.ts`** — the search behaviour extracted from the QuickPick controller as a pure,
+  `vscode`-free engine (scope, case, load-more/all, count, reference pivot → serialisable
+  `OmniViewData`). Reused by the panel; the QuickPick controller is untouched. Unit-tested.
+- **`omniSearchPanel.ts`** — the `vscode` shell: panel lifecycle, HTML/CSS, and the message pump
+  between the webview and the engine + injected activation/preview callbacks (built stone-bound by
+  the command layer). One panel at a time; opens in an editor tab (VS Code has no floating-modal
+  webview — that Pharo-Spotter float stays the QuickPick's domain).
+- **`omniSearchView.js`** — the webview DOM (read at runtime, jsdom-tested like the other `*View.js`):
+  labeled scope **tabs**, a **flat relevance-ranked** row list (see below), OUR case-correct
+  **highlighting** (`<mark>`), an always-on **case indicator** chip, a **source-preview pane** (fills
+  as the active row moves — the per-item "hover" a QuickPick can't do), a **clear (×)** button, a
+  **pin (📌)** toggle, and an elegant footer **count + Load more/all** (not synthetic list rows). The
+  cluttered field-hover gesture hint is intentionally NOT reproduced.
+
+Behaviour decisions (Eric's review of the first cut):
+
+- **Dialog, not a persistent tab.** Unpinned (default) the panel closes on focus-out and on picking
+  a result — the same "click away and it's gone" feel as the QuickPick. The **📌 pin** keeps it open
+  as a tab for people who always want it up (and switches activation to open-beside). It still renders
+  in the editor area — VS Code has no floating-modal webview — but *behaves* like a dialog.
+- **Flat, globally relevance-ranked results — no category grouping.** Typing "foo" should surface the
+  closest "foo" first regardless of kind, so `buildView` ranks every result together by match score.
+  Each row wears a small **category tag** (Class / Method / Global / …) so you still see what it is.
+  (Grouping/dividers were tried and dropped; re-grouping later is a pure view concern.)
+- **Scroll resets to the top** on a fresh query / clear / scope / case change, but NOT on Load-more.
+- **Activation:** unpinned Enter opens in the active group and dismisses the Spotter; pinned, Enter
+  opens beside and Ctrl+Enter opens beside keeping the field focused. Alt+Enter → references; ←/Esc →
+  back/close; the × clears without closing.
+
+Task status against the pinned Phase-2 plan: **1 (webview)**, **2 (own highlights)**, **4 (case
+indicator)** done; **3 (hover)** delivered as a preview pane; **5 (count)** shows an exact count once
+Load-all makes it exact, else `N+` (a true pre-count query stays a follow-up).
+
 ## Deferred / follow-ups (explicitly NOT in this issue)
 
 - Phase-2 **webview Spotter** (labeled filter-button row, inspector preview, screenshots' look).

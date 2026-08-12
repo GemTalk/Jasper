@@ -120,7 +120,7 @@ describe('literalSymbolReferences', () => {
 });
 
 describe('stringLiteralReferences', () => {
-  it('filters source candidates to those holding a matching String literal (excludes symbols)', () => {
+  it('filters source candidates to those holding the EXACT String literal (excludes symbols)', () => {
     const execute = vi.fn<QueryExecutor>(() => '');
     stringLiteralReferences(execute, 'no such element', true);
     const code = execute.mock.calls[0][0];
@@ -128,6 +128,10 @@ describe('stringLiteralReferences', () => {
     expect(code).toContain('m literals detect:');
     expect(code).toContain('isSymbol not');
     expect(code).toContain("'no such element'");
+    // Exact equality (not includesString), so 'name' matches only the literal 'name' — not
+    // 'className' / 'rename' / etc.
+    expect(code).toContain('= needle');
+    expect(code).not.toContain('includesString: needle');
   });
 });
 

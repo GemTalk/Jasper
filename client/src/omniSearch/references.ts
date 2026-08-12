@@ -60,7 +60,9 @@ export function methodRowsToResults(
   return rows.map((r) => ({
     categoryId,
     label: `${r.className}${r.isMeta ? ' class' : ''}>>${r.selector}`,
-    description: r.category ? `${r.dictName} · ${r.category}` : r.dictName,
+    // Home dictionary only — the method protocol/category is omitted to keep long Class>>selector
+    // rows from truncating (Eric's ask M); it added width for little value.
+    description: r.dictName,
     score: 0,
     ranges: [],
     action: {

@@ -34,6 +34,15 @@ describe('omniMatch — fuzzy (default)', () => {
     ]);
   });
 
+  it('prefers a contiguous run over a scattered subsequence that grabs a stray early char (N)', () => {
+    // Greedy-leftmost matches the `c` in "Announcements", missing the exact "Core"; a contiguous
+    // occurrence must win so the exact segment outranks a scattered start-anchored hit.
+    const r = match('Core', 'Announcements-Core-GemStone', opts('fuzzy'));
+    expect(r?.ranges).toEqual([[14, 18]]); // the real "Core" run, not [6, 15, 16, 17]
+    const ranked = rank('Core', ['Collections-Streams', 'Announcements-Core-GemStone'], 'fuzzy');
+    expect(ranked[0]).toBe('Announcements-Core-GemStone');
+  });
+
   it('ranks a camelCase-initials / word-start match above a scattered mid-word one', () => {
     // 'oc' should prefer OrderedCollection (O…C word starts) over a scattered hit like 'Document'.
     const ranked = rank('oc', ['Document', 'OrderedCollection'], 'fuzzy');

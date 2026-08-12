@@ -113,7 +113,7 @@ describe('methodRowsToResults', () => {
     const results = methodRowsToResults(rows, 7);
 
     expect(results.map((r) => r.label)).toEqual(['Array>>do:', 'Array class>>with:']);
-    expect(results[0].description).toBe('Globals · enumerating');
+    expect(results[0].description).toBe('Globals'); // home dictionary only — no method category
     expect(results[0].action).toMatchObject({
       kind: 'openMethod',
       sessionId: 7,

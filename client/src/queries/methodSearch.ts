@@ -191,6 +191,10 @@ export function stringLiteralReferences(
   environmentId: number = 0,
 ): MethodSearchResult[] {
   const esc = escapeString(text);
+  // substringSearch is only a fast candidate pre-filter (methods whose source text contains the
+  // characters); the literal-frame test is EXACT so `'name'` finds methods that use the literal
+  // 'name' itself — not every string that merely CONTAINS "name" (className, filename, rename…),
+  // which flooded the results and left nothing for the preview highlight to match.
   const code = `| ic needle candidates methods stream limit classDict sl |
 ic := ${ignoreCase}.
 needle := ic ifTrue: ['${esc}' asLowercase] ifFalse: ['${esc}'].
@@ -198,7 +202,7 @@ candidates := (ClassOrganizer new substringSearch: '${esc}' ignoreCase: ic) at: 
 methods := candidates select: [:m |
   (m literals detect: [:l |
     (l isKindOf: String) and: [l isSymbol not and: [
-      (ic ifTrue: [l asString asLowercase] ifFalse: [l asString]) includesString: needle]]]
+      (ic ifTrue: [l asString asLowercase] ifFalse: [l asString]) = needle]]]
     ifNone: [nil]) notNil].
 ${methodSerialization(environmentId)}`;
 

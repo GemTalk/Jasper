@@ -106,11 +106,34 @@ function matchSubstring(q: string, t: string): number[] | null {
 }
 
 /**
- * Greedy left-to-right subsequence match. Predictable and cheap; good enough for the basic impl.
- * (A DP optimum could pick a tighter later run, but greedy-leftmost with word-start/contiguous
- * bonuses gives the expected Quick-Open ordering for identifier-like targets.)
+ * A CONTIGUOUS occurrence of `q` in `t` (a real substring), preferring one that begins at a word
+ * boundary — returns its index run, or null if `q` isn't a substring. This runs BEFORE the greedy
+ * subsequence so an exact run always wins: greedy-leftmost otherwise grabs a stray early character
+ * (the `c` in "Colle**c**tions" / "Announ**c**ements") and misses a clean later "Core", letting a
+ * scattered match that happens to start at index 0 outrank an exact mid-string one.
+ */
+function contiguousIndices(q: string, t: string): number[] | null {
+  let firstAt = -1;
+  let at = t.indexOf(q);
+  while (at >= 0) {
+    if (isWordStart(t, at)) {
+      return Array.from({ length: q.length }, (_, i) => at + i); // word-start run — the best kind
+    }
+    if (firstAt < 0) firstAt = at;
+    at = t.indexOf(q, at + 1);
+  }
+  return firstAt < 0 ? null : Array.from({ length: q.length }, (_, i) => firstAt + i);
+}
+
+/**
+ * Fuzzy subsequence match. First prefers a contiguous occurrence (a real substring, see
+ * `contiguousIndices`) so exact runs rank above scattered matches; only when `q` is not a substring
+ * does it fall back to a greedy left-to-right subsequence (predictable and cheap).
  */
 function matchFuzzy(q: string, t: string): number[] | null {
+  const contiguous = contiguousIndices(q, t);
+  if (contiguous) return contiguous;
+
   const indices: number[] = [];
   let ti = 0;
   for (const qc of q) {

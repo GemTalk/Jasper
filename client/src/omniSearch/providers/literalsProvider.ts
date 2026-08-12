@@ -4,7 +4,8 @@
  *   - a **symbol** `#at:put:` → `literalSymbolReferences` = literal-frame refs MINUS senders, so only
  *     the methods that use `#at:put:` as data (a selector send is excluded);
  *   - a **string** `'error'` → `stringLiteralReferences` = source-substring candidates filtered to
- *     those whose literal frame actually holds a matching String (excludes comments/selectors).
+ *     those whose literal frame holds that String EXACTLY (so `'name'` finds the literal 'name', not
+ *     every string containing "name" like 'className'; excludes comments/selectors).
  * Anything else (a bare number, a character — immediates that aren't in the literal frame) is rejected
  * up front (shows nothing; the scoped placeholder tells the user to type `#symbol` or `'string'`).
  *

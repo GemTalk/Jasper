@@ -9,7 +9,7 @@
  */
 import { SelectorSearchResult } from '../../queries/searchSelectors';
 import { CATEGORY_BY_ID, OmniConfig, OmniProvider, OmniResult } from '../omniTypes';
-import { match, compareMatches } from '../omniMatch';
+import { match } from '../omniMatch';
 
 /** Runs the bounded selector search against the stone. Injected so the provider is stone-free. */
 export type SelectorSearchRunner = (
@@ -55,7 +55,9 @@ export function createMethodsProvider(
         out.push({
           categoryId: 'methods',
           label,
-          description: r.category ? `${r.dictName} · ${r.category}` : r.dictName,
+          // Just the home dictionary — NOT the method protocol/category, which ate row width and
+          // truncated long Class>>selector labels for little value (Eric's ask M).
+          description: r.dictName,
           score: m.score,
           ranges: m.ranges.map(([s, e]) => [s + shift, e + shift] as [number, number]),
           action: {
@@ -71,9 +73,16 @@ export function createMethodsProvider(
           },
         });
       }
-      out.sort((a, b) =>
-        compareMatches({ score: a.score, label: a.label }, { score: b.score, label: b.label }),
-      );
+      // Rank by match score, but break ties between same-scored selectors (e.g. many `withAll:`
+      // implementors) alphabetically by class name so the capped page — and each "Load more" page —
+      // is a predictable A→Z list rather than shortest-label-first. Mirrors the engine's final sort.
+      out.sort((a, b) => {
+        if (a.score !== b.score) return b.score - a.score;
+        const ac = a.action.kind === 'openMethod' ? a.action.className : a.label;
+        const bc = b.action.kind === 'openMethod' ? b.action.className : b.label;
+        const byClass = ac.localeCompare(bc);
+        return byClass !== 0 ? byClass : a.label.localeCompare(b.label);
+      });
       return out.slice(0, cfg.maxResultsPerCategory);
     },
   };

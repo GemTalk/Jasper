@@ -288,7 +288,7 @@ describe('methodsProvider', () => {
     );
     const add = results.find((r) => r.label === 'OrderedCollection>>add:');
     expect(add).toBeDefined();
-    expect(add?.description).toBe('Globals · adding');
+    expect(add?.description).toBe('Globals'); // home dictionary only — no method category
     expect(add?.action).toMatchObject({ kind: 'openMethod', selector: 'add:', isMeta: false });
   });
 
