@@ -140,6 +140,7 @@ vi.mock('../browserQueries', () => ({
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
+import { uriFsPath } from './support/uri';
 import * as debug from '../debugQueries';
 import * as queries from '../browserQueries';
 import {
@@ -918,7 +919,7 @@ describe('DebuggerPanel', () => {
       const opened = vi
         .mocked(vscode.workspace.openTextDocument)
         .mock.calls.at(-1)![0] as vscode.Uri;
-      expect(opened.fsPath).toBe('/Users/me/.jasper/stacks/x.txt');
+      expect(opened.fsPath).toBe(uriFsPath('/Users/me/.jasper/stacks/x.txt'));
       expect(vscode.window.showTextDocument).toHaveBeenCalledWith(
         expect.anything(),
         expect.objectContaining({ preview: false }),
@@ -3854,7 +3855,7 @@ describe('DebuggerPanel', () => {
 
     it('keeps the Create button suppressed once a create is underway (re-detect returns it)', async () => {
       const panel = openWithDnu();
-      expect(initPayload(panel).dnu).toBeTruthy(); // shown initially
+      expect(initPayload(panel).dnu).toBeDefined(); // shown initially
       sendMessage(panel, { command: 'createDnuMethod' });
       await flush();
       // A refresh while editing must NOT re-offer the button (method-in-progress).
@@ -3903,7 +3904,7 @@ describe('DebuggerPanel', () => {
         (f: { receiverClass?: string }) => f.receiverClass === 'JasperDebugDemo',
       );
       expect(selfFrames.length).toBeGreaterThan(0);
-      for (const f of selfFrames) expect(f.overridable).toBeFalsy();
+      for (const f of selfFrames) expect(f.overridable).toBe(false);
     });
 
     it('opens a new-method template for the receiver class + frame selector, with banner help (no init)', async () => {
@@ -4169,7 +4170,7 @@ describe('DebuggerPanel', () => {
       });
       const payload = initPayload(openPanel());
       expect(payload.subclassResp).toBeUndefined();
-      expect(payload.dnu).toBeTruthy();
+      expect(payload.dnu).toBeDefined();
     });
 
     it('QuickPicks the chain BOUNDED at the abstract definer, then opens a stub', async () => {
@@ -4325,7 +4326,7 @@ describe('DebuggerPanel', () => {
         (f: { receiverClass?: string }) => f.receiverClass === 'JasperMakerBase class',
       );
       expect(selfFrames.length).toBeGreaterThan(0);
-      for (const f of selfFrames) expect(f.overridable).toBeFalsy();
+      for (const f of selfFrames) expect(f.overridable).toBe(false);
     });
 
     it('implementInReceiver opens a CLASS-side new-method template for a metaclass receiver', async () => {

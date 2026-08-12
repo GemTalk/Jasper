@@ -1,5 +1,5 @@
 import { QueryExecutor } from './types';
-import { escapeString, splitLines } from './util';
+import { splitLines, dictLookupExpr } from './util';
 
 export interface ClassCategoryEntry {
   className: string;
@@ -15,10 +15,7 @@ export function getClassesWithCategory(
   execute: QueryExecutor,
   dict: number | string,
 ): ClassCategoryEntry[] {
-  const dictExpr =
-    typeof dict === 'number'
-      ? `System myUserProfile symbolList at: ${dict}`
-      : `System myUserProfile symbolList objectNamed: #'${escapeString(dict)}'`;
+  const dictExpr = dictLookupExpr(dict);
   const code = `| ws dict |
 dict := ${dictExpr}.
 dict ifNil: [^ ''].

@@ -26,6 +26,7 @@ The `typescript` devDependency range is a separate, compiler-version concern rat
    That release is the new floor; note its bundled Node version.
 2. Update all of these together — they encode the same runtime floor and are a **coordinated set, not independent knobs**. A partial bump lets the type checker or bundler assume APIs that don't exist on the shipped runtime floor:
    - `engines.vscode` and `engines.node` (root `package.json`)
+   - `devEngines.runtime` (root `package.json`) — mirrors `engines.node`; a partial bump desyncs it. `devEngines.packageManager`, alongside it, pins the *npm* floor instead — a separate, dev-toolchain-only concern that this document does not govern, but with an invariant this list still has to protect: that floor must stay ≤ the npm bundled by `.nvmrc`'s Node, or every setup path (contributor and CI alike) needs an explicit `npm i -g` step. Bumping `.nvmrc` down (or the `devEngines.packageManager` floor up) can break that silently — and if it holds, re-pin the global `npm install -g npm@…` calls in the CI floor job and `acceptance/Dockerfile` to whatever npm the new `.nvmrc` bundles
    - root `@types/node`
    - `client/package.json`'s `@types/vscode`
    - `tsconfig.base.json`'s `target` and `lib` (copy the values from the matching Node-version preset in [tsconfig/bases](https://github.com/tsconfig/bases) — see above for why we copy rather than `extends`)

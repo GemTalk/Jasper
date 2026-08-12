@@ -163,6 +163,65 @@ removeallclassmethods GsExtractMethodRefactoring
 
 doit
 | cls |
+cls := Object subclass: 'GsExtractSuperclassRefactoring'
+  instVarNames: #('environment' 'anchorClass' 'newName' 'dictNameOrNil' 'siblingNames' 'hoistMethods' 'hoistInstVars' 'sharedParent' 'extractedClasses' 'newClass' 'changeSet' 'analysisDone' 'decline' 'oldToNew')
+  classVars: #()
+  classInstVars: #()
+  poolDictionaries: #()
+  inDictionary: GsRefactoring.
+cls category: 'Refactoring-Core'.
+cls comment: '
+Insert a new common superclass (V6) and, optionally, hoist shared members up into it (V7),
+without committing.
+
+V6 Insert Superclass slides a NEW, empty class in between one class and its current superclass:
+`Object -> Dog` becomes `Object -> New -> Dog`. V7 Extract Superclass does the same above a chosen
+set of SIBLING classes and pulls their common instance variables and methods up into the new
+parent, removing the duplication. V6 is the degenerate case of V7 -- extract above ONE class,
+hoisting ZERO members -- so ONE engine serves both, driven from two thin client commands.
+
+The apply core is a direct generalisation of GsInstVarStructureRefactoring (the same
+reversion-by-newVersionOf: machinery, because GemStone has no reparent/addInstVarName: primitive)
+plus ONE new change kind, #classAdd, for the brand-new superclass (which has no prior class
+history). For every extracted class and its descendant subtree, top-down, apply creates a new
+class version, copies its methods forward, and re-parents it -- the extracted classes onto the NEW
+superclass, their descendants onto their own freshly-versioned ancestor. Hoisted instance
+variables move onto the new superclass (and off each extracted class); hoisted methods are added to
+the new superclass and skipped when copying each extracted class forward.
+
+Shared parent (S) = the anchor class''s immediate superclass. The extracted set = the anchor plus
+the chosen siblings, which MUST all be immediate subclasses of S (extract only inserts above
+same-parent siblings, keeping the new class''s own superclass unambiguous). Sibling names resolve
+within S''s own subclasses first, so a same-named class in another dictionary is never grabbed.
+
+Member CLASSIFICATION (candidateMethods / candidateInstVars) drives the client''s checklist but not
+the apply: a method common+identical across the extracted set is ''identical'' (pre-checked); common
+but differing is ''divergent''; present in only some is ''partial''; one that sends super, or touches
+an instance variable not being hoisted (and not on S), or a class/pool variable below S, is
+''unhoistable''. Only identical members are pre-checked, and only when there is a sibling to
+deduplicate against -- so V6 (no siblings) defaults to hoisting nothing (a pure insert). A member
+the client nonetheless asks to hoist which the engine finds unhoistable is a global decline (it
+would not compile on the new superclass).
+
+Preconditions (global declines that empty the change set, surfaced in the preview banner): the
+anchor has no superclass (nothing to slot the new class under); a class named newName already
+exists; a chosen sibling does not resolve or is not an immediate subclass of S; a hoisted ivar is
+not the anchor''s own ivar, or already collides on S; a hoisted method is missing on the anchor or
+is unhoistable.
+
+Apply is ALL-OR-NOTHING (the class creation, the reparents and the hoists must move together), so
+the client offers no per-change deselection and applyDeselected: ignores any deselection. Existing
+INSTANCES are not migrated (they keep their prior version, standard GemStone class evolution).
+Building compiles nothing and commits nothing; the apply compiles in the stone but NEVER commits.
+'.
+true.
+%
+
+removeallmethods GsExtractSuperclassRefactoring
+removeallclassmethods GsExtractSuperclassRefactoring
+
+doit
+| cls |
 cls := Object subclass: 'GsExtractTemporaryRefactoring'
   instVarNames: #('environment' 'definingClass' 'selector' 'isMeta' 'selStart' 'selStop' 'newName' 'replaceAll' 'changeSet' 'analysisDone' 'targetNode' 'declSeq' 'declineString')
   classVars: #()
@@ -954,6 +1013,48 @@ true.
 
 removeallmethods GsRenameTemporaryRefactoring
 removeallclassmethods GsRenameTemporaryRefactoring
+
+doit
+| cls |
+cls := Object subclass: 'GsSplitClassRefactoring'
+  instVarNames: #('environment' 'sourceClass' 'newName' 'dictNameOrNil' 'extractIvars' 'componentIvarName' 'movableSelectors' 'changeSet' 'analysisDone' 'decline' 'newClass' 'oldToNew')
+  classVars: #()
+  classInstVars: #()
+  poolDictionaries: #()
+  inDictionary: GsRefactoring.
+cls category: 'Refactoring-Core'.
+cls comment: '
+Split Class (V8): extract a cohesive subset of a class''s own instance variables -- and every
+method that uses them -- out into a brand-new collaborator class, leaving the source class holding
+a reference to an instance of it (a has-a relationship). Classic Fowler Extract Class, without
+committing.
+
+Given a source class S and a chosen extract set E of its OWN instance variables, the MOVABLE
+methods are S''s instance methods that reference an E ivar. Apply creates a new class N (an Object
+subclass) carrying E and the movable methods; reversions S to drop E, add an ivar `n` (the
+decapitalised new class name) and a lazy accessor `n ^n ifNil: [n := N new]`, and -- keeping S''s
+external API unchanged -- a delegating stub `foo ^self n foo` for every moved method; and re-parents
+S''s descendant subtree onto the freshly-versioned S (the same reversion-by-newVersionOf: machinery
+GsExtractSuperclassRefactoring / GsInstVarStructureRefactoring use, plus the #classAdd change kind
+for the new class). No NEW change kind is invented.
+
+CLEAN-CUT preconditions (global declines that empty the change set, surfaced in the preview banner),
+so the MVP only splits a self-contained subset -- the delegation then makes it behavior-preserving:
+a movable method also touches a retained ivar, or sends super, or self-sends a method that stays
+behind; a descendant references an extracted ivar; the derived component ivar name already exists on
+S; newName is not a valid class name or already exists; the extract set is empty or names a
+non-own ivar. (A retained method can never touch E -- touching E makes it movable by definition --
+and a retained method that CALLS a moved one is fine, because every moved method is delegated.)
+
+Apply is ALL-OR-NOTHING; applyDeselected: ignores deselection. Existing INSTANCES are not migrated
+(they keep their prior version). Building compiles nothing and commits nothing; apply compiles in
+the stone but NEVER commits.
+'.
+true.
+%
+
+removeallmethods GsSplitClassRefactoring
+removeallclassmethods GsSplitClassRefactoring
 
 ! Class implementations
 
@@ -2718,6 +2819,823 @@ category: 'paginated preview'
 classmethod: GsExtractMethodRefactoring
 clearToken: token
 	"Drop a finished preview from SessionTemps."
+	SessionTemps current removeKey: token asSymbol ifAbsent: [].
+	^'ok'
+%
+
+category: 'private'
+method: GsExtractSuperclassRefactoring
+setEnvironment: anEnvironment class: anAnchor name: aName dict: aDictOrNil siblings: sibs methods: methods instVars: ivars
+	environment := anEnvironment.
+	anchorClass := anAnchor.
+	newName := aName asString.
+	dictNameOrNil := aDictOrNil isNil ifTrue: [nil] ifFalse: [aDictOrNil asString].
+	siblingNames := (sibs ifNil: [#()]) collect: [:e | e asString].
+	hoistMethods := (methods ifNil: [#()]) collect: [:e | e asSymbol].
+	hoistInstVars := (ivars ifNil: [#()]) collect: [:e | e asString].
+	analysisDone := false
+%
+
+category: 'accessing'
+method: GsExtractSuperclassRefactoring
+environment
+	^environment
+%
+
+category: 'accessing'
+method: GsExtractSuperclassRefactoring
+extractedClasses
+	self ensureAnalysis.
+	^extractedClasses
+%
+
+category: 'accessing'
+method: GsExtractSuperclassRefactoring
+sharedParent
+	self ensureAnalysis.
+	^sharedParent
+%
+
+category: 'private'
+method: GsExtractSuperclassRefactoring
+sourceOf: aSelector in: aClass
+	| m |
+	m := aClass compiledMethodAt: aSelector environmentId: 0 otherwise: nil.
+	^m isNil ifTrue: [nil] ifFalse: [m sourceString]
+%
+
+category: 'private'
+method: GsExtractSuperclassRefactoring
+categoryOf: aSelector in: aClass
+	^((aClass categoryOfSelector: aSelector environmentId: 0) ifNil: ['as yet unclassified']) asString
+%
+
+category: 'private - analysis'
+method: GsExtractSuperclassRefactoring
+ensureAnalysis
+	analysisDone ifFalse: [
+		analysisDone := true.
+		[self computeAnalysis] on: Error do: [:e |
+			decline := 'The extract-superclass could not be analysed: ', e messageText]]
+%
+
+category: 'private - analysis'
+method: GsExtractSuperclassRefactoring
+computeAnalysis
+	"Resolve the shared parent S and the extracted set, reject the global preconditions, then
+	 validate the requested hoist sets. Sets decline (nil when viable), sharedParent and
+	 extractedClasses."
+	decline := nil.
+	extractedClasses := OrderedCollection new.
+	sharedParent := anchorClass superclass.
+	sharedParent isNil ifTrue: [
+		^decline := 'Cannot extract a superclass above ', anchorClass name asString, ': it has no superclass.'].
+	(environment classNamed: newName) notNil ifTrue: [
+		^decline := 'Cannot extract superclass ', newName, ': a class of that name already exists.'].
+	extractedClasses add: anchorClass.
+	siblingNames do: [:nm | | sib |
+		sib := self resolveSibling: nm.
+		sib isNil ifTrue: [
+			^decline := 'Cannot extract superclass: ', nm, ' is not a subclass of ', sharedParent name asString, '.'].
+		sib == anchorClass ifFalse: [
+			(extractedClasses includes: sib) ifFalse: [extractedClasses add: sib]]].
+	self validateHoistInstVars.
+	decline notNil ifTrue: [^decline].
+	self validateHoistMethods
+%
+
+category: 'private - analysis'
+method: GsExtractSuperclassRefactoring
+resolveSibling: aName
+	"The immediate subclass of the shared parent named aName -- resolved within S's OWN
+	 subclasses first (lineage-safe), so a same-named class in another dictionary is never
+	 grabbed. nil if no immediate subclass of S has that name."
+	^(sharedParent subclasses ifNil: [#()])
+		detect: [:c | c name asString = aName]
+		ifNone: [nil]
+%
+
+category: 'private - analysis'
+method: GsExtractSuperclassRefactoring
+validateHoistInstVars
+	"Every hoisted ivar must be the anchor's OWN ivar, must not already be defined on S (a
+	 double declaration once the new class -- a child of S -- declares it), and must not be OWNED
+	 BY A DESCENDANT of any extracted class.
+
+	 That last one is why this walks downwards. Hoisting puts the name on the new superclass, so
+	 every descendant inherits it; a descendant that also declares the name itself would be
+	 re-versioned with a duplicate declaration and GemStone rejects it. Without this check the
+	 rejection surfaced from applyClassChange: PART-WAY THROUGH the apply, leaving the new class
+	 created and some reparents done -- the half-applied state the user then has to abort. The
+	 class comment sells these as global declines that empty the change set, so it belongs here."
+	| own supAll |
+	own := environment ownInstVarNamesOf: anchorClass.
+	supAll := environment allInstVarNamesOf: sharedParent.
+	hoistInstVars do: [:v |
+		(own includes: v) ifFalse: [
+			^decline := 'Cannot hoist instance variable ', v, ': it is not declared in ', anchorClass name asString, '.'].
+		(supAll includes: v) ifTrue: [
+			^decline := 'Cannot hoist instance variable ', v, ': ', sharedParent name asString, ' already defines it.'].
+		(self descendantDeclaring: v) ifNotNil: [:owner |
+			^decline := 'Cannot hoist instance variable ', v, ': ', owner name asString, ' already declares it.']]
+%
+
+category: 'private - analysis'
+method: GsExtractSuperclassRefactoring
+descendantDeclaring: anIvarName
+	"The first descendant of an extracted class that declares anIvarName as its OWN instance
+	 variable, or nil. The extracted classes themselves are skipped -- the anchor is supposed to
+	 own the name (it is what gets hoisted), and a sibling losing its own copy is the point."
+	extractedClasses do: [:cls |
+		(environment descendantsOf: cls) do: [:d |
+			((extractedClasses includes: d) not
+				and: [(environment ownInstVarNamesOf: d) includes: anIvarName])
+					ifTrue: [^d]]].
+	^nil
+%
+
+category: 'private - analysis'
+method: GsExtractSuperclassRefactoring
+validateHoistMethods
+	"Every hoisted method must be implemented by the anchor and be hoistable onto the new
+	 superclass given the instance variables ACTUALLY being hoisted (plus whatever S provides)."
+	| visible |
+	visible := self visibleIvarSymbolsWith: hoistInstVars.
+	hoistMethods do: [:sel |
+		(anchorClass includesSelector: sel) ifFalse: [
+			^decline := 'Cannot hoist #', sel asString, ': it is not defined in ', anchorClass name asString, '.'].
+		(self hoistabilityReasonFor: sel visibleIvars: visible) ifNotNil: [:reason |
+			^decline := reason]]
+%
+
+category: 'private - analysis'
+method: GsExtractSuperclassRefactoring
+visibleIvarSymbolsWith: anIvarList
+	"The instance variables an ivar-list would make VISIBLE on the new superclass: that list
+	 plus everything S already provides, as a Set of Symbols."
+	| visible |
+	visible := Set new.
+	anIvarList do: [:v | visible add: v asSymbol].
+	(environment allInstVarNamesOf: sharedParent) do: [:v | visible add: v asSymbol].
+	^visible
+%
+
+category: 'private - analysis'
+method: GsExtractSuperclassRefactoring
+hoistabilityReasonFor: aSelector visibleIvars: visibleSet
+	"nil if the anchor's #aSelector can be hoisted onto the new superclass given visibleSet (the
+	 instance variables that will be reachable there); otherwise a reason. A method is
+	 unhoistable when it sends super (its meaning depends on the class's superclass, which changes
+	 when the home moves up), accesses an instance variable not in visibleSet, or references a
+	 class/pool variable declared only below S -- in each case it would not compile on the new
+	 superclass. Mirrors push-up's checks."
+	| src tree accessed missing sharedBelow refNames badShared |
+	src := self sourceOf: aSelector in: anchorClass.
+	src isNil ifTrue: [^'Cannot hoist #', aSelector asString, ': it is not defined in ', anchorClass name asString, '.'].
+	tree := [RBParser parseMethod: src] on: Error do: [:e | nil].
+	(tree notNil and: [self tree: tree referencesName: 'super']) ifTrue: [
+		^'Cannot hoist #', aSelector asString, ': it sends super, whose meaning depends on the class''s superclass.'].
+	accessed := [(anchorClass compiledMethodAt: aSelector environmentId: 0 otherwise: nil) instVarsAccessed] on: Error do: [:e | #()].
+	missing := accessed reject: [:v | visibleSet includes: v asSymbol].
+	missing isEmpty ifFalse: [
+		^'Cannot hoist #', aSelector asString, ': it uses instance variable(s) not available on the new superclass (',
+			(self commaList: (missing collect: [:v | v asString])), ').'].
+	sharedBelow := self sharedVarsBelowParent.
+	sharedBelow isEmpty ifFalse: [
+		refNames := Set new.
+		tree ifNotNil: [tree nodesDo: [:n | n isVariable ifTrue: [refNames add: n name asSymbol]]].
+		badShared := sharedBelow select: [:v | refNames includes: v].
+		badShared isEmpty ifFalse: [
+			^'Cannot hoist #', aSelector asString, ': it uses class/pool variable(s) not defined on the new superclass (',
+				(self commaList: ((badShared asSortedCollection: [:a :b | a <= b]) asArray collect: [:v | v asString])), ').']].
+	^nil
+%
+
+category: 'private - analysis'
+method: GsExtractSuperclassRefactoring
+sharedVarsBelowParent
+	"Class-variable + pool-variable names visible to the anchor but NOT to S -- a hoisted method
+	 referencing any of these would not compile on the new class (a child of S)."
+	| below |
+	below := self sharedVarNamesOf: anchorClass.
+	(self sharedVarNamesOf: sharedParent) do: [:v | below remove: v ifAbsent: []].
+	^below
+%
+
+category: 'private - analysis'
+method: GsExtractSuperclassRefactoring
+sharedVarNamesOf: aClass
+	| names |
+	names := Set new.
+	([aClass allClassVarNames] on: Error do: [:e | #()]) do: [:n | names add: n asSymbol].
+	([aClass sharedPools] on: Error do: [:e | #()]) do: [:pool | pool keysDo: [:k | names add: k asSymbol]].
+	^names
+%
+
+category: 'private - analysis'
+method: GsExtractSuperclassRefactoring
+tree: aTree referencesName: aName
+	aTree nodesDo: [:n | (n isVariable and: [n name = aName]) ifTrue: [^true]].
+	^false
+%
+
+category: 'private'
+method: GsExtractSuperclassRefactoring
+commaList: aCollection
+	^aCollection inject: '' into: [:acc :s | acc isEmpty ifTrue: [s] ifFalse: [acc, ', ', s]]
+%
+
+category: 'private'
+method: GsExtractSuperclassRefactoring
+spaceList: aCollection
+	^aCollection inject: '' into: [:acc :s | acc isEmpty ifTrue: [s asString] ifFalse: [acc, ' ', s asString]]
+%
+
+category: 'preconditions'
+method: GsExtractSuperclassRefactoring
+decline
+	self ensureAnalysis.
+	^decline
+%
+
+category: 'classification'
+method: GsExtractSuperclassRefactoring
+candidateMethods
+	"Classified method hoist candidates across the extracted set E = anchor + siblings. A
+	 candidate is a selector the ANCHOR implements (instance side). Answers an OrderedCollection
+	 of Arrays {selector, kindSymbol, reasonStringOrNil}: #unhoistable (super/foreign var),
+	 #identical (every class in E implements it byte-identically), #divergent (every class in E
+	 implements it but a source differs), or #partial (only some of E implement it)."
+	| result visible |
+	self ensureAnalysis.
+	result := OrderedCollection new.
+	decline notNil ifTrue: [^result].
+	"Classify methods OPTIMISTICALLY: assume the identical instance variables (the ones checked
+	 by default) will be hoisted too, so a shared accessor reads as hoistable rather than being
+	 flagged for an ivar that will in fact travel up with it. Apply-time validation uses the
+	 ACTUAL chosen ivar set, so an inconsistent selection (hoist the accessor, not the ivar) still
+	 declines."
+	visible := self visibleIvarSymbolsWith: self identicalCandidateIvarNames.
+	(anchorClass selectors asSortedCollection: [:a :b | a asString <= b asString]) do: [:sel | | reason anchorSrc all differs |
+		reason := self hoistabilityReasonFor: sel visibleIvars: visible.
+		reason notNil
+			ifTrue: [result add: (Array with: sel with: #unhoistable with: reason)]
+			ifFalse: [
+				anchorSrc := self sourceOf: sel in: anchorClass.
+				all := extractedClasses allSatisfy: [:c | c includesSelector: sel].
+				all
+					ifFalse: [result add: (Array with: sel with: #partial with: nil)]
+					ifTrue: [
+						differs := extractedClasses anySatisfy: [:c | (self sourceOf: sel in: c) ~= anchorSrc].
+						result add: (Array with: sel with: (differs ifTrue: [#divergent] ifFalse: [#identical]) with: nil)]]].
+	^result
+%
+
+category: 'classification'
+method: GsExtractSuperclassRefactoring
+candidateInstVars
+	"Classified instance-variable hoist candidates: each OWN ivar of the anchor, as Arrays
+	 {name, kindSymbol}: #unhoistable (S already defines it), #identical (owned by every class in
+	 E), or #partial (owned by only some of E)."
+	| result |
+	self ensureAnalysis.
+	result := OrderedCollection new.
+	decline notNil ifTrue: [^result].
+	(environment ownInstVarNamesOf: anchorClass) do: [:v | | all |
+		((environment allInstVarNamesOf: sharedParent) includes: v)
+			ifTrue: [result add: (Array with: v with: #unhoistable)]
+			ifFalse: [
+				all := extractedClasses allSatisfy: [:c | (environment ownInstVarNamesOf: c) includes: v].
+				result add: (Array with: v with: (all ifTrue: [#identical] ifFalse: [#partial]))]].
+	^result
+%
+
+category: 'classification'
+method: GsExtractSuperclassRefactoring
+identicalCandidateIvarNames
+	"The own ivars of the anchor that every extracted class also owns -- the ones hoisted by
+	 default -- as an Array of Strings. Used to classify method hoistability optimistically."
+	^(environment ownInstVarNamesOf: anchorClass) select: [:v |
+		((environment allInstVarNamesOf: sharedParent) includes: v) not
+			and: [extractedClasses allSatisfy: [:c | (environment ownInstVarNamesOf: c) includes: v]]]
+%
+
+category: 'classification'
+method: GsExtractSuperclassRefactoring
+defaultChecksMember: aKind
+	"Only 'identical' members are pre-checked, and only when there is a sibling to deduplicate
+	 against (so a single-anchor V6 defaults to hoisting nothing -- a pure insert)."
+	^aKind == #identical and: [siblingNames notEmpty]
+%
+
+category: 'building'
+method: GsExtractSuperclassRefactoring
+changeSet
+	changeSet isNil ifTrue: [changeSet := self buildChangeSet].
+	^changeSet
+%
+
+category: 'building'
+method: GsExtractSuperclassRefactoring
+buildChangeSet
+	"Stage: the #classAdd for the new superclass; then, per extracted class top-down, a
+	 #classDefinitionEdit re-parenting it under the new class (with the hoisted ivars removed)
+	 followed by a #classReparent for every descendant; then the hoisted methods as #methodAdd
+	 on the new class + #methodRemove on each extracted class that implements them. Compiles
+	 nothing, commits nothing."
+	| cs dn |
+	cs := GsRefactoringChangeSet new.
+	self ensureAnalysis.
+	decline notNil ifTrue: [^cs].
+	dn := self newClassDictName.
+	cs
+		addClassAddInDictionary: dn
+		className: newName
+		superclassName: sharedParent name asString
+		newSource: self newClassDefinition.
+	extractedClasses do: [:e |
+		self stageExtractedEdit: e into: cs.
+		(environment descendantsOf: e) do: [:d | self stageReparent: d into: cs]].
+	hoistMethods do: [:sel | self stageHoistOf: sel into: cs].
+	^cs
+%
+
+category: 'building'
+method: GsExtractSuperclassRefactoring
+stageExtractedEdit: aClass into: cs
+	"A #classDefinitionEdit re-parenting aClass under the new superclass, with the hoisted ivars
+	 dropped from its own list."
+	| oldDef newList |
+	oldDef := aClass definition.
+	newList := (environment ownInstVarNamesOf: aClass) reject: [:n | hoistInstVars includes: n].
+	cs
+		addClassDefinitionEditInDictionary: (self dictNameForClass: aClass)
+		className: aClass name asString
+		oldSource: oldDef
+		newSource: (self definitionText: oldDef superclass: newName ivars: newList)
+%
+
+category: 'building'
+method: GsExtractSuperclassRefactoring
+stageReparent: aClass into: cs
+	"A #classReparent for a descendant of an extracted class: recompiled only to re-point at its
+	 freshly-versioned ancestor. Its own definition text is unchanged."
+	| oldDef |
+	oldDef := aClass definition.
+	cs
+		addClassReparentInDictionary: (self dictNameForClass: aClass)
+		className: aClass name asString
+		oldSource: oldDef
+		newSource: oldDef
+%
+
+category: 'building'
+method: GsExtractSuperclassRefactoring
+stageHoistOf: aSelector into: cs
+	"Add the hoisted method (from the anchor's source) onto the new superclass, and stage a
+	 #methodRemove from every extracted class that implements it (for the preview; apply skips
+	 it on copy-forward, so the remove is a guarded no-op)."
+	| src cat |
+	src := self sourceOf: aSelector in: anchorClass.
+	cat := self categoryOf: aSelector in: anchorClass.
+	cs
+		addMethodAddInDictionary: (self newClassDictName)
+		className: newName
+		isMeta: false
+		selector: aSelector
+		category: cat
+		newSource: src.
+	extractedClasses do: [:e |
+		(e includesSelector: aSelector) ifTrue: [
+			cs
+				addMethodRemoveInDictionary: (self dictNameForClass: e)
+				className: e name asString
+				isMeta: false
+				selector: aSelector
+				category: (self categoryOf: aSelector in: e)
+				oldSource: (self sourceOf: aSelector in: e)]]
+%
+
+category: 'building'
+method: GsExtractSuperclassRefactoring
+definitionText: oldDef superclass: supName ivars: ivarList
+	"oldDef rewritten to name supName as the superclass and ivarList as the own-instVar list.
+	 Display-only (the apply computes both directly); replaces the leading superclass token and
+	 the instVarNames: list."
+	| idx s |
+	s := oldDef.
+	idx := s indexOfSubCollection: 'subclass:'.
+	idx > 0 ifTrue: [s := supName, ' ', (s copyFrom: idx to: s size)].
+	^self definitionWithIvars: ivarList in: s
+%
+
+category: 'building'
+method: GsExtractSuperclassRefactoring
+definitionWithIvars: anIvarList in: defString
+	"defString with the instVarNames: clause's parenthesised list replaced by anIvarList
+	 (quoted). Mirrors GsInstVarStructureRefactoring; display-only."
+	| marker start openParen closeParen ws |
+	marker := 'instVarNames:'.
+	start := defString indexOfSubCollection: marker.
+	start = 0 ifTrue: [^defString].
+	openParen := defString indexOf: $( startingAt: start.
+	openParen = 0 ifTrue: [^defString].
+	closeParen := defString indexOf: $) startingAt: openParen.
+	closeParen = 0 ifTrue: [^defString].
+	ws := WriteStream on: String new.
+	ws nextPutAll: (defString copyFrom: 1 to: openParen).
+	anIvarList keysAndValuesDo: [:i :n |
+		i = 1 ifFalse: [ws nextPut: $ ].
+		ws nextPutAll: ''''; nextPutAll: n asString; nextPutAll: ''''].
+	ws nextPutAll: (defString copyFrom: closeParen to: defString size).
+	^ws contents
+%
+
+category: 'building'
+method: GsExtractSuperclassRefactoring
+newClassDefinition
+	"A generated class definition for the new superclass (display-only)."
+	^sharedParent name asString, ' subclass: ''', newName, '''
+	instVarNames: #(', (self quotedList: hoistInstVars), ')
+	classVars: #()
+	classInstVars: #()
+	poolDictionaries: #()
+	inDictionary: ', self newClassDictName
+%
+
+category: 'building'
+method: GsExtractSuperclassRefactoring
+quotedList: aCollection
+	"aCollection as a space-separated list of single-quoted names, e.g. 'name' 'age'."
+	| ws q |
+	q := String with: $'.
+	ws := WriteStream on: String new.
+	aCollection keysAndValuesDo: [:i :n |
+		i = 1 ifFalse: [ws nextPut: $ ].
+		ws nextPutAll: q; nextPutAll: n asString; nextPutAll: q].
+	^ws contents
+%
+
+category: 'private'
+method: GsExtractSuperclassRefactoring
+newClassDictName
+	"The dictionary the new class is filed in: the caller's choice, else the anchor's own
+	 dictionary."
+	dictNameOrNil ifNotNil: [:dn | ^dn].
+	^self dictNameForClass: anchorClass
+%
+
+category: 'private'
+method: GsExtractSuperclassRefactoring
+dictNameForClass: aClass
+	| dicts |
+	dicts := environment dictionariesDefiningClassNamed: aClass name.
+	^dicts isEmpty ifTrue: ['UserGlobals'] ifFalse: [dicts first name asString]
+%
+
+category: 'serializing'
+method: GsExtractSuperclassRefactoring
+analysisJsonString
+	"The pre-flight payload: the decline reason (nil when viable), the new class name, the
+	 shared parent, and the number of staged changes."
+	self ensureAnalysis.
+	^'{"decline":', (decline ifNil: ['null'] ifNotNil: [:r | self jsonQuote: r]),
+	  ',"newClass":', (self jsonQuote: newName),
+	  ',"sharedParent":', (decline notNil ifTrue: ['null'] ifFalse: [self jsonQuote: sharedParent name asString]),
+	  ',"affectedCount":', (decline notNil ifTrue: ['0'] ifFalse: [self changeSet size printString]),
+	  '}'
+%
+
+category: 'serializing'
+method: GsExtractSuperclassRefactoring
+candidatesJsonString
+	"The classified member candidates for the preview checklist: methods and instance variables,
+	 each with its classification kind, a defaultChecked flag, and (methods) an unhoistable
+	 reason. Plus the resolved sibling set and any global decline."
+	| ws first |
+	self ensureAnalysis.
+	ws := WriteStream on: String new.
+	ws nextPutAll: '{"decline":'; nextPutAll: (decline ifNil: ['null'] ifNotNil: [:r | self jsonQuote: r]).
+	ws nextPutAll: ',"sharedParent":';
+		nextPutAll: (decline notNil ifTrue: ['null'] ifFalse: [self jsonQuote: sharedParent name asString]).
+	ws nextPutAll: ',"methods":['.
+	first := true.
+	self candidateMethods do: [:m |
+		first ifFalse: [ws nextPut: $,]. first := false.
+		ws nextPutAll: '{"selector":'; nextPutAll: (self jsonQuote: (m at: 1) asString).
+		ws nextPutAll: ',"kind":'; nextPutAll: (self jsonQuote: (m at: 2) asString).
+		ws nextPutAll: ',"defaultChecked":'; nextPutAll: (self defaultChecksMember: (m at: 2)) printString.
+		ws nextPutAll: ',"reason":'; nextPutAll: ((m at: 3) ifNil: ['null'] ifNotNil: [:r | self jsonQuote: r]).
+		ws nextPut: $}].
+	ws nextPutAll: '],"instVars":['.
+	first := true.
+	self candidateInstVars do: [:v |
+		first ifFalse: [ws nextPut: $,]. first := false.
+		ws nextPutAll: '{"name":'; nextPutAll: (self jsonQuote: (v at: 1) asString).
+		ws nextPutAll: ',"kind":'; nextPutAll: (self jsonQuote: (v at: 2) asString).
+		ws nextPutAll: ',"defaultChecked":'; nextPutAll: (self defaultChecksMember: (v at: 2)) printString.
+		ws nextPut: $}].
+	ws nextPutAll: ']}'.
+	^ws contents
+%
+
+category: 'serializing'
+method: GsExtractSuperclassRefactoring
+previewJsonString
+	^self changeSet jsonString
+%
+
+category: 'serializing'
+method: GsExtractSuperclassRefactoring
+outOfScopeJsonString
+	"The precondition / warning payload for the preview panel, in the family's shape."
+	^'{"references":0,"skipped":0,"scope":"hierarchy","collision":null,"decline":',
+	  (decline ifNil: ['null'] ifNotNil: [:r | self jsonQuote: r]),
+	  ',"note":', (self jsonQuote: 'Existing instances keep their prior class version and are not migrated.'), '}'
+%
+
+category: 'paginated preview'
+method: GsExtractSuperclassRefactoring
+startPreviewToken: token maxBytes: maxBytes
+	self changeSet.
+	SessionTemps current at: token asSymbol put: self.
+	^'{"token":', (self jsonQuote: token),
+	  ',"total":', self changeSet size printString,
+	  ',"newClass":', (self jsonQuote: newName),
+	  ',"sharedParent":', (decline notNil ifTrue: ['null'] ifFalse: [self jsonQuote: sharedParent name asString]),
+	  ',"outOfScope":', self outOfScopeJsonString,
+	  ',"page":', (self pageJsonFrom: 1 maxBytes: maxBytes), '}'
+%
+
+category: 'paginated preview'
+method: GsExtractSuperclassRefactoring
+pageJsonFrom: startIndex maxBytes: maxBytes
+	| all ws i |
+	all := self changeSet changes.
+	ws := WriteStream on: String new.
+	ws nextPut: $[.
+	i := startIndex.
+	[i <= all size and: [i = startIndex or: [ws position < maxBytes]]] whileTrue: [
+		i > startIndex ifTrue: [ws nextPut: $,].
+		(all at: i) jsonOn: ws.
+		i := i + 1].
+	ws nextPut: $].
+	^'{"changes":', ws contents,
+	  ',"nextOffset":', i printString,
+	  ',"done":', (i > all size) printString, '}'
+%
+
+category: 'applying'
+method: GsExtractSuperclassRefactoring
+applyDeselected: deselectedIds
+	"Apply EVERY staged change in the stone. Extract-superclass is ALL-OR-NOTHING (the class
+	 creation, the reparents and the hoists must move together), so a deselection is ignored.
+	 NOTHING is committed. If the loop passes a failed change, the changes that DID apply remain
+	 in the uncommitted transaction; the caller must ABORT to discard them. Answers
+	 {applied, failed:[..], committed}."
+	| applied failures |
+	self ensureAnalysis.
+	"Defence in depth: the client gates on the analysis before ever applying, but a declined ref
+	 must not answer a success-shaped envelope. Surface the reason via error (nothing applied)."
+	decline notNil ifTrue: [
+		^'{"applied":0,"committed":false,"failed":[],"error":', (self jsonQuote: decline), '}'].
+	oldToNew := IdentityDictionary new.
+	newClass := nil.
+	failures := OrderedCollection new.
+	applied := 0.
+	self changeSet changes do: [:change |
+		[self applyChange: change. applied := applied + 1]
+		on: Error do: [:e |
+			failures add: (Array with: change id with: change className with: e messageText)]].
+	^'{"applied":', applied printString,
+	  ',"committed":false',
+	  ',"failed":[',
+	  ((failures collect: [:f |
+		'{"id":', (self jsonQuote: (f at: 1)),
+		',"label":', (self jsonQuote: (f at: 2)),
+		',"error":', (self jsonQuote: (f at: 3)), '}'])
+			inject: '' into: [:acc :s | acc isEmpty ifTrue: [s] ifFalse: [acc, ',', s]]),
+	  ']}'
+%
+
+category: 'applying'
+method: GsExtractSuperclassRefactoring
+applyChange: aChange
+	aChange kind == #classAdd ifTrue: [^self applyClassAdd: aChange].
+	(aChange kind == #classDefinitionEdit or: [aChange kind == #classReparent])
+		ifTrue: [^self applyClassChange: aChange].
+	aChange kind == #methodAdd ifTrue: [^self applyMethodAdd: aChange].
+	aChange kind == #methodRemove ifTrue: [^self applyMethodRemove: aChange].
+	^self error: 'Unexpected change kind for extract-superclass: ', aChange kind printString
+%
+
+category: 'applying'
+method: GsExtractSuperclassRefactoring
+applyClassAdd: aChange
+	"Create the new superclass fresh under the shared parent, with the hoisted ivars as its own
+	 list. A brand-new class (no inClassHistory:), so a plain subclass: creation."
+	newClass := sharedParent
+		subclass: newName
+		instVarNames: (hoistInstVars collect: [:e | e asString])
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: (self dictObjectForNewClass).
+	oldToNew at: newClass put: newClass
+%
+
+category: 'applying'
+method: GsExtractSuperclassRefactoring
+applyClassChange: aChange
+	"Create a new version of the named class under its new parent -- the new superclass for an
+	 extracted class, its own freshly-versioned ancestor for a descendant -- with the computed
+	 own-instVar list, copy its methods forward (skipping the hoisted selectors for an extracted
+	 class), and record the old->new mapping."
+	| old isExtracted parentNew list new skip |
+	old := environment classNamed: aChange className.
+	old isNil ifTrue: [^self error: 'Class not found: ', aChange className].
+	isExtracted := aChange kind == #classDefinitionEdit.
+	parentNew := isExtracted
+		ifTrue: [newClass]
+		ifFalse: [oldToNew at: old superclass ifAbsent: [old superclass]].
+	list := isExtracted
+		ifTrue: [(environment ownInstVarNamesOf: old) reject: [:n | hoistInstVars includes: n]]
+		ifFalse: [environment ownInstVarNamesOf: old].
+	skip := isExtracted ifTrue: [hoistMethods] ifFalse: [#()].
+	new := self makeNewVersionOf: old superclass: parentNew instVarNames: list.
+	self copyMethodsFrom: old to: new skipping: skip.
+	oldToNew at: old put: new
+%
+
+category: 'applying'
+method: GsExtractSuperclassRefactoring
+makeNewVersionOf: old superclass: sup instVarNames: ivars
+	"A new version in old's class history, under sup, with own-instVar list ivars and all of
+	 old's other shape. Same format-preserving primitive GsInstVarStructureRefactoring uses."
+	^sup
+		_subclass: old name asString
+		instVarNames: (ivars collect: [:e | e asString])
+		format: old format
+		classVars: (old classVarNames collect: [:e | e asString])
+		classInstVars: (old class instVarNames collect: [:e | e asString])
+		poolDictionaries: old sharedPools
+		inDictionary: (self dictObjectFor: old)
+		inClassHistory: old classHistory
+		description: ([old commentForFileout] on: Error do: [:e | ''])
+		options: #()
+%
+
+category: 'applying'
+method: GsExtractSuperclassRefactoring
+copyMethodsFrom: old to: new skipping: skipSelectors
+	"Copy every method of old (both sides) onto new, EXCEPT the skipSelectors (instance-side
+	 hoisted methods that move to the new superclass instead)."
+	old selectors do: [:sel |
+		(skipSelectors includes: sel) ifFalse: [self copyMethod: sel from: old to: new]].
+	old class selectors do: [:sel | self copyMethod: sel from: old class to: new class]
+%
+
+category: 'applying'
+method: GsExtractSuperclassRefactoring
+copyMethod: sel from: srcCls to: dstCls
+	| m cat |
+	m := srcCls compiledMethodAt: sel environmentId: 0 otherwise: nil.
+	m isNil ifTrue: [^self].
+	cat := (srcCls categoryOfSelector: sel environmentId: 0) ifNil: ['as yet unclassified'].
+	dstCls
+		compileMethod: m sourceString
+		dictionaries: System myUserProfile symbolList
+		category: cat asString
+%
+
+category: 'applying'
+method: GsExtractSuperclassRefactoring
+applyMethodAdd: aChange
+	"Compile a hoisted method onto the new superclass."
+	| target |
+	target := aChange className = newName
+		ifTrue: [newClass]
+		ifFalse: [environment classNamed: aChange className].
+	target isNil ifTrue: [^self error: 'Class not found: ', aChange className].
+	target
+		compileMethod: aChange newSource
+		dictionaries: System myUserProfile symbolList
+		category: (aChange category ifNil: ['as yet unclassified'])
+%
+
+category: 'applying'
+method: GsExtractSuperclassRefactoring
+applyMethodRemove: aChange
+	"A hoisted method's removal from an extracted class. copyMethodsFrom:to:skipping: already
+	 left it off the new version, so this is a guarded no-op that keeps re-application idempotent."
+	| cls sel |
+	cls := environment classNamed: aChange className.
+	cls isNil ifTrue: [^self].
+	sel := aChange selector asSymbol.
+	(cls includesSelector: sel) ifTrue: [cls removeSelector: sel]
+%
+
+category: 'applying'
+method: GsExtractSuperclassRefactoring
+dictObjectFor: aClass
+	| dicts |
+	dicts := environment dictionariesDefiningClassNamed: aClass name.
+	^dicts isEmpty
+		ifTrue: [environment symbolList objectNamed: #UserGlobals]
+		ifFalse: [dicts first]
+%
+
+category: 'applying'
+method: GsExtractSuperclassRefactoring
+dictObjectForNewClass
+	"The SymbolDictionary the new class is filed in: the caller's choice by name, else the
+	 anchor's own dictionary."
+	dictNameOrNil ifNotNil: [:dn |
+		^(environment symbolList objectNamed: dn asSymbol)
+			ifNil: [self dictObjectFor: anchorClass]].
+	^self dictObjectFor: anchorClass
+%
+
+category: 'serializing'
+method: GsExtractSuperclassRefactoring
+jsonQuote: aString
+	^GsRefactoringJson jsonQuote: aString
+%
+
+category: 'serializing'
+method: GsExtractSuperclassRefactoring
+jsonEscape: aString
+	^GsRefactoringJson jsonEscape: aString
+%
+
+category: 'serializing'
+method: GsExtractSuperclassRefactoring
+hex2: anInteger
+	^GsRefactoringJson hex2: anInteger
+%
+
+category: 'instance creation'
+classmethod: GsExtractSuperclassRefactoring
+class: anAnchor extractSuperclassNamed: aName inDictionary: aDictOrNil siblings: sibs hoistMethods: methods hoistInstVars: ivars
+	"V7 (and V6 as the no-sibling/no-member case): extract a new superclass aName above anAnchor
+	 and the chosen sibling classes (sibs, names NOT including the anchor), hoisting the given
+	 instance-side selectors (methods) and own instance variables (ivars) up into it."
+	^self new
+		setEnvironment: GsRefactoringEnvironment new
+		class: anAnchor
+		name: aName
+		dict: aDictOrNil
+		siblings: sibs
+		methods: methods
+		instVars: ivars
+%
+
+category: 'instance creation'
+classmethod: GsExtractSuperclassRefactoring
+class: anAnchor insertSuperclassNamed: aName inDictionary: aDictOrNil
+	"V6: insert a new EMPTY superclass aName above anAnchor only (no siblings, no members)."
+	^self
+		class: anAnchor
+		extractSuperclassNamed: aName
+		inDictionary: aDictOrNil
+		siblings: #()
+		hoistMethods: #()
+		hoistInstVars: #()
+%
+
+category: 'preconditions'
+classmethod: GsExtractSuperclassRefactoring
+analyzeClass: anAnchor extractSuperclassNamed: aName siblings: sibs hoistMethods: methods hoistInstVars: ivars
+	^(self class: anAnchor extractSuperclassNamed: aName inDictionary: nil siblings: sibs hoistMethods: methods hoistInstVars: ivars) analysisJsonString
+%
+
+category: 'preconditions'
+classmethod: GsExtractSuperclassRefactoring
+candidatesForClass: anAnchor siblings: sibs
+	"The classified hoist candidates (methods + instance variables) the preview checklist
+	 renders, computed BEFORE any hoist set is chosen. Answers the candidates JSON."
+	^(self class: anAnchor extractSuperclassNamed: 'GsExtractSuperclassProbe' inDictionary: nil siblings: sibs hoistMethods: #() hoistInstVars: #()) candidatesJsonString
+%
+
+category: 'paginated preview'
+classmethod: GsExtractSuperclassRefactoring
+pageForToken: token from: startIndex maxBytes: maxBytes
+	^(SessionTemps current at: token asSymbol ifAbsent: [nil])
+		ifNil: ['{"error":"preview session expired","changes":[],"nextOffset":0,"done":true}']
+		ifNotNil: [:ref | ref pageJsonFrom: startIndex maxBytes: maxBytes]
+%
+
+category: 'paginated preview'
+classmethod: GsExtractSuperclassRefactoring
+applyForToken: token deselected: deselectedIds
+	^(SessionTemps current at: token asSymbol ifAbsent: [nil])
+		ifNil: ['{"applied":0,"committed":false,"failed":[],"error":"preview session expired"}']
+		ifNotNil: [:ref | ref applyDeselected: deselectedIds]
+%
+
+category: 'paginated preview'
+classmethod: GsExtractSuperclassRefactoring
+clearToken: token
 	SessionTemps current removeKey: token asSymbol ifAbsent: [].
 	^'ok'
 %
@@ -4664,36 +5582,9 @@ varName
 
 category: 'private'
 method: GsInstVarRefactoring
-ownInstVarsOf: aClass
-	"aClass's OWN instance-variable names (not inherited), as an Array of Strings."
-	^aClass instVarNames collect: [:e | e asString]
-%
-
-category: 'private'
-method: GsInstVarRefactoring
-allInstVarsOf: aClass
-	^aClass allInstVarNames collect: [:e | e asString]
-%
-
-category: 'private'
-method: GsInstVarRefactoring
 optionsOf: aClass
 	"aClass's own class-creation options, as an Array of Strings (e.g. #('selfCanBeSpecial'))."
 	^(aClass _optionsArray ifNil: [#()]) collect: [:e | e asString]
-%
-
-category: 'private'
-method: GsInstVarRefactoring
-allClassVarsOf: aClass
-	"aClass's own and inherited class-variable names, as a Set of Strings. Used to decline an
-	 #add whose name would shadow a class variable inside method bodies."
-	| result cls |
-	result := Set new.
-	cls := aClass.
-	[cls isNil] whileFalse: [
-		(cls classVarNames ifNil: [#()]) do: [:n | result add: n asString].
-		cls := cls superclass].
-	^result
 %
 
 category: 'private'
@@ -4746,15 +5637,14 @@ analyzeAdd
 	| conflicts names |
 	(self isValidIvarName: varName) ifFalse: [
 		^decline := 'Cannot add ', varName printString, ': an instance-variable name must start with a lowercase letter or an underscore, followed by letters, digits, or underscores.'].
-	((self allInstVarsOf: definingClass) includes: varName) ifTrue: [
+	((environment allInstVarNamesOf: definingClass) includes: varName) ifTrue: [
 		^decline := 'Cannot add ', varName, ': ', definingClass name asString, ' already has an instance variable of that name.'].
-	((self allClassVarsOf: definingClass) includes: varName) ifTrue: [
+	((environment classVarNamesVisibleTo: definingClass) includes: varName) ifTrue: [
 		^decline := 'Cannot add ', varName, ': a class variable of that name is visible to ', definingClass name asString, ', which it would shadow.'].
 	"A subclass that already declares varName as its OWN instance variable would end up with two
 	 of that name once the new one is inherited. That fails mid-apply (error 2271), so decline up
 	 front and name the offenders rather than let the reshape strand a half-versioned subtree."
-	conflicts := (environment descendantsOf: definingClass)
-		select: [:d | (self ownInstVarsOf: d) includes: varName].
+	conflicts := environment descendantsOf: definingClass declaringInstVar: varName.
 	conflicts notEmpty ifTrue: [
 		names := (conflicts collect: [:c | c name asString])
 			inject: '' into: [:acc :s | acc isEmpty ifTrue: [s] ifFalse: [acc, ', ', s]].
@@ -4763,7 +5653,7 @@ analyzeAdd
 			(conflicts size = 1 ifTrue: [' already declares'] ifFalse: [' already declare']),
 			' an instance variable of that name; adding it to ', definingClass name asString,
 			' would duplicate that variable.'].
-	newIvarLists at: definingClass name asString put: ((self ownInstVarsOf: definingClass) copyWith: varName).
+	newIvarLists at: definingClass name asString put: ((environment ownInstVarNamesOf: definingClass) copyWith: varName).
 	self computeAffectedFrom: (Array with: definingClass).
 	self recordWillNotRecompileShadowedBy: definingClass
 %
@@ -4773,9 +5663,9 @@ method: GsInstVarRefactoring
 analyzeRemove
 	"V1 remove: varName must be an OWN instance variable of definingClass. Every method (defining
 	 class and descendants) that accesses it will lose it -- those are the willNotRecompile set."
-	((self ownInstVarsOf: definingClass) includes: varName) ifFalse: [
+	((environment ownInstVarNamesOf: definingClass) includes: varName) ifFalse: [
 		^decline := 'Cannot remove ', varName, ': it is not an instance variable declared in ', definingClass name asString, '.'].
-	newIvarLists at: definingClass name asString put: ((self ownInstVarsOf: definingClass) reject: [:n | n = varName]).
+	newIvarLists at: definingClass name asString put: ((environment ownInstVarNamesOf: definingClass) reject: [:n | n = varName]).
 	self computeAffectedFrom: (Array with: definingClass).
 	self recordWillNotRecompileLosing: definingClass
 %
@@ -4912,7 +5802,7 @@ previewDefinitionFor: aClass oldDef: defString
 	 are not surfaced for editing in the panel."
 	^self replaceListClause: 'instVarNames:'
 		in: defString
-		with: (newIvarLists at: aClass name asString ifAbsent: [self ownInstVarsOf: aClass])
+		with: (newIvarLists at: aClass name asString ifAbsent: [environment ownInstVarNamesOf: aClass])
 %
 
 category: 'building'
@@ -5188,7 +6078,7 @@ applyClassChange: aChange
 	old := environment classNamed: aChange className.
 	old isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	parentNew := oldToNew at: old superclass ifAbsent: [old superclass].
-	list := newIvarLists at: aChange className ifAbsent: [self ownInstVarsOf: old].
+	list := newIvarLists at: aChange className ifAbsent: [environment ownInstVarNamesOf: old].
 	new := self makeNewVersionOf: old superclass: parentNew instVarNames: list options: (self optionsForApply: old).
 	"Count it as applied HERE, the moment the version is staged -- before copyMethodsFrom:, which
 	 could raise. If it does, this class's new version is already a real staged mutation, so the
@@ -5430,19 +6320,6 @@ topClass
 	^topClass
 %
 
-category: 'private'
-method: GsInstVarStructureRefactoring
-ownInstVarsOf: aClass
-	"aClass's OWN instance-variable names (not inherited), as an Array of Strings."
-	^aClass instVarNames collect: [:e | e asString]
-%
-
-category: 'private'
-method: GsInstVarStructureRefactoring
-allInstVarsOf: aClass
-	^aClass allInstVarNames collect: [:e | e asString]
-%
-
 category: 'private - analysis'
 method: GsInstVarStructureRefactoring
 ensureAnalysis
@@ -5480,7 +6357,7 @@ analyzeConvertTemp
 		 method can't reference it), and this engine only edits instance-side ivar lists. Decline
 		 rather than corrupt (add an unreachable ivar + recompile the class method against it)."
 		^decline := 'Cannot convert #', varName, ': converting a temporary in a class-side method to an instance variable is not supported.'].
-	((self allInstVarsOf: definingClass) includes: varName) ifTrue: [
+	((environment allInstVarNamesOf: definingClass) includes: varName) ifTrue: [
 		^decline := 'Cannot convert #', varName, ': it is already an instance variable of ', definingClass name asString, '.'].
 	behavior := methodMeta ifTrue: [definingClass class] ifFalse: [definingClass].
 	method := behavior compiledMethodAt: methodSelector environmentId: 0 otherwise: nil.
@@ -5501,7 +6378,7 @@ analyzeConvertTemp
 		newDecl,
 		(src copyFrom: tree body rightBar + 1 to: src size).
 	methodRewrite := Array with: definingClass name asString with: methodSelector with: methodMeta with: src with: newSrc.
-	newIvarLists at: definingClass name asString put: ((self ownInstVarsOf: definingClass) copyWith: varName)
+	newIvarLists at: definingClass name asString put: ((environment ownInstVarNamesOf: definingClass) copyWith: varName)
 %
 
 category: 'private - analysis'
@@ -5511,18 +6388,18 @@ analyzePushUp
 	 ancestors) must not already define it; and no OTHER descendant of that superclass may
 	 own a same-named ivar (it would collide with the newly inherited one)."
 	| sup |
-	((self ownInstVarsOf: definingClass) includes: varName) ifFalse: [
+	((environment ownInstVarNamesOf: definingClass) includes: varName) ifFalse: [
 		^decline := 'Cannot push up ', varName, ': it is not an instance variable declared in ', definingClass name asString, '.'].
 	sup := definingClass superclass.
 	sup isNil ifTrue: [
 		^decline := 'Cannot push up ', varName, ': ', definingClass name asString, ' has no superclass.'].
-	((self allInstVarsOf: sup) includes: varName) ifTrue: [
+	((environment allInstVarNamesOf: sup) includes: varName) ifTrue: [
 		^decline := 'Cannot push up ', varName, ': ', sup name asString, ' already defines an instance variable of that name.'].
 	(self otherDescendant: definingClass ofTop: sup ownsIvar: varName) ifNotNil: [:cls |
 		^decline := 'Cannot push up ', varName, ': ', cls, ' also declares an instance variable of that name, which would collide once it is inherited.'].
 	topClass := sup.
-	newIvarLists at: definingClass name asString put: ((self ownInstVarsOf: definingClass) reject: [:n | n = varName]).
-	newIvarLists at: sup name asString put: ((self ownInstVarsOf: sup) copyWith: varName).
+	newIvarLists at: definingClass name asString put: ((environment ownInstVarNamesOf: definingClass) reject: [:n | n = varName]).
+	newIvarLists at: sup name asString put: ((environment ownInstVarNamesOf: sup) copyWith: varName).
 	self moveAccessors ifTrue: [self planAccessorMovesFrom: definingClass to: (Array with: sup)]
 %
 
@@ -5533,7 +6410,7 @@ analyzePushDown
 	 access it (removing it would leave them undeclared); it must have subclasses; and no
 	 proper descendant may already own a same-named ivar (it would collide once inherited)."
 	| subs users |
-	((self ownInstVarsOf: definingClass) includes: varName) ifFalse: [
+	((environment ownInstVarNamesOf: definingClass) includes: varName) ifFalse: [
 		^decline := 'Cannot push down ', varName, ': it is not an instance variable declared in ', definingClass name asString, '.'].
 	subs := (definingClass subclasses ifNil: [#()]) asArray.
 	subs isEmpty ifTrue: [
@@ -5552,9 +6429,9 @@ analyzePushDown
 	(self anyDescendantOf: definingClass ownsIvar: varName) ifNotNil: [:cls |
 		^decline := 'Cannot push down ', varName, ': ', cls, ' already declares an instance variable of that name.'].
 	topClass := definingClass.
-	newIvarLists at: definingClass name asString put: ((self ownInstVarsOf: definingClass) reject: [:n | n = varName]).
+	newIvarLists at: definingClass name asString put: ((environment ownInstVarNamesOf: definingClass) reject: [:n | n = varName]).
 	subs do: [:sub |
-		newIvarLists at: sub name asString put: ((self ownInstVarsOf: sub) copyWith: varName)].
+		newIvarLists at: sub name asString put: ((environment ownInstVarNamesOf: sub) copyWith: varName)].
 	self moveAccessors ifTrue: [self planAccessorMovesFrom: definingClass to: subs]
 %
 
@@ -5573,7 +6450,7 @@ analyzeMove
 	| def dir sup losing |
 	def := definingClass.
 	dir := moveDirection.
-	((self ownInstVarsOf: def) includes: varName) ifFalse: [
+	((environment ownInstVarNamesOf: def) includes: varName) ifFalse: [
 		^decline := 'Cannot move ', varName, ': it is not an instance variable declared in ', def name asString, '.'].
 	(targetClasses isNil or: [targetClasses isEmpty]) ifTrue: [
 		^decline := 'Cannot move ', varName, ': no destination class was chosen.'].
@@ -5588,7 +6465,7 @@ analyzeMove
 			sup := targetClasses first.
 			(self isAncestor: sup of: def) ifFalse: [
 				^decline := 'Cannot move ', varName, ' up: ', sup name asString, ' is not a superclass of ', def name asString, '.'].
-			((self allInstVarsOf: sup) includes: varName) ifTrue: [
+			((environment allInstVarNamesOf: sup) includes: varName) ifTrue: [
 				^decline := 'Cannot move ', varName, ' up: ', sup name asString, ' already defines an instance variable of that name.'].
 			(self otherDescendant: def ofTop: sup ownsIvar: varName) ifNotNil: [:cls |
 				^decline := 'Cannot move ', varName, ' up: ', cls, ' also declares an instance variable of that name, which would collide once it is inherited.'].
@@ -5629,9 +6506,9 @@ analyzeMove
 			^decline := 'Cannot move ', varName, ': ', cls name asString,
 				' still uses it in ', users size printString, ' of its own method(s): ',
 				(self selectorListString: users), '.']].
-	newIvarLists at: def name asString put: ((self ownInstVarsOf: def) reject: [:n | n = varName]).
+	newIvarLists at: def name asString put: ((environment ownInstVarNamesOf: def) reject: [:n | n = varName]).
 	targetClasses do: [:t |
-		newIvarLists at: t name asString put: ((self ownInstVarsOf: t) copyWith: varName)].
+		newIvarLists at: t name asString put: ((environment ownInstVarNamesOf: t) copyWith: varName)].
 	self moveAccessors ifTrue: [self planAccessorMovesFrom: def to: targetClasses]
 %
 
@@ -5670,7 +6547,7 @@ otherDescendant: aSkip ofTop: aTop ownsIvar: aName
 	"The name of a descendant of aTop (other than aSkip) that owns an ivar named aName, or
 	 nil."
 	(environment descendantsOf: aTop) do: [:cls |
-		(cls ~~ aSkip and: [(self ownInstVarsOf: cls) includes: aName])
+		(cls ~~ aSkip and: [(environment ownInstVarNamesOf: cls) includes: aName])
 			ifTrue: [^cls name asString]].
 	^nil
 %
@@ -5680,7 +6557,7 @@ method: GsInstVarStructureRefactoring
 anyDescendantOf: aTop ownsIvar: aName
 	"The name of any descendant of aTop that owns an ivar named aName, or nil."
 	(environment descendantsOf: aTop) do: [:cls |
-		((self ownInstVarsOf: cls) includes: aName) ifTrue: [^cls name asString]].
+		((environment ownInstVarNamesOf: cls) includes: aName) ifTrue: [^cls name asString]].
 	^nil
 %
 
@@ -6130,7 +7007,7 @@ applyClassChange: aChange
 	old := environment classNamed: aChange className.
 	old isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	parentNew := oldToNew at: old superclass ifAbsent: [old superclass].
-	list := newIvarLists at: aChange className ifAbsent: [self ownInstVarsOf: old].
+	list := newIvarLists at: aChange className ifAbsent: [environment ownInstVarNamesOf: old].
 	new := self makeNewVersionOf: old superclass: parentNew instVarNames: list.
 	self copyMethodsFrom: old to: new.
 	oldToNew at: old put: new
@@ -8015,6 +8892,22 @@ setNewName: aString
 
 category: 'accessing'
 method: GsRefactoringChange
+failureLabel
+	"How this change names itself when it lands in an apply result's `failed` list.
+	 A method change answers the METHOD -- the failure list exists so the user can go
+	 open what did not survive, and a bare class name does not say which one. A
+	 structural change (a class-definition edit) has no selector, so it answers the
+	 class name it already did."
+	| cls |
+	cls := className asString.
+	selector isNil ifTrue: [^cls].
+	^isMeta == true
+		ifTrue: [cls, ' class>>', selector asString]
+		ifFalse: [cls, '>>', selector asString]
+%
+
+category: 'accessing'
+method: GsRefactoringChange
 selector
 	^selector
 %
@@ -8116,6 +9009,21 @@ classRenameId: anId dictName: dn className: cn newName: nn oldSource: os newSour
 		setId: anId kind: #classRename dictName: dn className: cn
 		isMeta: false selector: nil category: nil oldSource: os newSource: ns)
 		setNewName: nn
+%
+
+category: 'instance creation'
+classmethod: GsRefactoringChange
+classAddId: anId dictName: dn className: cn superclassName: sn newSource: ns
+	"A brand-new class to CREATE (extract-superclass inserts a new common parent between a class
+	 and its current superclass). Apply creates the class fresh -- no prior class history --, so
+	 unlike #classReparent there is no old version to version off. `className` is the new class's
+	 name, `newName` carries its superclass name (for the preview label), and `newSource` the
+	 generated class definition. oldSource is nil so the before/after diff renders as an
+	 all-added class."
+	^(self new
+		setId: anId kind: #classAdd dictName: dn className: cn
+		isMeta: false selector: nil category: nil oldSource: nil newSource: ns)
+		setNewName: sn
 %
 
 category: 'instance creation'
@@ -8230,6 +9138,20 @@ addClassRenameInDictionary: dn className: cn newName: nn oldSource: os newSource
 	change := GsRefactoringChange
 		classRenameId: self nextIdString dictName: dn className: cn
 		newName: nn oldSource: os newSource: ns.
+	changes add: change.
+	^change
+%
+
+category: 'building'
+method: GsRefactoringChangeSet
+addClassAddInDictionary: dn className: cn superclassName: sn newSource: ns
+	"Stage the creation of a brand-new class (extract-superclass's inserted common parent).
+	 Records the change only; NEVER compiles or commits. Apply creates the class fresh under
+	 superclassName. Returns the new GsRefactoringChange."
+	| change |
+	change := GsRefactoringChange
+		classAddId: self nextIdString dictName: dn className: cn
+		superclassName: sn newSource: ns.
 	changes add: change.
 	^change
 %
@@ -8443,6 +9365,72 @@ descendantsOf: aClass
 	^ordered asArray
 %
 
+category: 'enumerating'
+method: GsRefactoringEnvironment
+descendantsOf: aClass declaringInstVar: aName
+	"Every descendant of aClass that declares aName as its OWN instance variable. Once aName is
+	 added to aClass each of those descendants would carry two of that name, which the
+	 class-creation primitive rejects (error 2271) -- and it rejects it MID-apply, after earlier
+	 classes have already been versioned. Callers decline up front and name the offenders instead.
+
+	 Shared by every refactoring that introduces an instance variable on an existing class (V1 add,
+	 V8 split), so the check and its cross-version behaviour live in one place. Read-only.
+
+	 aName is normalised to a String because #ownInstVarNamesOf: answers Strings; a caller passing a
+	 Symbol would otherwise hit the same 3.6.x Unicode-comparison trap on the argument side and get a
+	 silently empty answer. Both #instVarNameArgument callers already accept either, so we match that."
+	| name |
+	name := aName asString.
+	^(self descendantsOf: aClass)
+		select: [:d | (self ownInstVarNamesOf: d) includes: name]
+%
+
+category: 'enumerating'
+method: GsRefactoringEnvironment
+classVarNamesVisibleTo: aClass
+	"aClass's own and inherited class-variable names, as a Set of Strings. A new instance variable
+	 of the same name would shadow one of these inside method bodies, so callers decline it.
+	 Read-only."
+	| result cls |
+	result := Set new.
+	cls := aClass.
+	[cls isNil] whileFalse: [
+		(cls classVarNames ifNil: [#()]) do: [:n | result add: n asString].
+		cls := cls superclass].
+	^result
+%
+
+category: 'instance variables'
+method: GsRefactoringEnvironment
+ownInstVarNamesOf: aClass
+	"aClass's OWN instance-variable names (not inherited), as an Array of Strings, in
+	 declaration order -- which is the order a class-creation change must preserve.
+
+	 Strings, not the Symbols #instVarNames answers, because every caller compares them
+	 against a name that arrived as a String from the client. Comparing a Symbol against
+	 such a String can silently answer false on 3.6.x (the Unicode-comparison trap), so
+	 normalising here is what makes those comparisons hold across releases.
+
+	 Shared by every refactoring that reasons about instance-variable structure --
+	 add/remove, push up/down/move, extract superclass, split class -- so the
+	 normalisation lives in one place. Read-only.
+
+	 The ifNil: guard is defensive only: a live class always answers an Array from #instVarNames, so
+	 nil is not expected to be reachable here. It mirrors the guard #descendantsOf:declaringInstVar:
+	 already carried and keeps the answer an empty Array rather than raising if that ever changes."
+	^(aClass instVarNames ifNil: [#()]) collect: [:e | e asString]
+%
+
+category: 'instance variables'
+method: GsRefactoringEnvironment
+allInstVarNamesOf: aClass
+	"aClass's own AND inherited instance-variable names, as an Array of Strings, inherited
+	 first -- the slot order of an instance. Callers use it to ask whether a name is already
+	 visible to aClass (its own or any superclass's). See #ownInstVarNamesOf: for why these
+	 are Strings. Read-only."
+	^(aClass allInstVarNames ifNil: [#()]) collect: [:e | e asString]
+%
+
 category: 'accessing'
 method: GsRefactoringEnvironment
 classNamed: aName
@@ -8549,6 +9537,45 @@ instanceMethodsShadowing: anInstVarName inClass: aClass
 				(tree notNil and: [self methodNode: tree declares: sym])
 					ifTrue: [result add: sel]]]].
 	^result asSortedCollection asArray
+%
+
+category: 'compiling'
+method: GsRefactoringEnvironment
+compile: source into: aBehavior category: aCategory
+	"Compile one method onto aBehavior and RAISE when it does not compile.
+
+	 Behavior>>compileMethod:dictionaries:category: reports a compile failure in its RETURN
+	 VALUE -- nil (or an empty Array) on success, an Array of error tuples otherwise -- and
+	 does NOT signal. An unchecked send therefore reads as success while the method is never
+	 installed: the caller counts it as applied and the user is told nothing. Raising puts the
+	 failure back onto the path every apply loop already guards with on: Error do:, so it is
+	 recorded in `failed` and reported like any other."
+	| result |
+	result := aBehavior
+		compileMethod: source
+		dictionaries: System myUserProfile symbolList
+		category: aCategory.
+	result isNil ifTrue: [^self].
+	"An unexpected shape is exactly when whoever debugs this most needs to see what came
+	 back, and compileErrorTextFrom: already falls back to a printString for it."
+	(result isKindOf: Array)
+		ifFalse: [^self error: 'did not recompile: ', (self compileErrorTextFrom: result)].
+	result isEmpty ifTrue: [^self].
+	self error: 'did not recompile: ', (self compileErrorTextFrom: result first)
+%
+
+category: 'private'
+method: GsRefactoringEnvironment
+compileErrorTextFrom: aTuple
+	"Readable text for one compiler error tuple -- (number, offset, message, nil, symbol) --
+	 falling back to a printString when it is not shaped as expected."
+	| text sym |
+	(aTuple isKindOf: Array) ifFalse: [^aTuple printString].
+	text := (aTuple size >= 3 and: [(aTuple at: 3) notNil])
+		ifTrue: [(aTuple at: 3) asString]
+		ifFalse: ['compile error'].
+	sym := aTuple size >= 5 ifTrue: [aTuple at: 5] ifFalse: [nil].
+	^sym isNil ifTrue: [text] ifFalse: [text, ' (', sym asString, ')']
 %
 
 category: 'private'
@@ -9085,7 +10112,7 @@ applyDeselected: deselectedIds
 			ifFalse: [
 				[self applyChange: change. applied := applied + 1]
 				on: Error do: [:e |
-					failures add: (Array with: change id with: change className with: e messageText)]]].
+					failures add: (Array with: change id with: change failureLabel with: e messageText)]]].
 	migrated := 0.
 	committed := false.
 	((migrateInstances or: [removeOldFromHistory]) and: [failures isEmpty]) ifTrue: [
@@ -9195,9 +10222,11 @@ applyMethodRecompile: aChange
 	cls := environment classNamed: aChange className.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
-	target
-		compileMethod: aChange newSource
-		dictionaries: System myUserProfile symbolList
+	"Through the environment, which RAISES on a compile failure -- an unchecked send would
+	 leave this referencing method naming the OLD class while reporting clean success."
+	environment
+		compile: aChange newSource
+		into: target
 		category: (aChange category ifNil: ['as yet unclassified'])
 %
 
@@ -9759,7 +10788,7 @@ applyDeselected: deselectedIds
 	self changeSet changes do: [:change |
 		[self applyChange: change. applied := applied + 1]
 		on: Error do: [:e |
-			failures add: (Array with: change id with: change className with: e messageText)]].
+			failures add: (Array with: change id with: change failureLabel with: e messageText)]].
 	^'{"applied":', applied printString,
 	  ',"failed":[',
 	  ((failures collect: [:f |
@@ -9807,9 +10836,12 @@ applyMethodRecompile: aChange
 	cls := environment classNamed: aChange className.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
-	target
-		compileMethod: aChange newSource
-		dictionaries: System myUserProfile symbolList
+	"Through the environment, which RAISES on a compile failure -- compileMethod: only
+	 answers its errors, so an unchecked send would leave this method un-recompiled and
+	 still bound to the OLD class-variable association while reporting clean success."
+	environment
+		compile: aChange newSource
+		into: target
 		category: (aChange category ifNil: ['as yet unclassified'])
 %
 
@@ -10595,9 +11627,12 @@ applyChange: aChange
 	cls := environment classNamed: aChange className.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
-	target
-		compileMethod: aChange newSource
-		dictionaries: System myUserProfile symbolList
+	"Through the environment, which RAISES on a compile failure. Critical here: the old
+	 selector is removed below, so an unchecked compile that failed would DELETE the method
+	 without installing its replacement -- outright method loss reported as success."
+	environment
+		compile: aChange newSource
+		into: target
 		category: (aChange category ifNil: ['as yet unclassified']).
 	(aChange kind == #methodRename and: [aChange newSelector ~= aChange selector])
 		ifTrue: [target removeSelector: aChange selector asSymbol]
@@ -10620,7 +11655,7 @@ applyDeselected: deselectedIds
 		(ids includes: change id asSymbol) ifFalse: [
 			[self applyChange: change. applied := applied + 1]
 			on: Error do: [:e |
-				failures add: (Array with: change id with: change className with: e messageText)]]].
+				failures add: (Array with: change id with: change failureLabel with: e messageText)]]].
 	^'{"applied":', applied printString, ',"failed":[',
 	  ((failures collect: [:f |
 		'{"id":', (self jsonQuote: (f at: 1)),
@@ -11310,6 +12345,764 @@ category: 'paginated preview'
 classmethod: GsRenameTemporaryRefactoring
 clearToken: token
 	"Drop a finished preview from SessionTemps."
+	SessionTemps current removeKey: token asSymbol ifAbsent: [].
+	^'ok'
+%
+
+category: 'private'
+method: GsSplitClassRefactoring
+setEnvironment: anEnvironment class: aSource name: aName dict: aDictOrNil extractIvars: ivars
+	environment := anEnvironment.
+	sourceClass := aSource.
+	newName := aName asString.
+	dictNameOrNil := aDictOrNil isNil ifTrue: [nil] ifFalse: [aDictOrNil asString].
+	extractIvars := (ivars ifNil: [#()]) collect: [:e | e asString].
+	analysisDone := false
+%
+
+category: 'accessing'
+method: GsSplitClassRefactoring
+environment
+	^environment
+%
+
+category: 'accessing'
+method: GsSplitClassRefactoring
+movableSelectors
+	self ensureAnalysis.
+	^movableSelectors
+%
+
+category: 'private'
+method: GsSplitClassRefactoring
+sourceOf: aSelector in: aClass
+	| m |
+	m := aClass compiledMethodAt: aSelector environmentId: 0 otherwise: nil.
+	^m isNil ifTrue: [nil] ifFalse: [m sourceString]
+%
+
+category: 'private'
+method: GsSplitClassRefactoring
+categoryOf: aSelector in: aClass
+	^((aClass categoryOfSelector: aSelector environmentId: 0) ifNil: ['as yet unclassified']) asString
+%
+
+category: 'private'
+method: GsSplitClassRefactoring
+ivarsAccessedBy: aSelector in: aClass
+	"The instance variables aSelector's compiled method touches, or NIL when the method cannot be
+	 read at all (no compiled method in environment 0, or reflection raising). NIL rather than #(),
+	 because 'we do not know what this method touches' is not the same claim as 'it touches
+	 nothing' -- and every caller here uses the answer to assert safety, so the two must not be
+	 confused. Callers decline on nil."
+	^[(aClass compiledMethodAt: aSelector environmentId: 0 otherwise: nil) instVarsAccessed] on: Error do: [:e | nil]
+%
+
+category: 'private'
+method: GsSplitClassRefactoring
+parses: src
+	"True when src is a method source RBParser can read. The clean-cut guards below are all
+	 permissive on a parse failure, so callers gate on this and decline instead."
+	src isNil ifTrue: [^false].
+	^([RBParser parseMethod: src] on: Error do: [:e | nil]) notNil
+%
+
+category: 'private'
+method: GsSplitClassRefactoring
+extractSymbolSet
+	| s |
+	s := Set new.
+	extractIvars do: [:e | s add: e asSymbol].
+	^s
+%
+
+category: 'private'
+method: GsSplitClassRefactoring
+nl
+	^String with: (Character codePoint: 10)
+%
+
+category: 'private'
+method: GsSplitClassRefactoring
+tab
+	^String with: (Character codePoint: 9)
+%
+
+category: 'private'
+method: GsSplitClassRefactoring
+commaList: aCollection
+	^aCollection inject: '' into: [:acc :s | acc isEmpty ifTrue: [s asString] ifFalse: [acc, ', ', s asString]]
+%
+
+category: 'private'
+method: GsSplitClassRefactoring
+decapitalize: aString
+	aString isEmpty ifTrue: [^aString].
+	^(aString copyFrom: 1 to: 1) asLowercase, (aString copyFrom: 2 to: aString size)
+%
+
+category: 'private'
+method: GsSplitClassRefactoring
+isValidClassName: aString
+	| c |
+	aString isEmpty ifTrue: [^false].
+	c := aString at: 1.
+	(c isLetter and: [c isUppercase]) ifFalse: [^false].
+	2 to: aString size do: [:i | | ch |
+		ch := aString at: i.
+		(ch isLetter or: [ch isDigit or: [ch == $_]]) ifFalse: [^false]].
+	^true
+%
+
+category: 'private'
+method: GsSplitClassRefactoring
+methodSource: src referencesName: aName
+	"CALLERS MUST GATE ON #parses: FIRST. A missing or unparseable source answers false here, which
+	 on a safety guard reads as 'no, it does not send super' -- the permissive answer. computeAnalysis
+	 declines such a method up front so this fallback is unreachable from it; keep it that way."
+	| tree found |
+	src isNil ifTrue: [^false].
+	tree := [RBParser parseMethod: src] on: Error do: [:e | nil].
+	tree isNil ifTrue: [^false].
+	found := false.
+	tree nodesDo: [:n | (n isVariable and: [n name = aName]) ifTrue: [found := true]].
+	^found
+%
+
+category: 'private'
+method: GsSplitClassRefactoring
+selfSentSelectorsIn: src
+	"The selectors sent to self / super in src, as a Set of Symbols. CALLERS MUST GATE ON #parses:
+	 FIRST -- an unparseable source answers an empty set, which reads as 'sends nothing to self'
+	 and sails past the retained-self-send guard."
+	| tree sels |
+	sels := Set new.
+	src isNil ifTrue: [^sels].
+	tree := [RBParser parseMethod: src] on: Error do: [:e | nil].
+	tree isNil ifTrue: [^sels].
+	tree nodesDo: [:n |
+		(n isMessage and: [n receiver isVariable and: [(n receiver name = 'self') or: [n receiver name = 'super']]])
+			ifTrue: [sels add: n selector asSymbol]].
+	^sels
+%
+
+category: 'private'
+method: GsSplitClassRefactoring
+argNamesFor: aSelector in: aClass
+	"The argument names of aSelector's source. RAISES when the source is missing or unparseable
+	 rather than answering #(): for a keyword selector an empty argument list makes
+	 selectorText:args: emit an empty pattern, so the delegator source comes out as `^self comp `
+	 and only fails at compile time during apply, stranding a half-applied split. computeAnalysis
+	 has already declined an unparseable movable method, so reaching this is a source that changed
+	 between the preview and the apply -- which the apply should report, not paper over."
+	| src tree |
+	src := self sourceOf: aSelector in: aClass.
+	tree := src isNil ifTrue: [nil] ifFalse: [[RBParser parseMethod: src] on: Error do: [:e | nil]].
+	tree isNil ifTrue: [
+		^self error: 'Cannot build the delegator for #', aSelector asString, ': its source is missing or no longer parses.'].
+	^tree arguments collect: [:a | a name]
+%
+
+category: 'private'
+method: GsSplitClassRefactoring
+selectorText: aSelector args: argNames
+	"The selector + args woven back into source text: a message-pattern that is ALSO the send after
+	 `^self <comp> `. Unary `foo`, binary `+ x`, keyword `at: k put: v`."
+	| parts ws |
+	(aSelector asString includes: $:) ifFalse: [
+		^argNames isEmpty
+			ifTrue: [aSelector asString]
+			ifFalse: [aSelector asString, ' ', (argNames at: 1) asString]].
+	parts := aSelector asString subStrings: ':'.
+	ws := WriteStream on: String new.
+	1 to: argNames size do: [:i |
+		i > 1 ifTrue: [ws nextPut: $ ].
+		ws nextPutAll: (parts at: i); nextPutAll: ': '; nextPutAll: (argNames at: i) asString].
+	^ws contents
+%
+
+category: 'private - analysis'
+method: GsSplitClassRefactoring
+ensureAnalysis
+	analysisDone ifFalse: [
+		analysisDone := true.
+		movableSelectors := OrderedCollection new.
+		[self computeAnalysis] on: Error do: [:e |
+			decline := 'The split could not be analysed: ', e messageText]]
+%
+
+category: 'private - analysis'
+method: GsSplitClassRefactoring
+computeAnalysis
+	"Validate the name + extract set, derive the component ivar, compute the movable methods, then
+	 run the clean-cut preconditions. Sets decline (nil when viable), componentIvarName and
+	 movableSelectors."
+	| own extractSyms ivarConflicts movable |
+	decline := nil.
+	(self isValidClassName: newName) ifFalse: [
+		^decline := 'Cannot split: ', newName, ' is not a valid class name.'].
+	(environment classNamed: newName) notNil ifTrue: [
+		^decline := 'Cannot split: a class named ', newName, ' already exists.'].
+	extractIvars isEmpty ifTrue: [
+		^decline := 'Cannot split: no instance variables were chosen to extract.'].
+	own := environment ownInstVarNamesOf: sourceClass.
+	extractIvars do: [:v |
+		(own includes: v) ifFalse: [
+			^decline := 'Cannot split: ', v, ' is not an instance variable of ', sourceClass name asString, '.']].
+	componentIvarName := self decapitalize: newName.
+	((environment allInstVarNamesOf: sourceClass) includes: componentIvarName) ifTrue: [
+		^decline := 'Cannot split: the source already has an instance variable named ', componentIvarName, '.'].
+	"The component ivar is a NEW instance variable on the source, so it faces the same two
+	 collisions V1 add declines -- a class variable it would shadow, and a subclass that already
+	 declares that name (error 2271, raised MID-apply once the component class and every moved
+	 method already exist). Both questions are asked through the shared environment queries so V1
+	 and V8 cannot drift apart."
+	((environment classVarNamesVisibleTo: sourceClass) includes: componentIvarName) ifTrue: [
+		^decline := 'Cannot split: a class variable named ', componentIvarName, ' is visible to ',
+			sourceClass name asString, ', which the new instance variable would shadow.'].
+	ivarConflicts := environment descendantsOf: sourceClass declaringInstVar: componentIvarName.
+	ivarConflicts notEmpty ifTrue: [
+		^decline := 'Cannot split: ',
+			(ivarConflicts size = 1 ifTrue: ['subclass '] ifFalse: ['subclasses ']),
+			(self commaList: ((ivarConflicts collect: [:c | c name asString]) asSortedCollection: [:a :b | a <= b])),
+			(ivarConflicts size = 1 ifTrue: [' already declares'] ifFalse: [' already declare']),
+			' an instance variable named ', componentIvarName, '; adding it to ',
+			sourceClass name asString, ' would duplicate that variable.'].
+	extractSyms := self extractSymbolSet.
+	"One pass: a method we cannot read is a DECLINE, not a method that touches nothing. Answering
+	 #() there would silently leave it behind on the source while the reversion removes the very
+	 instance variables it may use -- and the whole MVP is 'decline anything that isn't a clean
+	 cut'. The message names the selector so a rare refusal explains itself."
+	movable := OrderedCollection new.
+	sourceClass selectors do: [:sel | | acc |
+		acc := self ivarsAccessedBy: sel in: sourceClass.
+		acc isNil ifTrue: [
+			^decline := 'Cannot split off ', newName, ': #', sel asString, ' could not be analysed.'].
+		(acc anySatisfy: [:v | extractSyms includes: v asSymbol]) ifTrue: [movable add: sel]].
+	movableSelectors := movable asSortedCollection: [:a :b | a asString <= b asString].
+	movableSelectors do: [:sel | | accessed retained src selfSent |
+		accessed := self ivarsAccessedBy: sel in: sourceClass.
+		retained := accessed reject: [:v | extractSyms includes: v asSymbol].
+		retained notEmpty ifTrue: [
+			^decline := 'Cannot split off ', newName, ': #', sel asString, ' also uses instance variable(s) that stay behind (',
+				(self commaList: ((retained collect: [:v | v asString]) asSortedCollection: [:a :b | a <= b])), ').'].
+		src := self sourceOf: sel in: sourceClass.
+		"Gate BOTH source-level guards below on the source actually parsing. RBParser is a
+		 re-implementation, so a method carrying a GemStone-ism it does not handle is the realistic
+		 trigger -- and both guards answer permissively on a parse failure (false / an empty set),
+		 which would sail a method with a super send or a retained self send straight through."
+		(self parses: src) ifFalse: [
+			^decline := 'Cannot split off ', newName, ': the source of #', sel asString, ' could not be parsed.'].
+		(self methodSource: src referencesName: 'super') ifTrue: [
+			^decline := 'Cannot split off ', newName, ': #', sel asString, ' sends super, whose meaning depends on the source class.'].
+		selfSent := self selfSentSelectorsIn: src.
+		selfSent do: [:s |
+			"A self-sent selector is safe to leave behind only if it moves too, OR it is understood
+			 by Object AND the source does NOT override it -- else the move would resolve to the
+			 component's inherited Object impl and silently lose the source's override."
+			((movableSelectors includes: s)
+				or: [(sourceClass includesSelector: s) not and: [Object canUnderstand: s]]) ifFalse: [
+				^decline := 'Cannot split off ', newName, ': #', sel asString, ' calls #', s asString, ', which stays behind on ', sourceClass name asString, '.']]].
+	(environment descendantsOf: sourceClass) do: [:d |
+		d selectors do: [:sel | | acc |
+			acc := self ivarsAccessedBy: sel in: d.
+			"Same reasoning as the source sweep: this guard asserts a NEGATIVE (no subclass touches
+			 an extracted variable), and a method we cannot read cannot support that claim."
+			acc isNil ifTrue: [
+				^decline := 'Cannot split off ', newName, ': #', sel asString, ' on subclass ',
+					d name asString, ' could not be analysed.'].
+			(acc anySatisfy: [:v | extractSyms includes: v asSymbol]) ifTrue: [
+				^decline := 'Cannot split off ', newName, ': subclass ', d name asString, ' uses an extracted instance variable in #', sel asString, '.']]]
+%
+
+category: 'preconditions'
+method: GsSplitClassRefactoring
+decline
+	self ensureAnalysis.
+	^decline
+%
+
+category: 'building'
+method: GsSplitClassRefactoring
+changeSet
+	changeSet isNil ifTrue: [changeSet := self buildChangeSet].
+	^changeSet
+%
+
+category: 'building'
+method: GsSplitClassRefactoring
+buildChangeSet
+	"Stage: #classAdd N; the movable methods as #methodAdd on N; a #classDefinitionEdit reversioning
+	 S (drop E, add the component ivar); a #classReparent per descendant; and the accessor + a
+	 delegator per moved method as #methodAdd on S. The reversion's copy-forward already omits the
+	 moved methods from the new S version, so no explicit method removal is staged. Compiles nothing,
+	 commits nothing."
+	| cs dn sn srcDict |
+	cs := GsRefactoringChangeSet new.
+	self ensureAnalysis.
+	decline notNil ifTrue: [^cs].
+	dn := self newClassDictName.
+	sn := sourceClass name asString.
+	srcDict := self dictNameForClass: sourceClass.
+	cs
+		addClassAddInDictionary: dn
+		className: newName
+		superclassName: 'Object'
+		newSource: self newClassDefinition.
+	movableSelectors do: [:sel |
+		cs
+			addMethodAddInDictionary: dn
+			className: newName
+			isMeta: false
+			selector: sel
+			category: (self categoryOf: sel in: sourceClass)
+			newSource: (self sourceOf: sel in: sourceClass)].
+	cs
+		addClassDefinitionEditInDictionary: srcDict
+		className: sn
+		oldSource: sourceClass definition
+		newSource: self sourceDefinitionAfterSplit.
+	(environment descendantsOf: sourceClass) do: [:d |
+		cs
+			addClassReparentInDictionary: (self dictNameForClass: d)
+			className: d name asString
+			oldSource: d definition
+			newSource: d definition].
+	cs
+		addMethodAddInDictionary: srcDict
+		className: sn
+		isMeta: false
+		selector: componentIvarName asSymbol
+		category: 'accessing'
+		newSource: self accessorSource.
+	movableSelectors do: [:sel |
+		cs
+			addMethodAddInDictionary: srcDict
+			className: sn
+			isMeta: false
+			selector: sel
+			category: 'delegating'
+			newSource: (self delegatorSourceFor: sel)].
+	^cs
+%
+
+category: 'building'
+method: GsSplitClassRefactoring
+retainedOwnIvars
+	^(environment ownInstVarNamesOf: sourceClass) reject: [:n | extractIvars includes: n]
+%
+
+category: 'building'
+method: GsSplitClassRefactoring
+sourceIvarsAfterSplit
+	"The source's own ivars after the split: the retained ones plus the new component ivar."
+	^self retainedOwnIvars, (Array with: componentIvarName)
+%
+
+category: 'building'
+method: GsSplitClassRefactoring
+newClassDefinition
+	^'Object subclass: ''', newName, '''
+	instVarNames: #(', (self quotedList: extractIvars), ')
+	classVars: #()
+	classInstVars: #()
+	poolDictionaries: #()
+	inDictionary: ', self newClassDictName
+%
+
+category: 'building'
+method: GsSplitClassRefactoring
+sourceDefinitionAfterSplit
+	"The source's definition with its own-instVar list replaced by the retained ivars + component."
+	^self definitionWithIvars: self sourceIvarsAfterSplit in: sourceClass definition
+%
+
+category: 'building'
+method: GsSplitClassRefactoring
+definitionWithIvars: anIvarList in: defString
+	"defString with the instVarNames: clause's parenthesised list replaced by anIvarList (quoted).
+	 Display-only (apply computes the list directly). Mirrors GsExtractSuperclassRefactoring."
+	| marker start openParen closeParen ws |
+	marker := 'instVarNames:'.
+	start := defString indexOfSubCollection: marker.
+	start = 0 ifTrue: [^defString].
+	openParen := defString indexOf: $( startingAt: start.
+	openParen = 0 ifTrue: [^defString].
+	closeParen := defString indexOf: $) startingAt: openParen.
+	closeParen = 0 ifTrue: [^defString].
+	ws := WriteStream on: String new.
+	ws nextPutAll: (defString copyFrom: 1 to: openParen).
+	anIvarList keysAndValuesDo: [:i :n |
+		i = 1 ifFalse: [ws nextPut: $ ].
+		ws nextPutAll: ''''; nextPutAll: n asString; nextPutAll: ''''].
+	ws nextPutAll: (defString copyFrom: closeParen to: defString size).
+	^ws contents
+%
+
+category: 'building'
+method: GsSplitClassRefactoring
+quotedList: aCollection
+	| ws q |
+	q := String with: $'.
+	ws := WriteStream on: String new.
+	aCollection keysAndValuesDo: [:i :n |
+		i = 1 ifFalse: [ws nextPut: $ ].
+		ws nextPutAll: q; nextPutAll: n asString; nextPutAll: q].
+	^ws contents
+%
+
+category: 'building'
+method: GsSplitClassRefactoring
+accessorSource
+	"A lazy accessor for the component: `n ^n ifNil: [n := N new]`."
+	^componentIvarName, self nl, self tab,
+	 '^', componentIvarName, ' ifNil: [', componentIvarName, ' := ', newName, ' new]'
+%
+
+category: 'building'
+method: GsSplitClassRefactoring
+delegatorSourceFor: aSelector
+	"A delegating stub forwarding to the component: `foo: a ^self n foo: a`.
+
+	 The `^` is DROPPED when the moved method answers self on every path we can see, because a
+	 Smalltalk method that falls off its end answers the RECEIVER -- and after the move the
+	 receiver is the component, not the source. `^self comp street: aString` would therefore make
+	 `person street: 'x'` evaluate to the ScItAddress rather than the person: it breaks the
+	 unchanged-external-API promise for anything that chains on the result, and it leaks the
+	 component object out of S's API, which is precisely what the has-a encapsulation exists to
+	 prevent. Setters are the most common movable shape, so this is the common case, not an edge.
+
+	 Without the `^` the delegator itself falls off its end and answers the source again.
+
+	 KNOWN LIMITATION: a method that returns a value on one path and falls through on another still
+	 forwards, so its fall-through path answers the component. Detecting that needs a per-path
+	 analysis this MVP does not do -- and it is no worse than before this fix."
+	| text |
+	text := self selectorText: aSelector args: (self argNamesFor: aSelector in: sourceClass).
+	(self answersSelf: aSelector in: sourceClass)
+		ifTrue: [^text, self nl, self tab, 'self ', componentIvarName, ' ', text].
+	^text, self nl, self tab, '^self ', componentIvarName, ' ', text
+%
+
+category: 'private'
+method: GsSplitClassRefactoring
+answersSelf: aSelector in: aClass
+	"True when aSelector's method answers its receiver on every path we can see: it has no return
+	 at all (it falls off its end), or every return it does have is a literal `^self`. Those are the
+	 methods whose delegator must NOT forward with `^` -- see delegatorSourceFor:.
+
+	 A return of anything else means the value is the method's real answer and must be forwarded."
+	| src tree answersSelf |
+	src := self sourceOf: aSelector in: aClass.
+	(self parses: src) ifFalse: [^false].
+	tree := RBParser parseMethod: src.
+	answersSelf := true.
+	tree nodesDo: [:n |
+		(n isReturn and: [(n value isVariable and: [n value name = 'self']) not])
+			ifTrue: [answersSelf := false]].
+	^answersSelf
+%
+
+category: 'private'
+method: GsSplitClassRefactoring
+newClassDictName
+	dictNameOrNil ifNotNil: [:dn | ^dn].
+	^self dictNameForClass: sourceClass
+%
+
+category: 'private'
+method: GsSplitClassRefactoring
+dictNameForClass: aClass
+	| dicts |
+	dicts := environment dictionariesDefiningClassNamed: aClass name.
+	^dicts isEmpty ifTrue: ['UserGlobals'] ifFalse: [dicts first name asString]
+%
+
+category: 'serializing'
+method: GsSplitClassRefactoring
+analysisJsonString
+	self ensureAnalysis.
+	^'{"decline":', (decline ifNil: ['null'] ifNotNil: [:r | self jsonQuote: r]),
+	  ',"newClass":', (self jsonQuote: newName),
+	  ',"sourceClass":', (self jsonQuote: sourceClass name asString),
+	  ',"movableCount":', (decline notNil ifTrue: ['0'] ifFalse: [movableSelectors size printString]),
+	  ',"affectedCount":', (decline notNil ifTrue: ['0'] ifFalse: [self changeSet size printString]),
+	  '}'
+%
+
+category: 'serializing'
+method: GsSplitClassRefactoring
+candidatesJsonString
+	"The source's own instance variables, for the extract-set checklist (not gated on a decline --
+	 the client picks the set from this list)."
+	| ws first |
+	ws := WriteStream on: String new.
+	ws nextPutAll: '{"sourceClass":'; nextPutAll: (self jsonQuote: sourceClass name asString).
+	ws nextPutAll: ',"instVars":['.
+	first := true.
+	(environment ownInstVarNamesOf: sourceClass) do: [:v |
+		first ifFalse: [ws nextPut: $,]. first := false.
+		ws nextPutAll: '{"name":'; nextPutAll: (self jsonQuote: v); nextPut: $}].
+	ws nextPutAll: ']}'.
+	^ws contents
+%
+
+category: 'serializing'
+method: GsSplitClassRefactoring
+previewJsonString
+	^self changeSet jsonString
+%
+
+category: 'serializing'
+method: GsSplitClassRefactoring
+outOfScopeJsonString
+	^'{"references":0,"skipped":0,"scope":"hierarchy","collision":null,"decline":',
+	  (decline ifNil: ['null'] ifNotNil: [:r | self jsonQuote: r]),
+	  ',"note":', (self jsonQuote: 'Existing instances keep their prior class version and are not migrated.'), '}'
+%
+
+category: 'paginated preview'
+method: GsSplitClassRefactoring
+startPreviewToken: token maxBytes: maxBytes
+	self changeSet.
+	SessionTemps current at: token asSymbol put: self.
+	^'{"token":', (self jsonQuote: token),
+	  ',"total":', self changeSet size printString,
+	  ',"newClass":', (self jsonQuote: newName),
+	  ',"sourceClass":', (self jsonQuote: sourceClass name asString),
+	  ',"outOfScope":', self outOfScopeJsonString,
+	  ',"page":', (self pageJsonFrom: 1 maxBytes: maxBytes), '}'
+%
+
+category: 'paginated preview'
+method: GsSplitClassRefactoring
+pageJsonFrom: startIndex maxBytes: maxBytes
+	| all ws i |
+	all := self changeSet changes.
+	ws := WriteStream on: String new.
+	ws nextPut: $[.
+	i := startIndex.
+	[i <= all size and: [i = startIndex or: [ws position < maxBytes]]] whileTrue: [
+		i > startIndex ifTrue: [ws nextPut: $,].
+		(all at: i) jsonOn: ws.
+		i := i + 1].
+	ws nextPut: $].
+	^'{"changes":', ws contents,
+	  ',"nextOffset":', i printString,
+	  ',"done":', (i > all size) printString, '}'
+%
+
+category: 'applying'
+method: GsSplitClassRefactoring
+applyDeselected: deselectedIds
+	"Apply EVERY staged change in the stone. Split-class is ALL-OR-NOTHING, so a deselection is
+	 ignored. NOTHING is committed; on a failed change the caller must ABORT. Answers
+	 {applied, failed:[..], committed:false}."
+	| applied failures |
+	self ensureAnalysis.
+	decline notNil ifTrue: [
+		^'{"applied":0,"committed":false,"failed":[],"error":', (self jsonQuote: decline), '}'].
+	oldToNew := IdentityDictionary new.
+	newClass := nil.
+	failures := OrderedCollection new.
+	applied := 0.
+	self changeSet changes do: [:change |
+		[self applyChange: change. applied := applied + 1]
+		on: Error do: [:e |
+			failures add: (Array with: change id with: change className with: e messageText)]].
+	^'{"applied":', applied printString,
+	  ',"committed":false',
+	  ',"failed":[',
+	  ((failures collect: [:f |
+		'{"id":', (self jsonQuote: (f at: 1)),
+		',"label":', (self jsonQuote: (f at: 2)),
+		',"error":', (self jsonQuote: (f at: 3)), '}'])
+			inject: '' into: [:acc :s | acc isEmpty ifTrue: [s] ifFalse: [acc, ',', s]]),
+	  ']}'
+%
+
+category: 'applying'
+method: GsSplitClassRefactoring
+applyChange: aChange
+	aChange kind == #classAdd ifTrue: [^self applyClassAdd: aChange].
+	(aChange kind == #classDefinitionEdit or: [aChange kind == #classReparent])
+		ifTrue: [^self applyClassChange: aChange].
+	aChange kind == #methodAdd ifTrue: [^self applyMethodAdd: aChange].
+	^self error: 'Unexpected change kind for split-class: ', aChange kind printString
+%
+
+category: 'applying'
+method: GsSplitClassRefactoring
+applyClassAdd: aChange
+	"Create the new component class fresh -- an Object subclass carrying the extracted ivars. A
+	 brand-new class (no inClassHistory:), so a plain subclass: creation."
+	newClass := Object
+		subclass: newName
+		instVarNames: (extractIvars collect: [:e | e asString])
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: (self dictObjectForNewClass).
+	oldToNew at: newClass put: newClass
+%
+
+category: 'applying'
+method: GsSplitClassRefactoring
+applyClassChange: aChange
+	"Reversion the named class: the SOURCE (a #classDefinitionEdit) drops the extracted ivars, adds
+	 the component ivar, and drops the moved methods on copy-forward; a DESCENDANT (a #classReparent)
+	 just re-points at its freshly-versioned ancestor with its own shape unchanged."
+	| old isSource parentNew list skip new |
+	old := environment classNamed: aChange className.
+	old isNil ifTrue: [^self error: 'Class not found: ', aChange className].
+	isSource := aChange kind == #classDefinitionEdit.
+	parentNew := isSource
+		ifTrue: [old superclass]
+		ifFalse: [oldToNew at: old superclass ifAbsent: [old superclass]].
+	list := isSource
+		ifTrue: [self sourceIvarsAfterSplit]
+		ifFalse: [environment ownInstVarNamesOf: old].
+	skip := isSource ifTrue: [movableSelectors] ifFalse: [#()].
+	new := self makeNewVersionOf: old superclass: parentNew instVarNames: list.
+	self copyMethodsFrom: old to: new skipping: skip.
+	oldToNew at: old put: new
+%
+
+category: 'applying'
+method: GsSplitClassRefactoring
+makeNewVersionOf: old superclass: sup instVarNames: ivars
+	^sup
+		_subclass: old name asString
+		instVarNames: (ivars collect: [:e | e asString])
+		format: old format
+		classVars: (old classVarNames collect: [:e | e asString])
+		classInstVars: (old class instVarNames collect: [:e | e asString])
+		poolDictionaries: old sharedPools
+		inDictionary: (self dictObjectFor: old)
+		inClassHistory: old classHistory
+		description: ([old commentForFileout] on: Error do: [:e | ''])
+		options: #()
+%
+
+category: 'applying'
+method: GsSplitClassRefactoring
+copyMethodsFrom: old to: new skipping: skipSelectors
+	old selectors do: [:sel |
+		(skipSelectors includes: sel) ifFalse: [self copyMethod: sel from: old to: new]].
+	old class selectors do: [:sel | self copyMethod: sel from: old class to: new class]
+%
+
+category: 'applying'
+method: GsSplitClassRefactoring
+copyMethod: sel from: srcCls to: dstCls
+	| m cat |
+	m := srcCls compiledMethodAt: sel environmentId: 0 otherwise: nil.
+	m isNil ifTrue: [^self].
+	cat := (srcCls categoryOfSelector: sel environmentId: 0) ifNil: ['as yet unclassified'].
+	dstCls
+		compileMethod: m sourceString
+		dictionaries: System myUserProfile symbolList
+		category: cat asString
+%
+
+category: 'applying'
+method: GsSplitClassRefactoring
+applyMethodAdd: aChange
+	"Compile a method onto the component (movable methods) or the reversioned source (accessor +
+	 delegators)."
+	| target |
+	target := aChange className = newName
+		ifTrue: [newClass]
+		ifFalse: [environment classNamed: aChange className].
+	target isNil ifTrue: [^self error: 'Class not found: ', aChange className].
+	target
+		compileMethod: aChange newSource
+		dictionaries: System myUserProfile symbolList
+		category: (aChange category ifNil: ['as yet unclassified'])
+%
+
+category: 'applying'
+method: GsSplitClassRefactoring
+dictObjectFor: aClass
+	| dicts |
+	dicts := environment dictionariesDefiningClassNamed: aClass name.
+	^dicts isEmpty
+		ifTrue: [environment symbolList objectNamed: #UserGlobals]
+		ifFalse: [dicts first]
+%
+
+category: 'applying'
+method: GsSplitClassRefactoring
+dictObjectForNewClass
+	dictNameOrNil ifNotNil: [:dn |
+		^(environment symbolList objectNamed: dn asSymbol)
+			ifNil: [self dictObjectFor: sourceClass]].
+	^self dictObjectFor: sourceClass
+%
+
+category: 'serializing'
+method: GsSplitClassRefactoring
+jsonQuote: aString
+	^GsRefactoringJson jsonQuote: aString
+%
+
+category: 'serializing'
+method: GsSplitClassRefactoring
+jsonEscape: aString
+	^GsRefactoringJson jsonEscape: aString
+%
+
+category: 'serializing'
+method: GsSplitClassRefactoring
+hex2: anInteger
+	^GsRefactoringJson hex2: anInteger
+%
+
+category: 'instance creation'
+classmethod: GsSplitClassRefactoring
+class: aSource splitIntoClassNamed: aName extractingInstVars: ivars inDictionary: aDictOrNil
+	"Split aSource: extract the own instance variables ivars (and the methods that use them) into a
+	 new class aName (an Object subclass), filed in aDictOrNil (nil = the source's dictionary)."
+	^self new
+		setEnvironment: GsRefactoringEnvironment new
+		class: aSource
+		name: aName
+		dict: aDictOrNil
+		extractIvars: ivars
+%
+
+category: 'preconditions'
+classmethod: GsSplitClassRefactoring
+analyzeClass: aSource splitIntoClassNamed: aName extractingInstVars: ivars
+	^(self class: aSource splitIntoClassNamed: aName extractingInstVars: ivars inDictionary: nil) analysisJsonString
+%
+
+category: 'preconditions'
+classmethod: GsSplitClassRefactoring
+candidatesForClass: aSource
+	"The source's own instance variables the preview checklist renders as extract candidates."
+	^(self class: aSource splitIntoClassNamed: 'GsSplitClassProbe' extractingInstVars: #() inDictionary: nil) candidatesJsonString
+%
+
+category: 'paginated preview'
+classmethod: GsSplitClassRefactoring
+pageForToken: token from: startIndex maxBytes: maxBytes
+	^(SessionTemps current at: token asSymbol ifAbsent: [nil])
+		ifNil: ['{"error":"preview session expired","changes":[],"nextOffset":0,"done":true}']
+		ifNotNil: [:ref | ref pageJsonFrom: startIndex maxBytes: maxBytes]
+%
+
+category: 'paginated preview'
+classmethod: GsSplitClassRefactoring
+applyForToken: token deselected: deselectedIds
+	^(SessionTemps current at: token asSymbol ifAbsent: [nil])
+		ifNil: ['{"applied":0,"committed":false,"failed":[],"error":"preview session expired"}']
+		ifNotNil: [:ref | ref applyDeselected: deselectedIds]
+%
+
+category: 'paginated preview'
+classmethod: GsSplitClassRefactoring
+clearToken: token
 	SessionTemps current removeKey: token asSymbol ifAbsent: [].
 	^'ok'
 %

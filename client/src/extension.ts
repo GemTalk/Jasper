@@ -79,7 +79,11 @@ import { loadClassPickItems } from './commands/classPicker';
 import { GlobalsBrowser } from './globalsBrowser';
 import { CommentBrowser } from './commentBrowser';
 import { EnhancedInspector } from './enhancedInspector/enhancedInspector';
-import { maybeOfferServerSupport, runInstallServerSupport } from './optionalSupportOffer';
+import {
+  maybeOfferServerSupport,
+  runInstallServerSupport,
+  runUninstallServerSupport,
+} from './optionalSupportOffer';
 import { refreshEnhancedInspectorAvailable } from './enhancedInspector/enhancedInspectorAvailability';
 import { refreshRefactoringSupportAvailable } from './refactoring/refactoringAvailability';
 import { supportsEnhancedInspector } from './enhancedInspector/enhancedInspectorInstall';
@@ -122,7 +126,6 @@ import { getGciLog } from './gciLog';
 import { GemStoneCodeLensProvider } from './gemstoneCodeLensProvider';
 import * as queries from './browserQueries';
 import { SysadminStorage } from './sysadminStorage';
-import { GemStoneDatabase } from './sysadminTypes';
 import { appendSysadmin, getSysadminChannel } from './sysadminChannel';
 import { VersionManager } from './versionManager';
 import { VersionTreeProvider, VersionItem } from './versionTreeProvider';
@@ -131,7 +134,8 @@ import { DatabaseTreeProvider, DatabaseNode } from './databaseTreeProvider';
 import { runLogicalBackup } from './backupManager';
 import { runOnlineExtentBackup, resolveExtentBackupSession } from './extentBackupManager';
 import { runLogicalRestore, RestoreSession } from './restoreManager';
-import { hasFileControlPrivilege } from './queries/backup';
+import { hasFileControlPrivilege, serverBackupFilePaths } from './queries/backup';
+import { backupFolderInServer } from './queries/extentBackup';
 import { ProcessManager } from './processManager';
 import { openMcpInspector } from './openMcpInspector';
 import { McpSocketServer, writeClaudeDesktopMcpConfig } from './mcpSocketServer';
@@ -820,17 +824,33 @@ export function activate(context: vscode.ExtensionContext) {
   const hoverProvider = new GemStoneHoverProvider(sessionManager, selectorResolver);
   const completionProvider = new GemStoneCompletionProvider(sessionManager);
   const codeLensProvider = new GemStoneCodeLensProvider(sessionManager);
+  // The senders/implementors CodeLens must attach on a gemstone:// method the
+  // instant it opens. A gemstone doc's language is assigned asynchronously
+  // (onDidOpenTextDocument → setTextDocumentLanguage), so gating the lens on
+  // `language: gemstone-smalltalk` (as providerSelectors does) delays it past the
+  // first paint on a document's first open — the lens then pops in and shoves the
+  // code down. Match on scheme alone so it's present from the first render;
+  // provideCodeLenses returns nothing for non-method gemstone docs anyway.
+  const codeLensSelectors: vscode.DocumentFilter[] = [
+    { scheme: 'gemstone' },
+    { scheme: 'untitled', language: 'gemstone-smalltalk' },
+    { scheme: 'file', language: 'gemstone-smalltalk' },
+    { scheme: 'file', language: 'gemstone-topaz' },
+    { scheme: 'file', language: 'gemstone-tonel' },
+  ];
   context.subscriptions.push(
     vscode.languages.registerDefinitionProvider(providerSelectors, definitionProvider),
     vscode.languages.registerHoverProvider(providerSelectors, hoverProvider),
     vscode.languages.registerCompletionItemProvider(providerSelectors, completionProvider),
-    vscode.languages.registerCodeLensProvider(providerSelectors, codeLensProvider),
+    vscode.languages.registerCodeLensProvider(codeLensSelectors, codeLensProvider),
     codeLensProvider, // dispose() cancels pending count lookups + releases the emitter
     // Hosts "Rename Temporary/Argument…" under the native "Refactor…" menu in a
     // saved (scheme:gemstone) method editor.
     vscode.languages.registerCodeActionsProvider(
       { scheme: 'gemstone', language: 'gemstone-smalltalk' },
-      new RefactorCodeActionProvider(),
+      new RefactorCodeActionProvider(
+        () => sessionManager.getSelectedSession()?.rbSupportAvailable === true,
+      ),
       { providedCodeActionKinds: RefactorCodeActionProvider.providedCodeActionKinds },
     ),
   );
@@ -880,7 +900,10 @@ export function activate(context: vscode.ExtensionContext) {
     gemstoneFs.onClassDefinitionCompiled((e) => {
       const parts = e.uri.path.split('/').map(decodeURIComponent);
       if (parts.length >= 3) {
-        explorer.onClassCompiled(parseInt(e.uri.authority, 10), parts[2]);
+        // parts: ['', dictName, className, 'definition'] — pass the dictName so the
+        // explorer can jump to the dictionary the class was actually created in
+        // (which may differ from the selected one for a new-class inDictionary:).
+        explorer.onClassCompiled(parseInt(e.uri.authority, 10), parts[2], parts[1]);
       }
     }),
   );
@@ -977,6 +1000,16 @@ export function activate(context: vscode.ExtensionContext) {
       'setContext',
       'gemstone.rbSupportAvailable',
       !!selected && selected.rbSupportAvailable === true,
+    );
+    // Drives the "Uninstall Server Support" menu visibility: it appears only when
+    // at least one optional support (either feature) is actually installed on the
+    // selected stone. The install/uninstall commands refresh this via
+    // `optionalSupportOffer` after they change the latches.
+    vscode.commands.executeCommand(
+      'setContext',
+      'gemstone.serverSupportInstalled',
+      !!selected &&
+        (selected.rbSupportAvailable === true || selected.enhancedInspectorAvailable === true),
     );
   }
   context.subscriptions.push(
@@ -1278,6 +1311,10 @@ export function activate(context: vscode.ExtensionContext) {
 
     vscode.commands.registerCommand('gemstone.installServerSupport', async () => {
       await runInstallServerSupport(sessionManager, context.extensionPath);
+    }),
+
+    vscode.commands.registerCommand('gemstone.uninstallServerSupport', async () => {
+      await runUninstallServerSupport(sessionManager);
     }),
 
     vscode.commands.registerCommand('gemstone.renameTemporary', async (position?: unknown) => {
@@ -3733,12 +3770,7 @@ export function activate(context: vscode.ExtensionContext) {
           );
           return;
         }
-        // Default the destination next to the extents when this session's stone is
-        // one we manage locally; otherwise the picker opens without a default dir.
-        const db = sysadminStorage
-          .getDatabases()
-          .find((d) => d.config.stoneName === session.login.stone);
-        const backedUp = await runLogicalBackup({
+        await runLogicalBackup({
           execute: (code) => queries.executeFetchString(session, code),
           runBackup: (code) =>
             queries.executeFetchStringNb(
@@ -3749,11 +3781,7 @@ export function activate(context: vscode.ExtensionContext) {
               true,
             ),
           stoneName: session.login.stone,
-          dbPath: db?.path,
         });
-        // Re-read the Databases tree so the new backup (and the Backups node, if
-        // this was the first one) shows up without a manual refresh.
-        if (backedUp) refreshAdminViews();
       },
     ),
 
@@ -3812,35 +3840,12 @@ export function activate(context: vscode.ExtensionContext) {
 
     vscode.commands.registerCommand(
       'gemstone.fullLogicalRestore',
-      async (item?: GemStoneSessionItem | DatabaseNode) => {
-        // Two entry points: the Sessions view button (a GemStoneSessionItem) and
-        // a right-click on a backup-file node in the Databases tree. Either way we
-        // need a LIVE session (for credentials to re-login through the restore's
-        // stop/start cycle) and a locally-managed database (the restore must run
-        // on the stone's own host).
-        let session: ActiveSession | undefined;
-        let backupFile: string | undefined;
-        let db: GemStoneDatabase | undefined;
-
-        if (item instanceof GemStoneSessionItem) {
-          session = item.activeSession;
-        } else if (item && 'kind' in item && item.kind === 'backupFile') {
-          backupFile = item.filePath;
-          db = item.db;
-          session = sessionManager
-            .getSessions()
-            .find((s) => s.login.stone === db!.config.stoneName);
-          if (!session) {
-            vscode.window.showWarningMessage(
-              `A full logical restore runs over a live session (it needs your login to reconnect ` +
-                `through the stone restart). Log in to "${db.config.stoneName}" first, then try again.`,
-              { modal: true },
-            );
-            return;
-          }
-        } else {
-          session = sessionManager.getSelectedSession();
-        }
+      async (item?: GemStoneSessionItem) => {
+        // A restore runs over GCI against the connected stone (it needs a LIVE
+        // session for credentials to re-login through the stop/start cycle), so
+        // it operates on the session clicked in the Sessions tree, or the
+        // selected session when invoked from the palette.
+        const session = item ? item.activeSession : sessionManager.getSelectedSession();
         if (!session) {
           vscode.window.showInformationMessage(
             'No GemStone session to restore. Connect a session to the stone you want to restore first.',
@@ -3848,9 +3853,11 @@ export function activate(context: vscode.ExtensionContext) {
           return;
         }
 
-        db =
-          db ??
-          sysadminStorage.getDatabases().find((d) => d.config.stoneName === session.login.stone);
+        // Restore also needs a locally-managed database (it must run on the
+        // stone's own host).
+        const db = sysadminStorage
+          .getDatabases()
+          .find((d) => d.config.stoneName === session.login.stone);
         if (!db) {
           vscode.window.showErrorMessage(
             `Full logical restore currently requires a database created through Jasper's Databases ` +
@@ -3882,10 +3889,12 @@ export function activate(context: vscode.ExtensionContext) {
 
         const restored = await runLogicalRestore({
           stoneName: managed.config.stoneName,
-          dbPath: managed.path,
-          backupFile,
           hasFileControl: () =>
             hasFileControlPrivilege((code) => queries.executeFetchString(session, code)),
+          listBackupFiles: () => {
+            const execute = (code: string) => queries.executeFetchString(session, code);
+            return serverBackupFilePaths(execute, backupFolderInServer(execute));
+          },
           closeCurrentSession: async () => {
             sessionManager.logout(sessionId);
           },
@@ -3910,9 +3919,11 @@ export function activate(context: vscode.ExtensionContext) {
           startStone: async () => {
             await processManager.startStone(managed);
           },
-          copyCurrentExtentAside: async (destPath) => {
+          copyCurrentExtentAside: async (fileName) => {
+            const destPath = path.join(managed.path, 'backups', 'backupExtents', fileName);
             wslMkdirSync(path.dirname(destPath), { recursive: true });
             wslImportFileSync(path.join(dataDir, 'extent0.dbf'), destPath);
+            return destPath;
           },
           swapInFreshExtent: async () => {
             if (!gsPath) {

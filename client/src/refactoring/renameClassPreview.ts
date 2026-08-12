@@ -1,3 +1,5 @@
+import { asCount } from './previewCounts';
+import { ApplyResult as BaseApplyResult, parseApplyResultWith } from './previewEnvelope';
 /**
  * Pure helpers for the rename-class (R3) preview: parsing the server-side
  * engine's paginated preview envelope and the apply result, and validating a new
@@ -63,19 +65,12 @@ export interface StartClassPreview {
   page: PreviewPage;
 }
 
-export interface ApplyResult {
-  applied: number;
-  failed: { id: string; label: string; error: string }[];
+export interface ApplyResult extends BaseApplyResult {
   /** True when the apply committed (the migrate-instances / remove-old options
    *  require a durable commit). */
   committed?: boolean;
   /** Instances that failed to migrate (only meaningful when migrate was on). */
   migratedFailures?: number;
-  error?: string;
-}
-
-function asCount(v: unknown): number {
-  return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0;
 }
 
 function parseChange(raw: unknown, i: number): ClassRenameChange {
@@ -177,27 +172,10 @@ export function parsePage(json: string): PreviewPage {
 }
 
 export function parseApplyResult(json: string): ApplyResult {
-  const parsed: unknown = JSON.parse(json);
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    throw new Error('Apply did not return a result envelope.');
-  }
-  const env = parsed as Record<string, unknown>;
-  const failed = Array.isArray(env.failed)
-    ? env.failed
-        .filter((f): f is Record<string, unknown> => typeof f === 'object' && f !== null)
-        .map((f) => ({
-          id: typeof f.id === 'string' ? f.id : '?',
-          label: typeof f.label === 'string' ? f.label : '?',
-          error: typeof f.error === 'string' ? f.error : 'unknown error',
-        }))
-    : [];
-  return {
-    applied: asCount(env.applied),
-    failed,
+  return parseApplyResultWith(json, (env) => ({
     committed: env.committed === true,
     migratedFailures: asCount(env.migratedFailures),
-    error: typeof env.error === 'string' ? env.error : undefined,
-  };
+  }));
 }
 
 /** True when a change is structural (always applied, cannot be deselected). */

@@ -38,3 +38,17 @@ export function defaultDictionaryIndex(names: string[]): number {
   const userGlobals = names.indexOf('UserGlobals');
   return userGlobals >= 0 ? userGlobals : 0;
 }
+
+/**
+ * Whether a class whose class-category is `classCategory` is shown under the
+ * selected category node `selectedPath`. A category node shows its own classes AND
+ * everything in its dash-segmented subtree (selecting "Announcements" shows
+ * "Announcements-Core" too), so a class matches when its category equals the path
+ * or begins with `path-`. Used to keep a selected class in sync when its category
+ * node is clicked: the classes pane keeps highlighting the class, so the
+ * controller must not drop it (which would desync New Method / the Hierarchy pane).
+ */
+export function categoryContains(selectedPath: string, classCategory: string | undefined): boolean {
+  if (classCategory === undefined) return false;
+  return classCategory === selectedPath || classCategory.startsWith(`${selectedPath}-`);
+}

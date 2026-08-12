@@ -68,6 +68,12 @@ Follow these steps in order after cloning the repo:
 
 See [docs/how-to/raising-the-version-floor.md](docs/how-to/raising-the-version-floor.md) for the policy behind this floor and the steps to raise it.
 
+## npm version
+
+Separately from the runtime floor above, this repo requires **npm ≥ 11.16.0** on the dev toolchain (enforced by `devEngines` in `package.json`). `nvm use` satisfies it via `.nvmrc`; if you manage Node another way, run `npm i -g npm@11` instead. An npm below the floor fails with `EBADDEVENGINES`.
+
+`.npmrc` enforces `strict-allow-scripts`, so installing an unreviewed dependency's install script fails with `ESTRICTALLOWSCRIPTS`. See [docs/how-to/add-a-dependency-with-install-scripts.md](docs/how-to/add-a-dependency-with-install-scripts.md) for the approval steps.
+
 ## Build and test
 
 - Lint: `npm run lint`
@@ -125,7 +131,7 @@ CI runs on **GitHub Actions**. The [Health Check workflow](.github/workflows/hea
 
 ## Publishing a release
 
-1. Update the version in `package.json` (and `package-lock.json` — both the top-level `version` and `packages."".version`) and promote the `[Unreleased]` section in `CHANGELOG.md` to a new dated `[X.Y.Z]` heading. Sweep `main` since the last release for merged PRs that didn't add their own changelog entries.
+1. `npm version <X.Y.Z> --no-git-tag-version` — bumps `package.json`'s `version` and `package-lock.json`'s two root fields (`version` and `packages."".version`) atomically. Don't hand-edit these or find-and-replace the version string across the lockfile: the version can collide with an unrelated dependency's own version elsewhere in `package-lock.json` (e.g. `1.8.11` matches `typed-rest-client@1.8.11`), corrupting that entry. `--no-git-tag-version` skips npm's own commit/tag, since steps 3-4 below handle that. Then promote the `[Unreleased]` section in `CHANGELOG.md` to a new dated `[X.Y.Z]` heading. Sweep `main` since the last release for merged PRs that didn't add their own changelog entries.
 2. `npm run compile && npm test`
 3. Commit the version + changelog changes (e.g. `Release X.Y.Z: <one-line summary>`).
 4. `git tag -a vX.Y.Z -m "Release X.Y.Z"` — annotated tag, on the release commit.

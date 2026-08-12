@@ -101,6 +101,20 @@ GsRefactoringChange class >> classRenameId: anId dictName: dn className: cn newN
 ]
 
 { #category : 'instance creation' }
+GsRefactoringChange class >> classAddId: anId dictName: dn className: cn superclassName: sn newSource: ns [
+	"A brand-new class to CREATE (extract-superclass inserts a new common parent between a class
+	 and its current superclass). Apply creates the class fresh -- no prior class history --, so
+	 unlike #classReparent there is no old version to version off. `className` is the new class's
+	 name, `newName` carries its superclass name (for the preview label), and `newSource` the
+	 generated class definition. oldSource is nil so the before/after diff renders as an
+	 all-added class."
+	^(self new
+		setId: anId kind: #classAdd dictName: dn className: cn
+		isMeta: false selector: nil category: nil oldSource: nil newSource: ns)
+		setNewName: sn
+]
+
+{ #category : 'instance creation' }
 GsRefactoringChange class >> classReparentId: anId dictName: dn className: cn oldSource: os newSource: ns [
 	"A descendant of a renamed class: it must be recompiled newVersionOf: its current
 	 version so it re-points at the freshly created parent chain (and, for a direct
@@ -248,6 +262,21 @@ GsRefactoringChange >> newName [
 { #category : 'private' }
 GsRefactoringChange >> setNewName: aString [
 	newName := aString
+]
+
+{ #category : 'accessing' }
+GsRefactoringChange >> failureLabel [
+	"How this change names itself when it lands in an apply result's `failed` list.
+	 A method change answers the METHOD -- the failure list exists so the user can go
+	 open what did not survive, and a bare class name does not say which one. A
+	 structural change (a class-definition edit) has no selector, so it answers the
+	 class name it already did."
+	| cls |
+	cls := className asString.
+	selector isNil ifTrue: [^cls].
+	^isMeta == true
+		ifTrue: [cls, ' class>>', selector asString]
+		ifFalse: [cls, '>>', selector asString]
 ]
 
 { #category : 'accessing' }

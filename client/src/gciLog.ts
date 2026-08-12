@@ -28,6 +28,19 @@ export function logInfo(message: string): void {
 }
 
 /**
+ * A user-facing problem in a channel otherwise full of routine GCI traffic. Carries the
+ * `WARNING:` marker so the block is scannable when the user opens the channel from a red
+ * toast, and the trailing blank line `logError` uses so consecutive blocks do not butt
+ * against each other. Unlike `logError` it needs no session id — it reports on an
+ * operation, not on a session.
+ */
+export function logWarning(message: string): void {
+  const log = getGciLog();
+  log.appendLine(`${stamp()} WARNING: ${message}`);
+  log.appendLine('');
+}
+
+/**
  * Test-only: drop the cached channel so each test starts from a clean slate
  * (the channel is a module-level singleton created once per process). Not
  * used by production code.

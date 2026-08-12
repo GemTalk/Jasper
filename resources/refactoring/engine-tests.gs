@@ -135,6 +135,47 @@ removeallclassmethods GsExtractMethodRefactoringTest
 
 doit
 | cls |
+cls := TestCase subclass: 'GsExtractSuperclassRefactoringTest'
+  instVarNames: #()
+  classVars: #()
+  classInstVars: #()
+  poolDictionaries: #()
+  inDictionary: UserGlobals.
+cls category: 'Refactoring-Tests-Core'.
+cls comment: '
+Correctness of the extract-superclass refactorings (V6 insert superclass, V7 extract superclass).
+V6 inserts a new empty class between a class and its superclass; V7 does the same above a chosen
+set of siblings and hoists their common instance variables and methods up into it. Both are one
+engine (GsExtractSuperclassRefactoring): V6 is extract above ONE class hoisting ZERO members.
+
+The apply creates the new superclass fresh (a #classAdd), then -- because changing a class''s
+superclass or ivar list means a new class version (GemStone has no reparent/addInstVarName:) --
+re-versions every extracted class and its descendant subtree top-down, re-parenting the extracted
+classes onto the new class and their descendants onto their freshly-versioned ancestor. Hoisted
+ivars move onto the new class; hoisted methods are added to it and removed from the extracted
+classes.
+
+This suite pins down, on Object -> GsESAnimal -> {GsESDog, GsESCat, GsESFish} with
+GsESDog -> GsESPuppy -> GsESRunt (a two-deep subtree below the anchor):
+
+  - V6: inserting an empty superclass leaves the anchor''s methods/ivars intact and keeps the whole
+    subtree correctly parented;
+  - V7: hoisting an identical method/ivar moves it to the new class and both extracted classes
+    inherit it; member classification marks identical / divergent / partial / unhoistable members;
+  - declines: name collision, bad sibling, hoisting an unhoistable (super / foreign-ivar) method;
+  - across all: the descendant subtree survives the reversioning, apply is all-or-nothing, and
+    building/applying compiles-in-stone-only and never commits.
+
+setUp builds the throwaway hierarchy in UserGlobals; tearDown removes it (children first).
+'.
+true.
+%
+
+removeallmethods GsExtractSuperclassRefactoringTest
+removeallclassmethods GsExtractSuperclassRefactoringTest
+
+doit
+| cls |
 cls := TestCase subclass: 'GsExtractTemporaryRefactoringTest'
   instVarNames: #()
   classVars: #()
@@ -522,10 +563,13 @@ Correctness of the read-only all-dictionaries environment: class resolution
 and enumeration span every dictionary (not just UserGlobals); instance-variable
 access is found for reads and writes across a class hierarchy and excludes
 methods that never touch the variable; the instance-variable name argument
-accepts a String or a Symbol; and the queries never dirty the transaction.
+accepts a String or a Symbol; the own/all instance-variable-name queries answer
+Strings in declaration order and separate a class''s own slots from its inherited
+ones; and the queries never dirty the transaction.
 
 setUp builds a throwaway three-class hierarchy in UserGlobals and tearDown
-removes it, so the assertions have known, self-contained answers.
+removes it, so the assertions have known, self-contained answers. The subclass
+declares its own instance variable so own-vs-inherited is distinguishable.
 '.
 true.
 %
@@ -793,6 +837,32 @@ true.
 
 removeallmethods GsRenameTemporaryRefactoringTest
 removeallclassmethods GsRenameTemporaryRefactoringTest
+
+doit
+| cls |
+cls := TestCase subclass: 'GsSplitClassRefactoringTest'
+  instVarNames: #()
+  classVars: #()
+  classInstVars: #()
+  poolDictionaries: #()
+  inDictionary: UserGlobals.
+cls category: 'Refactoring-Tests-Core'.
+cls comment: '
+Tests for GsSplitClassRefactoring (V8 split class / extract class).
+
+Fixture (built in setUp, torn down after): GsSCSource with own ivars keepA keepB extractC extractD
+and a subclass GsSCSub. Methods that touch only the extract set are MOVABLE (sumExtract,
+readExtractC, writeExtractC:); methods touching the retained set are not (doubleKeep, readKeepB).
+Extracting #(extractC extractD) into GsSCComponent is the clean-cut case. Decline tests add a
+straddling / super-sending / retained-calling method, or a subclass use, or a bad name.
+
+Fixture names are substring-safe against the decline keywords, and all emitted Smalltalk is ASCII.
+'.
+true.
+%
+
+removeallmethods GsSplitClassRefactoringTest
+removeallclassmethods GsSplitClassRefactoringTest
 
 ! Class implementations
 
@@ -2170,6 +2240,657 @@ testApplyHonoursDuplicateDeselectionButNotCoreChanges
 	"a non-deselected duplicate WAS rewritten"
 	self assert: (self baseFixture compiledMethodAt: #helperB) sourceString
 		includesSubstring: 'self sideEffects'
+%
+
+category: 'asserting'
+method: GsExtractSuperclassRefactoringTest
+assert: aString includesSubstring: aSubstring
+	self assert: (aString indexOfSubCollection: aSubstring) > 0
+%
+
+category: 'asserting'
+method: GsExtractSuperclassRefactoringTest
+deny: aString includesSubstring: aSubstring
+	self assert: (aString indexOfSubCollection: aSubstring) = 0
+%
+
+category: 'asserting'
+method: GsExtractSuperclassRefactoringTest
+assert: aCollection includes: anObject
+	self assert: (aCollection includes: anObject)
+%
+
+category: 'asserting'
+method: GsExtractSuperclassRefactoringTest
+deny: aCollection includes: anObject
+	self assert: (aCollection includes: anObject) not
+%
+
+category: 'fixture'
+method: GsExtractSuperclassRefactoringTest
+compile: aSource in: aClass
+	[aClass
+		compileMethod: aSource
+		dictionaries: System myUserProfile symbolList
+		category: 'fixture']
+		on: CompileWarning
+		do: [:ex | ex resume: nil]
+%
+
+category: 'fixture'
+method: GsExtractSuperclassRefactoringTest
+classNamed: aName
+	^UserGlobals at: aName asSymbol
+%
+
+category: 'fixture'
+method: GsExtractSuperclassRefactoringTest
+ownIvarsOf: aName
+	^(self classNamed: aName) instVarNames collect: [:e | e asString]
+%
+
+category: 'fixture'
+method: GsExtractSuperclassRefactoringTest
+allIvarsOf: aName
+	^(self classNamed: aName) allInstVarNames collect: [:e | e asString]
+%
+
+category: 'fixture'
+method: GsExtractSuperclassRefactoringTest
+methodCandidate: aSelector in: ref
+	^ref candidateMethods detect: [:m | (m at: 1) asString = aSelector asString] ifNone: [nil]
+%
+
+category: 'fixture'
+method: GsExtractSuperclassRefactoringTest
+ivarCandidate: aName in: ref
+	^ref candidateInstVars detect: [:v | (v at: 1) asString = aName asString] ifNone: [nil]
+%
+
+category: 'fixture'
+method: GsExtractSuperclassRefactoringTest
+changeOfKind: aKind for: aName in: cs
+	^cs changes detect: [:c | c kind = aKind and: [c className = aName]] ifNone: [nil]
+%
+
+category: 'running'
+method: GsExtractSuperclassRefactoringTest
+setUp
+	| animal dog cat puppy |
+	animal := Object
+		subclass: 'GsESAnimal'
+		instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: UserGlobals.
+	dog := animal
+		subclass: 'GsESDog'
+		instVarNames: #('name' 'age' 'bark')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: UserGlobals.
+	cat := animal
+		subclass: 'GsESCat'
+		instVarNames: #('name' 'age' 'meow')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: UserGlobals.
+	animal
+		subclass: 'GsESFish'
+		instVarNames: #('name')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: UserGlobals.
+	puppy := dog
+		subclass: 'GsESPuppy'
+		instVarNames: #('cuteness')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: UserGlobals.
+	puppy
+		subclass: 'GsESRunt'
+		instVarNames: #('speckles')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: UserGlobals.
+	self compile: 'eat ^ 42' in: dog.
+	self compile: 'sleep ^ ''zzz''' in: dog.
+	self compile: 'describe ^ ''a dog''' in: dog.
+	self compile: 'fetch ^ ''fetching''' in: dog.
+	self compile: 'barkSound ^ bark' in: dog.
+	self compile: 'superGreet ^ super hash' in: dog.
+	self compile: 'nameGetter ^ name' in: dog.
+	self compile: 'eat ^ 42' in: cat.
+	self compile: 'sleep ^ ''zzz''' in: cat.
+	self compile: 'describe ^ ''a cat''' in: cat.
+	self compile: 'nameGetter ^ name' in: cat.
+	self compile: 'eat ^ 42' in: (self classNamed: 'GsESFish').
+	self compile: 'puppyM ^ 1' in: (self classNamed: 'GsESPuppy').
+	self compile: 'runtM ^ 2' in: (self classNamed: 'GsESRunt')
+%
+
+category: 'running'
+method: GsExtractSuperclassRefactoringTest
+tearDown
+	"children first (a class is removed before its superclass)"
+	#('GsESRunt' 'GsESPuppy' 'GsESDog' 'GsESCat' 'GsESFish' 'GsESPet' 'GsESAnimal')
+		do: [:nm | UserGlobals removeKey: nm asSymbol ifAbsent: []]
+%
+
+category: 'tests - V6 insert'
+method: GsExtractSuperclassRefactoringTest
+testInsertEmptySuperclassStagesClassAdd
+	| ref cs add |
+	ref := GsExtractSuperclassRefactoring class: (self classNamed: 'GsESDog') insertSuperclassNamed: 'GsESPet' inDictionary: nil.
+	cs := ref changeSet.
+	add := cs changes detect: [:c | c kind = #classAdd] ifNone: [nil].
+
+	self assert: ref decline isNil.
+	self assert: add notNil.
+	self assert: add className equals: 'GsESPet'.
+	self assert: (self changeOfKind: #classDefinitionEdit for: 'GsESDog' in: cs) notNil
+%
+
+category: 'tests - V6 insert'
+method: GsExtractSuperclassRefactoringTest
+testInsertEmptySuperclassApplies
+	| json |
+	json := (GsExtractSuperclassRefactoring class: (self classNamed: 'GsESDog') insertSuperclassNamed: 'GsESPet' inDictionary: nil)
+		applyDeselected: #().
+
+	self assert: json includesSubstring: '"failed":[]'.
+	"the new class slots between Animal and Dog"
+	self assert: (self classNamed: 'GsESPet') superclass name asString equals: 'GsESAnimal'.
+	self assert: (self classNamed: 'GsESDog') superclass name asString equals: 'GsESPet'.
+	"...and starts empty"
+	self assert: (self ownIvarsOf: 'GsESPet') isEmpty.
+	self assert: (self classNamed: 'GsESPet') selectors isEmpty.
+	"the anchor keeps its own methods + ivars"
+	self assert: ((self classNamed: 'GsESDog') includesSelector: #eat).
+	self assert: (self ownIvarsOf: 'GsESDog') includes: 'name'
+%
+
+category: 'tests - V6 insert'
+method: GsExtractSuperclassRefactoringTest
+testInsertReparentsDeepSubtree
+	"A grandchild of the anchor must stay correctly parented onto the anchor's new version."
+	(GsExtractSuperclassRefactoring class: (self classNamed: 'GsESDog') insertSuperclassNamed: 'GsESPet' inDictionary: nil)
+		applyDeselected: #().
+
+	self assert: (self classNamed: 'GsESPuppy') superclass name asString equals: 'GsESDog'.
+	self assert: ((self classNamed: 'GsESPuppy') includesSelector: #puppyM).
+	self assert: ((self classNamed: 'GsESPuppy') canUnderstand: #eat)
+%
+
+category: 'tests - V6 insert'
+method: GsExtractSuperclassRefactoringTest
+testInsertDoesNotMigrateExistingInstances
+	"Existing instances keep their prior class version (standard GemStone evolution, no migrate)."
+	| d |
+	d := (self classNamed: 'GsESDog') new.
+	(GsExtractSuperclassRefactoring class: (self classNamed: 'GsESDog') insertSuperclassNamed: 'GsESPet' inDictionary: nil)
+		applyDeselected: #().
+
+	self deny: d class == (self classNamed: 'GsESDog')
+%
+
+category: 'tests - V7 extract'
+method: GsExtractSuperclassRefactoringTest
+testExtractHoistsDivergentMethodAnchorVersionWins
+	"The design decision worth pinning: when the anchor and a sibling BOTH implement the selector
+	 with DIFFERENT source, hoisting it keeps the ANCHOR's version and the sibling loses its own,
+	 inheriting the anchor's behaviour. That is the outcome most likely to surprise someone, and
+	 the one a future change is most likely to break silently. #describe is 'a dog' on GsESDog and
+	 'a cat' on GsESCat."
+	| json |
+	json := (GsExtractSuperclassRefactoring
+		class: (self classNamed: 'GsESDog')
+		extractSuperclassNamed: 'GsESPet' inDictionary: nil
+		siblings: #('GsESCat') hoistMethods: #(#describe) hoistInstVars: #())
+		applyDeselected: #().
+
+	self assert: json includesSubstring: '"failed":[]'.
+	self assert: ((self classNamed: 'GsESPet') includesSelector: #describe).
+	self deny: ((self classNamed: 'GsESDog') includesSelector: #describe).
+	"The sibling's OWN divergent version is gone..."
+	self deny: ((self classNamed: 'GsESCat') includesSelector: #describe).
+	"...and it now answers the anchor's, not its own."
+	self assert: (self classNamed: 'GsESCat') new describe equals: 'a dog'.
+	self assert: (self classNamed: 'GsESDog') new describe equals: 'a dog'
+%
+
+category: 'tests - V7 extract'
+method: GsExtractSuperclassRefactoringTest
+testExtractDeclinesHoistingAnIvarADescendantAlreadyOwns
+	"Hoisting puts the name on the NEW superclass, so every class under it inherits the name --
+	 including the subtrees of the siblings being extracted. A class down there that already
+	 declares the name would be re-versioned with a duplicate declaration, which GemStone rejects.
+
+	 Note the reachable shape: it cannot be a descendant of the ANCHOR, because GemStone already
+	 forbids a subclass from redeclaring an ivar its ancestor owns -- the fixture could not even be
+	 built that way. It has to be a descendant of a SIBLING, owning an ivar that sibling does NOT
+	 have but the anchor is hoisting. GsESDog owns 'bark'; GsESCat does not; so a subclass of
+	 GsESCat may legally own 'bark' today, and hoisting 'bark' would collide with it.
+
+	 Before the precondition existed, that collision surfaced from applyClassChange: PART-WAY
+	 THROUGH the apply, leaving the new class created and some reparents done."
+	| ref |
+	(self classNamed: 'GsESCat')
+		subclass: 'GsESKitten'
+		instVarNames: #('bark')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: UserGlobals.
+	[ref := GsExtractSuperclassRefactoring
+		class: (self classNamed: 'GsESDog')
+		extractSuperclassNamed: 'GsESPet' inDictionary: nil
+		siblings: #('GsESCat') hoistMethods: #() hoistInstVars: #('bark').
+
+	 self assert: ref decline notNil.
+	 self assert: ref decline includesSubstring: 'GsESKitten'.
+	 self assert: ref decline includesSubstring: 'already declares it'.
+	 "A global decline empties the change set, so nothing is created."
+	 self assert: ref changeSet changes isEmpty.
+	 self deny: (UserGlobals includesKey: #GsESPet)]
+		ensure: [UserGlobals removeKey: #GsESKitten ifAbsent: []]
+%
+
+category: 'tests - V7 extract'
+method: GsExtractSuperclassRefactoringTest
+testExtractStillHoistsWhenOnlyTheSiblingOwnsTheIvar
+	"The guard must not over-reach: a SIBLING being extracted alongside the anchor is expected to
+	 own the name too (that is the whole point -- it loses its copy and inherits the hoisted one),
+	 so it must not be mistaken for a blocking descendant."
+	| ref |
+	ref := GsExtractSuperclassRefactoring
+		class: (self classNamed: 'GsESDog')
+		extractSuperclassNamed: 'GsESPet' inDictionary: nil
+		siblings: #('GsESCat') hoistMethods: #() hoistInstVars: #('name').
+
+	self assert: ref decline isNil
+%
+
+category: 'tests - V7 extract'
+method: GsExtractSuperclassRefactoringTest
+testExtractHoistsIdenticalMethod
+	| json |
+	json := (GsExtractSuperclassRefactoring
+		class: (self classNamed: 'GsESDog')
+		extractSuperclassNamed: 'GsESPet' inDictionary: nil
+		siblings: #('GsESCat') hoistMethods: #(#eat) hoistInstVars: #())
+		applyDeselected: #().
+
+	self assert: json includesSubstring: '"failed":[]'.
+	self assert: ((self classNamed: 'GsESPet') includesSelector: #eat).
+	self deny: ((self classNamed: 'GsESDog') includesSelector: #eat).
+	self deny: ((self classNamed: 'GsESCat') includesSelector: #eat).
+	self assert: ((self classNamed: 'GsESDog') canUnderstand: #eat).
+	self assert: ((self classNamed: 'GsESCat') canUnderstand: #eat).
+	"the non-hoisted methods stay put"
+	self assert: ((self classNamed: 'GsESDog') includesSelector: #describe).
+	self assert: ((self classNamed: 'GsESCat') includesSelector: #describe)
+%
+
+category: 'tests - V7 extract'
+method: GsExtractSuperclassRefactoringTest
+testExtractWithSiblingReparentsDeepSubtree
+	"With a sibling in the extracted set the apply stream interleaves classAdd, the Dog and Cat
+	 edits and the Puppy + Runt reparents. The anchor's WHOLE descendant subtree, two deep
+	 (GsESDog -> GsESPuppy -> GsESRunt), must reparent top-down onto each freshly-versioned
+	 ancestor -- the grandchild onto the anchor's new version, the great-grandchild onto the
+	 grandchild's -- keep its own methods, and inherit the hoisted selector all the way down."
+	| json |
+	json := (GsExtractSuperclassRefactoring
+		class: (self classNamed: 'GsESDog')
+		extractSuperclassNamed: 'GsESPet' inDictionary: nil
+		siblings: #('GsESCat') hoistMethods: #(#eat) hoistInstVars: #())
+		applyDeselected: #().
+
+	self assert: json includesSubstring: '"failed":[]'.
+	"depth 1: the grandchild reparents onto the anchor's new version"
+	self assert: (self classNamed: 'GsESPuppy') superclass name asString equals: 'GsESDog'.
+	self assert: ((self classNamed: 'GsESPuppy') includesSelector: #puppyM).
+	"depth 2: the great-grandchild reparents onto the grandchild's new version (top-down ordering)"
+	self assert: (self classNamed: 'GsESRunt') superclass name asString equals: 'GsESPuppy'.
+	self assert: ((self classNamed: 'GsESRunt') includesSelector: #runtM).
+	self assert: (self ownIvarsOf: 'GsESRunt') includes: 'speckles'.
+	"the hoisted #eat lives on GsESPet and is understood all the way down to the great-grandchild"
+	self assert: ((self classNamed: 'GsESPuppy') canUnderstand: #eat).
+	self assert: ((self classNamed: 'GsESRunt') canUnderstand: #eat)
+%
+
+category: 'tests - V7 extract'
+method: GsExtractSuperclassRefactoringTest
+testExtractHoistsIdenticalInstVar
+	| json |
+	json := (GsExtractSuperclassRefactoring
+		class: (self classNamed: 'GsESDog')
+		extractSuperclassNamed: 'GsESPet' inDictionary: nil
+		siblings: #('GsESCat') hoistMethods: #() hoistInstVars: #('name'))
+		applyDeselected: #().
+
+	self assert: json includesSubstring: '"failed":[]'.
+	self assert: (self ownIvarsOf: 'GsESPet') includes: 'name'.
+	self deny: (self ownIvarsOf: 'GsESDog') includes: 'name'.
+	self deny: (self ownIvarsOf: 'GsESCat') includes: 'name'.
+	self assert: (self allIvarsOf: 'GsESDog') includes: 'name'.
+	self assert: (self allIvarsOf: 'GsESCat') includes: 'name'.
+	"a non-hoisted own ivar stays"
+	self assert: (self ownIvarsOf: 'GsESDog') includes: 'bark'
+%
+
+category: 'tests - V7 extract'
+method: GsExtractSuperclassRefactoringTest
+testExtractHoistsMethodAndItsIvarTogether
+	"Hoisting a shared accessor together with its ivar: nameGetter (^ name) + name move to Pet."
+	| json |
+	json := (GsExtractSuperclassRefactoring
+		class: (self classNamed: 'GsESDog')
+		extractSuperclassNamed: 'GsESPet' inDictionary: nil
+		siblings: #('GsESCat') hoistMethods: #(#nameGetter) hoistInstVars: #('name'))
+		applyDeselected: #().
+
+	self assert: json includesSubstring: '"failed":[]'.
+	self assert: ((self classNamed: 'GsESPet') includesSelector: #nameGetter).
+	self assert: (self ownIvarsOf: 'GsESPet') includes: 'name'.
+	self assert: ((self classNamed: 'GsESDog') canUnderstand: #nameGetter)
+%
+
+category: 'tests - V7 extract'
+method: GsExtractSuperclassRefactoringTest
+testExtractFromSingleAnchorHoistsChosenMethod
+	"V6/V7 unified: extract above ONE class (no siblings) can still hoist a chosen method up."
+	| json |
+	json := (GsExtractSuperclassRefactoring
+		class: (self classNamed: 'GsESDog')
+		extractSuperclassNamed: 'GsESPet' inDictionary: nil
+		siblings: #() hoistMethods: #(#eat) hoistInstVars: #())
+		applyDeselected: #().
+
+	self assert: json includesSubstring: '"failed":[]'.
+	self assert: ((self classNamed: 'GsESPet') includesSelector: #eat).
+	self deny: ((self classNamed: 'GsESDog') includesSelector: #eat).
+	self assert: ((self classNamed: 'GsESDog') canUnderstand: #eat)
+%
+
+category: 'tests - classification'
+method: GsExtractSuperclassRefactoringTest
+testIdenticalMethodClassifiedAndDefaultChecked
+	| ref eat |
+	ref := GsExtractSuperclassRefactoring
+		class: (self classNamed: 'GsESDog')
+		extractSuperclassNamed: 'GsESPet' inDictionary: nil
+		siblings: #('GsESCat') hoistMethods: #() hoistInstVars: #().
+	eat := self methodCandidate: #eat in: ref.
+
+	self assert: eat notNil.
+	self assert: (eat at: 2) equals: #identical.
+	self assert: (ref defaultChecksMember: (eat at: 2))
+%
+
+category: 'tests - classification'
+method: GsExtractSuperclassRefactoringTest
+testDivergentMethodClassified
+	| ref describe |
+	ref := GsExtractSuperclassRefactoring
+		class: (self classNamed: 'GsESDog')
+		extractSuperclassNamed: 'GsESPet' inDictionary: nil
+		siblings: #('GsESCat') hoistMethods: #() hoistInstVars: #().
+	describe := self methodCandidate: #describe in: ref.
+
+	self assert: describe notNil.
+	self assert: (describe at: 2) equals: #divergent.
+	self deny: (ref defaultChecksMember: (describe at: 2))
+%
+
+category: 'tests - classification'
+method: GsExtractSuperclassRefactoringTest
+testPartialMethodClassified
+	"fetch is implemented only by the anchor, not the chosen sibling."
+	| ref fetch |
+	ref := GsExtractSuperclassRefactoring
+		class: (self classNamed: 'GsESDog')
+		extractSuperclassNamed: 'GsESPet' inDictionary: nil
+		siblings: #('GsESCat') hoistMethods: #() hoistInstVars: #().
+	fetch := self methodCandidate: #fetch in: ref.
+
+	self assert: fetch notNil.
+	self assert: (fetch at: 2) equals: #partial
+%
+
+category: 'tests - classification'
+method: GsExtractSuperclassRefactoringTest
+testSuperSendMethodUnhoistable
+	| ref greet |
+	ref := GsExtractSuperclassRefactoring
+		class: (self classNamed: 'GsESDog')
+		extractSuperclassNamed: 'GsESPet' inDictionary: nil
+		siblings: #('GsESCat') hoistMethods: #() hoistInstVars: #().
+	greet := self methodCandidate: #superGreet in: ref.
+
+	self assert: greet notNil.
+	self assert: (greet at: 2) equals: #unhoistable.
+	"assert a phrase unique to the super-send branch -- 'super' alone is a substring of the
+	 selector #superGreet the reason echoes, so it would pass for ANY reason (a false pass)."
+	self assert: (greet at: 3) includesSubstring: 'sends super'
+%
+
+category: 'tests - classification'
+method: GsExtractSuperclassRefactoringTest
+testForeignIvarMethodUnhoistable
+	"barkSound (^ bark) touches an ivar that is NOT shared (only the anchor owns it), so it is not
+	 hoistable while that ivar stays below."
+	| ref bs |
+	ref := GsExtractSuperclassRefactoring
+		class: (self classNamed: 'GsESDog')
+		extractSuperclassNamed: 'GsESPet' inDictionary: nil
+		siblings: #('GsESCat') hoistMethods: #() hoistInstVars: #().
+	bs := self methodCandidate: #barkSound in: ref.
+
+	self assert: bs notNil.
+	self assert: (bs at: 2) equals: #unhoistable.
+	self assert: (bs at: 3) includesSubstring: 'instance variable'
+%
+
+category: 'tests - classification'
+method: GsExtractSuperclassRefactoringTest
+testInstVarsClassified
+	| ref name bark |
+	ref := GsExtractSuperclassRefactoring
+		class: (self classNamed: 'GsESDog')
+		extractSuperclassNamed: 'GsESPet' inDictionary: nil
+		siblings: #('GsESCat') hoistMethods: #() hoistInstVars: #().
+	name := self ivarCandidate: 'name' in: ref.
+	bark := self ivarCandidate: 'bark' in: ref.
+
+	self assert: (name at: 2) equals: #identical.
+	self assert: (ref defaultChecksMember: (name at: 2)).
+	self assert: (bark at: 2) equals: #partial
+%
+
+category: 'tests - classification'
+method: GsExtractSuperclassRefactoringTest
+testSingleAnchorDefaultChecksNothing
+	"With no sibling to deduplicate against, even an 'identical' member is not pre-checked (V6
+	 defaults to a pure insert)."
+	| ref eat |
+	ref := GsExtractSuperclassRefactoring
+		class: (self classNamed: 'GsESDog')
+		extractSuperclassNamed: 'GsESPet' inDictionary: nil
+		siblings: #() hoistMethods: #() hoistInstVars: #().
+	eat := self methodCandidate: #eat in: ref.
+
+	self assert: (eat at: 2) equals: #identical.
+	self deny: (ref defaultChecksMember: (eat at: 2))
+%
+
+category: 'tests - declines'
+method: GsExtractSuperclassRefactoringTest
+testDeclinesOnNameCollision
+	| ref |
+	ref := GsExtractSuperclassRefactoring class: (self classNamed: 'GsESDog') insertSuperclassNamed: 'GsESCat' inDictionary: nil.
+
+	self assert: ref decline notNil.
+	self assert: ref decline includesSubstring: 'already exists'.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - declines'
+method: GsExtractSuperclassRefactoringTest
+testDeclinesOnBadSibling
+	| ref |
+	ref := GsExtractSuperclassRefactoring
+		class: (self classNamed: 'GsESDog')
+		extractSuperclassNamed: 'GsESPet' inDictionary: nil
+		siblings: #('GsESPuppy') hoistMethods: #() hoistInstVars: #().
+
+	self assert: ref decline notNil.
+	self assert: ref decline includesSubstring: 'not a subclass of'.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - declines'
+method: GsExtractSuperclassRefactoringTest
+testDeclinesHoistingSuperSendMethod
+	| ref |
+	ref := GsExtractSuperclassRefactoring
+		class: (self classNamed: 'GsESDog')
+		extractSuperclassNamed: 'GsESPet' inDictionary: nil
+		siblings: #('GsESCat') hoistMethods: #(#superGreet) hoistInstVars: #().
+
+	self assert: ref decline notNil.
+	"'sends super', not 'super' -- the latter is a substring of the echoed selector #superGreet."
+	self assert: ref decline includesSubstring: 'sends super'.
+	self assert: ref changeSet isEmpty
+%
+
+category: 'tests - declines'
+method: GsExtractSuperclassRefactoringTest
+testDeclinesHoistingForeignIvarMethodWithoutItsIvar
+	"Hoisting barkSound (^ bark) without also hoisting bark is declined; hoisting both is viable."
+	| without with |
+	without := GsExtractSuperclassRefactoring
+		class: (self classNamed: 'GsESDog')
+		extractSuperclassNamed: 'GsESPet' inDictionary: nil
+		siblings: #() hoistMethods: #(#barkSound) hoistInstVars: #().
+	with := GsExtractSuperclassRefactoring
+		class: (self classNamed: 'GsESDog')
+		extractSuperclassNamed: 'GsESPet' inDictionary: nil
+		siblings: #() hoistMethods: #(#barkSound) hoistInstVars: #('bark').
+
+	self assert: without decline notNil.
+	self assert: without decline includesSubstring: 'instance variable'.
+	self assert: with decline isNil
+%
+
+category: 'tests - declines'
+method: GsExtractSuperclassRefactoringTest
+testDeclinesAboveAClassWithNoSuperclass
+	| ref |
+	ref := GsExtractSuperclassRefactoring class: Object insertSuperclassNamed: 'GsESPet' inDictionary: nil.
+
+	self assert: ref decline notNil.
+	self assert: ref decline includesSubstring: 'no superclass'
+%
+
+category: 'tests - apply'
+method: GsExtractSuperclassRefactoringTest
+testApplyIsAllOrNothingIgnoringDeselection
+	"Extract-superclass is all-or-nothing: a deselected id is ignored and the new class is still
+	 created."
+	(GsExtractSuperclassRefactoring class: (self classNamed: 'GsESDog') insertSuperclassNamed: 'GsESPet' inDictionary: nil)
+		startPreviewToken: 'esTok' maxBytes: 100000.
+	[GsExtractSuperclassRefactoring applyForToken: 'esTok' deselected: #('1' '2' '3')]
+		ensure: [GsExtractSuperclassRefactoring clearToken: 'esTok'].
+
+	self assert: (UserGlobals includesKey: #GsESPet).
+	"...and the REPARENT survived the deselection too, which is the all-or-nothing property this
+	 test is named for -- the new class existing only shows the first change went through."
+	self assert: (self classNamed: 'GsESDog') superclass name asString equals: 'GsESPet'
+%
+
+category: 'tests - apply'
+method: GsExtractSuperclassRefactoringTest
+testBuildingCompilesNothingAndDoesNotCommit
+	| before |
+	before := System needsCommit.
+	(GsExtractSuperclassRefactoring class: (self classNamed: 'GsESDog') insertSuperclassNamed: 'GsESPet' inDictionary: nil) changeSet.
+
+	self deny: (UserGlobals includesKey: #GsESPet).
+	self assert: System needsCommit equals: before
+%
+
+category: 'tests - apply'
+method: GsExtractSuperclassRefactoringTest
+testApplyDoesNotCommit
+	| before |
+	before := System needsCommit.
+	(GsExtractSuperclassRefactoring class: (self classNamed: 'GsESDog') insertSuperclassNamed: 'GsESPet' inDictionary: nil)
+		applyDeselected: #().
+
+	self assert: System needsCommit equals: before
+%
+
+category: 'tests - apply'
+method: GsExtractSuperclassRefactoringTest
+testApplyReportsNotCommitted
+	| json |
+	json := (GsExtractSuperclassRefactoring class: (self classNamed: 'GsESDog') insertSuperclassNamed: 'GsESPet' inDictionary: nil)
+		applyDeselected: #().
+
+	self assert: json includesSubstring: '"committed":false'.
+	self assert: json includesSubstring: '"failed":[]'
+%
+
+category: 'tests - apply'
+method: GsExtractSuperclassRefactoringTest
+testApplyForTokenOnAnExpiredSessionAnswersAnError
+	self assert: (GsExtractSuperclassRefactoring applyForToken: 'nope' deselected: #())
+		includesSubstring: 'expired'
+%
+
+category: 'tests - apply'
+method: GsExtractSuperclassRefactoringTest
+testPageForTokenOnAnExpiredSessionAnswersAnError
+	self assert: (GsExtractSuperclassRefactoring pageForToken: 'nope' from: 1 maxBytes: 1000)
+		includesSubstring: 'expired'
+%
+
+category: 'tests - preview'
+method: GsExtractSuperclassRefactoringTest
+testAnalysisReportsDeclineAndNewClass
+	| ok bad |
+	ok := GsExtractSuperclassRefactoring
+		analyzeClass: (self classNamed: 'GsESDog') extractSuperclassNamed: 'GsESPet'
+		siblings: #('GsESCat') hoistMethods: #(#eat) hoistInstVars: #().
+	bad := GsExtractSuperclassRefactoring
+		analyzeClass: (self classNamed: 'GsESDog') extractSuperclassNamed: 'GsESCat'
+		siblings: #() hoistMethods: #() hoistInstVars: #().
+
+	self assert: ok includesSubstring: '"decline":null'.
+	self assert: ok includesSubstring: '"newClass":"GsESPet"'.
+	self assert: ok includesSubstring: '"sharedParent":"GsESAnimal"'.
+	self assert: bad includesSubstring: 'already exists'
+%
+
+category: 'tests - preview'
+method: GsExtractSuperclassRefactoringTest
+testStartPreviewCarriesTotalsAndPage
+	| json |
+	json := (GsExtractSuperclassRefactoring
+		class: (self classNamed: 'GsESDog')
+		extractSuperclassNamed: 'GsESPet' inDictionary: nil
+		siblings: #('GsESCat') hoistMethods: #(#eat) hoistInstVars: #('name'))
+		startPreviewToken: 'esTok2' maxBytes: 100000.
+	[self assert: json includesSubstring: '"newClass":"GsESPet"'.
+	 self assert: json includesSubstring: '"changes":'.
+	 self assert: json includesSubstring: 'classAdd']
+		ensure: [GsExtractSuperclassRefactoring clearToken: 'esTok2']
+%
+
+category: 'tests - preview'
+method: GsExtractSuperclassRefactoringTest
+testCandidatesJsonCarriesClassifiedMembers
+	| json |
+	json := GsExtractSuperclassRefactoring candidatesForClass: (self classNamed: 'GsESDog') siblings: #('GsESCat').
+
+	self assert: json includesSubstring: '"selector":"eat"'.
+	self assert: json includesSubstring: '"kind":"identical"'.
+	self assert: json includesSubstring: '"kind":"divergent"'.
+	self assert: json includesSubstring: '"name":"name"'
 %
 
 category: 'asserting'
@@ -4535,6 +5256,50 @@ testConvertTempStagesIvarEditAndMethodRecompile
 
 category: 'tests - V5 convert temp'
 method: GsInstVarStructureRefactoringTest
+testConvertTempSucceedsWhenMethodSourceIsWide
+	"Regression for the RBScanner wide-source parse gap (#361 / #362): converting a temporary in a
+	 method whose STORED SOURCE carries a non-ASCII (wide) comment must NOT decline. Before the
+	 Character>>isSqueakSeparator compat shim, RBParser parseMethod: DNU'd on wide source, the caller
+	 swallowed it to nil (analyzeConvertTemp: `[RBParser parseMethod: src] on: Error do: [:e | nil]`),
+	 and convert-temp hard-declined 'the method source does not parse'. This drives the WHOLE
+	 refactoring path (not just the parser, as GsRefactoringParseTest does), so a future regression
+	 anywhere along it is caught. The em-dash is built with #codePoint: so THIS test's own source
+	 stays pure ASCII (the 3.6.2 ComStrmSetCursor discipline)."
+	| emDash wideSource ref cs edit recompile |
+	emDash := String with: (Character codePoint: 8212).
+	wideSource := 'computeWide | w | "carry ', emDash, ' forward" w := shared. ^ w'.
+	self compile: wideSource in: (self classNamed: 'GsVSBase').
+
+	"PRECONDITION: the stored source really is wide. The em-dash is the ONLY thing making this a
+	 wide-source test, so if it ever stopped round-tripping through the compiler -- or compile:in:
+	 (which resumes CompileWarning with nil) quietly swallowed a compile problem -- everything below
+	 would still pass while exercising nothing but ASCII. Fail loudly there instead."
+	self assert: ((self classNamed: 'GsVSBase')
+		compiledMethodAt: #computeWide environmentId: 0 otherwise: nil) sourceString
+			includesSubstring: emDash.
+
+	ref := GsInstVarStructureRefactoring
+		class: (self classNamed: 'GsVSBase') convertTemporary: 'w' inMethod: #computeWide meta: false.
+	cs := ref changeSet.
+	edit := self editChangeFor: 'GsVSBase' in: cs.
+	recompile := cs changes detect: [:c | c kind = #methodRecompile] ifNone: [nil].
+
+	self assert: ref decline isNil.
+	"Assert the POSITIVE outcome, as testConvertTempStagesIvarEditAndMethodRecompile does for the
+	 ASCII path: the ivar edit and the method recompile are both staged. `decline isNil` alone
+	 already implies the decline text is absent from the analysis JSON, so checking for that string
+	 proved nothing."
+	self assert: edit notNil.
+	self assert: edit newSource includesSubstring: '''w'''.
+	self assert: recompile notNil.
+	self deny: recompile newSource includesSubstring: '| w |'.
+	"The failure mode this path most needs covered: the source PARSES but the rewritten source comes
+	 back with the wide character mangled or truncated. Pin that it survives the round trip."
+	self assert: recompile newSource includesSubstring: emDash
+%
+
+category: 'tests - V5 convert temp'
+method: GsInstVarStructureRefactoringTest
 testConvertTempAppliesAddingIvarAndDroppingDecl
 	| json |
 	json := (GsInstVarStructureRefactoring
@@ -6686,8 +7451,9 @@ method: GsRefactoringEnvironmentTest
 setUp
 	"A tiny throwaway hierarchy so the instance-variable queries have known,
 	 self-contained answers: a superclass defining 'alpha' with a reader, a
-	 writer and a non-accessing method; a subclass that reads the inherited
-	 'alpha'; and a sibling subclass that never touches it."
+	 writer and a non-accessing method; a subclass declaring its own 'beta' and
+	 'gamma' that reads the inherited 'alpha'; and a sibling subclass that declares
+	 nothing and never touches it."
 	| supr sl |
 	sl := System myUserProfile symbolList.
 	supr := Object
@@ -6702,7 +7468,7 @@ setUp
 	supr compileMethod: 'noTouch ^42' dictionaries: sl category: 'tests'.
 	(supr
 		subclass: 'GsRefEnvFixtureSub'
-		instVarNames: #()
+		instVarNames: #('beta' 'gamma')
 		classVars: #()
 		classInstVars: #()
 		poolDictionaries: #()
@@ -6750,12 +7516,59 @@ testAllClassesSpansEveryDictionaryWithoutDuplicates
 
 category: 'tests'
 method: GsRefactoringEnvironmentTest
+testAllInstVarNamesListsInheritedNamesBeforeOwnOnes
+	"Inherited first, then the class's own -- the slot order of an instance, which a
+	 class-creation change has to reproduce."
+	| env |
+	env := GsRefactoringEnvironment new.
+
+	self assert: (env allInstVarNamesOf: self superFixture) asArray
+		equals: #('alpha').
+	self assert: (env allInstVarNamesOf: self subFixture) asArray
+		equals: #('alpha' 'beta' 'gamma')
+%
+
+category: 'tests'
+method: GsRefactoringEnvironmentTest
+testAllInstVarNamesOfAClassWithNoInstVarsIsEmpty
+	self assert: (GsRefactoringEnvironment new allInstVarNamesOf: Object) isEmpty
+%
+
+category: 'tests'
+method: GsRefactoringEnvironmentTest
 testClassNamedResolvesClassesFromAnyDictionary
 	| env |
 	env := GsRefactoringEnvironment new.
 
 	self assert: (env classNamed: #Object) == Object.
 	self assert: (env classNamed: #GsRefEnvFixtureSuper) == self superFixture
+%
+
+category: 'tests'
+method: GsRefactoringEnvironmentTest
+testDescendantsDeclaringInstVarFindsOnlyTheRedeclaringSubclasses
+	"The V1-add / V8-split collision check: only a descendant that declares the name as its
+	 OWN instance variable counts. 'beta' is declared by the subclass; 'alpha' is declared by
+	 the superclass itself and merely inherited, so no descendant answers for it."
+	| env |
+	env := GsRefactoringEnvironment new.
+
+	self assert: ((env descendantsOf: self superFixture declaringInstVar: 'beta')
+		collect: [:c | c name asString]) asArray equals: #('GsRefEnvFixtureSub').
+	self assert: (env descendantsOf: self superFixture declaringInstVar: 'alpha') isEmpty
+%
+
+category: 'tests'
+method: GsRefactoringEnvironmentTest
+testDescendantsDeclaringInstVarAcceptsAStringOrASymbol
+	"The name is compared against normalised Strings, so a Symbol argument must be normalised too
+	 or it would hit the 3.6.x Unicode-comparison trap on the argument side and answer empty. Match
+	 #instanceMethodsAccessing:inClass:, which already accepts either."
+	| env |
+	env := GsRefactoringEnvironment new.
+
+	self assert: (env descendantsOf: self superFixture declaringInstVar: #beta)
+		equals: (env descendantsOf: self superFixture declaringInstVar: 'beta')
 %
 
 category: 'tests'
@@ -6816,6 +7629,52 @@ testInstVarNameArgumentAcceptsAStringOrASymbol
 
 category: 'tests'
 method: GsRefactoringEnvironmentTest
+testInstVarNameQueriesAnswerStringsNotSymbols
+	"#instVarNames / #allInstVarNames answer Symbols, but every caller compares the result
+	 against a name that arrived as a String from the client, and on 3.6.x that comparison
+	 can silently answer false (the Unicode-comparison trap). Normalising to Strings is what
+	 makes those comparisons hold, so it is asserted rather than assumed."
+	| env |
+	env := GsRefactoringEnvironment new.
+
+	"Pin the precondition: the loops below prove nothing if the query ever answers empty, so
+	 assert non-empty first -- otherwise a regression to #() would pass this test vacuously."
+	self deny: (env ownInstVarNamesOf: self subFixture) isEmpty.
+	self deny: (env allInstVarNamesOf: self subFixture) isEmpty.
+
+	(env ownInstVarNamesOf: self subFixture) do: [:each |
+		self assert: each isString.
+		self deny: each isSymbol].
+	(env allInstVarNamesOf: self subFixture) do: [:each |
+		self assert: each isString.
+		self deny: each isSymbol].
+	self assert: ((env ownInstVarNamesOf: self superFixture) includes: 'alpha')
+%
+
+category: 'tests'
+method: GsRefactoringEnvironmentTest
+testOwnInstVarNamesExcludesInheritedOnes
+	"Own means declared here: the subclass answers its own two and not the inherited 'alpha'."
+	| own |
+	own := GsRefactoringEnvironment new ownInstVarNamesOf: self subFixture.
+
+	self assert: own asArray equals: #('beta' 'gamma').
+	self deny: (own includes: 'alpha')
+%
+
+category: 'tests'
+method: GsRefactoringEnvironmentTest
+testOwnInstVarNamesIsEmptyForASubclassThatDeclaresNone
+	"The sibling declares nothing of its own, yet still inherits 'alpha'."
+	| env |
+	env := GsRefactoringEnvironment new.
+
+	self assert: (env ownInstVarNamesOf: self noAccessFixture) isEmpty.
+	self assert: ((env allInstVarNamesOf: self noAccessFixture) includes: 'alpha')
+%
+
+category: 'tests'
+method: GsRefactoringEnvironmentTest
 testReadOnlyQueriesDoNotChangeCommitState
 	| env before |
 	env := GsRefactoringEnvironment new.
@@ -6825,8 +7684,45 @@ testReadOnlyQueriesDoNotChangeCommitState
 	env classNamed: #Object.
 	env instanceMethodsAccessing: #alpha inClass: self superFixture.
 	env classesAndSelectorsAccessing: #alpha inHierarchyOf: self superFixture.
+	env ownInstVarNamesOf: self subFixture.
+	env allInstVarNamesOf: self subFixture.
+	env descendantsOf: self superFixture declaringInstVar: 'beta'.
 
 	self assert: System needsCommit equals: before
+%
+
+category: 'tests'
+method: GsRefactoringEnvironmentTest
+testTheInstVarNameQueriesHaveExactlyOneImplementationEach
+	"Issue #401: these one-liners used to be copy-pasted into four engine classes, which is
+	 how they could drift apart. Each now has a single implementation, on the environment --
+	 assert that, so a re-introduced copy (or a revived #ownInstVarsOf: / #allInstVarsOf:)
+	 fails here instead of silently diverging again.
+
+	 #implementorsOf: asks the RUNNING stone, so this asserts the state of the INSTALLED engine,
+	 not the source on this branch. A failure right after editing source usually means the stone's
+	 engine is stale -- reinstall it (npm run test:server:install-plugin) before reading it as a
+	 real regression.
+
+	 The revived-copy check is scoped to the four engine classes that once held the copies, not the
+	 whole image: #ownInstVarsOf: / #allInstVarsOf: are generic enough that an unrelated class
+	 adopting one should not fail a test guarding THIS drift."
+	| env engineClasses |
+	env := GsRefactoringEnvironment new.
+	engineClasses := Array
+		with: GsExtractSuperclassRefactoring
+		with: GsInstVarRefactoring
+		with: GsInstVarStructureRefactoring
+		with: GsSplitClassRefactoring.
+
+	#(#ownInstVarNamesOf: #allInstVarNamesOf:) do: [:sel |
+		self assert: ((env implementorsOf: sel) collect: [:m | m inClass])
+			equals: (Array with: GsRefactoringEnvironment)].
+	#(#ownInstVarsOf: #allInstVarsOf:) do: [:sel |
+		| implementorClasses |
+		implementorClasses := (env implementorsOf: sel) collect: [:m | m inClass].
+		engineClasses do: [:cls |
+			self deny: (implementorClasses includes: cls)]]
 %
 
 category: 'tests'
@@ -7159,7 +8055,7 @@ subFixture
 category: 'running'
 method: GsRenameClassRefactoringTest
 tearDown
-	#('GsRCSub' 'GsRCOther' 'GsRCBase' 'GsRCRenamed')
+	#('GsRCSub' 'GsRCOther' 'GsRCBase' 'GsRCRenamed' 'GsRCGone')
 		do: [:nm | UserGlobals removeKey: nm asSymbol ifAbsent: []].
 	super tearDown
 %
@@ -7253,6 +8149,33 @@ testNewNameCollisionDetected
 	ref := self renameTo: 'GsRCOther' scope: #wholeSystem.
 	self assert: ref newNameCollision notNil.
 	self assert: ref outOfScopeJsonString includesSubstring: 'already in use'
+%
+
+category: 'tests'
+method: GsRenameClassRefactoringTest
+testServerSideApplyReportsAnExternalMethodThatCannotRecompile
+	"An EXTERNAL referencing method is recompiled in place with the new class name.
+	 compileMethod: answers its errors rather than raising, so an unchecked apply counted a
+	 method that never recompiled as applied -- leaving it naming a class that no longer
+	 exists while reporting clean success. Make the external referencer un-compilable by
+	 removing a global it was compiled against and assert the apply reports it."
+	| json |
+	UserGlobals at: #GsRCGone put: 7.
+	self compile: 'usesBase "makes a GsRCBase" ^(Array with: GsRCBase new) , GsRCGone'
+		in: (UserGlobals at: #GsRCOther).
+	UserGlobals removeKey: #GsRCGone.
+
+	json := (self renameTo: 'GsRCRenamed' scope: #wholeSystem) applyDeselected: #().
+
+	self deny: json includesSubstring: '"failed":[]'.
+	self assert: json includesSubstring: 'did not recompile'.
+	"Pin WHICH change failed. #wholeSystem stages a change per referencing method, so a
+	 bare 'something failed' would also hold if usesBase recompiled fine and an unrelated
+	 fixture method broke -- green for the wrong reason, and the negative control would not
+	 catch it either."
+	self assert: json includesSubstring: 'GsRCOther>>usesBase'.
+	"...and that the rest of the rename still went through: only the one method failed."
+	self deny: json includesSubstring: '"applied":0'
 %
 
 category: 'tests'
@@ -7582,7 +8505,7 @@ subFixture
 category: 'running'
 method: GsRenameClassVariableRefactoringTest
 tearDown
-	#('GsRCVSub' 'GsRCVBase')
+	#('GsRCVSub' 'GsRCVBase' 'GsRCVGone')
 		do: [:nm | UserGlobals removeKey: nm asSymbol ifAbsent: []]
 %
 
@@ -7970,6 +8893,27 @@ testApplyReturnsAppliedCountAndNoFailures
 
 	self assert: json includesSubstring: '"applied":8'.
 	self assert: json includesSubstring: '"failed":[]'
+%
+
+category: 'tests - apply'
+method: GsRenameClassVariableRefactoringTest
+testApplyReportsAMethodThatCannotRecompile
+	"compileMethod: ANSWERS its errors instead of raising, so an apply that ignored the
+	 return value counted a method that never recompiled as APPLIED and reported clean
+	 success -- leaving that method bound to the OLD, now-detached association. Compile a
+	 reference method against a scaffold global, remove the global so its source no longer
+	 compiles, and assert the apply reports the failure instead of swallowing it."
+	| json |
+	UserGlobals at: #GsRCVGone put: 7.
+	self compile: 'broken ^Counter + GsRCVGone' in: self baseFixture.
+	UserGlobals removeKey: #GsRCVGone.
+
+	json := (self refactoringRenameCounterTo: 'Tally') applyDeselected: #().
+
+	self deny: json includesSubstring: '"failed":[]'.
+	self assert: json includesSubstring: 'did not recompile'.
+	"The other eight changes still applied -- one bad method does not stop the rename."
+	self assert: json includesSubstring: '"applied":8'
 %
 
 category: 'tests - preview'
@@ -8461,7 +9405,7 @@ subFixture
 category: 'running'
 method: GsRenameMethodRefactoringTest
 tearDown
-	#('GsRMSub' 'GsRMOther' 'GsRMBase')
+	#('GsRMSub' 'GsRMOther' 'GsRMBase' 'GsRMGone')
 		do: [:nm | UserGlobals removeKey: nm asSymbol ifAbsent: []].
 	super tearDown
 %
@@ -8627,6 +9571,34 @@ testServerSideApplyCompilesNewAndRemovesOld
 	"The sender was recompiled in place to call the new selector."
 	self assert: (base compiledMethodAt: #caller environmentId: 0 otherwise: nil) sourceString
 		includesSubstring: 'moveY: 2 x: 1'
+%
+
+category: 'tests'
+method: GsRenameMethodRefactoringTest
+testServerSideApplyKeepsTheOldMethodWhenTheNewOneWillNotCompile
+	"The apply compiles the new source and THEN removes the old selector. compileMethod:
+	 answers its errors rather than raising, so an unchecked apply deleted the old method
+	 without installing its replacement -- outright method loss, reported as success. The
+	 sender is made un-compilable by removing a global it was compiled against; the failure
+	 must be reported and `caller` must still exist."
+	| ref base json |
+	UserGlobals at: #GsRMGone put: 7.
+	self compile: 'caller
+	"a caller of movePointX:y: and ping"
+	self ping.
+	^(self movePointX: 1 y: 2) , GsRMGone' in: self baseFixture.
+	UserGlobals removeKey: #GsRMGone.
+	ref := self renamePartsTo: #('moveY:' 'x:') permutation: #(2 1) scope: #class.
+
+	json := ref applyDeselected: #().
+	base := self baseFixture.
+
+	self deny: json includesSubstring: '"failed":[]'.
+	self assert: json includesSubstring: 'did not recompile'.
+	"Nothing was destroyed on the way: the un-recompilable sender is still installed."
+	self assert: (base compiledMethodAt: #caller environmentId: 0 otherwise: nil) notNil.
+	"And the rename itself still went through for the implementor."
+	self assert: (base compiledMethodAt: #'moveY:x:' environmentId: 0 otherwise: nil) notNil
 %
 
 category: 'tests'
@@ -9147,6 +10119,555 @@ testApplyDoesNotCommit
 	before := System needsCommit.
 	(self renameComputeTempTo: 'sum') applyDeselected: #().
 	self assert: System needsCommit equals: before
+%
+
+category: 'running'
+method: GsSplitClassRefactoringTest
+setUp
+	| sl src sub |
+	sl := System myUserProfile symbolList.
+	src := Object
+		subclass: 'GsSCSource'
+		instVarNames: #('keepA' 'keepB' 'extractC' 'extractD')
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	src compileMethod: 'sumExtract ^extractC + extractD' dictionaries: sl category: 'tests'.
+	src compileMethod: 'readExtractC ^extractC' dictionaries: sl category: 'tests'.
+	src compileMethod: 'writeExtractC: v extractC := v' dictionaries: sl category: 'tests'.
+	src compileMethod: 'doubleKeep ^keepA * 2' dictionaries: sl category: 'tests'.
+	src compileMethod: 'readKeepB ^keepB' dictionaries: sl category: 'tests'.
+	src class compileMethod: 'sourceTag ^42' dictionaries: sl category: 'tests'.
+	sub := src
+		subclass: 'GsSCSub'
+		instVarNames: #()
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	sub compileMethod: 'subKeep ^keepA' dictionaries: sl category: 'tests'
+%
+
+category: 'running'
+method: GsSplitClassRefactoringTest
+tearDown
+	#(#GsSCSub2 #GsSCSub #GsSCSource #GsSCComponent #GsSplitClassProbe) do: [:nm |
+		UserGlobals removeKey: nm ifAbsent: []]
+%
+
+category: 'private'
+method: GsSplitClassRefactoringTest
+source
+	^UserGlobals at: #GsSCSource
+%
+
+category: 'private'
+method: GsSplitClassRefactoringTest
+component
+	^UserGlobals at: #GsSCComponent ifAbsent: [nil]
+%
+
+category: 'private'
+method: GsSplitClassRefactoringTest
+ref
+	"A clean-cut split: extract #(extractC extractD) into GsSCComponent."
+	^GsSplitClassRefactoring
+		class: self source
+		splitIntoClassNamed: 'GsSCComponent'
+		extractingInstVars: #('extractC' 'extractD')
+		inDictionary: nil
+%
+
+category: 'private'
+method: GsSplitClassRefactoringTest
+compileOnSource: aSource
+	(self source) compileMethod: aSource dictionaries: System myUserProfile symbolList category: 'tests'
+%
+
+category: 'private'
+method: GsSplitClassRefactoringTest
+changeOfKind: aKind for: aClassName in: cs
+	^cs changes detect: [:c | c kind = aKind and: [c className = aClassName]] ifNone: [nil]
+%
+
+category: 'private'
+method: GsSplitClassRefactoringTest
+changeOfKind: aKind for: aClassName in: cs matchingSelector: aSelector
+	^cs changes detect: [:c |
+		c kind = aKind and: [c className = aClassName and: [c selector = aSelector]]] ifNone: [nil]
+%
+
+category: 'tests - analysis'
+method: GsSplitClassRefactoringTest
+testAnalyzeComputesMovableMethods
+	| r |
+	r := self ref.
+	self assert: r decline isNil.
+	self assert: r movableSelectors size = 3.
+	self assert: (r movableSelectors includes: #readExtractC).
+	self assert: (r movableSelectors includes: #sumExtract).
+	self deny: (r movableSelectors includes: #doubleKeep)
+%
+
+category: 'tests - analysis'
+method: GsSplitClassRefactoringTest
+testAnalysisJsonReportsMovableCountAndNoDecline
+	| json |
+	json := self ref analysisJsonString.
+	self assert: (json includesString: '"decline":null').
+	self assert: (json includesString: '"movableCount":3')
+%
+
+category: 'tests - analysis'
+method: GsSplitClassRefactoringTest
+testCandidatesListSourceOwnIvars
+	| json |
+	json := GsSplitClassRefactoring candidatesForClass: self source.
+	self assert: (json includesString: 'extractC').
+	self assert: (json includesString: 'keepA')
+%
+
+category: 'tests - preview'
+method: GsSplitClassRefactoringTest
+testPreviewStagesClassAddForComponent
+	| add |
+	add := self changeOfKind: #classAdd for: 'GsSCComponent' in: self ref changeSet.
+	self deny: add isNil.
+	self assert: (add newSource includesString: 'extractC')
+%
+
+category: 'tests - preview'
+method: GsSplitClassRefactoringTest
+testPreviewStagesSourceReversionAddingComponentIvar
+	| edit |
+	edit := self changeOfKind: #classDefinitionEdit for: 'GsSCSource' in: self ref changeSet.
+	self deny: edit isNil.
+	self assert: (edit newSource includesString: 'gsSCComponent').
+	self deny: (edit newSource includesString: 'extractC')
+%
+
+category: 'tests - preview'
+method: GsSplitClassRefactoringTest
+testPreviewStagesMovedMethodOntoComponent
+	self assert: (self ref changeSet changes anySatisfy: [:c |
+		c kind = #methodAdd and: [c className = 'GsSCComponent' and: [c selector = #readExtractC]]])
+%
+
+category: 'tests - preview'
+method: GsSplitClassRefactoringTest
+testPreviewStagesAccessorAndDelegatorsOnSource
+	| cs |
+	cs := self ref changeSet.
+	self assert: (cs changes anySatisfy: [:c |
+		c kind = #methodAdd and: [c className = 'GsSCSource' and: [c selector = #gsSCComponent]]]).
+	self assert: (cs changes anySatisfy: [:c |
+		c kind = #methodAdd and: [c className = 'GsSCSource' and: [c selector = #readExtractC
+			and: [c newSource includesString: 'self gsSCComponent']]]])
+%
+
+category: 'tests - preview'
+method: GsSplitClassRefactoringTest
+testBuildingCreatesNothingInTheStone
+	self ref changeSet.
+	self assert: self component isNil
+%
+
+category: 'tests - declines'
+method: GsSplitClassRefactoringTest
+testDeclinesStraddlingMethod
+	self compileOnSource: 'usesBoth ^extractC + keepA'.
+	self assert: (self ref decline includesString: 'stay behind').
+	self assert: (self ref decline includesString: 'usesBoth')
+%
+
+category: 'tests - declines'
+method: GsSplitClassRefactoringTest
+testDeclinesSuperSendingMovableMethod
+	self compileOnSource: 'superMovable ^extractC + super hash'.
+	self assert: (self ref decline includesString: 'sends super').
+	self assert: (self ref decline includesString: 'superMovable')
+%
+
+category: 'tests - declines'
+method: GsSplitClassRefactoringTest
+testDeclinesMovableCallingRetainedMethod
+	self compileOnSource: 'movableCallsKeep ^extractC + self doubleKeep'.
+	self assert: (self ref decline includesString: 'doubleKeep').
+	self assert: (self ref decline includesString: 'stays behind')
+%
+
+category: 'tests - declines'
+method: GsSplitClassRefactoringTest
+testDeclinesMovableSelfSendingSourceOverriddenObjectMethod
+	"A movable method self-sends #printString, which the SOURCE overrides. Moving the method would
+	 resolve #printString to the component's inherited Object impl, silently losing the override, so
+	 the split must decline -- even though Object understands #printString."
+	self compileOnSource: 'printString ^''src'''.
+	self compileOnSource: 'describeExtract ^extractC printString, '' '', self printString'.
+	self assert: (self ref decline includesString: 'printString').
+	self assert: (self ref decline includesString: 'stays behind')
+%
+
+category: 'tests - declines'
+method: GsSplitClassRefactoringTest
+testAllowsMovableSelfSendingNonOverriddenObjectMethod
+	"Control for the override guard: a movable method may self-send an Object selector the source
+	 does NOT override (#hash) -- it safely resolves to Object on the component, so no decline."
+	self compileOnSource: 'hashExtract ^extractC hash + self hash'.
+	self assert: self ref decline isNil
+%
+
+category: 'tests - declines'
+method: GsSplitClassRefactoringTest
+testDeclinesWhenSubclassUsesExtractedIvar
+	(UserGlobals at: #GsSCSub)
+		compileMethod: 'subUsesExtract ^extractC'
+		dictionaries: System myUserProfile symbolList
+		category: 'tests'.
+	self assert: (self ref decline includesString: 'subclass GsSCSub').
+	self assert: (self ref decline includesString: 'extracted instance variable')
+%
+
+category: 'tests - declines'
+method: GsSplitClassRefactoringTest
+testDeclinesExistingClassName
+	| r |
+	r := GsSplitClassRefactoring class: self source splitIntoClassNamed: 'GsSCSource' extractingInstVars: #('extractC') inDictionary: nil.
+	self assert: (r decline includesString: 'already exists')
+%
+
+category: 'tests - declines'
+method: GsSplitClassRefactoringTest
+testDeclinesInvalidClassName
+	| r |
+	r := GsSplitClassRefactoring class: self source splitIntoClassNamed: 'lowercase' extractingInstVars: #('extractC') inDictionary: nil.
+	self assert: (r decline includesString: 'not a valid class name')
+%
+
+category: 'tests - declines'
+method: GsSplitClassRefactoringTest
+testDeclinesEmptyExtractSet
+	| r |
+	r := GsSplitClassRefactoring class: self source splitIntoClassNamed: 'GsSCComponent' extractingInstVars: #() inDictionary: nil.
+	self assert: (r decline includesString: 'no instance variables were chosen')
+%
+
+category: 'tests - declines'
+method: GsSplitClassRefactoringTest
+testDeclinesNonOwnIvar
+	| r |
+	r := GsSplitClassRefactoring class: self source splitIntoClassNamed: 'GsSCComponent' extractingInstVars: #('notAnIvar') inDictionary: nil.
+	self assert: (r decline includesString: 'not an instance variable')
+%
+
+category: 'tests - declines'
+method: GsSplitClassRefactoringTest
+testDeclinesComponentIvarNameCollision
+	| r |
+	"Decapitalising 'KeepA' yields 'keepA', which already exists on the source."
+	r := GsSplitClassRefactoring class: self source splitIntoClassNamed: 'KeepA' extractingInstVars: #('extractC') inDictionary: nil.
+	self assert: (r decline includesString: 'already has an instance variable')
+%
+
+category: 'tests - declines'
+method: GsSplitClassRefactoringTest
+testDeclinesSubclassDeclaringComponentIvar
+	"A subclass that already declares the component ivar would carry two of that name once it is
+	 inherited from the reversioned source -- which the class-creation primitive rejects (error
+	 2271) MID-apply, after the component class and every moved method already exist. Decline up
+	 front and NAME the offender, mirroring V1 add. Note the subclass is named GsSCSub2, not
+	 GsSCSub: the assertion below checks for the offender's name, and GsSCSub is a substring of
+	 every other name here."
+	| r |
+	self source
+		subclass: 'GsSCSub2'
+		instVarNames: #('gsSCComponent')
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	r := self ref.
+	self assert: (r decline includesString: 'GsSCSub2').
+	self assert: (r decline includesString: 'already declares').
+	self assert: (r decline includesString: 'gsSCComponent')
+%
+
+category: 'tests - declines'
+method: GsSplitClassRefactoringTest
+testDeclinesClassVariableShadowedByComponentIvar
+	"The component ivar is a NEW instance variable on the source, so a class variable of the same
+	 name visible to the source would be shadowed inside every method body. Same precondition V1
+	 add applies, asked through the same shared environment query."
+	| r |
+	self source addClassVarName: #gsSCComponent.
+	r := self ref.
+	self assert: (r decline includesString: 'class variable').
+	self assert: (r decline includesString: 'shadow')
+%
+
+category: 'tests - analysis guards'
+method: GsSplitClassRefactoringTest
+testIvarsAccessedAnswersNilWhenTheMethodCannotBeRead
+	"NIL, not #(). 'We could not read this method' is a different claim from 'it touches no
+	 instance variable', and computeAnalysis declines on the first while happily leaving a method
+	 behind on the second -- so the two must never collapse together."
+	self assert: (self ref ivarsAccessedBy: #noSuchSelectorHere in: self source) isNil.
+	self deny: (self ref ivarsAccessedBy: #readExtractC in: self source) isNil
+%
+
+category: 'tests - analysis guards'
+method: GsSplitClassRefactoringTest
+testParsesRejectsSourceRbParserCannotRead
+	"The super / retained-self-send guards both answer permissively on a parse failure, so
+	 computeAnalysis gates them on #parses: and declines instead. RBParser is a re-implementation,
+	 so a method carrying a construct it does not handle is the realistic trigger."
+	self deny: (self ref parses: nil).
+	self deny: (self ref parses: 'readExtractC ^ ^ ^').
+	self assert: (self ref parses: 'readExtractC ^extractC')
+%
+
+category: 'tests - analysis guards'
+method: GsSplitClassRefactoringTest
+testArgNamesRaisesRatherThanBuildingAnEmptyPattern
+	"Answering #() here made selectorText:args: emit an empty keyword pattern, so the delegator
+	 source came out as `^self comp ` and only failed at compile time DURING apply, stranding a
+	 half-applied split. Raise instead, so the apply reports it."
+	| names |
+	self should: [self ref argNamesFor: #noSuchSelectorHere in: self source] raise: Error.
+
+	"Compare as Symbols: the parser answers argument names as Unicode-capable strings, and a raw
+	 String = against them raises error 2718 on 3.6.x."
+	names := (self ref argNamesFor: #'writeExtractC:' in: self source) collect: [:e | e asSymbol].
+	self assert: names size = 1.
+	self assert: (names at: 1) == #v
+%
+
+category: 'tests - apply'
+method: GsSplitClassRefactoringTest
+testApplyCreatesComponentWithExtractedIvars
+	self ref applyDeselected: #().
+	self deny: self component isNil.
+	self assert: ((self component instVarNames collect: [:e | e asString]) includes: 'extractC').
+	self assert: ((self component instVarNames collect: [:e | e asString]) includes: 'extractD')
+%
+
+category: 'tests - apply'
+method: GsSplitClassRefactoringTest
+testApplyMovesMethodsAndDelegatesFromSource
+	| src |
+	self ref applyDeselected: #().
+	self assert: (self component includesSelector: #readExtractC).
+	self assert: (self source includesSelector: #readExtractC).
+	src := (self source compiledMethodAt: #readExtractC environmentId: 0 otherwise: nil) sourceString.
+	self assert: (src includesString: 'self gsSCComponent')
+%
+
+category: 'tests - apply'
+method: GsSplitClassRefactoringTest
+testApplyReshapesSourceIvars
+	self ref applyDeselected: #().
+	self deny: ((self source instVarNames collect: [:e | e asString]) includes: 'extractC').
+	self assert: ((self source instVarNames collect: [:e | e asString]) includes: 'gsSCComponent').
+	self assert: ((self source instVarNames collect: [:e | e asString]) includes: 'keepA')
+%
+
+category: 'tests - apply'
+method: GsSplitClassRefactoringTest
+testApplyAddsLazyAccessor
+	| src |
+	self ref applyDeselected: #().
+	self assert: (self source includesSelector: #gsSCComponent).
+	src := (self source compiledMethodAt: #gsSCComponent environmentId: 0 otherwise: nil) sourceString.
+	self assert: (src includesString: 'ifNil:')
+%
+
+category: 'tests - apply'
+method: GsSplitClassRefactoringTest
+testApplyPreservesBehaviorThroughDelegator
+	| s |
+	self ref applyDeselected: #().
+	s := self source new.
+	s writeExtractC: 7.
+	self assert: (s readExtractC) = 7
+%
+
+category: 'tests - apply'
+method: GsSplitClassRefactoringTest
+testDelegatorForAMethodWithNoReturnStillAnswersTheSource
+	"#writeExtractC: has no return, so before the split it answered the SOURCE. A delegator that
+	 forwards with `^` would answer whatever the moved method answers -- which is now the COMPONENT,
+	 because a method falling off its end answers its receiver. That silently changes S's external
+	 API for every caller that chains on the result, and hands the caller the component object the
+	 has-a encapsulation is meant to hide."
+	| s |
+	self ref applyDeselected: #().
+
+	s := self source new.
+
+	self assert: (s writeExtractC: 7) == s.
+	self deny: (s writeExtractC: 7) == (s gsSCComponent)
+%
+
+category: 'tests - apply'
+method: GsSplitClassRefactoringTest
+testDelegatorForAMethodWithAReturnStillForwardsTheValue
+	"The mirror of the test above: dropping the `^` unconditionally would break every method whose
+	 answer is the point, so #readExtractC must still forward its value."
+	| s |
+	self ref applyDeselected: #().
+
+	s := self source new.
+	s writeExtractC: 7.
+
+	self assert: s readExtractC = 7
+%
+
+category: 'tests - building'
+method: GsSplitClassRefactoringTest
+testDelegatorOmitsTheCaretOnlyForMethodsThatAnswerSelf
+	"Pins the discriminator directly, so a regression shows up as this test rather than as a
+	 puzzling identity failure in the apply tests above."
+	| r |
+	r := self ref.
+	self assert: (r answersSelf: #'writeExtractC:' in: self source).
+	self deny: (r answersSelf: #readExtractC in: self source).
+
+	"An explicit `^self` answers the receiver just as falling off the end does."
+	self compileOnSource: 'explicitSelfReturn extractC := 1. ^self'.
+	self assert: (r answersSelf: #explicitSelfReturn in: self source).
+
+	"A return of anything else is the method's real answer and must be forwarded."
+	self compileOnSource: 'mixedReturn extractC isNil ifTrue: [^0]. ^extractC'.
+	self deny: (r answersSelf: #mixedReturn in: self source)
+%
+
+category: 'tests - apply'
+method: GsSplitClassRefactoringTest
+testApplyLeavesRetainedMethodOnSource
+	self ref applyDeselected: #().
+	self assert: (self source includesSelector: #doubleKeep).
+	self assert: (self source includesSelector: #readKeepB)
+%
+
+category: 'tests - apply'
+method: GsSplitClassRefactoringTest
+testApplyPreservesClassSideMethods
+	"The reversion re-versions the source, whose metaclass method dictionary starts empty; the
+	 class-side method survives only because copyMethodsFrom:to:skipping: copies the metaclass
+	 forward -- and a reparented subclass still inherits it."
+	self ref applyDeselected: #().
+	self assert: (self source class includesSelector: #sourceTag).
+	self assert: ((UserGlobals at: #GsSCSub) class canUnderstand: #sourceTag)
+%
+
+category: 'tests - apply'
+method: GsSplitClassRefactoringTest
+testApplyReparentsSubclass
+	self ref applyDeselected: #().
+	self assert: ((UserGlobals at: #GsSCSub) superclass == self source).
+	self assert: ((UserGlobals at: #GsSCSub) includesSelector: #subKeep)
+%
+
+category: 'tests - apply'
+method: GsSplitClassRefactoringTest
+testApplyDoesNotCommit
+	| result |
+	result := self ref applyDeselected: #().
+	self assert: (result includesString: '"committed":false').
+	self deny: (result includesString: '"error"')
+%
+
+category: 'tests - preview'
+method: GsSplitClassRefactoringTest
+testDelegatorForBinarySelectorWeavesTheArgument
+	"A movable binary method gets a delegator on the source that forwards the operand."
+	| add |
+	self compileOnSource: '* aNumber ^extractC * aNumber'.
+	add := self changeOfKind: #methodAdd for: 'GsSCSource' in: self ref changeSet
+		matchingSelector: #'*'.
+	self deny: add isNil.
+	self assert: (add newSource includesString: '^self gsSCComponent * aNumber')
+%
+
+category: 'tests - preview'
+method: GsSplitClassRefactoringTest
+testDelegatorForKeywordSelectorWeavesEveryArgument
+	"A movable multi-keyword method gets a delegator that re-weaves each keyword and argument."
+	| add |
+	self compileOnSource: 'scaleBy: a and: b ^extractC'.
+	add := self changeOfKind: #methodAdd for: 'GsSCSource' in: self ref changeSet
+		matchingSelector: #'scaleBy:and:'.
+	self deny: add isNil.
+	self assert: (add newSource includesString: 'scaleBy: a and: b').
+	self assert: (add newSource includesString: '^self gsSCComponent scaleBy: a and: b')
+%
+
+category: 'tests - apply'
+method: GsSplitClassRefactoringTest
+testApplyPreservesBehaviorThroughKeywordDelegator
+	"Set an extracted ivar and read it back through a moved keyword method: behavior survives the
+	 delegation even for a method that takes arguments."
+	| s |
+	self compileOnSource: 'sumWith: n ^extractC + n'.
+	self ref applyDeselected: #().
+	s := self source new.
+	s writeExtractC: 10.
+	self assert: (s sumWith: 5) = 15
+%
+
+category: 'tests - preview'
+method: GsSplitClassRefactoringTest
+testPreviewJsonStringSerializesTheChangeSet
+	| json |
+	json := self ref previewJsonString.
+	self assert: (json includesString: 'GsSCComponent').
+	self assert: (json includesString: '"kind"')
+%
+
+category: 'tests - analysis'
+method: GsSplitClassRefactoringTest
+testAnalyzeClassConvenienceReportsMovableCount
+	"The class-side analyzeClass:... convenience answers the same envelope as the instance path."
+	| json |
+	json := GsSplitClassRefactoring
+		analyzeClass: self source
+		splitIntoClassNamed: 'GsSCComponent'
+		extractingInstVars: #('extractC' 'extractD').
+	self assert: (json includesString: '"decline":null').
+	self assert: (json includesString: '"movableCount":3')
+%
+
+category: 'tests - paginated preview'
+method: GsSplitClassRefactoringTest
+testPageForTokenContinuesAndReportsExpiredSession
+	| r firstPage expired |
+	r := self ref.
+	r startPreviewToken: 'v8pagetok' maxBytes: 120.
+	firstPage := GsSplitClassRefactoring pageForToken: 'v8pagetok' from: 1 maxBytes: 120.
+	self assert: (firstPage includesString: '"changes"').
+	expired := GsSplitClassRefactoring pageForToken: 'no-such-token' from: 1 maxBytes: 120.
+	self assert: (expired includesString: 'expired').
+	GsSplitClassRefactoring clearToken: 'v8pagetok'
+%
+
+category: 'tests - paginated preview'
+method: GsSplitClassRefactoringTest
+testApplyForExpiredTokenReportsExpired
+	| result |
+	result := GsSplitClassRefactoring applyForToken: 'no-such-token' deselected: #().
+	self assert: (result includesString: 'expired')
+%
+
+category: 'tests - paginated preview'
+method: GsSplitClassRefactoringTest
+testClearTokenRemovesThePreviewSession
+	| r |
+	r := self ref.
+	r startPreviewToken: 'v8cleartok' maxBytes: 500.
+	self assert: (SessionTemps current at: #v8cleartok ifAbsent: [nil]) notNil.
+	GsSplitClassRefactoring clearToken: 'v8cleartok'.
+	self assert: (SessionTemps current at: #v8cleartok ifAbsent: [nil]) isNil
 %
 
 ! Extension methods

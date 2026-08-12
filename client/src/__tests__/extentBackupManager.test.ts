@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import * as path from 'path';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
@@ -12,6 +13,7 @@ import {
 import type { ActiveSession } from '../sessionManager';
 import type { GemStoneSessionItem } from '../loginTreeProvider';
 import type { DatabaseNode } from '../databaseTreeProvider';
+import { uriFsPath } from './support/uri';
 
 // A fake GCI executor that answers each bracketing call by matching the emitted
 // Smalltalk. Override any response to drive a failure path.
@@ -50,16 +52,14 @@ function makeDeps(execute: QueryExecutor, over: Partial<ExtentBackupDeps> = {}):
 
 // The order index of the execute() call whose Smalltalk contains `needle`.
 function callOrder(execute: QueryExecutor, needle: string): number {
-  const spy = execute as unknown as {
-    mock: { calls: [string][]; invocationCallOrder: number[] };
-  };
+  const spy = vi.mocked(execute);
   const i = spy.mock.calls.findIndex(([code]) => code.includes(needle));
   return i === -1 ? -1 : spy.mock.invocationCallOrder[i];
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(vscode.window.showOpenDialog).mockResolvedValue([{ fsPath: '/chosen' } as vscode.Uri]);
+  vi.mocked(vscode.window.showOpenDialog).mockResolvedValue([vscode.Uri.file('/chosen')]);
 });
 
 describe('runOnlineExtentBackup', () => {
@@ -70,12 +70,25 @@ describe('runOnlineExtentBackup', () => {
     const ok = await runOnlineExtentBackup(deps);
 
     expect(ok).toBe(true);
-    expect(deps.copyFile).toHaveBeenCalledWith(
-      '/db/data/extent0.dbf',
-      expect.stringMatching(/\/chosen\/gs64stone_extents_[\d-]+_[\d-]+\/extent0\.dbf$/),
+    const copyFile = vi.mocked(deps.copyFile);
+    // copyFile takes exactly (src, dest) — toHaveBeenCalledWith used to
+    // enforce that implicitly; destructuring below doesn't, so check it here.
+    expect(copyFile.mock.calls[0]).toHaveLength(2);
+    const [src, dest] = copyFile.mock.calls[0];
+    // The stone reports its own extent paths verbatim (see extentFolderInServer's
+    // doc comment) -- POSIX since the server is never Windows, regardless of
+    // the client's OS -- so this literal is exactly what the mock returned,
+    // not a path.join reassembly.
+    expect(src).toBe('/db/data/extent0.dbf');
+    // path.basename/dirname parse whatever separator path.join used to build
+    // `dest`, so decomposing it this way stays correct on every platform,
+    // unlike a regex with a hardcoded `/`, which only matches on POSIX.
+    expect(path.basename(dest)).toBe('extent0.dbf');
+    expect(path.basename(path.dirname(dest))).toMatch(
+      /^gs64stone_extents_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$/,
     );
-    const copyOrder = (deps.copyFile as unknown as { mock: { invocationCallOrder: number[] } }).mock
-      .invocationCallOrder[0];
+    expect(path.dirname(path.dirname(dest))).toBe(uriFsPath('/chosen'));
+    const copyOrder = copyFile.mock.invocationCallOrder[0];
     expect(callOrder(execute, 'suspendCheckpointsForMinutes')).toBeLessThan(copyOrder);
     expect(copyOrder).toBeLessThan(callOrder(execute, 'resumeCheckpoints'));
   });
@@ -161,10 +174,11 @@ describe('runOnlineExtentBackup', () => {
 
     expect(ok).toBe(true);
     expect(deps.copyFile).toHaveBeenCalledTimes(2);
-    const copied = (
-      deps.copyFile as unknown as { mock: { calls: [string, string][] } }
-    ).mock.calls.map(([src]) => src);
-    expect(copied).toEqual(['/db/data/extent0.dbf', '/db/data/extent1.dbf']);
+    const copied = vi.mocked(deps.copyFile).mock.calls.map(([src]) => src);
+    expect(copied).toEqual([
+      path.join('/db/data', 'extent0.dbf'),
+      path.join('/db/data', 'extent1.dbf'),
+    ]);
   });
 });
 

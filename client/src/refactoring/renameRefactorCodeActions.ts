@@ -30,10 +30,21 @@ const REWRITE = vscode.CodeActionKind.Refactor.append('rewrite');
 export class RefactorCodeActionProvider implements vscode.CodeActionProvider {
   static readonly providedCodeActionKinds = [vscode.CodeActionKind.Refactor];
 
+  /**
+   * @param refactoringAvailable  whether the selected session's stone has the
+   *   refactoring engine installed. Every action here needs it, so when it is
+   *   absent (never installed, or uninstalled) the provider offers nothing —
+   *   the "Refactor…" menu stays empty rather than listing actions that would
+   *   only fail. Mirrors the Explorer menus' `gemstone.rbSupportAvailable` gate.
+   */
+  constructor(private readonly refactoringAvailable: () => boolean) {}
+
   provideCodeActions(
     document: vscode.TextDocument,
     range: vscode.Range | vscode.Selection,
   ): vscode.CodeAction[] {
+    if (!this.refactoringAvailable()) return [];
+
     const actions: vscode.CodeAction[] = [];
     const action = (
       kind: vscode.CodeActionKind,

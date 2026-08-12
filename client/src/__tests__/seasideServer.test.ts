@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as child_process from 'child_process';
 import * as fs from 'fs';
+import * as path from 'path';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 import {
@@ -70,7 +71,7 @@ describe('Seaside server lifecycle', () => {
 
     expect(url).toBe(seasideUrl());
     const [cmd, args, opts] = vi.mocked(child_process.spawn).mock.calls[0];
-    expect(cmd).toBe('/gs/GemStone64Bit3.7.5-arm64.Darwin/bin/topaz');
+    expect(cmd).toBe(path.join('/gs/GemStone64Bit3.7.5-arm64.Darwin', 'bin', 'topaz'));
     expect(args).toEqual(['-l']);
     expect(opts?.detached).toBe(true);
   });

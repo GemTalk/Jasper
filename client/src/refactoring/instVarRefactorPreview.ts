@@ -1,3 +1,5 @@
+import { asCount } from './previewCounts';
+import { ApplyResult as BaseApplyResult, parseApplyResultWith } from './previewEnvelope';
 /**
  * Pure helpers for the add / remove instance-variable (V1) preview: parsing the engine's
  * pre-flight analysis, the paginated preview envelope, and the apply result. No `vscode`
@@ -63,12 +65,9 @@ export interface StartInstVarPreview {
   page: PreviewPage;
 }
 
-export interface ApplyResult {
-  applied: number;
-  failed: { id: string; label: string; error: string }[];
+export interface ApplyResult extends BaseApplyResult {
   dropped: BrokenMethod[];
   committed: boolean;
-  error?: string;
   /** Set when a change failed: true if earlier changes were already staged, so the
    *  transaction now holds a PARTIAL reshape. The engine never aborts (that would discard
    *  the user's other in-flight work), so this is what the client's abort advice keys on. */
@@ -81,10 +80,6 @@ export interface InstVarAnalysis {
   sourceClass: string | null;
   affectedCount: number;
   willNotRecompileCount: number;
-}
-
-function asCount(v: unknown): number {
-  return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0;
 }
 
 function parseBroken(raw: unknown): BrokenMethod[] {
@@ -190,30 +185,13 @@ export function parsePage(json: string): PreviewPage {
 }
 
 export function parseApplyResult(json: string): ApplyResult {
-  const parsed: unknown = JSON.parse(json);
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    throw new Error('Apply did not return a result envelope.');
-  }
-  const env = parsed as Record<string, unknown>;
-  const failed = Array.isArray(env.failed)
-    ? env.failed
-        .filter((f): f is Record<string, unknown> => typeof f === 'object' && f !== null)
-        .map((f) => ({
-          id: typeof f.id === 'string' ? f.id : '?',
-          label: typeof f.label === 'string' ? f.label : '?',
-          error: typeof f.error === 'string' ? f.error : 'unknown error',
-        }))
-    : [];
-  return {
-    applied: asCount(env.applied),
-    failed,
+  return parseApplyResultWith(json, (env) => ({
     dropped: parseBroken(env.dropped),
     committed: env.committed === true,
-    error: typeof env.error === 'string' ? env.error : undefined,
     // Only meaningful alongside a failure; absent (an older engine) stays undefined so the
     // caller falls back to the conservative "abort it yourself" advice.
     partiallyApplied: typeof env.partiallyApplied === 'boolean' ? env.partiallyApplied : undefined,
-  };
+  }));
 }
 
 /** A failure to surface in the preview panel instead of applying. `canAbort` is true when a

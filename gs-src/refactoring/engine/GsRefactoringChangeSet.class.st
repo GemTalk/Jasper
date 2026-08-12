@@ -119,6 +119,19 @@ GsRefactoringChangeSet >> addClassRenameInDictionary: dn className: cn newName: 
 ]
 
 { #category : 'building' }
+GsRefactoringChangeSet >> addClassAddInDictionary: dn className: cn superclassName: sn newSource: ns [
+	"Stage the creation of a brand-new class (extract-superclass's inserted common parent).
+	 Records the change only; NEVER compiles or commits. Apply creates the class fresh under
+	 superclassName. Returns the new GsRefactoringChange."
+	| change |
+	change := GsRefactoringChange
+		classAddId: self nextIdString dictName: dn className: cn
+		superclassName: sn newSource: ns.
+	changes add: change.
+	^change
+]
+
+{ #category : 'building' }
 GsRefactoringChangeSet >> addClassReparentInDictionary: dn className: cn oldSource: os newSource: ns [
 	"Stage the re-parenting of one descendant of a renamed class. Records the change
 	 only; NEVER compiles or commits. Apply recompiles the descendant's definition

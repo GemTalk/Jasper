@@ -1,3 +1,6 @@
+import { asCount } from './previewCounts';
+export { parseApplyResult } from './previewEnvelope';
+export type { ApplyResult } from './previewEnvelope';
 /**
  * Pure helpers for the Extract Temporary (M3) preview: parsing the server-side
  * engine's pre-flight analysis, its paginated preview envelope, and the apply
@@ -56,16 +59,6 @@ export interface StartExtractTemporaryPreview {
   occurrenceCount: number;
   outOfScope: ExtractTemporaryOutOfScope;
   page: PreviewPage;
-}
-
-export interface ApplyResult {
-  applied: number;
-  failed: { id: string; label: string; error: string }[];
-  error?: string;
-}
-
-function asCount(v: unknown): number {
-  return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0;
 }
 
 function parseChange(raw: unknown, i: number): ExtractTemporaryChange {
@@ -163,28 +156,6 @@ export function parsePage(json: string): PreviewPage {
     throw new Error('Extract preview page did not return an envelope.');
   }
   return parsePageObject(parsed as Record<string, unknown>);
-}
-
-export function parseApplyResult(json: string): ApplyResult {
-  const parsed: unknown = JSON.parse(json);
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    throw new Error('Apply did not return a result envelope.');
-  }
-  const env = parsed as Record<string, unknown>;
-  const failed = Array.isArray(env.failed)
-    ? env.failed
-        .filter((f): f is Record<string, unknown> => typeof f === 'object' && f !== null)
-        .map((f) => ({
-          id: typeof f.id === 'string' ? f.id : '?',
-          label: typeof f.label === 'string' ? f.label : '?',
-          error: typeof f.error === 'string' ? f.error : 'unknown error',
-        }))
-    : [];
-  return {
-    applied: asCount(env.applied),
-    failed,
-    error: typeof env.error === 'string' ? env.error : undefined,
-  };
 }
 
 /** A human label for the preview row: "Foo>>bar" / "Foo class>>bar". */

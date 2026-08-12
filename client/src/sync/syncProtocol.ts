@@ -108,11 +108,16 @@ export function contentBuildExpr(refs: ClassRef[]): string {
 // manifest's per-index keying), then returns `dictIndex \t md5 \n file-out`,
 // or '' if the dictionary or class is not found.
 export function syncClassBuildExpr(dictName: string, className: string): string {
+  // Unicode7 idiom (see escapeString in queries/util.ts): a string literal inside a GCI doit is
+  // Unicode7 on 3.6.x, so compare an image-derived name as an interned Symbol, never a String.
+  // `name asString asSymbol` (not bare `name asSymbol`) so a dictionary with a nil name — which
+  // `SymbolDictionary new` produces, and one sitting ahead of the target in the scan is enough —
+  // answers #nil and moves on, rather than a `nil asSymbol` doesNotUnderstand that kills the scan.
   return blockExpr(`
   | sl idx |
   sl := System myUserProfile symbolList.
   idx := 0.
-  1 to: sl size do: [:i | (idx = 0 and: [(sl at: i) name asString = '${escapeString(dictName)}']) ifTrue: [idx := i]].
+  1 to: sl size do: [:i | (idx = 0 and: [(sl at: i) name asString asSymbol == #'${escapeString(dictName)}']) ifTrue: [idx := i]].
   idx = 0
     ifTrue: ['']
     ifFalse: [

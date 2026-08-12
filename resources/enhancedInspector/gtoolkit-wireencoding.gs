@@ -7,7 +7,7 @@
 ! Vendored into Jasper and filed into the stone by the Enhanced Inspector
 ! installer. DO NOT EDIT BY HAND - regenerated from upstream by
 ! update_gemstone_gt_support.sh, which re-applies this header and rewrites
-! class placement from Globals to Published.
+! class placement from Globals to the dedicated GsEnhancedInspector dictionary.
 ! ----------------------------------------------------------------------------
 ! Class Declarations
 ! Generated file, do not Edit
@@ -19,7 +19,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding';
@@ -37,7 +37,7 @@ doit
 	classVars: #(GtDefaultMap GtDefaultReverseMap)
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding';
@@ -55,7 +55,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding';
@@ -73,7 +73,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding';
@@ -91,7 +91,7 @@ doit
 	classVars: #(DefaultEncoder)
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding';
@@ -109,7 +109,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding';
@@ -128,7 +128,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding';
@@ -146,7 +146,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding';
@@ -164,7 +164,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding-Examples';
@@ -182,7 +182,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding';
@@ -200,7 +200,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding';
@@ -219,7 +219,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding-Examples';
@@ -237,7 +237,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding-Examples';
@@ -255,7 +255,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding-Examples';
@@ -273,7 +273,7 @@ doit
 	classVars: #(DefaultMap)
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding';
@@ -291,7 +291,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding';
@@ -309,7 +309,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding';
@@ -327,7 +327,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding';
@@ -345,7 +345,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding';
@@ -363,7 +363,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding';
@@ -381,7 +381,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding';
@@ -399,7 +399,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding';
@@ -417,7 +417,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding';
@@ -435,7 +435,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding';
@@ -453,7 +453,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding';
@@ -471,7 +471,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding';
@@ -490,7 +490,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding';
@@ -508,7 +508,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding';
@@ -526,7 +526,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding';
@@ -544,7 +544,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding';
@@ -562,7 +562,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding';
@@ -580,7 +580,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding';
@@ -598,7 +598,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding';
@@ -617,7 +617,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding';
@@ -635,7 +635,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding';
@@ -653,7 +653,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding';
@@ -674,7 +674,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding';
@@ -693,7 +693,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding';
@@ -716,7 +716,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding';
@@ -734,7 +734,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding';
@@ -753,7 +753,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding';
@@ -771,7 +771,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding';
@@ -789,7 +789,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding';
@@ -807,7 +807,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding';
@@ -825,7 +825,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding';
@@ -843,7 +843,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding';
@@ -861,7 +861,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding';
@@ -879,7 +879,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding';
@@ -898,7 +898,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding';
@@ -916,7 +916,7 @@ doit
 	classVars: #()
 	classInstVars: #()
 	poolDictionaries: #()
-	inDictionary: Published
+	inDictionary: GsEnhancedInspector
 	options: #( #logCreation )
 )
 		category: 'GToolkit-WireEncoding';

@@ -1,0 +1,3 @@
+# Windows CI checks out CRLF by default; several tests parse repo files
+# line-exactly and assume LF.
+* text=auto eol=lf

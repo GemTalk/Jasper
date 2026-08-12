@@ -49,4 +49,11 @@ describe('SysadminStorage.getPlatformKey on Darwin', () => {
       expect(new SysadminStorage().getCatalogPlatformKey()).toBe('i386.Darwin');
     });
   });
+
+  it('falls back to x86_64.Linux when there is no local server platform', () => {
+    withPlatform('win32', 'x64', () => {
+      expect(new SysadminStorage().getPlatformKey()).toBeUndefined();
+      expect(new SysadminStorage().getCatalogPlatformKey()).toBe('x86_64.Linux');
+    });
+  });
 });
