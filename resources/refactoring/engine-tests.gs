@@ -8055,7 +8055,7 @@ subFixture
 category: 'running'
 method: GsRenameClassRefactoringTest
 tearDown
-	#('GsRCSub' 'GsRCOther' 'GsRCBase' 'GsRCRenamed')
+	#('GsRCSub' 'GsRCOther' 'GsRCBase' 'GsRCRenamed' 'GsRCGone')
 		do: [:nm | UserGlobals removeKey: nm asSymbol ifAbsent: []].
 	super tearDown
 %
@@ -8149,6 +8149,33 @@ testNewNameCollisionDetected
 	ref := self renameTo: 'GsRCOther' scope: #wholeSystem.
 	self assert: ref newNameCollision notNil.
 	self assert: ref outOfScopeJsonString includesSubstring: 'already in use'
+%
+
+category: 'tests'
+method: GsRenameClassRefactoringTest
+testServerSideApplyReportsAnExternalMethodThatCannotRecompile
+	"An EXTERNAL referencing method is recompiled in place with the new class name.
+	 compileMethod: answers its errors rather than raising, so an unchecked apply counted a
+	 method that never recompiled as applied -- leaving it naming a class that no longer
+	 exists while reporting clean success. Make the external referencer un-compilable by
+	 removing a global it was compiled against and assert the apply reports it."
+	| json |
+	UserGlobals at: #GsRCGone put: 7.
+	self compile: 'usesBase "makes a GsRCBase" ^(Array with: GsRCBase new) , GsRCGone'
+		in: (UserGlobals at: #GsRCOther).
+	UserGlobals removeKey: #GsRCGone.
+
+	json := (self renameTo: 'GsRCRenamed' scope: #wholeSystem) applyDeselected: #().
+
+	self deny: json includesSubstring: '"failed":[]'.
+	self assert: json includesSubstring: 'did not recompile'.
+	"Pin WHICH change failed. #wholeSystem stages a change per referencing method, so a
+	 bare 'something failed' would also hold if usesBase recompiled fine and an unrelated
+	 fixture method broke -- green for the wrong reason, and the negative control would not
+	 catch it either."
+	self assert: json includesSubstring: 'GsRCOther>>usesBase'.
+	"...and that the rest of the rename still went through: only the one method failed."
+	self deny: json includesSubstring: '"applied":0'
 %
 
 category: 'tests'
@@ -8478,7 +8505,7 @@ subFixture
 category: 'running'
 method: GsRenameClassVariableRefactoringTest
 tearDown
-	#('GsRCVSub' 'GsRCVBase')
+	#('GsRCVSub' 'GsRCVBase' 'GsRCVGone')
 		do: [:nm | UserGlobals removeKey: nm asSymbol ifAbsent: []]
 %
 
@@ -8866,6 +8893,27 @@ testApplyReturnsAppliedCountAndNoFailures
 
 	self assert: json includesSubstring: '"applied":8'.
 	self assert: json includesSubstring: '"failed":[]'
+%
+
+category: 'tests - apply'
+method: GsRenameClassVariableRefactoringTest
+testApplyReportsAMethodThatCannotRecompile
+	"compileMethod: ANSWERS its errors instead of raising, so an apply that ignored the
+	 return value counted a method that never recompiled as APPLIED and reported clean
+	 success -- leaving that method bound to the OLD, now-detached association. Compile a
+	 reference method against a scaffold global, remove the global so its source no longer
+	 compiles, and assert the apply reports the failure instead of swallowing it."
+	| json |
+	UserGlobals at: #GsRCVGone put: 7.
+	self compile: 'broken ^Counter + GsRCVGone' in: self baseFixture.
+	UserGlobals removeKey: #GsRCVGone.
+
+	json := (self refactoringRenameCounterTo: 'Tally') applyDeselected: #().
+
+	self deny: json includesSubstring: '"failed":[]'.
+	self assert: json includesSubstring: 'did not recompile'.
+	"The other eight changes still applied -- one bad method does not stop the rename."
+	self assert: json includesSubstring: '"applied":8'
 %
 
 category: 'tests - preview'
@@ -9357,7 +9405,7 @@ subFixture
 category: 'running'
 method: GsRenameMethodRefactoringTest
 tearDown
-	#('GsRMSub' 'GsRMOther' 'GsRMBase')
+	#('GsRMSub' 'GsRMOther' 'GsRMBase' 'GsRMGone')
 		do: [:nm | UserGlobals removeKey: nm asSymbol ifAbsent: []].
 	super tearDown
 %
@@ -9523,6 +9571,34 @@ testServerSideApplyCompilesNewAndRemovesOld
 	"The sender was recompiled in place to call the new selector."
 	self assert: (base compiledMethodAt: #caller environmentId: 0 otherwise: nil) sourceString
 		includesSubstring: 'moveY: 2 x: 1'
+%
+
+category: 'tests'
+method: GsRenameMethodRefactoringTest
+testServerSideApplyKeepsTheOldMethodWhenTheNewOneWillNotCompile
+	"The apply compiles the new source and THEN removes the old selector. compileMethod:
+	 answers its errors rather than raising, so an unchecked apply deleted the old method
+	 without installing its replacement -- outright method loss, reported as success. The
+	 sender is made un-compilable by removing a global it was compiled against; the failure
+	 must be reported and `caller` must still exist."
+	| ref base json |
+	UserGlobals at: #GsRMGone put: 7.
+	self compile: 'caller
+	"a caller of movePointX:y: and ping"
+	self ping.
+	^(self movePointX: 1 y: 2) , GsRMGone' in: self baseFixture.
+	UserGlobals removeKey: #GsRMGone.
+	ref := self renamePartsTo: #('moveY:' 'x:') permutation: #(2 1) scope: #class.
+
+	json := ref applyDeselected: #().
+	base := self baseFixture.
+
+	self deny: json includesSubstring: '"failed":[]'.
+	self assert: json includesSubstring: 'did not recompile'.
+	"Nothing was destroyed on the way: the un-recompilable sender is still installed."
+	self assert: (base compiledMethodAt: #caller environmentId: 0 otherwise: nil) notNil.
+	"And the rename itself still went through for the implementor."
+	self assert: (base compiledMethodAt: #'moveY:x:' environmentId: 0 otherwise: nil) notNil
 %
 
 category: 'tests'
