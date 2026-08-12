@@ -105,7 +105,7 @@ GsRenameClassRefactoringTest >> subFixture [
 
 { #category : 'running' }
 GsRenameClassRefactoringTest >> tearDown [
-	#('GsRCSub' 'GsRCOther' 'GsRCBase' 'GsRCRenamed')
+	#('GsRCSub' 'GsRCOther' 'GsRCBase' 'GsRCRenamed' 'GsRCGone')
 		do: [:nm | UserGlobals removeKey: nm asSymbol ifAbsent: []].
 	super tearDown
 ]
@@ -192,6 +192,32 @@ GsRenameClassRefactoringTest >> testNewNameCollisionDetected [
 	ref := self renameTo: 'GsRCOther' scope: #wholeSystem.
 	self assert: ref newNameCollision notNil.
 	self assert: ref outOfScopeJsonString includesSubstring: 'already in use'
+]
+
+{ #category : 'tests' }
+GsRenameClassRefactoringTest >> testServerSideApplyReportsAnExternalMethodThatCannotRecompile [
+	"An EXTERNAL referencing method is recompiled in place with the new class name.
+	 compileMethod: answers its errors rather than raising, so an unchecked apply counted a
+	 method that never recompiled as applied -- leaving it naming a class that no longer
+	 exists while reporting clean success. Make the external referencer un-compilable by
+	 removing a global it was compiled against and assert the apply reports it."
+	| json |
+	UserGlobals at: #GsRCGone put: 7.
+	self compile: 'usesBase "makes a GsRCBase" ^(Array with: GsRCBase new) , GsRCGone'
+		in: (UserGlobals at: #GsRCOther).
+	UserGlobals removeKey: #GsRCGone.
+
+	json := (self renameTo: 'GsRCRenamed' scope: #wholeSystem) applyDeselected: #().
+
+	self deny: json includesSubstring: '"failed":[]'.
+	self assert: json includesSubstring: 'did not recompile'.
+	"Pin WHICH change failed. #wholeSystem stages a change per referencing method, so a
+	 bare 'something failed' would also hold if usesBase recompiled fine and an unrelated
+	 fixture method broke -- green for the wrong reason, and the negative control would not
+	 catch it either."
+	self assert: json includesSubstring: 'GsRCOther>>usesBase'.
+	"...and that the rest of the rename still went through: only the one method failed."
+	self deny: json includesSubstring: '"applied":0'
 ]
 
 { #category : 'tests' }
