@@ -12,7 +12,9 @@ New docs are organized by [Diátaxis](https://diataxis.fr/) category — `how-to
 
 - [npm supply-chain threat model](explanation/npm-supply-chain-threat-model.md) — the install-time execution threat these controls defend against, and why each is shaped the way it is.
 - [Why there are two browsers, and which one gets the work](explanation/system-browser-and-explorer.md) — the System Browser is frozen, the Explorer is where new features land; why "frozen" rather than deprecated or maintained, and the one gap still browser-only.
+- [Integration test isolation](explanation/integration-test-isolation.md) — why transaction-abort is the isolation mechanism for `useIntegrationTest`, and why the commit guard is armed per-session and irreversible.
 
 ## Reference
 
 - [npm supply-chain controls](reference/supply-chain-controls.md) — this repo's `.npmrc` keys, `allowScripts` verdicts, CI-only checks, and sunset conditions.
+- [Integration test harness](reference/integration-test-harness.md) — the `useIntegrationTest` `GciTestContext`, hook order, and the commit invariant.
