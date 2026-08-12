@@ -75,7 +75,11 @@ describe('runOnlineExtentBackup', () => {
     // enforce that implicitly; destructuring below doesn't, so check it here.
     expect(copyFile.mock.calls[0]).toHaveLength(2);
     const [src, dest] = copyFile.mock.calls[0];
-    expect(src).toBe(path.join('/db/data', 'extent0.dbf'));
+    // The stone reports its own extent paths verbatim (see extentFolderInServer's
+    // doc comment) -- POSIX since the server is never Windows, regardless of
+    // the client's OS -- so this literal is exactly what the mock returned,
+    // not a path.join reassembly.
+    expect(src).toBe('/db/data/extent0.dbf');
     // path.basename/dirname parse whatever separator path.join used to build
     // `dest`, so decomposing it this way stays correct on every platform,
     // unlike a regex with a hardcoded `/`, which only matches on POSIX.

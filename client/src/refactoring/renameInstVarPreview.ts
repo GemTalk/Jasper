@@ -7,6 +7,7 @@
  * glue (building the WorkspaceEdit + URIs, showing the preview, saving to
  * recompile) lives in the Explorer command.
  */
+import { ApplyResult, parseApplyResult } from './previewEnvelope';
 
 /** One staged change from GsRefactoringChangeSet>>jsonString. `selector` and
  *  `category` are null for a class-definition edit; `dictName` may be null when
@@ -59,36 +60,24 @@ export function parseRenamePreview(json: string): RenamePreview {
   return { token: env.token, changes: parseRenameChanges(JSON.stringify(env.changes)) };
 }
 
-/** The apply result: how many classes were re-versioned, and anything that
- *  failed to recompile onto its new class version. */
-export interface RenameApplyResult {
-  applied: number;
-  failed: { id: string; label: string; error: string }[];
-  error?: string;
-}
+/**
+ * The apply result: how many classes were re-versioned, and anything that failed to
+ * recompile onto its new class version. Structurally the family-wide envelope, so it
+ * is a named alias (RB catalog C3) — call sites and their tests read unchanged.
+ */
+export type RenameApplyResult = ApplyResult;
 
-/** Parse the engine's apply envelope, `{"applied":N,"failed":[..]}`. A malformed
- *  payload is reported as an error rather than silently read as success. */
-export function parseRenameApplyResult(json: string): RenameApplyResult {
-  const parsed: unknown = JSON.parse(json);
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    throw new Error('Rename apply did not return a result envelope.');
-  }
-  const env = parsed as Record<string, unknown>;
-  const rawFailed = Array.isArray(env.failed) ? env.failed : [];
-  return {
-    applied: typeof env.applied === 'number' ? env.applied : 0,
-    failed: rawFailed.map((f) => {
-      const o = (typeof f === 'object' && f !== null ? f : {}) as Record<string, unknown>;
-      return {
-        id: typeof o.id === 'string' ? o.id : '',
-        label: typeof o.label === 'string' ? o.label : '?',
-        error: typeof o.error === 'string' ? o.error : 'unknown error',
-      };
-    }),
-    error: typeof env.error === 'string' ? env.error : undefined,
-  };
-}
+/**
+ * Parse the engine's apply envelope, `{"applied":N,"failed":[..]}`. A malformed payload
+ * is reported as an error rather than silently read as success; see `parseApplyResult`
+ * for exactly what is coerced.
+ *
+ * This was a private copy that had DRIFTED from every other family — a missing failure
+ * `id` defaulted to '' rather than '?', and `applied` was read with a raw number check
+ * rather than `asCount`, so a negative or non-numeric count was never clamped to 0. It
+ * is now the shared parser (C3), a deliberate behaviour change pinned by tests.
+ */
+export const parseRenameApplyResult = parseApplyResult;
 
 /**
  * Parse a JSON array of change objects into typed changes. Throws if the payload
