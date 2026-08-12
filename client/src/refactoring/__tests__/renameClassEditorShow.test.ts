@@ -98,4 +98,35 @@ describe('showRenameClassEditor', () => {
 
     expect(await result).toBeUndefined();
   });
+
+  it('rejects a malformed scope from the webview without closing, then resolves on a valid one', async () => {
+    const validate = vi.fn(() => undefined);
+    const result = showRenameClassEditor({ oldName: 'Account' }, validate);
+    const panel = lastPanel();
+
+    // A malformed scope must be refused BEFORE validate() and must not resolve.
+    panel.__emit({
+      command: 'ok',
+      newName: 'BankAccount',
+      scope: { kind: 'bogus' },
+      options: OPTS,
+    });
+    expect(panel.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'invalid' }),
+    );
+    expect(validate).not.toHaveBeenCalled();
+
+    // The editor stayed open; a well-formed scope now resolves.
+    panel.__emit({
+      command: 'ok',
+      newName: 'BankAccount',
+      scope: { kind: 'dictionary', dictName: 'UserGlobals' },
+      options: OPTS,
+    });
+    expect(await result).toEqual({
+      newName: 'BankAccount',
+      scope: { kind: 'dictionary', dictName: 'UserGlobals' },
+      options: OPTS,
+    });
+  });
 });

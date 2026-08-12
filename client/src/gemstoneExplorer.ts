@@ -86,7 +86,12 @@ import {
   validateNewClassVarName,
 } from './refactoring/renameClassVarPreview';
 import { showRenameClassVarPanel } from './refactoring/renameClassVarPanel';
-import { variableSides, defaultDictionaryIndex, categoryContains } from './explorerTreeHelpers';
+import {
+  variableSides,
+  defaultDictionaryIndex,
+  matchesClassPrefix,
+  categoryContains,
+} from './explorerTreeHelpers';
 import { emptyVarSideUri } from './explorerVarDecorations';
 import {
   parseClassHistory,
@@ -563,8 +568,7 @@ async function pickClassByPrefix(
   qp.matchOnDetail = false;
   qp.items = all;
   qp.onDidChangeValue((value) => {
-    const q = value.trim().toLowerCase();
-    qp.items = q === '' ? all : all.filter((it) => it.label.toLowerCase().startsWith(q));
+    qp.items = all.filter((it) => matchesClassPrefix(it.label, value));
   });
   try {
     return await new Promise<queries.ClassNameEntry | undefined>((resolve) => {

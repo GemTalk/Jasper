@@ -9,6 +9,19 @@ import { classLookupExpr, escapeString } from '../../queries/util';
 export type RenameClassScope =
   { kind: 'class' | 'hierarchy' | 'wholeSystem' } | { kind: 'dictionary'; dictName: string };
 
+// Runtime guard for a RenameClassScope arriving from the webview (untrusted). The
+// editor casts the incoming message; validate it here so a malformed shape is
+// rejected rather than flowing through the cast into a server query.
+export function isRenameClassScope(x: unknown): x is RenameClassScope {
+  if (typeof x !== 'object' || x === null) return false;
+  const kind = (x as { kind?: unknown }).kind;
+  if (kind === 'class' || kind === 'hierarchy' || kind === 'wholeSystem') return true;
+  if (kind === 'dictionary') {
+    return typeof (x as { dictName?: unknown }).dictName === 'string';
+  }
+  return false;
+}
+
 function scopeClauseOf(scope: RenameClassScope): string {
   return scope.kind === 'dictionary'
     ? `dictionaryScope: '${escapeString(scope.dictName)}'`

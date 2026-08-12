@@ -184,6 +184,13 @@ GsExtractSuperclassRefactoring >> computeAnalysis [
 		^decline := 'Cannot extract a superclass above ', anchorClass name asString, ': it has no superclass.'].
 	(environment classNamed: newName) notNil ifTrue: [
 		^decline := 'Cannot extract superclass ', newName, ': a class of that name already exists.'].
+	"classNamed: only matches a Class binding; a name bound to a NON-class global
+	 would otherwise slip past and be silently clobbered by applyClassAdd:'s
+	 subclass:...inDictionary:. Decline any existing binding for the name (#379
+	 review: the client already guards this, but a non-UI caller -- MCP, SUnit,
+	 direct engine use -- must be protected here too)."
+	(environment symbolList objectNamed: newName asSymbol) notNil ifTrue: [
+		^decline := 'Cannot extract superclass ', newName, ': the name ', newName, ' is already in use as a global.'].
 	extractedClasses add: anchorClass.
 	siblingNames do: [:nm | | sib |
 		sib := self resolveSibling: nm.

@@ -14,7 +14,11 @@
 import * as vscode from 'vscode';
 import * as crypto from 'crypto';
 import { renderClassEditorHtml } from './renameClassEditorHtml';
-import { RenameClassScope, RenameClassOptions } from './queries/previewRenameClass';
+import {
+  RenameClassScope,
+  RenameClassOptions,
+  isRenameClassScope,
+} from './queries/previewRenameClass';
 import { readWebviewScript } from '../webviewAssets';
 
 const editorJs = readWebviewScript('renameClassEditorView.js', 'refactoring');
@@ -77,7 +81,15 @@ export function showRenameClassEditor(
     panel.webview.onDidReceiveMessage((message) => {
       if (message?.command === 'ok') {
         const newName = typeof message.newName === 'string' ? message.newName.trim() : '';
-        const scope = message.scope as RenameClassScope;
+        if (!isRenameClassScope(message.scope)) {
+          // Malformed scope from the webview: reject rather than trust the cast.
+          void panel.webview.postMessage({
+            command: 'invalid',
+            message: 'Internal error: unrecognized rename scope.',
+          });
+          return; // keep the editor open
+        }
+        const scope: RenameClassScope = message.scope;
         const err = validate(newName);
         if (err) {
           void panel.webview.postMessage({ command: 'invalid', message: err });
