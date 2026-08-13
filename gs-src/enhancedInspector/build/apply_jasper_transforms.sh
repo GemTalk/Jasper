@@ -21,15 +21,17 @@
 # standalone (re-applies to the vendored payload files) or from
 # update_enhanced_inspector_support.sh after it refreshes the files from upstream.
 #
-# The payload .gs files live in resources/enhancedInspector/ (two levels up from
-# this script), so they ship in the packaged VSIX; docs/ does not.
+# The payload .gs files live in resources/enhancedInspector/ (this script sits
+# at gs-src/enhancedInspector/build/, so the repo root is three levels up and
+# resources/enhancedInspector/ is two levels down from there), so they ship in
+# the packaged VSIX; docs/ does not.
 #
 # USAGE:
 #   ./apply_jasper_transforms.sh [target-dir]   # defaults to the payload dir
 
 set -e
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TARGET_DIR="${1:-$SCRIPT_DIR/../../resources/enhancedInspector}"
+REPO="$(CDPATH= cd -- "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+TARGET_DIR="${1:-$REPO/resources/enhancedInspector}"
 
 SENTINEL="! Jasper Enhanced Inspector vendored source"
 

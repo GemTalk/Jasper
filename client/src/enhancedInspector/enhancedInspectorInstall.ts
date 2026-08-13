@@ -57,7 +57,7 @@ export const ENHANCED_INSPECTOR_MIN_VERSION = '3.7.5';
  *
  * The payload's class declarations name it as a bareword
  * (`inDictionary: GsEnhancedInspector`, produced by
- * docs/enhancedInspectorSupport/apply_jasper_transforms.sh), so the installer
+ * gs-src/enhancedInspector/build/apply_jasper_transforms.sh), so the installer
  * creates and binds it — and shares it into every user's symbol list — BEFORE
  * filing in, exactly as the refactoring loader does. Isolating the classes here
  * (rather than commingling them in the shared `Published` dictionary, as an

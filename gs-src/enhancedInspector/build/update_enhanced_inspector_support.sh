@@ -17,9 +17,10 @@
 # USAGE:
 #   ./update_enhanced_inspector_support.sh
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO="$(CDPATH= cd -- "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+BUILD="$REPO/gs-src/enhancedInspector/build"
 # Payload .gs files live in resources/enhancedInspector/ so they ship in the VSIX.
-PAYLOAD_DIR="$SCRIPT_DIR/../../resources/enhancedInspector"
+PAYLOAD_DIR="$REPO/resources/enhancedInspector"
 mkdir -p "$PAYLOAD_DIR"
 
 if [ -z "$ROWAN_PROJECTS_HOME" ]; then
@@ -92,7 +93,7 @@ cp "$ROWAN_PROJECTS_HOME/gtoolkit-remote/src-gs/gtoolkit-remote.gs"   "$PAYLOAD_
 # no headers). See apply_jasper_transforms.sh.
 echo ""
 echo "Applying Jasper transforms (attribution headers + Globals->Published)..."
-"$SCRIPT_DIR/apply_jasper_transforms.sh" "$PAYLOAD_DIR"
+"$BUILD/apply_jasper_transforms.sh" "$PAYLOAD_DIR"
 
 echo ""
 echo "Update complete. Files written to $PAYLOAD_DIR"

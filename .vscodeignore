@@ -36,11 +36,12 @@ docs/**
 # Vendor snapshots of GCI headers, for reference while developing — not shipped.
 vendor/**
 
-# Server-side Smalltalk source (the refactoring engine, its vendored AST, tests,
-# and build tooling). This is source-of-truth, not runtime: the extension files
-# the *generated* payloads under resources/refactoring/ (ast-core.gs, compat.gs,
-# engine.gs, manifest.gs, refactoring-loader.gs) into a stone and never reads
-# gs-src/ itself. Mirrors how client/src, server/src, etc. are excluded.
+# Server-side Smalltalk source: the refactoring engine (vendored AST, tests, and
+# build tooling) and the Enhanced Inspector build tooling. This is source-of-truth,
+# not runtime: the extension files the *generated* payloads under
+# resources/refactoring/ (ast-core.gs, compat.gs, engine.gs, manifest.gs,
+# refactoring-loader.gs) and resources/enhancedInspector/ (*.gs) into a stone and
+# never reads gs-src/ itself. Mirrors how client/src, server/src, etc. are excluded.
 gs-src/**
 
 # The engine's GS SUnit tests, built for the automatic GCI test to file in from
