@@ -2697,9 +2697,23 @@ export class ExplorerController {
       if (choice !== PROCEED) return;
     }
 
-    const edit = await showRenameClassEditor(
-      { oldName, dictName: this.state.dictName },
-      (newName) => this.validateRenameTarget(newName, oldName),
+    // The "This dictionary" scope must follow the CLASS being renamed, not the
+    // Explorer's current selection: invoked from a method editor or a hierarchy
+    // node, `oldName` can live in a different dictionary than `this.state.dictName`,
+    // and scoping to the selection would silently exclude the class's real
+    // references. Resolve the class's own defining dictionary (via the same
+    // `dictArg` used for the rename lookup); fall back to the selection only if the
+    // probe fails, and to no "This dictionary" option if the class is unbound.
+    let scopeDictName = this.state.dictName;
+    try {
+      const homeDict = queries.classDefiningDictionaryName(session, oldName, dictArg);
+      scopeDictName = homeDict.length > 0 ? homeDict : undefined;
+    } catch {
+      /* keep the Explorer selection as a best-effort fallback */
+    }
+
+    const edit = await showRenameClassEditor({ oldName, dictName: scopeDictName }, (newName) =>
+      this.validateRenameTarget(newName, oldName),
     );
     if (!edit) return;
     const { newName, scope, options } = edit;

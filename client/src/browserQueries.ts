@@ -49,6 +49,7 @@ import {
   resolveClassReference as sharedResolveClassReference,
   ClassReference,
 } from './refactoring/queries/resolveClassReference';
+import { classDefiningDictionaryName as sharedClassDefiningDictionaryName } from './refactoring/queries/classDefiningDictionaryName';
 import { getDefinedInstVarCounts as sharedGetDefinedInstVarCounts } from './queries/getDefinedInstVarCounts';
 import { getDefinedClassVarNames as sharedGetDefinedClassVarNames } from './refactoring/queries/getDefinedClassVarNames';
 import { getVisibleClassVarNames as sharedGetVisibleClassVarNames } from './refactoring/queries/getVisibleClassVarNames';
@@ -778,6 +779,14 @@ export function resolveClassReference(
   name: string,
 ): ClassReference | undefined {
   return sharedResolveClassReference(defaultQueryExecutorUsing(session), name);
+}
+
+export function classDefiningDictionaryName(
+  session: ActiveSession,
+  className: string,
+  dict?: number | string,
+): string {
+  return sharedClassDefiningDictionaryName(defaultQueryExecutorUsing(session), className, dict);
 }
 
 export function getDefiningClassOfClassVar(

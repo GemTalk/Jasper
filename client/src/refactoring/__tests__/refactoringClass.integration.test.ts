@@ -226,6 +226,69 @@ anon ifNotNil: [System myUserProfile symbolList remove: anon ifAbsent: []].
 SessionTemps current removeKey: ${ANON_KEY} ifAbsent: [].
 'removed'`);
 
+  // Regression for PR #392 finding #2, at the query the fix introduced. The
+  // "This dictionary" rename scope must follow the class being renamed, so the
+  // client resolves the class's OWN defining dictionary rather than trusting the
+  // Explorer's selected dictionary. This pins that resolution against a live stone,
+  // including the shadow case where the same name is bound in two dictionaries.
+  const IDA = 'Pr392IntDictA';
+  const IDB = 'Pr392IntDictB';
+
+  const addIntDicts = (): string =>
+    exec(`| sl a b |
+sl := System myUserProfile symbolList.
+a := SymbolDictionary new name: #${IDA}; yourself.
+b := SymbolDictionary new name: #${IDB}; yourself.
+sl add: a. sl add: b.
+'ok'`);
+
+  const removeIntDicts = (): string =>
+    exec(`| sl |
+sl := System myUserProfile symbolList.
+(sl detect: [:d | d name == #${IDA}] ifNone: [nil]) ifNotNil: [:d | d removeKey: #Pr392IntFoo ifAbsent: []. d removeKey: #Pr392IntShadow ifAbsent: []. sl remove: d ifAbsent: []].
+(sl detect: [:d | d name == #${IDB}] ifNone: [nil]) ifNotNil: [:d | d removeKey: #Pr392IntShadow ifAbsent: []. sl remove: d ifAbsent: []].
+'removed'`);
+
+  it("resolves a class's own defining dictionary independent of any selection", (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+
+    addIntDicts();
+
+    try {
+      q.compileClassDefinition(
+        session(),
+        `Object subclass: 'Pr392IntFoo' instVarNames: #() classVars: #() classInstVars: #() ` +
+          `poolDictionaries: #() inDictionary: (System myUserProfile symbolList detect: [:d | d name == #${IDA}])`,
+      );
+      q.compileClassDefinition(
+        session(),
+        `Object subclass: 'Pr392IntShadow' instVarNames: #() classVars: #() classInstVars: #() ` +
+          `poolDictionaries: #() inDictionary: (System myUserProfile symbolList detect: [:d | d name == #${IDA}])`,
+      );
+      q.compileClassDefinition(
+        session(),
+        `Object subclass: 'Pr392IntShadow' instVarNames: #() classVars: #() classInstVars: #() ` +
+          `poolDictionaries: #() inDictionary: (System myUserProfile symbolList detect: [:d | d name == #${IDB}])`,
+      );
+
+      const idxOf = (name: string): number =>
+        Number(
+          exec(
+            `(System myUserProfile symbolList indexOf: ` +
+              `(System myUserProfile symbolList detect: [:d | d name == #${name}])) printString`,
+          ).trim(),
+        );
+      const idxA = idxOf(IDA);
+      const idxB = idxOf(IDB);
+
+      expect(q.classDefiningDictionaryName(session(), 'Pr392IntFoo', undefined)).toBe(IDA);
+      expect(q.classDefiningDictionaryName(session(), 'Pr392IntShadow', idxA)).toBe(IDA);
+      expect(q.classDefiningDictionaryName(session(), 'Pr392IntShadow', idxB)).toBe(IDB);
+    } finally {
+      removeIntDicts();
+    }
+  });
+
   it('previews a dictionary-scoped rename when an unnamed dictionary is on the symbol list', async (ctx) => {
     requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
