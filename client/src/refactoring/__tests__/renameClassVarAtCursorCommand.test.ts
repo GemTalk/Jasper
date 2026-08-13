@@ -117,25 +117,26 @@ describe('rename-class-variable at cursor', () => {
     expect(beginRename).not.toHaveBeenCalled();
   });
 
-  it('falls back to the editor dict scope when the defining class is not bound by name', async () => {
+  it('declines, without even asking to confirm, when the inherited defining class is not uniquely bound by name', async () => {
+    // dictIndex 0: the defining class was reached by the superclass walk but isn't
+    // bound under its own name, so there is no identity-safe handle. Resolving it by
+    // name in the SUBCLASS's dictionary could land on a different class of the same
+    // name and rename the wrong one — so the command must stop, not guess.
     installEditor(new vscode.Position(1, 2));
     vi.mocked(queries.getDefinedClassVarNames).mockReturnValue([]);
     vi.mocked(queries.getDefiningClassOfClassVar).mockReturnValue({
       className: 'BaseDemo',
       dictIndex: 0,
     });
-    vi.mocked(vscode.window.showInformationMessage).mockResolvedValue(
-      'Rename on BaseDemo…' as unknown as vscode.MessageItem,
-    );
     const beginRename = vi.fn(async () => false);
 
     await renameClassVarAtCursorCommand(sessions, beginRename);
 
-    expect(beginRename).toHaveBeenCalledWith({
-      className: 'BaseDemo',
-      classVarName: 'Registry',
-      dict: 2, // the editor URI's dict, since dictIndex 0 means "not bound by name"
-    });
+    expect(beginRename).not.toHaveBeenCalled();
+    expect(vscode.window.showInformationMessage).not.toHaveBeenCalled(); // refuses before the retarget confirm
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+      expect.stringContaining("isn't uniquely bound by name"),
+    );
   });
 
   it('declines an inherited class variable whose defining class cannot be resolved', async () => {
@@ -186,7 +187,11 @@ describe('rename-class-variable at cursor', () => {
     expect(beginRename).toHaveBeenCalledWith(expect.objectContaining({ classVarName: 'Registry' }));
   });
 
-  it('still starts the rename when the membership pre-check query throws (non-fatal)', async () => {
+  it('stops with a retry warning when the membership pre-check query throws — never renames against an unverified class', async () => {
+    // A probe failure leaves the defined/inherited classification unknown. Falling
+    // through to rename the cursor's class would, for an inherited class variable,
+    // stage a reference rewrite on a class that doesn't declare it — a broken method.
+    // So a throw must stop with a retry message, not proceed.
     installEditor(new vscode.Position(1, 2)); // on `Registry`
     vi.mocked(queries.getDefinedClassVarNames).mockImplementation(() => {
       throw new Error('GCI hiccup');
@@ -195,7 +200,10 @@ describe('rename-class-variable at cursor', () => {
 
     await renameClassVarAtCursorCommand(sessions, beginRename);
 
-    expect(beginRename).toHaveBeenCalledWith(expect.objectContaining({ classVarName: 'Registry' }));
+    expect(beginRename).not.toHaveBeenCalled();
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+      expect.stringContaining('a stone query failed'),
+    );
   });
 
   it('reloads and refocuses the method editor after an applied rename', async () => {

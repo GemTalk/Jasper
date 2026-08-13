@@ -58,9 +58,11 @@ export async function renameInstVarAtCursorCommand(
 
   // Classify the word against the stone: DEFINED here renames in place; INHERITED
   // is retargeted to its defining class (below); anything that is not a visible
-  // instance variable at all is declined. A query failure here is non-fatal — leave
-  // `inherited` unset and fall through, letting the rename flow report "no
-  // references" rather than blocking on a transient probe error.
+  // instance variable at all is declined. A probe-query failure STOPS with a retry
+  // message rather than falling through: proceeding against the cursor's class would
+  // hand an inherited ivar to the engine on a class that does not declare it, staging
+  // a reference rewrite with no matching declaration — a broken method, not just an
+  // empty preview.
   let inherited: DefiningClass | undefined;
   try {
     const defined = queries.getDefinedInstVarNames(session, parsed.className, dict);
@@ -82,16 +84,29 @@ export async function renameInstVarAtCursorCommand(
     }
   } catch (e: unknown) {
     logInfo(
-      `[renameIvar] membership pre-check failed (falling through): ${e instanceof Error ? e.message : String(e)}`,
+      `[renameIvar] membership pre-check failed: ${e instanceof Error ? e.message : String(e)}`,
     );
+    refuse(
+      `Couldn't determine where '${name}' is defined — a stone query failed. Try again, or rename it from the class's instance-variable row in the Explorer.`,
+    );
+    return;
   }
 
   // An inherited ivar renames on its DEFINING class, across that whole hierarchy.
   // Confirm the retarget first, since the user invoked this from a subclass method
-  // and the rename reaches beyond the class they were looking at. Fall back to the
-  // editor's dict scope only if the defining class is not bound by its own name.
+  // and the rename reaches beyond the class they were looking at.
   let renameTarget: InstVarRenameTarget = { className: parsed.className, ivarName: name, dict };
   if (inherited) {
+    // dictIndex 0 means the defining class is not bound under its own name, so there
+    // is no identity-safe handle to it — resolving `inherited.className` by name in
+    // the subclass's dictionary could hit a DIFFERENT class of the same name and
+    // rename the wrong one. Stop rather than guess.
+    if (inherited.dictIndex <= 0) {
+      refuse(
+        `'${name}' is defined on ${inherited.className}, which isn't uniquely bound by name — can't safely target it from here. Rename it from that class's instance-variable row in the Explorer.`,
+      );
+      return;
+    }
     const PROCEED = `Rename on ${inherited.className}…`;
     const choice = await vscode.window.showInformationMessage(
       `'${name}' is defined on ${inherited.className}, not ${parsed.className}. Rename it across ${inherited.className} and its subclasses?`,
@@ -101,7 +116,7 @@ export async function renameInstVarAtCursorCommand(
     renameTarget = {
       className: inherited.className,
       ivarName: name,
-      dict: inherited.dictIndex > 0 ? inherited.dictIndex : dict,
+      dict: inherited.dictIndex,
     };
   }
 
