@@ -142,4 +142,57 @@ describe('unified rename dispatcher', () => {
     // The class command resolves whether it is actually a class and declines if not.
     expect(dispatchedCommand()).toBe('gemstone.renameClassAtCursor');
   });
+
+  // Per-probe error handling: a failing classification probe makes only THAT
+  // classification inconclusive; it must not block a path that didn't need it, and we
+  // refuse (with a specific reason) only when classification couldn't complete and
+  // nothing matched — never by silently defaulting to Rename Class.
+  it('still renames the method when the temporary probe fails but the word is a selector', async () => {
+    installEditor(onCount());
+    vi.mocked(queries.renameTemporaryDeclineReason).mockRejectedValue(new Error('GCI hiccup'));
+    const selectorAt: SelectorAtPosition = () => Promise.resolve('scaleBy:');
+
+    await renameAtCursorCommand(sessions, selectorAt, onCount());
+
+    expect(dispatchedCommand()).toBe('gemstone.renameMethodInEditor');
+    expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
+  });
+
+  it('still renames a class variable when the instance-variable probe fails', async () => {
+    installEditor(onCount());
+    vi.mocked(queries.getInstVarNames).mockImplementation(() => {
+      throw new Error('GCI hiccup');
+    });
+    vi.mocked(queries.getVisibleClassVarNames).mockReturnValue(['count']);
+
+    await renameAtCursorCommand(sessions, noSelector, onCount());
+
+    expect(dispatchedCommand()).toBe('gemstone.renameClassVarAtCursor');
+  });
+
+  it('refuses with a specific reason when the temporary probe fails and nothing else classifies the word', async () => {
+    installEditor(onCount());
+    vi.mocked(queries.renameTemporaryDeclineReason).mockRejectedValue(new Error('GCI hiccup'));
+
+    await renameAtCursorCommand(sessions, noSelector, onCount());
+
+    expect(dispatchedCommand()).toBeUndefined(); // must NOT default to Rename Class
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+      expect.stringContaining("Couldn't tell what 'count' is"),
+    );
+  });
+
+  it('refuses rather than defaulting to Rename Class when a variable probe fails and nothing matched', async () => {
+    installEditor(onCount());
+    vi.mocked(queries.getVisibleClassVarNames).mockImplementation(() => {
+      throw new Error('GCI hiccup');
+    });
+
+    await renameAtCursorCommand(sessions, noSelector, onCount());
+
+    expect(dispatchedCommand()).toBeUndefined();
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+      expect.stringContaining('a stone query failed'),
+    );
+  });
 });

@@ -1,5 +1,10 @@
 import { QueryExecutor } from '../../queries/types';
-import { classLookupExpr, escapeString, splitLines } from '../../queries/util';
+import {
+  classLookupExpr,
+  escapeString,
+  splitLines,
+  symbolListIndexOfClassExpr,
+} from '../../queries/util';
 
 /** The class that DECLARES an instance variable, resolved by walking up from a
  *  starting class — the answer to "an inherited ivar belongs to which class?".
@@ -39,13 +44,8 @@ target := nil.
   cls := cls superclass].
 target isNil
   ifTrue: ['']
-  ifFalse: [ | sym idx |
-    sym := System myUserProfile symbolList.
-    idx := 0.
-    1 to: sym size do: [:i |
-      (idx = 0 and: [((sym at: i) at: target name asSymbol ifAbsent: [nil]) == target])
-        ifTrue: [idx := i]].
-    target name asString, (String with: Character lf), idx printString ]`;
+  ifFalse: [
+    target name asString, (String with: Character lf), ${symbolListIndexOfClassExpr('target')} printString ]`;
   const lines = splitLines(execute(code));
   if (lines.length === 0) return undefined;
   const dictIndex = lines.length > 1 ? Number(lines[1]) : 0;

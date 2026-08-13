@@ -1,5 +1,5 @@
 import { QueryExecutor } from '../../queries/types';
-import { classLookupExpr } from '../../queries/util';
+import { classLookupExpr, symbolListIndexOfClassExpr } from '../../queries/util';
 
 /**
  * The name of the dictionary that DEFINES `className` — the SymbolList dictionary
@@ -19,16 +19,14 @@ export function classDefiningDictionaryName(
   className: string,
   dict?: number | string,
 ): string {
-  const code = `| cls sl idx |
+  const code = `| cls idx |
 cls := ${classLookupExpr(className, dict)}.
 cls isNil
   ifTrue: ['']
   ifFalse: [
-    sl := System myUserProfile symbolList.
-    idx := 0.
-    1 to: sl size do: [:i |
-      (idx = 0 and: [((sl at: i) at: cls name asSymbol ifAbsent: [nil]) == cls])
-        ifTrue: [idx := i]].
-    idx = 0 ifTrue: [''] ifFalse: [((sl at: idx) name ifNil: ['']) asString]]`;
+    idx := ${symbolListIndexOfClassExpr('cls')}.
+    idx = 0
+      ifTrue: ['']
+      ifFalse: [((System myUserProfile symbolList at: idx) name ifNil: ['']) asString]]`;
   return execute(code).trim();
 }

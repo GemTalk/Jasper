@@ -1964,11 +1964,21 @@ export class ExplorerController {
     const wantAccessors = await this.askAddAccessors(name);
     if (wantAccessors === undefined) return;
 
+    let addResult: string;
     try {
-      queries.addClassVariable(session, className, name, this.state.dictIndex);
+      addResult = queries.addClassVariable(session, className, name, this.state.dictIndex);
     } catch (e: unknown) {
       void vscode.window.showErrorMessage(
         `Add class variable failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return;
+    }
+    // addClassVariable answers the non-throwing sentinel 'no-class' when the class
+    // can't be resolved — treat that as a failure, not success, so we don't refresh,
+    // reveal, and add accessors as if the variable had been added when it wasn't.
+    if (addResult.trim() !== 'ok') {
+      void vscode.window.showWarningMessage(
+        `Couldn't resolve ${className} to add the class variable '${name}'.`,
       );
       return;
     }

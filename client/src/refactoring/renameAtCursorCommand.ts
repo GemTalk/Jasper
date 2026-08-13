@@ -69,11 +69,21 @@ export async function renameAtCursorCommand(
   // dispatched command saves too; this keeps the offset aligned for the probe).
   if (!(await saveIfDirty(editor))) return;
   const name = word.name;
+
+  // Classify the word against the stone and route to the matching rename. Each probe
+  // is guarded on its own: a failure makes that ONE classification inconclusive and we
+  // move on — a later probe (or the LSP selector) may still classify the word
+  // definitively, so a probe hiccup must never block a path that didn't need it (e.g.
+  // a method rename must not be refused because the TEMPORARY probe failed). Only when
+  // every path is exhausted AND a probe couldn't run do we refuse: defaulting to "it's
+  // a class" then could silently rename the wrong kind of thing.
+
+  // 1. Temporary/argument FIRST — offset-based, so a method-pattern argument or a body
+  //    temp is renamed as a variable rather than mistaken for a selector by the
+  //    AST-based probe below. `undefined` = the probe could not run.
+  let tempReason: string | undefined;
   try {
-    // 1. Temporary/argument FIRST — offset-based, so a method-pattern argument or a
-    //    body temp is renamed as a variable rather than mistaken for a selector by
-    //    the AST-based probe below.
-    const tempReason = (
+    tempReason = (
       await queries.renameTemporaryDeclineReason(
         session,
         parsed.className,
@@ -84,45 +94,68 @@ export async function renameAtCursorCommand(
         dict,
       )
     ).trim();
-    if (tempReason.length === 0) {
-      await vscode.commands.executeCommand('gemstone.renameTemporary', at);
-      return;
-    }
-
-    // 2. A selector (send or the method header) resolves via the LSP; a variable
-    //    reference resolves to null. Checked before the name-based tests so a
-    //    selector sharing a name with an ivar/classvar becomes a method rename.
-    let sel: string | null = null;
-    try {
-      sel = await selectorAt(editor.document, at);
-    } catch {
-      logInfo('[rename] selectorAtPosition unavailable; continuing with variable classification');
-    }
-    if (sel) {
-      await vscode.commands.executeCommand('gemstone.renameMethodInEditor', at);
-      return;
-    }
-
-    // 3/4. `getInstVarNames` (allInstVarNames) and `getVisibleClassVarNames` already
-    //      include the inherited ones — the retarget lives in each dispatched command
-    //      — so a single visibility query per kind suffices.
-    if (queries.getInstVarNames(session, parsed.className, dict).includes(name)) {
-      await vscode.commands.executeCommand('gemstone.renameInstVarAtCursor', at);
-      return;
-    }
-    if (queries.getVisibleClassVarNames(session, parsed.className, dict).includes(name)) {
-      await vscode.commands.executeCommand('gemstone.renameClassVarAtCursor', at);
-      return;
-    }
   } catch (e: unknown) {
-    logInfo(`[rename] classification failed: ${e instanceof Error ? e.message : String(e)}`);
+    logInfo(`[rename] temporary probe failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  if (tempReason === '') {
+    await vscode.commands.executeCommand('gemstone.renameTemporary', at);
+    return;
+  }
+
+  // 2. A selector (send or the method header) resolves via the LSP; a variable
+  //    reference resolves to null. Checked before the name-based tests so a selector
+  //    sharing a name with an ivar/classvar becomes a method rename.
+  let sel: string | null = null;
+  try {
+    sel = await selectorAt(editor.document, at);
+  } catch {
+    logInfo('[rename] selectorAtPosition unavailable; continuing with variable classification');
+  }
+  if (sel) {
+    await vscode.commands.executeCommand('gemstone.renameMethodInEditor', at);
+    return;
+  }
+
+  // 3/4. `getInstVarNames` (allInstVarNames) and `getVisibleClassVarNames` already
+  //      include the inherited ones — the retarget lives in each dispatched command.
+  //      `undefined` = that probe could not run.
+  let ivarNames: string[] | undefined;
+  try {
+    ivarNames = queries.getInstVarNames(session, parsed.className, dict);
+  } catch (e: unknown) {
+    logInfo(
+      `[rename] instance-variable probe failed: ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
+  if (ivarNames?.includes(name)) {
+    await vscode.commands.executeCommand('gemstone.renameInstVarAtCursor', at);
+    return;
+  }
+  let classVarNames: string[] | undefined;
+  try {
+    classVarNames = queries.getVisibleClassVarNames(session, parsed.className, dict);
+  } catch (e: unknown) {
+    logInfo(`[rename] class-variable probe failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  if (classVarNames?.includes(name)) {
+    await vscode.commands.executeCommand('gemstone.renameClassVarAtCursor', at);
+    return;
+  }
+
+  // 5. Nothing matched. If a probe couldn't run, the word might be a temporary or a
+  //    variable we simply failed to see — so we can't safely treat it as a class.
+  //    Refuse with a specific reason (what failed, what to do) rather than silently
+  //    misrouting to Rename Class.
+  if (tempReason === undefined || ivarNames === undefined || classVarNames === undefined) {
     refuse(
-      `Couldn't determine what '${name}' is — a stone query failed. Try again, or use a specific Rename action.`,
+      `Couldn't tell what '${name}' is — a stone query failed while checking whether it's a ` +
+        `temporary, an instance variable, or a class variable. Try again in a moment, or pick a ` +
+        `specific action from the Refactor menu (Rename Method / Instance Variable / Class Variable / Class).`,
     );
     return;
   }
 
-  // 5. Not a temporary, selector, or variable of the class: fall through to Rename
-  //    Class, which renames the token if it resolves to a class and declines otherwise.
+  // Not a temporary, selector, or variable of the class — treat it as a class
+  // reference: Rename Class renames the token if it resolves to a class, declines if not.
   await vscode.commands.executeCommand('gemstone.renameClassAtCursor', at);
 }

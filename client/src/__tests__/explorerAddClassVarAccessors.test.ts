@@ -110,6 +110,24 @@ describe('ExplorerController add class variable', () => {
       1,
     );
   });
+
+  it('reports failure and does not refresh, reveal, or add accessors when the class cannot be resolved', async () => {
+    // addClassVariable answers the non-throwing sentinel 'no-class' — the flow must
+    // treat that as a failure, not proceed as if the variable had been added.
+    const { ctl, refresh, reveal } = makeController({} as ActiveSession);
+    vi.mocked(vscode.window.showInputBox).mockResolvedValue('Registry');
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValue('Add accessors' as never);
+    vi.mocked(queries.addClassVariable).mockReturnValue('no-class');
+
+    await ctl.addClassVarOnClass('Foo');
+
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+      expect.stringContaining("Couldn't resolve Foo"),
+    );
+    expect(refresh).not.toHaveBeenCalled();
+    expect(reveal).not.toHaveBeenCalled();
+    expect(queries.addAccessors).not.toHaveBeenCalled();
+  });
 });
 
 describe('ExplorerController add accessors (standalone row action)', () => {

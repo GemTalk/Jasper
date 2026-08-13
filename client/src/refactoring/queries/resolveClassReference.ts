@@ -1,5 +1,5 @@
 import { QueryExecutor } from '../../queries/types';
-import { escapeString, splitLines } from '../../queries/util';
+import { escapeString, splitLines, symbolListIndexOfClassExpr } from '../../queries/util';
 
 /** A class reference resolved from a name at the cursor: the class's own name plus
  *  the 1-based SymbolList index that binds it (0 when it is not bound by its own
@@ -25,13 +25,8 @@ export function resolveClassReference(
 obj := System myUserProfile symbolList objectNamed: '${escapeString(name)}' asSymbol.
 (obj isNil or: [(obj isKindOf: Class) not])
   ifTrue: ['']
-  ifFalse: [ | sym idx |
-    sym := System myUserProfile symbolList.
-    idx := 0.
-    1 to: sym size do: [:i |
-      (idx = 0 and: [((sym at: i) at: obj name asSymbol ifAbsent: [nil]) == obj])
-        ifTrue: [idx := i]].
-    obj name asString, (String with: Character lf), idx printString ]`;
+  ifFalse: [
+    obj name asString, (String with: Character lf), ${symbolListIndexOfClassExpr('obj')} printString ]`;
   const lines = splitLines(execute(code));
   if (lines.length === 0) return undefined;
   const dictIndex = lines.length > 1 ? Number(lines[1]) : 0;
