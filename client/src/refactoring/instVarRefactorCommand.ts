@@ -14,6 +14,7 @@ import * as vscode from 'vscode';
 import { ActiveSession } from '../sessionManager';
 import * as queries from '../browserQueries';
 import { InstVarOp } from './queries/previewInstVar';
+import { Accessor } from './queries/addAccessors';
 import { PREVIEW_PAGE_BYTES } from './queries/previewRenameMethod';
 import {
   parseAnalysis,
@@ -33,10 +34,10 @@ export interface InstVarRefactorRequest {
   ivarName: string;
   /** Dict scope for the class lookup (1-based SymbolList index or name). */
   dict?: number | string;
-  /** Accessor selectors that will be compiled AFTER applying (when the user opted
-   *  into accessors on an add). Shown as a preview note — they are separate methods,
-   *  not part of the engine's reshape change set. */
-  accessorSelectors?: string[];
+  /** Getter/setter to compile when the user opted into accessors on an add. Compiled by
+   *  the engine IN THE SAME transaction as the reshape, so they commit or abort with it
+   *  (not a separate fire-and-forget step). Also shown as a preview note. */
+  accessorSpecs?: Accessor[];
 }
 
 export interface InstVarRefactorOutcome {
@@ -56,7 +57,7 @@ function titleFor(req: InstVarRefactorRequest): string {
 export async function runInstVarRefactor(
   req: InstVarRefactorRequest,
 ): Promise<InstVarRefactorOutcome | undefined> {
-  const { session, op, className, ivarName, dict, accessorSelectors } = req;
+  const { session, op, className, ivarName, dict, accessorSpecs } = req;
   logInfo(`[instVar] ${op} ${ivarName} on ${className}`);
 
   const verb = op === 'add' ? 'Adding' : 'Removing';
@@ -122,8 +123,8 @@ export async function runInstVarRefactor(
   }
 
   const accessorNote =
-    accessorSelectors && accessorSelectors.length > 0
-      ? `Accessors will be added after applying: ${accessorSelectors.join(', ')}`
+    accessorSpecs && accessorSpecs.length > 0
+      ? `Accessors added with this change: ${accessorSpecs.map((a) => a.selector).join(', ')}`
       : undefined;
   const result = await showInstVarRefactorPanel(
     titleFor(req),
@@ -133,7 +134,15 @@ export async function runInstVarRefactor(
         parsePage(await queries.pageInstVarPreview(session, token, off, PREVIEW_PAGE_BYTES)),
       apply: async (options, migrate, deleteHistory) =>
         parseApplyResult(
-          await queries.applyInstVar(session, token, [], options, migrate, deleteHistory),
+          await queries.applyInstVar(
+            session,
+            token,
+            [],
+            options,
+            migrate,
+            deleteHistory,
+            accessorSpecs ?? [],
+          ),
         ),
       // The engine stops at the first failure and never aborts on its own (that would discard the
       // user's other in-flight work). The panel surfaces the failure in place and, when a partial

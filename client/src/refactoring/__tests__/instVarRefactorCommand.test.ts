@@ -319,6 +319,7 @@ describe('add / remove instance variable command', () => {
       ['disallowGciStore'],
       true,
       false,
+      [], // no accessors on this request
     );
     expect(result.committed).toBe(true);
 

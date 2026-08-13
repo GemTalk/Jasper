@@ -1883,10 +1883,10 @@ export class ExplorerController {
       className,
       ivarName: name,
       dict: this.state.dictIndex,
-      // Surface the accessors that will be added after applying, as a preview note.
-      accessorSelectors: wantAccessors
-        ? accessorSpecsFor(name, 'ivar').accessors.map((a) => a.selector)
-        : undefined,
+      // Accessors are compiled by the engine IN THE SAME transaction as the reshape, so
+      // they commit or abort atomically with the instance-variable add (not a separate
+      // fire-and-forget step after a possible commit).
+      accessorSpecs: wantAccessors ? accessorSpecsFor(name, 'ivar').accessors : undefined,
     });
     if (outcome) {
       await this.refreshAfterClassReshape(className);
@@ -1909,7 +1909,9 @@ export class ExplorerController {
           /* best-effort — leave the class selected if neither row can be revealed */
         }
       }
-      if (wantAccessors) await this.generateAccessorsFor(className, name, 'ivar');
+      // Accessors (if requested) were compiled inside the apply's transaction, so they are
+      // already present and committed/aborted together with the reshape — no separate
+      // generateAccessorsFor call here (that was the split-commit hazard).
     }
   }
 

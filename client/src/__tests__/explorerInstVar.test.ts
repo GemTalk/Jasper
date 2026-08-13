@@ -143,43 +143,46 @@ describe('ExplorerController add instance variable', () => {
     expect(refresh).not.toHaveBeenCalled();
   });
 
-  it('generates instance-side accessors after adding when the user opts in', async () => {
+  it('passes the accessor specs to the ivar refactor so they compile in the same apply, not a separate call', async () => {
     const { ctl } = makeController({} as ActiveSession);
     vi.mocked(vscode.window.showInputBox).mockResolvedValue('amount');
     vi.mocked(vscode.window.showQuickPick).mockResolvedValue('Add accessors' as never);
     vi.mocked(runInstVarRefactor).mockResolvedValue(outcome());
-    vi.mocked(queries.addAccessors).mockReturnValue({ created: 2, skipped: 0, noClass: false });
 
     await ctl.addInstVarOnClass('Foo');
 
-    expect(queries.addAccessors).toHaveBeenCalledWith(
-      expect.anything(),
-      'Foo',
-      false, // instance side
-      expect.arrayContaining([expect.objectContaining({ selector: 'amount' })]),
-      1,
+    expect(runInstVarRefactor).toHaveBeenCalledWith(
+      expect.objectContaining({
+        op: 'add',
+        className: 'Foo',
+        ivarName: 'amount',
+        accessorSpecs: expect.arrayContaining([
+          expect.objectContaining({ selector: 'amount' }),
+          expect.objectContaining({ selector: 'amount:' }),
+        ]),
+      }),
     );
+    // The accessors ride the apply transaction now, so there is no separate post-apply
+    // addAccessors call (the split-commit hazard the previous flow had).
+    expect(queries.addAccessors).not.toHaveBeenCalled();
   });
 
-  it('still writes the accessors when the add targets a class that is not the shown one (context-menu path)', async () => {
+  it('threads the accessor specs even when the add targets a class other than the shown one', async () => {
     const { ctl } = makeController({} as ActiveSession);
     ctl.state.className = 'SomethingElse'; // right-clicked a class that wasn't selected
     vi.mocked(vscode.window.showInputBox).mockResolvedValue('amount');
     vi.mocked(vscode.window.showQuickPick).mockResolvedValue('Add accessors' as never);
     vi.mocked(runInstVarRefactor).mockResolvedValue(outcome());
-    vi.mocked(queries.addAccessors).mockReturnValue({ created: 2, skipped: 0, noClass: false });
 
     await ctl.addInstVarOnClass('Foo');
 
-    // The accessors are compiled regardless of which class the pane currently shows;
-    // only the follow-up reveal is gated on it.
-    expect(queries.addAccessors).toHaveBeenCalledWith(
-      expect.anything(),
-      'Foo',
-      false,
-      expect.arrayContaining([expect.objectContaining({ selector: 'amount' })]),
-      1,
+    expect(runInstVarRefactor).toHaveBeenCalledWith(
+      expect.objectContaining({
+        className: 'Foo',
+        accessorSpecs: expect.arrayContaining([expect.objectContaining({ selector: 'amount' })]),
+      }),
     );
+    expect(queries.addAccessors).not.toHaveBeenCalled();
   });
 });
 

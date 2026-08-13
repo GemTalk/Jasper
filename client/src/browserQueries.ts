@@ -1496,10 +1496,11 @@ export function applyInstVar(
   options: string[] | null,
   migrate: boolean,
   deleteHistory: boolean,
+  accessors: Accessor[] = [],
 ): Promise<string> {
   const exec = (label: string, code: string): Promise<string> =>
     executeFetchStringNb(session, label, code, 'Applying…');
-  return sharedApplyInstVar(exec, token, deselectedIds, options, migrate, deleteHistory);
+  return sharedApplyInstVar(exec, token, deselectedIds, options, migrate, deleteHistory, accessors);
 }
 
 export function clearInstVarPreview(session: ActiveSession, token: string): string {
