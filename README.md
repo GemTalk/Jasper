@@ -174,14 +174,14 @@ Beyond browsing, the Explorer is where the code-changing operations live:
 
 - Filter any pane by name, with `*` as a wildcard, plus `reads:`/`writes:`/`accesses:` in the Methods pane to find the methods touching an instance variable
 - Group methods by category, or list them flat
-- Add, rename, and delete dictionaries, class categories, classes, methods, and instance/class variables
+- Add, rename, and delete dictionaries, class categories, classes, methods, and instance variables; rename class variables
 - The refactorings — rename, extract/inline method and temporary, change signature, move/push up/push down method, instance-variable structure changes, extract superclass, split class — each previewed before it is applied
-- Browse senders, implementors, references, and the class hierarchy; run SUnit tests on a class
+- Browse senders, implementors, references, and the class hierarchy
 - Drag and drop methods between categories, and classes between dictionaries
 
 ### System Browser
 
-> **Note:** the System Browser is the older, five-column browser that predates the **GemStone Explorer** above. It still works and is still maintained, but the Explorer is the supported experience and gets the new features — prefer it unless you specifically want this layout.
+> **Note:** the System Browser is **frozen** — the older, five-column browser that predates the **GemStone Explorer** above. It works today, but it is not being extended, and how long it keeps working is not guaranteed: new features land in the Explorer. Prefer the Explorer unless you specifically want this layout. Why, and the one gap that is still browser-only: [docs/explanation/system-browser-and-explorer.md](docs/explanation/system-browser-and-explorer.md).
 
 Open with **Cmd+K B** (Ctrl+K B), or from the Command Palette via **GemStone: Open System Browser (Classic)**. It is deliberately not offered as a button anywhere, so the Explorer is what you meet first. The browser provides a five-column layout:
 
@@ -344,6 +344,7 @@ The Windows client distribution exports a subset of the full GCI interface — n
 | Windows / WSL networking, hosts file, NetLDI port naming | [docs/windows-wsl.md](docs/windows-wsl.md) |
 | MCP server architecture, ownership model, client registration, tool catalog | [docs/mcp-server.md](docs/mcp-server.md) |
 | Smalltalk formatter reference (all options) | [docs/formatter.md](docs/formatter.md) |
+| Why the System Browser is frozen and the Explorer gets new work | [docs/explanation/system-browser-and-explorer.md](docs/explanation/system-browser-and-explorer.md) |
 | Building, testing, integration test environment setup, releasing | [CONTRIBUTING.md](CONTRIBUTING.md) |
 
 ## License

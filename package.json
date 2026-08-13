@@ -875,8 +875,7 @@
       {
         "command": "gemstone.openBrowser",
         "title": "Open System Browser (Classic)",
-        "category": "GemStone",
-        "icon": "$(list-tree)"
+        "category": "GemStone"
       },
       {
         "command": "gemstone.rowanAddRepo",

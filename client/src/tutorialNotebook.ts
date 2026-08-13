@@ -300,7 +300,7 @@ Run these read-only cells to look around. (This lesson changes nothing permanent
 
 **Where to go next:**
 - Open a **Workspace** (command: *GemStone: Open Getting Started Workspace*) for free-form experimenting with *Display It*, *Inspect It*, and *Debug It*.
-- Browse and edit the image in the **GemStone Explorer** (its own icon in the activity bar, beside the GemStone one), and inspect globals in the **Globals Browser**.
+- Browse and edit the image in the **GemStone Explorer** (its own icon in the activity bar, the far-left strip), and inspect globals in the **Globals Browser**.
 - Re-run this tutorial any time from the command *GemStone: Open Tutorial Notebook*.
 
 Happy hacking!`,

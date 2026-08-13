@@ -45,10 +45,6 @@ describe('session row inline button order', () => {
     ]);
   });
 
-  // The classic System Browser's absence from this row (#421) is guarded in
-  // browserDiscoverability421.test.ts, together with the status-bar half and the
-  // reachability it must keep — one place, so the two halves cannot drift apart.
-
   it('keeps the rare backup and restore actions off the inline row, paired in a context-menu group', () => {
     const sessionItems = itemContext.filter((m) =>
       (m.when ?? '').includes('viewItem == gemstoneSession'),
