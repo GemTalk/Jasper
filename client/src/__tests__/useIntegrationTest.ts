@@ -12,6 +12,14 @@ export type GciTestContext = {
 
 type UseIntegrationTestCallback = (testContext: GciTestContext) => void;
 
+/**
+ * Reason GemStone reports when it refuses a commit from a harness session. It
+ * names the harness so a refusal is traceable back to here rather than reading
+ * as an unrelated transaction error — assert against this constant instead of
+ * the surrounding message, whose wording varies by GemStone release.
+ */
+export const COMMIT_GUARD_REASON = 'jasper-test-harness: integration tests must not commit';
+
 /** Options accepted by a `GciTestContext`'s `login`. */
 type LoginOptions = {
   /** GemStone user to log in as. Defaults to `VITE_GEMSTONE_USER`; override to test login with different (e.g. invalid) credentials. */
@@ -219,7 +227,7 @@ export function useIntegrationTest(callback: UseIntegrationTestCallback) {
     try {
       armedNewly = gciLibrary.executeAndRelease(
         aSession,
-        `System disableCommitsWithReason: 'jasper-test-harness: integration tests must not commit'`,
+        `System disableCommitsWithReason: '${COMMIT_GUARD_REASON}'`,
         (oop) => gciLibrary.isTrueOop(oop),
       );
     } catch (error) {
