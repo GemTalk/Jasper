@@ -154,7 +154,7 @@ const PANELS: Array<{ name: string; show: Show }> = [
         'Foo',
         'Baz',
         s,
-        { recompileSubclasses: false, migrateInstances: false },
+        { recompileSubclasses: false, migrateInstances: false, removeOldFromHistory: false },
         h,
       ),
   },

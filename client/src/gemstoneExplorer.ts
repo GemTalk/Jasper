@@ -44,6 +44,9 @@ import { formatRenameFailureLog, formatRenameFailureToast } from './refactoring/
 import { getGciLog, logWarning } from './gciLog';
 import { supportsServerUtf8FileIn } from './refactoring/refactoringInstall';
 import { renameInstVarAtCursorCommand } from './refactoring/renameInstVarAtCursorCommand';
+import { renameAtCursorCommand } from './refactoring/renameAtCursorCommand';
+import { renameClassAtCursorCommand } from './refactoring/renameClassAtCursorCommand';
+import { accessorSpecsFor } from './refactoring/queries/addAccessors';
 import { runInstVarRefactor } from './refactoring/instVarRefactorCommand';
 import { renameClassVarAtCursorCommand } from './refactoring/renameClassVarAtCursorCommand';
 import {
@@ -1869,12 +1872,21 @@ export class ExplorerController {
     if (entered === undefined) return;
     const name = entered.trim();
     if (name.length === 0) return;
+    // Ask the accessors question up front so the add feels atomic — escaping it
+    // cancels the whole operation (nothing added) rather than leaving the variable
+    // added with the question half-answered.
+    const wantAccessors = await this.askAddAccessors(name);
+    if (wantAccessors === undefined) return;
     const outcome = await runInstVarRefactor({
       session,
       op: 'add',
       className,
       ivarName: name,
       dict: this.state.dictIndex,
+      // Accessors are compiled by the engine IN THE SAME transaction as the reshape, so
+      // they commit or abort atomically with the instance-variable add (not a separate
+      // fire-and-forget step after a possible commit).
+      accessorSpecs: wantAccessors ? accessorSpecsFor(name, 'ivar').accessors : undefined,
     });
     if (outcome) {
       await this.refreshAfterClassReshape(className);
@@ -1897,13 +1909,166 @@ export class ExplorerController {
           /* best-effort — leave the class selected if neither row can be revealed */
         }
       }
+      // Accessors (if requested) were compiled inside the apply's transaction, so they are
+      // already present and committed/aborted together with the reshape — no separate
+      // generateAccessorsFor call here (that was the split-commit hazard).
     }
   }
 
   // "+" inline on the "instance" variable-side node.
   async addInstVarFromSide(item: VarSideItem): Promise<void> {
-    if (item.isMeta) return; // class-variable side is out of scope
+    if (item.isMeta) return; // the class-variable side is handled by addClassVar
     await this.addInstVarOnClass(item.className);
+  }
+
+  // "+" inline on the "class variables" side node.
+  async addClassVarFromSide(item: VarSideItem): Promise<void> {
+    if (!item.isMeta) return; // the instance side is handled by addInstVar
+    await this.addClassVarOnClass(item.className);
+  }
+
+  // Add a class variable to a class. Unlike adding an instance variable this does NOT
+  // reshape the class (class variables are not part of instance layout), so there is
+  // no preview / migration panel — just the name, then the shared binding is added
+  // (initialized to nil), no new class version, no instances migrated, no commit.
+  async addClassVarOnClass(className: string): Promise<void> {
+    const session = this.session();
+    if (!session) return;
+    const entered = await vscode.window.showInputBox({
+      title: 'Add Class Variable',
+      prompt: `Add a class variable to ${className}.`,
+      placeHolder: 'NewVariableName',
+      // Same identifier rule as the class-variable rename (letter/underscore first).
+      validateInput: (v) => validateNewClassVarName(v, ''),
+    });
+    if (entered === undefined) return;
+    const name = entered.trim();
+    if (name.length === 0) return;
+
+    // A class variable is visible to the whole subtree, so adding one already visible
+    // (declared here OR inherited) would be a silent no-op in the image — refuse with
+    // a reason instead.
+    try {
+      if (
+        queries.getVisibleClassVarNames(session, className, this.state.dictIndex).includes(name)
+      ) {
+        void vscode.window.showWarningMessage(
+          `'${name}' is already a class variable visible to ${className}.`,
+        );
+        return;
+      }
+    } catch {
+      /* non-fatal: fall through and let the add surface any real problem */
+    }
+
+    // Ask the accessors question up front so the add feels atomic — escaping it
+    // cancels the whole operation (nothing added).
+    const wantAccessors = await this.askAddAccessors(name);
+    if (wantAccessors === undefined) return;
+
+    let addResult: string;
+    try {
+      addResult = queries.addClassVariable(session, className, name, this.state.dictIndex);
+    } catch (e: unknown) {
+      void vscode.window.showErrorMessage(
+        `Add class variable failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return;
+    }
+    // addClassVariable answers the non-throwing sentinel 'no-class' when the class
+    // can't be resolved — treat that as a failure, not success, so we don't refresh,
+    // reveal, and add accessors as if the variable had been added when it wasn't.
+    if (addResult.trim() !== 'ok') {
+      void vscode.window.showWarningMessage(
+        `Couldn't resolve ${className} to add the class variable '${name}'.`,
+      );
+      return;
+    }
+
+    // Adding a class variable does NOT reshape the class (no new version); this is
+    // just the general "class members changed" pane refresh, reused despite its name.
+    await this.refreshAfterClassReshape(className);
+    // Select the newly-added class variable (its row is under the "class" side); fall
+    // back to the class-variable side node, then leave the class selected.
+    try {
+      await this.views?.klass.reveal(new ClassVarItem(className, name), {
+        select: true,
+        focus: false,
+      });
+    } catch {
+      try {
+        await this.views?.klass.reveal(new VarSideItem(className, true), {
+          select: true,
+          focus: false,
+        });
+      } catch {
+        /* best-effort — leave the class selected if neither row can be revealed */
+      }
+    }
+    if (wantAccessors) await this.generateAccessorsFor(className, name, 'classvar');
+  }
+
+  // Generate accessors for an existing variable (the "Add Accessors" row action, and
+  // the follow-up when adding a variable). Skips any accessor already implemented, so
+  // it never clobbers a hand-written one, and reports what it did.
+  async generateAccessorsFor(
+    className: string,
+    varName: string,
+    kind: 'ivar' | 'classvar',
+  ): Promise<void> {
+    const session = this.session();
+    if (!session) return;
+    const { isMeta, accessors } = accessorSpecsFor(varName, kind);
+    let result;
+    try {
+      result = queries.addAccessors(session, className, isMeta, accessors, this.state.dictIndex);
+    } catch (e: unknown) {
+      void vscode.window.showErrorMessage(
+        `Add accessors failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return;
+    }
+    if (result.noClass) {
+      void vscode.window.showWarningMessage(`Couldn't resolve ${className} to add accessors.`);
+      return;
+    }
+    // Show the new accessors: navigate the panes to the class they were added to and
+    // reveal the new getter on its side (instance for an ivar, class for a classvar).
+    // Using revealClass (rather than only refreshing when this class happens to be the
+    // shown one) means the accessors are shown even when a DIFFERENT class was
+    // displayed — e.g. adding via V4Boat's "+" while viewing V4Car — and revealClass
+    // reloads the class's methods, so the accessors are in the list before the getter
+    // is revealed. Deferred a tick so any pending tree-selection event (the add flow's
+    // own class reveal fires selectClass) settles first, letting this reveal win.
+    const { dictName, dictIndex } = this.state;
+    if (dictName !== undefined && dictIndex !== undefined) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const getter = accessors[0]?.selector;
+      await this.revealClass(dictName, dictIndex, className, {
+        revealMethod: getter ? { selector: getter, isMeta } : undefined,
+      });
+    }
+    const where = isMeta ? 'class-side ' : '';
+    if (result.created === 0) {
+      void vscode.window.showInformationMessage(`${varName}: ${where}accessors already existed.`);
+    } else {
+      const skipNote = result.skipped > 0 ? ` (${result.skipped} already existed)` : '';
+      void vscode.window.showInformationMessage(
+        `Added ${result.created} ${where}accessor${result.created === 1 ? '' : 's'} for ${varName}${skipNote}.`,
+      );
+    }
+  }
+
+  // Ask, up front, whether to also generate accessors. Answers true/false, or
+  // undefined if the user escaped — the caller treats escape as "cancel the whole
+  // operation" so adding a variable feels atomic (all questions asked before any
+  // change, nothing added if the user backs out).
+  private async askAddAccessors(varName: string): Promise<boolean | undefined> {
+    const YES = 'Add accessors';
+    const choice = await vscode.window.showQuickPick([YES, 'No accessors'], {
+      placeHolder: `Also generate accessors for ${varName}?`,
+    });
+    return choice === undefined ? undefined : choice === YES;
   }
 
   // "−" inline on an instance-variable row: remove it (with the will-not-recompile
@@ -2510,9 +2675,19 @@ export class ExplorerController {
   // change set is previewed, any optional reference unchecked, and applied.
   // Invokable from a class row OR a hierarchy-pane class node.
   async renameClass(item: ClassItem | HierarchyItem): Promise<void> {
+    // A hierarchy node may name a class outside the current dictionary, so resolve
+    // it across the whole symbol list; a class-row uses the current dictionary.
+    const dictArg = item instanceof HierarchyItem ? undefined : this.state.dictIndex;
+    await this.renameClassNamed(item.className, dictArg);
+  }
+
+  /** Rename the class `oldName` across the image, resolving it through `dictArg`
+   *  (a 1-based SymbolList index, or undefined to resolve across the whole symbol
+   *  list). Shared by the Explorer class-row / hierarchy pencil and the method
+   *  editor's Rename… when the cursor is on a class reference. */
+  async renameClassNamed(oldName: string, dictArg: number | undefined): Promise<void> {
     const session = this.session();
     if (!session) return;
-    const oldName = item.className;
     if (!(await this.ensureRbSupport('Renaming a class'))) return;
 
     // Renaming a kernel/system class is hazardous (pervasive references; some
@@ -2534,16 +2709,26 @@ export class ExplorerController {
       if (choice !== PROCEED) return;
     }
 
-    const edit = await showRenameClassEditor(
-      { oldName, dictName: this.state.dictName },
-      (newName) => this.validateRenameTarget(newName, oldName),
+    // The "This dictionary" scope must follow the CLASS being renamed, not the
+    // Explorer's current selection: invoked from a method editor or a hierarchy
+    // node, `oldName` can live in a different dictionary than `this.state.dictName`,
+    // and scoping to the selection would silently exclude the class's real
+    // references. Resolve the class's own defining dictionary (via the same
+    // `dictArg` used for the rename lookup); fall back to the selection only if the
+    // probe fails, and to no "This dictionary" option if the class is unbound.
+    let scopeDictName = this.state.dictName;
+    try {
+      const homeDict = queries.classDefiningDictionaryName(session, oldName, dictArg);
+      scopeDictName = homeDict.length > 0 ? homeDict : undefined;
+    } catch {
+      /* keep the Explorer selection as a best-effort fallback */
+    }
+
+    const edit = await showRenameClassEditor({ oldName, dictName: scopeDictName }, (newName) =>
+      this.validateRenameTarget(newName, oldName),
     );
     if (!edit) return;
     const { newName, scope, options } = edit;
-
-    // A hierarchy node may name a class outside the current dictionary, so resolve
-    // it across the whole symbol list; a class-row uses the current dictionary.
-    const dictArg = item instanceof HierarchyItem ? undefined : this.state.dictIndex;
 
     const token = `rcp_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     const safeClear = (): void => {
@@ -2587,6 +2772,7 @@ export class ExplorerController {
       {
         recompileSubclasses: options.recompileSubclasses,
         migrateInstances: options.migrateInstances,
+        removeOldFromHistory: options.removeOldFromHistory,
       },
       {
         loadPage: async (offset) =>
@@ -5117,6 +5303,19 @@ export function registerGemStoneExplorer(
       if (item instanceof VarSideItem) void ctl.addInstVarFromSide(item);
       else if (item instanceof ClassItem) void ctl.addInstVarOnClass(item.className);
     }),
+    // Add a class variable (lightweight — no reshape/migration; see addClassVarOnClass).
+    vscode.commands.registerCommand('gemstone.explorer.addClassVar', (item?: unknown) => {
+      if (item instanceof VarSideItem) void ctl.addClassVarFromSide(item);
+      else if (item instanceof ClassItem) void ctl.addClassVarOnClass(item.className);
+    }),
+    // Generate getter/setter accessors for the variable at the row: instance-side for
+    // an instance variable, class-side for a class variable. Skips ones that exist.
+    vscode.commands.registerCommand('gemstone.explorer.addAccessors', (item?: unknown) => {
+      if (item instanceof IvarItem)
+        void ctl.generateAccessorsFor(item.className, item.ivarName, 'ivar');
+      else if (item instanceof ClassVarItem)
+        void ctl.generateAccessorsFor(item.className, item.classVarName, 'classvar');
+    }),
     vscode.commands.registerCommand('gemstone.explorer.removeInstVar', (item?: IvarItem) => {
       if (item instanceof IvarItem) void ctl.removeInstVar(item);
     }),
@@ -5136,12 +5335,31 @@ export function registerGemStoneExplorer(
         void vscode.window.showErrorMessage(`Move down instance variable failed: ${msg}`);
       });
     }),
+    // The single "Rename…" entry: figure out what the cursor is on (selector,
+    // temporary, instance variable, or class variable) and dispatch to the specific
+    // rename below. Consolidates the four rename actions (#328 item 2).
+    vscode.commands.registerCommand('gemstone.rename', (position?: unknown) => {
+      void renameAtCursorCommand(
+        sessionManager,
+        selectorAtPosition,
+        position instanceof vscode.Position ? position : undefined,
+      );
+    }),
     // Rename the instance variable at the cursor in a method source editor (the
     // Refactor… code action / palette) — routes into the same shared flow.
     vscode.commands.registerCommand('gemstone.renameInstVarAtCursor', (position?: unknown) => {
       void renameInstVarAtCursorCommand(
         sessionManager,
         (target) => ctl.renameInstVarNamed(target.className, target.ivarName, target.dict),
+        position instanceof vscode.Position ? position : undefined,
+      );
+    }),
+    // Rename the class referenced at the cursor in a method source editor — routes
+    // into the same shared flow as the Explorer's class-row pencil.
+    vscode.commands.registerCommand('gemstone.renameClassAtCursor', (position?: unknown) => {
+      void renameClassAtCursorCommand(
+        sessionManager,
+        (target) => ctl.renameClassNamed(target.className, target.dict),
         position instanceof vscode.Position ? position : undefined,
       );
     }),

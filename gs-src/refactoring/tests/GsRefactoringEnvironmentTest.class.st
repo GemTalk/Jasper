@@ -149,6 +149,71 @@ GsRefactoringEnvironmentTest >> testDictionariesDefiningNameReflectWhereTheClass
 ]
 
 { #category : 'tests' }
+GsRefactoringEnvironmentTest >> testDictionaryScopeMembershipIsByIdentityNotName [
+	"A class name bound in two dictionaries (a shadow) must be 'in' ONLY the
+	 dictionary that holds THAT class object -- not every dictionary that happens
+	 to bind the same name. Membership by name alone pulled the sibling into a
+	 single-dictionary scope and produced duplicate change rows (issue #328 item 9).
+	 Self-contained: builds two shadow dictionaries and removes them in an ensure:
+	 so a failure never leaks fixture state into the stone."
+	| sl env dictA dictB fooA fooB |
+	sl := System myUserProfile symbolList.
+	dictA := SymbolDictionary new name: #GsEnvScopeDictA; yourself.
+	dictB := SymbolDictionary new name: #GsEnvScopeDictB; yourself.
+	[sl add: dictA. sl add: dictB.
+	 fooA := Object subclass: 'GsEnvScopeShadow'
+		instVarNames: #() classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: dictA.
+	 fooB := Object subclass: 'GsEnvScopeShadow'
+		instVarNames: #() classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: dictB.
+	 env := GsRefactoringEnvironment new.
+
+	 "the name is genuinely shadowed -- both dictionaries define it"
+	 self assert: (env dictionariesDefiningClassNamed: #GsEnvScopeShadow) size >= 2.
+	 "each class is in exactly its OWN dictionary, by identity"
+	 self assert: (env class: fooA isDefinedInDictionaryNamed: #GsEnvScopeDictA).
+	 self deny: (env class: fooA isDefinedInDictionaryNamed: #GsEnvScopeDictB).
+	 self assert: (env class: fooB isDefinedInDictionaryNamed: #GsEnvScopeDictB).
+	 self deny: (env class: fooB isDefinedInDictionaryNamed: #GsEnvScopeDictA).
+	 "a symbol argument or a string argument both work"
+	 self assert: (env class: fooA isDefinedInDictionaryNamed: 'GsEnvScopeDictA').
+	 "a dictionary that does not exist is never in scope"
+	 self deny: (env class: fooA isDefinedInDictionaryNamed: #GsEnvNoSuchDict_ZZZ)]
+		ensure: [
+			dictA removeKey: #GsEnvScopeShadow ifAbsent: [].
+			dictB removeKey: #GsEnvScopeShadow ifAbsent: [].
+			sl remove: dictA ifAbsent: [].
+			sl remove: dictB ifAbsent: []]
+]
+
+{ #category : 'tests' }
+GsRefactoringEnvironmentTest >> testDictionaryScopeCheckSkipsAnAnonymousDictionary [
+	"An unnamed (anonymous) SymbolDictionary on the symbol list has a nil name.
+	 The dictionary-scope check must skip it, not send #asSymbol to nil and abort
+	 the scan for every dictionary-scoped rename -- even when the real target lives
+	 in a normal, named dictionary. Self-contained: the anonymous dictionary (and the
+	 fixture class it holds) are removed in an ensure: so nothing leaks into the stone."
+	| sl env anon foo |
+	sl := System myUserProfile symbolList.
+	anon := SymbolDictionary new.
+	self assert: anon name isNil.
+	[sl add: anon.
+	 foo := Object subclass: 'GsEnvAnonScopeFixture'
+		instVarNames: #() classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: anon.
+	 env := GsRefactoringEnvironment new.
+
+	 "The scan completes past the nil-named dictionary rather than raising."
+	 self deny: (env class: foo isDefinedInDictionaryNamed: #GsEnvAnonNoSuchDict_ZZZ).
+	 "And a class in a normal named dictionary is still resolved correctly."
+	 self assert: (env class: self superFixture isDefinedInDictionaryNamed: #UserGlobals)]
+		ensure: [
+			anon removeKey: #GsEnvAnonScopeFixture ifAbsent: [].
+			sl remove: anon ifAbsent: []]
+]
+
+{ #category : 'tests' }
 GsRefactoringEnvironmentTest >> testFindsInstanceMethodsThatReadOrWriteTheInstVar [
 	| sels |
 	sels := GsRefactoringEnvironment new instanceMethodsAccessing: #alpha inClass: self superFixture.

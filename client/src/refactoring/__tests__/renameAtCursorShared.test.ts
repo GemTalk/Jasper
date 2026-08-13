@@ -1,8 +1,13 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 
 import * as vscode from 'vscode';
-import { wordAt, MethodEditorTarget } from '../renameAtCursorShared';
+import {
+  wordAt,
+  saveIfDirty,
+  SAVE_BEFORE_REFACTOR,
+  MethodEditorTarget,
+} from '../renameAtCursorShared';
 
 /**
  * The shared editor→target plumbing. Focus here is the one subtle bit: `wordAt`
@@ -84,5 +89,67 @@ describe('wordAt source offset', () => {
     expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
       expect.stringContaining('Place the cursor on a temporary'),
     );
+  });
+});
+
+// A refactoring compiles the edited method to GemStone, and a later Cancel cannot
+// undo that durable save — so a dirty editor must be confirmed first, and the
+// refactoring aborted if the user declines (issue: cancelling a rename silently
+// saved the in-progress edit).
+function editorWithDirty(
+  isDirty: boolean,
+  saveResult = true,
+): { editor: vscode.TextEditor; save: ReturnType<typeof vi.fn> } {
+  const save = vi.fn(async () => saveResult);
+  return {
+    editor: { document: { isDirty, save } } as unknown as vscode.TextEditor,
+    save,
+  };
+}
+
+const warn = vscode.window.showWarningMessage as ReturnType<typeof vi.fn>;
+
+describe('saveIfDirty — a refactoring may not run against unsaved method edits', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('proceeds with no prompt or save when the editor is already clean', async () => {
+    const { editor, save } = editorWithDirty(false);
+
+    const ok = await saveIfDirty(editor);
+
+    expect(ok).toBe(true);
+    expect(warn).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it('saves and proceeds only after the user confirms', async () => {
+    warn.mockResolvedValueOnce(SAVE_BEFORE_REFACTOR);
+    const { editor, save } = editorWithDirty(true);
+
+    const ok = await saveIfDirty(editor);
+
+    expect(warn).toHaveBeenCalledOnce();
+    expect(save).toHaveBeenCalledOnce();
+    expect(ok).toBe(true);
+  });
+
+  it('does not save and aborts the refactoring when the user declines', async () => {
+    warn.mockResolvedValueOnce(undefined); // modal dismissed / cancelled
+    const { editor, save } = editorWithDirty(true);
+
+    const ok = await saveIfDirty(editor);
+
+    expect(ok).toBe(false);
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it('reports failure when the confirmed save itself fails', async () => {
+    warn.mockResolvedValueOnce(SAVE_BEFORE_REFACTOR);
+    const { editor, save } = editorWithDirty(true, false);
+
+    const ok = await saveIfDirty(editor);
+
+    expect(save).toHaveBeenCalledOnce();
+    expect(ok).toBe(false);
   });
 });

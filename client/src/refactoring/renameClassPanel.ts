@@ -29,6 +29,7 @@ export interface RenameClassPanelHandlers {
 export interface RenameClassPanelOptions {
   recompileSubclasses: boolean;
   migrateInstances: boolean;
+  removeOldFromHistory: boolean;
 }
 
 /** Show the paginated preview; resolve with the apply result, or undefined if the
@@ -58,6 +59,7 @@ export function showRenameClassPanel(
     skippedMethods: start.skippedMethods,
     recompileSubclasses: options.recompileSubclasses,
     migrateInstances: options.migrateInstances,
+    removeOldFromHistory: options.removeOldFromHistory,
     nonce,
     script: panelJs,
   });

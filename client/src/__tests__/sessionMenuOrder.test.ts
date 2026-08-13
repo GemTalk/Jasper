@@ -37,7 +37,6 @@ describe('session row inline button order', () => {
     const order = inlineOrderFor('viewItem == gemstoneSession');
 
     expect(order).toEqual([
-      'gemstone.openBrowser',
       'gemstone.sessionOpenWorkspace',
       'gemstone.sessionCommit',
       'gemstone.sessionAbort',

@@ -77,8 +77,17 @@ describe('browserQueries instance-variable wrappers', () => {
     expect(result).toBe('PAGE');
   });
 
-  it('applyInstVar delegates with the deselection, options, and commit flags', async () => {
-    const result = await applyInstVar(session, 'tok', ['x'], ['logCreation'], true, false);
+  it('applyInstVar delegates with the deselection, options, commit flags, and accessors', async () => {
+    const accessors = [{ selector: 'x', source: 'x\n\t^x' }];
+    const result = await applyInstVar(
+      session,
+      'tok',
+      ['x'],
+      ['logCreation'],
+      true,
+      false,
+      accessors,
+    );
 
     expect(shared.applyInstVar).toHaveBeenCalledWith(
       expect.any(Function),
@@ -87,6 +96,7 @@ describe('browserQueries instance-variable wrappers', () => {
       ['logCreation'],
       true,
       false,
+      accessors,
     );
     expect(result).toBe('APPLY');
   });

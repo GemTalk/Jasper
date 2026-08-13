@@ -91,6 +91,7 @@ function renderOutOfScope(
   skippedMethods: SkippedMethod[],
   recompileSubclasses: boolean,
   migrateInstances: boolean,
+  removeOldFromHistory: boolean,
 ): string {
   const lines: string[] = [];
   if (oos.collision) {
@@ -116,8 +117,21 @@ function renderOutOfScope(
   }
   lines.push(
     migrateInstances
-      ? 'Existing instances will be migrated to the new version (this commits the rename).'
+      ? 'Existing instances will be migrated to the new version.'
       : 'Existing instances stay on their prior version (not migrated).',
+  );
+  // #10: the rename is non-committing UNLESS a persistent option is chosen. Spell
+  // out in the preview which selected option(s) force a commit, so "never commits"
+  // is never misleading.
+  const commitReasons: string[] = [];
+  if (migrateInstances) commitReasons.push('“Migrate all instances”');
+  if (removeOldFromHistory) commitReasons.push('“Remove old versions from class history”');
+  lines.push(
+    commitReasons.length > 0
+      ? `⚠ This rename will <strong>commit the transaction</strong> — ${commitReasons.join(' and ')} ` +
+          `${commitReasons.length === 1 ? 'requires a commit' : 'each require a commit'}. ` +
+          'Without those options the rename applies without committing.'
+      : 'This rename applies without committing (no instance migration or history removal chosen).',
   );
   let skippedList = '';
   if (oos.skipped > 0) {
@@ -149,6 +163,8 @@ export interface ClassPanelHtmlOptions {
   recompileSubclasses: boolean;
   /** Whether the rename will migrate instances (drives the banner wording). */
   migrateInstances: boolean;
+  /** Whether old versions will be dropped from class history (also commits). */
+  removeOldFromHistory: boolean;
   nonce: string;
   script: string;
 }
@@ -165,6 +181,7 @@ export function renderClassPanelHtml(opts: ClassPanelHtmlOptions): string {
     skippedMethods,
     recompileSubclasses,
     migrateInstances,
+    removeOldFromHistory,
     nonce,
     script,
   } = opts;
@@ -284,7 +301,7 @@ export function renderClassPanelHtml(opts: ClassPanelHtmlOptions): string {
       <button id="cancel" class="secondary">Cancel</button>
     </div>
   </header>
-  ${renderOutOfScope(outOfScope, skippedMethods, recompileSubclasses, migrateInstances)}
+  ${renderOutOfScope(outOfScope, skippedMethods, recompileSubclasses, migrateInstances, removeOldFromHistory)}
   <div class="summary">
     <span id="selcount">${total}</span> of ${total} change${total === 1 ? '' : 's'} selected
     <button id="toggleAll" class="linkish" aria-expanded="false">Expand all</button>
