@@ -73,15 +73,11 @@ export class RefactorCodeActionProvider implements vscode.CodeActionProvider {
       action(INLINE, 'Inline Temporary…', 'gemstone.explorer.inlineTemporary', [range.start]);
     }
 
-    // Rename group — the cursor renames (on an identifier), then "Rename Method…",
-    // which targets the edited method (or a sent selector at the position) and so is
-    // offered anywhere.
-    if (onIdentifier) {
-      action(RENAME, 'Rename Temporary/Argument…', 'gemstone.renameTemporary', [range.start]);
-      action(RENAME, 'Rename Instance Variable…', 'gemstone.renameInstVarAtCursor', [range.start]);
-      action(RENAME, 'Rename Class Variable…', 'gemstone.renameClassVarAtCursor', [range.start]);
-    }
-    action(RENAME, 'Rename Method…', 'gemstone.renameMethodInEditor', [range.start]);
+    // Rename group — a single "Rename…" that resolves what the cursor is on
+    // (selector, temporary/argument, instance variable, or class variable) and runs
+    // the matching rename. Offered anywhere: on a selector or the method header it
+    // renames the method, so it is not gated on being over an identifier.
+    action(RENAME, 'Rename…', 'gemstone.rename', [range.start]);
 
     // Other rewrites — promote a temp (on an identifier), then "Change Method
     // Signature…", which targets the edited method's own signature and is offered

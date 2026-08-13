@@ -49,6 +49,7 @@ export function showInstVarRefactorPanel(
   title: string,
   start: StartInstVarPreview,
   handlers: InstVarPanelHandlers,
+  accessorNote?: string,
 ): Promise<ApplyResult | undefined> {
   const panel = vscode.window.createWebviewPanel(
     'gemstoneInstVarRefactor',
@@ -66,6 +67,7 @@ export function showInstVarRefactorPanel(
     outOfScope: start.outOfScope,
     nonce,
     script: panelJs,
+    accessorNote,
   });
 
   let offset = start.page.nextOffset;

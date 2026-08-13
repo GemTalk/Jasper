@@ -1454,6 +1454,51 @@ testMultiLineSenderRegionIsRebuiltOnOneLine
 	self assert: change newSource includesSubstring: 'moveY: 222 x: 111'
 %
 
+category: 'tests'
+method: GsChangeSignatureRefactoringTest
+testDictionaryScopeExcludesSameNamedImplementorInAnotherDictionary
+	"Regression for issue #328 item 9, the change-signature call site. A class name
+	 bound in two dictionaries (a shadow) must not restage the sibling's same-named
+	 implementor: changing the signature in dictionary A's scope stages ONLY A's
+	 implementor, and B's same-named class is counted out of scope. This pins the
+	 #dictionary branch of isClassInScope: (delegating to the identity helper
+	 GsRefactoringEnvironment>>class:isDefinedInDictionaryNamed:) at THIS call site,
+	 not only transitively. Self-contained: the shadow dictionaries are removed in an
+	 ensure: so a failure leaks nothing."
+	| sl dictA dictB fooA renames ref cs |
+	sl := System myUserProfile symbolList.
+	dictA := SymbolDictionary new name: #GsCSScopeDictA; yourself.
+	dictB := SymbolDictionary new name: #GsCSScopeDictB; yourself.
+	[sl add: dictA. sl add: dictB.
+	 fooA := Object subclass: 'GsCSShadow'
+		instVarNames: #() classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: dictA.
+	 Object subclass: 'GsCSShadow'
+		instVarNames: #() classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: dictB.
+	 self compile: 'shadowA: a b: b ^1' in: fooA.
+	 self compile: 'shadowA: a b: b ^2' in: (dictB at: #GsCSShadow).
+	 ref := GsChangeSignatureRefactoring
+		class: fooA meta: false changeSelector: #shadowA:b:
+		toParts: #('shadowB:' 'a:') permutation: #(2 1)
+		argNames: #('' '') defaults: #('' '') dictionaryScope: 'GsCSScopeDictA'.
+	 cs := ref changeSet.
+	 renames := cs changes select: [:c | c kind == #methodRename].
+
+	 "exactly ONE implementor restaged -- not the shadow sibling too"
+	 self assert: renames size equals: 1.
+	 "and it is dictionary A's class (body returns 1), never B's (returns 2)"
+	 self assert: renames first oldSource includesSubstring: '^1'.
+	 self deny: renames first oldSource includesSubstring: '^2'.
+	 "B's same-named implementor is counted out of scope, not silently dropped"
+	 self assert: ref outOfScopeImplementorCount equals: 1]
+		ensure: [
+			dictA removeKey: #GsCSShadow ifAbsent: [].
+			dictB removeKey: #GsCSShadow ifAbsent: [].
+			sl remove: dictA ifAbsent: [].
+			sl remove: dictB ifAbsent: []]
+%
+
 category: 'asserting'
 method: GsClassHistoryTest
 assert: aString includesSubstring: aSubstring
@@ -4959,6 +5004,41 @@ testApplyAddInstallsNewVersionWithIvar
 
 category: 'tests - apply'
 method: GsInstVarRefactoringTest
+testApplyCompilesAccessorsInTheSameApply
+	"Accessors requested with an add are compiled onto the NEW class version inside the same
+	 apply, so they ride the structural change's transaction (committed or aborted together with
+	 it) rather than a separate post-apply step that could strand them."
+	| refactoring accessors current |
+	refactoring := self add: 'tally'.
+	accessors := Array
+		with: (Array with: 'tally' with: 'tally
+^tally')
+		with: (Array with: 'tally:' with: 'tally: aValue
+tally := aValue').
+	refactoring applyDeselected: #() options: nil migrate: false deleteHistory: false accessors: accessors.
+	current := UserGlobals at: #GsIVBase.
+	self assert: (current instVarNames includes: #tally).
+	self assert: (current includesSelector: #tally).
+	self assert: (current includesSelector: #'tally:')
+%
+
+category: 'tests - apply'
+method: GsInstVarRefactoringTest
+testApplyReportsAnAccessorThatCannotCompileAndInstallsNothing
+	"A getter/setter that will not compile is surfaced in `failed` -- which holds the commit back --
+	 and is not installed: the mechanism that makes an add-with-accessors all-or-nothing."
+	| refactoring result |
+	refactoring := self add: 'tally'.
+	result := refactoring applyDeselected: #() options: nil migrate: false deleteHistory: false
+		accessors: (Array with: (Array with: 'tally' with: 'tally
+^ )( not parseable')).
+	"failed non-empty -> the empty-array marker is absent"
+	self assert: (result indexOfSubCollection: '"failed":[]') = 0.
+	self deny: ((UserGlobals at: #GsIVBase) includesSelector: #tally)
+%
+
+category: 'tests - apply'
+method: GsInstVarRefactoringTest
 testApplyPreservesClassOptions
 	"The acted-on class's options must survive the new version (the bug the earlier engines had:
 	 they passed options: #() and dropped them)."
@@ -7607,6 +7687,73 @@ testDictionariesDefiningNameReflectWhereTheClassLives
 
 category: 'tests'
 method: GsRefactoringEnvironmentTest
+testDictionaryScopeMembershipIsByIdentityNotName
+	"A class name bound in two dictionaries (a shadow) must be 'in' ONLY the
+	 dictionary that holds THAT class object -- not every dictionary that happens
+	 to bind the same name. Membership by name alone pulled the sibling into a
+	 single-dictionary scope and produced duplicate change rows (issue #328 item 9).
+	 Self-contained: builds two shadow dictionaries and removes them in an ensure:
+	 so a failure never leaks fixture state into the stone."
+	| sl env dictA dictB fooA fooB |
+	sl := System myUserProfile symbolList.
+	dictA := SymbolDictionary new name: #GsEnvScopeDictA; yourself.
+	dictB := SymbolDictionary new name: #GsEnvScopeDictB; yourself.
+	[sl add: dictA. sl add: dictB.
+	 fooA := Object subclass: 'GsEnvScopeShadow'
+		instVarNames: #() classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: dictA.
+	 fooB := Object subclass: 'GsEnvScopeShadow'
+		instVarNames: #() classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: dictB.
+	 env := GsRefactoringEnvironment new.
+
+	 "the name is genuinely shadowed -- both dictionaries define it"
+	 self assert: (env dictionariesDefiningClassNamed: #GsEnvScopeShadow) size >= 2.
+	 "each class is in exactly its OWN dictionary, by identity"
+	 self assert: (env class: fooA isDefinedInDictionaryNamed: #GsEnvScopeDictA).
+	 self deny: (env class: fooA isDefinedInDictionaryNamed: #GsEnvScopeDictB).
+	 self assert: (env class: fooB isDefinedInDictionaryNamed: #GsEnvScopeDictB).
+	 self deny: (env class: fooB isDefinedInDictionaryNamed: #GsEnvScopeDictA).
+	 "a symbol argument or a string argument both work"
+	 self assert: (env class: fooA isDefinedInDictionaryNamed: 'GsEnvScopeDictA').
+	 "a dictionary that does not exist is never in scope"
+	 self deny: (env class: fooA isDefinedInDictionaryNamed: #GsEnvNoSuchDict_ZZZ)]
+		ensure: [
+			dictA removeKey: #GsEnvScopeShadow ifAbsent: [].
+			dictB removeKey: #GsEnvScopeShadow ifAbsent: [].
+			sl remove: dictA ifAbsent: [].
+			sl remove: dictB ifAbsent: []]
+%
+
+category: 'tests'
+method: GsRefactoringEnvironmentTest
+testDictionaryScopeCheckSkipsAnAnonymousDictionary
+	"An unnamed (anonymous) SymbolDictionary on the symbol list has a nil name.
+	 The dictionary-scope check must skip it, not send #asSymbol to nil and abort
+	 the scan for every dictionary-scoped rename -- even when the real target lives
+	 in a normal, named dictionary. Self-contained: the anonymous dictionary (and the
+	 fixture class it holds) are removed in an ensure: so nothing leaks into the stone."
+	| sl env anon foo |
+	sl := System myUserProfile symbolList.
+	anon := SymbolDictionary new.
+	self assert: anon name isNil.
+	[sl add: anon.
+	 foo := Object subclass: 'GsEnvAnonScopeFixture'
+		instVarNames: #() classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: anon.
+	 env := GsRefactoringEnvironment new.
+
+	 "The scan completes past the nil-named dictionary rather than raising."
+	 self deny: (env class: foo isDefinedInDictionaryNamed: #GsEnvAnonNoSuchDict_ZZZ).
+	 "And a class in a normal named dictionary is still resolved correctly."
+	 self assert: (env class: self superFixture isDefinedInDictionaryNamed: #UserGlobals)]
+		ensure: [
+			anon removeKey: #GsEnvAnonScopeFixture ifAbsent: [].
+			sl remove: anon ifAbsent: []]
+%
+
+category: 'tests'
+method: GsRefactoringEnvironmentTest
 testFindsInstanceMethodsThatReadOrWriteTheInstVar
 	| sels |
 	sels := GsRefactoringEnvironment new instanceMethodsAccessing: #alpha inClass: self superFixture.
@@ -8410,6 +8557,56 @@ testStartPreviewCarriesTotalsAndNames
 	self assert: json includesSubstring: '"newName":"GsRCRenamed"'.
 	self assert: json includesSubstring: 'classRename'.
 	self assert: json includesSubstring: 'classReparent'
+%
+
+category: 'tests'
+method: GsRenameClassRefactoringTest
+testDictionaryScopeExcludesSameNamedClassReferenceInAnotherDictionary
+	"Regression for issue #328 item 9, the rename-class call site. When a class name is
+	 bound in two dictionaries (a shadow), renaming A's class in dictionary A's scope
+	 rewrites references from IN-scope classes only; a same-named reference from a class
+	 in dictionary B is counted out of scope, never rewritten (rewriting it would point
+	 at the wrong class). Pins the #dictionary branch of isClassInScope: (identity helper
+	 GsRefactoringEnvironment>>class:isDefinedInDictionaryNamed:) at THIS call site.
+	 Self-contained: the shadow dictionaries are removed in an ensure:."
+	| sl dictA dictB shadowA recompiles ref cs |
+	sl := System myUserProfile symbolList.
+	dictA := SymbolDictionary new name: #GsRCScopeDictA; yourself.
+	dictB := SymbolDictionary new name: #GsRCScopeDictB; yourself.
+	[sl add: dictA. sl add: dictB.
+	 shadowA := Object subclass: 'GsRCShadowT'
+		instVarNames: #() classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: dictA.
+	 Object subclass: 'GsRCShadowT'
+		instVarNames: #() classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: dictB.
+	 "One referrer in EACH dictionary; both reference the shared name GsRCShadowT."
+	 Object subclass: 'GsRCRefInA'
+		instVarNames: #() classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: dictA.
+	 Object subclass: 'GsRCRefInB'
+		instVarNames: #() classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: dictB.
+	 self compile: 'useIt ^GsRCShadowT' in: (dictA at: #GsRCRefInA).
+	 self compile: 'useIt ^GsRCShadowT' in: (dictB at: #GsRCRefInB).
+	 ref := GsRenameClassRefactoring
+		class: shadowA renameTo: 'GsRCShadowRenamedT' dictionaryScope: 'GsRCScopeDictA'.
+	 cs := ref changeSet.
+	 recompiles := cs changes select: [:c | c kind == #methodRecompile].
+
+	 "exactly ONE external reference rewritten -- dictionary A's referrer only"
+	 self assert: recompiles size equals: 1.
+	 self assert: recompiles first className asString equals: 'GsRCRefInA'.
+	 self assert: recompiles first newSource includesSubstring: 'GsRCShadowRenamedT'.
+	 "the class rename itself targets dictionary A's class"
+	 self assert: (self changeOfKind: #classRename for: 'GsRCShadowT' in: cs) notNil.
+	 "B's same-named referrer is counted out of scope, never rewritten"
+	 self assert: ref outOfScopeReferenceCount equals: 1]
+		ensure: [
+			#(#GsRCRefInA #GsRCShadowT #GsRCShadowRenamedT) do: [:s | dictA removeKey: s ifAbsent: []].
+			#(#GsRCRefInB #GsRCShadowT) do: [:s | dictB removeKey: s ifAbsent: []].
+			sl remove: dictA ifAbsent: [].
+			sl remove: dictB ifAbsent: []]
 %
 
 category: 'asserting'
@@ -9497,6 +9694,47 @@ testCommentSpellingIsNotRewritten
 	sender := self senderChangeFor: #caller
 		in: (self renamePartsTo: #('moveY:' 'x:') permutation: #(2 1) scope: #class) changeSet.
 	self assert: sender newSource includesSubstring: 'a caller of movePointX:y: and ping'
+%
+
+category: 'tests'
+method: GsRenameMethodRefactoringTest
+testDictionaryScopeExcludesSameNamedClassInAnotherDictionary
+	"Regression for issue #328 item 9. A class name bound in two dictionaries
+	 (a shadow) must not stage a duplicate rename for the sibling class: renaming
+	 in dictionary A's scope renames ONLY A's class, and B's same-named class is
+	 counted out of scope rather than staged again. Self-contained: the two shadow
+	 dictionaries are removed in an ensure: so a failure leaks nothing."
+	| sl dictA dictB fooA renames ref cs |
+	sl := System myUserProfile symbolList.
+	dictA := SymbolDictionary new name: #GsRMScopeDictA; yourself.
+	dictB := SymbolDictionary new name: #GsRMScopeDictB; yourself.
+	[sl add: dictA. sl add: dictB.
+	 fooA := Object subclass: 'GsRMShadow'
+		instVarNames: #() classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: dictA.
+	 Object subclass: 'GsRMShadow'
+		instVarNames: #() classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: dictB.
+	 self compile: 'shadowSel ^1' in: fooA.
+	 self compile: 'shadowSel ^2' in: (dictB at: #GsRMShadow).
+	 ref := GsRenameMethodRefactoring
+		class: fooA renameSelector: #shadowSel
+		toParts: #('shadowSel2') permutation: #() dictionaryScope: 'GsRMScopeDictA'.
+	 cs := ref changeSet.
+	 renames := cs changes select: [:c | c kind == #methodRename].
+
+	 "exactly ONE implementor renamed -- not the shadow sibling too"
+	 self assert: renames size equals: 1.
+	 "and it is dictionary A's class (body returns 1), never B's (returns 2)"
+	 self assert: renames first oldSource includesSubstring: '^1'.
+	 self deny: renames first oldSource includesSubstring: '^2'.
+	 "B's same-named implementor is counted out of scope, not silently dropped"
+	 self assert: ref outOfScopeImplementorCount equals: 1]
+		ensure: [
+			dictA removeKey: #GsRMShadow ifAbsent: [].
+			dictB removeKey: #GsRMShadow ifAbsent: [].
+			sl remove: dictA ifAbsent: [].
+			sl remove: dictB ifAbsent: []]
 %
 
 category: 'tests'

@@ -103,10 +103,18 @@ describe('getMethodCategories', () => {
 });
 
 describe('getInstVarNames', () => {
-  it('parses allInstVarNames output', () => {
+  it('parses allInstVarNames output, resolving the class through the symbol list', () => {
     const execute = vi.fn<QueryExecutor>(() => 'name\nsize\n');
     expect(getInstVarNames(execute, 'Foo')).toEqual(['name', 'size']);
-    expect(execute.mock.calls[0][0]).toContain('Foo allInstVarNames');
+    const code = execute.mock.calls[0][0];
+    expect(code).toContain('allInstVarNames');
+    expect(code).toContain("objectNamed: #'Foo'"); // dict-scoped/escaped lookup, not a bareword
+  });
+
+  it('scopes the lookup to a given SymbolList index', () => {
+    const execute = vi.fn<QueryExecutor>(() => '');
+    getInstVarNames(execute, 'Foo', 3);
+    expect(execute.mock.calls[0][0]).toContain('symbolList at: 3');
   });
 });
 

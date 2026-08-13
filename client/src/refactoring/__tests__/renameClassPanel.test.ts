@@ -66,6 +66,7 @@ function mount(over: Partial<Parameters<typeof renderClassPanelHtml>[0]> = {}) {
     total: 3,
     recompileSubclasses: true,
     migrateInstances: true,
+    removeOldFromHistory: false,
     changes: [renameChange, reparentChange, refChange],
     done: true,
     outOfScope: { references: 0, descendants: 1, skipped: 0, collision: null },
@@ -135,6 +136,32 @@ describe('rename-class preview panel HTML', () => {
   it('states instances will be migrated when migrate is on, or stay put when off', () => {
     expect(mount().full).toContain('migrated to the new version');
     expect(mount({ migrateInstances: false }).full).toContain('stay on their prior version');
+  });
+
+  it('warns in the preview that migrating instances commits the transaction', () => {
+    const full = mount({ migrateInstances: true, removeOldFromHistory: false }).full;
+
+    expect(full).toMatch(/commit the transaction[\s\S]*Migrate all instances/);
+  });
+
+  it('warns that removing old versions commits even when instances are not migrated', () => {
+    const full = mount({ migrateInstances: false, removeOldFromHistory: true }).full;
+
+    expect(full).toMatch(/commit the transaction[\s\S]*Remove old versions from class history/);
+  });
+
+  it('names both persistent options in the commit warning when both are chosen', () => {
+    const full = mount({ migrateInstances: true, removeOldFromHistory: true }).full;
+
+    expect(full).toContain('Migrate all instances');
+    expect(full).toContain('Remove old versions from class history');
+    expect(full).toContain('each require a commit');
+  });
+
+  it('states the rename applies without committing when no persistent option is chosen', () => {
+    const full = mount({ migrateInstances: false, removeOldFromHistory: false }).full;
+
+    expect(full).toContain('applies without committing');
   });
 });
 

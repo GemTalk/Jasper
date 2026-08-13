@@ -27,43 +27,55 @@ function escapeHtml(s: string): string {
     .replace(/"/g, '&quot;');
 }
 
-// Minimal line diff: old lines as removed, new lines as added. The engine sends whole
-// class definitions, which are small, so a full old/new render (not an LCS) is fine.
+// Line diff for a small class definition. A reparent has identical old/new text, so it
+// renders as context. An edit keeps the common leading/trailing lines as context and
+// shows only the changed middle as −/+ — so ADDING an instance variable reads as a
+// single changed line (the instVarNames clause gains the name) rather than the whole
+// definition duplicated, which is what assures the user the variable is really added.
 function renderDiff(change: InstVarChange): string {
-  const del = change.oldSource
-    .split('\n')
-    .map((t) => `<div class="line del">${escapeHtml('-' + t)}</div>`)
-    .join('');
-  const add = change.newSource
-    .split('\n')
-    .map((t) => `<div class="line add">${escapeHtml('+' + t)}</div>`)
-    .join('');
-  // A reparent has identical old/new text (it recompiles only to re-point at the new
-  // parent version); show it as context rather than a phantom delete+add.
-  if (change.oldSource === change.newSource) {
-    return change.newSource
-      .split('\n')
-      .map((t) => `<div class="line">${escapeHtml(' ' + t)}</div>`)
-      .join('');
-  }
-  return del + add;
+  const oldL = change.oldSource.split('\n');
+  const newL = change.newSource.split('\n');
+  const ctx = (t: string): string => `<div class="line">${escapeHtml(' ' + t)}</div>`;
+  if (change.oldSource === change.newSource) return oldL.map(ctx).join('');
+  let p = 0;
+  while (p < oldL.length && p < newL.length && oldL[p] === newL[p]) p++;
+  let s = 0;
+  while (
+    s < oldL.length - p &&
+    s < newL.length - p &&
+    oldL[oldL.length - 1 - s] === newL[newL.length - 1 - s]
+  )
+    s++;
+  const del = oldL
+    .slice(p, oldL.length - s)
+    .map((t) => `<div class="line del">${escapeHtml('-' + t)}</div>`);
+  const add = newL
+    .slice(p, newL.length - s)
+    .map((t) => `<div class="line add">${escapeHtml('+' + t)}</div>`);
+  const head = oldL.slice(0, p).map(ctx);
+  const tail = oldL.slice(oldL.length - s).map(ctx);
+  return [...head, ...del, ...add, ...tail].join('');
 }
 
 function renderCard(change: InstVarChange): string {
   const label = escapeHtml(instVarChangeLabel(change));
-  const kindBadge =
-    change.kind === 'classDefinitionEdit'
-      ? '<span class="badge">edit</span>'
-      : '<span class="badge">reparent</span>';
+  const isEdit = change.kind === 'classDefinitionEdit';
+  const kindBadge = isEdit
+    ? '<span class="badge">edit</span>'
+    : '<span class="badge">reparent</span>';
   const cb = `<input type="checkbox" class="sel" checked disabled title="This change is required" aria-label="${label} (required)">`;
+  // Expand the definition edit by default so the added/removed instance variable is
+  // visible immediately; the reparents stay collapsed (they are context).
+  const arrow = isEdit ? '▾' : '▸';
+  const preClass = isEdit ? 'diff' : 'diff hidden';
   return `<li class="change" data-id="${escapeHtml(change.id)}">
   <div class="change-head">
     ${cb}
     <span class="label">${label}</span>
     ${kindBadge}
-    <button class="toggle" title="Show/hide diff" aria-expanded="false">▸</button>
+    <button class="toggle" title="Show/hide diff" aria-expanded="${isEdit}">${arrow}</button>
   </div>
-  <pre class="diff hidden">${renderDiff(change)}</pre>
+  <pre class="${preClass}">${renderDiff(change)}</pre>
 </li>`;
 }
 
@@ -110,11 +122,17 @@ export interface InstVarPanelHtmlOptions {
   outOfScope: InstVarOutOfScope;
   nonce: string;
   script: string;
+  /** When set, an informational line telling the user that accessor methods will be
+   *  added after applying (they are compiled separately, not part of this change set). */
+  accessorNote?: string;
 }
 
 /** Build the panel's HTML. Pure (no vscode) so it unit-tests directly. */
 export function renderInstVarPanelHtml(opts: InstVarPanelHtmlOptions): string {
-  const { title, total, changes, done, outOfScope, nonce, script } = opts;
+  const { title, total, changes, done, outOfScope, nonce, script, accessorNote } = opts;
+  const accessorNoteHtml = accessorNote
+    ? `<div class="accessor-note">＋ ${escapeHtml(accessorNote)}</div>`
+    : '';
   const cards = renderInstVarCards(changes);
   const pagerHidden = done ? ' hidden' : '';
   const applyDisabled = outOfScope.decline ? ' disabled' : '';
@@ -205,6 +223,7 @@ export function renderInstVarPanelHtml(opts: InstVarPanelHtmlOptions): string {
     .commit-item { display: flex; align-items: center; gap: 6px; }
     .commit-item { margin-top: 6px; }
     .commit-note { opacity: 0.85; margin-bottom: 4px; }
+    .accessor-note { padding: 6px 16px; opacity: 0.9; }
     .warn-tag { color: var(--vscode-inputValidation-warningBorder, #c88c00); font-size: 0.85em; }
     .summary { padding: 8px 16px; opacity: 0.85; display: flex; align-items: center; gap: 10px; }
     button.linkish { background: none; color: var(--vscode-textLink-foreground); padding: 0; font-size: 0.95em; }
@@ -261,6 +280,7 @@ export function renderInstVarPanelHtml(opts: InstVarPanelHtmlOptions): string {
   </div>
   ${renderDeclineBanner(outOfScope)}
   ${renderWillNotRecompile(outOfScope)}
+  ${accessorNoteHtml}
   ${renderCommitControls(outOfScope)}
   <div class="summary">
     ${total} change${total === 1 ? '' : 's'}

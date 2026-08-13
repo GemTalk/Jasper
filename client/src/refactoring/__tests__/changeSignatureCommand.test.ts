@@ -15,6 +15,7 @@ import * as queries from '../../browserQueries';
 import { showChangeSignatureEditor } from '../changeSignatureEditor';
 import { showChangeSignaturePanel } from '../changeSignaturePanel';
 import { beginChangeSignature, changeSignatureCommand } from '../changeSignatureCommand';
+import { SAVE_BEFORE_REFACTOR } from '../renameAtCursorShared';
 import type { ActiveSession } from '../../sessionManager';
 import type { SessionManager } from '../../sessionManager';
 
@@ -255,11 +256,14 @@ describe('beginChangeSignature (shared flow)', () => {
     expect(onApplied).not.toHaveBeenCalled();
   });
 
-  it('saves a dirty source editor before previewing', async () => {
+  it('saves a dirty source editor before previewing, once the user confirms the save', async () => {
     vi.mocked(queries.analyzeChangeSignature).mockResolvedValue(analysis());
     vi.mocked(showChangeSignatureEditor).mockResolvedValue(edit);
     vi.mocked(queries.startChangeSignaturePreview).mockResolvedValue(startEnvelope());
     vi.mocked(showChangeSignaturePanel).mockResolvedValue({ applied: 2, failed: [] });
+    (vscode.window.showWarningMessage as ReturnType<typeof vi.fn>).mockResolvedValue(
+      SAVE_BEFORE_REFACTOR,
+    );
     const save = vi.fn(async () => true);
     const saveEditor = { document: { isDirty: true, save } } as unknown as vscode.TextEditor;
 
@@ -268,8 +272,28 @@ describe('beginChangeSignature (shared flow)', () => {
     expect(save).toHaveBeenCalled();
   });
 
-  it('stops without previewing when the dirty editor cannot be saved', async () => {
+  it('does not save and stops without previewing when the user declines the save', async () => {
     vi.mocked(queries.analyzeChangeSignature).mockResolvedValue(analysis());
+    (vscode.window.showWarningMessage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    const save = vi.fn(async () => true);
+    const saveEditor = { document: { isDirty: true, save } } as unknown as vscode.TextEditor;
+
+    const applied = await beginChangeSignature(target, {
+      session: session(),
+      saveEditor,
+      onApplied: vi.fn(),
+    });
+
+    expect(save).not.toHaveBeenCalled();
+    expect(applied).toBe(false);
+    expect(queries.analyzeChangeSignature).not.toHaveBeenCalled();
+  });
+
+  it('stops without previewing when the confirmed save cannot be completed', async () => {
+    vi.mocked(queries.analyzeChangeSignature).mockResolvedValue(analysis());
+    (vscode.window.showWarningMessage as ReturnType<typeof vi.fn>).mockResolvedValue(
+      SAVE_BEFORE_REFACTOR,
+    );
     const saveEditor = {
       document: { isDirty: true, save: vi.fn(async () => false) },
     } as unknown as vscode.TextEditor;

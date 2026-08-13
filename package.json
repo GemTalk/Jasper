@@ -147,7 +147,7 @@
             "type": "integer",
             "default": 0,
             "minimum": 0,
-            "description": "Maximum method dictionary environment to show in the browser (0 = standard Smalltalk only, 2 = show environments 0–2)"
+            "description": "Maximum method dictionary environment to show when listing methods (0 = standard Smalltalk only, 2 = show environments 0–2). Applies wherever methods are listed — the GemStone Explorer, the System Browser, and hover, CodeLens, and Go to Definition."
           },
           "gemstone.explorer.groupMethodsByCategory": {
             "type": "boolean",
@@ -171,7 +171,7 @@
           "gemstone.classSync.readOnlyMirror": {
             "type": "boolean",
             "default": true,
-            "description": "Write the local class-mirror .gs files as read-only, so they aren't edited directly (edit via the System Browser instead). Turn off to roughly halve the filesystem operations per class, which can noticeably speed up syncing on slow or network filesystems."
+            "description": "Write the local class-mirror .gs files as read-only, so they aren't edited directly (edit via the GemStone Explorer instead). Turn off to roughly halve the filesystem operations per class, which can noticeably speed up syncing on slow or network filesystems."
           },
           "gemstone.rootPath": {
             "type": "string",
@@ -874,9 +874,8 @@
       },
       {
         "command": "gemstone.openBrowser",
-        "title": "Open System Browser",
-        "category": "GemStone",
-        "icon": "$(list-tree)"
+        "title": "Open System Browser (Classic)",
+        "category": "GemStone"
       },
       {
         "command": "gemstone.rowanAddRepo",
@@ -1327,6 +1326,18 @@
         "icon": "$(add)"
       },
       {
+        "command": "gemstone.explorer.addClassVar",
+        "title": "Add Class Variable…",
+        "category": "GemStone",
+        "icon": "$(add)"
+      },
+      {
+        "command": "gemstone.explorer.addAccessors",
+        "title": "Add Accessors",
+        "category": "GemStone",
+        "icon": "$(symbol-method)"
+      },
+      {
         "command": "gemstone.explorer.removeInstVar",
         "title": "Remove Instance Variable…",
         "category": "GemStone",
@@ -1441,6 +1452,12 @@
       {
         "command": "gemstone.renameMethodInEditor",
         "title": "Rename Method in Editor…",
+        "category": "GemStone",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "gemstone.rename",
+        "title": "Rename…",
         "category": "GemStone",
         "icon": "$(edit)"
       },
@@ -1703,6 +1720,22 @@
           "when": "false"
         },
         {
+          "command": "gemstone.renameTemporary",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.renameInstVarAtCursor",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.renameClassVarAtCursor",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.renameMethodInEditor",
+          "when": "false"
+        },
+        {
           "command": "gemstone.explorer.commit",
           "when": "false"
         },
@@ -1728,6 +1761,14 @@
         },
         {
           "command": "gemstone.explorer.addInstVar",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.addClassVar",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.addAccessors",
           "when": "false"
         },
         {
@@ -2165,14 +2206,34 @@
           "group": "inline"
         },
         {
+          "command": "gemstone.explorer.addClassVar",
+          "when": "view == gemstoneExplorerClasses && viewItem == explorerVarSide.class",
+          "group": "inline"
+        },
+        {
           "command": "gemstone.explorer.addInstVar",
           "when": "view == gemstoneExplorerClasses && viewItem == explorerClass && gemstone.rbSupportAvailable",
           "group": "2_generate@2"
         },
         {
+          "command": "gemstone.explorer.addClassVar",
+          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass",
+          "group": "2_generate@3"
+        },
+        {
           "command": "gemstone.explorer.renameClassVariable",
           "when": "view == gemstoneExplorerClasses && viewItem == explorerClassVar && gemstone.rbSupportAvailable",
           "group": "inline"
+        },
+        {
+          "command": "gemstone.explorer.addAccessors",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerIvar/",
+          "group": "2_generate@1"
+        },
+        {
+          "command": "gemstone.explorer.addAccessors",
+          "when": "view == gemstoneExplorerClasses && viewItem == explorerClassVar",
+          "group": "2_generate@1"
         },
         {
           "command": "gemstone.explorer.renameMethod",
@@ -2364,34 +2425,29 @@
           "when": "view == gemstoneLogins && (viewItem == gemstoneLogin || viewItem == gemstoneLoginConnected)"
         },
         {
-          "command": "gemstone.openBrowser",
+          "command": "gemstone.sessionOpenWorkspace",
           "when": "view == gemstoneLogins && viewItem == gemstoneSession",
           "group": "inline@1"
         },
         {
-          "command": "gemstone.sessionOpenWorkspace",
+          "command": "gemstone.sessionCommit",
           "when": "view == gemstoneLogins && viewItem == gemstoneSession",
           "group": "inline@2"
         },
         {
-          "command": "gemstone.sessionCommit",
+          "command": "gemstone.sessionAbort",
           "when": "view == gemstoneLogins && viewItem == gemstoneSession",
           "group": "inline@3"
         },
         {
-          "command": "gemstone.sessionAbort",
+          "command": "gemstone.sessionPing",
           "when": "view == gemstoneLogins && viewItem == gemstoneSession",
           "group": "inline@4"
         },
         {
-          "command": "gemstone.sessionPing",
-          "when": "view == gemstoneLogins && viewItem == gemstoneSession",
-          "group": "inline@5"
-        },
-        {
           "command": "gemstone.sessionLogout",
           "when": "view == gemstoneLogins && viewItem == gemstoneSession",
-          "group": "inline@6"
+          "group": "inline@5"
         },
         {
           "command": "gemstone.fullLogicalBackup",
