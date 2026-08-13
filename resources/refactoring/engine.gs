@@ -9469,14 +9469,17 @@ class: aClass isDefinedInDictionaryNamed: aName
 	 a sibling into a single-dictionary scope, staging it as a duplicate change row
 	 for the 'same' class -- the #dictionary-scope duplicate the rename preview
 	 showed. Dictionary names and the class name are compared as Symbols so the
-	 3.6.x Unicode-comparison trap never bites."
+	 3.6.x Unicode-comparison trap never bites. An unnamed (anonymous) dictionary has
+	 a nil name -- skip it rather than send #asSymbol to nil and abort the whole scan."
 	| wanted nameSym |
 	wanted := aName asSymbol.
 	nameSym := aClass name asSymbol.
-	self dictionariesDo: [:dict |
-		(dict name asSymbol == wanted
-			and: [(dict at: nameSym ifAbsent: [nil]) == aClass])
-			ifTrue: [^true]].
+	self dictionariesDo: [:dict | | dn |
+		dn := dict name.
+		(dn notNil
+			and: [dn asSymbol == wanted
+				and: [(dict at: nameSym ifAbsent: [nil]) == aClass]])
+				ifTrue: [^true]].
 	^false
 %
 

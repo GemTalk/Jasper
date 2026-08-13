@@ -192,4 +192,89 @@ failuresAndErrors printString`;
 
     expect(printedInstVars).toBe("anArray('a')");
   });
+
+  // Regression for finding #1 of PR #392's automated review, driven through the
+  // real client query path rather than the engine SUnit. An unnamed (anonymous)
+  // SymbolDictionary on the symbol list has a nil name; before the nil-guard in
+  // GsRefactoringEnvironment>>class:isDefinedInDictionaryNamed:, every
+  // dictionary-scoped preview sent #asSymbol to that nil and aborted with an MNU,
+  // even when the real target lived in a normal named dictionary. There is no GUI
+  // path to create a nameless dictionary, so this injects one directly, then
+  // previews a dictionary-scoped rename the way the command dispatch does.
+  const ANON_BASE = 'RCAnonBase';
+  const ANON_REF = 'RCAnonRef';
+  const ANON_RENAMED = 'RCAnonRenamed';
+  const ANON_KEY = '#RCAnonScopeDict';
+
+  // Insert at the FRONT (index 1), not the end: the scope scan returns as soon as
+  // it finds the class in a matching named dictionary, so an anonymous dictionary
+  // appended after UserGlobals would never be reached and the nil name never hit.
+  // Front-inserted, it is the first dictionary every scope check examines, so the
+  // pre-fix `nil asSymbol` fires immediately. (Confirmed to go red on the unguarded
+  // engine.)
+  const addAnonymousDictionary = (): string =>
+    exec(`| anon |
+anon := SymbolDictionary new.
+System myUserProfile insertDictionary: anon at: 1.
+SessionTemps current at: ${ANON_KEY} put: anon.
+'added'`);
+
+  const removeAnonymousDictionary = (): string =>
+    exec(`| anon |
+anon := SessionTemps current at: ${ANON_KEY} otherwise: nil.
+anon ifNotNil: [System myUserProfile symbolList remove: anon ifAbsent: []].
+SessionTemps current removeKey: ${ANON_KEY} ifAbsent: [].
+'removed'`);
+
+  it('previews a dictionary-scoped rename when an unnamed dictionary is on the symbol list', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+
+    q.compileClassDefinition(
+      session(),
+      `Object subclass: '${ANON_BASE}' instVarNames: #() classVars: #() ` +
+        'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
+    );
+    q.compileClassDefinition(
+      session(),
+      `Object subclass: '${ANON_REF}' instVarNames: #() classVars: #() ` +
+        'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
+    );
+    q.compileMethod(session(), ANON_REF, false, 'making', `usesBase\n\t^${ANON_BASE} new`);
+    addAnonymousDictionary();
+
+    try {
+      const start = parseStartPreview(
+        await startRenameClassPreview(
+          asyncExec,
+          ANON_BASE,
+          ANON_RENAMED,
+          { kind: 'dictionary', dictName: 'UserGlobals' },
+          {
+            copyMethods: true,
+            recompileSubclasses: true,
+            migrateInstances: false,
+            removeOldFromHistory: false,
+          },
+          `rcit-anon-${ANON_BASE}`,
+          PREVIEW_PAGE_BYTES,
+        ),
+      );
+
+      expect(start.oldName).toBe(ANON_BASE);
+      expect(start.newName).toBe(ANON_RENAMED);
+      const rename = start.page.changes.find((c) => c.kind === 'classRename');
+      expect(rename?.newName).toBe(ANON_RENAMED);
+
+      // The in-scope external reference must be found and staged. Pre-fix, the
+      // scope scan hit the nil-named dictionary first, and this reference was
+      // silently dropped from the preview (no error surfaced to the user).
+      const ref = start.page.changes.find(
+        (c) => c.kind === 'methodRecompile' && c.className === ANON_REF,
+      );
+      expect(ref, 'in-scope reference was dropped (nil-named-dictionary regression)').toBeDefined();
+      expect(ref?.newSource).toContain(`${ANON_RENAMED} new`);
+    } finally {
+      removeAnonymousDictionary();
+    }
+  });
 });

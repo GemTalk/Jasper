@@ -188,6 +188,32 @@ GsRefactoringEnvironmentTest >> testDictionaryScopeMembershipIsByIdentityNotName
 ]
 
 { #category : 'tests' }
+GsRefactoringEnvironmentTest >> testDictionaryScopeCheckSkipsAnAnonymousDictionary [
+	"An unnamed (anonymous) SymbolDictionary on the symbol list has a nil name.
+	 The dictionary-scope check must skip it, not send #asSymbol to nil and abort
+	 the scan for every dictionary-scoped rename -- even when the real target lives
+	 in a normal, named dictionary. Self-contained: the anonymous dictionary (and the
+	 fixture class it holds) are removed in an ensure: so nothing leaks into the stone."
+	| sl env anon foo |
+	sl := System myUserProfile symbolList.
+	anon := SymbolDictionary new.
+	self assert: anon name isNil.
+	[sl add: anon.
+	 foo := Object subclass: 'GsEnvAnonScopeFixture'
+		instVarNames: #() classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: anon.
+	 env := GsRefactoringEnvironment new.
+
+	 "The scan completes past the nil-named dictionary rather than raising."
+	 self deny: (env class: foo isDefinedInDictionaryNamed: #GsEnvAnonNoSuchDict_ZZZ).
+	 "And a class in a normal named dictionary is still resolved correctly."
+	 self assert: (env class: self superFixture isDefinedInDictionaryNamed: #UserGlobals)]
+		ensure: [
+			anon removeKey: #GsEnvAnonScopeFixture ifAbsent: [].
+			sl remove: anon ifAbsent: []]
+]
+
+{ #category : 'tests' }
 GsRefactoringEnvironmentTest >> testFindsInstanceMethodsThatReadOrWriteTheInstVar [
 	| sels |
 	sels := GsRefactoringEnvironment new instanceMethodsAccessing: #alpha inClass: self superFixture.
