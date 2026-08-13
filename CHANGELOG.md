@@ -4,6 +4,10 @@ All notable changes to the **GemStone Smalltalk** extension will be documented i
 
 ## [Unreleased]
 
+### Changed
+
+- **The GemStone Explorer is now the browser you meet first.** The two buttons that advertised the classic System Browser are gone: the inline action on session rows in **Logins & Sessions**, and the `$(book)` item in the status bar. The Explorer — the supported way to browse and edit code — is what you now discover instead of the older five-column browser. The System Browser itself is unchanged and still available via **Cmd+K B** (Ctrl+K B) or **GemStone: Open System Browser (Classic)** in the Command Palette, retitled so it's clear which browser it opens. Documentation follows suit: the README documents the Explorer in its own section, and the walkthrough, the **Welcome to GemStone Smalltalk** tutorial, class sync, the inspector, and Jupyter all point at it — each also saying where the Explorer lives, since it has its own activity-bar icon rather than sitting in the GemStone sidebar. Two setting descriptions were corrected as well: `gemstone.classSync.readOnlyMirror` no longer sends you to the System Browser to edit, and `gemstone.maxEnvironment` no longer describes itself as browser-only when it governs the Explorer and the hover, CodeLens, and Go to Definition providers too. ([#421](https://github.com/GemTalk/Jasper/issues/421))
+
 ## [1.8.10] - 2026-07-31
 
 ### Added

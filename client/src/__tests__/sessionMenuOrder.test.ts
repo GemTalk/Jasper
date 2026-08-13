@@ -37,7 +37,6 @@ describe('session row inline button order', () => {
     const order = inlineOrderFor('viewItem == gemstoneSession');
 
     expect(order).toEqual([
-      'gemstone.openBrowser',
       'gemstone.sessionOpenWorkspace',
       'gemstone.sessionCommit',
       'gemstone.sessionAbort',
@@ -45,6 +44,10 @@ describe('session row inline button order', () => {
       'gemstone.sessionLogout',
     ]);
   });
+
+  // The classic System Browser's absence from this row (#421) is guarded in
+  // browserDiscoverability421.test.ts, together with the status-bar half and the
+  // reachability it must keep — one place, so the two halves cannot drift apart.
 
   it('keeps the rare backup and restore actions off the inline row, paired in a context-menu group', () => {
     const sessionItems = itemContext.filter((m) =>

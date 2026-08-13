@@ -130,7 +130,6 @@ Each login is a row in the tree; click **Login** to start a session, which appea
 
 - **Commit** / **Abort** — transaction control
 - **Ping** — confirm the session is still active and responsive
-- **Open Browser** — launch the System Browser for this session
 - **Logout** — disconnect
 - **Export** and **Make Active Session** (context menu)
 
@@ -138,7 +137,7 @@ The active session (used for code execution) is highlighted, and the status bar 
 
 #### Single vs. multiple sessions
 
-By default Jasper runs in **single-session mode**: each login may have at most one session at a time. This keeps a simpler mental model — there is one session, so the active session, the System Browser, and any open workspace can never point at different sessions.
+By default Jasper runs in **single-session mode**: each login may have at most one session at a time. This keeps a simpler mental model — there is one session, so the active session, the GemStone Explorer, and any open workspace can never point at different sessions.
 
 If you need concurrent connections, enable the **beta** multiple-session mode:
 
@@ -149,7 +148,7 @@ If you need concurrent connections, enable the **beta** multiple-session mode:
 
 The only difference is cardinality: a login may now have several session children, and its **Login** action stays available while connected so you can start more.
 
-> **Note:** In multiple-session mode, an open workspace/editor stays bound to the session that opened it even after you switch the active session, so the active session, browser, and an open editor can point at different sessions at once. If you use a custom `gemstone.exportPath`, include the `{session}` variable so concurrent sessions don't overwrite each other's exported files.
+> **Note:** In multiple-session mode, an open workspace/editor stays bound to the session that opened it even after you switch the active session, so the active session, the Explorer, and an open editor can point at different sessions at once. If you use a custom `gemstone.exportPath`, include the `{session}` variable so concurrent sessions don't overwrite each other's exported files.
 
 ### Code Execution
 
@@ -165,9 +164,26 @@ By default, **Display It** shows its result as a non-destructive inline overlay 
 
 Long-running expressions show a progress notification with soft-break and hard-break options. The **GemStone Transcript** output channel captures transcript output from the session.
 
+### GemStone Explorer
+
+The **GemStone Explorer** is the primary way to browse and edit code, and the view to reach for first. It lives in its own activity-bar container as a set of linked panes — **Dictionaries**, **Class Categories**, **Classes**, **Hierarchy**, and **Methods** — plus **Open Editors** for what you have open.
+
+Selecting down the panes narrows what the next one shows. Click a method to open its source; **Cmd+S** (Ctrl+S) compiles it back to GemStone. Class definitions and comments are editable the same way.
+
+Beyond browsing, the Explorer is where the code-changing operations live:
+
+- Filter any pane by name, with `*` as a wildcard, plus `reads:`/`writes:`/`accesses:` in the Methods pane to find the methods touching an instance variable
+- Group methods by category, or list them flat
+- Add, rename, and delete dictionaries, class categories, classes, methods, and instance/class variables
+- The refactorings — rename, extract/inline method and temporary, change signature, move/push up/push down method, instance-variable structure changes, extract superclass, split class — each previewed before it is applied
+- Browse senders, implementors, references, and the class hierarchy; run SUnit tests on a class
+- Drag and drop methods between categories, and classes between dictionaries
+
 ### System Browser
 
-Open with **Cmd+K B** (Ctrl+K B) or from a session's inline button. The browser provides a five-column layout:
+> **Note:** the System Browser is the older, five-column browser that predates the **GemStone Explorer** above. It still works and is still maintained, but the Explorer is the supported experience and gets the new features — prefer it unless you specifically want this layout.
+
+Open with **Cmd+K B** (Ctrl+K B), or from the Command Palette via **GemStone: Open System Browser (Classic)**. It is deliberately not offered as a button anywhere, so the Explorer is what you meet first. The browser provides a five-column layout:
 
 - **Dictionaries** — your symbol list dictionaries
 - **Class Categories** — classes grouped by category
@@ -188,7 +204,7 @@ Context menu operations include:
 
 ### Object Inspector
 
-The **Inspector** sidebar view displays GemStone objects with drill-down into named and indexed instance variables. Pin objects via **Inspect It** or by clicking globals in the browser. Large collections are paginated.
+The **Inspector** sidebar view displays GemStone objects with drill-down into named and indexed instance variables. Pin objects via **Inspect It** or by clicking globals in the Explorer. Large collections are paginated.
 
 #### Enhanced Inspector
 
@@ -231,7 +247,7 @@ The extension integrates with VS Code's native Test Explorer:
 
 ### Jupyter Notebooks (Smalltalk and Grail Python)
 
-Jasper registers two kernels with Microsoft's [Jupyter extension](https://marketplace.visualstudio.com/items?itemName=ms-toolsai.jupyter). Open any `.ipynb` notebook and pick one from the kernel picker; cells execute in the active GemStone session, so notebook code sees — and can modify — the same objects as the System Browser and Display It. Compile and runtime errors appear as cell error outputs.
+Jasper registers two kernels with Microsoft's [Jupyter extension](https://marketplace.visualstudio.com/items?itemName=ms-toolsai.jupyter). Open any `.ipynb` notebook and pick one from the kernel picker; cells execute in the active GemStone session, so notebook code sees — and can modify — the same objects as the GemStone Explorer and Display It. Compile and runtime errors appear as cell error outputs.
 
 **GemStone Smalltalk** runs each cell as an independent doit — multi-statement bodies are fine, and the value of the last statement is printed as the cell output. There is no notebook-local variable scope (Smalltalk has no REPL globals concept); state persists the way it does everywhere else in the session, e.g. `UserGlobals at: #x put: ...`, class definitions, and commits.
 
@@ -247,7 +263,7 @@ Jasper keeps a local mirror of a session's classes as `.gs` files in Topaz forma
 
 The mirror syncs **incrementally**: Jasper diffs a server-side manifest of per-class hashes against the last sync and re-fetches only what changed, so login/commit/abort stay fast even on a large schema over a slow connection. It's kept across logout (reconnecting re-syncs the difference) and is updated immediately as you edit, so search reflects a change before you commit. A per-login **Sync classes** toggle (on by default) turns the mirror off for slow/remote connections, where server-side search still works.
 
-Exported `.gs` files are **read-only on disk** by default (`chmod 0o444`) — not for editing; disabling `gemstone.classSync.readOnlyMirror` skips the permission changes, roughly halving the filesystem operations per class on slow or network filesystems. Edit methods through the **System Browser**, which round-trips through the `gemstone://` virtual filesystem and compiles on save. Creating a new `.gs` file under a dictionary directory does still file in a class template; deleting one deletes the class in GemStone.
+Exported `.gs` files are **read-only on disk** by default (`chmod 0o444`) — not for editing; disabling `gemstone.classSync.readOnlyMirror` skips the permission changes, roughly halving the filesystem operations per class on slow or network filesystems. Edit methods through the **GemStone Explorer**, which round-trips through the `gemstone://` virtual filesystem and compiles on save. Creating a new `.gs` file under a dictionary directory does still file in a class template; deleting one deletes the class in GemStone.
 
 ## Claude / MCP Integration
 
