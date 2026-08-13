@@ -96,10 +96,9 @@ export function supportsEnhancedInspector(stoneVersion: string | undefined): boo
 }
 
 /**
- * The payload files, in dependency order — must match the `input` order in
- * docs/enhancedInspectorSupport/load_enhanced_inspector_support.sh. The files themselves live in
- * resources/enhancedInspector/. Earlier files define classes and behavior that
- * later files depend on.
+ * The payload files, in dependency order — this array is the sole authority on
+ * load order. The files themselves live in resources/enhancedInspector/.
+ * Earlier files define classes and behavior that later files depend on.
  */
 export const ENHANCED_INSPECTOR_FILES: readonly string[] = [
   'Announcements.gs',

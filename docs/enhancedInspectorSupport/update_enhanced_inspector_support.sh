@@ -96,4 +96,5 @@ echo "Applying Jasper transforms (attribution headers + Globals->Published)..."
 
 echo ""
 echo "Update complete. Files written to $PAYLOAD_DIR"
-echo "Use load_enhanced_inspector_support.sh to load these into a stone."
+echo "Run the \"Install Server Support (Enhanced Inspector + Refactoring)\" command"
+echo "(gemstone.installServerSupport) in the extension to load these into a stone."
