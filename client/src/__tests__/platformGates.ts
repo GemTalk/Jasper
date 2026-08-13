@@ -4,13 +4,13 @@ const isSupportedPosixPlatform = process.platform === 'linux' || process.platfor
 
 /**
  * Wraps a `describe` block that only makes sense on a POSIX platform we've
- * validated socket behavior on (Linux/macOS), e.g. behavior backed by real
- * Unix domain sockets or filesystem paths that have no equivalent on Windows
- * named pipes. This is an allow-list, not a POSIX-detection check: other
- * POSIX platforms (freebsd, aix, sunos, ...) are deliberately excluded
- * because we haven't validated socket behavior there, not because they
- * aren't POSIX. Runs the block's tests normally on Linux/macOS; reports them
- * as skipped elsewhere.
+ * validated on (Linux/macOS): behavior backed by real Unix domain sockets or
+ * filesystem paths that have no equivalent on Windows (named pipes instead of
+ * sockets; `\` as a path separator instead of a legal filename character).
+ * This is an allow-list, not a POSIX-detection check: other POSIX platforms
+ * (freebsd, aix, sunos, ...) are deliberately excluded because we haven't
+ * validated this behavior there, not because they aren't POSIX. Runs the
+ * block's tests normally on Linux/macOS; reports them as skipped elsewhere.
  */
 export const onSupportedPosixDescribe: ReturnType<typeof describe.runIf> =
   describe.runIf(isSupportedPosixPlatform);

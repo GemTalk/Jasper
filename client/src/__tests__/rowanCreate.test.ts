@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { createRowanProject } from '../rowanCreate';
+import { onSupportedPosixIt } from './platformGates';
 
 const dirs: string[] = [];
 function tmp(): string {
@@ -117,7 +118,13 @@ describe('createRowanProject', () => {
     expect(spec).toContain("#projectName : 'O\\'Hara',");
   });
 
-  it('backslash-escapes a backslash in the project name', () => {
+  // A backslash is a plain filename character on POSIX but a path separator
+  // on Windows, so a name containing one can't be used as a spec's filename
+  // there. Not a real-world gap: every caller of createRowanProject already
+  // rejects '\' and '/' in the name before it gets here (see
+  // extension.ts's rowanNewProject input validation and rowanInitHere's use
+  // of path.basename).
+  onSupportedPosixIt('backslash-escapes a backslash in the project name', () => {
     const dir = tmp();
 
     createRowanProject(dir, 'a\\b');
