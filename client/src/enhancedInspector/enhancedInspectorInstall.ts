@@ -7,13 +7,11 @@
  * the file itself), in the dependency order the topaz loader uses, then the
  * work is committed and verified.
  *
- * Why server-side `GsFileIn` rather than client-side per-method compilation:
- * the payload is ~520 classes and ~3,700 methods. Compiling each over the GCI
- * one round-trip at a time blocks the extension host for thousands of
- * synchronous calls — long enough to freeze the UI and trip VS Code's
- * unresponsiveness watchdog. `GsFileIn` does all of that work inside the gem in
- * ~one call per file (near-instant), and yields between files keep the host
- * responsive and the progress notification live.
+ * Server-side `GsFileIn` (rather than client-side per-method compilation) is
+ * what keeps ~520 classes / ~3,700 methods from freezing the extension host.
+ *
+ * @see docs/explanation/enhanced-inspector.md for why the payload is vendored
+ * and filed in this way rather than loaded live.
  *
  * The payload installs persistent classes (into the dedicated
  * `GsEnhancedInspector` dictionary, created and shared here before the file-in)
@@ -40,13 +38,11 @@ import {
 /**
  * Minimum GemStone version the Enhanced Inspector support is limited to.
  *
- * The vendored GT payload requires kernel classes that only exist in 3.7+
- * (e.g. `GcFinalizeNotification`), and — more subtly — on stones before 3.7.5
- * string literals in GCI-compiled queries compile as Unicode, which the
- * platform refuses to `=`-compare against the byte-String dictionary keys the
- * payload builds. That mismatch makes the inspector return no views. 3.7.5 is
- * the first release where the whole pipeline (install + views) works, so we gate
- * on it rather than trying to paper over the platform behavior.
+ * Needs kernel classes only present in 3.7+ (e.g. `GcFinalizeNotification`),
+ * plus a non-obvious platform behavior below 3.7.5 that makes the inspector
+ * silently return no views even though install succeeds.
+ *
+ * @see docs/explanation/enhanced-inspector.md#the-gemstone-375-version-gate
  */
 export const ENHANCED_INSPECTOR_MIN_VERSION = '3.7.5';
 
@@ -59,10 +55,11 @@ export const ENHANCED_INSPECTOR_MIN_VERSION = '3.7.5';
  * (`inDictionary: GsEnhancedInspector`, produced by
  * gs-src/enhancedInspector/build/apply_jasper_transforms.sh), so the installer
  * creates and binds it — and shares it into every user's symbol list — BEFORE
- * filing in, exactly as the refactoring loader does. Isolating the classes here
- * (rather than commingling them in the shared `Published` dictionary, as an
- * earlier build did) means the whole payload can be removed cleanly by dropping
- * this one dictionary from every symbol list.
+ * filing in, exactly as the refactoring loader does.
+ *
+ * @see docs/explanation/enhanced-inspector.md for why a dedicated dictionary
+ * (rather than the shared `Published` an earlier build used) is what enables a
+ * clean uninstall.
  */
 export const ENHANCED_INSPECTOR_DICTIONARY = 'GsEnhancedInspector';
 
@@ -99,6 +96,8 @@ export function supportsEnhancedInspector(stoneVersion: string | undefined): boo
  * The payload files, in dependency order — this array is the sole authority on
  * load order. The files themselves live in resources/enhancedInspector/.
  * Earlier files define classes and behavior that later files depend on.
+ *
+ * @see docs/explanation/enhanced-inspector.md#file-load-order-is-load-bearing
  */
 export const ENHANCED_INSPECTOR_FILES: readonly string[] = [
   'Announcements.gs',
@@ -118,11 +117,12 @@ export const ENHANCED_INSPECTOR_FILES: readonly string[] = [
  * dictionary object into every user's symbol list — the mirror of
  * `GsRefactoringLoader>>ensureDictionary` + `shareDictionary:`.
  *
- * It also MIGRATES a stone installed by the earlier `Published`-placement build:
- * any GToolkit-categorized class still sitting in the shared `Published`
- * dictionary is removed, so the freshly filed-in copies in `GsEnhancedInspector`
- * (added at the end of the symbol list) are not shadowed by stale earlier-in-list
- * copies, and nothing is left behind to survive a later dictionary-drop uninstall.
+ * It also MIGRATES a stone installed by the earlier `Published`-placement
+ * build, so nothing stale shadows the fresh classes or survives a later
+ * dictionary-drop uninstall.
+ *
+ * @see docs/explanation/enhanced-inspector.md#migrating-a-legacy-published-placement-install
+ * for why the migration is gated the way it is below.
  *
  * Ends in a String so `executeFetchString` can fetch the result. Idempotent.
  */
@@ -140,20 +140,16 @@ AllUsers do: [:p |
 	(p symbolList detect: [:d | d name == sym] ifNone: [nil]) isNil
 		ifTrue: [ p insertDictionary: dict at: p symbolList size + 1 ] ].
 pub := list detect: [:d | d name == #Published] ifNone: [nil].
-"Legacy migration ONLY. Gate on a marker the earlier build is known to have bound INTO
- Published -- not on the mere presence of a GToolkit-categorized class -- so a stone that
- never carried the old placement is never swept. On a fresh install this whole branch is
- skipped, which is the common case and the one where an over-broad sweep could only do harm."
+"Legacy migration ONLY, gated on a marker the earlier build is known to have bound
+ INTO Published (not on the mere presence of a GToolkit-categorized class), so a
+ fresh install never sweeps. See docs/explanation/enhanced-inspector.md for why."
 (pub notNil and: [pub includesKey: #GtRemotePhlowViewedObject]) ifTrue: [
 	pub keys asArray do: [:k |
 		| v |
 		v := pub at: k ifAbsent: [nil].
-		"NB the class categories are a BARE 'GToolkit-...' ('GToolkit-RemotePhlow-DeclarativeViews'
-		 and friends); only the payload's EXTENSION-METHOD categories carry the leading '*'. So the
-		 uninstall snippet's '*GToolkit' anchor cannot be reused here -- it would match no class and
-		 silently skip the migration. The residual risk (a user's own Published class filed under a
-		 GToolkit... category) is accepted because the gate above means this only runs on a stone
-		 that demonstrably carried the old placement."
+		"Class categories here are bare 'GToolkit-...'; only the payload's
+		 extension-method categories carry a leading '*', so the uninstall
+		 snippet's '*GToolkit' anchor can't be reused for this match."
 		((v isKindOf: Class)
 			and: [((v category ifNil: ['']) asString beginsWith: 'GToolkit-')])
 				ifTrue: [ pub removeKey: k ] ] ].
