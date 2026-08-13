@@ -1,6 +1,20 @@
 import { QueryExecutor } from '../../queries/types';
 import { AsyncQueryExecutor } from './previewRenameMethod';
 import { classLookupExpr, escapeString } from '../../queries/util';
+import { Accessor } from './addAccessors';
+
+/** Smalltalk for an Array of #(selector source) pairs the engine compiles onto the new
+ *  class version inside the apply transaction. Built via an OrderedCollection (not a `{}`
+ *  brace array) so it is robust on the 3.6.x matrix regardless of accessor count. */
+function accessorPairsExpr(accessors: Accessor[]): string {
+  if (accessors.length === 0) return '#()';
+  const adds = accessors
+    .map(
+      (a) => `add: (Array with: '${escapeString(a.selector)}' with: '${escapeString(a.source)}')`,
+    )
+    .join('; ');
+  return `((OrderedCollection new) ${adds}; yourself) asArray`;
+}
 
 // Add / remove instance-variable (catalog V1) query builders. The engine
 // (GsInstVarRefactoring) is addressed by an operation and a source class + variable name.
@@ -85,12 +99,17 @@ export function applyInstVar(
   options: string[] | null,
   migrate: boolean,
   deleteHistory: boolean,
+  // Getter/setter to compile onto the new class version IN THE SAME transaction as the
+  // structural change (so an add-with-accessors commits or aborts as one unit). Empty
+  // when the user declined accessors.
+  accessors: Accessor[] = [],
 ): Promise<string> {
   const ids = deselectedIds.map((id) => `'${escapeString(id)}'`).join(' ');
   const code =
     `GsInstVarRefactoring applyForToken: '${escapeString(token)}' ` +
     `deselected: #(${ids}) options: ${optionsExpr(options)} ` +
-    `migrate: ${migrate ? 'true' : 'false'} deleteHistory: ${deleteHistory ? 'true' : 'false'}`;
+    `migrate: ${migrate ? 'true' : 'false'} deleteHistory: ${deleteHistory ? 'true' : 'false'} ` +
+    `accessors: ${accessorPairsExpr(accessors)}`;
   return execute(`applyInstVar(${token} migrate=${migrate} delHist=${deleteHistory})`, code);
 }
 

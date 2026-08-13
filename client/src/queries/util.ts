@@ -116,3 +116,21 @@ export function classLookupOrRaiseExpr(className: string, dictName?: string): st
   return `cls := ${classLookupExpr(className, dictName)}.
 cls isNil ifTrue: [^Error signal: 'Test class ${esc}${where} not found'].`;
 }
+
+/** A Smalltalk EXPRESSION evaluating to the 1-based SymbolList index that binds the
+ *  class object held in temp `classVar` BY IDENTITY, or 0 when no dictionary binds it
+ *  under its own name. `classVar` names a Smalltalk temp the caller has already set to
+ *  the class. This is the single home for "which SymbolList slot holds THIS class
+ *  object" — resolveClassReference, getDefiningClassOf{Inst,Class}Var, and
+ *  classDefiningDictionaryName all resolve it, and a change to the identity idiom (the
+ *  `at:ifAbsent:` / `==` shape, or the Unicode-safe `name asSymbol` comparison) should
+ *  land here once rather than in each. Compared by identity (`==`) so a name shadowed
+ *  across dictionaries resolves to the slot holding THIS class, not a same-named one. */
+export function symbolListIndexOfClassExpr(classVar: string): string {
+  return `([:sl | | idx |
+    idx := 0.
+    1 to: sl size do: [:i |
+      (idx = 0 and: [((sl at: i) at: ${classVar} name asSymbol ifAbsent: [nil]) == ${classVar}])
+        ifTrue: [idx := i]].
+    idx] value: System myUserProfile symbolList)`;
+}

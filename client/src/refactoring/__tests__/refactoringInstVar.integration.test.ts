@@ -141,6 +141,64 @@ r := (System myUserProfile symbolList objectNamed: #GsInstVarRefactoringTest) su
     expect(hasIvar(BASE, 'tally')).toBe(true);
   });
 
+  it('compiles the accessors onto the new class version in the same apply', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+
+    defineFixture();
+
+    parseStartPreview(
+      await startInstVarPreview(
+        asyncExec,
+        'add',
+        BASE,
+        'tally',
+        'xivit-acc',
+        PREVIEW_PAGE_BYTES,
+        userIndex(),
+      ),
+    );
+    const result = parseApplyResult(
+      await applyInstVar(asyncExec, 'xivit-acc', [], null, false, false, [
+        { selector: 'tally', source: 'tally\n\t^tally' },
+        { selector: 'tally:', source: 'tally: aValue\n\ttally := aValue' },
+      ]),
+    );
+
+    expect(result.failed).toEqual([]);
+    expect(hasIvar(BASE, 'tally')).toBe(true);
+    expect(includesSelector(BASE, 'tally')).toBe(true); // getter rode the same apply
+    expect(includesSelector(BASE, 'tally:')).toBe(true); // setter too
+  });
+
+  it('surfaces a failure and installs nothing extra when an accessor cannot compile', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+
+    defineFixture();
+
+    parseStartPreview(
+      await startInstVarPreview(
+        asyncExec,
+        'add',
+        BASE,
+        'tally',
+        'xivit-badacc',
+        PREVIEW_PAGE_BYTES,
+        userIndex(),
+      ),
+    );
+    const result = parseApplyResult(
+      await applyInstVar(asyncExec, 'xivit-badacc', [], null, false, false, [
+        { selector: 'tally', source: 'tally\n\t^ )( not parseable' },
+      ]),
+    );
+
+    // The accessor failure is surfaced (this is what holds the commit back), nothing was
+    // committed, and the un-compilable accessor is not installed.
+    expect(result.failed.length).toBeGreaterThan(0);
+    expect(result.committed).toBe(false);
+    expect(includesSelector(BASE, 'tally')).toBe(false);
+  });
+
   it('removes an instance variable, reporting and dropping the methods that used it', async (ctx) => {
     requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 

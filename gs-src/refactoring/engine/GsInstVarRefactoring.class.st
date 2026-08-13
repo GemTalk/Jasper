@@ -110,9 +110,17 @@ GsInstVarRefactoring class >> pageForToken: token from: startIndex maxBytes: max
 
 { #category : 'paginated preview' }
 GsInstVarRefactoring class >> applyForToken: token deselected: deselectedIds options: optsArray migrate: aBool deleteHistory: dBool [
+	^self applyForToken: token deselected: deselectedIds options: optsArray migrate: aBool deleteHistory: dBool accessors: #()
+]
+
+{ #category : 'paginated preview' }
+GsInstVarRefactoring class >> applyForToken: token deselected: deselectedIds options: optsArray migrate: aBool deleteHistory: dBool accessors: accessorPairs [
+	"accessorPairs is an Array of #(selector source) pairs: getter/setter methods to compile
+	 onto the acted-on class IN THE SAME transaction as the structural change, so an
+	 add-with-accessors commits (or aborts) as one unit. Empty when the user declined accessors."
 	^(SessionTemps current at: token asSymbol ifAbsent: [nil])
 		ifNil: ['{"applied":0,"failed":[],"dropped":[],"committed":false,"error":"preview session expired"}']
-		ifNotNil: [:ref | ref applyDeselected: deselectedIds options: optsArray migrate: aBool deleteHistory: dBool]
+		ifNotNil: [:ref | ref applyDeselected: deselectedIds options: optsArray migrate: aBool deleteHistory: dBool accessors: accessorPairs]
 ]
 
 { #category : 'paginated preview' }
@@ -465,6 +473,12 @@ GsInstVarRefactoring >> pageJsonFrom: startIndex maxBytes: maxBytes [
 
 { #category : 'applying' }
 GsInstVarRefactoring >> applyDeselected: deselectedIds options: optsArray migrate: aBool deleteHistory: dBool [
+	"Backward-compatible apply with no accessors (the pre-accessors signature)."
+	^self applyDeselected: deselectedIds options: optsArray migrate: aBool deleteHistory: dBool accessors: #()
+]
+
+{ #category : 'applying' }
+GsInstVarRefactoring >> applyDeselected: deselectedIds options: optsArray migrate: aBool deleteHistory: dBool accessors: accessorPairs [
 	"Apply EVERY staged change in the stone. An instance-variable add/remove is ALL-OR-NOTHING
 	 (the class-shape edits and the descendant reparents must move together), so a deselection is
 	 ignored. optsArray (nil or an Array of Strings) replaces the acted-on class's options; nil
@@ -500,8 +514,12 @@ GsInstVarRefactoring >> applyDeselected: deselectedIds options: optsArray migrat
 			on: Error do: [:e |
 				failures add: (Array with: change id with: change className with: e messageText)].
 		index := index + 1].
+	"Accessors ride the SAME transaction as the structural change: compile them now, before
+	 any commit. A compile error is recorded in `failures`, which holds the commit back -- so
+	 an add-with-accessors either commits with its accessors or commits nothing at all."
 	failures isEmpty ifTrue: [
-		(aBool or: [dBool]) ifTrue: [
+		self compileAccessors: accessorPairs onFailures: failures.
+		(failures isEmpty and: [aBool or: [dBool]]) ifTrue: [
 			self commitStructuralThenMigrate: aBool deleteHistory: dBool on: failures]].
 	"partiallyApplied means a failure left work behind -- classes already versioned in the
 	 transaction, or already committed if the failure struck AFTER the commit (a migrate /
@@ -674,6 +692,32 @@ GsInstVarRefactoring >> copyMethod: sel from: srcCls to: dstCls meta: isMeta [
 		ifFalse: [dropped add: (Array
 			with: (isMeta ifTrue: [dstCls thisClass name asString, ' class'] ifFalse: [dstCls name asString])
 			with: sel asString)]
+]
+
+{ #category : 'applying' }
+GsInstVarRefactoring >> compileAccessors: accessorPairs onFailures: failures [
+	"Compile each getter/setter for the just-added instance variable onto the NEW version of the
+	 acted-on class (oldToNew maps the old defining class to its new version), in the current
+	 transaction so they share its commit. accessorPairs is an Array of #(selector source); a
+	 selector already present is skipped, so re-adding a variable whose accessors exist is a no-op.
+	 compileMethod: ANSWERS nil (or an empty Array) on success and a non-empty error Array on
+	 failure -- a failure is recorded in `failures`, which makes the caller skip the commit, so the
+	 accessors and the instance-variable change are committed together or not at all."
+	| target |
+	(accessorPairs isNil or: [accessorPairs isEmpty]) ifTrue: [^self].
+	target := oldToNew at: definingClass ifAbsent: [definingClass].
+	accessorPairs do: [:pair | | sel result |
+		sel := (pair at: 1) asString.
+		(target includesSelector: sel asSymbol) ifFalse: [
+			result := target
+				compileMethod: (pair at: 2) asString
+				dictionaries: System myUserProfile symbolList
+				category: 'accessing'.
+			(result isNil or: [(result isKindOf: Array) and: [result isEmpty]])
+				ifFalse: [failures add: (Array
+					with: 'accessor:', sel
+					with: target name asString
+					with: 'accessor ', sel, ' could not be compiled onto the new class version')]]]
 ]
 
 { #category : 'applying' }

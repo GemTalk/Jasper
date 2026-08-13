@@ -577,3 +577,47 @@ GsChangeSignatureRefactoringTest >> testMultiLineSenderRegionIsRebuiltOnOneLine 
 	self assert: change notNil.
 	self assert: change newSource includesSubstring: 'moveY: 222 x: 111'
 ]
+
+{ #category : 'tests' }
+GsChangeSignatureRefactoringTest >> testDictionaryScopeExcludesSameNamedImplementorInAnotherDictionary [
+	"Regression for issue #328 item 9, the change-signature call site. A class name
+	 bound in two dictionaries (a shadow) must not restage the sibling's same-named
+	 implementor: changing the signature in dictionary A's scope stages ONLY A's
+	 implementor, and B's same-named class is counted out of scope. This pins the
+	 #dictionary branch of isClassInScope: (delegating to the identity helper
+	 GsRefactoringEnvironment>>class:isDefinedInDictionaryNamed:) at THIS call site,
+	 not only transitively. Self-contained: the shadow dictionaries are removed in an
+	 ensure: so a failure leaks nothing."
+	| sl dictA dictB fooA renames ref cs |
+	sl := System myUserProfile symbolList.
+	dictA := SymbolDictionary new name: #GsCSScopeDictA; yourself.
+	dictB := SymbolDictionary new name: #GsCSScopeDictB; yourself.
+	[sl add: dictA. sl add: dictB.
+	 fooA := Object subclass: 'GsCSShadow'
+		instVarNames: #() classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: dictA.
+	 Object subclass: 'GsCSShadow'
+		instVarNames: #() classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: dictB.
+	 self compile: 'shadowA: a b: b ^1' in: fooA.
+	 self compile: 'shadowA: a b: b ^2' in: (dictB at: #GsCSShadow).
+	 ref := GsChangeSignatureRefactoring
+		class: fooA meta: false changeSelector: #shadowA:b:
+		toParts: #('shadowB:' 'a:') permutation: #(2 1)
+		argNames: #('' '') defaults: #('' '') dictionaryScope: 'GsCSScopeDictA'.
+	 cs := ref changeSet.
+	 renames := cs changes select: [:c | c kind == #methodRename].
+
+	 "exactly ONE implementor restaged -- not the shadow sibling too"
+	 self assert: renames size equals: 1.
+	 "and it is dictionary A's class (body returns 1), never B's (returns 2)"
+	 self assert: renames first oldSource includesSubstring: '^1'.
+	 self deny: renames first oldSource includesSubstring: '^2'.
+	 "B's same-named implementor is counted out of scope, not silently dropped"
+	 self assert: ref outOfScopeImplementorCount equals: 1]
+		ensure: [
+			dictA removeKey: #GsCSShadow ifAbsent: [].
+			dictB removeKey: #GsCSShadow ifAbsent: [].
+			sl remove: dictA ifAbsent: [].
+			sl remove: dictB ifAbsent: []]
+]

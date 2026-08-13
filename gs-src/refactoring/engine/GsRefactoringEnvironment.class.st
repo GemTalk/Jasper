@@ -229,6 +229,29 @@ GsRefactoringEnvironment >> dictionariesDefiningClassNamed: aName [
 	^result
 ]
 
+{ #category : 'accessing' }
+GsRefactoringEnvironment >> class: aClass isDefinedInDictionaryNamed: aName [
+	"True iff aClass -- BY IDENTITY -- is the class bound to its own name in a
+	 dictionary named aName. Identity, not name equality: when a name is bound in
+	 more than one dictionary (a shadowed class), a DIFFERENT class of the same
+	 name in another dictionary is NOT in scope. Matching by name alone pulled such
+	 a sibling into a single-dictionary scope, staging it as a duplicate change row
+	 for the 'same' class -- the #dictionary-scope duplicate the rename preview
+	 showed. Dictionary names and the class name are compared as Symbols so the
+	 3.6.x Unicode-comparison trap never bites. An unnamed (anonymous) dictionary has
+	 a nil name -- skip it rather than send #asSymbol to nil and abort the whole scan."
+	| wanted nameSym |
+	wanted := aName asSymbol.
+	nameSym := aClass name asSymbol.
+	self dictionariesDo: [:dict | | dn |
+		dn := dict name.
+		(dn notNil
+			and: [dn asSymbol == wanted
+				and: [(dict at: nameSym ifAbsent: [nil]) == aClass]])
+				ifTrue: [^true]].
+	^false
+]
+
 { #category : 'enumerating' }
 GsRefactoringEnvironment >> dictionariesDo: aBlock [
 	"Evaluate aBlock with each SymbolDictionary on the symbol list, in order."

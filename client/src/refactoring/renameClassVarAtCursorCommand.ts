@@ -2,13 +2,15 @@
  * "Rename Class Variable…" triggered from the METHOD SOURCE EDITOR (the Refactor…
  * code action / command palette): the user puts the cursor on a class variable in
  * a gemstone: method editor, and the existing R4 rename flow (input box →
- * all-or-nothing preview panel → server-side apply, no commit) runs for the
- * editor's class — the same flow the Explorer's class-var-row pencil drives.
+ * all-or-nothing preview panel → server-side apply, no commit) runs — the same flow
+ * the Explorer's class-var-row pencil drives.
  *
- * Simple-but-polite: when the word is NOT a class variable declared on this class,
- * a warning toast says what it is instead — visible-but-inherited (rename belongs
- * to the defining class, since R4 edits the defining class's classVars: clause) or
- * not a class variable at all.
+ * A rename is always reachable: a class variable DECLARED on the editor's class
+ * renames in place (R4 edits that class's classVars: clause); an INHERITED one is
+ * not a dead-end — its defining class is resolved and, after a one-line confirm,
+ * the rename runs there (across that class's whole hierarchy). Only a word that is
+ * not a visible class variable at all is declined, the mirror of the instance-
+ * variable rename in renameInstVarAtCursorCommand.
  */
 import * as vscode from 'vscode';
 import { SessionManager } from '../sessionManager';
@@ -22,6 +24,7 @@ import {
   reloadMethodEditor,
   saveIfDirty,
 } from './renameAtCursorShared';
+import { DefiningClass } from './queries/getDefiningClassOfClassVar';
 
 /** What the shared Explorer rename flow needs to start. */
 export interface ClassVarRenameTarget {
@@ -52,32 +55,74 @@ export async function renameClassVarAtCursorCommand(
   const { parsed, session, dict } = target;
   const name = word.name;
 
-  // Simple membership pre-check: only a class variable DECLARED on this class
-  // proceeds (R4 edits the declaring class's classVars: clause, so a visible-but-
-  // inherited one belongs to its defining class; anything else is not a class-var
-  // rename at all).
+  // Classify the word against the stone: DECLARED here renames in place; INHERITED
+  // is retargeted to its defining class (below); anything that is not a visible
+  // class variable at all is declined. A probe-query failure STOPS with a retry
+  // message rather than falling through: proceeding against the cursor's class would
+  // hand an inherited class variable to the engine on a class that does not declare
+  // it, staging a reference rewrite with no matching declaration — a broken method,
+  // not just an empty preview.
+  let inherited: DefiningClass | undefined;
   try {
     const defined = queries.getDefinedClassVarNames(session, parsed.className, dict);
     if (!defined.includes(name)) {
       const visible = queries.getVisibleClassVarNames(session, parsed.className, dict);
-      if (visible.includes(name)) {
-        refuse(
-          `'${name}' is a class variable INHERITED by ${parsed.className} — rename it on its defining class (its class-variable row in the Explorer).`,
-        );
-      } else {
+      if (!visible.includes(name)) {
         refuse(
           `'${name}' is not a class variable of ${parsed.className}. For an instance variable or a temporary/argument, use those renames.`,
         );
+        return;
       }
-      return;
+      inherited = queries.getDefiningClassOfClassVar(session, parsed.className, name, dict);
+      if (!inherited) {
+        refuse(
+          `'${name}' is inherited by ${parsed.className}, but its defining class could not be resolved — rename it from that class's class-variable row in the Explorer.`,
+        );
+        return;
+      }
     }
   } catch (e: unknown) {
-    // Non-fatal: fall through — the rename flow itself reports "no references".
     logInfo(
-      `[renameClassVar] membership pre-check failed (falling through): ${e instanceof Error ? e.message : String(e)}`,
+      `[renameClassVar] membership pre-check failed: ${e instanceof Error ? e.message : String(e)}`,
     );
+    refuse(
+      `Couldn't determine where '${name}' is defined — a stone query failed. Try again, or rename it from the class's class-variable row in the Explorer.`,
+    );
+    return;
   }
 
-  const applied = await beginRename({ className: parsed.className, classVarName: name, dict });
+  // An inherited class variable renames on its DEFINING class (R4 edits that class's
+  // classVars: clause, across its whole hierarchy). Confirm the retarget first,
+  // since the user invoked this from a subclass method.
+  let renameTarget: ClassVarRenameTarget = {
+    className: parsed.className,
+    classVarName: name,
+    dict,
+  };
+  if (inherited) {
+    // dictIndex 0 means the defining class is not bound under its own name, so there
+    // is no identity-safe handle to it — resolving `inherited.className` by name in
+    // the subclass's dictionary could hit a DIFFERENT class of the same name and
+    // rename the wrong one. Stop rather than guess.
+    if (inherited.dictIndex <= 0) {
+      refuse(
+        `'${name}' is defined on ${inherited.className}, which isn't uniquely bound by name — can't safely target it from here. Rename it from that class's class-variable row in the Explorer.`,
+      );
+      return;
+    }
+    const PROCEED = `Rename on ${inherited.className}…`;
+    const choice = await vscode.window.showInformationMessage(
+      `'${name}' is defined on ${inherited.className}, not ${parsed.className}. Rename it across ${inherited.className} and its subclasses?`,
+      PROCEED,
+    );
+    if (choice !== PROCEED) return;
+    renameTarget = {
+      className: inherited.className,
+      classVarName: name,
+      dict: inherited.dictIndex,
+    };
+  }
+
+  const applied = await beginRename(renameTarget);
   if (applied) await reloadMethodEditor(target.editor);
 }

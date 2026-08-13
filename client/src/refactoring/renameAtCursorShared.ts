@@ -112,16 +112,20 @@ export function resolveMethodEditor(
 }
 
 /** The identifier at the target's position (with its 1-based source offset), or
- *  undefined after refusing when the position is not on an identifier. `subject`
- *  names what the caller renames, for the refusal message. */
+ *  undefined when the position is not on an identifier. `subject` names what the
+ *  caller renames, for the refusal message. By default a miss refuses with a
+ *  warning; pass `{ silent: true }` when the caller treats "no identifier" as a
+ *  valid outcome (the unified-rename dispatcher falls through to Rename Method) and
+ *  so must not flash a spurious "not a variable" warning. */
 export function wordAt(
   target: MethodEditorTarget,
   subject: string,
+  opts?: { silent?: boolean },
 ): { name: string; wordRange: vscode.Range; offset: number } | undefined {
   const document = target.editor.document;
   const wordRange = document.getWordRangeAtPosition(target.at, IDENTIFIER);
   if (!wordRange) {
-    refuse(`Place the cursor on ${subject} name (that spot is not a variable).`);
+    if (!opts?.silent) refuse(`Place the cursor on ${subject} name (that spot is not a variable).`);
     return undefined;
   }
   // 1-based source offset. The engine indexes the stored source by CHARACTER (a
@@ -138,13 +142,29 @@ export function wordAt(
   };
 }
 
-/** Save the editor if it has unsaved edits, so the rename operates on (and later
- *  reloads) the STORED source — never silently discarding the user's edits via the
- *  post-rename reload, and (for the offset-based temp rename) keeping the offset
- *  aligned with what the stone compiled. Answers false (and refuses) if the save
- *  fails. */
+/** Ensure the editor is saved before a refactoring runs, so the refactoring
+ *  operates on (and later reloads) the STORED source — never silently discarding
+ *  the user's edits via the post-rename reload, and (for the offset-based temp
+ *  rename) keeping the offset aligned with what the stone compiled.
+ *
+ *  A refactoring compiles the method to GemStone; that save is durable and a later
+ *  Cancel in the refactoring cannot undo it. So we never save behind the user's
+ *  back: a dirty editor is confirmed first, and the refactoring is aborted (answers
+ *  false) if the user declines. Answers false (and refuses) if the save itself
+ *  fails. A clean editor proceeds with no prompt. */
+export const SAVE_BEFORE_REFACTOR = 'Save and Continue';
+
 export async function saveIfDirty(editor: vscode.TextEditor): Promise<boolean> {
   if (!editor.document.isDirty) return true;
+
+  const choice = await vscode.window.showWarningMessage(
+    'This method has unsaved changes. Refactoring saves them to GemStone first, and ' +
+      'cancelling the refactoring will not undo that save. Save and continue?',
+    { modal: true },
+    SAVE_BEFORE_REFACTOR,
+  );
+  if (choice !== SAVE_BEFORE_REFACTOR) return false;
+
   const saved = await editor.document.save();
   if (!saved) refuse('Save the method before renaming.');
   return saved;
