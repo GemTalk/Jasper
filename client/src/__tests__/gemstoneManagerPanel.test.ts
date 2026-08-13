@@ -1,10 +1,25 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
-vi.mock('../sharedMemoryTreeProvider', () => ({
-  getSharedMemory: () => Promise.resolve({ shmmax: 2 ** 30, shmall: 2 ** 18 }),
-  sharedMemoryStatus: () => ({ configured: true, gbLabel: '1' }),
-}));
+
+/** What this machine reports about shared memory; a test may say otherwise. */
+const machine = vi.hoisted(() => ({ inUseBytes: 512 * 1024 * 1024 }));
+const A_GIGABYTE = 2 ** 30;
+
+// The 1 GB limit configured, expressed the way each probe reports it (shmall
+// counts 4 KB pages). Spreading the real module keeps every other probe the
+// panel reads present: an omitted one used to arrive as an OS section quietly
+// saying it could not look, rather than as a failure here.
+vi.mock('../sharedMemoryTreeProvider', async () => {
+  const actual = await vi.importActual<typeof import('../sharedMemoryTreeProvider')>(
+    '../sharedMemoryTreeProvider',
+  );
+  return {
+    ...actual,
+    getSharedMemory: () => Promise.resolve({ shmmax: 2 ** 30, shmall: 2 ** 18 }),
+    getSharedMemoryInUse: () => Promise.resolve(machine.inUseBytes),
+  };
+});
 
 import * as vscode from 'vscode';
 
@@ -157,12 +172,24 @@ function send(panel: MockPanel, msg: unknown): void {
   handler(msg);
 }
 
+type OsCheck = { key: string; state: string; detail: string };
+type PostedState = { logins: { label: string; running: boolean }[]; os: { checks: OsCheck[] } };
+
 /** The states the panel has pushed to its webview, oldest first. */
-function postedStates(panel: MockPanel): { logins: { label: string }[] }[] {
+function postedStates(panel: MockPanel): PostedState[] {
   return panel.webview.postMessage.mock.calls
-    .map(([msg]) => msg as { command: string; state?: { logins: { label: string }[] } })
+    .map(([msg]) => msg as { command: string; state?: PostedState })
     .filter((msg) => msg.command === 'state')
     .map((msg) => msg.state!);
+}
+
+/** What the latest state says about one operating-system prerequisite. */
+async function osCheck(panel: MockPanel, key: string): Promise<OsCheck> {
+  await vi.waitFor(() => expect(postedStates(panel).length).toBeGreaterThan(0));
+
+  return postedStates(panel)
+    .at(-1)!
+    .os.checks.find((c) => c.key === key)!;
 }
 
 /** Fire the handler the panel registered for configuration changes. */
@@ -182,6 +209,30 @@ describe('GemStone Manager panel', () => {
     const [onDispose] = lastPanel().onDidDispose.mock.calls[0] as [() => void];
     onDispose();
     vi.clearAllMocks();
+    machine.inUseBytes = 512 * 1024 * 1024;
+  });
+
+  it('says how much of the shared-memory limit is still free', async () => {
+    const { panel, adminChanged } = openPanel();
+
+    adminChanged.fire();
+
+    expect(await osCheck(panel, 'sharedMemory')).toMatchObject({
+      state: 'ok',
+      detail: '1 GB · 512 MB free',
+    });
+  });
+
+  it('warns when no room is left for another cache, however high the limit', async () => {
+    machine.inUseBytes = A_GIGABYTE - 40 * 1024 * 1024;
+    const { panel, adminChanged } = openPanel();
+
+    adminChanged.fire();
+
+    expect(await osCheck(panel, 'sharedMemory')).toMatchObject({
+      state: 'warn',
+      detail: '1 GB · 40 MB free — no room for another cache',
+    });
   });
 
   it('says a stone is up even when no database here made it', async () => {

@@ -197,6 +197,32 @@
     </div>`;
   }
 
+  // One row per prerequisite: what it is, what the machine says, and — only when
+  // it is not ok — the one thing that fixes it. This is how the Configure OS tree
+  // read, so a machine that cannot run a stone says which part is wrong.
+  function renderOsChecks(checks) {
+    if (!checks || !checks.length) return '';
+    const rows = checks
+      .map((c) => {
+        const tone = c.state === 'ok' ? 'ok' : c.state === 'warn' ? 'warn' : 'off';
+        const glyph =
+          c.state === 'ok' ? 'pass-filled' : c.state === 'warn' ? 'warning' : 'circle-outline';
+        const remedy = c.remedy
+          ? `<button type="button" class="btn" data-action="osRemedy" data-cmd="${esc(c.remedy.command)}" title="${esc(c.remedy.note ? `${c.remedy.label} — ${c.remedy.note}` : c.remedy.label)}"><span>${esc(c.remedy.label)}</span></button>${
+              c.remedy.note ? `<span class="os-check-note">${esc(c.remedy.note)}</span>` : ''
+            }`
+          : '';
+        return `<li class="os-check">
+          ${mark(glyph, tone, c.label)}
+          <span class="os-check-label">${esc(c.label)}</span>
+          <span class="os-check-detail mono dim">${esc(c.detail)}</span>
+          <span class="os-check-action">${remedy}</span>
+        </li>`;
+      })
+      .join('');
+    return `<ul class="os-checks">${rows}</ul>`;
+  }
+
   function renderOs(os, open, rootPath) {
     if (!os.supported) {
       return section(
@@ -205,19 +231,10 @@
       );
     }
 
-    const smConfigured = os.sharedMemoryConfigured;
-    const smClass = os.unknown ? 'off' : smConfigured ? 'ok' : 'warn';
-    const smText = os.unknown
-      ? 'Shared memory: unknown'
-      : smConfigured
-        ? `Shared memory configured (${esc(os.gbLabel)} GB)`
-        : `Shared memory not configured (< 1 GB)`;
-    const smGlyph =
-      smClass === 'ok' ? 'pass-filled' : smClass === 'warn' ? 'warning' : 'circle-outline';
     const body = `${renderOsRemedy(os)}
+      ${renderOsChecks(os.checks)}
       <dl class="facts">
         <dt>Platform</dt><dd>${esc(os.platformLabel)}</dd>
-        <dt>Shared memory</dt><dd>${mark(smGlyph, smClass, smText)}${smText}</dd>
         ${
           os.unknown
             ? ''

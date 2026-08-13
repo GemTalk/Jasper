@@ -178,6 +178,59 @@ describe('GemStone Manager webview', () => {
 
     expect(root.querySelector('.db-state')!.textContent).toBe('running 20 min');
   });
+  it('offers a remedy only for the prerequisite that failed', () => {
+    const checks = [
+      { key: 'sharedMemory', label: 'Shared memory', state: 'ok', detail: '2.0 GB' },
+      {
+        key: 'removeIpc',
+        label: 'RemoveIPC',
+        state: 'warn',
+        detail: 'yes',
+        remedy: {
+          command: 'gemstone.runSetRemoveIPC',
+          label: 'Run setup script',
+          note: 'requires sudo',
+        },
+      },
+    ];
+
+    const { root, host } = open(state({ os: { ...HEALTHY_OS, checks } }));
+
+    const buttons = [...root.querySelectorAll('[data-action="osRemedy"]')];
+    expect(buttons).toHaveLength(1);
+    (buttons[0] as HTMLButtonElement).click();
+    expect(host.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'osRemedy', action: 'gemstone.runSetRemoveIPC' }),
+    );
+  });
+
+  it('says what each prerequisite currently reports', () => {
+    const checks = [
+      { key: 'wslNetworking', label: 'WSL networking', state: 'warn', detail: 'NAT (172.20.1.5)' },
+    ];
+
+    const { root } = open(state({ os: { ...HEALTHY_OS, checks } }));
+
+    expect(root.querySelector('[data-section="os"]')!.textContent).toContain('NAT (172.20.1.5)');
+  });
+
+  it('warns when the machine has no room for another cache, even over the limit', () => {
+    const noRoom = [
+      {
+        key: 'sharedMemory',
+        label: 'Shared memory',
+        state: 'warn',
+        detail: '1 GB · 40 MB free — no room for another cache',
+      },
+    ];
+
+    const { root } = open(state({ os: { ...HEALTHY_OS, checks: noRoom } }));
+
+    expect(root.querySelector('[data-section="os"]')!.textContent).toContain(
+      'no room for another cache',
+    );
+  });
+
   it('offers to back up a database whose stone is up', () => {
     const { root, host } = open(state({ databases: [database({ stoneRunning: true })] }));
 

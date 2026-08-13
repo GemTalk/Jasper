@@ -20,7 +20,22 @@ import { SysadminStorage } from './sysadminStorage';
 import { VersionManager, CatalogEntry } from './versionManager';
 import { ProcessManager, versionsMatch } from './processManager';
 import { DatabaseManager } from './databaseManager';
-import { getSharedMemory, sharedMemoryStatus } from './sharedMemoryTreeProvider';
+import {
+  getSharedMemory,
+  getSharedMemoryInUse,
+  sharedMemoryStatus,
+  getRemoveIpcConfigured,
+  wslServicesHasGs64ldi,
+  windowsServicesHasGs64ldi,
+} from './sharedMemoryTreeProvider';
+import {
+  needsWsl,
+  getWslInfo,
+  getWslInfoAsync,
+  getWslNetworkInfoCached,
+  invalidateWslCache,
+  invalidateWslNetworkCache,
+} from './wslBridge';
 import { wslListFilesSync } from './wslFs';
 import { GemStoneVersion, GemStoneDatabase, GemStoneProcess } from './sysadminTypes';
 import { GemStoneLogin, loginLabel } from './loginTypes';
@@ -66,6 +81,39 @@ interface OsStatus {
   shmallBytes?: number;
   /** True when shared memory could not be read (e.g. WSL unavailable). */
   unknown: boolean;
+  /**
+   * One row per prerequisite this machine actually has: shared memory
+   * everywhere, RemoveIPC on Linux, the WSL set on Windows. A row that is not
+   * `ok` carries the remedy for that one problem, which is how the Configure OS
+   * tree read — a status and, under it, the thing that fixes it.
+   */
+  checks: OsCheck[];
+}
+
+interface OsCheck {
+  key: string;
+  label: string;
+  state: 'ok' | 'warn' | 'unknown';
+  /** What the machine currently says: '2.0 GB', 'mirrored', 'gs64ldi 50377/tcp'. */
+  detail: string;
+  remedy?: { command: string; label: string; note?: string };
+}
+
+/**
+ * Bytes as a short human reading — the host builds a couple of detail strings.
+ * `gemstoneManagerView.js` carries the same function for the rows it renders
+ * itself: a webview script is not part of the extension bundle and cannot import
+ * from it, so the two are kept deliberately identical rather than merged.
+ */
+function formatBytes(n: number): string {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0;
+  let v = Math.max(0, n);
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i += 1;
+  }
+  return `${v >= 10 || i === 0 ? Math.round(v) : Math.round(v * 10) / 10} ${units[i]}`;
 }
 
 /** Where a render's version rows come from: the disk alone, or the download catalog. */
@@ -186,7 +234,25 @@ type Inbound =
   | { command: 'selectSession'; sessionId: number }
   | { command: 'sessionAction'; sessionId: number; action: string }
   | { command: 'openSettings' }
+  | { command: 'osRemedy'; action: string }
   | { command: 'quickSetup' };
+
+/**
+ * The prerequisite remedies the panel may dispatch — every one the Configure OS
+ * tree offered. As with session actions, the webview sends a command *name*, so
+ * it is matched against this list rather than executed on trust.
+ */
+const OS_REMEDIES: ReadonlySet<string> = new Set([
+  'gemstone.runSetSharedMemory',
+  'gemstone.runSetSharedMemoryLinux',
+  'gemstone.runSetRemoveIPC',
+  'gemstone.upgradeWsl2',
+  'gemstone.updateWslCore',
+  'gemstone.enableMirroredNetworking',
+  'gemstone.writeWslHostsEntry',
+  'gemstone.writeServicesWindows',
+  'gemstone.writeServicesWsl',
+]);
 
 /**
  * The session actions the panel may dispatch — exactly the inline set the sidebar
@@ -403,6 +469,14 @@ export class GemstoneManagerPanel {
         // Refresh is the one place that asks the network again: everything the
         // panel caches is dropped here, so the button means what it says.
         this.catalog = undefined;
+        // The WSL answers are cached, and the OS checklist reads them — so a
+        // refresh has to forget them, or a machine stays "WSL not reachable"
+        // after the user has made it reachable.
+        if (needsWsl()) {
+          invalidateWslCache();
+          invalidateWslNetworkCache();
+          await getWslInfoAsync();
+        }
         await this.postState();
         return;
 
@@ -533,6 +607,11 @@ export class GemstoneManagerPanel {
         return;
 
       // OS prerequisites.
+      case 'osRemedy':
+        if (!OS_REMEDIES.has(msg.action)) return;
+        await vscode.commands.executeCommand(msg.action);
+        await this.postState();
+        return;
       case 'quickSetup':
         await vscode.commands.executeCommand('gemstone.quickSetup');
         await this.postState();
@@ -851,31 +930,152 @@ export class GemstoneManagerPanel {
           ? 'Windows (WSL)'
           : 'Linux';
 
-    let mem: { shmmax: number; shmall: number } | undefined;
-    try {
-      mem = await getSharedMemory();
-    } catch {
-      mem = undefined;
-    }
-    if (!mem) {
-      return {
-        supported,
-        platformLabel,
-        sharedMemoryConfigured: false,
-        gbLabel: '0',
-        unknown: true,
-      };
-    }
+    // Both probes answer undefined when the machine won't say, so there is
+    // nothing here to catch: a rejection would mean the probe itself is broken,
+    // and dressing that up as "could not be read" is how it would stay broken.
+    const [mem, inUse] = await Promise.all([getSharedMemory(), getSharedMemoryInUse()]);
     const { configured, gbLabel } = sharedMemoryStatus(mem);
     return {
       supported,
       platformLabel,
       sharedMemoryConfigured: configured,
       gbLabel,
-      shmmaxBytes: mem.shmmax,
-      shmallBytes: mem.shmall,
-      unknown: false,
+      shmmaxBytes: mem?.shmmax,
+      shmallBytes: mem?.shmall,
+      unknown: !mem,
+      checks: this.buildOsChecks(mem, gbLabel, inUse),
     };
+  }
+
+  /**
+   * One row per prerequisite this machine has. Every remedy the Configure OS
+   * tree offered appears here against the check it fixes, so a machine that
+   * cannot run a stone says which part is wrong rather than only that something
+   * is — and only a failing row carries a button.
+   */
+  private buildOsChecks(
+    mem: { shmmax: number; shmall: number } | undefined,
+    gbLabel: string,
+    inUse: number | undefined,
+  ): OsCheck[] {
+    // shmall is a ceiling for the machine, not for one stone: caches other stones
+    // already hold count against it. A database Jasper creates asks for a 100 MB
+    // cache (SHR_PAGE_CACHE_SIZE_KB), so less than that free means the next start
+    // fails however comfortably the limit itself clears 1 GB.
+    const shmallBytes = mem ? mem.shmall * 4096 : undefined;
+    const free = shmallBytes !== undefined && inUse !== undefined ? shmallBytes - inUse : undefined;
+    const roomForACache = free === undefined || free >= 100 * 1024 * 1024;
+    const headroom = free === undefined ? '' : ` · ${formatBytes(free)} free`;
+    const checks: OsCheck[] = [
+      {
+        key: 'sharedMemory',
+        label: 'Shared memory',
+        state: !mem
+          ? 'unknown'
+          : sharedMemoryStatus(mem).configured && roomForACache
+            ? 'ok'
+            : 'warn',
+        detail: mem
+          ? `${gbLabel} GB${headroom}${roomForACache ? '' : ' — no room for another cache'}`
+          : 'could not be read',
+        remedy: {
+          command:
+            process.platform === 'darwin'
+              ? 'gemstone.runSetSharedMemory'
+              : 'gemstone.runSetSharedMemoryLinux',
+          label: 'Run setup script',
+          note: 'requires sudo',
+        },
+      },
+    ];
+
+    // RemoveIPC is a systemd setting, so it is a Linux question — including the
+    // Linux inside WSL, which is where a Windows install's stone actually runs.
+    if (process.platform === 'linux' || needsWsl()) {
+      const ok = getRemoveIpcConfigured();
+      checks.push({
+        key: 'removeIpc',
+        label: 'RemoveIPC',
+        state: ok ? 'ok' : 'warn',
+        detail: ok ? 'no' : 'yes — systemd will delete the shared cache',
+        remedy: {
+          command: 'gemstone.runSetRemoveIPC',
+          label: 'Run setup script',
+          note: 'requires sudo',
+        },
+      });
+    }
+
+    if (!needsWsl()) return checks;
+
+    const wsl = getWslInfo();
+    checks.push({
+      key: 'wslVersion',
+      label: 'WSL',
+      state: !wsl.available ? 'unknown' : wsl.wslVersion === 2 ? 'ok' : 'warn',
+      detail: !wsl.available
+        ? 'not reachable'
+        : `${wsl.defaultDistro ?? 'default distro'}, WSL ${wsl.wslVersion ?? '?'}`,
+      remedy:
+        wsl.wslVersion === 2
+          ? { command: 'gemstone.updateWslCore', label: 'Update WSL' }
+          : { command: 'gemstone.upgradeWsl2', label: 'Upgrade to WSL 2' },
+    });
+
+    const net = getWslNetworkInfoCached();
+    checks.push({
+      key: 'wslNetworking',
+      label: 'WSL networking',
+      state: !net ? 'unknown' : net.mirrored ? 'ok' : 'warn',
+      detail: !net
+        ? 'not probed yet'
+        : net.mirrored
+          ? 'mirrored'
+          : `NAT${net.ip ? ` (${net.ip})` : ''}`,
+      remedy: { command: 'gemstone.enableMirroredNetworking', label: 'Enable mirrored networking' },
+    });
+
+    if (net && !net.mirrored) {
+      checks.push({
+        key: 'hostsEntry',
+        label: 'Hosts entry',
+        state: 'warn',
+        detail: 'wsl-linux needs an entry while networking is NAT',
+        remedy: {
+          command: 'gemstone.writeWslHostsEntry',
+          label: 'Write hosts entry',
+          note: 'requires admin',
+        },
+      });
+    }
+
+    const winServices = windowsServicesHasGs64ldi();
+    checks.push({
+      key: 'windowsServices',
+      label: 'Windows services entry',
+      state: winServices ? 'ok' : 'warn',
+      detail: winServices ? 'gs64ldi present' : 'gs64ldi missing',
+      remedy: {
+        command: 'gemstone.writeServicesWindows',
+        label: 'Write Windows services entry',
+        note: 'requires admin',
+      },
+    });
+
+    const wslServices = wslServicesHasGs64ldi();
+    checks.push({
+      key: 'wslServices',
+      label: 'WSL services entry',
+      state: wslServices ? 'ok' : 'warn',
+      detail: wslServices ? 'gs64ldi present' : 'gs64ldi missing',
+      remedy: {
+        command: 'gemstone.writeServicesWsl',
+        label: 'Write WSL services entry',
+        note: 'requires sudo',
+      },
+    });
+
+    return checks;
   }
 
   /**
@@ -1202,6 +1402,13 @@ th.v-num { text-align: right; }
 .file-root-actions { margin-left: auto; display: inline-flex; align-items: center; opacity: 0; transition: opacity .12s ease; }
 .file-root-head:hover .file-root-actions, .file-root-actions:focus-within { opacity: 1; }
 .file-list { list-style: none; margin: 0; padding: 0 0 3px 27px; }
+/* ── OS prerequisite checklist ───────────────────────────────────────────── */
+.os-checks { list-style: none; margin: 0 0 10px; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.os-check { display: flex; align-items: center; gap: 6px; padding: 3px 0; }
+.os-check-label { min-width: 150px; }
+.os-check-detail { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.os-check-action { display: flex; align-items: center; gap: 6px; }
+.os-check-note { font-size: 11px; color: var(--vscode-descriptionForeground, #9d9d9d); }
 /* A file row can carry its own action (restoring a backup), which sits beside
    the name rather than inside it — a button cannot nest in a button. */
 .file-line { display: flex; align-items: center; gap: 2px; }
