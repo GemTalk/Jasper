@@ -263,6 +263,14 @@ GsSplitClassRefactoring >> computeAnalysis [
 		^decline := 'Cannot split: ', newName, ' is not a valid class name.'].
 	(environment classNamed: newName) notNil ifTrue: [
 		^decline := 'Cannot split: a class named ', newName, ' already exists.'].
+	"classNamed: only matches a Class binding; a name bound to a NON-class global would
+	 otherwise slip past and be silently clobbered by applyClassAdd:'s
+	 subclass:...inDictionary:. Decline any existing binding for the name, anywhere on the
+	 symbol list -- the same question GsRenameClassRefactoring>>newNameCollision and
+	 GsExtractSuperclassRefactoring>>computeAnalysis ask. The split client validates only the
+	 SHAPE of the name, so this is the only guard the UI path has."
+	(environment symbolList objectNamed: newName asSymbol) notNil ifTrue: [
+		^decline := 'Cannot split: the name ', newName, ' is already in use as a global.'].
 	extractIvars isEmpty ifTrue: [
 		^decline := 'Cannot split: no instance variables were chosen to extract.'].
 	own := environment ownInstVarNamesOf: sourceClass.
