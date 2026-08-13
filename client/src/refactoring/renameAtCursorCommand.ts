@@ -57,7 +57,9 @@ export async function renameAtCursorCommand(
 
   // Not on an identifier (whitespace, a binary selector, punctuation): let Rename
   // Method resolve it — a sent binary selector at the cursor, or the edited method.
-  const word = wordAt(target, 'a name');
+  // Silent: this is a supported route to Rename Method, not an error, so wordAt must
+  // not flash a "not a variable" warning before we fall through.
+  const word = wordAt(target, 'a name', { silent: true });
   if (!word) {
     await vscode.commands.executeCommand('gemstone.renameMethodInEditor', at);
     return;
