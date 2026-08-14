@@ -10,6 +10,27 @@ import { readWebviewScript } from '../webviewAssets';
 import { CATEGORY_BY_ID, OmniCategoryId, OmniConfig } from './omniTypes';
 import { OmniEngine, OmniViewData } from './omniEngine';
 
+// The Alt+Enter (references) gesture, rendered per platform. On macOS the Alt key is Option, shown
+// as ⌥, with Return as ↩ — the same glyphs VS Code uses in its own keybinding UI; everywhere else
+// it stays the literal "Alt+Enter". These are the single source of truth for the hint text so the
+// QuickPick placeholder, the webview footer, and the row reference button all agree.
+const IS_MAC = process.platform === 'darwin';
+
+/** Plain-text hint for placeholders and tooltips, e.g. `Alt+Enter` or `⌥↩`. */
+export const REFERENCES_KEY_HINT = IS_MAC ? '⌥↩' : 'Alt+Enter';
+
+/** `<kbd>`-wrapped hint for the webview footer bar. */
+export const REFERENCES_KEY_HINT_HTML = IS_MAC
+  ? '<kbd>⌥</kbd><kbd>↩</kbd>'
+  : '<kbd>Alt</kbd>+<kbd>Enter</kbd>';
+
+/**
+ * Plain-text hint for the shortcut that opens Omni Search from anywhere in a session, per platform.
+ * Must track the `gemstone.omniSearch` keybinding in package.json (`ctrl+shift+a` / `cmd+shift+a`);
+ * the keybindings manifest test pins that binding so drift here is caught.
+ */
+export const OMNI_OPEN_KEY_HINT = IS_MAC ? '⌘⇧A' : 'Ctrl+Shift+A';
+
 /** Scope-name lookup for the placeholder. */
 const SCOPE_LABEL: Record<string, string> = {
   all: 'everything',
@@ -85,6 +106,7 @@ export function configMessage(config: OmniConfig, pinned: boolean): Record<strin
     pinned,
     referencesInPreview: config.referencesInPreview,
     placeholder: placeholderFor(null),
+    keyHint: REFERENCES_KEY_HINT,
   };
 }
 
@@ -401,7 +423,7 @@ export function renderOmniHtml(opts: { showPin: boolean }): string {
       <div id="preview"></div>
     </div>
     <div id="footer">
-      <span id="hints"><kbd>Enter</kbd> open · <kbd>Alt</kbd>+<kbd>Enter</kbd> references</span>
+      <span id="hints"><kbd>Enter</kbd> open · ${REFERENCES_KEY_HINT_HTML} references</span>
       <span id="count"></span>
       <button id="loadMore" title="Load more results" style="display:none">Load more</button>
       <button id="loadAll" title="Load all results (up to the server limit)" style="display:none">Load all</button>

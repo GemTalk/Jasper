@@ -209,6 +209,22 @@ describe('Omni Search view — results rendering (flat, no grouping)', () => {
     (refBtns[0] as HTMLButtonElement).click();
     expect(vscode.postMessage).toHaveBeenCalledWith({ command: 'references', id: 7 });
   });
+
+  it('labels the reference button with the platform key hint the host supplies', () => {
+    const { handle } = mount();
+
+    handle.onMessage({ data: { command: 'config', categories: [], scopeId: null, keyHint: '⌥↩' } });
+    handle.renderResults(
+      resultsMsg({
+        rows: [row(7, 'Foo', { referenceable: true, referenceTitle: 'References to Foo' })],
+        shownCount: 1,
+      }),
+    );
+
+    const refBtn = document.querySelector('#results .row .refbtn') as HTMLButtonElement;
+    expect(refBtn.title).toContain('⌥↩');
+    expect(refBtn.title).not.toContain('Alt+Enter');
+  });
 });
 
 describe('Omni Search view — footer count + load controls', () => {

@@ -8,6 +8,12 @@
  * at any time — so it resolves the session + builds its (session-bound) engine LAZILY, rebuilding when
  * the session changes. `resolveContext` (built by the command layer) yields the current session's deps
  * or null when there's nothing to search.
+ *
+ * The cached engine also captures the `gemstone.omniSearch` settings that were live when it was built,
+ * so the command layer calls `onConfigChanged()` (from an `onDidChangeConfiguration` listener) to drop
+ * the engine when those settings change — otherwise a settings edit made while the panel is open would
+ * be silently ignored until the session changed or the window reloaded. (Rebinding on a live SESSION
+ * switch — the `sessionMode: "multiple"` case — is deferred to #437.)
  */
 import * as vscode from 'vscode';
 import { createOmniEngine, OmniEngine, OmniViewData } from './omniEngine';
@@ -37,7 +43,7 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
   private deps: OmniPanelDeps | undefined;
   private builtForSession: number | undefined;
   // A focus() that arrives before the webview has loaded can't deliver `focusInput`; remember it and
-  // replay once the webview signals `ready`, so Shift+Enter always lands the cursor in the field.
+  // replay once the webview signals `ready`, so the open shortcut always lands the cursor in the field.
   private focusPending = false;
 
   constructor(private readonly resolveContext: () => Promise<OmniViewContext | null>) {}
@@ -51,6 +57,16 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
     view.onDidChangeVisibility(() => {
       if (view.visible) void this.ensureEngine();
     });
+  }
+
+  /** A `gemstone.omniSearch` setting changed: drop the cached engine (which baked in the old config)
+   *  so it's rebuilt with the fresh config. If the view is visible, rebuild now so the change shows up
+   *  live (scope tabs, case flag, limits); otherwise the next webview message rebuilds it lazily. */
+  onConfigChanged(): void {
+    this.engine = undefined;
+    this.deps = undefined;
+    this.builtForSession = undefined;
+    if (this.view?.visible) void this.ensureEngine();
   }
 
   /** Reveal + focus the view and its search field (the `ui: "panel"` entry point). */

@@ -54,10 +54,12 @@ icon, isEnabled, search(query, token) }`. Providers: **Classes, Methods, Diction
    `…caseSensitive`). Ranges are returned for future highlighting.
 
 5. **Trigger.** VS Code cannot bind _double-tap-Shift_ (keybindings are chords, not
-   double-taps), so we ship a command `gemstone.omniSearch` + a default keybinding **`shift+enter`**
+   double-taps), so we ship a command `gemstone.omniSearch` + a default keybinding
+   **`ctrl+shift+a`** (`cmd+shift+a` on macOS)
    (`when: gemstone.hasActiveSession && !terminalFocus` — a Jasper window, not the terminal),
-   configurable, plus a palette entry. Trade-off: Shift+Enter is shadowed inside other text-input
-   boxes (e.g. the SCM commit field); the conflict-free fallback is a `ctrl+k` chord. The double-Shift
+   configurable, plus a palette entry. A single simultaneous chord (not a sequential `ctrl+k` two-step)
+   that stays clear of the notebook cell-run gestures (`shift+enter` / `ctrl+enter` / `alt+enter`) — an
+   earlier `shift+enter` default shadowed the notebook's run-cell. The double-Shift
    aspiration is noted as a follow-up (would need a fragile keystroke hack). The primary-gesture hints
    ("Enter to open · Alt+Enter for references") ride in the **placeholder**, not the title — greyed and
    gone as soon as you type, keeping the title focused on the filter.
@@ -115,7 +117,7 @@ New shared query (if needed) lives under `client/src/queries/` per repo conventi
 
 Phase 2 replaces the QuickPick CHROME with a webview panel while keeping the exact search behaviour.
 The setting **`gemstone.omniSearch.ui`** switches between `spotter` (default) and `quickpick` so the
-two can be A/B compared; the command/keybinding (`gemstone.omniSearch`, Shift+Enter) is unchanged.
+two can be A/B compared; the command/keybinding (`gemstone.omniSearch`, Ctrl/Cmd+Shift+A) is unchanged.
 
 - **`omniEngine.ts`** — the search behaviour extracted from the QuickPick controller as a pure,
   `vscode`-free engine (scope, case, load-more/all, count, reference pivot → serialisable

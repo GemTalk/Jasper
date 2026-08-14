@@ -28,6 +28,7 @@ import {
 import { SystemBrowser } from '../systemBrowser';
 import { buildMethodUri } from '../gemstoneFileSystemProvider';
 import { readOmniConfig } from './omniConfig';
+import { OMNI_OPEN_KEY_HINT } from './omniSearchShared';
 import { OmniProvider, OmniResult } from './omniTypes';
 import { runOmniAction, OmniActionHandlers } from './omniActions';
 import { createClassesProvider } from './providers/classesProvider';
@@ -299,7 +300,7 @@ export async function runOmniSearch(
   await controller.start();
 }
 
-/** globalState flag: the one-time "Shift+Enter opens GemStone Search" tip has been shown. */
+/** globalState flag: the one-time "Ctrl/Cmd+Shift+A opens GemStone Search" tip has been shown. */
 const SEARCH_TIP_SHOWN_KEY = 'gemstone.gemstoneSearchTipShown';
 
 export function registerOmniSearch(
@@ -311,13 +312,13 @@ export function registerOmniSearch(
   const viewProvider = new OmniSearchViewProvider(buildViewContextResolver(sessionManager));
 
   // Discoverability clue #1 (persistent): a status-bar button that opens GemStone Search and, via its
-  // tooltip, teaches the Shift+Enter shortcut that works from anywhere in a session. Shown only while
-  // a session is active (the shortcut's own `when`).
+  // tooltip, teaches the shortcut that works from anywhere in a session. Shown only while a session
+  // is active (the shortcut's own `when`).
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   status.text = '$(search-fuzzy) GemStone Search';
   status.command = 'gemstone.omniSearch';
   status.tooltip = new vscode.MarkdownString(
-    'Search classes, methods, globals, source, literals & categories.\n\nPress **Shift+Enter** from anywhere.',
+    `Search classes, methods, globals, source, literals & categories.\n\nPress **${OMNI_OPEN_KEY_HINT}** from anywhere.`,
   );
   const syncStatus = (): void => {
     if (sessionManager.getSessions().length > 0) status.show();
@@ -332,7 +333,7 @@ export function registerOmniSearch(
     void context.globalState.update(SEARCH_TIP_SHOWN_KEY, true);
     void vscode.window
       .showInformationMessage(
-        'Tip: press Shift+Enter to open GemStone Search — find classes, methods, globals and more from anywhere.',
+        `Tip: press ${OMNI_OPEN_KEY_HINT} to open GemStone Search — find classes, methods, globals and more from anywhere.`,
         'Open now',
       )
       .then((pick) => {
@@ -366,6 +367,11 @@ export function registerOmniSearch(
   return vscode.Disposable.from(
     status,
     sessionManager.onDidChangeSelection(onSelection),
+    // The docked panel caches a session-bound engine that also baked in the settings live at build
+    // time; drop it when any `gemstone.omniSearch` setting changes so the edit takes effect at once.
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration('gemstone.omniSearch')) viewProvider.onConfigChanged();
+    }),
     vscode.window.registerWebviewViewProvider(OMNI_VIEW_ID, viewProvider, {
       webviewOptions: { retainContextWhenHidden: true },
     }),

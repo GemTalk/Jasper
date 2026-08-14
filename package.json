@@ -2829,7 +2829,8 @@
       },
       {
         "command": "gemstone.omniSearch",
-        "key": "shift+enter",
+        "key": "ctrl+shift+a",
+        "mac": "cmd+shift+a",
         "when": "gemstone.hasActiveSession && !terminalFocus"
       },
       {

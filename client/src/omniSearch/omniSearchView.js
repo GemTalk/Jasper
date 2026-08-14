@@ -45,6 +45,9 @@
     // When true, the references/senders gesture fills the preview pane with a sticky list (instead of
     // pivoting the left list). Pushed from the host config; false = the classic pivot.
     var referencesInPreview = false;
+    // Plain-text label for the references gesture, per platform (Alt+Enter, or ⌥↩ on macOS). Pushed
+    // from the host config message; the non-mac default covers the brief window before it arrives.
+    var referencesKeyHint = 'Alt+Enter';
     // What the preview pane is currently showing: 'source' (of the active left row) or 'refs' (the
     // sticky references list). A new search or a new left-row selection returns it to 'source'.
     var previewMode = 'source';
@@ -245,7 +248,7 @@
         var ref = doc.createElement('button');
         ref.className = 'refbtn';
         ref.textContent = '↗';
-        var refLabel = (row.referenceTitle || 'Find references') + ' (Alt+Enter)';
+        var refLabel = (row.referenceTitle || 'Find references') + ' (' + referencesKeyHint + ')';
         ref.title = refLabel;
         ref.setAttribute('aria-label', refLabel);
         (function (id) {
@@ -295,6 +298,7 @@
         case 'config':
           if (typeof msg.referencesInPreview === 'boolean')
             referencesInPreview = msg.referencesInPreview;
+          if (typeof msg.keyHint === 'string') referencesKeyHint = msg.keyHint;
           renderTabs(msg.categories, msg.scopeId);
           setCase(msg.caseSensitive);
           setPin(msg.pinned);

@@ -28,6 +28,7 @@ import {
 } from './omniTypes';
 import { match, compareMatches } from './omniMatch';
 import { referenceRequestFor } from './references';
+import { REFERENCES_KEY_HINT } from './omniSearchShared';
 
 export interface OmniQuickItem extends vscode.QuickPickItem {
   result?: OmniResult;
@@ -249,7 +250,7 @@ export function createOmniController(deps: OmniControllerDeps): OmniController {
       const hint = CATEGORY_BY_ID[id].searchHint;
       if (hint) return `${hint}   ·   Enter to open`;
     }
-    return `Search ${SCOPE_LABEL[id ?? 'all']}…   Enter to open · Alt+Enter for references`;
+    return `Search ${SCOPE_LABEL[id ?? 'all']}…   Enter to open · ${REFERENCES_KEY_HINT} for references`;
   };
 
   const backButton = (): vscode.QuickInputButton & { back: true } => ({
