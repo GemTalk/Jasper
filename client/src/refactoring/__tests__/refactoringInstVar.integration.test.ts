@@ -185,6 +185,40 @@ r := (System myUserProfile symbolList objectNamed: #GsInstVarRefactoringTest) su
     expect(includesSelector(BASE, 'tally')).toBe(false);
   });
 
+  it('commits nothing when an accessor cannot compile, even with migrate requested', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+
+    defineFixture();
+
+    parseStartPreview(
+      await startInstVarPreview(
+        asyncExec,
+        'add',
+        BASE,
+        'tally',
+        'xivit-badacc-mig',
+        PREVIEW_PAGE_BYTES,
+        userIndex(),
+      ),
+    );
+    // migrate: true is requested but never reached — the accessor failure gates
+    // `commitStructuralThenMigrate:` before it runs, so this stays fully transient and needs
+    // no commit strategy, unlike the sibling `migrate: true` scenarios in `gci/gciInstVar.e2e.test.ts`.
+    const result = parseApplyResult(
+      await applyInstVar(asyncExec, 'xivit-badacc-mig', [], null, true, false, [
+        { selector: 'tally', source: 'tally\n\t^ )( not parseable' },
+      ]),
+    );
+
+    // Asserting the whole failure set, not just `committed`: the engine swallows a failed
+    // commit into `failures` and only sets `committed` after the commit returns, so
+    // `committed: false` cannot tell "never attempted" from "attempted and refused". The
+    // absence of a `commit` entry is what proves the accessor failure gated it
+    expect(result.failed.map((failure) => failure.id)).toEqual(['accessor:tally']);
+    expect(result.committed).toBe(false);
+    expect(includesSelector(BASE, 'tally')).toBe(false);
+  });
+
   it('removes an instance variable, reporting and dropping the methods that used it', async (ctx) => {
     requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
