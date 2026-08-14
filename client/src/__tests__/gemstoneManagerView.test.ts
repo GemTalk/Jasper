@@ -295,6 +295,34 @@ describe('GemStone Manager webview', () => {
     );
   });
 
+  // Everything on this screen is a name from somewhere else — a stone, a user, a
+  // file on disk, a version's own description of itself — and the panel builds
+  // its markup as a string. A name carrying markup has to arrive as the name.
+  it('shows a name containing markup as text rather than building it', () => {
+    const nasty = database({ dirName: '<img src=x onerror=alert(1)>db' });
+
+    const { root } = open(state({ databases: [nasty] }));
+
+    expect(root.querySelector('img')).toBeNull();
+    expect(root.textContent).toContain('<img src=x onerror=alert(1)>db');
+  });
+
+  it('shows a login label containing markup as text rather than building it', () => {
+    const nasty = {
+      label: '</button><img src=x onerror=alert(1)>',
+      user: '<b>DataCurator</b>',
+      stone: 'devKit',
+      version: '3.7.5',
+      running: true,
+      connected: false,
+    };
+
+    const { root } = open(state({ logins: [nasty] }));
+
+    expect(root.querySelector('img')).toBeNull();
+    expect(root.querySelector('.login-user b')).toBeNull();
+  });
+
   it('offers to log out of a live session, whatever it can tell about the stone', () => {
     // A stone Jasper did not make here is not in its process list, so it cannot
     // see the stone running — but a session on it is first-hand knowledge.

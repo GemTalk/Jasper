@@ -254,7 +254,7 @@ type Inbound =
  * tree offered. As with session actions, the webview sends a command *name*, so
  * it is matched against this list rather than executed on trust.
  */
-const OS_REMEDIES: ReadonlySet<string> = new Set([
+export const OS_REMEDIES: ReadonlySet<string> = new Set([
   'gemstone.runSetSharedMemory',
   'gemstone.runSetSharedMemoryLinux',
   'gemstone.runSetRemoveIPC',
@@ -271,7 +271,7 @@ const OS_REMEDIES: ReadonlySet<string> = new Set([
  * offers a live session. The webview sends a command *name*, so it is matched
  * against this list rather than executed on trust.
  */
-const SESSION_ACTIONS: ReadonlySet<string> = new Set([
+export const SESSION_ACTIONS: ReadonlySet<string> = new Set([
   'gemstone.openBrowser',
   'gemstone.sessionOpenWorkspace',
   'gemstone.sessionCommit',
