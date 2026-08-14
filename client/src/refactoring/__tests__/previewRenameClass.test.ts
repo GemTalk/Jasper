@@ -96,6 +96,15 @@ describe('isRenameClassScope (webview-message guard)', () => {
     expect(isRenameClassScope({ kind: 'dictionary', dictName: 5 })).toBe(false);
   });
 
+  it('rejects a dictionary scope whose dictName is empty or blank', () => {
+    // The shape a webview actually produces when the dictionary dropdown is
+    // unselected. Left unchecked it reaches scopeClauseOf as dictionaryScope: '',
+    // a syntactically valid query naming a dictionary that cannot exist.
+    expect(isRenameClassScope({ kind: 'dictionary', dictName: '' })).toBe(false);
+    expect(isRenameClassScope({ kind: 'dictionary', dictName: '   ' })).toBe(false);
+    expect(isRenameClassScope({ kind: 'dictionary', dictName: '\t\n' })).toBe(false);
+  });
+
   it('rejects unknown kinds and non-objects', () => {
     expect(isRenameClassScope({ kind: 'everything' })).toBe(false);
     expect(isRenameClassScope({})).toBe(false);

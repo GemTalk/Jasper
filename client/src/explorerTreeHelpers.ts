@@ -41,7 +41,7 @@ export function defaultDictionaryIndex(names: string[]): number {
 
 /**
  * Whether a class-picker label matches the typed query, for the class-by-prefix
- * QuickPick (move-method / move-instance-variable destination pickers). The
+ * QuickPick (the move-to-class destination picker). The
  * QuickPick deliberately turns VS Code's built-in fuzzy SUBSTRING matching off and
  * uses this instead, so typing "Z" surfaces only classes that START with "Z", not
  * every class containing a "z". Case-insensitive; the query is trimmed; an empty

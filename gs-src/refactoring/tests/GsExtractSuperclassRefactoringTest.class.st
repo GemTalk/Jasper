@@ -190,7 +190,9 @@ GsExtractSuperclassRefactoringTest >> testInsertDeclinesWhenNameIsANonClassGloba
 		class: (self classNamed: 'GsESDog') insertSuperclassNamed: 'GsESPet' inDictionary: nil.
 
 	 self assert: ref decline notNil.
-	 self assert: ref decline includesSubstring: 'already in use as a global'.
+	 "The decline names the symbol list, not the target dictionary: the question asked is
+	  system-wide, so the message must not read as a collision in the class's own dictionary."
+	 self assert: ref decline includesSubstring: 'already in use as a global on the symbol list'.
 	 "A global decline empties the change set, so nothing is created."
 	 self assert: ref changeSet changes isEmpty.
 	 "the pre-existing non-class global is untouched"

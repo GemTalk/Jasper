@@ -268,9 +268,11 @@ GsSplitClassRefactoring >> computeAnalysis [
 	 subclass:...inDictionary:. Decline any existing binding for the name, anywhere on the
 	 symbol list -- the same question GsRenameClassRefactoring>>newNameCollision and
 	 GsExtractSuperclassRefactoring>>computeAnalysis ask. The split client validates only the
-	 SHAPE of the name, so this is the only guard the UI path has."
+	 SHAPE of the name, so this is the only guard the UI path has. The question is asked
+	 SYSTEM-WIDE and the decline says so, rather than reading as a collision in the
+	 source's own dictionary."
 	(environment symbolList objectNamed: newName asSymbol) notNil ifTrue: [
-		^decline := 'Cannot split: the name ', newName, ' is already in use as a global.'].
+		^decline := 'Cannot split: the name ', newName, ' is already in use as a global on the symbol list.'].
 	extractIvars isEmpty ifTrue: [
 		^decline := 'Cannot split: no instance variables were chosen to extract.'].
 	own := environment ownInstVarNamesOf: sourceClass.

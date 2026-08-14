@@ -10,14 +10,19 @@ export type RenameClassScope =
   { kind: 'class' | 'hierarchy' | 'wholeSystem' } | { kind: 'dictionary'; dictName: string };
 
 // Runtime guard for a RenameClassScope arriving from the webview (untrusted). The
-// editor casts the incoming message; validate it here so a malformed shape is
-// rejected rather than flowing through the cast into a server query.
+// editor validates the incoming message with this before using it, so a malformed
+// shape is rejected rather than flowing into a server query.
+//
+// A #dictionary scope needs a NON-BLANK name: an unselected dropdown posts
+// dictName: '', which would otherwise reach scopeClauseOf as dictionaryScope: '' --
+// a syntactically valid query naming a dictionary that cannot exist.
 export function isRenameClassScope(x: unknown): x is RenameClassScope {
   if (typeof x !== 'object' || x === null) return false;
   const kind = (x as { kind?: unknown }).kind;
   if (kind === 'class' || kind === 'hierarchy' || kind === 'wholeSystem') return true;
   if (kind === 'dictionary') {
-    return typeof (x as { dictName?: unknown }).dictName === 'string';
+    const dictName = (x as { dictName?: unknown }).dictName;
+    return typeof dictName === 'string' && dictName.trim() !== '';
   }
   return false;
 }

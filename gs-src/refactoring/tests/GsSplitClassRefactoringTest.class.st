@@ -220,7 +220,9 @@ GsSplitClassRefactoringTest >> testDeclinesWhenNameIsANonClassGlobal [
 	[r := GsSplitClassRefactoring class: self source splitIntoClassNamed: 'GsSCBucket' extractingInstVars: #('extractC') inDictionary: nil.
 
 	 self assert: r decline notNil.
-	 self assert: (r decline includesString: 'already in use as a global').
+	 "The decline names the symbol list, not the target dictionary -- the question asked is
+	  system-wide, so the message must not read as a collision in the source's own dictionary."
+	 self assert: (r decline includesString: 'already in use as a global on the symbol list').
 	 "A decline empties the change set, so nothing is created."
 	 self assert: r changeSet changes isEmpty.
 	 "the pre-existing non-class global is untouched"

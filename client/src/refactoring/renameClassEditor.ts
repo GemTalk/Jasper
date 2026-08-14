@@ -3,10 +3,15 @@
  * resolving with `{ newName, scope }` or undefined if cancelled/closed. Mirrors
  * the rename-method editor for a consistent rename UX.
  *
- * On submit the host runs `validate(newName)` — a synchronous check that includes
+ * On submit the host first validates the SHAPE of the posted scope with
+ * `isRenameClassScope` — a webview message is untrusted — and a scope that fails
+ * is rejected before `validate` runs, posting `invalid` back and leaving the panel
+ * open just as a bad name does.
+ *
+ * Then the host runs `validate(newName)` — a synchronous check that includes
  * "is this name already in use in the stone?" — and, if it returns an error,
  * posts it back to the editor (`invalid`) so the user can choose another name
- * without the editor closing. The editor resolves only once a name passes.
+ * without the editor closing. The editor resolves only once both checks pass.
  *
  * Follows Jasper's webview conventions: DOM logic lives in the sibling
  * renameClassEditorView.js (read at runtime, injected under a nonce).
