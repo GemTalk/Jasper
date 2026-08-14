@@ -261,6 +261,74 @@ describe('VersionItem (local version)', () => {
   });
 });
 
+// ── VersionManager.getInstalledVersions ────────────────────
+
+describe('VersionManager.getInstalledVersions', () => {
+  onSupportedPosixIt('lists the versions on disk, symlinked and extracted alike', () => {
+    const storage = new SysadminStorage();
+    const manager = new VersionManager(storage);
+    const suffix = storage.getPlatformSuffix();
+    const productDir = path.join(tmpDir, 'product');
+    fs.mkdirSync(productDir);
+    writeVersionTxt(productDir, SAMPLE_VERSION_TXT);
+    fs.symlinkSync(productDir, path.join(tmpDir, `GemStone64Bit3.7.6${suffix}`));
+    const extractedDir = path.join(tmpDir, `GemStone64Bit3.7.5${suffix}`);
+    fs.mkdirSync(extractedDir);
+    writeVersionTxt(extractedDir, SAMPLE_VERSION_TXT);
+
+    const versions = manager.getInstalledVersions();
+
+    expect(versions).toEqual([
+      expect.objectContaining({
+        version: '3.7.6',
+        local: true,
+        extracted: true,
+        date: '2026-03-24',
+        buildDescription: expect.stringContaining('private build'),
+      }),
+      expect.objectContaining({ version: '3.7.5', extracted: true }),
+    ]);
+  });
+
+  // The panel draws this list first and the catalog's list a moment later, so
+  // the two have to agree on order or the list rearranges itself as the
+  // download page arrives. Reading the directory answers in no defined order at
+  // all, which is the reason the ordering belongs here rather than being
+  // inherited from the disk.
+  onSupportedPosixIt('orders what is on disk newest first, as a catalog listing is', () => {
+    const storage = new SysadminStorage();
+    const manager = new VersionManager(storage);
+    const suffix = storage.getPlatformSuffix();
+    for (const version of ['3.6.8', '3.7.5']) {
+      const dir = path.join(tmpDir, `GemStone64Bit${version}${suffix}`);
+      fs.mkdirSync(dir);
+      writeVersionTxt(dir, SAMPLE_VERSION_TXT);
+    }
+
+    const versions = manager.getInstalledVersions();
+
+    expect(versions.map((v) => v.version)).toEqual(['3.7.5', '3.6.8']);
+  });
+
+  // Same argument for what the list holds: a release Jasper cannot drive is
+  // absent from the catalog answer, so showing it here would put a version on
+  // screen that vanishes the moment the catalog lands.
+  onSupportedPosixIt('leaves out a release older than the minimum this supports', () => {
+    const storage = new SysadminStorage();
+    const manager = new VersionManager(storage);
+    const suffix = storage.getPlatformSuffix();
+    for (const version of ['3.5.0', '3.7.5']) {
+      const dir = path.join(tmpDir, `GemStone64Bit${version}${suffix}`);
+      fs.mkdirSync(dir);
+      writeVersionTxt(dir, SAMPLE_VERSION_TXT);
+    }
+
+    const versions = manager.getInstalledVersions();
+
+    expect(versions.map((v) => v.version)).toEqual(['3.7.5']);
+  });
+});
+
 // ── VersionManager.fetchAvailableVersions (local inclusion) ──
 
 describe('VersionManager.fetchAvailableVersions', () => {
