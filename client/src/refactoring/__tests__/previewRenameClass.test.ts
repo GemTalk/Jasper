@@ -58,6 +58,27 @@ describe('previewRenameClass queries', () => {
     expect(code).toContain('removeOldFromHistory: true');
   });
 
+  it('trims surrounding whitespace off a dictionary scope name', async () => {
+    // isRenameClassScope only rejects an ALL-blank name, so ' MyDict ' passes the
+    // guard. Untrimmed it would reach the engine as dictionaryScope: ' MyDict ',
+    // naming a dictionary that cannot exist.
+    const execute = vi.fn().mockResolvedValue('{}');
+
+    await startRenameClassPreview(
+      execute,
+      'Account',
+      'BankAccount',
+      { kind: 'dictionary', dictName: ' \tMyDict\n ' },
+      OPTS,
+      'tok',
+      1000,
+    );
+
+    const code = execute.mock.calls[0][1];
+    expect(code).toContain("dictionaryScope: 'MyDict'");
+    expect(code).not.toContain("dictionaryScope: ' ");
+  });
+
   it('builds a page query for a token and offset', async () => {
     const execute = vi.fn().mockResolvedValue('{}');
 

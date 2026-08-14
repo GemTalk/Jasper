@@ -583,7 +583,7 @@ GsInstVarRefactoringTest >> testApplyReportsAnAccessorThatCannotCompileAndInstal
 		accessors: (Array with: (Array with: 'tally' with: 'tally
 ^ )( not parseable')).
 	"failed non-empty -> the empty-array marker is absent"
-	self assert: (result indexOfSubCollection: '"failed":[]') = 0.
+	self deny: result includesSubstring: '"failed":[]'.
 	self deny: ((UserGlobals at: #GsIVBase) includesSelector: #tally)
 ]
 

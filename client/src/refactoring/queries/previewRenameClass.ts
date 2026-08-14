@@ -16,6 +16,10 @@ export type RenameClassScope =
 // A #dictionary scope needs a NON-BLANK name: an unselected dropdown posts
 // dictName: '', which would otherwise reach scopeClauseOf as dictionaryScope: '' --
 // a syntactically valid query naming a dictionary that cannot exist.
+//
+// Blank-vs-non-blank is all this guard decides; it does not rewrite the value.
+// A name with surrounding whitespace (' UserGlobals') passes here, so
+// scopeClauseOf trims at the point of use rather than trusting the caller.
 export function isRenameClassScope(x: unknown): x is RenameClassScope {
   if (typeof x !== 'object' || x === null) return false;
   const kind = (x as { kind?: unknown }).kind;
@@ -27,9 +31,12 @@ export function isRenameClassScope(x: unknown): x is RenameClassScope {
   return false;
 }
 
+// Trims the dictionary name: isRenameClassScope only rejects an all-blank name,
+// so ' UserGlobals' reaches here intact and would name a dictionary that cannot
+// exist. Trimming at this single choke point covers every caller.
 function scopeClauseOf(scope: RenameClassScope): string {
   return scope.kind === 'dictionary'
-    ? `dictionaryScope: '${escapeString(scope.dictName)}'`
+    ? `dictionaryScope: '${escapeString(scope.dictName.trim())}'`
     : `scope: #${scope.kind}`;
 }
 
