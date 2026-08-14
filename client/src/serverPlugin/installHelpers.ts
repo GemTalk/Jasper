@@ -13,6 +13,8 @@
 import { ActiveSession } from '../sessionManager';
 import { executeFetchString } from '../browserQueries';
 import { gemNrsFor, stoneNrsFor, DEFAULT_GS_PW } from '../loginTypes';
+import { needsWsl } from '../wslBridge';
+import { toWslPath } from '../wslFs';
 
 // GemStone's default SystemUser password on a fresh stone. Tried first so a
 // stock stone installs in one step; on failure the caller falls back to a
@@ -30,6 +32,18 @@ export const DEFAULT_SYSTEMUSER_PW = DEFAULT_GS_PW;
  *  the whole value wrapped in quotes. */
 export function gsStringLiteral(s: string): string {
   return `'${s.replace(/'/g, "''")}'`;
+}
+
+/**
+ * Translate an absolute path into the form the gem process must open it as. On
+ * Windows the gem always runs inside WSL (see docs/windows-wsl.md) — a checkout
+ * path like `D:\...` is only visible to it via WSL's DrvFs automount at
+ * `/mnt/d/...`, so payload paths must be translated before crossing the GCI
+ * connection. No-op on every other platform, and harmless when the stone really
+ * is remote: the translated path is just as unreadable to a truly remote gem.
+ */
+export function toLocalGemPath(path: string): string {
+  return needsWsl() ? toWslPath(path) : path;
 }
 
 /** Whether the gem process can read the file at `serverPath`. */
