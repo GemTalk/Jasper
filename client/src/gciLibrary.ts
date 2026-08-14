@@ -177,8 +177,9 @@ type NotPromise<T> = T extends Promise<unknown> ? never : T;
  * - The remaining methods (grouped into labeled sections further down: Session
  *   lifecycle, Code execution, Symbol resolution & Utf8 caching, Object
  *   lifecycle & PureExportSet, UserGlobals management, SessionTemps
- *   management, OOP predicates, Error handling helpers, Session reset, Paged
- *   string fetching) are an ergonomic layer on top: they call one or more
+ *   management, OOP predicates, Value decoding, Error handling helpers,
+ *   Session reset, Paged string fetching) are an ergonomic layer on top:
+ *   they call one or more
  *   `GciTsXxx` methods, throw {@link GciLibraryError} on failure instead of
  *   returning a `{success, err}`/`{result, err}` pair, and give the raw calls
  *   memorable names and typed parameters.
@@ -2287,6 +2288,25 @@ export class GciLibrary {
     return this.releaseAfterUse(session, this.execute(session, code), callback);
   }
 
+  /**
+   * Evaluates `code` and decodes its result as a signed 64-bit integer, via
+   * {@link oopToInteger}.
+   *
+   * @param session - The GemStone session to operate in.
+   * @param code - Smalltalk source to evaluate.
+   * @returns The evaluated result, decoded as a signed 64-bit integer.
+   * @throws {GciLibraryError} If the evaluated code signals an error, if the
+   *   result is not a SmallInteger or a LargeInteger within the range of a
+   *   signed 64-bit integer -- including the result being `nil`, a
+   *   non-integer object, or a LargeInteger beyond that range -- or if the
+   *   underlying GCI calls fail.
+   */
+  public executeAndFetchInteger(session: unknown, code: string): bigint {
+    return this.executeAndRelease(session, code, (resultOop) =>
+      this.oopToInteger(session, resultOop),
+    );
+  }
+
   // ---------------------------------------------------------------------
   // Message sending
   // ---------------------------------------------------------------------
@@ -2856,6 +2876,46 @@ export class GciLibrary {
   /** Returns whether `oop` is the OOP of GemStone's `true` singleton. */
   public isTrueOop(oop: bigint) {
     return OOP_TRUE === oop;
+  }
+
+  // ---------------------------------------------------------------------
+  // Value decoding
+  // ---------------------------------------------------------------------
+
+  /**
+   * Decodes `oop` as a signed 64-bit integer.
+   *
+   * Reads the value directly off the oop -- a SmallInteger's is encoded in
+   * its tag bits, and a LargeInteger's is fetched by the underlying GCI
+   * call -- rather than sending `printString` and parsing the result. See
+   * {@link executeAndFetchInteger} for the same decoding composed with
+   * `execute`.
+   *
+   * Limited to the signed 64-bit range because it goes through
+   * `GciTsOopToI64`, which only decodes that far -- not because `bigint`
+   * itself has a ceiling; it doesn't, and could hold a LargeInteger of any
+   * size. A LargeInteger beyond int64 could still be decoded exactly, just
+   * not through this call: a LargeInteger is a byte-indexable object (its
+   * digits), so `GciTsFetchBytes` (the same primitive
+   * {@link fetchUtf8String} pages strings with) could fetch and reassemble
+   * it -- at the cost of an extra round-trip and no `printString` involved.
+   * Nothing does that today; add it if a caller needs LargeIntegers past
+   * int64.
+   *
+   * @param session - The GemStone session to operate in.
+   * @param oop - The oop to decode.
+   * @returns The decoded value.
+   * @throws {GciLibraryError} If `oop` is not a SmallInteger or a
+   *   LargeInteger within the range of a signed 64-bit integer -- including
+   *   `oop` being `nil`, a non-integer object, or a LargeInteger beyond that
+   *   range.
+   */
+  public oopToInteger(session: unknown, oop: bigint): bigint {
+    const { success, value, err } = this.GciTsOopToI64(session, oop);
+
+    this.throwUnless(success, err);
+
+    return value;
   }
 
   // ---------------------------------------------------------------------

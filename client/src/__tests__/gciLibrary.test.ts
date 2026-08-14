@@ -154,6 +154,17 @@ describe('GciLibrary', () => {
     expect(gciLibrary.executeAndFetchString(session, codeToEvaluate)).toBe(expectedResult);
   }
 
+  /**
+   * Asserts that evaluating `codeToEvaluate` and fetching its result as an
+   * integer yields `expectedResult`.
+   *
+   * @param codeToEvaluate - Smalltalk source to evaluate.
+   * @param expectedResult - The integer the evaluated result is expected to decode to.
+   */
+  function expectEvaluatedIntegerToBe(codeToEvaluate: string, expectedResult: bigint) {
+    expect(gciLibrary.executeAndFetchInteger(session, codeToEvaluate)).toBe(expectedResult);
+  }
+
   describe('evaluating expressions', () => {
     it('returns the result of evaluating an expression', () => {
       const resultOop = gciLibrary.execute(session, `true`);
@@ -631,6 +642,52 @@ describe('GciLibrary', () => {
 
     it('returns the result of code that uses a non-local return', () => {
       expectEvaluatedStringToBe(`^ 'a' encodeAsUTF16`, 'a');
+    });
+  });
+
+  describe('evaluating expressions and fetching the result as an integer', () => {
+    it('decodes a positive SmallInteger', () => {
+      expectEvaluatedIntegerToBe('42', 42n);
+    });
+
+    it('decodes a negative SmallInteger', () => {
+      expectEvaluatedIntegerToBe('-42', -42n);
+    });
+
+    it('decodes a LargeInteger within the 64-bit range', () => {
+      expectEvaluatedIntegerToBe('2 raisedTo: 62', 2n ** 62n);
+    });
+
+    it("preserves precision beyond JS's safe-integer range", () => {
+      expectEvaluatedIntegerToBe('(2 raisedTo: 60) - 1', 1152921504606846975n);
+    });
+
+    it('throws when the result is a non-integer object', () => {
+      expectToThrowGciLibraryError(
+        () => gciLibrary.executeAndFetchInteger(session, `'a'`),
+        'LargeInteger not representable as int64',
+      );
+    });
+
+    it('throws when the result is nil', () => {
+      expectToThrowGciLibraryError(() => gciLibrary.executeAndFetchInteger(session, 'nil'), '');
+    });
+
+    it('throws when the integer exceeds 64 bits', () => {
+      expectToThrowGciLibraryError(
+        () => gciLibrary.executeAndFetchInteger(session, '2 raisedTo: 100'),
+        'LargeInteger not representable as int64',
+      );
+    });
+
+    it('does not modify PureExportSet', () => {
+      expectPureExportSetToStayUnchanged(() => {
+        gciLibrary.executeAndFetchInteger(session, '42');
+      });
+    });
+
+    it('returns the result of code that uses a non-local return', () => {
+      expectEvaluatedIntegerToBe('^ 42', 42n);
     });
   });
 
