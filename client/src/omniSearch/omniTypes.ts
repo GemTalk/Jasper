@@ -48,7 +48,7 @@ export const OMNI_CATEGORIES: readonly OmniCategory[] = [
     // Finds LITERAL uses only (not senders / not source text): a #symbol used as data, or a 'string'
     // literal. e.g. #at:put: as a literal, or the string 'no such element'.
     searchHint:
-      "Type a #symbol or 'string' to find its literal uses, e.g. #at:put: or 'no such element'",
+      "Type a symbol literal (#at:put:) or a string literal ('no such element') to find its literal uses",
   },
   // Class categories are a whole-image scan to build; explicitOnly + lazy load keeps picker-open fast.
   {

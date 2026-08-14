@@ -5,7 +5,7 @@ import { createClassesProvider } from '../providers/classesProvider';
 import { createDictionariesProvider } from '../providers/dictionariesProvider';
 import { createGlobalsProvider } from '../providers/globalsProvider';
 import { createSourceProvider } from '../providers/sourceProvider';
-import { createLiteralsProvider } from '../providers/literalsProvider';
+import { createLiteralsProvider, isSymbolLiteral } from '../providers/literalsProvider';
 import { createCategoriesProvider } from '../providers/categoriesProvider';
 import { createMethodsProvider, SERVER_OVERFETCH } from '../providers/methodsProvider';
 import { MethodSearchResult } from '../../queries/methodSearch';
@@ -176,6 +176,16 @@ describe('literalsProvider', () => {
     expect(results[0].action).toMatchObject({ kind: 'openMethod' });
   });
 
+  it('never evaluates a # entry that is not a complete symbol literal', () => {
+    const runSymbol = vi.fn(() => rows);
+    const p = createLiteralsProvider(1, runSymbol, vi.fn());
+
+    expect(p.search('#foo. System abortTransaction', cfg(), NEVER_CANCELLED)).toEqual([]);
+    expect(p.search('#at:put: bar', cfg(), NEVER_CANCELLED)).toEqual([]);
+    expect(p.search('#', cfg(), NEVER_CANCELLED)).toEqual([]);
+    expect(runSymbol).not.toHaveBeenCalled();
+  });
+
   it("routes a closed 'string' to a source search of its content (case per config)", () => {
     const runString = vi.fn(() => rows);
     const p = createLiteralsProvider(1, vi.fn(), runString);
@@ -205,6 +215,26 @@ describe('literalsProvider', () => {
     );
 
     expect(p.search('#at:put:', cfg(), NEVER_CANCELLED)).toEqual([]);
+  });
+});
+
+describe('isSymbolLiteral', () => {
+  it('accepts unary, keyword, binary, and quoted symbol literals', () => {
+    expect(isSymbolLiteral('#foo')).toBe(true);
+    expect(isSymbolLiteral('#_bar1')).toBe(true);
+    expect(isSymbolLiteral('#at:put:')).toBe(true);
+    expect(isSymbolLiteral('#+')).toBe(true);
+    expect(isSymbolLiteral('#<=')).toBe(true);
+    expect(isSymbolLiteral("#'has spaces and ''quotes'''")).toBe(true);
+  });
+
+  it('rejects a bare # or a term that is more than a single symbol literal', () => {
+    expect(isSymbolLiteral('#')).toBe(false);
+    expect(isSymbolLiteral('#foo bar')).toBe(false);
+    expect(isSymbolLiteral('#foo. System abortTransaction')).toBe(false);
+    expect(isSymbolLiteral("#'unterminated")).toBe(false);
+    expect(isSymbolLiteral("#'a'; evil")).toBe(false);
+    expect(isSymbolLiteral('foo')).toBe(false);
   });
 });
 

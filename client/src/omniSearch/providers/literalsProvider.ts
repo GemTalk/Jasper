@@ -7,7 +7,10 @@
  *     those whose literal frame holds that String EXACTLY (so `'name'` finds the literal 'name', not
  *     every string containing "name" like 'className'; excludes comments/selectors).
  * Anything else (a bare number, a character — immediates that aren't in the literal frame) is rejected
- * up front (shows nothing; the scoped placeholder tells the user to type `#symbol` or `'string'`).
+ * up front (shows nothing; the scoped placeholder tells the user to type `#symbol` or `'string'`). The
+ * `#` branch also insists on a COMPLETE, well-formed symbol literal (`isSymbolLiteral`) before it runs:
+ * the expression is evaluated on the server, so a shape gate keeps `#foo. System abortTransaction` and
+ * other partial/injecting input from ever reaching the stone.
  *
  * Heavyweight + expression-based, so a partial/invalid form shows nothing (no error popup). Hits are
  * methods (open + ↗ senders), grouped under the Literals scope.
@@ -28,6 +31,22 @@ export function parseStringLiteral(term: string): string | null {
   return inner.length > 0 ? inner : null;
 }
 
+// A well-formed Smalltalk symbol literal, in full: `#` followed by exactly one of
+//   - a keyword selector `at:put:` (one-or-more `ident:` segments),
+//   - a unary identifier `foo` / `_bar1`,
+//   - a binary selector `+` / `<=` / `,`,
+//   - a quoted symbol `'anything, '' to escape a quote'`.
+// The whole term must be this and nothing more — this is the shape gate that stops the symbol branch
+// from evaluating arbitrary server code (e.g. `#foo. System abortTransaction`): anything with a
+// trailing `.`, space, or stray statement fails the anchors and is rejected before it reaches the stone.
+const SYMBOL_LITERAL_RE =
+  /^#(?:[A-Za-z_]\w*:(?:[A-Za-z_]\w*:)*|[A-Za-z_]\w*|[-+*/\\~<>=&|@%,?!]+|'(?:[^']|'')*')$/;
+
+/** Whether `term` is a complete, well-formed `#symbol` literal (and nothing else). */
+export function isSymbolLiteral(term: string): boolean {
+  return SYMBOL_LITERAL_RE.test(term);
+}
+
 export function createLiteralsProvider(
   sessionId: number,
   runSymbol: LiteralSymbolRunner,
@@ -40,7 +59,8 @@ export function createLiteralsProvider(
 
       let rows: MethodSearchResult[];
       try {
-        if (term.startsWith('#') && term.length > 1) {
+        if (term.startsWith('#')) {
+          if (!isSymbolLiteral(term)) return []; // partial or malformed — don't eval raw input
           rows = runSymbol(term);
         } else if (term.startsWith("'")) {
           const content = parseStringLiteral(term);
