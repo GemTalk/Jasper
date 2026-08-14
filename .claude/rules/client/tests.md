@@ -44,6 +44,8 @@ Tests run in random order; the seed is printed at the top of the output. Reprodu
 
 Tests using `useIntegrationTest` require a live GemStone instance so plain `npm test` needs a running stone. Run `npm run test:server:start` once to provision one; it writes connection details to `.env.test` (which the user may override with `.env.test.local`). CI runs these as a matrix over `client/.gemstone-integration-releases.json`.
 
+See [integration-test-harness.md](../../../docs/reference/integration-test-harness.md) for the harness contract (hook order, `GciTestContext`, the commit invariant) and [integration-test-isolation.md](../../../docs/explanation/integration-test-isolation.md) for why it's built this way.
+
 GCI session/oop values are koffi `External` pointer wrappers with no enumerable properties, so vitest's deep equality (`toEqual`, and therefore `expect(spy).toHaveBeenCalledWith(someSession, ...)`) cannot tell two *different* sessions or oops apart — it treats any two of them as equal regardless of the underlying native pointer. To assert *which* session/oop a call received, pull the argument out of `spy.mock.calls` and compare with `toBe` (reference equality) instead.
 
 ### Choosing where a stone-dependent test lives
@@ -52,7 +54,7 @@ The **default home** is a `*.integration.test.ts` using `useIntegrationTest`, co
 
 The on-demand `client/src/__tests__/gci/` project **never runs in CI** (see `.claude/rules/client/gci.md`) and is being migrated away. Add a test there only when the harness genuinely cannot host it:
 
-- it must **commit** — the harness aborts every test, and an abort cannot undo a commit;
+- it must **commit** — every harness session is armed to refuse commits outright (`TransactionError 2249`), with no opt-out;
 - it needs **exclusive access to the stone**, or destroys and restores the whole repository;
 - it drives a **session lifecycle** beyond `login` / `logout` / `withTransientSession` (e.g. many logins with varying flags), or installs process-wide state once for a whole file;
 - it makes a **single blocking GCI call** that can outlast the CI budget and that vitest cannot interrupt, so a hang takes out the whole job;
