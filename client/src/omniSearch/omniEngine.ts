@@ -304,8 +304,13 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
       current = filterPivot(pivot.results, rawValue.trim());
       return pivotView();
     }
-    lastRawValue = rawValue;
     const term = rawValue.trim();
+    // A genuinely new term restarts at the base cap: load-more/load-all raise `scopeLimit` for the
+    // term in the box, but that must not leak into the next search (else every keystroke fans out at
+    // LOAD_ALL_LIMIT and the footer falsely reads "exact"). The re-run paths (loadMore/loadAll/
+    // setScope/toggleCase/exitPivot) pass the unchanged `lastRawValue`, so they keep their cap.
+    if (term !== lastRawValue.trim()) scopeLimit = config.maxResultsPerCategory;
+    lastRawValue = rawValue;
     // Empty term shows nothing rather than dumping the whole image (recents is a follow-up). Bump the
     // generation so a slow in-flight query dispatched just before the clear can't repopulate.
     if (term.length === 0) {

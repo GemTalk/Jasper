@@ -239,6 +239,22 @@ describe('createOmniEngine', () => {
     expect(all!.exact).toBe(true);
   });
 
+  it('a fresh search term after Load-all restarts at the base cap instead of staying exhaustive', async () => {
+    const pool = Array.from({ length: 50 }, (_, i) => classResult(`C${i}`));
+    const engine = createOmniEngine({
+      providers: [fakeProvider('classes', pool)],
+      config: cfg({ maxResultsPerCategory: 5 }),
+    });
+
+    await engine.search('C');
+    await engine.loadAll();
+    const fresh = await engine.search('c');
+
+    expect(fresh!.shownCount).toBe(5);
+    expect(fresh!.hasMore).toBe(true);
+    expect(fresh!.exact).toBe(false);
+  });
+
   it('setScope narrows to a single category and re-runs the current term', async () => {
     const classes = fakeProvider('classes', [classResult('Foo')]);
     const source = fakeProvider('source', [
