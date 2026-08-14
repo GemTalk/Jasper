@@ -104,7 +104,7 @@ export function useIntegrationTest(
   let sessionCleanupFailed = false;
   // Inferred by subtraction after opening the nested levels, rather than
   // measured before nesting or hardcoded -- see openNestedCommitBudget below.
-  let floorLevel: number | undefined;
+  let floorLevel: bigint | undefined;
   // Whether the transaction beforeEach wraps around a test is currently open,
   // so a login() issued from inside a test body knows it has to re-establish
   // that transaction on the session it just created.
@@ -165,7 +165,7 @@ export function useIntegrationTest(
     // doit against a session a failing test may have left unusable, and a throw
     // out here would skip the abort while leaving the session looking clean to
     // the next test -- which would then start several levels deep.
-    let levelBeforeAbort: number | undefined;
+    let levelBeforeAbort: bigint | undefined;
 
     try {
       // Checked before the cleanup below on purpose: if the commit guard is no longer armed, that means a test
@@ -178,9 +178,7 @@ export function useIntegrationTest(
       // abort per remaining level to fully unwind rather than leaving the
       // next test's beginTransaction to fail against a still-nested session.
       if (options?.commitStrategy === 'nested') {
-        levelBeforeAbort = Number(
-          gciLibrary.executeAndFetchString(session, 'System transactionLevel printString'),
-        );
+        levelBeforeAbort = gciLibrary.executeAndFetchInteger(session, 'System transactionLevel');
 
         gciLibrary.executeDiscardingResult(
           session,
@@ -267,9 +265,7 @@ export function useIntegrationTest(
       session,
       `${commitDepth} timesRepeat: [System beginNestedTransaction]`,
     );
-    const nestedLevel = Number(
-      gciLibrary.executeAndFetchString(session, 'System transactionLevel printString'),
-    );
+    const nestedLevel = gciLibrary.executeAndFetchInteger(session, 'System transactionLevel');
 
     if (nestedLevel < commitDepth + 1) {
       throw new Error(
@@ -277,7 +273,7 @@ export function useIntegrationTest(
       );
     }
 
-    floorLevel = nestedLevel - commitDepth;
+    floorLevel = nestedLevel - BigInt(commitDepth);
 
     // Opening the levels, and reading the level back, are both doits: they
     // re-cache the Utf8 class oop and leave oops in the PureExportSet, undoing
