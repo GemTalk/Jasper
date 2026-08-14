@@ -3,10 +3,15 @@
  * resolving with `{ newName, scope }` or undefined if cancelled/closed. Mirrors
  * the rename-method editor for a consistent rename UX.
  *
- * On submit the host runs `validate(newName)` — a synchronous check that includes
+ * On submit the host first validates the SHAPE of the posted scope with
+ * `isRenameClassScope` — a webview message is untrusted — and a scope that fails
+ * is rejected before `validate` runs, posting `invalid` back and leaving the panel
+ * open just as a bad name does.
+ *
+ * Then the host runs `validate(newName)` — a synchronous check that includes
  * "is this name already in use in the stone?" — and, if it returns an error,
  * posts it back to the editor (`invalid`) so the user can choose another name
- * without the editor closing. The editor resolves only once a name passes.
+ * without the editor closing. The editor resolves only once both checks pass.
  *
  * Follows Jasper's webview conventions: DOM logic lives in the sibling
  * renameClassEditorView.js (read at runtime, injected under a nonce).
@@ -14,7 +19,11 @@
 import * as vscode from 'vscode';
 import * as crypto from 'crypto';
 import { renderClassEditorHtml } from './renameClassEditorHtml';
-import { RenameClassScope, RenameClassOptions } from './queries/previewRenameClass';
+import {
+  RenameClassScope,
+  RenameClassOptions,
+  isRenameClassScope,
+} from './queries/previewRenameClass';
 import { readWebviewScript } from '../webviewAssets';
 
 const editorJs = readWebviewScript('renameClassEditorView.js', 'refactoring');
@@ -77,7 +86,15 @@ export function showRenameClassEditor(
     panel.webview.onDidReceiveMessage((message) => {
       if (message?.command === 'ok') {
         const newName = typeof message.newName === 'string' ? message.newName.trim() : '';
-        const scope = message.scope as RenameClassScope;
+        if (!isRenameClassScope(message.scope)) {
+          // Malformed scope from the webview: reject rather than trust the cast.
+          void panel.webview.postMessage({
+            command: 'invalid',
+            message: 'Internal error: unrecognized rename scope.',
+          });
+          return; // keep the editor open
+        }
+        const scope: RenameClassScope = message.scope;
         const err = validate(newName);
         if (err) {
           void panel.webview.postMessage({ command: 'invalid', message: err });

@@ -2451,6 +2451,30 @@ testInsertEmptySuperclassApplies
 
 category: 'tests - V6 insert'
 method: GsExtractSuperclassRefactoringTest
+testInsertDeclinesWhenNameIsANonClassGlobal
+	"#379 hardening. classNamed: only matches a Class binding, so a name bound to a
+	 NON-class global slipped past the precondition and applyClassAdd:'s
+	 subclass:...inDictionary: silently rebound (clobbered) it. The objectNamed: guard
+	 in computeAnalysis now declines any existing binding for the new name, with the
+	 change set empty so nothing is created and the global is left intact."
+	| ref |
+	UserGlobals at: #GsESPet put: 42.
+	[ref := GsExtractSuperclassRefactoring
+		class: (self classNamed: 'GsESDog') insertSuperclassNamed: 'GsESPet' inDictionary: nil.
+
+	 self assert: ref decline notNil.
+	 "The decline names the symbol list, not the target dictionary: the question asked is
+	  system-wide, so the message must not read as a collision in the class's own dictionary."
+	 self assert: ref decline includesSubstring: 'already in use as a global on the symbol list'.
+	 "A global decline empties the change set, so nothing is created."
+	 self assert: ref changeSet changes isEmpty.
+	 "the pre-existing non-class global is untouched"
+	 self assert: (UserGlobals at: #GsESPet) equals: 42]
+		ensure: [UserGlobals removeKey: #GsESPet ifAbsent: []]
+%
+
+category: 'tests - V6 insert'
+method: GsExtractSuperclassRefactoringTest
 testInsertReparentsDeepSubtree
 	"A grandchild of the anchor must stay correctly parented onto the anchor's new version."
 	(GsExtractSuperclassRefactoring class: (self classNamed: 'GsESDog') insertSuperclassNamed: 'GsESPet' inDictionary: nil)
@@ -5011,7 +5035,7 @@ testApplyReportsAnAccessorThatCannotCompileAndInstallsNothing
 		accessors: (Array with: (Array with: 'tally' with: 'tally
 ^ )( not parseable')).
 	"failed non-empty -> the empty-array marker is absent"
-	self assert: (result indexOfSubCollection: '"failed":[]') = 0.
+	self deny: result includesSubstring: '"failed":[]'.
 	self deny: ((UserGlobals at: #GsIVBase) includesSelector: #tally)
 %
 
@@ -10573,6 +10597,29 @@ testDeclinesExistingClassName
 	| r |
 	r := GsSplitClassRefactoring class: self source splitIntoClassNamed: 'GsSCSource' extractingInstVars: #('extractC') inDictionary: nil.
 	self assert: (r decline includesString: 'already exists')
+%
+
+category: 'tests - declines'
+method: GsSplitClassRefactoringTest
+testDeclinesWhenNameIsANonClassGlobal
+	"PR #422 review. classNamed: only matches a Class binding, so a component name bound to a
+	 NON-class global slipped past the precondition and applyClassAdd:'s subclass:...inDictionary:
+	 silently rebound (clobbered) it. Unlike extract-superclass the split client validates only the
+	 name's SHAPE, so the UI path was exposed too. The objectNamed: guard declines any existing
+	 binding, with the change set empty so nothing is created and the global is left intact."
+	| r |
+	UserGlobals at: #GsSCBucket put: 'DO NOT LOSE ME'.
+	[r := GsSplitClassRefactoring class: self source splitIntoClassNamed: 'GsSCBucket' extractingInstVars: #('extractC') inDictionary: nil.
+
+	 self assert: r decline notNil.
+	 "The decline names the symbol list, not the target dictionary -- the question asked is
+	  system-wide, so the message must not read as a collision in the source's own dictionary."
+	 self assert: (r decline includesString: 'already in use as a global on the symbol list').
+	 "A decline empties the change set, so nothing is created."
+	 self assert: r changeSet changes isEmpty.
+	 "the pre-existing non-class global is untouched"
+	 self assert: (UserGlobals at: #GsSCBucket) equals: 'DO NOT LOSE ME']
+		ensure: [UserGlobals removeKey: #GsSCBucket ifAbsent: []]
 %
 
 category: 'tests - declines'

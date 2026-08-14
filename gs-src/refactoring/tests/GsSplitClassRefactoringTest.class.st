@@ -209,6 +209,28 @@ GsSplitClassRefactoringTest >> testDeclinesExistingClassName [
 ]
 
 { #category : 'tests - declines' }
+GsSplitClassRefactoringTest >> testDeclinesWhenNameIsANonClassGlobal [
+	"PR #422 review. classNamed: only matches a Class binding, so a component name bound to a
+	 NON-class global slipped past the precondition and applyClassAdd:'s subclass:...inDictionary:
+	 silently rebound (clobbered) it. Unlike extract-superclass the split client validates only the
+	 name's SHAPE, so the UI path was exposed too. The objectNamed: guard declines any existing
+	 binding, with the change set empty so nothing is created and the global is left intact."
+	| r |
+	UserGlobals at: #GsSCBucket put: 'DO NOT LOSE ME'.
+	[r := GsSplitClassRefactoring class: self source splitIntoClassNamed: 'GsSCBucket' extractingInstVars: #('extractC') inDictionary: nil.
+
+	 self assert: r decline notNil.
+	 "The decline names the symbol list, not the target dictionary -- the question asked is
+	  system-wide, so the message must not read as a collision in the source's own dictionary."
+	 self assert: (r decline includesString: 'already in use as a global on the symbol list').
+	 "A decline empties the change set, so nothing is created."
+	 self assert: r changeSet changes isEmpty.
+	 "the pre-existing non-class global is untouched"
+	 self assert: (UserGlobals at: #GsSCBucket) equals: 'DO NOT LOSE ME']
+		ensure: [UserGlobals removeKey: #GsSCBucket ifAbsent: []]
+]
+
+{ #category : 'tests - declines' }
 GsSplitClassRefactoringTest >> testDeclinesInvalidClassName [
 	| r |
 	r := GsSplitClassRefactoring class: self source splitIntoClassNamed: 'lowercase' extractingInstVars: #('extractC') inDictionary: nil.

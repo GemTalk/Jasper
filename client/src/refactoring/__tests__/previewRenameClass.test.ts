@@ -4,6 +4,7 @@ import {
   pageRenameClassPreview,
   applyRenameClass,
   clearRenameClassPreview,
+  isRenameClassScope,
 } from '../queries/previewRenameClass';
 
 const OPTS = {
@@ -57,6 +58,27 @@ describe('previewRenameClass queries', () => {
     expect(code).toContain('removeOldFromHistory: true');
   });
 
+  it('trims surrounding whitespace off a dictionary scope name', async () => {
+    // isRenameClassScope only rejects an ALL-blank name, so ' MyDict ' passes the
+    // guard. Untrimmed it would reach the engine as dictionaryScope: ' MyDict ',
+    // naming a dictionary that cannot exist.
+    const execute = vi.fn().mockResolvedValue('{}');
+
+    await startRenameClassPreview(
+      execute,
+      'Account',
+      'BankAccount',
+      { kind: 'dictionary', dictName: ' \tMyDict\n ' },
+      OPTS,
+      'tok',
+      1000,
+    );
+
+    const code = execute.mock.calls[0][1];
+    expect(code).toContain("dictionaryScope: 'MyDict'");
+    expect(code).not.toContain("dictionaryScope: ' ");
+  });
+
   it('builds a page query for a token and offset', async () => {
     const execute = vi.fn().mockResolvedValue('{}');
 
@@ -79,5 +101,37 @@ describe('previewRenameClass queries', () => {
     clearRenameClassPreview(execute, 'tok');
 
     expect(execute.mock.calls[0][0]).toContain("clearToken: 'tok'");
+  });
+});
+
+describe('isRenameClassScope (webview-message guard)', () => {
+  it('accepts the three argument-less scopes', () => {
+    expect(isRenameClassScope({ kind: 'class' })).toBe(true);
+    expect(isRenameClassScope({ kind: 'hierarchy' })).toBe(true);
+    expect(isRenameClassScope({ kind: 'wholeSystem' })).toBe(true);
+  });
+
+  it('accepts a dictionary scope only with a string dictName', () => {
+    expect(isRenameClassScope({ kind: 'dictionary', dictName: 'MyDict' })).toBe(true);
+    expect(isRenameClassScope({ kind: 'dictionary' })).toBe(false);
+    expect(isRenameClassScope({ kind: 'dictionary', dictName: 5 })).toBe(false);
+  });
+
+  it('rejects a dictionary scope whose dictName is empty or blank', () => {
+    // The shape a webview actually produces when the dictionary dropdown is
+    // unselected. Left unchecked it reaches scopeClauseOf as dictionaryScope: '',
+    // a syntactically valid query naming a dictionary that cannot exist.
+    expect(isRenameClassScope({ kind: 'dictionary', dictName: '' })).toBe(false);
+    expect(isRenameClassScope({ kind: 'dictionary', dictName: '   ' })).toBe(false);
+    expect(isRenameClassScope({ kind: 'dictionary', dictName: '\t\n' })).toBe(false);
+  });
+
+  it('rejects unknown kinds and non-objects', () => {
+    expect(isRenameClassScope({ kind: 'everything' })).toBe(false);
+    expect(isRenameClassScope({})).toBe(false);
+    expect(isRenameClassScope(null)).toBe(false);
+    expect(isRenameClassScope(undefined)).toBe(false);
+    expect(isRenameClassScope('wholeSystem')).toBe(false);
+    expect(isRenameClassScope(42)).toBe(false);
   });
 });

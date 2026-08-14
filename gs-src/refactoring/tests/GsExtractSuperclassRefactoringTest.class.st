@@ -178,6 +178,29 @@ GsExtractSuperclassRefactoringTest >> testInsertEmptySuperclassApplies [
 ]
 
 { #category : 'tests - V6 insert' }
+GsExtractSuperclassRefactoringTest >> testInsertDeclinesWhenNameIsANonClassGlobal [
+	"#379 hardening. classNamed: only matches a Class binding, so a name bound to a
+	 NON-class global slipped past the precondition and applyClassAdd:'s
+	 subclass:...inDictionary: silently rebound (clobbered) it. The objectNamed: guard
+	 in computeAnalysis now declines any existing binding for the new name, with the
+	 change set empty so nothing is created and the global is left intact."
+	| ref |
+	UserGlobals at: #GsESPet put: 42.
+	[ref := GsExtractSuperclassRefactoring
+		class: (self classNamed: 'GsESDog') insertSuperclassNamed: 'GsESPet' inDictionary: nil.
+
+	 self assert: ref decline notNil.
+	 "The decline names the symbol list, not the target dictionary: the question asked is
+	  system-wide, so the message must not read as a collision in the class's own dictionary."
+	 self assert: ref decline includesSubstring: 'already in use as a global on the symbol list'.
+	 "A global decline empties the change set, so nothing is created."
+	 self assert: ref changeSet changes isEmpty.
+	 "the pre-existing non-class global is untouched"
+	 self assert: (UserGlobals at: #GsESPet) equals: 42]
+		ensure: [UserGlobals removeKey: #GsESPet ifAbsent: []]
+]
+
+{ #category : 'tests - V6 insert' }
 GsExtractSuperclassRefactoringTest >> testInsertReparentsDeepSubtree [
 	"A grandchild of the anchor must stay correctly parented onto the anchor's new version."
 	(GsExtractSuperclassRefactoring class: (self classNamed: 'GsESDog') insertSuperclassNamed: 'GsESPet' inDictionary: nil)
