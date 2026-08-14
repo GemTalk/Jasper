@@ -73,7 +73,6 @@ import {
 } from './rowanDependency';
 import { shouldLoadAfterAddingDependency } from './rowanLoadPrompt';
 import { RowanDecorationProvider } from './rowanDecorations';
-import { ExplorerEmptyVarDecorationProvider } from './explorerVarDecorations';
 import { ActiveEditorDecorationProvider } from './activeEditorDecoration';
 import { findMethodInClass } from './commands/findMethodInClass';
 import { loadClassPickItems } from './commands/classPicker';
@@ -2945,9 +2944,6 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     // Git-view-style M/A/D badges + label tinting for Rowan rows.
     vscode.window.registerFileDecorationProvider(new RowanDecorationProvider()),
-    // Grays the "instance/class variables" header the Explorer shows for an empty
-    // variable side.
-    vscode.window.registerFileDecorationProvider(new ExplorerEmptyVarDecorationProvider()),
     // Tints the Methods-pane / Open-Editors row backing the active editor, so the
     // selected method reads as connected to its source even when the tree isn't
     // focused (its selection goes muted grey then).

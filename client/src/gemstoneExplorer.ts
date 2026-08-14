@@ -95,7 +95,6 @@ import {
   matchesClassPrefix,
   categoryContains,
 } from './explorerTreeHelpers';
-import { emptyVarSideUri } from './explorerVarDecorations';
 import {
   parseClassHistory,
   parseRevertResult,
@@ -273,6 +272,7 @@ class ClassItem extends vscode.TreeItem {
     public readonly className: string,
     hasIvars = false,
     versionTag?: string,
+    hasComment = false,
   ) {
     super(
       versionTag === undefined ? className : `${className}[${versionTag}]`,
@@ -281,7 +281,12 @@ class ClassItem extends vscode.TreeItem {
     // The displayed label may carry a `[n]` version tag, but the node's identity
     // (id, click argument, ivar sub-tree) always uses the raw class name.
     this.id = `k:${className}`;
-    this.contextValue = 'explorerClass';
+    // `.commented` gates the comment button to classes that actually have one
+    // (#387 item 11). Every other class action matches BOTH forms — see the
+    // `explorerClass(\.commented)?` clauses in package.json — so the suffix only
+    // ever adds a button, never removes one. Anchored there rather than a bare
+    // `^explorerClass` prefix, which would also swallow `explorerClassVar`.
+    this.contextValue = hasComment ? 'explorerClass.commented' : 'explorerClass';
     this.iconPath = new vscode.ThemeIcon('symbol-class');
     // Fires on every click (selection still drives navigation separately); the
     // controller uses the timing to detect a double-click → open definition.
@@ -337,30 +342,21 @@ class VarSideItem extends vscode.TreeItem {
   constructor(
     public readonly className: string,
     public readonly isMeta: boolean,
-    // When the class defines no variables on this side we still show its header,
-    // grayed and non-expandable, so the instance/class structure stays consistent.
-    isEmpty = false,
   ) {
+    // A side node exists only when that side has variables (#387 item 12), so it is
+    // always expandable and never needs an empty/grayed rendering.
     super(
       isMeta ? 'class variables' : 'instance variables',
-      isEmpty ? vscode.TreeItemCollapsibleState.None : vscode.TreeItemCollapsibleState.Expanded,
+      vscode.TreeItemCollapsibleState.Expanded,
     );
     this.id = `k:${className}/vside:${isMeta}`;
     // Split by side so the inline "+" (Add Instance Variable) targets only the
     // instance side; the class side keeps the base token.
     this.contextValue = isMeta ? 'explorerVarSide.class' : 'explorerVarSide.instance';
     this.iconPath = new vscode.ThemeIcon('symbol-class');
-    if (isEmpty) {
-      // Synthetic resourceUri → FileDecorationProvider grays the header label.
-      this.resourceUri = emptyVarSideUri(className, isMeta);
-      this.tooltip = isMeta
-        ? `${className} defines no class variables`
-        : `${className} defines no instance variables`;
-    } else {
-      this.tooltip = isMeta
-        ? `Class variables of ${className}`
-        : `Instance variables of ${className}`;
-    }
+    this.tooltip = isMeta
+      ? `Class variables of ${className}`
+      : `Instance variables of ${className}`;
   }
 }
 
@@ -1380,10 +1376,14 @@ export class ExplorerController {
 
   // Open a class's (editable) comment editor — the same gemstone://…/comment
   // document the System Browser saves, but reached from the Explorer's class row
-  // or Classes-pane toolbar. Opens to the side by default so the comment sits
-  // alongside whatever the developer is reading. `item` comes from the inline
-  // button; falls back to the selected class for the toolbar / palette.
-  async openClassComment(item?: ClassItem, pin = true): Promise<void> {
+  // or Classes-pane toolbar. Opens to the side so the comment sits alongside
+  // whatever the developer is reading, and as a PREVIEW tab rather than a pinned
+  // one: reading a comment is usually a peek, and a preview tab is reused by the
+  // next one and dismissed with a single click instead of two (#387 item 11).
+  // Double-clicking the tab still promotes it to a permanent one. `item` comes
+  // from the inline button; falls back to the selected class for the toolbar /
+  // palette.
+  async openClassComment(item?: ClassItem): Promise<void> {
     const className = item?.className ?? this.state.className;
     if (
       this.state.dictName === undefined ||
@@ -1392,7 +1392,7 @@ export class ExplorerController {
     ) {
       return;
     }
-    await this.openCommentFor(className, this.state.dictName, this.state.dictIndex, pin);
+    await this.openCommentFor(className, this.state.dictName, this.state.dictIndex);
   }
 
   // Same as openClassComment, but for a Hierarchy node — resolves the class's own
@@ -1404,21 +1404,20 @@ export class ExplorerController {
       void vscode.window.showWarningMessage(`Can't locate class ${item.className}.`);
       return;
     }
-    await this.openCommentFor(item.className, resolved.dictName, resolved.dictIndex, true);
+    await this.openCommentFor(item.className, resolved.dictName, resolved.dictIndex);
   }
 
   private async openCommentFor(
     className: string,
     dictName: string,
     dictIndex: number,
-    pin: boolean,
   ): Promise<void> {
     const session = this.session();
     if (!session) return;
     const uri = buildClassCommentUri(session.id, dictName, className, dictIndex);
     this.selfOpenedUris.add(uri.toString());
     const doc = await vscode.workspace.openTextDocument(uri);
-    await openGemstoneDocument(doc, pin ? 'pin' : 'preview', this.placement);
+    await openGemstoneDocument(doc, 'preview', this.placement);
   }
 
   // Generate an editable Grail `.py` stub for a class. Invoked from the Classes-
@@ -1768,6 +1767,17 @@ export class ExplorerController {
     return (
       this.classHasDefinedIvars(className) || (this.definedClassVarCounts.get(className) ?? 0) > 0
     );
+  }
+
+  // Whether a class carries a real comment — drives whether the row offers the
+  // comment button at all (#387 item 11), so the button never promises a document
+  // that turns out to be GemStone's synthesised "No class-specific documentation
+  // for …" placeholder. Answered from the class list already fetched for this
+  // dictionary, so asking costs no extra query. A class we have no entry for
+  // (a stale row, or one from another dictionary) is treated as uncommented: the
+  // Classes-pane toolbar button still reaches it, so nothing becomes unreachable.
+  classHasComment(className: string): boolean {
+    return this.classCategoryEntries.some((e) => e.className === className && e.hasComment);
   }
 
   // The class's `current/total` version tag when it has more than one version in
@@ -4912,7 +4922,15 @@ class ClassProvider extends RefreshableProvider<ClassNode | FilterChipItem> {
     if (!element) {
       const rows = this.ctl
         .classNames()
-        .map((n) => new ClassItem(n, this.ctl.classHasDefinedVars(n), this.ctl.classVersion(n)));
+        .map(
+          (n) =>
+            new ClassItem(
+              n,
+              this.ctl.classHasDefinedVars(n),
+              this.ctl.classVersion(n),
+              this.ctl.classHasComment(n),
+            ),
+        );
       return withFilterChip(VIEW_CLASSES, this.ctl, rows);
     }
     // A class expands to an "instance" and/or "class" variable-side node (like the
@@ -4921,7 +4939,7 @@ class ClassProvider extends RefreshableProvider<ClassNode | FilterChipItem> {
       return variableSides(
         this.ctl.definedIvarNames(element.className),
         this.ctl.definedClassVarNames(element.className),
-      ).map((side) => new VarSideItem(element.className, side.isMeta, side.names.length === 0));
+      ).map((side) => new VarSideItem(element.className, side.isMeta));
     }
     // A side node expands to its variable rows (each with an inline rename pencil).
     if (element instanceof VarSideItem) {
@@ -5275,8 +5293,9 @@ export function registerGemStoneExplorer(
       (item?: ClassItem) =>
         void ctl.openClassDefinition(item instanceof ClassItem ? item : undefined, true),
     ),
-    // Open a class's editable comment (inline button on the class row / Classes-
-    // pane toolbar). A class comment is often the first place a developer looks.
+    // Open a class's editable comment as a preview tab (inline button on the class
+    // row / Classes-pane toolbar). A class comment is often the first place a
+    // developer looks — and usually just a look, hence preview rather than pinned.
     vscode.commands.registerCommand(
       'gemstone.explorer.openComment',
       (item?: ClassItem) => void ctl.openClassComment(item instanceof ClassItem ? item : undefined),

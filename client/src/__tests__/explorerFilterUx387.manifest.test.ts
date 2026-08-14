@@ -64,6 +64,78 @@ describe('#387 item 2 — the magnifier is freed for find', () => {
   });
 });
 
+// The class row's contextValue gained a `.commented` variant, so every OTHER class
+// action had its `when` widened to accept both. Getting one wrong silently drops
+// that action from the context menu, which no other test would notice — hence
+// evaluating the clauses here against both contextValues.
+interface MenuEntry {
+  command: string;
+  when?: string;
+  group?: string;
+}
+const menus = (
+  JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../../package.json'), 'utf8')) as {
+    contributes: { menus: Record<string, MenuEntry[]> };
+  }
+).contributes.menus;
+
+const itemContext = menus['view/item/context'];
+// Does a `when` clause admit this contextValue? Only the viewItem term varies here,
+// so the rest of the clause is held constant and just the viewItem test evaluated.
+const admits = (when: string, viewItem: string): boolean => {
+  const exact = when.match(/viewItem == ([\w.]+)/);
+  if (exact) return exact[1] === viewItem;
+  const re = when.match(/viewItem =~ \/(.+?)\/(?: |$|&)/);
+  if (!re) throw new Error(`no viewItem test in: ${when}`);
+  return new RegExp(re[1]).test(viewItem);
+};
+const classRowCommands = (viewItem: string): string[] =>
+  itemContext
+    .filter((e) => (e.when ?? '').includes('gemstoneExplorerClasses'))
+    .filter((e) => /viewItem (==|=~)/.test(e.when ?? ''))
+    .filter((e) => admits(e.when ?? '', viewItem))
+    .map((e) => e.command);
+
+describe('#387 item 11 — the .commented contextValue only ever adds a button', () => {
+  it('offers the comment button on a class that has a comment', () => {
+    expect(classRowCommands('explorerClass.commented')).toContain('gemstone.explorer.openComment');
+  });
+
+  it('withholds it on a class that has none', () => {
+    expect(classRowCommands('explorerClass')).not.toContain('gemstone.explorer.openComment');
+  });
+
+  it('leaves every other class action reachable either way', () => {
+    const plain = classRowCommands('explorerClass');
+    const commented = classRowCommands('explorerClass.commented');
+    expect(plain.length).toBeGreaterThan(5); // the class row is not stripped bare
+    // The comment button is the ONLY difference between the two rows.
+    expect(commented.filter((c) => c !== 'gemstone.explorer.openComment').sort()).toEqual(
+      plain.sort(),
+    );
+  });
+
+  it('does not let the widened clauses swallow a class VARIABLE row', () => {
+    // `explorerClassVar` shares the `explorerClass` prefix, so an unanchored
+    // /^explorerClass/ would put class actions on class-variable rows.
+    const onClassVar = classRowCommands('explorerClassVar');
+    expect(onClassVar).not.toContain('gemstone.explorer.removeClass');
+    expect(onClassVar).not.toContain('gemstone.explorer.openComment');
+  });
+});
+
+describe('#387 item 11 — opening a comment is not pinning it', () => {
+  it.each(['gemstone.explorer.openComment', 'gemstone.explorer.openHierarchyComment'])(
+    '%s no longer promises a pin',
+    (id) => {
+      // The command opens a preview tab now, so a title of "Pin Comment" would
+      // describe behaviour the command deliberately no longer has.
+      expect(command(id).title).not.toMatch(/pin/i);
+      expect(command(id).title).toMatch(/comment/i);
+    },
+  );
+});
+
 describe('#387 item 8 — the flat view is about grouping, not uncategorized methods', () => {
   it('no longer reads as "the methods that have no category"', () => {
     const title = command('gemstone.explorer.showMethodsFlat').title;

@@ -1390,13 +1390,13 @@
       },
       {
         "command": "gemstone.explorer.openComment",
-        "title": "Pin Comment",
+        "title": "Open Comment",
         "category": "GemStone",
         "icon": "$(book)"
       },
       {
         "command": "gemstone.explorer.openHierarchyComment",
-        "title": "Pin Comment",
+        "title": "Open Comment",
         "category": "GemStone",
         "icon": "$(book)"
       },
@@ -2251,12 +2251,12 @@
         },
         {
           "command": "gemstone.explorer.openDefinitionToSide",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/",
           "group": "inline@1"
         },
         {
           "command": "gemstone.explorer.openComment",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass",
+          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass.commented",
           "group": "inline@2"
         },
         {
@@ -2316,12 +2316,12 @@
         },
         {
           "command": "gemstone.explorer.addInstVar",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/ && gemstone.rbSupportAvailable",
           "group": "2_generate@2"
         },
         {
           "command": "gemstone.explorer.addClassVar",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/",
           "group": "2_generate@3"
         },
         {
@@ -2386,27 +2386,27 @@
         },
         {
           "command": "gemstone.explorer.renameClass",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/ && gemstone.rbSupportAvailable",
           "group": "inline@3"
         },
         {
           "command": "gemstone.explorer.classHistory",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/ && gemstone.rbSupportAvailable",
           "group": "3_refactor@1"
         },
         {
           "command": "gemstone.explorer.insertSuperclass",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/ && gemstone.rbSupportAvailable",
           "group": "3_refactor@2"
         },
         {
           "command": "gemstone.explorer.extractSuperclass",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/ && gemstone.rbSupportAvailable",
           "group": "3_refactor@3"
         },
         {
           "command": "gemstone.explorer.splitClass",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/ && gemstone.rbSupportAvailable",
           "group": "3_refactor@4"
         },
         {
@@ -2446,7 +2446,7 @@
         },
         {
           "command": "gemstone.generateGrailStub",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/",
           "group": "2_generate@1"
         },
         {
@@ -2456,7 +2456,7 @@
         },
         {
           "command": "gemstone.explorer.removeClass",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/",
           "group": "inline@9"
         },
         {
