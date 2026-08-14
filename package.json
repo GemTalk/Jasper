@@ -133,6 +133,89 @@
     ],
     "configuration": [
       {
+        "title": "GemStone Search",
+        "properties": {
+          "gemstone.omniSearch.ui": {
+            "type": "string",
+            "enum": ["spotter", "panel", "quickpick"],
+            "enumDescriptions": [
+              "Editor-tab Spotter: a webview in an editor tab with labeled scope tabs, a source-preview pane, own match highlighting, and an always-on case indicator.",
+              "Bottom-panel view (default): the same webview docked in the panel strip (next to Terminal/Output). Stays out of the way; results open in the editor area above it.",
+              "Phase-1 Quick Pick: the native VS Code picker with title-bar scope buttons."
+            ],
+            "default": "panel",
+            "markdownDescription": "Which GemStone Search experience to open: the **bottom panel** view (default), the editor-tab **Spotter**, or the classic **Quick Pick**."
+          },
+          "gemstone.omniSearch.matchMode": {
+            "type": "string",
+            "enum": ["fuzzy", "substring", "prefix"],
+            "enumDescriptions": [
+              "Subsequence match: the typed characters appear in order (the Quick-Open feel).",
+              "The typed text appears as a contiguous run.",
+              "The result starts with the typed text."
+            ],
+            "default": "fuzzy",
+            "markdownDescription": "How Omni Search matches your query against classes, methods, dictionaries and open editors."
+          },
+          "gemstone.omniSearch.caseSensitive": {
+            "type": "boolean",
+            "default": false,
+            "description": "Match case-sensitively. Off by default."
+          },
+          "gemstone.omniSearch.categories": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "classes",
+                "methods",
+                "dictionaries",
+                "globals",
+                "source",
+                "literals",
+                "categories"
+              ]
+            },
+            "default": [
+              "classes",
+              "methods",
+              "dictionaries",
+              "globals",
+              "source",
+              "literals",
+              "categories"
+            ],
+            "markdownDescription": "Which categories Omni Search includes. Narrow a single search on the fly with the category buttons in the picker's title bar; the Clear-filter button resets to searching everything. **Source** (full method-source search) and **Literals** (methods referencing a compilable literal you type, e.g. `#at:put:`) are heavyweight, so they never run in the default search — pick their button to use them."
+          },
+          "gemstone.omniSearch.maxResultsPerCategory": {
+            "type": "number",
+            "default": 20,
+            "minimum": 1,
+            "maximum": 200,
+            "description": "Maximum results shown per category."
+          },
+          "gemstone.omniSearch.debounceMs": {
+            "type": "number",
+            "default": 120,
+            "minimum": 0,
+            "maximum": 2000,
+            "description": "Delay after a keystroke before searching, in milliseconds (throttles per-keystroke stone queries)."
+          },
+          "gemstone.omniSearch.methodMinQueryLength": {
+            "type": "number",
+            "default": 2,
+            "minimum": 1,
+            "maximum": 10,
+            "description": "Minimum characters before the Methods category queries the stone (method search hits the stone per keystroke). Raise it if per-keystroke method search feels slow on a large stone; lower it (to 1) to search selectors from the first character."
+          },
+          "gemstone.omniSearch.referencesInPreview": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Show a row's references/senders (Alt+Enter or the ↗ button) as a sticky list in the right-hand preview pane, leaving the results list in place — click an entry to open its source. Turn this **off** to use the classic behavior, where references replace the whole results list (a pivot you back out of with ← / Esc)."
+          }
+        }
+      },
+      {
         "title": "GemStone",
         "properties": {
           "gemstone.gciLibraries": {
@@ -381,9 +464,24 @@
           "title": "GemStone Explorer",
           "icon": "resources/gemstone-browser.svg"
         }
+      ],
+      "panel": [
+        {
+          "id": "gemstoneOmniSearchPanel",
+          "title": "GemStone Search",
+          "icon": "$(search)"
+        }
       ]
     },
     "views": {
+      "gemstoneOmniSearchPanel": [
+        {
+          "id": "gemstoneOmniSearchView",
+          "name": "GemStone Search",
+          "type": "webview",
+          "when": "gemstone.hasActiveSession"
+        }
+      ],
       "gemstoneExplorer": [
         {
           "id": "gemstoneExplorerOpenEditors",
@@ -998,6 +1096,12 @@
         "title": "Find Class…",
         "category": "GemStone",
         "icon": "$(search)"
+      },
+      {
+        "command": "gemstone.omniSearch",
+        "title": "GemStone Search…",
+        "category": "GemStone",
+        "icon": "$(search-fuzzy)"
       },
       {
         "command": "gemstone.findMethodInClass",
@@ -2722,6 +2826,22 @@
         "key": "ctrl+k c",
         "mac": "cmd+k c",
         "when": "gemstone.hasActiveSession"
+      },
+      {
+        "command": "gemstone.omniSearch",
+        "key": "ctrl+shift+a",
+        "mac": "cmd+shift+a",
+        "when": "gemstone.hasActiveSession && !terminalFocus"
+      },
+      {
+        "command": "gemstone.omniSearch.references",
+        "key": "alt+enter",
+        "when": "gemstone.omniSearchActive"
+      },
+      {
+        "command": "gemstone.omniSearch.back",
+        "key": "left",
+        "when": "gemstone.omniSearchInPivot"
       },
       {
         "command": "gemstone.findMethodInClass",

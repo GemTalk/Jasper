@@ -157,7 +157,14 @@ describe('configureAutoStartDatabase', () => {
 describe('the contributed setting', () => {
   const pkgPath = path.resolve(__dirname, '..', '..', '..', 'package.json');
   const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
-  const setting = pkg.contributes.configuration[0].properties['gemstone.autoStartDatabase'];
+  // Look the setting up across ALL configuration blocks (VS Code merges their properties), not a
+  // fixed block index — GemStone Search contributes its own configuration block, so the block order
+  // is not something a test should depend on.
+  const setting = pkg.contributes.configuration
+    .map(
+      (c: { properties?: Record<string, unknown> }) => c.properties?.['gemstone.autoStartDatabase'],
+    )
+    .find((s: unknown) => s !== undefined);
 
   it('is scoped so no workspace can override the remembered choice', () => {
     expect(setting.scope).toBe('application');

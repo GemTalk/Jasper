@@ -595,7 +595,10 @@ describe('ExportManager (incremental sync)', () => {
       const pkg = JSON.parse(
         fs.readFileSync(path.resolve(__dirname, '../../../package.json'), 'utf-8'),
       );
-      const desc = pkg.contributes.configuration[0].properties['gemstone.exportPath'].description;
+      const group = pkg.contributes.configuration.find(
+        (g: { properties?: Record<string, unknown> }) => g.properties?.['gemstone.exportPath'],
+      );
+      const desc = group.properties['gemstone.exportPath'].description;
       for (const v of [
         '{workspaceRoot}',
         '{session}',
