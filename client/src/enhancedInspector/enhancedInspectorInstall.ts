@@ -33,6 +33,7 @@ import {
   gsStringLiteral,
   messageOf,
   safeAbort,
+  toLocalGemPath,
   yieldToEventLoop,
 } from '../serverPlugin/installHelpers';
 
@@ -208,8 +209,10 @@ export function isEnhancedInspectorInstalled(session: ActiveSession): boolean {
  * partial is committed. On success the work is committed and verified.
  *
  * @param session     a session with write access to kernel classes (SystemUser).
- * @param payloadDir  absolute path to the directory holding the `.gs` files,
- *                    readable by the gem (a local stone).
+ * @param payloadDir  absolute client-side path to the directory holding the
+ *                    `.gs` files; translated to the gem's local path (see
+ *                    `toLocalGemPath`) before use, so callers must pass it
+ *                    untranslated.
  * @param onProgress  optional incremental progress callback.
  */
 export async function installEnhancedInspectorSupport(
@@ -217,8 +220,9 @@ export async function installEnhancedInspectorSupport(
   payloadDir: string,
   onProgress: ProgressReporter = () => {},
 ): Promise<InstallResult> {
-  const sep = payloadDir.endsWith('/') ? '' : '/';
-  const serverPath = (file: string): string => `${payloadDir}${sep}${file}`;
+  const gemPayloadDir = toLocalGemPath(payloadDir);
+  const sep = gemPayloadDir.endsWith('/') ? '' : '/';
+  const serverPath = (file: string): string => `${gemPayloadDir}${sep}${file}`;
   // The prepare-dictionary step + 7 files + the commit step.
   const stepIncrement = 100 / (ENHANCED_INSPECTOR_FILES.length + 2);
 
@@ -233,7 +237,7 @@ export async function installEnhancedInspectorSupport(
       filedIn: [],
       message:
         `The database's gem cannot read the payload files (${unreadable.join(', ')}) under ` +
-        `${payloadDir}. Server-side install requires a local stone whose gem shares this ` +
+        `${gemPayloadDir}. Server-side install requires a local stone whose gem shares this ` +
         'filesystem.',
     };
   }

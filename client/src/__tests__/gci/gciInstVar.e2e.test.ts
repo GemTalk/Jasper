@@ -24,17 +24,20 @@ import { parseStartPreview, parseApplyResult } from '../../refactoring/instVarRe
  * the automatic integration suite, which runs in CI across the release matrix — see
  * `refactoring/__tests__/refactoringInstVar.integration.test.ts` (add, remove + selective
  * copy-forward, partial apply without abort, shadowed-temporary prediction, decline duplicate,
- * decline a name a subclass declares, plus the engine's GS SUnit suite). What remains here are
- * the two scenarios on which the ENGINE commits:
+ * decline a name a subclass declares, plus the engine's GS SUnit suite). What remains here are the
+ * scenarios on which the ENGINE commits — migrate instances, delete history, and (added for PR
+ * #392 finding #10) an add-with-accessors that migrates, whose accessors must be committed
+ * ATOMICALLY with the reshape so a later abort cannot strand them:
  * `GsInstVarRefactoring>>applyDeselected:options:migrate:deleteHistory:` calls
  * `commitStructuralThenMigrate:` once the structural apply has succeeded, whenever `migrate` or
  * `deleteHistory` is requested, because `migrateInstancesTo:` needs a clean transaction.
- * `useIntegrationTest` aborts after every test
- * to keep tests isolated, and an abort cannot undo a commit, so these can only move once the CI
- * migration settles a commit-and-compensate story for the harness (a transient session, or a
- * test that commits its own cleanup). That is a policy call about the harness's "never commit"
- * invariant, not a technical blocker. Note the discriminator is what the PRODUCTION code does,
- * not what the test does: a test that merely commits its own fixture belongs in the harness.
+ * `useIntegrationTest` arms GemStone's commit guard on every session it hands out, so a commit
+ * fails at the commit site with `TransactionError 2249`, with no opt-out. These can only move once
+ * the harness grows an opt-in commit strategy for tests that genuinely need to commit. That is a
+ * policy call about the harness's "never commit" invariant, not a technical blocker. Note the
+ * discriminator is what the PRODUCTION code does, not what the test does: a test that merely needs
+ * its own fixture belongs in the harness — the auto-abort rolls the fixture back, so it never
+ * needs to commit.
  *
  * Guarded on the refactoring engine being installed (the queries reference the in-stone
  * `GsInstVarRefactoring`); the tests skip, with a reason, otherwise. Each test is self-cleaning
@@ -64,6 +67,8 @@ describe('instance-variable refactoring, committing paths (gci e2e)', () => {
 
   const hasIvar = (cls: string, name: string): boolean =>
     exec(`(${cls} instVarNames includes: #${name}) printString`).trim() === 'true';
+  const includesSelector = (cls: string, sel: string): boolean =>
+    exec(`(${cls} includesSelector: #${sel}) printString`).trim() === 'true';
 
   beforeAll(() => {
     gci = new GciLibrary(GCI_LIBRARY_PATH);
@@ -173,6 +178,108 @@ describe('instance-variable refactoring, committing paths (gci e2e)', () => {
       expect(exec(`${CLS} classHistory size printString`).trim()).toBe('1');
     } finally {
       exec(`UserGlobals removeKey: #${CLS} ifAbsent: []. System commitTransaction. 'ok'`);
+    }
+  });
+
+  // Accessors requested with a COMMITTING add are compiled inside the same transaction as the
+  // reshape, so they are committed with it and cannot be stranded. Pre-fix, accessor generation
+  // ran AFTER the commit (a separate, uncommitted step), so a later abort silently dropped them
+  // while the committed ivar stayed. Only a real commit + abort can observe this — hence gci.
+  it('keeps the committed accessors after a later abort when an add migrates instances', async (ctx) => {
+    if (!enginePresent) return ctx.skip('GsInstVarRefactoring is not installed on this stone');
+
+    const CLS = 'GciIvAccMig';
+    try {
+      q.compileClassDefinition(
+        session,
+        `Object subclass: '${CLS}' instVarNames: #(x) classVars: #() ` +
+          'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
+      );
+      // A persisted instance so migrate has something to move (and the migrate path commits).
+      exec(`UserGlobals at: #GciIvAccMigInst put: ${CLS} new. System commitTransaction. 'ok'`);
+
+      parseStartPreview(
+        await startInstVarPreview(
+          asyncExec,
+          'add',
+          CLS,
+          'y',
+          'gci-iv-acc-mig',
+          PREVIEW_PAGE_BYTES,
+          userIndex(),
+        ),
+      );
+      const result = parseApplyResult(
+        await applyInstVar(asyncExec, 'gci-iv-acc-mig', [], null, true, false, [
+          { selector: 'y', source: 'y\n\t^y' },
+          { selector: 'y:', source: 'y: aValue\n\ty := aValue' },
+        ]),
+      );
+
+      expect(result.failed).toEqual([]);
+      expect(result.committed).toBe(true);
+      expect(hasIvar(CLS, 'y')).toBe(true);
+      expect(includesSelector(CLS, 'y')).toBe(true);
+      expect(includesSelector(CLS, 'y:')).toBe(true);
+
+      // The fix's guarantee: because the accessors committed WITH the reshape, an abort at a later
+      // transaction boundary cannot drop them.
+      exec("System abortTransaction. 'ok'");
+
+      expect(hasIvar(CLS, 'y')).toBe(true);
+      expect(includesSelector(CLS, 'y')).toBe(true); // getter survived the abort
+      expect(includesSelector(CLS, 'y:')).toBe(true); // setter survived the abort
+    } finally {
+      exec(
+        `UserGlobals removeKey: #GciIvAccMigInst ifAbsent: []. ` +
+          `UserGlobals removeKey: #${CLS} ifAbsent: []. System commitTransaction. 'ok'`,
+      );
+    }
+  });
+
+  it('commits nothing when an accessor cannot compile, even with migrate requested', async (ctx) => {
+    if (!enginePresent) return ctx.skip('GsInstVarRefactoring is not installed on this stone');
+
+    const CLS = 'GciIvAccFail';
+    try {
+      q.compileClassDefinition(
+        session,
+        `Object subclass: '${CLS}' instVarNames: #(x) classVars: #() ` +
+          'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
+      );
+      exec(`UserGlobals at: #GciIvAccFailInst put: ${CLS} new. System commitTransaction. 'ok'`);
+
+      parseStartPreview(
+        await startInstVarPreview(
+          asyncExec,
+          'add',
+          CLS,
+          'y',
+          'gci-iv-acc-fail',
+          PREVIEW_PAGE_BYTES,
+          userIndex(),
+        ),
+      );
+      const result = parseApplyResult(
+        await applyInstVar(asyncExec, 'gci-iv-acc-fail', [], null, true, false, [
+          { selector: 'y', source: 'y\n\t^ )( will not compile' },
+        ]),
+      );
+
+      // The bad accessor lands in `failed`, which holds the commit back: nothing is committed, so
+      // an abort rolls the whole reshape back — the add and its accessors are all-or-nothing.
+      expect(result.failed.length).toBeGreaterThan(0);
+      expect(result.committed).toBe(false);
+
+      exec("System abortTransaction. 'ok'");
+
+      expect(hasIvar(CLS, 'y')).toBe(false); // structural add was never committed
+      expect(includesSelector(CLS, 'y')).toBe(false); // and the accessor never installed
+    } finally {
+      exec(
+        `UserGlobals removeKey: #GciIvAccFailInst ifAbsent: []. ` +
+          `UserGlobals removeKey: #${CLS} ifAbsent: []. System commitTransaction. 'ok'`,
+      );
     }
   });
 });

@@ -31,6 +31,8 @@ import {
   selectorArgCount,
   buildSelector,
 } from './selectorShape';
+export { parseApplyResult } from './previewEnvelope';
+export type { ApplyResult } from './previewEnvelope';
 
 /** One staged change from the engine. `selector` is the old selector for a
  *  methodRename, or the sender's own selector for a methodRecompile. */
@@ -83,13 +85,6 @@ export interface StartPreview {
   outOfScope: OutOfScopeCounts;
   skippedMethods: SkippedMethod[];
   page: PreviewPage;
-}
-
-/** The result of a server-side apply. */
-export interface ApplyResult {
-  applied: number;
-  failed: { id: string; label: string; error: string }[];
-  error?: string;
 }
 
 /** The pre-flight analysis of the method being edited: enough to pre-populate the
@@ -211,29 +206,6 @@ export function parsePage(json: string): PreviewPage {
     throw new Error('Change-signature preview page did not return an envelope.');
   }
   return parsePageObject(parsed as Record<string, unknown>);
-}
-
-/** Parse a server-side apply result. */
-export function parseApplyResult(json: string): ApplyResult {
-  const parsed: unknown = JSON.parse(json);
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    throw new Error('Apply did not return a result envelope.');
-  }
-  const env = parsed as Record<string, unknown>;
-  const failed = Array.isArray(env.failed)
-    ? env.failed
-        .filter((f): f is Record<string, unknown> => typeof f === 'object' && f !== null)
-        .map((f) => ({
-          id: typeof f.id === 'string' ? f.id : '?',
-          label: typeof f.label === 'string' ? f.label : '?',
-          error: typeof f.error === 'string' ? f.error : 'unknown error',
-        }))
-    : [];
-  return {
-    applied: asCount(env.applied),
-    failed,
-    error: typeof env.error === 'string' ? env.error : undefined,
-  };
 }
 
 /** Parse the pre-flight analysis envelope. Throws on a malformed payload; a bare

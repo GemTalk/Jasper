@@ -102,6 +102,17 @@ describe('keybindings', () => {
     }
   });
 
+  it('Omni Search opens on Ctrl/Cmd+Shift+A, not a notebook run-cell gesture', () => {
+    const omni = keybindings.filter((kb) => kb.command === 'gemstone.omniSearch');
+
+    expect(omni.length).toBe(1);
+    expect(omni[0].key).toBe('ctrl+shift+a');
+    expect(omni[0].mac).toBe('cmd+shift+a');
+    expect(omni[0].when).toContain('gemstone.hasActiveSession');
+    // Must stay off the notebook's own run-cell chords so it never shadows executeAndSelectBelow.
+    expect(['ctrl+enter', 'shift+enter', 'alt+enter']).not.toContain(omni[0].key);
+  });
+
   it('inspector welcome text should match the actual inspectIt chord', () => {
     const inspectIt = keybindings.find((kb) => kb.command === 'gemstone.inspectIt');
     expect(inspectIt).toBeDefined();

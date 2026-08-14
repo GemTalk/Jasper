@@ -133,6 +133,89 @@
     ],
     "configuration": [
       {
+        "title": "GemStone Search",
+        "properties": {
+          "gemstone.omniSearch.ui": {
+            "type": "string",
+            "enum": ["spotter", "panel", "quickpick"],
+            "enumDescriptions": [
+              "Editor-tab Spotter: a webview in an editor tab with labeled scope tabs, a source-preview pane, own match highlighting, and an always-on case indicator.",
+              "Bottom-panel view (default): the same webview docked in the panel strip (next to Terminal/Output). Stays out of the way; results open in the editor area above it.",
+              "Phase-1 Quick Pick: the native VS Code picker with title-bar scope buttons."
+            ],
+            "default": "panel",
+            "markdownDescription": "Which GemStone Search experience to open: the **bottom panel** view (default), the editor-tab **Spotter**, or the classic **Quick Pick**."
+          },
+          "gemstone.omniSearch.matchMode": {
+            "type": "string",
+            "enum": ["fuzzy", "substring", "prefix"],
+            "enumDescriptions": [
+              "Subsequence match: the typed characters appear in order (the Quick-Open feel).",
+              "The typed text appears as a contiguous run.",
+              "The result starts with the typed text."
+            ],
+            "default": "fuzzy",
+            "markdownDescription": "How Omni Search matches your query against classes, methods, dictionaries and open editors."
+          },
+          "gemstone.omniSearch.caseSensitive": {
+            "type": "boolean",
+            "default": false,
+            "description": "Match case-sensitively. Off by default."
+          },
+          "gemstone.omniSearch.categories": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "classes",
+                "methods",
+                "dictionaries",
+                "globals",
+                "source",
+                "literals",
+                "categories"
+              ]
+            },
+            "default": [
+              "classes",
+              "methods",
+              "dictionaries",
+              "globals",
+              "source",
+              "literals",
+              "categories"
+            ],
+            "markdownDescription": "Which categories Omni Search includes. Narrow a single search on the fly with the category buttons in the picker's title bar; the Clear-filter button resets to searching everything. **Source** (full method-source search) and **Literals** (methods referencing a compilable literal you type, e.g. `#at:put:`) are heavyweight, so they never run in the default search — pick their button to use them."
+          },
+          "gemstone.omniSearch.maxResultsPerCategory": {
+            "type": "number",
+            "default": 20,
+            "minimum": 1,
+            "maximum": 200,
+            "description": "Maximum results shown per category."
+          },
+          "gemstone.omniSearch.debounceMs": {
+            "type": "number",
+            "default": 120,
+            "minimum": 0,
+            "maximum": 2000,
+            "description": "Delay after a keystroke before searching, in milliseconds (throttles per-keystroke stone queries)."
+          },
+          "gemstone.omniSearch.methodMinQueryLength": {
+            "type": "number",
+            "default": 2,
+            "minimum": 1,
+            "maximum": 10,
+            "description": "Minimum characters before the Methods category queries the stone (method search hits the stone per keystroke). Raise it if per-keystroke method search feels slow on a large stone; lower it (to 1) to search selectors from the first character."
+          },
+          "gemstone.omniSearch.referencesInPreview": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Show a row's references/senders (Alt+Enter or the ↗ button) as a sticky list in the right-hand preview pane, leaving the results list in place — click an entry to open its source. Turn this **off** to use the classic behavior, where references replace the whole results list (a pivot you back out of with ← / Esc)."
+          }
+        }
+      },
+      {
         "title": "GemStone",
         "properties": {
           "gemstone.gciLibraries": {
@@ -147,7 +230,7 @@
             "type": "integer",
             "default": 0,
             "minimum": 0,
-            "description": "Maximum method dictionary environment to show in the browser (0 = standard Smalltalk only, 2 = show environments 0–2)"
+            "description": "Maximum method dictionary environment to show when listing methods (0 = standard Smalltalk only, 2 = show environments 0–2). Applies wherever methods are listed — the GemStone Explorer, the System Browser, and hover, CodeLens, and Go to Definition."
           },
           "gemstone.explorer.groupMethodsByCategory": {
             "type": "boolean",
@@ -171,7 +254,7 @@
           "gemstone.classSync.readOnlyMirror": {
             "type": "boolean",
             "default": true,
-            "description": "Write the local class-mirror .gs files as read-only, so they aren't edited directly (edit via the System Browser instead). Turn off to roughly halve the filesystem operations per class, which can noticeably speed up syncing on slow or network filesystems."
+            "description": "Write the local class-mirror .gs files as read-only, so they aren't edited directly (edit via the GemStone Explorer instead). Turn off to roughly halve the filesystem operations per class, which can noticeably speed up syncing on slow or network filesystems."
           },
           "gemstone.rootPath": {
             "type": "string",
@@ -256,6 +339,22 @@
             "default": "ask",
             "description": "What to do after adding a dependency to the open Rowan project while a database is connected. Adding a dependency only writes files on disk; the database does not have the code until the project is loaded. Only applies while connected. The buttons on the prompt update this setting.",
             "scope": "window"
+          },
+          "gemstone.autoStartDatabase": {
+            "type": "string",
+            "enum": [
+              "ask",
+              "always",
+              "never"
+            ],
+            "enumDescriptions": [
+              "When a login fails because its database is not running, offer to start the database and then connect.",
+              "Start a stopped database and connect, without asking.",
+              "Never offer to start a database; report the login failure as-is."
+            ],
+            "default": "ask",
+            "description": "What to do when a login fails because the database it connects to is not running. Only applies to local databases Jasper manages — a remote or hand-rolled stone is never started. Starting a database starts both its stone and its NetLDI. The buttons on the prompt update this setting.",
+            "scope": "application"
           },
           "gemstone.displayItMode": {
             "type": "string",
@@ -365,9 +464,24 @@
           "title": "GemStone Explorer",
           "icon": "resources/gemstone-browser.svg"
         }
+      ],
+      "panel": [
+        {
+          "id": "gemstoneOmniSearchPanel",
+          "title": "GemStone Search",
+          "icon": "$(search)"
+        }
       ]
     },
     "views": {
+      "gemstoneOmniSearchPanel": [
+        {
+          "id": "gemstoneOmniSearchView",
+          "name": "GemStone Search",
+          "type": "webview",
+          "when": "gemstone.hasActiveSession"
+        }
+      ],
       "gemstoneExplorer": [
         {
           "id": "gemstoneExplorerOpenEditors",
@@ -757,6 +871,11 @@
         "category": "GemStone"
       },
       {
+        "command": "gemstone.configureAutoStartDatabase",
+        "title": "Configure Database Auto-Start…",
+        "category": "GemStone"
+      },
+      {
         "command": "gemstone.uninstallServerSupport",
         "title": "Uninstall Server Support (Enhanced Inspector + Refactoring)",
         "category": "GemStone"
@@ -853,9 +972,8 @@
       },
       {
         "command": "gemstone.openBrowser",
-        "title": "Open System Browser",
-        "category": "GemStone",
-        "icon": "$(list-tree)"
+        "title": "Open System Browser (Classic)",
+        "category": "GemStone"
       },
       {
         "command": "gemstone.rowanAddRepo",
@@ -978,6 +1096,12 @@
         "title": "Find Class…",
         "category": "GemStone",
         "icon": "$(search)"
+      },
+      {
+        "command": "gemstone.omniSearch",
+        "title": "GemStone Search…",
+        "category": "GemStone",
+        "icon": "$(search-fuzzy)"
       },
       {
         "command": "gemstone.findMethodInClass",
@@ -1306,6 +1430,18 @@
         "icon": "$(add)"
       },
       {
+        "command": "gemstone.explorer.addClassVar",
+        "title": "Add Class Variable…",
+        "category": "GemStone",
+        "icon": "$(add)"
+      },
+      {
+        "command": "gemstone.explorer.addAccessors",
+        "title": "Add Accessors",
+        "category": "GemStone",
+        "icon": "$(symbol-method)"
+      },
+      {
         "command": "gemstone.explorer.removeInstVar",
         "title": "Remove Instance Variable…",
         "category": "GemStone",
@@ -1420,6 +1556,12 @@
       {
         "command": "gemstone.renameMethodInEditor",
         "title": "Rename Method in Editor…",
+        "category": "GemStone",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "gemstone.rename",
+        "title": "Rename…",
         "category": "GemStone",
         "icon": "$(edit)"
       },
@@ -1682,6 +1824,22 @@
           "when": "false"
         },
         {
+          "command": "gemstone.renameTemporary",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.renameInstVarAtCursor",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.renameClassVarAtCursor",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.renameMethodInEditor",
+          "when": "false"
+        },
+        {
           "command": "gemstone.explorer.commit",
           "when": "false"
         },
@@ -1707,6 +1865,14 @@
         },
         {
           "command": "gemstone.explorer.addInstVar",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.addClassVar",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.addAccessors",
           "when": "false"
         },
         {
@@ -2144,14 +2310,34 @@
           "group": "inline"
         },
         {
+          "command": "gemstone.explorer.addClassVar",
+          "when": "view == gemstoneExplorerClasses && viewItem == explorerVarSide.class",
+          "group": "inline"
+        },
+        {
           "command": "gemstone.explorer.addInstVar",
           "when": "view == gemstoneExplorerClasses && viewItem == explorerClass && gemstone.rbSupportAvailable",
           "group": "2_generate@2"
         },
         {
+          "command": "gemstone.explorer.addClassVar",
+          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass",
+          "group": "2_generate@3"
+        },
+        {
           "command": "gemstone.explorer.renameClassVariable",
           "when": "view == gemstoneExplorerClasses && viewItem == explorerClassVar && gemstone.rbSupportAvailable",
           "group": "inline"
+        },
+        {
+          "command": "gemstone.explorer.addAccessors",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerIvar/",
+          "group": "2_generate@1"
+        },
+        {
+          "command": "gemstone.explorer.addAccessors",
+          "when": "view == gemstoneExplorerClasses && viewItem == explorerClassVar",
+          "group": "2_generate@1"
         },
         {
           "command": "gemstone.explorer.renameMethod",
@@ -2343,34 +2529,29 @@
           "when": "view == gemstoneLogins && (viewItem == gemstoneLogin || viewItem == gemstoneLoginConnected)"
         },
         {
-          "command": "gemstone.openBrowser",
+          "command": "gemstone.sessionOpenWorkspace",
           "when": "view == gemstoneLogins && viewItem == gemstoneSession",
           "group": "inline@1"
         },
         {
-          "command": "gemstone.sessionOpenWorkspace",
+          "command": "gemstone.sessionCommit",
           "when": "view == gemstoneLogins && viewItem == gemstoneSession",
           "group": "inline@2"
         },
         {
-          "command": "gemstone.sessionCommit",
+          "command": "gemstone.sessionAbort",
           "when": "view == gemstoneLogins && viewItem == gemstoneSession",
           "group": "inline@3"
         },
         {
-          "command": "gemstone.sessionAbort",
+          "command": "gemstone.sessionPing",
           "when": "view == gemstoneLogins && viewItem == gemstoneSession",
           "group": "inline@4"
         },
         {
-          "command": "gemstone.sessionPing",
-          "when": "view == gemstoneLogins && viewItem == gemstoneSession",
-          "group": "inline@5"
-        },
-        {
           "command": "gemstone.sessionLogout",
           "when": "view == gemstoneLogins && viewItem == gemstoneSession",
-          "group": "inline@6"
+          "group": "inline@5"
         },
         {
           "command": "gemstone.fullLogicalBackup",
@@ -2645,6 +2826,22 @@
         "key": "ctrl+k c",
         "mac": "cmd+k c",
         "when": "gemstone.hasActiveSession"
+      },
+      {
+        "command": "gemstone.omniSearch",
+        "key": "ctrl+shift+a",
+        "mac": "cmd+shift+a",
+        "when": "gemstone.hasActiveSession && !terminalFocus"
+      },
+      {
+        "command": "gemstone.omniSearch.references",
+        "key": "alt+enter",
+        "when": "gemstone.omniSearchActive"
+      },
+      {
+        "command": "gemstone.omniSearch.back",
+        "key": "left",
+        "when": "gemstone.omniSearchInPivot"
       },
       {
         "command": "gemstone.findMethodInClass",

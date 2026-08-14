@@ -1177,10 +1177,10 @@ isClassInScope: aClass
 	scopeKind == #class ifTrue: [^aClass == definingClass].
 	scopeKind == #hierarchy ifTrue: [^self hierarchyScopeClasses includes: aClass].
 	scopeKind == #dictionary ifTrue: [
-		| wanted |
-		wanted := scopeDictName asSymbol.
-		^(environment dictionariesDefiningClassNamed: aClass name)
-			anySatisfy: [:d | d name asSymbol == wanted]].
+		"Identity, not name: a same-named class shadowed in ANOTHER dictionary is
+		 out of scope (matching by name alone duplicated it -- see
+		 GsRefactoringEnvironment>>class:isDefinedInDictionaryNamed:)."
+		^environment class: aClass isDefinedInDictionaryNamed: scopeDictName].
 	^false
 %
 
@@ -2892,6 +2892,21 @@ computeAnalysis
 		^decline := 'Cannot extract a superclass above ', anchorClass name asString, ': it has no superclass.'].
 	(environment classNamed: newName) notNil ifTrue: [
 		^decline := 'Cannot extract superclass ', newName, ': a class of that name already exists.'].
+	"classNamed: only matches a Class binding; a name bound to a NON-class global
+	 would otherwise slip past and be silently clobbered by applyClassAdd:'s
+	 subclass:...inDictionary:. Decline any existing binding for the name (#379
+	 review: the client already guards this, but a non-UI caller -- MCP, SUnit,
+	 direct engine use -- must be protected here too).
+	 The question is asked SYSTEM-WIDE, deliberately: applyClassAdd: creates into one
+	 dictionary, so a binding in a lower-priority dictionary would only be shadowed
+	 rather than clobbered, but shadowing an existing global with a new class is its own
+	 trap and GsRenameClassRefactoring>>newNameCollision already declines symbol-list-wide.
+	 (resolveSibling: scopes its lookup instead -- that one is about FINDING an existing
+	 class, where grabbing a same-named class from another dictionary would be wrong.)
+	 The decline names the symbol list so it cannot be read as a collision in the
+	 anchor's own dictionary."
+	(environment symbolList objectNamed: newName asSymbol) notNil ifTrue: [
+		^decline := 'Cannot extract superclass ', newName, ': the name ', newName, ' is already in use as a global on the symbol list.'].
 	extractedClasses add: anchorClass.
 	siblingNames do: [:nm | | sib |
 		sib := self resolveSibling: nm.
@@ -5927,6 +5942,13 @@ pageJsonFrom: startIndex maxBytes: maxBytes
 category: 'applying'
 method: GsInstVarRefactoring
 applyDeselected: deselectedIds options: optsArray migrate: aBool deleteHistory: dBool
+	"Backward-compatible apply with no accessors (the pre-accessors signature)."
+	^self applyDeselected: deselectedIds options: optsArray migrate: aBool deleteHistory: dBool accessors: #()
+%
+
+category: 'applying'
+method: GsInstVarRefactoring
+applyDeselected: deselectedIds options: optsArray migrate: aBool deleteHistory: dBool accessors: accessorPairs
 	"Apply EVERY staged change in the stone. An instance-variable add/remove is ALL-OR-NOTHING
 	 (the class-shape edits and the descendant reparents must move together), so a deselection is
 	 ignored. optsArray (nil or an Array of Strings) replaces the acted-on class's options; nil
@@ -5962,8 +5984,12 @@ applyDeselected: deselectedIds options: optsArray migrate: aBool deleteHistory: 
 			on: Error do: [:e |
 				failures add: (Array with: change id with: change className with: e messageText)].
 		index := index + 1].
+	"Accessors ride the SAME transaction as the structural change: compile them now, before
+	 any commit. A compile error is recorded in `failures`, which holds the commit back -- so
+	 an add-with-accessors either commits with its accessors or commits nothing at all."
 	failures isEmpty ifTrue: [
-		(aBool or: [dBool]) ifTrue: [
+		self compileAccessors: accessorPairs onFailures: failures.
+		(failures isEmpty and: [aBool or: [dBool]]) ifTrue: [
 			self commitStructuralThenMigrate: aBool deleteHistory: dBool on: failures]].
 	"partiallyApplied means a failure left work behind -- classes already versioned in the
 	 transaction, or already committed if the failure struck AFTER the commit (a migrate /
@@ -6149,6 +6175,33 @@ copyMethod: sel from: srcCls to: dstCls meta: isMeta
 
 category: 'applying'
 method: GsInstVarRefactoring
+compileAccessors: accessorPairs onFailures: failures
+	"Compile each getter/setter for the just-added instance variable onto the NEW version of the
+	 acted-on class (oldToNew maps the old defining class to its new version), in the current
+	 transaction so they share its commit. accessorPairs is an Array of #(selector source); a
+	 selector already present is skipped, so re-adding a variable whose accessors exist is a no-op.
+	 compileMethod: ANSWERS nil (or an empty Array) on success and a non-empty error Array on
+	 failure -- a failure is recorded in `failures`, which makes the caller skip the commit, so the
+	 accessors and the instance-variable change are committed together or not at all."
+	| target |
+	(accessorPairs isNil or: [accessorPairs isEmpty]) ifTrue: [^self].
+	target := oldToNew at: definingClass ifAbsent: [definingClass].
+	accessorPairs do: [:pair | | sel result |
+		sel := (pair at: 1) asString.
+		(target includesSelector: sel asSymbol) ifFalse: [
+			result := target
+				compileMethod: (pair at: 2) asString
+				dictionaries: System myUserProfile symbolList
+				category: 'accessing'.
+			(result isNil or: [(result isKindOf: Array) and: [result isEmpty]])
+				ifFalse: [failures add: (Array
+					with: 'accessor:', sel
+					with: target name asString
+					with: 'accessor ', sel, ' could not be compiled onto the new class version')]]]
+%
+
+category: 'applying'
+method: GsInstVarRefactoring
 dictObjectFor: aClass
 	"The actual SymbolDictionary object that defines aClass's name, for inDictionary:."
 	| dicts |
@@ -6221,9 +6274,18 @@ pageForToken: token from: startIndex maxBytes: maxBytes
 category: 'paginated preview'
 classmethod: GsInstVarRefactoring
 applyForToken: token deselected: deselectedIds options: optsArray migrate: aBool deleteHistory: dBool
+	^self applyForToken: token deselected: deselectedIds options: optsArray migrate: aBool deleteHistory: dBool accessors: #()
+%
+
+category: 'paginated preview'
+classmethod: GsInstVarRefactoring
+applyForToken: token deselected: deselectedIds options: optsArray migrate: aBool deleteHistory: dBool accessors: accessorPairs
+	"accessorPairs is an Array of #(selector source) pairs: getter/setter methods to compile
+	 onto the acted-on class IN THE SAME transaction as the structural change, so an
+	 add-with-accessors commits (or aborts) as one unit. Empty when the user declined accessors."
 	^(SessionTemps current at: token asSymbol ifAbsent: [nil])
 		ifNil: ['{"applied":0,"failed":[],"dropped":[],"committed":false,"error":"preview session expired"}']
-		ifNotNil: [:ref | ref applyDeselected: deselectedIds options: optsArray migrate: aBool deleteHistory: dBool]
+		ifNotNil: [:ref | ref applyDeselected: deselectedIds options: optsArray migrate: aBool deleteHistory: dBool accessors: accessorPairs]
 %
 
 category: 'paginated preview'
@@ -9459,6 +9521,30 @@ dictionariesDefiningClassNamed: aName
 	^result
 %
 
+category: 'accessing'
+method: GsRefactoringEnvironment
+class: aClass isDefinedInDictionaryNamed: aName
+	"True iff aClass -- BY IDENTITY -- is the class bound to its own name in a
+	 dictionary named aName. Identity, not name equality: when a name is bound in
+	 more than one dictionary (a shadowed class), a DIFFERENT class of the same
+	 name in another dictionary is NOT in scope. Matching by name alone pulled such
+	 a sibling into a single-dictionary scope, staging it as a duplicate change row
+	 for the 'same' class -- the #dictionary-scope duplicate the rename preview
+	 showed. Dictionary names and the class name are compared as Symbols so the
+	 3.6.x Unicode-comparison trap never bites. An unnamed (anonymous) dictionary has
+	 a nil name -- skip it rather than send #asSymbol to nil and abort the whole scan."
+	| wanted nameSym |
+	wanted := aName asSymbol.
+	nameSym := aClass name asSymbol.
+	self dictionariesDo: [:dict | | dn |
+		dn := dict name.
+		(dn notNil
+			and: [dn asSymbol == wanted
+				and: [(dict at: nameSym ifAbsent: [nil]) == aClass]])
+				ifTrue: [^true]].
+	^false
+%
+
 category: 'enumerating'
 method: GsRefactoringEnvironment
 dictionariesDo: aBlock
@@ -9875,10 +9961,10 @@ isClassInScope: aClass
 	scopeKind == #class ifTrue: [^aClass == definingClass].
 	scopeKind == #hierarchy ifTrue: [^self hierarchyScopeClasses includes: aClass].
 	scopeKind == #dictionary ifTrue: [
-		| wanted |
-		wanted := scopeDictName asSymbol.
-		^(environment dictionariesDefiningClassNamed: aClass name)
-			anySatisfy: [:d | d name asSymbol == wanted]].
+		"Identity, not name: a same-named class shadowed in ANOTHER dictionary is
+		 out of scope (matching by name alone duplicated it -- see
+		 GsRefactoringEnvironment>>class:isDefinedInDictionaryNamed:)."
+		^environment class: aClass isDefinedInDictionaryNamed: scopeDictName].
 	^false
 %
 
@@ -11459,12 +11545,10 @@ isClassInScope: aClass
 	scopeKind == #class ifTrue: [^aClass == definingClass].
 	scopeKind == #hierarchy ifTrue: [^self hierarchyScopeClasses includes: aClass].
 	scopeKind == #dictionary ifTrue: [
-		"Compare as Symbols -- scopeDictName is a client-supplied literal (Unicode
-		 on 3.6.x); asSymbol canonicalises both sides and avoids the comparison trap."
-		| wanted |
-		wanted := scopeDictName asSymbol.
-		^(environment dictionariesDefiningClassNamed: aClass name)
-			anySatisfy: [:d | d name asSymbol == wanted]].
+		"Identity, not name: a same-named class shadowed in ANOTHER dictionary is
+		 out of scope (matching by name alone duplicated it -- see
+		 GsRefactoringEnvironment>>class:isDefinedInDictionaryNamed:)."
+		^environment class: aClass isDefinedInDictionaryNamed: scopeDictName].
 	^false
 %
 
@@ -12543,6 +12627,16 @@ computeAnalysis
 		^decline := 'Cannot split: ', newName, ' is not a valid class name.'].
 	(environment classNamed: newName) notNil ifTrue: [
 		^decline := 'Cannot split: a class named ', newName, ' already exists.'].
+	"classNamed: only matches a Class binding; a name bound to a NON-class global would
+	 otherwise slip past and be silently clobbered by applyClassAdd:'s
+	 subclass:...inDictionary:. Decline any existing binding for the name, anywhere on the
+	 symbol list -- the same question GsRenameClassRefactoring>>newNameCollision and
+	 GsExtractSuperclassRefactoring>>computeAnalysis ask. The split client validates only the
+	 SHAPE of the name, so this is the only guard the UI path has. The question is asked
+	 SYSTEM-WIDE and the decline says so, rather than reading as a collision in the
+	 source's own dictionary."
+	(environment symbolList objectNamed: newName asSymbol) notNil ifTrue: [
+		^decline := 'Cannot split: the name ', newName, ' is already in use as a global on the symbol list.'].
 	extractIvars isEmpty ifTrue: [
 		^decline := 'Cannot split: no instance variables were chosen to extract.'].
 	own := environment ownInstVarNamesOf: sourceClass.

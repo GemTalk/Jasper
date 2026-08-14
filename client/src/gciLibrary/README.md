@@ -11,7 +11,7 @@ moves another slice.
 ## What is here, and why only this
 
 `__tests__/` holds integration tests for the **raw bindings** only — the wrappers that are
-1:1 with a GCI C entry point (`GciTs*`, plus the session-free `Gci*` host utilities). 
+1:1 with a GCI C entry point (`GciTs*`, plus the session-free `Gci*` host utilities).
 
 The narrow scope is deliberate. Raw-binding tests can move without touching the wrapper
 code, which keeps this first step reviewable. The ergonomic layer on top of the bindings,
@@ -23,4 +23,3 @@ From inside this folder, `import { GciLibrary } from '../../gciLibrary'` resolve
 **file** `client/src/gciLibrary.ts`, not to this directory. It works only because
 file-over-directory module resolution wins. Adding an `index.ts` here would silently
 redirect every one of those imports into this folder without a single import line changing.
-

@@ -184,6 +184,21 @@ GsExtractSuperclassRefactoring >> computeAnalysis [
 		^decline := 'Cannot extract a superclass above ', anchorClass name asString, ': it has no superclass.'].
 	(environment classNamed: newName) notNil ifTrue: [
 		^decline := 'Cannot extract superclass ', newName, ': a class of that name already exists.'].
+	"classNamed: only matches a Class binding; a name bound to a NON-class global
+	 would otherwise slip past and be silently clobbered by applyClassAdd:'s
+	 subclass:...inDictionary:. Decline any existing binding for the name (#379
+	 review: the client already guards this, but a non-UI caller -- MCP, SUnit,
+	 direct engine use -- must be protected here too).
+	 The question is asked SYSTEM-WIDE, deliberately: applyClassAdd: creates into one
+	 dictionary, so a binding in a lower-priority dictionary would only be shadowed
+	 rather than clobbered, but shadowing an existing global with a new class is its own
+	 trap and GsRenameClassRefactoring>>newNameCollision already declines symbol-list-wide.
+	 (resolveSibling: scopes its lookup instead -- that one is about FINDING an existing
+	 class, where grabbing a same-named class from another dictionary would be wrong.)
+	 The decline names the symbol list so it cannot be read as a collision in the
+	 anchor's own dictionary."
+	(environment symbolList objectNamed: newName asSymbol) notNil ifTrue: [
+		^decline := 'Cannot extract superclass ', newName, ': the name ', newName, ' is already in use as a global on the symbol list.'].
 	extractedClasses add: anchorClass.
 	siblingNames do: [:nm | | sib |
 		sib := self resolveSibling: nm.

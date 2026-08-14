@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { variableSides, defaultDictionaryIndex, categoryContains } from '../explorerTreeHelpers';
+import {
+  variableSides,
+  defaultDictionaryIndex,
+  matchesClassPrefix,
+  categoryContains,
+} from '../explorerTreeHelpers';
 
 describe('variable-side grouping under a class', () => {
   it('shows an instance side then a class side when both kinds exist', () => {
@@ -42,6 +47,39 @@ describe('default dictionary selection on connect', () => {
 
   it('selects nothing when there are no dictionaries', () => {
     expect(defaultDictionaryIndex([])).toBe(-1);
+  });
+});
+
+describe('class-picker prefix matching (matchesClassPrefix)', () => {
+  it('matches only labels that START with the query, not substrings', () => {
+    // The whole point: "Z" must not surface "AZure"/"Blaze".
+    expect(matchesClassPrefix('Zoo', 'Z')).toBe(true);
+    expect(matchesClassPrefix('AZure', 'Z')).toBe(false);
+    expect(matchesClassPrefix('Blaze', 'z')).toBe(false);
+  });
+
+  it('is case-insensitive on both sides', () => {
+    expect(matchesClassPrefix('Account', 'acc')).toBe(true);
+    expect(matchesClassPrefix('account', 'ACC')).toBe(true);
+    expect(matchesClassPrefix('Account', 'x')).toBe(false);
+  });
+
+  it('trims the query', () => {
+    expect(matchesClassPrefix('Account', '  acc  ')).toBe(true);
+    expect(matchesClassPrefix('Account', '   ')).toBe(true); // trims to empty → matches all
+  });
+
+  it('matches everything for an empty query (show the full list)', () => {
+    expect(matchesClassPrefix('Anything', '')).toBe(true);
+    expect(matchesClassPrefix('', '')).toBe(true);
+  });
+
+  it('a longer query than the label does not match', () => {
+    expect(matchesClassPrefix('Acc', 'Account')).toBe(false);
+  });
+
+  it('an exact full-length match matches', () => {
+    expect(matchesClassPrefix('Account', 'Account')).toBe(true);
   });
 });
 

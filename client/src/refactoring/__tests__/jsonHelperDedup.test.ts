@@ -41,13 +41,18 @@ const headerRe = /^(.+?) >> (jsonEscape:|jsonQuote:|hex2:) (\w+) \[\s*$/;
 function collectDefs(): Def[] {
   const defs: Def[] = [];
   for (const f of fs.readdirSync(engineDir).filter((n) => n.endsWith('.class.st'))) {
-    const lines = fs.readFileSync(path.join(engineDir, f), 'utf8').split('\n');
+    // Tolerate CRLF here rather than relying on .gitattributes' eol=lf: that
+    // normalizes fresh checkouts, but not an already-checked-out working
+    // copy, a hand-edited file, or a later narrowing of the pattern. A plain
+    // split('\n')/'!== ]' would then undercount definitions instead of
+    // failing loudly.
+    const lines = fs.readFileSync(path.join(engineDir, f), 'utf8').split(/\r?\n/);
     for (let i = 0; i < lines.length; i++) {
       const m = headerRe.exec(lines[i]);
       if (!m) continue;
       const bodyLines: string[] = [];
       let j = i + 1;
-      for (; j < lines.length && lines[j] !== ']'; j++) bodyLines.push(lines[j]);
+      for (; j < lines.length && lines[j].trim() !== ']'; j++) bodyLines.push(lines[j]);
       const body = bodyLines.join('\n').trim();
       defs.push({
         file: f,

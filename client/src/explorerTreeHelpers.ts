@@ -40,6 +40,19 @@ export function defaultDictionaryIndex(names: string[]): number {
 }
 
 /**
+ * Whether a class-picker label matches the typed query, for the class-by-prefix
+ * QuickPick (the move-to-class destination picker). The
+ * QuickPick deliberately turns VS Code's built-in fuzzy SUBSTRING matching off and
+ * uses this instead, so typing "Z" surfaces only classes that START with "Z", not
+ * every class containing a "z". Case-insensitive; the query is trimmed; an empty
+ * query matches everything (show the full list).
+ */
+export function matchesClassPrefix(label: string, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  return q === '' || label.toLowerCase().startsWith(q);
+}
+
+/**
  * Whether a class whose class-category is `classCategory` is shown under the
  * selected category node `selectedPath`. A category node shows its own classes AND
  * everything in its dash-segmented subtree (selecting "Announcements" shows

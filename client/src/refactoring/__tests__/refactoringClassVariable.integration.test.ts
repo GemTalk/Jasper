@@ -1,11 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
-import * as path from 'path';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 
 import { useIntegrationTest } from '../../__tests__/useIntegrationTest';
 import { GciLibrary } from '../../gciLibrary';
 import * as q from '../../browserQueries';
-import { escapeString } from '../../queries/util';
 import { startRenameClassVarPreview, applyRenameClassVar } from '../queries/previewRenameClassVar';
 import { PREVIEW_PAGE_BYTES } from '../queries/previewRenameMethod';
 import { parseStartPreview, parseApplyResult } from '../renameClassVarPreview';
@@ -13,6 +11,7 @@ import type { ActiveSession } from '../../sessionManager';
 import { testActiveSession } from '../../__tests__/testActiveSession';
 import { requireServerPluginFeature } from '../../__tests__/requireServerPluginFeature';
 import { pluginFeatures } from '../../serverPlugin/pluginFeatures';
+import { fileInEngineTestsExpr } from './support/refactoring';
 
 /**
  * Automatic GCI integration test for the rename-class-variable (R4) refactoring,
@@ -46,14 +45,6 @@ describe('rename class variable (integration)', () => {
     exec(
       "(System myUserProfile symbolList objectNamed: 'GsRenameClassVariableRefactoring') notNil printString",
     ).trim() === 'true';
-
-  const engineTestsPayload = (): string =>
-    path.resolve(__dirname, '../../../../resources/refactoring/engine-tests.gs');
-
-  const fileInTests = (): string => {
-    const p = escapeString(engineTestsPayload());
-    return `[GsFileIn fromServerPath: '${p}'] on: Error do: [:e | GsFileIn fromPath: '${p}' on: #serverUtf8File to: nil].`;
-  };
 
   const dictIndexOf = (name: string): number =>
     parseInt(
@@ -123,7 +114,7 @@ describe('rename class variable (integration)', () => {
     requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
     const code = `| r |
-${fileInTests()}
+${fileInEngineTestsExpr()}
 r := (System myUserProfile symbolList objectNamed: #GsRenameClassVariableRefactoringTest) suite run.
 (r failures size + r errors size) printString`;
 
@@ -243,5 +234,67 @@ r := (System myUserProfile symbolList objectNamed: #GsRenameClassVariableRefacto
         `(${SHADOW_BASE} compiledMethodAt: #shadow environmentId: 0 otherwise: nil) sourceString`,
       ),
     ).toContain('Counter');
+  });
+
+  // ---- inherited-classvar retarget resolution (#328 item 11) ------------------
+  // Invoked on a class variable a subclass method only INHERITS, the editor rename
+  // command resolves the defining class and reruns the rename there. That
+  // resolution is getDefiningClassOfClassVar; prove it against the real hierarchy so
+  // the superclass walk + SymbolList-index lookup are exercised on a stone. These
+  // probes are pure base image (classVarNames / superclass / symbolList), so they
+  // are NOT gated on the refactoring engine — they run in both CI passes.
+
+  it('resolves a class variable inherited by a subclass to its defining class and dictionary', () => {
+    defineFixture();
+
+    expect(q.getDefiningClassOfClassVar(session(), SUB, 'Rate', userIndex())).toEqual({
+      className: BASE,
+      dictIndex: userIndex(),
+    });
+  });
+
+  it('resolves a class variable to its declaring class even when asked from that class', () => {
+    defineFixture();
+
+    expect(q.getDefiningClassOfClassVar(session(), BASE, 'Rate', userIndex())?.className).toBe(
+      BASE,
+    );
+  });
+
+  it('answers undefined for a word that is not a visible class variable', () => {
+    defineFixture();
+
+    expect(
+      q.getDefiningClassOfClassVar(session(), SUB, 'NotAClassVar', userIndex()),
+    ).toBeUndefined();
+  });
+
+  it('renames an inherited class variable across the hierarchy when retargeted to its defining class', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+
+    defineFixture();
+    // Resolve the defining class the way the editor command does when the cursor is
+    // on `Rate` in a SUB method, then run the rename against THAT class.
+    const defining = q.getDefiningClassOfClassVar(session(), SUB, 'Rate', userIndex());
+    if (!defining) throw new Error('expected Rate to resolve to its defining class');
+    const token = `rcvit-retarget-${BASE}`;
+
+    await startRenameClassVarPreview(
+      asyncExec,
+      defining.className,
+      'Rate',
+      'Multiplier',
+      token,
+      PREVIEW_PAGE_BYTES,
+      defining.dictIndex,
+    );
+    const result = parseApplyResult(await applyRenameClassVar(asyncExec, token));
+
+    expect(result.failed).toEqual([]);
+    expect(exec(`(${BASE} classVarNames includes: #Multiplier) printString`).trim()).toBe('true');
+    // The inherited-referencing subclass method now reads the renamed class variable.
+    expect(
+      exec(`(${SUB} compiledMethodAt: #useRate environmentId: 0 otherwise: nil) sourceString`),
+    ).toContain('Multiplier');
   });
 });

@@ -57,6 +57,28 @@ describe('instance-variable refactor panel HTML', () => {
     expect(reparentOnly).not.toContain('line add');
   });
 
+  it('shows only the changed instVarNames line as ± and keeps the rest as context', () => {
+    const cards = renderInstVarCards([edit]);
+    // The unchanged first line is context (leading space), not a delete/add.
+    expect(cards).toContain(`<div class="line">${' '}Object subclass: 'Foo'`);
+    // Only the instVarNames clause changes — the added variable is visible in the +line.
+    expect(cards).toContain('-  instVarNames: #(count)');
+    expect(cards).toContain('+  instVarNames: #(count tally)');
+    // The whole definition is NOT duplicated: the class-declaration line appears once
+    // (as context), not once as −old and once as +new.
+    expect(cards).not.toContain("-Object subclass: 'Foo'");
+  });
+
+  it('expands the definition edit by default so the added variable is visible; reparents stay collapsed', () => {
+    const editCard = renderInstVarCards([edit]);
+    expect(editCard).toContain('<pre class="diff">'); // not hidden
+    expect(editCard).toContain('aria-expanded="true"');
+
+    const reparentCard = renderInstVarCards([reparent]);
+    expect(reparentCard).toContain('<pre class="diff hidden">');
+    expect(reparentCard).toContain('aria-expanded="false"');
+  });
+
   it('every change row is required (checked + disabled)', () => {
     expect(renderInstVarCards([edit])).toContain('checked disabled');
   });
@@ -134,6 +156,23 @@ describe('instance-variable refactor panel HTML', () => {
     });
     expect(h).toContain('Move &lt;x&gt; to Bar');
     expect(h).toContain('&lt;b&gt;');
+  });
+
+  it('shows an accessors note when accessors will be added, and omits it otherwise', () => {
+    expect(html()).not.toContain('<div class="accessor-note">');
+
+    const withNote = renderInstVarPanelHtml({
+      title: 'Add foo to Foo',
+      total: 1,
+      changes: [edit],
+      done: true,
+      outOfScope: baseOos,
+      nonce: 'n',
+      script: '',
+      accessorNote: 'Accessors will be added after applying: foo, foo:',
+    });
+    expect(withNote).toContain('<div class="accessor-note">');
+    expect(withNote).toContain('Accessors will be added after applying: foo, foo:');
   });
 
   it('renders a hidden failure banner with an abort button and a close button', () => {

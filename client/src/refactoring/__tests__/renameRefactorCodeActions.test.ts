@@ -25,10 +25,7 @@ describe('refactor code actions', () => {
     expect(actions.map((a) => a.command?.command)).toEqual([
       'gemstone.explorer.inlineMethod',
       'gemstone.explorer.inlineTemporary',
-      'gemstone.renameTemporary',
-      'gemstone.renameInstVarAtCursor',
-      'gemstone.renameClassVarAtCursor',
-      'gemstone.renameMethodInEditor',
+      'gemstone.rename',
       'gemstone.convertTempToInstVar',
       'gemstone.changeMethodSignature',
     ]);
@@ -37,9 +34,6 @@ describe('refactor code actions', () => {
     expect(actions.map((a) => a.kind?.value)).toEqual([
       'refactor.inline',
       'refactor.inline',
-      'refactor.rename',
-      'refactor.rename',
-      'refactor.rename',
       'refactor.rename',
       'refactor.rewrite',
       'refactor.rewrite',
@@ -58,13 +52,15 @@ describe('refactor code actions', () => {
     expect(gatedOff.provideCodeActions(docWith('total foo'), range)).toEqual([]);
   });
 
-  it('offers only the method rename when the cursor is not on an identifier', () => {
+  it('still offers Rename and change-signature when the cursor is not on an identifier', () => {
     const range = new vscode.Range(new vscode.Position(0, 0), new vscode.Position(0, 0));
 
     const actions = provider.provideCodeActions(docWith('  + 1'), range);
 
+    // Rename… is offered anywhere (on a selector or the method header it renames the
+    // method), so it appears even off an identifier.
     expect(actions.map((a) => a.command?.command)).toEqual([
-      'gemstone.renameMethodInEditor',
+      'gemstone.rename',
       'gemstone.changeMethodSignature',
     ]);
   });
@@ -77,7 +73,7 @@ describe('refactor code actions', () => {
     expect(actions.map((a) => a.command?.command)).toEqual([
       'gemstone.explorer.extractMethod',
       'gemstone.explorer.extractTemporary',
-      'gemstone.renameMethodInEditor',
+      'gemstone.rename',
       'gemstone.changeMethodSignature',
     ]);
     // The extractions read the editor selection, so they carry no position argument.
@@ -95,10 +91,7 @@ describe('refactor code actions', () => {
       'gemstone.explorer.extractTemporary',
       'gemstone.explorer.inlineMethod',
       'gemstone.explorer.inlineTemporary',
-      'gemstone.renameTemporary',
-      'gemstone.renameInstVarAtCursor',
-      'gemstone.renameClassVarAtCursor',
-      'gemstone.renameMethodInEditor',
+      'gemstone.rename',
       'gemstone.convertTempToInstVar',
       'gemstone.changeMethodSignature',
     ]);
@@ -109,9 +102,6 @@ describe('refactor code actions', () => {
       'refactor.extract',
       'refactor.inline',
       'refactor.inline',
-      'refactor.rename',
-      'refactor.rename',
-      'refactor.rename',
       'refactor.rename',
       'refactor.rewrite',
       'refactor.rewrite',

@@ -1,4 +1,5 @@
 import { asCount } from './previewCounts';
+import { ApplyResult } from './previewEnvelope';
 /**
  * Shared "method-relocation" preview primitives (RB catalog C2). The move-method (M6)
  * and push-up / push-down (M7 / M8) client families model a relocation as a set of
@@ -62,11 +63,11 @@ export interface StartRelocationPreview<C extends BaseMethodChange> {
   page: RelocationPreviewPage<C>;
 }
 
-export interface RelocationApplyResult {
-  applied: number;
-  failed: { id: string; label: string; error: string }[];
-  error?: string;
-}
+/**
+ * Byte-identical to the family-wide envelope (RB catalog C3) — kept as a named alias
+ * so relocation call sites and their tests read unchanged.
+ */
+export type RelocationApplyResult = ApplyResult;
 
 /** One selector's pre-flight verdict (the base fields; families may extend it). */
 export interface BaseSelectorAnalysis {
@@ -231,28 +232,7 @@ export function makeParsePage<C extends BaseMethodChange>(
   };
 }
 
-/** Parse an apply result. Identical across families. */
-export function parseApplyResult(json: string): RelocationApplyResult {
-  const parsed: unknown = JSON.parse(json);
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    throw new Error('Apply did not return a result envelope.');
-  }
-  const env = parsed as Record<string, unknown>;
-  const failed = Array.isArray(env.failed)
-    ? env.failed
-        .filter((f): f is Record<string, unknown> => typeof f === 'object' && f !== null)
-        .map((f) => ({
-          id: typeof f.id === 'string' ? f.id : '?',
-          label: typeof f.label === 'string' ? f.label : '?',
-          error: typeof f.error === 'string' ? f.error : 'unknown error',
-        }))
-    : [];
-  return {
-    applied: asCount(env.applied),
-    failed,
-    error: typeof env.error === 'string' ? env.error : undefined,
-  };
-}
+export { parseApplyResult } from './previewEnvelope';
 
 /** The "Class[ class]>>selector" stem shared by every relocation row label. */
 export function relocationChangeStem(change: BaseMethodChange): string {
