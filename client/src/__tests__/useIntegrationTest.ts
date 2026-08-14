@@ -119,11 +119,7 @@ export function useIntegrationTest(callback: UseIntegrationTestCallback) {
     try {
       // Checked before the cleanup below on purpose: if the commit guard is no longer armed, that means a test
       // committed and left the session dirty, so the cleanup below is not guaranteed to succeed. Bail out early
-      const commitGuardStillArmed = gciLibrary.executeAndRelease(
-        session,
-        'System commitsDisabledUntilLogout',
-        (oop) => gciLibrary.isTrueOop(oop),
-      );
+      const commitGuardStillArmed = gciLibrary.areCommitsDisabledUntilLogout(session);
 
       if (!commitGuardStillArmed) {
         throw new Error(
@@ -225,11 +221,7 @@ export function useIntegrationTest(callback: UseIntegrationTestCallback) {
   function armCommitGuard(aSession: unknown) {
     let armedNewly: boolean;
     try {
-      armedNewly = gciLibrary.executeAndRelease(
-        aSession,
-        `System disableCommitsWithReason: '${COMMIT_GUARD_REASON}'`,
-        (oop) => gciLibrary.isTrueOop(oop),
-      );
+      armedNewly = gciLibrary.disableCommitsUntilLogout(aSession, COMMIT_GUARD_REASON);
     } catch (error) {
       // `cause` keeps the original error — stack included — linked to this one, which
       // vitest prints under a "Caused by:" heading. Its message is also inlined here so

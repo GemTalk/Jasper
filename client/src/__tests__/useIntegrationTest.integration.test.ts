@@ -24,10 +24,7 @@ describe('integration test harness commit guard (integration)', () => {
     withTransientSession = testContext.withTransientSession;
   });
 
-  const commitGuardIsArmedOn = (aSession: unknown) =>
-    gci.executeAndRelease(aSession, 'System commitsDisabledUntilLogout', (oop) =>
-      gci.isTrueOop(oop),
-    );
+  const commitGuardIsArmedOn = (aSession: unknown) => gci.areCommitsDisabledUntilLogout(aSession);
 
   const commitOn = (aSession: unknown) => () =>
     gci.executeAndRelease(aSession, 'System commitTransaction', (oop) => gci.isTrueOop(oop));
