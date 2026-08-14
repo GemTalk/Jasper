@@ -161,20 +161,28 @@ ${methodSerialization(environmentId)}`;
   return parseMethodSearchResults(execute(code));
 }
 
-// Methods that use a symbol as a DATA literal, NOT as a message send. `referencesToLiteral:` (and
-// `referencesToObject:`) find both — a selector send puts the symbol in the literal frame too — so
-// we subtract the senders. e.g. #size: ~2104 literal-frame refs, ~2090 senders → ~14 pure literal
-// uses. `symbolExpr` is a raw, compilable `#...` expression (evaluated on the server).
+// Methods that use a symbol as a DATA literal, NOT as a message send. `referencesToLiteral:` finds
+// both — a selector send puts the symbol in the literal frame too — so it can't be used alone. The
+// obvious "subtract the senders" (`reject: [:m | (sendersOf: symLit) includes: m]`) is unsound:
+// `sendersOf:` under-reports for some selectors (notably `#not`, where it returns 0 while
+// referencesToLiteral returns hundreds), so on those stones NOTHING is subtracted and every method
+// that merely SENDS the selector leaks in as a bogus hit whose source never contains the symbol
+// (Omni Search triage #9). Instead we mirror the string-literal branch: a fast source-substring
+// pre-filter (`substringSearch:` for the literal's textual form `#...`) intersected with the
+// literal-frame membership. A send like `x not` has source `not`, not `#not`, so it fails the
+// substring filter; a real literal `#not` passes both. `symbolExpr` is a raw, compilable `#...`
+// expression (evaluated on the server); `needle` is that same text matched literally in source.
 export function literalSymbolReferences(
   execute: QueryExecutor,
   symbolExpr: string,
   environmentId: number = 0,
 ): MethodSearchResult[] {
-  const code = `| symLit lit sends methods stream limit classDict sl |
+  const needle = escapeString(symbolExpr);
+  const code = `| symLit lit candidates methods stream limit classDict sl |
 symLit := ${symbolExpr}.
 lit := (ClassOrganizer new referencesToLiteral: symLit) at: 1.
-sends := (ClassOrganizer new sendersOf: symLit) at: 1.
-methods := lit reject: [:m | sends includes: m].
+candidates := (ClassOrganizer new substringSearch: '${needle}' ignoreCase: false) at: 1.
+methods := candidates select: [:m | lit includes: m].
 ${methodSerialization(environmentId)}`;
 
   return parseMethodSearchResults(execute(code));
