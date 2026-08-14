@@ -16,7 +16,8 @@ has an apply-path test.
 - **[GCI integration]** in `client/src/refactoring/__tests__/*.integration.test.ts` — drive apply
   through the client path end to end, gated with `requireServerPluginFeature`. This is the default
   home: it runs in CI over the whole release matrix. Only a scenario that must COMMIT belongs in the
-  on-demand `client/src/__tests__/gci/` project, since the integration harness aborts every test.
+  on-demand `client/src/__tests__/gci/` project, since every harness session is armed to refuse
+  commits outright (`TransactionError 2249`), with no opt-out.
 - Both boundaries: 3.6.2 **and** 3.7.5.
 
 ## What an apply test must assert
