@@ -42,6 +42,15 @@
     var activeIndex = -1;
     var inPivot = false;
     var previewTimer = null;
+    // When true, the references/senders gesture fills the preview pane with a sticky list (instead of
+    // pivoting the left list). Pushed from the host config; false = the classic pivot.
+    var referencesInPreview = false;
+    // What the preview pane is currently showing: 'source' (of the active left row) or 'refs' (the
+    // sticky references list). A new search or a new left-row selection returns it to 'source'.
+    var previewMode = 'source';
+    // The symbol the current references list is OF (selector / class name), highlighted in a sender's
+    // source when a row is expanded inline.
+    var refHighlightTerm = '';
     // Mirrors the host's case-sensitivity so the preview-pane highlight matches how the search did.
     var caseSensitive = false;
     // Set when the NEXT results render should scroll the list back to the top — true for a fresh
@@ -153,6 +162,8 @@
       var el = rows[activeIndex];
       el.classList.add('active');
       if (scroll !== false && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
+      // A new left-row selection dismisses a sticky references list — the pane goes back to source.
+      previewMode = 'source';
       requestPreview();
     }
 
@@ -171,10 +182,23 @@
       }, PREVIEW_DEBOUNCE_MS);
     }
 
+    // References/senders of a row. In referencesInPreview mode the host replies with a `refPreview`
+    // that fills the preview pane (leaving the left list alone); otherwise it's the classic list pivot.
+    function requestReferences(id) {
+      if (referencesInPreview) {
+        post('referencesInline', { id: id });
+      } else {
+        scrollResetPending = true;
+        post('references', { id: id });
+      }
+    }
+
     function renderResults(view) {
       resultsEl.textContent = '';
       rows = [];
       inPivot = !!view.pivot;
+      if (typeof view.referencesInPreview === 'boolean')
+        referencesInPreview = view.referencesInPreview;
       // Flat, globally relevance-ranked list — no category grouping/dividers; each row wears a small
       // category tag instead so you still see what it is.
       var viewRows = view.rows || [];
@@ -221,13 +245,13 @@
         var ref = doc.createElement('button');
         ref.className = 'refbtn';
         ref.textContent = '↗';
-        ref.title = row.referenceTitle || 'Find references';
-        ref.setAttribute('aria-label', row.referenceTitle || 'Find references');
+        var refLabel = (row.referenceTitle || 'Find references') + ' (Alt+Enter)';
+        ref.title = refLabel;
+        ref.setAttribute('aria-label', refLabel);
         (function (id) {
           ref.addEventListener('click', function (ev) {
             ev.stopPropagation();
-            scrollResetPending = true;
-            post('references', { id: id });
+            requestReferences(id);
           });
         })(row.id);
         li.appendChild(ref);
@@ -259,6 +283,7 @@
     }
 
     function clearPreview() {
+      previewMode = 'source';
       previewEl.textContent = '';
       previewEl.classList.remove('has-content');
     }
@@ -268,6 +293,8 @@
       var msg = event.data || {};
       switch (msg.command) {
         case 'config':
+          if (typeof msg.referencesInPreview === 'boolean')
+            referencesInPreview = msg.referencesInPreview;
           renderTabs(msg.categories, msg.scopeId);
           setCase(msg.caseSensitive);
           setPin(msg.pinned);
@@ -292,8 +319,19 @@
           setBusy(!!msg.on);
           break;
         case 'preview':
-          // Ignore a stale preview for a row that is no longer active.
-          if (msg.id === activeRowId()) showPreview(msg.source, msg.title);
+          // Ignore a stale preview for a row that's no longer active, or one that arrives while the
+          // pane is showing a sticky references list (referencesInPreview mode).
+          if (previewMode === 'source' && msg.id === activeRowId())
+            showPreview(msg.source, msg.title);
+          break;
+        case 'refPreview':
+          // Fill the preview pane with the row's references/senders — but only if that row is still
+          // the active one (a fast re-selection could have superseded the request).
+          if (msg.forId === activeRowId()) showRefPreview(msg.title, msg.rows, msg.highlightTerm);
+          break;
+        case 'referenceSource':
+          // Inline source for an expanded reference row.
+          fillReferenceSource(msg.refId, msg.source);
           break;
         case 'error':
           setError(msg.message || '');
@@ -336,7 +374,175 @@
       return first;
     }
 
+    // Render the sticky references/senders list into the preview pane (referencesInPreview mode). The
+    // left search list is untouched; a row expands inline to show its source (Ctrl+Enter / double-
+    // click opens it in a real editor).
+    function showRefPreview(title, refRows, highlightTerm) {
+      if (previewTimer) {
+        clearTimeout(previewTimer);
+        previewTimer = null;
+      }
+      previewMode = 'refs';
+      refHighlightTerm = highlightTerm || '';
+      previewEl.textContent = '';
+      if (title) {
+        var h = doc.createElement('div');
+        h.className = 'preview-title';
+        h.textContent = title;
+        previewEl.appendChild(h);
+      }
+      var list = refRows || [];
+      if (list.length === 0) {
+        var empty = doc.createElement('div');
+        empty.className = 'preview-empty';
+        empty.textContent = 'No references';
+        previewEl.appendChild(empty);
+      } else {
+        var ul = doc.createElement('ul');
+        ul.className = 'preview-list';
+        for (var i = 0; i < list.length; i++) ul.appendChild(makeRefRow(list[i]));
+        previewEl.appendChild(ul);
+      }
+      previewEl.classList.add('has-content');
+      previewEl.scrollTop = 0;
+    }
+
+    function makeRefRow(row) {
+      var item = doc.createElement('li');
+      item.className = 'preview-ref-item';
+
+      var header = doc.createElement('div');
+      header.className = 'preview-ref';
+      header.setAttribute('data-ref-id', String(row.id));
+      header.setAttribute('tabindex', '0'); // focusable so Tab from the field can dive into the list
+
+      var twisty = doc.createElement('span');
+      twisty.className = 'twisty';
+      twisty.textContent = '▶'; // ▶ collapsed
+      header.appendChild(twisty);
+
+      var label = doc.createElement('span');
+      label.className = 'label';
+      renderLabel(label, row.label, row.ranges);
+      header.appendChild(label);
+
+      if (row.description) {
+        var desc = doc.createElement('span');
+        desc.className = 'desc';
+        desc.textContent = row.description;
+        header.appendChild(desc);
+      }
+
+      var src = doc.createElement('pre');
+      src.className = 'preview-ref-src';
+      src.style.display = 'none';
+
+      item.appendChild(header);
+      item.appendChild(src);
+
+      (function (refId) {
+        // Click toggles the inline source (EI Meta-tab feel); double-click opens a real editor.
+        header.addEventListener('click', function () {
+          toggleExpand(refId);
+        });
+        header.addEventListener('dblclick', function () {
+          post('openReference', { refId: refId });
+        });
+      })(row.id);
+      return item;
+    }
+
+    function refItems() {
+      return previewEl.querySelectorAll('.preview-ref');
+    }
+
+    function refHeaderFor(refId) {
+      return previewEl.querySelector('.preview-ref[data-ref-id="' + refId + '"]');
+    }
+
+    // Expand/collapse a reference row's inline source, lazily asking the host for it the first time.
+    function toggleExpand(refId) {
+      var header = refHeaderFor(refId);
+      if (!header) return;
+      var src = header.parentNode.querySelector('.preview-ref-src');
+      var twisty = header.querySelector('.twisty');
+      if (src.style.display === 'none') {
+        src.style.display = '';
+        if (twisty) twisty.textContent = '▼'; // ▼ expanded
+        if (!src.getAttribute('data-loaded')) {
+          src.textContent = '…';
+          post('previewReference', { refId: refId });
+        }
+      } else {
+        src.style.display = 'none';
+        if (twisty) twisty.textContent = '▶';
+      }
+    }
+
+    // Fill an expanded row's source (host reply), highlighting the symbol the list is references OF.
+    function fillReferenceSource(refId, source) {
+      var header = refHeaderFor(refId);
+      if (!header) return;
+      var src = header.parentNode.querySelector('.preview-ref-src');
+      src.textContent = '';
+      highlightOccurrences(src, source || '', refHighlightTerm, caseSensitive);
+      src.setAttribute('data-loaded', '1');
+    }
+
+    // Keyboard handling while a reference row has focus: arrow through the list, open the focused one,
+    // and hand focus back to the search field at the top / on Escape / on Shift+Tab.
+    function handleRefKey(ev) {
+      var items = refItems();
+      if (!items.length) return;
+      var cur = -1;
+      for (var i = 0; i < items.length; i++) {
+        if (items[i] === ev.target) {
+          cur = i;
+          break;
+        }
+      }
+      switch (ev.key) {
+        case 'ArrowDown':
+          ev.preventDefault();
+          items[Math.min(items.length - 1, cur + 1)].focus();
+          break;
+        case 'ArrowUp':
+          ev.preventDefault();
+          if (cur <= 0) inputEl.focus();
+          else items[cur - 1].focus();
+          break;
+        case 'ArrowLeft':
+          // Left is "back to the results": return to the search field, where Up/Down drive the left
+          // list. The refs list stays visible until a new selection/typing dismisses it.
+          ev.preventDefault();
+          inputEl.focus();
+          break;
+        case 'Enter':
+        case ' ':
+        case 'Spacebar': {
+          // Enter/Space toggles the inline source; Ctrl/Cmd+Enter opens it in a real editor instead.
+          ev.preventDefault();
+          var rid = Number(ev.target.getAttribute('data-ref-id'));
+          if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey))
+            post('openReference', { refId: rid });
+          else toggleExpand(rid);
+          break;
+        }
+        case 'Escape':
+          ev.preventDefault();
+          inputEl.focus(); // back to the field, list left open
+          break;
+        case 'Tab':
+          if (ev.shiftKey) {
+            ev.preventDefault();
+            inputEl.focus();
+          }
+          break;
+      }
+    }
+
     function showPreview(source, title) {
+      previewMode = 'source';
       previewEl.textContent = '';
       if (!source) {
         clearPreview();
@@ -402,11 +608,31 @@
     inputEl.addEventListener('input', function () {
       setBusy(true);
       scrollResetPending = true; // a new query starts the list at the top
+      previewMode = 'source'; // typing dismisses a sticky references list
       updateClearVisibility();
       post('query', { value: inputEl.value });
     });
 
-    inputEl.addEventListener('keydown', function (ev) {
+    // Bound to the whole document, NOT just the search field: in a WebviewView the field's focus is
+    // easily lost (clicking Load More, the case chip, a row, or opening a result), and a handler tied
+    // to the input would then go silent while the mouse-driven buttons kept working. At the document
+    // level the shortcuts fire whenever the panel has focus, wherever it sits.
+    doc.addEventListener('keydown', function (ev) {
+      // While the references list is open: keys land on it, and Tab from the field dives into it
+      // (rather than tabbing to the clear/case buttons).
+      if (previewMode === 'refs' && previewEl.contains(ev.target)) {
+        handleRefKey(ev);
+        return;
+      }
+      if (ev.key === 'Tab' && !ev.shiftKey && previewMode === 'refs' && ev.target === inputEl) {
+        var firstRef = refItems()[0];
+        if (firstRef) {
+          ev.preventDefault();
+          firstRef.focus();
+        }
+        return;
+      }
+      var onButton = ev.target && ev.target.tagName === 'BUTTON';
       switch (ev.key) {
         case 'ArrowDown':
           ev.preventDefault();
@@ -417,21 +643,45 @@
           setActive(activeIndex - 1);
           break;
         case 'Enter': {
+          // A plain Enter on a focused button is its own click (Load More, case, pin…) — leave it be.
+          if (onButton && !ev.altKey && !ev.ctrlKey && !ev.metaKey) break;
           var id = activeRowId();
           if (id === null) break;
           ev.preventDefault();
-          // Ctrl/Cmd+Enter opens beside (keeps the Spotter visible); Alt+Enter pivots to references.
-          if (ev.altKey) post('references', { id: id });
+          // Ctrl/Cmd+Enter opens beside (keeps the Spotter visible); Alt+Enter shows references (in
+          // the preview pane, or — flag off — as the classic list pivot).
+          if (ev.altKey) requestReferences(id);
           else post('activate', { id: id, side: ev.ctrlKey || ev.metaKey });
           break;
         }
         case 'ArrowLeft':
           // Only steal Left as "back" when pivoted AND the caret is at the field start, so normal
-          // cursor movement inside the query is undisturbed.
-          if (inPivot && inputEl.selectionStart === 0 && inputEl.selectionEnd === 0) {
+          // cursor movement inside the query is undisturbed (field-focused only).
+          if (
+            inPivot &&
+            doc.activeElement === inputEl &&
+            inputEl.selectionStart === 0 &&
+            inputEl.selectionEnd === 0
+          ) {
             ev.preventDefault();
             scrollResetPending = true;
             post('back');
+          }
+          break;
+        case 'ArrowRight':
+          // Right dives into an open references list (mirror of Left, which comes back). Only when the
+          // caret is at the END of the field, so normal in-field cursor movement is undisturbed.
+          if (
+            previewMode === 'refs' &&
+            ev.target === inputEl &&
+            inputEl.selectionStart === inputEl.value.length &&
+            inputEl.selectionEnd === inputEl.value.length
+          ) {
+            var firstOnRight = refItems()[0];
+            if (firstOnRight) {
+              ev.preventDefault();
+              firstOnRight.focus();
+            }
           }
           break;
         case 'Escape':

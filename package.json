@@ -207,6 +207,11 @@
             "minimum": 1,
             "maximum": 10,
             "description": "Minimum characters before the Methods category queries the stone (method search hits the stone per keystroke). Raise it if per-keystroke method search feels slow on a large stone; lower it (to 1) to search selectors from the first character."
+          },
+          "gemstone.omniSearch.referencesInPreview": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Show a row's references/senders (Alt+Enter or the ↗ button) as a sticky list in the right-hand preview pane, leaving the results list in place — click an entry to open its source. Turn this **off** to use the classic behavior, where references replace the whole results list (a pivot you back out of with ← / Esc)."
           }
         }
       },

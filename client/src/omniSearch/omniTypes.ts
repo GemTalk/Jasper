@@ -113,6 +113,10 @@ export interface OmniConfig {
   debounceMs: number;
   /** Methods hit the stone per keystroke, so don't search until the term is at least this long. */
   methodMinQueryLength: number;
+  /** When true, the references/senders gesture shows the results in the right-hand preview pane (a
+   *  sticky list you open source from) instead of pivoting the whole left list. Off = the classic
+   *  list pivot. */
+  referencesInPreview: boolean;
 }
 
 /** Minimal cancellation signal so providers need not import `vscode.CancellationToken`. */

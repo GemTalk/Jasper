@@ -40,6 +40,8 @@ export interface OmniQuickItem extends vscode.QuickPickItem {
 /** A result the reference pivot loaded: its breadcrumb title + the reference rows. */
 export interface ReferenceView {
   title: string;
+  /** The symbol these are references/senders OF — highlighted in an expanded sender's source. */
+  target?: string;
   results: OmniResult[];
 }
 

@@ -320,6 +320,66 @@ describe('createOmniEngine', () => {
     expect(back!.rows[0].label).toBe('Foo'); // prior search restored
   });
 
+  it('loads a row references into a sticky preview list without disturbing the search list', async () => {
+    const classes = fakeProvider('classes', [classResult('Foo')]);
+    const refView: ReferenceView = {
+      title: 'References to Foo',
+      target: 'Foo',
+      results: [methodResult('A>>useFoo', 'useFoo'), methodResult('B>>alsoFoo', 'alsoFoo')],
+    };
+    const engine = createOmniEngine({
+      providers: [classes],
+      config: cfg(),
+      resolveReferences: () => refView,
+    });
+    const search = await engine.search('foo');
+    const classRowId = search!.rows[0].id;
+
+    const preview = await engine.referencesFor(classRowId);
+
+    expect(preview!.title).toBe('References to Foo');
+    expect(preview!.highlightTerm).toBe('Foo');
+    expect(preview!.rows.map((r) => r.label)).toEqual(['A>>useFoo', 'B>>alsoFoo']);
+    expect(engine.state().pivot).toBe(false);
+    expect(engine.resultFor(classRowId)!.label).toBe('Foo'); // search list + ids untouched
+    expect(classes.searched).toEqual(['foo']); // no re-query of the search providers
+  });
+
+  it('resolves a preview reference row back to its result for opening its source', async () => {
+    const refView: ReferenceView = {
+      title: 'References to Foo',
+      results: [methodResult('A>>useFoo', 'useFoo'), methodResult('B>>alsoFoo', 'alsoFoo')],
+    };
+    const engine = createOmniEngine({
+      providers: [fakeProvider('classes', [classResult('Foo')])],
+      config: cfg(),
+      resolveReferences: () => refView,
+    });
+    const search = await engine.search('foo');
+
+    const preview = await engine.referencesFor(search!.rows[0].id);
+    const secondRow = preview!.rows.find((r) => r.label === 'B>>alsoFoo')!;
+
+    expect(engine.referenceResultFor(secondRow.id)!.label).toBe('B>>alsoFoo');
+  });
+
+  it('references preview is null without a resolver or on a non-referenceable row', async () => {
+    const withResolver = createOmniEngine({
+      providers: [fakeProvider('dictionaries', [dictResult('UserGlobals')])],
+      config: cfg(),
+      resolveReferences: () => null,
+    });
+    const dictView = await withResolver.search('user');
+    expect(await withResolver.referencesFor(dictView!.rows[0].id)).toBeNull(); // not referenceable
+
+    const noResolver = createOmniEngine({
+      providers: [fakeProvider('classes', [classResult('Foo')])],
+      config: cfg(),
+    });
+    const classView = await noResolver.search('foo');
+    expect(await noResolver.referencesFor(classView!.rows[0].id)).toBeNull(); // no resolver wired
+  });
+
   it('pivot is a no-op without a resolver or on a non-referenceable row', async () => {
     const engine = createOmniEngine({
       providers: [fakeProvider('dictionaries', [dictResult('UserGlobals')])],

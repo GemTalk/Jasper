@@ -62,4 +62,11 @@ describe('readOmniConfig', () => {
       readOmniConfig(fakeConfig({ maxResultsPerCategory: 'lots' })).maxResultsPerCategory,
     ).toBe(OMNI_DEFAULTS.maxResultsPerCategory);
   });
+
+  it('keeps references in the preview pane unless explicitly turned off', () => {
+    expect(readOmniConfig(fakeConfig({})).referencesInPreview).toBe(true);
+    expect(readOmniConfig(fakeConfig({ referencesInPreview: false })).referencesInPreview).toBe(
+      false,
+    );
+  });
 });

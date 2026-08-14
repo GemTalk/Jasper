@@ -46,6 +46,9 @@ type OmniInbound =
   | { command: 'loadAll' }
   | { command: 'activate'; id: number; side: boolean }
   | { command: 'references'; id: number }
+  | { command: 'referencesInline'; id: number }
+  | { command: 'previewReference'; refId: number }
+  | { command: 'openReference'; refId: number }
   | { command: 'back' }
   | { command: 'preview'; id: number }
   | { command: 'close' };
@@ -195,6 +198,43 @@ export class OmniSearchPanel {
             source,
             title: result.label,
           });
+          return;
+        }
+        case 'referencesInline': {
+          // Load a row's senders/references into the sticky preview-pane list (leaves the search list
+          // and its state untouched). `forId` lets the webview drop a stale reply if the row moved on.
+          const preview = await this.engine.referencesFor(m.id);
+          if (preview) {
+            this.panel.webview.postMessage({
+              command: 'refPreview',
+              forId: m.id,
+              title: preview.title,
+              highlightTerm: preview.highlightTerm,
+              rows: preview.rows,
+            });
+          }
+          return;
+        }
+        case 'previewReference': {
+          // Source of a single reference row, for the inline (EI Meta-tab style) expand in the list.
+          const result = this.engine.referenceResultFor(m.refId);
+          let source = '';
+          if (result) {
+            try {
+              source = this.deps.previewSource(result);
+            } catch {
+              source = '';
+            }
+          }
+          this.panel.webview.postMessage({ command: 'referenceSource', refId: m.refId, source });
+          return;
+        }
+        case 'openReference': {
+          const result = this.engine.referenceResultFor(m.refId);
+          if (!result) return;
+          // Opening source from the refs list must NOT dismiss the Spotter — open beside it and keep
+          // focus in the field so the sticky list stays put for the next pick.
+          await this.deps.activate(result, { beside: true, preserveFocus: true });
           return;
         }
         case 'close':

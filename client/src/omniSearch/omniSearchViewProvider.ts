@@ -29,7 +29,7 @@ export interface OmniViewContext {
 }
 
 /** Webview messages this host handles beyond the common engine ones. */
-type PanelInbound = CommonInbound & { id?: number; side?: boolean };
+type PanelInbound = CommonInbound & { id?: number; side?: boolean; refId?: number };
 
 export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
   private view: vscode.WebviewView | undefined;
@@ -139,6 +139,43 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
             source = '';
           }
           this.post({ command: 'preview', id: m.id, source, title: result.label });
+          return;
+        }
+        case 'referencesInline': {
+          // Load a row's senders/references into the sticky preview-pane list (leaves the search list
+          // and its state untouched). `forId` lets the webview drop a stale reply if the row moved on.
+          const preview = await engine.referencesFor(m.id ?? -1);
+          if (preview) {
+            this.post({
+              command: 'refPreview',
+              forId: m.id,
+              title: preview.title,
+              highlightTerm: preview.highlightTerm,
+              rows: preview.rows,
+            });
+          }
+          return;
+        }
+        case 'previewReference': {
+          // Source of a single reference row, for the inline (EI Meta-tab style) expand in the list.
+          const result = engine.referenceResultFor(m.refId ?? -1);
+          let source = '';
+          if (result) {
+            try {
+              source = this.deps!.previewSource(result);
+            } catch {
+              source = '';
+            }
+          }
+          this.post({ command: 'referenceSource', refId: m.refId, source });
+          return;
+        }
+        case 'openReference': {
+          // Open the picked reference's source in the editor area above the docked panel — but keep
+          // focus in the panel (preserveFocus) so the sticky refs list stays keyboard-navigable for
+          // the next pick (Enter from the list must not fling focus into the opened editor).
+          const result = engine.referenceResultFor(m.refId ?? -1);
+          if (result) await this.deps!.activate(result, { beside: false, preserveFocus: true });
           return;
         }
         case 'close':

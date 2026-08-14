@@ -70,6 +70,7 @@ export function resultsMessage(
     scopeId: chrome.scopeId,
     caseSensitive: chrome.caseSensitive,
     pinned: chrome.pinned,
+    referencesInPreview: chrome.config.referencesInPreview,
     placeholder: placeholderFor(view.pivot ? null : chrome.scopeId),
   };
 }
@@ -82,6 +83,7 @@ export function configMessage(config: OmniConfig, pinned: boolean): Record<strin
     scopeId: null,
     caseSensitive: config.caseSensitive,
     pinned,
+    referencesInPreview: config.referencesInPreview,
     placeholder: placeholderFor(null),
   };
 }
@@ -285,6 +287,37 @@ export function renderOmniHtml(opts: { showPin: boolean }): string {
       color: var(--vscode-editor-foreground, inherit);
       border-radius: 2px;
     }
+    /* The sticky references/senders list, shown IN the preview pane (referencesInPreview mode). */
+    .preview-list { list-style: none; margin: 0; padding: 0; }
+    .preview-ref-item { list-style: none; }
+    .preview-ref { display: flex; align-items: baseline; gap: 6px; padding: 3px 6px; border-radius: 4px; cursor: pointer; }
+    .preview-ref:hover { background: var(--vscode-list-hoverBackground); }
+    .preview-ref .twisty { flex: 0 0 auto; width: 0.9em; text-align: center; font-size: 0.75em; opacity: 0.7; }
+    /* Inline (EI Meta-tab style) source of an expanded reference, with the searched symbol highlighted. */
+    .preview-ref-src {
+      margin: 1px 0 6px 1.7em;
+      white-space: pre-wrap;
+      font-family: var(--vscode-editor-font-family, monospace);
+      font-size: 0.85em;
+      color: var(--vscode-foreground);
+      border-left: 2px solid var(--vscode-widget-border, var(--vscode-panel-border, transparent));
+      padding-left: 8px;
+    }
+    .preview-ref-src mark {
+      background: var(--vscode-editor-findMatchBackground, rgba(234,92,0,0.6));
+      outline: 1px solid var(--vscode-editor-findMatchBorder, rgba(234,92,0,0.9));
+      color: var(--vscode-editor-foreground, inherit);
+      border-radius: 2px;
+    }
+    .preview-ref:focus {
+      outline: none;
+      background: var(--vscode-list-activeSelectionBackground, var(--vscode-list-hoverBackground));
+      color: var(--vscode-list-activeSelectionForeground);
+      box-shadow: inset 3px 0 0 0 var(--vscode-focusBorder, var(--vscode-list-focusOutline, #007acc));
+    }
+    .preview-ref .label { flex: 0 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .preview-ref .desc { flex: 1 1 auto; color: var(--vscode-descriptionForeground); font-size: 0.85em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .preview-empty { color: var(--vscode-descriptionForeground); font-style: italic; }
     .row { display: flex; align-items: baseline; gap: 8px; padding: 3px 8px 3px 10px; border-radius: 4px; cursor: pointer; }
     .row:hover { background: var(--vscode-list-hoverBackground); }
     /* The active row's background is theme-dependent and can be faint (and webviews don't get VS

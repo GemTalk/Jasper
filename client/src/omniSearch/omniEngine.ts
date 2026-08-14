@@ -86,7 +86,20 @@ const CATEGORY_TAG: Record<OmniCategoryId, string> = {
 /** A result the reference pivot loaded: its breadcrumb title + the reference rows. */
 export interface ReferenceView {
   title: string;
+  /** The symbol these are references/senders OF (selector or class/global name) — highlighted when a
+   *  sender's source is expanded inline. */
+  target?: string;
   results: OmniResult[];
+}
+
+/** The senders/references of a row, shaped for the sticky preview-pane list (the non-pivot path).
+ *  `rows` carry ids that index the engine's stored reference rows, resolved by `referenceResultFor`
+ *  when one is opened. Unlike the pivot this leaves the search list (and all search state) untouched. */
+export interface ReferencePreview {
+  title: string;
+  /** The symbol to highlight in an expanded sender's source (the selector / class name searched). */
+  highlightTerm?: string;
+  rows: OmniViewRow[];
 }
 
 export interface OmniEngineDeps {
@@ -240,6 +253,11 @@ export interface OmniEngine {
   pivot(rowId: number): Promise<OmniViewData | null>;
   /** Leave the reference view and restore the prior search. */
   exitPivot(): Promise<OmniViewData | null>;
+  /** Load a row's references/senders for the sticky preview-pane list WITHOUT pivoting — the search
+   *  list and all search state are left intact. Returns null if not referenceable / no resolver. */
+  referencesFor(rowId: number): Promise<ReferencePreview | null>;
+  /** The `OmniResult` for a reference row id from the last `referencesFor` (for opening its source). */
+  referenceResultFor(refId: number): OmniResult | undefined;
   /** The `OmniResult` for a row id in the CURRENT view (for activation), or undefined. */
   resultFor(rowId: number): OmniResult | undefined;
   /** Current UI state the panel needs to render chrome (scope, case, pivot). */
@@ -257,6 +275,9 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
   let pivot: ReferenceView | null = null;
   // The results backing the CURRENT view, indexed by row id.
   let current: OmniResult[] = [];
+  // The reference rows from the last `referencesFor`, indexed by the preview list's row id. Kept
+  // separate from `current` so loading references never disturbs the search list or its ids.
+  let referenceRows: OmniResult[] = [];
 
   const effectiveConfig = (): OmniConfig => ({
     ...config,
@@ -390,6 +411,19 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
       pivot = null;
       return runSearch(lastRawValue);
     },
+    async referencesFor(rowId) {
+      if (!deps.resolveReferences) return null;
+      const result = current[rowId];
+      if (!result) return null;
+      const view = await deps.resolveReferences(result);
+      if (!view) return null; // not referenceable
+      referenceRows = view.results;
+      const built = buildView(referenceRows, { hasMore: false, exact: true, pivot: false }, () => ({
+        referenceable: false,
+      }));
+      return { title: view.title, highlightTerm: view.target, rows: built.rows };
+    },
+    referenceResultFor: (refId) => referenceRows[refId],
     resultFor: (rowId) => current[rowId],
     state: () => ({ scopeId, caseSensitive, pivot: pivot !== null }),
   };

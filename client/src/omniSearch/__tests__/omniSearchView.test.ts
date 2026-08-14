@@ -56,6 +56,10 @@ function row(id: number, label: string, over: Record<string, unknown> = {}) {
   };
 }
 
+function refRow(id: number, label: string, description?: string) {
+  return { id, label, ranges: [], description, categoryId: 'methods', categoryLabel: 'Method' };
+}
+
 function resultsMsg(over: Record<string, unknown> = {}) {
   return {
     command: 'results',
@@ -201,6 +205,7 @@ describe('Omni Search view — results rendering (flat, no grouping)', () => {
     );
     const refBtns = document.querySelectorAll('#results .row .refbtn');
     expect(refBtns.length).toBe(1);
+    expect((refBtns[0] as HTMLButtonElement).title).toContain('Alt+Enter');
     (refBtns[0] as HTMLButtonElement).click();
     expect(vscode.postMessage).toHaveBeenCalledWith({ command: 'references', id: 7 });
   });
@@ -389,6 +394,33 @@ describe('Omni Search view — keyboard', () => {
     expect(vscode.postMessage).toHaveBeenCalledWith({ command: 'references', id: 0 });
   });
 
+  it('keeps working when focus is on a chrome button, not the field (e.g. after Load More)', () => {
+    const { handle, vscode } = mount();
+    seed(handle);
+
+    document
+      .getElementById('loadMore')!
+      .dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', altKey: true, bubbles: true }));
+
+    expect(vscode.postMessage).toHaveBeenCalledWith({ command: 'references', id: 0 });
+  });
+
+  it('leaves a plain Enter on a focused button to that button (no row activation)', () => {
+    const { handle, vscode } = mount();
+    seed(handle);
+    vscode.postMessage.mockClear();
+
+    document
+      .getElementById('loadMore')!
+      .dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+
+    expect(vscode.postMessage).not.toHaveBeenCalledWith({
+      command: 'activate',
+      id: 0,
+      side: false,
+    });
+  });
+
   it('input change posts the query and marks the field busy', () => {
     const { vscode } = mount();
     const input = document.getElementById('query') as HTMLInputElement;
@@ -409,5 +441,249 @@ describe('Omni Search view — keyboard', () => {
     seed(handle);
     keydown({ key: 'Escape' });
     expect(vscode.postMessage).toHaveBeenCalledWith({ command: 'close' });
+  });
+});
+
+describe('Omni Search view — references in the preview pane', () => {
+  function seedActive(handle: ReturnType<ViewApi['wire']>) {
+    handle.renderResults(
+      resultsMsg({
+        rows: [row(7, 'Foo', { referenceable: true, referenceTitle: 'References to Foo' })],
+        shownCount: 1,
+        referencesInPreview: true,
+      }),
+    );
+  }
+
+  const refPreviewMsg = (forId: number, rows: unknown[]) => ({
+    data: { command: 'refPreview', forId, title: 'References to Foo', highlightTerm: 'Foo', rows },
+  });
+
+  it('Alt+Enter requests references inline (not a pivot) when the mode is on', () => {
+    const { handle, vscode } = mount();
+    seedActive(handle);
+
+    document
+      .getElementById('query')!
+      .dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', altKey: true, bubbles: true }));
+
+    expect(vscode.postMessage).toHaveBeenCalledWith({ command: 'referencesInline', id: 7 });
+  });
+
+  it('the ↗ button requests references inline when the mode is on', () => {
+    const { handle, vscode } = mount();
+    seedActive(handle);
+
+    (document.querySelector('#results .row .refbtn') as HTMLButtonElement).click();
+
+    expect(vscode.postMessage).toHaveBeenCalledWith({ command: 'referencesInline', id: 7 });
+  });
+
+  it('fills the preview pane with the senders list; clicking a row expands its inline source', () => {
+    const { handle, vscode } = mount();
+    seedActive(handle);
+
+    handle.onMessage(refPreviewMsg(7, [refRow(0, 'A>>useFoo'), refRow(1, 'B>>alsoFoo')]));
+
+    const preview = document.getElementById('preview')!;
+    expect(preview.querySelector('.preview-title')!.textContent).toBe('References to Foo');
+    const items = preview.querySelectorAll('.preview-ref');
+    expect(Array.from(items).map((i) => i.querySelector('.label')!.textContent)).toEqual([
+      'A>>useFoo',
+      'B>>alsoFoo',
+    ]);
+    (items[1] as HTMLElement).click();
+    expect(vscode.postMessage).toHaveBeenCalledWith({ command: 'previewReference', refId: 1 });
+  });
+
+  it('shows an expanded reference source with the searched symbol highlighted', () => {
+    const { handle } = mount();
+    seedActive(handle);
+    handle.onMessage(refPreviewMsg(7, [refRow(0, 'A>>useFoo')]));
+
+    (document.querySelector('#preview .preview-ref') as HTMLElement).click();
+    handle.onMessage({
+      data: { command: 'referenceSource', refId: 0, source: 'useFoo\n  ^self Foo new' },
+    });
+
+    const src = document.querySelector('#preview .preview-ref-src')!;
+    expect(src.textContent).toBe('useFoo\n  ^self Foo new');
+    expect(src.querySelector('mark')!.textContent).toBe('Foo');
+  });
+
+  it('collapses an expanded reference source on a second click (no reload)', () => {
+    const { handle, vscode } = mount();
+    seedActive(handle);
+    handle.onMessage(refPreviewMsg(7, [refRow(0, 'A>>useFoo')]));
+    const row = document.querySelector('#preview .preview-ref') as HTMLElement;
+
+    row.click();
+    handle.onMessage({ data: { command: 'referenceSource', refId: 0, source: 'useFoo' } });
+    const src = document.querySelector('#preview .preview-ref-src') as HTMLElement;
+    expect(src.style.display).not.toBe('none');
+
+    vscode.postMessage.mockClear();
+    row.click();
+    expect(src.style.display).toBe('none');
+    expect(vscode.postMessage).not.toHaveBeenCalledWith({ command: 'previewReference', refId: 0 });
+  });
+
+  it('double-clicking a reference opens it in a real editor', () => {
+    const { handle, vscode } = mount();
+    seedActive(handle);
+    handle.onMessage(refPreviewMsg(7, [refRow(0, 'A>>useFoo')]));
+
+    (document.querySelector('#preview .preview-ref') as HTMLElement).dispatchEvent(
+      new MouseEvent('dblclick', { bubbles: true }),
+    );
+
+    expect(vscode.postMessage).toHaveBeenCalledWith({ command: 'openReference', refId: 0 });
+  });
+
+  it('ignores a references list whose row is no longer the active one', () => {
+    const { handle } = mount();
+    seedActive(handle);
+
+    handle.onMessage(refPreviewMsg(999, [refRow(0, 'X>>y')]));
+
+    expect(document.querySelectorAll('#preview .preview-ref').length).toBe(0);
+  });
+
+  it('shows "No references" when the list is empty', () => {
+    const { handle } = mount();
+    seedActive(handle);
+
+    handle.onMessage(refPreviewMsg(7, []));
+
+    expect(document.querySelector('#preview .preview-empty')!.textContent).toBe('No references');
+  });
+
+  it('a stale source preview for the same row does not overwrite the shown references list', () => {
+    const { handle } = mount();
+    seedActive(handle);
+    handle.onMessage(refPreviewMsg(7, [refRow(0, 'A>>useFoo')]));
+
+    handle.onMessage({ data: { command: 'preview', id: 7, source: 'foo def', title: 'Foo' } });
+
+    expect(document.querySelectorAll('#preview .preview-ref').length).toBe(1);
+    expect(document.querySelector('#preview .preview-src')).toBeNull();
+  });
+
+  it('a new left-row selection dismisses the references list and restores the source preview', () => {
+    const { handle } = mount();
+    handle.renderResults(
+      resultsMsg({
+        rows: [row(7, 'Foo', { referenceable: true }), row(8, 'Bar')],
+        shownCount: 2,
+        referencesInPreview: true,
+      }),
+    );
+    handle.onMessage(refPreviewMsg(7, [refRow(0, 'A>>useFoo')]));
+    expect(document.querySelectorAll('#preview .preview-ref').length).toBe(1);
+
+    handle.setActive(1);
+    handle.onMessage({ data: { command: 'preview', id: 8, source: 'bar def', title: 'Bar' } });
+
+    expect(document.querySelectorAll('#preview .preview-ref').length).toBe(0);
+    expect(document.querySelector('#preview .preview-src')!.textContent).toBe('bar def');
+  });
+
+  it('Tab from the field dives into the open references list (not the chrome buttons)', () => {
+    const { handle } = mount();
+    seedActive(handle);
+    handle.onMessage(refPreviewMsg(7, [refRow(0, 'A>>useFoo'), refRow(1, 'B>>alsoFoo')]));
+    const input = document.getElementById('query') as HTMLInputElement;
+    input.focus();
+
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+
+    const items = document.querySelectorAll('#preview .preview-ref');
+    expect(document.activeElement).toBe(items[0]);
+  });
+
+  it('Right arrow from the field dives into the open references list (mirror of Left)', () => {
+    const { handle } = mount();
+    seedActive(handle);
+    handle.onMessage(refPreviewMsg(7, [refRow(0, 'A>>useFoo'), refRow(1, 'B>>alsoFoo')]));
+    const input = document.getElementById('query') as HTMLInputElement;
+    input.focus();
+
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+
+    const items = document.querySelectorAll('#preview .preview-ref');
+    expect(document.activeElement).toBe(items[0]);
+  });
+
+  it('arrows move within the list, and Up from the top hands focus back to the field', () => {
+    const { handle } = mount();
+    seedActive(handle);
+    handle.onMessage(refPreviewMsg(7, [refRow(0, 'A>>useFoo'), refRow(1, 'B>>alsoFoo')]));
+    const items = document.querySelectorAll<HTMLElement>('#preview .preview-ref');
+    items[0].focus();
+
+    items[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    expect(document.activeElement).toBe(items[1]);
+
+    items[1].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
+    expect(document.activeElement).toBe(items[0]);
+
+    items[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
+    expect(document.activeElement).toBe(document.getElementById('query'));
+  });
+
+  it('Enter on a focused reference expands its inline source; Ctrl+Enter opens the editor', () => {
+    const { handle, vscode } = mount();
+    seedActive(handle);
+    handle.onMessage(refPreviewMsg(7, [refRow(0, 'A>>useFoo'), refRow(1, 'B>>alsoFoo')]));
+    const items = document.querySelectorAll<HTMLElement>('#preview .preview-ref');
+    items[1].focus();
+
+    items[1].dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    expect(vscode.postMessage).toHaveBeenCalledWith({ command: 'previewReference', refId: 1 });
+
+    items[1].dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }),
+    );
+    expect(vscode.postMessage).toHaveBeenCalledWith({ command: 'openReference', refId: 1 });
+  });
+
+  it('Left arrow from the list returns focus to the search field (back to the results)', () => {
+    const { handle } = mount();
+    seedActive(handle);
+    handle.onMessage(refPreviewMsg(7, [refRow(0, 'A>>useFoo')]));
+    const item = document.querySelector<HTMLElement>('#preview .preview-ref')!;
+    item.focus();
+
+    item.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
+
+    expect(document.activeElement).toBe(document.getElementById('query'));
+  });
+
+  it('Escape from the list returns to the field without closing the search', () => {
+    const { handle, vscode } = mount();
+    seedActive(handle);
+    handle.onMessage(refPreviewMsg(7, [refRow(0, 'A>>useFoo')]));
+    const item = document.querySelector<HTMLElement>('#preview .preview-ref')!;
+    item.focus();
+
+    item.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+    expect(document.activeElement).toBe(document.getElementById('query'));
+    expect(vscode.postMessage).not.toHaveBeenCalledWith({ command: 'close' });
+  });
+
+  it('typing in the search bar dismisses the references list', () => {
+    const { handle } = mount();
+    seedActive(handle);
+    handle.onMessage(refPreviewMsg(7, [refRow(0, 'A>>useFoo')]));
+    expect(document.querySelectorAll('#preview .preview-ref').length).toBe(1);
+
+    const input = document.getElementById('query') as HTMLInputElement;
+    input.value = 'fo';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    handle.onMessage({ data: { command: 'preview', id: 7, source: 'foo def', title: 'Foo' } });
+
+    expect(document.querySelectorAll('#preview .preview-ref').length).toBe(0);
+    expect(document.querySelector('#preview .preview-src')!.textContent).toBe('foo def');
   });
 });

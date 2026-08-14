@@ -35,6 +35,25 @@ describe('buildOmniHandlers', () => {
     );
   });
 
+  it('opens a method without stealing focus when preserveFocus is set (references-list open)', () => {
+    void buildOmniHandlers({ preserveFocus: true, preview: false }).openMethod({
+      kind: 'openMethod',
+      sessionId: 1,
+      dictName: 'UserGlobals',
+      className: 'Foo',
+      isMeta: false,
+      category: 'accessing',
+      selector: 'bar',
+      environmentId: 0,
+      dictIndex: 0,
+    });
+
+    const call = vi
+      .mocked(vscode.commands.executeCommand)
+      .mock.calls.find((c) => c[0] === 'gemstone.openDocument')!;
+    expect(call[2]).toEqual({ preserveFocus: true, preview: false });
+  });
+
   it('reveals a class category via dict + path, not just the dictionary', () => {
     void buildOmniHandlers().revealCategory({
       kind: 'revealCategory',

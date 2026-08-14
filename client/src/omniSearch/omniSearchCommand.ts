@@ -134,7 +134,8 @@ export function resolveReferencesUsing(
       req.kind === 'senders'
         ? sendersOf(session, req.selector, req.environmentId)
         : referencesToObject(session, req.className, req.environmentId);
-    return { title: req.title, results: methodRowsToResults(rows, session.id) };
+    const target = req.kind === 'senders' ? req.selector : req.className;
+    return { title: req.title, target, results: methodRowsToResults(rows, session.id) };
   };
 }
 
@@ -207,7 +208,16 @@ export function buildViewContextResolver(
         providers: buildProviders(session, config.enabledCategories),
         config,
         resolveReferences: resolveReferencesUsing(session),
-        activate: (result) => runOmniAction(result.action, buildOmniHandlers()),
+        // The docked panel opens results in the editor area above it (no beside/close). Normally that
+        // takes focus (you want to land in what you opened); when opening from the sticky references
+        // list we pass preserveFocus so the keyboard stays in the list — honor it here.
+        activate: (result, opts) =>
+          runOmniAction(
+            result.action,
+            buildOmniHandlers(
+              opts?.preserveFocus ? { preserveFocus: true, preview: false } : undefined,
+            ),
+          ),
         previewSource: buildPreviewSource(session),
         onError: (message) => vscode.window.showErrorMessage(`Omni Search: ${message}`),
       },

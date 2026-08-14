@@ -27,6 +27,8 @@ export const OMNI_DEFAULTS: OmniConfig = {
   // methods to promote); 1-char selector scans across the whole image are too heavy, so they stay
   // off. Raise this via settings if per-keystroke method search feels slow on a large stone.
   methodMinQueryLength: 2,
+  // Try the sticky preview-pane references list by default; flip off to restore the classic pivot.
+  referencesInPreview: true,
 };
 
 function clampInt(v: unknown, min: number, max: number, fallback: number): number {
@@ -69,5 +71,7 @@ export function readOmniConfig(cfg: ConfigLike): OmniConfig {
       10,
       OMNI_DEFAULTS.methodMinQueryLength,
     ),
+    referencesInPreview:
+      cfg.get<boolean>('referencesInPreview', OMNI_DEFAULTS.referencesInPreview) !== false,
   };
 }
