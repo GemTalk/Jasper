@@ -1,15 +1,11 @@
 /**
- * Transport-agnostic Omni Search engine for the Phase-2 webview Spotter (issue #378).
+ * Transport-agnostic Omni Search engine for the webview UIs (issue #378).
  *
- * The Phase-1 UI is a native `vscode.QuickPick` driven by `omniSearchController.ts`. Phase 2 replaces
- * that chrome with a webview panel (`omniSearchPanel.ts`), but the SEARCH behaviour is identical:
- * hold the active scope + case flag + result cap, fan out to the in-scope providers, rank/group the
- * results by category, and support the reference pivot. That behaviour lives here — a pure engine
- * with NO `vscode` dependency, so it unit-tests with plain fake providers and is reused by the panel.
- *
- * The engine deliberately does not import the controller (which pulls in `vscode`); the two tiny
- * pure helpers it shares with the controller (`providersInScope` / `gatherResults`) are re-stated
- * here so this module stays `vscode`-free and independently testable. Behaviour is kept in lockstep.
+ * Both webview surfaces — the docked bottom-panel view (`omniSearchViewProvider.ts`) and the
+ * editor-tab Spotter (`omniSearchPanel.ts`) — drive their search through this engine: hold the active
+ * scope + case flag + result cap, fan out to the in-scope providers, rank/group the results by
+ * category, and support the reference pivot. That behaviour lives here — a pure engine with NO
+ * `vscode` dependency, so it unit-tests with plain fake providers and is reused by both surfaces.
  *
  * Output is a plain `OmniViewData` (serialisable rows grouped by category, plus the footer meta) that
  * the panel forwards to the webview verbatim. Rows are addressed by a stable numeric `id` within a
@@ -110,12 +106,11 @@ export interface OmniEngineDeps {
 }
 
 // "Load all" jumps the display cap here — big enough to mean "everything" in practice; the true
-// ceiling is each provider's own server fetch cap (a few hundred), so this never runs away. Matches
-// the QuickPick controller's constant so the two UIs behave identically.
+// ceiling is each provider's own server fetch cap (a few hundred), so this never runs away.
 const LOAD_ALL_LIMIT = 100_000;
 
 /** The enabled providers in scope. Under the all-scope (`null`), explicit-only categories are
- *  excluded so heavyweight searches never fire on a plain keystroke. (Mirror of the controller.) */
+ *  excluded so heavyweight searches never fire on a plain keystroke. */
 export function providersInScope(
   providers: readonly OmniProvider[],
   scopeId: OmniCategoryId | null,

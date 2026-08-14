@@ -3,8 +3,9 @@
  *
  * This is the thin wiring layer: resolve the active session, build the session-bound providers +
  * result-activation handlers (the only place that touches `vscode`, the SystemBrowser and the
- * `gemstone:` uri builders), and hand them to the controller. All the logic lives in the
- * unit-tested pieces (matcher, providers, controller, action dispatcher).
+ * `gemstone:` uri builders), and hand them to the chosen UI (the docked panel view or the editor-tab
+ * Spotter). All the logic lives in the unit-tested pieces (matcher, providers, engine, action
+ * dispatcher).
  */
 import * as vscode from 'vscode';
 import { SessionManager, ActiveSession } from '../sessionManager';
@@ -38,27 +39,10 @@ import { createGlobalsProvider } from './providers/globalsProvider';
 import { createSourceProvider } from './providers/sourceProvider';
 import { createLiteralsProvider } from './providers/literalsProvider';
 import { createCategoriesProvider } from './providers/categoriesProvider';
-import {
-  createOmniController,
-  OmniController,
-  OmniQuickItem,
-  ReferenceView,
-} from './omniSearchController';
+import { ReferenceView } from './omniEngine';
 import { referenceRequestFor, methodRowsToResults } from './references';
 import { OmniSearchPanel } from './omniSearchPanel';
 import { OmniSearchViewProvider, OmniViewContext, OMNI_VIEW_ID } from './omniSearchViewProvider';
-
-/** Context key that's true only while the Omni Search picker is open, so the Alt+Enter keybinding
- *  for references fires there and nowhere else. */
-const OMNI_ACTIVE_CONTEXT = 'gemstone.omniSearchActive';
-
-/** Context key that's true only while the reference view is showing, so the Left-arrow "back"
- *  keybinding fires only in the pivot (elsewhere Left is normal cursor movement). */
-const OMNI_IN_PIVOT_CONTEXT = 'gemstone.omniSearchInPivot';
-
-/** The controller for the currently-open picker, so the (global) references command can act on its
- *  highlighted row. Cleared when the picker hides. */
-let activeController: OmniController | undefined;
 
 /** Where a result should open. The QuickPick passes nothing (open in the active group, the prior
  *  behavior); the Spotter passes `Beside` + a `preserveFocus` flag so a result opens beside the
@@ -230,21 +214,16 @@ export async function runOmniSearch(
   sessionManager: SessionManager,
   viewProvider?: OmniSearchViewProvider,
 ): Promise<void> {
-  // Which GemStone Search UI to open: the bottom-PANEL view (default), the editor-tab Spotter, or the
-  // Phase-1 QuickPick. The panel view resolves its own session lazily, so branch before resolveSession.
+  // Which GemStone Search UI to open: the bottom-PANEL view (default) or the editor-tab Spotter. The
+  // Spotter needs an eagerly-resolved session; the panel view resolves its own session lazily.
   const ui = vscode.workspace.getConfiguration('gemstone.omniSearch').get<string>('ui', 'panel');
-  if (ui === 'panel' && viewProvider) {
-    await viewProvider.focus();
-    return;
-  }
-
-  const session = await sessionManager.resolveSession();
-  if (!session) return;
-
-  const config = readOmniConfig(vscode.workspace.getConfiguration('gemstone.omniSearch'));
-  const providers = buildProviders(session, config.enabledCategories);
-
   if (ui === 'spotter') {
+    const session = await sessionManager.resolveSession();
+    if (!session) return;
+
+    const config = readOmniConfig(vscode.workspace.getConfiguration('gemstone.omniSearch'));
+    const providers = buildProviders(session, config.enabledCategories);
+
     OmniSearchPanel.show({
       providers,
       config,
@@ -271,33 +250,8 @@ export async function runOmniSearch(
     return;
   }
 
-  const qp = vscode.window.createQuickPick<OmniQuickItem>();
-  qp.ignoreFocusOut = false;
-
-  const handlers = buildOmniHandlers();
-  const activate = (result: OmniResult) => runOmniAction(result.action, handlers);
-
-  const controller = createOmniController({
-    quickPick: qp,
-    providers,
-    config,
-    activate,
-    resolveReferences: resolveReferencesUsing(session),
-    onPivotChange: (inPivot) =>
-      void vscode.commands.executeCommand('setContext', OMNI_IN_PIVOT_CONTEXT, inPivot),
-    onError: (message) => vscode.window.showErrorMessage(`Omni Search: ${message}`),
-  });
-
-  // Make Alt+Enter (references of the highlighted row) reachable only while this picker is open.
-  activeController = controller;
-  void vscode.commands.executeCommand('setContext', OMNI_ACTIVE_CONTEXT, true);
-  qp.onDidHide(() => {
-    void vscode.commands.executeCommand('setContext', OMNI_ACTIVE_CONTEXT, false);
-    void vscode.commands.executeCommand('setContext', OMNI_IN_PIVOT_CONTEXT, false);
-    if (activeController === controller) activeController = undefined;
-  });
-
-  await controller.start();
+  // Default (and only other) UI: the docked bottom-panel view.
+  if (viewProvider) await viewProvider.focus();
 }
 
 /** globalState flag: the one-time "Ctrl/Cmd+Shift+A opens GemStone Search" tip has been shown. */
@@ -377,14 +331,6 @@ export function registerOmniSearch(
     }),
     vscode.commands.registerCommand('gemstone.omniSearch', () =>
       runOmniSearch(sessionManager, viewProvider),
-    ),
-    // Alt+Enter inside the picker: pivot to references/senders of the highlighted row.
-    vscode.commands.registerCommand('gemstone.omniSearch.references', () =>
-      activeController?.pivotActiveItem(),
-    ),
-    // Left arrow while in the reference view: go back to the search results (the ← button's key).
-    vscode.commands.registerCommand('gemstone.omniSearch.back', () =>
-      activeController?.exitPivot(),
     ),
   );
 }
