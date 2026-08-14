@@ -555,6 +555,39 @@ GsInstVarRefactoringTest >> testApplyAddInstallsNewVersionWithIvar [
 ]
 
 { #category : 'tests - apply' }
+GsInstVarRefactoringTest >> testApplyCompilesAccessorsInTheSameApply [
+	"Accessors requested with an add are compiled onto the NEW class version inside the same
+	 apply, so they ride the structural change's transaction (committed or aborted together with
+	 it) rather than a separate post-apply step that could strand them."
+	| refactoring accessors current |
+	refactoring := self add: 'tally'.
+	accessors := Array
+		with: (Array with: 'tally' with: 'tally
+^tally')
+		with: (Array with: 'tally:' with: 'tally: aValue
+tally := aValue').
+	refactoring applyDeselected: #() options: nil migrate: false deleteHistory: false accessors: accessors.
+	current := UserGlobals at: #GsIVBase.
+	self assert: (current instVarNames includes: #tally).
+	self assert: (current includesSelector: #tally).
+	self assert: (current includesSelector: #'tally:')
+]
+
+{ #category : 'tests - apply' }
+GsInstVarRefactoringTest >> testApplyReportsAnAccessorThatCannotCompileAndInstallsNothing [
+	"A getter/setter that will not compile is surfaced in `failed` -- which holds the commit back --
+	 and is not installed: the mechanism that makes an add-with-accessors all-or-nothing."
+	| refactoring result |
+	refactoring := self add: 'tally'.
+	result := refactoring applyDeselected: #() options: nil migrate: false deleteHistory: false
+		accessors: (Array with: (Array with: 'tally' with: 'tally
+^ )( not parseable')).
+	"failed non-empty -> the empty-array marker is absent"
+	self assert: (result indexOfSubCollection: '"failed":[]') = 0.
+	self deny: ((UserGlobals at: #GsIVBase) includesSelector: #tally)
+]
+
+{ #category : 'tests - apply' }
 GsInstVarRefactoringTest >> testApplyPreservesClassOptions [
 	"The acted-on class's options must survive the new version (the bug the earlier engines had:
 	 they passed options: #() and dropped them)."
