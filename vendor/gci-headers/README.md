@@ -9,6 +9,7 @@ One folder per **distinct header content revision**, named after the earliest Ge
 ## Adding a new version
 
 1. Install the GemStone distribution (or locate it under `~/Documents/GemStone/GemStone64Bit<version>-*/include/`).
-2. Hash its four header files and compare against the entries in `versions.md`.
+2. Hash its header files — three before 3.7.2, four from 3.7.2 on, since `gcits.ht` doesn't exist in earlier distributions — and compare against the entries in `versions.md`.
 3. If the hashes match an existing folder exactly, just add a row to `versions.md` pointing at that folder — no new folder needed.
-4. If any hash differs, create a new folder named after this version, copy the four files in, and add a row.
+4. If any hash differs, create a new folder named after this version, copy those files in, and add a row.
+5. Run `npm run lint:gci-headers` to confirm the new row matches the files on disk.

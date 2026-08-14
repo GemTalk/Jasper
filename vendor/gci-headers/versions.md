@@ -24,4 +24,4 @@ Hashes are truncated to the first 8 hex characters for readability; run `shasum 
 
 - `gcits.ht` doesn't exist before 3.7.2 — that's a real absence in the vendor distribution, not a gap in this snapshot.
 - 3.6.2/3.6.3, 3.6.4/3.6.5, 3.7.2/3.7.2.2, and 3.7.4.1/3.7.4.3 each ship byte-identical headers within the pair, hence the shared folder.
-- Source install path pattern: `~/Documents/GemStone/GemStone64Bit<version>-arm64.Darwin/include/`.
+- Source install path pattern: `~/Documents/GemStone/GemStone64Bit<version>-<arch>.<platform>/include/` — e.g. `-arm64.Darwin` on Apple silicon, `-x86_64.Linux` on Linux devs and CI.
