@@ -119,13 +119,7 @@ export function useIntegrationTest(callback: UseIntegrationTestCallback) {
     try {
       // Checked before the cleanup below on purpose: if the commit guard is no longer armed, that means a test
       // committed and left the session dirty, so the cleanup below is not guaranteed to succeed. Bail out early
-      const commitGuardStillArmed = gciLibrary.areCommitsDisabledUntilLogout(session);
-
-      if (!commitGuardStillArmed) {
-        throw new Error(
-          `useIntegrationTest: the commit guard was no longer armed at the end of "${expect.getState().currentTestName}" — this is a harness bug, not a mid-test abort (the guard cannot be dropped). Failing the rest of this file since every remaining test would run against an unguarded session.`,
-        );
-      }
+      assertCommitGuardIsStillArmed(session);
 
       gciLibrary.abortTransaction(session);
       gciLibrary.resetNonTransactionalSessionState(session);
@@ -250,6 +244,19 @@ export function useIntegrationTest(callback: UseIntegrationTestCallback) {
     // arming would be observable by tests that assert otherwise. Resetting here
     // hands every session over in the state a bare login leaves behind.
     gciLibrary.resetNonTransactionalSessionState(aSession);
+  }
+
+  /**
+   * Fails if the session's commit guard is no longer armed. GemStone gives no way
+   * to drop it short of logout, so a session that comes back unguarded means the
+   * harness itself misplaced the guard.
+   */
+  function assertCommitGuardIsStillArmed(aSession: unknown) {
+    if (gciLibrary.areCommitsDisabledUntilLogout(aSession)) return;
+
+    throw new Error(
+      `useIntegrationTest: the commit guard was no longer armed at the end of "${expect.getState().currentTestName}" — this is a harness bug, not a mid-test abort (the guard cannot be dropped). Failing the rest of this file since every remaining test would run against an unguarded session.`,
+    );
   }
 
   /**
