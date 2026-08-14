@@ -2,6 +2,7 @@ import koffi from 'koffi';
 import * as path from 'path';
 import { OOP_FALSE, OOP_ILLEGAL, OOP_NIL, OOP_TRUE } from './gciConstants';
 import { GciLibraryError } from './gciLibraryError';
+import { escapeString } from './queries/util';
 
 // OopType is uint64_t in C; koffi maps this to BigInt in JS
 const OopType = 'uint64';
@@ -2146,6 +2147,40 @@ export class GciLibrary {
     const { success, err } = this.GciTsAbort(session);
 
     this.throwUnless(success, err);
+  }
+
+  /**
+   * Disables commits on `session` for the remainder of its lifetime, recording
+   * `reason` as the explanation GemStone reports when it refuses a commit
+   * (`TransactionError 2249`). Session-scoped and irreversible: there is no
+   * counterpart that re-enables commits, and the only exit is logout.
+   *
+   * @param session - The GemStone session to operate in.
+   * @param reason - Why commits are being disabled; surfaced in the refusal message.
+   * @returns Whether this call is the one that disabled commits — `false` means
+   *   they were already disabled.
+   * @throws {GciLibraryError} If the underlying GCI call fails.
+   */
+  public disableCommitsUntilLogout(session: unknown, reason: string) {
+    return this.executeAndRelease(
+      session,
+      `System disableCommitsWithReason: '${escapeString(reason)}'`,
+      (oop) => this.isTrueOop(oop),
+    );
+  }
+
+  /**
+   * Returns whether commits have been disabled on `session` for the remainder
+   * of its lifetime (see `System class >> disableCommitsWithReason:`). The flag
+   * is session-scoped and irreversible: the only exit is logout.
+   *
+   * @param session - The GemStone session to operate in.
+   * @throws {GciLibraryError} If the underlying GCI call fails.
+   */
+  public areCommitsDisabledUntilLogout(session: unknown) {
+    return this.executeAndRelease(session, 'System commitsDisabledUntilLogout', (oop) =>
+      this.isTrueOop(oop),
+    );
   }
 
   // ---------------------------------------------------------------------
