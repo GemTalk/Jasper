@@ -17,7 +17,7 @@ be overwritten. Instead regenerate from upstream:
 gs-src/enhancedInspector/build/update_enhanced_inspector_support.sh
 ```
 
-## The payloads (filed in, in this order)
+## The payloads
 
 | File | What it is |
 |---|---|
@@ -29,9 +29,10 @@ gs-src/enhancedInspector/build/update_enhanced_inspector_support.sh
 | `gt4gemstone.gs` | The core GT4GemStone remote-inspector views and bindings |
 | `gtoolkit-remote.gs` | The GToolkit remote-inspector protocol (`RemotePhlow` objects and friends) |
 
-This order is load-bearing — it must match `ENHANCED_INSPECTOR_FILES` in
-[`enhancedInspectorInstall.ts`](../../client/src/enhancedInspector/enhancedInspectorInstall.ts), which
-is the sole authority on load order.
+Rows above are listed in current dependency order for orientation only.
+[`ENHANCED_INSPECTOR_FILES`](../../client/src/enhancedInspector/enhancedInspectorInstall.ts) is the
+sole authority on load order — nothing keeps this table in sync with it, so if the two ever
+disagree, trust the array.
 
 See [`gs-src/enhancedInspector/README.md`](../../gs-src/enhancedInspector/README.md) for the
 regeneration workflow and its macOS warning.
