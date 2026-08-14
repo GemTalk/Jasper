@@ -1,11 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
-import * as path from 'path';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 
 import { useIntegrationTest } from '../../__tests__/useIntegrationTest';
 import { GciLibrary } from '../../gciLibrary';
 import * as q from '../../browserQueries';
-import { escapeString } from '../../queries/util';
 import {
   analyzeExtractSelection,
   startExtractMethodPreview,
@@ -15,6 +13,7 @@ import { PREVIEW_PAGE_BYTES } from '../queries/previewRenameMethod';
 import { parseAnalysis, parseStartPreview, parseApplyResult } from '../extractMethodPreview';
 import type { ActiveSession } from '../../sessionManager';
 import { testActiveSession } from '../../__tests__/testActiveSession';
+import { fileInEngineTestsExpr } from './support/refactoring';
 
 /**
  * Automatic GCI integration test for the extract-method (M1) refactoring, over the
@@ -46,14 +45,6 @@ describe('extract method (integration)', () => {
     exec(
       '(System myUserProfile symbolList objectNamed: #GsExtractMethodRefactoring) notNil printString',
     ).trim() === 'true';
-
-  const engineTestsPayload = (): string =>
-    path.resolve(__dirname, '../../../../resources/refactoring/engine-tests.gs');
-
-  const fileInTests = (): string => {
-    const p = escapeString(engineTestsPayload());
-    return `[GsFileIn fromServerPath: '${p}'] on: Error do: [:e | GsFileIn fromPath: '${p}' on: #serverUtf8File to: nil].`;
-  };
 
   const dictIndexOf = (name: string): number =>
     parseInt(
@@ -96,7 +87,7 @@ describe('extract method (integration)', () => {
     if (!enginePresent()) ctx.skip('refactoring engine not loaded in this stone');
 
     const code = `| r |
-${fileInTests()}
+${fileInEngineTestsExpr()}
 r := (System myUserProfile symbolList objectNamed: #GsExtractMethodRefactoringTest) suite run.
 (r failures size + r errors size) printString`;
 

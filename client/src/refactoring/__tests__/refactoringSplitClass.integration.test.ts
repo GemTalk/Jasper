@@ -1,11 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
-import * as path from 'path';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 
 import { useIntegrationTest } from '../../__tests__/useIntegrationTest';
 import { GciLibrary } from '../../gciLibrary';
 import * as q from '../../browserQueries';
-import { escapeString } from '../../queries/util';
 import {
   candidatesForSplitClass,
   analyzeSplitClass,
@@ -24,6 +22,7 @@ import {
 import type { ActiveSession } from '../../sessionManager';
 import { requireServerPluginFeature } from '../../__tests__/requireServerPluginFeature';
 import { pluginFeatures } from '../../serverPlugin/pluginFeatures';
+import { fileInEngineTestsExpr } from './support/refactoring';
 
 /**
  * Automatic GCI integration test for the split-class (V8 / extract class) refactoring, over the real
@@ -59,14 +58,6 @@ describe('split class (integration)', () => {
     exec(
       '(System myUserProfile symbolList objectNamed: #GsSplitClassRefactoring) notNil printString',
     ).trim() === 'true';
-
-  const engineTestsPayload = (): string =>
-    path.resolve(__dirname, '../../../../resources/refactoring/engine-tests.gs');
-
-  const fileInTests = (): string => {
-    const p = escapeString(engineTestsPayload());
-    return `[GsFileIn fromServerPath: '${p}'] on: Error do: [:e | GsFileIn fromPath: '${p}' on: #serverUtf8File to: nil].`;
-  };
 
   // A cohesive Contact whose address ivars (street/city/zip) and the methods that use them are a
   // clean extract set; name/email + their readers stay behind, and a subclass adds `tier` without
@@ -125,7 +116,7 @@ describe('split class (integration)', () => {
     requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
     const code = `| r |
-${fileInTests()}
+${fileInEngineTestsExpr()}
 r := (System myUserProfile symbolList objectNamed: #GsSplitClassRefactoringTest) suite run.
 (r failures size + r errors size) printString`;
 
