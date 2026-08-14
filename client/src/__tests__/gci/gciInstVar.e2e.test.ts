@@ -31,12 +31,13 @@ import { parseStartPreview, parseApplyResult } from '../../refactoring/instVarRe
  * `GsInstVarRefactoring>>applyDeselected:options:migrate:deleteHistory:` calls
  * `commitStructuralThenMigrate:` once the structural apply has succeeded, whenever `migrate` or
  * `deleteHistory` is requested, because `migrateInstancesTo:` needs a clean transaction.
- * `useIntegrationTest` aborts after every test
- * to keep tests isolated, and an abort cannot undo a commit, so these can only move once the CI
- * migration settles a commit-and-compensate story for the harness (a transient session, or a
- * test that commits its own cleanup). That is a policy call about the harness's "never commit"
- * invariant, not a technical blocker. Note the discriminator is what the PRODUCTION code does,
- * not what the test does: a test that merely commits its own fixture belongs in the harness.
+ * `useIntegrationTest` arms GemStone's commit guard on every session it hands out, so a commit
+ * fails at the commit site with `TransactionError 2249`, with no opt-out. These can only move once
+ * the harness grows an opt-in commit strategy for tests that genuinely need to commit. That is a
+ * policy call about the harness's "never commit" invariant, not a technical blocker. Note the
+ * discriminator is what the PRODUCTION code does, not what the test does: a test that merely needs
+ * its own fixture belongs in the harness — the auto-abort rolls the fixture back, so it never
+ * needs to commit.
  *
  * Guarded on the refactoring engine being installed (the queries reference the in-stone
  * `GsInstVarRefactoring`); the tests skip, with a reason, otherwise. Each test is self-cleaning

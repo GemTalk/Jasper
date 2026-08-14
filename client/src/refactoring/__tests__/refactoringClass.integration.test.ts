@@ -1,11 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
-import * as path from 'path';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 
 import { useIntegrationTest } from '../../__tests__/useIntegrationTest';
 import { GciLibrary } from '../../gciLibrary';
 import * as q from '../../browserQueries';
-import { escapeString } from '../../queries/util';
 import { startRenameClassPreview, applyRenameClass } from '../queries/previewRenameClass';
 import { PREVIEW_PAGE_BYTES } from '../queries/previewRenameMethod';
 import { parseStartPreview, parseApplyResult } from '../renameClassPreview';
@@ -14,6 +12,7 @@ import type { ActiveSession } from '../../sessionManager';
 import { testActiveSession } from '../../__tests__/testActiveSession';
 import { requireServerPluginFeature } from '../../__tests__/requireServerPluginFeature';
 import { pluginFeatures } from '../../serverPlugin/pluginFeatures';
+import { fileInEngineTestsExpr } from './support/refactoring';
 
 /**
  * Automatic GCI integration tests for the rename-class (R3) refactoring and the
@@ -49,14 +48,6 @@ describe('rename class + class history (integration)', () => {
       "(System myUserProfile symbolList objectNamed: 'GsRenameClassRefactoring') notNil printString",
     ).trim() === 'true';
 
-  const engineTestsPayload = (): string =>
-    path.resolve(__dirname, '../../../../resources/refactoring/engine-tests.gs');
-
-  const fileInTests = (): string => {
-    const p = escapeString(engineTestsPayload());
-    return `[GsFileIn fromServerPath: '${p}'] on: Error do: [:e | GsFileIn fromPath: '${p}' on: #serverUtf8File to: nil].`;
-  };
-
   it('reports rename-class engine availability matching the shared refactoring probe', () => {
     expect(rbEnginePresent()).toBe(q.checkRefactoringSupportAvailable(session()));
   });
@@ -65,7 +56,7 @@ describe('rename class + class history (integration)', () => {
     requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
     const code = `| failuresAndErrors |
-${fileInTests()}
+${fileInEngineTestsExpr()}
 failuresAndErrors := 0.
 #(#GsRenameClassRefactoringTest #GsClassHistoryTest)
   do: [:nm | | r |

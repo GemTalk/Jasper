@@ -1,11 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
-import * as path from 'path';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 
 import { useIntegrationTest } from '../../__tests__/useIntegrationTest';
 import { GciLibrary } from '../../gciLibrary';
 import * as q from '../../browserQueries';
-import { escapeString } from '../../queries/util';
 import {
   analyzeInstVarStructure,
   startInstVarStructurePreview,
@@ -17,6 +15,7 @@ import { parseAnalysis, parseStartPreview, parseApplyResult } from '../instVarSt
 import type { ActiveSession } from '../../sessionManager';
 import { requireServerPluginFeature } from '../../__tests__/requireServerPluginFeature';
 import { pluginFeatures } from '../../serverPlugin/pluginFeatures';
+import { fileInEngineTestsExpr } from './support/refactoring';
 
 /**
  * Automatic GCI integration test for the instance-variable structure refactorings (V2
@@ -49,14 +48,6 @@ describe('instance-variable structure (integration)', () => {
     exec(
       '(System myUserProfile symbolList objectNamed: #GsInstVarStructureRefactoring) notNil printString',
     ).trim() === 'true';
-
-  const engineTestsPayload = (): string =>
-    path.resolve(__dirname, '../../../../resources/refactoring/engine-tests.gs');
-
-  const fileInTests = (): string => {
-    const p = escapeString(engineTestsPayload());
-    return `[GsFileIn fromServerPath: '${p}'] on: Error do: [:e | GsFileIn fromPath: '${p}' on: #serverUtf8File to: nil].`;
-  };
 
   const BASE = 'VsItBase';
   const MID = 'VsItMid';
@@ -143,7 +134,7 @@ describe('instance-variable structure (integration)', () => {
     requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
     const code = `| r |
-${fileInTests()}
+${fileInEngineTestsExpr()}
 r := (System myUserProfile symbolList objectNamed: #GsInstVarStructureRefactoringTest) suite run.
 (r failures size + r errors size) printString`;
 

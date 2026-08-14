@@ -39,6 +39,7 @@ import {
   gsStringLiteral,
   messageOf,
   safeAbort,
+  toLocalGemPath,
   yieldToEventLoop,
 } from '../serverPlugin/installHelpers';
 
@@ -106,8 +107,9 @@ export function isRefactoringSupportInstalled(session: ActiveSession): boolean {
  * engine is committed and the loader's completeness check has already passed.
  *
  * @param session     a session with write access to kernel classes (SystemUser).
- * @param payloadDir  absolute path to `resources/refactoring/`, readable by the
- *                    gem (a local stone).
+ * @param payloadDir  absolute client-side path to `resources/refactoring/`;
+ *                    translated to the gem's local path (see `toLocalGemPath`)
+ *                    before use, so callers must pass it untranslated.
  * @param onProgress  optional incremental progress callback.
  */
 export async function installRefactoringSupport(
@@ -115,8 +117,9 @@ export async function installRefactoringSupport(
   payloadDir: string,
   onProgress: ProgressReporter = () => {},
 ): Promise<RefactoringInstallResult> {
-  const sep = payloadDir.endsWith('/') ? '' : '/';
-  const serverPath = (file: string): string => `${payloadDir}${sep}${file}`;
+  const gemPayloadDir = toLocalGemPath(payloadDir);
+  const sep = gemPayloadDir.endsWith('/') ? '' : '/';
+  const serverPath = (file: string): string => `${gemPayloadDir}${sep}${file}`;
 
   // Fail fast (and clearly) if the gem can't read the payload — e.g. a remote
   // stone whose gem doesn't share this machine's filesystem.
@@ -127,7 +130,7 @@ export async function installRefactoringSupport(
       report: '',
       message:
         `The database's gem cannot read the payload files (${unreadable.join(', ')}) under ` +
-        `${payloadDir}. Server-side install requires a local stone whose gem shares this ` +
+        `${gemPayloadDir}. Server-side install requires a local stone whose gem shares this ` +
         'filesystem.',
     };
   }
@@ -163,7 +166,7 @@ export async function installRefactoringSupport(
     raw = executeFetchString(
       session,
       '| ldr | ' +
-        `ldr := GsRefactoringLoader loadFromServerDir: ${gsStringLiteral(payloadDir)}. ` +
+        `ldr := GsRefactoringLoader loadFromServerDir: ${gsStringLiteral(gemPayloadDir)}. ` +
         "(ldr allOk ifTrue: ['OK'] ifFalse: ['FAIL']), (String with: Character lf), ldr reportString",
     );
   } catch (e: unknown) {

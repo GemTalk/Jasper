@@ -3499,6 +3499,75 @@ export class ExplorerController {
     await this.revealClass(chosen.dictName, chosen.dictIndex, chosen.className);
   }
 
+  // Reveal+select a dictionary row by name in the Dictionaries pane (used by Omni
+  // Search). Resolves the 1-based symbol-list index from the live list, cascades
+  // the panes to that dictionary, and highlights its row. Warns on an unknown name.
+  async revealDictionaryByName(name: string): Promise<void> {
+    const session = await this.sessionManager.resolveSession();
+    if (!session) return;
+    const names = queries.getDictionaryNames(session);
+    const idx = names.indexOf(name);
+    if (idx < 0) {
+      void vscode.window.showWarningMessage(`No dictionary matching "${name}".`);
+      return;
+    }
+    const item = new DictItem(name, idx + 1);
+    this.selectDict(item);
+    try {
+      await this.views?.dict.reveal(item, { select: true, focus: true });
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // Reveal+select a class-category node by path in the Categories pane (used by Omni Search). Selects
+  // the home dictionary first (so its categories load + the classes pane filters to the category),
+  // then selects and reveals the category node itself.
+  async revealCategoryByPath(dictName: string, categoryPath: string): Promise<void> {
+    const session = await this.sessionManager.resolveSession();
+    if (!session) return;
+    const names = queries.getDictionaryNames(session);
+    const idx = names.indexOf(dictName);
+    if (idx < 0) {
+      void vscode.window.showWarningMessage(`No dictionary matching "${dictName}".`);
+      return;
+    }
+    this.selectDict(new DictItem(dictName, idx + 1));
+    const segment = categoryPath.split('-').pop() ?? categoryPath;
+    const catItem = new ClassCategoryItem(segment, categoryPath, false);
+    this.selectClassCategory(catItem);
+
+    // If the category isn't actually in this dictionary's loaded forest, say so — otherwise the jump
+    // silently appears to do nothing (the reported "strange spot").
+    if (
+      !this.allCategoryPaths().some((p) => p === categoryPath || p.startsWith(`${categoryPath}-`))
+    ) {
+      void vscode.window.showWarningMessage(
+        `Category "${categoryPath}" was not found in ${dictName}.`,
+      );
+      return;
+    }
+
+    // Surface the Class Categories view FIRST. When it lives in a collapsed/hidden sidebar,
+    // TreeView.reveal() can no-op — which is exactly how an Omni category jump looked like it landed
+    // nowhere (a flat dictionary reveal is less sensitive, so dictionary jumps still worked). Focusing
+    // the view makes the subsequent nested reveal land on the real node.
+    try {
+      await vscode.commands.executeCommand('gemstoneExplorerCategories.focus');
+    } catch {
+      /* the view id may be absent in some hosts — fall through to the best-effort reveal */
+    }
+    try {
+      await this.views?.dict.reveal(new DictItem(dictName, idx + 1), { select: true });
+      await this.views?.category.reveal(catItem, { select: true, focus: true, expand: true });
+    } catch (e) {
+      // No longer swallowed silently: log it so a future failure is diagnosable from the GCI log.
+      logWarning(
+        `Omni category reveal failed for ${dictName}/${categoryPath}: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
+
   // Set the cascade state to a specific class and reveal it across the panes.
   // Never opens the class-definition editor — that's an explicit action now (the
   // class-row button / menu). `opts.revealMethod` reveals+selects a method row.
@@ -5128,6 +5197,18 @@ export function registerGemStoneExplorer(
     // title button or the command palette).
     vscode.commands.registerCommand('gemstone.explorer.findClass', (name?: string) =>
       ctl.findClass(typeof name === 'string' ? name : undefined),
+    ),
+    // Reveal+select a dictionary row by name (Omni Search dictionary results).
+    vscode.commands.registerCommand('gemstone.explorer.revealDictionary', (name?: string) =>
+      typeof name === 'string' ? ctl.revealDictionaryByName(name) : undefined,
+    ),
+    // Reveal+select a class-category node by dict + path (Omni Search category results).
+    vscode.commands.registerCommand(
+      'gemstone.explorer.revealCategory',
+      (dictName?: string, categoryPath?: string) =>
+        typeof dictName === 'string' && typeof categoryPath === 'string'
+          ? ctl.revealCategoryByPath(dictName, categoryPath)
+          : undefined,
     ),
     // Open a class's definition editor (inline button / menu on the class row —
     // a plain class click no longer auto-opens it; a double-click does).

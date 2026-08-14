@@ -1,11 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
-import * as path from 'path';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 
 import { useIntegrationTest } from '../../__tests__/useIntegrationTest';
 import { GciLibrary } from '../../gciLibrary';
 import * as q from '../../browserQueries';
-import { escapeString } from '../../queries/util';
 import {
   startRenameMethodPreview,
   pageRenameMethodPreview,
@@ -17,6 +15,7 @@ import type { ActiveSession } from '../../sessionManager';
 import { testActiveSession } from '../../__tests__/testActiveSession';
 import { requireServerPluginFeature } from '../../__tests__/requireServerPluginFeature';
 import { pluginFeatures } from '../../serverPlugin/pluginFeatures';
+import { fileInEngineTestsExpr } from './support/refactoring';
 
 /**
  * Automatic GCI integration tests for the rename-method (R2) refactoring, over
@@ -55,9 +54,6 @@ describe('rename method (integration)', () => {
       "(System myUserProfile symbolList objectNamed: 'GsRenameMethodRefactoring') notNil printString",
     ).trim() === 'true';
 
-  const engineTestsPayload = (): string =>
-    path.resolve(__dirname, '../../../../resources/refactoring/engine-tests.gs');
-
   it('reports rename-method engine availability matching the ivar engine probe', () => {
     expect(rbEnginePresent()).toBe(q.checkRefactoringSupportAvailable(session()));
   });
@@ -67,10 +63,8 @@ describe('rename method (integration)', () => {
 
     // File in the test classes (in-image compile — robust) then run every engine
     // suite, answering the total failure+error count across all of them.
-    const p = escapeString(engineTestsPayload());
-    const code = `| p failuresAndErrors |
-p := '${p}'.
-[GsFileIn fromServerPath: p] on: Error do: [:e | GsFileIn fromPath: p on: #serverUtf8File to: nil].
+    const code = `| failuresAndErrors |
+${fileInEngineTestsExpr()}
 failuresAndErrors := 0.
 #(#GsRenameMethodRefactoringTest #GsRenameInstanceVariableRefactoringTest #GsRefactoringEnvironmentTest #GsRefactoringChangeSetTest)
   do: [:nm | | r |
@@ -84,12 +78,10 @@ failuresAndErrors printString`;
   it('runs the rename-method suite alone and reports its test count', (ctx) => {
     requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
 
-    const p = escapeString(engineTestsPayload());
     // The class isn't defined at this doit's compile time (it is filed in at run
     // time), so resolve it via objectNamed: rather than as a bareword.
-    const code = `| p r |
-p := '${p}'.
-[GsFileIn fromServerPath: p] on: Error do: [:e | GsFileIn fromPath: p on: #serverUtf8File to: nil].
+    const code = `| r |
+${fileInEngineTestsExpr()}
 r := (System myUserProfile symbolList objectNamed: #GsRenameMethodRefactoringTest) suite run.
 r runCount printString, ' ', (r failures size + r errors size) printString`;
 

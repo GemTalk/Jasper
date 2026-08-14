@@ -74,6 +74,7 @@ client/src/**
 !client/src/refactoring/classHistoryPanelView.js
 !client/src/refactoring/changeSignatureEditorView.js
 !client/src/refactoring/instVarRefactorPanelView.js
+!client/src/omniSearch/omniSearchView.js
 server/src/**
 mcp-server/src/**
 
