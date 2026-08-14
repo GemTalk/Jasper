@@ -20,24 +20,33 @@ import { parseStartPreview, parseApplyResult } from '../../refactoring/instVarRe
  * On-demand GCI e2e for the COMMITTING paths of the add / remove instance-variable (V1)
  * refactoring, over the real GCI transport (`npm run test:gci`).
  *
- * WHY THIS IS STILL AN on-demand gci SUITE: every scenario the harness can host has moved to
- * the automatic integration suite, which runs in CI across the release matrix — see
- * `refactoring/__tests__/refactoringInstVar.integration.test.ts` (add, remove + selective
- * copy-forward, partial apply without abort, shadowed-temporary prediction, decline duplicate,
- * decline a name a subclass declares, plus the engine's GS SUnit suite). What remains here are the
- * scenarios on which the ENGINE commits — migrate instances, delete history, and (added for PR
- * #392 finding #10) an add-with-accessors that migrates, whose accessors must be committed
- * ATOMICALLY with the reshape so a later abort cannot strand them:
+ * The delete-history scenario has moved to
+ * `refactoring/__tests__/refactoringInstVar.committing.integration.test.ts`, which runs in CI
+ * over the release matrix using the harness's nested-transaction commit strategy: it
+ * involves no instance migration, so there is no persistence question. What remains here:
+ *
+ * - **migrate instances**: a spike run against both 3.6.2 and 3.7.5 established that a nested
+ *   commit promotes objects into the *parent* transaction, not into the repository, so under one
+ *   level of nesting `migrateInstancesTo:` sees no already-committed instances and cannot migrate
+ *   them (it raised `1 instance could not be migrated to the new class version`). This scenario
+ *   therefore does not fit the nested strategy and is earmarked for the disposable-stone route instead.
+ * - one of the two accessor-atomicity scenarios added for PR #392 finding #10 (`keeps the
+ *   committed accessors after a later abort when an add migrates instances`): it also requests
+ *   `migrate: true` on a fixture class that only ever exists inside this test's own transaction,
+ *   so it hits the same no-op-under-nesting blocker as the migrate test above and is earmarked
+ *   for the same disposable-stone route. The sibling scenario (`commits nothing when an accessor
+ *   cannot compile, even with migrate requested`) turned out NOT to need a commit at all — the
+ *   accessor failure gates `commitStructuralThenMigrate:` before it runs — and has moved to
+ *   `refactoringInstVar.integration.test.ts`.
+ *
  * `GsInstVarRefactoring>>applyDeselected:options:migrate:deleteHistory:` calls
  * `commitStructuralThenMigrate:` once the structural apply has succeeded, whenever `migrate` or
  * `deleteHistory` is requested, because `migrateInstancesTo:` needs a clean transaction.
  * `useIntegrationTest` arms GemStone's commit guard on every session it hands out, so a commit
- * fails at the commit site with `TransactionError 2249`, with no opt-out. These can only move once
- * the harness grows an opt-in commit strategy for tests that genuinely need to commit. That is a
- * policy call about the harness's "never commit" invariant, not a technical blocker. Note the
- * discriminator is what the PRODUCTION code does, not what the test does: a test that merely needs
- * its own fixture belongs in the harness — the auto-abort rolls the fixture back, so it never
- * needs to commit.
+ * fails at the commit site with `TransactionError 2249`, with no opt-out. Note the discriminator
+ * is what the PRODUCTION code does, not what the test does: a test that merely needs its own
+ * fixture belongs in the harness — the auto-abort rolls the fixture back, so it never needs to
+ * commit.
  *
  * Guarded on the refactoring engine being installed (the queries reference the in-stone
  * `GsInstVarRefactoring`); the tests skip, with a reason, otherwise. Each test is self-cleaning
@@ -141,43 +150,6 @@ describe('instance-variable refactoring, committing paths (gci e2e)', () => {
         `UserGlobals removeKey: #GciIvMigInst ifAbsent: []. ` +
           `UserGlobals removeKey: #${CLS} ifAbsent: []. System commitTransaction. 'ok'`,
       );
-    }
-  });
-
-  it('deletes prior versions from the class history and commits when delete-history is requested', async (ctx) => {
-    if (!enginePresent) return ctx.skip('GsInstVarRefactoring is not installed on this stone');
-
-    const CLS = 'GciIvHist';
-    try {
-      q.compileClassDefinition(
-        session,
-        `Object subclass: '${CLS}' instVarNames: #(x) classVars: #() ` +
-          'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
-      );
-      exec("System commitTransaction. 'ok'"); // commit the original version so history bumps to 2
-
-      parseStartPreview(
-        await startInstVarPreview(
-          asyncExec,
-          'add',
-          CLS,
-          'z',
-          'gci-iv-history',
-          PREVIEW_PAGE_BYTES,
-          userIndex(),
-        ),
-      );
-      const result = parseApplyResult(
-        await applyInstVar(asyncExec, 'gci-iv-history', [], null, false, true),
-      );
-
-      expect(result.failed).toEqual([]);
-      expect(result.committed).toBe(true);
-      expect(hasIvar(CLS, 'z')).toBe(true);
-      // The prior version was pruned: only the current version remains in the history.
-      expect(exec(`${CLS} classHistory size printString`).trim()).toBe('1');
-    } finally {
-      exec(`UserGlobals removeKey: #${CLS} ifAbsent: []. System commitTransaction. 'ok'`);
     }
   });
 
