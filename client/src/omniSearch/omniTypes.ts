@@ -126,10 +126,36 @@ export interface OmniCancel {
 
 export const NEVER_CANCELLED: OmniCancel = { isCancelled: false };
 
+/** A single known local structural change to fold into a cached provider's corpus without a full
+ *  reload. Today only a class definition produces one (the only granular local signal we have);
+ *  other corpora refresh via `reprime` on a session sync instead. */
+export interface OmniCorpusChange {
+  kind: 'class';
+  /** The class that was created or redefined. */
+  className: string;
+  dictName?: string;
+}
+
+/** The category a change belongs to (for deciding whether it can affect the current scope). */
+export function changeCategoryId(change: OmniCorpusChange): OmniCategoryId {
+  switch (change.kind) {
+    case 'class':
+      return 'classes';
+  }
+}
+
 export interface OmniProvider {
   category: OmniCategory;
   /** Optional one-time load when the picker opens (load-once providers cache their corpus here). */
   prime?(token: OmniCancel): Promise<void> | void;
+  /** Rebuild a cached corpus from scratch (drop + reload). No-op for per-query providers; used on a
+   *  session sync (commit/abort) when changes from outside this UI — including other sessions — may
+   *  have landed. Defaults to `prime` when a provider doesn't override it. */
+  reprime?(token: OmniCancel): Promise<void> | void;
+  /** Fold a single known local change into the cached corpus without a full reload. Returns true if
+   *  the corpus actually changed (a new or removed name), so the caller can decide whether to
+   *  re-render. Only providers with a granular local signal (classes) implement it. */
+  applyChange?(change: OmniCorpusChange, token: OmniCancel): Promise<boolean> | boolean;
   /** Ranked, already-limited results for `query` (the raw, trimmed search term). */
   search(query: string, cfg: OmniConfig, token: OmniCancel): Promise<OmniResult[]> | OmniResult[];
 }

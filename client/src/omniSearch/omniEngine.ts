@@ -14,11 +14,15 @@
  */
 import {
   OMNI_CATEGORIES,
+  CATEGORY_BY_ID,
+  NEVER_CANCELLED,
   OmniCancel,
   OmniCategoryId,
   OmniConfig,
+  OmniCorpusChange,
   OmniProvider,
   OmniResult,
+  changeCategoryId,
 } from './omniTypes';
 import { match, compareMatches } from './omniMatch';
 import { referenceRequestFor } from './references';
@@ -233,6 +237,13 @@ function buildView(
 export interface OmniEngine {
   /** Prime load-once providers (concurrently; a failing prime just yields no results). */
   prime(onError?: (message: string) => void): Promise<void>;
+  /** Fold a single known local change (a class compile) into the cached corpora. Re-runs the current
+   *  term and returns the new view ONLY when the change could affect what's shown (the changed name
+   *  matches the term and its category is in scope); returns null otherwise, leaving the view as-is. */
+  applyChange(change: OmniCorpusChange): Promise<OmniViewData | null>;
+  /** Drop + rebuild every cached corpus (on a session sync — commit/abort), catching changes from
+   *  outside this UI, then re-run the current term. Returns null while a pivot is showing. */
+  resync(onError?: (message: string) => void): Promise<OmniViewData | null>;
   /** Run the search for a raw field value and return the view (or null if superseded by a newer
    *  call). In the pivot, this filters the loaded reference rows client-side instead. */
   search(rawValue: string): Promise<OmniViewData | null>;
@@ -371,6 +382,52 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
           }
         }),
       );
+    },
+    async applyChange(change) {
+      let changed = false;
+      for (const p of providers) {
+        if (!p.applyChange) continue;
+        try {
+          if (await p.applyChange(change, NEVER_CANCELLED)) changed = true;
+        } catch {
+          // A failed fold just leaves that provider's cache as-is; a later resync will correct it.
+        }
+      }
+      // The caches are now current regardless; the question is only whether the CURRENT view needs
+      // redrawing. Never mid-pivot, never on an empty box (shows nothing).
+      if (pivot) return null;
+      const term = lastRawValue.trim();
+      if (term.length === 0) return null;
+
+      // The Categories scope is DERIVED from classes — a class compile can introduce a new category,
+      // and we can't cheaply know its name to match, so re-run to reload + re-rank against the term.
+      if (scopeId === CATEGORY_BY_ID.categories.id) {
+        return change.kind === 'class' ? runSearch(lastRawValue) : null;
+      }
+      // Scopes where the changed item's own name is what's shown (the classes scope, and the all-scope
+      // which includes classes): skip the redraw when nothing changed or the new name can't match the
+      // current term (avoids a needless re-render / scroll reset on an unrelated compile).
+      if (scopeId === null || scopeId === changeCategoryId(change)) {
+        if (!changed) return null;
+        if (!match(term, change.className, { mode: config.matchMode, caseSensitive })) return null;
+        return runSearch(lastRawValue);
+      }
+      // Any other scope (methods/source/…) is unaffected by this kind of change.
+      return null;
+    },
+    async resync(onError) {
+      await Promise.all(
+        providers.map(async (p) => {
+          try {
+            await (p.reprime ?? p.prime)?.(NEVER_CANCELLED);
+          } catch (e: unknown) {
+            onError?.(e instanceof Error ? e.message : String(e));
+          }
+        }),
+      );
+      // Don't disturb a pivot; otherwise re-run the current term against the rebuilt corpora.
+      if (pivot) return null;
+      return runSearch(lastRawValue);
     },
     search: (rawValue) => runSearch(rawValue),
     async setScope(newScope) {

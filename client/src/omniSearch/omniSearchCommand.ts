@@ -16,7 +16,7 @@ import {
   getMethodSource,
   getClassDefinition,
 } from '../browserQueries';
-import { getAllClassNames } from '../queries/getAllClassNames';
+import { getAllClassNames, getClassNameEntriesFor } from '../queries/getAllClassNames';
 import { getAllGlobalNames } from '../queries/getAllGlobalNames';
 import { getAllClassCategories } from '../queries/getAllClassCategories';
 import { getDictionaryNames } from '../queries/getDictionaryNames';
@@ -128,7 +128,11 @@ export function resolveReferencesUsing(
 export function buildProviders(session: ActiveSession, enabled: readonly string[]): OmniProvider[] {
   const exec = defaultQueryExecutorUsing(session);
   const all: OmniProvider[] = [
-    createClassesProvider(session.id, () => getAllClassNames(exec)),
+    createClassesProvider(
+      session.id,
+      () => getAllClassNames(exec),
+      (name) => getClassNameEntriesFor(exec, name),
+    ),
     createMethodsProvider(session.id, (term, limit, ignoreCase) =>
       searchSelectors(exec, term, { limit, ignoreCase }),
     ),
@@ -190,6 +194,7 @@ export function buildViewContextResolver(
     return {
       sessionId: session.id,
       deps: {
+        sessionId: session.id,
         providers: buildProviders(session, config.enabledCategories),
         config,
         resolveReferences: resolveReferencesUsing(session),
@@ -225,6 +230,7 @@ export async function runOmniSearch(
     const providers = buildProviders(session, config.enabledCategories);
 
     OmniSearchPanel.show({
+      sessionId: session.id,
       providers,
       config,
       resolveReferences: resolveReferencesUsing(session),
@@ -257,10 +263,18 @@ export async function runOmniSearch(
 /** globalState flag: the one-time "Ctrl/Cmd+Shift+A opens GemStone Search" tip has been shown. */
 const SEARCH_TIP_SHOWN_KEY = 'gemstone.gemstoneSearchTipShown';
 
+/** The disposable for the Omni Search registration, plus hooks the extension calls when the image
+ *  changes so an open search stays current: a local class compile, and a session sync (commit/abort/
+ *  file-in). Both forward to whichever host is live (the docked panel view and/or the Spotter). */
+export interface OmniSearchRegistration extends vscode.Disposable {
+  notifyClassCompiled(sessionId: number, className: string, dictName?: string): void;
+  notifySessionSynced(sessionId: number): void;
+}
+
 export function registerOmniSearch(
   sessionManager: SessionManager,
   context?: vscode.ExtensionContext,
-): vscode.Disposable {
+): OmniSearchRegistration {
   // The bottom-panel view provider is registered up-front (before any session) and resolves its
   // session lazily; the command reveals it when `ui: "panel"` is selected.
   const viewProvider = new OmniSearchViewProvider(buildViewContextResolver(sessionManager));
@@ -318,7 +332,7 @@ export function registerOmniSearch(
   syncStatus();
   maybeTip();
 
-  return vscode.Disposable.from(
+  const disposable = vscode.Disposable.from(
     status,
     sessionManager.onDidChangeSelection(onSelection),
     // The docked panel caches a session-bound engine that also baked in the settings live at build
@@ -333,4 +347,16 @@ export function registerOmniSearch(
       runOmniSearch(sessionManager, viewProvider),
     ),
   );
+
+  return {
+    dispose: () => disposable.dispose(),
+    notifyClassCompiled: (sessionId, className, dictName) => {
+      void viewProvider.onClassCompiled(sessionId, className, dictName);
+      OmniSearchPanel.onClassCompiled(sessionId, className, dictName);
+    },
+    notifySessionSynced: (sessionId) => {
+      void viewProvider.onSessionSynced(sessionId);
+      OmniSearchPanel.onSessionSynced(sessionId);
+    },
+  };
 }

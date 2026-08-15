@@ -6,6 +6,8 @@ vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 vi.mock('../omniEngine', () => ({
   createOmniEngine: vi.fn(() => ({
     prime: vi.fn(async () => {}),
+    applyChange: vi.fn(async () => null),
+    resync: vi.fn(async () => null),
     state: () => ({ scopeId: null, caseSensitive: false }),
   })),
 }));
@@ -77,5 +79,73 @@ describe('Omni Search docked panel — reacting to settings changes', () => {
     expect(createOmniEngine).toHaveBeenCalledTimes(1);
     await on.message({ command: 'ready' });
     expect(createOmniEngine).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('Omni Search docked panel — reacting to image changes', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  async function openForSession1() {
+    const provider = new OmniSearchViewProvider(vi.fn(async () => fakeContext()));
+    const { view, on } = fakeView(true);
+    provider.resolveWebviewView(view as never);
+    await on.message({ command: 'ready' });
+    const engine = vi.mocked(createOmniEngine).mock.results[0].value;
+    return { provider, view, engine };
+  }
+
+  it('folds a locally compiled class into the engine built for that session', async () => {
+    const { provider, engine } = await openForSession1();
+
+    await provider.onClassCompiled(1, 'Bar', 'UserGlobals');
+
+    expect(engine.applyChange).toHaveBeenCalledWith({
+      kind: 'class',
+      className: 'Bar',
+      dictName: 'UserGlobals',
+    });
+  });
+
+  it('ignores a class compile for a different session', async () => {
+    const { provider, engine } = await openForSession1();
+
+    await provider.onClassCompiled(2, 'Bar');
+
+    expect(engine.applyChange).not.toHaveBeenCalled();
+  });
+
+  it('rebuilds every cached corpus when its session syncs', async () => {
+    const { provider, engine } = await openForSession1();
+
+    await provider.onSessionSynced(1);
+
+    expect(engine.resync).toHaveBeenCalled();
+  });
+
+  it('redraws the results when a change affects the current view', async () => {
+    const { provider, view, engine } = await openForSession1();
+    engine.applyChange.mockResolvedValueOnce({
+      rows: [],
+      shownCount: 0,
+      hasMore: false,
+      exact: true,
+      pivot: false,
+    });
+
+    await provider.onClassCompiled(1, 'Bar');
+
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'results' }),
+    );
+  });
+
+  it('leaves the view alone when the change does not affect it', async () => {
+    const { provider, view, engine } = await openForSession1();
+    engine.applyChange.mockResolvedValueOnce(null);
+    view.webview.postMessage.mockClear();
+
+    await provider.onClassCompiled(1, 'Bar');
+
+    expect(view.webview.postMessage).not.toHaveBeenCalled();
   });
 });

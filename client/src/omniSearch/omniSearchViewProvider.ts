@@ -69,6 +69,23 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
     if (this.view?.visible) void this.ensureEngine();
   }
 
+  /** A class was compiled locally in `sessionId`: fold it into the live engine's cache (a cheap
+   *  single-class lookup, no full reload) and redraw only if it affects the current results. No-op
+   *  unless we have an engine built for that same session. */
+  async onClassCompiled(sessionId: number, className: string, dictName?: string): Promise<void> {
+    if (!this.engine || this.builtForSession !== sessionId) return;
+    const view = await this.engine.applyChange({ kind: 'class', className, dictName });
+    if (view) this.postView(view);
+  }
+
+  /** The session synced (commit/abort): rebuild every cached corpus so changes from elsewhere —
+   *  including other sessions — appear, then redraw the current search. */
+  async onSessionSynced(sessionId: number): Promise<void> {
+    if (!this.engine || this.builtForSession !== sessionId) return;
+    const view = await this.engine.resync(this.deps?.onError);
+    if (view) this.postView(view);
+  }
+
   /** Reveal + focus the view and its search field (the `ui: "panel"` entry point). */
   async focus(): Promise<void> {
     this.focusPending = true;

@@ -719,7 +719,12 @@ export class ExplorerController {
   private hierChain: queries.ClassHierarchyEntry[] = [];
   private hierSubs: queries.ClassHierarchyEntry[] = [];
 
-  constructor(private readonly sessionManager: SessionManager) {}
+  constructor(
+    private readonly sessionManager: SessionManager,
+    /** Called after a symbol-list structural change (dictionary add/remove/rename) so other views —
+     *  e.g. Omni Search's cached dictionary corpus — can refresh. Uncommitted, but visible in-session. */
+    private readonly onSymbolListChanged?: (sessionId: number) => void,
+  ) {}
 
   session(): ActiveSession | undefined {
     return this.sessionManager.getSelectedSession();
@@ -3742,6 +3747,7 @@ export class ExplorerController {
     if (!name) return;
     queries.addDictionary(session, name);
     this.dictProvider.refresh();
+    this.onSymbolListChanged?.(session.id);
     // Select the new dictionary so its (empty) categories/classes cascade, and
     // highlight its row.
     const names = queries.getDictionaryNames(session);
@@ -3782,6 +3788,7 @@ export class ExplorerController {
     // Indices have shifted and the selection may be gone; rebuild from scratch and
     // auto-select a default dictionary.
     this.reset();
+    this.onSymbolListChanged?.(session.id);
     void vscode.window.setStatusBarMessage(`Removed dictionary ${node.dictName}`, 4000);
   }
 
@@ -3857,6 +3864,7 @@ export class ExplorerController {
     } catch {
       /* ignore */
     }
+    this.onSymbolListChanged?.(session.id);
     void vscode.window.setStatusBarMessage(`Renamed dictionary ${oldName} → ${newName}`, 4000);
   }
 
@@ -5049,8 +5057,11 @@ export function registerGemStoneExplorer(
   // triggered Rename Method to target a SENT selector under the cursor. Optional
   // so tests (and a not-yet-started LSP) degrade to renaming the edited method.
   selectorAtPosition: SelectorAtPosition = () => Promise.resolve(null),
+  // Called after a dictionary add/remove/rename so other views (Omni Search) can refresh their
+  // cached symbol-list corpus.
+  onSymbolListChanged?: (sessionId: number) => void,
 ): ExplorerHandle {
-  const ctl = new ExplorerController(sessionManager);
+  const ctl = new ExplorerController(sessionManager, onSymbolListChanged);
 
   // The Open Editors pane (last in the container) mirrors the open gemstone://
   // source editors; it is session-independent, so it registers on its own.
