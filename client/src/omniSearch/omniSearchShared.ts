@@ -176,8 +176,11 @@ export function renderOmniHtml(opts: { showPin: boolean }): string {
       margin: 0;
     }
     #omni {
-      max-width: 960px;
-      margin: 0 auto;
+      /* Size to the window, not to a fixed pixel cap. A max-width of 960px here left a wide monitor
+         mostly empty and ellipsized long Class>>selector rows with blank space sitting beside them;
+         both hosts render this chrome, so the docked panel paid for it too. (No backticks in here --
+         this stylesheet lives inside a template literal.) */
+      width: 100%;
       padding: 10px 14px 8px;
       display: flex;
       flex-direction: column;
