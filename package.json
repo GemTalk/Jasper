@@ -19,8 +19,16 @@
     "node": ">=22.15.1"
   },
   "devEngines": {
-    "packageManager": { "name": "npm", "version": ">=11.16.0", "onFail": "error" },
-    "runtime": { "name": "node", "version": ">=22.15.1", "onFail": "error" }
+    "packageManager": {
+      "name": "npm",
+      "version": ">=11.16.0",
+      "onFail": "error"
+    },
+    "runtime": {
+      "name": "node",
+      "version": ">=22.15.1",
+      "onFail": "error"
+    }
   },
   "icon": "resources/gemstone-icon.png",
   "categories": [
@@ -137,7 +145,11 @@
         "properties": {
           "gemstone.omniSearch.ui": {
             "type": "string",
-            "enum": ["spotter", "panel", "quickpick"],
+            "enum": [
+              "spotter",
+              "panel",
+              "quickpick"
+            ],
             "enumDescriptions": [
               "Editor-tab Spotter: a webview in an editor tab with labeled scope tabs, a source-preview pane, own match highlighting, and an always-on case indicator.",
               "Bottom-panel view (default): the same webview docked in the panel strip (next to Terminal/Output). Stays out of the way; results open in the editor area above it.",
@@ -148,7 +160,11 @@
           },
           "gemstone.omniSearch.matchMode": {
             "type": "string",
-            "enum": ["fuzzy", "substring", "prefix"],
+            "enum": [
+              "fuzzy",
+              "substring",
+              "prefix"
+            ],
             "enumDescriptions": [
               "Subsequence match: the typed characters appear in order (the Quick-Open feel).",
               "The typed text appears as a contiguous run.",
@@ -207,6 +223,13 @@
             "minimum": 1,
             "maximum": 10,
             "description": "Minimum characters before the Methods category queries the stone (method search hits the stone per keystroke). Raise it if per-keystroke method search feels slow on a large stone; lower it (to 1) to search selectors from the first character."
+          },
+          "gemstone.omniSearch.maxServerScan": {
+            "type": "number",
+            "default": 200,
+            "minimum": 20,
+            "maximum": 20000,
+            "markdownDescription": "How many matches the **Methods** search collects from the stone before it stops looking.\n\nThat search walks every selector of every class in your symbol list, so it gives up early to keep searching-as-you-type fast. This is a limit on the *results*, not just on the time: when a search stops here, no amount of **Load more** or **Load all** can reach the matches beyond it — the footer says `Methods scan capped at 200` when that happens.\n\nRaise it to cast a wider net on broad terms (`add`, `at:`), at the cost of a slower search on every keystroke. Narrowing your search term is usually faster than raising this."
           },
           "gemstone.omniSearch.referencesInPreview": {
             "type": "boolean",

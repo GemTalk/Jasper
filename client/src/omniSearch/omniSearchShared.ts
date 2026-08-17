@@ -85,6 +85,11 @@ export function resultsMessage(
     shownCount: view.shownCount,
     hasMore: view.hasMore,
     exact: view.exact,
+    // Scopes whose own server scan was capped, so the footer can say so IN the UI. This payload lists
+    // its fields one by one rather than spreading `view`, so a new OmniViewData field is invisible to
+    // the webview until it is added here — which is exactly how the #14 fix first shipped broken (the
+    // engine computed the flag, the footer never received it, and the count still read "200 results").
+    truncations: view.truncations,
     pivot: view.pivot,
     pivotTitle: view.pivotTitle,
     categories: tabCategoriesFrom(chrome.config.enabledCategories),
@@ -378,7 +383,27 @@ export function renderOmniHtml(opts: { showPin: boolean }): string {
       border-top: 1px solid var(--vscode-widget-border, var(--vscode-panel-border, transparent));
       margin-top: 6px;
     }
-    #count { flex: 1 1 auto; }
+    #count { flex: 0 0 auto; }
+    /* Sits immediately after the count so the two read as one statement: "200+ shown — Methods scan
+       capped at 200". A capped scan is otherwise invisible (triage #14): the results just stop, with
+       nothing on screen saying the scan gave up rather than ran out. Warning-toned, not error-toned —
+       the results shown are correct, merely incomplete. */
+    /* This note is ALWAYS a flex item and is the footer's only slack absorber, so the Load buttons stay
+       pinned to the right whether or not it has anything to say. The view toggles "visibility", never
+       "display": display:none removes the item, which both hands the slack to something else and drops
+       one of the footer's 10px gaps — so the buttons visibly jumped as the note came and went.
+       Deliberately NO display rule here either; a "display: none" in this stylesheet would also win over
+       the view and leave the note permanently invisible, which is how it first shipped.
+       (No backticks in this comment: the whole stylesheet is inside a template literal.) */
+    #capnote {
+      flex: 1 1 auto;
+      min-width: 0;
+      color: var(--vscode-editorWarning-foreground, var(--vscode-inputValidation-warningBorder));
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      cursor: help;
+    }
     /* A persistent, unobtrusive gesture legend — useful now that Omni Search is a docked panel you
        keep open (not a glance-once dialog). Distinct from the QuickPick's cluttered field-hover. */
     #hints { flex: 0 0 auto; opacity: 0.7; font-size: 0.95em; }
@@ -425,6 +450,7 @@ export function renderOmniHtml(opts: { showPin: boolean }): string {
     <div id="footer">
       <span id="hints"><kbd>Enter</kbd> open · ${REFERENCES_KEY_HINT_HTML} references</span>
       <span id="count"></span>
+      <span id="capnote" role="status" style="visibility:hidden"></span>
       <button id="loadMore" title="Load more results" style="display:none">Load more</button>
       <button id="loadAll" title="Load all results (up to the server limit)" style="display:none">Load all</button>
     </div>

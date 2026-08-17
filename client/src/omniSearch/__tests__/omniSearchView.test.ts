@@ -38,7 +38,7 @@ const SHELL =
   '<div id="breadcrumb"></div>' +
   '<div id="error"></div>' +
   '<div id="body"><ul id="results"></ul><div id="preview"></div></div>' +
-  '<span id="hints"></span><span id="count"></span>' +
+  '<span id="hints"></span><span id="count"></span><span id="capnote"></span>' +
   '<button id="loadMore" style="display:none">Load more</button>' +
   '<button id="loadAll" style="display:none">Load all</button>' +
   '</div>';
@@ -245,6 +245,183 @@ describe('Omni Search view — footer count + load controls', () => {
     handle.renderResults(resultsMsg({ rows, shownCount: 2, hasMore: false, exact: true }));
     expect(document.getElementById('count')!.textContent).toBe('2 results');
     expect((document.getElementById('loadMore') as HTMLElement).style.display).toBe('none');
+  });
+
+  // Triage #14. A scope whose server scan is capped stops early, and before this the UI said nothing:
+  // the rows just ended and the count read a bare, authoritative "200 results".
+  describe('a capped scan', () => {
+    const capped = [
+      {
+        categoryId: 'methods',
+        categoryLabel: 'Methods',
+        scanned: 200,
+        ceiling: 200,
+        atCeiling: true,
+      },
+    ];
+
+    it('marks the count as a floor even with no display cap left to fill', () => {
+      const { handle } = mount();
+      handle.renderResults(
+        resultsMsg({ rows: [row(0, 'a')], shownCount: 200, hasMore: false, truncations: capped }),
+      );
+      expect(document.getElementById('count')!.textContent).toBe('200+ shown');
+    });
+
+    it('names the capped scope and its limit in a VISIBLE note beside the count', () => {
+      const { handle } = mount();
+      handle.renderResults(
+        resultsMsg({ rows: [row(0, 'a')], shownCount: 200, hasMore: false, truncations: capped }),
+      );
+      const note = document.getElementById('capnote') as HTMLElement;
+      // `visibility`, not `display`: the note must stay a flex item so the Load buttons don't move.
+      // And an EXPLICIT value, not a cleared inline style — clearing it would fall back to the
+      // stylesheet, where a `display: none` would keep the note invisible while a laxer assertion
+      // still passed. That combination is how the note first shipped, silently doing nothing.
+      expect(note.style.visibility).toBe('visible');
+      expect(note.textContent).toContain('Methods');
+      expect(note.textContent).toContain('200');
+      expect(note.textContent).toContain('narrow the search');
+    });
+
+    it('explains in the hover WHY the cap exists, that loading more cannot help, and the setting', () => {
+      const { handle } = mount();
+      handle.renderResults(
+        resultsMsg({ rows: [row(0, 'a')], shownCount: 200, hasMore: false, truncations: capped }),
+      );
+      const help = (document.getElementById('capnote') as HTMLElement).title;
+      expect(help).toContain('every selector'); // why the scan is bounded at all
+      expect(help).toContain('keystroke');
+      expect(help).toContain('Load all'); // why the load buttons cannot reach past it
+      expect(help).toContain('gemstone.omniSearch.maxServerScan'); // how to raise it
+    });
+
+    it('names every capped scope when several cap in the same all-scope run', () => {
+      const { handle } = mount();
+      handle.renderResults(
+        resultsMsg({
+          rows: [row(0, 'a')],
+          shownCount: 300,
+          hasMore: false,
+          truncations: [
+            {
+              categoryId: 'methods',
+              categoryLabel: 'Methods',
+              scanned: 200,
+              ceiling: 200,
+              atCeiling: true,
+            },
+            {
+              categoryId: 'source',
+              categoryLabel: 'Source',
+              scanned: 100,
+              ceiling: 100,
+              atCeiling: true,
+            },
+          ],
+        }),
+      );
+      const note = document.getElementById('capnote')!;
+      expect(note.textContent).toContain('Methods');
+      expect(note.textContent).toContain('Source');
+      expect(note.textContent).toContain('100');
+    });
+
+    it('hides the note again once a search comes back uncapped', () => {
+      const { handle } = mount();
+      handle.renderResults(
+        resultsMsg({ rows: [row(0, 'a')], shownCount: 200, hasMore: false, truncations: capped }),
+      );
+      handle.renderResults(
+        resultsMsg({ rows: [row(0, 'a')], shownCount: 1, exact: true, truncations: [] }),
+      );
+      const note = document.getElementById('capnote') as HTMLElement;
+      expect(note.style.visibility).toBe('hidden');
+      expect(note.style.display).not.toBe('none'); // still a flex item, so the buttons stay put
+      expect(note.textContent).toBe('');
+      expect(document.getElementById('count')!.textContent).toBe('1 result');
+    });
+
+    // Eric's report: setting maxServerScan to 400 with the cap at 60 showed "capped at 240", then 400
+    // after Load More. 240 is the over-fetch, not his setting, and it moved on every Load-more.
+    it('shows the configured ceiling, not the slice that happened to be scanned', () => {
+      const { handle } = mount();
+      handle.renderResults(
+        resultsMsg({
+          rows: [row(0, 'a')],
+          shownCount: 240,
+          hasMore: false,
+          truncations: [
+            {
+              categoryId: 'methods',
+              categoryLabel: 'Methods',
+              scanned: 240,
+              ceiling: 400,
+              atCeiling: true,
+            },
+          ],
+        }),
+      );
+      const note = document.getElementById('capnote')!;
+      expect(note.textContent).toContain('400'); // the setting
+      expect(note.textContent).not.toContain('240'); // not the incidental slice
+    });
+
+    it('stays silent while the over-fetch — not the ceiling — is the bound, since Load-more helps', () => {
+      const { handle } = mount();
+      handle.renderResults(
+        resultsMsg({
+          rows: [row(0, 'a')],
+          shownCount: 60,
+          hasMore: true,
+          truncations: [
+            {
+              categoryId: 'methods',
+              categoryLabel: 'Methods',
+              scanned: 240,
+              ceiling: 400,
+              atCeiling: false,
+            },
+          ],
+        }),
+      );
+      // No warning: telling the user to narrow the search would be wrong while "Load more" works.
+      expect((document.getElementById('capnote') as HTMLElement).style.visibility).toBe('hidden');
+      // But the count still admits the results are incomplete.
+      expect(document.getElementById('count')!.textContent).toBe('60+ shown');
+      expect((document.getElementById('loadMore') as HTMLElement).style.display).toBe('');
+    });
+
+    // Eric: "the Load More and Load All buttons shouldn't jump around when you show the message."
+    // The note is the footer's slack absorber (flex: 1 1 auto), so removing it from the flow — which is
+    // what display:none does — hands the slack elsewhere and drops one of the footer's gaps, sliding the
+    // buttons sideways. Both the note and the buttons can be on screen together, so this is visible.
+    it('never leaves the flex flow, so the Load buttons do not move when it appears', () => {
+      const { handle } = mount();
+      const note = document.getElementById('capnote') as HTMLElement;
+      const rows = [row(0, 'a')];
+
+      // Capped AND still loadable: note and buttons on screen at the same time.
+      handle.renderResults(
+        resultsMsg({ rows, shownCount: 240, hasMore: true, truncations: capped }),
+      );
+      expect(note.style.visibility).toBe('visible');
+      expect(note.style.display).not.toBe('none');
+      expect((document.getElementById('loadMore') as HTMLElement).style.display).toBe('');
+
+      // Uncapped again: the note goes quiet but MUST still occupy its slot.
+      handle.renderResults(resultsMsg({ rows, shownCount: 20, hasMore: true, truncations: [] }));
+      expect(note.style.visibility).toBe('hidden');
+      expect(note.style.display).not.toBe('none');
+      expect((document.getElementById('loadMore') as HTMLElement).style.display).toBe('');
+    });
+
+    it('survives a host that sends no truncations field at all (older payload)', () => {
+      const { handle } = mount();
+      handle.renderResults(resultsMsg({ rows: [row(0, 'a')], shownCount: 1, exact: true }));
+      expect((document.getElementById('capnote') as HTMLElement).style.visibility).toBe('hidden');
+      expect(document.getElementById('count')!.textContent).toBe('1 result');
+    });
   });
 });
 

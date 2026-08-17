@@ -31,6 +31,7 @@
     var resultsEl = doc.getElementById('results');
     var previewEl = doc.getElementById('preview');
     var countEl = doc.getElementById('count');
+    var capNoteEl = doc.getElementById('capnote');
     var loadMoreEl = doc.getElementById('loadMore');
     var loadAllEl = doc.getElementById('loadAll');
     var breadcrumbEl = doc.getElementById('breadcrumb');
@@ -272,17 +273,76 @@
     }
 
     // ── Footer (count + elegant load controls — replaces the two synthetic list rows) ──
+    // Scopes whose own server scan was capped this run (see OmniViewData.truncations). A capped scan
+    // stops early, so its rows are a floor: the count gets a "+" and the note next to it names the
+    // scope and the number. Triage #14 — before this, hitting the wall looked identical to having
+    // found everything, in the footer AND in the count.
+    function truncationsOf(view) {
+      return Array.isArray(view.truncations) ? view.truncations : [];
+    }
+
     function updateFooter(view) {
       var n = view.shownCount || 0;
+      var capped = truncationsOf(view);
       var text;
+      // A capped scan means the count is a floor, so show the "+" even when the display cap wasn't
+      // filled, and never print a bare, exact-looking total (at the ceiling both the `exact` and the
+      // neither-flag branch used to read "200 results", the one thing we know it isn't).
       if (n === 0) text = inPivot ? 'No references' : '';
       else if (view.exact) text = n + (n === 1 ? ' result' : ' results');
-      else if (view.hasMore) text = n + '+ shown';
+      else if (view.hasMore || capped.length) text = n + '+ shown';
       else text = n + (n === 1 ? ' result' : ' results');
       countEl.textContent = text;
+      // The "+" above covers EVERY truncation (results are incomplete either way), but the note is
+      // only for the walls Load-more cannot get past — otherwise it fires while "Load more" is sitting
+      // right there working, telling the user to narrow their search for no reason.
+      updateCapNote(
+        capped.filter(function (t) {
+          return t.atCeiling !== false;
+        }),
+      );
       var showLoad = !!view.hasMore && !view.exact;
       loadMoreEl.style.display = showLoad ? '' : 'none';
       loadAllEl.style.display = showLoad ? '' : 'none';
+    }
+
+    /**
+     * The visible "we stopped looking" line, right after the count so the two read as one statement.
+     *
+     * Toggles `visibility`, NOT `display`, and always with an explicit value:
+     *  - `display: none` would remove the flex item, so the footer's slack would move to another item
+     *    and one 10px gap would vanish — the Load buttons visibly jumped each time the note appeared or
+     *    went away (both it and the buttons can be on screen at once). Keeping the item in flow makes it
+     *    the constant slack absorber, so the buttons never move.
+     *  - clearing the inline value instead of setting one would fall back to the stylesheet, where a
+     *    `display: none` rule would leave the note permanently invisible. That is how it first shipped,
+     *    and a test asserting merely "not none" could not tell the difference.
+     */
+    function updateCapNote(capped) {
+      if (!capNoteEl) return;
+      if (!capped.length) {
+        capNoteEl.textContent = '';
+        capNoteEl.title = '';
+        capNoteEl.style.visibility = 'hidden';
+        return;
+      }
+      // "Methods scan capped at 400" — per scope, since under the all-scope only some of them cap.
+      // Shows `ceiling` (the configured maxServerScan), NOT `scanned`: they differ whenever the
+      // over-fetch was the tighter bound, and `scanned` climbs on each Load-more, so it read as a
+      // limit the user never set and never held still.
+      var parts = capped.map(function (t) {
+        return (t.categoryLabel || t.categoryId) + ' scan capped at ' + (t.ceiling || t.scanned);
+      });
+      capNoteEl.textContent = '⚠ ' + parts.join(' · ') + ' — narrow the search for the rest';
+      // Why the cap exists, why loading more can't help, and the setting that changes it.
+      capNoteEl.title =
+        'This search walks every selector of every class in your symbol list, so it stops once it has ' +
+        'collected enough matches — otherwise every keystroke would scan the whole image.\n\n' +
+        'That means more matches exist than are shown, and Load more / Load all cannot reach them: ' +
+        'the limit is on what gets fetched, not on what gets displayed.\n\n' +
+        'Narrow the search term to see the rest, or raise the limit with the setting ' +
+        '"gemstone.omniSearch.maxServerScan" (a wider net costs a slower search on every keystroke).';
+      capNoteEl.style.visibility = 'visible';
     }
 
     function clearPreview() {

@@ -23,9 +23,18 @@ import {
   OmniConfig,
   OmniProvider,
   OmniResult,
+  OmniTruncation,
+  OmniTruncationSink,
 } from './omniTypes';
 import { match, compareMatches } from './omniMatch';
 import { referenceRequestFor } from './references';
+
+/** A provider's truncation report plus the human scope name, so the webview can say WHICH scope was
+ *  capped and at what number without carrying a category table of its own. */
+export interface OmniViewTruncation extends OmniTruncation {
+  /** e.g. "Methods" — the category's display label. */
+  categoryLabel: string;
+}
 
 /** A single result row, flattened for the webview (no non-serialisable `action`). */
 export interface OmniViewRow {
@@ -63,9 +72,16 @@ export interface OmniViewData {
   shownCount: number;
   /** True when at least one category filled its cap — more results are available. */
   hasMore: boolean;
-  /** True once the cap has been jumped to "load all", so `shownCount` is the exact total (bounded
-   *  only by the providers' server fetch caps) rather than a capped subset. */
+  /** True when `shownCount` IS the total for this term — nothing was left unfetched. Requires both
+   *  that the cap was jumped to "load all" and that no provider hit its own fetch ceiling; see
+   *  `truncations` (triage #14 — this used to be derived from the cap alone, which let the footer
+   *  report a ceiling-truncated slice as an exact count). */
   exact: boolean;
+  /** One entry per in-scope provider whose own server fetch ceiling bounded its results, so
+   *  `shownCount` is a floor and raising the display cap cannot reveal the rest. Empty = nothing was
+   *  cut off. Non-empty is never `exact`, and the view surfaces it as a visible notice naming the
+   *  scope and the number it stopped at. */
+  truncations: OmniViewTruncation[];
   /** True while showing a reference pivot (typing then filters these rows client-side). */
   pivot: boolean;
   /** Breadcrumb title while pivoted (e.g. "Senders of printString"). */
@@ -110,9 +126,11 @@ export interface OmniEngineDeps {
 }
 
 // "Load all" jumps the display cap here — big enough to mean "everything" in practice; the true
-// ceiling is each provider's own server fetch cap (a few hundred), so this never runs away. Matches
-// the QuickPick controller's constant so the two UIs behave identically.
-const LOAD_ALL_LIMIT = 100_000;
+// ceiling is each provider's own server fetch cap (a few hundred), so this never runs away. Because
+// that ceiling can bind BEFORE this cap does, reaching this value does not by itself mean the results
+// are complete — see `truncated` (triage #14). Matches the QuickPick controller's constant so the two
+// UIs behave identically.
+export const LOAD_ALL_LIMIT = 100_000;
 
 /** The enabled providers in scope. Under the all-scope (`null`), explicit-only categories are
  *  excluded so heavyweight searches never fire on a plain keystroke. (Mirror of the controller.) */
@@ -124,17 +142,20 @@ export function providersInScope(
   return providers.filter((p) => p.category.id === scopeId);
 }
 
-/** Run each in-scope provider and collect its results (each already ranked + capped). */
+/** Run each in-scope provider and collect its results (each already ranked + capped). Providers with
+ *  a server fetch ceiling of their own report through `reportTruncated` when that ceiling cut them
+ *  off, so the caller can tell a complete result set from a bounded slice (triage #14). */
 export async function gatherResults(
   term: string,
   providers: readonly OmniProvider[],
   cfg: OmniConfig,
   token: OmniCancel,
+  reportTruncated?: OmniTruncationSink,
 ): Promise<OmniResult[]> {
   const all: OmniResult[] = [];
   for (const p of providers) {
     if (token.isCancelled) break;
-    const part = await p.search(term, cfg, token);
+    const part = await p.search(term, cfg, token, reportTruncated);
     all.push(...part);
   }
   return all;
@@ -310,6 +331,8 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
       {
         hasMore: false,
         exact: true,
+        // The pivot shows a fully-loaded reference list, not a bounded provider fan-out.
+        truncations: [],
         pivot: true,
         pivotTitle: pivot?.title,
       },
@@ -337,7 +360,7 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
     if (term.length === 0) {
       ++generation;
       current = [];
-      return buildView([], { hasMore: false, exact: false, pivot: false }, () => ({
+      return buildView([], { hasMore: false, exact: false, truncations: [], pivot: false }, () => ({
         referenceable: false,
       }));
     }
@@ -348,7 +371,13 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
       },
     };
     const inScope = providersInScope(providers, scopeId);
-    const results = await gatherResults(term, inScope, effectiveConfig(), token);
+    // Collected from any provider whose own server fetch ceiling bounded its results (today: methods).
+    // A non-empty list means the run can never be an exact total, however high the display cap goes.
+    const truncations: OmniViewTruncation[] = [];
+    const results = await gatherResults(term, inScope, effectiveConfig(), token, (t) => {
+      const label = OMNI_CATEGORIES.find((c) => c.id === t.categoryId)?.label ?? t.categoryId;
+      truncations.push({ ...t, categoryLabel: label });
+    });
     if (token.isCancelled) return null; // a newer call superseded this run
 
     // Offer "load more" whenever ANY category filled its cap (so it works in the all-scope too).
@@ -359,7 +388,14 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
     current = results;
     return buildView(
       results,
-      { hasMore, exact: scopeLimit >= LOAD_ALL_LIMIT, pivot: false },
+      // "Load all" alone does NOT make the count exact: a ceiling-truncated provider leaves rows
+      // unfetched that no cap can reach, so claim exactness only when nothing was cut off (#14).
+      {
+        hasMore,
+        exact: scopeLimit >= LOAD_ALL_LIMIT && truncations.length === 0,
+        truncations,
+        pivot: false,
+      },
       referenceInfo,
       term,
     );
@@ -418,9 +454,11 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
       const view = await deps.resolveReferences(result);
       if (!view) return null; // not referenceable
       referenceRows = view.results;
-      const built = buildView(referenceRows, { hasMore: false, exact: true, pivot: false }, () => ({
-        referenceable: false,
-      }));
+      const built = buildView(
+        referenceRows,
+        { hasMore: false, exact: true, truncations: [], pivot: false },
+        () => ({ referenceable: false }),
+      );
       return { title: view.title, highlightTerm: view.target, rows: built.rows };
     },
     referenceResultFor: (refId) => referenceRows[refId],
