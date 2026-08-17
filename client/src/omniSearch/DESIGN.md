@@ -73,6 +73,27 @@ icon, isEnabled, search(query, token) }`. Providers: **Classes, Methods, Diction
    typing filters the reference rows client-side; Back restores the prior search. (`references.ts` is
    the pure glue; the controller owns the pivot state.)
 
+5c. **A scope belongs to the search, not to a references view** (#20). The pivot is not a search: it
+   is a fixed list of rows already fetched from the stone, and **every one of them is a method**
+   (`methodRowsToResults`), so a Classes/Globals/Dictionaries filter has nothing meaningful to do to
+   them. Picking a scope while pivoted therefore **leaves the pivot** and applies that scope to the
+   restored search. The rejected alternatives, for the record: *filtering the pivot rows by scope*
+   (meaningless — one category, so every tab is either a no-op or empties the list) and *making the
+   tabs inert while pivoted* (honest, but it hides a control rather than giving it a meaning, and it
+   lives in the webview rather than the engine). What must never happen again is the original
+   behaviour: the tab lit up as active while the list was left untouched, so the chrome advertised a
+   filter that was never applied — and the scope then took effect **invisibly** when the pivot was
+   dismissed, narrowing a search the user never asked to narrow.
+   **The pivot names its own exit.** Its only ways out are `Esc` and `←` (the latter only with the
+   caret at the start of the field), neither of them visible, and clearing the box does *not* escape —
+   an empty filter matches every reference row, so clearing widens the list instead. Rather than
+   overload the clear gesture, the breadcrumb carries the exit: `PIVOT_EXIT_HINT` ("Esc to go back") is
+   appended to `OmniViewData.pivotTitle`. It is deliberately **not** added to `ReferencePreview.title`
+   — in `referencesInPreview` mode there is no pivot and `Esc` closes the panel, so the same words
+   there would be false. ⚠️ The hint is only as visible as the breadcrumb: while `#breadcrumb` carries
+   a stylesheet `display: none` that the view tries to undo by clearing an *inline* style, it renders
+   nowhere at all.
+
 6. **Scope filtering** ("filter buttons on top", per the issue). Native QuickPick can't render a row
    of labeled toggle buttons or a pressed state, so scope is expressed with **title buttons**: one
    icon button per enabled category plus an "All" button (`buildScopeButtons`). Clicking one narrows

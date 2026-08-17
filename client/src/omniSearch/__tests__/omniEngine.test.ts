@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createOmniEngine, providersInScope, ReferenceView } from '../omniEngine';
+import { createOmniEngine, providersInScope, PIVOT_EXIT_HINT, ReferenceView } from '../omniEngine';
 import { OMNI_DEFAULTS } from '../omniConfig';
 import { CATEGORY_BY_ID, OmniConfig, OmniProvider, OmniResult } from '../omniTypes';
 
@@ -303,7 +303,7 @@ describe('createOmniEngine', () => {
 
     const pivot = await engine.pivot(classRowId);
     expect(pivot!.pivot).toBe(true);
-    expect(pivot!.pivotTitle).toBe('References to Foo');
+    expect(pivot!.pivotTitle).toBe(`References to Foo — ${PIVOT_EXIT_HINT}`);
     expect(pivot!.shownCount).toBe(2);
     // Reference rows are not themselves further pivotable.
     expect(pivot!.rows.every((r) => !r.referenceable)).toBe(true);
@@ -392,6 +392,48 @@ describe('createOmniEngine', () => {
     expect(engine.state().pivot).toBe(false);
   });
 
+  it('the pivot breadcrumb names its own way out (Esc), so the exit is discoverable', async () => {
+    const refView: ReferenceView = {
+      title: 'References to Foo',
+      results: [methodResult('A>>useFoo', 'useFoo'), methodResult('B>>alsoFoo', 'alsoFoo')],
+    };
+    const engine = createOmniEngine({
+      providers: [fakeProvider('classes', [classResult('Foo')])],
+      config: cfg(),
+      resolveReferences: () => refView,
+    });
+    const search = await engine.search('foo');
+
+    const pivot = await engine.pivot(search!.rows[0].id);
+    expect(pivot!.pivotTitle).toBe(`References to Foo — ${PIVOT_EXIT_HINT}`);
+    expect(PIVOT_EXIT_HINT).toContain('Esc');
+
+    // The hint must survive filtering inside the pivot — that is exactly when a user is looking for
+    // the way out, and the pivot branch of runSearch rebuilds the view.
+    const filtered = await engine.search('also');
+    expect(filtered!.pivotTitle).toBe(`References to Foo — ${PIVOT_EXIT_HINT}`);
+  });
+
+  it('the sticky preview references list keeps a CLEAN title (no Esc hint)', async () => {
+    // In `referencesInPreview` mode there is no pivot to escape from — Esc closes the panel — so the
+    // hint would be a lie in the preview pane's header.
+    const refView: ReferenceView = {
+      title: 'References to Foo',
+      target: 'Foo',
+      results: [methodResult('A>>useFoo', 'useFoo')],
+    };
+    const engine = createOmniEngine({
+      providers: [fakeProvider('classes', [classResult('Foo')])],
+      config: cfg(),
+      resolveReferences: () => refView,
+    });
+    const search = await engine.search('foo');
+
+    const preview = await engine.referencesFor(search!.rows[0].id);
+    expect(preview!.title).toBe('References to Foo');
+    expect(preview!.title).not.toContain('Esc');
+  });
+
   it('supersedes a slow in-flight search (returns null for the stale run)', async () => {
     let releaseFirst: (() => void) | undefined;
     const gate = new Promise<void>((res) => (releaseFirst = res));
@@ -411,5 +453,130 @@ describe('createOmniEngine', () => {
     const [first, second] = await Promise.all([firstP, secondP]);
     expect(first).toBeNull(); // stale run discarded
     expect(second).not.toBeNull();
+  });
+});
+
+/**
+ * #20 — the references pivot used to ignore the selected scope while CLAIMING to apply it.
+ *
+ * Before the fix: `runSearch` returned early through its pivot branch, so a `setScope` during a pivot
+ * changed nothing on screen, yet the reply's chrome carried the new `scopeId` and the tab lit up as
+ * active. The scope was then applied silently when the pivot was dismissed, narrowing a search the
+ * user never asked to narrow.
+ *
+ * The decision these tests pin: a scope belongs to the SEARCH, not to a references view (every pivot
+ * row is a method — see `methodRowsToResults` — so filtering them by scope is meaningless), therefore
+ * picking a scope LEAVES the pivot and applies the scope to the restored search.
+ */
+describe('createOmniEngine — scope vs. the references pivot (#20)', () => {
+  const refView: ReferenceView = {
+    title: 'References to Foo',
+    results: [methodResult('A>>useFoo', 'useFoo'), methodResult('B>>alsoFoo', 'alsoFoo')],
+  };
+
+  /** Search 'foo' in the all-scope (a class hit AND a method hit), then pivot on the class row. */
+  async function pivotedEngine() {
+    const classes = fakeProvider('classes', [classResult('Foo')]);
+    const methods = fakeProvider('methods', [methodResult('Bar>>foo', 'foo')]);
+    const engine = createOmniEngine({
+      providers: [classes, methods],
+      config: cfg(),
+      resolveReferences: () => refView,
+    });
+    const search = await engine.search('foo');
+    expect(search!.rows.map((r) => r.label).sort()).toEqual(['Bar>>foo', 'Foo']);
+    const classRow = search!.rows.find((r) => r.label === 'Foo')!;
+    const pivot = await engine.pivot(classRow.id);
+    expect(pivot!.pivot).toBe(true);
+    expect(pivot!.rows.map((r) => r.label)).toEqual(['A>>useFoo', 'B>>alsoFoo']);
+    return { engine, classes, methods };
+  }
+
+  it('picking a scope during a pivot LEAVES the pivot instead of silently doing nothing', async () => {
+    const { engine } = await pivotedEngine();
+
+    const view = await engine.setScope('classes');
+
+    expect(view!.pivot).toBe(false); // no longer a references view…
+    expect(engine.state().pivot).toBe(false); // …and the engine agrees
+    expect(view!.pivotTitle).toBeUndefined();
+    // The reference rows are gone: what is shown is the SEARCH, narrowed to the chosen scope.
+    expect(view!.rows.map((r) => r.label)).toEqual(['Foo']);
+    expect(engine.state().scopeId).toBe('classes');
+  });
+
+  it('the tab no longer lies: the shown rows match the scope the chrome reports', async () => {
+    const { engine } = await pivotedEngine();
+
+    const view = await engine.setScope('methods');
+
+    // Before the fix this returned the 2 reference rows while reporting scopeId 'methods'.
+    expect(engine.state().scopeId).toBe('methods');
+    expect(view!.rows.map((r) => r.label)).toEqual(['Bar>>foo']);
+    expect(view!.rows.some((r) => r.label.endsWith('useFoo'))).toBe(false);
+  });
+
+  it('no silent narrowing on the way out — there is no pivot left to exit', async () => {
+    const { engine } = await pivotedEngine();
+
+    await engine.setScope('classes');
+
+    // The old bug's second half: Esc/← after a scope click re-ran the search THEN, applying a filter
+    // the user could not see. The scope change already restored the list, so the exit is a no-op.
+    expect(await engine.exitPivot()).toBeNull();
+    expect(engine.state().pivot).toBe(false);
+  });
+
+  it('re-runs the restored search itself rather than reusing the pivot rows', async () => {
+    const { engine, classes, methods } = await pivotedEngine();
+    expect(classes.searched).toEqual(['foo']); // pivoting does not re-query
+    expect(methods.searched).toEqual(['foo']);
+
+    await engine.setScope('classes');
+
+    expect(classes.searched).toEqual(['foo', 'foo']); // the restored search really ran
+    expect(methods.searched).toEqual(['foo']); // out of scope now, so not re-queried
+  });
+
+  it('a scope chosen BEFORE the pivot still survives an Esc exit (unchanged behavior)', async () => {
+    const classes = fakeProvider('classes', [classResult('Foo')]);
+    const methods = fakeProvider('methods', [methodResult('Bar>>foo', 'foo')]);
+    const engine = createOmniEngine({
+      providers: [classes, methods],
+      config: cfg(),
+      resolveReferences: () => refView,
+    });
+    await engine.setScope('classes');
+    const search = await engine.search('foo');
+    expect(search!.rows.map((r) => r.label)).toEqual(['Foo']);
+
+    await engine.pivot(search!.rows[0].id);
+    const back = await engine.exitPivot();
+
+    // Deliberate: this scope was applied to a search the user could SEE being narrowed, so Esc must
+    // put that same narrowed search back. Only a scope picked *during* a pivot is the bug.
+    expect(back!.pivot).toBe(false);
+    expect(back!.rows.map((r) => r.label)).toEqual(['Foo']);
+    expect(engine.state().scopeId).toBe('classes');
+  });
+
+  it('clearing the box stays a FILTER RESET inside the pivot — Esc is the way out', async () => {
+    const { engine } = await pivotedEngine();
+
+    const filtered = await engine.search('also');
+    expect(filtered!.rows.map((r) => r.label)).toEqual(['B>>alsoFoo']);
+
+    const cleared = await engine.search('');
+
+    // Deliberate decision (Eric's call): clearing widens back to every reference row rather than
+    // escaping, because an empty filter matching everything is the honest reading of "clear". The
+    // discoverability half is handled by the breadcrumb naming Esc — see PIVOT_EXIT_HINT.
+    expect(cleared!.pivot).toBe(true);
+    expect(engine.state().pivot).toBe(true);
+    expect(cleared!.rows.map((r) => r.label)).toEqual(['A>>useFoo', 'B>>alsoFoo']);
+
+    const back = await engine.exitPivot();
+    expect(back!.pivot).toBe(false);
+    expect(back!.rows.map((r) => r.label).sort()).toEqual(['Bar>>foo', 'Foo']);
   });
 });

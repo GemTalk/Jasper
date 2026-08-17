@@ -68,9 +68,17 @@ export interface OmniViewData {
   exact: boolean;
   /** True while showing a reference pivot (typing then filters these rows client-side). */
   pivot: boolean;
-  /** Breadcrumb title while pivoted (e.g. "Senders of printString"). */
+  /** Breadcrumb title while pivoted (e.g. "Senders of printString"), with the exit hint appended —
+   *  see `PIVOT_EXIT_HINT`. */
   pivotTitle?: string;
 }
+
+/** Appended to the pivot breadcrumb so the way OUT of a references view is discoverable (#20). The
+ *  pivot replaces the whole result list and offers no visible exit affordance, so a user who does not
+ *  already know the gesture has to guess — clearing the box looks like it should work and doesn't (an
+ *  empty filter matches every reference row). Deliberately NOT added to `ReferencePreview.title`: in
+ *  `referencesInPreview` mode there is no pivot and Esc closes the panel, so the hint would be false. */
+export const PIVOT_EXIT_HINT = 'Esc to go back';
 
 /** Short, singular per-row category tag (the flat list has no group header to carry the name). */
 const CATEGORY_TAG: Record<OmniCategoryId, string> = {
@@ -311,7 +319,7 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
         hasMore: false,
         exact: true,
         pivot: true,
-        pivotTitle: pivot?.title,
+        pivotTitle: pivot ? `${pivot.title} — ${PIVOT_EXIT_HINT}` : undefined,
       },
       // Reference rows are already the senders/references; don't offer a further pivot on them.
       () => ({ referenceable: false }),
@@ -381,6 +389,13 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
     async setScope(newScope) {
       scopeId = newScope;
       scopeLimit = config.maxResultsPerCategory; // a fresh scope starts at the base cap
+      // A scope belongs to the SEARCH, not to a references view, so picking one LEAVES the pivot
+      // (#20). Every pivot row is a method (`methodRowsToResults`), so there is nothing meaningful for
+      // a Classes/Globals/Dictionaries filter to do to them. Without this the tab lit up as active
+      // while `runSearch`'s pivot branch returned the unchanged reference rows — the chrome claimed a
+      // filter that was never applied — and the scope then took effect invisibly on the way out,
+      // narrowing a restored search the user never asked to narrow.
+      pivot = null;
       return runSearch(lastRawValue);
     },
     async toggleCase() {
