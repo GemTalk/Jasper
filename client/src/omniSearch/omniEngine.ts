@@ -114,13 +114,25 @@ export interface OmniEngineDeps {
 // the QuickPick controller's constant so the two UIs behave identically.
 const LOAD_ALL_LIMIT = 100_000;
 
-/** The enabled providers in scope. Under the all-scope (`null`), explicit-only categories are
- *  excluded so heavyweight searches never fire on a plain keystroke. (Mirror of the controller.) */
+/**
+ * The enabled providers in scope.
+ *
+ * Under the all-scope (`null`) two things are held back, for the same reason but by different
+ * authority: `explicitOnly` categories (Source/Literals/Categories) are held back BY DESIGN so
+ * heavyweight searches never fire on a plain keystroke, and `excludedFromAll` categories are held
+ * back BY THE USER, who decided a category's per-keystroke cost isn't worth it (Methods being the
+ * usual one — it queries the stone on every keystroke).
+ *
+ * Scoping directly to a category always runs it: excluding a category from "All" must never make it
+ * unreachable, which is exactly what the `categories` setting does and why it is not the same knob.
+ */
 export function providersInScope(
   providers: readonly OmniProvider[],
   scopeId: OmniCategoryId | null,
+  excludedFromAll: ReadonlySet<OmniCategoryId> = new Set(),
 ): OmniProvider[] {
-  if (scopeId === null) return providers.filter((p) => !p.category.explicitOnly);
+  if (scopeId === null)
+    return providers.filter((p) => !p.category.explicitOnly && !excludedFromAll.has(p.category.id));
   return providers.filter((p) => p.category.id === scopeId);
 }
 
@@ -253,6 +265,9 @@ export interface OmniEngine {
   pivot(rowId: number): Promise<OmniViewData | null>;
   /** Leave the reference view and restore the prior search. */
   exitPivot(): Promise<OmniViewData | null>;
+  /** Replace the set of categories held back from the "All" fan-out; re-runs the current term.
+   *  `explicitOnly` ids are ignored (they are never in "All" anyway). */
+  setExcludedFromAll(ids: readonly OmniCategoryId[]): Promise<OmniViewData | null>;
   /** Load a row's references/senders for the sticky preview-pane list WITHOUT pivoting — the search
    *  list and all search state are left intact. Returns null if not referenceable / no resolver. */
   referencesFor(rowId: number): Promise<ReferencePreview | null>;
@@ -260,8 +275,13 @@ export interface OmniEngine {
   referenceResultFor(refId: number): OmniResult | undefined;
   /** The `OmniResult` for a row id in the CURRENT view (for activation), or undefined. */
   resultFor(rowId: number): OmniResult | undefined;
-  /** Current UI state the panel needs to render chrome (scope, case, pivot). */
-  state(): { scopeId: OmniCategoryId | null; caseSensitive: boolean; pivot: boolean };
+  /** Current UI state the panel needs to render chrome (scope, case, pivot, All-scope exclusions). */
+  state(): {
+    scopeId: OmniCategoryId | null;
+    caseSensitive: boolean;
+    pivot: boolean;
+    excludedFromAll: OmniCategoryId[];
+  };
 }
 
 export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
@@ -271,6 +291,10 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
   let lastRawValue = '';
   let caseSensitive = config.caseSensitive;
   let scopeLimit = config.maxResultsPerCategory;
+  // Categories the user holds back from the "All" fan-out. Seeded from settings, then owned by the
+  // panel's scope filter for the rest of the session — the toggle does NOT rewrite settings (same
+  // contract as `caseSensitive`), so a live experiment never edits the user's settings.json.
+  let excludedFromAll = new Set<OmniCategoryId>(config.excludedFromAll);
   // When non-null, the list shows the references/senders of a result (a "pivot"), not a live search.
   let pivot: ReferenceView | null = null;
   // The results backing the CURRENT view, indexed by row id.
@@ -347,7 +371,7 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
         return gen !== generation;
       },
     };
-    const inScope = providersInScope(providers, scopeId);
+    const inScope = providersInScope(providers, scopeId, excludedFromAll);
     const results = await gatherResults(term, inScope, effectiveConfig(), token);
     if (token.isCancelled) return null; // a newer call superseded this run
 
@@ -411,6 +435,15 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
       pivot = null;
       return runSearch(lastRawValue);
     },
+    async setExcludedFromAll(ids) {
+      const cats = new Map(OMNI_CATEGORIES.map((c) => [c.id, c]));
+      excludedFromAll = new Set(ids.filter((id) => cats.get(id)?.explicitOnly !== true));
+      // Re-running with the SAME term must not inherit a raised cap from a previous load-more, and
+      // `runSearch` only resets the cap when the term itself changes — so reset it here, as setScope
+      // does. Narrowing "All" is a fresh question, not more of the last answer.
+      scopeLimit = config.maxResultsPerCategory;
+      return runSearch(lastRawValue);
+    },
     async referencesFor(rowId) {
       if (!deps.resolveReferences) return null;
       const result = current[rowId];
@@ -425,6 +458,11 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
     },
     referenceResultFor: (refId) => referenceRows[refId],
     resultFor: (rowId) => current[rowId],
-    state: () => ({ scopeId, caseSensitive, pivot: pivot !== null }),
+    state: () => ({
+      scopeId,
+      caseSensitive,
+      pivot: pivot !== null,
+      excludedFromAll: [...excludedFromAll],
+    }),
   };
 }

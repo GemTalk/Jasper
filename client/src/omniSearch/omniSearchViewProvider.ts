@@ -118,6 +118,7 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
         scopeId: st.scopeId,
         caseSensitive: st.caseSensitive,
         pinned: false,
+        excludedFromAll: st.excludedFromAll,
       }),
     );
   }

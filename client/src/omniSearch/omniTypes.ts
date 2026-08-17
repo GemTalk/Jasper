@@ -117,6 +117,18 @@ export interface OmniConfig {
    *  sticky list you open source from) instead of pivoting the whole left list. Off = the classic
    *  list pivot. */
   referencesInPreview: boolean;
+  /** Show the source-preview pane beside the result list. It takes ~45% of the width, which the
+   *  bottom-docked panel (wide but short) can least afford — turning it off hands that room back to
+   *  the labels. This is the STARTING value only: the in-panel toggle changes it for the rest of the
+   *  session without rewriting settings, exactly as `caseSensitive` does. */
+  previewPane: boolean;
+  /** Categories left OUT of the "All" fan-out while still reachable by their own tab.
+   *
+   *  `explicitOnly` categories (Source/Literals/Categories) are already in that state permanently;
+   *  this is what lets the user put an ORDINARY category there too — typically Methods, which queries
+   *  the stone on every keystroke. Distinct from `enabledCategories`, which removes a category
+   *  altogether (no provider, no tab). Starting value for the in-panel scope filter. */
+  excludedFromAll: OmniCategoryId[];
 }
 
 /** Minimal cancellation signal so providers need not import `vscode.CancellationToken`. */

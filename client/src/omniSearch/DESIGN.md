@@ -152,6 +152,34 @@ Task status against the pinned Phase-2 plan: **1 (webview)**, **2 (own highlight
 indicator)** done; **3 (hover)** delivered as a preview pane; **5 (count)** shows an exact count once
 Load-all makes it exact, else `N+` (a true pre-count query stays a follow-up).
 
+## Controlling what a search costs (#428 items #40 / #41)
+
+Two panel controls let the user decide what a search spends, instead of that being fixed in the code
+or reachable only by editing settings.json. Both follow the **`caseSensitive` contract**: a setting
+supplies the STARTING value, the in-panel control owns it for the rest of the session, and toggling
+never rewrites the user's settings. That matters here — writing a setting fires
+`onDidChangeConfiguration`, which drops the cached engine and re-primes the corpus, so a UI toggle
+that persisted itself would pay a stone round-trip for a cosmetic change.
+
+- **Preview-pane toggle (◧, `gemstone.omniSearch.previewPane`).** `#body` is a flex row: `#results`
+  is `flex: 1 1 55%` and `#preview` `flex: 1 1 45%`. The docked panel is wide but SHORT, so that 45%
+  buys a source view only a few lines tall while costing the result labels nearly half their width —
+  the host that pays most gets least. Off adds `body.no-preview` (which outranks
+  `#preview.has-content` on specificity) and short-circuits `requestPreview()`, so it also stops the
+  per-row source fetch as you arrow down. The toggle never reaches the host: hiding a pane has no
+  effect on the search. One exception — asking for references while the pane is hidden switches it
+  back on, since the references list lives in that pane and the gesture would otherwise do nothing
+  visible.
+- **All-scope filter (the `Scopes` button, `gemstone.omniSearch.excludeFromAll`).** `providersInScope` already held
+  `explicitOnly` categories (Source/Literals/Categories) out of the "All" fan-out by design; this
+  lets the user put an ordinary category — in practice **Methods**, which queries the stone on every
+  keystroke — into that same state. Scoping directly to a category always runs it, so an exclusion
+  never makes a scope unreachable. That is precisely what distinguishes it from
+  `gemstone.omniSearch.categories`, which removes the provider AND the tab; conflating the two is
+  the defect #41 reports. The engine owns the set (`setExcludedFromAll` re-runs the term and resets
+  the page cap, as `setScope` does) and echoes it on every results message, so the menu can never
+  drift from what the search actually did.
+
 ## Deferred / follow-ups (explicitly NOT in this issue)
 
 - Phase-2 **webview Spotter** (labeled filter-button row, inspector preview, screenshots' look).

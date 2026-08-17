@@ -146,6 +146,7 @@ export class OmniSearchPanel {
         scopeId: st.scopeId,
         caseSensitive: st.caseSensitive,
         pinned: this.pinned,
+        excludedFromAll: st.excludedFromAll,
       }),
     );
   }

@@ -7,7 +7,7 @@
  */
 
 import { MatchMode } from './omniMatch';
-import { OmniCategoryId, OmniConfig, OMNI_CATEGORIES } from './omniTypes';
+import { CATEGORY_BY_ID, OmniCategoryId, OmniConfig, OMNI_CATEGORIES } from './omniTypes';
 
 export interface ConfigLike {
   get<T>(section: string, defaultValue: T): T;
@@ -29,6 +29,12 @@ export const OMNI_DEFAULTS: OmniConfig = {
   methodMinQueryLength: 2,
   // Try the sticky preview-pane references list by default; flip off to restore the classic pivot.
   referencesInPreview: true,
+  // The preview pane is on by default (it's the per-row "hover" a QuickPick can't do); the in-panel
+  // toggle turns it off when the results need the width more.
+  previewPane: true,
+  // Nothing is held back from "All" by default — the user opts a category out when its per-keystroke
+  // cost isn't worth it (Methods being the usual one).
+  excludedFromAll: [],
 };
 
 function clampInt(v: unknown, min: number, max: number, fallback: number): number {
@@ -46,6 +52,15 @@ export function readOmniConfig(cfg: ConfigLike): OmniConfig {
   // Keep only known ids, preserve the canonical display order, and never end up empty.
   const enabledCategories = ALL_CATEGORY_IDS.filter(
     (id) => Array.isArray(rawCats) && rawCats.includes(id),
+  );
+
+  // Which categories start out held back from the "All" fan-out. Unknown ids are dropped, and an
+  // `explicitOnly` id is ignored rather than honoured — those are never in "All" to begin with, so
+  // listing one would be a no-op that reads as if it did something.
+  const rawExcluded = cfg.get<string[]>('excludeFromAll', [...OMNI_DEFAULTS.excludedFromAll]);
+  const excludedFromAll = ALL_CATEGORY_IDS.filter(
+    (id) =>
+      Array.isArray(rawExcluded) && rawExcluded.includes(id) && !CATEGORY_BY_ID[id].explicitOnly,
   );
 
   return {
@@ -73,5 +88,7 @@ export function readOmniConfig(cfg: ConfigLike): OmniConfig {
     ),
     referencesInPreview:
       cfg.get<boolean>('referencesInPreview', OMNI_DEFAULTS.referencesInPreview) !== false,
+    previewPane: cfg.get<boolean>('previewPane', OMNI_DEFAULTS.previewPane) !== false,
+    excludedFromAll,
   };
 }
