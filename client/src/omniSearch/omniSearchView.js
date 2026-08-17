@@ -35,6 +35,7 @@
     var loadAllEl = doc.getElementById('loadAll');
     var breadcrumbEl = doc.getElementById('breadcrumb');
     var errorEl = doc.getElementById('error');
+    var refIndicatorEl = doc.getElementById('refindicator');
 
     // The currently-rendered row elements, in display order — the target of Up/Down navigation.
     // `activeIndex` points into it; -1 = nothing active.
@@ -59,6 +60,10 @@
     // Set when the NEXT results render should scroll the list back to the top — true for a fresh
     // search/clear/scope/case change, false for Load-more (which should keep your place).
     var scrollResetPending = true;
+    // The scope tabs as last rendered (in display order) + the active scope id, so Tab / Shift+Tab can
+    // cycle scopes from the field (#428 item 26). The host owns scope; we just reflect what it sent.
+    var lastCategories = [];
+    var currentScopeId = null;
 
     function post(command, extra) {
       var msg = { command: command };
@@ -131,9 +136,35 @@
       return b;
     }
 
+    // Cycle the active scope one step in `dir` (+1 = next tab, -1 = previous), wrapping around, in the
+    // exact left-to-right order the tabs render: All, then the filter scopes, then the explicit search
+    // scopes. Posts setScope like a tab click does. (#428 item 26 — the JetBrains Tab/Shift+Tab gesture.)
+    function orderedScopeIds() {
+      var ids = [null]; // "All"
+      var searches = [];
+      for (var i = 0; i < lastCategories.length; i++) {
+        var c = lastCategories[i];
+        (c.explicitOnly ? searches : ids).push(c.id);
+      }
+      return ids.concat(searches);
+    }
+
+    function cycleScope(dir) {
+      var ids = orderedScopeIds();
+      if (ids.length < 2) return;
+      var cur = ids.indexOf(currentScopeId);
+      if (cur < 0) cur = 0;
+      var next = (cur + dir + ids.length) % ids.length;
+      scrollResetPending = true;
+      post('setScope', { scopeId: ids[next] });
+      inputEl.focus();
+    }
+
     function renderTabs(categories, scopeId) {
       tabsEl.textContent = '';
       var cats = categories || [];
+      lastCategories = cats;
+      currentScopeId = scopeId || null;
       var filters = [{ id: null, label: 'All' }];
       var searches = [];
       for (var i = 0; i < cats.length; i++) {
@@ -168,6 +199,7 @@
       // A new left-row selection dismisses a sticky references list — the pane goes back to source.
       previewMode = 'source';
       requestPreview();
+      refreshRefIndicator();
     }
 
     function activeRowId() {
@@ -218,6 +250,7 @@
         clearPreview();
       }
       updateFooter(view);
+      refreshRefIndicator();
     }
 
     function makeRow(row) {
@@ -409,6 +442,7 @@
       }
       previewEl.classList.add('has-content');
       previewEl.scrollTop = 0;
+      refreshRefIndicator();
     }
 
     function makeRefRow(row) {
@@ -547,6 +581,7 @@
 
     function showPreview(source, title) {
       previewMode = 'source';
+      refreshRefIndicator();
       previewEl.textContent = '';
       if (!source) {
         clearPreview();
@@ -577,13 +612,28 @@
     function setError(message) {
       if (!errorEl) return;
       errorEl.textContent = message || '';
-      errorEl.style.display = message ? '' : 'none';
+      // Explicit 'block' (not '') for the same reason as the breadcrumb: the stylesheet hides #error
+      // with `display: none`, so clearing the inline style fell back to that and the in-panel error
+      // banner never showed. (Errors also toast, so this is a second, in-context layer.)
+      errorEl.style.display = message ? 'block' : 'none';
     }
 
     function setBreadcrumb(title) {
       if (!breadcrumbEl) return;
       breadcrumbEl.textContent = title || '';
-      breadcrumbEl.style.display = title ? '' : 'none';
+      // Explicit 'block' (not '') — the stylesheet hides #breadcrumb with `display: none`, and clearing
+      // the inline style falls BACK to that rule, so a bare '' left the breadcrumb permanently hidden.
+      breadcrumbEl.style.display = title ? 'block' : 'none';
+    }
+
+    // Show the references-mode chip (styled like the case toggle) whenever the panel is displaying
+    // references/senders — the classic list pivot OR the sticky preview-pane list (#428 item 28) — so
+    // it is obvious you are in a references view. Hidden the rest of the time.
+    function refreshRefIndicator() {
+      if (!refIndicatorEl) return;
+      var on = inPivot || previewMode === 'refs';
+      refIndicatorEl.style.display = on ? 'inline-block' : 'none';
+      refIndicatorEl.setAttribute('aria-pressed', on ? 'true' : 'false');
     }
 
     function setCase(on) {
@@ -634,6 +684,22 @@
           ev.preventDefault();
           firstRef.focus();
         }
+        return;
+      }
+      // Tab / Shift+Tab from the field cycles the scope tabs (JetBrains gesture, #428 item 26) — but
+      // not while a references list is open (there Tab dives into the list, handled just above / by the
+      // pivot) and not with Ctrl/Alt/Cmd held (leave those to VS Code / the OS).
+      if (
+        ev.key === 'Tab' &&
+        ev.target === inputEl &&
+        previewMode !== 'refs' &&
+        !inPivot &&
+        !ev.ctrlKey &&
+        !ev.altKey &&
+        !ev.metaKey
+      ) {
+        ev.preventDefault();
+        cycleScope(ev.shiftKey ? -1 : 1);
         return;
       }
       var onButton = ev.target && ev.target.tagName === 'BUTTON';
@@ -717,6 +783,21 @@
     if (pinEl) {
       pinEl.addEventListener('click', function () {
         post('togglePin');
+        inputEl.focus();
+      });
+    }
+
+    if (refIndicatorEl) {
+      // Clicking the references chip exits the references view: for the classic list pivot that means
+      // `back` (restore the prior search); for the sticky preview-pane list it means re-selecting the
+      // active row so its source preview replaces the refs list. Either way the chip then hides.
+      refIndicatorEl.addEventListener('click', function () {
+        if (inPivot) {
+          scrollResetPending = true;
+          post('back');
+        } else if (previewMode === 'refs') {
+          setActive(activeIndex);
+        }
         inputEl.focus();
       });
     }
