@@ -18,6 +18,8 @@
   // Sections the user has opened or closed by hand, against whatever the panel
   // would have chosen — their answer, kept across re-renders.
   const sectionChoice = new Map();
+  // Windows with WSL: gates the actions that only mean anything there.
+  let windowsHost = false;
 
   // Internal key -> the real codicon name. This is the single place a key is
   // translated; nothing else invents a glyph.
@@ -116,7 +118,8 @@
       (a.version ? ` data-version="${esc(a.version)}"` : '') +
       (a.dir ? ` data-dir="${esc(a.dir)}"` : '') +
       (a.folder ? ` data-folder="${esc(a.folder)}"` : '') +
-      (a.login ? ` data-login="${esc(a.login)}"` : '');
+      (a.login ? ` data-login="${esc(a.login)}"` : '') +
+      (a.name ? ` data-name="${esc(a.name)}"` : '');
     const title = ` title="${esc(a.title || label)}"`;
 
     if (a.iconOnly) {
@@ -378,6 +381,31 @@
       iconOnly: true,
       title: 'Open product folder',
     });
+    const openTerminal = btn('openVersionTerminal', 'Open Terminal', 'terminal', 'btn-ghost', {
+      version: v.version,
+      iconOnly: true,
+      title: 'Open a terminal for this version',
+    });
+    // The Windows client is a separate download from the server product, and only
+    // means anything on Windows.
+    const client = !windowsHost
+      ? ''
+      : v.clientExtracted
+        ? btn('openWindowsClientFolder', 'Open Client Folder', 'folderOpen', 'btn-ghost', {
+            version: v.version,
+            iconOnly: true,
+            title: 'Open the Windows client folder',
+          }) +
+          btn('deleteWindowsClient', 'Delete Client', 'trash', 'btn-ghost', {
+            version: v.version,
+            iconOnly: true,
+            title: 'Remove the extracted Windows client',
+          })
+        : btn('installWindowsClient', 'Install Client', 'install', 'btn-ghost', {
+            version: v.version,
+            iconOnly: true,
+            title: 'Download and extract the Windows client',
+          });
 
     if (state === 'downloaded') {
       return (
@@ -398,7 +426,7 @@
     }
     if (state === 'local') {
       return (
-        cell(openFolder) +
+        cell(openFolder + openTerminal + client) +
         cell(
           btn('unregisterLocalVersion', 'Unregister', null, 'btn-ghost', {
             version: v.version,
@@ -408,7 +436,7 @@
       );
     }
     return (
-      cell(openFolder) +
+      cell(openFolder + openTerminal + client) +
       cell(
         btn('uninstallVersion', 'Uninstall', 'trash', 'btn-ghost', {
           version: v.version,
@@ -437,7 +465,12 @@
     const installed = versionsInstalledCount(versions);
     const actions =
       btn('installNewVersion', 'Install Version…', 'plus', 'btn-ghost', { iconOnly: true }) +
-      btn('registerLocalVersion', 'Register Local…', 'folderOpen', 'btn-ghost', { iconOnly: true });
+      btn('registerLocalVersion', 'Register Local…', 'folderOpen', 'btn-ghost', {
+        iconOnly: true,
+      }) +
+      btn('openWalkthrough', 'Get Started with GemStone', 'notebook', 'btn-ghost', {
+        iconOnly: true,
+      });
 
     if (!onDisk.length) {
       return section(
@@ -531,6 +564,24 @@
       state = `<span class="svc-state off">Stopped</span>`;
     }
 
+    const extras =
+      (stale
+        ? btn('deleteStaleLock', 'Delete stale lock', 'trash', 'btn-ghost', {
+            dir: db.dirName,
+            name: proc.name,
+            iconOnly: true,
+            title: `Remove the stale lock file for ${esc(proc.name)}`,
+          })
+        : '') +
+      (!isStone && windowsHost && proc
+        ? btn('copyNetldiHost', 'Copy host', 'target', 'btn-ghost', {
+            dir: db.dirName,
+            name: proc.name,
+            iconOnly: true,
+            title: 'Copy the host clients should use to reach this NetLDI',
+          })
+        : '');
+
     const toggle = running
       ? btn(isStone ? 'stopStone' : 'stopNetldi', 'Stop', 'stop', 'btn-ghost', {
           dir: db.dirName,
@@ -549,7 +600,7 @@
         <span class="proc-name mono">${esc(name)}</span>
         ${badge(label)}
       </span>
-      <span class="db-line-actions">${state}${toggle}</span>
+      <span class="db-line-actions">${state}${extras}${toggle}</span>
     </div>`;
   }
 
@@ -620,6 +671,11 @@
       : '';
     return (
       backup +
+      btn('installServerSupport', 'Install Server Support', 'install', 'btn-ghost', {
+        dir: db.dirName,
+        iconOnly: true,
+        title: 'Install the Enhanced Inspector and refactoring support into this stone',
+      }) +
       btn('openDbTerminal', 'Terminal', 'terminal', 'btn-ghost', {
         dir: db.dirName,
         iconOnly: true,
@@ -724,6 +780,7 @@
   }
 
   function render(state) {
+    windowsHost = !!state.windows;
     els.root.innerHTML = orderedSections(state)
       .map((s) => s.html)
       .join('');
@@ -769,6 +826,7 @@
       dirName: el.dataset.dir,
       folder: el.dataset.folder,
       login: el.dataset.login,
+      name: el.dataset.name,
       path: el.dataset.path,
       sessionId: el.dataset.session ? Number(el.dataset.session) : undefined,
       action: el.dataset.cmd,

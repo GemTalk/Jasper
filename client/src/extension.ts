@@ -3581,7 +3581,6 @@ export function activate(context: vscode.ExtensionContext) {
         storage: sysadminStorage,
         versionManager,
         processManager,
-        databaseManager,
         getLogins: () => storage.getLogins(),
         sessionManager,
         extensionUri: context.extensionUri,

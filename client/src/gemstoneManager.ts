@@ -19,7 +19,6 @@ import * as path from 'path';
 import { SysadminStorage } from './sysadminStorage';
 import { VersionManager, CatalogEntry } from './versionManager';
 import { ProcessManager, versionsMatch } from './processManager';
-import { DatabaseManager } from './databaseManager';
 import {
   getSharedMemory,
   getSharedMemoryInUse,
@@ -53,7 +52,6 @@ export interface GemstoneManagerDeps {
   storage: SysadminStorage;
   versionManager: VersionManager;
   processManager: ProcessManager;
-  databaseManager: DatabaseManager;
   getLogins: () => GemStoneLogin[];
   /** Live sessions — lets Connect show what is already connected, and which is current. */
   sessionManager: SessionManager;
@@ -128,6 +126,8 @@ interface VersionRow {
   extracted: boolean;
   local?: boolean;
   bundled?: boolean;
+  /** A Windows client for this release is extracted — it can be opened or removed. */
+  clientExtracted?: boolean;
 }
 
 interface ProcInfo {
@@ -191,6 +191,8 @@ interface FileEntry {
 
 interface ManagerState {
   platform: string;
+  /** Windows with WSL — where the client install and Copy Host actions mean anything. */
+  windows: boolean;
   rootPath: string;
   os: OsStatus;
   versions: VersionRow[];
@@ -208,6 +210,10 @@ type Inbound =
   | { command: 'uninstallVersion'; version: string }
   | { command: 'unregisterLocalVersion'; version: string }
   | { command: 'openVersionFolder'; version: string }
+  | { command: 'openVersionTerminal'; version: string }
+  | { command: 'installWindowsClient'; version: string }
+  | { command: 'openWindowsClientFolder'; version: string }
+  | { command: 'deleteWindowsClient'; version: string }
   | { command: 'registerLocalVersion' }
   | { command: 'installNewVersion' }
   | { command: 'createDatabase' }
@@ -220,6 +226,7 @@ type Inbound =
   | { command: 'stopNetldi'; dirName: string }
   | { command: 'replaceExtent'; dirName: string }
   | { command: 'backupDatabase'; dirName: string }
+  | { command: 'installServerSupport'; dirName: string }
   | { command: 'restoreBackup'; dirName: string; path: string }
   | { command: 'openDbTerminal'; dirName: string }
   | { command: 'openDbInFinder'; dirName: string }
@@ -229,11 +236,16 @@ type Inbound =
   | { command: 'createLoginFromDb'; dirName: string }
   | { command: 'connectLogin'; login: string }
   | { command: 'editLogin'; login: string }
+  | { command: 'deleteLogin'; login: string }
+  | { command: 'duplicateLogin'; login: string }
   | { command: 'createLogin' }
   | { command: 'startAndConnect'; login: string }
   | { command: 'selectSession'; sessionId: number }
   | { command: 'sessionAction'; sessionId: number; action: string }
   | { command: 'openSettings' }
+  | { command: 'copyNetldiHost'; dirName: string; name: string }
+  | { command: 'deleteStaleLock'; dirName: string; name: string }
+  | { command: 'openWalkthrough' }
   | { command: 'osRemedy'; action: string }
   | { command: 'quickSetup' };
 
@@ -266,6 +278,8 @@ const SESSION_ACTIONS: ReadonlySet<string> = new Set([
   'gemstone.sessionAbort',
   'gemstone.sessionPing',
   'gemstone.sessionLogout',
+  'gemstone.exportClasses',
+  'gemstone.fullLogicalBackup',
 ]);
 
 /**
@@ -500,6 +514,27 @@ export class GemstoneManagerPanel {
       case 'unregisterLocalVersion':
         await this.runVersionCommand('gemstone.unregisterLocalVersion', msg.version);
         return;
+      case 'openVersionTerminal':
+        await this.versionCommand('gemstone.openVersionTerminal', msg.version);
+        return;
+      case 'installWindowsClient':
+        await this.versionCommand('gemstone.downloadWindowsClient', msg.version);
+        return;
+      case 'openWindowsClientFolder':
+        await this.versionCommand('gemstone.openWindowsClientFolder', msg.version);
+        return;
+      case 'deleteWindowsClient':
+        await this.versionCommand('gemstone.deleteWindowsClientExtracted', msg.version);
+        return;
+      case 'copyNetldiHost':
+        await this.processCommand('gemstone.copyNetldiHost', msg.dirName, msg.name);
+        return;
+      case 'deleteStaleLock':
+        await this.processCommand('gemstone.deleteStaleLock', msg.dirName, msg.name);
+        return;
+      case 'openWalkthrough':
+        await vscode.commands.executeCommand('gemstone.openWalkthrough');
+        return;
       case 'openVersionFolder':
         await this.runVersionCommand('gemstone.openVersionFolder', msg.version);
         return;
@@ -514,18 +549,15 @@ export class GemstoneManagerPanel {
       // Databases — reuse the existing commands with a synthetic DatabaseNode.
       // Creating a database also opens a matching login (prefilled), so a new
       // database is immediately connectable.
-      case 'createDatabase': {
-        const db = await this.deps.databaseManager.createDatabase();
-        if (db) {
-          await vscode.commands.executeCommand('gemstone.refreshDatabases');
-          await vscode.commands.executeCommand('gemstone.createLoginFromDb', {
-            kind: 'database',
-            db,
-          });
-        }
+      case 'createDatabase':
+        // Through the command like everything else: it creates the database and
+        // then adds the stone's DataCurator login unless one already targets it.
+        // Doing the create here instead skipped that check and opened the login
+        // editor, so a database made from the panel ended up different from one
+        // made anywhere else.
+        await vscode.commands.executeCommand('gemstone.createDatabase');
         await this.postState();
         return;
-      }
       case 'deleteDatabase':
         await this.runDbCommand('gemstone.deleteDatabase', msg.dirName, 'database');
         return;
@@ -562,6 +594,12 @@ export class GemstoneManagerPanel {
       case 'replaceExtent':
         await this.runDbCommand('gemstone.replaceExtent', msg.dirName, 'stone');
         return;
+      case 'installServerSupport':
+        // The command resolves the session it needs and says so when there is
+        // none, so the panel offers it per database without second-guessing.
+        await vscode.commands.executeCommand('gemstone.installServerSupport');
+        await this.postState();
+        return;
       case 'backupDatabase':
         // The command resolves the live session itself and says so when there
         // isn't one, so the panel does not second-guess it.
@@ -583,7 +621,13 @@ export class GemstoneManagerPanel {
         await this.connectLogin(msg.login);
         return;
       case 'editLogin':
-        await this.editLogin(msg.login);
+        await this.loginCommand('gemstone.editLogin', msg.login);
+        return;
+      case 'deleteLogin':
+        await this.loginCommand('gemstone.deleteLogin', msg.login);
+        return;
+      case 'duplicateLogin':
+        await this.loginCommand('gemstone.duplicateLogin', msg.login);
         return;
       case 'openSettings':
         // Extensions link to Settings rather than reimplementing it.
@@ -599,12 +643,17 @@ export class GemstoneManagerPanel {
       case 'sessionAction':
         await this.runSessionAction(msg.sessionId, msg.action);
         return;
-      case 'selectSession':
-        // Clicking a session that is already open means "work in this one",
-        // not "log in again".
-        this.deps.sessionManager.selectSession(msg.sessionId);
+      case 'selectSession': {
+        // Clicking a session that is already open means "work in this one", not
+        // "log in again". Through the command rather than the manager directly,
+        // so everything else showing the selection follows.
+        const activeSession = this.deps.sessionManager.getSession(msg.sessionId);
+        if (activeSession) {
+          await vscode.commands.executeCommand('gemstone.selectSession', { activeSession });
+        }
         await this.postState();
         return;
+      }
 
       // OS prerequisites.
       case 'osRemedy':
@@ -685,14 +734,16 @@ export class GemstoneManagerPanel {
   }
 
   /**
-   * Open a login in the login editor. `gemstone.editLogin` reads nothing off the
-   * tree item but its `login`, so the panel hands it the same shape the sidebar
-   * would — and inherits the read-only-while-connected rule that command owns.
+   * Run a login command on the login with this label. Each of them reads nothing
+   * off the tree item it is handed but its `login`, so that is the shape the
+   * panel supplies — and it inherits their own rules, like refusing to delete a
+   * login that has a session open.
    */
-  private async editLogin(label: string): Promise<void> {
+  private async loginCommand(command: string, label: string): Promise<void> {
     const login = this.deps.getLogins().find((l) => loginLabel(l) === label);
     if (!login) return;
-    await vscode.commands.executeCommand('gemstone.editLogin', { login });
+    await vscode.commands.executeCommand(command, { login });
+    await this.postState();
   }
 
   /**
@@ -750,6 +801,34 @@ export class GemstoneManagerPanel {
     const v = this.lastVersions.find((x) => x.version === version);
     if (!v) return;
     await vscode.commands.executeCommand(command, { version: v });
+    await this.postState();
+  }
+
+  /**
+   * Run a version command on the release with this number. They take a tree item
+   * and read only its `version`, so that is what the panel hands them.
+   */
+  private async versionCommand(command: string, version: string): Promise<void> {
+    const target = this.lastVersions.find((v) => v.version === version);
+    if (!target) return;
+    await vscode.commands.executeCommand(command, { version: target });
+    await this.postState();
+  }
+
+  /**
+   * Run a process command on one of a database's processes. They take a tree item
+   * and read only its `process`, and the stale-lock one refuses a process that is
+   * still responding — so the panel passes the live record rather than the row it
+   * last rendered.
+   */
+  private async processCommand(command: string, dirName: string, name: string): Promise<void> {
+    const db = this.lastDatabases.find((d) => d.dirName === dirName);
+    if (!db) return;
+    const process = this.deps.processManager
+      .getProcesses()
+      .find((p) => p.name === name && versionsMatch(p.version, db.config.version));
+    if (!process) return;
+    await vscode.commands.executeCommand(command, { process });
     await this.postState();
   }
 
@@ -912,6 +991,7 @@ export class GemstoneManagerPanel {
 
     return {
       platform: this.deps.storage.getPlatformKey() ?? process.platform,
+      windows: needsWsl(),
       rootPath: this.deps.storage.getRootPath(),
       os,
       versions,
@@ -1145,6 +1225,7 @@ export class GemstoneManagerPanel {
       extracted: v.extracted,
       local: v.local,
       bundled: v.bundled,
+      clientExtracted: v.clientExtracted,
     }));
   }
 

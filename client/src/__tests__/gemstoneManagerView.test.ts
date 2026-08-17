@@ -214,6 +214,37 @@ describe('GemStone Manager webview', () => {
     expect(root.querySelector('[data-section="os"]')!.textContent).toContain('NAT (172.20.1.5)');
   });
 
+  it('offers to clear the lock of a process that stopped responding', () => {
+    const stale = database({
+      stoneRunning: false,
+      processes: [{ type: 'stone', name: 'devKit', pid: 42, status: 'killed', responding: false }],
+    });
+    const { root, host } = open(state({ databases: [stale] }));
+
+    root.querySelector<HTMLButtonElement>('[data-action="deleteStaleLock"]')!.click();
+
+    expect(host.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'deleteStaleLock', dirName: 'devKit', name: 'devKit' }),
+    );
+  });
+
+  it('keeps the Windows client actions off a machine that is not Windows', () => {
+    const { root } = open(state());
+
+    expect(root.querySelector('[data-action="installWindowsClient"]')).toBeNull();
+    expect(root.querySelector('[data-action="copyNetldiHost"]')).toBeNull();
+  });
+
+  it('offers to install the Windows client on Windows', () => {
+    const { root, host } = open(state({ windows: true }));
+
+    root.querySelector<HTMLButtonElement>('[data-action="installWindowsClient"]')!.click();
+
+    expect(host.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'installWindowsClient', version: '3.7.5' }),
+    );
+  });
+
   it('warns when the machine has no room for another cache, even over the limit', () => {
     const noRoom = [
       {
