@@ -8,6 +8,7 @@
 import * as crypto from 'crypto';
 import { readWebviewScript } from '../webviewAssets';
 import { CATEGORY_BY_ID, OmniCategoryId, OmniConfig } from './omniTypes';
+import { MatchMode } from './omniMatch';
 import { OmniEngine, OmniViewData } from './omniEngine';
 
 // The Alt+Enter (references) gesture, rendered per platform. On macOS the Alt key is Option, shown
@@ -78,6 +79,7 @@ export function resultsMessage(
     caseSensitive: boolean;
     pinned: boolean;
     excludedFromAll: OmniCategoryId[];
+    matchMode: MatchMode;
   },
 ): Record<string, unknown> {
   return {
@@ -96,6 +98,8 @@ export function resultsMessage(
     // Which categories are currently held back from "All" — the scope filter renders its checkboxes
     // from this, so the panel always shows what the engine actually did.
     excludedFromAll: chrome.excludedFromAll,
+    // Engine-owned, like `caseSensitive` — so it IS re-sent every time, unlike `previewPane`.
+    matchMode: chrome.matchMode,
     placeholder: placeholderFor(view.pivot ? null : chrome.scopeId),
   };
   // NOTE: `previewPane` is deliberately NOT here. Once the webview has it from `configMessage` the
@@ -115,6 +119,7 @@ export function configMessage(config: OmniConfig, pinned: boolean): Record<strin
     // Starting values for the two in-panel controls; both are owned by the session afterwards.
     previewPane: config.previewPane,
     excludedFromAll: config.excludedFromAll,
+    matchMode: config.matchMode,
     placeholder: placeholderFor(null),
     keyHint: REFERENCES_KEY_HINT,
   };
@@ -128,11 +133,13 @@ export interface CommonInbound {
   id?: number;
   /** Categories to hold back from the "All" fan-out (the scope filter's checkbox state). */
   excludedFromAll?: OmniCategoryId[];
+  /** The match algorithm picked from the panel. */
+  mode?: MatchMode;
 }
 
 /**
  * Run the engine op for a host-independent message (query / setScope / toggleCase / loadMore /
- * loadAll / references / back / setExcludedFromAll). Returns the fresh view, `null` when superseded,
+ * loadAll / references / back / setExcludedFromAll / setMatchMode). Returns the fresh view, `null` when superseded,
  * or `undefined` when the message isn't one of these (so the host handles it —
  * ready/activate/preview/close/togglePin). The preview-pane toggle is absent on purpose: it never
  * reaches the host at all, since hiding the pane is pure chrome with no engine effect.
@@ -158,6 +165,8 @@ export function dispatchEngineMessage(
       return engine.exitPivot();
     case 'setExcludedFromAll':
       return engine.setExcludedFromAll(m.excludedFromAll ?? []);
+    case 'setMatchMode':
+      return engine.setMatchMode(m.mode ?? 'fuzzy');
     default:
       return undefined;
   }
@@ -422,7 +431,7 @@ export function renderOmniHtml(opts: { showPin: boolean }): string {
     /* Two controls over what a search COSTS: the preview-pane toggle and the All-scope filter.
        Kept in their own block (and shaped to match the case chip rather than editing its rule) so
        this stays an additive hunk. No backticks anywhere in here - this is a template literal. */
-    #previewToggle, #scopeFilter {
+    #previewToggle, #scopeFilter, #matchMode {
       flex: 0 0 auto;
       padding: 5px 9px;
       border: 1px solid var(--vscode-input-border, transparent);
@@ -434,6 +443,13 @@ export function renderOmniHtml(opts: { showPin: boolean }): string {
       opacity: 0.65;
     }
     #previewToggle.active, #scopeFilter.active {
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+      border-color: var(--vscode-button-background);
+      opacity: 1;
+    }
+    /* The algorithm chip always shows its CURRENT value as text, so it needs no on/off state. */
+    #matchMode {
       background: var(--vscode-button-background);
       color: var(--vscode-button-foreground);
       border-color: var(--vscode-button-background);
@@ -498,6 +514,7 @@ export function renderOmniHtml(opts: { showPin: boolean }): string {
         <button id="scopeFilter" title="Choose which scopes the All search runs" aria-label="Choose which scopes the All search runs" aria-haspopup="true" aria-expanded="false">Scopes</button>
         <div id="scopeFilterMenu" role="menu" hidden></div>
       </span>
+      <button id="matchMode" title="Match algorithm" aria-label="Match algorithm">Fuzzy</button>
       ${pinButton}
     </div>
     <div id="breadcrumb"></div>

@@ -194,6 +194,7 @@ describe('webview message payloads (#40 / #41)', () => {
       caseSensitive: false,
       pinned: false,
       excludedFromAll: ['methods'],
+      matchMode: 'fuzzy',
     });
     expect(msg.excludedFromAll).toEqual(['methods']);
   });
@@ -207,6 +208,7 @@ describe('webview message payloads (#40 / #41)', () => {
       caseSensitive: false,
       pinned: false,
       excludedFromAll: [],
+      matchMode: 'fuzzy',
     });
     expect(Object.keys(msg)).not.toContain('previewPane');
   });

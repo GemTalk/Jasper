@@ -24,7 +24,7 @@ import {
   OmniProvider,
   OmniResult,
 } from './omniTypes';
-import { match, compareMatches } from './omniMatch';
+import { match, compareMatches, MatchMode } from './omniMatch';
 import { referenceRequestFor } from './references';
 
 /** A single result row, flattened for the webview (no non-serialisable `action`). */
@@ -257,6 +257,8 @@ export interface OmniEngine {
   setScope(scopeId: OmniCategoryId | null): Promise<OmniViewData | null>;
   /** Toggle case-sensitive matching; re-runs the current term. */
   toggleCase(): Promise<OmniViewData | null>;
+  /** Switch the match algorithm for this session; re-runs the current term. */
+  setMatchMode(mode: MatchMode): Promise<OmniViewData | null>;
   /** Grow the result cap by one page; re-runs the current term. */
   loadMore(): Promise<OmniViewData | null>;
   /** Jump the cap to everything (bounded by the server fetch caps); re-runs the current term. */
@@ -281,6 +283,7 @@ export interface OmniEngine {
     caseSensitive: boolean;
     pivot: boolean;
     excludedFromAll: OmniCategoryId[];
+    matchMode: MatchMode;
   };
 }
 
@@ -290,6 +293,9 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
   let scopeId: OmniCategoryId | null = null;
   let lastRawValue = '';
   let caseSensitive = config.caseSensitive;
+  // The live match algorithm. Exactly parallel to `caseSensitive`: both change how the SAME corpus is
+  // matched, so both are worth trying mid-search rather than only in settings.json.
+  let matchMode = config.matchMode;
   let scopeLimit = config.maxResultsPerCategory;
   // Categories the user holds back from the "All" fan-out. Seeded from settings, then owned by the
   // panel's scope filter for the rest of the session — the toggle does NOT rewrite settings (same
@@ -306,6 +312,7 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
   const effectiveConfig = (): OmniConfig => ({
     ...config,
     caseSensitive,
+    matchMode,
     maxResultsPerCategory: scopeLimit,
   });
 
@@ -319,7 +326,10 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
     if (term.length === 0) return [...rows];
     const scored: OmniResult[] = [];
     for (const r of rows) {
-      const m = match(term, r.label, { mode: config.matchMode, caseSensitive });
+      // `matchMode`, not `config.matchMode`: the pivot filter has to honour a live algorithm change
+      // like every other match in the engine does, or switching modes would appear to do nothing
+      // while a references list is open.
+      const m = match(term, r.label, { mode: matchMode, caseSensitive });
       if (m) scored.push({ ...r, score: m.score, ranges: m.ranges });
     }
     scored.sort((a, b) =>
@@ -411,6 +421,12 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
       caseSensitive = !caseSensitive;
       return runSearch(lastRawValue);
     },
+    async setMatchMode(mode) {
+      matchMode = mode;
+      // Deliberately does NOT reset the page cap, matching `toggleCase`: changing how the same corpus
+      // is matched is not a new question, so if you had loaded more you keep it.
+      return runSearch(lastRawValue);
+    },
     async loadMore() {
       scopeLimit += config.maxResultsPerCategory;
       return runSearch(lastRawValue);
@@ -463,6 +479,7 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
       caseSensitive,
       pivot: pivot !== null,
       excludedFromAll: [...excludedFromAll],
+      matchMode,
     }),
   };
 }

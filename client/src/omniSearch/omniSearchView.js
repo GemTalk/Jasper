@@ -38,6 +38,7 @@
     var previewToggleEl = doc.getElementById('previewToggle');
     var scopeFilterEl = doc.getElementById('scopeFilter');
     var scopeFilterMenuEl = doc.getElementById('scopeFilterMenu');
+    var matchModeEl = doc.getElementById('matchMode');
 
     // The currently-rendered row elements, in display order — the target of Up/Down navigation.
     // `activeIndex` points into it; -1 = nothing active.
@@ -72,6 +73,8 @@
     var excludedFromAll = [];
     // The category descriptors last pushed by the host, for rebuilding the scope-filter menu.
     var tabCategories = [];
+    // The live match algorithm, mirrored from the engine (which owns it, as it does case-sensitivity).
+    var matchMode = 'fuzzy';
 
     function post(command, extra) {
       var msg = { command: command };
@@ -425,6 +428,29 @@
       return !!scopeFilterMenuEl && !scopeFilterMenuEl.hasAttribute('hidden');
     }
 
+    // ── Match algorithm, switchable mid-search (#42) ────────────────
+    // A three-state chip rather than a menu: it always SHOWS the current algorithm as text, which is
+    // both the label and the affordance, and cycling is one click. `matchMode` is engine-owned (like
+    // case sensitivity), so every results message refreshes it and the chip cannot drift.
+    var MATCH_MODES = ['fuzzy', 'substring', 'prefix'];
+    var MATCH_MODE_LABEL = { fuzzy: 'Fuzzy', substring: 'Substring', prefix: 'Prefix' };
+    var MATCH_MODE_HELP = {
+      fuzzy: 'Fuzzy — letters in order, gaps allowed (oc matches OrderedCollection)',
+      substring: 'Substring — the text must appear as-is, anywhere',
+      prefix: 'Prefix — the name must start with what you typed',
+    };
+
+    function setMatchMode(mode) {
+      matchMode = MATCH_MODES.indexOf(mode) >= 0 ? mode : 'fuzzy';
+      if (!matchModeEl) return;
+      matchModeEl.textContent = MATCH_MODE_LABEL[matchMode];
+      matchModeEl.title = MATCH_MODE_HELP[matchMode] + ' — click to change';
+    }
+
+    function nextMatchMode() {
+      return MATCH_MODES[(MATCH_MODES.indexOf(matchMode) + 1) % MATCH_MODES.length];
+    }
+
     // ── Inbound host messages ───────────────────────────────────────
     function onMessage(event) {
       var msg = event.data || {};
@@ -437,6 +463,7 @@
           // this the toggle is the webview's own, so results messages must not carry (and undo) it.
           if (typeof msg.previewPane === 'boolean') setPreviewEnabled(msg.previewPane);
           if (Array.isArray(msg.excludedFromAll)) excludedFromAll = msg.excludedFromAll.slice();
+          if (typeof msg.matchMode === 'string') setMatchMode(msg.matchMode);
           tabCategories = msg.categories || [];
           renderTabs(msg.categories, msg.scopeId);
           renderScopeFilter();
@@ -448,6 +475,7 @@
         case 'results':
           setError('');
           if (Array.isArray(msg.excludedFromAll)) excludedFromAll = msg.excludedFromAll.slice();
+          if (typeof msg.matchMode === 'string') setMatchMode(msg.matchMode);
           tabCategories = msg.categories || [];
           renderTabs(msg.categories, msg.scopeId);
           renderScopeFilter();
@@ -883,6 +911,14 @@
       });
     }
 
+    if (matchModeEl) {
+      matchModeEl.addEventListener('click', function () {
+        scrollResetPending = true; // a different algorithm is a different answer — start at the top
+        post('setMatchMode', { mode: nextMatchMode() });
+        inputEl.focus();
+      });
+    }
+
     // Click anywhere else dismisses the scope menu (standard menu behaviour; the menu's own clicks
     // stop propagation so toggling several scopes in a row keeps it open).
     doc.addEventListener('click', function (ev) {
@@ -935,6 +971,9 @@
       scopeMenuOpen: scopeMenuOpen,
       excludedFromAll: function () {
         return excludedFromAll.slice();
+      },
+      matchMode: function () {
+        return matchMode;
       },
     };
   }

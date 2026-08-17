@@ -180,6 +180,42 @@ that persisted itself would pay a stone round-trip for a cosmetic change.
   the page cap, as `setScope` does) and echoes it on every results message, so the menu can never
   drift from what the search actually did.
 
+- **Match algorithm (the `Fuzzy`/`Substring`/`Prefix` chip, `gemstone.omniSearch.matchMode`).** The
+  algorithm was settings-only, so comparing two of them meant leaving the search, editing
+  settings.json and starting over — for a choice whose whole point is that the right answer depends
+  on what you are hunting for. The chip shows the current algorithm as its own label (no legend
+  needed) and cycles on click. The engine owns the live value, exactly as it owns case sensitivity,
+  and echoes it on every results message.
+  ⚠️ **A live algorithm has to reach `filterPivot` too.** That function read `config.matchMode` — the
+  value baked in when the engine was constructed — so switching algorithms did nothing while a
+  references list was open. It now reads the engine's live `matchMode`; there is a test pinning it.
+
+## Why the matcher stays hand-rolled (#428 item #44)
+
+`fuzzysort` was weighed against `omniMatch` and **not adopted**. Measured, not assumed: the real
+`omniMatch.ts` was compiled out of the worktree and benchmarked against `fuzzysort` 4.0.2 on three
+corpora — the repo's own vendored Smalltalk class names (2 063) and selectors (8 230), plus a 20 000
+name corpus scaled from those (synthetic, but with authentic name shapes) to stand in for a real
+image. The benchmark ran outside the repo so no dependency was added to answer the question.
+
+- **Speed: fuzzysort wins, and it does not matter.** It is 3–24× faster (4.4× overall on 20 000
+  names). But `omniMatch`'s absolute worst case there is **16 ms for a single-character query**, and
+  3–8 ms for realistic ones — inside one frame, behind a 120 ms debounce. Nobody is waiting on it.
+- **Recall is identical.** Both returned exactly the same number of hits for every query on all three
+  corpora, so the hand-rolled subsequence matcher is not missing results.
+- **Ranking is at least as good, and arguably better.** For `oc`, `omniMatch` gives
+  `OCCURRENCE, Once, ONCE, OrderedCollection` where fuzzysort gives
+  `OCCURRENCE, SubOnlyCVar, OrderedCollection, Lock` — our word-start and contiguity weights are
+  tuned for camelCase identifiers.
+- **It would cost two shipped features.** fuzzysort is **fuzzy-only** — no `substring` or `prefix` —
+  and has **no case-sensitive option** (it always folds case; `single('OC', 'OrderedCollection')`
+  matches). Jasper exposes both as user settings, and the chip above just made the mode switchable
+  mid-search. Adopting fuzzysort would mean removing them.
+- **Plus a runtime dependency** (17.2 kB minified, no transitive deps — cheap, but not free on a
+  supply-chain surface this repo has been deliberately hardening).
+
+Revisit only if the corpus grows by an order of magnitude AND the matcher shows up in a profile.
+
 ## Deferred / follow-ups (explicitly NOT in this issue)
 
 - Phase-2 **webview Spotter** (labeled filter-button row, inspector preview, screenshots' look).
