@@ -48,6 +48,17 @@ icon, isEnabled, search(query, token) }`. Providers: **Classes, Methods, Diction
      - _Categories_ — class-category names; a whole-image scan (`getAllClassCategories`) so it
        **lazy-loads on first search**, not on picker open.
 
+     ⚠️ Being excluded from the all-scope fan-out has a UX cost that has to be paid for explicitly: an
+     All-scope search silently returns nothing for a term only those scopes could find, so "no results"
+     is indistinguishable from "not in the image". Reproduced with `no such element` — 4 hits under
+     Source, 0 under All. So while the All scope is active **and** something is typed, the view shows a
+     hint under the field naming the skipped scopes, each one a button that switches to it:
+     `Not searched here: Source · Literals · Categories — click one to search it` (`updateScopeHint` in
+     `omniSearchView.js`, triage **#21**). It stays silent when a heavy scope is already active (its own
+     placeholder hint applies then), when the field is empty, and when the user has disabled the heavy
+     scopes via the `categories` setting. Enter was deliberately left alone — it activates the selected
+     row, and making it scope-dependent would trade one surprise for another.
+
 4. **Pluggable, savable match algorithm** (the issue asks for this). A pure matcher
    (`omniMatch.ts`) with modes `fuzzy` (subsequence, default) | `substring` | `prefix`, plus
    case-sensitivity — read from settings (`gemstone.omniSearch.matchMode`,

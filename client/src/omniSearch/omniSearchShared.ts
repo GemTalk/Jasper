@@ -278,6 +278,28 @@ export function renderOmniHtml(opts: { showPin: boolean }): string {
       border-color: var(--vscode-button-background);
       opacity: 1;
     }
+    /* "Not searched here: Source - Literals - Categories" under the field while the All scope is
+       active. Those three are explicitOnly, so an All-scope search silently skips them and "no results"
+       is indistinguishable from "not in the image" (triage #21). No display rule here on purpose: the
+       element starts hidden via an inline style and the view sets explicit display values, because a
+       rule here would beat the view clearing the inline style. Unlike the footer's cap note this one
+       does NOT reserve space when hidden — an empty line under the field would just be a gap. */
+    #scopehint {
+      margin-top: var(--omni-gap);
+      font-size: 0.9em;
+      color: var(--vscode-descriptionForeground);
+    }
+    #scopehint button {
+      background: transparent;
+      border: none;
+      padding: 0 2px;
+      font-family: inherit;
+      font-size: inherit;
+      color: var(--vscode-textLink-foreground);
+      cursor: pointer;
+      text-decoration: underline;
+    }
+    #scopehint button:hover { color: var(--vscode-textLink-activeForeground); }
     #breadcrumb { margin-top: var(--omni-gap); font-size: 0.9em; color: var(--vscode-descriptionForeground); display: none; }
     #error {
       margin-top: var(--omni-gap);
@@ -441,6 +463,7 @@ export function renderOmniHtml(opts: { showPin: boolean }): string {
       <button id="case" title="Case sensitivity" aria-pressed="false">Aa</button>
       ${pinButton}
     </div>
+    <div id="scopehint" style="display:none"></div>
     <div id="breadcrumb"></div>
     <div id="error"></div>
     <div id="body">

@@ -35,6 +35,7 @@ const SHELL =
   '<div id="field"><input id="query" type="text"><button id="clear" style="display:none">×</button></div>' +
   '<button id="case">Aa</button>' +
   '<button id="pin">📌</button>' +
+  '<div id="scopehint" style="display:none"></div>' +
   '<div id="breadcrumb"></div>' +
   '<div id="error"></div>' +
   '<div id="body"><ul id="results"></ul><div id="preview"></div></div>' +
@@ -59,6 +60,22 @@ function row(id: number, label: string, over: Record<string, unknown> = {}) {
 function refRow(id: number, label: string, description?: string) {
   return { id, label, ranges: [], description, categoryId: 'methods', categoryLabel: 'Method' };
 }
+
+/** The category payload the host really sends: four plain scopes + the three explicit-only ones. */
+const CATEGORIES = [
+  { id: 'classes', label: 'Classes', explicitOnly: false },
+  { id: 'methods', label: 'Methods', explicitOnly: false },
+  { id: 'dictionaries', label: 'Dictionaries', explicitOnly: false },
+  { id: 'globals', label: 'Globals', explicitOnly: false },
+  {
+    id: 'source',
+    label: 'Source',
+    explicitOnly: true,
+    searchHint: 'Type text to find inside method source',
+  },
+  { id: 'literals', label: 'Literals', explicitOnly: true },
+  { id: 'categories', label: 'Categories', explicitOnly: true },
+];
 
 function resultsMsg(over: Record<string, unknown> = {}) {
   return {
@@ -878,5 +895,95 @@ describe('Omni Search view — references in the preview pane', () => {
 
     expect(document.querySelectorAll('#preview .preview-ref').length).toBe(0);
     expect(document.querySelector('#preview .preview-src')!.textContent).toBe('foo def');
+  });
+});
+
+// Triage #21: the three explicit-only scopes (Source / Literals / Categories) are dropped by
+// `providersInScope` whenever the scope is All, so an All-scope search never runs them and nothing said
+// so. Verified live: `no such element` finds 4 methods under Source and 0 under All. The hint names the
+// skipped scopes and doubles as the one-click way into them.
+describe('Omni Search view — scopes skipped under All (#21)', () => {
+  const hint = () => document.getElementById('scopehint') as HTMLElement;
+
+  /** Render an All-scope result set with something typed in the field. */
+  function searchUnderAll(handle: ReturnType<typeof mount>['handle'], term = 'no such element') {
+    (document.getElementById('query') as HTMLInputElement).value = term;
+    handle.renderTabs(CATEGORIES, null);
+    handle.renderResults(resultsMsg({ rows: [], shownCount: 0, categories: CATEGORIES }));
+  }
+
+  it('names every skipped scope while the All scope is active', () => {
+    const { handle } = mount();
+    searchUnderAll(handle);
+    expect(hint().style.display).toBe('block');
+    expect(hint().textContent).toContain('Not searched here');
+    expect(hint().textContent).toContain('Source');
+    expect(hint().textContent).toContain('Literals');
+    expect(hint().textContent).toContain('Categories');
+    // The plain scopes ARE searched under All, so naming them would be a lie.
+    expect(hint().textContent).not.toContain('Classes');
+    expect(hint().textContent).not.toContain('Globals');
+  });
+
+  it('stays silent once a heavy scope is actually active', () => {
+    const { handle } = mount();
+    (document.getElementById('query') as HTMLInputElement).value = 'no such element';
+    handle.renderTabs(CATEGORIES, 'source');
+    handle.renderResults(resultsMsg({ rows: [row(0, 'Foo>>bar')], shownCount: 1 }));
+    // Scoped to Source the search really does run it — a warning here would be wrong.
+    expect(hint().style.display).toBe('none');
+    expect(hint().textContent).toBe('');
+  });
+
+  it('stays silent with an empty field — nothing typed means nothing is being skipped', () => {
+    const { handle } = mount();
+    (document.getElementById('query') as HTMLInputElement).value = '';
+    handle.renderTabs(CATEGORIES, null);
+    handle.renderResults(resultsMsg({ rows: [], shownCount: 0 }));
+    expect(hint().style.display).toBe('none');
+  });
+
+  it('stays silent when no heavy scope is enabled at all', () => {
+    const { handle } = mount();
+    const plainOnly = CATEGORIES.filter((c) => !c.explicitOnly);
+    (document.getElementById('query') as HTMLInputElement).value = 'foo';
+    handle.renderTabs(plainOnly, null);
+    handle.renderResults(resultsMsg({ rows: [], shownCount: 0, categories: plainOnly }));
+    // A user who turned the heavy scopes off via `categories` is not missing anything.
+    expect(hint().style.display).toBe('none');
+  });
+
+  it('switches to a skipped scope when its name is clicked', () => {
+    const { handle, vscode } = mount();
+    searchUnderAll(handle);
+    const links = hint().querySelectorAll('button');
+    expect(links.length).toBe(3);
+    links[0].click();
+    expect(vscode.postMessage).toHaveBeenCalledWith({ command: 'setScope', scopeId: 'source' });
+  });
+
+  it('carries each scope’s own search hint as the link tooltip', () => {
+    const { handle } = mount();
+    searchUnderAll(handle);
+    const source = hint().querySelector('button') as HTMLButtonElement;
+    expect(source.title).toBe('Type text to find inside method source');
+  });
+
+  it('appears as soon as you type, without waiting for the debounced reply', () => {
+    const { handle } = mount();
+    handle.renderTabs(CATEGORIES, null);
+    const input = document.getElementById('query') as HTMLInputElement;
+    input.value = 'no such element';
+    input.dispatchEvent(new Event('input'));
+    expect(hint().style.display).toBe('block');
+  });
+
+  it('disappears again when the field is cleared with the x', () => {
+    const { handle } = mount();
+    searchUnderAll(handle);
+    expect(hint().style.display).toBe('block');
+    (document.getElementById('clear') as HTMLButtonElement).click();
+    expect(hint().style.display).toBe('none');
+    expect(hint().textContent).toBe('');
   });
 });
