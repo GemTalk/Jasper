@@ -3515,8 +3515,12 @@ export class ExplorerController {
     this.selectDict(item);
     try {
       await this.views?.dict.reveal(item, { select: true, focus: true });
-    } catch {
-      /* ignore */
+    } catch (e) {
+      // No longer swallowed silently: log it so a future failure is diagnosable from the GCI log
+      // (mirrors the category-reveal path below).
+      logWarning(
+        `Omni dictionary reveal failed for ${name}: ${e instanceof Error ? e.message : String(e)}`,
+      );
     }
   }
 
@@ -3533,12 +3537,12 @@ export class ExplorerController {
       return;
     }
     this.selectDict(new DictItem(dictName, idx + 1));
-    const segment = categoryPath.split('-').pop() ?? categoryPath;
-    const catItem = new ClassCategoryItem(segment, categoryPath, false);
-    this.selectClassCategory(catItem);
 
-    // If the category isn't actually in this dictionary's loaded forest, say so — otherwise the jump
-    // silently appears to do nothing (the reported "strange spot").
+    // Check the category actually exists in this dictionary's loaded forest BEFORE mutating the
+    // category/classes panes. selectDict has just (synchronously) loaded classCategoryEntries, so
+    // allCategoryPaths() is valid here. Doing the check first means a missing category leaves the
+    // panes untouched instead of scrolling them to a node that isn't there — the jump would otherwise
+    // silently appear to do nothing (the reported "strange spot").
     if (
       !this.allCategoryPaths().some((p) => p === categoryPath || p.startsWith(`${categoryPath}-`))
     ) {
@@ -3547,6 +3551,10 @@ export class ExplorerController {
       );
       return;
     }
+
+    const segment = categoryPath.split('-').pop() ?? categoryPath;
+    const catItem = new ClassCategoryItem(segment, categoryPath, false);
+    this.selectClassCategory(catItem);
 
     // Surface the Class Categories view FIRST. When it lives in a collapsed/hidden sidebar,
     // TreeView.reveal() can no-op — which is exactly how an Omni category jump looked like it landed
