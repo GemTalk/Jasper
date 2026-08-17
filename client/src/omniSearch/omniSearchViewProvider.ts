@@ -69,13 +69,18 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
     if (this.view?.visible) void this.ensureEngine();
   }
 
-  /** Reveal + focus the view and its search field (the `ui: "panel"` entry point). */
-  async focus(): Promise<void> {
+  /** Reveal + focus the view and its search field (the `ui: "panel"` entry point).
+   *
+   *  Reports whether the view actually resolved. A reveal attempted while the view's `when` clause is
+   *  still false — i.e. before `gemstone.hasActiveSession` has propagated — silently shows nothing, so
+   *  a caller revealing on a login needs to know rather than assume (see `revealPanelAfterLogin`). */
+  async focus(): Promise<boolean> {
     this.focusPending = true;
     // Reveal (and, if needed, create) the view; then ask the field to take the cursor. If the webview
     // is still loading, the message is lost — the `ready` handler replays it (see onMessage).
     await vscode.commands.executeCommand(`${OMNI_VIEW_ID}.focus`);
     this.deliverFocus();
+    return this.view !== undefined;
   }
 
   private deliverFocus(): void {

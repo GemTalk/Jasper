@@ -8,6 +8,7 @@
  */
 import * as vscode from 'vscode';
 import { SessionManager, ActiveSession } from '../sessionManager';
+import { logWarning } from '../gciLog';
 import {
   defaultQueryExecutorUsing,
   sendersOf,
@@ -303,6 +304,43 @@ export async function runOmniSearch(
 /** globalState flag: the one-time "Ctrl/Cmd+Shift+A opens GemStone Search" tip has been shown. */
 const SEARCH_TIP_SHOWN_KEY = 'gemstone.gemstoneSearchTipShown';
 
+/** Bounded retry budget for the post-login reveal (see `revealPanelAfterLogin`): the first attempt is
+ *  immediate, so this only costs anything on a window slow enough to actually lose the race. */
+const REVEAL_ATTEMPTS = 5;
+const REVEAL_RETRY_MS = 60;
+
+/**
+ * Reveal the search panel after a login, waiting on the signal the view really depends on instead of
+ * guessing how long the workbench needs.
+ *
+ * `SessionManager.selectSession` fires `onDidChangeSelection` BEFORE it sets the
+ * `gemstone.hasActiveSession` context key, and that key is the view's `when` clause — so a reveal
+ * driven straight off the event finds no view to show and does nothing at all. The previous code slept
+ * a flat 400 ms and hoped: on a slow or busy window (remote, WSL, a crowded activation) that lost the
+ * race with no retry and no warning, and on a fast one it made the panel arrive a visible beat late.
+ *
+ * Instead: assert the context key ourselves and AWAIT it — idempotent, since the session manager sets
+ * the same value a tick later, but awaiting means it has actually landed — then reveal and use
+ * `focus()`'s report of whether the view resolved, retrying briefly if the workbench hasn't caught up.
+ * A reveal that never lands is logged instead of swallowed; the shortcut and status-bar button still
+ * work, so this is a warning, not an error.
+ */
+export async function revealPanelAfterLogin(
+  viewProvider: Pick<OmniSearchViewProvider, 'focus'>,
+  sleep: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+): Promise<boolean> {
+  await vscode.commands.executeCommand('setContext', 'gemstone.hasActiveSession', true);
+  for (let attempt = 1; attempt <= REVEAL_ATTEMPTS; attempt++) {
+    if (await viewProvider.focus()) return true;
+    if (attempt < REVEAL_ATTEMPTS) await sleep(REVEAL_RETRY_MS);
+  }
+  logWarning(
+    'GemStone Search: the search panel did not appear after login — the view never resolved. ' +
+      `Open it with ${OMNI_OPEN_KEY_HINT} or the GemStone Search button in the status bar.`,
+  );
+  return false;
+}
+
 export function registerOmniSearch(
   sessionManager: SessionManager,
   context?: vscode.ExtensionContext,
@@ -353,10 +391,10 @@ export function registerOmniSearch(
       const ui = vscode.workspace
         .getConfiguration('gemstone.omniSearch')
         .get<string>('ui', 'panel');
-      // Defer the reveal: `selectSession` fires THIS event BEFORE it sets the `gemstone.hasActiveSession`
-      // context that gates the view's `when` clause, so focusing synchronously finds no view to reveal.
-      // A short delay lets the context propagate (and the login flow settle) before we switch tabs.
-      if (ui === 'panel') setTimeout(() => void viewProvider.focus(), 400);
+      // `selectSession` fires THIS event BEFORE it sets the `gemstone.hasActiveSession` context that
+      // gates the view's `when` clause, so revealing right here finds no view. `revealPanelAfterLogin`
+      // waits on that context key rather than on a timer (and reports a reveal that never lands).
+      if (ui === 'panel') void revealPanelAfterLogin(viewProvider);
     }
     hadSession = nowActive;
   };
