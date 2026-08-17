@@ -3270,14 +3270,25 @@ export class ExplorerController {
   // Reveal + select a method row, honoring the pane's current view state: switch
   // to the method's side (the pane shows one side at a time) and drop the category
   // parent when grouping is off, so the built node's id matches the rendered row.
-  private async revealMethodRow(isMeta: boolean, info: SelectorInfo): Promise<void> {
+  private async revealMethodRow(
+    isMeta: boolean,
+    info: SelectorInfo,
+    opts: { focusEditorAfter?: boolean } = {},
+  ): Promise<void> {
     this.setMethodSide(isMeta);
     const displayCategory = this.groupMethodsByCategory() ? info.category : undefined;
+    const item = new MethodItem(isMeta, info, displayCategory, this.methodSourceUri(isMeta, info));
     try {
-      await this.views?.method.reveal(
-        new MethodItem(isMeta, info, displayCategory, this.methodSourceUri(isMeta, info)),
-        { select: true, focus: false, expand: true },
-      );
+      // In this VS Code build focus:false selects the row but never scrolls it into view (#43); only
+      // focus:true scrolls. For editor-driven navigation we force the scroll with focus:true and hand
+      // focus straight back to the editor so the tree doesn't keep it. A passive background resync
+      // stays a plain (non-scrolling) select so it can't yank focus off whatever the user is doing.
+      if (opts.focusEditorAfter) {
+        await this.views?.method.reveal(item, { select: true, focus: true, expand: true });
+        await vscode.commands.executeCommand('workbench.action.focusActiveEditorGroup');
+      } else {
+        await this.views?.method.reveal(item, { select: true, focus: false, expand: true });
+      }
     } catch {
       /* ignore */
     }
@@ -3662,7 +3673,7 @@ export class ExplorerController {
         (i) => i.selector === opts.revealMethod!.selector,
       );
       if (info) {
-        await this.revealMethodRow(opts.revealMethod.isMeta, info);
+        await this.revealMethodRow(opts.revealMethod.isMeta, info, { focusEditorAfter: true });
         this.syncTitles();
       }
     }
@@ -3724,7 +3735,7 @@ export class ExplorerController {
           (i) => i.selector === revealMethod.selector,
         );
         if (info) {
-          await this.revealMethodRow(revealMethod.isMeta, info);
+          await this.revealMethodRow(revealMethod.isMeta, info, { focusEditorAfter: true });
           this.syncTitles();
         }
       }
@@ -4412,7 +4423,7 @@ export class ExplorerController {
     );
     if (!added) return;
     this.pendingNewMethod = undefined;
-    void this.revealMethodRow(pending.isMeta, added);
+    void this.revealMethodRow(pending.isMeta, added, { focusEditorAfter: true });
   }
 
   // ── Drag & drop ─────────────────────────────────────────────────────────────
