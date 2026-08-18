@@ -88,14 +88,29 @@ export function getSharedMemory(): Promise<{ shmmax: number; shmall: number } | 
   });
 }
 
-/** Is shared memory at least the 1 GB GemStone needs (both shmmax and shmall)?
- *  Treats an unreadable sysctl as "not configured". */
-export async function isSharedMemoryConfigured(): Promise<boolean> {
-  const mem = await getSharedMemory();
-  if (!mem) return false;
+/**
+ * Whether a shared-memory reading clears the 1 GB a stone needs, and how to say
+ * how much there is. The one place that knows the divisors and the threshold:
+ * the Start Stone preflight gates on it, Quick Setup warns on it, and the OS
+ * view displays it, so a reading they disagree about is a machine one calls
+ * ready and another refuses.
+ */
+export function sharedMemoryStatus(mem: { shmmax: number; shmall: number } | undefined): {
+  configured: boolean;
+  gbLabel: string;
+} {
+  if (!mem) return { configured: false, gbLabel: '0' };
   const shmmaxGb = mem.shmmax / Math.pow(2, 30);
   const shmallGb = mem.shmall / Math.pow(2, 18);
-  return shmmaxGb >= 1 && shmallGb >= 1;
+  const minGb = Math.min(shmmaxGb, shmallGb);
+  return {
+    configured: shmmaxGb >= 1 && shmallGb >= 1,
+    gbLabel: minGb > 1024 ? '≥ 1' : String(Math.round(minGb * 10) / 10),
+  };
+}
+
+export async function isSharedMemoryConfigured(): Promise<boolean> {
+  return sharedMemoryStatus(await getSharedMemory()).configured;
 }
 
 /** Does the systemd logind config set `RemoveIPC=no`? Without it, systemd
@@ -465,17 +480,8 @@ export class OsConfigTreeProvider implements vscode.TreeDataProvider<OsConfigNod
     }
 
     if (showLinuxChecks || process.platform === 'darwin') {
-      const mem = await getSharedMemory();
-      if (mem) {
-        const shmmaxGb = mem.shmmax / Math.pow(2, 30);
-        const shmallGb = mem.shmall / Math.pow(2, 18);
-        const minGb = Math.min(shmmaxGb, shmallGb);
-        const configured = shmmaxGb >= 1 && shmallGb >= 1;
-        const gbLabel = minGb > 1024 ? '≥ 1' : String(Math.round(minGb * 10) / 10);
-        nodes.push({ kind: 'sharedMemoryStatus', configured, gbLabel });
-      } else {
-        nodes.push({ kind: 'sharedMemoryStatus', configured: false, gbLabel: '0' });
-      }
+      const { configured, gbLabel } = sharedMemoryStatus(await getSharedMemory());
+      nodes.push({ kind: 'sharedMemoryStatus', configured, gbLabel });
     }
 
     if (showLinuxChecks) {

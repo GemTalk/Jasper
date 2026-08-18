@@ -8,7 +8,7 @@ import { ProcessManager } from './processManager';
 import { LoginStorage } from './loginStorage';
 import { DEFAULT_GS_PW } from './loginTypes';
 import { GemStoneVersion } from './sysadminTypes';
-import { getSharedMemory } from './sharedMemoryTreeProvider';
+import { getSharedMemory, sharedMemoryStatus } from './sharedMemoryTreeProvider';
 import { appendSysadmin } from './sysadminChannel';
 import { isWindows } from './wslBridge';
 import { bundledWindowsClientGciPath } from './bundledGci';
@@ -49,10 +49,7 @@ export async function runQuickSetup(deps: QuickSetupDeps): Promise<void> {
 
   // ── Step 1: Check shared memory ─────────────────────────
   if (process.platform !== 'win32') {
-    const mem = await getSharedMemory();
-    const shmmaxGb = mem ? mem.shmmax / Math.pow(2, 30) : 0;
-    const shmallGb = mem ? mem.shmall / Math.pow(2, 18) : 0;
-    if (shmmaxGb < 1 || shmallGb < 1) {
+    if (!sharedMemoryStatus(await getSharedMemory()).configured) {
       const choice = await vscode.window.showWarningMessage(
         'Shared memory is not configured (< 1 GB). Run the setup script first?',
         { modal: true },
