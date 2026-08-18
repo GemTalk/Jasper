@@ -207,7 +207,10 @@ export function renderOmniHtml(opts: { showPin: boolean }): string {
       border-color: var(--vscode-button-background);
     }
     .tab.explicit { font-style: italic; border-style: dashed; }
-    .tab.explicit::before { content: '\\1F50D\\00A0'; font-style: normal; font-size: 0.9em; }
+    /* Heavy/slow scopes (Source/Literals/Categories) each run a full-image scan, so they carry a
+       distinct hourglass marker rather than the plain magnifier the whole field otherwise reads as.
+       No backticks in this comment -- the stylesheet is a template literal. */
+    .tab.explicit::before { content: '\\231B\\00A0'; font-style: normal; font-size: 0.9em; }
     .tabsep {
       align-self: center;
       margin: 0 4px 0 8px;
@@ -278,6 +281,23 @@ export function renderOmniHtml(opts: { showPin: boolean }): string {
       border-color: var(--vscode-button-background);
       opacity: 1;
     }
+    /* References-mode indicator (#428 item 28): a chip in the field row, styled like the always-on
+       case toggle, that appears (filled/accent) whenever the panel is showing references or senders --
+       so it is obvious you are in a references view -- and clicking it exits back to the normal search.
+       Shown/hidden via an INLINE style the view sets, never via a stylesheet display:none. */
+    #refindicator {
+      flex: 0 0 auto;
+      padding: 5px 9px;
+      border: 1px solid var(--vscode-button-background);
+      border-radius: 4px;
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 0.85em;
+      white-space: nowrap;
+    }
+    #refindicator:hover { background: var(--vscode-button-hoverBackground, var(--vscode-button-background)); }
     /* "Not searched here: Source - Literals - Categories" under the field while the All scope is
        active. Those three are explicitOnly, so an All-scope search silently skips them and "no results"
        is indistinguishable from "not in the image" (triage #21). No display rule here on purpose: the
@@ -461,6 +481,7 @@ export function renderOmniHtml(opts: { showPin: boolean }): string {
         <button id="clear" title="Clear search" aria-label="Clear search" style="display:none">×</button>
       </div>
       <button id="case" title="Case sensitivity" aria-pressed="false">Aa</button>
+      <button id="refindicator" title="Showing references — click to exit" aria-pressed="false" style="display:none">↗ References</button>
       ${pinButton}
     </div>
     <div id="scopehint" style="display:none"></div>
@@ -471,7 +492,7 @@ export function renderOmniHtml(opts: { showPin: boolean }): string {
       <div id="preview"></div>
     </div>
     <div id="footer">
-      <span id="hints"><kbd>Enter</kbd> open · ${REFERENCES_KEY_HINT_HTML} references</span>
+      <span id="hints"><kbd>Enter</kbd> open · ${REFERENCES_KEY_HINT_HTML} references · <kbd>Tab</kbd>/<kbd>&#8679;Tab</kbd> switch scope</span>
       <span id="count"></span>
       <span id="capnote" role="status" style="visibility:hidden"></span>
       <button id="loadMore" title="Load more results" style="display:none">Load more</button>
