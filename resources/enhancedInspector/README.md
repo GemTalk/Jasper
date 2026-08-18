@@ -3,8 +3,9 @@
 These `*.gs` files are **vendored, generated build artifacts**, not source written for this repo.
 They are the GemStone-side [feenk GToolkit](https://github.com/feenkcom) remote-inspector support
 that [`enhancedInspectorInstall.ts`](../../client/src/enhancedInspector/enhancedInspectorInstall.ts)
-files into a stone (server-side, via `GsFileIn`) when a user runs the extension's "Install Server
-Support" command. They ship as runtime assets in the VSIX, which is why they live under
+files into a stone (server-side, via `GsFileIn`) via the extension's "Install Server Support"
+command, or headlessly with `npm run test:server:install-plugin` for a test stone. They ship as
+runtime assets in the VSIX, which is why they live under
 `resources/` alongside the other shipped bundles (`resources/refactoring/`,
 `resources/walkthrough/`, …).
 
