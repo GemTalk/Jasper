@@ -154,7 +154,7 @@
               "The result starts with the typed text."
             ],
             "default": "fuzzy",
-            "markdownDescription": "How your typed query is matched against the names in each scope: classes, method selectors, dictionaries, globals and class categories. **Source** and **Literals** match on the stone instead (whole method source / literal frames), so this setting does not affect them."
+            "markdownDescription": "How your typed query is matched against the names in each category: classes, method selectors, dictionaries, globals and class categories. **Source** and **Literals** match on the stone instead (whole method source / literal frames), so this setting does not affect them."
           },
           "gemstone.omniSearch.caseSensitive": {
             "type": "boolean",

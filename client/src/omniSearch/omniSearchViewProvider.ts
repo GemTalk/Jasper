@@ -33,6 +33,12 @@ import {
 
 export const OMNI_VIEW_ID = 'gemstoneOmniSearchView';
 
+/** How long `focus()` waits for the workbench to instantiate the view before reporting that the reveal
+ *  did not land. This is a give-up bound for REPORTING, not an estimate of how long a reveal takes: the
+ *  happy path returns the moment the view resolves, so a generous deadline costs the fast path nothing
+ *  and buys patience on a slow or busy window (remote, WSL, a crowded activation). */
+export const REVEAL_DEADLINE_MS = 5000;
+
 /** The session-bound deps plus the id they were built for (so we rebuild when the session changes). */
 export interface OmniViewContext {
   deps: OmniPanelDeps;
@@ -54,6 +60,10 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
   // reloaded them yet (see onSessionSynced). Cleared by flushPendingSync, and whenever the engine is
   // dropped or rebuilt — a fresh engine primes its corpora, so there is nothing left to catch up on.
   private syncPending = false;
+  // Fires when the workbench has actually instantiated the view. `focus()` waits on this rather than
+  // inspecting `this.view`, which only reports whether the view has EVER been built (it is set once in
+  // `resolveWebviewView` and never cleared) and so cannot tell a landed reveal from a lost one.
+  private readonly onDidResolveView = new vscode.EventEmitter<void>();
 
   constructor(private readonly resolveContext: () => Promise<OmniViewContext | null>) {}
 
@@ -67,6 +77,7 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
     view.onDidChangeVisibility(() => {
       if (view.visible) void this.onShown();
     });
+    this.onDidResolveView.fire(); // the definitive "the view exists now" signal — see focus()
   }
 
   /** A `gemstone.omniSearch` setting changed: drop the cached engine (which baked in the old config)
@@ -119,18 +130,41 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
     if (view) this.postView(view);
   }
 
+  /** Resolves true once the workbench has instantiated the view, false if it never does within
+   *  `deadlineMs`. An already-resolved view short-circuits, which is correct here: the view genuinely
+   *  exists, so `<viewId>.focus` had something to reveal. */
+  private whenResolved(deadlineMs: number): Promise<boolean> {
+    if (this.view) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      // `timer` is declared after `sub` but only ever read from inside its callback, which cannot run
+      // until both exist.
+      const sub = this.onDidResolveView.event(() => {
+        clearTimeout(timer);
+        sub.dispose();
+        resolve(true);
+      });
+      const timer = setTimeout(() => {
+        sub.dispose();
+        resolve(false);
+      }, deadlineMs);
+    });
+  }
+
   /** Reveal + focus the view and its search field (the `ui: "panel"` entry point).
    *
-   *  Reports whether the view actually resolved. A reveal attempted while the view's `when` clause is
-   *  still false — i.e. before `gemstone.hasActiveSession` has propagated — silently shows nothing, so
-   *  a caller revealing on a login needs to know rather than assume (see `revealPanelAfterLogin`). */
+   *  Reports whether THIS reveal landed — i.e. whether the view is instantiated by the time we return.
+   *  A reveal can come back before the workbench has built the provider, and one attempted while the
+   *  view's `when` clause is still false shows nothing at all, so a caller revealing on a login needs
+   *  to know rather than assume (see `revealPanelAfterLogin`). The wait is on the resolve event, not a
+   *  poll: `resolveWebviewView` is the only definitive signal that the view exists. */
   async focus(): Promise<boolean> {
     this.focusPending = true;
     // Reveal (and, if needed, create) the view; then ask the field to take the cursor. If the webview
     // is still loading, the message is lost — the `ready` handler replays it (see onMessage).
     await vscode.commands.executeCommand(`${OMNI_VIEW_ID}.focus`);
+    const resolved = await this.whenResolved(REVEAL_DEADLINE_MS);
     this.deliverFocus();
-    return this.view !== undefined;
+    return resolved;
   }
 
   private deliverFocus(): void {

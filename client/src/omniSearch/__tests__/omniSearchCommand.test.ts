@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 vi.mock('../../gciLog', async () => {
   const actual = await vi.importActual<typeof import('../../gciLog')>('../../gciLog');
@@ -6,8 +6,10 @@ vi.mock('../../gciLog', async () => {
 });
 
 import * as vscode from 'vscode';
+import { __resetConfig, __setConfig } from '../../__mocks__/vscode';
 import { logWarning } from '../../gciLog';
-import { buildOmniHandlers, revealPanelAfterLogin } from '../omniSearchCommand';
+import { buildOmniHandlers, registerOmniSearch, revealPanelAfterLogin } from '../omniSearchCommand';
+import { OMNI_VIEW_ID } from '../omniSearchViewProvider';
 
 describe('buildOmniHandlers', () => {
   beforeEach(() => vi.clearAllMocks());
@@ -77,19 +79,9 @@ describe('buildOmniHandlers', () => {
 });
 
 describe('revealPanelAfterLogin', () => {
-  /** A stub view provider whose `focus()` reports "the view resolved" after `resolvesOnAttempt` tries
-   *  — the workbench catching up with the `when` clause, which is the whole race being fixed. */
-  const providerResolvingOn = (resolvesOnAttempt: number) => {
-    let attempts = 0;
-    return {
-      focus: vi.fn<() => Promise<boolean>>(() => Promise.resolve(++attempts >= resolvesOnAttempt)),
-    };
-  };
-  const nap = (): Promise<void> => Promise.resolve(); // instant, so the bounded retry costs no wall time
-
   beforeEach(() => vi.clearAllMocks());
 
-  it('waits on the hasActiveSession context key before revealing, instead of on a timer', async () => {
+  it('sets the hasActiveSession context key before revealing, so the view is allowed to exist', async () => {
     // The context key the view's `when` clause reads must already be set when the reveal runs —
     // asserting it from inside focus() pins the ordering without restubbing executeCommand.
     let contextWasSetFirst = false;
@@ -104,41 +96,99 @@ describe('revealPanelAfterLogin', () => {
       }),
     };
 
-    await expect(revealPanelAfterLogin(provider, nap)).resolves.toBe(true);
+    await expect(revealPanelAfterLogin(provider)).resolves.toBe(true);
 
     expect(contextWasSetFirst).toBe(true);
   });
 
-  it('reveals on the first attempt when the view is already there (no retry, no delay)', async () => {
-    const provider = providerResolvingOn(1);
-    const sleep = vi.fn(nap);
+  it('reveals once and says nothing when the panel comes forward', async () => {
+    const provider = { focus: vi.fn<() => Promise<boolean>>(() => Promise.resolve(true)) };
 
-    await expect(revealPanelAfterLogin(provider, sleep)).resolves.toBe(true);
+    await expect(revealPanelAfterLogin(provider)).resolves.toBe(true);
+
+    expect(provider.focus).toHaveBeenCalledTimes(1); // the wait lives in focus(), not in a retry here
+    expect(logWarning).not.toHaveBeenCalled();
+  });
+
+  it('logs instead of failing silently when the reveal never lands', async () => {
+    const provider = { focus: vi.fn<() => Promise<boolean>>(() => Promise.resolve(false)) };
+
+    await expect(revealPanelAfterLogin(provider)).resolves.toBe(false);
 
     expect(provider.focus).toHaveBeenCalledTimes(1);
-    expect(sleep).not.toHaveBeenCalled();
-    expect(logWarning).not.toHaveBeenCalled();
-  });
-
-  it('retries until the view resolves, then stops', async () => {
-    const provider = providerResolvingOn(3);
-    const sleep = vi.fn(nap);
-
-    await expect(revealPanelAfterLogin(provider, sleep)).resolves.toBe(true);
-
-    expect(provider.focus).toHaveBeenCalledTimes(3); // two misses, then the view is there
-    expect(sleep).toHaveBeenCalledTimes(2); // only between attempts — never after the win
-    expect(logWarning).not.toHaveBeenCalled();
-  });
-
-  it('gives up after a bounded number of attempts and logs instead of failing silently', async () => {
-    const provider = providerResolvingOn(Number.POSITIVE_INFINITY); // the view never resolves
-    const sleep = vi.fn(nap);
-
-    await expect(revealPanelAfterLogin(provider, sleep)).resolves.toBe(false);
-
-    expect(provider.focus).toHaveBeenCalledTimes(5);
-    expect(sleep).toHaveBeenCalledTimes(4); // bounded: no attempt-6, no unbounded polling
     expect(vi.mocked(logWarning).mock.calls[0][0]).toMatch(/did not appear after login/);
+  });
+});
+
+describe('registerOmniSearch: when a login reveals the panel', () => {
+  /** Drive the real registration with a stub session manager, and hand back a way to fire its
+   *  selection event with a chosen number of live sessions. */
+  const registerWith = (ui: string) => {
+    __setConfig('gemstone.omniSearch', 'ui', ui);
+
+    let sessionCount = 0;
+    let fire: () => void = () => {};
+    const sessionManager = {
+      getSessions: () => Array.from({ length: sessionCount }, (_, i) => ({ id: i + 1 })),
+      getSelectedSession: () => undefined,
+      onDidChangeSelection: (listener: () => void) => {
+        fire = listener;
+        return { dispose: () => {} };
+      },
+    };
+
+    const disposable = registerOmniSearch(sessionManager as never);
+    // The reveal is fire-and-forget from the listener, so let its awaits settle before asserting.
+    const select = async (count: number): Promise<void> => {
+      sessionCount = count;
+      fire();
+      await Promise.resolve();
+      await Promise.resolve();
+    };
+    const revealed = (): boolean =>
+      vi
+        .mocked(vscode.commands.executeCommand)
+        .mock.calls.some((c) => c[0] === `${OMNI_VIEW_ID}.focus`);
+    return { select, revealed, disposable };
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // focus() waits on the view resolving, which never happens under the mock; keep that wait off the
+    // clock so the test does not sit out the real deadline.
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    __resetConfig();
+  });
+
+  it('reveals the panel when a session appears where there were none (a login)', async () => {
+    const { select, revealed, disposable } = registerWith('panel');
+
+    await select(1);
+
+    expect(revealed()).toBe(true);
+    disposable.dispose();
+  });
+
+  it('does not reveal when switching between sessions that already existed', async () => {
+    const { select, revealed, disposable } = registerWith('panel');
+
+    await select(2); // already logged in when the listener was wired: not a 0 -> active transition
+    vi.mocked(vscode.commands.executeCommand).mockClear();
+    await select(2); // a switch between the two
+
+    expect(revealed()).toBe(false);
+    disposable.dispose();
+  });
+
+  it('does not reveal the panel at all when the Spotter is the chosen UI', async () => {
+    const { select, revealed, disposable } = registerWith('spotter');
+
+    await select(1);
+
+    expect(revealed()).toBe(false);
+    disposable.dispose();
   });
 });
