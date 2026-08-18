@@ -1,6 +1,7 @@
 import { QueryExecutor } from '../../queries/types';
 import { AsyncQueryExecutor } from './previewRenameMethod';
 import { classLookupExpr, escapeString } from '../../queries/util';
+import { recordedApplyExpr } from './undoRecording';
 
 // Client-side query builders for Inline Temporary (M4). The engine
 // (GsInlineTemporaryRefactoring) is method-local: it parses ONE method, resolves the
@@ -74,9 +75,12 @@ export function pageInlineTemporaryPreview(
 
 // Apply a started preview server-side (recompile the one method), WITHOUT committing.
 // A single change, so there is nothing to deselect; always sends an empty set.
-export function applyInlineTemporary(execute: AsyncQueryExecutor, token: string): Promise<string> {
-  const code =
-    `GsInlineTemporaryRefactoring applyForToken: '${escapeString(token)}' ` + `deselected: #()`;
+export function applyInlineTemporary(
+  execute: AsyncQueryExecutor,
+  token: string,
+  undoLabel: string,
+): Promise<string> {
+  const code = recordedApplyExpr('GsInlineTemporaryRefactoring', token, [], undoLabel);
   return execute(`applyInlineTemporary(${token})`, code);
 }
 

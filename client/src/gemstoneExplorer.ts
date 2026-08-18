@@ -103,6 +103,7 @@ import {
 } from './refactoring/classHistoryModel';
 import { showClassHistoryPanel } from './refactoring/classHistoryPanel';
 import { moveMethod } from './refactoring/moveMethodCommand';
+import { notifyRefactoringApplied } from './refactoring/refactoringAppliedToast';
 
 const VIEW_DICTS = 'gemstoneExplorerDicts';
 const VIEW_CATEGORIES = 'gemstoneExplorerCategories';
@@ -2503,7 +2504,14 @@ export class ExplorerController {
           await queries.pageRenameMethodPreview(session, token, offset, PREVIEW_PAGE_BYTES),
         ),
       apply: async (deselected) =>
-        parseApplyResult(await queries.applyRenameMethod(session, token, deselected)),
+        parseApplyResult(
+          await queries.applyRenameMethod(
+            session,
+            token,
+            deselected,
+            `Rename #${oldSelector} to #${newSelector}`,
+          ),
+        ),
       cleanup: safeClear,
     });
     if (!result) return false; // cancelled/closed
@@ -2525,9 +2533,11 @@ export class ExplorerController {
       this.reportRenameFailures(`Rename method '${oldSelector}' → '${newSelector}'`, result);
       return true;
     }
-    void vscode.window.showInformationMessage(
+    notifyRefactoringApplied(
+      session,
       `Renamed '${oldSelector}' → '${newSelector}' (${result.applied} change` +
         `${result.applied === 1 ? '' : 's'}). Compiled but NOT committed — commit when ready.`,
+      'toast',
     );
     return true;
   }

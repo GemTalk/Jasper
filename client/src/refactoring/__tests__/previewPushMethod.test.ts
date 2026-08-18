@@ -77,7 +77,7 @@ describe('push-method query builders', () => {
     it('applies by token, passing the deselected ids', async () => {
       const exec = vi.fn().mockResolvedValue('{}');
 
-      await applyPushMethod(exec, 'up', 'tok3', ['5', '7']);
+      await applyPushMethod(exec, 'up', 'tok3', ['5', '7'], 'test undo');
 
       const [, code] = exec.mock.calls[0];
       expect(code).toContain('GsPushUpMethodRefactoring applyForToken:');

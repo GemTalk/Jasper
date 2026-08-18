@@ -31,6 +31,7 @@ import {
   reloadMethodEditor,
   saveIfDirty,
 } from './renameAtCursorShared';
+import { notifyRefactoringApplied } from './refactoringAppliedToast';
 
 /** Run the rename-temporary flow for the active method editor. When invoked from
  *  the "Refactor…" code action, `position` is the exact spot the action was offered
@@ -170,7 +171,14 @@ export async function renameTemporaryCommand(
   const result = await showRenameTemporaryPanel(oldName, newName, start, {
     loadPage: async (off) =>
       parsePage(await queries.pageRenameTemporaryPreview(session, token, off, PREVIEW_PAGE_BYTES)),
-    apply: async () => parseApplyResult(await queries.applyRenameTemporary(session, token)),
+    apply: async () =>
+      parseApplyResult(
+        await queries.applyRenameTemporary(
+          session,
+          token,
+          `Rename temporary '${oldName}' to '${newName}'`,
+        ),
+      ),
     cleanup: safeClear,
   });
   if (!result) {
@@ -198,5 +206,5 @@ export async function renameTemporaryCommand(
   // stone so it shows the saved, renamed source, and re-focus it (Eric: the method
   // is selected after the refactoring).
   await reloadMethodEditor(editor);
-  void vscode.window.setStatusBarMessage(`Renamed '${oldName}' → '${newName}'`, 4000);
+  notifyRefactoringApplied(session, `Renamed '${oldName}' → '${newName}'.`);
 }

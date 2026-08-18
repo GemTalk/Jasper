@@ -1,6 +1,7 @@
 import { QueryExecutor } from '../../queries/types';
 import { AsyncQueryExecutor, RenameMethodScope } from './previewRenameMethod';
 import { classLookupExpr, escapeString } from '../../queries/util';
+import { recordedApplyExpr } from './undoRecording';
 
 // Change-method-signature (M5) query builders. The engine
 // (GsChangeSignatureRefactoring) is addressed by class + meta + the OLD selector +
@@ -112,10 +113,9 @@ export function applyChangeSignature(
   execute: AsyncQueryExecutor,
   token: string,
   deselectedIds: string[],
+  undoLabel: string,
 ): Promise<string> {
-  const code =
-    `GsChangeSignatureRefactoring applyForToken: '${escapeString(token)}' ` +
-    `deselected: #(${stringArrayLiteral(deselectedIds)})`;
+  const code = recordedApplyExpr('GsChangeSignatureRefactoring', token, deselectedIds, undoLabel);
   return execute(`applyChangeSignature(${token}, -${deselectedIds.length})`, code);
 }
 

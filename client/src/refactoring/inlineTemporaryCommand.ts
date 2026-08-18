@@ -30,6 +30,7 @@ import {
   reloadMethodEditor,
   saveIfDirty,
 } from './renameAtCursorShared';
+import { notifyRefactoringApplied } from './refactoringAppliedToast';
 
 /** Run the inline-temporary flow for the active method editor. When invoked from the
  *  "Refactor…" code action, `position` is the exact spot; the palette command passes
@@ -136,7 +137,10 @@ export async function inlineTemporaryCommand(
   const result = await showInlineTemporaryPanel(start.name, start, {
     loadPage: async (off) =>
       parsePage(await queries.pageInlineTemporaryPreview(session, token, off, PREVIEW_PAGE_BYTES)),
-    apply: async () => parseApplyResult(await queries.applyInlineTemporary(session, token)),
+    apply: async () =>
+      parseApplyResult(
+        await queries.applyInlineTemporary(session, token, `Inline temporary '${start.name}'`),
+      ),
     cleanup: safeClear,
   });
   if (!result) {
@@ -163,5 +167,5 @@ export async function inlineTemporaryCommand(
   // The method was recompiled server-side (no commit). Reload the editor from the
   // stone so it shows the saved, rewritten source, and re-focus it.
   await reloadMethodEditor(editor);
-  void vscode.window.setStatusBarMessage(`Inlined '${start.name}'`, 4000);
+  notifyRefactoringApplied(session, `Inlined '${start.name}'.`);
 }

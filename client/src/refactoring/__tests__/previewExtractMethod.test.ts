@@ -81,14 +81,14 @@ describe('previewExtractMethod query builders', () => {
 
   it('applyExtractMethod passes the deselected duplicate ids', async () => {
     const s = spy();
-    await applyExtractMethod(s.exec, 'tok', ['3', '5']);
+    await applyExtractMethod(s.exec, 'tok', ['3', '5'], 'test undo');
     expect(s.code).toContain("applyForToken: 'tok'");
     expect(s.code).toContain("deselected: #('3' '5')");
   });
 
   it('applyExtractMethod sends an empty set when nothing is deselected', async () => {
     const s = spy();
-    await applyExtractMethod(s.exec, 'tok', []);
+    await applyExtractMethod(s.exec, 'tok', [], 'test undo');
     expect(s.code).toContain('deselected: #()');
   });
 

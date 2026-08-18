@@ -1,6 +1,7 @@
 import { QueryExecutor } from '../../queries/types';
 import { AsyncQueryExecutor } from './previewRenameMethod';
 import { classLookupExpr, escapeString } from '../../queries/util';
+import { recordedApplyExpr } from './undoRecording';
 
 // Extract-method (M1) query builders. The engine (GsExtractMethodRefactoring) is
 // addressed by class + selector + isMeta + a source INTERVAL (selStart..selStop,
@@ -93,10 +94,9 @@ export function applyExtractMethod(
   execute: AsyncQueryExecutor,
   token: string,
   deselectedIds: string[],
+  undoLabel: string,
 ): Promise<string> {
-  const ids = deselectedIds.map((id) => `'${escapeString(id)}'`).join(' ');
-  const code =
-    `GsExtractMethodRefactoring applyForToken: '${escapeString(token)}' ` + `deselected: #(${ids})`;
+  const code = recordedApplyExpr('GsExtractMethodRefactoring', token, deselectedIds, undoLabel);
   return execute(`applyExtractMethod(${token})`, code);
 }
 

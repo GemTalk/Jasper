@@ -136,7 +136,7 @@ r runCount printString, ' ', (r failures size + r errors size) printString`;
     );
     expect(sender?.newSource).toContain('self moveY: 2 x: 1');
 
-    const result = parseApplyResult(await applyRenameMethod(asyncExec, token, []));
+    const result = parseApplyResult(await applyRenameMethod(asyncExec, token, [], 'test undo'));
 
     expect(result.failed).toEqual([]);
     expect(result.applied).toBeGreaterThanOrEqual(2);
@@ -183,7 +183,7 @@ r runCount printString, ' ', (r failures size + r errors size) printString`;
       (c) => c.kind === 'methodRecompile' && c.selector === 'caller',
     )?.id;
     const result = parseApplyResult(
-      await applyRenameMethod(asyncExec, token, senderId ? [senderId] : []),
+      await applyRenameMethod(asyncExec, token, senderId ? [senderId] : [], 'test undo'),
     );
 
     expect(result.failed).toEqual([]);

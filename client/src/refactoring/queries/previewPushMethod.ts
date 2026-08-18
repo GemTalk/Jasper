@@ -1,6 +1,7 @@
 import { QueryExecutor } from '../../queries/types';
 import { AsyncQueryExecutor } from './previewRenameMethod';
 import { classLookupExpr, escapeString } from '../../queries/util';
+import { recordedApplyExpr } from './undoRecording';
 
 // Push-up / push-down method (M7 / M8) query builders. Both engines
 // (GsPushUpMethodRefactoring / GsPushDownMethodRefactoring) share one class-side API,
@@ -101,10 +102,9 @@ export function applyPushMethod(
   direction: PushDirection,
   token: string,
   deselectedIds: string[],
+  undoLabel: string,
 ): Promise<string> {
-  const engine = pushEngineClass(direction);
-  const ids = deselectedIds.map((id) => `'${escapeString(id)}'`).join(' ');
-  const code = `${engine} applyForToken: '${escapeString(token)}' ` + `deselected: #(${ids})`;
+  const code = recordedApplyExpr(pushEngineClass(direction), token, deselectedIds, undoLabel);
   return execute(`applyPush${direction}(${token})`, code);
 }
 

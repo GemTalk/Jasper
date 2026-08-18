@@ -71,6 +71,14 @@ import {
   RenameMethodScope,
 } from './refactoring/queries/previewRenameMethod';
 import {
+  refactoringUndoStatus as sharedRefactoringUndoStatus,
+  startUndoRefactoringPreview as sharedStartUndoRefactoringPreview,
+  pageUndoRefactoringPreview as sharedPageUndoRefactoringPreview,
+  applyUndoRefactoring as sharedApplyUndoRefactoring,
+  clearUndoRefactoringPreview as sharedClearUndoRefactoringPreview,
+  clearRefactoringUndo as sharedClearRefactoringUndo,
+} from './refactoring/queries/previewUndoRefactoring';
+import {
   analyzeChangeSignature as sharedAnalyzeChangeSignature,
   startChangeSignaturePreview as sharedStartChangeSignaturePreview,
   pageChangeSignaturePreview as sharedPageChangeSignaturePreview,
@@ -926,10 +934,11 @@ export function applyRenameMethod(
   session: ActiveSession,
   token: string,
   deselectedIds: string[],
+  undoLabel: string,
 ): Promise<string> {
   const exec = (label: string, code: string): Promise<string> =>
     executeFetchStringNb(session, label, code, 'Applying rename…');
-  return sharedApplyRenameMethod(exec, token, deselectedIds);
+  return sharedApplyRenameMethod(exec, token, deselectedIds, undoLabel);
 }
 
 export function clearRenameMethodPreview(session: ActiveSession, token: string): string {
@@ -999,10 +1008,11 @@ export function applyChangeSignature(
   session: ActiveSession,
   token: string,
   deselectedIds: string[],
+  undoLabel: string,
 ): Promise<string> {
   const exec = (label: string, code: string): Promise<string> =>
     executeFetchStringNb(session, label, code, 'Applying signature change…');
-  return sharedApplyChangeSignature(exec, token, deselectedIds);
+  return sharedApplyChangeSignature(exec, token, deselectedIds, undoLabel);
 }
 
 export function clearChangeSignaturePreview(session: ActiveSession, token: string): string {
@@ -1066,10 +1076,11 @@ export function applyPushMethod(
   direction: PushDirection,
   token: string,
   deselectedIds: string[],
+  undoLabel: string,
 ): Promise<string> {
   const exec = (label: string, code: string): Promise<string> =>
     executeFetchStringNb(session, label, code, 'Applying push…');
-  return sharedApplyPushMethod(exec, direction, token, deselectedIds);
+  return sharedApplyPushMethod(exec, direction, token, deselectedIds, undoLabel);
 }
 
 export function clearPushMethodPreview(
@@ -1212,10 +1223,14 @@ export function pageRenameTemporaryPreview(
   return sharedPageRenameTemporaryPreview(exec, token, offset, maxBytes);
 }
 
-export function applyRenameTemporary(session: ActiveSession, token: string): Promise<string> {
+export function applyRenameTemporary(
+  session: ActiveSession,
+  token: string,
+  undoLabel: string,
+): Promise<string> {
   const exec = (label: string, code: string): Promise<string> =>
     executeFetchStringNb(session, label, code, 'Applying rename…');
-  return sharedApplyRenameTemporary(exec, token);
+  return sharedApplyRenameTemporary(exec, token, undoLabel);
 }
 
 export function clearRenameTemporaryPreview(session: ActiveSession, token: string): string {
@@ -1306,10 +1321,11 @@ export function applyExtractMethod(
   session: ActiveSession,
   token: string,
   deselectedIds: string[],
+  undoLabel: string,
 ): Promise<string> {
   const exec = (label: string, code: string): Promise<string> =>
     executeFetchStringNb(session, label, code, 'Applying extraction…');
-  return sharedApplyExtractMethod(exec, token, deselectedIds);
+  return sharedApplyExtractMethod(exec, token, deselectedIds, undoLabel);
 }
 
 export function clearExtractMethodPreview(session: ActiveSession, token: string): string {
@@ -1368,10 +1384,11 @@ export function applyInlineMethod(
   session: ActiveSession,
   token: string,
   deselectedIds: string[],
+  undoLabel: string,
 ): Promise<string> {
   const exec = (label: string, code: string): Promise<string> =>
     executeFetchStringNb(session, label, code, 'Applying inline…');
-  return sharedApplyInlineMethod(exec, token, deselectedIds);
+  return sharedApplyInlineMethod(exec, token, deselectedIds, undoLabel);
 }
 
 export function clearInlineMethodPreview(session: ActiveSession, token: string): string {
@@ -1437,10 +1454,11 @@ export function applyMoveMethod(
   session: ActiveSession,
   token: string,
   deselectedIds: string[],
+  undoLabel: string,
 ): Promise<string> {
   const exec = (label: string, code: string): Promise<string> =>
     executeFetchStringNb(session, label, code, 'Applying move…');
-  return sharedApplyMoveMethod(exec, token, deselectedIds);
+  return sharedApplyMoveMethod(exec, token, deselectedIds, undoLabel);
 }
 
 export function clearMoveMethodPreview(session: ActiveSession, token: string): string {
@@ -1565,10 +1583,14 @@ export function pageExtractTemporaryPreview(
   return sharedPageExtractTemporaryPreview(exec, token, offset, maxBytes);
 }
 
-export function applyExtractTemporary(session: ActiveSession, token: string): Promise<string> {
+export function applyExtractTemporary(
+  session: ActiveSession,
+  token: string,
+  undoLabel: string,
+): Promise<string> {
   const exec = (label: string, code: string): Promise<string> =>
     executeFetchStringNb(session, label, code, 'Applying extraction…');
-  return sharedApplyExtractTemporary(exec, token);
+  return sharedApplyExtractTemporary(exec, token, undoLabel);
 }
 
 export function clearExtractTemporaryPreview(session: ActiveSession, token: string): string {
@@ -1626,10 +1648,14 @@ export function pageInlineTemporaryPreview(
   return sharedPageInlineTemporaryPreview(exec, token, offset, maxBytes);
 }
 
-export function applyInlineTemporary(session: ActiveSession, token: string): Promise<string> {
+export function applyInlineTemporary(
+  session: ActiveSession,
+  token: string,
+  undoLabel: string,
+): Promise<string> {
   const exec = (label: string, code: string): Promise<string> =>
     executeFetchStringNb(session, label, code, 'Applying inline…');
-  return sharedApplyInlineTemporary(exec, token);
+  return sharedApplyInlineTemporary(exec, token, undoLabel);
 }
 
 export function clearInlineTemporaryPreview(session: ActiveSession, token: string): string {
@@ -2206,4 +2232,51 @@ export function clearAllBreaks(
     environmentId,
     dict,
   );
+}
+
+// Undo the last applied refactoring (#434). The record lives in the stone, so all of
+// these are round trips; the status probe is a blocking fetch (it is one small string
+// and drives a menu's visibility), while the preview / page / apply are NON-BLOCKING so
+// a large undo shows progress and keeps the extension host responsive.
+export function refactoringUndoStatus(session: ActiveSession): string {
+  return sharedRefactoringUndoStatus(defaultQueryExecutorUsing(session));
+}
+
+export function startUndoRefactoringPreview(
+  session: ActiveSession,
+  token: string,
+  maxBytes: number,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Preparing the undo preview…');
+  return sharedStartUndoRefactoringPreview(exec, token, maxBytes);
+}
+
+export function pageUndoRefactoringPreview(
+  session: ActiveSession,
+  token: string,
+  offset: number,
+  maxBytes: number,
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Loading more changes…');
+  return sharedPageUndoRefactoringPreview(exec, token, offset, maxBytes);
+}
+
+export function applyUndoRefactoring(
+  session: ActiveSession,
+  token: string,
+  deselectedIds: string[],
+): Promise<string> {
+  const exec = (label: string, code: string): Promise<string> =>
+    executeFetchStringNb(session, label, code, 'Undoing the refactoring…');
+  return sharedApplyUndoRefactoring(exec, token, deselectedIds);
+}
+
+export function clearUndoRefactoringPreview(session: ActiveSession, token: string): string {
+  return sharedClearUndoRefactoringPreview(defaultQueryExecutorUsing(session), token);
+}
+
+export function clearRefactoringUndo(session: ActiveSession): string {
+  return sharedClearRefactoringUndo(defaultQueryExecutorUsing(session));
 }

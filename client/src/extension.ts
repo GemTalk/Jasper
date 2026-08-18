@@ -87,6 +87,8 @@ import {
 } from './optionalSupportOffer';
 import { refreshEnhancedInspectorAvailable } from './enhancedInspector/enhancedInspectorAvailability';
 import { refreshRefactoringSupportAvailable } from './refactoring/refactoringAvailability';
+import { refreshRefactoringUndoContext } from './refactoring/refactoringUndoAvailability';
+import { undoLastRefactoringCommand } from './refactoring/undoRefactoringCommand';
 import { supportsEnhancedInspector } from './enhancedInspector/enhancedInspectorInstall';
 import { DebuggerPanel } from './debuggerPanel';
 import { InlineValuesCodeLensProvider } from './inlineValuesCodeLens';
@@ -1010,6 +1012,16 @@ export function activate(context: vscode.ExtensionContext) {
   );
   updateRefactoringSupportContext();
 
+  // Drive `gemstone.refactoringUndoAvailable` the same way. The undo record lives in
+  // the stone, so switching sessions switches which undo (if any) is on offer -- and a
+  // reconnect clears it, which this re-probe picks up.
+  context.subscriptions.push(
+    sessionManager.onDidChangeSelection(() =>
+      refreshRefactoringUndoContext(sessionManager.getSelectedSession()),
+    ),
+  );
+  refreshRefactoringUndoContext(sessionManager.getSelectedSession());
+
   // ── Enhanced Inspector Perf Tracking ───────────────────────────────────
   const enhancedInspectorPerfChannel = vscode.window.createOutputChannel(
     'GemStone Enhanced Inspector Perf',
@@ -1343,6 +1355,13 @@ export function activate(context: vscode.ExtensionContext) {
       await extractMethodCommand(sessionManager);
     }),
 
+    // Undo the last applied refactoring (#434). Reached three ways -- the Undo button on
+    // the post-apply toast, this palette entry, and the Explorer context-menu item -- all
+    // of which land in the one flow.
+    vscode.commands.registerCommand('gemstone.undoLastRefactoring', async () => {
+      await undoLastRefactoringCommand(sessionManager);
+    }),
+
     vscode.commands.registerCommand(
       'gemstone.explorer.inlineMethod',
       async (position?: unknown) => {
@@ -1638,6 +1657,7 @@ export function activate(context: vscode.ExtensionContext) {
         refreshEnhancedInspectorAvailable(session);
         refreshRefactoringSupportAvailable(session);
         updateRefactoringSupportContext();
+        refreshRefactoringUndoContext(session);
         treeProvider.refresh();
         vscode.window.showInformationMessage(
           `Connected to ${login.stone} (${session.stoneVersion}) on ${login.gem_host} as ${login.gs_user}`,

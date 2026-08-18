@@ -1,5 +1,6 @@
 import { QueryExecutor } from '../../queries/types';
 import { classLookupExpr, escapeString } from '../../queries/util';
+import { recordedApplyExpr } from './undoRecording';
 
 /** An executor whose result is fetched asynchronously (non-blocking GCI), so a
  *  slow build shows progress and keeps the extension host responsive. */
@@ -84,11 +85,9 @@ export function applyRenameMethod(
   execute: AsyncQueryExecutor,
   token: string,
   deselectedIds: string[],
+  undoLabel: string,
 ): Promise<string> {
-  const idsLiteral = deselectedIds.map((id) => `'${escapeString(id)}'`).join(' ');
-  const code =
-    `GsRenameMethodRefactoring applyForToken: '${escapeString(token)}' ` +
-    `deselected: #(${idsLiteral})`;
+  const code = recordedApplyExpr('GsRenameMethodRefactoring', token, deselectedIds, undoLabel);
   return execute(`applyRenameMethod(${token}, -${deselectedIds.length})`, code);
 }
 
