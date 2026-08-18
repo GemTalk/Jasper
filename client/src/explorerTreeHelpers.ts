@@ -15,17 +15,22 @@ export interface VariableSide {
 
 /**
  * The variable-side nodes to show under a class row, mirroring the Methods pane's
- * instance/class split: the "instance" side then the "class" side. When a class
- * defines any variables at all, BOTH sides are returned (a side that happens to be
- * empty carries an empty `names` list, so the caller can render its header grayed
- * and non-expandable). A class that defines neither kind shows nothing.
+ * instance/class split: the "instance" side then the "class" side. A side is shown
+ * ONLY when it has variables — a class with instance variables but no class
+ * variables shows just the "instance variables" header, and a class with neither
+ * shows nothing (#387 item 12).
+ *
+ * This replaced an earlier convention that showed both headers whenever a class had
+ * any variables at all, graying the empty one. A header for a section that is
+ * definitively empty is noise: it reads as something to open, and opening it is the
+ * only way to learn there was nothing there. Omitting it is the convention to apply
+ * to any other metadata section that can be empty.
  */
 export function variableSides(ivarNames: string[], classVarNames: string[]): VariableSide[] {
-  if (ivarNames.length === 0 && classVarNames.length === 0) return [];
-  return [
-    { isMeta: false, names: ivarNames },
-    { isMeta: true, names: classVarNames },
-  ];
+  const sides: VariableSide[] = [];
+  if (ivarNames.length > 0) sides.push({ isMeta: false, names: ivarNames });
+  if (classVarNames.length > 0) sides.push({ isMeta: true, names: classVarNames });
+  return sides;
 }
 
 /**

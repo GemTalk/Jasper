@@ -11,6 +11,7 @@ New docs are organized by [Diátaxis](https://diataxis.fr/) category — `how-to
 ## Explanation
 
 - [npm supply-chain threat model](explanation/npm-supply-chain-threat-model.md) — the install-time execution threat these controls defend against, and why each is shaped the way it is.
+- [Enhanced Inspector support](explanation/enhanced-inspector.md) — why the payload is vendored and dictionary-isolated, why file order and the 3.7.5 version gate are load-bearing, and how the legacy-`Published` migration is scoped.
 - [Why there are two browsers, and which one gets the work](explanation/system-browser-and-explorer.md) — the System Browser is frozen, the Explorer is where new features land; why "frozen" rather than deprecated or maintained, and the one gap still browser-only.
 - [The four kinds of tests](explanation/test-tiers.md) — unit, integration, GCI, and acceptance: what each proves, what it needs, and the names that mislead.
 - [Integration test isolation](explanation/integration-test-isolation.md) — why transaction-abort is the isolation mechanism for `useIntegrationTest`, and why the commit guard is armed per-session and irreversible.

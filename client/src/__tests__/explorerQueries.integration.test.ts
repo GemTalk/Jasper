@@ -164,6 +164,53 @@ describe('explorer queries (integration)', () => {
 
       expect(categoryOf(WIDGET)).toBe('JasperIt-Alpha');
     });
+
+    // #387 item 11 drives the class row's comment button off this flag, so what
+    // counts as "has a comment" has to be decided against a real class, not a
+    // mocked line of output: `Class>>comment` SYNTHESISES a placeholder when there
+    // is none, and `comment: ''` STORES the empty string rather than dropping the
+    // key. Both are engine behaviours a unit test cannot show.
+    const commentedOf = (className: string): boolean | undefined =>
+      q.getClassesWithCategory(session(), userIndex()).find((e) => e.className === className)
+        ?.hasComment;
+
+    it('reports a class that was never commented as uncommented', () => {
+      defineClass(WIDGET);
+
+      // Guard: the synthesised accessor answers a non-empty string even here, which
+      // is exactly why the flag cannot be read from it.
+      expect(exec(`(UserGlobals at: #'${WIDGET}') comment isEmpty printString`).trim()).toBe(
+        'false',
+      );
+      expect(commentedOf(WIDGET)).toBe(false);
+    });
+
+    it('reports a class with real comment text as commented', () => {
+      defineClass(WIDGET);
+      q.setClassComment(session(), WIDGET, 'A widget.', userIndex());
+
+      expect(commentedOf(WIDGET)).toBe(true);
+    });
+
+    it('reports a comment emptied by the editor as uncommented', () => {
+      defineClass(WIDGET);
+      q.setClassComment(session(), WIDGET, 'A widget.', userIndex());
+      q.setClassComment(session(), WIDGET, '', userIndex());
+
+      // The key survives the emptying — a nil test would still answer "commented".
+      expect(
+        exec(`((UserGlobals at: #'${WIDGET}') _extraDictAt: #comment) notNil printString`).trim(),
+      ).toBe('true');
+      expect(commentedOf(WIDGET)).toBe(false);
+    });
+
+    it('reports a whitespace-only comment as uncommented', () => {
+      defineClass(WIDGET);
+      // What a save can leave behind after the text is deleted (insert-final-newline).
+      q.setClassComment(session(), WIDGET, '\n', userIndex());
+
+      expect(commentedOf(WIDGET)).toBe(false);
+    });
   });
 
   describe('canClassBeWritten', () => {

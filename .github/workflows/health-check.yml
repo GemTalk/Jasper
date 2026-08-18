@@ -109,6 +109,8 @@ jobs:
         run: npm ci
       - name: Supply-chain config check
         run: npm run lint:supply-chain
+      - name: GCI header version map
+        run: npm run lint:gci-headers
       - name: Lockfile lint
         run: npm run lint:lockfile
       - name: Format check

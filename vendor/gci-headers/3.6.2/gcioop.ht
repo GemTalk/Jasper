@@ -1,0 +1,658 @@
+#ifndef GCIOOP_HT
+#define GCIOOP_HT TRUE
+/*========================================================================
+ * Copyright (C) GemTalk Systems 1986-2021.  All Rights Reserved.
+ *
+ * Name - gcioop.ht
+ *
+ * Description: 
+ *
+ *========================================================================*/
+
+/* no more includes. KEEP THIS LINE */
+
+/* Definitions of the format of OopType */
+
+#define OOP_TAG_RAM_OOP     0x0 /* 2r000  memory pointer ObjSType* */
+#define OOP_TAG_POM_OOP     0x1 /* 2r001  disk objId */
+  // disk objIds have the form 0x0000nnnnnnnnnn01 , with the 
+  //  oopNumber shifted left by 8 before adding the pom tag bit 
+#define OOP_TAG_SMALLINT    0x2 /* 2r010  SmallInteger */
+#define OOP_TAG_SMALLDOUBLE 0x6 /* 2r110  SmallDouble */
+#define OOP_TAG_SPECIAL     0x4 /* 2r100  true,false,nil, Char, JISChar */
+
+#define OOP_NUM_TAG_BITS 3 /* number of tag bits on a disk objId */
+
+enum { OOP_SPECIAL_CLASS_MASK = 0xFE  // mask to obtain class field of any special oop
+				   //  for lookup in specialClasses table.
+     };
+
+#define OOP_POM_TAG_MASK    0x1
+
+#define OOP_TAG_SPECIAL_MASK  0x6    /* any special oop */
+
+/* OOP_RAM_TAG_MASK must be all ones (no intervening zeros) */
+#define OOP_RAM_TAG_MASK      0x7
+
+enum { 
+  // mask for class field of specials other than SmallInt or SmallDouble. 
+  OOP_SPECIAL_ST_CLASS_FIELD_MASK = 0xF8, // 2rxxxxx100
+                        
+  OOP_SPECIAL_CLS_MASK = 0xFF // OOP_RAM_TAG_MASK | OOP_SPECIAL_ST_CLASS_FIELD_MASK
+};
+
+/* values of class field for specific non-smallint classes, obtained
+ * by   oop & OOP_SPECIAL_ST_CLASS_FIELD_MASK
+ */
+/* special class number 0 is for SmallDouble */
+enum {  OOP_SPECIAL_BOOLEAN_CLASS_FIELD = 8 ,  /* 1 << 3 */
+	OOP_SPECIAL_UNDEF_CLASS_FIELD   = 16,  /* 2 << 3 */ 
+	OOP_SPECIAL_CHAR_CLASS_FIELD    = 24,  /* 3 << 3 */ 
+	OOP_SPECIAL_JISCHAR_CLASS_FIELD = 32,  /* 4 << 3 */
+	OOP_SPECIAL_SmallFractionCLASS_FIELD = 40, /* 5 << 3 */
+        OOP_SPECIAL_SmallScaledDecimalCLASS_FIELD = 48,/* 6 << 3  */
+        OOP_SPECIAL_SmallDateAndTimeCLASS_FIELD = 56, /* 7 << 3  */
+        OOP_SPECIAL_SmallTimeCLASS_FIELD = 64, /* 8 << 3  */
+        OOP_SPECIAL_SmallDateCLASS_FIELD = 72, /* 9 << 3  */
+
+	OOP_SPECIAL_BOOLEAN_CLASS_FIELD_shr3 = OOP_SPECIAL_BOOLEAN_CLASS_FIELD >> 3 ,
+	OOP_SPECIAL_UNDEF_CLASS_FIELD_shr3   = OOP_SPECIAL_UNDEF_CLASS_FIELD >> 3,
+	OOP_SPECIAL_CHAR_CLASS_FIELD_shr3    = OOP_SPECIAL_CHAR_CLASS_FIELD >> 3 ,
+	OOP_SPECIAL_JISCHAR_CLASS_FIELD_shr3 = OOP_SPECIAL_JISCHAR_CLASS_FIELD >> 3 ,
+	OOP_SPECIAL_SmallFractionCLASS_FIELD_shr3 = OOP_SPECIAL_SmallFractionCLASS_FIELD >> 3,
+
+  OOP_SPECIAL_SmallScaledDecimalCLASS_FIELD_shr3 = OOP_SPECIAL_SmallScaledDecimalCLASS_FIELD >> 3 ,
+  OOP_SPECIAL_SmallDateAndTimeCLASS_FIELD_shr3 = OOP_SPECIAL_SmallDateAndTimeCLASS_FIELD >> 3 ,
+  OOP_SPECIAL_SmallTimeCLASS_FIELD_shr3 = OOP_SPECIAL_SmallTimeCLASS_FIELD >> 3 ,
+  OOP_SPECIAL_SmallDateCLASS_FIELD_shr3 = OOP_SPECIAL_SmallDateCLASS_FIELD >> 3  
+     /* remaining special class numbers 10 .. 31 not used */
+};
+
+// ========================================================================
+// conversion from 32bit C int to OopType
+
+#if defined(FLG_AIX_UNIX) && !defined(_LP64)
+     /* 32bit AIX libgci*/
+#define GCI_I32_TO_OOP(arg) GciI64ToOop(arg)
+#else
+#define GCI_I32_TO_OOP(arg) (\
+  ((OopType)(arg) << OOP_NUM_TAG_BITS) | OOP_TAG_SMALLINT)
+#endif
+
+enum { GCI_MAX_SYMBOL_SIZE = 1024, // maximum number of Characters in a Symbol
+       GCI_MAX_SYMBOL_SIZE_bytes = 4096 // worst case QuadByteSymbol 
+     };  
+
+// ========================================================================
+
+#if defined(FLG_AIX_UNIX) && !defined(_LP64)
+#define OOP_MinusOne      18446744073709551610ULL
+#define OOP_MinusTwo      18446744073709551602ULL
+#define OOP_Zero          2U 
+#define OOP_One           10U 
+#define OOP_Two           18U 
+#define OOP_Three         26U 
+#define OOP_Four          34U 
+#else
+#define OOP_MinusOne      GCI_I32_TO_OOP(-1)
+#define OOP_MinusTwo      GCI_I32_TO_OOP(-2)
+#define OOP_Zero          GCI_I32_TO_OOP(0)
+#define OOP_One           GCI_I32_TO_OOP(1)
+#define OOP_Two           GCI_I32_TO_OOP(2)
+#define OOP_Three         GCI_I32_TO_OOP(3)
+#define OOP_Four          GCI_I32_TO_OOP(4)
+#endif
+
+#define MAX_SMALL_INT          I64_CONST(1152921504606846975)
+#define MIN_SMALL_INT          (I64_CONST(-1152921504606846976))
+#define MAX_SMALL_INT_PLUS_ONE (MAX_SMALL_INT + 1)
+
+#define OOP_ILLEGAL         ((OopType)0x01)
+#define OOP_NIL             ((OopType)0x14)
+#define OOP_REMOTE_NIL     ((OopType)0x114)
+
+// additional instances of UndefinedObject used within the VM, in oop.ht 
+
+#define OOP_FALSE           ((OopType)0x0C)
+#define OOP_TRUE           ((OopType)0x10C) 
+#define OOP_ASCII_NUL       ((OopType)0x1C)
+#define OOP_FIRST_JIS_CHAR  ((OopType)0x24)
+
+/* Bug 40443 */
+#define OOP_MIN_SMALL_INT_6x GCI_I32_TO_OOP(-536870912)
+
+/* OOP_NO_CONTEXT is used to tell GCI calls that do a execute from
+ * a specified context that no context should be used.
+ */
+#define OOP_NO_CONTEXT OOP_ILLEGAL
+
+/* OOP_OVERLAY is used to tell GCI store calls that a store of this
+ * oop should not overwrite an existing value but instead use
+ * whatever value already exists. If no value exists then OOP_NIL
+ * will be stored.
+ */
+#define OOP_OVERLAY OOP_ILLEGAL
+
+
+#define OOP_CLASS_ARRAY         66817U  /* v1.1 oop  523 */ 
+#define OOP_CLASS_ASSOCIATION   67073U  /* v1.1 oop  525 */ 
+#define OOP_CLASS_IDENTITY_BAG 	67329U  /* v1.1 oop  527 */ 
+#define OOP_CLASS_BEHAVIOR      67585U  /* v1.1 oop  529 */ 
+
+#define OOP_CLASS_BOOLEAN       68097U  /* v1.1 oop  533 */ 
+#define OOP_CLASS_CHARACTER     68353U  /* v1.1 oop  535 */ 
+#define OOP_CLASS_CLASS         68609U  /* v1.1 oop  537 */ 
+#define OOP_CLASS_COLLECTION    68865U  /* v1.1 oop  539 */ 
+#define OOP_CLASS_OBSOLETE_COMPILED_METHOD    69121U  /* v1.1 oop  541 */ 
+#define OOP_CLASS_OBSOLETE_DATE_TIME       69377U  /* v1.1 oop  543 */ 
+
+#define OOP_CLASS_OBSOLETE_DATE_TIME50     101121U  /* v1.1 oop  791 */ 
+
+#define OOP_CLASS_OBSOLETE_DICTIONARY      69633U  /* v1.1 oop  545 */ 
+#define OOP_CLASS_DECIMAL_FLOAT   69889U  /* v1.1 oop  547 */ 
+#define OOP_CLASS_INTEGER         70145U  /* v1.1 oop  549 */ 
+#define OOP_CLASS_INVARIANT_ARRAY 70401U  /* v1.1 oop  551 */ 
+#define OOP_CLASS_INVARIANT_STRING  70657U  /* v1.1 oop  553 */ 
+#define OOP_CLASS_OBSOLETE_LANGUAGE_DICTIONARY 70913U  /* v1.1 oop  555 */ 
+#define OOP_CLASS_MAGNITUDE      71169U  /* v1.1 oop  557 */ 
+#define OOP_CLASS_ObsoleteMetaclass  71425U  /* v1.1 oop  559 */ 
+
+
+#define OOP_CLASS_NUMBER         71937U  /* v1.1 oop  563 */ 
+#define OOP_CLASS_OBJECT         72193U  /* v1.1 oop  565 */ 
+#define OOP_CLASS_POSITIONABLE_STREAM    72449U  /* v1.1 oop  567 */ 
+#define OOP_CLASS_READ_STREAM    72705U  /* v1.1 oop  569 */ 
+#define OOP_OLD_CLASS_REPOSITORY     72961U  /* v1.1 oop  571 , pre-v2.2 class */ 
+#define OOP_CLASS_GsObjectSecurityPolicy        73217U  /* v1.1 oop  573 */ 
+#define OOP_CLASS_SEGMENT                       73217U  /* old name */
+
+enum { WORLD_RW_SEGMENT_ID = 0, /* no authorization checks on this segment*/
+       SYSTEM_SEGMENT_ID = 1,
+       DATACURATOR_SEGMENT_ID = 2,
+       TIME_ZONE_SEGMENT_ID = 3,
+       INDEXING_SEGMENT_ID = 4,
+       SECURITY_DATA_SEGMENT_ID = 5,
+       PUBLISHED_SEGMENT_ID = 6, 
+       MAX_SEGMENT_ID = 0xFFFE,
+       UNDEFINED_SEGMENT_ID = 0xFFFF // used in gci traversal buffers
+};
+
+enum { WORLD_RW_ObjectSecurityPolicyId = 0, /* no authorization checks on this segment*/
+       SYSTEM_ObjectSecurityPolicyId = 1,
+       DATACURATOR_ObjectSecurityPolicyId = 2,
+       TIME_ZONE_ObjectSecurityPolicyId = 3,
+       INDEXING_ObjectSecurityPolicyId = 4,
+       SECURITY_DATA_ObjectSecurityPolicyId = 5,
+       PUBLISHED_ObjectSecurityPolicyId = 6, 
+       MAX_ObjectSecurityPolicyId = 0xFFFE,
+       UNDEFINED_ObjectSecurityPolicyId = 0xFFFF  // used in gci traversal buffers
+     };  
+
+#define OOP_CLASS_SEQUENCEABLE_COLLECT   73729U  /* v1.1 oop  577 */ 
+#define OOP_CLASS_IDENTITY_SET 	 73985U  /* v1.1 oop  579 */ 
+#define OOP_CLASS_SMALL_INTEGER  74241U  /* v1.1 oop  581 */ 
+#define OOP_CLASS_STREAM         74497U  /* v1.1 oop  583 */ 
+#define OOP_CLASS_STRING         74753U  /* v1.1 oop  585 */ 
+#define OOP_CLASS_OBSOLETE_SYMBOL 75009U  /* v1.1 oop  587 */ 
+#define OOP_CLASS_OBSOLETE_SYMBOL_ASSOCIATION 75265U  /* v1.1 oop  589 */ 
+#define OOP_CLASS_OBSOLETE_SYMBOL_DICTIONARY 75521U  /* v1.1 oop  591 */ 
+#define OOP_CLASS_OBSOLETE_SYMBOL_SET     75777U  /* v1.1 oop  593 */ 
+#define OOP_CLASS_SYSTEM         76033U  /* v1.1 oop  595 */ 
+#define OOP_CLASS_UNDEFINED_OBJECT  76289U  /* v1.1 oop  597 */ 
+#define OOP_CLASS_USER_PROFILE      76545U  /* v1.1 oop  599 */ 
+#define OOP_CLASS_ABS_USERPROFILE_SET  76801U  /* v1.1 oop  601 */ 
+#define OOP_CLASS_WRITE_STREAM      77057U  /* v1.1 oop  603 */ 
+#define OOP_CLASS_OBS_LARGE_POSITIVE_INT  77313U  /* v1.1 oop  605 */ 
+#define OOP_CLASS_OBS_LARGE_NEGATIVE_INT  77569U  /* v1.1 oop  607 */ 
+#define OOP_CLASS_FRACTION            77825U  /* v1.1 oop  609 */ 
+#define OOP_CLASS_OBSOLETE_CLAMP_SPEC  78081U  /* v1.1 oop  611 */ 
+#define OOP_CLASS_OBSOLETE_IDENTITY_DICTIONARY 78337U  /* v1.1 oop  613 */ 
+#define OOP_CLASS_SYMBOL_LIST         78593U  /* v1.1 oop  615 */ 
+
+
+#define OOP_CLASS_ABSTRACT_COLLISION_BUCKET  79105U  /* v1.1 oop  619 */ 
+#define OOP_CLASS_KEY_VALUE_DICTIONARY     79361U  /* v1.1 oop  621 */ 
+#define OOP_CLASS_INT_KEY_VALUE_DICTIONARY    79617U  /* v1.1 oop  623 */ 
+#define OOP_CLASS_STR_KEY_VALUE_DICTIONARY    79873U  /* v1.1 oop  625 */ 
+#define OOP_CLASS_OBSOLETE_SYM_KEY_VALUE_DICTIONARY 80129U  /* v1.1 oop  627 */ 
+#define OOP_CLASS_CHARACTER_COLLECTION   80385U  /* v1.1 oop  629 */ 
+#define OOP_CLASS_JAPANESE_STRING        80641U  /* v1.1 oop  631 */ 
+#define OOP_CLASS_EUC_STRING             80897U  /* v1.1 oop  633 */ 
+#define OOP_CLASS_INVARIANT_EUC_STRING   81153U  /* v1.1 oop  635 */ 
+#define OOP_CLASS_EUC_SYMBOL             81409U  /* v1.1 oop  637 */ 
+#define OOP_CLASS_ABSTRACT_CHARACTER     81665U  /* v1.1 oop  639 */ 
+#define OOP_CLASS_JIS_CHARACTER          81921U  /* v1.1 oop  641 */ 
+  /* following added in 3.2 */ 
+#define OOP_CLASS_CLUSTER_BUCKET         82177U  /* v1.1 oop  643 */ 
+#define OOP_CLASS_CLUSTER_BUCKET_ARRAY   82433U  /* v1.1 oop  645 */ 
+#define OOP_CLASS_HISTORY                82689U  /* v1.1 oop  647 */ 
+#define OOP_CLASS_RCQUEUE                82945U  /* v1.1 oop  649 */ 
+
+/* added in 4.0 */
+#define OOP_CLASS_OBS_STACK_SEGMENT  83201U  /* v1.1 oop  651 */ 
+#define OOP_CLASS_OBS_STACK_BUFFER   83457U  /* v1.1 oop  653 */ 
+#define OOP_CLASS_OBS_ACTIVATION     83713U  /* v1.1 oop  655 */ 
+#define OOP_CLASS_OBSOLETE_PROCESS   83969U  /* v1.1 oop  657 */ 
+#define OOP_CLASS_oldVARIABLE_CONTEXT   84225U  /* v1.1 oop  659 */ 
+#define OOP_CLASS_BLOCK_CLOSURE      84481U  /* v1.1 oop  661 */ 
+
+// deletion
+#define OOP_CLASS_oldEXECUTABLE_BLOCK   84737U  /* v1.1 oop  663 */ 
+#define OOP_CLASS_oldSIMPLE_BLOCK       84993U  /* v1.1 oop  665 */ 
+#define OOP_CLASS_oldCOMPLEX_BLOCK      85249U  /* v1.1 oop  667 */ 
+#define OOP_CLASS_oldCOMPLEX_VC_BLOCK   85505U  /* v1.1 oop  669 */ 
+#define OOP_CLASS_SELECT_BLOCK       85761U  /* v1.1 oop  671 */ 
+// deletion
+
+#define OOP_CLASS_BTREE_NODE                86017U  /* v1.1 oop  673 */ 
+#define OOP_CLASS_BTREE_INTERIOR_NODE       86273U  /* v1.1 oop  675 */ 
+#define OOP_CLASS_BTREE_LEAF_NODE           86529U  /* v1.1 oop  677 */ 
+#define OOP_CLASS_BTREE_BASIC_INTERIOR_NODE 86785U  /* v1.1 oop  679 , index.c is order dependent */
+#define OOP_CLASS_BTREE_BASIC_LEAF_NODE     87041U  /* v1.1 oop  681 */ 
+
+#define OOP_CLASS_RCKEY_VALUE_DICTIONARY       87297U  /* v1.1 oop  683 */ 
+#define OOP_CLASS_OBSOLETE_RC_COLLISION_BUCKET 87553U  /* v1.1 oop  685 */ 
+#define OOP_CLASS_RCINDEX_DICTIONARY      87809U  /* v1.1 oop  687 */ 
+#define OOP_CLASS_RCINDEX_BUCKET          88065U  /* v1.1 oop  689 */ 
+#define OOP_CLASS_BUCKET_VALUE_BAG        88321U  /* v1.1 oop  691 */ 
+
+#define OOP_CLASS_IDENTITY_INDEX          88577U  /* v1.1 oop  693 */ 
+#define OOP_CLASS_RANGE_EQUALITY_INDEX    88833U  /* v1.1 oop  695 */ 
+#define OOP_CLASS_PATH_TERM               89089U  /* v1.1 oop  697 */ 
+#define OOP_CLASS_INDEX_LIST              89345U  /* v1.1 oop  699 */ 
+#define OOP_CLASS_DEPENDENCY_LIST         89601U  /* v1.1 oop  701 */ 
+#define OOP_CLASS_SET_VALUED_PATH_TERM    89857U  /* v1.1 oop  703 */ 
+#define OOP_CLASS_MAPPING_INFO            90113U  /* v1.1 oop  705 */ 
+#define OOP_CLASS_CONSTRAINED_PATH_TERM   90369U  /* v1.1 oop  707 */ 
+#define OOP_CLASS_QUERY_EXECUTER          90625U  /* v1.1 oop  709 */ 
+#define OOP_CLASS_IDENTITY_KEY_VALUE_DICTIONARY  90881U  /* v1.1 oop  711 */ 
+#define OOP_CLASS_OBSOLETE_IDENTITY_COLLISION_BUCKET 91137U  /* v1.1 oop  713 */ 
+
+#define OOP_CLASS_OBSOLETE_BTREE_READSTREAM        91393U  /* v1.1 oop  715 */ 
+#define OOP_CLASS_OBSOLETE_RANGE_INDEX_READSTREAM  91649U  /* v1.1 oop  717 */ 
+#define OOP_CLASS_PATH_EVALUATOR                   91905U  /* v1.1 oop  719 */ 
+#define OOP_CLASS_LOG_ENTRY                        92161U  /* v1.1 oop  721 */ 
+
+  /* DB conversion note: the following classes exist WITHOUT reserved
+   *  oops in 3.2 Geode databases.  Oops of the such classes and 
+   *  references to the classes must be changed by the fullbackup phase
+   *  of 3.2 to 4.0 database conversion
+   */
+#define OOP_CLASS_OBSOLETE_GEODE        92417U  /* v1.1 oop  723 */ 
+#define OOP_CLASS_ORDERED_COLLECTION    92673U  /* v1.1 oop  725 */ 
+#define OOP_CLASS_SORTED_COLLECTION     92929U  /* v1.1 oop  727 */ 
+#define OOP_CLASS_CLASS_ORGANIZER       93185U  /* v1.1 oop  729 */ 
+#define OOP_CLASS_PROF_MONITOR          93441U  /* v1.1 oop  731 */ 
+#define OOP_CLASS_CLASS_SET             93697U  /* v1.1 oop  733 */ 
+#define OOP_CLASS_AUTO_COMPLETE         93953U  /* v1.1 oop  735 */ 
+#define OOP_CLASS_STRING_PAIR           94209U  /* v1.1 oop  737 */ 
+#define OOP_CLASS_STRING_PAIR_SET       94465U  /* v1.1 oop  739 */ 
+
+#define OOP_CLASS_OBSOLETE_SYMBOL_LIST_DICTIONARY 94721U  /* v1.1 oop  741 */ 
+
+#define OOP_CLASS_REDO_LOG              94977U  /* v1.1 oop  743 */ 
+
+#define OOP_CLASS_GSCLASS_DOCUMENTATION 95233U  /* v1.1 oop  745 */ 
+#define OOP_CLASS_GSDOC_TEXT            95489U  /* v1.1 oop  747 */ 
+
+#define OOP_CLASS_SORT_NODE             95745U  /* v1.1 oop  749 , index.c is order dependent*/
+#define OOP_CLASS_BASIC_SORT_NODE       96001U  /* v1.1 oop  751 , index.c is order dependent*/
+
+#define OOP_CLASS_UNORDERED_COLLECTION  96257U  /* v1.1 oop  753 */ 
+
+#define OOP_CLASS_BINARY_FLOAT          96513U  /* v1.1 oop  755 */ 
+#define OOP_CLASS_ISO_LATIN             96769U  /* v1.1 oop  757 */ 
+#define OOP_CLASS_GsObjectSecurityPolicySet           97025U  /* v1.1 oop  759 */ 
+#define OOP_CLASS_SEGMENT_SET  97025U /* old name */
+
+#define OOP_CLASS_OBS_FLOAT     97281U  /* v1.1 oop  761 */ 
+#define OOP_CLASS_OBS_SMALL_FLOAT 97537U  /* v1.1 oop  763 */ 
+#define OOP_CLASS_UNIMPLEMENTED_FLOAT_1  97793U  /* v1.1 oop  765 */ 
+#define OOP_CLASS_UNIMPLEMENTED_FLOAT_2  98049U  /* v1.1 oop  767 */ 
+
+#define OOP_CLASS_JIS_STRING       98305U  /* v1.1 oop  769 */ 
+#define OOP_CLASS_INDEX_BKT_WITH_CACHE 98561U  /* v1.1 oop  771 */ 
+
+/* following new in 5.0 */
+
+#define OOP__CLASS_GSMETHOD            98817U  /* v1.1 oop  773 */ 
+#define OOP_CLASS_GSMETHOD_DICTIONARY 99073U  /* v1.1 oop  775 */ 
+#define OOP_CLASS_oldDOUBLE_BYTE_STRING  99329U  /* v1.1 oop  777 */ 
+#define OOP_CLASS_oldDOUBLE_BYTE_SYMBOL  99585U  /* v1.1 oop  779 */ 
+#define OOP_CLASS_oldGSPROCESS        99841U  /* v1.1 oop  781 */ 
+#define OOP_CLASS_GSSTACK_BUFFER      100097U  /* v1.1 oop  783 */ 
+
+#define OOP_CLASS_CLASS_DEF_INFO        100353U  /* v1.1 oop  785 */ 
+
+#define OOP_CLASS_DATE 		      100609U  /* v1.1 oop  787 */ 
+#define OOP_CLASS_TIME 		      100865U  /* v1.1 oop  789 */ 
+
+#define OOP_CLASS_N_DICTIONARY          101377U  /* v1.1 oop  793 */ 
+#define OOP_CLASS_N_IDENTITY_DICTIONARY 101633U  /* v1.1 oop  795 */ 
+#define OOP_CLASS_N_LANGUAGE_DICTIONARY 101889U  /* v1.1 oop  797 */ 
+#define OOP_CLASS_MODIFICATION_LOG	102145U  /* v1.1 oop  799 */ 
+
+#define OOP_CLASS_EQUALITY_SET            102401U  /* v1.1 oop  801 */ 
+#define OOP_CLASS_EQUALITY_BAG            102657U  /* v1.1 oop  803 */ 
+
+#define OOP_CLASS_FixedPoint     102913U  /* v1.1 oop  805 */ /* was ScaledDecimal in v2.4*/
+#define OOP_CLASS_INTERVAL	      103169U  /* v1.1 oop  807 */ 
+#define OOP_CLASS_BYTE_ARRAY	      103425U  /* v1.1 oop  809 */ 
+
+/* classes added in 5.0 */
+#define OOP_CLASS_GSSESSION           103681U  /* v1.1 oop  811 */ 
+#define OOP_CLASS_GSCURRENT_SESSION   103937U  /* v1.1 oop  813 */ 
+#define OOP_CLASS_GSREMOTE_SESSION    104193U  /* v1.1 oop  815 */ 
+#define OOP_CLASS_INDEX_DICT_ENTRY_HOLDER  104449U  /* v1.1 oop  817 */ 
+// 41056: obsolete GSRDB_CONNECTION
+#define OOP_CLASS_OBSOLETE_GSRDB_CONNECTION    104705U  /* v1.1 oop  819 */ 
+#define OOP_CLASS_GSINTERSESS_SIGNAL  104961U  /* v1.1 oop  821 */ 
+#define OOP_CLASS_ABSTRACT_SESSION    105217U  /* v1.1 oop  823 */ 
+
+/* classes that existed in 4.1 without reserved oops */
+#define OOP_CLASS_RCIDENTITY_BAG  105473U  /* v1.1 oop  825 */ 
+/* These next two were reserved but are no longer needed */
+/* was for OOP_CLASS_RCPOS_COUNTER  105729U   v1.1 oop  827 */ 
+/* was for OOP_CLASS_RCPIPE         105985U   v1.1 oop  829 */ 
+#define OOP_CLASS_CONSTR_PATH_EVAL 106241U  /* v1.1 oop  831 */ 
+#define OOP_CLASS_SETVAL_PATH_EVAL 106497U  /* v1.1 oop  833 */ 
+#define OOP_CLASS_PATH_SORTER      106753U  /* v1.1 oop  835 */ 
+#define OOP_CLASS_DEP_LIST_BUCKET  107009U  /* v1.1 oop  837 */ 
+#define OOP_CLASS_DEP_LIST_TABLE   107265U  /* v1.1 oop  839 */ 
+#define OOP_CLASS_SORT_NODE_ARRAY  107521U  /* v1.1 oop  841 */ 
+#define OOP_CLASS_NSC_BUILDER      107777U  /* v1.1 oop  843 */ 
+#define OOP_CLASS_PRINT_STREAM     108033U  /* v1.1 oop  845 */ 
+#define OOP_CLASS_RCCOUNTER_ELEMENT 108289U  /* v1.1 oop  847 */ 
+#define OOP_CLASS_RCQUEUE_ELEMENT  108545U  /* v1.1 oop  849 */ 
+#define OOP_CLASS_RCQ_REM_SEQ_NUMS 108801U  /* v1.1 oop  851 */ 
+#define OOP_CLASS_RCQ_SESSION_COMP 109057U  /* v1.1 oop  853 */ 
+#define OOP_CLASS_RCCOUNTER        109313U  /* v1.1 oop  855 */ 
+
+/* more classes added in 5.0 */
+#define OOP_CLASS_CLIENT_FORWARDER     109569U  /* v1.1 oop  857 */ 
+#define OOP_CLASS_CANON_STR_DICTIONARY_old 109825U  /* v1.1 oop  859 */ 
+#define OOP_CLASS_oldCLAMP_SPECIFICATION  110081U  /* v1.1 oop  861 */ 
+#define OOP_CLASS_OBSOLETE_GS_FILE        110337U  /* v1.1 oop  863 */ 
+
+#define OOP_CLASS_ABSTRACT_DICTIONARY  110593U  /* v1.1 oop  865 */ 
+#define OOP_CLASS_SYMBOL               110849U  /* v1.1 oop  867 */ 
+#define OOP_CLASS_SYM_KEY_VALUE_DICTIONARY 111105U  /* v1.1 oop  869 */ 
+#define OOP_CLASS_SYMBOL_DICT 		111361U  /* v1.1 oop  871 */ 
+#define OOP_CLASS_SYMBOL_ASSOCIATION 111617U  /* v1.1 oop  873 */ 
+
+#define OOP_CLASS_IDENTITY_BTREE_NODE	111873U  /* v1.1 oop  875 */ 
+
+#define OOP_CLASS_USERPROFILE_SET     112129U  /* v1.1 oop  877 */ 
+#define OOP_CLASS_USERSECURITY_DATA   112385U  /* v1.1 oop  879 */ 
+
+#define OOP_CLASS_GS_COMMIT_LIST               112641U  /* v1.1 oop  881 */ 
+
+/* More classes that did not have reservedOop in 4.1 */
+#define OOP_CLASS_oldGS_SOCKET 112897U  /* v1.1 oop  883 */ 
+#define OOP_CLASS_PASSIVE_OBJECT 113153U  /* v1.1 oop  885 */ 
+#define OOP_CLASS_GS_CLONE_LIST 113409U  /* v1.1 oop  887 */ 
+
+#define OOP_CLASS_DB_CONVERSION 113665U  /* v1.1 oop  889 */ 
+#define OOP_CLASS_SYMBOL_SET     113921U  /* v1.1 oop  891 */ 
+
+#define OOP_CLASS_IDENTITY_COLLISION_BUCKET 114177U  /* v1.1 oop  893 */ 
+#define OOP_CLASS_COLLISION_BUCKET    114433U  /* v1.1 oop  895 */ 
+#define OOP_CLASS_RCCOLLISION_BUCKET  114689U  /* v1.1 oop  897 */ 
+#define OOP_CLASS_oldGS_FILE          114945U  /* v1.1 oop  899 */ 
+
+#define OOP_CLASS_FED_RESERVED_1      115201U  /* v1.1 oop  901 */ 
+#define OOP_CLASS_FED_RESERVED_2      115457U  /* v1.1 oop  903 */ 
+
+/* New 5.1 kernel classes */
+#define OOP_CLASS_SEMAPHORE           115713U  /* v1.1 oop  905 */ 
+#define OOP_CLASS_DELAY               115969U  /* v1.1 oop  907 */ 
+#define OOP_CLASS_PROCESSOR           116225U  /* v1.1 oop  909 */ 
+#define OOP_CLASS_PROCESSOR_SCHEDULER 116481U  /* v1.1 oop  911 */ 
+/*  unused  116737U   v1.1 oop  913 */ 
+#define OOP_CLASS_SHARED_QUEUE        116993U  /* v1.1 oop  915 */ 
+#define OOP_CLASS_CRITICAL_SECTION    117249U  /* v1.1 oop  917 */ 
+#define OOP_CLASS_GEMSTONE_PARAMETERS 117505U  /* v1.1 oop  919 */ 
+#define OOP_CLASS_ERROR_DESCRIPTION   117761U  /* v1.1 oop  921 */ 
+#define OOP_CLASS_CBUFFER	            118017U  /* v1.1 oop  923 */ 
+#define OOP_CLASS_GCI_INTERFACE       118273U  /* v1.1 oop  925 */ 
+      /* changed name for TimeZone -- JGF 2007-02-12 */
+#define OOP_CLASS_OBSOLETE_TIME_ZONE  118529U  /* v1.1 oop  927 */ 
+#define OOP_CLASS_DATE_TIME           118785U  /* v1.1 oop  929 */ 
+
+/* added for Gemstone64 1.0 */
+#define OOP_CLASS_CANON_STRING_BUCKET 119041U  /* v1.1 oop  931 */ 
+#define OOP_CLASS_CANON_STRING_DICT   119297U  /* v1.1 oop  933 */ 
+#define OOP_CLASS_CANON_SYMBOL_DICT   119553U  /* v1.1 oop  935 */ 
+#define OOP_CLASS_FAST_IDENTITY_KEY_VALUE_DICTIONARY 119809U  /* v1.1 oop  937 */ 
+
+#define OOP_CLASS_SOFTREFERENCE       120065U  /* v1.1 oop  939 */ 
+#define OOP_CLASS_KEY_SOFTVALUE_DICT		  120321U  /* v1.1 oop  941 */ 
+#define OOP_CLASS_IDENTITY_KEY_SOFTVALUE_DICT	  120577U  /* v1.1 oop  943 */ 
+#define OOP_CLASS_SOFT_COLLISION_BUCKET		  120833U  /* v1.1 oop  945 */ 
+#define OOP_CLASS_IDENTITY_SOFT_COLLISION_BUCKET  121089U  /* v1.1 oop  947 */ 
+
+/* Added in Gemstone64 v2.0 */
+#define OOP_CLASS_SMALL_DOUBLE   121345U  /* v1.1 oop  949 */ 
+#define OOP_CLASS_INDEX_MANAGER  121601U  /* v1.1 oop  951 */ 
+
+/* Added in Gemstone64 v2.1 */
+#define OOP_CLASS_INDEXED_QUERY_EVALUATOR         121857U  /* v1.1 oop  953 */ 
+#define OOP_CLASS_EQUALITY_INDEX_QUERY_EVALUATOR  122113U  /* v1.1 oop  955 */ 
+#define OOP_CLASS_IDENTITY_INDEX_QUERY_EVALUATOR  122369U  /* v1.1 oop  957 */ 
+#define OOP_CLASS_BTREE_COMPARISON_FOR_SORT       122625U  /* v1.1 oop  959 */ 
+#define OOP_CLASS_BTREE_COMPARISON_FOR_COMPARE    122881U  /* v1.1 oop  961 */ 
+
+#define OOP_CLASS_INDEX_MANAGER_AUTO_COMMIT_POLICY 123137U  /* v1.1 oop  963 */ 
+
+#define OOP_CLASS_BTREE_QUERY_SPEC                  123393U  /* v1.1 oop  965 */ 
+#define OOP_CLASS_BTREE_COMPARISON_QUERY_SPEC       123649U  /* v1.1 oop  967 */ 
+#define OOP_CLASS_BTREE_RANGE_COMPARISON_QUERY_SPEC 123905U  /* v1.1 oop  969 */ 
+
+// Locale is used in 6.1.5+ repositories
+#define OOP_CLASS_LOCALE  124161U  /* v6.1 oop  1941 */ /* v1.1 oop  971 */ 
+
+/* Added in Gemstone64 v2.2 */
+#define OOP_CLASS_REPOSITORY          124417U    /* v1.1 oop 973 */
+
+#define OOP_CLASS_RCQUEUE_ENTRY       124673U    /* v1.1 oop 975 */
+#define OOP_CLASS_RC_BTREE_BASIC_INTERIOR_NODE 124929U  /* v1.1 oop  977 , index.c is order dependent*/
+#define OOP_CLASS_RC_BTREE_BASIC_LEAF_NODE     125185U  /* v1.1 oop  979 */ 
+#define OOP_CLASS_RC_RANGE_EQUALITY_INDEX      125441U  /* v1.1 oop  981 */ 
+#define OOP_CLASS_RC_BTREE_INTERIOR_NODE       125697U  /* v1.1 oop  983 */ 
+#define OOP_CLASS_RC_BTREE_LEAF_NODE           125953U  /* v1.1 oop  985 */ 
+
+#define OOP_CLASS_GS_SESS_METH_DICT   126209U  /* v1.1 oop  987 */ 
+
+  // QuadByte string classes from v2.3
+#define OOP_CLASS_oldMULTI_BYTE_STRING  126465U    /* v1.1 oop 989 */
+#define OOP_CLASS_oldQUAD_BYTE_STRING  126721U    /* v1.1 oop 991 */
+#define OOP_CLASS_oldQUAD_BYTE_SYMBOL  126977U    /* v1.1 oop 993 */
+
+#define OOP_CLASS_Regexp              127233U    /* v1.1 oop 995 */
+#define OOP_CLASS_MatchData           127489U    /* v1.1 oop 997 */
+#define OOP_CLASS_ExecBlock0          127745U    /* v1.1 oop 999 */
+#define OOP_CLASS_ExecBlock1	      128001U    /* v1.1 oop 1001 */
+#define OOP_CLASS_ExecBlock2	      128257U    /* v1.1 oop 1003 */
+#define OOP_CLASS_ExecBlock3	      128513U    /* v1.1 oop 1005 */
+#define OOP_CLASS_ExecBlock4	      128769U   /* v1.1 oop 1007 */
+#define OOP_CLASS_ExecBlock5	      129025U   /* v1.1 oop 1009 */
+#define OOP_CLASS_ExecBlockN	      129281U   /* v1.1 oop 1011 */
+#define OOP_CLASS_Range               129537U   /* v1.1 oop 1013 */
+#define OOP_CLASS_IO                  129793U   /* v1.1 oop 1015 */
+#define OOP_CLASS_ExceptionSet        130049U   /* v1.1 oop 1017 */
+#define OOP_CLASS_AbstractException   130305U   /* v1.1 oop 1019 */
+#define OOP_CLASS_GsExceptionHandler  130561U   /* v1.1 oop 1021 */
+#define OOP_CLASS_Error               130817U
+#define OOP_CLASS_MessageNotUnderstood	131073U
+#define OOP_CLASS_ZeroDivide          131329U
+#define OOP_CLASS_NameError	      131585U
+#define OOP_CLASS_InternalError	      131841U
+#define OOP_CLASS_CompileError       132097U
+#define OOP_CLASS_LookupError        132353U
+#define OOP_CLASS_UserDefinedError    132609U
+#define OOP_CLASS_ControlInterrupt    132865U
+#define OOP_CLASS_Halt		      133121U
+#define OOP_CLASS_Notification        133377U
+
+#define OOP_CLASS_CLibrary 	      133633U
+#define OOP_CLASS_CFunction 	      133889U
+#define OOP_CLASS_CPointer  	      134145U
+#define OOP_CLASS_CByteArray 	      134401U
+#define OOP_CLASS_GsProcess           134657U 
+#define OOP_CLASS_VariableContext     134913U 
+#define OOP_CLASS_GsFile              135169U 
+#define OOP_CLASS_GsSocket            135425U
+#define OOP_CLASS_CLAMP_SPECIFICATION  135681U  /* v1.1 oop  1061 */ 
+#define OOP_CLASS_Float                135937U
+#define OOP_CLASS_LargeInteger         136193U
+#define OOP_CLASS_MultiByteString      136449U
+#define OOP_CLASS_SmallFloat           136705U
+#define OOP_CLASS_TrueClass            136961U
+#define OOP_CLASS_FalseClass           137217U
+#define OOP_CLASS_BitSet               137473U
+#define OOP_CLASS_Exception            137729U
+#define OOP_CLASS_GsFileStat           137985U
+#define OOP_CLASS_RubyTime             138241U
+#define OOP_CLASS_RubyHash             138497U
+#define OOP_CLASS_AlmostOutOfMemory  	138753U
+#define OOP_CLASS_ArgumentError  	139009U
+#define OOP_CLASS_IOError		139265U
+#define OOP_CLASS_RepositoryViewLost	139521U
+#define OOP_CLASS_OffsetError		139777U
+#define OOP_CLASS_OutOfRange		140033U
+#define OOP_CLASS_FloatingPointError  	140289U
+#define OOP_CLASS_RegexpError		140545U
+#define OOP_CLASS_SecurityError		140801U
+#define OOP_CLASS_SystemCallError 	141057U
+#define OOP_CLASS_ThreadError  		141313U
+#define OOP_CLASS_ArgumentTypeError    	141569U
+#define OOP_CLASS_AlmostOutOfStack    	141825U
+#define OOP_CLASS_CannotReturn    	142081U
+#define OOP_CLASS_SocketError    	142337U
+#define OOP_CLASS_ImproperOperation    	142593U
+#define OOP_CLASS_RubyBreakException    142849U
+#define OOP_CLASS_Module                143105U
+#define OOP_CLASS_EXEC_BLOCK          	143361U
+#define OOP_CLASS_GSNATIVECODE        	143617U
+#define OOP_CLASS_DoubleByteString	143873U
+#define OOP_CLASS_DoubleByteSymbol	144129U 
+#define OOP_CLASS_QuadByteString    	144385U
+#define OOP_CLASS_QuadByteSymbol     	144641U
+#define OOP_CLASS_GSNMETHOD           	144897U
+#define OOP_CLASS_CZstream           	145153U
+#define OOP_CLASS_GS_OBJ_INV            145409U
+#define OOP_CLASS_GS_OBJ_INV_ENTRY      145665U
+#define OOP_CLASS_TransientShortArray   145921U
+#define OOP_CLASS_Metaclass3            146177U
+#define OOP_CLASS_ScaledDecimal         146433U
+#define OOP_CLASS_EqualityCollisionBucket 146689U
+#define OOP_CLASS_CCallout		146945U
+#define OOP_CLASS_CCallin               147201U
+#define OOP_CLASS_RubyThrowException    147457U
+#define OOP_CLASS_Break			147713U
+#define OOP_CLASS_Breakpoint		147969U
+#define OOP_CLASS_ClientForwarderSend	148225U
+#define OOP_CLASS_EndOfStream		148481U
+#define OOP_CLASS_ExternalError		148737U
+#define OOP_CLASS_IndexingErrorPreventingCommit		148993U
+#define OOP_CLASS_GciTransportError	149249U
+#define OOP_CLASS_LockError		149505U
+#define OOP_CLASS_NumericError		149761U
+#define OOP_CLASS_RepositoryError  	150017U
+#define OOP_CLASS_TransactionError	150273U
+#define OOP_CLASS_UncontinuableError	150529U
+#define OOP_CLASS_Admonition		150785U
+#define OOP_CLASS_Deprecated		151041U
+#define OOP_CLASS_FloatingPointException	151297U
+#define OOP_CLASS_ObjectsCommittedNotification	151553U
+#define OOP_CLASS_TerminateProcess	151809U
+#define OOP_CLASS_TransactionBacklog	152065U
+#define OOP_CLASS_Warning		152321U
+#define OOP_CLASS_TestFailure		152577U
+#define OOP_CLASS_SignalBufferFull      152833U
+#define OOP_CLASS_InterSessionSignal     153089U
+#define OOP_CLASS_RubyCextData          153345U
+#define OOP_CLASS_IcuLocale	        153601U
+#define OOP_CLASS_IcuCollator           153857U
+#define OOP_CLASS_Utf8           154113U
+#define OOP_CLASS_Unicode7       154369U
+#define OOP_CLASS_Unicode16     154625U
+#define OOP_CLASS_Unicode32          154881U
+
+#define OOP_CLASS_GsHostProcess  155137U
+
+/* added in 3.2 */
+#define OOP_CLASS_BTREE_UNICODE_COMPARISON_QUERY_SPEC       155393U  /* v1.1 oop  1215 */
+#define OOP_CLASS_BTREE_UNICODE_RANGE_COMPARISON_QUERY_SPEC 155649U  /* v1.1 oop  1217 */
+
+/* added in 3.2.5 */
+#define OOP_CLASS_UnauthorizedObjectStub 155905U   
+
+/* added in 3.3 */
+#define OOP_CLASS_SmallFraction  156161U  
+   // 29 bit signed numerator, 27bit unsigned denom, 8 bits tag(value 0x2c), 
+   // see lrgint.c and gcisup_ts.c 
+
+#define OOP_CLASS_AbstractFraction 156417U
+
+#define OOP_CLASS_LdapDirectoryServer 156673U /* v1.1 oop 1225*/
+
+#define OOP_AllLdapDirectoryServers 156929U  /* oop also coded in image/LdapDirectoryServer.gs*/
+
+/* added in 3.4 */
+#define OOP_ALL_GROUPS 157185U /* v1.1 oop 1229 */
+
+#define OOP_CLASS_USER_PROFILE_GROUP 157441U /* v1.1 oop 1231 */
+
+#define OOP_CLASS_KERBEROS_PRINCIPAL 157697U /* v1.1 oop 1233 */
+
+#define OOP_ALL_KERBEROS_PRINCIPALS 157953U /* v1.1 oop 1235 */
+
+/* 46958 */
+#define OOP_CLASS_SecureSocketError 158209U /* v1.1 oop 1237 */
+
+#define OOP_CLASS_Utf16          158465U  /* v1.1 oop 1239 */
+
+#define OOP_CLASS_CryptoError  158721U /* v1.1 oop 1241 */
+
+#define OOP_CLASS_MigrationError  158977U /* v1.1 oop 1243 */
+
+#define OOP_CLASS_SmallScaledDecimal  159233U     /* added in Gs64 v3.6*/
+#define OOP_CLASS_SmallDateAndTime    159489U
+#define OOP_CLASS_SmallTime           159745U
+#define OOP_CLASS_SmallDate           160001U
+#define OOP_CLASS_AlmostOutOfStackError  160257U
+#define OOP_CLASS_AlmostOutOfMemoryError 160513U
+
+#define OOP_LAST_KERNEL_OOP      160513U
+/* 174 oops left to LAST_EXPORTED_OOP=205057 */
+
+/* from 160001, 175 oops left to LAST_EXPORTED_OOP=205057 */
+
+/* oops OOP_LAST_KERNEL_OOP+256 to OOP_LAST_EXPORTED_OOP(in oop.ht) 
+ * are available for new kernel classes
+ */
+
+/* ************************************************************ */
+#define OOP_CLASS_old_EXCEPTION      230913U  /* v1.1 oop  1805 */ 
+#define OOP_GEMSTONE_ERROR_CAT       231169U  /* v1.1 oop  1807 */ 
+   /* GemStone errors are in this category */
+
+#define OOP_ALL_CLUSTER_BUCKETS      232961U  /* v1.1 oop  1821 */ 
+
+#define OOP_EMPTY_INVARIANT_ARRAY    233217U  /* v1.1 oop  1823 */ 
+#define OOP_EMPTY_INVARIANT_STRING   233473U  /* v1.1 oop  1825 */ 
+#define OOP_EMPTY_SYMBOL             233729U  /* v1.1 oop  1827 */ 
+
+/* oop of kernel symbol #manualBegin , also in oop.ht */
+#define OOP_SYM_MANUAL_BEGIN         236033U /* v1.1 oop 1845 */
+
+/* oop of kernel symbol #autoBegin , also in oop.ht*/
+#define OOP_SYM_AUTO_BEGIN           236289U /* v1.1 oop 1847 */
+
+/* 
+ * if you add a new oop here, you must change OOP_LAST_USED_RESERVED_OOP
+ * in GemStone internal file oop.ht
+ */
+
+#endif
