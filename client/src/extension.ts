@@ -88,6 +88,7 @@ import { refreshEnhancedInspectorAvailable } from './enhancedInspector/enhancedI
 import { refreshRefactoringSupportAvailable } from './refactoring/refactoringAvailability';
 import { supportsEnhancedInspector } from './enhancedInspector/enhancedInspectorInstall';
 import { DebuggerPanel } from './debuggerPanel';
+import { GemstoneManagerPanel } from './gemstoneManager';
 import { InlineValuesCodeLensProvider } from './inlineValuesCodeLens';
 import {
   GemStoneFileSystemProvider,
@@ -3589,6 +3590,24 @@ export function activate(context: vscode.ExtensionContext) {
 
     vscode.commands.registerCommand('gemstone.refreshDatabases', () => {
       refreshAdminViews();
+    }),
+
+    vscode.commands.registerCommand('gemstone.openManager', () => {
+      GemstoneManagerPanel.show({
+        storage: sysadminStorage,
+        versionManager,
+        processManager,
+        getLogins: () => storage.getLogins(),
+        sessionManager,
+        extensionUri: context.extensionUri,
+        // The same signals the admin trees redraw on: every command that changes
+        // a version, database or process refreshes one of these providers.
+        onAdminChange: [
+          versionProvider.onDidChangeTreeData,
+          databaseProvider.onDidChangeTreeData,
+          processProvider.onDidChangeTreeData,
+        ],
+      });
     }),
 
     vscode.commands.registerCommand('gemstone.startStone', async (node: DatabaseNode) => {

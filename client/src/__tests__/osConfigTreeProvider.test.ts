@@ -32,6 +32,7 @@ import {
   OsConfigTreeProvider,
   isSharedMemoryConfigured,
   getRemoveIpcConfigured,
+  getSharedMemoryInUse,
   type OsConfigNode,
 } from '../sharedMemoryTreeProvider';
 import * as wslBridge from '../wslBridge';
@@ -1291,6 +1292,75 @@ describe('isSharedMemoryConfigured', () => {
     mockExecError();
 
     expect(await isSharedMemoryConfigured()).toBe(false);
+  });
+});
+
+describe('getSharedMemoryInUse', () => {
+  let originalPlatform: NodeJS.Platform;
+
+  // ipcs prints a title, a header row and one line per segment. macOS puts the
+  // size last (`ipcs -mb`), Linux fifth (`ipcs -m`) — and both print rows that
+  // are not segments at all, which is what the header lines here are for.
+  const MACOS_IPCS = [
+    'IPC status from <running system> as of Wed Aug 13 00:00:00 CEST 2026',
+    'T     ID     KEY        MODE       OWNER    GROUP      SEGSZ',
+    'Shared Memory:',
+    'm  65536 0x0000dead --rw------- gemstone    staff  268435456',
+    'm  65537 0x0000beef --rw------- gemstone    staff  536870912',
+  ].join('\n');
+
+  const LINUX_IPCS = [
+    '------ Shared Memory Segments --------',
+    'key        shmid      owner      perms      bytes      nattch     status',
+    '0x0000dead 32768      gemstone   600        268435456  2          dest',
+    '0x0000beef 32769      gemstone   600        536870912  1',
+  ].join('\n');
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    originalPlatform = process.platform;
+    vi.mocked(wslBridge.needsWsl).mockReturnValue(false);
+  });
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+  });
+
+  it('adds up the segments macOS reports', async () => {
+    setPlatform('darwin');
+    mockExec(MACOS_IPCS);
+
+    expect(await getSharedMemoryInUse()).toBe(768 * 1024 * 1024);
+  });
+
+  it('adds up the segments Linux reports', async () => {
+    setPlatform('linux');
+    mockExec(LINUX_IPCS);
+
+    expect(await getSharedMemoryInUse()).toBe(768 * 1024 * 1024);
+  });
+
+  it('reads the WSL side when paths route through it', async () => {
+    setPlatform('win32');
+    vi.mocked(wslBridge.needsWsl).mockReturnValue(true);
+    mockExec(LINUX_IPCS);
+
+    expect(await getSharedMemoryInUse()).toBe(768 * 1024 * 1024);
+    expect(vi.mocked(exec).mock.calls[0][0]).toContain('wsl.exe');
+  });
+
+  it('holds nothing when the machine holds no segments', async () => {
+    setPlatform('linux');
+    mockExec('------ Shared Memory Segments --------\nkey shmid owner perms bytes nattch status\n');
+
+    expect(await getSharedMemoryInUse()).toBe(0);
+  });
+
+  it('has no answer when ipcs cannot be run', async () => {
+    setPlatform('linux');
+    mockExecError();
+
+    expect(await getSharedMemoryInUse()).toBeUndefined();
   });
 });
 

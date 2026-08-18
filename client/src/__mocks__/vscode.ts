@@ -1,5 +1,12 @@
 import { vi } from 'vitest';
-import { URI as Uri } from 'vscode-uri';
+import { URI as Uri, Utils } from 'vscode-uri';
+
+// vscode exposes joinPath as a static on Uri; vscode-uri ships the same behavior
+// as Utils.joinPath but hangs it off a separate namespace. Graft it on rather
+// than making call sites spell the difference — assigned through a cast because
+// the imported class declares no such static, and left as a class binding so
+// `Uri` stays usable as a type throughout this mock.
+(Uri as unknown as { joinPath: typeof Utils.joinPath }).joinPath = Utils.joinPath;
 
 export { Uri };
 
@@ -157,6 +164,10 @@ function createMockWebview() {
     html: '',
     postMessage: vi.fn(),
     onDidReceiveMessage: vi.fn((_handler: unknown) => ({ dispose: () => {} })),
+    // A panel that ships assets resolves them through these two; the real ones
+    // rewrite a disk path into the webview's own origin.
+    asWebviewUri: vi.fn((uri: unknown) => uri),
+    cspSource: 'vscode-webview://mock',
   };
 }
 
@@ -166,6 +177,7 @@ function createMockPanel() {
     webview,
     title: '',
     active: true,
+    visible: true,
     reveal: vi.fn(),
     dispose: vi.fn(),
     onDidDispose: vi.fn((_handler: unknown) => ({ dispose: () => {} })),

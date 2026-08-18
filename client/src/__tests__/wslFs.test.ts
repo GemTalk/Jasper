@@ -36,6 +36,7 @@ import {
   wslIsDirectory,
   wslIsFile,
   wslReaddirSync,
+  wslListFilesSync,
   wslMkdirSync,
   wslWriteFileSync,
   wslCopyFileSync,
@@ -127,6 +128,46 @@ describe('wslFs', () => {
         throw new Error();
       });
       expect(wslReaddirSync(UNC)).toEqual([]);
+    });
+  });
+
+  describe('wslListFilesSync', () => {
+    it('lists the files of a directory, sorted, leaving out its subdirectories', () => {
+      vi.mocked(needsWsl).mockReturnValue(true);
+      vi.mocked(wslExecSync).mockReturnValue('c.dbf\nolder/\na.log\n\n  b.conf  \n');
+
+      expect(wslListFilesSync(UNC)).toEqual(['a.log', 'b.conf', 'c.dbf']);
+    });
+
+    it('asks the WSL side once, however many files the directory holds', () => {
+      vi.mocked(needsWsl).mockReturnValue(true);
+      vi.mocked(wslExecSync).mockReturnValue('a.log\nb.log\nc.log\nd.log\n');
+
+      wslListFilesSync(UNC);
+
+      expect(vi.mocked(wslExecSync)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(wslExecSync).mock.calls[0][0]).toContain('ls -A1p');
+    });
+
+    it('lists a native directory without stating each name in turn', () => {
+      vi.mocked(needsWsl).mockReturnValue(false);
+      vi.mocked(fs.readdirSync).mockReturnValue([
+        { name: 'b.log', isFile: () => true },
+        { name: 'archive', isFile: () => false },
+        { name: 'a.log', isFile: () => true },
+      ] as unknown as ReturnType<typeof fs.readdirSync>);
+
+      expect(wslListFilesSync('/gs/db-1/log')).toEqual(['a.log', 'b.log']);
+      expect(vi.mocked(fs.statSync)).not.toHaveBeenCalled();
+    });
+
+    it('has nothing to list when the directory cannot be read', () => {
+      vi.mocked(needsWsl).mockReturnValue(true);
+      vi.mocked(wslExecSync).mockImplementation(() => {
+        throw new Error('No such file or directory');
+      });
+
+      expect(wslListFilesSync(UNC)).toEqual([]);
     });
   });
 

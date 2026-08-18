@@ -31,7 +31,8 @@ export type OsConfigNode =
 /** Does `/etc/services` inside the default WSL distro have a
  *  `gs64ldi <port>/tcp` entry? Routed through wslExecSync so the check
  *  inspects the Linux distro, not any Windows file of the same name. */
-function wslServicesHasGs64ldi(): boolean {
+/** Does the WSL distro's /etc/services carry the gs64ldi entry? */
+export function wslServicesHasGs64ldi(): boolean {
   try {
     wslExecSync(
       'grep -qE "^[[:space:]]*gs64ldi[[:space:]]+[0-9]+/tcp([[:space:]]|$)" /etc/services',
@@ -44,7 +45,8 @@ function wslServicesHasGs64ldi(): boolean {
 
 /** Does the Windows services file (drivers\etc\services) have a
  *  `gs64ldi <port>/tcp` entry? */
-function windowsServicesHasGs64ldi(): boolean {
+/** The same question for the Windows services file. */
+export function windowsServicesHasGs64ldi(): boolean {
   try {
     const systemRoot = process.env.SystemRoot ?? 'C:\\Windows';
     const servicesPath = path.join(systemRoot, 'System32', 'drivers', 'etc', 'services');
@@ -88,14 +90,64 @@ export function getSharedMemory(): Promise<{ shmmax: number; shmall: number } | 
   });
 }
 
-/** Is shared memory at least the 1 GB GemStone needs (both shmmax and shmall)?
- *  Treats an unreadable sysctl as "not configured". */
-export async function isSharedMemoryConfigured(): Promise<boolean> {
-  const mem = await getSharedMemory();
-  if (!mem) return false;
+/**
+ * Bytes of shared memory already allocated on this machine, or undefined when it
+ * cannot be read. The limit alone does not predict whether a stone will start:
+ * segments other stones hold count against the same shmall, so a machine can
+ * clear the 1 GB threshold and still have no room for another cache.
+ */
+export function getSharedMemoryInUse(): Promise<number | undefined> {
+  // macOS prints SEGSZ last (ipcs -mb); Linux prints bytes as the fifth column.
+  const darwin = process.platform === 'darwin';
+  const cmd = darwin ? 'ipcs -mb' : 'ipcs -m';
+  const column = darwin ? -1 : 4;
+  // Which lines are segments, rather than the title, the header or a blank: a
+  // macOS row opens with the type letter, a Linux row with the hex key. Taking
+  // any line with enough columns instead would count macOS's title line, whose
+  // last field is the year.
+  const isSegment = darwin
+    ? (parts: string[]) => parts[0] === 'm'
+    : (parts: string[]) => /^0x[0-9a-f]+$/i.test(parts[0]);
+  const run = needsWsl() ? `wsl.exe -e sh -lc "${cmd}"` : cmd;
+  return new Promise((resolve) => {
+    exec(run, { encoding: 'utf-8' }, (error, output) => {
+      if (error) return resolve(undefined);
+      let total = 0;
+      for (const line of output.split('\n')) {
+        const parts = line.trim().split(/\s+/);
+        if (parts.length < 5 || !isSegment(parts)) continue;
+        const size = Number(parts.at(column));
+        if (!Number.isFinite(size) || size <= 0) continue;
+        total += size;
+      }
+      resolve(total);
+    });
+  });
+}
+
+/**
+ * Whether a shared-memory reading clears the 1 GB a stone needs, and how to say
+ * how much there is. The one place that knows the divisors and the threshold:
+ * the Start Stone preflight gates on it, Quick Setup warns on it, and the OS
+ * view and the manager both display it, so a reading they disagree about is a
+ * machine one calls ready and another refuses.
+ */
+export function sharedMemoryStatus(mem: { shmmax: number; shmall: number } | undefined): {
+  configured: boolean;
+  gbLabel: string;
+} {
+  if (!mem) return { configured: false, gbLabel: '0' };
   const shmmaxGb = mem.shmmax / Math.pow(2, 30);
   const shmallGb = mem.shmall / Math.pow(2, 18);
-  return shmmaxGb >= 1 && shmallGb >= 1;
+  const minGb = Math.min(shmmaxGb, shmallGb);
+  return {
+    configured: shmmaxGb >= 1 && shmallGb >= 1,
+    gbLabel: minGb > 1024 ? '≥ 1' : String(Math.round(minGb * 10) / 10),
+  };
+}
+
+export async function isSharedMemoryConfigured(): Promise<boolean> {
+  return sharedMemoryStatus(await getSharedMemory()).configured;
 }
 
 /** Does the systemd logind config set `RemoveIPC=no`? Without it, systemd
@@ -465,17 +517,8 @@ export class OsConfigTreeProvider implements vscode.TreeDataProvider<OsConfigNod
     }
 
     if (showLinuxChecks || process.platform === 'darwin') {
-      const mem = await getSharedMemory();
-      if (mem) {
-        const shmmaxGb = mem.shmmax / Math.pow(2, 30);
-        const shmallGb = mem.shmall / Math.pow(2, 18);
-        const minGb = Math.min(shmmaxGb, shmallGb);
-        const configured = shmmaxGb >= 1 && shmallGb >= 1;
-        const gbLabel = minGb > 1024 ? '≥ 1' : String(Math.round(minGb * 10) / 10);
-        nodes.push({ kind: 'sharedMemoryStatus', configured, gbLabel });
-      } else {
-        nodes.push({ kind: 'sharedMemoryStatus', configured: false, gbLabel: '0' });
-      }
+      const { configured, gbLabel } = sharedMemoryStatus(await getSharedMemory());
+      nodes.push({ kind: 'sharedMemoryStatus', configured, gbLabel });
     }
 
     if (showLinuxChecks) {

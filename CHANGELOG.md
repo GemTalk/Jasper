@@ -4,6 +4,10 @@ All notable changes to the **GemStone Smalltalk** extension will be documented i
 
 ## [Unreleased]
 
+### Added
+
+- **GemStone Manager: one screen for the whole GemStone environment.** A new **GemStone Admin: GemStone Manager** editor tab shows the operating system's prerequisites, the versions installed, the databases made from them, and the logins that reach those databases — in the order they matter, so a machine that cannot hand out enough shared memory says so before anything else, a machine with nothing installed leads with the versions, and once neither is true the screen leads with connecting. Every action the four sidebar views offered is offered here too, dispatched to the command that already owns it. The operating-system section is a checklist with one row per prerequisite the machine actually has — shared memory (with how much is still free, not just the limit), RemoveIPC, the WSL version, mirrored networking, the two `gs64ldi` services entries, the hosts entry — each carrying its own remedy only while it is failing. It keeps itself current as stones start and stop, logins are added, and sessions come and go. ([#454](https://github.com/GemTalk/Jasper/pull/454))
+
 ## [1.8.11] - 2026-08-16
 
 ### Added
