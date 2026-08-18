@@ -1,5 +1,6 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import { GciLibrary } from '../../gciLibrary';
+import { GCI_LOGIN_PW_ENCRYPTED } from '../../gciConstants';
 import {
   GCI_LIBRARY_PATH,
   STONE_NRS,
@@ -167,7 +168,6 @@ describe('GciTsLogin / GciTsLogout', () => {
       const encrypted = gci.GciTsEncrypt(GS_PASSWORD);
       expect(encrypted).not.toBeNull();
 
-      const GCI_LOGIN_PW_ENCRYPTED = 1;
       const { session, err } = gci.GciTsLogin(
         STONE_NRS,
         null,
