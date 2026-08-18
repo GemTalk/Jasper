@@ -87,12 +87,12 @@ cp "$ROWAN_PROJECTS_HOME/gtoolkit-remote/src-gs/gtoolkit-remote.gs"   "$PAYLOAD_
 
 # Re-apply Jasper's post-processing to the freshly-copied upstream files:
 #   - per-file attribution headers (origin repo + MIT license)
-#   - class placement rewrite from Globals to Published
+#   - class placement rewrite from Globals to GsEnhancedInspector
 # These transforms are deterministic and idempotent; they MUST run on every
 # update or the refreshed files would revert to pristine upstream (Globals,
 # no headers). See apply_jasper_transforms.sh.
 echo ""
-echo "Applying Jasper transforms (attribution headers + Globals->Published)..."
+echo "Applying Jasper transforms (attribution headers + Globals->GsEnhancedInspector)..."
 "$BUILD/apply_jasper_transforms.sh" "$PAYLOAD_DIR"
 
 echo ""
