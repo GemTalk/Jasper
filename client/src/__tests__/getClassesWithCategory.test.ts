@@ -25,6 +25,27 @@ describe("listing a dictionary's classes with their categories", () => {
     expect(getClassesWithCategory(execute, 1).map((e) => e.hasComment)).toEqual([false, true]);
   });
 
+  // The engine-side behaviour this encodes (a stored `''`, a whitespace-only
+  // comment) is pinned against a real stone in explorerQueries.integration.test.ts;
+  // here we only pin that a blank comment reaches the Explorer as `hasComment: false`.
+  it('reports a blank comment as no comment at all', () => {
+    const execute = vi.fn().mockReturnValue('Kernel\t0\tEmptied\nKernel\t1\tReal\n');
+
+    expect(getClassesWithCategory(execute, 1).map((e) => e.hasComment)).toEqual([false, true]);
+  });
+
+  it('asks for any non-whitespace character, not merely a non-nil comment', () => {
+    const execute = vi.fn().mockReturnValue('');
+
+    getClassesWithCategory(execute, 1);
+
+    const code = execute.mock.calls[0][0] as string;
+    // A bare `notNil` would count the `''` that emptying the editor stores (#387
+    // item 11 / PR #442 review).
+    expect(code).not.toMatch(/#comment\) notNil/);
+    expect(code).toContain('isSeparator not');
+  });
+
   it('asks the class for the comment KEY, never for the synthesised comment text', () => {
     const execute = vi.fn().mockReturnValue('');
 
@@ -38,12 +59,14 @@ describe("listing a dictionary's classes with their categories", () => {
   });
 
   it('keeps a tab in a category name from shifting the class name', () => {
-    // Category comes first and the class name is taken from the LAST tab, so the
-    // parse stays anchored even if a category ever contains one.
-    const execute = vi.fn().mockReturnValue('Odd\t1\tArray\n');
+    // A category is free text; a class name cannot hold a tab. So the fields are
+    // read from the RIGHT, and a category carrying one stays in the category.
+    // Left-anchored, this line parsed as category 'Od', hasComment false, className
+    // '1\tArray' — every field wrong.
+    const execute = vi.fn().mockReturnValue('Od\td\t1\tArray\n');
 
     expect(getClassesWithCategory(execute, 1)).toEqual([
-      { category: 'Odd', className: 'Array', hasComment: true },
+      { category: 'Od\td', className: 'Array', hasComment: true },
     ]);
   });
 

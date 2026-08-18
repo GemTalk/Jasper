@@ -277,13 +277,11 @@ describe('#387 item 10 — the ALL METHODS pseudo-category is gone', () => {
       )
       .sort();
 
-    // Exactly what the pseudo-category used to enumerate.
-    expect(reachable).toEqual(
-      ctl
-        .selectorsFor(false, ALL_METHODS_CATEGORY)
-        .map((i) => i.selector)
-        .sort(),
-    );
+    // Exactly what the pseudo-category used to enumerate, written out rather than
+    // read back from selectorsFor: comparing that call against itself would pass
+    // just as happily if it answered nothing at all, and "no methods lost" is the
+    // whole claim.
+    expect(reachable).toEqual(['name', 'name:', 'printOn:', 'printString', 'size']);
   });
 
   it('keeps ALL_METHODS_CATEGORY working as the enumerate-everything lookup key', () => {

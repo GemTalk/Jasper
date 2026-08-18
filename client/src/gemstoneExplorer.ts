@@ -643,7 +643,23 @@ interface ExplorerViews {
 export class ExplorerController {
   readonly state: ExplorerState = {};
   // className → category for the current dictionary; fetched once per dict.
-  private classCategoryEntries: queries.ClassCategoryEntry[] = [];
+  // Assign through the accessor pair, never to the backing field: the setter derives
+  // `commentedClasses` from the entries, so every reassignment (dict switch, refresh,
+  // class create/rename, comment edit) keeps that set in step with no site to forget.
+  private classCategoryEntriesStore: queries.ClassCategoryEntry[] = [];
+  // The commented subset of the above, as a set. `classHasComment` is asked once per
+  // class ROW, so scanning the entries there made the Classes pane quadratic in class
+  // count (~300k comparisons for the 769 classes in Globals, on every render). A set
+  // lookup puts it back alongside the O(1) map reads its two row siblings do
+  // (`classHasDefinedVars`, `classVersion`).
+  private commentedClasses = new Set<string>();
+  private get classCategoryEntries(): queries.ClassCategoryEntry[] {
+    return this.classCategoryEntriesStore;
+  }
+  private set classCategoryEntries(entries: queries.ClassCategoryEntry[]) {
+    this.classCategoryEntriesStore = entries;
+    this.commentedClasses = new Set(entries.filter((e) => e.hasComment).map((e) => e.className));
+  }
   // className → count of locally-defined instance variables, for the current
   // dictionary; fetched once per dict so class rows know whether to show an
   // expansion caret. Names are fetched lazily on expand and memoized here.
@@ -1772,12 +1788,13 @@ export class ExplorerController {
   // Whether a class carries a real comment — drives whether the row offers the
   // comment button at all (#387 item 11), so the button never promises a document
   // that turns out to be GemStone's synthesised "No class-specific documentation
-  // for …" placeholder. Answered from the class list already fetched for this
-  // dictionary, so asking costs no extra query. A class we have no entry for
-  // (a stale row, or one from another dictionary) is treated as uncommented: the
-  // Classes-pane toolbar button still reaches it, so nothing becomes unreachable.
+  // for …" placeholder. Answered from the set derived from the class list already
+  // fetched for this dictionary, so asking costs no extra query and no scan. A class
+  // we have no entry for (a stale row, or one from another dictionary) is treated as
+  // uncommented: the Classes-pane toolbar button still reaches it, so nothing becomes
+  // unreachable.
   classHasComment(className: string): boolean {
-    return this.classCategoryEntries.some((e) => e.className === className && e.hasComment);
+    return this.commentedClasses.has(className);
   }
 
   // The class's `current/total` version tag when it has more than one version in
@@ -3098,8 +3115,9 @@ export class ExplorerController {
     // drop categories with no matching selector, and expand what remains so the
     // matches are visible without hand-expanding each folder.
     // A category survives the filter when its OWN name matches (#387 item 7) or when
-    // any selector inside it matches. Name-matching first: it is a string compare,
-    // where the selector scan can pull in the ivar-access map.
+    // any selector inside it matches. Name-matching first: it is a cached-parse
+    // lookup plus a string compare (parseFilter re-parses only when the raw filter
+    // string changes), where the selector scan can pull in the ivar-access map.
     const hasMatch = (category: string) =>
       filter === undefined ||
       this.methodCategoryMatchesFilter(category, filter) ||

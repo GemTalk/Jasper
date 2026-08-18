@@ -22,6 +22,13 @@ export interface ClassCategoryEntry {
 // key is also the cheaper of the two — measured at ~0.12µs per class, so adding it
 // to this existing per-class loop costs nothing noticeable even on a large
 // dictionary, and adds no round trip.
+//
+// Present-but-blank counts as NO comment. Emptying the editor and saving stores
+// `''` rather than removing the key, so a bare nil test kept offering a button that
+// opened an empty document — the very promise item 11 set out to stop making. The
+// test is "any non-whitespace character", not `isEmpty not`, because a save can
+// leave a lone newline behind (VS Code's insert-final-newline) and a comment of
+// pure whitespace is no more readable than none.
 export function getClassesWithCategory(
   execute: QueryExecutor,
   dict: number | string,
@@ -36,18 +43,25 @@ dict keysAndValuesDo: [:k :v |
     | cat cmt |
     cat := [v category] on: Error do: [:e | nil].
     (cat isNil or: [cat isEmpty]) ifTrue: [cat := 'as yet unclassified'].
-    cmt := [(v _extraDictAt: #comment) notNil] on: Error do: [:e | false].
+    cmt := [(v _extraDictAt: #comment)
+              ifNil: [false]
+              ifNotNil: [:c | (c detect: [:ch | ch isSeparator not] ifNone: [nil]) notNil]]
+            on: Error do: [:e | false].
     ws nextPutAll: cat asString; tab;
        nextPutAll: (cmt ifTrue: ['1'] ifFalse: ['0']); tab;
        nextPutAll: k; lf]].
 ws contents`;
+  // Parsed from the RIGHT. A class name cannot contain a tab, but a class category
+  // is free text and conceivably could, so anchoring on the first two tabs would let
+  // one category shift the flag and the name a field over. The last tab always ends
+  // the flag, the one before it always ends the category.
   return splitLines(execute(code)).map((line) => {
-    const tab = line.indexOf('\t');
-    const tab2 = line.indexOf('\t', tab + 1);
+    const nameTab = line.lastIndexOf('\t');
+    const flagTab = line.lastIndexOf('\t', nameTab - 1);
     return {
-      category: line.slice(0, tab),
-      hasComment: line.slice(tab + 1, tab2) === '1',
-      className: line.slice(tab2 + 1),
+      category: line.slice(0, flagTab),
+      hasComment: line.slice(flagTab + 1, nameTab) === '1',
+      className: line.slice(nameTab + 1),
     };
   });
 }
