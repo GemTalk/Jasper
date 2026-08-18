@@ -1,8 +1,8 @@
 ---
 paths:
-  - "gs-src/refactoring/**"
-  - "client/src/refactoring/**"
-  - "client/src/__tests__/gci/**"
+  - 'gs-src/refactoring/**'
+  - 'client/src/refactoring/**'
+  - 'client/src/__tests__/gci/**'
 ---
 
 # Refactoring (RB) tests: cover APPLY, not just PREVIEW
@@ -15,9 +15,10 @@ has an apply-path test.
   state of the stone, not the change set that was staged.
 - **[GCI integration]** in `client/src/refactoring/__tests__/*.integration.test.ts` — drive apply
   through the client path end to end, gated with `requireServerPluginFeature`. This is the default
-  home: it runs in CI over the whole release matrix. Only a scenario that must COMMIT belongs in the
-  on-demand `client/src/__tests__/gci/` project, since every harness session is armed to refuse
-  commits outright (`TransactionError 2249`), with no opt-out.
+  home: it runs in CI over the whole release matrix. A scenario that must COMMIT is a candidate for a
+  `*.committing.integration.test.ts` file using `commitStrategy: 'nested'` — but check it against
+  [the harness reference](../../docs/reference/integration-test-harness.md)'s exclusions first; a scenario that doesn't fit still
+  belongs in the on-demand `client/src/__tests__/gci/` project rather than being forced into `'nested'`.
 - Both boundaries: 3.6.2 **and** 3.7.5.
 
 ## What an apply test must assert
