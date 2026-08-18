@@ -15,24 +15,39 @@ describe('variable-side grouping under a class', () => {
     expect(sides[1].names).toEqual(['Rate']);
   });
 
-  it('still shows both sides when there are no class variables, leaving the class side empty', () => {
+  // #387 item 12. The convention is OMIT an empty section, not render it grayed:
+  // a header for a definitively-empty section reads as something to open, and
+  // opening it is the only way to find out there was nothing there.
+  it('omits the class side entirely when there are no class variables', () => {
     const sides = variableSides(['count'], []);
 
-    expect(sides.map((s) => s.isMeta)).toEqual([false, true]);
+    expect(sides.map((s) => s.isMeta)).toEqual([false]);
     expect(sides[0].names).toEqual(['count']);
-    expect(sides[1].names).toEqual([]);
   });
 
-  it('still shows both sides when there are no instance variables, leaving the instance side empty', () => {
+  it('omits the instance side entirely when there are no instance variables', () => {
     const sides = variableSides([], ['Rate', 'Minimum']);
 
-    expect(sides.map((s) => s.isMeta)).toEqual([false, true]);
-    expect(sides[0].names).toEqual([]);
-    expect(sides[1].names).toEqual(['Rate', 'Minimum']);
+    expect(sides.map((s) => s.isMeta)).toEqual([true]);
+    expect(sides[0].names).toEqual(['Rate', 'Minimum']);
   });
 
   it('shows nothing when a class defines neither kind', () => {
     expect(variableSides([], [])).toHaveLength(0);
+  });
+
+  it('never returns a side with nothing in it', () => {
+    // The invariant the whole convention rests on: no caller has to handle — or
+    // render — an empty side, whichever combination it is given.
+    const combos: [string[], string[]][] = [
+      [[], []],
+      [['a'], []],
+      [[], ['B']],
+      [['a'], ['B']],
+    ];
+    for (const [ivars, cvars] of combos) {
+      for (const side of variableSides(ivars, cvars)) expect(side.names.length).toBeGreaterThan(0);
+    }
   });
 });
 

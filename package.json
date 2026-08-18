@@ -1182,25 +1182,25 @@
         "command": "gemstoneExplorerDicts.filter",
         "title": "Filter",
         "category": "GemStone",
-        "icon": "$(search)"
+        "icon": "$(filter)"
       },
       {
         "command": "gemstoneExplorerCategories.filter",
         "title": "Filter",
         "category": "GemStone",
-        "icon": "$(search)"
+        "icon": "$(filter)"
       },
       {
         "command": "gemstoneExplorerClasses.filter",
         "title": "Filter",
         "category": "GemStone",
-        "icon": "$(search)"
+        "icon": "$(filter)"
       },
       {
         "command": "gemstoneExplorerMethods.filter",
         "title": "Filter",
         "category": "GemStone",
-        "icon": "$(search)"
+        "icon": "$(filter)"
       },
       {
         "command": "gemstoneExplorerDicts.clearFilter",
@@ -1234,7 +1234,7 @@
       },
       {
         "command": "gemstone.explorer.showMethodsFlat",
-        "title": "Show Methods Without Categories",
+        "title": "Don't Group Methods by Category",
         "category": "GemStone",
         "icon": "$(list-flat)"
       },
@@ -1273,9 +1273,9 @@
       },
       {
         "command": "gemstone.explorer.findClass",
-        "title": "Find Class in Browser Panels",
+        "title": "Find Class in Explorer",
         "category": "GemStone",
-        "icon": "$(search-fuzzy)"
+        "icon": "$(search)"
       },
       {
         "command": "gemstone.explorer.newDictionary",
@@ -1389,13 +1389,13 @@
       },
       {
         "command": "gemstone.explorer.openComment",
-        "title": "Pin Comment",
+        "title": "Open Comment",
         "category": "GemStone",
         "icon": "$(book)"
       },
       {
         "command": "gemstone.explorer.openHierarchyComment",
-        "title": "Pin Comment",
+        "title": "Open Comment",
         "category": "GemStone",
         "icon": "$(book)"
       },
@@ -2250,12 +2250,12 @@
         },
         {
           "command": "gemstone.explorer.openDefinitionToSide",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/",
           "group": "inline@1"
         },
         {
           "command": "gemstone.explorer.openComment",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass",
+          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass.commented",
           "group": "inline@2"
         },
         {
@@ -2315,12 +2315,12 @@
         },
         {
           "command": "gemstone.explorer.addInstVar",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/ && gemstone.rbSupportAvailable",
           "group": "2_generate@2"
         },
         {
           "command": "gemstone.explorer.addClassVar",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/",
           "group": "2_generate@3"
         },
         {
@@ -2385,27 +2385,27 @@
         },
         {
           "command": "gemstone.explorer.renameClass",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/ && gemstone.rbSupportAvailable",
           "group": "inline@3"
         },
         {
           "command": "gemstone.explorer.classHistory",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/ && gemstone.rbSupportAvailable",
           "group": "3_refactor@1"
         },
         {
           "command": "gemstone.explorer.insertSuperclass",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/ && gemstone.rbSupportAvailable",
           "group": "3_refactor@2"
         },
         {
           "command": "gemstone.explorer.extractSuperclass",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/ && gemstone.rbSupportAvailable",
           "group": "3_refactor@3"
         },
         {
           "command": "gemstone.explorer.splitClass",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/ && gemstone.rbSupportAvailable",
           "group": "3_refactor@4"
         },
         {
@@ -2445,7 +2445,7 @@
         },
         {
           "command": "gemstone.generateGrailStub",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/",
           "group": "2_generate@1"
         },
         {
@@ -2455,7 +2455,7 @@
         },
         {
           "command": "gemstone.explorer.removeClass",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/",
           "group": "inline@9"
         },
         {
