@@ -1,0 +1,623 @@
+import { describe, it, expect, vi } from 'vitest';
+vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
+
+import { useIntegrationTest } from '../../__tests__/useIntegrationTest';
+import { GciLibrary } from '../../gciLibrary';
+import * as q from '../../browserQueries';
+import {
+  PREVIEW_PAGE_BYTES,
+  applyRenameMethod,
+  startRenameMethodPreview,
+} from '../queries/previewRenameMethod';
+import {
+  refactoringUndoStatus,
+  startUndoRefactoringPreview,
+  pageUndoRefactoringPreview,
+  applyUndoRefactoring,
+  clearUndoRefactoringPreview,
+  clearRefactoringUndo,
+} from '../queries/previewUndoRefactoring';
+import {
+  parseUndoStatus,
+  parseUndoStartPreview,
+  parseUndoPage,
+  parseApplyResult,
+} from '../undoRefactoringPreview';
+import { startExtractMethodPreview, applyExtractMethod } from '../queries/previewExtractMethod';
+import {
+  startExtractTemporaryPreview,
+  applyExtractTemporary,
+} from '../queries/previewExtractTemporary';
+import { startInlineMethodPreview, applyInlineMethod } from '../queries/previewInlineMethod';
+import {
+  startInlineTemporaryPreview,
+  applyInlineTemporary,
+} from '../queries/previewInlineTemporary';
+import { startMoveMethodPreview, applyMoveMethod } from '../queries/previewMoveMethod';
+import { startPushMethodPreview, applyPushMethod } from '../queries/previewPushMethod';
+import {
+  startRenameTemporaryPreview,
+  applyRenameTemporary,
+} from '../queries/previewRenameTemporary';
+import {
+  startChangeSignaturePreview,
+  applyChangeSignature,
+} from '../queries/previewChangeSignature';
+import type { ActiveSession } from '../../sessionManager';
+import { requireServerPluginFeature } from '../../__tests__/requireServerPluginFeature';
+import { pluginFeatures } from '../../serverPlugin/pluginFeatures';
+import { fileInEngineTestsExpr } from './support/refactoring';
+
+/**
+ * Automatic GCI integration test for UNDOING a refactoring (#434), over the real GCI
+ * transport and through the same query builders and parsers the extension uses.
+ *
+ * Layers:
+ *  1. The engine's GS SUnit suite (GsRefactoringUndoTest), filed in and run in-stone.
+ *  2. One apply-then-undo round trip per undoable refactoring, each asserting the
+ *     WHOLE class is back where it started — every selector on BOTH sides, each with
+ *     its source and its category, including the methods the refactoring had no
+ *     reason to touch. Those last ones are the point: no change set mentions them, so
+ *     nothing else would catch their loss.
+ *  3. The behaviour around the record: the status probe, drift as a warning rather
+ *     than a refusal, per-change deselection, a clean undo consuming the entry, and
+ *     the safety rule that a refactoring which reshapes a class records nothing.
+ *
+ * Gated via the shared server-plugin feature gate. Fully transient: the harness aborts
+ * each test, so the fixture classes and every applied change roll back and nothing is
+ * committed. All emitted Smalltalk is ASCII-only for the 3.6.x matrix.
+ */
+describe('undo a refactoring (integration)', () => {
+  let gci: GciLibrary;
+  let handle: unknown;
+  useIntegrationTest((testContext) => {
+    gci = testContext.gciLibrary;
+    handle = testContext.session;
+  });
+
+  const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
+  const exec = (code: string): string => q.executeFetchString(session(), code);
+  const asyncExec = (_label: string, code: string): Promise<string> => Promise.resolve(exec(code));
+
+  // Distinctive names so no refactoring here can reach a same-named method elsewhere in
+  // the image, and every scope stays #class.
+  const CLS = 'UndoItAccount';
+  const OTHER = 'UndoItLedger';
+  const SUB = 'UndoItSavings';
+
+  const defineFixture = (): void => {
+    const def = (name: string, sup: string, ivars: string): void => {
+      q.compileClassDefinition(
+        session(),
+        `${sup} subclass: '${name}' instVarNames: #(${ivars}) classVars: #() ` +
+          'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
+      );
+    };
+    def(CLS, 'Object', "'balance'");
+    def(OTHER, 'Object', "'balance'");
+    def(SUB, CLS, '');
+    q.compileMethod(session(), CLS, false, 'computing', 'undoTotal\n\t^ 40 + 2');
+    q.compileMethod(
+      session(),
+      CLS,
+      false,
+      'printing',
+      "undoReport\n\t^ 'total is ', self undoTotal printString",
+    );
+    q.compileMethod(session(), CLS, false, 'fixture', "undoUntouched\n\t^ 'kept'");
+    q.compileMethod(session(), CLS, false, 'accessing', 'undoBalance\n\t^ balance');
+    q.compileMethod(session(), CLS, false, 'computing', 'undoPure\n\t^ 7 * 6');
+    q.compileMethod(session(), CLS, true, 'fixture', "undoAlsoUntouched\n\t^ 'class side'");
+    q.compileMethod(session(), OTHER, false, 'fixture', 'undoLedgerOwn\n\t^ 1');
+    q.compileMethod(session(), SUB, false, 'fixture', 'undoSavingsOwn\n\t^ 2');
+  };
+
+  /** Every selector on both sides of `cls`, each with its source and category, as a
+   *  sorted list of `side|selector|category|source` lines. Comparing two of these is
+   *  the whole-class assertion an undo has to survive. */
+  const snapshot = (cls: string): string[] => {
+    const raw = exec(`| ws add |
+ws := WriteStream on: String new.
+add := [:behavior :side |
+  behavior selectors asSortedCollection do: [:sel | | m |
+    m := behavior compiledMethodAt: sel environmentId: 0 otherwise: nil.
+    ws nextPutAll: side; nextPutAll: '|'; nextPutAll: sel asString;
+       nextPutAll: '|'; nextPutAll: ((behavior categoryOfSelector: sel environmentId: 0) ifNil: ['?']) asString;
+       nextPutAll: '|'; nextPutAll: (m isNil ifTrue: ['<none>'] ifFalse: [m sourceString]);
+       nextPutAll: '<<>>']].
+add value: ${cls} value: 'inst'.
+add value: ${cls} class value: 'meta'.
+ws contents`);
+    return raw
+      .split('<<>>')
+      .filter((s) => s.trim().length > 0)
+      .map((s) => s.replace(/\s+/g, ' ').trim())
+      .sort();
+  };
+
+  const definesSelector = (cls: string, selector: string, meta = false): boolean =>
+    exec(
+      `((${cls}${meta ? ' class' : ''}) compiledMethodAt: #'${selector}' environmentId: 0 otherwise: nil) notNil printString`,
+    ).trim() === 'true';
+
+  const offsetOf = (cls: string, selector: string, text: string): number =>
+    parseInt(
+      exec(
+        `((${cls} compiledMethodAt: #'${selector}') sourceString indexOfSubCollection: '${text}') printString`,
+      ).trim(),
+      10,
+    );
+
+  const undoStatus = (): ReturnType<typeof parseUndoStatus> =>
+    parseUndoStatus(refactoringUndoStatus((code) => exec(code)));
+
+  /** Run the whole undo through the client path: probe, preview (loading EVERY page,
+   *  so pagination is exercised), apply, drop the preview. */
+  const undoEverything = async (
+    deselect: (changes: ReturnType<typeof parseUndoPage>['changes']) => string[] = () => [],
+  ): Promise<{ applied: number; failed: unknown[]; label: string; drifted: number }> => {
+    const token = `undo-it-${Math.random().toString(36).slice(2)}`;
+    const start = parseUndoStartPreview(
+      await startUndoRefactoringPreview(asyncExec, token, PREVIEW_PAGE_BYTES),
+    );
+    const changes = [...start.page.changes];
+    let offset = start.page.nextOffset;
+    let done = start.page.done;
+    while (!done) {
+      const page = parseUndoPage(
+        await pageUndoRefactoringPreview(asyncExec, token, offset, PREVIEW_PAGE_BYTES),
+      );
+      changes.push(...page.changes);
+      offset = page.nextOffset;
+      done = page.done;
+    }
+    expect(changes).toHaveLength(start.total);
+    const result = parseApplyResult(
+      await applyUndoRefactoring(asyncExec, token, deselect(changes)),
+    );
+    clearUndoRefactoringPreview((code) => exec(code), token);
+    return { ...result, label: start.label, drifted: start.drifted };
+  };
+
+  it('reports undo-engine availability matching the shared refactoring probe', () => {
+    const present =
+      exec(
+        '(System myUserProfile symbolList objectNamed: #GsRefactoringUndo) notNil printString',
+      ).trim() === 'true';
+    expect(present).toBe(q.checkRefactoringSupportAvailable(session()));
+  });
+
+  // Generous timeout: this files in the whole (growing) engine-tests.gs payload and runs
+  // a full SUnit suite in-stone over the GCI transport.
+  it('runs the undo GS SUnit suite in-stone with zero failures', (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+
+    const code = `| r |
+${fileInEngineTestsExpr()}
+r := (System myUserProfile symbolList objectNamed: #GsRefactoringUndoTest) suite run.
+(r failures size + r errors size) printString`;
+
+    expect(exec(code).trim()).toBe('0');
+  }, 120_000);
+
+  it('has nothing to undo in a fresh session', (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    clearRefactoringUndo((code) => exec(code));
+
+    expect(undoStatus().available).toBe(false);
+  });
+
+  it('undoes a rename method, restoring the whole class including its senders', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    defineFixture();
+    const before = snapshot(CLS);
+
+    const token = 'undo-rename';
+    await startRenameMethodPreview(
+      asyncExec,
+      CLS,
+      'undoTotal',
+      ['undoSum'],
+      [],
+      { kind: 'class' },
+      token,
+      PREVIEW_PAGE_BYTES,
+    );
+    const applied = parseApplyResult(
+      await applyRenameMethod(asyncExec, token, [], 'Rename #undoTotal to #undoSum'),
+    );
+    expect(applied.failed).toHaveLength(0);
+    expect(definesSelector(CLS, 'undoSum')).toBe(true);
+    expect(definesSelector(CLS, 'undoTotal')).toBe(false);
+
+    // The client is told, in the apply's own answer, that an undo was recorded.
+    expect(undoStatus()).toMatchObject({
+      available: true,
+      label: 'Rename #undoTotal to #undoSum',
+      engine: 'GsRenameMethodRefactoring',
+    });
+
+    const undone = await undoEverything();
+    expect(undone.failed).toHaveLength(0);
+    expect(undone.label).toBe('Rename #undoTotal to #undoSum');
+    expect(snapshot(CLS)).toEqual(before);
+  }, 60_000);
+
+  it('uses the record up once a clean undo has run', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    defineFixture();
+
+    const token = 'undo-once';
+    await startRenameMethodPreview(
+      asyncExec,
+      CLS,
+      'undoTotal',
+      ['undoSum'],
+      [],
+      { kind: 'class' },
+      token,
+      PREVIEW_PAGE_BYTES,
+    );
+    await applyRenameMethod(asyncExec, token, [], 'Rename #undoTotal to #undoSum');
+    expect(undoStatus().available).toBe(true);
+
+    await undoEverything();
+
+    expect(undoStatus().available).toBe(false);
+  }, 60_000);
+
+  it('warns about a method edited since the refactoring, and still undoes it', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    defineFixture();
+
+    const token = 'undo-drift';
+    await startRenameMethodPreview(
+      asyncExec,
+      CLS,
+      'undoTotal',
+      ['undoSum'],
+      [],
+      { kind: 'class' },
+      token,
+      PREVIEW_PAGE_BYTES,
+    );
+    await applyRenameMethod(asyncExec, token, [], 'Rename #undoTotal to #undoSum');
+
+    // Edit the renamed method after the fact.
+    q.compileMethod(session(), CLS, false, 'computing', 'undoSum\n\t^ 999');
+
+    const previewToken = 'undo-drift-preview';
+    const start = parseUndoStartPreview(
+      await startUndoRefactoringPreview(asyncExec, previewToken, PREVIEW_PAGE_BYTES),
+    );
+    clearUndoRefactoringPreview((code) => exec(code), previewToken);
+    expect(start.drifted).toBeGreaterThan(0);
+    expect(start.page.changes.some((c) => (c.warning ?? '').includes('Edited since'))).toBe(true);
+
+    // Warned, not refused.
+    const undone = await undoEverything();
+    expect(undone.failed).toHaveLength(0);
+    expect(definesSelector(CLS, 'undoTotal')).toBe(true);
+    expect(definesSelector(CLS, 'undoSum')).toBe(false);
+  }, 60_000);
+
+  it('leaves a deselected change alone and keeps the record for another go', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    defineFixture();
+
+    const token = 'undo-partial';
+    await startRenameMethodPreview(
+      asyncExec,
+      CLS,
+      'undoTotal',
+      ['undoSum'],
+      [],
+      { kind: 'class' },
+      token,
+      PREVIEW_PAGE_BYTES,
+    );
+    await applyRenameMethod(asyncExec, token, [], 'Rename #undoTotal to #undoSum');
+
+    // Keep the new selector: deselect the change that would delete it.
+    const undone = await undoEverything((changes) =>
+      changes.filter((c) => c.kind === 'methodRemove').map((c) => c.id),
+    );
+    expect(undone.failed).toHaveLength(0);
+    expect(definesSelector(CLS, 'undoTotal')).toBe(true);
+    expect(definesSelector(CLS, 'undoSum')).toBe(true);
+    // A partial undo is not used up.
+    expect(undoStatus().available).toBe(true);
+  }, 60_000);
+
+  it('undoes an extract method, removing the extracted method and restoring the original', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    defineFixture();
+    const before = snapshot(CLS);
+
+    const start = offsetOf(CLS, 'undoTotal', '40 + 2');
+    const token = 'undo-extract-method';
+    await startExtractMethodPreview(
+      asyncExec,
+      CLS,
+      'undoTotal',
+      false,
+      start,
+      start + '40 + 2'.length - 1,
+      'undoAnswer',
+      false,
+      token,
+      PREVIEW_PAGE_BYTES,
+    );
+    await applyExtractMethod(asyncExec, token, [], 'Extract method #undoAnswer');
+    expect(definesSelector(CLS, 'undoAnswer')).toBe(true);
+
+    expect((await undoEverything()).failed).toHaveLength(0);
+    expect(definesSelector(CLS, 'undoAnswer')).toBe(false);
+    expect(snapshot(CLS)).toEqual(before);
+  }, 60_000);
+
+  it('undoes an inline method, bringing the deleted method back with its category', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    defineFixture();
+    const before = snapshot(CLS);
+
+    const token = 'undo-inline-method';
+    await startInlineMethodPreview(
+      asyncExec,
+      CLS,
+      'undoReport',
+      false,
+      offsetOf(CLS, 'undoReport', 'undoTotal printString'),
+      token,
+      PREVIEW_PAGE_BYTES,
+    );
+    await applyInlineMethod(asyncExec, token, [], 'Inline #undoTotal');
+    // Inlining the last sender deletes the target.
+    expect(definesSelector(CLS, 'undoTotal')).toBe(false);
+
+    expect((await undoEverything()).failed).toHaveLength(0);
+    expect(definesSelector(CLS, 'undoTotal')).toBe(true);
+    // The whole-class comparison covers the CATEGORY too — a restored method landing in
+    // 'as yet unclassified' would fail here.
+    expect(snapshot(CLS)).toEqual(before);
+  }, 60_000);
+
+  it('undoes a move method, restoring both the source and the target class', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    defineFixture();
+    const beforeSource = snapshot(CLS);
+    const beforeTarget = snapshot(OTHER);
+
+    const token = 'undo-move';
+    await startMoveMethodPreview(
+      asyncExec,
+      CLS,
+      ['undoPure'],
+      false,
+      OTHER,
+      false,
+      token,
+      PREVIEW_PAGE_BYTES,
+    );
+    await applyMoveMethod(asyncExec, token, [], `Move #undoPure to ${OTHER}`);
+    expect(definesSelector(OTHER, 'undoPure')).toBe(true);
+    expect(definesSelector(CLS, 'undoPure')).toBe(false);
+
+    expect((await undoEverything()).failed).toHaveLength(0);
+    expect(snapshot(CLS)).toEqual(beforeSource);
+    expect(snapshot(OTHER)).toEqual(beforeTarget);
+  }, 60_000);
+
+  it('undoes a push up, restoring both the subclass and the superclass', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    defineFixture();
+    q.compileMethod(session(), SUB, false, 'computing', 'undoSavingsPure\n\t^ 3');
+    const beforeParent = snapshot(CLS);
+    const beforeChild = snapshot(SUB);
+
+    const token = 'undo-push-up';
+    await startPushMethodPreview(
+      asyncExec,
+      'up',
+      SUB,
+      ['undoSavingsPure'],
+      false,
+      token,
+      PREVIEW_PAGE_BYTES,
+    );
+    await applyPushMethod(asyncExec, 'up', token, [], `Push up from ${SUB}`);
+    expect(definesSelector(CLS, 'undoSavingsPure')).toBe(true);
+
+    expect((await undoEverything()).failed).toHaveLength(0);
+    expect(snapshot(CLS)).toEqual(beforeParent);
+    expect(snapshot(SUB)).toEqual(beforeChild);
+  }, 60_000);
+
+  it('undoes a push down, restoring both the superclass and the subclass', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    defineFixture();
+    const beforeParent = snapshot(CLS);
+    const beforeChild = snapshot(SUB);
+
+    const token = 'undo-push-down';
+    await startPushMethodPreview(
+      asyncExec,
+      'down',
+      CLS,
+      ['undoPure'],
+      false,
+      token,
+      PREVIEW_PAGE_BYTES,
+    );
+    await applyPushMethod(asyncExec, 'down', token, [], `Push down from ${CLS}`);
+    expect(definesSelector(SUB, 'undoPure')).toBe(true);
+
+    expect((await undoEverything()).failed).toHaveLength(0);
+    expect(snapshot(CLS)).toEqual(beforeParent);
+    expect(snapshot(SUB)).toEqual(beforeChild);
+  }, 60_000);
+
+  it('undoes a change signature, restoring the implementor and its sender', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    defineFixture();
+    q.compileMethod(session(), CLS, false, 'computing', 'undoScaleBy: aNumber\n\t^ 42 * aNumber');
+    q.compileMethod(session(), CLS, false, 'computing', 'undoUseScale\n\t^ self undoScaleBy: 2');
+    const before = snapshot(CLS);
+
+    const token = 'undo-change-signature';
+    await startChangeSignaturePreview(
+      asyncExec,
+      CLS,
+      'undoScaleBy:',
+      ['undoTimes:'],
+      [1],
+      ['aNumber'],
+      [''],
+      { kind: 'class' },
+      token,
+      PREVIEW_PAGE_BYTES,
+      false,
+    );
+    await applyChangeSignature(
+      asyncExec,
+      token,
+      [],
+      'Change signature #undoScaleBy: to #undoTimes:',
+    );
+    expect(definesSelector(CLS, 'undoTimes:')).toBe(true);
+
+    expect((await undoEverything()).failed).toHaveLength(0);
+    expect(snapshot(CLS)).toEqual(before);
+  }, 60_000);
+
+  it('undoes a rename temporary', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    defineFixture();
+    q.compileMethod(
+      session(),
+      CLS,
+      false,
+      'computing',
+      'undoWithTemp\n\t| t |\n\tt := 3.\n\t^ t + 1',
+    );
+    const before = snapshot(CLS);
+
+    const token = 'undo-rename-temp';
+    await startRenameTemporaryPreview(
+      asyncExec,
+      CLS,
+      'undoWithTemp',
+      false,
+      't',
+      'count',
+      offsetOf(CLS, 'undoWithTemp', 't := 3'),
+      token,
+      PREVIEW_PAGE_BYTES,
+    );
+    await applyRenameTemporary(asyncExec, token, "Rename temporary 't' to 'count'");
+    expect(exec(`(${CLS} compiledMethodAt: #undoWithTemp) sourceString`)).toContain('count');
+
+    expect((await undoEverything()).failed).toHaveLength(0);
+    expect(snapshot(CLS)).toEqual(before);
+  }, 60_000);
+
+  it('undoes an extract temporary', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    defineFixture();
+    const before = snapshot(CLS);
+
+    const start = offsetOf(CLS, 'undoPure', '7 * 6');
+    const token = 'undo-extract-temp';
+    await startExtractTemporaryPreview(
+      asyncExec,
+      CLS,
+      'undoPure',
+      false,
+      start,
+      start + '7 * 6'.length - 1,
+      'product',
+      false,
+      token,
+      PREVIEW_PAGE_BYTES,
+    );
+    await applyExtractTemporary(asyncExec, token, "Extract temporary 'product'");
+    expect(exec(`(${CLS} compiledMethodAt: #undoPure) sourceString`)).toContain('product');
+
+    expect((await undoEverything()).failed).toHaveLength(0);
+    expect(snapshot(CLS)).toEqual(before);
+  }, 60_000);
+
+  it('undoes an inline temporary', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    defineFixture();
+    q.compileMethod(
+      session(),
+      CLS,
+      false,
+      'computing',
+      'undoInlineMe\n\t| tOnce |\n\ttOnce := 5.\n\t^ tOnce + 1',
+    );
+    const before = snapshot(CLS);
+
+    const token = 'undo-inline-temp';
+    await startInlineTemporaryPreview(
+      asyncExec,
+      CLS,
+      'undoInlineMe',
+      false,
+      offsetOf(CLS, 'undoInlineMe', 'tOnce := 5'),
+      token,
+      PREVIEW_PAGE_BYTES,
+    );
+    await applyInlineTemporary(asyncExec, token, "Inline temporary 'tOnce'");
+    expect(exec(`(${CLS} compiledMethodAt: #undoInlineMe) sourceString`)).not.toContain(
+      'tOnce := 5',
+    );
+
+    expect((await undoEverything()).failed).toHaveLength(0);
+    expect(snapshot(CLS)).toEqual(before);
+  }, 60_000);
+
+  it('undoes a class-side rename without disturbing the instance side', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    defineFixture();
+    q.compileMethod(session(), CLS, true, 'instance creation', 'undoMake\n\t^ self new');
+    const before = snapshot(CLS);
+
+    const token = 'undo-meta-rename';
+    await startRenameMethodPreview(
+      asyncExec,
+      CLS,
+      'undoMake',
+      ['undoBuild'],
+      [],
+      { kind: 'class' },
+      token,
+      PREVIEW_PAGE_BYTES,
+    );
+    await applyRenameMethod(asyncExec, token, [], 'Rename #undoMake to #undoBuild');
+    expect(definesSelector(CLS, 'undoBuild', true)).toBe(true);
+
+    expect((await undoEverything()).failed).toHaveLength(0);
+    expect(snapshot(CLS)).toEqual(before);
+  }, 60_000);
+
+  it('records nothing for a refactoring that reshapes a class', (ctx) => {
+    // The safety rule for this tier: class shape is not reversible here, so no entry is
+    // recorded rather than a half-undo being offered. Asserted at the engine's own seam,
+    // over a change set holding a class-definition edit.
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    clearRefactoringUndo((code) => exec(code));
+
+    const answer = exec(`| undoCls cs |
+undoCls := System myUserProfile symbolList objectNamed: #GsRefactoringUndo.
+cs := (System myUserProfile symbolList objectNamed: #GsRefactoringChangeSet) new.
+cs addMethodRecompileInDictionary: nil className: 'Object' isMeta: false
+   selector: 'foo' category: 'x' oldSource: 'foo ^1' newSource: 'foo ^2'.
+cs addClassDefinitionEditInDictionary: nil className: 'Object' oldSource: 'a' newSource: 'b'.
+(undoCls slotsTouchedIn: cs deselected: #()) isNil printString`);
+
+    expect(answer.trim()).toBe('true');
+    expect(undoStatus().available).toBe(false);
+  });
+});
