@@ -3352,16 +3352,39 @@ export class ExplorerController {
   // Reveal + select a method row, honoring the pane's current view state: switch
   // to the method's side (the pane shows one side at a time) and drop the category
   // parent when grouping is off, so the built node's id matches the rendered row.
-  private async revealMethodRow(isMeta: boolean, info: SelectorInfo): Promise<void> {
+  private async revealMethodRow(
+    isMeta: boolean,
+    info: SelectorInfo,
+    opts: { focusEditorAfter?: boolean } = {},
+  ): Promise<void> {
     this.setMethodSide(isMeta);
     const displayCategory = this.groupMethodsByCategory() ? info.category : undefined;
+    const item = new MethodItem(isMeta, info, displayCategory, this.methodSourceUri(isMeta, info));
+    // In this VS Code build focus:false selects the row but never scrolls it into view; only
+    // focus:true scrolls. For editor-driven navigation we force the scroll with focus:true and hand
+    // focus straight back to the editor so the tree doesn't keep it. A passive background resync
+    // stays a plain (non-scrolling) select so it can't yank focus off whatever the user is doing.
+    const takesFocus = opts.focusEditorAfter === true;
+    const side = isMeta ? 'class' : 'instance';
     try {
-      await this.views?.method.reveal(
-        new MethodItem(isMeta, info, displayCategory, this.methodSourceUri(isMeta, info)),
-        { select: true, focus: false, expand: true },
+      await this.views?.method.reveal(item, { select: true, focus: takesFocus, expand: true });
+    } catch (e) {
+      // No longer swallowed silently: log it so a future failure is diagnosable from the GCI log
+      // (mirrors the dictionary/category reveal paths above).
+      logWarning(
+        `Explorer method reveal failed for ${side} method ${info.selector}: ${e instanceof Error ? e.message : String(e)}`,
       );
-    } catch {
-      /* ignore */
+    }
+    // Hand focus back even if the reveal above rejected: it may have taken focus before failing, and
+    // leaving the user's cursor stranded in the tree is the worse outcome.
+    if (takesFocus) {
+      try {
+        await vscode.commands.executeCommand('workbench.action.focusActiveEditorGroup');
+      } catch (e) {
+        logWarning(
+          `Explorer could not return focus to the editor after revealing ${side} method ${info.selector}: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
     }
   }
 
@@ -3597,8 +3620,12 @@ export class ExplorerController {
     this.selectDict(item);
     try {
       await this.views?.dict.reveal(item, { select: true, focus: true });
-    } catch {
-      /* ignore */
+    } catch (e) {
+      // No longer swallowed silently: log it so a future failure is diagnosable from the GCI log
+      // (mirrors the category-reveal path below).
+      logWarning(
+        `Omni dictionary reveal failed for ${name}: ${e instanceof Error ? e.message : String(e)}`,
+      );
     }
   }
 
@@ -3615,12 +3642,14 @@ export class ExplorerController {
       return;
     }
     this.selectDict(new DictItem(dictName, idx + 1));
-    const segment = categoryPath.split('-').pop() ?? categoryPath;
-    const catItem = new ClassCategoryItem(segment, categoryPath, false);
-    this.selectClassCategory(catItem);
 
-    // If the category isn't actually in this dictionary's loaded forest, say so — otherwise the jump
-    // silently appears to do nothing (the reported "strange spot").
+    // Check the category actually exists in this dictionary's loaded forest BEFORE mutating the
+    // category/classes panes. selectDict has just (synchronously) loaded classCategoryEntries, so
+    // allCategoryPaths() is valid here. Note the dictionary selection above has ALREADY been applied
+    // and is meant to stick — landing on the home dictionary is still useful. Doing the check first
+    // means a missing category leaves only the category/classes panes untouched instead of scrolling
+    // them to a node that isn't there — the jump would otherwise silently appear to do nothing (the
+    // reported "strange spot").
     if (
       !this.allCategoryPaths().some((p) => p === categoryPath || p.startsWith(`${categoryPath}-`))
     ) {
@@ -3629,6 +3658,10 @@ export class ExplorerController {
       );
       return;
     }
+
+    const segment = categoryPath.split('-').pop() ?? categoryPath;
+    const catItem = new ClassCategoryItem(segment, categoryPath, false);
+    this.selectClassCategory(catItem);
 
     // Surface the Class Categories view FIRST. When it lives in a collapsed/hidden sidebar,
     // TreeView.reveal() can no-op — which is exactly how an Omni category jump looked like it landed
@@ -3736,7 +3769,7 @@ export class ExplorerController {
         (i) => i.selector === opts.revealMethod!.selector,
       );
       if (info) {
-        await this.revealMethodRow(opts.revealMethod.isMeta, info);
+        await this.revealMethodRow(opts.revealMethod.isMeta, info, { focusEditorAfter: true });
         this.syncTitles();
       }
     }
@@ -3798,7 +3831,7 @@ export class ExplorerController {
           (i) => i.selector === revealMethod.selector,
         );
         if (info) {
-          await this.revealMethodRow(revealMethod.isMeta, info);
+          await this.revealMethodRow(revealMethod.isMeta, info, { focusEditorAfter: true });
           this.syncTitles();
         }
       }
@@ -4497,7 +4530,7 @@ export class ExplorerController {
     );
     if (!added) return;
     this.pendingNewMethod = undefined;
-    void this.revealMethodRow(pending.isMeta, added);
+    void this.revealMethodRow(pending.isMeta, added, { focusEditorAfter: true });
   }
 
   // ── Drag & drop ─────────────────────────────────────────────────────────────

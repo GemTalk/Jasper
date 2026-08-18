@@ -9,6 +9,7 @@
  */
 import * as vscode from 'vscode';
 import { SessionManager, ActiveSession } from '../sessionManager';
+import { logWarning } from '../gciLog';
 import {
   defaultQueryExecutorUsing,
   sendersOf,
@@ -146,6 +147,9 @@ export function buildProviders(session: ActiveSession, enabled: readonly string[
       session.id,
       (symbolExpr) => literalSymbolReferences(exec, symbolExpr),
       (text, ignoreCase) => stringLiteralReferences(exec, text, ignoreCase),
+      // Surface a real runner failure (GCI drop / aborted transaction) to the durable log instead of
+      // letting it masquerade as "no results". A bare string, so the thunk is all we need.
+      (msg) => logWarning(msg),
     ),
     createCategoriesProvider(session.id, () => getAllClassCategories(exec)),
   ];
