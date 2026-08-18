@@ -19,7 +19,7 @@ The tradeoff, made explicit in `gs-src/enhancedInspector/README.md`, is that the
 
 ## File load order is load-bearing
 
-`ENHANCED_INSPECTOR_FILES` in `enhancedInspectorInstall.ts` lists the payload files in dependency order — earlier files define classes and behavior that later files depend on — and files in that order over a single session, so a later file can compile against classes an earlier file just installed. That array is the sole authority on load order (there is no other manifest to keep in sync with it); reordering it without checking the payload's actual dependencies risks a file-in failure partway through, which aborts the whole install rather than leaving a partial one committed.
+`ENHANCED_INSPECTOR_FILES` in `enhancedInspectorInstall.ts` lists the payload files in dependency order — earlier files define classes and behavior that later files depend on — and the installer files them in that order over a single session, so a later file can compile against classes an earlier file just installed. That array is the sole authority on load order (there is no other manifest to keep in sync with it); reordering it without checking the payload's actual dependencies risks a file-in failure partway through, which aborts the whole install rather than leaving a partial one committed.
 
 ## The GemStone 3.7.5 version gate
 
