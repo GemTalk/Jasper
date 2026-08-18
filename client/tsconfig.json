@@ -3,7 +3,8 @@
   "compilerOptions": {
     "outDir": "./out",
     "rootDir": "./src",
-    "allowJs": true
+    "allowJs": true,
+    "types": ["node", "jsdom"]
   },
   "include": ["src/**/*.ts", "src/gemStoneVersion.js"]
 }
