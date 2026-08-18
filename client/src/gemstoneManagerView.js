@@ -847,8 +847,11 @@
     els.root.addEventListener('click', onClick);
     els.root.addEventListener('change', onChange);
     els.root.innerHTML = '<div class="skeleton">Loading GemStone environment…</div>';
+    // Messages arrive from the extension host, which VS Code relays in from the
+    // frame around this one — so `ev.source` is never this window, and testing
+    // for that drops every message the panel exists to receive. What guards this
+    // listener is the webview boundary itself: nothing else can reach it.
     window.addEventListener('message', (ev) => {
-      if (ev.source !== window) return;
       const msg = ev.data;
       if (!msg || typeof msg !== 'object') return;
       if (msg.command === 'loading') {
