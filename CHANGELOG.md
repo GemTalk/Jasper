@@ -4,6 +4,10 @@ All notable changes to the **GemStone Smalltalk** extension will be documented i
 
 ## [Unreleased]
 
+### Added
+
+- **Undo a refactoring.** Applying a refactoring is no longer one-way: the last one you applied can be put back. Undo covers the refactorings that change methods — change signature, extract/inline method, extract/inline temporary, move method, push up, push down, rename method, rename temporary — and is reached three ways, so a missed toast does not strand it: an **Undo** button on the post-apply notification, an **Undo Last Refactoring…** item in the Explorer's refactor menu (on classes, methods, and the hierarchy view), and the same entry in the Command Palette. All three open the same preview the forward direction gets — every reversal listed with its diff and its own checkbox, so you can keep part of an undo — and the rows are badged with what undoing *does* (Restore / Revert / Delete). A method edited since the refactoring is flagged inline and summarised at the top, and the undo still runs: drift is a warning, never a refusal. Nothing commits, either direction, so undoing an uncommitted refactoring stays uncommitted and undoing a committed one needs your own commit. The record is per session and covers the most recent refactoring only; a refactoring that reshapes a **class** (add/remove instance variable, instance-variable structure, extract superclass, split class, rename class, rename instance variable, rename class variable) records no undo — class shape has its own restore path, in the Class Definition History viewer. ([#434](https://github.com/GemTalk/Jasper/issues/434))
+
 ## [1.8.11] - 2026-08-16
 
 ### Added
