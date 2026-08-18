@@ -172,6 +172,13 @@ ${methodSerialization(environmentId)}`;
 // literal-frame membership. A send like `x not` has source `not`, not `#not`, so it fails the
 // substring filter; a real literal `#not` passes both. `symbolExpr` is a raw, compilable `#...`
 // expression (evaluated on the server); `needle` is that same text matched literally in source.
+//
+// What that costs — the gate is textual, so a genuine literal use whose SOURCE doesn't spell `#not`
+// is missed even though the symbol really is in the literal frame:
+//   - inside a literal array — `#(not size)`, `#(at:put: foo)`: real symbols, but no `#` per element
+//   - an equivalent different spelling — a search for `#not` won't find a method that wrote `#'not'`
+// Accepted deliberately (reviewed on PR #443): both are rare next to the bogus every-sender flood the
+// old query produced. If you are chasing a "missing" literal hit, this filter is the reason.
 export function literalSymbolReferences(
   execute: QueryExecutor,
   symbolExpr: string,

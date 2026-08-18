@@ -761,10 +761,13 @@ export function activate(context: vscode.ExtensionContext) {
         textDocument: { uri: document.uri.toString() },
         position,
       });
-      // A dictionary add/remove/rename changes the symbol list — refresh an open Omni Search so the
-      // new/renamed dictionary shows up without waiting for a commit.
     },
+    // A dictionary add/remove/rename changes the symbol list — refresh an open Omni Search so the
+    // new/renamed dictionary shows up without waiting for a commit.
     (sid) => omniSearch?.notifySessionSynced(sid),
+    // A removed class has to leave Omni Search's cached class corpus the same way, but one class at a
+    // time — Remove Class takes the whole subtree with it.
+    (sid, className) => omniSearch?.notifyClassRemoved(sid, className),
   );
 
   // ── GemStone FileSystem Provider ─────────────────────────

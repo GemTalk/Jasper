@@ -724,6 +724,9 @@ export class ExplorerController {
     /** Called after a symbol-list structural change (dictionary add/remove/rename) so other views —
      *  e.g. Omni Search's cached dictionary corpus — can refresh. Uncommitted, but visible in-session. */
     private readonly onSymbolListChanged?: (sessionId: number) => void,
+    /** Called once per class removed by Remove Class, so views holding a cached class corpus (Omni
+     *  Search) can drop it. Per class, not per command: the delete takes the whole subtree. */
+    private readonly onClassRemoved?: (sessionId: number, className: string) => void,
   ) {}
 
   session(): ActiveSession | undefined {
@@ -4099,10 +4102,12 @@ export class ExplorerController {
     }
 
     const failures: string[] = [];
+    const removed: string[] = [];
     for (const t of targets) {
       try {
         const result = queries.deleteClass(session, t.dictIndex, t.className);
-        if (!result.startsWith('Deleted class:')) failures.push(`${t.className}: ${result}`);
+        if (result.startsWith('Deleted class:')) removed.push(t.className);
+        else failures.push(`${t.className}: ${result}`);
       } catch (e: unknown) {
         failures.push(`${t.className}: ${e instanceof Error ? e.message : String(e)}`);
       }
@@ -4125,6 +4130,12 @@ export class ExplorerController {
     this.hierarchyProvider.refresh();
     this.methodProvider.refresh();
     this.syncTitles();
+
+    // Views that cache a class corpus can't see this deletion — it is uncommitted, so nothing else
+    // announces it, and until now a removed class stayed listed (and clickable) in an open Omni
+    // Search until the next commit/abort resync. Notify the ones that ACTUALLY went, so a partial
+    // failure doesn't drop a class that is still there.
+    for (const name of removed) this.onClassRemoved?.(session.id, name);
 
     if (failures.length > 0) {
       void vscode.window.showErrorMessage(`Remove class had errors — ${failures.join('; ')}`);
@@ -5060,8 +5071,11 @@ export function registerGemStoneExplorer(
   // Called after a dictionary add/remove/rename so other views (Omni Search) can refresh their
   // cached symbol-list corpus.
   onSymbolListChanged?: (sessionId: number) => void,
+  // Called once per class that Remove Class actually deleted, so Omni Search can drop it from its
+  // cached corpus instead of showing (and offering to open) a class that no longer exists.
+  onClassRemoved?: (sessionId: number, className: string) => void,
 ): ExplorerHandle {
-  const ctl = new ExplorerController(sessionManager, onSymbolListChanged);
+  const ctl = new ExplorerController(sessionManager, onSymbolListChanged, onClassRemoved);
 
   // The Open Editors pane (last in the container) mirrors the open gemstone://
   // source editors; it is session-independent, so it registers on its own.

@@ -44,9 +44,10 @@ import { referenceRequestFor, methodRowsToResults } from './references';
 import { OmniSearchPanel } from './omniSearchPanel';
 import { OmniSearchViewProvider, OmniViewContext, OMNI_VIEW_ID } from './omniSearchViewProvider';
 
-/** Where a result should open. The QuickPick passes nothing (open in the active group, the prior
- *  behavior); the Spotter passes `Beside` + a `preserveFocus` flag so a result opens beside the
- *  panel — optionally without stealing focus from the search field. */
+/** Where a result should open. The docked panel view passes nothing (open in the active group — the
+ *  editor area sits above the panel, so there is nothing to open beside); the Spotter passes `Beside`
+ *  + a `preserveFocus` flag so a result opens beside the panel — optionally without stealing focus
+ *  from the search field. */
 export interface OmniOpenOptions {
   viewColumn?: vscode.ViewColumn;
   preserveFocus?: boolean;
@@ -264,10 +265,15 @@ export async function runOmniSearch(
 const SEARCH_TIP_SHOWN_KEY = 'gemstone.gemstoneSearchTipShown';
 
 /** The disposable for the Omni Search registration, plus hooks the extension calls when the image
- *  changes so an open search stays current: a local class compile, and a session sync (commit/abort/
- *  file-in). Both forward to whichever host is live (the docked panel view and/or the Spotter). */
+ *  changes so an open search stays current: a local class compile, a class REMOVAL, and a session sync
+ *  (commit/abort/file-in). All forward to whichever host is live (the docked panel view and/or the
+ *  Spotter). */
 export interface OmniSearchRegistration extends vscode.Disposable {
   notifyClassCompiled(sessionId: number, className: string, dictName?: string): void;
+  /** A class was removed from the image (Explorer → Remove Class). Folded per class, not per delete
+   *  command: removing a class takes its whole subtree with it, and each member has to leave the
+   *  cached corpus. No `dictName` — the class is gone, so there is no dictionary left to name. */
+  notifyClassRemoved(sessionId: number, className: string): void;
   notifySessionSynced(sessionId: number): void;
 }
 
@@ -348,12 +354,18 @@ export function registerOmniSearch(
     ),
   );
 
+  // Both class hooks fold the same way — re-fetch just that class name and reconcile the corpus.
+  const foldClassChange = (sessionId: number, className: string, dictName?: string): void => {
+    void viewProvider.onClassCompiled(sessionId, className, dictName);
+    OmniSearchPanel.onClassCompiled(sessionId, className, dictName);
+  };
+
   return {
     dispose: () => disposable.dispose(),
-    notifyClassCompiled: (sessionId, className, dictName) => {
-      void viewProvider.onClassCompiled(sessionId, className, dictName);
-      OmniSearchPanel.onClassCompiled(sessionId, className, dictName);
-    },
+    notifyClassCompiled: foldClassChange,
+    // A removal reuses the compile fold: the provider re-looks-up the name, the lookup comes back
+    // empty, and the entry drops out — no full corpus re-enumeration for a delete.
+    notifyClassRemoved: (sessionId, className) => foldClassChange(sessionId, className),
     notifySessionSynced: (sessionId) => {
       void viewProvider.onSessionSynced(sessionId);
       OmniSearchPanel.onSessionSynced(sessionId);

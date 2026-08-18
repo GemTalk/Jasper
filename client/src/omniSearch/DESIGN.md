@@ -52,7 +52,21 @@ Global "search anything browsable" for the GemStone IDE — the Jasper answer to
    keystroke):
    - _Classes_, _Dictionaries_, _Globals_: enumerate the stone **once** when the UI opens, via the
      provider's `prime()` (`getAllClassNames` / `getDictionaryNames` / `getAllGlobalNames`), then match
-     **client-side**.
+     **client-side**. Those three loads are image-wide **synchronous GCI executes**, so reloading them
+     is never done on a background path: a **hidden** docked panel that hears a session sync only marks
+     its corpora stale (`syncPending`) and rebuilds on the next reveal or search — the same `visible`
+     gate `onConfigChanged` uses. A visible panel still refreshes live.
+   - Keeping those cached corpora honest between primes — **who announces what**:
+
+     | Change in the image | Hook | Cost |
+     | --- | --- | --- |
+     | A class compiled locally | `notifyClassCompiled` → `applyChange` | re-fetch that ONE class name |
+     | A class removed (Explorer → Remove Class) | `notifyClassRemoved` → `applyChange`, fired **once per class** because the delete takes the subtree | re-fetch per name; the lookup comes back empty and the entry drops |
+     | Dictionary add / remove / rename | `onSymbolListChanged` → `notifySessionSynced` | full `resync` |
+     | Commit / abort / file-in | `notifySessionSynced` | full `resync`, deferred while hidden |
+
+     Everything else — a global created by evaluating code, a class removed by another session — is
+     only picked up by the next commit/abort `resync`. That is the by-design staleness window.
    - _Methods_: the selector space is too large to preload, so this provider queries the stone
      **per search term** (debounced, min query length `methodMinQueryLength`), reusing the
      `searchSelectors` machinery.
@@ -167,8 +181,11 @@ Behaviour decisions (Eric's review of the first webview cut):
 
 - **Recents / empty-state** (IntelliJ shows recent files when the field is empty).
 - **Top-hit** promotion.
-- Corpus refresh: `prime()` loads the class/global/dictionary corpus **once**, so a class created after
-  the UI opened won't appear until reopen (#428).
+- Corpus refresh — the remaining gaps. The refresh model itself is built (see §3: compiles and class
+  removals fold per class, dictionary changes and commit/abort re-scan), so a class created after the
+  UI opened DOES appear now. Still stale until the next commit/abort `resync`: a **global created by
+  evaluating code** (nothing announces a new global), a **brand-new class category** when the
+  Categories scope is already loaded, and anything changed by **another session**.
 - Extra providers / scopes: **dedicated Symbols scope**, **method-categories scope**,
   senders/implementors, commands, settings.
 - **Double-tap-Shift** trigger.

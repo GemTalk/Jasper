@@ -8,6 +8,7 @@ vi.mock('../omniEngine', () => ({
     prime: vi.fn(async () => {}),
     applyChange: vi.fn(async () => null),
     resync: vi.fn(async () => null),
+    search: vi.fn(async () => null),
     state: () => ({ scopeId: null, caseSensitive: false }),
   })),
 }));
@@ -114,7 +115,7 @@ describe('Omni Search docked panel — reacting to image changes', () => {
     expect(engine.applyChange).not.toHaveBeenCalled();
   });
 
-  it('rebuilds every cached corpus when its session syncs', async () => {
+  it('rebuilds every cached corpus when its session syncs while the panel is visible', async () => {
     const { provider, engine } = await openForSession1();
 
     await provider.onSessionSynced(1);
@@ -147,5 +148,82 @@ describe('Omni Search docked panel — reacting to image changes', () => {
     await provider.onClassCompiled(1, 'Bar');
 
     expect(view.webview.postMessage).not.toHaveBeenCalled();
+  });
+});
+
+// A sync rebuild re-primes every provider, three of them via image-wide synchronous GCI executes. The
+// engine outlives a hidden panel, so without this gate every commit/abort — and every dictionary
+// add/remove/rename — paid that cost with nothing on screen. See PR #443 review (#428 Round 1).
+describe('Omni Search docked panel — a session sync while hidden', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  // The provider's webview callback is `void this.onMessage(m)`, so awaiting `on.message(...)` returns
+  // the moment the handler suspends, not when it finishes. Yield a macrotask to let it run to the end —
+  // otherwise an in-flight `ready` handler picks up a sync this test hasn't posted yet.
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  async function openThenHide() {
+    const provider = new OmniSearchViewProvider(vi.fn(async () => fakeContext()));
+    const { view, on } = fakeView(true);
+    provider.resolveWebviewView(view as never);
+    await on.message({ command: 'ready' }); // shown once: builds + primes the engine
+    await settle();
+    const engine = vi.mocked(createOmniEngine).mock.results[0].value;
+    view.visible = false;
+    return { provider, view, on, engine };
+  }
+
+  it('does not touch the corpora while the panel is hidden', async () => {
+    const { provider, engine } = await openThenHide();
+
+    await provider.onSessionSynced(1);
+
+    expect(engine.resync).not.toHaveBeenCalled();
+  });
+
+  it('pays the deferred rebuild when the panel is revealed again', async () => {
+    const { provider, view, on, engine } = await openThenHide();
+    await provider.onSessionSynced(1);
+
+    view.visible = true;
+    on.visibility();
+
+    await vi.waitFor(() => expect(engine.resync).toHaveBeenCalledTimes(1));
+  });
+
+  it('rebuilds before the next search, so a hidden sync is never searched stale', async () => {
+    const { provider, on, engine } = await openThenHide();
+    await provider.onSessionSynced(1);
+
+    await on.message({ command: 'query', value: 'Foo' });
+    await settle();
+
+    expect(engine.resync).toHaveBeenCalledTimes(1);
+    expect(engine.search).toHaveBeenCalledWith('Foo');
+  });
+
+  it('rebuilds once for many hidden syncs, not once per sync', async () => {
+    const { provider, view, on, engine } = await openThenHide();
+    await provider.onSessionSynced(1);
+    await provider.onSessionSynced(1);
+    await provider.onSessionSynced(1);
+
+    view.visible = true;
+    on.visibility();
+
+    await vi.waitFor(() => expect(engine.resync).toHaveBeenCalledTimes(1));
+    await settle();
+    expect(engine.resync).toHaveBeenCalledTimes(1);
+  });
+
+  it('stays quiet on a reveal with no sync outstanding', async () => {
+    const { view, on, engine } = await openThenHide();
+
+    view.visible = true;
+    on.visibility();
+
+    await settle();
+    expect(createOmniEngine).toHaveBeenCalledTimes(1);
+    expect(engine.resync).not.toHaveBeenCalled();
   });
 });
