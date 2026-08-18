@@ -113,6 +113,9 @@ export interface OmniConfig {
   debounceMs: number;
   /** Methods hit the stone per keystroke, so don't search until the term is at least this long. */
   methodMinQueryLength: number;
+  /** How many matches a scope's server-side scan collects before stopping. Bounds the results, not
+   *  just the cost: no display cap can reach past it, so the UI reports when a scan stops here. */
+  maxServerScan: number;
   /** When true, the references/senders gesture shows the results in the right-hand preview pane (a
    *  sticky list you open source from) instead of pivoting the whole left list. Off = the classic
    *  list pivot. */
@@ -125,6 +128,47 @@ export interface OmniCancel {
 }
 
 export const NEVER_CANCELLED: OmniCancel = { isCancelled: false };
+
+/**
+ * A provider's report that its OWN fetch ceiling — not the display cap — bounded the results, so the
+ * row count is a floor rather than a total.
+ *
+ * Only providers with a server-side scan bound have one (today: methods, whose scan short-circuits at
+ * `maxServerScan`); the rest scan exhaustively and cap client-side, so they never report. The
+ * engine cannot infer this: the display cap is its own number, and a count below the ceiling proves
+ * nothing once the client-side re-filter has dropped rows. Without the report the footer claims an
+ * exact total at the very moment the results were cut off, and the UI says nothing about the wall the
+ * user just hit (triage #14).
+ *
+ * It carries the scope and the number so the UI can name both ("Methods stopped after 200") rather
+ * than show an anonymous warning — and so any provider that gains a ceiling later is covered without
+ * touching the view.
+ */
+export interface OmniTruncation {
+  /** The category whose own fetch ceiling bound the results. */
+  categoryId: OmniCategoryId;
+  /** The slice size that bound this run — the number the scan was asked for and stopped at. (Reported
+   *  only when the scan came back full, i.e. `rows.length >= serverLimit`, so it equals the rows
+   *  collected too, but the slice size is what it names.) */
+  scanned: number;
+  /** The CONFIGURED ceiling (`maxServerScan`) — the number to show the user, because it is the one
+   *  they set. `scanned` can be lower when the over-fetch was the tighter bound, and it changes as
+   *  the display cap grows, so showing it made the message read as a limit nobody configured. */
+  ceiling: number;
+  /**
+   * True when the configured ceiling is what bound the scan, so **Load-more cannot fetch any more** —
+   * the only wall worth warning about.
+   *
+   * False when the smaller over-fetch (`maxResultsPerCategory × SERVER_OVERFETCH`) bound it: results
+   * are still incomplete, so the count keeps its `+`, but Load-more genuinely widens the scan and is
+   * the honest next step rather than a dead end.
+   */
+  atCeiling: boolean;
+}
+
+/** Called ONCE per truncated provider in a run; never called by a provider that returned everything,
+ *  so "no calls" unambiguously means "nothing was cut off". */
+export type OmniTruncationSink = (info: OmniTruncation) => void;
 
 /** A single known local structural change to fold into a cached provider's corpus without a full
  *  reload. Today only a class definition produces one (the only granular local signal we have);
@@ -156,6 +200,12 @@ export interface OmniProvider {
    *  the corpus actually changed (a new or removed name), so the caller can decide whether to
    *  re-render. Only providers with a granular local signal (classes) implement it. */
   applyChange?(change: OmniCorpusChange, token: OmniCancel): Promise<boolean> | boolean;
-  /** Ranked, already-limited results for `query` (the raw, trimmed search term). */
-  search(query: string, cfg: OmniConfig, token: OmniCancel): Promise<OmniResult[]> | OmniResult[];
+  /** Ranked, already-limited results for `query` (the raw, trimmed search term). A provider whose
+   *  server fetch is bounded calls `reportTruncated` to say whether that bound cut the results off. */
+  search(
+    query: string,
+    cfg: OmniConfig,
+    token: OmniCancel,
+    reportTruncated?: OmniTruncationSink,
+  ): Promise<OmniResult[]> | OmniResult[];
 }

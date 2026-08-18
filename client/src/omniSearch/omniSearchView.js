@@ -31,10 +31,16 @@
     var resultsEl = doc.getElementById('results');
     var previewEl = doc.getElementById('preview');
     var countEl = doc.getElementById('count');
+    var capNoteEl = doc.getElementById('capnote');
     var loadMoreEl = doc.getElementById('loadMore');
     var loadAllEl = doc.getElementById('loadAll');
     var breadcrumbEl = doc.getElementById('breadcrumb');
+    var scopeHintEl = doc.getElementById('scopehint');
     var errorEl = doc.getElementById('error');
+    // The last category list + active scope pushed from the host, kept so the scope hint can name the
+    // scopes an All-scope search leaves out (see updateScopeHint).
+    var lastCategories = [];
+    var lastScopeId = null;
 
     // The currently-rendered row elements, in display order — the target of Up/Down navigation.
     // `activeIndex` points into it; -1 = nothing active.
@@ -134,6 +140,8 @@
     function renderTabs(categories, scopeId) {
       tabsEl.textContent = '';
       var cats = categories || [];
+      lastCategories = cats;
+      lastScopeId = scopeId || null;
       var filters = [{ id: null, label: 'All' }];
       var searches = [];
       for (var i = 0; i < cats.length; i++) {
@@ -222,6 +230,8 @@
       // trip (which never comes when the active row is unchanged — same source, no repaint). See #8.
       rehighlightSourcePreview();
       updateFooter(view);
+      // After renderTabs has refreshed the scope/category state for this reply.
+      updateScopeHint();
     }
 
     function makeRow(row) {
@@ -276,17 +286,76 @@
     }
 
     // ── Footer (count + elegant load controls — replaces the two synthetic list rows) ──
+    // Scopes whose own server scan was capped this run (see OmniViewData.truncations). A capped scan
+    // stops early, so its rows are a floor: the count gets a "+" and the note next to it names the
+    // scope and the number. Triage #14 — before this, hitting the wall looked identical to having
+    // found everything, in the footer AND in the count.
+    function truncationsOf(view) {
+      return Array.isArray(view.truncations) ? view.truncations : [];
+    }
+
     function updateFooter(view) {
       var n = view.shownCount || 0;
+      var capped = truncationsOf(view);
       var text;
+      // A capped scan means the count is a floor, so show the "+" even when the display cap wasn't
+      // filled, and never print a bare, exact-looking total (at the ceiling both the `exact` and the
+      // neither-flag branch used to read "200 results", the one thing we know it isn't).
       if (n === 0) text = inPivot ? 'No references' : '';
       else if (view.exact) text = n + (n === 1 ? ' result' : ' results');
-      else if (view.hasMore) text = n + '+ shown';
+      else if (view.hasMore || capped.length) text = n + '+ shown';
       else text = n + (n === 1 ? ' result' : ' results');
       countEl.textContent = text;
+      // The "+" above covers EVERY truncation (results are incomplete either way), but the note is
+      // only for the walls Load-more cannot get past — otherwise it fires while "Load more" is sitting
+      // right there working, telling the user to narrow their search for no reason.
+      updateCapNote(
+        capped.filter(function (t) {
+          return t.atCeiling !== false;
+        }),
+      );
       var showLoad = !!view.hasMore && !view.exact;
       loadMoreEl.style.display = showLoad ? '' : 'none';
       loadAllEl.style.display = showLoad ? '' : 'none';
+    }
+
+    /**
+     * The visible "we stopped looking" line, right after the count so the two read as one statement.
+     *
+     * Toggles `visibility`, NOT `display`, and always with an explicit value:
+     *  - `display: none` would remove the flex item, so the footer's slack would move to another item
+     *    and one 10px gap would vanish — the Load buttons visibly jumped each time the note appeared or
+     *    went away (both it and the buttons can be on screen at once). Keeping the item in flow makes it
+     *    the constant slack absorber, so the buttons never move.
+     *  - clearing the inline value instead of setting one would fall back to the stylesheet, where a
+     *    `display: none` rule would leave the note permanently invisible. That is how it first shipped,
+     *    and a test asserting merely "not none" could not tell the difference.
+     */
+    function updateCapNote(capped) {
+      if (!capNoteEl) return;
+      if (!capped.length) {
+        capNoteEl.textContent = '';
+        capNoteEl.title = '';
+        capNoteEl.style.visibility = 'hidden';
+        return;
+      }
+      // "Methods scan capped at 400" — per scope, since under the all-scope only some of them cap.
+      // Shows `ceiling` (the configured maxServerScan), NOT `scanned`: they differ whenever the
+      // over-fetch was the tighter bound, and `scanned` climbs on each Load-more, so it read as a
+      // limit the user never set and never held still.
+      var parts = capped.map(function (t) {
+        return (t.categoryLabel || t.categoryId) + ' scan capped at ' + (t.ceiling || t.scanned);
+      });
+      capNoteEl.textContent = '⚠ ' + parts.join(' · ') + ' — narrow the search for the rest';
+      // Why the cap exists, why loading more can't help, and the setting that changes it.
+      capNoteEl.title =
+        'This search walks every selector of every class in your symbol list, so it stops once it has ' +
+        'collected enough matches — otherwise every keystroke would scan the whole image.\n\n' +
+        'That means more matches exist than are shown, and Load more / Load all cannot reach them: ' +
+        'the limit is on what gets fetched, not on what gets displayed.\n\n' +
+        'Narrow the search term to see the rest, or raise the limit with the setting ' +
+        '"gemstone.omniSearch.maxServerScan" (a wider net costs a slower search on every keystroke).';
+      capNoteEl.style.visibility = 'visible';
     }
 
     function clearPreview() {
@@ -601,6 +670,57 @@
       errorEl.style.display = message ? '' : 'none';
     }
 
+    /**
+     * "Not searched here: Source · Literals · Categories — click one to search it", under the field
+     * while the All scope is active and something is typed.
+     *
+     * Those three scopes are `explicitOnly`, so `providersInScope` drops them under All — the search
+     * genuinely never runs them. Nothing said so, which makes an All-scope "no results" identical to
+     * "not in the image": search `no such element` under All and you get nothing, click Source and you
+     * get four hits (triage #21). The scope names are buttons, so the fix names the problem AND is the
+     * one-click way out of it.
+     *
+     * Deliberately silent when a heavy scope IS active — then its own placeholder hint applies and the
+     * search really is running everything the user asked for.
+     */
+    function updateScopeHint() {
+      if (!scopeHintEl) return;
+      var heavy = [];
+      for (var i = 0; i < lastCategories.length; i++) {
+        if (lastCategories[i].explicitOnly) heavy.push(lastCategories[i]);
+      }
+      // Only under All (no scope), only with a term to search, and only if any heavy scope is enabled
+      // at all — a user who disabled them via `categories` is not missing anything.
+      var show = lastScopeId === null && inputEl.value.trim().length > 0 && heavy.length > 0;
+      if (!show) {
+        scopeHintEl.textContent = '';
+        scopeHintEl.style.display = 'none';
+        return;
+      }
+      scopeHintEl.textContent = '';
+      scopeHintEl.appendChild(doc.createTextNode('Not searched here: '));
+      for (var h = 0; h < heavy.length; h++) {
+        if (h > 0) scopeHintEl.appendChild(doc.createTextNode(' · '));
+        scopeHintEl.appendChild(scopeHintLink(heavy[h]));
+      }
+      scopeHintEl.appendChild(doc.createTextNode(' — click one to search it'));
+      scopeHintEl.style.display = 'block';
+    }
+
+    /** One clickable scope name inside the hint; switching scope re-runs the term that's already typed. */
+    function scopeHintLink(cat) {
+      var b = doc.createElement('button');
+      b.type = 'button';
+      b.textContent = cat.label;
+      b.title = cat.searchHint || 'Search ' + cat.label.toLowerCase();
+      b.addEventListener('click', function () {
+        scrollResetPending = true;
+        post('setScope', { scopeId: cat.id });
+        inputEl.focus();
+      });
+      return b;
+    }
+
     function setBreadcrumb(title) {
       if (!breadcrumbEl) return;
       breadcrumbEl.textContent = title || '';
@@ -635,6 +755,9 @@
       scrollResetPending = true; // a new query starts the list at the top
       previewMode = 'source'; // typing dismisses a sticky references list
       updateClearVisibility();
+      // Track the field immediately: the hint depends on whether anything is typed, so waiting for the
+      // debounced reply would leave it a keystroke behind.
+      updateScopeHint();
       rehighlightSourcePreview(); // clear/refresh the stale blue match marks now, not on the fetch
       post('query', { value: inputEl.value });
     });
@@ -725,6 +848,7 @@
         inputEl.value = '';
         scrollResetPending = true;
         updateClearVisibility();
+        updateScopeHint(); // nothing typed = nothing being skipped, so drop the hint at once
         post('query', { value: '' });
         inputEl.focus();
       });

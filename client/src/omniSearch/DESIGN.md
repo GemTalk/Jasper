@@ -81,6 +81,17 @@ Global "search anything browsable" for the GemStone IDE — the Jasper answer to
      - _Categories_ — class-category names; a whole-image scan (`getAllClassCategories`) so it
        **lazy-loads on first search**, not on open.
 
+     ⚠️ Being excluded from the all-scope fan-out has a UX cost that has to be paid for explicitly: an
+     All-scope search silently returns nothing for a term only those scopes could find, so "no results"
+     is indistinguishable from "not in the image". Reproduced with `no such element` — 4 hits under
+     Source, 0 under All. So while the All scope is active **and** something is typed, the view shows a
+     hint under the field naming the skipped scopes, each one a button that switches to it:
+     `Not searched here: Source · Literals · Categories — click one to search it` (`updateScopeHint` in
+     `omniSearchView.js`, triage **#21**). It stays silent when a heavy scope is already active (its own
+     placeholder hint applies then), when the field is empty, and when the user has disabled the heavy
+     scopes via the `categories` setting. Enter was deliberately left alone — it activates the selected
+     row, and making it scope-dependent would trade one surprise for another.
+
 4. **Pluggable, savable match algorithm** (the issue asks for this). A pure matcher (`omniMatch.ts`)
    with modes `fuzzy` (subsequence, default) | `substring` | `prefix`, plus case-sensitivity — read
    from settings (`gemstone.omniSearch.matchMode`, `…caseSensitive`). It returns match **ranges**,
@@ -141,7 +152,10 @@ New shared query (if needed) lives under `client/src/queries/` per repo conventi
 - `caseSensitive`: boolean (default `false`).
 - `categories`: which providers are enabled (default: all seven —
   `classes, methods, dictionaries, globals, source, literals, categories`).
-- `maxResultsPerCategory`: number (default `20`).
+- `maxResultsPerCategory`: number (default `20`) — how many rows are **shown** per scope.
+- `maxServerScan`: number (default `200`, clamped 20–20 000) — how many matches a scope's
+  **server-side scan** collects before it stops. A different bound from `maxResultsPerCategory`; see
+  "Two different limits bound a result set" below.
 - `debounceMs`: number (default `120`).
 - `methodMinQueryLength`: number (default `2`) — min chars before the Methods provider queries the stone.
 - `referencesInPreview`: boolean (default `true`) — references as a sticky preview list vs a full-list pivot.
@@ -176,6 +190,59 @@ Behaviour decisions (Eric's review of the first webview cut):
   worktree/branch** that calls the scoped backend + adds the Explorer title button.
 - **#387 items 1–5 (funnel=filter, magnifier=find, wording):** the "find" affordance #387 wants to
   free up is the same entry point #377 adds. Kept out of this branch; noted for the #377/#387 work.
+
+## Two different limits bound a result set
+
+The display cap (`maxResultsPerCategory`, raised by Load-more/Load-all) is not the only bound — the
+**Methods** scope also has a server-side one. `searchSelectors` short-circuits the moment it has
+`limit` matches, and `methodsProvider` clamps that limit to `maxServerScan` (default 200) however high
+the display cap goes. So with the default a broad selector term can never yield more than 200 rows,
+Load-all included. That ceiling is a **setting** rather than a constant precisely because the honest
+answer to "I want more than 200" is "raise the scan, and accept a slower search".
+
+The two bounds mean different things to the user, so a provider reports when its OWN ceiling was the
+one that bound it (`OmniTruncationSink`, an optional 4th argument to `OmniProvider.search`, carrying
+the category and the number it stopped at; providers that scan exhaustively and cap client-side never
+report). The engine collects those into `OmniViewData.truncations`:
+
+- **display cap reached** → `hasMore`; more rows are one Load-more away → `N+ shown` + the Load buttons.
+- **fetch ceiling reached** → a `truncations` entry; that scope's rows are a floor and raising the cap
+  cannot reveal more *of it* → `N+ shown` **and a visible note beside the count** naming the scope and
+  its limit: `⚠ Methods scan capped at 200 — narrow the search for the rest`. The Load buttons are
+  **not** hidden — `updateFooter` keys them off `hasMore && !exact` alone, deliberately: they raise the
+  display cap for the whole view, which still widens any *other* in-scope provider that has more to
+  show; only the capped scope can't grow, and the note (not a vanished button) is what says so.
+- **neither** → `exact`; `shownCount` is the real total → `N results`.
+
+There is a third case, and getting it wrong was a bug worth remembering. The server slice is
+`min(maxResultsPerCategory × SERVER_OVERFETCH, maxServerScan)`, so the **over-fetch** can be the
+tighter bound — with the cap at 60 and `maxServerScan` at 400 the scan is `min(240, 400)` = 240. Those
+results are incomplete, so the count keeps its `+`, but this is NOT a wall: Load-more raises the cap
+and genuinely widens the scan (240 → 400). So `OmniTruncation` carries `atCeiling`, and:
+
+- the **`+`** on the count is driven by any truncation;
+- the **note** only appears for `atCeiling` entries — warning while "Load more" is right there and
+  working would tell the user to narrow their search for no reason;
+- the note shows **`ceiling`** (the configured `maxServerScan`), never `scanned`. Reporting `scanned`
+  displayed a limit the user never set and made the number climb on every Load-more — Eric saw
+  "capped at 240" become "capped at 400".
+
+Footer layout: the note is `flex: 1 1 auto` and is the footer's only slack absorber, so it stays a flex
+item at all times and the view toggles **`visibility`**, never `display`. Removing it from the flow
+hands the slack to another item and drops one of the footer's `10px` gaps, which slid the Load buttons
+sideways whenever the note appeared — and both can be on screen together.
+
+`exact` therefore requires Load-all **and** an empty `truncations`. Deriving it from the cap alone was
+triage **#14**: at the ceiling the footer printed a bare `200 results` over a slice that had been cut
+off, with nothing on screen saying the scan had given up rather than run out.
+
+Because the cap is reported per scope rather than as one boolean, any provider that gains a server
+ceiling later is surfaced by the same note with no view changes.
+
+⚠️ **`resultsMessage` (omniSearchShared.ts) lists the view's fields one by one instead of spreading
+it**, so a new `OmniViewData` field reaches the engine but never the webview. That is how the #14 fix
+first shipped broken — the flag was computed and never forwarded, so the count still read
+`200 results`. A test in `omniSearchShared.test.ts` now fails if a field is added without forwarding.
 
 ## Deferred / follow-ups (tracked in issue #428)
 
