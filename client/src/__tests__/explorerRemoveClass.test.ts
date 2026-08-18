@@ -14,10 +14,10 @@ import { ExplorerController } from '../gemstoneExplorer';
 import { canClassBeWritten, getClassDescendantNames, deleteClass } from '../browserQueries';
 import type { SessionManager, ActiveSession } from '../sessionManager';
 
-function makeController(): ExplorerController {
+function makeController(onClassRemoved?: (sessionId: number, className: string) => void) {
   const session = { id: 1 } as ActiveSession;
   const sessionManager = { getSelectedSession: () => session } as unknown as SessionManager;
-  const ctl = new ExplorerController(sessionManager);
+  const ctl = new ExplorerController(sessionManager, undefined, onClassRemoved);
   ctl.state.dictName = 'UserGlobals';
   ctl.state.dictIndex = 1;
   ctl.state.className = 'Doomed';
@@ -139,5 +139,59 @@ describe('ExplorerController.removeClass', () => {
 
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('cannot be modified'));
     expect(deleteClassMock).not.toHaveBeenCalled();
+  });
+});
+
+// A removal is uncommitted, so nothing else announces it: without this hook a deleted class stayed
+// listed — and clickable — in an open Omni Search until the next commit/abort. Fired per class rather
+// than per command, because Remove Class takes the whole subtree. See PR #443 review (#428 Round 1).
+describe('ExplorerController.removeClass — telling cached corpora what went', () => {
+  it('reports a removed leaf class with its session', async () => {
+    const onClassRemoved = vi.fn();
+    const ctl = makeController(onClassRemoved);
+    warn.mockResolvedValueOnce('Remove');
+
+    await ctl.removeClass();
+
+    expect(onClassRemoved).toHaveBeenCalledTimes(1);
+    expect(onClassRemoved).toHaveBeenCalledWith(1, 'Doomed');
+  });
+
+  it('reports every member of a removed subtree, not just the root', async () => {
+    const onClassRemoved = vi.fn();
+    const ctl = makeController(onClassRemoved);
+    descendantsMock.mockReturnValue([descendant('Kid', 1), descendant('GrandKid', 1)]);
+    warn.mockResolvedValueOnce('Remove All');
+
+    await ctl.removeClass();
+
+    expect(onClassRemoved.mock.calls.map((c) => c[1])).toEqual(['Doomed', 'Kid', 'GrandKid']);
+  });
+
+  it('stays silent about a class the delete did not actually remove', async () => {
+    const onClassRemoved = vi.fn();
+    const ctl = makeController(onClassRemoved);
+    descendantsMock.mockReturnValue([descendant('Kid', 1)]);
+    warn.mockResolvedValueOnce('Remove All');
+    // Root deletes; the subclass reports a failure — dropping it from the corpus would hide a class
+    // that is still in the image.
+    deleteClassMock
+      .mockReturnValueOnce('Deleted class: Doomed')
+      .mockReturnValueOnce('Error: could not delete Kid');
+
+    await ctl.removeClass();
+
+    expect(onClassRemoved).toHaveBeenCalledTimes(1);
+    expect(onClassRemoved).toHaveBeenCalledWith(1, 'Doomed');
+  });
+
+  it('reports nothing when the confirmation is dismissed', async () => {
+    const onClassRemoved = vi.fn();
+    const ctl = makeController(onClassRemoved);
+    warn.mockResolvedValueOnce(undefined);
+
+    await ctl.removeClass();
+
+    expect(onClassRemoved).not.toHaveBeenCalled();
   });
 });

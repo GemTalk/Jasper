@@ -137,14 +137,13 @@
         "properties": {
           "gemstone.omniSearch.ui": {
             "type": "string",
-            "enum": ["spotter", "panel", "quickpick"],
+            "enum": ["spotter", "panel"],
             "enumDescriptions": [
               "Editor-tab Spotter: a webview in an editor tab with labeled scope tabs, a source-preview pane, own match highlighting, and an always-on case indicator.",
-              "Bottom-panel view (default): the same webview docked in the panel strip (next to Terminal/Output). Stays out of the way; results open in the editor area above it.",
-              "Phase-1 Quick Pick: the native VS Code picker with title-bar scope buttons."
+              "Bottom-panel view (default): the same webview docked in the panel strip (next to Terminal/Output). Stays out of the way; results open in the editor area above it."
             ],
             "default": "panel",
-            "markdownDescription": "Which GemStone Search experience to open: the **bottom panel** view (default), the editor-tab **Spotter**, or the classic **Quick Pick**."
+            "markdownDescription": "Which GemStone Search experience to open: the **bottom panel** view (default) or the editor-tab **Spotter**."
           },
           "gemstone.omniSearch.matchMode": {
             "type": "string",
@@ -2832,16 +2831,6 @@
         "key": "ctrl+shift+a",
         "mac": "cmd+shift+a",
         "when": "gemstone.hasActiveSession && !terminalFocus"
-      },
-      {
-        "command": "gemstone.omniSearch.references",
-        "key": "alt+enter",
-        "when": "gemstone.omniSearchActive"
-      },
-      {
-        "command": "gemstone.omniSearch.back",
-        "key": "left",
-        "when": "gemstone.omniSearchInPivot"
       },
       {
         "command": "gemstone.findMethodInClass",
