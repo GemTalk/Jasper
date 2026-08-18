@@ -1,13 +1,15 @@
 /**
- * Omni Search → Explorer reveal robustness (#428 items #15 and #16).
+ * Omni Search → Explorer reveal robustness.
  *
- * #16 — revealDictionaryByName no longer swallows a failed TreeView.reveal with a bare
- *       `catch { /* ignore *\/ }`; it logs to the durable GCI channel (mirroring the
- *       category-reveal path) so a future failure is diagnosable instead of invisible.
- * #15 — revealCategoryByPath checks the category actually exists in the dictionary's loaded
- *       forest BEFORE selectClassCategory mutates the category/classes panes. A missing
- *       category must leave the panes untouched (and warn) rather than scroll them to a node
- *       that isn't there — which looked like the jump "landed nowhere" (the reported bug).
+ * revealDictionaryByName no longer swallows a failed TreeView.reveal with a bare
+ * `catch { /* ignore *\/ }`; it logs to the durable GCI channel (mirroring the
+ * category-reveal path) so a future failure is diagnosable instead of invisible.
+ *
+ * revealCategoryByPath checks the category actually exists in the dictionary's loaded
+ * forest BEFORE selectClassCategory mutates the category/classes panes. A missing category
+ * must leave the category/classes panes untouched (and warn) rather than scroll them to a node
+ * that isn't there — which looked like the jump "landed nowhere" (the reported bug). The home
+ * dictionary is selected before the check and deliberately stays selected.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
@@ -70,7 +72,7 @@ beforeEach(() => {
   dictNames.mockReturnValue(['UserGlobals']);
 });
 
-describe('#16 — revealDictionaryByName logs a failed reveal instead of swallowing it', () => {
+describe('revealDictionaryByName logs a failed reveal instead of swallowing it', () => {
   it('logs to the GCI channel when TreeView.reveal rejects', async () => {
     const ctl = makeController();
     withViews(ctl, () => Promise.reject(new Error('pane gone')));
@@ -110,7 +112,7 @@ describe('#16 — revealDictionaryByName logs a failed reveal instead of swallow
   });
 });
 
-describe('#15 — revealCategoryByPath checks existence before mutating the panes', () => {
+describe('revealCategoryByPath checks existence before mutating the panes', () => {
   it('does NOT mutate the panes when the category is missing, and warns', async () => {
     const ctl = makeController();
     const { category } = withViews(ctl);
@@ -119,7 +121,7 @@ describe('#15 — revealCategoryByPath checks existence before mutating the pane
 
     await ctl.revealCategoryByPath('UserGlobals', 'Ghost-Category');
 
-    // The whole point of #15: a missing category leaves the panes untouched. On the OLD code
+    // The whole point: a missing category leaves the category/classes panes untouched. On the OLD code
     // selectClassCategory ran BEFORE the existence check, so this assertion fails there — it pins
     // the reorder, not merely "a check exists".
     expect(selectCat).not.toHaveBeenCalled();

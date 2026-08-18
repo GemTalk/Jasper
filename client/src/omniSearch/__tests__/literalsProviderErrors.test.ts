@@ -1,12 +1,12 @@
 /**
- * #428 item #18 — the Literals provider must not let a REAL runner failure (a GCI drop, an aborted
+ * The Literals provider must not let a REAL runner failure (a GCI drop, an aborted
  * transaction) masquerade as "no results". A well-formed literal that reaches the server-side runner
  * and throws is reported through the injected error sink; the "still typing / not a literal" cases
  * stay silent (they never touch the server). In every case the provider returns [] — throwing would
  * abort sibling providers in the All scope, and the sync API has no error row.
  *
- * Kept in its own file (not providers.test.ts) so this runs clear of the parallel maxServerScan work
- * that also edits providers.test.ts.
+ * Kept in its own file (not providers.test.ts) so this runs clear of parallel edits to
+ * providers.test.ts.
  */
 import { describe, it, expect, vi } from 'vitest';
 import { OMNI_DEFAULTS } from '../omniConfig';

@@ -3360,19 +3360,31 @@ export class ExplorerController {
     this.setMethodSide(isMeta);
     const displayCategory = this.groupMethodsByCategory() ? info.category : undefined;
     const item = new MethodItem(isMeta, info, displayCategory, this.methodSourceUri(isMeta, info));
+    // In this VS Code build focus:false selects the row but never scrolls it into view; only
+    // focus:true scrolls. For editor-driven navigation we force the scroll with focus:true and hand
+    // focus straight back to the editor so the tree doesn't keep it. A passive background resync
+    // stays a plain (non-scrolling) select so it can't yank focus off whatever the user is doing.
+    const takesFocus = opts.focusEditorAfter === true;
+    const side = isMeta ? 'class' : 'instance';
     try {
-      // In this VS Code build focus:false selects the row but never scrolls it into view (#43); only
-      // focus:true scrolls. For editor-driven navigation we force the scroll with focus:true and hand
-      // focus straight back to the editor so the tree doesn't keep it. A passive background resync
-      // stays a plain (non-scrolling) select so it can't yank focus off whatever the user is doing.
-      if (opts.focusEditorAfter) {
-        await this.views?.method.reveal(item, { select: true, focus: true, expand: true });
+      await this.views?.method.reveal(item, { select: true, focus: takesFocus, expand: true });
+    } catch (e) {
+      // No longer swallowed silently: log it so a future failure is diagnosable from the GCI log
+      // (mirrors the dictionary/category reveal paths above).
+      logWarning(
+        `Explorer method reveal failed for ${side} method ${info.selector}: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+    // Hand focus back even if the reveal above rejected: it may have taken focus before failing, and
+    // leaving the user's cursor stranded in the tree is the worse outcome.
+    if (takesFocus) {
+      try {
         await vscode.commands.executeCommand('workbench.action.focusActiveEditorGroup');
-      } else {
-        await this.views?.method.reveal(item, { select: true, focus: false, expand: true });
+      } catch (e) {
+        logWarning(
+          `Explorer could not return focus to the editor after revealing ${side} method ${info.selector}: ${e instanceof Error ? e.message : String(e)}`,
+        );
       }
-    } catch {
-      /* ignore */
     }
   }
 
@@ -3633,9 +3645,11 @@ export class ExplorerController {
 
     // Check the category actually exists in this dictionary's loaded forest BEFORE mutating the
     // category/classes panes. selectDict has just (synchronously) loaded classCategoryEntries, so
-    // allCategoryPaths() is valid here. Doing the check first means a missing category leaves the
-    // panes untouched instead of scrolling them to a node that isn't there — the jump would otherwise
-    // silently appear to do nothing (the reported "strange spot").
+    // allCategoryPaths() is valid here. Note the dictionary selection above has ALREADY been applied
+    // and is meant to stick — landing on the home dictionary is still useful. Doing the check first
+    // means a missing category leaves only the category/classes panes untouched instead of scrolling
+    // them to a node that isn't there — the jump would otherwise silently appear to do nothing (the
+    // reported "strange spot").
     if (
       !this.allCategoryPaths().some((p) => p === categoryPath || p.startsWith(`${categoryPath}-`))
     ) {

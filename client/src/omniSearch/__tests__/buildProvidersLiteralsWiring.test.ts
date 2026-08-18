@@ -1,11 +1,11 @@
 /**
- * #428 item #18 — production wiring guard. The provider mechanism (literalsProvider's onError sink)
+ * Production wiring guard. The provider mechanism (literalsProvider's onError sink)
  * is unit-tested in literalsProviderErrors.test.ts; this proves buildProviders actually CONNECTS it
  * to the durable log. Without the wiring, a real GCI failure during a literal search stays invisible
  * (the original bug), so this test fails the moment the onError argument is dropped from the
  * createLiteralsProvider call.
  *
- * Kept in its own file so it runs clear of Round 4's parallel edits to omniSearchCommand.test.ts.
+ * Kept in its own file so it runs clear of parallel edits to omniSearchCommand.test.ts.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -37,7 +37,7 @@ const cfg = (over: Partial<OmniConfig> = {}): OmniConfig => ({ ...OMNI_DEFAULTS,
 
 beforeEach(() => vi.clearAllMocks());
 
-describe('buildProviders wires the Literals provider to the GCI log (#18)', () => {
+describe('buildProviders wires the Literals provider to the GCI log', () => {
   it('logs a warning when the literal runner throws on a well-formed #symbol', () => {
     const providers = buildProviders({ id: 1 } as ActiveSession, ['literals']);
     const literals = providers.find((p) => p.category.id === 'literals');
