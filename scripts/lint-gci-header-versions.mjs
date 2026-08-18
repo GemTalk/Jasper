@@ -14,11 +14,16 @@
 // GCI signature or struct layout, which is worse than having no snapshot at all.
 // Hence a loud failure here rather than silent drift.
 //
-// The check is bidirectional, because a one-way check leaves two ways for the
-// table to lie: a row can point at a folder that doesn't exist (caught by
-// checkRows), and a folder can exist that no row mentions (caught by
-// checkFolders) — the latter being how a half-finished "add a version" lands
-// headers nobody can find via the map.
+// The check runs in both directions, because a one-way check leaves three ways
+// for the table to lie: a row can point at a folder that doesn't exist (caught
+// by checkRows), a folder can exist that no row mentions (checkFolders) — how a
+// half-finished "add a version" lands headers nobody can find via the map — and
+// a folder can hold a file no column names (checkStrayFiles). That last one is
+// the quiet case: every row passes, yet the folder carries an unhashed file, so
+// a reader can open a header that nothing in the map vouches for. It is also how
+// a stray copy lands (a build-tool leftover, or one of the includes versions.md
+// says are deliberately not vendored), which would silently contradict the
+// "closed under #include" claim that document makes.
 //
 // File names come from the table header rather than a hardcoded list, so adding
 // a fifth header file to the snapshot means editing only the markdown. Absence is
@@ -169,13 +174,18 @@ function checkRows(table, referenced) {
   return failed;
 }
 
+// Every content folder committed under vendor/gci-headers/, in table order-independent
+// disk order. Shared by the two reverse checks below.
+function headerFolders() {
+  return readdirSync(HEADERS_DIR).filter((entry) =>
+    statSync(path.join(HEADERS_DIR, entry)).isDirectory(),
+  );
+}
+
 // A folder no row mentions is unreachable through the map, so it may as well not
 // be committed — this is what a half-finished "add a version" looks like.
 function checkFolders(referenced) {
-  const onDisk = readdirSync(HEADERS_DIR).filter((entry) =>
-    statSync(path.join(HEADERS_DIR, entry)).isDirectory(),
-  );
-  const orphans = onDisk.filter((folder) => !referenced.has(folder));
+  const orphans = headerFolders().filter((folder) => !referenced.has(folder));
 
   for (const folder of orphans) {
     console.error(
@@ -190,6 +200,39 @@ function checkFolders(referenced) {
   return orphans.length > 0;
 }
 
+// checkRows only ever looks at the files the table names, so a file the table is
+// silent about is invisible to it: the row still passes while the folder carries
+// an unhashed header. Walk the folders themselves and require that every file in
+// them is accounted for by a column — nothing in the snapshot is unvouched-for.
+// Directories are reported too rather than skipped, since the snapshot is flat by
+// design and a nested one would hide files from this walk entirely.
+function checkStrayFiles(table) {
+  const named = new Set(table.files);
+  let failed = false;
+
+  for (const folder of headerFolders()) {
+    const folderPath = path.join(HEADERS_DIR, folder);
+    for (const entry of readdirSync(folderPath)) {
+      if (named.has(entry)) {
+        continue;
+      }
+      const kind = statSync(path.join(folderPath, entry)).isDirectory() ? 'directory' : 'file';
+      console.error(
+        `✗ ${HEADERS_DIR}/${folder}/${entry} is a ${kind} no column in ${VERSIONS_FILE} names — add a column for it, or remove it from the snapshot`,
+      );
+      failed = true;
+    }
+  }
+
+  if (!failed) {
+    console.log(
+      `✓ every file under ${HEADERS_DIR}/*/ is one of the ${named.size} the table hashes`,
+    );
+  }
+
+  return failed;
+}
+
 function main() {
   const table = parseTable(readFileSync(VERSIONS_FILE, 'utf8'));
   if (!table) {
@@ -202,8 +245,9 @@ function main() {
   const referenced = new Set();
   const rowsFailed = checkRows(table, referenced);
   const foldersFailed = checkFolders(referenced);
+  const strayFilesFailed = checkStrayFiles(table);
 
-  if (rowsFailed || foldersFailed) {
+  if (rowsFailed || foldersFailed || strayFilesFailed) {
     process.exit(1);
   }
 }
