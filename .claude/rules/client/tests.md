@@ -1,7 +1,7 @@
 ---
 paths:
-  - "client/**/*.test.ts"
-  - "client/src/**/__tests__/**"
+  - 'client/**/*.test.ts'
+  - 'client/src/**/__tests__/**'
 ---
 
 # Client tests
@@ -15,6 +15,7 @@ Tests that use `useIntegrationTest` run against the real GCI shared library — 
 The VS Code API is not available in tests. Vitest picks up `src/__mocks__/vscode.ts` automatically — a comprehensive manual mock of the `vscode` module. Any test importing extension code that touches the VS Code API gets it for free; no explicit import or `vi.mock()` call is needed.
 
 Mock test helpers:
+
 - `__resetConfig()` — clears all stored configuration values; call in `beforeEach` if your test uses `workspace.getConfiguration`.
 - `__setConfig(section, key, value)` — pre-seeds a config value before the test runs.
 
@@ -27,16 +28,16 @@ Query functions in `queries/` take a `QueryExecutor` — in tests, pass a `vi.fn
 Some handlers (e.g. in `systemBrowser.ts`) call async methods without awaiting them (fire-and-forget), so tests must account for the effect landing a tick later. Which tool depends on the assertion's polarity:
 
 - **Positive assertion** ("the effect eventually happens", e.g. `expect(window.showTextDocument).toHaveBeenCalled()`): use `await vi.waitFor(() => expect(...).toHaveBeenCalled())`. It polls until the condition holds, returns as soon as it does, tolerates chains that span several ticks, and gives a diagnostic error on timeout. Prefer this over a blind flush.
-- **Negative assertion** ("the effect must *not* happen", e.g. `expect(window.showTextDocument).not.toHaveBeenCalled()`): `vi.waitFor` does **not** work here — a negative expectation is already satisfied on the first poll, so it returns immediately without ever draining the fire-and-forget queue, and the bug never gets a chance to manifest. Instead, deterministically drain the queue first, then assert: `await new Promise(resolve => setTimeout(resolve, 0));`. Note this flushes only a single macrotask tick — a chain with multiple awaits/nested microtasks may need more, so **verify new negative assertions actually fail against the unfixed code before trusting them green.**
+- **Negative assertion** ("the effect must _not_ happen", e.g. `expect(window.showTextDocument).not.toHaveBeenCalled()`): `vi.waitFor` does **not** work here — a negative expectation is already satisfied on the first poll, so it returns immediately without ever draining the fire-and-forget queue, and the bug never gets a chance to manifest. Instead, deterministically drain the queue first, then assert: `await new Promise(resolve => setTimeout(resolve, 0));`. Note this flushes only a single macrotask tick — a chain with multiple awaits/nested microtasks may need more, so **verify new negative assertions actually fail against the unfixed code before trusting them green.**
 
 Tests run in random order; the seed is printed at the top of the output. Reproduce a run by replaying that seed via `VITEST_SEED=<seed>` (a root `SeededSequencer` in `client/vitest.config.ts` reads it and pins it into both projects for a fully reproducible file order).
 
 ### Typing overloaded Node/vscode mocks without `any`
 
-`vi.mocked()` on an overloaded function (`fs.readFileSync`, `fs.readdirSync`, `child_process.exec`, `vscode.window.showInformationMessage`, ...) types the mock using the *last* declared overload, not the one production code actually hits. Don't reach for `any` when a call against one of these doesn't type-check:
+`vi.mocked()` on an overloaded function (`fs.readFileSync`, `fs.readdirSync`, `child_process.exec`, `vscode.window.showInformationMessage`, ...) types the mock using the _last_ declared overload, not the one production code actually hits. Don't reach for `any` when a call against one of these doesn't type-check:
 
 - First try the plain, unfixed-up value and let `npx tsc -p client/tsconfig.json --noEmit` tell you if it's actually a problem. The last overload's return/param type is often already a superset of what you need (e.g. `readFileSync`'s last overload returns `string | Buffer`, so a plain string return just works).
-- When `tsc` reports a *real* mismatch (e.g. `readdirSync`'s last overload wants `Dirent[]`, not `string[]`; `showInformationMessage`'s last overload wants `T extends MessageItem`, not a bare string), that's genuine overload friction, not a typing mistake — use a precise, narrowly-scoped `as unknown as <ExpectedType>` at that one call site rather than widening to `any`.
+- When `tsc` reports a _real_ mismatch (e.g. `readdirSync`'s last overload wants `Dirent[]`, not `string[]`; `showInformationMessage`'s last overload wants `T extends MessageItem`, not a bare string), that's genuine overload friction, not a typing mistake — use a precise, narrowly-scoped `as unknown as <ExpectedType>` at that one call site rather than widening to `any`.
 - Optional callback params (e.g. `exec`'s `callback?: (...) => void`) are "possibly undefined" once you're not masking the type with `any` — call them with `cb?.(...)`, don't cast the optionality away.
 - For partial interface mocks (`vscode.Terminal`, `vscode.ExtensionContext`), confine the one unavoidable `as unknown as T` cast to a single shared test helper (e.g. a `fakeTerminal()` factory) instead of repeating it at every call site — see `osConfigTreeProvider.test.ts`.
 
@@ -46,7 +47,7 @@ Tests using `useIntegrationTest` require a live GemStone instance so plain `npm 
 
 See [integration-test-harness.md](../../../docs/reference/integration-test-harness.md) for the harness contract (hook order, `GciTestContext`, the commit invariant) and [integration-test-isolation.md](../../../docs/explanation/integration-test-isolation.md) for why it's built this way.
 
-GCI session/oop values are koffi `External` pointer wrappers with no enumerable properties, so vitest's deep equality (`toEqual`, and therefore `expect(spy).toHaveBeenCalledWith(someSession, ...)`) cannot tell two *different* sessions or oops apart — it treats any two of them as equal regardless of the underlying native pointer. To assert *which* session/oop a call received, pull the argument out of `spy.mock.calls` and compare with `toBe` (reference equality) instead.
+GCI session/oop values are koffi `External` pointer wrappers with no enumerable properties, so vitest's deep equality (`toEqual`, and therefore `expect(spy).toHaveBeenCalledWith(someSession, ...)`) cannot tell two _different_ sessions or oops apart — it treats any two of them as equal regardless of the underlying native pointer. To assert _which_ session/oop a call received, pull the argument out of `spy.mock.calls` and compare with `toBe` (reference equality) instead.
 
 ### Choosing where a stone-dependent test lives
 
@@ -54,7 +55,7 @@ The **default home** is a `*.integration.test.ts` using `useIntegrationTest`, co
 
 The on-demand `client/src/__tests__/gci/` project **never runs in CI** (see `.claude/rules/client/gci.md`) and is being migrated away. Add a test there only when the harness genuinely cannot host it:
 
-- it must **commit** — every harness session is armed to refuse commits outright (`TransactionError 2249`), with no opt-out;
+- it must **commit**, and doesn't fit any opt-in commit strategy — every harness session is otherwise armed to refuse commits outright (`TransactionError 2249`). Check [the harness reference](../../../docs/reference/integration-test-harness.md)'s `'nested'` strategy and its exclusions before assuming a commit forces this project;
 - it needs **exclusive access to the stone**, or destroys and restores the whole repository;
 - it drives a **session lifecycle** beyond `login` / `logout` / `withTransientSession` (e.g. many logins with varying flags), or installs process-wide state once for a whole file;
 - it makes a **single blocking GCI call** that can outlast the CI budget and that vitest cannot interrupt, so a hang takes out the whole job;
@@ -62,11 +63,11 @@ The on-demand `client/src/__tests__/gci/` project **never runs in CI** (see `.cl
 
 **These are not reasons** — each already has a mechanism that runs in CI:
 
-- *needs the server plugin in the image* → gate it (see below). CI runs the suite twice, once bare and once with the plugin installed, so both worlds are covered.
-- *needs Rowan or Grail in the image* → probe for it live and `ctx.skip(reason)` when absent, the way `rowanExportFixpoint.integration.test.ts` does with `listRowanProjects(exec).available`. Unlike the server plugin, there is no CI pass with Rowan/Grail installed yet, so such a test currently always skips in CI — that's a known gap, not a reason to write it in `gci/` instead.
-- *needs a class, method, or test-case fixture a bare vendor extent lacks* → create it in the test; the auto-abort rolls it back.
-- *depends on behavior that differs by stone version* → a version-applicability gate resolved off the session, never a hardcoded `stoneVersion` literal.
-- *needs `SystemUser` or different credentials* → `login({ user: 'SystemUser' })`.
+- _needs the server plugin in the image_ → gate it (see below). CI runs the suite twice, once bare and once with the plugin installed, so both worlds are covered.
+- _needs Rowan or Grail in the image_ → probe for it live and `ctx.skip(reason)` when absent, the way `rowanExportFixpoint.integration.test.ts` does with `listRowanProjects(exec).available`. Unlike the server plugin, there is no CI pass with Rowan/Grail installed yet, so such a test currently always skips in CI — that's a known gap, not a reason to write it in `gci/` instead.
+- _needs a class, method, or test-case fixture a bare vendor extent lacks_ → create it in the test; the auto-abort rolls it back.
+- _depends on behavior that differs by stone version_ → a version-applicability gate resolved off the session, never a hardcoded `stoneVersion` literal.
+- _needs `SystemUser` or different credentials_ → `login({ user: 'SystemUser' })`.
 
 A test whose assertion **branches on what the live stone happens to contain** doesn't belong in `gci/` either — it needs a bounded, deterministic fixture. An `if (present) … else …` that asserts both branches passes no matter which one ran, so it can never fail.
 
@@ -76,7 +77,7 @@ Whenever a test skips, skip it with a reason — `ctx.skip(reason)`. A bare `ret
 
 ### Tests that depend on the server plugin
 
-CI runs the integration suite twice — once against a bare stone, then again after installing the Jasper Server Plugin. By default a test runs in *both* passes, so most tests need no gating. Only reach for a gate when the test makes sense in just one of those worlds; call it at the test's top (from `src/__tests__/requireServerPluginFeature.ts`). The gate skips the test, with a reason, when the connected stone isn't in the matching world, so each pass runs exactly the subset that applies instead of failing:
+CI runs the integration suite twice — once against a bare stone, then again after installing the Jasper Server Plugin. By default a test runs in _both_ passes, so most tests need no gating. Only reach for a gate when the test makes sense in just one of those worlds; call it at the test's top (from `src/__tests__/requireServerPluginFeature.ts`). The gate skips the test, with a reason, when the connected stone isn't in the matching world, so each pass runs exactly the subset that applies instead of failing:
 
 - The test exercises a plugin feature → `requireServerPluginFeature(pluginFeatures.refactoring, ctx, session())` — runs only when the feature is installed.
 - The test asserts fallback/graceful-degradation behavior when the feature is missing → `requireServerPluginFeatureAbsent(pluginFeatures.refactoring, ctx, session())` — runs only when the feature is absent.
