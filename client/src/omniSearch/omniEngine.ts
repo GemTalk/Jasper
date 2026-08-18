@@ -1,15 +1,11 @@
 /**
- * Transport-agnostic Omni Search engine for the Phase-2 webview Spotter (issue #378).
+ * Transport-agnostic Omni Search engine for the webview UIs (issue #378).
  *
- * The Phase-1 UI is a native `vscode.QuickPick` driven by `omniSearchController.ts`. Phase 2 replaces
- * that chrome with a webview panel (`omniSearchPanel.ts`), but the SEARCH behaviour is identical:
- * hold the active scope + case flag + result cap, fan out to the in-scope providers, rank/group the
- * results by category, and support the reference pivot. That behaviour lives here — a pure engine
- * with NO `vscode` dependency, so it unit-tests with plain fake providers and is reused by the panel.
- *
- * The engine deliberately does not import the controller (which pulls in `vscode`); the two tiny
- * pure helpers it shares with the controller (`providersInScope` / `gatherResults`) are re-stated
- * here so this module stays `vscode`-free and independently testable. Behaviour is kept in lockstep.
+ * Both webview surfaces — the docked bottom-panel view (`omniSearchViewProvider.ts`) and the
+ * editor-tab Spotter (`omniSearchPanel.ts`) — drive their search through this engine: hold the active
+ * scope + case flag + result cap, fan out to the in-scope providers, rank/group the results by
+ * category, and support the reference pivot. That behaviour lives here — a pure engine with NO
+ * `vscode` dependency, so it unit-tests with plain fake providers and is reused by both surfaces.
  *
  * Output is a plain `OmniViewData` (serialisable rows grouped by category, plus the footer meta) that
  * the panel forwards to the webview verbatim. Rows are addressed by a stable numeric `id` within a
@@ -18,11 +14,15 @@
  */
 import {
   OMNI_CATEGORIES,
+  CATEGORY_BY_ID,
+  NEVER_CANCELLED,
   OmniCancel,
   OmniCategoryId,
   OmniConfig,
+  OmniCorpusChange,
   OmniProvider,
   OmniResult,
+  changeCategoryId,
 } from './omniTypes';
 import { match, compareMatches } from './omniMatch';
 import { referenceRequestFor } from './references';
@@ -110,12 +110,11 @@ export interface OmniEngineDeps {
 }
 
 // "Load all" jumps the display cap here — big enough to mean "everything" in practice; the true
-// ceiling is each provider's own server fetch cap (a few hundred), so this never runs away. Matches
-// the QuickPick controller's constant so the two UIs behave identically.
+// ceiling is each provider's own server fetch cap (a few hundred), so this never runs away.
 const LOAD_ALL_LIMIT = 100_000;
 
 /** The enabled providers in scope. Under the all-scope (`null`), explicit-only categories are
- *  excluded so heavyweight searches never fire on a plain keystroke. (Mirror of the controller.) */
+ *  excluded so heavyweight searches never fire on a plain keystroke. */
 export function providersInScope(
   providers: readonly OmniProvider[],
   scopeId: OmniCategoryId | null,
@@ -238,6 +237,13 @@ function buildView(
 export interface OmniEngine {
   /** Prime load-once providers (concurrently; a failing prime just yields no results). */
   prime(onError?: (message: string) => void): Promise<void>;
+  /** Fold a single known local change (a class compile) into the cached corpora. Re-runs the current
+   *  term and returns the new view ONLY when the change could affect what's shown (the changed name
+   *  matches the term and its category is in scope); returns null otherwise, leaving the view as-is. */
+  applyChange(change: OmniCorpusChange): Promise<OmniViewData | null>;
+  /** Drop + rebuild every cached corpus (on a session sync — commit/abort), catching changes from
+   *  outside this UI, then re-run the current term. Returns null while a pivot is showing. */
+  resync(onError?: (message: string) => void): Promise<OmniViewData | null>;
   /** Run the search for a raw field value and return the view (or null if superseded by a newer
    *  call). In the pivot, this filters the loaded reference rows client-side instead. */
   search(rawValue: string): Promise<OmniViewData | null>;
@@ -376,6 +382,52 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
           }
         }),
       );
+    },
+    async applyChange(change) {
+      let changed = false;
+      for (const p of providers) {
+        if (!p.applyChange) continue;
+        try {
+          if (await p.applyChange(change, NEVER_CANCELLED)) changed = true;
+        } catch {
+          // A failed fold just leaves that provider's cache as-is; a later resync will correct it.
+        }
+      }
+      // The caches are now current regardless; the question is only whether the CURRENT view needs
+      // redrawing. Never mid-pivot, never on an empty box (shows nothing).
+      if (pivot) return null;
+      const term = lastRawValue.trim();
+      if (term.length === 0) return null;
+
+      // The Categories scope is DERIVED from classes — a class compile can introduce a new category,
+      // and we can't cheaply know its name to match, so re-run to reload + re-rank against the term.
+      if (scopeId === CATEGORY_BY_ID.categories.id) {
+        return change.kind === 'class' ? runSearch(lastRawValue) : null;
+      }
+      // Scopes where the changed item's own name is what's shown (the classes scope, and the all-scope
+      // which includes classes): skip the redraw when nothing changed or the new name can't match the
+      // current term (avoids a needless re-render / scroll reset on an unrelated compile).
+      if (scopeId === null || scopeId === changeCategoryId(change)) {
+        if (!changed) return null;
+        if (!match(term, change.className, { mode: config.matchMode, caseSensitive })) return null;
+        return runSearch(lastRawValue);
+      }
+      // Any other scope (methods/source/…) is unaffected by this kind of change.
+      return null;
+    },
+    async resync(onError) {
+      await Promise.all(
+        providers.map(async (p) => {
+          try {
+            await (p.reprime ?? p.prime)?.(NEVER_CANCELLED);
+          } catch (e: unknown) {
+            onError?.(e instanceof Error ? e.message : String(e));
+          }
+        }),
+      );
+      // Don't disturb a pivot; otherwise re-run the current term against the rebuilt corpora.
+      if (pivot) return null;
+      return runSearch(lastRawValue);
     },
     search: (rawValue) => runSearch(rawValue),
     async setScope(newScope) {

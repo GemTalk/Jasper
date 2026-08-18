@@ -41,7 +41,7 @@ import {
 } from './enhancedInspector/enhancedInspectorPerfTracker';
 import { CodeExecutor } from './codeExecutor';
 import { SystemBrowser } from './systemBrowser';
-import { registerOmniSearch } from './omniSearch/omniSearchCommand';
+import { registerOmniSearch, OmniSearchRegistration } from './omniSearch/omniSearchCommand';
 import {
   startSeasideServer,
   stopSeasideServer,
@@ -73,7 +73,6 @@ import {
 } from './rowanDependency';
 import { shouldLoadAfterAddingDependency } from './rowanLoadPrompt';
 import { RowanDecorationProvider } from './rowanDecorations';
-import { ExplorerEmptyVarDecorationProvider } from './explorerVarDecorations';
 import { ActiveEditorDecorationProvider } from './activeEditorDecoration';
 import { findMethodInClass } from './commands/findMethodInClass';
 import { loadClassPickItems } from './commands/classPicker';
@@ -560,6 +559,9 @@ async function pickGitRevision(url: string): Promise<string | undefined> {
 }
 
 export function activate(context: vscode.ExtensionContext) {
+  // Set when Omni Search registers (below); the class-compile and commit/abort handlers call its
+  // hooks so an open search re-primes/folds in changes instead of going stale.
+  let omniSearch: OmniSearchRegistration | undefined;
   // Create every output channel up front — not lazily on first use — so the
   // full set is discoverable in the Output view's channel dropdown from
   // activation. (The Class Sync channel is created just after ExportManager is
@@ -746,17 +748,27 @@ export function activate(context: vscode.ExtensionContext) {
   // selectors resolve whole). Reads `client` lazily — it is created above but
   // starts asynchronously; until it answers, the rename falls back to the edited
   // method.
-  const explorer = registerGemStoneExplorer(context, sessionManager, async (document, position) => {
-    // Distinguish "no selector at this position" (LSP answers null → rename the
-    // edited method) from "lookup unavailable" (throw → the command aborts rather
-    // than guess): a not-yet-started client or a request failure THROWS; only a
-    // live "no selector here" answers null.
-    if (!client) throw new Error('language server not started');
-    return client.sendRequest<string | null>('gemstone/selectorAtPosition', {
-      textDocument: { uri: document.uri.toString() },
-      position,
-    });
-  });
+  const explorer = registerGemStoneExplorer(
+    context,
+    sessionManager,
+    async (document, position) => {
+      // Distinguish "no selector at this position" (LSP answers null → rename the
+      // edited method) from "lookup unavailable" (throw → the command aborts rather
+      // than guess): a not-yet-started client or a request failure THROWS; only a
+      // live "no selector here" answers null.
+      if (!client) throw new Error('language server not started');
+      return client.sendRequest<string | null>('gemstone/selectorAtPosition', {
+        textDocument: { uri: document.uri.toString() },
+        position,
+      });
+    },
+    // A dictionary add/remove/rename changes the symbol list — refresh an open Omni Search so the
+    // new/renamed dictionary shows up without waiting for a commit.
+    (sid) => omniSearch?.notifySessionSynced(sid),
+    // A removed class has to leave Omni Search's cached class corpus the same way, but one class at a
+    // time — Remove Class takes the whole subtree with it.
+    (sid, className) => omniSearch?.notifyClassRemoved(sid, className),
+  );
 
   // ── GemStone FileSystem Provider ─────────────────────────
   const gemstoneFs = new GemStoneFileSystemProvider(sessionManager, exportManager);
@@ -907,6 +919,8 @@ export function activate(context: vscode.ExtensionContext) {
         // explorer can jump to the dictionary the class was actually created in
         // (which may differ from the selected one for a new-class inDictionary:).
         explorer.onClassCompiled(parseInt(e.uri.authority, 10), parts[2], parts[1]);
+        // Keep an open Omni Search current: fold the freshly compiled class into its cache.
+        omniSearch?.notifyClassCompiled(parseInt(e.uri.authority, 10), parts[2], parts[1]);
       }
     }),
   );
@@ -1191,6 +1205,9 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showInformationMessage(`Session ${session.id}: Commit succeeded.`);
         await exportManager.refreshSession(session);
         SystemBrowser.refresh(session.id);
+        // A sync can surface classes/globals/dicts added elsewhere (incl. other sessions) — rebuild
+        // an open Omni Search's cached corpora so they show up.
+        omniSearch?.notifySessionSynced(session.id);
       } else {
         vscode.window.showErrorMessage(
           `Session ${session.id}: Commit failed — ${err.message || `error ${err.number}`}`,
@@ -1221,6 +1238,9 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showInformationMessage(`Session ${session.id}: Abort succeeded.`);
         await exportManager.refreshSession(session);
         SystemBrowser.refresh(session.id);
+        // An abort can pull in classes/globals/dicts from other sessions — rebuild an open Omni
+        // Search's cached corpora so they show up.
+        omniSearch?.notifySessionSynced(session.id);
         explorer.onSessionAborted(session.id);
       } else {
         vscode.window.showErrorMessage(
@@ -2513,8 +2533,7 @@ export function activate(context: vscode.ExtensionContext) {
       }
     }),
 
-    registerOmniSearch(sessionManager, context),
-
+    (omniSearch = registerOmniSearch(sessionManager, context)),
     vscode.commands.registerCommand('gemstone.findMethodInClass', () =>
       findMethodInClass(sessionManager),
     ),
@@ -2946,9 +2965,6 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     // Git-view-style M/A/D badges + label tinting for Rowan rows.
     vscode.window.registerFileDecorationProvider(new RowanDecorationProvider()),
-    // Grays the "instance/class variables" header the Explorer shows for an empty
-    // variable side.
-    vscode.window.registerFileDecorationProvider(new ExplorerEmptyVarDecorationProvider()),
     // Tints the Methods-pane / Open-Editors row backing the active editor, so the
     // selected method reads as connected to its source even when the tree isn't
     // focused (its selection goes muted grey then).

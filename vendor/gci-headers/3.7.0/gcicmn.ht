@@ -1,0 +1,843 @@
+#ifndef GCICMN_HT
+#define GCICMN_HT TRUE
+/*=========================================================================
+ * Copyright (C) GemTalk Systems 1986-2023.  All Rights Reserved.
+ *
+ * Name - gcicmn.ht
+ *
+ * Description - Common definitions for the GemStone C interface,
+ *               known as the GCI. This file contains definitions
+ *               used by gci.hf 
+ *========================================================================
+ */
+
+/*******  GemStone constants/types defined in this and other modules ********/
+#include "flag.ht"
+
+#if defined (FLG_MSWIN32)
+// must include stdlib.h and malloc.h for call to free()
+#include <stdlib.h>
+#include <malloc.h>
+
+// define export or import for C++ class definitions
+#if defined(GCI_DLL)
+// implementation of a gci.dll  should use dllexport .
+#define CLS_EXPORT __declspec(dllexport)
+#else
+// Customer GCI code should  always take this definition
+#define CLS_EXPORT __declspec(dllimport)
+#endif
+
+#define GCI_ASSERT(x) /* nothing */
+
+#else
+// Unix
+#define CLS_EXPORT
+
+#if defined(UTL_ASSERT)
+#define GCI_ASSERT UTL_ASSERT
+#else
+#if defined(FLG_DEBUG)
+#include <assert.h>
+#define GCI_ASSERT(x) assert( x )
+#else
+#define GCI_ASSERT(x) /* nothing */
+#endif
+#endif
+
+#endif
+
+
+#include "gci.ht"      /* Constants and typedefs for GCI interface           */
+#include "gcioop.ht"   /* Constants for the OOPs of reserved GS. kernel objs */
+#include "gcioc.ht"    /* One based constants describing GS. kernel objs     */
+#include "gcierr.ht"   /* Defines mnemonics for all GemStone errors          */
+#include "version.ht"  /* version dependent default stone and netldi names */
+
+/* no more includes. KEEP THIS LINE */
+
+#ifdef FLG_MSC32
+#ifdef GCI_DLL /* building GCI DLL */
+#define EXTERN_GCI_DEC(EGDtype) extern __declspec(dllexport) EGDtype
+#else 
+  // assuming ! defined(GCI_STATIC) 
+#define EXTERN_GCI_DEC(EGDtype) __declspec(dllimport) EGDtype
+#endif /* GCI_DLL */
+#else 
+// non Microsoft compilers
+#define EXTERN_GCI_DEC(EGDtype) EGDtype
+#endif
+
+#if !defined(GLOBAL_HT)
+#if defined(FLG_MSWIN32) && !defined(_AMD64_)
+typedef unsigned int     uintptr_t;
+#endif
+#endif
+
+// Fix 47967 - make Gci* sybmols weak on Linux
+#ifdef FLG_LINUX_UNIX
+#define GCI_WEAK __attribute__((weak))
+#else
+#define GCI_WEAK /**/
+#endif
+
+/*******  Macros defined in this module  ************************************/
+/* =============================================================================
+ * GCI_BOOL_TO_OOP macro
+ *   Convert a C Boolean value to a GemStone Boolean object.
+ *
+ * Arguments:
+ *   (1) The C Boolean value to be translated into a GemStone object.
+ *
+ * Result value:
+ *   The OOP of the GemStone Boolean object that is equivalent to aBoolean.
+ *   If argument is non-zero returns OOP_TRUE, otherwise returns OOP_FALSE.
+ *==============================================================================
+ */
+#define GCI_BOOL_TO_OOP(aBoolean) ( ((aBoolean) != 0) ? OOP_TRUE : OOP_FALSE )
+
+/* =============================================================================
+ * GCI_CHR_TO_OOP macro
+ *   Convert a 32 bit C character value to a GemStone Character object.
+ *
+ * Arguments:
+ *   (1) The C character value to be translated into a GemStone object.
+ *
+ * Result value:
+ *   The OOP of the GemStone Character object that is equivalent to aChar.
+ *
+ *  Note that character oops are not sequential integers
+ *==============================================================================
+ */
+#define CHAR_16_MAX_VALUE 0xFFFF 
+/* Gs64 v3.2, CHAR32_MAX_VALUE deleted, use CHAR32_MAX_UTF8 */
+
+#define CHAR32_MAX_UTF8 0x10FFFFU /* maximum character for utf8 encoding */
+
+enum { GCI_OOP_SPECIAL_VALUE_SHIFT = 8,
+        // shift a char left by this before adding tag bits to
+        //  convert from C char to Smalltalk Character oop
+
+       GCI_OOP_SPECIAL_VALUE_MASK = 0xFF 
+    };
+
+static inline OopType GCI_CHR_TO_OOP_(uint aChar)
+{
+  /* Returns an instance of Character if 0 <= aChar <= 0x10FFFF ,
+   * else returns OOP_ILLEGAL
+   */
+  if (aChar <= CHAR32_MAX_UTF8) {
+    return ((OopType)aChar << GCI_OOP_SPECIAL_VALUE_SHIFT) | OOP_ASCII_NUL ;
+  }
+  return OOP_ILLEGAL;
+}
+
+static inline OopType GCI_CHR_TO_OOP(uint aChar)
+{
+  /* Returns an instance of Character if 0 <= aChar <= 0x10FFFF ,
+   * else returns GCI_CHR_TO_OOP_(0x10FFFF)
+   */
+  if (aChar > CHAR32_MAX_UTF8) {
+    aChar = CHAR32_MAX_UTF8;
+  }
+  return ((OopType)aChar << GCI_OOP_SPECIAL_VALUE_SHIFT) | OOP_ASCII_NUL ;
+}
+
+/*========================================================================
+ * GCI_OOP_IS_JIS_CHAR
+ *
+ * macro for testing whether an oop is a JisCharacter
+ */
+#define GCI_OOP_IS_JIS_CHAR(oop) ( ((uintptr_t)(oop) & 0xFF ) == OOP_FIRST_JIS_CHAR )
+
+// ====================================================
+// Varous constants related to the numeric classes
+
+enum { SMALL_DOUBLE_MAX_EXP = 0xFF };
+enum { SMALL_DOUBLE_EXPONENT_BASE = 0x380 };
+
+#define LRG_RADIX_MASK  0xFFFFFFFFU
+
+#define LRG_RADIX ((int64)LRG_RADIX_MASK + 1)
+
+enum { LRG_RADIX_BITS = 32 };  // each digit is a uint 
+
+enum { LRG_DIGIT_BYTES = 4 ,   // 4 bytes per digit of a large integer
+        // shift size in bytes right by LRG_DIGIT_sizeShift 
+        //  to get size in digits
+       LRG_DIGIT_sizeShift = 2 ,
+       LRG_bitToDigitShift = 5
+     };
+
+enum { LRG_maxDecimalFloat_digitsSize = 1558, 
+       LRG_maxFloat_digitsSize = 32 
+     };
+
+/*========================================================================
+   Gci Macros For testing oops
+ *========================================================================
+ */
+/* =============================================================================
+ * GCI_OOP_IS_SMALL_INT macro
+ *   Determine whether or not a GemStone object represents a SmallInteger.
+ *
+ * Arguments:
+ *   (1) The OOP of the object to test.
+ *
+ * Result value:
+ *   A C Boolean value.  Returns TRUE if the object represents a SmallInteger,
+ *   FALSE otherwise.
+ *==============================================================================
+ */
+#define GCI_OOP_IS_SMALL_INT(oop) (((uintptr_t)(oop) & OOP_RAM_TAG_MASK) == OOP_TAG_SMALLINT)
+
+#define GCI_OOP_IS_SMALL_FRACTION(o) (\
+  ((OopType)o & OOP_SPECIAL_CLASS_MASK)  == (OOP_SPECIAL_SmallFractionCLASS_FIELD | OOP_TAG_SPECIAL) )
+
+#define GCI_OOP_IS_SmallScaledDecimal(o) (\
+  ((OopType)o & OOP_SPECIAL_CLASS_MASK)  == (OOP_SPECIAL_SmallScaledDecimalCLASS_FIELD | OOP_TAG_SPECIAL) )
+
+#define GCI_OOP_IS_SmallDate(o) (\
+  ((OopType)o & OOP_SPECIAL_CLASS_MASK)  == (OOP_SPECIAL_SmallDateCLASS_FIELD | OOP_TAG_SPECIAL) )
+
+#define GCI_OOP_IS_SmallTime(o) (\
+  ((OopType)o & OOP_SPECIAL_CLASS_MASK)  == (OOP_SPECIAL_SmallTimeCLASS_FIELD | OOP_TAG_SPECIAL) )
+
+#define GCI_OOP_IS_SmallDateAndTime(o) (\
+  ((OopType)o & OOP_SPECIAL_CLASS_MASK)  == (OOP_SPECIAL_SmallDateAndTimeCLASS_FIELD | OOP_TAG_SPECIAL) )
+
+#define GCI_OOP_IS_SMALL_DOUBLE(oop) \
+   ( (((OopType)oop) & OOP_RAM_TAG_MASK) == OOP_TAG_SMALLDOUBLE )
+
+static inline double GCI_OOP_TO_SMALL_DOUBLE(OopType arg)
+{
+  // caller must check that GCI_OOP_IS_SMALL_DOUBLE(arg) != 0 
+  uint64 e_f_bits = arg >> (OOP_NUM_TAG_BITS + 1) ;
+  uint64 sign = arg & 0x8;
+  uint64 result = 0;
+  if (e_f_bits == 0) {
+    // result will be  0.0 or -0.0 
+  } else {
+    uint64 expBits = arg >> 56 ;
+    result =  (arg << 8) >> 12 ; // isolate f bits
+    GCI_ASSERT(result != 0 || expBits != 0); // e or f bits must be non-zero
+    expBits = expBits + SMALL_DOUBLE_EXPONENT_BASE ;
+    result |= (expBits << 52);
+  }
+  result |= sign << 60 ;
+  return *((double*)&result);
+}
+
+
+/* =============================================================================
+ * GCI_OOP_IS_BOOL macro
+ *   Determine whether or not a GemStone object represents a Boolean value.
+ *
+ * Arguments:
+ *   (1) The OOP of the object to test.
+ *
+ * Result value:
+ *   A C Boolean value.  Returns TRUE if the object represents a Boolean, FALSE
+ *   otherwise.
+ *==============================================================================
+ */
+enum { OOP_IS_BOOL_MASK = 0xFF };
+#define GCI_OOP_IS_BOOL(oop) ( ((uintptr_t)(oop) & OOP_IS_BOOL_MASK) == OOP_FALSE )
+
+
+static inline BoolType GCI_I64_IS_SMALL_INT(int64 arg)
+{
+  // Return TRUE if argument is within SmallInteger range .
+  // A SmallInteger has a 61 bit 2-s complement integer and 3 tag bits.
+  // For a positive int64 argument,
+  //  top 4 bits must be 2r0000 for argument to be within SmallInteger range.
+  // For a negative int64 argument,
+  //  top 4 bits must be 2r1111 for argument to be within SmallInteger range.
+
+  // This algorithm avoids loading large constants (expensive on RISC machines)
+  // and does only one compare .
+  int shiftCount = 64 - (OOP_NUM_TAG_BITS + 1) ;
+  int64 top4 = arg >> shiftCount;
+  int64 sign4 = (top4 & 0xF0) >> 4;    // sign4 is either 0 or 0xF 
+  return (top4 & 0xF) == sign4;
+}
+
+// ==================================================================
+//  It was thought the following 3 would be an optimization on machines 
+//  where loading a large constant can be expensive, but some compilers
+//  ignored these and did their own 3-instruction sequence after
+//  computing constants at compile time... 
+//  So  GCI_int64_MAX generates same code as using LONG_MAX directly.
+
+static inline int64 GCI_int64_MAX()
+{
+  // function result is 64bit LONG_MAX
+  uint64 val = 0;
+  val = ( ~ val) >> 1;
+  return (int64)val ;
+}
+
+static inline uint64 GCI_uint64_MAX()
+{
+  // function result is 64bit ULONG_MAX
+  uint64 val = 0;
+  val =  ~ val ;
+  return val ;
+}
+
+static inline int64 GCI_int64_MIN()
+{
+  // function result is 64bit LONG_MIN
+  uint64 val = 1;
+  val = val << 63;
+  return (int64)val ;
+}
+
+/* =============================================================================
+ * GCI_OOP_IS_SPECIAL
+ *   Determine whether or not a GemStone object has a special representation.
+ *
+ * Arguments:
+ *   (1) The OOP of the object to test.
+ *
+ * Result value:
+ *   A C Boolean value.  Returns TRUE if the object has a special
+ *   representation, FALSE otherwise.
+ *==============================================================================
+ */
+
+#define GCI_OOP_IS_SPECIAL(oop) \
+  (((uintptr_t)(oop) & OOP_RAM_TAG_MASK) && ! ((uintptr_t)(oop) & OOP_TAG_POM_OOP))
+
+/*========================================================================
+ *  Gci Macros for converting Oops to C types.  These macros will run
+ *  faster than the equivalent functions.  If the argument is out of range for
+ *  the result type, the equivalent function is called to generate an error
+ *
+ *  WARNING - do not use a function call as the expression for the argument,
+ *   or you will pay the penalty of executing the function twice.
+ *========================================================================
+ */
+
+/* =============================================================================
+ * GCI_OOP_IS_CHAR macro
+ *
+ * Return TRUE if the argument is an instance of Character , false otherwise .
+ * =============================================================================
+ */
+#define GCI_OOP_IS_CHAR(oop) (((uintptr_t)(oop) & 0xFF ) == OOP_ASCII_NUL )
+
+/* =============================================================================
+ * GCI_ALIGN_STACK macro
+ *
+ * For internal use by the GCI only. GCI client applications should not use this
+ * macro.  Applied to GCI function declarations that are called by GBS 8.0,
+ * since VisualWorks does not align C stack per C compiler conventions, fixes 42632.
+ * =============================================================================
+ */
+#if FLG_INTEL_LINUX && FLG_32BIT_CPU
+#  define GCI_ALIGN_STACK __attribute__ ((force_align_arg_pointer))
+#else
+#  define GCI_ALIGN_STACK
+#endif
+
+/* ----------------------- gcifloat definitions ------------------------- */
+
+/*=========================================================================
+ *  byte-order dependent macros and constants 
+ *
+ *  GCI_FLOAT_TOP - access the most significant word of a C double
+ *  GCI_FLOAT_BOTTOM - access the least significant word of a C double.
+ * 
+ *  macros to be applied to the result of GCI_FLOAT_TOP
+ *    GCI_FLOAT_NEG_BIT - return TRUE if the negative bit is set
+ *    GCI_FLOAT_MSB_SET - return TRUE if most significant bit of mantissa is set
+ *    GCI_FLOAT_EXPONENT_ZERO - return TRUE if the exponent is zero
+ *    GCI_FLOAT_EXCEPTIONAL - return TRUE if double is either NaN or Infinity
+ * 
+ *  GCI_SMALLFLOAT_EXCEPTIONAL -return TRUE if float is either NaN or Infinity 
+ *
+ */
+#if defined(FLG_IEEE_LITTLE) /* ------------------------------------ */
+
+#define GCI_FLOAT_TOP(x) (((unsigned int *)(&x))[1])
+#define GCI_FLOAT_BOTTOM(x) (((unsigned int *)(&x))[0])
+
+#elif defined(FLG_IEEE_BIG) /* ------------------------------------ */
+
+#define GCI_FLOAT_TOP(x) (((unsigned int *)(&x))[0])
+#define GCI_FLOAT_BOTTOM(x) (((unsigned int *)(&x))[1])
+
+/* endif FLG_IEEE_BIG */
+#else /* ------------------------------------ */
++++ PORT_ERR, neither FLG_IEEE_LITTLE nor FLG_IEEE_BIG defined.  What is this?
+#endif /* FLG_IEEE_BIG or FLG_IEEE_LITTLE */
+
+/* apply the following four to the top word */
+#define GCI_FLOAT_NEG_BIT(x) (((x) & 0x80000000) != 0)
+#define GCI_FLOAT_MSB_SET(x) (((x) & 0x00080000) != 0)
+#define GCI_FLOAT_EXPONENT_ZERO(x) (((x) & 0x7ff00000) == 0)
+#define GCI_FLOAT_EXCEPTIONAL(x) ((((x) & 0x7ff00000) == 0x7ff00000))
+
+#define GCI_SMALLFLOAT_EXCEPTIONAL(x) ((((x) & 0x7f800000) == 0x7f800000))
+
+// Float swizzling macros deleted 
+
+/* bits in flags argument to GciPerformNoDebug. 
+ * comments duplicated in gci.hf 
+ */
+enum { 
+  GCI_PERFORM_FLAG_ENABLE_DEBUG = 1,  
+   /* make like GciPerform() with respect to debugging. default is debugger is
+    * disabled until GciPerformNoDebug returns */
+
+  GCI_PERFORM_FLAG_DISABLE_ASYNC_EVENTS = 2  ,
+   /* disable async events.  Used for GSI to be able to execute an exception
+    * block or method to service RT_ERR_SIGNAL_ABORT, 
+    *  RT_ERR_SIGNAL_GEMSTONE_SESSION, or ABORT_ERR_LOST_OT_ROOT 
+    * Also makes a callback from a UserAction non-interruptable .
+    */
+
+  GCI_PERFORM_FLAG_SINGLE_STEP = 4, 
+   /* place a single step break-point at the start of the method to be
+    * performed, and then execute to hit that breakpoint.
+    * if true, also implies GCI_PERFORM_FLAG_INTERPRETED
+    */
+
+  // GCI_PERFORM_MAP_SYMBOLS = 8, // obsolete, not used
+  GCI_PERFORM_noClientUseraction = 0x10, // disallow client user action for the duration
+                                         // for the duration of the execution
+
+  GCI_PERFORM_FLAG_INTERPRETED = 0x20 /* disable native code for the execution*/
+ };
+
+// =============================================================================
+// bits in flags argument to GciCompileMethod
+enum {
+  GCI_COMPILE_CLASS_METH = 1, /* 1 means classmethod, 0 means instance method*/
+  // GCI_COMPILE_RUBY_METH  = 2,   no longer supported
+
+  GCI_COMPILE_evaluateWithoutSelf = 4 /* String>>evaluate disallowing refs to self ,
+				        used in ExecBlock>>recompile  */
+};
+
+// =============================================================================
+// Traversal buffer type
+
+enum { GCI_MIN_TRAV_BUFF_SIZE = 2048 };
+
+class CLS_EXPORT GciTravBufType 
+{
+ public:
+   uint allocatedBytes; // allocated size of the body
+   uint usedBytes;  // used bytes of the body
+   // Gs64 v3.2 changed the above to fields from int64 to uint 
+   //   for transport efficiency. max size of a GciTravBufType is now 4GB
+   // Gs64 v3.3  if compression is being used for the session or for a
+   //  traversal call, the maximum size of a GciTravBufType is 2GB (INT_MAX)
+   //  because of limitations in lz4 compression.  An error will be thrown
+   //  if this limit is exceeded during compression.
+   ByteType body[8];
+	// actual body size is variable, minimum of GCI_MIN_TRAV_BUFF_SIZE
+
+   inline GciObjRepSType* firstReport() { 
+     return (GciObjRepSType*)body;
+   }
+
+   inline GciObjRepSType* readLimit() {
+      // for use when reading object reports out of a buffer
+      // returns pointer past end of last object report in the buffer
+      return (GciObjRepSType*)(body + usedBytes);
+   }
+
+   inline GciObjRepSType* writeLimit() {
+      // for use when composing a buffer
+      // returns pointer one byte past end of the allocated buffer
+      return (GciObjRepSType*)(body + allocatedBytes);
+   }
+
+   inline GciObjRepHdrSType* firstReportHdr() {
+      return &firstReport()->hdr;
+   }
+   inline GciObjRepHdrSType* readLimitHdr() {
+      return &readLimit()->hdr;
+   }
+   inline GciObjRepHdrSType* writeLimitHdr() {
+      return &writeLimit()->hdr ;
+   }
+
+   GciObjRepHdrSType* findObjectReport(OopType objectId);
+   // return NULL if a report for objectId is not found ,
+   // otherwise returns the first report for objectId.
+
+   GciTravBufType(size_t allocationSize);
+     // do not use this constructor, use malloc() instead
+ 
+   static GciTravBufType* malloc(size_t allocationSize, int lineNum = -1,
+				 const char* fileName = NULL);
+     // returns an instance obtained from ::malloc
+     // initialized with allocatedBytes equal to allocationSize,
+     //  and usedBytes == 0;  returns NULL if malloc fails.
+     // if allocationSize is not a multiple of 8 bytes, allocatedBytes will be
+     //  equal to allocationSize rounded up to the next multiple of 8 bytes.
+     // The maximum allocatedBytes will be UINT_MAX - 8 .
+     // lineNum and fileName are optional args for use by the implementation
+     //  of GciCHeapCheck .
+     // see GciAllocTravBuf for an ANSI-C equivalent.
+
+   BoolType legalSize();  // return TRUE if allocatedBytes >= GCI_MIN_TRAV_BUFF_SIZE
+                          //  and a multiple of 8 bytes
+
+   void free();
+};
+
+class CLS_EXPORT GciTravBufHolder {
+  // for use in allocated traversal buffers whose lifetime is
+  // confined to the life of a C function call. 
+ public:
+   GciTravBufType *buf;
+
+  GciTravBufHolder(size_t allocationSize);
+    // allocates GciTravBufType on the C heap with:
+    //   buf = GciTravBufType::malloc(allocationSize);
+
+  GciTravBufHolder(GciTravBufType *aBuffer);
+    // constructor that accepts a previously allocated buffer
+  
+  ~ GciTravBufHolder();
+    // releases the GciTravBufType with:
+    //   buf->free();  buf = NULL;
+
+  void free(void);
+
+};
+
+/* =============================================================================
+ * GCI_TRAVBUFF_SIZE 
+ *   Returns a uint that is the number of bytes in a traversal buffer.
+ *
+ *   (1) A pointer to a traversal buffer
+ *
+ * Result value:
+ *   A  that is the number of bytes in travFuffPtr.
+ *==============================================================================
+ */
+static inline uint GCI_TRAVBUFF_SIZE(GciTravBufType* buf)
+{
+  return buf->usedBytes;
+}
+
+
+/* =============================================================================
+ * GCI_FIRST_OBJREP 
+ *   Returns a pointer to the first object report in a traversal buffer:
+ *
+ *   (1) A pointer to a traversal buffer
+ *
+ * Precondition:
+ *   The traversal buffer must contain at least one report.
+ *
+ * Result value:
+ *   A GciObjRepSType* to the first object report.
+ *==============================================================================
+ */
+static inline GciObjRepSType* GCI_FIRST_OBJREP(GciTravBufType* buf)
+{
+  return buf->firstReport();
+}
+ 
+/* =============================================================================
+ * GCI_AFTER_LAST_OBJREP 
+ *   Returns a pointer just past the last object report in a traversal buffer:
+ *
+ *   (1) A pointer to a traversal buffer
+ *
+ * Precondition:
+ *   The traversal buffer must contain at least one report.
+ *   This is for use when reading reports out of a buffer, not when composing
+ *   a buffer.
+ *
+ * Result value:
+ *   A GciObjRepSType* to just past the last object report.
+ *==============================================================================
+ */
+static inline GciObjRepSType* GCI_AFTER_LAST_OBJREP(GciTravBufType* buf)
+{
+  return buf->readLimit();
+}
+
+/* =============================================================================
+ * GCI_NEXT_OBJREP 
+ *   Returns a pointer to the next object report.
+ *
+ *   (1) A pointer to a object report (GciObjRepSType*).
+ *
+ * Precondition:
+ *   The argument should not point past the last report in a traversal buffer.
+ *   Use GCI_AFTER_LAST_OBJREP to get a limit pointer
+ *   use it as a sentinal to make sure you do not go to far.
+ *
+ * Result value:
+ *   A GciObjRepSType* to the next object report.
+ *==============================================================================
+ */
+static inline GciObjRepSType* GCI_NEXT_OBJREP(const GciObjRepSType *rpt)
+{
+  return rpt->nextReport();
+}
+
+/* ==========================================================================*/
+/* arguments to various traversal functions */
+
+/* bits in retrievalFlags in GciClampedTravArgsSType */
+enum { GCI_RETRIEVE_DEFAULT = 0,
+       GCI_RETRIEVE_EXPORT = 1, /* causes results to automatically be added 
+                                * to an export set using GciSaveObjs semantics*/
+       GCI_CLEAR_EXPORT = 2, /* Causes traverse to clear the export set
+                                * using GciReleaseAllOops before filling the
+                                * traversal buffer . */
+       GCI_COMPRESS_TRAV = 4, /* compress traversal buffers before transmissions
+                 * between gem and rpc gci client, including the store traversal
+                 * of this call, and any GciMoreTraversal calls used to finish
+                 * this call. */
+       GCI_NOKILL_TRAV = 8, /* start a traversal that will allow GCI message 
+                            * sends, executes and store operations to precede
+                            * GciMoreTraversal calls that are part of this
+                            * traversal.  Only the start of some other traversal
+                            * will kill this traversal. */
+
+  // following flags are intended for use by the implementation of
+  //   GciStoreTravDoTravRefs and should not be used in application code
+       GCI_TRAV_WITH_REF_SET = 0x10, /* if true, use GciStoreTravDoTravRefs 
+            semantics */
+
+       /* the GciStoreTravDoTravRefs function will automatically set
+        * the GCI_TRAV_WITH_REF_SET bit as needed during execution.
+        * The state of those bits at the end of a GciStoreTravDoTravRefs call 
+        * is undefined. 
+        * The GciStoreTravDoTravRefs will ignore bits GCI_RETRIEVE_EXPORT, 
+	*  GCI_CLEAR_EXPORT
+        */
+
+       GCI_TRAV_HAVE_ALTERED_OBJS = 0x20,    /* for internal use only*/
+
+       GCI_TRAV_REFS_EXCLUDE_RESULT_OBJ = 0x80,
+           /* exclude execution result * from the traversal result */
+
+       GCI_TRAV_REFS_EXCLUDE_EXPORTED_RESULT_OBJ = 0x100
+           /* only give report for execution result if not already exported,
+              has no effect if GCI_TRAV_REFS_EXCLUDE_RESULT_OBJ is set*/
+  };
+
+#define GCI_CLEAR_AND_EXPORT (GCI_RETRIEVE_EXPORT|GCI_CLEAR_EXPORT)
+
+class CLS_EXPORT GciClampedTravArgsSType {
+ public:
+  OopType clampSpec;
+  OopType resultOop; /* Result of GciPerformTrav/GciExecuteStrTrav */
+  GciTravBufType *travBuff;
+  int level;
+  int retrievalFlags;
+  BoolType isRpc; /* private, for use by implementation of GCI */
+
+  GciClampedTravArgsSType() {
+    clampSpec = OOP_NIL;
+    resultOop = OOP_NIL;
+    travBuff = NULL;
+    level = 0;
+    retrievalFlags = 0;
+    isRpc = 1;
+  }
+};
+
+/* ==========================================================================*/
+
+enum { GCI_SECONDS_PER_DAY = 86400  };  /* conversion constant */
+
+/* Note: In GemStone versions earlier than 5.1, the DateTime struct had only
+ * three fields; in 5.1, timeZone has been added. timeZone represents
+ * the time zone of the region in which the DateTime was created/is being 
+ * created. If the timeZone field is OOP_NIL, GemStone replaces it with
+ * the session's current time zone. (Each session can have a different time 
+ * zone).
+ * 
+ * In 5.1, time is represented in millisecond granularity; in the earlier 
+ * versions, it was second granularity. 
+ */
+class CLS_EXPORT GciDateTimeSType {      
+  /* C representation in GMT of instance of class DateTime */
+ public:
+   int year;         /* 1901 <= year <= 1000000. Value is the actual year */
+   int dayOfYear;    /* 1..366 (366 used for a leap year) */
+   int milliseconds; /* since midnight */
+   OopType timeZone;  /* oop of the time zone */
+
+   GciDateTimeSType() {
+     year = 1901;
+     dayOfYear = 1;
+     milliseconds = 0;
+     timeZone = OOP_NIL;
+   }
+};
+
+class CLS_EXPORT GciDateAndTime {
+  // C Representation of instance of DateAndTime
+ public:
+    // dayOfYear == -1   microSeconds are posix time , year not used
+    // dayOfYear >= 1,  microSeconds is from start of day 
+  int64 microSeconds;  // posixMicroseconds if year==-1
+  int offsetSeconds;
+  int year;      // Gregorian year per DateAndTime  
+  int dayOfYear;    /* 1..366 (366 used for a leap year) */
+
+  GciDateAndTime() { initialize(); }
+
+  void initialize() {
+    year = 2001;
+    dayOfYear = 1;
+    microSeconds = 0;
+    offsetSeconds = 0; 
+  } 
+};
+
+class CLS_EXPORT GciPosixDateAndTime {
+  // C Representation of instance of DateAndTime
+ public:
+  int64 microseconds;  // UTC since 1970
+  int offset;
+
+  GciPosixDateAndTime() {
+    microseconds = 0;
+    offset = 0;
+  } 
+};
+
+/* ===============================================================
+ *  GciStoreTravDoArgsSType used by GCI StoreTravDo  functions
+ */
+class CLS_EXPORT GciStoreTravDoArgsSType {
+ public:
+  int      doPerform; 
+     // for GciStoreTravDoTravRefs and GciNbStoreTravDoTravRefs_ only
+     //     0 == ExecuteStr, 1 == Perform 2 == ExecuteBlock
+     //     3 == no execution , 4 == GciContinueWith .
+     //     For no execution:
+     //      if ((retrievalFlags & GCI_TRAV_REFS_EXCLUDE_RESULT_OBJ) == 0) 
+     //        use u.perform.receiver as the 
+     //        object to traverse after traversing altered objects,
+     //      else ignore u.perform.receiver 
+     // for all other Gci calls , 0 == ExecuteStr , all other values == Perform
+                       
+  int      doFlags;  /* per GciPerformNoDebug */
+  int      alteredNumOops;   /* input/output */
+  BoolType alteredCompleted; /* output */
+
+  union {
+    struct { /* args for a GciPerformNoDebug call or no execution */
+      OopType        receiver;
+      char           pad[24]; // Make later elements same offset as executestr, handy for GBS
+      const char*    selector;  // 1 byte per character
+      const OopType* args;
+      int            numArgs;
+      ushort         environmentId;  // compilation environment for execution
+    } perform;
+
+    struct { // args for ExecuteStr or ExecuteBlock 
+      OopType   contextObject;
+      OopType   sourceClass; // String, Utf8 or Unicode7 or DoubleByteString
+      OopType   symbolList;
+      int64     sourceSize;
+      const char* source; // 1 or 2 bytes per char, client-native byte order
+      const OopType* args;         // ignored unless ExecuteBlock
+      int       numArgs;	         // ignored unless ExecuteBlock
+      ushort    environmentId;  // compilation environment for execution
+    } executestr;
+
+    struct {  // args for GciContinueWith 
+      OopType process;
+      OopType replaceTopOfStack;
+      // also uses doFlags above
+      // GciErrSType *error input of GciContinueWith() always NULL
+    } continueArgs ;
+  } u;
+  GciTravBufType* storeTravBuff;
+  OopType*        alteredTheOops;   /* output */
+  int             storeTravFlags;   /* GCI_STORE_TRAV* bits from gci.ht */
+
+  //  For ExecuteBlock variant of GciStoreTravDoArgsSType as used with
+  //     GciStoreTravDoTravRefs ,
+  //  Given the argument  
+  //     GciStoreTravDoArgsSType *args;
+  //  Then for ExecuteBlock variant we expect :
+  //    args->doPerform == 2
+  //    args->u.executestr.source, args->u.executestr.sourceSize 
+  //     define the source for an anonomous method, which returns a Block
+  //     "[:arg1 :arg2 | | t1 t2 |  .... ]"
+  //
+  //    args->u.executestr.sourceClass, args->u.executestr.contextObject, 
+  //    args->u.executestr.symbolList 
+  //       have the same semantics as for ExecuteStr
+  //
+  //    args->u.executestr.args , args->u.executestr.numArgs 
+  //      must match the number of arguments to the Block.
+  //
+  //  The virtual machine will compile the anonomous method, execute it to
+  //  get the Block, and then send  valueWithArguments: to the Block.
+};
+
+
+class CLS_EXPORT GciX509LoginArg  
+{   /* argument for GciX509Login */
+public:
+  const char  *netldiHostOrIp;
+  const char  *netldiNameOrPort;
+  const char  *privateKey;
+  const char  *cert;
+  const char  *caCert;
+  const char  *extraGemArgs;
+  const char  *dirArg; // #dir
+  const char  *logArg; // #log
+  unsigned int loginFlags; 
+  BoolType     argsArePemStrings; // TRUE: args are PEM. FALSE: args are file names
+  BoolType     executedSessionInit; // output
+   // if you add fields, adjust GemStoneX509Parameters>>asGciX509LoginArg 
+   //    for malloc size and initializations.
+  
+  GciX509LoginArg() {
+    loginFlags = 0;
+    argsArePemStrings = 0;
+    dirArg = logArg = netldiNameOrPort = netldiHostOrIp = privateKey = cert =
+      caCert = extraGemArgs = NULL;
+    executedSessionInit = FALSE;
+  }
+
+  ~GciX509LoginArg() { }
+
+  inline BoolType argsAreFileNames() { return ! argsArePemStrings; }
+  
+};
+
+class CLS_EXPORT GciSpecial56bit { 
+ public: 
+  enum { tag_bits = 8 };
+
+  static int64 value(OopType o) {
+    return (int64)o >> tag_bits;
+  }
+
+  static uint64 unsignedValue(OopType o) {
+    return o >> tag_bits;
+  }
+
+  static OopType special56bit0_new(int64 v) {
+    return (v << 8) | OOP_Special56bit0_ls8bits ;
+  }
+
+  static OopType special56bitNew(OopType cls, int64 v) {
+    OopType base = OOP_CLASS_Special56bit0 ;
+    int64 lowBits = OOP_Special56bit0_ls8bits + (((cls - base) >> 8) << 3) ; //  /256*8
+    return (v << 8) | (lowBits & 0xFF) ;
+  }
+};
+
+#endif /* GCICMN_HT */
