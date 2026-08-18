@@ -1,0 +1,556 @@
+#ifndef GCI_HT
+#define GCI_HT TRUE
+
+/*========================================================================
+ * Copyright (C) GemTalk Systems 1986-2022.  All Rights Reserved.
+ *
+ *  Name - gci.ht
+ *
+ *  Description: Constant definitions and C type declarations used by
+ *               GemBuilder for C Interface (GCI) functions.
+ *
+ * $Id$
+ *
+ *========================================================================
+ */
+
+
+
+#include "flag.ht"                            /* Host specific constants  */
+#include "l2unix.hf"
+
+#include "gcioc.ht"
+#ifndef GLOBAL_HT
+
+#if defined(FLG_MSWIN32) && !defined(_AMD64_)
+typedef int intptr_t;
+#endif
+#endif /* !GLOBAL_HT */
+
+/*******  GemStone constants/types defined in this and other modules ********/
+
+/* GCI_FEATURE_LEVEL will be incremented any time a new
+ * function is added to the GCI API.
+ */
+#define GCI_FEATURE_LEVEL 357
+
+/* GCI_COMPAT_LEVEL will be incremented any time
+ * a change is made to existing functionality
+ * this is not backwards compatible.
+ * It will not be changed if new functionality is added.
+ *
+ * 2 = 2 billion oop repository
+ * 3 = gss64 phase 1 (64 bit shared cache, 2 billion oop repository)
+ * 4 = gss64 phase 2 (64 bit shared cache, 2^^40 max oops in repository)
+ */
+#define GCI_COMPAT_LEVEL 4
+
+/*========================================================================
+ *  --  GemStone defines and types required for the GCI - shipped without
+ *      global.ht
+ *========================================================================
+ */
+#if !defined(GLOBAL_HT)
+
+#if defined(FLG_MSWIN32)
+typedef __int64          int64_t;
+typedef unsigned __int64 uint64_t;
+#if !defined(_AMD64_)
+typedef unsigned int     uintptr_t;
+#endif
+typedef unsigned int     uint;
+typedef unsigned short  ushort;
+#endif
+
+typedef uint64_t   OopType;         /* object identifier definition */
+typedef uint64_t   OopNumberType;
+typedef unsigned char   ByteType;
+typedef int             BoolType;
+
+typedef int64_t int64;
+typedef uint64_t uint64;
+#if defined(FLG_AIX_UNIX)
+typedef unsigned int uint;      // AIX cpp does not bring this in from system files
+typedef unsigned short ushort;
+#endif
+
+/* Boolean constants, values for BoolType */
+#ifndef TRUE
+#define TRUE 1
+#endif
+#ifndef FALSE
+#define FALSE 0
+#endif
+
+/* ==================================================================
+ * Format strings for printing integers in both 32 and 64 bit builds
+ *
+ * Using %ld to print an intptr_t is safe regardless of whether compiling
+ * for 32 bit pointers or 64 bit pointers , since %ld assumes a
+ * 64 bit int in a 64 bit build, and a 32 bit int in a 32 bit build .
+ *  However it will give a warning on a 32 bit compile, and you
+ *  have to use %d to print a 32 bit intptr_t to avoid the warning.
+ *
+ * Always use %d to print an  int .
+ *
+ * FMT_I64 is format string for printing an int64_t
+ * Use it only for int64 .
+ *
+ * Summary of recomended uses:
+ *  int          "%d"
+ *  unsigned int "%u"
+ *  OopType      FMT_OID   (see definition below)
+ *  pointer      %p or  FMT_P
+ *  int64        FMT_I64
+ *  uint64       FMT_U64
+ *  intptr_t     FMT_PTR_T
+ *  uintptr_t    FMT_UPTR_T
+ *
+ */
+#if defined(FLG_UNIX)
+#ifdef _LP64
+/* Unix 64 bit address space */
+#define FMT_PTR_T  "%ld"
+#define FMT_UPTR_T "%lu"
+#define FMT_TIME_T "%ld"
+#define FMT_I64 "%ld"
+#define FMT_U64 "%lu"
+#define FMT_X64 "0x%lx"
+
+#else /* _LP64 */
+/* 32 bit address space */
+#define FMT_PTR_T  "%d"
+#define FMT_UPTR_T "%u"
+#define FMT_TIME_T "%ld"
+
+#define FMT_I64   "%lld"
+#define FMT_U64   "%llu"
+#define FMT_X64   "0x%llx"
+#endif /* _LP64 */
+
+#else
+/* Windows */
+#if !defined(FMT_PTR_T)
+#if defined(_WIN64)
+#define FMT_PTR_T  "%I64d"
+#define FMT_UPTR_T "%I64u"
+#define FMT_TIME_T "%I64d"
+#else
+#define FMT_PTR_T  "%d"
+#define FMT_UPTR_T "%u"
+#define FMT_TIME_T "%d"
+#endif
+#define FMT_I64    "%I64d"
+#define FMT_U64    "%I64u"
+#define FMT_X64    "0x%I64x"
+#endif
+#endif
+
+#define FMT_OID FMT_U64
+
+/* Format string for printing pointers , %p automatically
+ *  handles the size of the pointer */
+#if defined(FLG_LINUX_UNIX) || defined(FLG_APPLE_UNIX)
+/* Linux does the 0x prefix automatically , Solaris does not*/
+#define FMT_P "%p"
+#else
+#define FMT_P "0x%p"
+#endif
+
+#if defined FLG_UNIX
+#define I64_CONST(arg)  ( arg##LL )
+#else
+#define I64_CONST(arg)  ( arg##i64 )
+#endif
+
+#endif /* !defined(GLOBAL_HT */
+/*======================================================================== */
+
+typedef int  GciSessionIdType;
+#define      GCI_INVALID_SESSION_ID  ((GciSessionIdType)0)
+#define      GCI_LNK_SESSION_ID      ((GciSessionIdType)1)
+  /* GCI_LNK_SESSION_ID specifies linkable session only in a process using
+   * libgcilnk.so.  In a process using libgcirpc.so , 
+   * sessionId 1  is just a normal session
+   */
+#define      GCI_LNK_SERVICE      "gcilnkobj"
+#define      GCI_RPC_SERVICE      "gemnetobject"
+
+#define      GCI_RPC_GEM_NAME     "gem"
+
+enum { 	GCI_ERR_STR_SIZE      =  1024,       /* Max size of an error str   */
+        GCI_ERR_reasonSize    =  GCI_ERR_STR_SIZE, /* Increase from 63 so IntErrType->reasonStr will fit */
+	GCI_MAX_ERR_ARGS      =  10,        /* Max num args for error str */
+
+	GCI_SMALL_OBJ_BYTE_SIZE = 16000 /* approximation of max small obj */
+  };
+
+#include "gcioop.ht"
+#include "gcierr.ht"                          /* GemStone errors */
+
+
+/* =============================================================================
+ * GCI_ALIGN macro
+ *   Align an address to an 8-byte boundary.
+ *
+ * Arguments:
+ *   (1) The address to align.
+ *
+ * Result value:
+ *   A aligned uintptr_t that is >= the address argument .
+ *==============================================================================
+ */
+#define gciUTL_ALIGN(val, alignSize) \
+ (((uintptr_t)(val) + ((alignSize) - 1)) & ~((uintptr_t)(alignSize) - 1) )
+
+#define GCI_ALIGN(address)  gciUTL_ALIGN((address), sizeof(OopType) )
+
+
+/*========================================================================
+ *  --  GciDbgEstablish: typedef for name of application's debug function
+ *
+ *      char message[] - is a null terminated str passed to the application's
+ *                       debugging function (that is "established" with
+ *                       GciDbgEstablish) it contains the name of the GCI
+ *                       function about to be executed.
+ *
+ *========================================================================
+ */
+typedef void GciDbgFuncType( const char message[] );
+
+/*========================================================================
+ *  GCI Error message specification
+ *========================================================================
+ */
+
+class GciErrSType {
+public:
+  OopType       category;                      /* error dictionary       */
+  OopType       context;  /* GemStone Smalltalk execution state , a GsProcess */
+  OopType       exceptionObj;  /* an instance of AbstractException, or nil; may be nil
+                                 if error was not signaled from Smalltalk execution */
+  OopType       args[GCI_MAX_ERR_ARGS];        /* arguments to error text */
+  int          number;                        /* GemStone error number  */
+  int          argCount;                      /* num of arg in the args[]*/
+  unsigned char fatal;                         /* nonzero if err is fatal */
+  // Since Gs64 v3.2.0  message and reason are Utf8 .
+  char          message[GCI_ERR_STR_SIZE + 1]; /* null-termated Utf8 error text */
+  char          reason[GCI_ERR_reasonSize + 1]; /* null terminated Utf8 */
+
+  // If you change this struct,  Smalltalk client FFI code may
+  //  need smalltalk code changes.
+
+  inline void init(void) {
+    category = OOP_NIL;
+    exceptionObj = OOP_NIL;
+    number = 0;
+    context = OOP_NIL;
+    argCount = 0;
+    fatal = FALSE;
+    message[0] = '\0';
+    reason[0] = '\0';
+    args[0] = OOP_ILLEGAL;
+  }
+
+  GciErrSType() { init(); }
+  ~GciErrSType() { }
+
+  GciErrSType(GciErrSType *src);
+
+  void setError(int errNum, const char* msg);
+  void setFatalError(int errNum, const char* msg);
+
+  void appendStr(const char* str); // appends str to message
+}; 
+
+/*========================================================================
+ * GCI object report data structure  , result of GciTraverseObjs, etc.
+ *========================================================================
+ */
+typedef enum {
+    // How to swizzle body of a byte format object for conversion
+    //  between big and little endian, used for large integers, DoubleByteString,
+    //  Float, QuadByteString , etc
+  gci_byte_swiz_none = 0,     
+  gci_byte_swiz_2_bytes = 1,  
+  gci_byte_swiz_4_bytes = 2,
+  gci_byte_swiz_8_bytes = 3   
+} GciByteSwizEType ;
+
+
+class CLS_EXPORT GciObjRepHdrSType 
+{   /* object report header struct */
+ public:
+  int          valueBuffSize;    /* size in bytes of obj's value buff */
+  short         namedSize;       /* number of named instVars */
+  unsigned short objectSecurityPolicyId; //   previously named segmentId
+      // For store traversals, objectSecurityPolicyId == UNDEFINED_ObjectSecurityPolicyId means
+      // security policy of object should not be changed , or that for
+      // object creation the current default security policy will be used.
+      // Gs64 v3.4 and above: If object already exists, 
+      // must be UNDEFINED_ObjectSecurityPolicyId ; changing the security policy
+      // of an existing object via store traversal is no longer supported.
+  OopType       objId;       /* OOP of the object  */
+  OopType       oclass;      /* OOP of the class of the object  */
+  int64         firstOffset; /* absolute offset of first instVar in the value 
+                       buffer, 1 means first instVar is first named instVar */
+  uint64 _idxSizeBits;  // 40 bits of size , 8 bits numDynamicIvs, 16 bits
+  enum {  // definitions of bottom 8 bits within _idxSizeBits
+  	 implem_mask    = GC_IMPLEMENTATION_MASK, // 0x03
+	 indexable_mask = GC_INDEXABLE_MASK,      // 0x04
+         invariant_mask = GC_INVARIANT_MASK,      // 0x08
+         partial_mask   = 0x10,                
+         overlay_mask   = 0x20,
+      no_read_auth_mask = 0x40,
+         clamped_mask   = 0x80,
+        swiz_kind_mask = 0x300,    // a GciByteSwizEType
+              swiz_kind_shift = 8,
+         unused_mask  = 0xFC00,
+        all_bits_mask = 0xFFFF,
+        all_bits_numDynIvs_mask = 0xFFFFFF 
+       };
+
+  inline int64 idxSize() const {  /* number of indexable or varying instVars */
+     return _idxSizeBits >> 24; 
+  } 
+
+  inline void setIdxSize(int64 size) {
+    _idxSizeBits = (size << 24) | (_idxSizeBits & all_bits_numDynIvs_mask)  ;
+  }
+
+  inline void setIdxSizeBits(int64 size, uint bits, int nDynamicIvs) {
+    // bits must conform to bits defined in the the  enum above
+    _idxSizeBits = (size << 24) | ((nDynamicIvs & 0xFF) << 16) | (bits & all_bits_mask);
+  }
+
+  inline int numDynamicIvs() {
+    return (_idxSizeBits >> 16) & 0xFF ;
+  }
+
+  inline int objImpl() const {  
+    /* return implementation format 0..3 , one of GC_FORMAT_OOP..GC_FORMAT_SPECIAL */
+    return _idxSizeBits & GC_IMPLEMENTATION_MASK; 
+  }
+
+  inline void setObjImpl(int v) {  
+    /* arg is format 0..3 , one of GC_FORMAT_OOP..GC_FORMAT_SPECIAL */
+    uint64 mask = GC_IMPLEMENTATION_MASK;
+    _idxSizeBits = ( _idxSizeBits & ~ mask) | (v & mask) ;
+  }
+
+  inline int64 objSize() const {   /* total number of instVars in the object */
+    return idxSize() + namedSize; 
+  }
+
+  inline GciByteSwizEType byteSwizKind() const {  
+     return (GciByteSwizEType)((_idxSizeBits & swiz_kind_mask) >> swiz_kind_shift) ;
+  }
+
+  inline void setByteSwizKind(uint64 val) {
+    uint64 mask = swiz_kind_mask;
+    _idxSizeBits = (_idxSizeBits & ~ mask) | ((val << swiz_kind_shift) & mask);
+  }
+
+  inline void clearBits() {
+    uint64 mask = all_bits_mask ;
+    _idxSizeBits &= ~ mask;
+  }
+
+  inline unsigned char isClamped() const { return _idxSizeBits & clamped_mask; }
+  inline unsigned char noReadAuthorization() const { return _idxSizeBits & no_read_auth_mask; }
+  inline unsigned char isInvariant() const { return _idxSizeBits & invariant_mask; }
+  inline unsigned char isIndexable() const { return _idxSizeBits & indexable_mask; }
+  inline unsigned char isPartial()   const { return _idxSizeBits & partial_mask; }
+  inline unsigned char isOverlayed() const { return _idxSizeBits & overlay_mask; }
+
+  inline void setIsClamped(unsigned char val) {
+    uint64 mask = clamped_mask;
+    if (val) { _idxSizeBits |= mask; } else { _idxSizeBits &= ~mask;} 
+  }
+  inline void setNoReadAuth(unsigned char val) {
+    uint64 mask = no_read_auth_mask;
+    if (val) { _idxSizeBits |= mask; } else { _idxSizeBits &= ~mask;} 
+  }
+  inline void setInvariant(unsigned char val) {
+    uint64 mask = invariant_mask;
+    if (val) { _idxSizeBits |= mask; } else { _idxSizeBits &= ~mask;} 
+  }
+  inline void setIndexable(unsigned char val) {
+    uint64 mask = indexable_mask;
+    if (val) { _idxSizeBits |= mask; } else { _idxSizeBits &= ~mask;} 
+  }
+  inline void setPartial(unsigned char val) {
+    uint64 mask = partial_mask;
+    if (val) { _idxSizeBits |= mask; } else { _idxSizeBits &= ~mask;} 
+  }
+  inline void setOverlayed(unsigned char val) {
+    uint64 mask = overlay_mask;
+    if (val) { _idxSizeBits |= mask; } else { _idxSizeBits &= ~mask;} 
+  }
+
+  inline void setIsClamped() {
+    uint64 mask = clamped_mask;
+    _idxSizeBits |= mask;
+  }
+  inline void setPartial() {
+    uint64 mask = partial_mask;
+    _idxSizeBits |= mask;
+  }
+  inline void clearPartial() {
+    uint64 mask = partial_mask;
+    _idxSizeBits &= ~ mask;
+  }
+
+  inline uint usedBytes() const {
+    return (uint)sizeof(*this) + (uint) GCI_ALIGN(this->valueBuffSize);
+  }
+
+  inline uint valueBufNumOops() const {
+    return this->valueBuffSize / (uint)sizeof(OopType);
+  }
+
+  static uint usedBytes(int valueBuffSize) {
+    return (uint) sizeof(GciObjRepHdrSType) + (uint) GCI_ALIGN(valueBuffSize);
+  }
+
+  inline GciObjRepHdrSType *nextReport() const {
+    return (GciObjRepHdrSType*)((char*)this + this->usedBytes());
+  }
+
+  inline ByteType* valueBufferBytes() const {
+    return (ByteType*)((char*)this + sizeof(*this));
+  }
+  inline OopType* valueBufferOops() const {
+    return (OopType*)((char*)this + sizeof(*this));
+  }
+} ;
+
+/*========================================================================*/
+class CLS_EXPORT GciObjRepSType { /* object report struct */
+ public:
+  GciObjRepHdrSType hdr;                /* object report header */
+  union {
+    ByteType        bytes[1];           /* Byte obj impl. obj's value buff   */
+    OopType         oops[1];            /* Pointer obj impl. obj's value buff*/
+  } u;
+
+  inline uint usedBytes() const {
+    return this->hdr.usedBytes(); 
+  }
+
+  inline GciObjRepSType* nextReport() const {
+    return (GciObjRepSType*) this->hdr.nextReport();
+  }
+
+  inline ByteType* valueBufferBytes() const {
+    return (ByteType*)this->u.bytes;
+  }
+
+  inline OopType* valueBufferOops() const {
+    return (OopType*)this->u.oops;
+  }
+};
+
+
+/*========================================================================
+ *
+ *  GciStoreTrav - definitions for "flag" argument
+ *
+ *========================================================================
+ */
+enum { GCI_STORE_TRAV_DEFAULT = 0,
+    /* default behavior: 
+     *   use "add" sematics for varying instvars of Nsc's.
+     *   if object to be stored into does not exist, give error
+     */
+
+  /* The following flags are orthogonal to each other; any combination of them
+   * is allowed
+   */
+   GCI_STORE_TRAV_NSC_REP = 0x1,
+   /*  use REPLACE semantics for varying instvars of Nsc's */
+
+   GCI_STORE_TRAV_CREATE =  0x2,
+   /*  If an object to be stored into does not exist, use GciCreate to
+    *  semantics to create the object. such created objects are added to
+    *  the PureExportSet .
+    */
+
+   GCI_STORE_TRAV_CREATE_PERMANENT = 0x4,
+   /* This flag has no effect in this release */
+
+   GCI_STORE_TRAV_FINISH_UPDATES = 0x8,
+  /* After processing the last object report in the traversal buffer,
+   * automatically execute GciProcessDeferredUpdates
+   */
+
+   GCI_STORE_TRAV_SWIZZLE_IN_PLACE = 0x10  
+    /* if swizzling by the client is being done for transmit to a server
+     * with opposite byte order, this flag says it is ok to swizzle the
+     * caller's buffer in place before transmitting.  Reduces client memory 
+     * access footprint of a large store traversal */
+  };
+
+/*========================================================================*/
+
+/* Flags for GciLoginEx */
+enum { GCI_LOGIN_PW_ENCRYPTED = 1, /* The gemstonePassword is encrypted. */
+       GCI_LOGIN_IS_SUBORDINATE = 2, /* Session created by this login
+	 * is a child of the current session and will be terminated if the
+	 * current session terminates. Intended for GciInterface .
+         * ignored in linked session login */
+       GCI_LOGIN_FULL_COMPRESSION_ENABLED = 4, /*support for full compression */
+       GCI_LOGIN_ERRS_USE_REF_SET = 8,/* oop fields of GciErrSType 
+                                  * added to ReferencedSet instead of PureExportSet */
+       GCI_LOGIN_QUIET          = 0x10,
+       GCI_CLIENT_DOES_SESSION_INIT = 0x20,/* a GCI_LOGIN_ flag ,
+          Non-zero value ignored unless STN_ALLOW_NO_SESSION_INIT=TRUE in stone config.
+          Non-zero means GCI application
+          will do 
+             GciPerform(OOP_CLASS_GSCURRENT_SESSION, "initialize", NULL, 0);
+          after a successful GciLogin.  Zero means that the VM 
+          is supposed to do that message send itself as part of GciLogin */
+
+       /* add next flag bit here and adjust GCI_LOGIN_ALL_FLAGS */
+       GCI_TS_CLIENT       =  0x40, /* a GCI_LOGIN_ flag, 
+           *  bit is controlled by libgcirpc and libgcits
+           * and bit in flags arg passed to GciLoginEx and GciTsLogin is ignored */
+       GCI_PASSWORDLESS_LOGIN = 0x80, /* authenticate using Kerberos / GSSAPI ,
+           * ignored by GciX509Login  */
+
+       GCI_LOGIN_SOLO =      0x100,   /* also in image/gsparams.gs */
+
+       GCI_WINDOWS_CLIENT = 0x200, // controlled by libgci code
+       
+       GCI_LOGIN_ALL_FLAGS = 0x3FF 
+  };
+
+
+
+/* enumerated type that defines the possible kinds of an IEEE binary float.
+ * The ordering in this list matches the GemStone Smalltalk list given in 
+ * the method  Number(C)/_kindList
+ */
+typedef enum {
+  GCI_FLOAT_KIND_INVALID,  /* 0 is not used in this enumerated type */
+  GCI_FLOAT_KIND_NORMAL,
+  GCI_FLOAT_KIND_SUB_NORMAL,
+  GCI_FLOAT_KIND_INFINITY,
+  GCI_FLOAT_KIND_ZERO,
+  GCI_FLOAT_KIND_QUIET_NAN,
+  GCI_FLOAT_KIND_SIGNALLING_NAN
+  } GciFloatKindEType;
+
+enum { GCI_MAX_DYNAMIC_IVS = 255 };
+
+enum { GCI_PROC_NAME_SIZE = 31 };
+
+/* flags argument for GciFetchUtf8Bytes_ */
+typedef enum {
+  GCI_UTF8_FetchNormal = 0,
+  GCI_UTF8_FilterIllegalCodePoints = 0x1, /* substitue '.' for illegal codepoints*/ 
+  GCI_UTF8_NoError     = 0x2   /* return  message instead of signalling Exception
+                                      for illegal codepoints */
+} GciFetchUtf8Flags ;
+
+#endif /* GCI_HT */

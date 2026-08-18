@@ -14,6 +14,11 @@
  * the engine when those settings change — otherwise a settings edit made while the panel is open would
  * be silently ignored until the session changed or the window reloaded. (Rebinding on a live SESSION
  * switch — the `sessionMode: "multiple"` case — is deferred to #437.)
+ *
+ * Both catch-ups are gated on the view being VISIBLE, because the engine outlives a hidden panel and
+ * reloading its corpora costs image-wide synchronous GCI executes. A hidden panel therefore only notes
+ * that it is out of date (a dropped engine for config, `syncPending` for a commit/abort) and pays for
+ * it on the next reveal or webview message — never on the hidden path itself.
  */
 import * as vscode from 'vscode';
 import { createOmniEngine, OmniEngine, OmniViewData } from './omniEngine';
@@ -45,6 +50,10 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
   // A focus() that arrives before the webview has loaded can't deliver `focusInput`; remember it and
   // replay once the webview signals `ready`, so the open shortcut always lands the cursor in the field.
   private focusPending = false;
+  // A session sync that landed while the view was hidden: the cached corpora are stale but we have NOT
+  // reloaded them yet (see onSessionSynced). Cleared by flushPendingSync, and whenever the engine is
+  // dropped or rebuilt — a fresh engine primes its corpora, so there is nothing left to catch up on.
+  private syncPending = false;
 
   constructor(private readonly resolveContext: () => Promise<OmniViewContext | null>) {}
 
@@ -53,9 +62,10 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
     view.webview.options = { enableScripts: true, localResourceRoots: [] };
     view.webview.html = renderOmniHtml({ showPin: false });
     view.webview.onDidReceiveMessage((m: PanelInbound) => void this.onMessage(m));
-    // The engine is session-bound; rebuild it if the session changed while the view was hidden.
+    // The engine is session-bound; rebuild it if the session changed while the view was hidden, and
+    // catch up on any sync that we deliberately skipped while hidden.
     view.onDidChangeVisibility(() => {
-      if (view.visible) void this.ensureEngine();
+      if (view.visible) void this.onShown();
     });
   }
 
@@ -66,7 +76,47 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
     this.engine = undefined;
     this.deps = undefined;
     this.builtForSession = undefined;
+    this.syncPending = false; // the replacement engine primes from scratch
     if (this.view?.visible) void this.ensureEngine();
+  }
+
+  /** A class was compiled locally in `sessionId`: fold it into the live engine's cache (a cheap
+   *  single-class lookup, no full reload) and redraw only if it affects the current results. No-op
+   *  unless we have an engine built for that same session. */
+  async onClassCompiled(sessionId: number, className: string, dictName?: string): Promise<void> {
+    if (!this.engine || this.builtForSession !== sessionId) return;
+    const view = await this.engine.applyChange({ kind: 'class', className, dictName });
+    if (view) this.postView(view);
+  }
+
+  /** The session synced (commit/abort — and dictionary add/remove/rename, which route here too): every
+   *  cached corpus is now stale, so changes from elsewhere — including other sessions — can appear.
+   *
+   *  Rebuilding is expensive: `resync` re-primes EVERY provider, and three of those loads are
+   *  image-wide synchronous GCI executes (`getAllClassNames` / `getDictionaryNames` /
+   *  `getAllGlobalNames`), i.e. a UI-thread stall on a big image. Commit and abort are run constantly,
+   *  and this panel is the default UI that stays alive once shown — so when it is HIDDEN we only mark
+   *  the corpora stale and let the next visible use rebuild them, mirroring the `visible` gate in
+   *  `onConfigChanged`. A VISIBLE panel still refreshes live. */
+  async onSessionSynced(sessionId: number): Promise<void> {
+    if (!this.engine || this.builtForSession !== sessionId) return;
+    this.syncPending = true;
+    if (this.view?.visible) await this.flushPendingSync();
+  }
+
+  /** Reveal-time catch-up: make sure the engine matches the current session, then pay for any sync we
+   *  skipped while hidden. */
+  private async onShown(): Promise<void> {
+    if (await this.ensureEngine()) await this.flushPendingSync();
+  }
+
+  /** Rebuild the corpora a hidden sync left stale, then redraw the current search. No-op when nothing
+   *  is pending — this is called on every reveal and before every webview-driven engine operation. */
+  private async flushPendingSync(): Promise<void> {
+    if (!this.syncPending || !this.engine) return;
+    this.syncPending = false;
+    const view = await this.engine.resync(this.deps?.onError);
+    if (view) this.postView(view);
   }
 
   /** Reveal + focus the view and its search field (the `ui: "panel"` entry point).
@@ -101,6 +151,7 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
       this.engine = undefined;
       this.deps = undefined;
       this.builtForSession = undefined;
+      this.syncPending = false;
       this.post({ command: 'error', message: 'Log in to a GemStone session to search.' });
       return false;
     }
@@ -108,6 +159,7 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
     this.deps = ctx.deps;
     this.engine = createOmniEngine(ctx.deps);
     this.builtForSession = ctx.sessionId;
+    this.syncPending = false; // a brand-new engine primes below, so there is no stale corpus to catch up
     this.post({ command: 'error', message: '' }); // clear any prior "log in" notice
     this.post(configMessage(ctx.deps.config, false));
     await this.engine.prime(ctx.deps.onError);
@@ -131,10 +183,13 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
     try {
       if (m.command === 'ready') {
         await this.ensureEngine();
+        await this.flushPendingSync();
         this.deliverFocus(); // a focus() that raced the webview load lands the cursor now
         return;
       }
       if (!this.engine && !(await this.ensureEngine())) return;
+      // Searching stale corpora would show deleted classes / miss new ones: pay the deferred rebuild.
+      await this.flushPendingSync();
       const engine = this.engine!;
 
       const engineOp = dispatchEngineMessage(engine, m);

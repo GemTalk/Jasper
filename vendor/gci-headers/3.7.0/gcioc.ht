@@ -1,0 +1,536 @@
+#ifndef GCIOC_HT
+#define GCIOC_HT TRUE
+/*=========================================================================
+ * Copyright (C) GemTalk Systems 1986-2023.  All Rights Reserved.
+ *
+ * Name - gcioc.ht
+ *
+ * Purpose - This file was derived from opalcls.ht .
+ *
+ *           The conversion was as follows.
+ *           1) Change the OC_ prefix to GC_    (some names are at 31 chars)
+ *           2) Add 1 to all values except size and bitmasks values.
+ *
+ *           FOR EXAMPLE: In OpalCls.HT    class Association 
+ *              define OC_ASSOCIATION_KEY            0
+ *              define OC_ASSOCIATION_VALUE          1
+ *              define OC_SIZE_ASSOCIATION           2
+ *           
+ *           BECOMES the following in this file.
+ *              define GC_ASSOCIATION_KEY            1     (add one)
+ *              define GC_ASSOCIATION_VALUE          2     (add one)
+ *              define GC_SIZE_ASSOCIATION           2     (remains the same)
+ *           
+ *           THE FOLLOWING DO NOT CHANGE 
+ *              define GC_IMPLEMENTATION_MASK        3
+ *              define GC_INDEXABLE_MASK             4
+ *              define GC_INVARIANT_MASK             8
+ *              define GC_CONSTRAINTS_MASK           16    (no longer set or checked)
+ *
+ *           THE FOLLOWING IS NOT A SIZE FIELD SO IT WILL CHANGE
+ *              define OC_COMPILED_METHOD_CONTEXT_SIZE  8
+ *           BECOMES the following in this file.
+ *              define GC_COMPILED_METHOD_CONTEXT_SIZE  9
+ *
+ *========================================================================
+ */
+
+/*******  GemStone constants/types defined in this and other modules ********/
+
+/* no more includes. KEEP THIS LINE */
+
+/*******  Variables defined in this module  *********************************/
+/*******  Macros defined in this module  ************************************/
+
+   /*class Activation*/
+#define GC_SIZE_ACTIVATION             2
+#define GC_ACTIVATION_A_STACK_SEGMENT  1
+#define GC_ACTIVATION_CS_INDEX         2
+
+   /*class Association*/
+#define GC_ASSOCIATION_KEY            1
+#define GC_ASSOCIATION_VALUE          2
+#define GC_SIZE_ASSOCIATION           2
+
+   /*class Behavior*/
+#define GC_BEHAVIOR_SUPERCLASS        1
+#define GC_BEHAVIOR_FORMAT            2  /* see bit definitions below */
+#define GC__BEHAVIOR_INST_VARS         3  /* format change in Gs64 v3.0, see omobj.hf*/
+#define GC_BEHAVIOR_INST_VAR_NAMES    4
+/*5 was GC_BEHAVIOR_CONSTRAINTS, no longer used */
+#define GC_BEHAVIOR_CLASS_VARS        6
+#define GC_BEHAVIOR_methDicts         7  /* value changes in Gs64 v3.0 */
+#define GC_BEHAVIOR_POOL_DICTIONARIES 8
+#define GC_BEHAVIOR__CATEGORIES       9   /* value changes in Gs64 v3.0 */
+#define GC_BEHAVIOR_PRIMARY_COPY     10
+enum { GC_SIZE_BEHAVIOR = 10 };
+
+   /*class ObsoleteMetaclass*/ 
+   /* Inherits from Behavior instVars 1..10  */
+enum { GC_ObsMETACLASS_THIS_CLASS  = 11 ,
+       GC_SIZE_ObsMETACLASS = 11 };
+
+   /*class Module*/
+enum { GC_Module_NAME         = 11,
+       GC_Module_CLASSHISTORY = 12,
+       GC_Module_transientMethDicts =13,
+       GC_SIZE_Module = 13 };
+
+                         /* offset 13 was GC_CLASS_DESCRIPTION in v2.3 */
+#define GC_CLASS_NAME 	      GC_Module_NAME
+#define GC_CLASS_CLASSHISTORY GC_Module_CLASSHISTORY
+
+ /* class Metaclass3 */
+enum { GC_Metaclass3_destClass = 14 ,
+       GC_SIZE_Metaclass3      = 14 };
+
+   /* class Class */
+#define GC_CLASS_destClass     GC_RCLASS_destClass
+#define GC_CLASS_TIMESTAMP     15
+#define GC_CLASS_USERID        16
+#define GC_CLASS_EXTRADICT     17
+#define GC_CLASS_CLASSCATEGORY 18     /* new in 5.0 */
+#define GC_CLASS_SUBCLASSES    19     /* new in 5.0 */
+enum { GC_SIZE_CLASS   = 19 };
+
+
+   /* The following masks must be used to isolate the particular fields
+          in the SmallInteger value 
+	  in the GC_BEHAVIOR_FORMAT instVar above using a bitwise AND.  The
+	  implementation mask field has values to indicate pointer, byte,
+	  nsc, or special implementation as describe in the first four
+	  values above.  The indexable mask yields a non-zero value if the
+	  class is indexable.  The invariant mask yields a non-zero value if
+	  instances of the class are invariant.
+	*/
+enum {
+  GC_IMPLEMENTATION_MASK       = 0x03,
+  GC_INDEXABLE_MASK            = 0x04,
+  GC_INVARIANT_MASK            = 0x08,
+/*  0x10 was GC_CONSTRAINTS_MASK , no longer set or checked */
+  GC_SUBCLASS_DISALLOWED_MASK  = 0x20,
+
+  GC_NSC_DUPLICATES_MASK       = 0x40,
+  /* class is an unordered collection that allows duplicates, like Bag */
+
+  GC_PROTECTED_MASK            = 0x80,
+   /* true if instances of the class are to be "protected" against GCI access*/
+
+  GC_FORMAT_RESERVED1_MASK    = 0x100, /* obsolete, not reusable */
+
+  GC_FORMAT_NO_STRUCT_UPDATE  = 0x200,
+  /* TRUE if message sends must be used to initialize and update instances 
+   * of the class.  Detailed semantics are private to the GSI */
+
+  GC_FORMAT_TRAV_BY_CALLBACK  = 0x400, 
+  /* TRUE if traversal result for instances is to be obtained by
+   * message send of aClampSpecification.traversalCallBackSelector
+   */
+
+  GC_NON_PERSISTENT_MASK      = 0x800 ,
+  /* instances of the class may not be committed */
+
+  GC_DB_TRANSIENT_MASK       = 0x1000,
+  /* instVar values in instances of the class are always nil on disk*/
+
+  // following added for 3.0 
+  GC_SELF_CAN_BE_SPECIAL     = 0x2000,// true if class or any subclass has special format
+
+  GC_RUBY_VIRTUAL_CLASS      = 0x4000,  // an include of a Module into a Class or Module
+  GC_RUBY_SINGLETON_CLASS    = 0x8000 , // eigenclass for an object
+  GC_MODULE_inclSelf_CLASS  = 0x10000 , // include of a Module into itself
+  GC_MODULE_moduFcts_CLASS =  0x20000 , // holds module-methods for a Module
+     // at most one of the VIRTUAL, SINGLETON, singletonClass,
+     //    inclSelf, moduFcts  bits should be set  
+  GC_RUBY_anyVirtual_MASK =   0x3C000 ,
+  GC_RUBY_virtualNotSingleton_MASK = 0x34000,
+        // following for testing an OopType directly without
+        //  converting SmallInt to an int64 
+    GC_BEHAV_anyVirtual_LOW_oopMASK = 0xF,  
+    GC_BEHAV_anyVirtual_shift  = 17,  // 14 bits plus 3 tag bits
+
+  GC_RubyModuleNP             = 0x0800000 ,  // the Module itself is NP // unused
+  GC_Metaclass3_metaClass     = 0x1000000 , 
+//GC_Metaclass3_singletonClass= 0x2000000  to replace RUBY_SINGLETON ??
+
+  GC_ClassCreationRuby       = 0x40000000, // used in arg to prim 233 only, 
+				// not in BEHAVIOR_FORMAT instVar
+  // GC_Class_byteSwizKind  = 0x180000000 , // 0..3 , GciByteSwizEType for non-legacy byte format classes.
+     GC_BEHAV_byteSwizKind_shift = 31 , // also in image // not including smallint tags bits 
+     GC_BEHAV_byteSwizKind_mask  = 0x3, // after shifting right by 31
+
+  // GC_signedWords            = 0x200000000,  // 1 in Int32Array, 0 in Uint32Array  , etc
+    GC_BEHAV_signedWords_shift         = 33 // not including tag bits
+};
+
+
+   /* following constants are SOME possible values of the bit encodings
+    * that can be stored in the offBehaviorFormat offset of a Behavior */
+					   /* Object                         */
+					   /*  Kind    Indexable   Invariant */
+					   /* ------   ---------   --------- */
+#define GC_FORMAT_OOP             0       /* Pointer     No           No    */
+#define GC_FORMAT_BYTE            1       /* Byte        No           No    */
+#define GC_FORMAT_NSC             2       /* NSC         No           No    */
+#define GC_FORMAT_SPECIAL         3       /* Special     No           No    */
+#define GC_FORMAT_OOP_IDX         4       /* Pointer     Yes          No    */
+#define GC_FORMAT_BYTE_IDX        5       /* Byte        Yes          No    */
+#define GC_FORMAT_SPECIAL_IDX     7       /* Special     Yes          No    */
+#define GC_FORMAT_OOP_INVAR       8       /* Pointer     No           Yes   */
+#define GC_FORMAT_BYTE_INVAR      9       /* Byte        No           Yes   */
+#define GC_FORMAT_NSC_INVAR       10       /* NSC         No           Yes   */
+#define GC_FORMAT_SPECIAL_INVAR   11       /* Special     No           Yes   */
+#define GC_FORMAT_OOP_IDX_INVAR   12       /* Pointer     Yes          Yes   */
+#define GC_FORMAT_BYTE_IDX_INVAR  13       /* Byte        Yes          Yes   */
+#define GC_FORMAT_SPECIAL_IDX_INVAR  15   /* Special     Yes          Yes   */
+
+#define GC_FORMAT_NSC_BAG        0x42   /* Nsc, not invariant, Bag semantics*/ 
+#define GC_FORMAT_NSC_BAG_INVAR  0x4A   /* Nsc, not invariant, Bag semantics*/ 
+
+/* the following formats are not allowed
+ *  GC_FORMAT_NSC_IDX         6       * NSC         Yes          No    *
+ *  GC_FORMAT_NSC_IDX_INVAR   14      * NSC         Yes          Yes   *
+ */
+
+   /* classes, UnorderedCollection, IdentityBag */
+      /* 4 private named instance variables for use by GemStone
+       * primitives and object manager only 
+       */
+#define GC_SIZE_UNORDERED_COLL  4
+#define GC_SIZE_IDENTITY_BAG  GC_SIZE_UNORDERED_COLL
+
+  /* ClassHistory , subclass of Array */
+#define GC_CLASS_HISTORY_DESCRIPTION   1
+#define GC_CLASS_HISTORY_NAME          2
+ /* varying part contains instances of Class  */
+ /* minimum size of a ClassHistory is normally varyingSize == 1 */
+#define GC_CLASS_HISTORY_MIN_SIZE (GC_CLASS_HISTORY_NAME + 1)
+
+  /* ClampSpecification */
+#define GC_CLAMP_SPEC_ID_CLAMPS            1
+#define GC_CLAMP_SPEC_CLASS_CLAMPS         2
+#define GC_CLAMP_SPEC_IV_LEVELS            3
+#define GC_CLAMP_SPEC_SUBLEAFHDRS          4
+#define GC_CLAMP_SPEC_ivLevelSelector      5
+#define GC_CLAMP_SPEC_TRAVCALLBACK_SEL     6
+#define GC_CLAMP_SPEC_VALUE_CLAMPS         7
+#define GC_CLAMP_SPEC_ENVIRONMENT_ID       8
+#define GC_CLAMP_SPEC_SIZE                 8
+
+  /* ClusterBucket */
+#define GC_CLUSTER_BUCKET_CLUSTER_ID  1
+#define GC_CLUSTER_BUCKET_EXTENT_ID   2
+#define GC_CLUSTER_BUCKET_KEEPCLUSTERED   3
+#define GC_CLUSTER_BUCKET_DESCRIPTION 4
+#define GC_CLUSTER_BUCKET_SIZE        4
+
+  /* Ids of Predefined cluster buckets in kernel database.
+   * These Ids are 1-based offsets into OOP_ALL_CLUSTER_BUCKETS.
+   */
+#define GC_CLUST_BKT_ID_USE_CURRENT    0  /* use (System currentClusterId)*/
+#define GC_CLUST_BKT_ID_LOGIN_DEFAULT  1 
+   /* default bucket at login */
+  /* buckets 2 and 3 are generic buckets */
+
+#define GC_CLUST_BKT_ID_BEHAVIOR    4 /* kernel class behavior */
+#define GC_CLUST_BKT_ID_DESCRIPTION 5 /* kernel class descriptions */
+#define GC_CLUST_BKT_ID_KERNEL_DEF  6  /* kernel class symbols and other */
+
+   /*class Date, new in 5.0 */
+#define GC_DATE_YEAR          1
+#define GC_DATE_DAYOFYEAR     2
+#define GC_NAMED_SIZE_DATE          2
+
+   /*class DateTime, oop format in 5.0 */
+#define GC_DATE_TIME_YEAR          1
+#define GC_DATE_TIME_DAYOFYEAR     2
+#define GC_DATE_TIME_MILLISECONDS  3
+#define GC_DATE_TIME_TIMEZONE      4
+#define GC_NAMED_SIZE_DATE_TIME    4
+
+   /*class Time, new in 5.0 */
+#define GC_TIME_MILLISECONDS       1
+#define GC_NAMED_SIZE_TIME    1
+
+  /*class ErrorDescription */
+#define GC_SIZE_ERROR_DESC               6
+#define GC_ERROR_DESC_CAT_OOP                          1
+#define GC_ERROR_DESC_NUMBER                           2
+#define GC_ERROR_DESC_CONTEXT_OOP                      3
+#define GC_ERROR_DESC_MESSAGE                          4
+#define GC_ERROR_DESC_FATAL                            5
+#define GC_ERROR_DESC_GCI_INTERFACE                    6
+
+
+/* Exception, private to VM now */
+  
+   /*class Fraction*/
+#define GC_SIZE_FRACTION              2
+#define GC_FRACTION_NUMERATOR         1
+#define GC_FRACTION_DENOMINATOR       2
+
+  /* class GciInterface */
+#define GC_SIZE_GCI_INTERFACE              7
+#define GC_GCI_INTERFACE_SESSIONID             	1
+#define GC_GCI_INTERFACE_LAST_RESULT            2
+#define GC_GCI_INTERFACE_RESULT_IS_SPECIAL      3
+#define GC_GCI_INTERFACE_LAST_ERROR             4
+#define GC_GCI_INTERFACE_TRACE             	5
+#define GC_GCI_INTERFACE_LOG             	6
+#define GC_GCI_INTERFACE_ERROR_CLASS           	7
+
+  /* class GemStoneParameters */
+#define GC_SIZE_GSPARAMETERS              6
+#define GC_GSPARAMETERS_GEMSTONENAME            1
+#define GC_GSPARAMETERS_USERNAME                2
+#define GC_GSPARAMETERS_PASSWORD                3
+#define GC_GSPARAMETERS_HOSTUSERNAME            4
+#define GC_GSPARAMETERS_HOSTPASSWORD            5
+#define GC_GSPARAMETERS_GEMSERVICE              6
+
+  /* class IO */
+enum { GC_IO_FILEDESC = 1,
+       GC_IO_lineNumber = 2,
+       GC_IO_NAMED_SIZE = 2 };
+
+   /* class GsFile , inherits from IO */
+enum { GC_GSFILE_ISCLIENT = GC_IO_NAMED_SIZE + 1,
+       GC_GSFILE_PATHNAME = GC_IO_NAMED_SIZE + 2, 
+       GC_GSFILE_MODE     = GC_IO_NAMED_SIZE + 3,
+       GC_GSFILE_NAMED_SIZE = GC_GSFILE_MODE };
+
+  /* class GsMethod from Gs64 v2.x */
+#define OLD_GC_GSMETHOD_INVOCATION_CNT   1  /* for profiling and cache control, also stores method compiler version */
+#define OLD_GC_GSMETHOD_NUM_BREAKPOINTS  2   /* nil in instances on disk */
+#define OLD_GC_GSMETHOD_SELECTOR         3
+#define OLD_GC_GSMETHOD_LITERALS_OFS     4  /* smallInt , offset 
+		from firstIndexable instVar to start of literals section */
+#define OLD_GC_GSMETHOD_NUMARGS          5      /* number of args to the method,
+			needed to implement num args check in perform: */
+#define OLD_GC_GSMETHOD_IN_CLASS         6   /* needed for efficient send_super  */
+#define OLD_GC_GSMETHOD_NUM_SENDS        7  /* number of send instructions */
+#define OLD_GC_GSMETHOD_SOURCE           8
+#define OLD_GC_GSMETHOD_DEBUGINFO        9
+#define OLD_GC_GSMETHOD_NAMED_SIZE  9
+
+   /* class GsNMethod */
+enum { GC_GSNMETHOD_IFIELDS1     = 1,  
+       GC_GSNMETHOD_SELECTOR_ID  = 2,   // SmallInt holding envId, oopNum
+       GC_GSNMETHOD_IN_CLASS     = 3,   // class in which method was compiled 
+  //  IN_CLASS is reference to home GsNMethod  if isMethodForBlock == 1
+  //  IN_CLASS is OOP_NIL if anonymous method 
+       GC_GSNMETHOD_DEBUGINFO    = 4,   // SOURCE is a sub object , also method compiler version
+       GC_GSNMETHOD_NAMED_SIZE   = 4 };
+
+
+   /*class PositionableStream*/
+#define GC_SIZE_POSITIONABLE_STREAM     2
+#define GC_POS_STREAM_COLLECTION        1
+#define GC_POS_STREAM_POSITION          2
+
+   /*class GsProcess*/
+#define GC_GSPROCESS_stackId  		1   
+#define GC_GSPROCESS_SIGNALTIME         2 
+#define GC_GSPROCESS_PRIORITY_USE  	3
+#define GC_GSPROCESS_uaCount_depth 	4   /* see image for details */
+#define GC_GSPROCESS_interruptFlag_stEntryCount  5   /* see image for details */
+#define GC_GSPROCESS_modeInfo        6   /* see image for details */
+#define GC_GSPROCESS_topFpOffset     7
+#define GC_GSPROCESS_arSTACK         8
+#define GC_GSPROCESS_breakpointLevel 9
+#define GC_GSPROCESS_BLOCK          10 
+#define GC_GSPROCESS_ARGS           11 
+#define GC_GSPROCESS_RESULT 	    12 
+#define GC_GSPROCESS_CLIENTDATA     13
+#define GC_GSPROCESS_waitingOn      14
+#define GC_GSPROCESS_GROUP          15
+#define GC_GSPROCESS_ENVIRONMENT    16
+#define GC_GSPROCESS_onQueue        17
+#define GC_GSPROCESS_joiners        18
+#define GC_GSPROCESS_msgEnvironmentId 19
+#define GC_GSPROCESS_signalledException 20
+#define GC_GSPROCESS_ioSelectResult 21  /* not used */
+#define GC_GSPROCESS_stackSerialNum 22
+#define GC_GSPROCESS_dbgFpsCache    23
+#define GC_GSPROCESS_lastBreakpt    24
+#define GC_GSPROCESS_debugAction    25
+#define GC_GSPROCESS_name           26
+#define GC_GSPROCESS_startSeconds   27
+#define GC_GSPROCESS_parentProcess  28
+#define GC_GSPROCESS_ffiErrno       29
+#define GC_GSPROCESS_NAMED_SIZE     29
+
+enum { GC_GSPROCESS_cpuKind_unknown = 0,   // do not reorder
+       GC_GSPROCESS_cpuKind_interp =  1,   // do not reorder
+       GC_GSPROCESS_cpuKind_LinuxArm = 2,  // must match AbstractException class >> cpuOsKindString
+       GC_GSPROCESS_cpuKind_LinuxX86_64  = 3,
+       GC_GSPROCESS_cpuKind_AixPowerPc   = 4,
+       GC_GSPROCESS_cpuKind_DarwinX86_64 = 5,
+       GC_GSPROCESS_cpuKind_DarwinArm = 6,
+       GC_GSPROCESS_cpuKind_max = 7
+     };
+
+   /* class ProfMonitor */
+#define GC_PROFMONITOR_FILE     1
+#define GC_PROFMONITOR_INTERVAL 2
+#define GC_PROFMONITOR_RESULTS  3
+#define GC_PROFMONITOR_SAMPLE_DEPTH 4
+#define GC_PROFMONITOR_STARTTIM  5
+#define GC_PROFMONITOR_ENDTIM    6
+#define GC_PROFMONITOR_TRACEOBJCREAT  7
+#define GC_PROFMONITOR_NUM_SAMPLES 8
+#define GC_PROFMONITOR_NAMED_SIZE   8
+
+   /*class Repository*/
+#define GC_SIZE_REPOS                 2
+#define GC_REPOSITORY_NAME            1
+#define GC_REPOSITORY_DATA_DICTIONARY 2
+#define GC_REPOSITORY_FIRST_IDX     GC_SIZE_REPOS
+
+/* class RcQueue */
+#define GC_RCQ_REMOVAL_SEQ_NUM 1
+
+/* class RcQueueEntry */
+#define GC_RCQENTRY_VALUE 1
+#define GC_RCQENTRY_SEQUENCE 2
+#define GC_RCQENTRY_SECONDS 3
+#define GC_RCQENTRY_MICRO_SECONDS 4
+
+   /* class FixedPoint , class was named ScaledDecimal in v2.4 */
+#define GC_FixedPoint_NUMERATOR    1
+#define GC_FixedPoint_DENOM        2
+#define GC_FixedPoint_SCALE        3
+#define GC_SIZE_FixedPoint  3
+
+   /* class ScaledDecimal */
+#define GC_ScaledDecimal_mantissa 1
+#define GC_ScaledDecimal_scale    2
+#define GC_ScaledDecimal_MaxScale 30000
+
+   /*class GsObjectSecurityPolicy*/
+#define GC_ObjectSecurityPolicy_ITS_REPOSITORY     1
+#define GC_ObjectSecurityPolicy_ITS_OWNER          2
+#define GC_ObjectSecurityPolicy_GROUPS_READ        3
+#define GC_ObjectSecurityPolicy_GROUPS_WRITE       4
+#define GC_ObjectSecurityPolicy_OWNER_AUTH         5
+#define GC_ObjectSecurityPolicy_WORLD_AUTH         6
+#define GC_ObjectSecurityPolicy_SEG_ID             7
+#define GC_ObjectSecurityPolicy_trackReads         8
+#define GC_SIZE_ObjectSecurityPolicy               8
+
+   /*class StackSegment*/
+#define GC_SIZE_STACK_SEGMENT             3
+#define GC_STACK_SEGMENT_ACTIVATION_STACK 1
+#define GC_STACK_SEGMENT_CONTROL_STACK    2
+#define GC_STACK_SEGMENT_NEXT             3
+
+   /* class TraversalBuffer */
+#define GC_SIZE_TRAVERSAL_BUFFER		6
+#define GC_TRAVERSAL_BUFFER_RESULT_OOP		2
+#define GC_TRAVERSAL_BUFFER_RESULT_IS_SPECIAL	3
+#define GC_TRAVERSAL_BUFFER_CLAMP_OOP		4
+#define GC_TRAVERSAL_RETRIEVAL_FLAGS		5
+#define GC_TRAVERSAL_BUFFER_LEVEL		6
+
+   /*class UserProfile*/
+#define GC_SIZE_USER_PROFILE            10
+/* GC_USER_PROFILE_PASSWORD obsolete */
+#define GC_USER_PROFILE_USER_ID          2
+#define GC_USER_PROFILE_SYMBOL_LIST      3
+#define GC_USER_PROFILE_DEF_ObjectSecurityPolicy      4
+#define GC_USER_PROFILE_PRIVILEGES       5
+#define GC_USER_PROFILE_GROUPS       6
+#define GC_USER_PROFILE_KERBEROS_PRINCIPAL 7 /* was GC_USER_PROFILE_SPARE1 */
+#define GC_USER_PROFILE_SPARE2       8
+#define GC_USER_PROFILE_LOGIN_HOOK   9  /* was GC_USER_PROFILE_SPARE3 */
+#define GC_USER_PROFILE_COMPILER_LANG_OBSOLETE   10     /* not used */
+
+#define GC_COMPILER_LANG_ASCII_OBS    1 /* obsolete */
+#define GC_COMPILER_LANG_JIS_EUC_OBS  2 /* obsolete */
+/* language environments supported by the compiler; these are the
+   valid SmallInteger value for GC_USER_PROFILE_COMPILER_LANG */
+
+   /*One constant is used for the size of all metaclasses created in bom.
+       All metaclasses are ultimately subclasses of Class and no metaclass
+       adds any new instance variables.  Therefore, all metaclasses are of
+       the same size as class Class.*/
+#define GC_SIZE_OF_ALL_METACLASSES GC_SIZE_CLASS
+
+   /*Definition of the Privilege Bits*/
+#define GC_PRIV_SYSTEM_CTL               1
+#define  GC_PRIV_STATS_obsolete           2  /* Obsolete*/
+#define GC_PRIV_SESSION_ACCESS           3
+#define GC_PRIV_USER_PASSWORD            4
+#define GC_PRIV_LOGIN_DEFAULT_ObjectSecurityPolicy    5
+#define GC_PRIV_NOT_USED                 6
+#define GC_PRIV_OTHER_PASSWORD           7
+#define GC_PRIV_ObjectSecurityPolicy_CREATION         8
+#define GC_PRIV_ObjectSecurityPolicy_AUTHORIZATION    9
+#define GC_PRIV_FILE_CONTROL             10
+#define GC_PRIV_GARBAGE_CTL              11
+/* C definitions of bits after PRIV_GARBAGE_CTL private to the VM */
+   /* To test or set the privilege bits in the user profile, remember to
+	convert the offUserProfilePrivileges value to an Integer.  Then mask
+	it with (2^ privXXX).
+      */
+
+   /*class UserProfileSet, new in 5.0 , instvars private in opalcls.ht */
+
+  /* Size of an instance of Float (8 byte binary IEEE) */
+#define GC_SIZE_FLOAT  8
+
+  /* Size of an instance of SmallFloat */
+#define GC_SIZE_SMALL_FLOAT  4
+
+
+/* Session classes */
+/* GsSession */
+#define GC_GSSESS_SERIAL_NUM 1
+#define GC_GSSESS_USER_PRO   2
+/* GsTransactionalSession, no new instVars, inherits from GsSession */
+/* GsCurrentSession, inherits from GsTransactionalSession */
+#define GC_GSCURRSESS_SYMLIST    3
+#define GC_GSCURRSESS_NATIVELANG 4
+#define GC_GSCURRSESS_transientSymlist 5
+#define GC_SIZE_CURRENT_SESSION  5
+
+/* GsObjectInventoryEntry class */
+#define GC_GS_OBJ_INV_ENTRY_CLASS 1
+#define GC_GS_OBJ_INV_ENTRY_INST_COUNT 2
+#define GC_GS_OBJ_INV_ENTRY_BYTE_COUNT 3
+
+/* GsObjectInventory class */
+#define GC_GS_OBJ_INV_ENTRIES_BY_COUNT 1
+#define GC_GS_OBJ_INV_ENTRIES_BY_BYTES 2
+#define GC_GS_OBJ_INV_INCLUDE_HIDDEN   3
+
+#define GC_GS_DIGITAL_ENV_PUBKEY 1
+#define GC_GS_DIGITAL_ENV_ENCKEY 2
+#define GC_GS_DIGITAL_ENV_CIPHERTEXT 3
+#define GC_GS_DIGITAL_ENV_IV 4
+#define GC_GS_DIGITAL_ENV_CIPHERID 5
+#define GC_GS_DIGITAL_ENV_TAG 6
+#define GC_GS_DIGITAL_ENV_MSG_CLS_NAME 7
+#define GC_GS_DIGITAL_ENV_SIGNATURE 8
+
+// sftpSocket inst vars
+#define GC_GS_SFTP_REMOTE_FILE_SFTP_SOCKET 1
+#define GC_GS_SFTP_REMOTE_FILE_REMOTE_FILE_NAME 2
+
+#define GC_AWS_CREDENTIALS_ACCESS_KEY_ID 1
+#define GC_AWS_CREDENTIALS_SECRET_KEY_ID 2
+#define GC_AWS_CREDENTIALS_SESSION_ID 3
+
+#define GC_AWS_DATA_KEY_CMS_KEY_ID 1
+#define GC_AWS_DATA_KEY_ENCRYPTED_KEY 2
+#define GC_AWS_DATA_KEY_SIZE 3
+
+#define GC_AZURE_CREDENTIALS_CLIENT_ID 1
+#define GC_AZURE_CREDENTIALS_CLIENT_SECRET 2
+#define GC_AZURE_CREDENTIALS_TENANT_ID 3
+
+#define GC_AZURE_DATA_KEY_VAULT_URL 1
+#define GC_AZURE_DATA_KEY_NAME 2
+#define GC_AZURE_DATA_KEY_ENCRYPTED_KEY 3
+
+#endif   /* end of GciOC.ht */

@@ -95,7 +95,6 @@ import {
   matchesClassPrefix,
   categoryContains,
 } from './explorerTreeHelpers';
-import { emptyVarSideUri } from './explorerVarDecorations';
 import {
   parseClassHistory,
   parseRevertResult,
@@ -273,6 +272,7 @@ class ClassItem extends vscode.TreeItem {
     public readonly className: string,
     hasIvars = false,
     versionTag?: string,
+    hasComment = false,
   ) {
     super(
       versionTag === undefined ? className : `${className}[${versionTag}]`,
@@ -281,7 +281,12 @@ class ClassItem extends vscode.TreeItem {
     // The displayed label may carry a `[n]` version tag, but the node's identity
     // (id, click argument, ivar sub-tree) always uses the raw class name.
     this.id = `k:${className}`;
-    this.contextValue = 'explorerClass';
+    // `.commented` gates the comment button to classes that actually have one
+    // (#387 item 11). Every other class action matches BOTH forms — see the
+    // `explorerClass(\.commented)?` clauses in package.json — so the suffix only
+    // ever adds a button, never removes one. Anchored there rather than a bare
+    // `^explorerClass` prefix, which would also swallow `explorerClassVar`.
+    this.contextValue = hasComment ? 'explorerClass.commented' : 'explorerClass';
     this.iconPath = new vscode.ThemeIcon('symbol-class');
     // Fires on every click (selection still drives navigation separately); the
     // controller uses the timing to detect a double-click → open definition.
@@ -337,30 +342,21 @@ class VarSideItem extends vscode.TreeItem {
   constructor(
     public readonly className: string,
     public readonly isMeta: boolean,
-    // When the class defines no variables on this side we still show its header,
-    // grayed and non-expandable, so the instance/class structure stays consistent.
-    isEmpty = false,
   ) {
+    // A side node exists only when that side has variables (#387 item 12), so it is
+    // always expandable and never needs an empty/grayed rendering.
     super(
       isMeta ? 'class variables' : 'instance variables',
-      isEmpty ? vscode.TreeItemCollapsibleState.None : vscode.TreeItemCollapsibleState.Expanded,
+      vscode.TreeItemCollapsibleState.Expanded,
     );
     this.id = `k:${className}/vside:${isMeta}`;
     // Split by side so the inline "+" (Add Instance Variable) targets only the
     // instance side; the class side keeps the base token.
     this.contextValue = isMeta ? 'explorerVarSide.class' : 'explorerVarSide.instance';
     this.iconPath = new vscode.ThemeIcon('symbol-class');
-    if (isEmpty) {
-      // Synthetic resourceUri → FileDecorationProvider grays the header label.
-      this.resourceUri = emptyVarSideUri(className, isMeta);
-      this.tooltip = isMeta
-        ? `${className} defines no class variables`
-        : `${className} defines no instance variables`;
-    } else {
-      this.tooltip = isMeta
-        ? `Class variables of ${className}`
-        : `Instance variables of ${className}`;
-    }
+    this.tooltip = isMeta
+      ? `Class variables of ${className}`
+      : `Instance variables of ${className}`;
   }
 }
 
@@ -373,14 +369,15 @@ export class MethodCategoryItem extends vscode.TreeItem {
     public readonly isMeta: boolean,
     public readonly category: string,
     public readonly computed: boolean,
-    // Open the node up front. ALL METHODS always does (it's the landing view);
-    // the rest do while a filter is active, so matches show without expanding
-    // every folder by hand.
+    // Open the node up front. Categories do this while a filter is active, so matches
+    // show without expanding every folder by hand. (Before #387 item 10 the ALL METHODS
+    // row also forced itself open as the landing view; that row is gone, so nothing is
+    // expanded by default any more and the real categories start at the top.)
     forceExpanded = false,
   ) {
     super(
       category,
-      category === ALL_METHODS_CATEGORY || forceExpanded
+      forceExpanded
         ? vscode.TreeItemCollapsibleState.Expanded
         : vscode.TreeItemCollapsibleState.Collapsed,
     );
@@ -396,8 +393,8 @@ export class MethodCategoryItem extends vscode.TreeItem {
 
 export class MethodItem extends vscode.TreeItem {
   // `displayCategory` is the category node this row is shown *under* (a real
-  // category, ALL METHODS, SESSION METHODS, or undefined when category grouping is
-  // off). It's needed so MethodProvider.getParent can walk up for reveal().
+  // category, SESSION METHODS, or undefined when category grouping is off). It's
+  // needed so MethodProvider.getParent can walk up for reveal().
   constructor(
     public readonly isMeta: boolean,
     public readonly info: SelectorInfo,
@@ -478,16 +475,20 @@ export class MethodItem extends vscode.TreeItem {
 }
 
 // A "filter chip" root row shown while a pane's filter is active: a funnel icon,
-// the label "Filter", and the pattern in grey description text — visually
+// the label "Filter:", and the pattern in grey description text — visually
 // distinct from method/selector rows. Clicking it re-opens the filter editor;
 // its inline ✕ clears the filter. Carries the owning view id so one clear
 // command serves every pane.
+//
+// The label keeps its colon: seeing the pattern is easy, but NOTICING that a
+// filter is on at all is the hard part, and "Filter: foo*" reads as a statement
+// about the pane where a bare "Filter foo*" reads like a button (#387 item 4).
 export class FilterChipItem extends vscode.TreeItem {
   constructor(
     public readonly viewId: string,
     pattern: string,
   ) {
-    super('Filter', vscode.TreeItemCollapsibleState.None);
+    super('Filter:', vscode.TreeItemCollapsibleState.None);
     this.id = `filterchip:${viewId}`;
     this.description = pattern;
     this.iconPath = new vscode.ThemeIcon('filter-filled');
@@ -642,7 +643,23 @@ interface ExplorerViews {
 export class ExplorerController {
   readonly state: ExplorerState = {};
   // className → category for the current dictionary; fetched once per dict.
-  private classCategoryEntries: queries.ClassCategoryEntry[] = [];
+  // Assign through the accessor pair, never to the backing field: the setter derives
+  // `commentedClasses` from the entries, so every reassignment (dict switch, refresh,
+  // class create/rename, comment edit) keeps that set in step with no site to forget.
+  private classCategoryEntriesStore: queries.ClassCategoryEntry[] = [];
+  // The commented subset of the above, as a set. `classHasComment` is asked once per
+  // class ROW, so scanning the entries there made the Classes pane quadratic in class
+  // count (~300k comparisons for the 769 classes in Globals, on every render). A set
+  // lookup puts it back alongside the O(1) map reads its two row siblings do
+  // (`classHasDefinedVars`, `classVersion`).
+  private commentedClasses = new Set<string>();
+  private get classCategoryEntries(): queries.ClassCategoryEntry[] {
+    return this.classCategoryEntriesStore;
+  }
+  private set classCategoryEntries(entries: queries.ClassCategoryEntry[]) {
+    this.classCategoryEntriesStore = entries;
+    this.commentedClasses = new Set(entries.filter((e) => e.hasComment).map((e) => e.className));
+  }
   // className → count of locally-defined instance variables, for the current
   // dictionary; fetched once per dict so class rows know whether to show an
   // expansion caret. Names are fetched lazily on expand and memoized here.
@@ -719,7 +736,15 @@ export class ExplorerController {
   private hierChain: queries.ClassHierarchyEntry[] = [];
   private hierSubs: queries.ClassHierarchyEntry[] = [];
 
-  constructor(private readonly sessionManager: SessionManager) {}
+  constructor(
+    private readonly sessionManager: SessionManager,
+    /** Called after a symbol-list structural change (dictionary add/remove/rename) so other views —
+     *  e.g. Omni Search's cached dictionary corpus — can refresh. Uncommitted, but visible in-session. */
+    private readonly onSymbolListChanged?: (sessionId: number) => void,
+    /** Called once per class removed by Remove Class, so views holding a cached class corpus (Omni
+     *  Search) can drop it. Per class, not per command: the delete takes the whole subtree. */
+    private readonly onClassRemoved?: (sessionId: number, className: string) => void,
+  ) {}
 
   session(): ActiveSession | undefined {
     return this.sessionManager.getSelectedSession();
@@ -810,6 +835,13 @@ export class ExplorerController {
     let accepted = false;
     box.title = 'Filter';
     box.placeholder = 'starts with… (use * as a wildcard)';
+    // Set an explicit prompt. Left unset, VS Code fills the prompt line with its own
+    // "press Enter to confirm / Escape to cancel" hint, which tells the user nothing
+    // filters until Enter — but this box filters on every keystroke
+    // (onDidChangeValue -> setFilterState). The live behaviour is the one worth
+    // keeping, so correct the message instead (#387 item 5). Escape still cancels and
+    // restores the previous filter, which is why it stays in the text.
+    box.prompt = 'Filters as you type — Escape to cancel';
     box.value = filterBeforeEdit ?? '';
     this.filteringView = viewId;
     this.syncTitles();
@@ -1368,10 +1400,14 @@ export class ExplorerController {
 
   // Open a class's (editable) comment editor — the same gemstone://…/comment
   // document the System Browser saves, but reached from the Explorer's class row
-  // or Classes-pane toolbar. Opens to the side by default so the comment sits
-  // alongside whatever the developer is reading. `item` comes from the inline
-  // button; falls back to the selected class for the toolbar / palette.
-  async openClassComment(item?: ClassItem, pin = true): Promise<void> {
+  // or Classes-pane toolbar. Opens to the side so the comment sits alongside
+  // whatever the developer is reading, and as a PREVIEW tab rather than a pinned
+  // one: reading a comment is usually a peek, and a preview tab is reused by the
+  // next one and dismissed with a single click instead of two (#387 item 11).
+  // Double-clicking the tab still promotes it to a permanent one. `item` comes
+  // from the inline button; falls back to the selected class for the toolbar /
+  // palette.
+  async openClassComment(item?: ClassItem): Promise<void> {
     const className = item?.className ?? this.state.className;
     if (
       this.state.dictName === undefined ||
@@ -1380,7 +1416,7 @@ export class ExplorerController {
     ) {
       return;
     }
-    await this.openCommentFor(className, this.state.dictName, this.state.dictIndex, pin);
+    await this.openCommentFor(className, this.state.dictName, this.state.dictIndex);
   }
 
   // Same as openClassComment, but for a Hierarchy node — resolves the class's own
@@ -1392,21 +1428,20 @@ export class ExplorerController {
       void vscode.window.showWarningMessage(`Can't locate class ${item.className}.`);
       return;
     }
-    await this.openCommentFor(item.className, resolved.dictName, resolved.dictIndex, true);
+    await this.openCommentFor(item.className, resolved.dictName, resolved.dictIndex);
   }
 
   private async openCommentFor(
     className: string,
     dictName: string,
     dictIndex: number,
-    pin: boolean,
   ): Promise<void> {
     const session = this.session();
     if (!session) return;
     const uri = buildClassCommentUri(session.id, dictName, className, dictIndex);
     this.selfOpenedUris.add(uri.toString());
     const doc = await vscode.workspace.openTextDocument(uri);
-    await openGemstoneDocument(doc, pin ? 'pin' : 'preview', this.placement);
+    await openGemstoneDocument(doc, 'preview', this.placement);
   }
 
   // Generate an editable Grail `.py` stub for a class. Invoked from the Classes-
@@ -1756,6 +1791,18 @@ export class ExplorerController {
     return (
       this.classHasDefinedIvars(className) || (this.definedClassVarCounts.get(className) ?? 0) > 0
     );
+  }
+
+  // Whether a class carries a real comment — drives whether the row offers the
+  // comment button at all (#387 item 11), so the button never promises a document
+  // that turns out to be GemStone's synthesised "No class-specific documentation
+  // for …" placeholder. Answered from the set derived from the class list already
+  // fetched for this dictionary, so asking costs no extra query and no scan. A class
+  // we have no entry for (a stale row, or one from another dictionary) is treated as
+  // uncommented: the Classes-pane toolbar button still reaches it, so nothing becomes
+  // unreachable.
+  classHasComment(className: string): boolean {
+    return this.commentedClasses.has(className);
   }
 
   // The class's `current/total` version tag when it has more than one version in
@@ -3059,7 +3106,7 @@ export class ExplorerController {
     });
   }
 
-  // Method categories for one side, with the computed ALL/SESSION rows on top,
+  // Method categories for one side, with the computed SESSION row on top,
   // plus any just-created (still empty) categories from the + button.
   methodCategories(isMeta: boolean, filter?: string): MethodCategoryItem[] {
     const lines = this.envLines.filter((l) => l.isMeta === isMeta);
@@ -3075,16 +3122,29 @@ export class ExplorerController {
     // With a filter set and categories visible, keep the category structure but
     // drop categories with no matching selector, and expand what remains so the
     // matches are visible without hand-expanding each folder.
+    // A category survives the filter when its OWN name matches (#387 item 7) or when
+    // any selector inside it matches. Name-matching first: it is a cached-parse
+    // lookup plus a string compare (parseFilter re-parses only when the raw filter
+    // string changes), where the selector scan can pull in the ivar-access map.
     const hasMatch = (category: string) =>
       filter === undefined ||
+      this.methodCategoryMatchesFilter(category, filter) ||
       this.selectorsFor(isMeta, category).some((info) =>
         this.methodMatchesFilter(isMeta, info.selector, filter),
       );
     const expanded = filter !== undefined;
     if (filter !== undefined) combined = combined.filter(hasMatch);
     const items: MethodCategoryItem[] = [];
-    if (hasMatch(ALL_METHODS_CATEGORY))
-      items.push(new MethodCategoryItem(isMeta, ALL_METHODS_CATEGORY, true, expanded));
+    // No ALL METHODS pseudo-category row (#387 item 10). It duplicated what the real
+    // categories already show — for an uncategorized class it listed exactly what "as
+    // yet unclassified" lists — and being first AND expanded by default it pushed the
+    // real categories below the fold, so switching classes meant scrolling before any
+    // category was visible. Every method is still reachable under its own category (the
+    // pseudo-category's contents were only ever "selectors that have a category"), and
+    // the flat/grouped toggle remains the see-everything view.
+    //
+    // ALL_METHODS_CATEGORY itself stays: selectorsFor() still uses it as the
+    // enumerate-every-selector lookup key that reveal and the flat view depend on.
     if (hasSession && hasMatch(SESSION_METHODS_CATEGORY))
       items.push(new MethodCategoryItem(isMeta, SESSION_METHODS_CATEGORY, true, expanded));
     return items.concat(combined.map((c) => new MethodCategoryItem(isMeta, c, false, expanded)));
@@ -3104,7 +3164,15 @@ export class ExplorerController {
   flatMethods(isMeta: boolean, filter?: string): MethodItem[] {
     return this.selectorsFor(isMeta, ALL_METHODS_CATEGORY)
       .filter(
-        (info) => filter === undefined || this.methodMatchesFilter(isMeta, info.selector, filter),
+        (info) =>
+          filter === undefined ||
+          this.methodMatchesFilter(isMeta, info.selector, filter) ||
+          // A category-name match keeps that category's methods here too (#387 item 7).
+          // Without this, filtering 'accessing' listed the category in grouped mode and
+          // then emptied the pane the moment the user turned grouping off, even though
+          // the filter had not changed. Ivar-token filters are excluded for free --
+          // methodCategoryMatchesFilter answers false for them.
+          this.methodCategoryMatchesFilter(info.category, filter),
       )
       .map(
         (info) =>
@@ -3153,6 +3221,20 @@ export class ExplorerController {
     }
     const access = this.methodIvarAccess().get(`${isMeta}:${selector}`);
     return matchesMethodFilter(filter, selector, access);
+  }
+
+  // Whether a method CATEGORY's own name passes the active filter (#387 item 7).
+  // The browser offers category quick-filters, so typing 'acc' in the Methods pane
+  // should surface the 'accessing' category, not just selectors starting with 'acc'.
+  //
+  // Deliberately false for a filter carrying reads:/writes:/accesses: tokens: those
+  // ask a question about a method's bytecode, which a category name cannot answer, so
+  // an ivar filter keeps its current selector-only meaning rather than dragging in
+  // whole categories whose NAME happens to look like the ivar.
+  methodCategoryMatchesFilter(category: string, raw: string): boolean {
+    const filter = this.parseFilter(raw);
+    if (filter.ivar.length > 0) return false;
+    return filter.selector !== undefined && filterMatches(category, filter.selector);
   }
 
   // The r/w/rw glyph a method row should show under an active ivar filter, or
@@ -3270,16 +3352,39 @@ export class ExplorerController {
   // Reveal + select a method row, honoring the pane's current view state: switch
   // to the method's side (the pane shows one side at a time) and drop the category
   // parent when grouping is off, so the built node's id matches the rendered row.
-  private async revealMethodRow(isMeta: boolean, info: SelectorInfo): Promise<void> {
+  private async revealMethodRow(
+    isMeta: boolean,
+    info: SelectorInfo,
+    opts: { focusEditorAfter?: boolean } = {},
+  ): Promise<void> {
     this.setMethodSide(isMeta);
     const displayCategory = this.groupMethodsByCategory() ? info.category : undefined;
+    const item = new MethodItem(isMeta, info, displayCategory, this.methodSourceUri(isMeta, info));
+    // In this VS Code build focus:false selects the row but never scrolls it into view; only
+    // focus:true scrolls. For editor-driven navigation we force the scroll with focus:true and hand
+    // focus straight back to the editor so the tree doesn't keep it. A passive background resync
+    // stays a plain (non-scrolling) select so it can't yank focus off whatever the user is doing.
+    const takesFocus = opts.focusEditorAfter === true;
+    const side = isMeta ? 'class' : 'instance';
     try {
-      await this.views?.method.reveal(
-        new MethodItem(isMeta, info, displayCategory, this.methodSourceUri(isMeta, info)),
-        { select: true, focus: false, expand: true },
+      await this.views?.method.reveal(item, { select: true, focus: takesFocus, expand: true });
+    } catch (e) {
+      // No longer swallowed silently: log it so a future failure is diagnosable from the GCI log
+      // (mirrors the dictionary/category reveal paths above).
+      logWarning(
+        `Explorer method reveal failed for ${side} method ${info.selector}: ${e instanceof Error ? e.message : String(e)}`,
       );
-    } catch {
-      /* ignore */
+    }
+    // Hand focus back even if the reveal above rejected: it may have taken focus before failing, and
+    // leaving the user's cursor stranded in the tree is the worse outcome.
+    if (takesFocus) {
+      try {
+        await vscode.commands.executeCommand('workbench.action.focusActiveEditorGroup');
+      } catch (e) {
+        logWarning(
+          `Explorer could not return focus to the editor after revealing ${side} method ${info.selector}: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
     }
   }
 
@@ -3515,8 +3620,12 @@ export class ExplorerController {
     this.selectDict(item);
     try {
       await this.views?.dict.reveal(item, { select: true, focus: true });
-    } catch {
-      /* ignore */
+    } catch (e) {
+      // No longer swallowed silently: log it so a future failure is diagnosable from the GCI log
+      // (mirrors the category-reveal path below).
+      logWarning(
+        `Omni dictionary reveal failed for ${name}: ${e instanceof Error ? e.message : String(e)}`,
+      );
     }
   }
 
@@ -3533,12 +3642,14 @@ export class ExplorerController {
       return;
     }
     this.selectDict(new DictItem(dictName, idx + 1));
-    const segment = categoryPath.split('-').pop() ?? categoryPath;
-    const catItem = new ClassCategoryItem(segment, categoryPath, false);
-    this.selectClassCategory(catItem);
 
-    // If the category isn't actually in this dictionary's loaded forest, say so — otherwise the jump
-    // silently appears to do nothing (the reported "strange spot").
+    // Check the category actually exists in this dictionary's loaded forest BEFORE mutating the
+    // category/classes panes. selectDict has just (synchronously) loaded classCategoryEntries, so
+    // allCategoryPaths() is valid here. Note the dictionary selection above has ALREADY been applied
+    // and is meant to stick — landing on the home dictionary is still useful. Doing the check first
+    // means a missing category leaves only the category/classes panes untouched instead of scrolling
+    // them to a node that isn't there — the jump would otherwise silently appear to do nothing (the
+    // reported "strange spot").
     if (
       !this.allCategoryPaths().some((p) => p === categoryPath || p.startsWith(`${categoryPath}-`))
     ) {
@@ -3547,6 +3658,10 @@ export class ExplorerController {
       );
       return;
     }
+
+    const segment = categoryPath.split('-').pop() ?? categoryPath;
+    const catItem = new ClassCategoryItem(segment, categoryPath, false);
+    this.selectClassCategory(catItem);
 
     // Surface the Class Categories view FIRST. When it lives in a collapsed/hidden sidebar,
     // TreeView.reveal() can no-op — which is exactly how an Omni category jump looked like it landed
@@ -3654,7 +3769,7 @@ export class ExplorerController {
         (i) => i.selector === opts.revealMethod!.selector,
       );
       if (info) {
-        await this.revealMethodRow(opts.revealMethod.isMeta, info);
+        await this.revealMethodRow(opts.revealMethod.isMeta, info, { focusEditorAfter: true });
         this.syncTitles();
       }
     }
@@ -3716,7 +3831,7 @@ export class ExplorerController {
           (i) => i.selector === revealMethod.selector,
         );
         if (info) {
-          await this.revealMethodRow(revealMethod.isMeta, info);
+          await this.revealMethodRow(revealMethod.isMeta, info, { focusEditorAfter: true });
           this.syncTitles();
         }
       }
@@ -3742,6 +3857,7 @@ export class ExplorerController {
     if (!name) return;
     queries.addDictionary(session, name);
     this.dictProvider.refresh();
+    this.onSymbolListChanged?.(session.id);
     // Select the new dictionary so its (empty) categories/classes cascade, and
     // highlight its row.
     const names = queries.getDictionaryNames(session);
@@ -3782,6 +3898,7 @@ export class ExplorerController {
     // Indices have shifted and the selection may be gone; rebuild from scratch and
     // auto-select a default dictionary.
     this.reset();
+    this.onSymbolListChanged?.(session.id);
     void vscode.window.setStatusBarMessage(`Removed dictionary ${node.dictName}`, 4000);
   }
 
@@ -3857,6 +3974,7 @@ export class ExplorerController {
     } catch {
       /* ignore */
     }
+    this.onSymbolListChanged?.(session.id);
     void vscode.window.setStatusBarMessage(`Renamed dictionary ${oldName} → ${newName}`, 4000);
   }
 
@@ -4091,10 +4209,12 @@ export class ExplorerController {
     }
 
     const failures: string[] = [];
+    const removed: string[] = [];
     for (const t of targets) {
       try {
         const result = queries.deleteClass(session, t.dictIndex, t.className);
-        if (!result.startsWith('Deleted class:')) failures.push(`${t.className}: ${result}`);
+        if (result.startsWith('Deleted class:')) removed.push(t.className);
+        else failures.push(`${t.className}: ${result}`);
       } catch (e: unknown) {
         failures.push(`${t.className}: ${e instanceof Error ? e.message : String(e)}`);
       }
@@ -4117,6 +4237,12 @@ export class ExplorerController {
     this.hierarchyProvider.refresh();
     this.methodProvider.refresh();
     this.syncTitles();
+
+    // Views that cache a class corpus can't see this deletion — it is uncommitted, so nothing else
+    // announces it, and until now a removed class stayed listed (and clickable) in an open Omni
+    // Search until the next commit/abort resync. Notify the ones that ACTUALLY went, so a partial
+    // failure doesn't drop a class that is still there.
+    for (const name of removed) this.onClassRemoved?.(session.id, name);
 
     if (failures.length > 0) {
       void vscode.window.showErrorMessage(`Remove class had errors — ${failures.join('; ')}`);
@@ -4404,7 +4530,7 @@ export class ExplorerController {
     );
     if (!added) return;
     this.pendingNewMethod = undefined;
-    void this.revealMethodRow(pending.isMeta, added);
+    void this.revealMethodRow(pending.isMeta, added, { focusEditorAfter: true });
   }
 
   // ── Drag & drop ─────────────────────────────────────────────────────────────
@@ -4866,7 +4992,15 @@ class ClassProvider extends RefreshableProvider<ClassNode | FilterChipItem> {
     if (!element) {
       const rows = this.ctl
         .classNames()
-        .map((n) => new ClassItem(n, this.ctl.classHasDefinedVars(n), this.ctl.classVersion(n)));
+        .map(
+          (n) =>
+            new ClassItem(
+              n,
+              this.ctl.classHasDefinedVars(n),
+              this.ctl.classVersion(n),
+              this.ctl.classHasComment(n),
+            ),
+        );
       return withFilterChip(VIEW_CLASSES, this.ctl, rows);
     }
     // A class expands to an "instance" and/or "class" variable-side node (like the
@@ -4875,7 +5009,7 @@ class ClassProvider extends RefreshableProvider<ClassNode | FilterChipItem> {
       return variableSides(
         this.ctl.definedIvarNames(element.className),
         this.ctl.definedClassVarNames(element.className),
-      ).map((side) => new VarSideItem(element.className, side.isMeta, side.names.length === 0));
+      ).map((side) => new VarSideItem(element.className, side.isMeta));
     }
     // A side node expands to its variable rows (each with an inline rename pencil).
     if (element instanceof VarSideItem) {
@@ -4945,11 +5079,18 @@ class MethodProvider extends RefreshableProvider<MethodNode> {
     }
     if (element instanceof MethodCategoryItem) {
       const filter = this.ctl.getFilter(VIEW_METHODS);
+      // When the CATEGORY NAME is what matched the filter, show everything inside it
+      // (#387 item 7). Filtering the selectors too would render the category the user
+      // just searched for as an empty folder, since its methods generally do not start
+      // with their category's name.
+      const nameMatched =
+        filter !== undefined && this.ctl.methodCategoryMatchesFilter(element.category, filter);
       return this.ctl
         .selectorsFor(element.isMeta, element.category)
         .filter(
           (info) =>
             filter === undefined ||
+            nameMatched ||
             this.ctl.methodMatchesFilter(element.isMeta, info.selector, filter),
         )
         .map(
@@ -5049,8 +5190,14 @@ export function registerGemStoneExplorer(
   // triggered Rename Method to target a SENT selector under the cursor. Optional
   // so tests (and a not-yet-started LSP) degrade to renaming the edited method.
   selectorAtPosition: SelectorAtPosition = () => Promise.resolve(null),
+  // Called after a dictionary add/remove/rename so other views (Omni Search) can refresh their
+  // cached symbol-list corpus.
+  onSymbolListChanged?: (sessionId: number) => void,
+  // Called once per class that Remove Class actually deleted, so Omni Search can drop it from its
+  // cached corpus instead of showing (and offering to open) a class that no longer exists.
+  onClassRemoved?: (sessionId: number, className: string) => void,
 ): ExplorerHandle {
-  const ctl = new ExplorerController(sessionManager);
+  const ctl = new ExplorerController(sessionManager, onSymbolListChanged, onClassRemoved);
 
   // The Open Editors pane (last in the container) mirrors the open gemstone://
   // source editors; it is session-independent, so it registers on its own.
@@ -5222,8 +5369,9 @@ export function registerGemStoneExplorer(
       (item?: ClassItem) =>
         void ctl.openClassDefinition(item instanceof ClassItem ? item : undefined, true),
     ),
-    // Open a class's editable comment (inline button on the class row / Classes-
-    // pane toolbar). A class comment is often the first place a developer looks.
+    // Open a class's editable comment as a preview tab (inline button on the class
+    // row / Classes-pane toolbar). A class comment is often the first place a
+    // developer looks — and usually just a look, hence preview rather than pinned.
     vscode.commands.registerCommand(
       'gemstone.explorer.openComment',
       (item?: ClassItem) => void ctl.openClassComment(item instanceof ClassItem ? item : undefined),

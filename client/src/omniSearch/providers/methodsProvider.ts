@@ -8,7 +8,14 @@
  * computed against the selector and the highlight ranges are shifted into label coordinates.
  */
 import { SelectorSearchResult } from '../../queries/searchSelectors';
-import { CATEGORY_BY_ID, OmniConfig, OmniProvider, OmniResult } from '../omniTypes';
+import {
+  CATEGORY_BY_ID,
+  OmniCancel,
+  OmniConfig,
+  OmniProvider,
+  OmniResult,
+  OmniTruncationSink,
+} from '../omniTypes';
 import { match } from '../omniMatch';
 
 /** Runs the bounded selector search against the stone. Injected so the provider is stone-free. */
@@ -21,9 +28,6 @@ export type SelectorSearchRunner = (
 /** Over-fetch factor: request this many × the displayed cap from the server, so ranking has a
  *  wider pool to pick the best matches from (see search()). */
 export const SERVER_OVERFETCH = 4;
-/** Hard ceiling on the server slice, to bound the scan cost regardless of maxResultsPerCategory. */
-export const MAX_SERVER_LIMIT = 200;
-
 function labelFor(r: SelectorSearchResult): string {
   return `${r.className}${r.isMeta ? ' class' : ''}>>${r.selector}`;
 }
@@ -34,15 +38,47 @@ export function createMethodsProvider(
 ): OmniProvider {
   return {
     category: CATEGORY_BY_ID.methods,
-    search(query: string, cfg: OmniConfig): OmniResult[] {
+    search(
+      query: string,
+      cfg: OmniConfig,
+      _token?: OmniCancel,
+      reportTruncated?: OmniTruncationSink,
+    ): OmniResult[] {
       const term = query.trim();
       if (term.length < cfg.methodMinQueryLength) return [];
 
       // Fetch a WIDER server slice than we display, then rank + cap client-side. The server scan is
       // substring-match in symbol-list order (not by relevance), so a high-quality selector match
       // could sit past a tight cutoff and never reach us; over-fetching lets the ranking surface it.
-      const serverLimit = Math.min(cfg.maxResultsPerCategory * SERVER_OVERFETCH, MAX_SERVER_LIMIT);
+      // The `gemstone.omniSearch.maxServerScan` setting bounds the server slice, and so the scan cost,
+      // regardless of maxResultsPerCategory. `readOmniConfig` has already clamped it into 20–20 000, so
+      // it is read straight. It bounds the RESULTS as well as the cost: `searchSelectors` short-circuits
+      // the instant it has that many matches, so a broad term can never return more no matter how far
+      // the display cap is raised — "Load all" included. `search` therefore reports truncation to the
+      // engine, which would otherwise present a cut-off count as an exact total, with nothing on screen
+      // saying the scan gave up (#14).
+      const ceiling = cfg.maxServerScan;
+      const serverLimit = Math.min(cfg.maxResultsPerCategory * SERVER_OVERFETCH, ceiling);
       const rows = runSearch(term, serverLimit, !cfg.caseSensitive);
+      // A FULL slice means the scan short-circuited, so the image almost certainly holds matches we
+      // never saw: the count is a floor, not a total. Judged on the RAW row count, before the re-filter
+      // below — that drops rows and would mask the fact that we stopped early. When the image happens
+      // to hold exactly `serverLimit` matches this over-reports by claiming "more exist"; telling the
+      // two apart would cost another fetch, so we stay conservative.
+      //
+      // `atCeiling` separates the two very different reasons the slice can be full. If the CONFIGURED
+      // ceiling bound it, Load-more cannot fetch more and the user should be told, naming their own
+      // setting. If the (smaller) over-fetch bound it, Load-more raises the cap and genuinely widens
+      // the scan — warning there would be wrong, and reporting `scanned` as the limit would show a
+      // number nobody configured that then changes on every Load-more.
+      if (rows.length >= serverLimit) {
+        reportTruncated?.({
+          categoryId: 'methods',
+          scanned: serverLimit,
+          ceiling,
+          atCeiling: serverLimit >= ceiling,
+        });
+      }
       const out: OmniResult[] = [];
       for (const r of rows) {
         const m = match(term, r.selector, {
