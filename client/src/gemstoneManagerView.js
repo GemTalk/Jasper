@@ -848,11 +848,13 @@
     els.root.addEventListener('change', onChange);
     els.root.innerHTML = '<div class="skeleton">Loading GemStone environment…</div>';
     window.addEventListener('message', (ev) => {
+      if (ev.source !== window) return;
       const msg = ev.data;
-      if (!msg) return;
+      if (!msg || typeof msg !== 'object') return;
       if (msg.command === 'loading') {
         els.root.setAttribute('aria-busy', 'true');
       } else if (msg.command === 'state') {
+        if (!msg.state || typeof msg.state !== 'object') return;
         els.root.setAttribute('aria-busy', 'false');
         render(msg.state);
       }
