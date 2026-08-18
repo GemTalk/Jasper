@@ -556,8 +556,8 @@
 
     let state;
     if (proc) {
-      const meta = [`pid ${proc.pid}`];
-      if (proc.port) meta.push(`port ${proc.port}`);
+      const meta = [`pid ${esc(proc.pid)}`];
+      if (proc.port) meta.push(`port ${esc(proc.port)}`);
       if (stale) meta.push(`stale · ${esc(proc.status)}`);
       state = `<span class="db-line-meta mono">${meta.join(' · ')}</span>`;
     } else {
