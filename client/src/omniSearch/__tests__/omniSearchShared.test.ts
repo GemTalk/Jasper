@@ -10,8 +10,14 @@ const chrome = {
   pinned: false,
 };
 
-/** A view with every footer-relevant field populated, so a dropped field is detectable. */
-function viewData(over: Partial<OmniViewData> = {}): OmniViewData {
+/**
+ * A view with EVERY field populated, so a dropped field is detectable. Typed `Required<OmniViewData>`
+ * on purpose: that makes TypeScript force each future field — **optional ones included** — into this
+ * fixture, so the forwarding guard below covers it without anyone remembering to. A base typed
+ * `OmniViewData` would let a new optional field (the shape `pivotTitle` has) slip past `Object.keys`,
+ * which is exactly the kind of remembering the #14 regression proved we can't count on.
+ */
+function viewData(over: Partial<OmniViewData> = {}): Required<OmniViewData> {
   return {
     rows: [],
     shownCount: 200,
@@ -27,6 +33,7 @@ function viewData(over: Partial<OmniViewData> = {}): OmniViewData {
       },
     ],
     pivot: false,
+    pivotTitle: 'Senders of foo',
     ...over,
   };
 }
@@ -58,7 +65,9 @@ describe('resultsMessage', () => {
   // read `undefined`, and the count still said "200 results". This guard fails the moment another
   // field is added to OmniViewData without being forwarded here.
   it('forwards every OmniViewData field, so a new field cannot be silently dropped', () => {
-    const view = viewData({ pivotTitle: 'Senders of foo' });
+    // The base fixture is `Required<OmniViewData>`, so every field — `pivotTitle` included — is present
+    // here and the loop below checks each one is forwarded.
+    const view = viewData();
     const msg = resultsMessage(view, chrome);
     for (const key of Object.keys(view)) {
       expect(msg, `OmniViewData.${key} is missing from the results message`).toHaveProperty(key);

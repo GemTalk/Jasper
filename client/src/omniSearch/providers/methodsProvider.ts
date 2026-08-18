@@ -28,18 +28,6 @@ export type SelectorSearchRunner = (
 /** Over-fetch factor: request this many × the displayed cap from the server, so ranking has a
  *  wider pool to pick the best matches from (see search()). */
 export const SERVER_OVERFETCH = 4;
-/** Ceiling on the server slice, bounding the scan cost regardless of maxResultsPerCategory. Comes from
- *  the `gemstone.omniSearch.maxServerScan` setting (`OmniConfig.maxServerScan`, default 200) so a user
- *  who wants a wider net can raise it.
- *
- *  It bounds the RESULTS as well as the cost: `searchSelectors` short-circuits the instant it has that
- *  many matches, so a broad term can never return more no matter how far the display cap is raised —
- *  "Load all" included. `search` therefore reports truncation to the engine, which would otherwise
- *  present a cut-off count as an exact total, with nothing on screen saying the scan gave up (#14). */
-function scanCeiling(cfg: OmniConfig): number {
-  return cfg.maxServerScan > 0 ? cfg.maxServerScan : 200;
-}
-
 function labelFor(r: SelectorSearchResult): string {
   return `${r.className}${r.isMeta ? ' class' : ''}>>${r.selector}`;
 }
@@ -62,7 +50,14 @@ export function createMethodsProvider(
       // Fetch a WIDER server slice than we display, then rank + cap client-side. The server scan is
       // substring-match in symbol-list order (not by relevance), so a high-quality selector match
       // could sit past a tight cutoff and never reach us; over-fetching lets the ranking surface it.
-      const ceiling = scanCeiling(cfg);
+      // The `gemstone.omniSearch.maxServerScan` setting bounds the server slice, and so the scan cost,
+      // regardless of maxResultsPerCategory. `readOmniConfig` has already clamped it into 20–20 000, so
+      // it is read straight. It bounds the RESULTS as well as the cost: `searchSelectors` short-circuits
+      // the instant it has that many matches, so a broad term can never return more no matter how far
+      // the display cap is raised — "Load all" included. `search` therefore reports truncation to the
+      // engine, which would otherwise present a cut-off count as an exact total, with nothing on screen
+      // saying the scan gave up (#14).
+      const ceiling = cfg.maxServerScan;
       const serverLimit = Math.min(cfg.maxResultsPerCategory * SERVER_OVERFETCH, ceiling);
       const rows = runSearch(term, serverLimit, !cfg.caseSensitive);
       // A FULL slice means the scan short-circuited, so the image almost certainly holds matches we

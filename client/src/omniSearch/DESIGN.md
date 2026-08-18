@@ -206,9 +206,12 @@ the category and the number it stopped at; providers that scan exhaustively and 
 report). The engine collects those into `OmniViewData.truncations`:
 
 - **display cap reached** → `hasMore`; more rows are one Load-more away → `N+ shown` + the Load buttons.
-- **fetch ceiling reached** → a `truncations` entry; the count is a floor and no cap can reveal the
-  rest → `N+ shown`, no Load buttons (they cannot help), **and a visible note beside the count**
-  naming the scope and its limit: `⚠ Methods scan capped at 200 — narrow the search for the rest`.
+- **fetch ceiling reached** → a `truncations` entry; that scope's rows are a floor and raising the cap
+  cannot reveal more *of it* → `N+ shown` **and a visible note beside the count** naming the scope and
+  its limit: `⚠ Methods scan capped at 200 — narrow the search for the rest`. The Load buttons are
+  **not** hidden — `updateFooter` keys them off `hasMore && !exact` alone, deliberately: they raise the
+  display cap for the whole view, which still widens any *other* in-scope provider that has more to
+  show; only the capped scope can't grow, and the note (not a vanished button) is what says so.
 - **neither** → `exact`; `shownCount` is the real total → `N results`.
 
 There is a third case, and getting it wrong was a bug worth remembering. The server slice is

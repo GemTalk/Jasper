@@ -147,7 +147,9 @@ export const NEVER_CANCELLED: OmniCancel = { isCancelled: false };
 export interface OmniTruncation {
   /** The category whose own fetch ceiling bound the results. */
   categoryId: OmniCategoryId;
-  /** How many matches this run's scan actually collected before stopping. */
+  /** The slice size that bound this run — the number the scan was asked for and stopped at. (Reported
+   *  only when the scan came back full, i.e. `rows.length >= serverLimit`, so it equals the rows
+   *  collected too, but the slice size is what it names.) */
   scanned: number;
   /** The CONFIGURED ceiling (`maxServerScan`) — the number to show the user, because it is the one
    *  they set. `scanned` can be lower when the over-fetch was the tighter bound, and it changes as

@@ -19,16 +19,8 @@
     "node": ">=22.15.1"
   },
   "devEngines": {
-    "packageManager": {
-      "name": "npm",
-      "version": ">=11.16.0",
-      "onFail": "error"
-    },
-    "runtime": {
-      "name": "node",
-      "version": ">=22.15.1",
-      "onFail": "error"
-    }
+    "packageManager": { "name": "npm", "version": ">=11.16.0", "onFail": "error" },
+    "runtime": { "name": "node", "version": ">=22.15.1", "onFail": "error" }
   },
   "icon": "resources/gemstone-icon.png",
   "categories": [
@@ -155,11 +147,7 @@
           },
           "gemstone.omniSearch.matchMode": {
             "type": "string",
-            "enum": [
-              "fuzzy",
-              "substring",
-              "prefix"
-            ],
+            "enum": ["fuzzy", "substring", "prefix"],
             "enumDescriptions": [
               "Subsequence match: the typed characters appear in order (the Quick-Open feel).",
               "The typed text appears as a contiguous run.",
