@@ -149,6 +149,11 @@ export const test = base.extend<{
       'editor.inlineSuggest.enabled': false,
       'github.copilot.enable': { '*': false },
       'github.copilot.nextEditSuggestions.enabled': false,
+      // GemStone Search docks a webview of its own in the panel the moment a
+      // session exists, which leaves `iframe.webview` matching two frames and
+      // any spec that reaches into one of them ambiguous. Its QuickPick form is
+      // the same feature without a second webview to trip over.
+      'gemstone.omniSearch.ui': 'quickpick',
       ...stoneSettings,
       ...workspaceSettings,
     };
