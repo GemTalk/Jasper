@@ -88,6 +88,8 @@ export function pageExtractTemporaryPreview(
 
 // Apply a started preview server-side (recompile the one method), WITHOUT committing.
 // A single change, so there is nothing to deselect; always sends an empty set.
+// Routed through GsRefactoringUndo so the change is RECORDED and can be undone (#434);
+// see recordedApplyExpr. The answer is the engine's own envelope plus `undoRecorded`.
 export function applyExtractTemporary(
   execute: AsyncQueryExecutor,
   token: string,

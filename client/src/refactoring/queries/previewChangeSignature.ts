@@ -108,7 +108,9 @@ export function pageChangeSignaturePreview(
 
 // Apply a started preview server-side (compile new / remove old), skipping the given
 // deselected change ids, WITHOUT committing. Returns
-// {"applied":N,"failed":[{"id":..,"label":..,"error":..}]}.
+// {"applied":N,"failed":[{"id":..,"label":..,"error":..}],"undoRecorded":bool}.
+// Routed through GsRefactoringUndo so the change is RECORDED and can be undone (#434);
+// see recordedApplyExpr. The answer is the engine's own envelope plus `undoRecorded`.
 export function applyChangeSignature(
   execute: AsyncQueryExecutor,
   token: string,

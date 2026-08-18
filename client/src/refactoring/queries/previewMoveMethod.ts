@@ -93,7 +93,9 @@ export function pageMoveMethodPreview(
 
 /** Apply a started preview server-side (compile on the target + remove from the
  *  source, the removal guarded so a deselected add never strands a method), WITHOUT
- *  committing. `deselectedIds` skips individual staged changes. */
+ *  committing. `deselectedIds` skips individual staged changes.
+ *  Routed through GsRefactoringUndo so the change is RECORDED and can be undone (#434);
+ *  see recordedApplyExpr. The answer is the engine's own envelope plus `undoRecorded`. */
 export function applyMoveMethod(
   execute: AsyncQueryExecutor,
   token: string,

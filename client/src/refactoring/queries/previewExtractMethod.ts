@@ -89,7 +89,9 @@ export function pageExtractMethodPreview(
 
 /** Apply a started preview server-side (compile the new method + rewrite the
  *  original + any selected duplicate sites), WITHOUT committing. The two core
- *  changes are always applied; `deselectedIds` skips only duplicate replacements. */
+ *  changes are always applied; `deselectedIds` skips only duplicate replacements.
+ *  Routed through GsRefactoringUndo so the change is RECORDED and can be undone (#434);
+ *  see recordedApplyExpr. The answer is the engine's own envelope plus `undoRecorded`. */
 export function applyExtractMethod(
   execute: AsyncQueryExecutor,
   token: string,

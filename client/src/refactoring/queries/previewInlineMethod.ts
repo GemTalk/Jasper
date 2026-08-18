@@ -73,7 +73,9 @@ export function pageInlineMethodPreview(
 
 /** Apply a started preview server-side (recompile the caller + optionally remove
  *  the now-unused target), WITHOUT committing. The caller recompile is always
- *  applied; `deselectedIds` skips only the target removal. */
+ *  applied; `deselectedIds` skips only the target removal.
+ *  Routed through GsRefactoringUndo so the change is RECORDED and can be undone (#434);
+ *  see recordedApplyExpr. The answer is the engine's own envelope plus `undoRecorded`. */
 export function applyInlineMethod(
   execute: AsyncQueryExecutor,
   token: string,

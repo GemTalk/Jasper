@@ -92,6 +92,8 @@ export function pageRenameTemporaryPreview(
 // local), WITHOUT committing. A temporary/argument rename is a SINGLE change, so
 // there is nothing to deselect; the engine ignores any deselected set and this
 // always sends an empty one.
+// Routed through GsRefactoringUndo so the change is RECORDED and can be undone (#434);
+// see recordedApplyExpr. The answer is the engine's own envelope plus `undoRecorded`.
 export function applyRenameTemporary(
   execute: AsyncQueryExecutor,
   token: string,
