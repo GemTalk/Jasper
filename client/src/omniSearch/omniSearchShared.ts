@@ -208,9 +208,8 @@ export function renderOmniHtml(opts: { showPin: boolean }): string {
     }
     .tab.explicit { font-style: italic; border-style: dashed; }
     /* Heavy/slow scopes (Source/Literals/Categories) each run a full-image scan, so they carry a
-       distinct hourglass marker rather than the plain magnifier the whole field otherwise reads as
-       (#428 item 27). No backticks in this comment -- the stylesheet is a template literal.
-       Swap 231B (hourglass) for 1F422 (turtle) if the hourglass reads as "loading" instead of "slow". */
+       distinct hourglass marker rather than the plain magnifier the whole field otherwise reads as.
+       No backticks in this comment -- the stylesheet is a template literal. */
     .tab.explicit::before { content: '\\231B\\00A0'; font-style: normal; font-size: 0.9em; }
     .tabsep {
       align-self: center;

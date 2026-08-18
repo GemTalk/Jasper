@@ -20,6 +20,8 @@ interface ViewApi {
     vscode: { postMessage: (m: unknown) => void },
   ): {
     renderTabs: (categories: unknown, scopeId: string | null) => void;
+    renderResults: (view: unknown) => void;
+    onMessage: (event: { data: unknown }) => void;
   };
 }
 
@@ -49,6 +51,37 @@ const CATS = [
   { id: 'source', label: 'Source', explicitOnly: true },
 ];
 // Render order → cycle order: [null, 'classes', 'methods', 'source'].
+
+function row(id: number, label: string, over: Record<string, unknown> = {}) {
+  return {
+    id,
+    label,
+    ranges: [],
+    referenceable: true,
+    categoryId: 'classes',
+    categoryLabel: 'Class',
+    icon: 'symbol-class',
+    ...over,
+  };
+}
+
+// A results message carrying the CATS scopes, so tabs exist and cycling is possible in principle —
+// the point of the guard tests is that Tab still does NOT cycle in the refs / pivot states.
+function resultsData(over: Record<string, unknown> = {}) {
+  return {
+    command: 'results',
+    rows: [row(0, 'Foo')],
+    shownCount: 1,
+    hasMore: false,
+    exact: false,
+    pivot: false,
+    categories: CATS,
+    scopeId: null,
+    caseSensitive: false,
+    pinned: false,
+    ...over,
+  };
+}
 
 function mount() {
   document.body.innerHTML = SHELL;
@@ -116,6 +149,34 @@ describe('scope cycling with Tab / Shift+Tab (#428 #26)', () => {
   it('is a no-op when there is only the All scope', () => {
     const { handle, vscode, input } = mount();
     handle.renderTabs([], null);
+    pressTab(input);
+    expect(lastSetScope(vscode)).toBeUndefined();
+  });
+
+  it('does not cycle while a references list fills the preview pane (Tab dives into the list)', () => {
+    const { handle, vscode, input } = mount();
+    handle.onMessage({ data: resultsData() }); // renders tabs (so cycling is possible) + active row 0
+    handle.onMessage({
+      data: {
+        command: 'refPreview',
+        forId: 0,
+        title: 'Senders of #bar',
+        rows: [],
+        highlightTerm: '',
+      },
+    });
+    // Plain Tab dives into the list; Shift+Tab (which the dive handler ignores) must also not cycle —
+    // that's the case the guard's `previewMode !== 'refs'` clause exists to cover.
+    pressTab(input);
+    pressTab(input, { shiftKey: true });
+    expect(lastSetScope(vscode)).toBeUndefined();
+  });
+
+  it('does not cycle in the classic list pivot (Tab moves native focus into the results)', () => {
+    const { handle, vscode, input } = mount();
+    handle.onMessage({
+      data: resultsData({ pivot: true, pivotTitle: 'References to Foo' }),
+    });
     pressTab(input);
     expect(lastSetScope(vscode)).toBeUndefined();
   });

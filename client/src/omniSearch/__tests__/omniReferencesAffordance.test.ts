@@ -168,21 +168,36 @@ describe('references affordance (#428 #28)', () => {
     expect(vscode.postMessage).toHaveBeenCalledWith(expect.objectContaining({ command: 'back' }));
   });
 
-  it('clicking the chip in preview-refs mode dismisses the refs list (chip hides)', () => {
-    const { handle, chip } = mount();
-    handle.renderResults(resultsMsg({ rows: [row(0, 'Foo')], shownCount: 1 }));
-    handle.onMessage({
-      data: {
-        command: 'refPreview',
-        forId: 0,
-        title: 'Senders of #bar',
-        rows: [],
-        highlightTerm: '',
-      },
-    });
-    expect(chip.style.display).toBe('inline-block');
-    chip.click();
-    expect(chip.style.display).toBe('none');
+  it('clicking the chip in preview-refs mode dismisses the refs list and restores the source preview', () => {
+    vi.useFakeTimers();
+    try {
+      const { handle, vscode, chip } = mount();
+      const preview = document.getElementById('preview')!;
+      handle.renderResults(resultsMsg({ rows: [row(0, 'Foo')], shownCount: 1 }));
+      handle.onMessage({
+        data: {
+          command: 'refPreview',
+          forId: 0,
+          title: 'Senders of #bar',
+          rows: [{ id: 100, label: 'Baz>>qux', ranges: [] }],
+          highlightTerm: 'bar',
+        },
+      });
+      expect(chip.style.display).toBe('inline-block');
+      expect(preview.textContent).toContain('Baz>>qux'); // the refs list really is on screen
+
+      vscode.postMessage.mockClear();
+      chip.click();
+      expect(chip.style.display).toBe('none');
+      // The observable dismissal: re-selecting the active row takes the pane out of refs mode and
+      // re-requests its source preview (debounced). Without that, the refs rows would linger.
+      vi.advanceTimersByTime(300);
+      expect(vscode.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ command: 'preview', id: 0 }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
