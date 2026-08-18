@@ -217,6 +217,10 @@
         activeIndex = -1;
         clearPreview();
       }
+      // Any re-run (new term, case toggle, scope change) can leave the still-shown source preview
+      // highlighting the OLD term; refresh it now rather than waiting for the debounced host round-
+      // trip (which never comes when the active row is unchanged — same source, no repaint). See #8.
+      rehighlightSourcePreview();
       updateFooter(view);
     }
 
@@ -569,6 +573,23 @@
       else previewEl.scrollTop = 0;
     }
 
+    // Re-apply the search-term highlight to the source preview ALREADY on screen, against the current
+    // query + case setting, without waiting for a fresh host round-trip. Changing the term (or the
+    // case toggle) changes only what should be highlighted, not the shown source — so the blue match
+    // marks must track the field immediately. Otherwise the old highlight lingers for the whole
+    // debounce + fetch window, and when the active row is unchanged the host replies with identical
+    // source, so nothing ever forces a visual refresh and the stale marks persist (triage #8). The
+    // preview's textContent reconstructs the original source (its <mark>s only wrap substrings of it),
+    // so we can recompute in place with no state kept.
+    function rehighlightSourcePreview() {
+      if (previewMode !== 'source') return;
+      var pre = previewEl.querySelector('.preview-src');
+      if (!pre) return;
+      var source = pre.textContent || '';
+      pre.textContent = '';
+      highlightOccurrences(pre, source, inputEl.value.trim(), caseSensitive);
+    }
+
     function setBusy(on) {
       if (on) doc.body.classList.add('busy');
       else doc.body.classList.remove('busy');
@@ -614,6 +635,7 @@
       scrollResetPending = true; // a new query starts the list at the top
       previewMode = 'source'; // typing dismisses a sticky references list
       updateClearVisibility();
+      rehighlightSourcePreview(); // clear/refresh the stale blue match marks now, not on the fetch
       post('query', { value: inputEl.value });
     });
 
