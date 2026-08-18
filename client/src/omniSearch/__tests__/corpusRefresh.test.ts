@@ -76,6 +76,8 @@ describe('classes provider corpus refresh', () => {
     expect(changed).toBe(false);
   });
 
+  // Produced in the real app by Explorer → Remove Class, which fires `onClassRemoved` once per class
+  // in the deleted subtree (PR #443 review). The re-fetch comes back empty and the entry drops.
   it('drops a removed class on the next fold', () => {
     const corpus = classCorpus(['Foo', 'Bar']);
     void corpus.provider.prime?.({ isCancelled: false });

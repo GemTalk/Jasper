@@ -2,10 +2,11 @@
  * Classes provider: enumerate every class once when the picker opens (reusing the same
  * `getAllClassNames` corpus `Find Class` uses), then match client-side on each keystroke.
  *
- * The cached corpus is kept fresh two ways: a full `reprime` (drop + reload) on a session sync, and
- * — when a class is compiled locally — a lightweight `applyChange` that re-fetches just that one
- * class (via `lookupClassEntries`) and folds it in, so a new class shows up in search without
- * re-enumerating the whole image.
+ * The cached corpus is kept fresh two ways: a full `reprime` (drop + reload) on a session sync, and a
+ * lightweight `applyChange` that re-fetches just that one class (via `lookupClassEntries`) and
+ * reconciles it, so a change shows up in search without re-enumerating the whole image. The granular
+ * path covers a local compile AND a removal (Explorer → Remove Class, notified per class): the
+ * re-fetch simply comes back empty for a class that is gone, which is what drops it.
  */
 import { ClassNameEntry } from '../../queries/getAllClassNames';
 import {
