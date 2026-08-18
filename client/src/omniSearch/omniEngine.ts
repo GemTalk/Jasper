@@ -1,15 +1,11 @@
 /**
- * Transport-agnostic Omni Search engine for the Phase-2 webview Spotter (issue #378).
+ * Transport-agnostic Omni Search engine for the webview UIs (issue #378).
  *
- * The Phase-1 UI is a native `vscode.QuickPick` driven by `omniSearchController.ts`. Phase 2 replaces
- * that chrome with a webview panel (`omniSearchPanel.ts`), but the SEARCH behaviour is identical:
- * hold the active scope + case flag + result cap, fan out to the in-scope providers, rank/group the
- * results by category, and support the reference pivot. That behaviour lives here — a pure engine
- * with NO `vscode` dependency, so it unit-tests with plain fake providers and is reused by the panel.
- *
- * The engine deliberately does not import the controller (which pulls in `vscode`); the two tiny
- * pure helpers it shares with the controller (`providersInScope` / `gatherResults`) are re-stated
- * here so this module stays `vscode`-free and independently testable. Behaviour is kept in lockstep.
+ * Both webview surfaces — the docked bottom-panel view (`omniSearchViewProvider.ts`) and the
+ * editor-tab Spotter (`omniSearchPanel.ts`) — drive their search through this engine: hold the active
+ * scope + case flag + result cap, fan out to the in-scope providers, rank/group the results by
+ * category, and support the reference pivot. That behaviour lives here — a pure engine with NO
+ * `vscode` dependency, so it unit-tests with plain fake providers and is reused by both surfaces.
  *
  * Output is a plain `OmniViewData` (serialisable rows grouped by category, plus the footer meta) that
  * the panel forwards to the webview verbatim. Rows are addressed by a stable numeric `id` within a
@@ -18,14 +14,27 @@
  */
 import {
   OMNI_CATEGORIES,
+  CATEGORY_BY_ID,
+  NEVER_CANCELLED,
   OmniCancel,
   OmniCategoryId,
   OmniConfig,
+  OmniCorpusChange,
   OmniProvider,
   OmniResult,
+  OmniTruncation,
+  OmniTruncationSink,
+  changeCategoryId,
 } from './omniTypes';
 import { match, compareMatches } from './omniMatch';
 import { referenceRequestFor } from './references';
+
+/** A provider's truncation report plus the human scope name, so the webview can say WHICH scope was
+ *  capped and at what number without carrying a category table of its own. */
+export interface OmniViewTruncation extends OmniTruncation {
+  /** e.g. "Methods" — the category's display label. */
+  categoryLabel: string;
+}
 
 /** A single result row, flattened for the webview (no non-serialisable `action`). */
 export interface OmniViewRow {
@@ -63,9 +72,16 @@ export interface OmniViewData {
   shownCount: number;
   /** True when at least one category filled its cap — more results are available. */
   hasMore: boolean;
-  /** True once the cap has been jumped to "load all", so `shownCount` is the exact total (bounded
-   *  only by the providers' server fetch caps) rather than a capped subset. */
+  /** True when `shownCount` IS the total for this term — nothing was left unfetched. Requires both
+   *  that the cap was jumped to "load all" and that no provider hit its own fetch ceiling; see
+   *  `truncations` (triage #14 — this used to be derived from the cap alone, which let the footer
+   *  report a ceiling-truncated slice as an exact count). */
   exact: boolean;
+  /** One entry per in-scope provider whose own server fetch ceiling bounded its results, so
+   *  `shownCount` is a floor and raising the display cap cannot reveal the rest. Empty = nothing was
+   *  cut off. Non-empty is never `exact`, and the view surfaces it as a visible notice naming the
+   *  scope and the number it stopped at. */
+  truncations: OmniViewTruncation[];
   /** True while showing a reference pivot (typing then filters these rows client-side). */
   pivot: boolean;
   /** Breadcrumb title while pivoted (e.g. "Senders of printString"). */
@@ -110,12 +126,14 @@ export interface OmniEngineDeps {
 }
 
 // "Load all" jumps the display cap here — big enough to mean "everything" in practice; the true
-// ceiling is each provider's own server fetch cap (a few hundred), so this never runs away. Matches
-// the QuickPick controller's constant so the two UIs behave identically.
-const LOAD_ALL_LIMIT = 100_000;
+// ceiling is each provider's own server fetch cap (a few hundred), so this never runs away. Because
+// that ceiling can bind BEFORE this cap does, reaching this value does not by itself mean the results
+// are complete — see `truncated` (triage #14). Matches the QuickPick controller's constant so the two
+// UIs behave identically.
+export const LOAD_ALL_LIMIT = 100_000;
 
 /** The enabled providers in scope. Under the all-scope (`null`), explicit-only categories are
- *  excluded so heavyweight searches never fire on a plain keystroke. (Mirror of the controller.) */
+ *  excluded so heavyweight searches never fire on a plain keystroke. */
 export function providersInScope(
   providers: readonly OmniProvider[],
   scopeId: OmniCategoryId | null,
@@ -124,17 +142,20 @@ export function providersInScope(
   return providers.filter((p) => p.category.id === scopeId);
 }
 
-/** Run each in-scope provider and collect its results (each already ranked + capped). */
+/** Run each in-scope provider and collect its results (each already ranked + capped). Providers with
+ *  a server fetch ceiling of their own report through `reportTruncated` when that ceiling cut them
+ *  off, so the caller can tell a complete result set from a bounded slice (triage #14). */
 export async function gatherResults(
   term: string,
   providers: readonly OmniProvider[],
   cfg: OmniConfig,
   token: OmniCancel,
+  reportTruncated?: OmniTruncationSink,
 ): Promise<OmniResult[]> {
   const all: OmniResult[] = [];
   for (const p of providers) {
     if (token.isCancelled) break;
-    const part = await p.search(term, cfg, token);
+    const part = await p.search(term, cfg, token, reportTruncated);
     all.push(...part);
   }
   return all;
@@ -238,6 +259,13 @@ function buildView(
 export interface OmniEngine {
   /** Prime load-once providers (concurrently; a failing prime just yields no results). */
   prime(onError?: (message: string) => void): Promise<void>;
+  /** Fold a single known local change (a class compile) into the cached corpora. Re-runs the current
+   *  term and returns the new view ONLY when the change could affect what's shown (the changed name
+   *  matches the term and its category is in scope); returns null otherwise, leaving the view as-is. */
+  applyChange(change: OmniCorpusChange): Promise<OmniViewData | null>;
+  /** Drop + rebuild every cached corpus (on a session sync — commit/abort), catching changes from
+   *  outside this UI, then re-run the current term. Returns null while a pivot is showing. */
+  resync(onError?: (message: string) => void): Promise<OmniViewData | null>;
   /** Run the search for a raw field value and return the view (or null if superseded by a newer
    *  call). In the pivot, this filters the loaded reference rows client-side instead. */
   search(rawValue: string): Promise<OmniViewData | null>;
@@ -310,6 +338,8 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
       {
         hasMore: false,
         exact: true,
+        // The pivot shows a fully-loaded reference list, not a bounded provider fan-out.
+        truncations: [],
         pivot: true,
         pivotTitle: pivot?.title,
       },
@@ -337,7 +367,7 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
     if (term.length === 0) {
       ++generation;
       current = [];
-      return buildView([], { hasMore: false, exact: false, pivot: false }, () => ({
+      return buildView([], { hasMore: false, exact: false, truncations: [], pivot: false }, () => ({
         referenceable: false,
       }));
     }
@@ -348,7 +378,13 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
       },
     };
     const inScope = providersInScope(providers, scopeId);
-    const results = await gatherResults(term, inScope, effectiveConfig(), token);
+    // Collected from any provider whose own server fetch ceiling bounded its results (today: methods).
+    // A non-empty list means the run can never be an exact total, however high the display cap goes.
+    const truncations: OmniViewTruncation[] = [];
+    const results = await gatherResults(term, inScope, effectiveConfig(), token, (t) => {
+      const label = OMNI_CATEGORIES.find((c) => c.id === t.categoryId)?.label ?? t.categoryId;
+      truncations.push({ ...t, categoryLabel: label });
+    });
     if (token.isCancelled) return null; // a newer call superseded this run
 
     // Offer "load more" whenever ANY category filled its cap (so it works in the all-scope too).
@@ -359,7 +395,14 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
     current = results;
     return buildView(
       results,
-      { hasMore, exact: scopeLimit >= LOAD_ALL_LIMIT, pivot: false },
+      // "Load all" alone does NOT make the count exact: a ceiling-truncated provider leaves rows
+      // unfetched that no cap can reach, so claim exactness only when nothing was cut off (#14).
+      {
+        hasMore,
+        exact: scopeLimit >= LOAD_ALL_LIMIT && truncations.length === 0,
+        truncations,
+        pivot: false,
+      },
       referenceInfo,
       term,
     );
@@ -376,6 +419,52 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
           }
         }),
       );
+    },
+    async applyChange(change) {
+      let changed = false;
+      for (const p of providers) {
+        if (!p.applyChange) continue;
+        try {
+          if (await p.applyChange(change, NEVER_CANCELLED)) changed = true;
+        } catch {
+          // A failed fold just leaves that provider's cache as-is; a later resync will correct it.
+        }
+      }
+      // The caches are now current regardless; the question is only whether the CURRENT view needs
+      // redrawing. Never mid-pivot, never on an empty box (shows nothing).
+      if (pivot) return null;
+      const term = lastRawValue.trim();
+      if (term.length === 0) return null;
+
+      // The Categories scope is DERIVED from classes — a class compile can introduce a new category,
+      // and we can't cheaply know its name to match, so re-run to reload + re-rank against the term.
+      if (scopeId === CATEGORY_BY_ID.categories.id) {
+        return change.kind === 'class' ? runSearch(lastRawValue) : null;
+      }
+      // Scopes where the changed item's own name is what's shown (the classes scope, and the all-scope
+      // which includes classes): skip the redraw when nothing changed or the new name can't match the
+      // current term (avoids a needless re-render / scroll reset on an unrelated compile).
+      if (scopeId === null || scopeId === changeCategoryId(change)) {
+        if (!changed) return null;
+        if (!match(term, change.className, { mode: config.matchMode, caseSensitive })) return null;
+        return runSearch(lastRawValue);
+      }
+      // Any other scope (methods/source/…) is unaffected by this kind of change.
+      return null;
+    },
+    async resync(onError) {
+      await Promise.all(
+        providers.map(async (p) => {
+          try {
+            await (p.reprime ?? p.prime)?.(NEVER_CANCELLED);
+          } catch (e: unknown) {
+            onError?.(e instanceof Error ? e.message : String(e));
+          }
+        }),
+      );
+      // Don't disturb a pivot; otherwise re-run the current term against the rebuilt corpora.
+      if (pivot) return null;
+      return runSearch(lastRawValue);
     },
     search: (rawValue) => runSearch(rawValue),
     async setScope(newScope) {
@@ -418,9 +507,11 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
       const view = await deps.resolveReferences(result);
       if (!view) return null; // not referenceable
       referenceRows = view.results;
-      const built = buildView(referenceRows, { hasMore: false, exact: true, pivot: false }, () => ({
-        referenceable: false,
-      }));
+      const built = buildView(
+        referenceRows,
+        { hasMore: false, exact: true, truncations: [], pivot: false },
+        () => ({ referenceable: false }),
+      );
       return { title: view.title, highlightTerm: view.target, rows: built.rows };
     },
     referenceResultFor: (refId) => referenceRows[refId],

@@ -108,14 +108,18 @@ describe('referencesToLiteral', () => {
 });
 
 describe('literalSymbolReferences', () => {
-  it('subtracts the senders from the literal-frame refs (data-literal uses only)', () => {
+  it('intersects a source-substring pre-filter with literal-frame membership (data-literal uses only)', () => {
     const execute = vi.fn<QueryExecutor>(() => '');
     literalSymbolReferences(execute, '#size');
     const code = execute.mock.calls[0][0];
     expect(code).toContain('symLit := #size.');
     expect(code).toContain('referencesToLiteral: symLit');
-    expect(code).toContain('sendersOf: symLit');
-    expect(code).toContain('reject:');
+    // The textual form of the symbol is the substring pre-filter (a send like `x size` has source
+    // "size", not "#size", so it's excluded); frame membership then confirms it's a real literal.
+    expect(code).toContain("substringSearch: '#size' ignoreCase: false");
+    expect(code).toContain('lit includes: m');
+    // The old "subtract senders" heuristic is gone — sendersOf: under-reports for some selectors.
+    expect(code).not.toContain('sendersOf:');
   });
 });
 

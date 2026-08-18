@@ -59,8 +59,28 @@ describe('Methods pane category grouping', () => {
 
     expect(children.every((c) => c instanceof MethodCategoryItem)).toBe(true);
     expect((children as MethodCategoryItem[]).map((c) => c.category)).toEqual(
-      expect.arrayContaining([ALL_METHODS_CATEGORY, 'accessing', 'printing']),
+      expect.arrayContaining(['accessing', 'printing']),
     );
+  });
+
+  it('leads with a REAL category — no ALL METHODS pseudo-category (#387 item 10)', () => {
+    const ctl = makeController();
+
+    const categories = (ctl.methodProvider.getChildren() as MethodCategoryItem[]).map(
+      (c) => c.category,
+    );
+
+    // It used to come first and expanded, pushing the real categories below the fold.
+    expect(categories).not.toContain(ALL_METHODS_CATEGORY);
+    expect(categories[0]).toBe('accessing');
+  });
+
+  it('starts every category collapsed now that nothing forces itself open', () => {
+    const ctl = makeController();
+
+    for (const c of ctl.methodProvider.getChildren() as MethodCategoryItem[]) {
+      expect(c.collapsibleState).toBe(TreeItemCollapsibleState.Collapsed);
+    }
   });
 
   it('lists methods flat, with no category rows, when grouping is off', () => {
