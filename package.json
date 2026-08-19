@@ -2446,7 +2446,7 @@
         },
         {
           "command": "gemstone.undoLastRefactoring",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass && gemstone.refactoringUndoAvailable",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/ && gemstone.refactoringUndoAvailable",
           "group": "3_refactor@9"
         },
         {
