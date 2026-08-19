@@ -12,47 +12,9 @@
  * measured width — the width itself is what Eric verifies at F5.
  */
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
-import * as fs from 'fs';
-import * as path from 'path';
+import { loadOmniView, mountOmniView } from './omniViewHarness';
 
-beforeAll(() => {
-  const source = fs.readFileSync(path.resolve(__dirname, '../omniSearchView.js'), 'utf8');
-  new Function(source)();
-  Element.prototype.scrollIntoView = vi.fn();
-});
-
-interface WiredView {
-  renderResults: (view: unknown) => void;
-  onMessage: (event: { data: unknown }) => void;
-  setActive: (i: number, scroll?: boolean) => void;
-  previewEnabled: () => boolean;
-}
-
-interface ViewApi {
-  wire(doc: Document, vscode: { postMessage: (m: unknown) => void }): WiredView;
-}
-
-function api(): ViewApi {
-  return (globalThis as unknown as { OmniSearchView: ViewApi }).OmniSearchView;
-}
-
-// The real chrome from renderOmniHtml, trimmed to what this file touches — including the two
-// Round-6 controls, which the older view test's shell predates.
-const SHELL =
-  '<div id="omni">' +
-  '<div id="tabs"></div>' +
-  '<div id="field"><input id="query" type="text"><button id="clear" style="display:none">×</button></div>' +
-  '<button id="case">Aa</button>' +
-  '<button id="previewToggle" aria-pressed="true">◧</button>' +
-  '<span id="scopeFilterWrap"><button id="scopeFilter" aria-expanded="false">▽</button>' +
-  '<div id="scopeFilterMenu" hidden></div></span>' +
-  '<div id="breadcrumb"></div>' +
-  '<div id="error"></div>' +
-  '<div id="body"><ul id="results"></ul><div id="preview"></div></div>' +
-  '<span id="count"></span>' +
-  '<button id="loadMore" style="display:none">Load more</button>' +
-  '<button id="loadAll" style="display:none">Load all</button>' +
-  '</div>';
+beforeAll(loadOmniView);
 
 function row(id: number, label: string) {
   return {
@@ -66,15 +28,7 @@ function row(id: number, label: string) {
   };
 }
 
-function mount() {
-  document.body.innerHTML = SHELL;
-  document.body.className = '';
-  const posted: Array<Record<string, unknown>> = [];
-  const view = api().wire(document, {
-    postMessage: (m: unknown) => posted.push(m as Record<string, unknown>),
-  });
-  return { view, posted };
-}
+const mount = () => mountOmniView();
 
 const el = (id: string) => document.getElementById(id) as HTMLElement;
 const commands = (posted: Array<Record<string, unknown>>) => posted.map((m) => m.command);

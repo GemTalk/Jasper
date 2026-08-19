@@ -541,8 +541,7 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
       return runSearch(lastRawValue);
     },
     async setExcludedFromAll(ids) {
-      const cats = new Map(OMNI_CATEGORIES.map((c) => [c.id, c]));
-      excludedFromAll = new Set(ids.filter((id) => cats.get(id)?.explicitOnly !== true));
+      excludedFromAll = new Set(ids.filter((id) => CATEGORY_BY_ID[id]?.explicitOnly !== true));
       // Re-running with the SAME term must not inherit a raised cap from a previous load-more, and
       // `runSearch` only resets the cap when the term itself changes — so reset it here, as setScope
       // does. Narrowing "All" is a fresh question, not more of the last answer.

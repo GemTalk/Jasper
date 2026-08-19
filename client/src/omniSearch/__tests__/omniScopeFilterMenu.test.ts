@@ -1,51 +1,16 @@
 // @vitest-environment jsdom
 /**
- * #428 item #41 — the in-panel scope filter (the ▽ menu).
+ * #428 item #41 — the in-panel scope filter (the Scopes menu).
  *
  * The engine side is covered in omniAllScopeFilter.test.ts; this covers the control itself, where
  * the subtle requirements live: the menu must offer only the categories that are genuinely a choice,
  * it must show a narrowed "All" without being opened (otherwise a missing category reads as a search
  * bug), and its Escape must dismiss the MENU rather than the whole panel.
  */
-import { describe, it, expect, beforeAll, vi } from 'vitest';
-import * as fs from 'fs';
-import * as path from 'path';
+import { describe, it, expect, beforeAll } from 'vitest';
+import { loadOmniView, mountOmniView } from './omniViewHarness';
 
-beforeAll(() => {
-  const source = fs.readFileSync(path.resolve(__dirname, '../omniSearchView.js'), 'utf8');
-  new Function(source)();
-  Element.prototype.scrollIntoView = vi.fn();
-});
-
-interface WiredView {
-  onMessage: (event: { data: unknown }) => void;
-  scopeMenuOpen: () => boolean;
-  excludedFromAll: () => string[];
-}
-
-interface ViewApi {
-  wire(doc: Document, vscode: { postMessage: (m: unknown) => void }): WiredView;
-}
-
-function api(): ViewApi {
-  return (globalThis as unknown as { OmniSearchView: ViewApi }).OmniSearchView;
-}
-
-const SHELL =
-  '<div id="omni">' +
-  '<div id="tabs"></div>' +
-  '<div id="field"><input id="query" type="text"><button id="clear" style="display:none">×</button></div>' +
-  '<button id="case">Aa</button>' +
-  '<button id="previewToggle" aria-pressed="true">◧</button>' +
-  '<span id="scopeFilterWrap"><button id="scopeFilter" aria-expanded="false">▽</button>' +
-  '<div id="scopeFilterMenu" hidden></div></span>' +
-  '<div id="breadcrumb"></div>' +
-  '<div id="error"></div>' +
-  '<div id="body"><ul id="results"></ul><div id="preview"></div></div>' +
-  '<span id="count"></span>' +
-  '<button id="loadMore" style="display:none">Load more</button>' +
-  '<button id="loadAll" style="display:none">Load all</button>' +
-  '</div>';
+beforeAll(loadOmniView);
 
 const CATEGORIES = [
   { id: 'classes', label: 'Classes', explicitOnly: false },
@@ -57,19 +22,8 @@ const CATEGORIES = [
   { id: 'categories', label: 'Categories', explicitOnly: true },
 ];
 
-function mount(over: Record<string, unknown> = {}) {
-  document.body.innerHTML = SHELL;
-  document.body.className = '';
-  const posted: Array<Record<string, unknown>> = [];
-  const view = api().wire(document, {
-    postMessage: (m: unknown) => posted.push(m as Record<string, unknown>),
-  });
-  view.onMessage({
-    data: { command: 'config', categories: CATEGORIES, excludedFromAll: [], ...over },
-  });
-  posted.length = 0;
-  return { view, posted };
-}
+const mount = (over: Record<string, unknown> = {}) =>
+  mountOmniView({ categories: CATEGORIES, excludedFromAll: [], ...over });
 
 const el = (id: string) => document.getElementById(id) as HTMLElement;
 const options = () => Array.from(document.querySelectorAll('#scopeFilterMenu .scope-opt'));

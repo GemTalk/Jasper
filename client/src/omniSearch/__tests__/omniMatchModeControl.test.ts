@@ -10,9 +10,8 @@
  * engine construction — so a live change would silently do nothing while a references list was open.
  * That is pinned below.
  */
-import { describe, it, expect, beforeAll, vi } from 'vitest';
-import * as fs from 'fs';
-import * as path from 'path';
+import { describe, it, expect, beforeAll } from 'vitest';
+import { loadOmniView, mountOmniView, WiredOmniView } from './omniViewHarness';
 import { createOmniEngine, ReferenceView } from '../omniEngine';
 import { OMNI_DEFAULTS } from '../omniConfig';
 import { CATEGORY_BY_ID, OmniCategoryId, OmniConfig, OmniProvider, OmniResult } from '../omniTypes';
@@ -106,8 +105,9 @@ describe('engine.setMatchMode (#42)', () => {
     await engine.search('arr');
     await engine.pivot(0);
 
-    // Fuzzy: "oc" matches OrderedCollection as a subsequence, and Collection too (C-o-...-c? no) —
-    // assert against prefix, which is unambiguous.
+    // Fuzzy: "oc" matches OrderedCollection as a subsequence, and Collection too (o@1, c@5) — so on
+    // its own it can't tell the live mode from the construction-time one. The prefix assertion below
+    // is the unambiguous discriminator.
     const fuzzy = await engine.search('oc');
     expect(fuzzy?.rows.some((r) => r.label === 'OrderedCollection')).toBe(true);
 
@@ -121,57 +121,14 @@ describe('engine.setMatchMode (#42)', () => {
 
 // ── The panel chip ──────────────────────────────────────────────────
 
-beforeAll(() => {
-  const source = fs.readFileSync(path.resolve(__dirname, '../omniSearchView.js'), 'utf8');
-  new Function(source)();
-  Element.prototype.scrollIntoView = vi.fn();
-});
+beforeAll(loadOmniView);
 
-interface WiredView {
-  onMessage: (event: { data: unknown }) => void;
-  matchMode: () => string;
-}
-
-interface ViewApi {
-  wire(doc: Document, vscode: { postMessage: (m: unknown) => void }): WiredView;
-}
-
-function api(): ViewApi {
-  return (globalThis as unknown as { OmniSearchView: ViewApi }).OmniSearchView;
-}
-
-const SHELL =
-  '<div id="omni">' +
-  '<div id="tabs"></div>' +
-  '<div id="field"><input id="query" type="text"><button id="clear" style="display:none">×</button></div>' +
-  '<button id="case">Aa</button>' +
-  '<button id="previewToggle" aria-pressed="true">◧</button>' +
-  '<span id="scopeFilterWrap"><button id="scopeFilter" aria-expanded="false">Scopes</button>' +
-  '<div id="scopeFilterMenu" hidden></div></span>' +
-  '<button id="matchMode">Fuzzy</button>' +
-  '<div id="breadcrumb"></div>' +
-  '<div id="error"></div>' +
-  '<div id="body"><ul id="results"></ul><div id="preview"></div></div>' +
-  '<span id="count"></span>' +
-  '<button id="loadMore" style="display:none">Load more</button>' +
-  '<button id="loadAll" style="display:none">Load all</button>' +
-  '</div>';
-
-function mount(matchMode = 'fuzzy') {
-  document.body.innerHTML = SHELL;
-  const posted: Array<Record<string, unknown>> = [];
-  const view = api().wire(document, {
-    postMessage: (m: unknown) => posted.push(m as Record<string, unknown>),
-  });
-  view.onMessage({ data: { command: 'config', categories: [], matchMode } });
-  posted.length = 0;
-  return { view, posted };
-}
+const mount = (matchMode = 'fuzzy') => mountOmniView({ categories: [], matchMode });
 
 const chip = () => document.getElementById('matchMode') as HTMLElement;
 
 /** Push the mode the engine settled on back to the view, as a real results message would. */
-function echo(view: WiredView, matchMode: string) {
+function echo(view: WiredOmniView, matchMode: string) {
   view.onMessage({
     data: {
       command: 'results',

@@ -70,7 +70,14 @@ export function placeholderFor(scopeId: string | null): string {
   return 'Search classes, methods, globals…';
 }
 
-/** The `results` message payload for a fresh view, decorated with the current chrome state. */
+/**
+ * The `results` message payload for a fresh view, decorated with the current chrome state.
+ *
+ * `previewPane` is deliberately NOT included here. Once the webview has it from `configMessage` the
+ * toggle belongs to the webview alone (the engine has no part in it), so re-sending it on every
+ * results message would silently undo the user's toggle on their next keystroke. Anyone adding a
+ * field to this payload should double-check it is engine-owned before forwarding it.
+ */
 export function resultsMessage(
   view: OmniViewData,
   chrome: {
@@ -107,9 +114,6 @@ export function resultsMessage(
     matchMode: chrome.matchMode,
     placeholder: placeholderFor(view.pivot ? null : chrome.scopeId),
   };
-  // NOTE: `previewPane` is deliberately NOT here. Once the webview has it from `configMessage` the
-  // toggle belongs to the webview alone (the engine has no part in it), so re-sending it on every
-  // results message would silently undo the user's toggle on their next keystroke.
 }
 
 /** The initial `config` message sent on `ready`. */
