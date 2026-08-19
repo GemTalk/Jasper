@@ -764,7 +764,14 @@ export class ExplorerController {
       );
       return undefined;
     }
-    this.sessionManager.selectSession(sessionId);
+    // Only switch when the result came from a DIFFERENT session than the one already selected. The
+    // common case — searching and clicking a result in the session you are already in — must not fire a
+    // needless `selectSession`, which unconditionally emits onDidChangeSelection (sessionManager.ts) and
+    // drives a full downstream refresh it doesn't need: symbol-cache invalidation, admin-panel restale,
+    // sunit resync, tree refreshes. Mirrors OmniSearchPanel.show()'s session-id compare before switching.
+    if (this.sessionManager.getSelectedSession()?.id !== sessionId) {
+      this.sessionManager.selectSession(sessionId);
+    }
     return session;
   }
 

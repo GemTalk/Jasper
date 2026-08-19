@@ -193,6 +193,16 @@ describe('reveal targets the result’s own session, not whatever is selected no
     expect(dict.reveal).toHaveBeenCalledTimes(1); // and actually revealed
   });
 
+  it('does not re-select when the result already came from the active session', async () => {
+    const { ctl, selectSession } = makeTwoSessionController(1); // active session is 1…
+    const { dict } = withViews(ctl);
+
+    await ctl.revealDictionaryByName('UserGlobals', 1); // …and the result also came from session 1
+
+    expect(selectSession).not.toHaveBeenCalled(); // no needless switch → no downstream refresh cycle
+    expect(dict.reveal).toHaveBeenCalledTimes(1); // still reveals
+  });
+
   it('warns and does not reveal when the result’s session is gone', async () => {
     const { ctl, selectSession } = makeTwoSessionController(2);
     const { dict } = withViews(ctl);
