@@ -70,12 +70,23 @@ export class OmniSearchPanel {
   // Guard so an initial "inactive" view-state event can't dispose the panel before it's ever focused.
   private hasBeenActive = false;
 
-  /** Open (or reveal) the Spotter. Only one exists at a time — a second invocation refocuses it. */
+  /** Open (or reveal) the Spotter. Only one exists at a time. A second invocation for the SAME
+   *  session just refocuses it; one for a DIFFERENT session replaces it, because a Spotter is bound
+   *  to its session (see below) and can't be re-pointed in place. */
   static show(deps: OmniPanelDeps): void {
-    if (OmniSearchPanel.current) {
-      OmniSearchPanel.current.panel.reveal(OmniSearchPanel.current.panel.viewColumn);
-      OmniSearchPanel.current.panel.webview.postMessage({ command: 'focusInput' });
-      return;
+    const existing = OmniSearchPanel.current;
+    if (existing) {
+      if (existing.deps.sessionId === deps.sessionId) {
+        // Same session: bring the open Spotter forward and refocus its field.
+        existing.panel.reveal(existing.panel.viewColumn);
+        existing.panel.webview.postMessage({ command: 'focusInput' });
+        return;
+      }
+      // Different session: the open Spotter's engine (and its providers, activation and preview) was
+      // built once from the OLD session's `deps` in the constructor and can't be re-pointed here, so a
+      // bare reveal would keep searching and opening against the previous session with no sign
+      // anything is wrong. Replace it with a Spotter bound to the new session's deps.
+      existing.dispose();
     }
     const panel = vscode.window.createWebviewPanel(
       'gemstoneOmniSearch',

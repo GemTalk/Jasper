@@ -50,7 +50,6 @@ describe('referenceRequestFor', () => {
       title: 'Senders of printString',
       kind: 'senders',
       selector: 'printString',
-      environmentId: 0,
     });
   });
 
@@ -59,7 +58,6 @@ describe('referenceRequestFor', () => {
       title: 'References to OrderedCollection',
       kind: 'references',
       className: 'OrderedCollection',
-      environmentId: 0,
     });
   });
 
@@ -82,7 +80,6 @@ describe('referenceRequestFor', () => {
       title: 'References to Transcript',
       kind: 'references',
       className: 'Transcript',
-      environmentId: 0,
     });
   });
 
@@ -124,6 +121,25 @@ describe('methodRowsToResults', () => {
       kind: 'openMethod',
       isMeta: true,
       selector: 'with:',
+    });
+  });
+
+  it('carries the given method environment into each open action (defaults to 0)', () => {
+    const rows: MethodSearchResult[] = [
+      {
+        dictName: 'Globals',
+        className: 'Array',
+        isMeta: false,
+        selector: 'do:',
+        category: 'enumerating',
+      },
+    ];
+
+    // Default: env 0 (the Source/Literals scopes rely on this).
+    expect(methodRowsToResults(rows, 7)[0].action).toMatchObject({ environmentId: 0 });
+    // Explicit non-zero env (a references-pivot hit found in environment 2) must open there, not env 0.
+    expect(methodRowsToResults(rows, 7, 'methods', 2)[0].action).toMatchObject({
+      environmentId: 2,
     });
   });
 });

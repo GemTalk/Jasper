@@ -750,6 +750,24 @@ export class ExplorerController {
     return this.sessionManager.getSelectedSession();
   }
 
+  // Resolve the session a reveal should run against. When a caller (Omni Search) names the session its
+  // result came from, switch the Explorer to that session first so the reveal targets the right data —
+  // otherwise, after the user switches the active session, a click would resolve against the new one
+  // and land in the wrong session (or a same-named dictionary/category). With no id, fall back to the
+  // normal "resolve the selected session (prompting if ambiguous)" path.
+  private async resolveSessionFor(sessionId?: number): Promise<ActiveSession | undefined> {
+    if (sessionId === undefined) return this.sessionManager.resolveSession();
+    const session = this.sessionManager.getSession(sessionId);
+    if (!session) {
+      void vscode.window.showWarningMessage(
+        `That result's GemStone session (${sessionId}) is no longer active.`,
+      );
+      return undefined;
+    }
+    this.sessionManager.selectSession(sessionId);
+    return session;
+  }
+
   setViews(views: ExplorerViews): void {
     this.views = views;
     this.syncTitles();
@@ -3559,10 +3577,11 @@ export class ExplorerController {
   // Browser "Find Class…"), then cascade the new panes to the chosen class:
   // select its dictionary and class-category, reveal the class row, and open its
   // definition. An explicit `name` arg (programmatic callers) skips the picker.
-  async findClass(name?: string): Promise<void> {
+  async findClass(name?: string, sessionId?: number): Promise<void> {
     // Resolve rather than require a pre-selected session: if one session is
     // logged in it's chosen automatically (a bare getSelectedSession() no-ops).
-    const session = await this.sessionManager.resolveSession();
+    // An explicit sessionId (Omni Search) pins the reveal to the result's own session.
+    const session = await this.resolveSessionFor(sessionId);
     if (!session) return;
 
     let entries: queries.ClassNameEntry[];
@@ -3607,8 +3626,8 @@ export class ExplorerController {
   // Reveal+select a dictionary row by name in the Dictionaries pane (used by Omni
   // Search). Resolves the 1-based symbol-list index from the live list, cascades
   // the panes to that dictionary, and highlights its row. Warns on an unknown name.
-  async revealDictionaryByName(name: string): Promise<void> {
-    const session = await this.sessionManager.resolveSession();
+  async revealDictionaryByName(name: string, sessionId?: number): Promise<void> {
+    const session = await this.resolveSessionFor(sessionId);
     if (!session) return;
     const names = queries.getDictionaryNames(session);
     const idx = names.indexOf(name);
@@ -3632,8 +3651,12 @@ export class ExplorerController {
   // Reveal+select a class-category node by path in the Categories pane (used by Omni Search). Selects
   // the home dictionary first (so its categories load + the classes pane filters to the category),
   // then selects and reveals the category node itself.
-  async revealCategoryByPath(dictName: string, categoryPath: string): Promise<void> {
-    const session = await this.sessionManager.resolveSession();
+  async revealCategoryByPath(
+    dictName: string,
+    categoryPath: string,
+    sessionId?: number,
+  ): Promise<void> {
+    const session = await this.resolveSessionFor(sessionId);
     if (!session) return;
     const names = queries.getDictionaryNames(session);
     const idx = names.indexOf(dictName);
@@ -5341,20 +5364,36 @@ export function registerGemStoneExplorer(
       if (node instanceof MethodItem) void ctl.openMethod(node, 'pin');
     }),
     // Find Class: cascade the panes to a class by name (from the Classes pane
-    // title button or the command palette).
-    vscode.commands.registerCommand('gemstone.explorer.findClass', (name?: string) =>
-      ctl.findClass(typeof name === 'string' ? name : undefined),
+    // title button or the command palette). The optional sessionId lets a caller (Omni Search) target
+    // the session its result came from rather than whatever session is selected now.
+    vscode.commands.registerCommand(
+      'gemstone.explorer.findClass',
+      (name?: string, sessionId?: number) =>
+        ctl.findClass(
+          typeof name === 'string' ? name : undefined,
+          typeof sessionId === 'number' ? sessionId : undefined,
+        ),
     ),
-    // Reveal+select a dictionary row by name (Omni Search dictionary results).
-    vscode.commands.registerCommand('gemstone.explorer.revealDictionary', (name?: string) =>
-      typeof name === 'string' ? ctl.revealDictionaryByName(name) : undefined,
+    // Reveal+select a dictionary row by name (Omni Search dictionary results). Optional sessionId as
+    // above — the result carries the session it was found in.
+    vscode.commands.registerCommand(
+      'gemstone.explorer.revealDictionary',
+      (name?: string, sessionId?: number) =>
+        typeof name === 'string'
+          ? ctl.revealDictionaryByName(name, typeof sessionId === 'number' ? sessionId : undefined)
+          : undefined,
     ),
-    // Reveal+select a class-category node by dict + path (Omni Search category results).
+    // Reveal+select a class-category node by dict + path (Omni Search category results). Optional
+    // sessionId as above.
     vscode.commands.registerCommand(
       'gemstone.explorer.revealCategory',
-      (dictName?: string, categoryPath?: string) =>
+      (dictName?: string, categoryPath?: string, sessionId?: number) =>
         typeof dictName === 'string' && typeof categoryPath === 'string'
-          ? ctl.revealCategoryByPath(dictName, categoryPath)
+          ? ctl.revealCategoryByPath(
+              dictName,
+              categoryPath,
+              typeof sessionId === 'number' ? sessionId : undefined,
+            )
           : undefined,
     ),
     // Open a class's definition editor (inline button / menu on the class row —
