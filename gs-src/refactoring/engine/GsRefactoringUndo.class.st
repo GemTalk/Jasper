@@ -31,15 +31,38 @@ Ordering inside the inverse: restore-what-was-deleted first, then recompile-what
 changed, then delete-what-was-created. Undoing a rename therefore brings the
 original selector back BEFORE the new one is removed.
 
-Scope (Tier 1 of #434)
-----------------------
-METHOD changes only -- #methodAdd, #methodRemove, #methodRecompile, #methodRename.
-If the change set holds anything that reshapes a CLASS (#classAdd, #classRename,
-#classReparent, #classDefinitionEdit) NO undo entry is recorded at all, and the
-apply's own result is returned unchanged: half an undo is worse than none, and
-class shape wants the classHistory revert path instead (see
-GsClassHistory>>revertClassNamed:toIndex:). The apply result's undoRecorded field
-reports which it was, so the client can say so rather than silently offering nothing.
+TWO mechanisms, one entry
+-------------------------
+A second kind of entry exists for the pure RENAMES -- rename class, rename instance
+variable, rename class variable. Those cannot be reversed by the change-set diff above:
+the diff is keyed by class NAME (and by (class, side, selector) slots), and a rename is
+precisely the thing that moves the key. A rename also re-versions the class, so there is
+no method-slot difference to invert.
+
+Instead such an entry records the OPERATION -- kind, class, from-name, to-name, scope --
+and reversing it REBUILDS the same rename engine in the opposite direction and previews
+and applies THAT. So `mechanism` answers either:
+
+  #changeSet   -- apply the recorded inverse change set (method refactorings)
+  #renameBack  -- rebuild the rename in the opposite direction and apply it
+
+Both are previewed and applied through the same client path, because both end up
+answering an ordinary change set to page over.
+
+A #renameBack is deliberately NOT a rollback and the UI says so: GemStone has no
+transaction savepoints, so renaming back is a fresh forward rename. Class history GROWS;
+it never shrinks. The compensation is real, though -- a rename carries methods forward, so
+anything written AFTER the original rename survives the reversal, which a classHistory
+revert would have discarded.
+
+Still out of scope
+------------------
+Everything else that reshapes a class -- add/remove instance variable, instance-variable
+structure, extract superclass, split class -- records NO entry: half an undo is worse than
+none. Those need machinery that does not exist yet (a class-removal primitive, an inverse
+ordering that stays top-down, classHistory reverts), or they lose data a by-name reversal
+cannot restore. The apply result's undoRecorded field reports which it was, so the client
+can say so rather than silently offering nothing.
 
 Nothing here commits. An undo of an uncommitted refactoring stays uncommitted; an
 undo of a committed one needs the user's own commit, exactly like every apply.
@@ -55,7 +78,9 @@ Class {
 		'label',
 		'engineName',
 		'sequence',
-		'changeSet'
+		'changeSet',
+		'reverseOp',
+		'reverseRef'
 	],
 	#category : 'Refactoring-Core'
 }
@@ -144,6 +169,48 @@ GsRefactoringUndo class >> recordAndApplyForToken: token engine: engineName dese
 					recorded := true]]
 				on: Error do: [:ex | self clear]].
 	^self result: result withUndoRecorded: recorded
+]
+
+{ #category : 'recording' }
+GsRefactoringUndo class >> renameKinds [
+	"The rename kinds a #renameBack entry can reverse. Each names an engine whose forward
+	 operation is its own inverse when the two names are swapped."
+	^#(#classRename #instVarRename #classVarRename)
+]
+
+{ #category : 'recording' }
+GsRefactoringUndo class >> recordReverseRename: aKind className: cn from: fromName to: toName scopeKind: sk scopeDictName: sdn label: aLabel engine: engineName [
+	"Record that a RENAME was applied, so it can be reversed by renaming back.
+
+	 `cn` is the class to look the operation up on AFTER the forward rename landed (for a
+	 class rename that is the NEW name -- the class is bound under it now); `fromName` is
+	 the name that is in force now and `toName` the name to go back to. Answers 'ok', or
+	 'unsupported' for a kind this cannot reverse (recording nothing rather than recording
+	 something wrong).
+
+	 The caller records this only once the forward apply has actually landed -- see the
+	 client's rename flows, which check the apply result first."
+	| kind op |
+	kind := aKind asSymbol.
+	(self renameKinds asIdentitySet includes: kind) ifFalse: [^'unsupported'].
+	"Filled slot by slot rather than with a six-argument `Array with:...`: 3.6.2's Array class
+	 does not implement past four (MessageNotUnderstood 2010), so the longer forms are a 3.7-only
+	 convenience the matrix cannot use."
+	op := Array new: 6.
+	op at: 1 put: kind.
+	op at: 2 put: cn asString.
+	op at: 3 put: fromName asString.
+	op at: 4 put: toName asString.
+	op at: 5 put: (sk isNil ifTrue: [nil] ifFalse: [sk asSymbol]).
+	op at: 6 put: (sdn isNil ifTrue: [nil] ifFalse: [sdn asString]).
+	SessionTemps current
+		at: self entryKey
+		put: (self new
+			setLabel: aLabel
+			engine: engineName
+			sequence: self nextSequence
+			reverseOp: op).
+	^'ok'
 ]
 
 { #category : 'recording' }
@@ -336,11 +403,19 @@ GsRefactoringUndo class >> startPreviewToken: token maxBytes: maxBytes [
 		^'{"error":"There is no refactoring to undo in this session.",' ,
 		  '"token":"","label":"","engine":"","total":0,' ,
 		  '"page":{"changes":[],"nextOffset":0,"done":true}}'].
+	"A recorded reversal that can no longer run refuses HERE, with the reason, rather than
+	 opening a panel over an empty change set."
+	undo reverseUnavailableReason ifNotNil: [:why |
+		^'{"error":', (GsRefactoringJson jsonQuote: why),
+		  ',"token":"","label":', (GsRefactoringJson jsonQuote: undo label),
+		  ',"engine":"","mechanism":', (GsRefactoringJson jsonQuote: undo mechanism asString),
+		  ',"total":0,"page":{"changes":[],"nextOffset":0,"done":true}}'].
 	undo refreshWarnings.
 	SessionTemps current at: token asSymbol put: undo.
 	^'{"token":', (GsRefactoringJson jsonQuote: token asString),
 	  ',"label":', (GsRefactoringJson jsonQuote: undo label),
 	  ',"engine":', (GsRefactoringJson jsonQuote: undo engineName),
+	  ',"mechanism":', (GsRefactoringJson jsonQuote: undo mechanism asString),
 	  ',"sequence":', undo sequence printString,
 	  ',"drifted":', undo driftedCount printString,
 	  ',"total":', undo size printString,
@@ -396,13 +471,104 @@ GsRefactoringUndo >> sequence [
 
 { #category : 'accessing' }
 GsRefactoringUndo >> size [
-	^changeSet size
+	"How many changes the reversal would apply. For a #renameBack that means building the
+	 reverse rename, which is why callers that only want a cheap yes/no ask `mechanism`."
+	^reverseOp isNil ifTrue: [changeSet size] ifFalse: [self reverseChangeSet size]
+]
+
+{ #category : 'accessing' }
+GsRefactoringUndo >> mechanism [
+	"#changeSet -- apply the recorded inverse change set; #renameBack -- rebuild the rename
+	 in the opposite direction. See the class comment."
+	^reverseOp isNil ifTrue: [#changeSet] ifFalse: [#renameBack]
+]
+
+{ #category : 'accessing' }
+GsRefactoringUndo >> reverseOp [
+	"(kind, className, fromName, toName, scopeKind, scopeDictName), or nil for a change-set
+	 entry."
+	^reverseOp
+]
+
+{ #category : 'reverse rename' }
+GsRefactoringUndo >> reverseRefactoring [
+	"The rename refactoring that undoes the recorded one, built ONCE and cached: the preview
+	 and the apply must run against the SAME object, or the apply would re-derive a change set
+	 from a stone the preview has already described (and the change ids the client deselected
+	 would not match). Answers nil when the class can no longer be resolved."
+	| env cls kind |
+	reverseRef isNil ifFalse: [^reverseRef].
+	reverseOp isNil ifTrue: [^nil].
+	env := GsRefactoringEnvironment new.
+	cls := env classNamed: (reverseOp at: 2).
+	cls isNil ifTrue: [^nil].
+	kind := reverseOp at: 1.
+	kind == #classRename ifTrue: [
+		reverseRef := (reverseOp at: 5) == #dictionary
+			ifTrue: [GsRenameClassRefactoring
+				class: cls renameTo: (reverseOp at: 4) dictionaryScope: (reverseOp at: 6)]
+			ifFalse: [GsRenameClassRefactoring
+				class: cls renameTo: (reverseOp at: 4)
+				scope: ((reverseOp at: 5) ifNil: [#wholeSystem])]].
+	kind == #instVarRename ifTrue: [
+		reverseRef := GsRenameInstanceVariableRefactoring
+			class: cls renameInstVar: (reverseOp at: 3) to: (reverseOp at: 4)].
+	kind == #classVarRename ifTrue: [
+		reverseRef := GsRenameClassVariableRefactoring
+			class: cls renameClassVar: (reverseOp at: 3) to: (reverseOp at: 4)].
+	^reverseRef
+]
+
+{ #category : 'reverse rename' }
+GsRefactoringUndo >> reverseChangeSet [
+	"The change set the reversal would apply -- the reverse rename's own -- or an empty one
+	 when the reversal cannot be built (the class is gone)."
+	^self reverseRefactoring
+		ifNil: [GsRefactoringChangeSet new]
+		ifNotNil: [:ref | ref changeSet]
+]
+
+{ #category : 'reverse rename' }
+GsRefactoringUndo >> reverseUnavailableReason [
+	"Why the recorded reversal cannot run, or nil when it can. Answered BEFORE a preview so the
+	 client refuses with a reason instead of opening a panel over a reversal that would fail.
+
+	 The COLLISION check here is load-bearing, not belt-and-braces. The rename engines
+	 deliberately do NOT enforce `newNameCollision` while building a change set -- the forward
+	 flow's preview panel surfaces it and the CLIENT refuses (see
+	 GsRenameClassRefactoring>>newNameCollision: 'the apply would fail'). A reversal is driven
+	 from here, not from that panel, so without this check the guard would simply be absent and
+	 the reversal would fail partway through instead of declining. Reachable in practice: rename
+	 A to B, then create something new called A, then try to reverse."
+	| env cls ref |
+	reverseOp isNil ifTrue: [^nil].
+	env := GsRefactoringEnvironment new.
+	cls := env classNamed: (reverseOp at: 2).
+	cls isNil ifTrue: [
+		^'Class ', (reverseOp at: 2), ' no longer exists, so the rename cannot be reversed.'].
+	"An instance-variable rename has no collision check of its own, so make the one that matters
+	 here explicitly: the name we would rename back TO must not already be declared."
+	(reverseOp at: 1) == #instVarRename ifTrue: [
+		((env ownInstVarNamesOf: cls) includes: (reverseOp at: 4)) ifTrue: [
+			^'Cannot rename back: ', (reverseOp at: 2), ' already declares an instance variable named ',
+			  (reverseOp at: 4), '.']].
+	ref := self reverseRefactoring.
+	ref isNil ifTrue: [
+		^'The reversal of this rename can no longer be built.'].
+	((ref respondsTo: #newNameCollision) and: [ref newNameCollision notNil]) ifTrue: [
+		^'Cannot rename back: ', ref newNameCollision, '.'].
+	self reverseChangeSet isEmpty ifTrue: [
+		^'Nothing to reverse: ', (reverseOp at: 3), ' is no longer named that.'].
+	^nil
 ]
 
 { #category : 'accessing' }
 GsRefactoringUndo >> statusJson [
+	"`mechanism` lets the client word the offer honestly without a second round trip: a
+	 #renameBack is a reversal, not a rollback."
 	^'{"available":true,"label":', (GsRefactoringJson jsonQuote: self label),
 	  ',"engine":', (GsRefactoringJson jsonQuote: self engineName),
+	  ',"mechanism":', (GsRefactoringJson jsonQuote: self mechanism asString),
 	  ',"sequence":', self sequence printString,
 	  ',"total":', self size printString, '}'
 ]
@@ -414,6 +580,11 @@ GsRefactoringUndo >> refreshWarnings [
 	 already in the state the undo would put it in (undoing it changes nothing). Warnings
 	 render on the existing per-change preview rows, so the user deselects what to keep."
 	| env |
+	"A #renameBack has no per-change drift to report: its change set is derived from the stone
+	 as it is RIGHT NOW, by the same engine that would apply it, so every row is current by
+	 construction. Its one caveat is not per-change (it is 'this renames again rather than
+	 rolling back') and the client states it once, above the list."
+	reverseOp isNil ifFalse: [^self].
 	env := GsRefactoringEnvironment new.
 	changeSet changes do: [:change |
 		change setWarning: (self warningFor: change in: env)]
@@ -449,15 +620,18 @@ GsRefactoringUndo >> warningFor: aChange in: env [
 GsRefactoringUndo >> driftedCount [
 	"How many changes currently carry a warning. Summarised at the top of the preview so
 	 the user is told BEFORE scrolling that the undo is not a clean reversal."
+	reverseOp isNil ifFalse: [^0].
 	^(changeSet changes select: [:c | c warning notNil]) size
 ]
 
 { #category : 'paginated preview' }
 GsRefactoringUndo >> pageJsonFrom: startIndex maxBytes: maxBytes [
-	"One page of inverse changes, byte-bounded exactly as the forward previews are, so a
-	 large undo still fits the non-blocking GCI fetch cap."
+	"One page of the changes the reversal would apply, byte-bounded exactly as the forward
+	 previews are, so a large undo still fits the non-blocking GCI fetch cap. For a
+	 #renameBack those are the reverse rename's OWN changes, which is why the client's
+	 preview has to accept class-shape kinds as well as method ones."
 	| all ws i |
-	all := changeSet changes.
+	all := (reverseOp isNil ifTrue: [changeSet] ifFalse: [self reverseChangeSet]) changes.
 	ws := WriteStream on: String new.
 	ws nextPut: $[.
 	i := startIndex.
@@ -505,6 +679,18 @@ GsRefactoringUndo >> applyDeselected: deselectedIds [
 	 up. A partial or failed one keeps it, so the user can look at what went wrong and
 	 try again -- re-applying the same inverse set is idempotent."
 	| ids applied failures |
+	"A #renameBack is applied by the rename engine itself -- same code path the forward rename
+	 uses, so the reversal cannot drift from the operation it reverses. A clean one is used up,
+	 exactly as below."
+	reverseOp isNil ifFalse: [
+		| ref result |
+		ref := self reverseRefactoring.
+		ref isNil ifTrue: [
+			^'{"applied":0,"failed":[],"error":"the class this rename applied to no longer exists"}'].
+		result := ref applyDeselected: deselectedIds.
+		(deselectedIds isEmpty and: [(result indexOfSubCollection: '"failed":[]') > 0])
+			ifTrue: [GsRefactoringUndo clear].
+		^result].
 	ids := (deselectedIds collect: [:e | e asSymbol]) asIdentitySet.
 	applied := 0.
 	failures := OrderedCollection new.
@@ -522,6 +708,14 @@ GsRefactoringUndo >> applyDeselected: deselectedIds [
 		',"error":', (GsRefactoringJson jsonQuote: ((f at: 3) ifNil: ['unknown error']) asString), '}'])
 			inject: '' into: [:acc :s | acc isEmpty ifTrue: [s] ifFalse: [acc, ',', s]]),
 	  ']}'
+]
+
+{ #category : 'private' }
+GsRefactoringUndo >> setLabel: aLabel engine: anEngineName sequence: aSequence reverseOp: anArray [
+	label := aLabel isNil ifTrue: [nil] ifFalse: [aLabel asString].
+	engineName := anEngineName isNil ifTrue: [nil] ifFalse: [anEngineName asString].
+	sequence := aSequence.
+	reverseOp := anArray
 ]
 
 { #category : 'private' }

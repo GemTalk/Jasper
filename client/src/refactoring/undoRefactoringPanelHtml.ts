@@ -22,9 +22,11 @@
  */
 import {
   UndoChange,
+  UndoMechanism,
   undoChangeLabel,
   undoActionLabel,
   undoSummary,
+  RENAME_BACK_CAVEAT,
 } from './undoRefactoringPreview';
 import { lineDiff, DiffLine, DiffLineType } from './lineDiff';
 
@@ -58,18 +60,21 @@ function changeDiff(change: UndoChange): DiffLine[] {
   return lineDiff(change.oldSource, change.newSource);
 }
 
-function renderCard(change: UndoChange): string {
+function renderCard(change: UndoChange, mechanism: UndoMechanism): string {
   const label = escapeHtml(undoChangeLabel(change));
-  const action = undoActionLabel(change);
+  const action = undoActionLabel(change, mechanism);
   const category = change.category
     ? `<span class="badge">${escapeHtml(change.category)}</span>`
     : '';
   const diff = renderDiff(changeDiff(change));
   const warning = change.warning ? `<div class="warn">⚠ ${escapeHtml(change.warning)}</div>` : '';
+  // The badge is a word, not a colour-only cue, and its class is derived from that word — so a
+  // new action label styles itself neutrally instead of silently inheriting another's colour.
+  const actionClass = action.toLowerCase().replace(/[^a-z]+/g, '-');
   return `<li class="change${change.warning ? ' warned' : ''}" data-id="${escapeHtml(change.id)}">
   <div class="change-head">
     <input type="checkbox" class="sel" checked aria-label="Include ${label}">
-    <span class="action action-${action.toLowerCase()}">${action}</span>
+    <span class="action action-${actionClass}">${action}</span>
     <span class="label">${label}</span>
     ${category}
     <button class="toggle" title="Show/hide diff" aria-expanded="false">▸</button>
@@ -80,13 +85,18 @@ function renderCard(change: UndoChange): string {
 }
 
 /** Render a batch of change cards (first page and appended pages alike). Pure. */
-export function renderUndoCards(changes: UndoChange[]): string {
-  return changes.map(renderCard).join('\n');
+export function renderUndoCards(
+  changes: UndoChange[],
+  mechanism: UndoMechanism = 'changeSet',
+): string {
+  return changes.map((c) => renderCard(c, mechanism)).join('\n');
 }
 
 export interface UndoPanelHtmlOptions {
   /** What the refactoring being undone called itself. */
   refactoringLabel: string;
+  /** How the undo will be carried out — chooses the row badges and the caveat banner. */
+  mechanism: UndoMechanism;
   /** Total number of inverse changes across all pages. */
   total: number;
   /** How many of them carry a warning. */
@@ -101,11 +111,15 @@ export interface UndoPanelHtmlOptions {
 
 /** Build the panel's HTML. Pure (no vscode) so it unit-tests directly. */
 export function renderUndoPanelHtml(opts: UndoPanelHtmlOptions): string {
-  const { refactoringLabel, total, drifted, changes, done, nonce, script } = opts;
-  const cards = renderUndoCards(changes);
+  const { refactoringLabel, mechanism, total, drifted, changes, done, nonce, script } = opts;
+  const cards = renderUndoCards(changes, mechanism);
   const pagerHidden = done ? ' hidden' : '';
   const driftBanner =
     drifted > 0 ? `<div class="oos">⚠ ${escapeHtml(undoSummary(total, drifted))}</div>` : '';
+  // A rename reversal is not a rollback and must not be presented as one. Informational, not a
+  // warning: nothing is going wrong here, the mechanism simply differs from what "undo" implies.
+  const mechanismBanner =
+    mechanism === 'renameBack' ? `<div class="note">↩ ${escapeHtml(RENAME_BACK_CAVEAT)}</div>` : '';
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -182,6 +196,12 @@ export function renderUndoPanelHtml(opts: UndoPanelHtmlOptions): string {
     }
     .action-restore { color: var(--vscode-gitDecoration-addedResourceForeground, inherit); }
     .action-delete { color: var(--vscode-gitDecoration-deletedResourceForeground, inherit); }
+    .note {
+      margin: 8px 16px 0; padding: 8px 12px;
+      border: 1px solid var(--vscode-panel-border, rgba(127,127,127,0.4));
+      background: var(--vscode-textBlockQuote-background, rgba(127,127,127,0.08));
+      border-radius: 4px;
+    }
     .warn {
       padding: 6px 10px 6px 34px;
       background: var(--vscode-inputValidation-warningBackground, rgba(200,160,0,0.12));
@@ -224,6 +244,7 @@ export function renderUndoPanelHtml(opts: UndoPanelHtmlOptions): string {
       <button id="cancel" class="secondary">Cancel</button>
     </div>
   </header>
+  ${mechanismBanner}
   ${driftBanner}
   <div class="summary">
     <span id="selcount">${total}</span> of ${total} change${total === 1 ? '' : 's'} selected

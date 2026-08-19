@@ -21,6 +21,7 @@ const status = (available: boolean) => ({
   available,
   label: 'Rename #total to #sum',
   engine: 'GsRenameMethodRefactoring',
+  mechanism: 'changeSet' as const,
   sequence: 1,
   total: 2,
 });

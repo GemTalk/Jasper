@@ -16,6 +16,7 @@ const change = (over: Partial<UndoChange> = {}): UndoChange => ({
   className: 'Account',
   isMeta: false,
   selector: 'total',
+  newName: null,
   category: 'computing',
   oldSource: 'total ^ self sum',
   newSource: 'total ^ 40 + 2',
@@ -26,6 +27,7 @@ const change = (over: Partial<UndoChange> = {}): UndoChange => ({
 const html = (over: Partial<Parameters<typeof renderUndoPanelHtml>[0]> = {}): string =>
   renderUndoPanelHtml({
     refactoringLabel: 'Rename #total to #sum',
+    mechanism: 'changeSet',
     total: 1,
     drifted: 0,
     changes: [change()],
@@ -88,6 +90,7 @@ describe('undo panel html', () => {
   it('escapes HTML in a class name, a label and a warning', () => {
     const out = renderUndoPanelHtml({
       refactoringLabel: '<script>x</script>',
+      mechanism: 'changeSet',
       total: 1,
       drifted: 1,
       changes: [change({ className: 'A<b>', warning: '<i>w</i>' })],
@@ -108,5 +111,44 @@ describe('undo panel html', () => {
   it('locks the script down to the nonce', () => {
     expect(html()).toContain("script-src 'nonce-abc'");
     expect(html()).toContain('<script nonce="abc">');
+  });
+});
+
+describe('undo panel html — a reverse rename says it is not a rollback', () => {
+  const renameRow = (over: Partial<UndoChange> = {}): UndoChange => ({
+    ...change(),
+    kind: 'classRename',
+    className: 'NewName',
+    newName: 'OldName',
+    selector: null,
+    ...over,
+  });
+
+  it('carries the caveat banner for a renameBack, and not for a changeSet', () => {
+    const back = html({ mechanism: 'renameBack', changes: [renameRow()] });
+    expect(back).toContain('class="note"');
+    expect(back).toContain('not a rollback');
+    expect(html({ mechanism: 'changeSet' })).not.toContain('class="note"');
+  });
+
+  it('badges a class-shape row and labels it by its class', () => {
+    const out = renderUndoCards([renameRow()], 'renameBack');
+    expect(out).toContain('>Rename back<');
+    expect(out).toContain('NewName → OldName');
+    // No phantom ">>" for a row that has no selector.
+    expect(out).not.toContain('&gt;&gt;');
+  });
+
+  it('derives the badge class from the badge word, so a multi-word action is still valid CSS', () => {
+    expect(renderUndoCards([renameRow()], 'renameBack')).toContain('action-rename-back');
+  });
+
+  it('badges a reference rewrite as a rewrite, not as a revert', () => {
+    const out = renderUndoCards(
+      [renameRow({ kind: 'methodRecompile', selector: 'usesIt', newName: null })],
+      'renameBack',
+    );
+    expect(out).toContain('>Rewrite<');
+    expect(out).not.toContain('>Revert<');
   });
 });

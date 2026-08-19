@@ -143,8 +143,15 @@ export async function undoLastRefactoringCommand(sessions: SessionManager): Prom
     return;
   }
 
+  // Word it for what actually happened. A reverse rename did not roll anything back -- it
+  // renamed again -- and saying "undid" without qualification would misdescribe the state the
+  // stone is now in (an extra class version, history intact).
   void vscode.window.showInformationMessage(
-    `Undid ${start.label} (${result.applied} change${result.applied === 1 ? '' : 's'}). ` +
-      'Compiled but NOT committed — commit when ready.',
+    start.mechanism === 'renameBack'
+      ? `Reversed ${start.label} by renaming back (${result.applied} change` +
+          `${result.applied === 1 ? '' : 's'}). The class keeps its history. ` +
+          'Compiled but NOT committed — commit when ready.'
+      : `Undid ${start.label} (${result.applied} change${result.applied === 1 ? '' : 's'}). ` +
+          'Compiled but NOT committed — commit when ready.',
   );
 }

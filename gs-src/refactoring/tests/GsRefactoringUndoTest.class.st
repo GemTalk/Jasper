@@ -223,7 +223,9 @@ GsRefactoringUndoTest >> setUp [
 { #category : 'running' }
 GsRefactoringUndoTest >> tearDown [
 	GsRefactoringUndo clear.
-	(Array with: #GsUndoSavings with: #GsUndoLedger with: #GsUndoAccount)
+	"GsUndoOldLedger / GsUndoVarHolder only exist in the reverse-rename tests, and a test that
+	 fails mid-way can leave either behind -- remove them unconditionally."
+	#(#GsUndoSavings #GsUndoLedger #GsUndoAccount #GsUndoOldLedger #GsUndoVarHolder)
 		do: [:n | UserGlobals removeKey: n ifAbsent: []].
 	super tearDown
 ]
@@ -619,6 +621,263 @@ GsRefactoringUndoTest >> testRecordingAndUndoingCommitNothing [
 	| before |
 	before := System needsCommit.
 	self applyRecording: (self renameInFixture: 'gsuTotal' to: 'gsuSum').
+	self undoAll.
+	self assert: System needsCommit equals: before
+]
+
+{ #category : 'fixture' }
+GsRefactoringUndoTest >> recordClassRenameFrom: fromName to: toName [
+	"Record the reversal of a class rename that has already landed: the class is bound under
+	 fromName now, and toName is where it goes back to."
+	^GsRefactoringUndo
+		recordReverseRename: #classRename
+		className: fromName
+		from: fromName
+		to: toName
+		scopeKind: #wholeSystem
+		scopeDictName: nil
+		label: 'Rename class ', toName, ' to ', fromName
+		engine: 'GsRenameClassRefactoring'
+]
+
+{ #category : 'tests - reverse rename' }
+GsRefactoringUndoTest >> testRecordingARenameAnswersARenameBackEntry [
+	self assert: (self recordClassRenameFrom: 'GsUndoLedger' to: 'GsUndoOldLedger') equals: 'ok'.
+	self assert: GsRefactoringUndo currentEntry mechanism equals: #renameBack.
+	self assert: GsRefactoringUndo statusJson includesSubstring: '"mechanism":"renameBack"'
+]
+
+{ #category : 'tests - reverse rename' }
+GsRefactoringUndoTest >> testAMethodEntryReportsTheChangeSetMechanism [
+	self applyRecording: (self renameInFixture: 'gsuTotal' to: 'gsuSum').
+	self assert: GsRefactoringUndo currentEntry mechanism equals: #changeSet.
+	self assert: GsRefactoringUndo statusJson includesSubstring: '"mechanism":"changeSet"'
+]
+
+{ #category : 'tests - reverse rename' }
+GsRefactoringUndoTest >> testAnUnreversibleKindRecordsNothing [
+	"Recording something this cannot reverse must record NOTHING rather than something wrong."
+	self
+		assert: (GsRefactoringUndo
+			recordReverseRename: #splitClass className: 'GsUndoAccount' from: 'a' to: 'b'
+			scopeKind: nil scopeDictName: nil label: 'x' engine: 'GsSplitClassRefactoring')
+		equals: 'unsupported'.
+	self assert: GsRefactoringUndo currentEntry isNil
+]
+
+{ #category : 'tests - reverse rename' }
+GsRefactoringUndoTest >> testTheReverseIsBuiltFromTheRENAMEEngineItself [
+	"The reversal is the same engine run the other way -- not a hand-rolled inverse."
+	self recordClassRenameFrom: 'GsUndoLedger' to: 'GsUndoOldLedger'.
+	self
+		assert: GsRefactoringUndo currentEntry reverseRefactoring class name asString
+		equals: 'GsRenameClassRefactoring'
+]
+
+{ #category : 'tests - reverse rename' }
+GsRefactoringUndoTest >> testTheReverseRefactoringIsBuiltOnceAndCached [
+	"The preview and the apply must run against the SAME object, or the change ids the user
+	 deselected in the preview would not match the set the apply walks."
+	| first |
+	self recordClassRenameFrom: 'GsUndoLedger' to: 'GsUndoOldLedger'.
+	first := GsRefactoringUndo currentEntry reverseRefactoring.
+	self assert: GsRefactoringUndo currentEntry reverseRefactoring == first
+]
+
+{ #category : 'tests - reverse rename' }
+GsRefactoringUndoTest >> testTheReversePreviewIsTheReverseRenamesOwnChangeSet [
+	| json |
+	self recordClassRenameFrom: 'GsUndoLedger' to: 'GsUndoOldLedger'.
+	json := self undoPreviewJson.
+	self assert: json includesSubstring: '"mechanism":"renameBack"'.
+	"A class rename stages a classRename row (plus reparents/recompiles) -- class-shape kinds
+	 the client's undo preview therefore has to render."
+	self assert: json includesSubstring: '"kind":"classRename"'.
+	self assert: json includesSubstring: '"newName":"GsUndoOldLedger"'
+]
+
+{ #category : 'tests - reverse rename' }
+GsRefactoringUndoTest >> testAReverseRenamePreviewReportsNoPerChangeDrift [
+	"Its change set is derived from the stone as it is right now, by the engine that would
+	 apply it, so every row is current by construction."
+	| json |
+	self recordClassRenameFrom: 'GsUndoLedger' to: 'GsUndoOldLedger'.
+	json := self undoPreviewJson.
+	self assert: json includesSubstring: '"drifted":0'.
+	self assert: GsRefactoringUndo currentEntry driftedCount equals: 0
+]
+
+{ #category : 'tests - reverse rename' }
+GsRefactoringUndoTest >> testReversingAClassRenamePutsTheNameBack [
+	| applied |
+	"Rename GsUndoLedger -> GsUndoOldLedger for real, then record and reverse it."
+	applied := (GsRenameClassRefactoring
+		class: self otherFixture renameTo: 'GsUndoOldLedger' scope: #wholeSystem)
+		applyDeselected: #().
+	self assert: applied includesSubstring: '"failed":[]'.
+	self assert: (UserGlobals at: #GsUndoOldLedger ifAbsent: [nil]) notNil.
+	self assert: (UserGlobals at: #GsUndoLedger ifAbsent: [nil]) isNil.
+
+	self recordClassRenameFrom: 'GsUndoOldLedger' to: 'GsUndoLedger'.
+	self undoAll.
+
+	self assert: (UserGlobals at: #GsUndoLedger ifAbsent: [nil]) notNil.
+	self assert: (UserGlobals at: #GsUndoOldLedger ifAbsent: [nil]) isNil.
+	"And the class still works -- its methods came forward through both renames."
+	self assert: (self sourceOf: #gsuLedgerOwn in: (UserGlobals at: #GsUndoLedger)) notNil
+]
+
+{ #category : 'tests - reverse rename' }
+GsRefactoringUndoTest >> testWorkWrittenAfterTheRenameSurvivesTheReversal [
+	"The compensation for not being a rollback: a rename carries methods FORWARD, so a method
+	 added after the rename survives -- where a classHistory revert would have discarded it."
+	(GsRenameClassRefactoring class: self otherFixture renameTo: 'GsUndoOldLedger' scope: #wholeSystem)
+		applyDeselected: #().
+	self
+		compile: 'gsuAddedAfterTheRename ^ 99'
+		in: (UserGlobals at: #GsUndoOldLedger)
+		category: 'after'.
+
+	self recordClassRenameFrom: 'GsUndoOldLedger' to: 'GsUndoLedger'.
+	self undoAll.
+
+	self
+		assert: (self sourceOf: #gsuAddedAfterTheRename in: (UserGlobals at: #GsUndoLedger))
+		notNil.
+	self
+		assert: (self categoryOf: #gsuAddedAfterTheRename in: (UserGlobals at: #GsUndoLedger))
+		equals: 'after'
+]
+
+{ #category : 'tests - reverse rename' }
+GsRefactoringUndoTest >> testACleanReversalConsumesTheEntry [
+	(GsRenameClassRefactoring class: self otherFixture renameTo: 'GsUndoOldLedger' scope: #wholeSystem)
+		applyDeselected: #().
+	self recordClassRenameFrom: 'GsUndoOldLedger' to: 'GsUndoLedger'.
+	self assert: GsRefactoringUndo currentEntry notNil.
+	self undoAll.
+	self assert: GsRefactoringUndo currentEntry isNil
+]
+
+{ #category : 'tests - reverse rename' }
+GsRefactoringUndoTest >> testAReversalRefusesWithAReasonWhenTheClassIsGone [
+	| json |
+	self recordClassRenameFrom: 'GsUndoNoSuchClass' to: 'GsUndoWhatever'.
+	self assert: GsRefactoringUndo currentEntry reverseUnavailableReason notNil.
+	json := self undoPreviewJson.
+	self assert: json includesSubstring: '"error"'.
+	self assert: json includesSubstring: 'no longer exists'
+]
+
+{ #category : 'tests - reverse rename' }
+GsRefactoringUndoTest >> testAReversalRefusesWhenTheOldNameHasBeenTakenBySomethingElse [
+	"The reachable collision: rename A -> B, then create a NEW class named A. Reversing would
+	 have to put B back as A, and A is taken. It must refuse -- and above all must not clobber
+	 the new A."
+	| newcomer |
+	(GsRenameClassRefactoring class: self otherFixture renameTo: 'GsUndoOldLedger' scope: #wholeSystem)
+		applyDeselected: #().
+	newcomer := Object
+		subclass: 'GsUndoLedger'
+		instVarNames: #()
+		classVars: #()
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	self compile: 'gsuIAmTheNewOne ^ true' in: newcomer category: 'fixture'.
+
+	self recordClassRenameFrom: 'GsUndoOldLedger' to: 'GsUndoLedger'.
+	self assert: GsRefactoringUndo currentEntry reverseUnavailableReason notNil.
+
+	"The newcomer is untouched, and the renamed class is still under its new name."
+	self assert: (self sourceOf: #gsuIAmTheNewOne in: (UserGlobals at: #GsUndoLedger)) notNil.
+	self assert: (UserGlobals at: #GsUndoOldLedger ifAbsent: [nil]) notNil
+]
+
+{ #category : 'tests - reverse rename' }
+GsRefactoringUndoTest >> testAnInstVarReversalRefusesWhenTheOldNameIsDeclaredAgain [
+	"Rename balance -> gsuFunds, then add a NEW instance variable called balance. Reversing
+	 would declare it twice, which the class-creation primitive rejects mid-apply -- and the
+	 ivar rename engine has no collision check of its own, so the reversal must make it."
+	(GsRenameInstanceVariableRefactoring
+		class: self fixture renameInstVar: 'balance' to: 'gsuFunds') applyDeselected: #().
+	"Re-declare the class with `balance` back alongside `gsuFunds` -- a new class version, which
+	 is what adding an instance variable by hand amounts to."
+	Object
+		subclass: 'GsUndoAccount'
+		instVarNames: #('gsuFunds' 'owner' 'balance')
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: UserGlobals.
+
+	GsRefactoringUndo
+		recordReverseRename: #instVarRename className: 'GsUndoAccount'
+		from: 'gsuFunds' to: 'balance' scopeKind: nil scopeDictName: nil
+		label: 'Rename instance variable balance to gsuFunds'
+		engine: 'GsRenameInstanceVariableRefactoring'.
+
+	self assert: GsRefactoringUndo currentEntry reverseUnavailableReason notNil.
+	self
+		assert: GsRefactoringUndo currentEntry reverseUnavailableReason
+		includesSubstring: 'already declares an instance variable'
+]
+
+{ #category : 'tests - reverse rename' }
+GsRefactoringUndoTest >> testReversingARenamedInstanceVariablePutsTheNameBack [
+	| cls |
+	(GsRenameInstanceVariableRefactoring
+		class: self fixture renameInstVar: 'balance' to: 'gsuFunds') applyDeselected: #().
+	cls := UserGlobals at: #GsUndoAccount.
+	self assert: ((cls instVarNames collect: [:e | e asString]) includes: 'gsuFunds').
+
+	GsRefactoringUndo
+		recordReverseRename: #instVarRename className: 'GsUndoAccount'
+		from: 'gsuFunds' to: 'balance' scopeKind: nil scopeDictName: nil
+		label: 'Rename instance variable balance to gsuFunds'
+		engine: 'GsRenameInstanceVariableRefactoring'.
+	self undoAll.
+
+	cls := UserGlobals at: #GsUndoAccount.
+	self assert: ((cls instVarNames collect: [:e | e asString]) includes: 'balance').
+	self deny: ((cls instVarNames collect: [:e | e asString]) includes: 'gsuFunds').
+	"The accessor that reads it recompiled both ways and still works."
+	self assert: (self sourceOf: #gsuBalance in: cls) includesSubstring: 'balance'
+]
+
+{ #category : 'tests - reverse rename' }
+GsRefactoringUndoTest >> testReversingARenamedClassVariablePutsTheNameBack [
+	| cls |
+	cls := Object
+		subclass: 'GsUndoVarHolder'
+		instVarNames: #()
+		classVars: #('GsuRegistry')
+		classInstVars: #()
+		poolDictionaries: #()
+		inDictionary: UserGlobals.
+	self compile: 'gsuReadIt ^ GsuRegistry' in: cls category: 'accessing'.
+	[(GsRenameClassVariableRefactoring
+		class: cls renameClassVar: 'GsuRegistry' to: 'GsuCatalog') applyDeselected: #().
+	self assert: (((UserGlobals at: #GsUndoVarHolder) classVarNames
+		collect: [:e | e asString]) includes: 'GsuCatalog').
+
+	GsRefactoringUndo
+		recordReverseRename: #classVarRename className: 'GsUndoVarHolder'
+		from: 'GsuCatalog' to: 'GsuRegistry' scopeKind: nil scopeDictName: nil
+		label: 'Rename class variable GsuRegistry to GsuCatalog'
+		engine: 'GsRenameClassVariableRefactoring'.
+	self undoAll.
+
+	self assert: (((UserGlobals at: #GsUndoVarHolder) classVarNames
+		collect: [:e | e asString]) includes: 'GsuRegistry')]
+		ensure: [UserGlobals removeKey: #GsUndoVarHolder ifAbsent: []]
+]
+
+{ #category : 'tests - reverse rename' }
+GsRefactoringUndoTest >> testReversingARenameCommitsNothing [
+	| before |
+	before := System needsCommit.
+	(GsRenameClassRefactoring class: self otherFixture renameTo: 'GsUndoOldLedger' scope: #wholeSystem)
+		applyDeselected: #().
+	self recordClassRenameFrom: 'GsUndoOldLedger' to: 'GsUndoLedger'.
 	self undoAll.
 	self assert: System needsCommit equals: before
 ]

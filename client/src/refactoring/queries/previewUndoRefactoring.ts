@@ -86,6 +86,50 @@ c isNil ifTrue: ['ok'] ifFalse: [c clearToken: '${escapeString(token)}']`,
   );
 }
 
+/** The rename kinds a reversal can be recorded for. Each names an engine whose forward
+ *  operation is its own inverse once the two names are swapped. */
+export type ReverseRenameKind = 'classRename' | 'instVarRename' | 'classVarRename';
+
+/**
+ * Record that a RENAME landed, so it can be reversed by renaming back (#434).
+ *
+ * Call this only once the forward apply has actually succeeded — the rename flows check
+ * their apply result first. `className` is the class to look the reversal up on AFTERWARDS
+ * (for a class rename that is the NEW name, since the class is bound under it now), `from`
+ * is the name in force now and `to` the name to go back to.
+ *
+ * Answers `'ok'`, `'unsupported'` for a kind the engine cannot reverse, or `'ok'` as a
+ * no-op on a stone whose engine predates undo — recording is never allowed to fail a
+ * rename that has already happened.
+ */
+export function recordReverseRename(
+  execute: QueryExecutor,
+  kind: ReverseRenameKind,
+  className: string,
+  from: string,
+  to: string,
+  label: string,
+  engineClassName: string,
+  scope?: { kind: string; dictName?: string },
+): string {
+  const scopeKind = scope ? `#${scope.kind}` : 'nil';
+  const scopeDict = scope?.dictName ? `'${escapeString(scope.dictName)}'` : 'nil';
+  return execute(
+    `| c |
+c := ${UNDO_CLASS}.
+c isNil ifTrue: ['ok'] ifFalse: [
+  c
+    recordReverseRename: #${kind}
+    className: '${escapeString(className)}'
+    from: '${escapeString(from)}'
+    to: '${escapeString(to)}'
+    scopeKind: ${scopeKind}
+    scopeDictName: ${scopeDict}
+    label: '${escapeString(label)}'
+    engine: '${escapeString(engineClassName)}']`,
+  );
+}
+
 /** Forget the recorded undo entirely (there is nothing to undo any more). */
 export function clearRefactoringUndo(execute: QueryExecutor): string {
   return execute(

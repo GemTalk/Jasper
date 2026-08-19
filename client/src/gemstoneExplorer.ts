@@ -41,7 +41,7 @@ import {
 } from './refactoring/renameInstVarPreview';
 import { showRenameInstVarPanel } from './refactoring/renameInstVarPanel';
 import { formatRenameFailureLog, formatRenameFailureToast } from './refactoring/renameFailureLog';
-import { getGciLog, logWarning } from './gciLog';
+import { getGciLog, logInfo, logWarning } from './gciLog';
 import { supportsServerUtf8FileIn } from './refactoring/refactoringInstall';
 import { renameInstVarAtCursorCommand } from './refactoring/renameInstVarAtCursorCommand';
 import { renameAtCursorCommand } from './refactoring/renameAtCursorCommand';
@@ -103,6 +103,7 @@ import {
 import { showClassHistoryPanel } from './refactoring/classHistoryPanel';
 import { moveMethod } from './refactoring/moveMethodCommand';
 import { notifyRefactoringApplied } from './refactoring/refactoringAppliedToast';
+import type { ReverseRenameKind } from './refactoring/queries/previewUndoRefactoring';
 
 const VIEW_DICTS = 'gemstoneExplorerDicts';
 const VIEW_CATEGORIES = 'gemstoneExplorerCategories';
@@ -2346,6 +2347,37 @@ export class ExplorerController {
     return applied;
   }
 
+  /**
+   * Record a rename that has just landed, so it can be reversed by renaming back (#434).
+   *
+   * Best-effort on purpose: the rename has ALREADY happened by the time we get here, so a
+   * failure to write the bookkeeping must never be reported as a failed rename. The user
+   * simply gets no Undo offer, which is the same place they were before this existed.
+   *
+   * `from` is the name in force now and `to` the one to go back to; `className` is the class
+   * the reversal looks itself up on afterwards (for a class rename that is the NEW name).
+   */
+  private recordReverseRename(
+    session: ActiveSession,
+    kind: ReverseRenameKind,
+    className: string,
+    from: string,
+    to: string,
+    label: string,
+    engine: string,
+    scope?: { kind: string; dictName?: string },
+  ): void {
+    try {
+      queries.recordReverseRename(session, kind, className, from, to, label, engine, scope);
+    } catch (e: unknown) {
+      logInfo(
+        `[undoRefactoring] could not record the reverse rename: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+  }
+
   // Report a rename that left methods behind: the FULL list to the persistent "GemStone
   // GCI" channel, and a notification that names the first and offers a button onto the
   // rest. Both are built from the same `action` + result, so they cannot disagree about
@@ -2425,10 +2457,21 @@ export class ExplorerController {
       );
       return true;
     }
-    void vscode.window.showInformationMessage(
+    this.recordReverseRename(
+      session,
+      'instVarRename',
+      className,
+      newName,
+      oldName,
+      `Rename instance variable ${oldName} to ${newName} in ${className}`,
+      'GsRenameInstanceVariableRefactoring',
+    );
+    notifyRefactoringApplied(
+      session,
       `Renamed '${oldName}' → '${newName}' (${result.applied} class` +
         `${result.applied === 1 ? '' : 'es'} re-versioned). ` +
         'Compiled but NOT committed — commit when ready.',
+      'toast',
     );
     return true;
   }
@@ -2870,9 +2913,23 @@ export class ExplorerController {
     const commitNote = result.committed
       ? `Migrated and COMMITTED${migrateNote}.`
       : 'Compiled but NOT committed — commit when ready.';
-    void vscode.window.showInformationMessage(
+    // The class is bound under `newName` now, so that is what the reversal looks up; it
+    // renames it back to `oldName`, reusing the scope the forward rename ran in.
+    this.recordReverseRename(
+      session,
+      'classRename',
+      newName,
+      newName,
+      oldName,
+      `Rename class ${oldName} to ${newName}`,
+      'GsRenameClassRefactoring',
+      { kind: scope.kind, dictName: 'dictName' in scope ? scope.dictName : undefined },
+    );
+    notifyRefactoringApplied(
+      session,
       `Renamed class '${oldName}' → '${newName}' (${result.applied} change` +
         `${result.applied === 1 ? '' : 's'}). ${commitNote}`,
+      'toast',
     );
   }
 
@@ -3058,9 +3115,20 @@ export class ExplorerController {
       );
       return true;
     }
-    void vscode.window.showInformationMessage(
+    this.recordReverseRename(
+      session,
+      'classVarRename',
+      className,
+      newName,
+      oldName,
+      `Rename class variable ${oldName} to ${newName} in ${className}`,
+      'GsRenameClassVariableRefactoring',
+    );
+    notifyRefactoringApplied(
+      session,
       `Renamed class variable '${oldName}' → '${newName}' (${result.applied} change` +
         `${result.applied === 1 ? '' : 's'}). Compiled but NOT committed — commit when ready.`,
+      'toast',
     );
     return true;
   }

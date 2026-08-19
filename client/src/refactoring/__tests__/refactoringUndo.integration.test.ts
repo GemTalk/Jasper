@@ -10,6 +10,7 @@ import {
   startRenameMethodPreview,
 } from '../queries/previewRenameMethod';
 import {
+  recordReverseRename,
   refactoringUndoStatus,
   startUndoRefactoringPreview,
   pageUndoRefactoringPreview,
@@ -139,6 +140,11 @@ ws contents`);
     exec(
       `((${cls}${meta ? ' class' : ''}) compiledMethodAt: #'${selector}' environmentId: 0 otherwise: nil) notNil printString`,
     ).trim() === 'true';
+
+  const ownInstVarNames = (cls: string): string[] => {
+    const raw = exec(`(${cls} instVarNames collect: [:e | e asString]) printString`);
+    return [...raw.matchAll(/'([^']*)'/g)].map((m) => m[1]);
+  };
 
   const offsetOf = (cls: string, selector: string, text: string): number =>
     parseInt(
@@ -620,4 +626,180 @@ cs addClassDefinitionEditInDictionary: nil className: 'Object' oldSource: 'a' ne
     expect(answer.trim()).toBe('true');
     expect(undoStatus().available).toBe(false);
   });
+
+  // ---------------------------------------------------------------------------------------
+  // Reversing a RENAME (#434). These entries are not a recorded inverse: the reversal is the
+  // same rename engine run the other way, so the checks are "is the name back, and did the
+  // work I did after the rename survive" rather than "is the change set inverted".
+  // ---------------------------------------------------------------------------------------
+
+  const RENAMED = 'UndoItRenamedAccount';
+
+  it('reverses a class rename, putting the name back', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    defineFixture();
+    clearRefactoringUndo((code) => exec(code));
+
+    // Rename it for real, engine-side (the client's rename flow is UI; the engine is the part
+    // under test here).
+    exec(`(GsRenameClassRefactoring class: ${CLS} renameTo: '${RENAMED}' scope: #wholeSystem)
+      applyDeselected: #()`);
+    expect(exec(`(UserGlobals at: #'${RENAMED}' ifAbsent: [nil]) notNil printString`).trim()).toBe(
+      'true',
+    );
+
+    recordReverseRename(
+      (code) => exec(code),
+      'classRename',
+      RENAMED,
+      RENAMED,
+      CLS,
+      `Rename class ${CLS} to ${RENAMED}`,
+      'GsRenameClassRefactoring',
+      { kind: 'wholeSystem' },
+    );
+
+    const status = undoStatus();
+    expect(status.available).toBe(true);
+    expect(status.mechanism).toBe('renameBack');
+
+    const undone = await undoEverything();
+    expect(undone.failed).toHaveLength(0);
+    expect(exec(`(UserGlobals at: #'${CLS}' ifAbsent: [nil]) notNil printString`).trim()).toBe(
+      'true',
+    );
+    expect(exec(`(UserGlobals at: #'${RENAMED}' ifAbsent: [nil]) isNil printString`).trim()).toBe(
+      'true',
+    );
+  }, 60_000);
+
+  it('carries work written after the rename through the reversal', async (ctx) => {
+    // The compensation for not being a rollback, and the reason renaming back beats a
+    // class-history revert here: a rename copies methods forward, so a method added after the
+    // rename survives — a history revert would have discarded it.
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    defineFixture();
+    clearRefactoringUndo((code) => exec(code));
+
+    exec(`(GsRenameClassRefactoring class: ${CLS} renameTo: '${RENAMED}' scope: #wholeSystem)
+      applyDeselected: #()`);
+    q.compileMethod(session(), RENAMED, false, 'after', 'undoWrittenLater\n\t^ 123');
+
+    recordReverseRename(
+      (code) => exec(code),
+      'classRename',
+      RENAMED,
+      RENAMED,
+      CLS,
+      `Rename class ${CLS} to ${RENAMED}`,
+      'GsRenameClassRefactoring',
+      { kind: 'wholeSystem' },
+    );
+    expect((await undoEverything()).failed).toHaveLength(0);
+
+    expect(definesSelector(CLS, 'undoWrittenLater')).toBe(true);
+    // And the untouched originals came through both renames too.
+    expect(definesSelector(CLS, 'undoUntouched')).toBe(true);
+    expect(definesSelector(CLS, 'undoAlsoUntouched', true)).toBe(true);
+  }, 60_000);
+
+  it('previews a reverse rename as the reverse rename own change set', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    defineFixture();
+    clearRefactoringUndo((code) => exec(code));
+
+    exec(`(GsRenameClassRefactoring class: ${CLS} renameTo: '${RENAMED}' scope: #wholeSystem)
+      applyDeselected: #()`);
+    recordReverseRename(
+      (code) => exec(code),
+      'classRename',
+      RENAMED,
+      RENAMED,
+      CLS,
+      `Rename class ${CLS} to ${RENAMED}`,
+      'GsRenameClassRefactoring',
+      { kind: 'wholeSystem' },
+    );
+
+    const token = 'undo-rev-preview';
+    const start = parseUndoStartPreview(
+      await startUndoRefactoringPreview(asyncExec, token, PREVIEW_PAGE_BYTES),
+    );
+    clearUndoRefactoringPreview((code) => exec(code), token);
+
+    expect(start.mechanism).toBe('renameBack');
+    // Class-shape rows the change-set path never produces — the preview must render them.
+    const rename = start.page.changes.find((c) => c.kind === 'classRename');
+    expect(rename).toBeDefined();
+    expect(rename?.newName).toBe(CLS);
+    expect(rename?.selector).toBeNull();
+    // A reverse rename derives its rows from the stone as it is now, so nothing is drifted.
+    expect(start.drifted).toBe(0);
+  }, 60_000);
+
+  it('reverses a renamed instance variable', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    defineFixture();
+    clearRefactoringUndo((code) => exec(code));
+
+    exec(`(GsRenameInstanceVariableRefactoring class: ${CLS} renameInstVar: 'balance' to: 'undoFunds')
+      applyDeselected: #()`);
+    expect(ownInstVarNames(CLS)).toContain('undoFunds');
+
+    recordReverseRename(
+      (code) => exec(code),
+      'instVarRename',
+      CLS,
+      'undoFunds',
+      'balance',
+      `Rename instance variable balance to undoFunds in ${CLS}`,
+      'GsRenameInstanceVariableRefactoring',
+    );
+    expect((await undoEverything()).failed).toHaveLength(0);
+
+    expect(ownInstVarNames(CLS)).toContain('balance');
+    expect(ownInstVarNames(CLS)).not.toContain('undoFunds');
+    // The accessor that reads it recompiled both ways and still names the variable.
+    expect(exec(`(${CLS} compiledMethodAt: #undoBalance) sourceString`)).toContain('balance');
+  }, 60_000);
+
+  it('refuses, with a reason, when the old name has been taken by something else', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    defineFixture();
+    clearRefactoringUndo((code) => exec(code));
+
+    exec(`(GsRenameClassRefactoring class: ${CLS} renameTo: '${RENAMED}' scope: #wholeSystem)
+      applyDeselected: #()`);
+    // Something new takes the old name. Reversing would have to clobber it.
+    q.compileClassDefinition(
+      session(),
+      `Object subclass: '${CLS}' instVarNames: #() classVars: #() ` +
+        'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
+    );
+    q.compileMethod(session(), CLS, false, 'fixture', 'undoIAmTheNewOne\n\t^ true');
+
+    recordReverseRename(
+      (code) => exec(code),
+      'classRename',
+      RENAMED,
+      RENAMED,
+      CLS,
+      `Rename class ${CLS} to ${RENAMED}`,
+      'GsRenameClassRefactoring',
+      { kind: 'wholeSystem' },
+    );
+
+    // The preview refuses up front rather than opening over a reversal that would fail.
+    await expect(
+      startUndoRefactoringPreview(asyncExec, 'undo-collide', PREVIEW_PAGE_BYTES).then(
+        parseUndoStartPreview,
+      ),
+    ).rejects.toThrow(/already in use|Cannot rename back/);
+
+    // Nothing was clobbered.
+    expect(definesSelector(CLS, 'undoIAmTheNewOne')).toBe(true);
+    expect(exec(`(UserGlobals at: #'${RENAMED}' ifAbsent: [nil]) notNil printString`).trim()).toBe(
+      'true',
+    );
+  }, 60_000);
 });

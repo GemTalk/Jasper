@@ -54,15 +54,19 @@ import type { ActiveSession } from '../sessionManager';
 /**
  * The undo-invalidation rule (#434).
  *
- * A class-reshaping refactoring records NO undo of its own — class shape has its own
- * restore path — but it also makes any PREVIOUSLY recorded method undo untrustworthy:
+ * A class-reshaping refactoring makes any PREVIOUSLY recorded method undo untrustworthy:
  * it creates new class versions, so the recorded sources may no longer compile into the
  * class they name, and offering "undo the last refactoring" would name the wrong one.
  *
- * So each of their applies forgets the record. This pins that for every one of them,
- * including when the apply itself fails — a partial class reshape invalidates the record
- * just as thoroughly as a complete one — and pins that a method refactoring does NOT
- * forget it (that is the whole feature).
+ * So each of their applies forgets the record. This pins that for every one of them, including
+ * when the apply itself fails — a partial class reshape invalidates the record just as
+ * thoroughly as a complete one — and pins that a method refactoring does NOT forget it (that is
+ * the whole feature).
+ *
+ * Note the three pure RENAMES appear here as well, and should: clearing is still correct for
+ * them, because what they clear is whatever was recorded BEFORE them. They go on to record a
+ * reversal of their own from their command (`recordReverseRename`), after this has run — that
+ * ordering is covered by the rename flows' own tests, not here.
  */
 
 const session = { id: 1 } as ActiveSession;

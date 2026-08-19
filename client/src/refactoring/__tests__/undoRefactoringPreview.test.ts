@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  RENAME_BACK_CAVEAT,
   parseUndoStatus,
   parseUndoStartPreview,
   parseUndoPage,
@@ -45,6 +46,7 @@ describe('undo status', () => {
       available: true,
       label: 'Rename #total to #sum',
       engine: 'GsRenameMethodRefactoring',
+      mechanism: 'changeSet',
       sequence: 3,
       total: 7,
     });
@@ -97,12 +99,14 @@ describe('undo preview envelope', () => {
     expect(page.changes[0].warning).toContain('DISCARDS');
   });
 
-  it('rejects an unknown change kind rather than rendering it as something else', () => {
-    // A class-shape kind can never appear in an inverse set; if one ever did, showing
-    // it as a method change would be a lie about what Undo is about to do.
+  it('rejects a kind no undo can produce, rather than rendering it as something else', () => {
+    // `classAdd` is a real engine kind that NO undo produces: a recorded inverse only ever
+    // holds method kinds, and a reverse rename only ever holds classRename / classReparent /
+    // classDefinitionEdit. If one showed up, rendering it as some other kind would be a lie
+    // about what Undo is about to do — so it must be refused.
     expect(() =>
       parseUndoPage(
-        `{"changes":[${JSON.stringify(change({ kind: 'classDefinitionEdit' }))}],"nextOffset":0,"done":true}`,
+        `{"changes":[${JSON.stringify(change({ kind: 'classAdd' }))}],"nextOffset":0,"done":true}`,
       ),
     ).toThrow(/unknown kind/);
   });
@@ -132,9 +136,9 @@ describe('labels', () => {
   });
 
   it('names the ACTION undoing takes, not the change kind', () => {
-    expect(undoActionLabel(c({ kind: 'methodAdd' }))).toBe('Restore');
-    expect(undoActionLabel(c({ kind: 'methodRemove' }))).toBe('Delete');
-    expect(undoActionLabel(c({ kind: 'methodRecompile' }))).toBe('Revert');
+    expect(undoActionLabel(c({ kind: 'methodAdd' }), 'changeSet')).toBe('Restore');
+    expect(undoActionLabel(c({ kind: 'methodRemove' }), 'changeSet')).toBe('Delete');
+    expect(undoActionLabel(c({ kind: 'methodRecompile' }), 'changeSet')).toBe('Revert');
   });
 });
 
@@ -148,5 +152,82 @@ describe('summary line', () => {
     expect(undoSummary(3, 1)).toContain('1 of them is');
     expect(undoSummary(3, 2)).toContain('2 of them are');
     expect(undoSummary(3, 2)).toContain('un-tick');
+  });
+});
+
+describe('reverse-rename entries (#434)', () => {
+  const classShape = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+    id: '1',
+    kind: 'classRename',
+    dictName: 'UserGlobals',
+    className: 'NewName',
+    isMeta: false,
+    selector: null,
+    newName: 'OldName',
+    category: null,
+    oldSource: 'Object subclass: #NewName',
+    newSource: 'Object subclass: #OldName',
+    warning: null,
+    ...over,
+  });
+
+  it('reads the mechanism from the status probe', () => {
+    expect(
+      parseUndoStatus('{"available":true,"mechanism":"renameBack","label":"x","total":3}')
+        .mechanism,
+    ).toBe('renameBack');
+  });
+
+  it('defaults the mechanism to changeSet, so an older engine still reads correctly', () => {
+    // An engine that predates the rename reversal answers no `mechanism` and only ever
+    // records change-set entries.
+    expect(parseUndoStatus('{"available":true,"label":"x","total":1}').mechanism).toBe('changeSet');
+  });
+
+  it('accepts a class-shape change, which only a reverse rename produces', () => {
+    const page = parseUndoPage(
+      `{"changes":[${JSON.stringify(classShape())}],"nextOffset":0,"done":true}`,
+    );
+    expect(page.changes[0].kind).toBe('classRename');
+    expect(page.changes[0].selector).toBeNull();
+    expect(page.changes[0].newName).toBe('OldName');
+  });
+
+  it('still rejects a METHOD change that arrives with no selector', () => {
+    // Class-shape kinds legitimately have none; a method change with none is malformed and
+    // would render as an unlabelled row.
+    expect(() =>
+      parseUndoPage(
+        `{"changes":[${JSON.stringify(classShape({ kind: 'methodRecompile' }))}],"nextOffset":0,"done":true}`,
+      ),
+    ).toThrow(/no selector/);
+  });
+
+  it('labels a class-shape row by its class, showing both names for a rename', () => {
+    const c = classShape() as unknown as UndoChange;
+    expect(undoChangeLabel(c)).toBe('NewName → OldName');
+    expect(undoChangeLabel({ ...c, newName: null })).toBe('NewName');
+  });
+
+  it('badges the class-shape kinds for what they do', () => {
+    const at = (kind: string): string =>
+      undoActionLabel(classShape({ kind }) as unknown as UndoChange, 'renameBack');
+    expect(at('classRename')).toBe('Rename back');
+    expect(at('classReparent')).toBe('Re-version');
+    expect(at('classDefinitionEdit')).toBe('Redefine');
+  });
+
+  it('reads a methodRecompile differently under each mechanism', () => {
+    // Same kind, two meanings: restoring an earlier source vs rewriting a reference to
+    // follow the name. The badge must not pick one and be wrong half the time.
+    const c = classShape({ kind: 'methodRecompile', selector: 'foo' }) as unknown as UndoChange;
+    expect(undoActionLabel(c, 'changeSet')).toBe('Revert');
+    expect(undoActionLabel(c, 'renameBack')).toBe('Rewrite');
+  });
+
+  it('states the caveat without claiming to be a rollback', () => {
+    expect(RENAME_BACK_CAVEAT).toContain('not a rollback');
+    expect(RENAME_BACK_CAVEAT).toContain('carried forward');
+    expect(RENAME_BACK_CAVEAT).toContain('its own commit');
   });
 });

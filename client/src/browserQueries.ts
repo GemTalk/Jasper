@@ -77,6 +77,8 @@ import {
   applyUndoRefactoring as sharedApplyUndoRefactoring,
   clearUndoRefactoringPreview as sharedClearUndoRefactoringPreview,
   clearRefactoringUndo as sharedClearRefactoringUndo,
+  recordReverseRename as sharedRecordReverseRename,
+  ReverseRenameKind,
 } from './refactoring/queries/previewUndoRefactoring';
 import {
   analyzeChangeSignature as sharedAnalyzeChangeSignature,
@@ -2255,13 +2257,20 @@ export function clearAllBreaks(
  * new class versions, so the recorded sources may no longer even compile into the class
  * they name, and offering to "undo the last refactoring" would name the wrong one.
  *
- * Those refactorings deliberately record NO undo of their own (class shape has its own
- * restore path -- the Class Definition History viewer). So the rule is simply: after one
- * of them, there is nothing to undo. Applied here, at the single place each of their
- * applies passes through, rather than at each command's several success paths.
+ * Applied here, at the single place each of their applies passes through, rather than at each
+ * command's several success paths. Runs whether the apply succeeded, partly failed, or threw:
+ * a partial class reshape invalidates the record just as thoroughly as a complete one.
  *
- * Runs whether the apply succeeded, partly failed, or threw: a partial class reshape
- * invalidates the record just as thoroughly as a complete one.
+ * The three pure RENAMES (class / instance variable / class variable) go through here too, and
+ * still should: this clears whatever was recorded BEFORE them. They then record a reversal of
+ * their own from their command, once they have confirmed the rename actually landed -- see
+ * `recordReverseRename`. The order matters and falls out naturally, because this runs when the
+ * apply settles and the command records after that.
+ *
+ * The rest (add/remove instance variable, instance-variable structure, extract superclass,
+ * split class) record nothing at all: they need machinery that does not exist yet, or would
+ * lose data a by-name reversal cannot restore. Class shape has its own restore path -- the
+ * Class Definition History viewer.
  */
 function invalidatingRefactoringUndo(
   session: ActiveSession,
@@ -2331,4 +2340,32 @@ export function clearUndoRefactoringPreview(session: ActiveSession, token: strin
 
 export function clearRefactoringUndo(session: ActiveSession): string {
   return sharedClearRefactoringUndo(defaultQueryExecutorUsing(session));
+}
+
+/**
+ * Record that a rename landed so it can be reversed by renaming back (#434). Called by the
+ * rename flows AFTER they have confirmed the forward apply succeeded, which is why this is
+ * not folded into the apply wrapper the way the method refactorings' recording is: only the
+ * command knows whether the rename it just ran is one worth offering to reverse.
+ */
+export function recordReverseRename(
+  session: ActiveSession,
+  kind: ReverseRenameKind,
+  className: string,
+  from: string,
+  to: string,
+  label: string,
+  engineClassName: string,
+  scope?: { kind: string; dictName?: string },
+): string {
+  return sharedRecordReverseRename(
+    defaultQueryExecutorUsing(session),
+    kind,
+    className,
+    from,
+    to,
+    label,
+    engineClassName,
+    scope,
+  );
 }

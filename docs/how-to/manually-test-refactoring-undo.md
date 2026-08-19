@@ -13,17 +13,28 @@ Work through it in order; each section builds on the fixture from **Setup**.
 
 ## What undo covers
 
-Undo reverses **the last refactoring you applied in this session**, and only the ones
-that change methods:
+Undo reverses **the last refactoring you applied in this session**, by one of two
+mechanisms, and the difference is visible in the UI.
+
+**Recorded inverse** — the refactorings that change methods:
 
 change signature · extract method · extract temporary · inline method · inline temporary ·
 move method · push up · push down · rename method · rename temporary
 
-The refactorings that reshape a **class** (add/remove instance variable, instance-variable
-structure, extract superclass, split class, rename class, rename instance variable, rename
-class variable) deliberately record **no** undo — the Undo affordance simply does not
-appear after one. Class shape has its own restore path (the Class Definition History
-viewer's **Restore**).
+**Reversed by renaming again** — the three pure renames:
+
+rename class · rename instance variable · rename class variable
+
+The second kind is **not a rollback**, and the preview says so in a banner. GemStone has no
+transaction savepoints, so reversing a rename is a fresh rename in the other direction: the
+class keeps its history (a reversal adds a version, it never removes one). The compensation
+is real — anything written after the rename is carried forward, which a history revert would
+have discarded.
+
+The refactorings that reshape a class in other ways (add/remove instance variable,
+instance-variable structure, extract superclass, split class) deliberately record **no**
+undo — the affordance simply does not appear after one. Class shape has its own restore path
+(the Class Definition History viewer's **Restore**).
 
 There is **one** undo, not a stack: applying a second refactoring replaces the record, and
 undoing uses it up.
@@ -125,8 +136,24 @@ or the menu item is missing here, that is a bug worth reporting.
 | # | Step | Expect |
 |---|---|---|
 | 6.1 | With no undo recorded, run **Add Instance Variable** (or Extract Superclass, or Split Class) on `UndoDemo` and apply | The usual success message, with **no Undo button** |
-| 6.2 | Palette / context menu | **No** Undo entry — a class reshape records nothing rather than offering half an undo |
+| 6.2 | Palette / context menu | **No** Undo entry — those reshapes record nothing rather than offering half an undo |
 | 6.3 | Rename `total` → `sum`, apply, then **without undoing** run Extract Superclass and apply | Undo is offered **before** the second refactoring and **gone after** it — a class reshape clears a stale record rather than leaving one that no longer matches the stone |
+
+## 6b — Reversing a rename (the not-a-rollback path)
+
+| # | Step | Expect |
+|---|---|---|
+| 6b.1 | Rename the class `UndoDemo` → `UndoRenamed` and apply | Success toast **with an Undo button** — renames are reversible now |
+| 6b.2 | Add a method to `UndoRenamed` (say `writtenLater ^ 1`) and save it | — |
+| 6b.3 | Invoke Undo | The panel is titled **Undo Rename class UndoDemo to UndoRenamed** and carries a **↩ note**: it reverses by renaming again, is not a rollback, the class keeps its history, and work since the rename is carried forward |
+| 6b.4 | Read the rows | Badged **Rename back** / **Re-version** / **Rewrite** — never `classRename` / `classReparent` |
+| 6b.5 | The `Rename back` row's label | `UndoRenamed → UndoDemo`, with no phantom `>>` (a class row has no selector) |
+| 6b.6 | Press Undo | Explorer shows `UndoDemo` again; `UndoRenamed` is gone |
+| 6b.7 | Check `UndoDemo>>writtenLater` | **Still there** — carried forward through the reversal. This is the point of 6b.2 |
+| 6b.8 | Toast | Says it **reversed by renaming back** and that the class keeps its history — not a bare "Undid" |
+| 6b.9 | Class History on `UndoDemo` | More versions than before, not fewer — a reversal adds one |
+| 6b.10 | Now: rename `UndoDemo` → `UndoRenamed`, apply, then create a **new** class called `UndoDemo`, then invoke Undo | It **refuses** and names the collision. The new `UndoDemo` is untouched and `UndoRenamed` still exists |
+| 6b.11 | Repeat 6b.1 for an **instance variable** rename, then for a **class variable** rename | Both offer Undo and both put the name back |
 
 ## 7 — Sessions and commits
 

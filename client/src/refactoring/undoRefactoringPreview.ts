@@ -12,23 +12,44 @@ export type { ApplyResult } from './previewEnvelope';
  * refactoring's preview uses — with `label` / `engine` naming the refactoring being
  * undone and `drifted` counting the changes that carry a warning.
  *
- * Only three change kinds can appear, and each reads as a plain action:
+ * There are TWO mechanisms and the rows read differently under each, so `mechanism` travels
+ * in the envelope and the labels are chosen from it:
  *
+ * `changeSet` — the recorded inverse of a method refactoring. Three kinds:
  *   methodAdd       the refactoring DELETED this method — undoing puts it back
  *   methodRecompile the refactoring REWROTE it          — undoing restores the source
  *   methodRemove    the refactoring CREATED it          — undoing deletes it
  *
+ * `renameBack` — a rename reversed by renaming again (rename class / instance variable /
+ * class variable). Those rows are the reverse rename's OWN change set, so they carry
+ * CLASS-shape kinds — `classRename`, `classReparent`, `classDefinitionEdit` — plus method
+ * recompiles for the references being rewritten. A `renameBack` is deliberately not a
+ * rollback, and the UI says so once, above the list.
+ *
  * Kept free of any `vscode` dependency so it unit-tests directly.
  */
 
-/** One inverse change: what undoing does to a single method. */
+/** How the recorded undo will be carried out. See the module comment. */
+export type UndoMechanism = 'changeSet' | 'renameBack';
+
+/** One change the undo will apply. A method change carries a `selector`; a class-shape
+ *  change (only ever from a `renameBack`) carries none, and is labelled by its class. */
 export interface UndoChange {
   id: string;
-  kind: 'methodAdd' | 'methodRecompile' | 'methodRemove';
+  kind:
+    | 'methodAdd'
+    | 'methodRecompile'
+    | 'methodRemove'
+    | 'classRename'
+    | 'classReparent'
+    | 'classDefinitionEdit';
   dictName: string | null;
   className: string;
   isMeta: boolean;
-  selector: string;
+  /** null for a class-shape change. */
+  selector: string | null;
+  /** The name a `classRename` renames TO; null for every other kind. */
+  newName: string | null;
   category: string | null;
   /** What is in the stone now (null for a methodAdd — the method is not there). */
   oldSource: string | null;
@@ -44,6 +65,7 @@ export interface UndoStatus {
   available: boolean;
   label: string;
   engine: string;
+  mechanism: UndoMechanism;
   /** Monotonic per-session counter: a later entry always has a higher number, so a
    *  stale label the client is still showing can be told apart from a current one. */
   sequence: number;
@@ -63,6 +85,7 @@ export interface UndoStartPreview {
   /** What the refactoring being undone called itself. */
   label: string;
   engine: string;
+  mechanism: UndoMechanism;
   sequence: number;
   /** How many changes carry a warning (see `UndoChange.warning`). */
   drifted: number;
@@ -70,7 +93,20 @@ export interface UndoStartPreview {
   page: UndoPreviewPage;
 }
 
-const UNDO_KINDS = ['methodAdd', 'methodRecompile', 'methodRemove'] as const;
+const UNDO_KINDS = [
+  'methodAdd',
+  'methodRecompile',
+  'methodRemove',
+  'classRename',
+  'classReparent',
+  'classDefinitionEdit',
+] as const;
+
+/** Parse the mechanism, defaulting to the change-set one — an engine that predates the rename
+ *  reversal answers no `mechanism` field and only ever records change-set entries. */
+function mechanismOf(v: unknown): UndoMechanism {
+  return v === 'renameBack' ? 'renameBack' : 'changeSet';
+}
 
 function str(v: unknown): string | null {
   return typeof v === 'string' ? v : null;
@@ -80,7 +116,14 @@ function str(v: unknown): string | null {
  *  rather than throwing: the probe drives a menu's visibility, and a broken probe
  *  must not break the menu. */
 export function parseUndoStatus(json: string): UndoStatus {
-  const empty: UndoStatus = { available: false, label: '', engine: '', sequence: 0, total: 0 };
+  const empty: UndoStatus = {
+    available: false,
+    label: '',
+    engine: '',
+    mechanism: 'changeSet',
+    sequence: 0,
+    total: 0,
+  };
   let parsed: unknown;
   try {
     parsed = JSON.parse(json);
@@ -94,6 +137,7 @@ export function parseUndoStatus(json: string): UndoStatus {
     available: true,
     label: str(env.label) ?? 'the last refactoring',
     engine: str(env.engine) ?? '',
+    mechanism: mechanismOf(env.mechanism),
     sequence: asCount(env.sequence),
     total: asCount(env.total),
   };
@@ -109,12 +153,13 @@ function parseChange(raw: unknown, i: number): UndoChange {
   if (!UNDO_KINDS.includes(kind as (typeof UNDO_KINDS)[number])) {
     throw new Error(`Undo preview change ${i} has an unknown kind: ${String(kind)}`);
   }
-  if (
-    typeof c.id !== 'string' ||
-    typeof c.className !== 'string' ||
-    typeof c.selector !== 'string'
-  ) {
+  if (typeof c.id !== 'string' || typeof c.className !== 'string') {
     throw new Error(`Undo preview change ${i} is missing required fields.`);
+  }
+  // A METHOD change must name its selector; a class-shape change never has one.
+  const selector = str(c.selector);
+  if (String(kind).startsWith('method') && selector === null) {
+    throw new Error(`Undo preview change ${i} is a method change with no selector.`);
   }
   return {
     id: c.id,
@@ -122,7 +167,8 @@ function parseChange(raw: unknown, i: number): UndoChange {
     dictName: str(c.dictName),
     className: c.className,
     isMeta: c.isMeta === true,
-    selector: c.selector,
+    selector,
+    newName: str(c.newName),
     category: str(c.category),
     oldSource: str(c.oldSource),
     newSource: str(c.newSource),
@@ -159,6 +205,7 @@ export function parseUndoStartPreview(json: string): UndoStartPreview {
     token: env.token,
     label: str(env.label) ?? 'the last refactoring',
     engine: str(env.engine) ?? '',
+    mechanism: mechanismOf(env.mechanism),
     sequence: asCount(env.sequence),
     drifted: asCount(env.drifted),
     total: asCount(env.total),
@@ -175,22 +222,55 @@ export function parseUndoPage(json: string): UndoPreviewPage {
   return parsePageObject(parsed as Record<string, unknown>);
 }
 
-/** A human label for a preview row: "Foo>>bar:" or "Foo class>>bar:". */
+/** A human label for a preview row: "Foo>>bar:", "Foo class>>bar:", or — for a class-shape
+ *  change, which has no selector — the class itself, a rename showing both names. */
 export function undoChangeLabel(change: UndoChange): string {
+  if (change.selector === null) {
+    return change.newName === null ? change.className : `${change.className} → ${change.newName}`;
+  }
   return `${change.className}${change.isMeta ? ' class' : ''}>>${change.selector}`;
 }
 
-/** What undoing this change does, in the user's terms — the badge on its row. */
-export function undoActionLabel(change: UndoChange): string {
+/**
+ * What undoing this change does, in the user's terms — the badge on its row.
+ *
+ * The wording depends on the MECHANISM, because one kind means two things: a
+ * `methodRecompile` in a recorded inverse restores a method's earlier source ("Revert"),
+ * while in a reverse rename it rewrites a reference to follow the name ("Rewrite"). Passing
+ * the mechanism keeps the badge honest rather than picking one reading and being wrong half
+ * the time.
+ */
+export function undoActionLabel(change: UndoChange, mechanism: UndoMechanism): string {
   switch (change.kind) {
     case 'methodAdd':
       return 'Restore';
     case 'methodRemove':
       return 'Delete';
+    case 'classRename':
+      return 'Rename back';
+    case 'classReparent':
+      return 'Re-version';
+    case 'classDefinitionEdit':
+      return 'Redefine';
     default:
-      return 'Revert';
+      return mechanism === 'renameBack' ? 'Rewrite' : 'Revert';
   }
 }
+
+/**
+ * The standing caveat for a `renameBack`, stated once above the list.
+ *
+ * Deliberately not sold as a rollback: GemStone has no transaction savepoints, so renaming
+ * back is a fresh forward rename and class history GROWS rather than shrinking. The second
+ * half is the compensation, and it is a real one — a rename carries methods forward, so work
+ * written after the original rename SURVIVES the reversal, where a class-history revert
+ * would have discarded it.
+ */
+export const RENAME_BACK_CAVEAT =
+  'This reverses the rename by renaming again — it is not a rollback. The class keeps its ' +
+  'history (a reversal adds a version, it never removes one), and anything written since ' +
+  'the rename is carried forward rather than discarded. If the rename was committed, the ' +
+  'reversal needs its own commit.';
 
 /** The one-line summary above the change list. */
 export function undoSummary(total: number, drifted: number): string {

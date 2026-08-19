@@ -44,6 +44,7 @@ export function showUndoRefactoringPanel(
   const nonce = crypto.randomBytes(16).toString('hex');
   panel.webview.html = renderUndoPanelHtml({
     refactoringLabel: start.label,
+    mechanism: start.mechanism,
     total: start.total,
     drifted: start.drifted,
     changes: start.page.changes,
@@ -71,7 +72,7 @@ export function showUndoRefactoringPanel(
       done = page.done;
       void panel.webview.postMessage({
         command: 'appendChanges',
-        html: renderUndoCards(page.changes),
+        html: renderUndoCards(page.changes, start.mechanism),
         done,
       });
       return done;
