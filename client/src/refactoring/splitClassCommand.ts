@@ -193,20 +193,41 @@ export async function splitClassCommand(
     return undefined;
   }
 
+  // #434: snapshot the subtree BEFORE the reshape so it can be put back. The capture is held
+  // PENDING and only becomes an undo entry once the apply is known to have landed, so every path
+  // that does not get there drops it -- a partial reshape leaves the stone in a state the capture
+  // does not describe, and must never have an undo offered against it.
+  const discardCapture = (): void => {
+    try {
+      queries.discardPendingCapture(session);
+    } catch {
+      /* best-effort */
+    }
+  };
+  try {
+    queries.captureClassHistory(session, className);
+  } catch {
+    /* best-effort: a reshape must not fail because its undo bookkeeping did */
+  }
   const result = await showSplitClassPanel(heading, start, {
     loadPage: async (off) =>
       parsePage(await queries.pageSplitClassPreview(session, token, off, PREVIEW_PAGE_BYTES)),
     apply: async () => parseApplyResult(await queries.applySplitClass(session, token)),
     cleanup: safeClear,
   });
-  if (!result) return undefined;
+  if (!result) {
+    discardCapture();
+    return undefined;
+  }
 
   if (result.error) {
+    discardCapture();
     void vscode.window.showErrorMessage(`${heading} failed: ${result.error}`);
     return undefined;
   }
   if (result.failed.length > 0) {
     const first = result.failed[0];
+    discardCapture();
     void vscode.window.showErrorMessage(
       `Change failed: ${first.label}: ${first.error}. Earlier changes may have been applied — abort the transaction to discard them.`,
     );
@@ -216,10 +237,18 @@ export async function splitClassCommand(
   // zero changes applied without an error/failure is an impossible-in-practice state — but do not
   // claim success for it (the "no false success" rule).
   if (result.applied === 0) {
+    discardCapture();
     void vscode.window.showErrorMessage(`${heading} applied no changes.`);
     return undefined;
   }
 
+  // The reversal also has to UNBIND the class this created: it is brand new, so there is no
+  // earlier version to revert it to.
+  try {
+    queries.commitHistoryRevert(session, heading, 'GsSplitClassRefactoring', [newName]);
+  } catch {
+    /* best-effort: the reshape landed either way */
+  }
   void vscode.window.showInformationMessage(
     `${heading} — applied ${result.applied} change(s). Existing instances keep their prior version and are not migrated; commit to persist.`,
   );

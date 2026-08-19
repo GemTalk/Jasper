@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   mirrorCaveat,
+  historyRevertCaveat,
   deselectionNote,
   parseUndoStatus,
   parseUndoStartPreview,
@@ -257,5 +258,64 @@ describe('reverse-rename entries (#434)', () => {
     expect(deselectionNote('ignored')).toContain('all-or-nothing');
     // The one that would otherwise read exactly backwards.
     expect(deselectionNote('dropsMethod')).toContain('DELETES it');
+  });
+});
+
+describe('history-revert entries (#434)', () => {
+  it('reads the third mechanism', () => {
+    expect(
+      parseUndoStatus('{"available":true,"mechanism":"historyRevert","label":"x","total":2}')
+        .mechanism,
+    ).toBe('historyRevert');
+  });
+
+  it('accepts the classRemove kind, which only a history revert produces', () => {
+    const raw = JSON.stringify({
+      id: '1',
+      kind: 'classRemove',
+      className: 'Extracted',
+      isMeta: false,
+      selector: null,
+      newName: null,
+      category: null,
+      oldSource: 'Object subclass: #Extracted',
+      newSource: null,
+      warning: null,
+    });
+    const page = parseUndoPage(`{"changes":[${raw}],"nextOffset":0,"done":true}`);
+    expect(page.changes[0].kind).toBe('classRemove');
+    expect(undoActionLabel(page.changes[0], 'historyRevert')).toBe('Delete class');
+  });
+
+  it('badges a reverted class as Restore, not Redefine', () => {
+    // Under a history revert the definition edit IS the restoration; "Redefine" would understate
+    // what the row does.
+    const c = {
+      id: '1',
+      kind: 'classDefinitionEdit',
+      className: 'Account',
+      isMeta: false,
+      selector: null,
+      newName: null,
+      category: null,
+      oldSource: 'a',
+      newSource: 'b',
+      warning: null,
+    } as unknown as UndoChange;
+    expect(undoActionLabel(c, 'historyRevert')).toBe('Restore');
+    expect(undoActionLabel(c, 'mirror')).toBe('Redefine');
+  });
+
+  it('says plainly that this returns the classes to their pre-refactoring state', () => {
+    const c = historyRevertCaveat(0);
+    expect(c).toContain('BEFORE the refactoring');
+    expect(c).toContain('shape and their methods');
+    expect(c).toContain('nothing extra is lost');
+  });
+
+  it('names how many methods will be discarded when there are any', () => {
+    expect(historyRevertCaveat(3)).toContain('3 methods written since will be DISCARDED');
+    expect(historyRevertCaveat(1)).toContain('1 method written since will be DISCARDED');
+    expect(historyRevertCaveat(1)).not.toContain('nothing extra is lost');
   });
 });

@@ -132,6 +132,55 @@ c isNil ifTrue: ['ok'] ifFalse: [
   );
 }
 
+/**
+ * Snapshot, BEFORE a class-reshaping apply, the classHistory index of `rootClassName` and every
+ * descendant, so the reshape can later be put back (#434). Held pending until
+ * `commitHistoryRevert` promotes it — so an apply that fails leaves no half-made undo.
+ *
+ * Must be called BEFORE the apply. Answers `'ok'`, `'not a class'`, or `'ok'` as a no-op on a
+ * stone whose engine predates undo.
+ */
+export function captureClassHistory(execute: QueryExecutor, rootClassName: string): string {
+  return execute(
+    `| c |
+c := ${UNDO_CLASS}.
+c isNil ifTrue: ['ok'] ifFalse: [c captureClassHistoryOf: '${escapeString(rootClassName)}']`,
+  );
+}
+
+/** Throw away a pending capture whose apply did not land. */
+export function discardPendingCapture(execute: QueryExecutor): string {
+  return execute(
+    `| c |
+c := ${UNDO_CLASS}.
+c isNil ifTrue: ['ok'] ifFalse: [c discardPendingCapture]`,
+  );
+}
+
+/**
+ * Promote a pending capture into the undo entry, once the apply is known to have landed.
+ * `createdClassNames` are classes the refactoring brought into existence (an inserted
+ * superclass, an extracted component); they have no earlier version to revert to and are
+ * unbound by the reversal instead.
+ */
+export function commitHistoryRevert(
+  execute: QueryExecutor,
+  label: string,
+  engineClassName: string,
+  createdClassNames: string[] = [],
+): string {
+  const created = createdClassNames.map((n) => `'${escapeString(n)}'`).join(' ');
+  return execute(
+    `| c |
+c := ${UNDO_CLASS}.
+c isNil ifTrue: ['ok'] ifFalse: [
+  c
+    commitHistoryRevert: '${escapeString(label)}'
+    engine: '${escapeString(engineClassName)}'
+    created: #(${created})]`,
+  );
+}
+
 /** Forget the recorded undo entirely (there is nothing to undo any more). */
 export function clearRefactoringUndo(execute: QueryExecutor): string {
   return execute(

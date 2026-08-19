@@ -183,6 +183,7 @@ GsRefactoringUndoTest >> setUp [
 	| account ledger savings |
 	super setUp.
 	GsRefactoringUndo clear.
+	GsRefactoringUndo discardPendingCapture.
 	account := Object
 		subclass: 'GsUndoAccount'
 		instVarNames: #('balance' 'owner')
@@ -223,9 +224,10 @@ GsRefactoringUndoTest >> setUp [
 { #category : 'running' }
 GsRefactoringUndoTest >> tearDown [
 	GsRefactoringUndo clear.
+	GsRefactoringUndo discardPendingCapture.
 	"GsUndoOldLedger / GsUndoVarHolder only exist in the reverse-rename tests, and a test that
 	 fails mid-way can leave either behind -- remove them unconditionally."
-	#(#GsUndoSavings #GsUndoLedger #GsUndoAccount #GsUndoOldLedger #GsUndoVarHolder)
+	#(#GsUndoSavings #GsUndoLedger #GsUndoAccount #GsUndoOldLedger #GsUndoVarHolder #GsUndoCreated)
 		do: [:n | UserGlobals removeKey: n ifAbsent: []].
 	super tearDown
 ]
@@ -1025,6 +1027,172 @@ GsRefactoringUndoTest >> testAnInstVarReversalNeverCommitsAndNeverDeletesHistory
 		applyDeselected: #() options: nil migrate: false deleteHistory: false.
 	before := System needsCommit.
 	self recordInstVarAddOf: 'gsuExtra'.
+	self undoAll.
+	self assert: System needsCommit equals: before
+]
+
+{ #category : 'tests - history revert' }
+GsRefactoringUndoTest >> testCaptureAndCommitMakeAHistoryRevertEntry [
+	self assert: (GsRefactoringUndo captureClassHistoryOf: 'GsUndoAccount') equals: 'ok'.
+	self
+		assert: (GsRefactoringUndo commitHistoryRevert: 'Push up balance' engine: 'GsInstVarStructureRefactoring' created: #())
+		equals: 'ok'.
+	self assert: GsRefactoringUndo currentEntry mechanism equals: #historyRevert
+]
+
+{ #category : 'tests - history revert' }
+GsRefactoringUndoTest >> testCaptureRecordsTheSubtreeTopDown [
+	"Parent before child: GsClassHistory re-versions each subclass onto its parent's restored
+	 version, so replaying a child first would re-parent it onto a version about to be superseded."
+	| names |
+	GsRefactoringUndo captureClassHistoryOf: 'GsUndoAccount'.
+	GsRefactoringUndo commitHistoryRevert: 'x' engine: 'y' created: #().
+	names := GsRefactoringUndo currentEntry revertPlan collect: [:e | e at: 1].
+	self assert: (names indexOf: 'GsUndoAccount') < (names indexOf: 'GsUndoSavings')
+]
+
+{ #category : 'tests - history revert' }
+GsRefactoringUndoTest >> testCommittingWithNoCaptureRecordsNothing [
+	"A caller that forgot to capture must fail loudly rather than record an empty undo."
+	self
+		assert: (GsRefactoringUndo commitHistoryRevert: 'x' engine: 'y' created: #())
+		equals: 'nothing captured'.
+	self assert: GsRefactoringUndo currentEntry isNil
+]
+
+{ #category : 'tests - history revert' }
+GsRefactoringUndoTest >> testADiscardedCaptureLeavesNoEntry [
+	GsRefactoringUndo captureClassHistoryOf: 'GsUndoAccount'.
+	GsRefactoringUndo discardPendingCapture.
+	self
+		assert: (GsRefactoringUndo commitHistoryRevert: 'x' engine: 'y' created: #())
+		equals: 'nothing captured'
+]
+
+{ #category : 'tests - history revert' }
+GsRefactoringUndoTest >> testCapturingAnUnknownClassRecordsNothing [
+	self
+		assert: (GsRefactoringUndo captureClassHistoryOf: 'GsUndoNoSuchThing')
+		equals: 'not a class'
+]
+
+{ #category : 'tests - history revert' }
+GsRefactoringUndoTest >> testAHistoryRevertIsAllOrNothing [
+	GsRefactoringUndo captureClassHistoryOf: 'GsUndoAccount'.
+	GsRefactoringUndo commitHistoryRevert: 'x' engine: 'y' created: #().
+	self assert: GsRefactoringUndo currentEntry deselection equals: #ignored.
+	self assert: self undoPreviewJson includesSubstring: '"deselection":"ignored"'
+]
+
+{ #category : 'tests - history revert' }
+GsRefactoringUndoTest >> testHistoryRevertRestoresAReshapedClass [
+	"The real thing: reshape a class, then put it back to its pre-refactoring state."
+	| before |
+	before := (self ownInstVarsOf: #GsUndoAccount) asSortedCollection asArray.
+	GsRefactoringUndo captureClassHistoryOf: 'GsUndoAccount'.
+	(GsInstVarRefactoring class: self fixture addInstVar: 'gsuReshaped')
+		applyDeselected: #() options: nil migrate: false deleteHistory: false.
+	GsRefactoringUndo
+		commitHistoryRevert: 'Add gsuReshaped to GsUndoAccount'
+		engine: 'GsInstVarRefactoring'
+		created: #().
+	self assert: ((self ownInstVarsOf: #GsUndoAccount) includes: 'gsuReshaped').
+
+	self undoAll.
+
+	self assert: (self ownInstVarsOf: #GsUndoAccount) asSortedCollection asArray equals: before.
+	"And the methods came back with the shape -- that is the point of reverting rather than
+	 re-declaring by hand."
+	self assert: (self sourceOf: #gsuUntouched in: (UserGlobals at: #GsUndoAccount)) notNil.
+	self assert: (self sourceOf: #gsuAlsoUntouched in: (UserGlobals at: #GsUndoAccount) class) notNil
+]
+
+{ #category : 'tests - history revert' }
+GsRefactoringUndoTest >> testHistoryRevertNamesTheMethodsItWillDiscard [
+	"Eric 2026-08-19: the reversal returns the class to its PRE-REFACTORING state, and the user
+	 must be told that -- so anything written since is named, not discovered afterwards."
+	| json |
+	GsRefactoringUndo captureClassHistoryOf: 'GsUndoAccount'.
+	(GsInstVarRefactoring class: self fixture addInstVar: 'gsuReshaped')
+		applyDeselected: #() options: nil migrate: false deleteHistory: false.
+	GsRefactoringUndo commitHistoryRevert: 'x' engine: 'y' created: #().
+	self compile: 'gsuWrittenAfter ^ 7' in: (UserGlobals at: #GsUndoAccount) category: 'after'.
+
+	self assert: GsRefactoringUndo currentEntry totalDiscardedCount > 0.
+	json := self undoPreviewJson.
+	self assert: json includesSubstring: 'pre-refactoring state DISCARDS'.
+	self assert: json includesSubstring: 'gsuWrittenAfter'
+]
+
+{ #category : 'tests - history revert' }
+GsRefactoringUndoTest >> testNothingWrittenSinceMeansNothingDiscarded [
+	GsRefactoringUndo captureClassHistoryOf: 'GsUndoAccount'.
+	(GsInstVarRefactoring class: self fixture addInstVar: 'gsuReshaped')
+		applyDeselected: #() options: nil migrate: false deleteHistory: false.
+	GsRefactoringUndo commitHistoryRevert: 'x' engine: 'y' created: #().
+	self assert: GsRefactoringUndo currentEntry totalDiscardedCount equals: 0
+]
+
+{ #category : 'tests - history revert' }
+GsRefactoringUndoTest >> testThePreviewShowsADefinitionDiffPerRevertedClass [
+	| json |
+	GsRefactoringUndo captureClassHistoryOf: 'GsUndoAccount'.
+	(GsInstVarRefactoring class: self fixture addInstVar: 'gsuReshaped')
+		applyDeselected: #() options: nil migrate: false deleteHistory: false.
+	GsRefactoringUndo commitHistoryRevert: 'x' engine: 'y' created: #().
+	json := self undoPreviewJson.
+	self assert: json includesSubstring: '"kind":"classDefinitionEdit"'.
+	self assert: json includesSubstring: '"mechanism":"historyRevert"'
+]
+
+{ #category : 'tests - history revert' }
+GsRefactoringUndoTest >> testAClassTheRefactoringCREATEDIsUnbound [
+	"An inserted superclass or an extracted component has no earlier version to revert to, so the
+	 reversal takes the name back out."
+	| created |
+	created := Object
+		subclass: 'GsUndoCreated'
+		instVarNames: #()
+		classVars: #() classInstVars: #() poolDictionaries: #()
+		inDictionary: UserGlobals.
+	GsRefactoringUndo captureClassHistoryOf: 'GsUndoAccount'.
+	GsRefactoringUndo
+		commitHistoryRevert: 'Extract superclass GsUndoCreated'
+		engine: 'GsExtractSuperclassRefactoring'
+		created: (Array with: 'GsUndoCreated').
+	self assert: self undoPreviewJson includesSubstring: '"kind":"classRemove"'.
+
+	self undoAll.
+	self assert: (UserGlobals at: #GsUndoCreated ifAbsent: [nil]) isNil
+]
+
+{ #category : 'tests - history revert' }
+GsRefactoringUndoTest >> testAHistoryRevertRefusesWhenEveryClassIsGone [
+	GsRefactoringUndo captureClassHistoryOf: 'GsUndoLedger'.
+	GsRefactoringUndo commitHistoryRevert: 'x' engine: 'y' created: #().
+	UserGlobals removeKey: #GsUndoLedger ifAbsent: [].
+	self assert: GsRefactoringUndo currentEntry reverseUnavailableReason notNil.
+	self assert: self undoPreviewJson includesSubstring: 'cannot be reversed'
+]
+
+{ #category : 'tests - history revert' }
+GsRefactoringUndoTest >> testACleanHistoryRevertConsumesTheEntry [
+	GsRefactoringUndo captureClassHistoryOf: 'GsUndoAccount'.
+	(GsInstVarRefactoring class: self fixture addInstVar: 'gsuReshaped')
+		applyDeselected: #() options: nil migrate: false deleteHistory: false.
+	GsRefactoringUndo commitHistoryRevert: 'x' engine: 'y' created: #().
+	self undoAll.
+	self assert: GsRefactoringUndo currentEntry isNil
+]
+
+{ #category : 'tests - history revert' }
+GsRefactoringUndoTest >> testAHistoryRevertCommitsNothing [
+	| before |
+	before := System needsCommit.
+	GsRefactoringUndo captureClassHistoryOf: 'GsUndoAccount'.
+	(GsInstVarRefactoring class: self fixture addInstVar: 'gsuReshaped')
+		applyDeselected: #() options: nil migrate: false deleteHistory: false.
+	GsRefactoringUndo commitHistoryRevert: 'x' engine: 'y' created: #().
 	self undoAll.
 	self assert: System needsCommit equals: before
 ]

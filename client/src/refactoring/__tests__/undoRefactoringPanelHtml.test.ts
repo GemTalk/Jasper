@@ -193,3 +193,22 @@ describe('undo panel html — un-ticking means three different things', () => {
     expect(out).toContain('DELETE 2 methods');
   });
 });
+
+describe('undo panel html — a history revert states the pre-refactoring state plainly', () => {
+  it('warns, in the warning style, when methods will be discarded', () => {
+    const out = html({ mechanism: 'historyRevert', deselection: 'ignored', dropCount: 2 });
+    expect(out).toContain('BEFORE the refactoring');
+    expect(out).toContain('2 methods written since will be DISCARDED');
+    expect(out).toMatch(/class="oos">⚠/);
+  });
+
+  it('uses the calm note style when nothing would be discarded', () => {
+    const out = html({ mechanism: 'historyRevert', deselection: 'ignored', dropCount: 0 });
+    expect(out).toContain('nothing extra is lost');
+    expect(out).toContain('class="note"');
+  });
+
+  it('disables the rows — a revert restores each subclass onto its parent', () => {
+    expect(renderUndoCards([change()], 'historyRevert', 'ignored')).toContain('disabled');
+  });
+});

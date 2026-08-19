@@ -29,6 +29,7 @@ import {
   undoActionLabel,
   undoSummary,
   mirrorCaveat,
+  historyRevertCaveat,
   deselectionNote,
 } from './undoRefactoringPreview';
 import { lineDiff, DiffLine, DiffLineType } from './lineDiff';
@@ -151,10 +152,16 @@ export function renderUndoPanelHtml(opts: UndoPanelHtmlOptions): string {
     drifted > 0 ? `<div class="oos">⚠ ${escapeHtml(undoSummary(total, drifted))}</div>` : '';
   // A rename reversal is not a rollback and must not be presented as one. Informational, not a
   // warning: nothing is going wrong here, the mechanism simply differs from what "undo" implies.
+  // A historyRevert's note is a WARNING, not an aside: it is the one mechanism that discards
+  // work, and the count is in the text.
   const mechanismBanner =
     mechanism === 'mirror'
       ? `<div class="note">↩ ${escapeHtml(mirrorCaveat(reverseKind, dropCount))}</div>`
-      : '';
+      : mechanism === 'historyRevert'
+        ? `<div class="${dropCount > 0 ? 'oos' : 'note'}">${
+            dropCount > 0 ? '⚠' : '↩'
+          } ${escapeHtml(historyRevertCaveat(dropCount))}</div>`
+        : '';
   // Said separately from the mechanism note: this is about the CONTROLS rather than the
   // operation, and a `dropsMethod` warning can apply to a change-set entry too.
   const deselectionBanner = (() => {

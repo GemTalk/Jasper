@@ -747,7 +747,7 @@ removeallclassmethods GsRefactoringJson
 doit
 | cls |
 cls := Object subclass: 'GsRefactoringUndo'
-  instVarNames: #('label' 'engineName' 'sequence' 'changeSet' 'reverseOp' 'reverseRef')
+  instVarNames: #('label' 'engineName' 'sequence' 'changeSet' 'reverseOp' 'reverseRef' 'revertPlan' 'removePlan')
   classVars: #()
   classInstVars: #()
   poolDictionaries: #()
@@ -799,8 +799,10 @@ Instead such an entry records the OPERATION -- kind, class, from-name, to-name, 
 and reversing it REBUILDS the same rename engine in the opposite direction and previews
 and applies THAT. So `mechanism` answers either:
 
-  #changeSet -- apply the recorded inverse change set (method refactorings)
-  #mirror    -- rebuild the SAME engine performing the opposite operation, and apply that
+  #changeSet     -- apply the recorded inverse change set (method refactorings)
+  #mirror        -- rebuild the SAME engine performing the opposite operation, and apply that
+  #historyRevert -- revert every class the refactoring reshaped to the classHistory version it
+                    had BEFORE the apply, then unbind any class the refactoring created
 
 Both are previewed and applied through the same client path, because both end up
 answering an ordinary change set to page over.
@@ -816,14 +818,28 @@ a REMOVE brings the name back but not the values it held nor the methods the rem
 Un-ticking a row means three different things across these kinds -- see
 `deselectionFor:` -- so the mechanism alone is not enough for a client to render honestly.
 
-Still out of scope
-------------------
-Everything else that reshapes a class -- instance-variable structure, extract superclass,
-split class -- records NO entry: half an undo is worse than
-none. Those need machinery that does not exist yet (a class-removal primitive, an inverse
-ordering that stays top-down, classHistory reverts), or they lose data a by-name reversal
-cannot restore. The apply result''s undoRecorded field reports which it was, so the client
-can say so rather than silently offering nothing.
+The #historyRevert mechanism -- the wholesale one
+------------------------------------------------
+The remaining class reshapes (instance-variable structure, extract superclass, split class)
+have no mirror operation. They are reversed by putting each reshaped class back to the
+classHistory version it had before the apply, via GsClassHistory>>revertClassNamed:toIndex:,
+and then unbinding whatever class the refactoring CREATED (an inserted superclass or an
+extracted component has no earlier version to revert to).
+
+Two properties of that, both of which the UI must state:
+
+- Order is TOP-DOWN, parent before child -- NOT reverse order. GsClassHistory re-versions each
+  subclass onto its parent''s restored version, so reverting a child first would re-parent it
+  onto a version its parent is about to supersede. This is the main correctness trap here.
+- Reverting takes the historical version''s METHODS as well as its shape, so this returns those
+  classes to their PRE-REFACTORING STATE -- anything written on them since the refactoring is
+  discarded. `discardedMethodsFor:atIndex:` finds exactly which methods those are, per class, so
+  the preview can name them rather than let the user discover it afterwards. Eric''s call
+  (2026-08-19): put the thing refactored back as it was, and make sure the user knows that is
+  what is happening.
+
+The apply result''s undoRecorded field reports whether anything was recorded, so the client can
+say so rather than silently offering nothing.
 
 Nothing here commits. An undo of an uncommitted refactoring stays uncommitted; an
 undo of a committed one needs the user''s own commit, exactly like every apply.
@@ -9184,6 +9200,19 @@ classAddId: anId dictName: dn className: cn superclassName: sn newSource: ns
 
 category: 'instance creation'
 classmethod: GsRefactoringChange
+classRemoveId: anId dictName: dn className: cn oldSource: os
+	"A class to UNBIND from its dictionary. Staged only by an UNDO: a refactoring that CREATED a
+	 class (extract-superclass's inserted parent, split-class's component) has no earlier version
+	 to revert that class to, so reversing it means taking the name back out. oldSource is the
+	 class's current definition and newSource is nil, so the before/after diff renders as an
+	 all-removed class. No forward refactoring stages this kind."
+	^self new
+		setId: anId kind: #classRemove dictName: dn className: cn
+		isMeta: false selector: nil category: nil oldSource: os newSource: nil
+%
+
+category: 'instance creation'
+classmethod: GsRefactoringChange
 classReparentId: anId dictName: dn className: cn oldSource: os newSource: ns
 	"A descendant of a renamed class: it must be recompiled newVersionOf: its current
 	 version so it re-points at the freshly created parent chain (and, for a direct
@@ -9308,6 +9337,19 @@ addClassAddInDictionary: dn className: cn superclassName: sn newSource: ns
 	change := GsRefactoringChange
 		classAddId: self nextIdString dictName: dn className: cn
 		superclassName: sn newSource: ns.
+	changes add: change.
+	^change
+%
+
+category: 'building'
+method: GsRefactoringChangeSet
+addClassRemoveInDictionary: dn className: cn oldSource: os
+	"Stage the UNBINDING of a class. Records the change only; NEVER removes or commits. Staged
+	 only by an undo reversing a refactoring that created the class -- see
+	 GsRefactoringChange class>>classRemoveId:dictName:className:oldSource:."
+	| change |
+	change := GsRefactoringChange
+		classRemoveId: self nextIdString dictName: dn className: cn oldSource: os.
 	changes add: change.
 	^change
 %
@@ -9869,15 +9911,174 @@ method: GsRefactoringUndo
 size
 	"How many changes the reversal would apply. For a #mirror that means building the
 	 reverse rename, which is why callers that only want a cheap yes/no ask `mechanism`."
+	revertPlan isNil ifFalse: [^self revertChangeSet size].
 	^reverseOp isNil ifTrue: [changeSet size] ifFalse: [self reverseChangeSet size]
 %
 
 category: 'accessing'
 method: GsRefactoringUndo
 mechanism
-	"#changeSet -- apply the recorded inverse change set; #mirror -- rebuild the SAME engine
-	 performing the opposite operation and apply that. See the class comment."
+	"See the class comment: #changeSet, #mirror, or #historyRevert."
+	revertPlan isNil ifFalse: [^#historyRevert].
 	^reverseOp isNil ifTrue: [#changeSet] ifFalse: [#mirror]
+%
+
+category: 'accessing'
+method: GsRefactoringUndo
+revertPlan
+	"Array of (className, historyIndex, definitionAtCaptureTime), TOP-DOWN. nil unless this is a
+	 #historyRevert entry."
+	^revertPlan
+%
+
+category: 'accessing'
+method: GsRefactoringUndo
+removePlan
+	"Names of classes the refactoring created, to be unbound by the reversal."
+	^removePlan ifNil: [#()]
+%
+
+category: 'history revert'
+method: GsRefactoringUndo
+discardedMethodsFor: aClassName atIndex: anIndex
+	"The methods reverting aClassName to version anIndex would DISCARD: those the class has NOW
+	 that the target version either lacks, or holds different source for. This is what makes the
+	 reversal a return to the PRE-REFACTORING STATE rather than a merge, and naming them is the
+	 difference between the user choosing that and discovering it afterwards. Answers an Array of
+	 'Foo>>bar' / 'Foo class>>bar' strings, both sides."
+	| env cls hist target out |
+	env := GsRefactoringEnvironment new.
+	cls := env classNamed: aClassName.
+	cls isNil ifTrue: [^Array new].
+	hist := cls classHistory.
+	(anIndex < 1 or: [anIndex > hist size]) ifTrue: [^Array new].
+	target := hist at: anIndex.
+	target == cls ifTrue: [^Array new].
+	out := OrderedCollection new.
+	(Array with: false with: true) do: [:meta | | now then |
+		now := meta ifTrue: [cls class] ifFalse: [cls].
+		then := meta ifTrue: [target class] ifFalse: [target].
+		now selectors do: [:sel | | mNow mThen |
+			mNow := now compiledMethodAt: sel environmentId: 0 otherwise: nil.
+			mThen := then compiledMethodAt: sel environmentId: 0 otherwise: nil.
+			(mNow notNil and: [mThen isNil
+				or: [(GsRefactoringUndo source: mNow sourceString matches: mThen sourceString) not]])
+				ifTrue: [out add: aClassName, (meta ifTrue: [' class>>'] ifFalse: ['>>']), sel asString]]].
+	^out asArray
+%
+
+category: 'private'
+method: GsRefactoringUndo
+commaList: aCollection
+	"aCollection joined with commas, capped so one warning cannot swamp the preview row."
+	| shown ws |
+	shown := aCollection size > 8 ifTrue: [aCollection copyFrom: 1 to: 8] ifFalse: [aCollection].
+	ws := WriteStream on: String new.
+	shown keysAndValuesDo: [:i :e |
+		i = 1 ifFalse: [ws nextPutAll: ', '].
+		ws nextPutAll: e asString].
+	aCollection size > shown size ifTrue: [
+		ws nextPutAll: ' (and '; nextPutAll: (aCollection size - shown size) printString;
+		   nextPutAll: ' more)'].
+	^ws contents
+%
+
+category: 'history revert'
+method: GsRefactoringUndo
+revertChangeSet
+	"A synthetic change set describing the reversal, so it previews through the same panel as
+	 everything else: one #classDefinitionEdit per class to revert -- a real definition diff, what
+	 it is now on the left and what reverting restores on the right -- carrying a warning naming
+	 the methods that revert would discard; then one #classRemove per class the refactoring
+	 created. Built fresh each time, so the diff and the warnings describe the stone as it is now."
+	| env cs |
+	env := GsRefactoringEnvironment new.
+	cs := GsRefactoringChangeSet new.
+	revertPlan do: [:entry | | cls hist target discarded change |
+		cls := env classNamed: (entry at: 1).
+		cls isNil ifFalse: [
+			hist := cls classHistory.
+			target := ((entry at: 2) between: 1 and: hist size)
+				ifTrue: [hist at: (entry at: 2)]
+				ifFalse: [nil].
+			change := cs
+				addClassDefinitionEditInDictionary: nil
+				className: (entry at: 1)
+				oldSource: cls definition
+				newSource: (target isNil ifTrue: [entry at: 3] ifFalse: [target definition]).
+			discarded := self discardedMethodsFor: (entry at: 1) atIndex: (entry at: 2).
+			discarded isEmpty ifFalse: [
+				change setWarning: 'Returning ', (entry at: 1),
+					' to its pre-refactoring state DISCARDS ', discarded size printString,
+					' method', (discarded size = 1 ifTrue: [''] ifFalse: ['s']),
+					' written since: ', (self commaList: discarded)]]].
+	self removePlan do: [:name | | cls |
+		cls := env classNamed: name.
+		cls isNil ifFalse: [
+			cs addClassRemoveInDictionary: nil className: name oldSource: cls definition]].
+	^cs
+%
+
+category: 'history revert'
+method: GsRefactoringUndo
+totalDiscardedCount
+	"How many methods the whole reversal would discard, across every class it reverts."
+	| n |
+	revertPlan isNil ifTrue: [^0].
+	n := 0.
+	revertPlan do: [:entry |
+		n := n + (self discardedMethodsFor: (entry at: 1) atIndex: (entry at: 2)) size].
+	^n
+%
+
+category: 'history revert'
+method: GsRefactoringUndo
+applyHistoryRevert
+	"Revert every planned class TOP-DOWN, then unbind the classes the refactoring created.
+
+	 Top-down is not a preference: GsClassHistory re-versions each subclass onto its parent's
+	 restored version, so a child reverted BEFORE its parent would be re-parented onto a version
+	 the parent is about to supersede. The capture recorded that order; replay it as recorded."
+	| env applied failures |
+	applied := 0.
+	failures := OrderedCollection new.
+	revertPlan do: [:entry |
+		[| answer |
+		 answer := GsClassHistory revertClassNamed: (entry at: 1) toIndex: (entry at: 2).
+		 (answer indexOfSubCollection: '"reverted":true') > 0
+			ifTrue: [applied := applied + 1]
+			ifFalse: [
+				"'already current' means that class never moved -- nothing to do, not a failure."
+				(answer indexOfSubCollection: 'already current') > 0
+					ifFalse: [failures add: (Array with: (entry at: 1) with: (entry at: 1) with: answer)]]]
+			on: Error do: [:e |
+				failures add: (Array with: (entry at: 1) with: (entry at: 1) with: e messageText)]].
+	env := GsRefactoringEnvironment new.
+	self removePlan do: [:name |
+		[| removed |
+		 removed := false.
+		 (env dictionariesDefiningClassNamed: name) do: [:d |
+			(d removeKey: name asSymbol ifAbsent: [nil]) isNil ifFalse: [removed := true]].
+		 removed ifTrue: [applied := applied + 1]]
+			on: Error do: [:e |
+				failures add: (Array with: name with: name with: e messageText)]].
+	^'{"applied":', applied printString, ',"failed":[',
+	  ((failures collect: [:f |
+		'{"id":', (GsRefactoringJson jsonQuote: (f at: 1) asString),
+		',"label":', (GsRefactoringJson jsonQuote: (f at: 2) asString),
+		',"error":', (GsRefactoringJson jsonQuote: ((f at: 3) ifNil: ['unknown error']) asString), '}'])
+			inject: '' into: [:acc :s | acc isEmpty ifTrue: [s] ifFalse: [acc, ',', s]]),
+	  ']}'
+%
+
+category: 'private'
+method: GsRefactoringUndo
+setLabel: aLabel engine: anEngineName sequence: aSequence revertPlan: aPlan removePlan: aRemoveList
+	label := aLabel isNil ifTrue: [nil] ifFalse: [aLabel asString].
+	engineName := anEngineName isNil ifTrue: [nil] ifFalse: [anEngineName asString].
+	sequence := aSequence.
+	revertPlan := aPlan.
+	removePlan := aRemoveList
 %
 
 category: 'accessing'
@@ -9892,6 +10093,9 @@ category: 'accessing'
 method: GsRefactoringUndo
 deselection
 	"See GsRefactoringUndo class>>deselectionFor:. A change-set entry is always #perChange."
+	"A #historyRevert is all-or-nothing: the classes are reverted top-down and each child is
+	 re-versioned onto its restored parent, so leaving one out would strand the rest."
+	revertPlan isNil ifFalse: [^#ignored].
 	^reverseOp isNil
 		ifTrue: [#perChange]
 		ifFalse: [GsRefactoringUndo deselectionFor: (reverseOp at: 1)]
@@ -9979,6 +10183,11 @@ reverseUnavailableReason
 	 the reversal would fail partway through instead of declining. Reachable in practice: rename
 	 A to B, then create something new called A, then try to reverse."
 	| env cls ref |
+	revertPlan isNil ifFalse: [
+		env := GsRefactoringEnvironment new.
+		(revertPlan anySatisfy: [:e | (env classNamed: (e at: 1)) notNil]) ifFalse: [
+			^'None of the classes this refactoring reshaped still exist, so it cannot be reversed.'].
+		^nil].
 	reverseOp isNil ifTrue: [^nil].
 	env := GsRefactoringEnvironment new.
 	cls := env classNamed: (reverseOp at: 2).
@@ -10038,6 +10247,9 @@ refreshWarnings
 	 as it is RIGHT NOW, by the same engine that would apply it, so every row is current by
 	 construction. Its one caveat is not per-change (it is 'this renames again rather than
 	 rolling back') and the client states it once, above the list."
+	"A #historyRevert builds its warnings as it builds its synthetic change set, from the stone as
+	 it is now, so there is nothing to refresh here either."
+	revertPlan isNil ifFalse: [^self].
 	reverseOp isNil ifFalse: [^self].
 	env := GsRefactoringEnvironment new.
 	changeSet changes do: [:change |
@@ -10076,6 +10288,10 @@ method: GsRefactoringUndo
 driftedCount
 	"How many changes currently carry a warning. Summarised at the top of the preview so
 	 the user is told BEFORE scrolling that the undo is not a clean reversal."
+	"A #historyRevert's per-row warnings are exactly the 'this discards N methods' notices, which
+	 the user most needs counted -- so they are reported, unlike a #mirror's (which has none)."
+	revertPlan isNil ifFalse: [
+		^(self revertChangeSet changes select: [:c | c warning notNil]) size].
 	reverseOp isNil ifFalse: [^0].
 	^(changeSet changes select: [:c | c warning notNil]) size
 %
@@ -10088,7 +10304,9 @@ pageJsonFrom: startIndex maxBytes: maxBytes
 	 #mirror those are the mirrored operation's OWN changes, which is why the client's
 	 preview has to accept class-shape kinds as well as method ones."
 	| all ws i |
-	all := (reverseOp isNil ifTrue: [changeSet] ifFalse: [self reverseChangeSet]) changes.
+	all := (revertPlan notNil
+		ifTrue: [self revertChangeSet]
+		ifFalse: [reverseOp isNil ifTrue: [changeSet] ifFalse: [self reverseChangeSet]]) changes.
 	ws := WriteStream on: String new.
 	ws nextPut: $[.
 	i := startIndex.
@@ -10141,6 +10359,12 @@ applyDeselected: deselectedIds
 	"A #mirror is applied by the mirrored engine itself -- the same code path the forward operation
 	 uses, so the reversal cannot drift from the operation it reverses. A clean one is used up,
 	 exactly as below."
+	revertPlan isNil ifFalse: [
+		| result |
+		result := self applyHistoryRevert.
+		(deselectedIds isEmpty and: [(result indexOfSubCollection: '"failed":[]') > 0])
+			ifTrue: [GsRefactoringUndo clear].
+		^result].
 	reverseOp isNil ifFalse: [
 		| ref result kind |
 		ref := self reverseRefactoring.
@@ -10356,6 +10580,69 @@ recordReverseRename: aKind className: cn from: fromName to: toName scopeKind: sk
 			engine: engineName
 			sequence: self nextSequence
 			reverseOp: op).
+	^'ok'
+%
+
+category: 'constants'
+classmethod: GsRefactoringUndo
+pendingCaptureKey
+	"Where a BEFORE-the-apply class-history capture waits until the apply is known to have landed.
+	 Separate from the entry key so a failed apply cannot leave a half-made entry behind."
+	^#GsRefactoringUndoPendingCapture
+%
+
+category: 'recording'
+classmethod: GsRefactoringUndo
+captureClassHistoryOf: aRootClassName
+	"Snapshot, BEFORE a class-reshaping apply, the classHistory index of the named class and every
+	 descendant -- TOP-DOWN, which is the order the reversal must replay them in. Held pending
+	 until commitHistoryRevert:engine:created: promotes it. Answers 'ok', or 'not a class' when the
+	 name does not resolve (recording nothing rather than something wrong)."
+	| env cls ordered plan |
+	env := GsRefactoringEnvironment new.
+	cls := env classNamed: aRootClassName.
+	cls isNil ifTrue: [^'not a class'].
+	ordered := OrderedCollection new.
+	ordered add: cls.
+	ordered addAll: (env descendantsOf: cls).
+	plan := ordered collect: [:c | | triple |
+		triple := Array new: 3.
+		triple at: 1 put: c name asString.
+		triple at: 2 put: (c classHistory indexOf: c).
+		triple at: 3 put: c definition.
+		triple].
+	SessionTemps current at: self pendingCaptureKey put: plan asArray.
+	^'ok'
+%
+
+category: 'recording'
+classmethod: GsRefactoringUndo
+discardPendingCapture
+	"Throw away a capture whose apply did not land."
+	SessionTemps current removeKey: self pendingCaptureKey ifAbsent: [].
+	^'ok'
+%
+
+category: 'recording'
+classmethod: GsRefactoringUndo
+commitHistoryRevert: aLabel engine: engineName created: createdNames
+	"Promote a pending capture into THE undo entry, now that the apply is known to have landed.
+	 `createdNames` are classes the refactoring brought into existence, which have no earlier
+	 version to revert to and are unbound instead. Answers 'ok', or 'nothing captured' when no
+	 capture is pending -- so a caller that forgot to capture fails loudly rather than silently
+	 recording an empty undo."
+	| plan |
+	plan := SessionTemps current at: self pendingCaptureKey ifAbsent: [nil].
+	plan isNil ifTrue: [^'nothing captured'].
+	SessionTemps current removeKey: self pendingCaptureKey ifAbsent: [].
+	SessionTemps current
+		at: self entryKey
+		put: (self new
+			setLabel: aLabel
+			engine: engineName
+			sequence: self nextSequence
+			revertPlan: plan
+			removePlan: ((createdNames ifNil: [#()]) collect: [:e | e asString]) asArray).
 	^'ok'
 %
 
@@ -10578,7 +10865,9 @@ startPreviewToken: token maxBytes: maxBytes
 		ifNil: ['null']
 		ifNotNil: [:k | GsRefactoringJson jsonQuote: k asString]),
 	  ',"deselection":', (GsRefactoringJson jsonQuote: undo deselection asString),
-	  ',"dropCount":', undo mirrorDropCount printString,
+	  ',"dropCount":', (undo mechanism == #historyRevert
+		ifTrue: [undo totalDiscardedCount printString]
+		ifFalse: [undo mirrorDropCount printString]),
 	  ',"sequence":', undo sequence printString,
 	  ',"drifted":', undo driftedCount printString,
 	  ',"total":', undo size printString,

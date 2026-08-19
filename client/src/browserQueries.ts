@@ -78,6 +78,9 @@ import {
   clearUndoRefactoringPreview as sharedClearUndoRefactoringPreview,
   clearRefactoringUndo as sharedClearRefactoringUndo,
   recordReverseRename as sharedRecordReverseRename,
+  captureClassHistory as sharedCaptureClassHistory,
+  discardPendingCapture as sharedDiscardPendingCapture,
+  commitHistoryRevert as sharedCommitHistoryRevert,
   ReverseRenameKind,
 } from './refactoring/queries/previewUndoRefactoring';
 import {
@@ -2367,5 +2370,35 @@ export function recordReverseRename(
     label,
     engineClassName,
     scope,
+  );
+}
+
+/**
+ * The three-step protocol for reversing a class RESHAPE that has no mirror operation (#434):
+ * capture before the apply, then either commit the capture (the apply landed) or discard it.
+ *
+ * Kept as three explicit calls rather than a wrapper, because only the command knows whether its
+ * apply really landed -- these refactorings report partial application, and a capture promoted
+ * after a partial reshape would describe a state the stone was never in.
+ */
+export function captureClassHistory(session: ActiveSession, rootClassName: string): string {
+  return sharedCaptureClassHistory(defaultQueryExecutorUsing(session), rootClassName);
+}
+
+export function discardPendingCapture(session: ActiveSession): string {
+  return sharedDiscardPendingCapture(defaultQueryExecutorUsing(session));
+}
+
+export function commitHistoryRevert(
+  session: ActiveSession,
+  label: string,
+  engineClassName: string,
+  createdClassNames: string[] = [],
+): string {
+  return sharedCommitHistoryRevert(
+    defaultQueryExecutorUsing(session),
+    label,
+    engineClassName,
+    createdClassNames,
   );
 }

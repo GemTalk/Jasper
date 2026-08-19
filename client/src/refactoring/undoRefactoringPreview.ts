@@ -34,7 +34,7 @@ export type { ApplyResult } from './previewEnvelope';
  */
 
 /** How the recorded undo will be carried out. See the module comment. */
-export type UndoMechanism = 'changeSet' | 'mirror';
+export type UndoMechanism = 'changeSet' | 'mirror' | 'historyRevert';
 
 /** Which operation a `mirror` entry reverses. Drives the caveat wording. */
 export type UndoReverseKind =
@@ -62,7 +62,8 @@ export interface UndoChange {
     | 'methodRemove'
     | 'classRename'
     | 'classReparent'
-    | 'classDefinitionEdit';
+    | 'classDefinitionEdit'
+    | 'classRemove';
   dictName: string | null;
   className: string;
   isMeta: boolean;
@@ -128,6 +129,7 @@ const UNDO_KINDS = [
   'classRename',
   'classReparent',
   'classDefinitionEdit',
+  'classRemove',
 ] as const;
 
 const REVERSE_KINDS: readonly string[] = [
@@ -141,7 +143,9 @@ const REVERSE_KINDS: readonly string[] = [
 /** Parse the mechanism, defaulting to the change-set one — an engine that predates the mirror
  *  reversal answers no `mechanism` field and only ever records change-set entries. */
 function mechanismOf(v: unknown): UndoMechanism {
-  return v === 'mirror' ? 'mirror' : 'changeSet';
+  if (v === 'mirror') return 'mirror';
+  if (v === 'historyRevert') return 'historyRevert';
+  return 'changeSet';
 }
 
 function reverseKindOf(v: unknown): UndoReverseKind | null {
@@ -304,7 +308,9 @@ export function undoActionLabel(change: UndoChange, mechanism: UndoMechanism): s
     case 'classReparent':
       return 'Re-version';
     case 'classDefinitionEdit':
-      return 'Redefine';
+      return mechanism === 'historyRevert' ? 'Restore' : 'Redefine';
+    case 'classRemove':
+      return 'Delete class';
     default:
       return mechanism === 'mirror' ? 'Rewrite' : 'Revert';
   }
@@ -354,11 +360,37 @@ export function mirrorCaveat(kind: UndoReverseKind | null, dropCount = 0): strin
   }
 }
 
+/**
+ * The standing caveat for a `historyRevert`, stated once above the list.
+ *
+ * This is the mechanism that genuinely returns the refactored classes to their PRE-REFACTORING
+ * state — shape and methods together — so anything written on them since is discarded. Eric's
+ * call (2026-08-19) was that this is what undo should do; the corresponding obligation is to
+ * say so plainly, and `discardCount` lets it name the number rather than hint at it. The
+ * per-row warnings name the individual methods.
+ */
+export function historyRevertCaveat(discardCount = 0): string {
+  const head =
+    'This returns the refactored classes to their state BEFORE the refactoring — their shape ' +
+    'and their methods together. ';
+  const discards =
+    discardCount > 0
+      ? `${discardCount} method${discardCount === 1 ? '' : 's'} written since will be DISCARDED ` +
+        '(each row names its own). '
+      : 'Nothing has been written on them since, so nothing extra is lost. ';
+  return (
+    head +
+    discards +
+    'Class history only grows: the restored version is added, not swapped in. ' +
+    'If the refactoring was committed, the reversal needs its own commit.'
+  );
+}
+
 /** What to say about the checkboxes, given what un-ticking actually does here. */
 export function deselectionNote(deselection: UndoDeselection): string | null {
   switch (deselection) {
     case 'ignored':
-      return 'This reversal is all-or-nothing — the shape edits and the class re-versionings have to move together, so individual rows cannot be left out.';
+      return 'This reversal is all-or-nothing — the shape edits and the class re-versionings have to move together (each subclass is restored onto its parent), so individual rows cannot be left out.';
     case 'dropsMethod':
       return 'Careful: un-ticking a row here does not keep that method as it is — it DELETES it, by not carrying it onto the new class version.';
     default:

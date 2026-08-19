@@ -128,6 +128,22 @@ export async function runInstVarStructure(req: IvarStructureRequest): Promise<bo
     return false;
   }
 
+  // #434: snapshot the subtree BEFORE the reshape so it can be put back afterwards. The capture
+  // is held PENDING and only becomes an undo entry once the apply is known to have landed — so
+  // every path that does not get there drops it, and a partial reshape (which leaves the stone in
+  // a state the capture does not describe) never gets an undo offered against it.
+  const discardCapture = (): void => {
+    try {
+      queries.discardPendingCapture(session);
+    } catch {
+      /* best-effort */
+    }
+  };
+  try {
+    queries.captureClassHistory(session, className);
+  } catch {
+    /* best-effort: a reshape must not fail because its undo bookkeeping did */
+  }
   const result = await showInstVarStructurePanel(heading, start, {
     loadPage: async (off) =>
       parsePage(await queries.pageInstVarStructurePreview(session, token, off, PREVIEW_PAGE_BYTES)),
@@ -142,13 +158,17 @@ export async function runInstVarStructure(req: IvarStructureRequest): Promise<bo
       ),
     cleanup: safeClear,
   });
-  if (!result) return false;
+  if (!result) {
+    discardCapture();
+    return false;
+  }
 
   // The only whole-apply error the engine reports here is an expired preview token (the apply
   // arrived after its preview session was dropped): `applied:0`, nothing changed, so there is
   // deliberately no abort advice below. A failure *during* apply is caught per-change and
   // collected into `failed` (see the next branch), which is where the abort warning lives.
   if (result.error) {
+    discardCapture();
     void vscode.window.showErrorMessage(`${heading} failed: ${result.error}`);
     return false;
   }
@@ -158,6 +178,9 @@ export async function runInstVarStructure(req: IvarStructureRequest): Promise<bo
     // failure (the earlier changes stay applied, uncommitted); we surface the first. Tell the user
     // their transaction is now half-reversioned and must be aborted to discard it.
     const first = result.failed[0];
+    // A partial reshape leaves the stone in a state the capture does not describe, so the undo
+    // is dropped rather than offered against it.
+    discardCapture();
     void vscode.window.showErrorMessage(
       `Change failed: ${first.label}: ${first.error}. Earlier changes may have been applied — abort the transaction to discard them.`,
     );
@@ -169,6 +192,17 @@ export async function runInstVarStructure(req: IvarStructureRequest): Promise<bo
     result.migratedFailures && result.migratedFailures > 0
       ? ` (${result.migratedFailures} instance(s) failed to migrate)`
       : '';
+  // Not recorded when the apply MIGRATED instances or DELETED history: both commit, and both are
+  // irreversible, so an undo offer would be a promise this cannot keep.
+  if (result.committed) {
+    discardCapture();
+  } else {
+    try {
+      queries.commitHistoryRevert(session, heading, 'GsInstVarStructureRefactoring');
+    } catch {
+      /* best-effort: the reshape landed either way */
+    }
+  }
   void vscode.window.showInformationMessage(
     `${heading} — applied ${result.applied} change(s)${committedNote}${migrateNote}.`,
   );

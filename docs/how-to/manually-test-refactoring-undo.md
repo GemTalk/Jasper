@@ -43,9 +43,19 @@ change is skipped; for an instance-variable **rename** un-ticking **deletes** th
 for the all-or-nothing reshapes the boxes are **disabled** because the engine applies its whole
 change set regardless.
 
-The refactorings that reshape a class in other ways (instance-variable structure, extract
-superclass, split class) still record **no** undo — the affordance simply does not appear after
-one. Class shape has its own restore path (the Class Definition History viewer's **Restore**).
+**Returned to their pre-refactoring state** — the remaining class reshapes:
+
+instance-variable push up / push down · convert temporary to instance variable ·
+extract superclass · insert superclass · split class
+
+These have no opposite operation, so the reversal puts every class the refactoring reshaped back
+to the version it had **before** it — shape *and* methods — and unbinds any class the refactoring
+created. That means **anything written on those classes since the refactoring is discarded**, and
+the preview says so: the banner names how many methods, and each row names its own. It is
+all-or-nothing (each subclass is restored onto its parent), so the boxes are disabled.
+
+An apply that **migrated instances** or **deleted old versions from the class history** records
+no undo at all — both commit and both are irreversible.
 
 There is **one** undo, not a stack: applying a second refactoring replaces the record, and
 undoing uses it up.
@@ -146,8 +156,8 @@ or the menu item is missing here, that is a bug worth reporting.
 
 | # | Step | Expect |
 |---|---|---|
-| 6.1 | With no undo recorded, run **Extract Superclass** (or Split Class, or Push Instance Variable Up) on `UndoDemo` and apply | The usual success message, with **no Undo button** |
-| 6.2 | Palette / context menu | **No** Undo entry — those reshapes record nothing rather than offering half an undo |
+| 6.1 | Run **Add Instance Variable** with **Migrate instances** ticked, and apply | The usual success message, with **no Undo button** — a migration moved user data |
+| 6.2 | Palette / context menu | **No** Undo entry for it |
 | 6.3 | Rename `total` → `sum`, apply, then **without undoing** run Extract Superclass and apply | Undo is offered **before** the second refactoring and **gone after** it — a class reshape clears a stale record rather than leaving one that no longer matches the stone |
 
 ## 6b — Reversing a rename (the not-a-rollback path)
@@ -191,3 +201,18 @@ If something here does not behave as described, note **which numbered step**, wh
 instead, the stone version, and whether the refactoring engine was freshly installed. The
 GemStone GCI output channel (`View → Output → GemStone GCI`) carries a `[undoRefactoring]`
 breadcrumb for every invocation and refusal.
+
+## 6c — Returning a reshape to its pre-refactoring state
+
+| # | Step | Expect |
+|---|---|---|
+| 6c.1 | **Push Instance Variable Down** (or Up) on `UndoDemo`, apply | Success toast **with an Undo button** |
+| 6c.2 | Invoke Undo | Rows badged **Restore**, one per class the refactoring reshaped, each showing a **definition diff** — what it is now vs what reverting restores |
+| 6c.3 | The banner | Says it returns the classes to their state **BEFORE the refactoring**, shape *and* methods, and that nothing extra is lost |
+| 6c.4 | The checkboxes | **Disabled** — all-or-nothing, because each subclass is restored onto its parent |
+| 6c.5 | Press Undo, then check the class | Instance variables back where they were, and the methods came with them |
+| 6c.6 | Now redo the push-down, then **add a method** to one affected class and save it, then Undo | The banner turns into a **⚠ warning** naming the count, and the row for that class names **your method** specifically |
+| 6c.7 | Press Undo, then look for that method | **Gone** — this is the pre-refactoring state, as warned. That is the trade-off; make sure the warning made it obvious enough |
+| 6c.8 | **Extract Superclass** on `UndoDemo`, apply, then Undo | Rows include a **Delete class** row for the new superclass (it has no earlier version to revert to). After Undo, the extracted superclass is gone and `UndoDemo` is back under its original parent |
+| 6c.9 | **Split Class**, apply, then Undo | Same shape: the source restored, the component class deleted |
+| 6c.10 | Class History on an affected class, after any 6c undo | More versions, not fewer — a revert adds one |
