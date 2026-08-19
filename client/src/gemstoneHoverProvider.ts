@@ -9,6 +9,34 @@ export class GemStoneHoverProvider implements vscode.HoverProvider {
     private selectorResolver?: SelectorResolver,
   ) {}
 
+  /**
+   * Senders counts, keyed by `selector|sessionId|maxEnv`. `sendersOf` blocks the
+   * host and can be costly for a popular selector, and a hover fires on every mouse
+   * rest — so once counted, a re-hover of the same selector is instant. (The
+   * implementors count is free: the hover already runs `implementorsOf` to list
+   * the classes.)
+   */
+  private sendersCountCache = new Map<string, number>();
+
+  /**
+   * A trusted markdown line of clickable senders/implementors links (#432). This
+   * is where those counts live now — the source-editor CodeLens jiggled the code on
+   * open, so the counts moved into this hover, out of the document flow. Each link
+   * fires the same command the old lens did, opening the results panel.
+   */
+  private navLinks(selector: string, sessionId: number, sendersCount: number, implCount: number) {
+    const arg = encodeURIComponent(JSON.stringify([{ selector, sessionId }]));
+    // The quoted title after the URL is the link's tooltip; without it VS Code
+    // shows the raw `command:…?%5B…` URI on hover (#432).
+    const senders =
+      `[$(references) ${sendersCount} sender${sendersCount === 1 ? '' : 's'}]` +
+      `(command:gemstone.sendersOfSelector?${arg} "Browse senders of #${selector}")`;
+    const impl =
+      `[$(symbol-method) ${implCount} implementor${implCount === 1 ? '' : 's'}]` +
+      `(command:gemstone.implementorsOfSelector?${arg} "Browse implementors of #${selector}")`;
+    return `${senders}  ·  ${impl}`;
+  }
+
   async provideHover(
     document: vscode.TextDocument,
     position: vscode.Position,
@@ -29,12 +57,28 @@ export class GemStoneHoverProvider implements vscode.HoverProvider {
     if (selector) {
       const env = vscode.workspace.getConfiguration('gemstone').get<number>('maxEnvironment', 0);
       const results = queries.implementorsOf(session, selector, env);
-      if (results.length === 0) return null;
+
+      // Senders count (cached — sendersOf is costly and a hover fires easily).
+      const sKey = `${selector}|${session.id}|${env}`;
+      let sendersCount = this.sendersCountCache.get(sKey);
+      if (sendersCount === undefined) {
+        try {
+          sendersCount = queries.sendersOf(session, selector, env).length;
+        } catch {
+          sendersCount = 0;
+        }
+        this.sendersCountCache.set(sKey, sendersCount);
+      }
+
+      // Nothing to say if the selector is neither sent nor implemented anywhere.
+      if (results.length === 0 && sendersCount === 0) return null;
 
       const md = new vscode.MarkdownString();
-      md.appendMarkdown(
-        `**#${selector}** — *${results.length}* implementor${results.length === 1 ? '' : 's'}\n\n`,
-      );
+      md.supportThemeIcons = true;
+      md.isTrusted = true; // required for the command: links below to be clickable
+      md.appendMarkdown(`**#${selector}**\n\n`);
+      md.appendMarkdown(this.navLinks(selector, session.id, sendersCount, results.length) + '\n\n');
+
       const show = results.slice(0, 10);
       for (const r of show) {
         const side = r.isMeta ? ' class' : '';

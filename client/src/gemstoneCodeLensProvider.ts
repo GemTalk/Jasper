@@ -2,7 +2,6 @@ import * as vscode from 'vscode';
 import { SessionManager, ActiveSession } from './sessionManager';
 import { parseTopazDocument } from './topazFileIn';
 import { extractSelector } from './systemBrowser';
-import { parseMethodUri } from './gemstoneFileSystemProvider';
 import * as queries from './browserQueries';
 
 interface CodeLensData {
@@ -90,12 +89,13 @@ export class GemStoneCodeLensProvider implements vscode.CodeLensProvider, vscode
     return lenses;
   }
 
-  private provideGemstoneCodeLenses(document: vscode.TextDocument): vscode.CodeLens[] {
-    const method = parseMethodUri(document.uri);
-    if (!method) return [];
-
-    const range = new vscode.Range(new vscode.Position(0, 0), new vscode.Position(0, 0));
-    return this.makeMethodLenses(range, method.selector, method.className, method.isMeta);
+  private provideGemstoneCodeLenses(_document: vscode.TextDocument): vscode.CodeLens[] {
+    // #432: the editable gemstone:// method editor no longer carries a
+    // senders/implementors CodeLens (it appeared after first paint and shoved the
+    // source down — the "jiggle"). Those counts now live in the selector hover
+    // (GemStoneHoverProvider) as clickable links, which is out of the document flow
+    // and can't move the source. The topaz/file paths above keep their lenses.
+    return [];
   }
 
   // Emit the senders + implementors pair on the same range, in that order.
