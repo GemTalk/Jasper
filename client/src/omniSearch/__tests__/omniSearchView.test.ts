@@ -987,3 +987,106 @@ describe('Omni Search view — scopes skipped under All', () => {
     expect(hint().textContent).toBe('');
   });
 });
+
+describe('search field debounce', () => {
+  /** Mount, then push a host config carrying `debounceMs` (the only way the webview learns it). */
+  function mountWithDebounce(debounceMs: number) {
+    const m = mount();
+    m.handle.onMessage({
+      data: { command: 'config', categories: [], scopeId: null, debounceMs },
+    });
+    m.vscode.postMessage.mockClear();
+    return m;
+  }
+
+  function type(text: string) {
+    const input = document.getElementById('query') as HTMLInputElement;
+    input.value = text;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
+  function queries(vscode: { postMessage: ReturnType<typeof vi.fn> }) {
+    return vscode.postMessage.mock.calls
+      .map((c) => c[0] as { command: string; value?: string })
+      .filter((m) => m.command === 'query')
+      .map((m) => m.value);
+  }
+
+  it('coalesces a burst of keystrokes into ONE search, carrying the final text', () => {
+    vi.useFakeTimers();
+    try {
+      const { vscode } = mountWithDebounce(120);
+      type('f');
+      type('fo');
+      type('foo');
+      expect(queries(vscode)).toEqual([]); // nothing sent while the user is still typing
+
+      vi.advanceTimersByTime(120);
+      expect(queries(vscode)).toEqual(['foo']); // one search, the finished term
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('waits for quiet — a keystroke inside the window restarts the delay', () => {
+    vi.useFakeTimers();
+    try {
+      const { vscode } = mountWithDebounce(120);
+      type('f');
+      vi.advanceTimersByTime(100); // not yet
+      type('fo');
+      vi.advanceTimersByTime(100); // still inside the restarted window
+      expect(queries(vscode)).toEqual([]);
+
+      vi.advanceTimersByTime(20);
+      expect(queries(vscode)).toEqual(['fo']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('searches immediately when the delay is 0 (opt-out) and before any config arrives', () => {
+    const immediate = mountWithDebounce(0);
+    type('ab');
+    expect(queries(immediate.vscode)).toEqual(['ab']);
+
+    // No config message at all — the field must still work, just uncoalesced.
+    const bare = mount();
+    type('cd');
+    expect(queries(bare.vscode)).toEqual(['cd']);
+  });
+
+  it('the clear button searches at once and cancels a keystroke still pending', () => {
+    vi.useFakeTimers();
+    try {
+      const { vscode } = mountWithDebounce(120);
+      type('foo');
+      (document.getElementById('clear') as HTMLButtonElement).click();
+      expect(queries(vscode)).toEqual(['']); // immediate, not waiting out the timer
+
+      vi.advanceTimersByTime(500);
+      expect(queries(vscode)).toEqual(['']); // and 'foo' never lands after the clear
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('ignores a nonsense debounce value, keeping the last good one in force', () => {
+    vi.useFakeTimers();
+    try {
+      const { handle, vscode } = mountWithDebounce(120);
+      // A negative value is not a valid delay; adopting it would drop the coalescing entirely.
+      handle.onMessage({
+        data: { command: 'config', categories: [], scopeId: null, debounceMs: -5 },
+      });
+      vscode.postMessage.mockClear();
+
+      type('x');
+      expect(queries(vscode)).toEqual([]); // still coalescing, so -5 was not adopted
+      vi.advanceTimersByTime(120);
+      expect(queries(vscode)).toEqual(['x']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
