@@ -96,6 +96,7 @@ import {
   closeGemstoneTabsForSession,
   installStaleGemstoneTabReaper,
   buildMethodUri,
+  parseMethodUri,
   parseUri,
 } from './gemstoneFileSystemProvider';
 import { openWorkspace } from './workspace';
@@ -945,6 +946,24 @@ export function activate(context: vscode.ExtensionContext) {
   // ── SUnit Test Controller ────────────────────────────────
   const sunitTestController = new SunitTestController(sessionManager);
   context.subscriptions.push(sunitTestController);
+
+  // Keep the pass/fail indicators honest. A compiled method or class definition
+  // means the outcome shown beside it predates the code now in the stone: the
+  // recompiled thing's own result is dropped, and everything still showing a
+  // result is marked stale (see SunitTestController.invalidateForMethod).
+  context.subscriptions.push(
+    gemstoneFs.onMethodCompiled((e) => {
+      const method = parseMethodUri(e.uri);
+      if (method) {
+        sunitTestController.invalidateForMethod(method.dictName, method.className, method.selector);
+      }
+    }),
+    gemstoneFs.onClassDefinitionCompiled((e) => {
+      // parts: ['', dictName, className, 'definition', …]
+      const parts = e.uri.path.split('/').map(decodeURIComponent);
+      if (parts.length >= 3) sunitTestController.invalidateForClass(parts[1], parts[2]);
+    }),
+  );
 
   // ── Jupyter Notebook Kernels (Grail Python + Smalltalk) ─
   const grailNotebookController = new GrailNotebookController(sessionManager);

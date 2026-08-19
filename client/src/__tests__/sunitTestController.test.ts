@@ -498,6 +498,226 @@ describe('SunitTestController', () => {
     });
   });
 
+  describe('result store', () => {
+    // The tree rows, the code lenses and the Test Explorer all read the same
+    // store, so what it holds after a run is what the user sees everywhere.
+    async function runClass(ctrl: SunitTestController) {
+      await ctrl.runClassByName('UserGlobals', 'MyTestCase');
+    }
+
+    it('records each method outcome from a class run', async () => {
+      const ctrl = new SunitTestController(makeSessionManager(true));
+      await runClass(ctrl);
+
+      expect(ctrl.resultFor('UserGlobals', 'MyTestCase', 'testAdd')).toMatchObject({
+        outcome: 'passed',
+        durationMs: 5,
+      });
+      expect(ctrl.resultFor('UserGlobals', 'MyTestCase', 'testRemove')).toMatchObject({
+        outcome: 'failed',
+        message: 'Expected true',
+      });
+      ctrl.dispose();
+    });
+
+    it('records a passed/total roll-up on the class itself', async () => {
+      const ctrl = new SunitTestController(makeSessionManager(true));
+      await runClass(ctrl);
+
+      expect(ctrl.resultFor('UserGlobals', 'MyTestCase')).toMatchObject({
+        outcome: 'failed',
+        passedCount: 1,
+        totalCount: 2,
+      });
+      ctrl.dispose();
+    });
+
+    it('records the outcome of a single-method run', async () => {
+      const ctrl = new SunitTestController(makeSessionManager(true));
+      await ctrl.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd']);
+
+      expect(ctrl.resultFor('UserGlobals', 'MyTestCase', 'testAdd')).toMatchObject({
+        outcome: 'passed',
+        durationMs: 10,
+      });
+      ctrl.dispose();
+    });
+
+    it('publishes a running state before the outcome so the row can show a spinner', async () => {
+      const ctrl = new SunitTestController(makeSessionManager(true));
+      const seen: (string | undefined)[] = [];
+      ctrl.onDidChangeResults(() => {
+        seen.push(ctrl.resultFor('UserGlobals', 'MyTestCase', 'testAdd')?.outcome);
+      });
+
+      await ctrl.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd']);
+
+      expect(seen[0]).toBe('running');
+      expect(seen.at(-1)).toBe('passed');
+      ctrl.dispose();
+    });
+
+    it('batches the change event rather than firing per test', async () => {
+      const ctrl = new SunitTestController(makeSessionManager(true));
+      let fires = 0;
+      ctrl.onDidChangeResults(() => {
+        fires += 1;
+      });
+
+      await runClass(ctrl);
+
+      // Once for "all running", once for the finished run — not once per test.
+      expect(fires).toBe(2);
+      ctrl.dispose();
+    });
+
+    it('drops every result when the session changes', async () => {
+      const sm = makeSessionManager(true);
+      const ctrl = new SunitTestController(sm);
+      await runClass(ctrl);
+
+      const onSelectionChange = (sm.onDidChangeSelection as ReturnType<typeof vi.fn>).mock
+        .calls[0][0] as () => Promise<void>;
+      await onSelectionChange();
+
+      expect(ctrl.resultFor('UserGlobals', 'MyTestCase')).toBeUndefined();
+      expect(ctrl.resultFor('UserGlobals', 'MyTestCase', 'testAdd')).toBeUndefined();
+      ctrl.dispose();
+    });
+  });
+
+  describe('invalidation when code is compiled', () => {
+    it('drops the recompiled method and its class roll-up', async () => {
+      const ctrl = new SunitTestController(makeSessionManager(true));
+      await ctrl.runClassByName('UserGlobals', 'MyTestCase');
+
+      ctrl.invalidateForMethod('UserGlobals', 'MyTestCase', 'testAdd');
+
+      expect(ctrl.resultFor('UserGlobals', 'MyTestCase', 'testAdd')).toBeUndefined();
+      expect(ctrl.resultFor('UserGlobals', 'MyTestCase')).toBeUndefined();
+      ctrl.dispose();
+    });
+
+    it('marks the results it keeps stale — they predate the edit', async () => {
+      const ctrl = new SunitTestController(makeSessionManager(true));
+      await ctrl.runClassByName('UserGlobals', 'MyTestCase');
+
+      ctrl.invalidateForMethod('UserGlobals', 'MyTestCase', 'testAdd');
+
+      expect(ctrl.resultFor('UserGlobals', 'MyTestCase', 'testRemove')).toMatchObject({
+        outcome: 'failed',
+        stale: true,
+      });
+      ctrl.dispose();
+    });
+
+    it('drops every result for a class whose definition was recompiled', async () => {
+      const ctrl = new SunitTestController(makeSessionManager(true));
+      await ctrl.runClassByName('UserGlobals', 'MyTestCase');
+
+      ctrl.invalidateForClass('UserGlobals', 'MyTestCase');
+
+      expect(ctrl.resultFor('UserGlobals', 'MyTestCase')).toBeUndefined();
+      expect(ctrl.resultFor('UserGlobals', 'MyTestCase', 'testAdd')).toBeUndefined();
+      expect(ctrl.resultFor('UserGlobals', 'MyTestCase', 'testRemove')).toBeUndefined();
+      ctrl.dispose();
+    });
+
+    it('fires a change event so the rows repaint', async () => {
+      const ctrl = new SunitTestController(makeSessionManager(true));
+      await ctrl.runClassByName('UserGlobals', 'MyTestCase');
+      let fires = 0;
+      ctrl.onDidChangeResults(() => {
+        fires += 1;
+      });
+
+      ctrl.invalidateForMethod('UserGlobals', 'MyTestCase', 'testAdd');
+
+      expect(fires).toBe(1);
+      ctrl.dispose();
+    });
+
+    it('stays quiet when there is nothing to invalidate', () => {
+      const ctrl = new SunitTestController(makeSessionManager(true));
+      let fires = 0;
+      ctrl.onDidChangeResults(() => {
+        fires += 1;
+      });
+
+      ctrl.invalidateForMethod('UserGlobals', 'MyTestCase', 'testAdd');
+
+      expect(fires).toBe(0);
+      ctrl.dispose();
+    });
+  });
+
+  describe('editor gutter wiring', () => {
+    // VS Code matches a test item to an open editor by exact URI and draws the
+    // run/status icon at the item's range. Both must therefore be the URI the
+    // editor itself opens — including the ?dict=N scope — not a hand-built one.
+    // Only this group cares about the dictionary index, and a persistent
+    // mockReturnValue would leak into the other groups (tests are shuffled).
+    function discoverWithDictIndex() {
+      (sunit.discoverTestClasses as ReturnType<typeof vi.fn>).mockReturnValueOnce([
+        { dictName: 'UserGlobals', className: 'MyTestCase', testCount: 2, dictIndex: 3 },
+      ]);
+    }
+
+    it('points a class item at its class-definition document', async () => {
+      discoverWithDictIndex();
+      const ctrl = new SunitTestController(makeSessionManager(true));
+      const mockController = (tests.createTestController as ReturnType<typeof vi.fn>).mock
+        .results[0].value;
+
+      await mockController.resolveHandler(undefined);
+
+      const [, , uri] = (mockController.createTestItem as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(uri.toString()).toBe(
+        'gemstone://1/UserGlobals/MyTestCase/definition/MyTestCase?dict%3D3',
+      );
+      ctrl.dispose();
+    });
+
+    it('points a method item at its method document', async () => {
+      discoverWithDictIndex();
+      const ctrl = new SunitTestController(makeSessionManager(true));
+      const mockController = (tests.createTestController as ReturnType<typeof vi.fn>).mock
+        .results[0].value;
+
+      await mockController.resolveHandler(undefined);
+      const classItem = mockController.items.get('sunit/1/UserGlobals/MyTestCase');
+      await mockController.resolveHandler(classItem);
+
+      const methodCall = (
+        mockController.createTestItem as ReturnType<typeof vi.fn>
+      ).mock.calls.find((call: unknown[]) => call[1] === 'testAdd');
+      expect(methodCall).toBeDefined();
+      expect(methodCall![2].toString()).toBe(
+        'gemstone://1/UserGlobals/MyTestCase/instance/unit%20tests/testAdd?dict%3D3',
+      );
+      ctrl.dispose();
+    });
+
+    it('gives class and method items a range, without which no icon is drawn', async () => {
+      discoverWithDictIndex();
+      const ctrl = new SunitTestController(makeSessionManager(true));
+      const mockController = (tests.createTestController as ReturnType<typeof vi.fn>).mock
+        .results[0].value;
+
+      await mockController.resolveHandler(undefined);
+      const classItem = mockController.items.get('sunit/1/UserGlobals/MyTestCase');
+      await mockController.resolveHandler(classItem);
+
+      expect(classItem.range.start.line).toBe(0);
+      const methodItems: { range: { start: { line: number } } }[] = [];
+      classItem.children.forEach((child: { range: { start: { line: number } } }) =>
+        methodItems.push(child),
+      );
+      expect(methodItems[0].range.start.line).toBe(0);
+      ctrl.dispose();
+    });
+  });
+
   describe('dispose', () => {
     it('disposes the controller', () => {
       const sm = makeSessionManager(true);
