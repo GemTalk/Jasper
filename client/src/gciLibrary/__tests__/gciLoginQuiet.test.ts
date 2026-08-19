@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { GCI_LOGIN_PW_ENCRYPTED, GCI_LOGIN_QUIET } from '../../gciConstants';
+import { mockKoffiModule } from '../../__mocks__/koffi';
 
 // One stub per native function, so each login binding's arguments can be
 // inspected independently. Keyed by the function name parsed out of the koffi
@@ -7,31 +8,18 @@ import { GCI_LOGIN_PW_ENCRYPTED, GCI_LOGIN_QUIET } from '../../gciConstants';
 // above this module's imports.
 const nativeStubs = vi.hoisted(() => new Map<string, ReturnType<typeof vi.fn>>());
 
-vi.mock('koffi', () => {
-  const mockLib = {
-    func: vi.fn((signature: string) => {
-      // `GciSessionPtr GciTsLogin(const char *, ...)` -> `GciTsLogin`
-      const name = /(\w+)\s*\(/.exec(signature)?.[1] ?? signature;
-      let stub = nativeStubs.get(name);
-      if (!stub) {
-        stub = vi.fn();
-        nativeStubs.set(name, stub);
-      }
-      return stub;
-    }),
-    unload: vi.fn(),
-  };
-  return {
-    default: {
-      struct: vi.fn(() => 'MockStruct'),
-      array: vi.fn(() => 'MockArray'),
-      opaque: vi.fn(() => 'MockOpaque'),
-      pointer: vi.fn(() => 'MockPointer'),
-      union: vi.fn(() => 'MockUnion'),
-      load: vi.fn(() => mockLib),
-    },
-  };
-});
+vi.mock('koffi', () =>
+  mockKoffiModule((signature: string) => {
+    // `GciSessionPtr GciTsLogin(const char *, ...)` -> `GciTsLogin`
+    const name = /(\w+)\s*\(/.exec(signature)?.[1] ?? signature;
+    let stub = nativeStubs.get(name);
+    if (!stub) {
+      stub = vi.fn();
+      nativeStubs.set(name, stub);
+    }
+    return stub;
+  }),
+);
 
 import { GciLibrary } from '../../gciLibrary';
 
