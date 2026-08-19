@@ -111,12 +111,18 @@ function matchSubstring(q: string, t: string): number[] | null {
  * subsequence so an exact run always wins: greedy-leftmost otherwise grabs a stray early character
  * (the `c` in "Colle**c**tions" / "Announ**c**ements") and misses a clean later "Core", letting a
  * scattered match that happens to start at index 0 outrank an exact mid-string one.
+ *
+ * `t` is the case-folded target (what we search in), `cased` the original (what we judge boundaries in).
+ * They must be separate: half of `isWordStart` is the camelCase hump test, which needs a real uppercase
+ * letter to fire, and in the DEFAULT case-insensitive mode `t` has none left. Asking `t` about word
+ * starts silently reduced the preference to separators only and picked a mid-word occurrence over a
+ * later camelCase one — the majority of searches, since case-insensitive is the default.
  */
-function contiguousIndices(q: string, t: string): number[] | null {
+function contiguousIndices(q: string, t: string, cased: string): number[] | null {
   let firstAt = -1;
   let at = t.indexOf(q);
   while (at >= 0) {
-    if (isWordStart(t, at)) {
+    if (isWordStart(cased, at)) {
       return Array.from({ length: q.length }, (_, i) => at + i); // word-start run — the best kind
     }
     if (firstAt < 0) firstAt = at;
@@ -130,8 +136,8 @@ function contiguousIndices(q: string, t: string): number[] | null {
  * `contiguousIndices`) so exact runs rank above scattered matches; only when `q` is not a substring
  * does it fall back to a greedy left-to-right subsequence (predictable and cheap).
  */
-function matchFuzzy(q: string, t: string): number[] | null {
-  const contiguous = contiguousIndices(q, t);
+function matchFuzzy(q: string, t: string, cased: string): number[] | null {
+  const contiguous = contiguousIndices(q, t, cased);
   if (contiguous) return contiguous;
 
   const indices: number[] = [];
@@ -171,7 +177,7 @@ export function match(query: string, target: string, opts: MatchOptions): MatchR
       break;
     case 'fuzzy':
     default:
-      indices = matchFuzzy(q, t);
+      indices = matchFuzzy(q, t, target);
       break;
   }
   if (indices === null) return null;
