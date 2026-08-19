@@ -1127,7 +1127,7 @@
         "icon": "$(search)"
       },
       {
-        "command": "gemstone.omniSearch",
+        "command": "gemstone.search",
         "title": "GemStone Search…",
         "category": "GemStone",
         "icon": "$(search-fuzzy)"
@@ -2857,7 +2857,7 @@
         "when": "gemstone.hasActiveSession"
       },
       {
-        "command": "gemstone.omniSearch",
+        "command": "gemstone.search",
         "key": "ctrl+shift+a",
         "mac": "cmd+shift+a",
         "when": "gemstone.hasActiveSession && !terminalFocus"

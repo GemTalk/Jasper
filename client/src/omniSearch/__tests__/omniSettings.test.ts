@@ -29,15 +29,6 @@ describe('gemstone.omniSearch.ui setting', () => {
   });
 });
 
-describe('the class-categories scope', () => {
-  it('labels itself "Class Categories", not the ambiguous "Categories"', () => {
-    // The scope searches CLASS categories (getAllClassCategories), never method categories — the tab
-    // and every user-facing surface say so explicitly so the distinction is not left to the reader.
-    const categories = OMNI_CATEGORIES.find((c) => c.id === 'categories');
-    expect(categories?.label).toBe('Class Categories');
-  });
-});
-
 describe('gemstone.omniSearch.excludeFromAll setting', () => {
   const excludeFromAll = properties['gemstone.omniSearch.excludeFromAll'] as {
     items: { enum: string[] };

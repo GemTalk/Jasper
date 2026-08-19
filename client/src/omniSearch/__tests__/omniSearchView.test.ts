@@ -74,7 +74,7 @@ const CATEGORIES = [
     searchHint: 'Type text to find inside method source',
   },
   { id: 'literals', label: 'Literals', explicitOnly: true },
-  { id: 'categories', label: 'Categories', explicitOnly: true },
+  { id: 'categories', label: 'Class Categories', explicitOnly: true },
 ];
 
 function resultsMsg(over: Record<string, unknown> = {}) {
@@ -898,7 +898,7 @@ describe('GemStone Search view — references in the preview pane', () => {
   });
 });
 
-// The three explicit-only scopes (Source / Literals / Categories) are dropped by
+// The three explicit-only scopes (Source / Literals / Class Categories) are dropped by
 // `providersInScope` whenever the scope is All, so an All-scope search never runs them and nothing said
 // so. Verified live: `no such element` finds 4 methods under Source and 0 under All. The hint names the
 // skipped scopes and doubles as the one-click way into them.
@@ -919,7 +919,7 @@ describe('GemStone Search view — scopes skipped under All', () => {
     expect(hint().textContent).toContain('Not searched here');
     expect(hint().textContent).toContain('Source');
     expect(hint().textContent).toContain('Literals');
-    expect(hint().textContent).toContain('Categories');
+    expect(hint().textContent).toContain('Class Categories');
     // The plain scopes ARE searched under All, so naming them would be a lie.
     expect(hint().textContent).not.toContain('Classes');
     expect(hint().textContent).not.toContain('Globals');

@@ -15,10 +15,11 @@ Global "search anything browsable" for the GemStone IDE — the Jasper answer to
 > toasts, tooltips, and throughout this document. The name keeps the GemStone brand on the panel strip
 > next to Terminal / Output, where a generic name would say nothing about which extension owns it. The
 > code still uses the `omniSearch` identifier prefix — the `client/src/omniSearch/` module, the
-> `OmniSearch*` classes, the `gemstone.omniSearch` command, and the `gemstone.omniSearch.*` setting
-> keys — because those keys live in users' `settings.json` and renaming them would break existing
-> configuration for no user-visible gain. Treat `omniSearch` as an internal identifier, not a second
-> name. This design note **stays in the repo** next to the code it describes rather than moving to an
+> `OmniSearch*` classes, and the `gemstone.omniSearch.*` setting keys — because those keys live in
+> users' `settings.json` and renaming them would break existing configuration for no user-visible gain.
+> The command itself was renamed to `gemstone.search` (commands are not persisted in user config, so the
+> old `omniSearch` name there was pure internal drift with no compatibility cost). Treat `omniSearch` as
+> an internal identifier, not a second name. This design note **stays in the repo** next to the code it describes rather than moving to an
 > external support doc, so it is reviewed and kept in sync in the same change as the code (both
 > decisions resolve #428 / [#447](https://github.com/GemTalk/Jasper/issues/447)).
 
@@ -118,7 +119,7 @@ Global "search anything browsable" for the GemStone IDE — the Jasper answer to
    every candidate, drop non-matches, sort by the matcher's total order, cap to `maxResultsPerCategory`.
 
 5. **Trigger.** VS Code cannot bind _double-tap-Shift_ (keybindings are chords, not double-taps), so we
-   ship a command `gemstone.omniSearch` + a default keybinding **`ctrl+shift+a`** (`cmd+shift+a` on
+   ship a command `gemstone.search` + a default keybinding **`ctrl+shift+a`** (`cmd+shift+a` on
    macOS), `when: gemstone.hasActiveSession && !terminalFocus` (a Jasper window, not the terminal),
    configurable, plus a palette entry. A single simultaneous chord (not a sequential `ctrl+k` two-step)
    that stays clear of the notebook cell-run gestures (`shift+enter` / `ctrl+enter` / `alt+enter`) — an

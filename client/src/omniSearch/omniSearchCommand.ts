@@ -1,5 +1,5 @@
 /**
- * Command entry point for GemStone Search (`gemstone.omniSearch`).
+ * Command entry point for GemStone Search (`gemstone.search`).
  *
  * This is the thin wiring layer: resolve the active session, build the session-bound providers +
  * result-activation handlers (the only place that touches `vscode`, the SystemBrowser and the
@@ -327,7 +327,7 @@ export function registerOmniSearch(
   // is active (the shortcut's own `when`).
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   status.text = '$(search-fuzzy) GemStone Search';
-  status.command = 'gemstone.omniSearch';
+  status.command = 'gemstone.search';
   status.tooltip = new vscode.MarkdownString(
     `Search classes, methods, globals, source, literals & categories.\n\nPress **${OMNI_OPEN_KEY_HINT}** from anywhere.`,
   );
@@ -348,7 +348,7 @@ export function registerOmniSearch(
         'Open now',
       )
       .then((pick) => {
-        if (pick === 'Open now') void vscode.commands.executeCommand('gemstone.omniSearch');
+        if (pick === 'Open now') void vscode.commands.executeCommand('gemstone.search');
       });
   };
 
@@ -387,7 +387,7 @@ export function registerOmniSearch(
     vscode.window.registerWebviewViewProvider(OMNI_VIEW_ID, viewProvider, {
       webviewOptions: { retainContextWhenHidden: true },
     }),
-    vscode.commands.registerCommand('gemstone.omniSearch', () =>
+    vscode.commands.registerCommand('gemstone.search', () =>
       runOmniSearch(sessionManager, viewProvider),
     ),
   );

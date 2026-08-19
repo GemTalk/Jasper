@@ -27,7 +27,7 @@ export const REFERENCES_KEY_HINT_HTML = IS_MAC
 
 /**
  * Plain-text hint for the shortcut that opens GemStone Search from anywhere in a session, per platform.
- * Must track the `gemstone.omniSearch` keybinding in package.json (`ctrl+shift+a` / `cmd+shift+a`);
+ * Must track the `gemstone.search` keybinding in package.json (`ctrl+shift+a` / `cmd+shift+a`);
  * the keybindings manifest test pins that binding so drift here is caught.
  */
 export const OMNI_OPEN_KEY_HINT = IS_MAC ? '⌘⇧A' : 'Ctrl+Shift+A';

@@ -897,6 +897,14 @@
      * button that would start a fresh search and discard the pivot — so the hint would both mislead and
      * invite an unwarned-for exit. (This mirrors the placeholder, which `resultsMessage` already blanks
      * for a pivot via `placeholderFor(view.pivot ? null : …)`.)
+     *
+     * But it deliberately STAYS in the references-*preview* mode (`referencesInPreview` on, the default),
+     * where the left list is still the real All-scope search and only the right pane shows the refs — so
+     * `inPivot` is false. There the first reason above no longer applies (the rows genuinely are a search
+     * that skipped these scopes), so the warning is true and worth keeping. Clicking a scope does discard
+     * the sticky preview just as silently as it would drop a pivot, but that ephemeral preview is a
+     * smaller loss than suppressing an accurate "not searched here" warning on a live search — so only
+     * the full-list pivot suppresses the hint, not the preview.
      */
     function updateScopeHint() {
       if (!scopeHintEl) return;

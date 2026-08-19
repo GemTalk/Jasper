@@ -103,7 +103,7 @@ describe('keybindings', () => {
   });
 
   it('GemStone Search opens on Ctrl/Cmd+Shift+A, not a notebook run-cell gesture', () => {
-    const omni = keybindings.filter((kb) => kb.command === 'gemstone.omniSearch');
+    const omni = keybindings.filter((kb) => kb.command === 'gemstone.search');
 
     expect(omni.length).toBe(1);
     expect(omni[0].key).toBe('ctrl+shift+a');
