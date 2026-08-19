@@ -70,19 +70,39 @@ async function reloadVisibleGemstoneEditors(): Promise<void> {
  */
 async function revealWhatCameBack(start: UndoStartPreview): Promise<void> {
   const rows = start.page.changes;
+
+  // A METHOD came back: land on it. The inverse set is ordered restore-first, so the first
+  // methodAdd is the restored method; fall back to any method row so a recompile-style undo still
+  // lands somewhere relevant.
   const restored =
     rows.find((c) => c.kind === 'methodAdd' && c.selector !== null) ??
     rows.find((c) => c.selector !== null && c.kind.startsWith('method'));
-  if (!restored || restored.selector === null) return;
+  if (restored?.selector != null) {
+    try {
+      await vscode.commands.executeCommand(
+        'gemstone.explorer.revealMethodByName',
+        restored.className,
+        restored.selector,
+        restored.isMeta,
+      );
+    } catch {
+      /* the Explorer may not be active, or the row may not be in the rebuilt tree */
+    }
+    return;
+  }
+
+  // Otherwise a CLASS came back — a rename reversed, or a reshape returned to its earlier state.
+  // Land on the class, for the same reason: what changed should be what you are looking at.
+  // A reversed class rename ends up under the name it went BACK to, which the row carries as
+  // `newName`; every other class row keeps its own name.
+  const classRow = rows.find((c) => c.className.length > 0);
+  if (!classRow) return;
+  const landOn =
+    classRow.kind === 'classRename' ? (classRow.newName ?? classRow.className) : classRow.className;
   try {
-    await vscode.commands.executeCommand(
-      'gemstone.explorer.revealMethodByName',
-      restored.className,
-      restored.selector,
-      restored.isMeta,
-    );
+    await vscode.commands.executeCommand('gemstone.explorer.findClass', landOn);
   } catch {
-    /* the Explorer may not be active, or the row may not be in the rebuilt tree */
+    /* best-effort */
   }
 }
 

@@ -1547,7 +1547,7 @@
         "command": "gemstone.undoLastRefactoring",
         "title": "Undo Last Refactoring…",
         "category": "GemStone",
-        "icon": "$(discard)"
+        "icon": "$(debug-step-back)"
       },
       {
         "command": "gemstone.explorer.inlineMethod",
@@ -2138,9 +2138,14 @@
           "group": "navigation@5"
         },
         {
+          "command": "gemstone.undoLastRefactoring",
+          "when": "view == gemstoneExplorerDicts && gemstone.refactoringUndoAvailable",
+          "group": "navigation@6"
+        },
+        {
           "command": "gemstone.explorer.newDictionary",
           "when": "view == gemstoneExplorerDicts",
-          "group": "navigation@6"
+          "group": "navigation@7"
         },
         {
           "command": "gemstone.explorer.newClassCategory",
@@ -2400,11 +2405,6 @@
           "group": "3_refactor@3"
         },
         {
-          "command": "gemstone.undoLastRefactoring",
-          "when": "view == gemstoneExplorerMethods && viewItem =~ /explorerMethod/ && gemstone.refactoringUndoAvailable",
-          "group": "3_refactor@9"
-        },
-        {
           "command": "gemstone.explorer.pushUpMethod",
           "when": "view == gemstoneExplorerMethods && viewItem =~ /explorerMethod/ && gemstone.rbSupportAvailable",
           "group": "inline@4"
@@ -2445,11 +2445,6 @@
           "group": "3_refactor@4"
         },
         {
-          "command": "gemstone.undoLastRefactoring",
-          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/ && gemstone.refactoringUndoAvailable",
-          "group": "3_refactor@9"
-        },
-        {
           "command": "gemstone.explorer.openHierarchyDefinition",
           "when": "view == gemstoneExplorerClassHierarchy && viewItem == explorerHierClass",
           "group": "inline@1"
@@ -2483,11 +2478,6 @@
           "command": "gemstone.explorer.splitClass",
           "when": "view == gemstoneExplorerClassHierarchy && viewItem == explorerHierClass && gemstone.rbSupportAvailable",
           "group": "3_refactor@4"
-        },
-        {
-          "command": "gemstone.undoLastRefactoring",
-          "when": "view == gemstoneExplorerClassHierarchy && viewItem == explorerHierClass && gemstone.refactoringUndoAvailable",
-          "group": "3_refactor@9"
         },
         {
           "command": "gemstone.generateGrailStub",

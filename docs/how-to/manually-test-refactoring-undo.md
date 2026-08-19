@@ -88,17 +88,17 @@ undoing uses it up.
 4. **Do not commit.** Everything here is meant to be abortable; finish by aborting the
    transaction (Explorer → Abort) and the fixture disappears.
 
-## 1 — The three ways in
+## 1 — The two ways in
 
 | # | Step | Expect |
 |---|---|---|
 | 1.1 | Before doing anything, open the command palette and type `GemStone: Undo` | **No** "Undo Last Refactoring…" entry — there is nothing to undo yet |
-| 1.2 | Right-click `UndoDemo` in the Explorer | **No** Undo item in the refactor group |
+| 1.2 | Look at the **Dictionaries** pane title bar | **No** Undo button — beside Refresh / Commit / Abort there is nothing to undo |
 | 1.3 | Rename `total` → `sum` (Explorer → the method → Rename), apply the preview | A toast: `Renamed 'total' → 'sum' … NOT committed` **with an Undo button** |
 | 1.4 | Do **not** press it. Dismiss the toast (the ✕, or just let it fade) | — |
 | 1.5 | Open the command palette, type `GemStone: Undo` | "Undo Last Refactoring…" is now there |
-| 1.6 | Right-click `UndoDemo` in the Explorer, and again a method, and again the class in the **Class Hierarchy** view | An **Undo Last Refactoring…** item in each, at the bottom of the refactor group |
-| 1.7 | Press Escape without choosing anything | Nothing changes; the item is still there |
+| 1.6 | Look at the **Dictionaries** pane title bar | An **Undo Last Refactoring…** button has appeared, beside Commit and Abort |
+| 1.7 | Right-click a class, a method, an instance variable | **No** Undo item on any context menu — one button, not an entry on every row |
 
 **The point of 1.4–1.6:** a dismissed toast must not strand the undo. If the palette entry
 or the menu item is missing here, that is a bug worth reporting.
@@ -129,7 +129,7 @@ or the menu item is missing here, that is a bug worth reporting.
 | 3.6 | Check `total`'s **category** in the Explorer | Back to `computing` — **not** `as yet unclassified` |
 | 3.6b | Where the Explorer is pointing | The **restored method is selected** in the Methods pane — you should not have to hunt for what came back |
 | 3.7 | Check `untouched` and `UndoDemo class>>make` | Untouched, both of them |
-| 3.8 | Open the palette / the context menu again | The Undo entry is **gone** — the record was used up |
+| 3.8 | The title-bar button and the palette entry | Both **gone** — the record was used up |
 
 ## 4 — Keeping part of an undo
 
@@ -139,7 +139,7 @@ or the menu item is missing here, that is a bug worth reporting.
 | 4.2 | Invoke Undo, and **un-tick** the row badged **Delete** (`sum`) | Button count drops by one |
 | 4.3 | Press Undo | — |
 | 4.4 | Explorer | **Both** `total` and `sum` are present — you kept the new one and got the old one back |
-| 4.5 | Open the palette again | Undo is **still** offered: a partial undo is not used up |
+| 4.5 | The title-bar button | **Still** there: a partial undo is not used up |
 | 4.6 | Invoke it again and undo the rest | `sum` goes; you are back to the fixture |
 
 ## 5 — Drift: editing after a refactoring
@@ -158,8 +158,8 @@ or the menu item is missing here, that is a bug worth reporting.
 | # | Step | Expect |
 |---|---|---|
 | 6.1 | Run **Add Instance Variable** with **Migrate instances** ticked, and apply | The usual success message, with **no Undo button** — a migration moved user data |
-| 6.2 | Palette / context menu | **No** Undo entry for it |
-| 6.3 | Rename `total` → `sum`, apply, then **without undoing** run Extract Superclass and apply | Undo is offered **before** the second refactoring and **gone after** it — a class reshape clears a stale record rather than leaving one that no longer matches the stone |
+| 6.2 | Title bar / palette | **No** Undo button for it |
+| 6.3 | Rename `total` → `sum`, apply, then **without undoing** run an **Add Instance Variable with Migrate ticked** | Undo is offered **before** the second refactoring and **gone after** it — an irreversible apply clears a stale record rather than leaving one that no longer matches the stone |
 
 ## 6b — Reversing a rename (the not-a-rollback path)
 
@@ -171,7 +171,7 @@ or the menu item is missing here, that is a bug worth reporting.
 | 6b.4 | Read the rows | Badged **Rename back** / **Re-version** / **Rewrite** — never `classRename` / `classReparent` |
 | 6b.5 | The `Rename back` row's label | `UndoRenamed → UndoDemo`, with no phantom `>>` (a class row has no selector) |
 | 6b.6 | Press Undo | Explorer shows `UndoDemo` again; `UndoRenamed` is gone |
-| 6b.6b | The Classes pane | Still lists the **other classes in the dictionary**, with `UndoDemo` selected — not narrowed to just it |
+| 6b.6b | The Classes pane | Still lists the **other classes in the dictionary**, with `UndoDemo` **selected** — not narrowed to just it |
 | 6b.7 | Check `UndoDemo>>writtenLater` | **Still there** — carried forward through the reversal. This is the point of 6b.2 |
 | 6b.8 | Toast | Says it **reversed by renaming back** and that the class keeps its history — not a bare "Undid" |
 | 6b.9 | Class History on `UndoDemo` | More versions than before, not fewer — a reversal adds one |
@@ -218,3 +218,4 @@ breadcrumb for every invocation and refusal.
 | 6c.8 | **Extract Superclass** on `UndoDemo`, apply, then Undo | Rows include a **Delete class** row for the new superclass (it has no earlier version to revert to). After Undo, the extracted superclass is gone and `UndoDemo` is back under its original parent |
 | 6c.9 | **Split Class**, apply, then Undo | Same shape: the source restored, the component class deleted |
 | 6c.10 | Class History on an affected class, after any 6c undo | More versions, not fewer — a revert adds one |
+| 6c.11 | Where the Explorer is pointing after any 6c undo | The reshaped **class is selected**, in the dictionary's full class list |

@@ -196,8 +196,46 @@ describe('undoLastRefactoringCommand', () => {
     );
   });
 
-  it('does not try to land on a row for a class-shape reversal', async () => {
-    // No single method to land on, and the Explorer refresh already re-reads the class.
+  it('lands on the class when a class came back rather than a method', async () => {
+    // A reversed class rename ends up under the name it went BACK to, which the row carries as
+    // newName -- landing on the pre-undo name would select the class that no longer exists.
+    vi.mocked(queries.startUndoRefactoringPreview).mockResolvedValue(
+      JSON.stringify({
+        token: 't1',
+        label: 'Rename class Renamed to Original',
+        mechanism: 'mirror',
+        reverseKind: 'classRename',
+        total: 1,
+        page: {
+          changes: [
+            {
+              id: '1',
+              kind: 'classRename',
+              className: 'Renamed',
+              isMeta: false,
+              selector: null,
+              newName: 'Original',
+              category: null,
+              oldSource: 'a',
+              newSource: 'b',
+              warning: null,
+            },
+          ],
+          nextOffset: 0,
+          done: true,
+        },
+      }),
+    );
+
+    await undoLastRefactoringCommand(sessionsWith(true));
+
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+      'gemstone.explorer.findClass',
+      'Original',
+    );
+  });
+
+  it('lands on the reshaped class after a history revert', async () => {
     vi.mocked(queries.startUndoRefactoringPreview).mockResolvedValue(
       JSON.stringify({
         token: 't1',
@@ -227,11 +265,16 @@ describe('undoLastRefactoringCommand', () => {
 
     await undoLastRefactoringCommand(sessionsWith(true));
 
+    // No method row, so no method reveal -- but the class it reshaped is selected.
     expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith(
       'gemstone.explorer.revealMethodByName',
       expect.anything(),
       expect.anything(),
       expect.anything(),
+    );
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+      'gemstone.explorer.findClass',
+      'Account',
     );
   });
 
