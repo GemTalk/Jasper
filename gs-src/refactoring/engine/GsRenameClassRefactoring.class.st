@@ -105,6 +105,30 @@ GsRenameClassRefactoring >> setShapeSource: aClass [
 ]
 
 { #category : 'private' }
+GsRenameClassRefactoring >> superclassForShapeSource: src of: old [
+	"The superclass the new version belongs under.
+
+	 For an ordinary RENAME src is the current class, so this is just its current superclass and
+	 nothing changes. For a RESTORE src is a historical version, and its PARENTAGE is part of the
+	 definition being restored -- so a restore must go back under the parent that version had, not
+	 stay under whatever parent the class has now. Passing `old superclass` here meant a restore
+	 silently kept the current parent, so restoring across a re-parenting (an inserted superclass,
+	 an extracted one) claimed to restore a definition it did not restore. Undoing such a
+	 refactoring then left the class under a parent that was about to be unbound (#434).
+
+	 The historical version's superclass may itself be a superseded version of that parent, so it
+	 is resolved BY NAME to whatever version is current -- re-parenting onto a stale version would
+	 strand the class off the live hierarchy. If the name no longer resolves (the parent class is
+	 gone), the current superclass is kept: better a class in the wrong place than one that cannot
+	 be created at all."
+	| histSuper |
+	src == old ifTrue: [^old superclass].
+	histSuper := src superclass.
+	histSuper isNil ifTrue: [^old superclass].
+	^(environment classNamed: histSuper name asString) ifNil: [old superclass]
+]
+
+{ #category : 'private' }
 GsRenameClassRefactoring >> shapeSourceOr: aClass [
 	"The shape/method source for the target class: the explicit shapeSource (a
 	 restore) or the current class (an ordinary rename)."
@@ -631,7 +655,11 @@ GsRenameClassRefactoring >> applyClassRename: aChange [
 	old := environment classNamed: aChange className.
 	old isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	src := self shapeSourceOr: old.
-	new := self makeNewVersionOf: old shapedLike: src named: aChange newName superclass: old superclass.
+	new := self
+		makeNewVersionOf: old
+		shapedLike: src
+		named: aChange newName
+		superclass: (self superclassForShapeSource: src of: old).
 	copyMethods ifTrue: [self copyMethodsFrom: src to: new].
 	oldToNew at: old put: new.
 	aChange className asString = aChange newName asString

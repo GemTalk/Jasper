@@ -194,14 +194,17 @@ export async function runInstVarStructure(req: IvarStructureRequest): Promise<bo
       : '';
   // Not recorded when the apply MIGRATED instances or DELETED history: both commit, and both are
   // irreversible, so an undo offer would be a promise this cannot keep.
-  // #434 HELD BACK, deliberately. The engine side of this reversal is implemented and unit-tested,
-  // but end-to-end testing found that GsClassHistory>>revertClassNamed:toIndex: does NOT restore a
-  // class's own SUPERCLASS -- it restores shape and methods and re-parents SUBCLASSES, but leaves
-  // the class itself under whatever parent it has now. For a refactoring that inserted a parent,
-  // reverting and then unbinding that parent would leave the class pointing at an unbound class.
-  // Until the reversal re-parents from the captured definition, no undo is offered here: the
-  // capture is taken (harmless) and then dropped.
-  discardCapture();
+  // Not recorded when the apply MIGRATED instances or DELETED history: both commit, and both are
+  // irreversible, so an undo offer would be a promise this cannot keep.
+  if (result.committed) {
+    discardCapture();
+  } else {
+    try {
+      queries.commitHistoryRevert(session, heading, 'GsInstVarStructureRefactoring');
+    } catch {
+      /* best-effort: the reshape landed either way */
+    }
+  }
   void vscode.window.showInformationMessage(
     `${heading} — applied ${result.applied} change(s)${committedNote}${migrateNote}.`,
   );

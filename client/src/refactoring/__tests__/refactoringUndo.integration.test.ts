@@ -97,7 +97,10 @@ describe('undo a refactoring (integration)', () => {
           'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
       );
     };
-    def(CLS, 'Object', "'balance'");
+    // `undoSpare` is read by nothing on purpose: pushing an instance variable DOWN is declined
+    // when the parent's own methods still use it, so a push-down test needs one that is free to
+    // move. `balance` is deliberately not that -- undoBalance reads it.
+    def(CLS, 'Object', "'balance' 'undoSpare'");
     def(OTHER, 'Object', "'balance'");
     def(SUB, CLS, '');
     q.compileMethod(session(), CLS, false, 'computing', 'undoTotal\n\t^ 40 + 2');
@@ -926,14 +929,10 @@ cs addClassDefinitionEditInDictionary: nil className: 'Object' oldSource: 'a' ne
   // the refactoring reshaped to the version it had BEFORE it, then unbinding whatever the
   // refactoring created.
   //
-  // HELD BACK and these are the REPRODUCTION. End-to-end testing found that
-  // GsClassHistory>>revertClassNamed:toIndex: does not restore a class's own SUPERCLASS: it
-  // restores shape and methods and re-parents SUBCLASSES, but leaves the class itself under its
-  // current parent. So reverting an inserted-superclass refactoring and then unbinding the
-  // inserted parent would leave the class pointing at an unbound class. The commands therefore
-  // record no undo for these four yet (see the gate in each command); these tests are skipped
-  // until the reversal re-parents from the captured definition, at which point they are the
-  // acceptance criteria.
+  // These caught a real defect on the way in: the restore path passed the CURRENT superclass to
+  // makeNewVersionOf:, so reverting across a re-parenting kept the wrong parent -- and unbinding
+  // the created parent afterwards would have left the class pointing at an unbound class. Fixed in
+  // GsRenameClassRefactoring>>superclassForShapeSource:of:; these are the regression guard.
   // ---------------------------------------------------------------------------------------
 
   const capture = (root: string): string => captureClassHistory((code) => exec(code), root);
@@ -942,27 +941,27 @@ cs addClassDefinitionEditInDictionary: nil className: 'Object' oldSource: 'a' ne
 
   const superclassOf = (cls: string): string => exec(`${cls} superclass name asString`).trim();
 
-  it.skip('returns a pushed-down instance variable to its pre-refactoring state', async (ctx) => {
+  it('returns a pushed-down instance variable to its pre-refactoring state', async (ctx) => {
     requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
     defineFixture();
     clearRefactoringUndo((code) => exec(code));
 
     const before = ownInstVarNames(CLS).slice().sort();
     expect(capture(CLS)).toBe('ok');
-    exec(`(GsInstVarStructureRefactoring class: ${CLS} pushDownInstVar: 'balance')
+    exec(`(GsInstVarStructureRefactoring class: ${CLS} pushDownInstVar: 'undoSpare')
       applyDeselected: #()`);
-    expect(commitRevert(`Push down balance from ${CLS}`, 'GsInstVarStructureRefactoring')).toBe(
+    expect(commitRevert(`Push down undoSpare from ${CLS}`, 'GsInstVarStructureRefactoring')).toBe(
       'ok',
     );
 
-    expect(ownInstVarNames(CLS)).not.toContain('balance');
-    expect(ownInstVarNames(SUB)).toContain('balance');
+    expect(ownInstVarNames(CLS)).not.toContain('undoSpare');
+    expect(ownInstVarNames(SUB)).toContain('undoSpare');
     expect(undoStatus().mechanism).toBe('historyRevert');
 
     expect((await undoEverything()).failed).toHaveLength(0);
 
     expect(ownInstVarNames(CLS).slice().sort()).toEqual(before);
-    expect(ownInstVarNames(SUB)).not.toContain('balance');
+    expect(ownInstVarNames(SUB)).not.toContain('undoSpare');
     // The methods came back with the shape — the whole point of reverting rather than
     // re-declaring the class by hand.
     expect(definesSelector(CLS, 'undoUntouched')).toBe(true);
@@ -970,7 +969,7 @@ cs addClassDefinitionEditInDictionary: nil className: 'Object' oldSource: 'a' ne
     expect(definesSelector(SUB, 'undoSavingsOwn')).toBe(true);
   }, 60_000);
 
-  it.skip('reverts the subtree top-down, so a subclass lands on its restored parent', async (ctx) => {
+  it('reverts the subtree top-down, so a subclass lands on its restored parent', async (ctx) => {
     // The ordering trap: a child reverted before its parent would be re-parented onto a version
     // the parent is about to supersede. If that happened, the subclass would no longer be a
     // subclass of the restored parent.
@@ -979,23 +978,23 @@ cs addClassDefinitionEditInDictionary: nil className: 'Object' oldSource: 'a' ne
     clearRefactoringUndo((code) => exec(code));
 
     capture(CLS);
-    exec(`(GsInstVarStructureRefactoring class: ${CLS} pushDownInstVar: 'balance')
+    exec(`(GsInstVarStructureRefactoring class: ${CLS} pushDownInstVar: 'undoSpare')
       applyDeselected: #()`);
-    commitRevert('Push down balance', 'GsInstVarStructureRefactoring');
+    commitRevert('Push down undoSpare', 'GsInstVarStructureRefactoring');
     expect((await undoEverything()).failed).toHaveLength(0);
 
     expect(superclassOf(SUB)).toBe(CLS);
   }, 60_000);
 
-  it.skip('names the methods the revert will discard, and discards exactly those', async (ctx) => {
+  it('names the methods the revert will discard, and discards exactly those', async (ctx) => {
     requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
     defineFixture();
     clearRefactoringUndo((code) => exec(code));
 
     capture(CLS);
-    exec(`(GsInstVarStructureRefactoring class: ${CLS} pushDownInstVar: 'balance')
+    exec(`(GsInstVarStructureRefactoring class: ${CLS} pushDownInstVar: 'undoSpare')
       applyDeselected: #()`);
-    commitRevert('Push down balance', 'GsInstVarStructureRefactoring');
+    commitRevert('Push down undoSpare', 'GsInstVarStructureRefactoring');
 
     // Written AFTER the refactoring — the pre-refactoring state does not include it.
     q.compileMethod(session(), CLS, false, 'after', 'undoWrittenAfter\n\t^ 7');
@@ -1022,15 +1021,15 @@ cs addClassDefinitionEditInDictionary: nil className: 'Object' oldSource: 'a' ne
     expect(definesSelector(CLS, 'undoUntouched')).toBe(true);
   }, 60_000);
 
-  it.skip('previews a revert as a definition diff per reshaped class', async (ctx) => {
+  it('previews a revert as a definition diff per reshaped class', async (ctx) => {
     requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
     defineFixture();
     clearRefactoringUndo((code) => exec(code));
 
     capture(CLS);
-    exec(`(GsInstVarStructureRefactoring class: ${CLS} pushDownInstVar: 'balance')
+    exec(`(GsInstVarStructureRefactoring class: ${CLS} pushDownInstVar: 'undoSpare')
       applyDeselected: #()`);
-    commitRevert('Push down balance', 'GsInstVarStructureRefactoring');
+    commitRevert('Push down undoSpare', 'GsInstVarStructureRefactoring');
 
     const token = 'undo-revert-diff';
     const start = parseUndoStartPreview(
@@ -1042,10 +1041,10 @@ cs addClassDefinitionEditInDictionary: nil className: 'Object' oldSource: 'a' ne
     expect(edit).toBeDefined();
     // A real diff: what the class is now on the left, what reverting restores on the right.
     expect(edit?.oldSource).not.toBe(edit?.newSource);
-    expect(edit?.newSource).toContain('balance');
+    expect(edit?.newSource).toContain('undoSpare');
   }, 60_000);
 
-  it.skip('unbinds the class an extract-superclass created', async (ctx) => {
+  it('unbinds the class an extract-superclass created', async (ctx) => {
     requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
     defineFixture();
     clearRefactoringUndo((code) => exec(code));
@@ -1081,7 +1080,7 @@ cs addClassDefinitionEditInDictionary: nil className: 'Object' oldSource: 'a' ne
     expect(definesSelector(CLS, 'undoUntouched')).toBe(true);
   }, 60_000);
 
-  it.skip('reverses a split class, restoring the source and unbinding the component', async (ctx) => {
+  it('reverses a split class, restoring the source and unbinding the component', async (ctx) => {
     requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
     defineFixture();
     clearRefactoringUndo((code) => exec(code));
@@ -1120,7 +1119,7 @@ cs addClassDefinitionEditInDictionary: nil className: 'Object' oldSource: 'a' ne
 
     expect(capture(CLS)).toBe('ok');
     expect(discardPendingCapture((code) => exec(code))).toBe('ok');
-    expect(commitRevert('Push down balance', 'GsInstVarStructureRefactoring')).toBe(
+    expect(commitRevert('Push down undoSpare', 'GsInstVarStructureRefactoring')).toBe(
       'nothing captured',
     );
     expect(undoStatus().available).toBe(false);

@@ -244,14 +244,13 @@ export async function splitClassCommand(
 
   // The reversal also has to UNBIND the class this created: it is brand new, so there is no
   // earlier version to revert it to.
-  // #434 HELD BACK, deliberately. The engine side of this reversal is implemented and unit-tested,
-  // but end-to-end testing found that GsClassHistory>>revertClassNamed:toIndex: does NOT restore a
-  // class's own SUPERCLASS -- it restores shape and methods and re-parents SUBCLASSES, but leaves
-  // the class itself under whatever parent it has now. For a refactoring that inserted a parent,
-  // reverting and then unbinding that parent would leave the class pointing at an unbound class.
-  // Until the reversal re-parents from the captured definition, no undo is offered here: the
-  // capture is taken (harmless) and then dropped.
-  discardCapture();
+  // The reversal also has to UNBIND the class this created: it is brand new, so there is no
+  // earlier version to revert it to.
+  try {
+    queries.commitHistoryRevert(session, heading, 'GsSplitClassRefactoring', [newName]);
+  } catch {
+    /* best-effort: the reshape landed either way */
+  }
   void vscode.window.showInformationMessage(
     `${heading} — applied ${result.applied} change(s). Existing instances keep their prior version and are not migrated; commit to persist.`,
   );
