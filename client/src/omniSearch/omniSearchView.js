@@ -112,15 +112,21 @@
      * Search for `value` after `debounceMs` of quiet, replacing any keystroke search still pending.
      * `debounceMs` of 0 (including before the host's first config message arrives) searches at once, so
      * the field is never unresponsive — it just is not coalesced yet.
+     *
+     * Marks the field busy at the moment it actually dispatches, NOT on each keystroke: during the quiet
+     * window before the timer fires there is no stone work in flight, so a high `debounceMs` must not
+     * leave the panel reading as busy with nothing happening. Busy means "a query is out to the host."
      */
     function sendQueryDebounced(value) {
       cancelPendingQuery();
       if (!debounceMs) {
+        setBusy(true);
         post('query', { value: value });
         return;
       }
       queryTimer = setTimeout(function () {
         queryTimer = null;
+        setBusy(true);
         post('query', { value: value });
       }, debounceMs);
     }
@@ -1014,7 +1020,6 @@
 
     // ── Input + keyboard ────────────────────────────────────────────
     inputEl.addEventListener('input', function () {
-      setBusy(true);
       scrollResetPending = true; // a new query starts the list at the top
       previewMode = 'source'; // typing dismisses a sticky references list
       updateClearVisibility();

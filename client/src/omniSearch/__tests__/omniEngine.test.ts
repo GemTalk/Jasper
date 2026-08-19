@@ -817,6 +817,32 @@ describe('createOmniEngine — out-of-order reference and pivot results', () => 
     expect(engine.referenceResultFor(fastB!.rows[0].id)!.label).toBe('Y>>usesBeta');
   });
 
+  it('a new search supersedes a reference load the previous term left in flight', async () => {
+    let releaseRefs: (() => void) | undefined;
+    const gate = new Promise<void>((res) => (releaseRefs = res));
+    const engine = createOmniEngine({
+      providers: [fakeProvider('classes', [classResult('Alpha'), classResult('Beta')])],
+      config: cfg(),
+      resolveReferences: async () => {
+        await gate; // still resolving when the next search lands
+        return {
+          title: 'References to Alpha',
+          target: 'Alpha',
+          results: [methodResult('X>>usesAlpha', 'usesAlpha')],
+        };
+      },
+    });
+    const search = await engine.search('a');
+    const idA = search!.rows.find((r) => r.label === 'Alpha')!.id;
+
+    const slowRefs = engine.referencesFor(idA);
+    const next = await engine.search('al'); // a new term starts while the reference load is mid-flight
+    releaseRefs!();
+
+    expect(await slowRefs).toBeNull(); // superseded by the search — its rows never overwrite the list
+    expect(next!.rows.map((r) => r.label).sort()).toEqual(['Alpha', 'Beta']); // the search landed intact
+  });
+
   it('a reference load neither cancels nor is cancelled by an in-flight search', async () => {
     let releaseSearch: (() => void) | undefined;
     const gate = new Promise<void>((res) => (releaseSearch = res));
@@ -846,7 +872,9 @@ describe('createOmniEngine — out-of-order reference and pivot results', () => 
     releaseSearch!();
 
     expect(preview!.rows.map((r) => r.label)).toEqual(['A>>useFoo']); // not cancelled by the search
-    expect(await searchP).not.toBeNull(); // and it did not cancel the search either
+    // ...and it did not cancel the search either: the search's own rows land intact, not clobbered by
+    // the reference load's row.
+    expect((await searchP)!.rows.map((r) => r.label)).toEqual(['Foo']);
   });
 
   it('supersedes an earlier pivot when a second pivot is started', async () => {

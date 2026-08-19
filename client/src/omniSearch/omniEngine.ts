@@ -410,6 +410,12 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
       current = filterPivot(pivot.results, rawValue.trim());
       return pivotView();
     }
+    // A new search supersedes any reference load already in flight: otherwise its rows would land in
+    // this search's preview under a row id that now points at a different result (ids are array
+    // indices), and `referenceResultFor` would then open from that stale list. A reference load
+    // started AFTER this point takes a newer token and is unaffected — a search and a later reference
+    // load stay independent (see the tests in "out-of-order reference and pivot results").
+    ++referenceGeneration;
     const term = rawValue.trim();
     // A genuinely new term restarts at the base cap: load-more/load-all raise `scopeLimit` for the
     // term in the box, but that must not leak into the next search (else every keystroke fans out at
@@ -588,7 +594,9 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
       if (!result) return null;
       // `referenceRows` is the single array every preview row id indexes into, so a slow load must not
       // land after a newer one: arrowing from row A to row B while A is still resolving would leave B's
-      // list on screen over A's rows, and `referenceResultFor` would then open the wrong method.
+      // list on screen over A's rows, and `referenceResultFor` would then open the wrong method. A new
+      // search bumps `referenceGeneration` too (see `runSearch`), so a load the previous term left in
+      // flight is discarded rather than dropped over the new results.
       const gen = ++referenceGeneration;
       const view = await deps.resolveReferences(result);
       if (gen !== referenceGeneration) return null; // a newer reference load superseded this one
