@@ -1,5 +1,5 @@
 /**
- * Transport-agnostic Omni Search engine for the webview UIs (issue #378).
+ * Transport-agnostic GemStone Search engine for the webview UIs (issue #378).
  *
  * Both webview surfaces — the docked bottom-panel view (`omniSearchViewProvider.ts`) and the
  * editor-tab Spotter (`omniSearchPanel.ts`) — drive their search through this engine: hold the active

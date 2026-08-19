@@ -1,5 +1,5 @@
 /**
- * Omni Search as a bottom-PANEL webview view (`ui: "panel"`), alongside Terminal / Output. Unlike the
+ * GemStone Search as a bottom-PANEL webview view (`ui: "panel"`), alongside Terminal / Output. Unlike the
  * editor-tab Spotter it's a docked tool: no pin, no auto-close, no open-beside — activating a result
  * just opens it in the editor area ABOVE the panel, and the search stays put below. It shares all the
  * chrome + engine plumbing with the tab host via `omniSearchShared.ts`.

@@ -1,5 +1,5 @@
 /**
- * Omni Search → Explorer reveal robustness.
+ * GemStone Search → Explorer reveal robustness.
  *
  * revealDictionaryByName no longer swallows a failed TreeView.reveal with a bare
  * `catch { /* ignore *\/ }`; it logs to the durable GCI channel (mirroring the

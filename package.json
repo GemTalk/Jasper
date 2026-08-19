@@ -173,6 +173,15 @@
                 "source",
                 "literals",
                 "categories"
+              ],
+              "enumDescriptions": [
+                "Class names.",
+                "Method selectors (queries the stone as you type).",
+                "SymbolDictionary names.",
+                "Global variable names.",
+                "Full method source (heavyweight; explicit scope only).",
+                "Methods referencing a literal you type, e.g. #at:put: (heavyweight; explicit scope only).",
+                "Class category names — not method categories (heavyweight; explicit scope only)."
               ]
             },
             "default": [
@@ -184,7 +193,7 @@
               "literals",
               "categories"
             ],
-            "markdownDescription": "Which categories Omni Search includes. Narrow a single search on the fly with the category buttons in the picker's title bar; the Clear-filter button resets to searching everything. **Source** (full method-source search) and **Literals** (methods referencing a compilable literal you type, e.g. `#at:put:`) are heavyweight, so they never run in the default search — pick their button to use them."
+            "markdownDescription": "Which search scopes GemStone Search includes. Narrow a single search on the fly with the scope tabs above the results; the Clear-filter button resets to searching everything. **Source** (full method-source search), **Literals** (methods referencing a compilable literal you type, e.g. `#at:put:`) and **Class Categories** (class-category names) are heavyweight, so they never run in the default search — pick their tab to use them."
           },
           "gemstone.omniSearch.maxResultsPerCategory": {
             "type": "number",

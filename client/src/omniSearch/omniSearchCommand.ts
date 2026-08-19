@@ -1,5 +1,5 @@
 /**
- * Command entry point for Omni Search (`gemstone.omniSearch`).
+ * Command entry point for GemStone Search (`gemstone.omniSearch`).
  *
  * This is the thin wiring layer: resolve the active session, build the session-bound providers +
  * result-activation handlers (the only place that touches `vscode`, the SystemBrowser and the
@@ -214,7 +214,7 @@ export function buildViewContextResolver(
             ),
           ),
         previewSource: buildPreviewSource(session),
-        onError: (message) => vscode.window.showErrorMessage(`Omni Search: ${message}`),
+        onError: (message) => vscode.window.showErrorMessage(`GemStone Search: ${message}`),
       },
     };
   };
@@ -256,7 +256,7 @@ export async function runOmniSearch(
           ),
         ),
       previewSource: buildPreviewSource(session),
-      onError: (message) => vscode.window.showErrorMessage(`Omni Search: ${message}`),
+      onError: (message) => vscode.window.showErrorMessage(`GemStone Search: ${message}`),
     });
     return;
   }
@@ -301,7 +301,7 @@ export async function revealPanelAfterLogin(
   return false;
 }
 
-/** The disposable for the Omni Search registration, plus hooks the extension calls when the image
+/** The disposable for the GemStone Search registration, plus hooks the extension calls when the image
  *  changes so an open search stays current: a local class compile, a class REMOVAL, and a session sync
  *  (commit/abort/file-in). All forward to whichever host is live (the docked panel view and/or the
  *  Spotter). */

@@ -142,32 +142,13 @@ ${methodSerialization(environmentId)}`;
   return parseMethodSearchResults(execute(code));
 }
 
-// Methods that reference the VALUE of a user-typed, compilable literal expression — e.g. `#at:put:`,
-// `42`, `$a`, `#{Globals.Object}`. The expression is compiled and evaluated on the server (it is
-// intentionally raw, not escaped — it IS Smalltalk source), then `referencesToObject:` finds the
-// literal frame. Interned literals (symbols, SmallIntegers, characters, specials, globals) match;
-// a fresh String/Array literal is a distinct object each compile and so matches nothing. A
-// malformed expression makes `execute` raise a compile error, which the caller handles.
-export function referencesToLiteral(
-  execute: QueryExecutor,
-  literalExpr: string,
-  environmentId: number = 0,
-): MethodSearchResult[] {
-  const code = `| methods stream limit classDict sl lit |
-lit := ${literalExpr}.
-methods := (ClassOrganizer new referencesToObject: lit).
-${methodSerialization(environmentId)}`;
-
-  return parseMethodSearchResults(execute(code));
-}
-
 // Methods that use a symbol as a DATA literal, NOT as a message send. `referencesToLiteral:` finds
 // both — a selector send puts the symbol in the literal frame too — so it can't be used alone. The
 // obvious "subtract the senders" (`reject: [:m | (sendersOf: symLit) includes: m]`) is unsound:
 // `sendersOf:` under-reports for some selectors (notably `#not`, where it returns 0 while
 // referencesToLiteral returns hundreds), so on those stones NOTHING is subtracted and every method
 // that merely SENDS the selector leaks in as a bogus hit whose source never contains the symbol
-// (Omni Search triage #9). Instead we mirror the string-literal branch: a fast source-substring
+// (GemStone Search triage #9). Instead we mirror the string-literal branch: a fast source-substring
 // pre-filter (`substringSearch:` for the literal's textual form `#...`) intersected with the
 // literal-frame membership. A send like `x not` has source `not`, not `#not`, so it fails the
 // substring filter; a real literal `#not` passes both. `symbolExpr` is a raw, compilable `#...`

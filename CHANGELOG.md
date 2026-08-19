@@ -4,6 +4,14 @@ All notable changes to the **GemStone Smalltalk** extension will be documented i
 
 ## [Unreleased]
 
+### Changed
+
+- **GemStone Search now uses that one name across the whole UI.** A few surfaces (error messages and the pin tooltip) used a different label; they now all read **GemStone Search**, matching the panel tab, status-bar button, and command. Its **Categories** scope is relabeled **Class Categories**, making explicit that it searches class categories rather than method categories. ([#447](https://github.com/GemTalk/Jasper/issues/447))
+
+### Fixed
+
+- **The "not searched here" hint no longer appears while GemStone Search is showing a references pivot.** A pivot's rows are a fixed list of senders already fetched from the stone, not a search, so nothing was being skipped — and each scope name in the hint is a button that would have started a fresh search and silently discarded the pivot. ([#447](https://github.com/GemTalk/Jasper/issues/447))
+
 ## [1.8.11] - 2026-08-16
 
 ### Added

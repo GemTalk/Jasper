@@ -1,5 +1,5 @@
 /**
- * Webview-side behavior for the Omni Search Phase-2 "Spotter" panel (omniSearchPanel.ts).
+ * Webview-side behavior for the GemStone Search Phase-2 "Spotter" panel (omniSearchPanel.ts).
  *
  * Like listFilter.js / methodListView.js / debuggerView.js, this is read at runtime via
  * fs.readFileSync and injected into the webview as a <script> tag — it is NOT compiled into the
@@ -880,7 +880,7 @@
     }
 
     /**
-     * "Not searched here: Source · Literals · Categories — click one to search it", under the field
+     * "Not searched here: Source · Literals · Class Categories — click one to search it", under the field
      * while the All scope is active and something is typed.
      *
      * Those three scopes are `explicitOnly`, so `providersInScope` drops them under All — the search
@@ -891,6 +891,12 @@
      *
      * Deliberately silent when a heavy scope IS active — then its own placeholder hint applies and the
      * search really is running everything the user asked for.
+     *
+     * Also silent during a references pivot: the rows there are a fixed list of senders already fetched
+     * from the stone, not a search, so nothing is being "not searched". Worse, each scope name is a
+     * button that would start a fresh search and discard the pivot — so the hint would both mislead and
+     * invite an unwarned-for exit. (This mirrors the placeholder, which `resultsMessage` already blanks
+     * for a pivot via `placeholderFor(view.pivot ? null : …)`.)
      */
     function updateScopeHint() {
       if (!scopeHintEl) return;
@@ -898,9 +904,10 @@
       for (var i = 0; i < lastCategories.length; i++) {
         if (lastCategories[i].explicitOnly) heavy.push(lastCategories[i]);
       }
-      // Only under All (no scope), only with a term to search, and only if any heavy scope is enabled
-      // at all — a user who disabled them via `categories` is not missing anything.
-      var show = lastScopeId === null && inputEl.value.trim().length > 0 && heavy.length > 0;
+      // Only under All (no scope), never during a pivot, only with a term to search, and only if any
+      // heavy scope is enabled at all — a user who disabled them via `categories` is not missing anything.
+      var show =
+        !inPivot && lastScopeId === null && inputEl.value.trim().length > 0 && heavy.length > 0;
       if (!show) {
         scopeHintEl.textContent = '';
         scopeHintEl.style.display = 'none';
@@ -972,7 +979,7 @@
       pinEl.setAttribute('aria-pressed', on ? 'true' : 'false');
       pinEl.title = on
         ? 'Pinned open — click to let it close on focus-out'
-        : 'Keep Omni Search open (pin to a tab)';
+        : 'Keep GemStone Search open (pin to a tab)';
     }
 
     function updateClearVisibility() {

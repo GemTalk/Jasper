@@ -3,7 +3,7 @@ import { escapeString } from './util';
 
 /**
  * Find compiled methods whose SELECTOR matches a substring, across every class in the user's
- * symbol list (instance and class side). This is the backend for Omni Search's "Methods" category
+ * symbol list (instance and class side). This is the backend for GemStone Search's "Methods" category
  * (issue #378) and is intended to be reused, scoped, by the Explorer method-signature search
  * (issue #377).
  *
