@@ -4,6 +4,7 @@ vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
 vi.mock('../browserQueries', () => ({
   implementorsOf: vi.fn(() => []),
+  sendersOf: vi.fn(() => []),
   getAllClassNames: vi.fn(() => []),
   getClassComment: vi.fn(() => ''),
 }));
@@ -13,9 +14,10 @@ import type * as vscode from 'vscode';
 import { GemStoneHoverProvider } from '../gemstoneHoverProvider';
 import { SelectorResolver } from '../gemstoneDefinitionProvider';
 import { SessionManager } from '../sessionManager';
-import { implementorsOf, getAllClassNames, getClassComment } from '../browserQueries';
+import { implementorsOf, sendersOf, getAllClassNames, getClassComment } from '../browserQueries';
 
 const mockImplementorsOf = vi.mocked(implementorsOf);
+const mockSendersOf = vi.mocked(sendersOf);
 const mockGetAllClassNames = vi.mocked(getAllClassNames);
 const mockGetClassComment = vi.mocked(getClassComment);
 
@@ -56,9 +58,11 @@ describe('GemStoneHoverProvider', () => {
   beforeEach(() => {
     __resetConfig();
     mockImplementorsOf.mockReset();
+    mockSendersOf.mockReset();
     mockGetAllClassNames.mockReset();
     mockGetClassComment.mockReset();
     mockImplementorsOf.mockReturnValue([]);
+    mockSendersOf.mockReturnValue([]);
     mockGetAllClassNames.mockReturnValue([]);
     mockGetClassComment.mockReturnValue('');
   });
@@ -72,7 +76,7 @@ describe('GemStoneHoverProvider', () => {
   });
 
   describe('selector hover', () => {
-    it('shows implementors with categories', async () => {
+    it('shows implementors with categories, plus clickable senders/implementors links', async () => {
       mockImplementorsOf.mockReturnValue([
         {
           dictName: 'Globals',
@@ -89,6 +93,7 @@ describe('GemStoneHoverProvider', () => {
           category: 'accessing',
         },
       ]);
+      mockSendersOf.mockReturnValue(Array.from({ length: 7 }, () => ({}) as never));
       const resolver: SelectorResolver = { getSelector: vi.fn(async () => 'size') };
       const provider = new GemStoneHoverProvider(makeSessionManager(true), resolver);
       const result = await provider.provideHover(makeDocument('self size'), pos(0, 5));
@@ -96,9 +101,25 @@ describe('GemStoneHoverProvider', () => {
       expect(result).not.toBeNull();
       const md = result!.contents as unknown as MarkdownString;
       expect(md.value).toContain('**#size**');
-      expect(md.value).toContain('*2* implementors');
+      // #432: counts are clickable command links, not plain text.
+      expect(md.value).toContain('7 senders](command:gemstone.sendersOfSelector?');
+      expect(md.value).toContain('2 implementors](command:gemstone.implementorsOfSelector?');
+      expect(md.isTrusted).toBe(true); // command: links only fire from a trusted hover
       expect(md.value).toContain('`Array` (accessing)');
       expect(md.value).toContain('`String` (accessing)');
+    });
+
+    it('shows a hover with just a senders link when the selector has no implementors', async () => {
+      mockImplementorsOf.mockReturnValue([]);
+      mockSendersOf.mockReturnValue(Array.from({ length: 3 }, () => ({}) as never));
+      const resolver: SelectorResolver = { getSelector: vi.fn(async () => 'onlySent') };
+      const provider = new GemStoneHoverProvider(makeSessionManager(true), resolver);
+      const result = await provider.provideHover(makeDocument('self onlySent'), pos(0, 5));
+
+      expect(result).not.toBeNull();
+      const md = result!.contents as unknown as MarkdownString;
+      expect(md.value).toContain('3 senders](command:gemstone.sendersOfSelector?');
+      expect(md.value).toContain('0 implementors](command:gemstone.implementorsOfSelector?');
     });
 
     it('shows singular "implementor" for one result', async () => {
@@ -116,7 +137,7 @@ describe('GemStoneHoverProvider', () => {
       const result = await provider.provideHover(makeDocument('self size'), pos(0, 5));
 
       const md = result!.contents as unknown as MarkdownString;
-      expect(md.value).toContain('*1* implementor\n');
+      expect(md.value).toContain('1 implementor](command:gemstone.implementorsOfSelector?');
     });
 
     it('shows "class" suffix for class-side implementors', async () => {
@@ -151,7 +172,7 @@ describe('GemStoneHoverProvider', () => {
       const result = await provider.provideHover(makeDocument('self size'), pos(0, 5));
 
       const md = result!.contents as unknown as MarkdownString;
-      expect(md.value).toContain('*15* implementors');
+      expect(md.value).toContain('15 implementors](command:gemstone.implementorsOfSelector?');
       expect(md.value).toContain('Class9');
       expect(md.value).not.toContain('Class10');
       expect(md.value).toContain('...and 5 more');
