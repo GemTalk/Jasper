@@ -17,7 +17,7 @@ const chrome = {
  * on purpose: that makes TypeScript force each future field — **optional ones included** — into this
  * fixture, so the forwarding guard below covers it without anyone remembering to. A base typed
  * `OmniViewData` would let a new optional field (the shape `pivotTitle` has) slip past `Object.keys`,
- * which is exactly the kind of remembering the #14 regression proved we can't count on.
+ * which is exactly the kind of remembering the missing truncation notice proved we can't count on.
  */
 function viewData(over: Partial<OmniViewData> = {}): Required<OmniViewData> {
   return {
@@ -36,6 +36,7 @@ function viewData(over: Partial<OmniViewData> = {}): Required<OmniViewData> {
     ],
     pivot: false,
     pivotTitle: 'Senders of foo',
+    pivotHint: 'Esc to go back',
     ...over,
   };
 }
@@ -62,10 +63,10 @@ describe('resultsMessage', () => {
   });
 
   // This payload lists its fields one at a time instead of spreading the view, so a NEW OmniViewData
-  // field reaches the engine but never the footer. That is precisely how the #14 fix first shipped
-  // broken: the engine computed the truncation flag, `resultsMessage` didn't forward it, the webview
-  // read `undefined`, and the count still said "200 results". This guard fails the moment another
-  // field is added to OmniViewData without being forwarded here.
+  // field reaches the engine but never the footer. That is precisely how the truncation notice first
+  // shipped broken: the engine computed the flag, `resultsMessage` didn't forward it, the webview read
+  // `undefined`, and the count still said "200 results". This guard fails the moment another field is
+  // added to OmniViewData without being forwarded here.
   it('forwards every OmniViewData field, so a new field cannot be silently dropped', () => {
     // The base fixture is `Required<OmniViewData>`, so every field — `pivotTitle` included — is present
     // here and the loop below checks each one is forwarded.

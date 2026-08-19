@@ -74,8 +74,8 @@ export interface OmniViewData {
   hasMore: boolean;
   /** True when `shownCount` IS the total for this term — nothing was left unfetched. Requires both
    *  that the cap was jumped to "load all" and that no provider hit its own fetch ceiling; see
-   *  `truncations` (triage #14 — this used to be derived from the cap alone, which let the footer
-   *  report a ceiling-truncated slice as an exact count). */
+   *  `truncations`. Derived from the cap alone, this used to let the footer report a ceiling-truncated
+   *  slice as an exact count. */
   exact: boolean;
   /** One entry per in-scope provider whose own server fetch ceiling bounded its results, so
    *  `shownCount` is a floor and raising the display cap cannot reveal the rest. Empty = nothing was
@@ -84,9 +84,23 @@ export interface OmniViewData {
   truncations: OmniViewTruncation[];
   /** True while showing a reference pivot (typing then filters these rows client-side). */
   pivot: boolean;
-  /** Breadcrumb title while pivoted (e.g. "Senders of printString"). */
+  /** Breadcrumb title while pivoted (e.g. "Senders of printString"). Just the title: the way out
+   *  travels separately, in `pivotHint`. */
   pivotTitle?: string;
+  /** How to leave the pivot, offered ALONGSIDE `pivotTitle` rather than glued into it, so each host
+   *  decides how to present it: the webview renders it as a quieter aside beside the breadcrumb, and a
+   *  host whose own chrome already shows an exit can simply ignore the field. Set only while pivoted;
+   *  the wording is `PIVOT_EXIT_HINT`. */
+  pivotHint?: string;
 }
+
+/** Carried beside the pivot breadcrumb (as `OmniViewData.pivotHint`) so the way OUT of a references
+ *  view is discoverable. The pivot replaces the whole result list and offers no visible exit
+ *  affordance, so a user who does not already know the gesture has to guess — clearing the box looks
+ *  like it should work and doesn't (an empty filter matches every reference row). Deliberately NOT
+ *  added to `ReferencePreview.title`: in `referencesInPreview` mode there is no pivot and Esc closes
+ *  the panel, so the hint would be false. */
+export const PIVOT_EXIT_HINT = 'Esc to go back';
 
 /** Short, singular per-row category tag (the flat list has no group header to carry the name). */
 const CATEGORY_TAG: Record<OmniCategoryId, string> = {
@@ -128,8 +142,7 @@ export interface OmniEngineDeps {
 // "Load all" jumps the display cap here — big enough to mean "everything" in practice; the true
 // ceiling is each provider's own server fetch cap (a few hundred), so this never runs away. Because
 // that ceiling can bind BEFORE this cap does, reaching this value does not by itself mean the results
-// are complete — see `truncated` (triage #14). Matches the QuickPick controller's constant so the two
-// UIs behave identically.
+// are complete — see `truncated`.
 export const LOAD_ALL_LIMIT = 100_000;
 
 /**
@@ -156,7 +169,7 @@ export function providersInScope(
 
 /** Run each in-scope provider and collect its results (each already ranked + capped). Providers with
  *  a server fetch ceiling of their own report through `reportTruncated` when that ceiling cut them
- *  off, so the caller can tell a complete result set from a bounded slice (triage #14). */
+ *  off, so the caller can tell a complete result set from a bounded slice. */
 export async function gatherResults(
   term: string,
   providers: readonly OmniProvider[],
@@ -376,6 +389,7 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
         truncations: [],
         pivot: true,
         pivotTitle: pivot?.title,
+        pivotHint: pivot ? PIVOT_EXIT_HINT : undefined,
       },
       // Reference rows are already the senders/references; don't offer a further pivot on them.
       () => ({ referenceable: false }),
@@ -430,7 +444,7 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
     return buildView(
       results,
       // "Load all" alone does NOT make the count exact: a ceiling-truncated provider leaves rows
-      // unfetched that no cap can reach, so claim exactness only when nothing was cut off (#14).
+      // unfetched that no cap can reach, so claim exactness only when nothing was cut off.
       {
         hasMore,
         exact: scopeLimit >= LOAD_ALL_LIMIT && truncations.length === 0,
@@ -504,6 +518,13 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
     async setScope(newScope) {
       scopeId = newScope;
       scopeLimit = config.maxResultsPerCategory; // a fresh scope starts at the base cap
+      // A scope belongs to the SEARCH, not to a references view, so picking one LEAVES the pivot.
+      // Every pivot row is a method (`methodRowsToResults`), so there is nothing meaningful for a
+      // Classes/Globals/Dictionaries filter to do to them. Without this the tab lit up as active
+      // while `runSearch`'s pivot branch returned the unchanged reference rows — the chrome claimed a
+      // filter that was never applied — and the scope then took effect invisibly on the way out,
+      // narrowing a restored search the user never asked to narrow.
+      pivot = null;
       return runSearch(lastRawValue);
     },
     async toggleCase() {

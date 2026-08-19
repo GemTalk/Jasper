@@ -56,7 +56,7 @@ export function createMethodsProvider(
       // the instant it has that many matches, so a broad term can never return more no matter how far
       // the display cap is raised — "Load all" included. `search` therefore reports truncation to the
       // engine, which would otherwise present a cut-off count as an exact total, with nothing on screen
-      // saying the scan gave up (#14).
+      // saying the scan gave up.
       const ceiling = cfg.maxServerScan;
       const serverLimit = Math.min(cfg.maxResultsPerCategory * SERVER_OVERFETCH, ceiling);
       const rows = runSearch(term, serverLimit, !cfg.caseSensitive);

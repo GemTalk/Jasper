@@ -157,7 +157,7 @@ describe('Omni Search docked panel — reacting to image changes', () => {
 
 // A sync rebuild re-primes every provider, three of them via image-wide synchronous GCI executes. The
 // engine outlives a hidden panel, so without this gate every commit/abort — and every dictionary
-// add/remove/rename — paid that cost with nothing on screen. See PR #443 review (#428 Round 1).
+// add/remove/rename — paid that cost with nothing on screen. See the PR #443 review.
 describe('Omni Search docked panel — a session sync while hidden', () => {
   beforeEach(() => vi.clearAllMocks());
 
