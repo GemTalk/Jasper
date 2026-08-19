@@ -77,7 +77,7 @@ Global "search anything browsable" for the GemStone IDE — the Jasper answer to
      - _Literals_ — find methods that use a value **as a literal** (not as a message send, not merely
        as source text). Two forms: a **symbol** (`#at:put:`) via `literalSymbolReferences`, and a
        **string** via `stringLiteralReferences`. The symbol branch is shape-gated by `isSymbolLiteral`
-       so a raw expression is never eval'd against the stone (#428 #5).
+       so a raw expression is never eval'd against the stone.
      - _Categories_ — class-category names; a whole-image scan (`getAllClassCategories`) so it
        **lazy-loads on first search**, not on open.
 
@@ -87,7 +87,7 @@ Global "search anything browsable" for the GemStone IDE — the Jasper answer to
      Source, 0 under All. So while the All scope is active **and** something is typed, the view shows a
      hint under the field naming the skipped scopes, each one a button that switches to it:
      `Not searched here: Source · Literals · Categories — click one to search it` (`updateScopeHint` in
-     `omniSearchView.js`, triage **#21**). It stays silent when a heavy scope is already active (its own
+     `omniSearchView.js`). It stays silent when a heavy scope is already active (its own
      placeholder hint applies then), when the field is empty, and when the user has disabled the heavy
      scopes via the `categories` setting. Enter was deliberately left alone — it activates the selected
      row, and making it scope-dependent would trade one surprise for another.
@@ -103,7 +103,7 @@ Global "search anything browsable" for the GemStone IDE — the Jasper answer to
    macOS), `when: gemstone.hasActiveSession && !terminalFocus` (a Jasper window, not the terminal),
    configurable, plus a palette entry. A single simultaneous chord (not a sequential `ctrl+k` two-step)
    that stays clear of the notebook cell-run gestures (`shift+enter` / `ctrl+enter` / `alt+enter`) — an
-   earlier `shift+enter` default shadowed the notebook's run-cell (#428 #2). The double-Shift aspiration
+   earlier `shift+enter` default shadowed the notebook's run-cell. The double-Shift aspiration
    is a follow-up (would need a fragile keystroke hack).
 
 6. **Reference Search (Wishlist Task 1).** A result can pivot to "who references it": a **method** row →
@@ -114,7 +114,7 @@ Global "search anything browsable" for the GemStone IDE — the Jasper answer to
    preview pane, leaving the results list in place; set it `false` for the classic pivot that replaces
    the whole list (backed out with ← / Esc).
 
-6a. **A scope belongs to the search, not to a references view** (#20). The pivot is not a search: it
+6a. **A scope belongs to the search, not to a references view.** The pivot is not a search: it
    is a fixed list of rows already fetched from the stone, and **every one of them is a method**
    (`methodRowsToResults`), so a Classes/Globals/Dictionaries filter has nothing meaningful to do to
    them. Picking a scope while pivoted therefore **leaves the pivot** and applies that scope to the
@@ -128,12 +128,15 @@ Global "search anything browsable" for the GemStone IDE — the Jasper answer to
    **The pivot names its own exit.** Its only ways out are `Esc` and `←` (the latter only with the
    caret at the start of the field), neither of them visible, and clearing the box does *not* escape —
    an empty filter matches every reference row, so clearing widens the list instead. Rather than
-   overload the clear gesture, the breadcrumb carries the exit: `PIVOT_EXIT_HINT` ("Esc to go back") is
-   appended to `OmniViewData.pivotTitle`. It is deliberately **not** added to `ReferencePreview.title`
-   — in `referencesInPreview` mode there is no pivot and `Esc` closes the panel, so the same words
-   there would be false. The hint is only as visible as the breadcrumb, which needs the *explicit*
-   `display: block` that `setBreadcrumb` now sets — clearing the inline style falls back to the
-   stylesheet's `display: none` and the whole breadcrumb disappears.
+   overload the clear gesture, the breadcrumb carries the exit: `PIVOT_EXIT_HINT` ("Esc to go back")
+   travels as its own field, **`OmniViewData.pivotHint`**, beside the plain `pivotTitle` — *not*
+   concatenated into it. That keeps the wording and the styling a **view** decision: the webview renders
+   the hint as a quieter aside (`.crumb-hint`) next to the title, and a host whose own chrome already
+   shows a way out ignores the field instead of having to split a string on its separator. It is
+   deliberately **not** added to `ReferencePreview.title` — in `referencesInPreview` mode there is no
+   pivot and `Esc` closes the panel, so the same words there would be false. The hint is only as visible
+   as the breadcrumb, which needs the *explicit* `display: block` that `setBreadcrumb` sets — clearing
+   the inline style falls back to the stylesheet's `display: none` and the whole breadcrumb disappears.
 
 7. **Scope filtering** ("filter buttons on top", per the issue). The webview renders one **labeled tab**
    per enabled category plus an "All" tab; picking one narrows the search to that category and re-runs
@@ -200,7 +203,7 @@ Behaviour decisions (Eric's review of the first webview cut):
   Each row wears a small **category tag** (Class / Method / Global / …) so you still see what it is.
 - **Scroll resets to the top** on a fresh query / clear / scope / case change, but NOT on Load-more.
 - **The result cap resets** to the base `maxResultsPerCategory` on a genuine term change (and on clear),
-  so a raised "Load all" cap never silently persists into the next search (#428 #1/#6/#7).
+  so a raised "Load all" cap never silently persists into the next search.
 - **Activation:** in the Spotter, unpinned Enter opens in the active group and dismisses it; pinned,
   Enter opens beside and Ctrl+Enter opens beside keeping the field focused. Alt+Enter → references.
 
@@ -254,16 +257,16 @@ hands the slack to another item and drops one of the footer's `10px` gaps, which
 sideways whenever the note appeared — and both can be on screen together.
 
 `exact` therefore requires Load-all **and** an empty `truncations`. Deriving it from the cap alone was
-triage **#14**: at the ceiling the footer printed a bare `200 results` over a slice that had been cut
-off, with nothing on screen saying the scan had given up rather than run out.
+the bug behind the truncation notice: at the ceiling the footer printed a bare `200 results` over a
+slice that had been cut off, with nothing on screen saying the scan had given up rather than run out.
 
 Because the cap is reported per scope rather than as one boolean, any provider that gains a server
 ceiling later is surfaced by the same note with no view changes.
 
 ⚠️ **`resultsMessage` (omniSearchShared.ts) lists the view's fields one by one instead of spreading
-it**, so a new `OmniViewData` field reaches the engine but never the webview. That is how the #14 fix
-first shipped broken — the flag was computed and never forwarded, so the count still read
-`200 results`. A test in `omniSearchShared.test.ts` now fails if a field is added without forwarding.
+it**, so a new `OmniViewData` field reaches the engine but never the webview. That is how the
+truncation notice first shipped broken — the flag was computed and never forwarded, so the count still
+read `200 results`. A test in `omniSearchShared.test.ts` now fails if a field is added without forwarding.
 
 ## Deferred / follow-ups (tracked in issue #428)
 
@@ -286,4 +289,4 @@ Every pure module is unit-tested: the matcher/ranker (`omniMatch`, via providers
 parsing against a mocked `QueryExecutor` (the `methodSearch.test.ts` pattern). The webview DOM
 (`omniSearchView.js`) is jsdom-tested. `omniSettings.test.ts` guards the contributed `ui` enum (exactly
 `panel` + `spotter`); `keybindings.test.ts` covers the trigger. A live-stone integration test
-(`queries/__tests__/methodSearch.integration.test.ts`) covers the Literals symbol query (#428 #9).
+(`queries/__tests__/methodSearch.integration.test.ts`) covers the Literals symbol query.

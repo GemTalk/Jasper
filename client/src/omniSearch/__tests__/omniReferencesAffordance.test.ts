@@ -4,8 +4,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { renderOmniHtml } from '../omniSearchShared';
 
-// #428 item 28: "It isn't obvious when you're searching by references. Consider a visual affordance
-// similar to the case-sensitivity toggle button." We add a #refindicator chip (styled like #case) that
+// "It isn't obvious when you're searching by references. Consider a visual affordance similar to the
+// case-sensitivity toggle button." We add a #refindicator chip (styled like #case) that
 // appears whenever the panel is showing references/senders — in BOTH the classic list pivot and the
 // default sticky preview-pane list — and clicking it exits back to the normal search. We also repair
 // the #breadcrumb, which the stylesheet hid with `display:none` while the view "showed" it by clearing
@@ -94,7 +94,7 @@ beforeEach(() => {
   document.body.className = '';
 });
 
-describe('references affordance (#428 #28)', () => {
+describe('references affordance', () => {
   it('keeps the references chip hidden on an ordinary (non-pivot) search', () => {
     const { handle, chip } = mount();
     handle.renderResults(resultsMsg({ rows: [row(0, 'Foo')], shownCount: 1 }));
@@ -214,12 +214,73 @@ describe('in-panel error banner (dead-affordance repair, same bug as the breadcr
   });
 });
 
-describe('references affordance — rendered HTML/CSS (#428 #28)', () => {
+describe('references affordance — rendered HTML/CSS', () => {
   for (const showPin of [false, true]) {
     it(`renderOmniHtml includes the #refindicator chip and its style (showPin=${showPin})`, () => {
       const html = renderOmniHtml({ showPin });
       expect(html).toContain('id="refindicator"');
       expect(html).toContain('#refindicator {');
+    });
+  }
+});
+
+describe('the pivot breadcrumb carries its exit hint as a separate, quieter aside', () => {
+  it('renders the hint in its own element, leaving the title text plain', () => {
+    const { handle, crumb } = mount();
+    handle.onMessage({
+      data: resultsMsg({
+        rows: [row(0, 'Foo>>bar', { categoryLabel: 'Method' })],
+        shownCount: 1,
+        pivot: true,
+        pivotTitle: 'References to Foo',
+        pivotHint: 'Esc to go back',
+      }),
+    });
+    const hint = crumb.querySelector('.crumb-hint');
+    expect(hint?.textContent).toBe('Esc to go back');
+    // The title is the breadcrumb's own text, NOT a string with the hint concatenated into it: the
+    // view can dim the hint (and a host could drop it) without splitting text back apart.
+    expect(crumb.firstChild?.textContent).toBe('References to Foo');
+    expect(crumb.style.display).toBe('block');
+  });
+
+  it('shows the title alone when the host offers no hint', () => {
+    const { handle, crumb } = mount();
+    handle.onMessage({
+      data: resultsMsg({
+        rows: [row(0, 'Foo>>bar', { categoryLabel: 'Method' })],
+        shownCount: 1,
+        pivot: true,
+        pivotTitle: 'References to Foo',
+      }),
+    });
+    expect(crumb.querySelector('.crumb-hint')).toBeNull();
+    expect(crumb.textContent).toBe('References to Foo');
+  });
+
+  it('takes the hint away with the breadcrumb when the pivot is left', () => {
+    const { handle, crumb } = mount();
+    handle.onMessage({
+      data: resultsMsg({
+        rows: [row(0, 'Foo>>bar', { categoryLabel: 'Method' })],
+        shownCount: 1,
+        pivot: true,
+        pivotTitle: 'References to Foo',
+        pivotHint: 'Esc to go back',
+      }),
+    });
+    handle.onMessage({ data: resultsMsg({ rows: [row(0, 'Foo')], shownCount: 1 }) });
+    expect(crumb.querySelector('.crumb-hint')).toBeNull(); // no stale hint left behind
+    expect(crumb.textContent).toBe('');
+    expect(crumb.style.display).toBe('none');
+  });
+
+  for (const showPin of [false, true]) {
+    it(`styles the hint more quietly than the title (showPin=${showPin})`, () => {
+      // The stylesheet is a template literal, so a rule is easy to lose; and without a rule of its own
+      // the hint would look exactly like the title it is meant to sit beside.
+      const html = renderOmniHtml({ showPin });
+      expect(html).toMatch(/#breadcrumb \.crumb-hint \{[^}]*opacity/);
     });
   }
 });

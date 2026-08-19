@@ -264,7 +264,7 @@ describe('Omni Search view — footer count + load controls', () => {
     expect((document.getElementById('loadMore') as HTMLElement).style.display).toBe('none');
   });
 
-  // Triage #14. A scope whose server scan is capped stops early, and before this the UI said nothing:
+  // A scope whose server scan is capped stops early, and before this the UI said nothing:
   // the rows just ended and the count read a bare, authoritative "200 results".
   describe('a capped scan', () => {
     const capped = [
@@ -898,11 +898,11 @@ describe('Omni Search view — references in the preview pane', () => {
   });
 });
 
-// Triage #21: the three explicit-only scopes (Source / Literals / Categories) are dropped by
+// The three explicit-only scopes (Source / Literals / Categories) are dropped by
 // `providersInScope` whenever the scope is All, so an All-scope search never runs them and nothing said
 // so. Verified live: `no such element` finds 4 methods under Source and 0 under All. The hint names the
 // skipped scopes and doubles as the one-click way into them.
-describe('Omni Search view — scopes skipped under All (#21)', () => {
+describe('Omni Search view — scopes skipped under All', () => {
   const hint = () => document.getElementById('scopehint') as HTMLElement;
 
   /** Render an All-scope result set with something typed in the field. */

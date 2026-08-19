@@ -248,7 +248,7 @@ describe('createOmniEngine', () => {
     expect(all!.truncations).toEqual([]); // nothing was cut off, so the count really is the total
   });
 
-  // Triage #14. A provider with a server fetch ceiling (methods) can never return more than a few
+  // A provider with a server fetch ceiling (methods) can never return more than a few
   // hundred rows however high the display cap goes, so "Load all" does NOT make its count a total.
   // The engine used to derive `exact` from the cap alone, and the footer printed a bare "N results"
   // over a slice that had been cut off — the one thing it definitely wasn't.
@@ -491,7 +491,7 @@ describe('createOmniEngine', () => {
 
     const pivot = await engine.pivot(classRowId);
     expect(pivot!.pivot).toBe(true);
-    expect(pivot!.pivotTitle).toBe(`References to Foo — ${PIVOT_EXIT_HINT}`);
+    expect(pivot!.pivotTitle).toBe('References to Foo');
     expect(pivot!.shownCount).toBe(2);
     // Reference rows are not themselves further pivotable.
     expect(pivot!.rows.every((r) => !r.referenceable)).toBe(true);
@@ -593,13 +593,18 @@ describe('createOmniEngine', () => {
     const search = await engine.search('foo');
 
     const pivot = await engine.pivot(search!.rows[0].id);
-    expect(pivot!.pivotTitle).toBe(`References to Foo — ${PIVOT_EXIT_HINT}`);
+    expect(pivot!.pivotHint).toBe(PIVOT_EXIT_HINT);
     expect(PIVOT_EXIT_HINT).toContain('Esc');
+    // The hint is its OWN field, so the title stays the plain name of the list and each host decides
+    // how (or whether) to show the way out. Glued into the title, the only way to style or drop the
+    // hint would be to split the string back apart.
+    expect(pivot!.pivotTitle).toBe('References to Foo');
 
     // The hint must survive filtering inside the pivot — that is exactly when a user is looking for
     // the way out, and the pivot branch of runSearch rebuilds the view.
     const filtered = await engine.search('also');
-    expect(filtered!.pivotTitle).toBe(`References to Foo — ${PIVOT_EXIT_HINT}`);
+    expect(filtered!.pivotTitle).toBe('References to Foo');
+    expect(filtered!.pivotHint).toBe(PIVOT_EXIT_HINT);
   });
 
   it('the sticky preview references list keeps a CLEAN title (no Esc hint)', async () => {
@@ -645,7 +650,7 @@ describe('createOmniEngine', () => {
 });
 
 /**
- * #20 — the references pivot used to ignore the selected scope while CLAIMING to apply it.
+ * The references pivot used to ignore the selected scope while CLAIMING to apply it.
  *
  * Before the fix: `runSearch` returned early through its pivot branch, so a `setScope` during a pivot
  * changed nothing on screen, yet the reply's chrome carried the new `scopeId` and the tab lit up as
@@ -656,7 +661,7 @@ describe('createOmniEngine', () => {
  * row is a method — see `methodRowsToResults` — so filtering them by scope is meaningless), therefore
  * picking a scope LEAVES the pivot and applies the scope to the restored search.
  */
-describe('createOmniEngine — scope vs. the references pivot (#20)', () => {
+describe('createOmniEngine — scope vs. the references pivot', () => {
   const refView: ReferenceView = {
     title: 'References to Foo',
     results: [methodResult('A>>useFoo', 'useFoo'), methodResult('B>>alsoFoo', 'alsoFoo')],
@@ -688,6 +693,7 @@ describe('createOmniEngine — scope vs. the references pivot (#20)', () => {
     expect(view!.pivot).toBe(false); // no longer a references view…
     expect(engine.state().pivot).toBe(false); // …and the engine agrees
     expect(view!.pivotTitle).toBeUndefined();
+    expect(view!.pivotHint).toBeUndefined(); // no pivot, so nothing to escape from
     // The reference rows are gone: what is shown is the SEARCH, narrowed to the chosen scope.
     expect(view!.rows.map((r) => r.label)).toEqual(['Foo']);
     expect(engine.state().scopeId).toBe('classes');

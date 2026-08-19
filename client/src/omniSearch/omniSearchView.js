@@ -40,7 +40,7 @@
     var refIndicatorEl = doc.getElementById('refindicator');
     // The last category list + active scope pushed from the host. The host owns scope; we just reflect
     // what it sent. Kept so the scope hint can name the scopes an All-scope search leaves out (see
-    // updateScopeHint) and so Tab / Shift+Tab can cycle scopes from the field (#428 item 26).
+    // updateScopeHint) and so Tab / Shift+Tab can cycle scopes from the field.
     var lastCategories = [];
     var lastScopeId = null;
 
@@ -141,7 +141,7 @@
 
     // Cycle the active scope one step in `dir` (+1 = next tab, -1 = previous), wrapping around, in the
     // exact left-to-right order the tabs render: All, then the filter scopes, then the explicit search
-    // scopes. Posts setScope like a tab click does. (#428 item 26 — the JetBrains Tab/Shift+Tab gesture.)
+    // scopes. Posts setScope like a tab click does (the JetBrains Tab/Shift+Tab gesture).
     function orderedScopeIds() {
       var ids = [null]; // "All"
       var searches = [];
@@ -254,7 +254,8 @@
       }
       // Any re-run (new term, case toggle, scope change) can leave the still-shown source preview
       // highlighting the OLD term; refresh it now rather than waiting for the debounced host round-
-      // trip (which never comes when the active row is unchanged — same source, no repaint). See #8.
+      // trip (which never comes when the active row is unchanged — same source, no repaint). See
+      // `rehighlightSourcePreview` for why the host cannot be relied on here.
       rehighlightSourcePreview();
       updateFooter(view);
       refreshRefIndicator();
@@ -316,7 +317,7 @@
     // ── Footer (count + elegant load controls — replaces the two synthetic list rows) ──
     // Scopes whose own server scan was capped this run (see OmniViewData.truncations). A capped scan
     // stops early, so its rows are a floor: the count gets a "+" and the note next to it names the
-    // scope and the number. Triage #14 — before this, hitting the wall looked identical to having
+    // scope and the number. Before this, hitting the wall looked identical to having
     // found everything, in the footer AND in the count.
     function truncationsOf(view) {
       return Array.isArray(view.truncations) ? view.truncations : [];
@@ -413,7 +414,7 @@
           setPin(msg.pinned);
           updateClearVisibility();
           if (typeof msg.placeholder === 'string') inputEl.placeholder = msg.placeholder;
-          setBreadcrumb(msg.pivot ? msg.pivotTitle : '');
+          setBreadcrumb(msg.pivot ? msg.pivotTitle : '', msg.pivot ? msg.pivotHint : '');
           renderResults(msg);
           setBusy(false);
           break;
@@ -677,7 +678,7 @@
     // case toggle) changes only what should be highlighted, not the shown source — so the blue match
     // marks must track the field immediately. Otherwise the old highlight lingers for the whole
     // debounce + fetch window, and when the active row is unchanged the host replies with identical
-    // source, so nothing ever forces a visual refresh and the stale marks persist (triage #8). The
+    // source, so nothing ever forces a visual refresh and the stale marks persist. The
     // preview's textContent reconstructs the original source (its <mark>s only wrap substrings of it),
     // so we can recompute in place with no state kept.
     function rehighlightSourcePreview() {
@@ -710,7 +711,7 @@
      * Those three scopes are `explicitOnly`, so `providersInScope` drops them under All — the search
      * genuinely never runs them. Nothing said so, which makes an All-scope "no results" identical to
      * "not in the image": search `no such element` under All and you get nothing, click Source and you
-     * get four hits (triage #21). The scope names are buttons, so the fix names the problem AND is the
+     * get four hits. The scope names are buttons, so the fix names the problem AND is the
      * one-click way out of it.
      *
      * Deliberately silent when a heavy scope IS active — then its own placeholder hint applies and the
@@ -754,16 +755,25 @@
       return b;
     }
 
-    function setBreadcrumb(title) {
+    function setBreadcrumb(title, hint) {
       if (!breadcrumbEl) return;
       breadcrumbEl.textContent = title || '';
+      // The exit hint is a quieter aside than the title it follows, so it gets its own element to dim
+      // rather than being concatenated into the breadcrumb text. No hint (a host that offers no way
+      // out, or no pivot at all) simply leaves the title standing alone.
+      if (title && hint) {
+        var hintEl = doc.createElement('span');
+        hintEl.className = 'crumb-hint';
+        hintEl.textContent = hint;
+        breadcrumbEl.appendChild(hintEl);
+      }
       // Explicit 'block' (not '') — the stylesheet hides #breadcrumb with `display: none`, and clearing
       // the inline style falls BACK to that rule, so a bare '' left the breadcrumb permanently hidden.
       breadcrumbEl.style.display = title ? 'block' : 'none';
     }
 
     // Show the references-mode chip (styled like the case toggle) whenever the panel is displaying
-    // references/senders — the classic list pivot OR the sticky preview-pane list (#428 item 28) — so
+    // references/senders — the classic list pivot OR the sticky preview-pane list — so
     // it is obvious you are in a references view. Hidden the rest of the time.
     function refreshRefIndicator() {
       if (!refIndicatorEl) return;
@@ -826,7 +836,7 @@
         }
         return;
       }
-      // Tab / Shift+Tab from the field cycles the scope tabs (JetBrains gesture, #428 item 26) — but
+      // Tab / Shift+Tab from the field cycles the scope tabs (the JetBrains gesture) — but
       // not while a references list is open (there Tab dives into the list, handled just above / by the
       // pivot) and not with Ctrl/Alt/Cmd held (leave those to VS Code / the OS).
       if (

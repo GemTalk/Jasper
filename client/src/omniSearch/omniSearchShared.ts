@@ -87,11 +87,13 @@ export function resultsMessage(
     exact: view.exact,
     // Scopes whose own server scan was capped, so the footer can say so IN the UI. This payload lists
     // its fields one by one rather than spreading `view`, so a new OmniViewData field is invisible to
-    // the webview until it is added here — which is exactly how the #14 fix first shipped broken (the
-    // engine computed the flag, the footer never received it, and the count still read "200 results").
+    // the webview until it is added here — which is exactly how the truncation notice first shipped
+    // broken (the engine computed the flag, the footer never received it, and a scan that stopped at
+    // its ceiling still reported a bare "200 results").
     truncations: view.truncations,
     pivot: view.pivot,
     pivotTitle: view.pivotTitle,
+    pivotHint: view.pivotHint,
     categories: tabCategoriesFrom(chrome.config.enabledCategories),
     scopeId: chrome.scopeId,
     caseSensitive: chrome.caseSensitive,
@@ -284,7 +286,7 @@ export function renderOmniHtml(opts: { showPin: boolean }): string {
       border-color: var(--vscode-button-background);
       opacity: 1;
     }
-    /* References-mode indicator (#428 item 28): a chip in the field row, styled like the always-on
+    /* References-mode indicator: a chip in the field row, styled like the always-on
        case toggle, that appears (filled/accent) whenever the panel is showing references or senders --
        so it is obvious you are in a references view -- and clicking it exits back to the normal search.
        Shown/hidden via an INLINE style the view sets, never via a stylesheet display:none. */
@@ -303,7 +305,7 @@ export function renderOmniHtml(opts: { showPin: boolean }): string {
     #refindicator:hover { background: var(--vscode-button-hoverBackground, var(--vscode-button-background)); }
     /* "Not searched here: Source - Literals - Categories" under the field while the All scope is
        active. Those three are explicitOnly, so an All-scope search silently skips them and "no results"
-       is indistinguishable from "not in the image" (triage #21). No display rule here on purpose: the
+       is indistinguishable from "not in the image". No display rule here on purpose: the
        element starts hidden via an inline style and the view sets explicit display values, because a
        rule here would beat the view clearing the inline style. Unlike the footer's cap note this one
        does NOT reserve space when hidden — an empty line under the field would just be a gap. */
@@ -324,6 +326,9 @@ export function renderOmniHtml(opts: { showPin: boolean }): string {
     }
     #scopehint button:hover { color: var(--vscode-textLink-activeForeground); }
     #breadcrumb { margin-top: var(--omni-gap); font-size: 0.9em; color: var(--vscode-descriptionForeground); display: none; }
+    /* The pivot's exit hint rides beside the breadcrumb title as its own span, quieter than the
+       title so it reads as an aside rather than part of the name of the list. */
+    #breadcrumb .crumb-hint { margin-left: 0.6em; font-size: 0.85em; opacity: 0.75; }
     #error {
       margin-top: var(--omni-gap);
       padding: 6px 10px;
@@ -430,7 +435,7 @@ export function renderOmniHtml(opts: { showPin: boolean }): string {
     }
     #count { flex: 0 0 auto; }
     /* Sits immediately after the count so the two read as one statement: "200+ shown — Methods scan
-       capped at 200". A capped scan is otherwise invisible (triage #14): the results just stop, with
+       capped at 200". A capped scan is otherwise invisible: the results just stop, with
        nothing on screen saying the scan gave up rather than ran out. Warning-toned, not error-toned —
        the results shown are correct, merely incomplete. */
     /* This note is ALWAYS a flex item and is the footer's only slack absorber, so the Load buttons stay
