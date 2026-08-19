@@ -304,7 +304,8 @@ export interface OmniEngine {
   loadMore(): Promise<OmniViewData | null>;
   /** Jump the cap to everything (bounded by the server fetch caps); re-runs the current term. */
   loadAll(): Promise<OmniViewData | null>;
-  /** Pivot the list to a row's references/senders. Returns null if not referenceable / no resolver. */
+  /** Pivot the list to a row's references/senders. Returns null if not referenceable, if there is no
+   *  resolver, or if a newer call superseded this one while it resolved. */
   pivot(rowId: number): Promise<OmniViewData | null>;
   /** Leave the reference view and restore the prior search. */
   exitPivot(): Promise<OmniViewData | null>;
@@ -312,7 +313,8 @@ export interface OmniEngine {
    *  `explicitOnly` ids are ignored (they are never in "All" anyway). */
   setExcludedFromAll(ids: readonly OmniCategoryId[]): Promise<OmniViewData | null>;
   /** Load a row's references/senders for the sticky preview-pane list WITHOUT pivoting — the search
-   *  list and all search state are left intact. Returns null if not referenceable / no resolver. */
+   *  list and all search state are left intact. Returns null if not referenceable, if there is no
+   *  resolver, or if a newer reference load superseded this one while it resolved. */
   referencesFor(rowId: number): Promise<ReferencePreview | null>;
   /** The `OmniResult` for a reference row id from the last `referencesFor` (for opening its source). */
   referenceResultFor(refId: number): OmniResult | undefined;
@@ -349,6 +351,11 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
   // The reference rows from the last `referencesFor`, indexed by the preview list's row id. Kept
   // separate from `current` so loading references never disturbs the search list or its ids.
   let referenceRows: OmniResult[] = [];
+  // Ordering token for `referencesFor`, deliberately SEPARATE from `generation`: loading the preview
+  // list leaves the search alone, so a reference load must neither cancel an in-flight search nor be
+  // cancelled by one. All it has to supersede is an earlier reference load, whose slower resolve would
+  // otherwise land in `referenceRows` after a newer row's — see the guard in `referencesFor`.
+  let referenceGeneration = 0;
 
   const effectiveConfig = (): OmniConfig => ({
     ...config,
@@ -549,8 +556,14 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
       if (!deps.resolveReferences) return null;
       const result = current[rowId];
       if (!result) return null;
-      ++generation; // supersede any in-flight search so its late result can't land over the pivot
+      // Take a token of our own as we supersede in-flight work. Bumping `generation` stops an older
+      // search from landing over this pivot, but the resolve below can be slow (senders of a common
+      // selector), and anything the user does while we wait — a new term, another pivot — bumps the
+      // generation again. Without re-checking afterwards this call would snap the view back to a pivot
+      // that has already been left behind.
+      const gen = ++generation;
       const view = await deps.resolveReferences(result);
+      if (gen !== generation) return null; // a newer call superseded this pivot
       if (!view) return null; // not referenceable — leave the current list as-is
       pivot = view;
       current = view.results;
@@ -573,7 +586,12 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
       if (!deps.resolveReferences) return null;
       const result = current[rowId];
       if (!result) return null;
+      // `referenceRows` is the single array every preview row id indexes into, so a slow load must not
+      // land after a newer one: arrowing from row A to row B while A is still resolving would leave B's
+      // list on screen over A's rows, and `referenceResultFor` would then open the wrong method.
+      const gen = ++referenceGeneration;
       const view = await deps.resolveReferences(result);
+      if (gen !== referenceGeneration) return null; // a newer reference load superseded this one
       if (!view) return null; // not referenceable
       referenceRows = view.results;
       const built = buildView(
