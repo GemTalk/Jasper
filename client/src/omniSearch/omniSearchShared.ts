@@ -8,6 +8,7 @@
 import * as crypto from 'crypto';
 import { readWebviewScript } from '../webviewAssets';
 import { CATEGORY_BY_ID, OmniCategoryId, OmniConfig } from './omniTypes';
+import { MatchMode } from './omniMatch';
 import { OmniEngine, OmniViewData } from './omniEngine';
 
 // The Alt+Enter (references) gesture, rendered per platform. On macOS the Alt key is Option, shown
@@ -69,7 +70,14 @@ export function placeholderFor(scopeId: string | null): string {
   return 'Search classes, methods, globals…';
 }
 
-/** The `results` message payload for a fresh view, decorated with the current chrome state. */
+/**
+ * The `results` message payload for a fresh view, decorated with the current chrome state.
+ *
+ * `previewPane` is deliberately NOT included here. Once the webview has it from `configMessage` the
+ * toggle belongs to the webview alone (the engine has no part in it), so re-sending it on every
+ * results message would silently undo the user's toggle on their next keystroke. Anyone adding a
+ * field to this payload should double-check it is engine-owned before forwarding it.
+ */
 export function resultsMessage(
   view: OmniViewData,
   chrome: {
@@ -77,6 +85,8 @@ export function resultsMessage(
     scopeId: OmniCategoryId | null;
     caseSensitive: boolean;
     pinned: boolean;
+    excludedFromAll: OmniCategoryId[];
+    matchMode: MatchMode;
   },
 ): Record<string, unknown> {
   return {
@@ -85,13 +95,25 @@ export function resultsMessage(
     shownCount: view.shownCount,
     hasMore: view.hasMore,
     exact: view.exact,
+    // Scopes whose own server scan was capped, so the footer can say so IN the UI. This payload lists
+    // its fields one by one rather than spreading `view`, so a new OmniViewData field is invisible to
+    // the webview until it is added here — which is exactly how the truncation notice first shipped
+    // broken (the engine computed the flag, the footer never received it, and a scan that stopped at
+    // its ceiling still reported a bare "200 results").
+    truncations: view.truncations,
     pivot: view.pivot,
     pivotTitle: view.pivotTitle,
+    pivotHint: view.pivotHint,
     categories: tabCategoriesFrom(chrome.config.enabledCategories),
     scopeId: chrome.scopeId,
     caseSensitive: chrome.caseSensitive,
     pinned: chrome.pinned,
     referencesInPreview: chrome.config.referencesInPreview,
+    // Which categories are currently held back from "All" — the scope filter renders its checkboxes
+    // from this, so the panel always shows what the engine actually did.
+    excludedFromAll: chrome.excludedFromAll,
+    // Engine-owned, like `caseSensitive` — so it IS re-sent every time, unlike `previewPane`.
+    matchMode: chrome.matchMode,
     placeholder: placeholderFor(view.pivot ? null : chrome.scopeId),
   };
 }
@@ -105,6 +127,10 @@ export function configMessage(config: OmniConfig, pinned: boolean): Record<strin
     caseSensitive: config.caseSensitive,
     pinned,
     referencesInPreview: config.referencesInPreview,
+    // Starting values for the two in-panel controls; both are owned by the session afterwards.
+    previewPane: config.previewPane,
+    excludedFromAll: config.excludedFromAll,
+    matchMode: config.matchMode,
     placeholder: placeholderFor(null),
     keyHint: REFERENCES_KEY_HINT,
   };
@@ -116,12 +142,18 @@ export interface CommonInbound {
   value?: string;
   scopeId?: OmniCategoryId | null;
   id?: number;
+  /** Categories to hold back from the "All" fan-out (the scope filter's checkbox state). */
+  excludedFromAll?: OmniCategoryId[];
+  /** The match algorithm picked from the panel. */
+  mode?: MatchMode;
 }
 
 /**
  * Run the engine op for a host-independent message (query / setScope / toggleCase / loadMore /
- * loadAll / references / back). Returns the fresh view, `null` when superseded, or `undefined` when
- * the message isn't one of these (so the host handles it — ready/activate/preview/close/togglePin).
+ * loadAll / references / back / setExcludedFromAll / setMatchMode). Returns the fresh view, `null` when superseded,
+ * or `undefined` when the message isn't one of these (so the host handles it —
+ * ready/activate/preview/close/togglePin). The preview-pane toggle is absent on purpose: it never
+ * reaches the host at all, since hiding the pane is pure chrome with no engine effect.
  */
 export function dispatchEngineMessage(
   engine: OmniEngine,
@@ -142,6 +174,10 @@ export function dispatchEngineMessage(
       return engine.pivot(m.id ?? -1);
     case 'back':
       return engine.exitPivot();
+    case 'setExcludedFromAll':
+      return engine.setExcludedFromAll(m.excludedFromAll ?? []);
+    case 'setMatchMode':
+      return engine.setMatchMode(m.mode ?? 'fuzzy');
     default:
       return undefined;
   }
@@ -176,8 +212,11 @@ export function renderOmniHtml(opts: { showPin: boolean }): string {
       margin: 0;
     }
     #omni {
-      max-width: 960px;
-      margin: 0 auto;
+      /* Size to the window, not to a fixed pixel cap. A max-width of 960px here left a wide monitor
+         mostly empty and ellipsized long Class>>selector rows with blank space sitting beside them;
+         both hosts render this chrome, so the docked panel paid for it too. (No backticks in here --
+         this stylesheet lives inside a template literal.) */
+      width: 100%;
       padding: 10px 14px 8px;
       display: flex;
       flex-direction: column;
@@ -202,7 +241,10 @@ export function renderOmniHtml(opts: { showPin: boolean }): string {
       border-color: var(--vscode-button-background);
     }
     .tab.explicit { font-style: italic; border-style: dashed; }
-    .tab.explicit::before { content: '\\1F50D\\00A0'; font-style: normal; font-size: 0.9em; }
+    /* Heavy/slow scopes (Source/Literals/Categories) each run a full-image scan, so they carry a
+       distinct hourglass marker rather than the plain magnifier the whole field otherwise reads as.
+       No backticks in this comment -- the stylesheet is a template literal. */
+    .tab.explicit::before { content: '\\231B\\00A0'; font-style: normal; font-size: 0.9em; }
     .tabsep {
       align-self: center;
       margin: 0 4px 0 8px;
@@ -273,7 +315,49 @@ export function renderOmniHtml(opts: { showPin: boolean }): string {
       border-color: var(--vscode-button-background);
       opacity: 1;
     }
+    /* References-mode indicator: a chip in the field row, styled like the always-on
+       case toggle, that appears (filled/accent) whenever the panel is showing references or senders --
+       so it is obvious you are in a references view -- and clicking it exits back to the normal search.
+       Shown/hidden via an INLINE style the view sets, never via a stylesheet display:none. */
+    #refindicator {
+      flex: 0 0 auto;
+      padding: 5px 9px;
+      border: 1px solid var(--vscode-button-background);
+      border-radius: 4px;
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 0.85em;
+      white-space: nowrap;
+    }
+    #refindicator:hover { background: var(--vscode-button-hoverBackground, var(--vscode-button-background)); }
+    /* "Not searched here: Source - Literals - Categories" under the field while the All scope is
+       active. Those three are explicitOnly, so an All-scope search silently skips them and "no results"
+       is indistinguishable from "not in the image". No display rule here on purpose: the
+       element starts hidden via an inline style and the view sets explicit display values, because a
+       rule here would beat the view clearing the inline style. Unlike the footer's cap note this one
+       does NOT reserve space when hidden — an empty line under the field would just be a gap. */
+    #scopehint {
+      margin-top: var(--omni-gap);
+      font-size: 0.9em;
+      color: var(--vscode-descriptionForeground);
+    }
+    #scopehint button {
+      background: transparent;
+      border: none;
+      padding: 0 2px;
+      font-family: inherit;
+      font-size: inherit;
+      color: var(--vscode-textLink-foreground);
+      cursor: pointer;
+      text-decoration: underline;
+    }
+    #scopehint button:hover { color: var(--vscode-textLink-activeForeground); }
     #breadcrumb { margin-top: var(--omni-gap); font-size: 0.9em; color: var(--vscode-descriptionForeground); display: none; }
+    /* The pivot's exit hint rides beside the breadcrumb title as its own span, quieter than the
+       title so it reads as an aside rather than part of the name of the list. */
+    #breadcrumb .crumb-hint { margin-left: 0.6em; font-size: 0.85em; opacity: 0.75; }
     #error {
       margin-top: var(--omni-gap);
       padding: 6px 10px;
@@ -378,7 +462,27 @@ export function renderOmniHtml(opts: { showPin: boolean }): string {
       border-top: 1px solid var(--vscode-widget-border, var(--vscode-panel-border, transparent));
       margin-top: 6px;
     }
-    #count { flex: 1 1 auto; }
+    #count { flex: 0 0 auto; }
+    /* Sits immediately after the count so the two read as one statement: "200+ shown — Methods scan
+       capped at 200". A capped scan is otherwise invisible: the results just stop, with
+       nothing on screen saying the scan gave up rather than ran out. Warning-toned, not error-toned —
+       the results shown are correct, merely incomplete. */
+    /* This note is ALWAYS a flex item and is the footer's only slack absorber, so the Load buttons stay
+       pinned to the right whether or not it has anything to say. The view toggles "visibility", never
+       "display": display:none removes the item, which both hands the slack to something else and drops
+       one of the footer's 10px gaps — so the buttons visibly jumped as the note came and went.
+       Deliberately NO display rule here either; a "display: none" in this stylesheet would also win over
+       the view and leave the note permanently invisible, which is how it first shipped.
+       (No backticks in this comment: the whole stylesheet is inside a template literal.) */
+    #capnote {
+      flex: 1 1 auto;
+      min-width: 0;
+      color: var(--vscode-editorWarning-foreground, var(--vscode-inputValidation-warningBorder));
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      cursor: help;
+    }
     /* A persistent, unobtrusive gesture legend — useful now that Omni Search is a docked panel you
        keep open (not a glance-once dialog). Distinct from the QuickPick's cluttered field-hover. */
     #hints { flex: 0 0 auto; opacity: 0.7; font-size: 0.95em; }
@@ -403,6 +507,76 @@ export function renderOmniHtml(opts: { showPin: boolean }): string {
     body.busy #query { background:
       linear-gradient(90deg, var(--vscode-input-background) 0%, var(--vscode-list-hoverBackground) 50%, var(--vscode-input-background) 100%);
     }
+    /* Two controls over what a search COSTS: the preview-pane toggle and the All-scope filter.
+       Kept in their own block (and shaped to match the case chip rather than editing its rule) so
+       this stays an additive hunk. No backticks anywhere in here - this is a template literal. */
+    #previewToggle, #scopeFilter, #matchMode {
+      flex: 0 0 auto;
+      padding: 5px 9px;
+      border: 1px solid var(--vscode-input-border, transparent);
+      border-radius: 4px;
+      background: transparent;
+      color: var(--vscode-descriptionForeground);
+      cursor: pointer;
+      font-family: inherit;
+      opacity: 0.65;
+    }
+    #previewToggle.active, #scopeFilter.active {
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+      border-color: var(--vscode-button-background);
+      opacity: 1;
+    }
+    /* The algorithm chip always shows its CURRENT value as text, so it needs no on/off state. */
+    #matchMode {
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+      border-color: var(--vscode-button-background);
+      opacity: 1;
+    }
+    /* The filter button owns the menu's positioning context, so the searchbar rule is left alone. */
+    #scopeFilterWrap { position: relative; flex: 0 0 auto; display: inline-flex; }
+    #scopeFilterMenu {
+      position: absolute;
+      right: 0;
+      top: calc(100% + 4px);
+      z-index: 10;
+      min-width: 190px;
+      padding: 4px 0;
+      background: var(--vscode-menu-background, var(--vscode-editorWidget-background, var(--vscode-editor-background)));
+      color: var(--vscode-menu-foreground, var(--vscode-foreground));
+      border: 1px solid var(--vscode-menu-border, var(--vscode-widget-border, var(--vscode-panel-border, transparent)));
+      border-radius: 4px;
+      box-shadow: 0 2px 8px var(--vscode-widget-shadow, rgba(0,0,0,0.36));
+    }
+    #scopeFilterMenu[hidden] { display: none; }
+    .scope-opt-title {
+      padding: 2px 10px 4px;
+      font-size: 0.8em;
+      color: var(--vscode-descriptionForeground);
+      white-space: nowrap;
+    }
+    .scope-opt {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      padding: 4px 10px;
+      background: transparent;
+      border: none;
+      color: inherit;
+      font-family: inherit;
+      font-size: inherit;
+      text-align: left;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .scope-opt:hover { background: var(--vscode-list-hoverBackground); }
+    .scope-opt .box { flex: 0 0 auto; width: 1em; text-align: center; opacity: 0.9; }
+    .scope-opt.off { color: var(--vscode-descriptionForeground); }
+    /* Preview off: the results list gets the whole body width back. Beats the has-content rule on
+       specificity, so a loaded preview stays hidden until the pane is switched back on. */
+    body.no-preview #preview { display: none; }
   </style>
 </head>
 <body>
@@ -414,8 +588,16 @@ export function renderOmniHtml(opts: { showPin: boolean }): string {
         <button id="clear" title="Clear search" aria-label="Clear search" style="display:none">×</button>
       </div>
       <button id="case" title="Case sensitivity" aria-pressed="false">Aa</button>
+      <button id="previewToggle" title="Show the source preview" aria-label="Show the source preview" aria-pressed="true">&#9707;</button>
+      <span id="scopeFilterWrap">
+        <button id="scopeFilter" title="Choose which scopes the All search runs" aria-label="Choose which scopes the All search runs" aria-haspopup="true" aria-expanded="false">Scopes</button>
+        <div id="scopeFilterMenu" role="menu" hidden></div>
+      </span>
+      <button id="matchMode" title="Match algorithm" aria-label="Match algorithm">Fuzzy</button>
+      <button id="refindicator" title="Showing references — click to exit" aria-pressed="false" style="display:none">↗ References</button>
       ${pinButton}
     </div>
+    <div id="scopehint" style="display:none"></div>
     <div id="breadcrumb"></div>
     <div id="error"></div>
     <div id="body">
@@ -423,8 +605,9 @@ export function renderOmniHtml(opts: { showPin: boolean }): string {
       <div id="preview"></div>
     </div>
     <div id="footer">
-      <span id="hints"><kbd>Enter</kbd> open · ${REFERENCES_KEY_HINT_HTML} references</span>
+      <span id="hints"><kbd>Enter</kbd> open · ${REFERENCES_KEY_HINT_HTML} references · <kbd>Tab</kbd>/<kbd>&#8679;Tab</kbd> switch scope</span>
       <span id="count"></span>
+      <span id="capnote" role="status" style="visibility:hidden"></span>
       <button id="loadMore" title="Load more results" style="display:none">Load more</button>
       <button id="loadAll" title="Load all results (up to the server limit)" style="display:none">Load all</button>
     </div>

@@ -113,10 +113,25 @@ export interface OmniConfig {
   debounceMs: number;
   /** Methods hit the stone per keystroke, so don't search until the term is at least this long. */
   methodMinQueryLength: number;
+  /** How many matches a scope's server-side scan collects before stopping. Bounds the results, not
+   *  just the cost: no display cap can reach past it, so the UI reports when a scan stops here. */
+  maxServerScan: number;
   /** When true, the references/senders gesture shows the results in the right-hand preview pane (a
    *  sticky list you open source from) instead of pivoting the whole left list. Off = the classic
    *  list pivot. */
   referencesInPreview: boolean;
+  /** Show the source-preview pane beside the result list. It takes ~45% of the width, which the
+   *  bottom-docked panel (wide but short) can least afford — turning it off hands that room back to
+   *  the labels. This is the STARTING value only: the in-panel toggle changes it for the rest of the
+   *  session without rewriting settings, exactly as `caseSensitive` does. */
+  previewPane: boolean;
+  /** Categories left OUT of the "All" fan-out while still reachable by their own tab.
+   *
+   *  `explicitOnly` categories (Source/Literals/Categories) are already in that state permanently;
+   *  this is what lets the user put an ORDINARY category there too — typically Methods, which queries
+   *  the stone on every keystroke. Distinct from `enabledCategories`, which removes a category
+   *  altogether (no provider, no tab). Starting value for the in-panel scope filter. */
+  excludedFromAll: OmniCategoryId[];
 }
 
 /** Minimal cancellation signal so providers need not import `vscode.CancellationToken`. */
@@ -126,10 +141,83 @@ export interface OmniCancel {
 
 export const NEVER_CANCELLED: OmniCancel = { isCancelled: false };
 
+/**
+ * A provider's report that its OWN fetch ceiling — not the display cap — bounded the results, so the
+ * row count is a floor rather than a total.
+ *
+ * Only providers with a server-side scan bound have one (today: methods, whose scan short-circuits at
+ * `maxServerScan`); the rest scan exhaustively and cap client-side, so they never report. The
+ * engine cannot infer this: the display cap is its own number, and a count below the ceiling proves
+ * nothing once the client-side re-filter has dropped rows. Without the report the footer claims an
+ * exact total at the very moment the results were cut off, and the UI says nothing about the wall the
+ * user just hit (triage #14).
+ *
+ * It carries the scope and the number so the UI can name both ("Methods stopped after 200") rather
+ * than show an anonymous warning — and so any provider that gains a ceiling later is covered without
+ * touching the view.
+ */
+export interface OmniTruncation {
+  /** The category whose own fetch ceiling bound the results. */
+  categoryId: OmniCategoryId;
+  /** The slice size that bound this run — the number the scan was asked for and stopped at. (Reported
+   *  only when the scan came back full, i.e. `rows.length >= serverLimit`, so it equals the rows
+   *  collected too, but the slice size is what it names.) */
+  scanned: number;
+  /** The CONFIGURED ceiling (`maxServerScan`) — the number to show the user, because it is the one
+   *  they set. `scanned` can be lower when the over-fetch was the tighter bound, and it changes as
+   *  the display cap grows, so showing it made the message read as a limit nobody configured. */
+  ceiling: number;
+  /**
+   * True when the configured ceiling is what bound the scan, so **Load-more cannot fetch any more** —
+   * the only wall worth warning about.
+   *
+   * False when the smaller over-fetch (`maxResultsPerCategory × SERVER_OVERFETCH`) bound it: results
+   * are still incomplete, so the count keeps its `+`, but Load-more genuinely widens the scan and is
+   * the honest next step rather than a dead end.
+   */
+  atCeiling: boolean;
+}
+
+/** Called ONCE per truncated provider in a run; never called by a provider that returned everything,
+ *  so "no calls" unambiguously means "nothing was cut off". */
+export type OmniTruncationSink = (info: OmniTruncation) => void;
+
+/** A single known local structural change to fold into a cached provider's corpus without a full
+ *  reload. Today only a class definition produces one (the only granular local signal we have);
+ *  other corpora refresh via `reprime` on a session sync instead. */
+export interface OmniCorpusChange {
+  kind: 'class';
+  /** The class that was created or redefined. */
+  className: string;
+  dictName?: string;
+}
+
+/** The category a change belongs to (for deciding whether it can affect the current scope). */
+export function changeCategoryId(change: OmniCorpusChange): OmniCategoryId {
+  switch (change.kind) {
+    case 'class':
+      return 'classes';
+  }
+}
+
 export interface OmniProvider {
   category: OmniCategory;
   /** Optional one-time load when the picker opens (load-once providers cache their corpus here). */
   prime?(token: OmniCancel): Promise<void> | void;
-  /** Ranked, already-limited results for `query` (the raw, trimmed search term). */
-  search(query: string, cfg: OmniConfig, token: OmniCancel): Promise<OmniResult[]> | OmniResult[];
+  /** Rebuild a cached corpus from scratch (drop + reload). No-op for per-query providers; used on a
+   *  session sync (commit/abort) when changes from outside this UI — including other sessions — may
+   *  have landed. Defaults to `prime` when a provider doesn't override it. */
+  reprime?(token: OmniCancel): Promise<void> | void;
+  /** Fold a single known local change into the cached corpus without a full reload. Returns true if
+   *  the corpus actually changed (a new or removed name), so the caller can decide whether to
+   *  re-render. Only providers with a granular local signal (classes) implement it. */
+  applyChange?(change: OmniCorpusChange, token: OmniCancel): Promise<boolean> | boolean;
+  /** Ranked, already-limited results for `query` (the raw, trimmed search term). A provider whose
+   *  server fetch is bounded calls `reportTruncated` to say whether that bound cut the results off. */
+  search(
+    query: string,
+    cfg: OmniConfig,
+    token: OmniCancel,
+    reportTruncated?: OmniTruncationSink,
+  ): Promise<OmniResult[]> | OmniResult[];
 }

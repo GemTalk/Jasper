@@ -24,6 +24,9 @@ import {
 
 /** Everything the panel needs, injected by the command layer (keeps this file stone-free). */
 export interface OmniPanelDeps extends OmniEngineDeps {
+  /** The session these providers are bound to, so a class-compile / sync notification for a
+   *  different session is ignored. */
+  sessionId: number;
   /** Activate a result. `beside` opens it in a group beside the Spotter (pinned mode); when false it
    *  opens in the active group like the Phase-1 dialog. `preserveFocus` keeps the field focused. */
   activate: (
@@ -81,6 +84,24 @@ export class OmniSearchPanel {
       { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [] },
     );
     OmniSearchPanel.current = new OmniSearchPanel(panel, deps);
+  }
+
+  /** Fold a locally-compiled class into the open Spotter's cache (if any), redrawing only if it
+   *  affects the current results. No-op unless a Spotter bound to that session is open (typically a
+   *  pinned one — an unpinned Spotter has already closed on focus-out by the time you compile). */
+  static onClassCompiled(sessionId: number, className: string, dictName?: string): void {
+    const panel = OmniSearchPanel.current;
+    if (!panel || panel.deps.sessionId !== sessionId) return;
+    void panel.engine
+      .applyChange({ kind: 'class', className, dictName })
+      .then((view) => view && panel.postView(view));
+  }
+
+  /** Rebuild the open Spotter's cached corpora on a session sync (commit/abort), then redraw. */
+  static onSessionSynced(sessionId: number): void {
+    const panel = OmniSearchPanel.current;
+    if (!panel || panel.deps.sessionId !== sessionId) return;
+    void panel.engine.resync(panel.deps.onError).then((view) => view && panel.postView(view));
   }
 
   private constructor(
@@ -146,6 +167,8 @@ export class OmniSearchPanel {
         scopeId: st.scopeId,
         caseSensitive: st.caseSensitive,
         pinned: this.pinned,
+        excludedFromAll: st.excludedFromAll,
+        matchMode: st.matchMode,
       }),
     );
   }

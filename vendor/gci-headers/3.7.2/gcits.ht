@@ -1,0 +1,108 @@
+#ifndef GCITS_HT
+#define GCITS_HT
+/*==============================================================================
+ * Copyright (C) GemTalk Systems 1986-2024.  All Rights Reserved.
+ *
+ * Name - gcits.ht
+ *
+ *  Some type definitions for the thread-safe GCI
+ *
+ *==============================================================================
+ */
+#include "flag.ht"
+
+class GciTsObjInfo {
+ public:
+  OopType       objId;
+  OopType       objClass;                  /* OOP of the class of the obj */
+  int64         objSize;                /* obj's total size, in bytes or OOPs*/
+  int           namedSize;              /* num of named inst vars in the obj */
+  uint access;  /* see AUTH_  bits below */
+  unsigned short objectSecurityPolicyId;  // previously named segmentId
+  unsigned short _bits;  // see masks below
+  // Adjust  GciTsExternalSession>>_resolveResult: for field additions or reordering
+  enum {  // bits in access field
+     AUTH_NONE = 0, AUTH_READ = 1, AUTH_WRITE = 2 , AUTH_NOT_EXIST = 4
+  };
+
+  GciTsObjInfo() {
+    initialize();
+  }
+  void initialize() {
+    objId = OOP_NIL;
+    objClass = OOP_NIL;
+    objSize = 0;
+    namedSize = 0;
+    access = 0;
+    objectSecurityPolicyId = 0;
+    _bits = 0;
+  }
+
+  enum {  // definitions of bits
+      implem_mask    = GC_IMPLEMENTATION_MASK, // 0x03
+      indexable_mask = GC_INDEXABLE_MASK,      // 0x04
+      invariant_mask = GC_INVARIANT_MASK,      // 0x08
+      partial_mask   = 0x10,
+      overlay_mask   = 0x20,
+      is_placeholder = 0x40 , // object is place holder for unsatisfied forward reference
+      swiz_kind_mask = 0x300,
+           swiz_kind_shift = 8
+  };
+
+  inline unsigned char isInvariant() { return _bits & invariant_mask; }
+  inline unsigned char isIndexable() { return _bits & indexable_mask; }
+  inline unsigned char isPartial()   { return _bits & partial_mask; }
+  inline unsigned char isOverlayed() { return _bits & overlay_mask; }
+
+  inline GciByteSwizEType byteSwizKind() const {
+     return (GciByteSwizEType)((_bits & swiz_kind_mask) >> swiz_kind_shift) ;
+  }
+
+  inline unsigned char objImpl() {
+    /* implementation format 0..3 , one of GC_FORMAT_OOP..GC_FORMAT_SPECIAL */
+    return _bits & GC_IMPLEMENTATION_MASK;
+  }
+};
+
+class GciTsGbjInfo : public GciTsObjInfo {
+ public:
+  enum {   // see omobj.hf for controlling definitions 
+    // class_extra_travEnumType bits 0x3F  not from server , 
+    is_7bits =             0x1,  // from object header
+    is_utf16 =             0x2,
+    // is_utf8 not needed, instances of Utf8 have data returned to java as 7bit or as Utf16
+  
+    strInfo_shift = 17,
+    strInfo_ChrSize =      0x7 ,
+    strInfo_icuString  =   0x8 , // Unicode7,Unicode16,Unicode32
+    strInfo_byteArrBit =  0x10 ,  // a ByteArray without Utf8 nor Utf16 encoding
+    strSymInfo_isSymbol = 0x20,
+  
+    isSymbol_shift              = 22, // 0x400000
+    isNumber_shift              = 23,
+    isScaledDecimal_shift      = 31,
+    isIdentityBag_shift         = 30,   // excludes is RcIdentityBag
+    isInteger_shift             = 34,  // not including SmallInteger
+    isIdentitySet_shift         = 27,
+  };
+  uint64 extraBits;  // selected bits from gem process's in-memory object header and class
+  int64 bytesReturned;
+
+  GciTsGbjInfo() {
+    extraBits = 0;
+    bytesReturned = 0;
+  }
+
+  // following are for non-special objs only
+  uint64 isNumber() { return extraBits & (1L << isNumber_shift); }
+  uint64 isScaledDecimal() { return extraBits & (1L << isScaledDecimal_shift); }
+  uint64 isLargeInteger() { return extraBits & (1L << isInteger_shift); }
+
+  uint64 charSize() { return (extraBits >> strInfo_shift) & strInfo_ChrSize; }
+  uint64 is7bits() { return extraBits & is_7bits ; }
+  uint64 isUtf16() { return extraBits & is_utf16 ; }
+  uint64 isUnicode() { return (extraBits >> strInfo_shift) & strInfo_icuString; }
+  uint64 isByteArray() { return (extraBits >> strInfo_shift) & strInfo_byteArrBit; }
+};
+
+#endif
