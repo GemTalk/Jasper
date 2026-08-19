@@ -1,7 +1,11 @@
-import { describe, expect, it, Mock, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { GciLibrary } from '../gciLibrary';
 import { GciTestContext, useIntegrationTest } from './useIntegrationTest';
 import { GciLibraryError } from '../gciLibraryError';
+import {
+  expectUtf8OopToBeCached,
+  expectUtf8OopToResolveViaSymbolLookup,
+} from './support/utf8OopCache';
 
 describe('GciLibrary', () => {
   let gciLibrary: GciLibrary;
@@ -98,49 +102,6 @@ describe('GciLibrary', () => {
    */
   function expectPureExportSetToGrow(shouldGrow: boolean, callback: () => unknown) {
     expect(gciLibrary.didPureExportSetGrow(session, callback)).toBe(shouldGrow);
-  }
-
-  /** Spies on `resolveSymbol` for the duration of `callback`, then restores it. */
-  function spyOnResolveSymbol(
-    callback: (spy: Mock<typeof GciLibrary.prototype.resolveSymbol>) => void,
-  ) {
-    const spy = vi.spyOn(gciLibrary, 'resolveSymbol');
-
-    try {
-      callback(spy);
-    } finally {
-      spy.mockRestore();
-    }
-  }
-
-  /**
-   * Asserts a fresh symbol lookup happens for `sessionToUse`.
-   *
-   * Checks the looked-up session with `toBe`, not `toHaveBeenCalledWith`
-   * -- koffi's session pointers have no enumerable properties, so
-   * vitest's deep equality can't tell two different sessions apart and
-   * would pass regardless of which one was actually used.
-   *
-   * @param sessionToUse - The session expected to require a fresh lookup; defaults to the shared `session`.
-   */
-  function expectUtf8OopToResolveViaSymbolLookup(sessionToUse: unknown = session) {
-    spyOnResolveSymbol((resolveSymbolSpy) => {
-      gciLibrary.utf8ClassOop(sessionToUse);
-
-      expect(resolveSymbolSpy).toHaveBeenCalledTimes(1);
-      const [calledSession, calledSymbol] = resolveSymbolSpy.mock.calls[0];
-      expect(calledSession).toBe(sessionToUse);
-      expect(calledSymbol).toBe('Utf8');
-    });
-  }
-
-  /** Asserts `session`'s already-cached Utf8 oop is reused, without a fresh symbol lookup. */
-  function expectUtf8OopToBeCached() {
-    spyOnResolveSymbol((resolveSymbolSpy) => {
-      gciLibrary.utf8ClassOop(session);
-
-      expect(resolveSymbolSpy).not.toHaveBeenCalled();
-    });
   }
 
   /**
@@ -499,13 +460,13 @@ describe('GciLibrary', () => {
     });
 
     it('resolves the Utf8 class via a symbol lookup the first time it is needed', () => {
-      expectUtf8OopToResolveViaSymbolLookup();
+      expectUtf8OopToResolveViaSymbolLookup(session, gciLibrary);
     });
 
     it('reuses the cached Utf8 class oop on later lookups', () => {
       gciLibrary.utf8ClassOop(session);
 
-      expectUtf8OopToBeCached();
+      expectUtf8OopToBeCached(session, gciLibrary);
     });
 
     it('adds only the resolved oop to the PureExportSet', () => {
@@ -539,7 +500,7 @@ describe('GciLibrary', () => {
 
       gciLibrary.releaseCachedUtf8Oop(session);
 
-      expectUtf8OopToResolveViaSymbolLookup();
+      expectUtf8OopToResolveViaSymbolLookup(session, gciLibrary);
     });
 
     it('re-resolves the Utf8 oop after a logout/login cycle', () => {
@@ -548,14 +509,14 @@ describe('GciLibrary', () => {
 
       testContext.login();
 
-      expectUtf8OopToResolveViaSymbolLookup();
+      expectUtf8OopToResolveViaSymbolLookup(session, gciLibrary);
     });
 
     it("a new session doesn't have another session's cached Utf8 oop", () => {
       gciLibrary.utf8ClassOop(session);
 
       testContext.withTransientSession((transientSession) => {
-        expectUtf8OopToResolveViaSymbolLookup(transientSession);
+        expectUtf8OopToResolveViaSymbolLookup(transientSession, gciLibrary);
       });
     });
 
@@ -569,7 +530,7 @@ describe('GciLibrary', () => {
         // check that `session`'s own cached oop survived it untouched.
       });
 
-      expectUtf8OopToBeCached();
+      expectUtf8OopToBeCached(session, gciLibrary);
     });
   });
 
@@ -884,7 +845,7 @@ describe('GciLibrary', () => {
 
       gciLibrary.resetNonTransactionalSessionState(session);
 
-      expectUtf8OopToResolveViaSymbolLookup();
+      expectUtf8OopToResolveViaSymbolLookup(session, gciLibrary);
     });
 
     it('releases previously created objects from the PureExportSet', () => {
