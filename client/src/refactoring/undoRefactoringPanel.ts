@@ -45,6 +45,9 @@ export function showUndoRefactoringPanel(
   panel.webview.html = renderUndoPanelHtml({
     refactoringLabel: start.label,
     mechanism: start.mechanism,
+    reverseKind: start.reverseKind,
+    deselection: start.deselection,
+    dropCount: start.dropCount,
     total: start.total,
     drifted: start.drifted,
     changes: start.page.changes,
@@ -72,7 +75,7 @@ export function showUndoRefactoringPanel(
       done = page.done;
       void panel.webview.postMessage({
         command: 'appendChanges',
-        html: renderUndoCards(page.changes, start.mechanism),
+        html: renderUndoCards(page.changes, start.mechanism, start.deselection),
         done,
       });
       return done;

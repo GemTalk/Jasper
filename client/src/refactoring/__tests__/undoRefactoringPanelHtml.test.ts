@@ -125,14 +125,14 @@ describe('undo panel html — a reverse rename says it is not a rollback', () =>
   });
 
   it('carries the caveat banner for a renameBack, and not for a changeSet', () => {
-    const back = html({ mechanism: 'renameBack', changes: [renameRow()] });
+    const back = html({ mechanism: 'mirror', changes: [renameRow()] });
     expect(back).toContain('class="note"');
     expect(back).toContain('not a rollback');
     expect(html({ mechanism: 'changeSet' })).not.toContain('class="note"');
   });
 
   it('badges a class-shape row and labels it by its class', () => {
-    const out = renderUndoCards([renameRow()], 'renameBack');
+    const out = renderUndoCards([renameRow()], 'mirror');
     expect(out).toContain('>Rename back<');
     expect(out).toContain('NewName → OldName');
     // No phantom ">>" for a row that has no selector.
@@ -140,15 +140,56 @@ describe('undo panel html — a reverse rename says it is not a rollback', () =>
   });
 
   it('derives the badge class from the badge word, so a multi-word action is still valid CSS', () => {
-    expect(renderUndoCards([renameRow()], 'renameBack')).toContain('action-rename-back');
+    expect(renderUndoCards([renameRow()], 'mirror')).toContain('action-rename-back');
   });
 
   it('badges a reference rewrite as a rewrite, not as a revert', () => {
     const out = renderUndoCards(
       [renameRow({ kind: 'methodRecompile', selector: 'usesIt', newName: null })],
-      'renameBack',
+      'mirror',
     );
     expect(out).toContain('>Rewrite<');
     expect(out).not.toContain('>Revert<');
+  });
+});
+
+describe('undo panel html — un-ticking means three different things', () => {
+  it('disables every checkbox when the engine ignores deselection', () => {
+    // An enabled box that silently changes nothing is worse than no box: it invites a click and
+    // then betrays it.
+    const out = renderUndoCards([change()], 'mirror', 'ignored');
+    expect(out).toContain('disabled');
+    expect(out).toContain('all-or-nothing');
+    expect(out).toContain('(always applied)');
+  });
+
+  it('leaves them enabled where deselection is honoured', () => {
+    expect(renderUndoCards([change()], 'changeSet', 'perChange')).not.toContain('disabled');
+    expect(renderUndoCards([change()], 'mirror', 'dropsMethod')).not.toContain('disabled');
+  });
+
+  it('says all-or-nothing in the banner and the counter, not "selected"', () => {
+    const out = html({ mechanism: 'mirror', deselection: 'ignored' });
+    expect(out).toContain('all-or-nothing');
+    expect(out).toContain('(all applied)');
+    expect(out).not.toContain('changes selected');
+  });
+
+  it('warns, in the warning style, where un-ticking DELETES the method', () => {
+    const out = html({ mechanism: 'mirror', deselection: 'dropsMethod' });
+    expect(out).toContain('DELETES it');
+    // Warning styling, not the neutral note styling — this one can lose work.
+    expect(out).toMatch(/class="oos">⚠[^<]*DELETES it/);
+  });
+
+  it('says nothing about the checkboxes in the ordinary case', () => {
+    const out = html({ mechanism: 'changeSet', deselection: 'perChange' });
+    expect(out).not.toContain('all-or-nothing');
+    expect(out).not.toContain('DELETES it');
+  });
+
+  it('names the number of methods an instVar-add reversal would delete', () => {
+    const out = html({ mechanism: 'mirror', reverseKind: 'instVarAdd', dropCount: 2 });
+    expect(out).toContain('DELETE 2 methods');
   });
 });

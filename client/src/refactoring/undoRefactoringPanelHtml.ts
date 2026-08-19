@@ -23,10 +23,13 @@
 import {
   UndoChange,
   UndoMechanism,
+  UndoDeselection,
+  UndoReverseKind,
   undoChangeLabel,
   undoActionLabel,
   undoSummary,
-  RENAME_BACK_CAVEAT,
+  mirrorCaveat,
+  deselectionNote,
 } from './undoRefactoringPreview';
 import { lineDiff, DiffLine, DiffLineType } from './lineDiff';
 
@@ -60,7 +63,11 @@ function changeDiff(change: UndoChange): DiffLine[] {
   return lineDiff(change.oldSource, change.newSource);
 }
 
-function renderCard(change: UndoChange, mechanism: UndoMechanism): string {
+function renderCard(
+  change: UndoChange,
+  mechanism: UndoMechanism,
+  deselection: UndoDeselection,
+): string {
   const label = escapeHtml(undoChangeLabel(change));
   const action = undoActionLabel(change, mechanism);
   const category = change.category
@@ -71,9 +78,16 @@ function renderCard(change: UndoChange, mechanism: UndoMechanism): string {
   // The badge is a word, not a colour-only cue, and its class is derived from that word — so a
   // new action label styles itself neutrally instead of silently inheriting another's colour.
   const actionClass = action.toLowerCase().replace(/[^a-z]+/g, '-');
+  // Where the engine IGNORES deselection, the box is checked and DISABLED: an enabled box that
+  // silently changes nothing is worse than no box at all. The shared view script never reports a
+  // disabled box as deselected, so this is enforced rather than merely advertised.
+  const cb =
+    deselection === 'ignored'
+      ? `<input type="checkbox" class="sel" checked disabled title="all-or-nothing" aria-label="${label} (always applied)">`
+      : `<input type="checkbox" class="sel" checked aria-label="Include ${label}">`;
   return `<li class="change${change.warning ? ' warned' : ''}" data-id="${escapeHtml(change.id)}">
   <div class="change-head">
-    <input type="checkbox" class="sel" checked aria-label="Include ${label}">
+    ${cb}
     <span class="action action-${actionClass}">${action}</span>
     <span class="label">${label}</span>
     ${category}
@@ -88,8 +102,9 @@ function renderCard(change: UndoChange, mechanism: UndoMechanism): string {
 export function renderUndoCards(
   changes: UndoChange[],
   mechanism: UndoMechanism = 'changeSet',
+  deselection: UndoDeselection = 'perChange',
 ): string {
-  return changes.map((c) => renderCard(c, mechanism)).join('\n');
+  return changes.map((c) => renderCard(c, mechanism, deselection)).join('\n');
 }
 
 export interface UndoPanelHtmlOptions {
@@ -97,6 +112,12 @@ export interface UndoPanelHtmlOptions {
   refactoringLabel: string;
   /** How the undo will be carried out — chooses the row badges and the caveat banner. */
   mechanism: UndoMechanism;
+  /** Which operation is being mirrored; null for a change-set entry. Picks the caveat wording. */
+  reverseKind?: UndoReverseKind | null;
+  /** What un-ticking a row does here — decides whether the boxes are even enabled. */
+  deselection?: UndoDeselection;
+  /** Methods the reversal is predicted to DELETE, named in the caveat. */
+  dropCount?: number;
   /** Total number of inverse changes across all pages. */
   total: number;
   /** How many of them carry a warning. */
@@ -111,15 +132,38 @@ export interface UndoPanelHtmlOptions {
 
 /** Build the panel's HTML. Pure (no vscode) so it unit-tests directly. */
 export function renderUndoPanelHtml(opts: UndoPanelHtmlOptions): string {
-  const { refactoringLabel, mechanism, total, drifted, changes, done, nonce, script } = opts;
-  const cards = renderUndoCards(changes, mechanism);
+  const {
+    refactoringLabel,
+    mechanism,
+    reverseKind = null,
+    deselection = 'perChange',
+    dropCount = 0,
+    total,
+    drifted,
+    changes,
+    done,
+    nonce,
+    script,
+  } = opts;
+  const cards = renderUndoCards(changes, mechanism, deselection);
   const pagerHidden = done ? ' hidden' : '';
   const driftBanner =
     drifted > 0 ? `<div class="oos">⚠ ${escapeHtml(undoSummary(total, drifted))}</div>` : '';
   // A rename reversal is not a rollback and must not be presented as one. Informational, not a
   // warning: nothing is going wrong here, the mechanism simply differs from what "undo" implies.
   const mechanismBanner =
-    mechanism === 'renameBack' ? `<div class="note">↩ ${escapeHtml(RENAME_BACK_CAVEAT)}</div>` : '';
+    mechanism === 'mirror'
+      ? `<div class="note">↩ ${escapeHtml(mirrorCaveat(reverseKind, dropCount))}</div>`
+      : '';
+  // Said separately from the mechanism note: this is about the CONTROLS rather than the
+  // operation, and a `dropsMethod` warning can apply to a change-set entry too.
+  const deselectionBanner = (() => {
+    const note = deselectionNote(deselection);
+    if (note === null) return '';
+    const cls = deselection === 'dropsMethod' ? 'oos' : 'note';
+    const glyph = deselection === 'dropsMethod' ? '⚠' : 'ℹ';
+    return `<div class="${cls}">${glyph} ${escapeHtml(note)}</div>`;
+  })();
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -245,9 +289,12 @@ export function renderUndoPanelHtml(opts: UndoPanelHtmlOptions): string {
     </div>
   </header>
   ${mechanismBanner}
+  ${deselectionBanner}
   ${driftBanner}
   <div class="summary">
-    <span id="selcount">${total}</span> of ${total} change${total === 1 ? '' : 's'} selected
+    <span id="selcount">${total}</span> of ${total} change${total === 1 ? '' : 's'}${
+      deselection === 'ignored' ? ' (all applied)' : ' selected'
+    }
     <button id="toggleAll" class="linkish" aria-expanded="false">Expand all</button>
   </div>
   <ul class="changes">

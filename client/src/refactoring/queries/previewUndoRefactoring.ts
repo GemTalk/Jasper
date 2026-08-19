@@ -86,9 +86,11 @@ c isNil ifTrue: ['ok'] ifFalse: [c clearToken: '${escapeString(token)}']`,
   );
 }
 
-/** The rename kinds a reversal can be recorded for. Each names an engine whose forward
- *  operation is its own inverse once the two names are swapped. */
-export type ReverseRenameKind = 'classRename' | 'instVarRename' | 'classVarRename';
+/** The operation kinds a reversal can be recorded for. Each names an engine whose forward
+ *  operation has an exact opposite that same engine already performs — a rename with the two
+ *  names swapped, or an add/remove flipped. */
+export type ReverseRenameKind =
+  'classRename' | 'instVarRename' | 'classVarRename' | 'instVarAdd' | 'instVarRemove';
 
 /**
  * Record that a RENAME landed, so it can be reversed by renaming back (#434).

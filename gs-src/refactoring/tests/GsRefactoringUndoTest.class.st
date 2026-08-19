@@ -643,8 +643,8 @@ GsRefactoringUndoTest >> recordClassRenameFrom: fromName to: toName [
 { #category : 'tests - reverse rename' }
 GsRefactoringUndoTest >> testRecordingARenameAnswersARenameBackEntry [
 	self assert: (self recordClassRenameFrom: 'GsUndoLedger' to: 'GsUndoOldLedger') equals: 'ok'.
-	self assert: GsRefactoringUndo currentEntry mechanism equals: #renameBack.
-	self assert: GsRefactoringUndo statusJson includesSubstring: '"mechanism":"renameBack"'
+	self assert: GsRefactoringUndo currentEntry mechanism equals: #mirror.
+	self assert: GsRefactoringUndo statusJson includesSubstring: '"mechanism":"mirror"'
 ]
 
 { #category : 'tests - reverse rename' }
@@ -689,7 +689,7 @@ GsRefactoringUndoTest >> testTheReversePreviewIsTheReverseRenamesOwnChangeSet [
 	| json |
 	self recordClassRenameFrom: 'GsUndoLedger' to: 'GsUndoOldLedger'.
 	json := self undoPreviewJson.
-	self assert: json includesSubstring: '"mechanism":"renameBack"'.
+	self assert: json includesSubstring: '"mechanism":"mirror"'.
 	"A class rename stages a classRename row (plus reparents/recompiles) -- class-shape kinds
 	 the client's undo preview therefore has to render."
 	self assert: json includesSubstring: '"kind":"classRename"'.
@@ -878,6 +878,153 @@ GsRefactoringUndoTest >> testReversingARenameCommitsNothing [
 	(GsRenameClassRefactoring class: self otherFixture renameTo: 'GsUndoOldLedger' scope: #wholeSystem)
 		applyDeselected: #().
 	self recordClassRenameFrom: 'GsUndoOldLedger' to: 'GsUndoLedger'.
+	self undoAll.
+	self assert: System needsCommit equals: before
+]
+
+{ #category : 'tests - deselection semantics' }
+GsRefactoringUndoTest >> testDeselectionMeansThreeDifferentThings [
+	"A client that renders all these rows the same way misleads: for one kind un-ticking simply
+	 skips the change, for another it DELETES the method, and for the rest it does nothing at all."
+	self assert: (GsRefactoringUndo deselectionFor: #classRename) equals: #perChange.
+	self assert: (GsRefactoringUndo deselectionFor: #instVarRename) equals: #dropsMethod.
+	self assert: (GsRefactoringUndo deselectionFor: #classVarRename) equals: #ignored.
+	self assert: (GsRefactoringUndo deselectionFor: #instVarAdd) equals: #ignored.
+	self assert: (GsRefactoringUndo deselectionFor: #instVarRemove) equals: #ignored
+]
+
+{ #category : 'tests - deselection semantics' }
+GsRefactoringUndoTest >> testAChangeSetEntryIsAlwaysPerChange [
+	self applyRecording: (self renameInFixture: 'gsuTotal' to: 'gsuSum').
+	self assert: GsRefactoringUndo currentEntry deselection equals: #perChange
+]
+
+{ #category : 'tests - deselection semantics' }
+GsRefactoringUndoTest >> testThePreviewReportsTheDeselectionSemantics [
+	"An instance-variable reshape is all-or-nothing, so the client must render its rows disabled
+	 rather than invite a click that silently does nothing."
+	| json |
+	(GsInstVarRefactoring class: self fixture addInstVar: 'gsuExtra')
+		applyDeselected: #() options: nil migrate: false deleteHistory: false.
+	self recordInstVarAddOf: 'gsuExtra'.
+	json := self undoPreviewJson.
+	self assert: json includesSubstring: '"deselection":"ignored"'
+]
+
+{ #category : 'fixture' }
+GsRefactoringUndoTest >> recordInstVarAddOf: aName [
+	"Record the reversal of an instance-variable ADD that has already landed."
+	^GsRefactoringUndo
+		recordReverseRename: #instVarAdd
+		className: 'GsUndoAccount'
+		from: aName
+		to: aName
+		scopeKind: nil
+		scopeDictName: nil
+		label: 'Add instance variable ', aName, ' to GsUndoAccount'
+		engine: 'GsInstVarRefactoring'
+]
+
+{ #category : 'fixture' }
+GsRefactoringUndoTest >> recordInstVarRemoveOf: aName [
+	^GsRefactoringUndo
+		recordReverseRename: #instVarRemove
+		className: 'GsUndoAccount'
+		from: aName
+		to: aName
+		scopeKind: nil
+		scopeDictName: nil
+		label: 'Remove instance variable ', aName, ' from GsUndoAccount'
+		engine: 'GsInstVarRefactoring'
+]
+
+{ #category : 'fixture' }
+GsRefactoringUndoTest >> ownInstVarsOf: aClassName [
+	^((UserGlobals at: aClassName asSymbol) instVarNames collect: [:e | e asString]) asArray
+]
+
+{ #category : 'tests - instvar add/remove' }
+GsRefactoringUndoTest >> testReversingAnInstVarAddTakesTheVariableBackOut [
+	(GsInstVarRefactoring class: self fixture addInstVar: 'gsuExtra')
+		applyDeselected: #() options: nil migrate: false deleteHistory: false.
+	self assert: ((self ownInstVarsOf: #GsUndoAccount) includes: 'gsuExtra').
+
+	self recordInstVarAddOf: 'gsuExtra'.
+	self assert: GsRefactoringUndo currentEntry reverseKind equals: #instVarAdd.
+	self undoAll.
+
+	self deny: ((self ownInstVarsOf: #GsUndoAccount) includes: 'gsuExtra').
+	"The variables that were always there, and the methods, survived both reshapes."
+	self assert: ((self ownInstVarsOf: #GsUndoAccount) includes: 'balance').
+	self assert: (self sourceOf: #gsuUntouched in: (UserGlobals at: #GsUndoAccount)) notNil.
+	self assert: (self sourceOf: #gsuAlsoUntouched in: (UserGlobals at: #GsUndoAccount) class) notNil
+]
+
+{ #category : 'tests - instvar add/remove' }
+GsRefactoringUndoTest >> testReversingAnInstVarRemovePutsTheVariableBack [
+	(GsInstVarRefactoring class: self fixture removeInstVar: 'owner')
+		applyDeselected: #() options: nil migrate: false deleteHistory: false.
+	self deny: ((self ownInstVarsOf: #GsUndoAccount) includes: 'owner').
+
+	self recordInstVarRemoveOf: 'owner'.
+	self assert: GsRefactoringUndo currentEntry reverseKind equals: #instVarRemove.
+	self undoAll.
+
+	self assert: ((self ownInstVarsOf: #GsUndoAccount) includes: 'owner').
+	self assert: (self sourceOf: #gsuUntouched in: (UserGlobals at: #GsUndoAccount)) notNil
+]
+
+{ #category : 'tests - instvar add/remove' }
+GsRefactoringUndoTest >> testReversingAnAddCountsTheMethodsItWouldDrop [
+	"Reversing an ADD removes the variable, so a method written since that USES it cannot be
+	 recompiled and is dropped. The count is surfaced so the client can say the number."
+	(GsInstVarRefactoring class: self fixture addInstVar: 'gsuExtra')
+		applyDeselected: #() options: nil migrate: false deleteHistory: false.
+	self compile: 'gsuUsesExtra ^ gsuExtra' in: (UserGlobals at: #GsUndoAccount) category: 'after'.
+
+	self recordInstVarAddOf: 'gsuExtra'.
+	self assert: GsRefactoringUndo currentEntry mirrorDropCount > 0.
+	self assert: self undoPreviewJson includesSubstring: '"dropCount":'
+]
+
+{ #category : 'tests - instvar add/remove' }
+GsRefactoringUndoTest >> testAKindWithNothingToDropCountsZero [
+	self recordInstVarRemoveOf: 'owner'.
+	self assert: GsRefactoringUndo currentEntry mirrorDropCount equals: 0.
+	self applyRecording: (self renameInFixture: 'gsuTotal' to: 'gsuSum').
+	self assert: GsRefactoringUndo currentEntry mirrorDropCount equals: 0
+]
+
+{ #category : 'tests - instvar add/remove' }
+GsRefactoringUndoTest >> testReversingAnAddRefusesWhenTheVariableIsAlreadyGone [
+	"Nothing to take back out -- offering it would be misleading."
+	self recordInstVarAddOf: 'gsuNeverExisted'.
+	self assert: GsRefactoringUndo currentEntry reverseUnavailableReason notNil.
+	self
+		assert: GsRefactoringUndo currentEntry reverseUnavailableReason
+		includesSubstring: 'nothing to take back out'
+]
+
+{ #category : 'tests - instvar add/remove' }
+GsRefactoringUndoTest >> testReversingARemoveRefusesWhenTheNameIsDeclaredAgain [
+	"Adding it back would declare it twice, which the class-creation primitive rejects mid-apply."
+	self recordInstVarRemoveOf: 'balance'.
+	self assert: GsRefactoringUndo currentEntry reverseUnavailableReason notNil.
+	self
+		assert: GsRefactoringUndo currentEntry reverseUnavailableReason
+		includesSubstring: 'already declares'
+]
+
+{ #category : 'tests - instvar add/remove' }
+GsRefactoringUndoTest >> testAnInstVarReversalNeverCommitsAndNeverDeletesHistory [
+	"migrate and deleteHistory are the two irreversible options in the family: one moves user
+	 data, the other destroys what a later reversal needs. A reversal hardcodes both false, so it
+	 must leave the transaction dirty -- if it had committed, needsCommit would be false."
+	| before |
+	(GsInstVarRefactoring class: self fixture addInstVar: 'gsuExtra')
+		applyDeselected: #() options: nil migrate: false deleteHistory: false.
+	before := System needsCommit.
+	self recordInstVarAddOf: 'gsuExtra'.
 	self undoAll.
 	self assert: System needsCommit equals: before
 ]

@@ -21,20 +21,31 @@ mechanisms, and the difference is visible in the UI.
 change signature · extract method · extract temporary · inline method · inline temporary ·
 move method · push up · push down · rename method · rename temporary
 
-**Reversed by renaming again** — the three pure renames:
+**Reversed by the opposite operation** — renames, and instance-variable add/remove:
 
-rename class · rename instance variable · rename class variable
+rename class · rename instance variable · rename class variable ·
+add instance variable · remove instance variable
 
-The second kind is **not a rollback**, and the preview says so in a banner. GemStone has no
-transaction savepoints, so reversing a rename is a fresh rename in the other direction: the
-class keeps its history (a reversal adds a version, it never removes one). The compensation
-is real — anything written after the rename is carried forward, which a history revert would
-have discarded.
+The second kind is **not a rollback**, and the preview says so in a banner whose wording
+depends on which operation it is. GemStone has no transaction savepoints, so the reversal is a
+fresh forward operation: the class keeps its history (a reversal adds a version, it never
+removes one).
 
-The refactorings that reshape a class in other ways (add/remove instance variable,
-instance-variable structure, extract superclass, split class) deliberately record **no**
-undo — the affordance simply does not appear after one. Class shape has its own restore path
-(the Class Definition History viewer's **Restore**).
+- For a **rename** the compensation is real — anything written after it is carried forward,
+  which a history revert would have discarded.
+- Reversing an **added** instance variable removes it again, which **deletes** any method
+  written since that uses it. The banner names the number.
+- Reversing a **removed** instance variable declares the name again but does **not** restore
+  the values it held, nor the methods the removal dropped. The banner says so.
+
+Un-ticking a row also means three different things, and the panel reflects each: normally the
+change is skipped; for an instance-variable **rename** un-ticking **deletes** that method; and
+for the all-or-nothing reshapes the boxes are **disabled** because the engine applies its whole
+change set regardless.
+
+The refactorings that reshape a class in other ways (instance-variable structure, extract
+superclass, split class) still record **no** undo — the affordance simply does not appear after
+one. Class shape has its own restore path (the Class Definition History viewer's **Restore**).
 
 There is **one** undo, not a stack: applying a second refactoring replaces the record, and
 undoing uses it up.
@@ -135,7 +146,7 @@ or the menu item is missing here, that is a bug worth reporting.
 
 | # | Step | Expect |
 |---|---|---|
-| 6.1 | With no undo recorded, run **Add Instance Variable** (or Extract Superclass, or Split Class) on `UndoDemo` and apply | The usual success message, with **no Undo button** |
+| 6.1 | With no undo recorded, run **Extract Superclass** (or Split Class, or Push Instance Variable Up) on `UndoDemo` and apply | The usual success message, with **no Undo button** |
 | 6.2 | Palette / context menu | **No** Undo entry — those reshapes record nothing rather than offering half an undo |
 | 6.3 | Rename `total` → `sum`, apply, then **without undoing** run Extract Superclass and apply | Undo is offered **before** the second refactoring and **gone after** it — a class reshape clears a stale record rather than leaving one that no longer matches the stone |
 
@@ -154,6 +165,10 @@ or the menu item is missing here, that is a bug worth reporting.
 | 6b.9 | Class History on `UndoDemo` | More versions than before, not fewer — a reversal adds one |
 | 6b.10 | Now: rename `UndoDemo` → `UndoRenamed`, apply, then create a **new** class called `UndoDemo`, then invoke Undo | It **refuses** and names the collision. The new `UndoDemo` is untouched and `UndoRenamed` still exists |
 | 6b.11 | Repeat 6b.1 for an **instance variable** rename, then for a **class variable** rename | Both offer Undo and both put the name back |
+| 6b.12 | **Add Instance Variable** `extra` to `UndoDemo`, apply, then Undo | Boxes are **disabled** ("all-or-nothing"), the counter reads "(all applied)", and the banner says reversing removes it again. After Undo, `extra` is gone |
+| 6b.13 | Add `extra` again, then add a method `usesExtra ^ extra`, save it, then Undo | The banner now names the count: it will **DELETE 1 method**. After Undo, `usesExtra` is gone with the variable — as warned |
+| 6b.14 | **Remove Instance Variable** `balance` (which `balance` accessor reads), apply, then Undo | The banner says the values and the dropped methods do **not** come back. After Undo the variable is declared again; the dropped accessor is **not** restored |
+| 6b.15 | Do an Add Instance Variable **with Migrate instances ticked**, apply, then check the menu | **No** Undo offer — a migration moved user data, so no reversal is promised |
 
 ## 7 — Sessions and commits
 

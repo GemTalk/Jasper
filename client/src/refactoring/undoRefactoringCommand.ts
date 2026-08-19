@@ -147,8 +147,8 @@ export async function undoLastRefactoringCommand(sessions: SessionManager): Prom
   // renamed again -- and saying "undid" without qualification would misdescribe the state the
   // stone is now in (an extra class version, history intact).
   void vscode.window.showInformationMessage(
-    start.mechanism === 'renameBack'
-      ? `Reversed ${start.label} by renaming back (${result.applied} change` +
+    start.mechanism === 'mirror'
+      ? `Reversed ${start.label} (${result.applied} change` +
           `${result.applied === 1 ? '' : 's'}). The class keeps its history. ` +
           'Compiled but NOT committed — commit when ready.'
       : `Undid ${start.label} (${result.applied} change${result.applied === 1 ? '' : 's'}). ` +

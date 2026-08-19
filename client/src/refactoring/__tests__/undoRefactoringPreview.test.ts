@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
-  RENAME_BACK_CAVEAT,
+  mirrorCaveat,
+  deselectionNote,
   parseUndoStatus,
   parseUndoStartPreview,
   parseUndoPage,
@@ -47,6 +48,7 @@ describe('undo status', () => {
       label: 'Rename #total to #sum',
       engine: 'GsRenameMethodRefactoring',
       mechanism: 'changeSet',
+      reverseKind: null,
       sequence: 3,
       total: 7,
     });
@@ -171,11 +173,19 @@ describe('reverse-rename entries (#434)', () => {
     ...over,
   });
 
-  it('reads the mechanism from the status probe', () => {
+  it('reads the mechanism and the mirrored kind from the status probe', () => {
+    const s = parseUndoStatus(
+      '{"available":true,"mechanism":"mirror","reverseKind":"instVarAdd","label":"x","total":3}',
+    );
+    expect(s.mechanism).toBe('mirror');
+    expect(s.reverseKind).toBe('instVarAdd');
+  });
+
+  it('rejects a reverseKind it does not know, rather than passing it through', () => {
     expect(
-      parseUndoStatus('{"available":true,"mechanism":"renameBack","label":"x","total":3}')
-        .mechanism,
-    ).toBe('renameBack');
+      parseUndoStatus('{"available":true,"mechanism":"mirror","reverseKind":"wat","total":1}')
+        .reverseKind,
+    ).toBeNull();
   });
 
   it('defaults the mechanism to changeSet, so an older engine still reads correctly', () => {
@@ -211,7 +221,7 @@ describe('reverse-rename entries (#434)', () => {
 
   it('badges the class-shape kinds for what they do', () => {
     const at = (kind: string): string =>
-      undoActionLabel(classShape({ kind }) as unknown as UndoChange, 'renameBack');
+      undoActionLabel(classShape({ kind }) as unknown as UndoChange, 'mirror');
     expect(at('classRename')).toBe('Rename back');
     expect(at('classReparent')).toBe('Re-version');
     expect(at('classDefinitionEdit')).toBe('Redefine');
@@ -222,12 +232,30 @@ describe('reverse-rename entries (#434)', () => {
     // follow the name. The badge must not pick one and be wrong half the time.
     const c = classShape({ kind: 'methodRecompile', selector: 'foo' }) as unknown as UndoChange;
     expect(undoActionLabel(c, 'changeSet')).toBe('Revert');
-    expect(undoActionLabel(c, 'renameBack')).toBe('Rewrite');
+    expect(undoActionLabel(c, 'mirror')).toBe('Rewrite');
   });
 
   it('states the caveat without claiming to be a rollback', () => {
-    expect(RENAME_BACK_CAVEAT).toContain('not a rollback');
-    expect(RENAME_BACK_CAVEAT).toContain('carried forward');
-    expect(RENAME_BACK_CAVEAT).toContain('its own commit');
+    const c = mirrorCaveat('classRename');
+    expect(c).toContain('not a rollback');
+    expect(c).toContain('carried forward');
+    expect(c).toContain('its own commit');
+  });
+
+  it('words the caveat per kind, because the honest one differs', () => {
+    // Reversing an ADD deletes methods that use the variable; reversing a REMOVE cannot bring
+    // values or dropped methods back. One generic sentence would misstate one of them.
+    expect(mirrorCaveat('instVarAdd', 3)).toContain('DELETE 3 methods');
+    expect(mirrorCaveat('instVarAdd', 1)).toContain('DELETE 1 method');
+    expect(mirrorCaveat('instVarAdd', 0)).not.toContain('DELETE');
+    expect(mirrorCaveat('instVarRemove')).toContain('does NOT restore the values');
+    expect(mirrorCaveat('instVarRemove')).not.toContain('carried forward');
+  });
+
+  it('says what un-ticking actually does, per deselection semantics', () => {
+    expect(deselectionNote('perChange')).toBeNull();
+    expect(deselectionNote('ignored')).toContain('all-or-nothing');
+    // The one that would otherwise read exactly backwards.
+    expect(deselectionNote('dropsMethod')).toContain('DELETES it');
   });
 });

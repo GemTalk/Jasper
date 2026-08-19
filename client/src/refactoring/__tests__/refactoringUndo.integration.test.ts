@@ -661,7 +661,7 @@ cs addClassDefinitionEditInDictionary: nil className: 'Object' oldSource: 'a' ne
 
     const status = undoStatus();
     expect(status.available).toBe(true);
-    expect(status.mechanism).toBe('renameBack');
+    expect(status.mechanism).toBe('mirror');
 
     const undone = await undoEverything();
     expect(undone.failed).toHaveLength(0);
@@ -727,7 +727,7 @@ cs addClassDefinitionEditInDictionary: nil className: 'Object' oldSource: 'a' ne
     );
     clearUndoRefactoringPreview((code) => exec(code), token);
 
-    expect(start.mechanism).toBe('renameBack');
+    expect(start.mechanism).toBe('mirror');
     // Class-shape rows the change-set path never produces — the preview must render them.
     const rename = start.page.changes.find((c) => c.kind === 'classRename');
     expect(rename).toBeDefined();
@@ -801,5 +801,120 @@ cs addClassDefinitionEditInDictionary: nil className: 'Object' oldSource: 'a' ne
     expect(exec(`(UserGlobals at: #'${RENAMED}' ifAbsent: [nil]) notNil printString`).trim()).toBe(
       'true',
     );
+  }, 60_000);
+
+  // ---- instance-variable add / remove, reversed by the opposite operation -----------------
+
+  const applyInstVarOp = (op: 'add' | 'remove', cls: string, ivar: string): void => {
+    exec(`(GsInstVarRefactoring class: ${cls} ${op}InstVar: '${ivar}')
+      applyDeselected: #() options: nil migrate: false deleteHistory: false`);
+  };
+
+  it('reverses an added instance variable by taking it back out', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    defineFixture();
+    clearRefactoringUndo((code) => exec(code));
+
+    applyInstVarOp('add', CLS, 'undoExtra');
+    expect(ownInstVarNames(CLS)).toContain('undoExtra');
+
+    recordReverseRename(
+      (code) => exec(code),
+      'instVarAdd',
+      CLS,
+      'undoExtra',
+      'undoExtra',
+      `Add undoExtra to ${CLS}`,
+      'GsInstVarRefactoring',
+    );
+    expect(undoStatus().mechanism).toBe('mirror');
+
+    expect((await undoEverything()).failed).toHaveLength(0);
+    expect(ownInstVarNames(CLS)).not.toContain('undoExtra');
+    // The variables and methods that were always there survived both reshapes.
+    expect(ownInstVarNames(CLS)).toContain('balance');
+    expect(definesSelector(CLS, 'undoUntouched')).toBe(true);
+    expect(definesSelector(CLS, 'undoAlsoUntouched', true)).toBe(true);
+  }, 60_000);
+
+  it('reverses a removed instance variable by declaring it again', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    defineFixture();
+    clearRefactoringUndo((code) => exec(code));
+
+    // `balance` is read by undoBalance, so removing it drops that method — which is exactly the
+    // loss the reversal cannot undo, and which the caveat warns about.
+    applyInstVarOp('remove', CLS, 'balance');
+    expect(ownInstVarNames(CLS)).not.toContain('balance');
+
+    recordReverseRename(
+      (code) => exec(code),
+      'instVarRemove',
+      CLS,
+      'balance',
+      'balance',
+      `Remove balance from ${CLS}`,
+      'GsInstVarRefactoring',
+    );
+    expect((await undoEverything()).failed).toHaveLength(0);
+
+    expect(ownInstVarNames(CLS)).toContain('balance');
+    // Honest about the limit: the accessor the removal dropped does NOT come back.
+    expect(definesSelector(CLS, 'undoBalance')).toBe(false);
+    // Everything the removal did not touch is still here.
+    expect(definesSelector(CLS, 'undoUntouched')).toBe(true);
+  }, 60_000);
+
+  it('reports the all-or-nothing deselection and the methods a reversal would delete', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    defineFixture();
+    clearRefactoringUndo((code) => exec(code));
+
+    applyInstVarOp('add', CLS, 'undoExtra');
+    q.compileMethod(session(), CLS, false, 'after', 'undoUsesExtra\n\t^ undoExtra');
+
+    recordReverseRename(
+      (code) => exec(code),
+      'instVarAdd',
+      CLS,
+      'undoExtra',
+      'undoExtra',
+      `Add undoExtra to ${CLS}`,
+      'GsInstVarRefactoring',
+    );
+
+    const token = 'undo-ivar-preview';
+    const start = parseUndoStartPreview(
+      await startUndoRefactoringPreview(asyncExec, token, PREVIEW_PAGE_BYTES),
+    );
+    clearUndoRefactoringPreview((code) => exec(code), token);
+
+    expect(start.reverseKind).toBe('instVarAdd');
+    // The engine ignores deselection here, so the panel must disable the boxes.
+    expect(start.deselection).toBe('ignored');
+    // And it can say how many methods taking the variable back out will delete.
+    expect(start.dropCount).toBeGreaterThan(0);
+  }, 60_000);
+
+  it('refuses to reverse an add when the variable is already gone', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    defineFixture();
+    clearRefactoringUndo((code) => exec(code));
+
+    recordReverseRename(
+      (code) => exec(code),
+      'instVarAdd',
+      CLS,
+      'undoNeverAdded',
+      'undoNeverAdded',
+      `Add undoNeverAdded to ${CLS}`,
+      'GsInstVarRefactoring',
+    );
+
+    await expect(
+      startUndoRefactoringPreview(asyncExec, 'undo-ivar-gone', PREVIEW_PAGE_BYTES).then(
+        parseUndoStartPreview,
+      ),
+    ).rejects.toThrow(/nothing to take back out/);
   }, 60_000);
 });

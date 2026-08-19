@@ -33,8 +33,9 @@ original selector back BEFORE the new one is removed.
 
 TWO mechanisms, one entry
 -------------------------
-A second kind of entry exists for the pure RENAMES -- rename class, rename instance
-variable, rename class variable. Those cannot be reversed by the change-set diff above:
+A second kind of entry exists for the operations whose exact opposite the same engine already
+performs -- rename class, rename instance variable, rename class variable, and add/remove
+instance variable. Those cannot be reversed by the change-set diff above:
 the diff is keyed by class NAME (and by (class, side, selector) slots), and a rename is
 precisely the thing that moves the key. A rename also re-versions the class, so there is
 no method-slot difference to invert.
@@ -43,22 +44,27 @@ Instead such an entry records the OPERATION -- kind, class, from-name, to-name, 
 and reversing it REBUILDS the same rename engine in the opposite direction and previews
 and applies THAT. So `mechanism` answers either:
 
-  #changeSet   -- apply the recorded inverse change set (method refactorings)
-  #renameBack  -- rebuild the rename in the opposite direction and apply it
+  #changeSet -- apply the recorded inverse change set (method refactorings)
+  #mirror    -- rebuild the SAME engine performing the opposite operation, and apply that
 
 Both are previewed and applied through the same client path, because both end up
 answering an ordinary change set to page over.
 
-A #renameBack is deliberately NOT a rollback and the UI says so: GemStone has no
-transaction savepoints, so renaming back is a fresh forward rename. Class history GROWS;
-it never shrinks. The compensation is real, though -- a rename carries methods forward, so
-anything written AFTER the original rename survives the reversal, which a classHistory
-revert would have discarded.
+A #mirror is deliberately NOT a rollback and the UI says so: GemStone has no transaction
+savepoints, so the reversal is a fresh forward operation. Class history GROWS; it never
+shrinks. For a rename the compensation is real -- it carries methods forward, so anything
+written AFTER the original rename survives, which a classHistory revert would have discarded.
+For add/remove it is weaker and the UI must say which: reversing an ADD removes the variable
+and DROPS any method written since that uses it (`mirrorDropCount` counts them), and reversing
+a REMOVE brings the name back but not the values it held nor the methods the removal dropped.
+
+Un-ticking a row means three different things across these kinds -- see
+`deselectionFor:` -- so the mechanism alone is not enough for a client to render honestly.
 
 Still out of scope
 ------------------
-Everything else that reshapes a class -- add/remove instance variable, instance-variable
-structure, extract superclass, split class -- records NO entry: half an undo is worse than
+Everything else that reshapes a class -- instance-variable structure, extract superclass,
+split class -- records NO entry: half an undo is worse than
 none. Those need machinery that does not exist yet (a class-removal primitive, an inverse
 ordering that stays top-down, classHistory reverts), or they lose data a by-name reversal
 cannot restore. The apply result's undoRecorded field reports which it was, so the client
@@ -172,27 +178,51 @@ GsRefactoringUndo class >> recordAndApplyForToken: token engine: engineName dese
 ]
 
 { #category : 'recording' }
-GsRefactoringUndo class >> renameKinds [
-	"The rename kinds a #renameBack entry can reverse. Each names an engine whose forward
-	 operation is its own inverse when the two names are swapped."
-	^#(#classRename #instVarRename #classVarRename)
+GsRefactoringUndo class >> reversibleKinds [
+	"The operation kinds a #mirror entry can reverse. Each names an engine whose forward
+	 operation has an exact opposite the same engine already performs -- a rename with the two
+	 names swapped, or an add/remove flipped."
+	^#(#classRename #instVarRename #classVarRename #instVarAdd #instVarRemove)
+]
+
+{ #category : 'recording' }
+GsRefactoringUndo class >> deselectionFor: aKind [
+	"What un-ticking a row in the preview MEANS for this kind. The three answers are genuinely
+	 different and a client that treats them alike will mislead:
+
+	   #perChange   -- the change is simply not applied (rename class)
+	   #dropsMethod -- the method is NOT carried onto the new class version, i.e. it is DELETED
+	                   (rename instance variable: that is the only way a method disappears there)
+	   #ignored     -- the engine applies its whole change set regardless; un-ticking does
+	                   nothing at all (rename class variable, add/remove instance variable --
+	                   the shape edits and descendant re-parents must move together)
+
+	 So `#ignored` rows must render disabled rather than invite a click that silently does
+	 nothing, and `#dropsMethod` must not be described as 'un-tick what you want to keep' --
+	 there, un-ticking is what throws it away."
+	| kind |
+	kind := aKind asSymbol.
+	kind == #classRename ifTrue: [^#perChange].
+	kind == #instVarRename ifTrue: [^#dropsMethod].
+	^#ignored
 ]
 
 { #category : 'recording' }
 GsRefactoringUndo class >> recordReverseRename: aKind className: cn from: fromName to: toName scopeKind: sk scopeDictName: sdn label: aLabel engine: engineName [
-	"Record that a RENAME was applied, so it can be reversed by renaming back.
+	"Record that a reversible operation was applied, so it can be reversed by re-applying the
+	 opposite one. Named for its first use (renames); it now also records instance-variable
+	 add/remove, whose opposite is the other operation of the same engine.
 
-	 `cn` is the class to look the operation up on AFTER the forward rename landed (for a
-	 class rename that is the NEW name -- the class is bound under it now); `fromName` is
-	 the name that is in force now and `toName` the name to go back to. Answers 'ok', or
-	 'unsupported' for a kind this cannot reverse (recording nothing rather than recording
-	 something wrong).
+	 `cn` is the class to look the operation up on AFTERWARDS. For a rename, `fromName` is the
+	 name in force now and `toName` the name to go back to. For an add/remove, `fromName` is the
+	 instance-variable name and `toName` is unused. Answers 'ok', or 'unsupported' for a kind
+	 this cannot reverse (recording nothing rather than recording something wrong).
 
 	 The caller records this only once the forward apply has actually landed -- see the
 	 client's rename flows, which check the apply result first."
 	| kind op |
 	kind := aKind asSymbol.
-	(self renameKinds asIdentitySet includes: kind) ifFalse: [^'unsupported'].
+	(self reversibleKinds asIdentitySet includes: kind) ifFalse: [^'unsupported'].
 	"Filled slot by slot rather than with a six-argument `Array with:...`: 3.6.2's Array class
 	 does not implement past four (MessageNotUnderstood 2010), so the longer forms are a 3.7-only
 	 convenience the matrix cannot use."
@@ -409,6 +439,8 @@ GsRefactoringUndo class >> startPreviewToken: token maxBytes: maxBytes [
 		^'{"error":', (GsRefactoringJson jsonQuote: why),
 		  ',"token":"","label":', (GsRefactoringJson jsonQuote: undo label),
 		  ',"engine":"","mechanism":', (GsRefactoringJson jsonQuote: undo mechanism asString),
+		  ',"deselection":', (GsRefactoringJson jsonQuote: undo deselection asString),
+		  ',"dropCount":0',
 		  ',"total":0,"page":{"changes":[],"nextOffset":0,"done":true}}'].
 	undo refreshWarnings.
 	SessionTemps current at: token asSymbol put: undo.
@@ -416,6 +448,11 @@ GsRefactoringUndo class >> startPreviewToken: token maxBytes: maxBytes [
 	  ',"label":', (GsRefactoringJson jsonQuote: undo label),
 	  ',"engine":', (GsRefactoringJson jsonQuote: undo engineName),
 	  ',"mechanism":', (GsRefactoringJson jsonQuote: undo mechanism asString),
+	  ',"reverseKind":', (undo reverseKind
+		ifNil: ['null']
+		ifNotNil: [:k | GsRefactoringJson jsonQuote: k asString]),
+	  ',"deselection":', (GsRefactoringJson jsonQuote: undo deselection asString),
+	  ',"dropCount":', undo mirrorDropCount printString,
 	  ',"sequence":', undo sequence printString,
 	  ',"drifted":', undo driftedCount printString,
 	  ',"total":', undo size printString,
@@ -471,16 +508,45 @@ GsRefactoringUndo >> sequence [
 
 { #category : 'accessing' }
 GsRefactoringUndo >> size [
-	"How many changes the reversal would apply. For a #renameBack that means building the
+	"How many changes the reversal would apply. For a #mirror that means building the
 	 reverse rename, which is why callers that only want a cheap yes/no ask `mechanism`."
 	^reverseOp isNil ifTrue: [changeSet size] ifFalse: [self reverseChangeSet size]
 ]
 
 { #category : 'accessing' }
 GsRefactoringUndo >> mechanism [
-	"#changeSet -- apply the recorded inverse change set; #renameBack -- rebuild the rename
-	 in the opposite direction. See the class comment."
-	^reverseOp isNil ifTrue: [#changeSet] ifFalse: [#renameBack]
+	"#changeSet -- apply the recorded inverse change set; #mirror -- rebuild the SAME engine
+	 performing the opposite operation and apply that. See the class comment."
+	^reverseOp isNil ifTrue: [#changeSet] ifFalse: [#mirror]
+]
+
+{ #category : 'accessing' }
+GsRefactoringUndo >> reverseKind [
+	"Which operation is being mirrored, or nil for a change-set entry. The client picks its
+	 caveat wording from this -- the honest caveat differs per kind."
+	^reverseOp isNil ifTrue: [nil] ifFalse: [reverseOp at: 1]
+]
+
+{ #category : 'accessing' }
+GsRefactoringUndo >> deselection [
+	"See GsRefactoringUndo class>>deselectionFor:. A change-set entry is always #perChange."
+	^reverseOp isNil
+		ifTrue: [#perChange]
+		ifFalse: [GsRefactoringUndo deselectionFor: (reverseOp at: 1)]
+]
+
+{ #category : 'reverse rename' }
+GsRefactoringUndo >> mirrorDropCount [
+	"How many methods the reversal is predicted to DELETE, for the one kind that can: reversing
+	 an instance-variable ADD means REMOVING that variable, and any method written since that
+	 uses it cannot be recompiled and is dropped. Answers 0 for every other kind. Surfaced so
+	 the client can say the number before the user commits to it."
+	| ref |
+	self reverseKind == #instVarAdd ifFalse: [^0].
+	ref := self reverseRefactoring.
+	^(ref notNil and: [ref respondsTo: #willNotRecompileSelectorCount])
+		ifTrue: [ref willNotRecompileSelectorCount]
+		ifFalse: [0]
 ]
 
 { #category : 'accessing' }
@@ -516,6 +582,11 @@ GsRefactoringUndo >> reverseRefactoring [
 	kind == #classVarRename ifTrue: [
 		reverseRef := GsRenameClassVariableRefactoring
 			class: cls renameClassVar: (reverseOp at: 3) to: (reverseOp at: 4)].
+	"An add and a remove are each other's opposite, performed by the same engine."
+	kind == #instVarAdd ifTrue: [
+		reverseRef := GsInstVarRefactoring class: cls removeInstVar: (reverseOp at: 3)].
+	kind == #instVarRemove ifTrue: [
+		reverseRef := GsInstVarRefactoring class: cls addInstVar: (reverseOp at: 3)].
 	^reverseRef
 ]
 
@@ -552,6 +623,17 @@ GsRefactoringUndo >> reverseUnavailableReason [
 		((env ownInstVarNamesOf: cls) includes: (reverseOp at: 4)) ifTrue: [
 			^'Cannot rename back: ', (reverseOp at: 2), ' already declares an instance variable named ',
 			  (reverseOp at: 4), '.']].
+	"Reversing an ADD means removing the variable -- pointless, and misleading to offer, if it is
+	 no longer there. Reversing a REMOVE means adding it back, which duplicates it if something
+	 has re-declared the name (the class-creation primitive rejects that mid-apply, error 2271)."
+	(reverseOp at: 1) == #instVarAdd ifTrue: [
+		((env ownInstVarNamesOf: cls) includes: (reverseOp at: 3)) ifFalse: [
+			^(reverseOp at: 2), ' no longer declares an instance variable named ', (reverseOp at: 3),
+			  ', so there is nothing to take back out.']].
+	(reverseOp at: 1) == #instVarRemove ifTrue: [
+		((env ownInstVarNamesOf: cls) includes: (reverseOp at: 3)) ifTrue: [
+			^(reverseOp at: 2), ' already declares an instance variable named ', (reverseOp at: 3),
+			  ' again, so it cannot be added back.']].
 	ref := self reverseRefactoring.
 	ref isNil ifTrue: [
 		^'The reversal of this rename can no longer be built.'].
@@ -565,10 +647,13 @@ GsRefactoringUndo >> reverseUnavailableReason [
 { #category : 'accessing' }
 GsRefactoringUndo >> statusJson [
 	"`mechanism` lets the client word the offer honestly without a second round trip: a
-	 #renameBack is a reversal, not a rollback."
+	 #mirror is a reversal, not a rollback."
 	^'{"available":true,"label":', (GsRefactoringJson jsonQuote: self label),
 	  ',"engine":', (GsRefactoringJson jsonQuote: self engineName),
 	  ',"mechanism":', (GsRefactoringJson jsonQuote: self mechanism asString),
+	  ',"reverseKind":', (self reverseKind
+		ifNil: ['null']
+		ifNotNil: [:k | GsRefactoringJson jsonQuote: k asString]),
 	  ',"sequence":', self sequence printString,
 	  ',"total":', self size printString, '}'
 ]
@@ -580,7 +665,7 @@ GsRefactoringUndo >> refreshWarnings [
 	 already in the state the undo would put it in (undoing it changes nothing). Warnings
 	 render on the existing per-change preview rows, so the user deselects what to keep."
 	| env |
-	"A #renameBack has no per-change drift to report: its change set is derived from the stone
+	"A #mirror has no per-change drift to report: its change set is derived from the stone
 	 as it is RIGHT NOW, by the same engine that would apply it, so every row is current by
 	 construction. Its one caveat is not per-change (it is 'this renames again rather than
 	 rolling back') and the client states it once, above the list."
@@ -628,7 +713,7 @@ GsRefactoringUndo >> driftedCount [
 GsRefactoringUndo >> pageJsonFrom: startIndex maxBytes: maxBytes [
 	"One page of the changes the reversal would apply, byte-bounded exactly as the forward
 	 previews are, so a large undo still fits the non-blocking GCI fetch cap. For a
-	 #renameBack those are the reverse rename's OWN changes, which is why the client's
+	 #mirror those are the mirrored operation's OWN changes, which is why the client's
 	 preview has to accept class-shape kinds as well as method ones."
 	| all ws i |
 	all := (reverseOp isNil ifTrue: [changeSet] ifFalse: [self reverseChangeSet]) changes.
@@ -679,15 +764,24 @@ GsRefactoringUndo >> applyDeselected: deselectedIds [
 	 up. A partial or failed one keeps it, so the user can look at what went wrong and
 	 try again -- re-applying the same inverse set is idempotent."
 	| ids applied failures |
-	"A #renameBack is applied by the rename engine itself -- same code path the forward rename
+	"A #mirror is applied by the mirrored engine itself -- the same code path the forward operation
 	 uses, so the reversal cannot drift from the operation it reverses. A clean one is used up,
 	 exactly as below."
 	reverseOp isNil ifFalse: [
-		| ref result |
+		| ref result kind |
 		ref := self reverseRefactoring.
 		ref isNil ifTrue: [
-			^'{"applied":0,"failed":[],"error":"the class this rename applied to no longer exists"}'].
-		result := ref applyDeselected: deselectedIds.
+			^'{"applied":0,"failed":[],"error":"the class this operation applied to no longer exists"}'].
+		kind := reverseOp at: 1.
+		"The instance-variable engine takes a wider apply signature and has no plain
+		 applyDeselected:. migrate and deleteHistory are hardcoded FALSE and must stay that way:
+		 both COMMIT, and both are the two genuinely irreversible options in the whole family --
+		 a migration moves user data and deleting history destroys what any later reversal would
+		 need. A reversal must never be the thing that makes the stone unrecoverable. nil options
+		 keeps the class's current compile options."
+		result := (kind == #instVarAdd or: [kind == #instVarRemove])
+			ifTrue: [ref applyDeselected: #() options: nil migrate: false deleteHistory: false]
+			ifFalse: [ref applyDeselected: deselectedIds].
 		(deselectedIds isEmpty and: [(result indexOfSubCollection: '"failed":[]') > 0])
 			ifTrue: [GsRefactoringUndo clear].
 		^result].

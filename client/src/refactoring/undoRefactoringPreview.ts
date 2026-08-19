@@ -20,17 +20,37 @@ export type { ApplyResult } from './previewEnvelope';
  *   methodRecompile the refactoring REWROTE it          — undoing restores the source
  *   methodRemove    the refactoring CREATED it          — undoing deletes it
  *
- * `renameBack` — a rename reversed by renaming again (rename class / instance variable /
- * class variable). Those rows are the reverse rename's OWN change set, so they carry
- * CLASS-shape kinds — `classRename`, `classReparent`, `classDefinitionEdit` — plus method
- * recompiles for the references being rewritten. A `renameBack` is deliberately not a
- * rollback, and the UI says so once, above the list.
+ * `mirror` — reversed by re-applying the OPPOSITE operation of the same engine: a rename with
+ * the names swapped, or an add/remove flipped. Those rows are the mirrored operation's OWN
+ * change set, so they carry CLASS-shape kinds — `classRename`, `classReparent`,
+ * `classDefinitionEdit` — plus method recompiles for references being rewritten. A `mirror` is
+ * deliberately not a rollback, and the UI says so once, above the list, in wording that depends
+ * on `reverseKind` because the honest caveat differs per kind.
+ *
+ * `deselection` matters as much as the mechanism: un-ticking a row means three different things
+ * (see `UndoDeselection`), and a panel that renders them alike will mislead.
  *
  * Kept free of any `vscode` dependency so it unit-tests directly.
  */
 
 /** How the recorded undo will be carried out. See the module comment. */
-export type UndoMechanism = 'changeSet' | 'renameBack';
+export type UndoMechanism = 'changeSet' | 'mirror';
+
+/** Which operation a `mirror` entry reverses. Drives the caveat wording. */
+export type UndoReverseKind =
+  'classRename' | 'instVarRename' | 'classVarRename' | 'instVarAdd' | 'instVarRemove';
+
+/**
+ * What un-ticking a preview row actually DOES. Three genuinely different answers, and getting
+ * this wrong is worse than not offering the checkbox at all:
+ *
+ * - `perChange`   the change is simply not applied.
+ * - `dropsMethod` the method is NOT carried onto the new class version — i.e. it is DELETED.
+ *                 So "un-tick what you want to keep" is exactly backwards here.
+ * - `ignored`     the engine applies its whole change set regardless. The row must render
+ *                 DISABLED rather than invite a click that silently does nothing.
+ */
+export type UndoDeselection = 'perChange' | 'dropsMethod' | 'ignored';
 
 /** One change the undo will apply. A method change carries a `selector`; a class-shape
  *  change (only ever from a `renameBack`) carries none, and is labelled by its class. */
@@ -66,6 +86,7 @@ export interface UndoStatus {
   label: string;
   engine: string;
   mechanism: UndoMechanism;
+  reverseKind: UndoReverseKind | null;
   /** Monotonic per-session counter: a later entry always has a higher number, so a
    *  stale label the client is still showing can be told apart from a current one. */
   sequence: number;
@@ -86,6 +107,13 @@ export interface UndoStartPreview {
   label: string;
   engine: string;
   mechanism: UndoMechanism;
+  /** Which operation is being mirrored; null for a change-set entry. */
+  reverseKind: UndoReverseKind | null;
+  /** What un-ticking a row does here. */
+  deselection: UndoDeselection;
+  /** How many methods the reversal is predicted to DELETE (only ever non-zero when reversing
+   *  an instance-variable add, which removes the variable those methods use). */
+  dropCount: number;
   sequence: number;
   /** How many changes carry a warning (see `UndoChange.warning`). */
   drifted: number;
@@ -102,10 +130,30 @@ const UNDO_KINDS = [
   'classDefinitionEdit',
 ] as const;
 
-/** Parse the mechanism, defaulting to the change-set one — an engine that predates the rename
+const REVERSE_KINDS: readonly string[] = [
+  'classRename',
+  'instVarRename',
+  'classVarRename',
+  'instVarAdd',
+  'instVarRemove',
+];
+
+/** Parse the mechanism, defaulting to the change-set one — an engine that predates the mirror
  *  reversal answers no `mechanism` field and only ever records change-set entries. */
 function mechanismOf(v: unknown): UndoMechanism {
-  return v === 'renameBack' ? 'renameBack' : 'changeSet';
+  return v === 'mirror' ? 'mirror' : 'changeSet';
+}
+
+function reverseKindOf(v: unknown): UndoReverseKind | null {
+  return typeof v === 'string' && REVERSE_KINDS.includes(v) ? (v as UndoReverseKind) : null;
+}
+
+/** Parse the deselection semantics. Defaults to `perChange`, which is what a change-set entry
+ *  always is and what an engine predating the field only ever recorded. */
+function deselectionOf(v: unknown): UndoDeselection {
+  if (v === 'ignored') return 'ignored';
+  if (v === 'dropsMethod') return 'dropsMethod';
+  return 'perChange';
 }
 
 function str(v: unknown): string | null {
@@ -121,6 +169,7 @@ export function parseUndoStatus(json: string): UndoStatus {
     label: '',
     engine: '',
     mechanism: 'changeSet',
+    reverseKind: null,
     sequence: 0,
     total: 0,
   };
@@ -138,6 +187,7 @@ export function parseUndoStatus(json: string): UndoStatus {
     label: str(env.label) ?? 'the last refactoring',
     engine: str(env.engine) ?? '',
     mechanism: mechanismOf(env.mechanism),
+    reverseKind: reverseKindOf(env.reverseKind),
     sequence: asCount(env.sequence),
     total: asCount(env.total),
   };
@@ -206,6 +256,9 @@ export function parseUndoStartPreview(json: string): UndoStartPreview {
     label: str(env.label) ?? 'the last refactoring',
     engine: str(env.engine) ?? '',
     mechanism: mechanismOf(env.mechanism),
+    reverseKind: reverseKindOf(env.reverseKind),
+    deselection: deselectionOf(env.deselection),
+    dropCount: asCount(env.dropCount),
     sequence: asCount(env.sequence),
     drifted: asCount(env.drifted),
     total: asCount(env.total),
@@ -253,24 +306,65 @@ export function undoActionLabel(change: UndoChange, mechanism: UndoMechanism): s
     case 'classDefinitionEdit':
       return 'Redefine';
     default:
-      return mechanism === 'renameBack' ? 'Rewrite' : 'Revert';
+      return mechanism === 'mirror' ? 'Rewrite' : 'Revert';
   }
 }
 
+/** The shared half of every `mirror` caveat: it re-applies the opposite operation, so nothing
+ *  is rolled back and class history only ever grows. */
+const MIRROR_PREAMBLE =
+  'This reverses the change by applying the opposite operation — it is not a rollback. ' +
+  'The class keeps its history (a reversal adds a version, it never removes one). ';
+
+const COMMIT_TAIL = 'If the original change was committed, the reversal needs its own commit.';
+
 /**
- * The standing caveat for a `renameBack`, stated once above the list.
+ * The standing caveat for a `mirror` entry, stated once above the list.
  *
- * Deliberately not sold as a rollback: GemStone has no transaction savepoints, so renaming
- * back is a fresh forward rename and class history GROWS rather than shrinking. The second
- * half is the compensation, and it is a real one — a rename carries methods forward, so work
- * written after the original rename SURVIVES the reversal, where a class-history revert
- * would have discarded it.
+ * Deliberately per-kind, because the honest caveat genuinely differs. A rename gets a *better*
+ * outcome than a rollback would give (it carries later work forward, where a class-history
+ * revert would discard it). An add/remove reversal does not, and must say what it will not
+ * bring back — a single generic sentence would either overstate the renames' risk or
+ * understate the instance variables'.
+ *
+ * `dropCount` is the number of methods the reversal is predicted to DELETE; the caller passes
+ * it so the wording can name the number instead of hinting at it.
  */
-export const RENAME_BACK_CAVEAT =
-  'This reverses the rename by renaming again — it is not a rollback. The class keeps its ' +
-  'history (a reversal adds a version, it never removes one), and anything written since ' +
-  'the rename is carried forward rather than discarded. If the rename was committed, the ' +
-  'reversal needs its own commit.';
+export function mirrorCaveat(kind: UndoReverseKind | null, dropCount = 0): string {
+  switch (kind) {
+    case 'instVarAdd': {
+      const drops =
+        dropCount > 0
+          ? `Taking it back out will DELETE ${dropCount} method${dropCount === 1 ? '' : 's'} ` +
+            'written since that use it. '
+          : '';
+      return `${MIRROR_PREAMBLE}Reversing an added instance variable removes it again. ${drops}${COMMIT_TAIL}`;
+    }
+    case 'instVarRemove':
+      return (
+        `${MIRROR_PREAMBLE}Reversing a removed instance variable declares the name again, but ` +
+        'it does NOT restore the values it held, nor any method the removal dropped. ' +
+        COMMIT_TAIL
+      );
+    default:
+      return (
+        `${MIRROR_PREAMBLE}Anything written since the rename is carried forward rather than ` +
+        `discarded. ${COMMIT_TAIL}`
+      );
+  }
+}
+
+/** What to say about the checkboxes, given what un-ticking actually does here. */
+export function deselectionNote(deselection: UndoDeselection): string | null {
+  switch (deselection) {
+    case 'ignored':
+      return 'This reversal is all-or-nothing — the shape edits and the class re-versionings have to move together, so individual rows cannot be left out.';
+    case 'dropsMethod':
+      return 'Careful: un-ticking a row here does not keep that method as it is — it DELETES it, by not carrying it onto the new class version.';
+    default:
+      return null;
+  }
+}
 
 /** The one-line summary above the change list. */
 export function undoSummary(total: number, drifted: number): string {

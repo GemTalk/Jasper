@@ -26,6 +26,7 @@ const NOTHING: UndoStatus = {
   label: '',
   engine: '',
   mechanism: 'changeSet',
+  reverseKind: null,
   sequence: 0,
   total: 0,
 };
