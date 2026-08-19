@@ -137,14 +137,13 @@
         "properties": {
           "gemstone.omniSearch.ui": {
             "type": "string",
-            "enum": ["spotter", "panel", "quickpick"],
+            "enum": ["spotter", "panel"],
             "enumDescriptions": [
               "Editor-tab Spotter: a webview in an editor tab with labeled scope tabs, a source-preview pane, own match highlighting, and an always-on case indicator.",
-              "Bottom-panel view (default): the same webview docked in the panel strip (next to Terminal/Output). Stays out of the way; results open in the editor area above it.",
-              "Phase-1 Quick Pick: the native VS Code picker with title-bar scope buttons."
+              "Bottom-panel view (default): the same webview docked in the panel strip (next to Terminal/Output). Stays out of the way; results open in the editor area above it."
             ],
             "default": "panel",
-            "markdownDescription": "Which GemStone Search experience to open: the **bottom panel** view (default), the editor-tab **Spotter**, or the classic **Quick Pick**."
+            "markdownDescription": "Which GemStone Search experience to open: the **bottom panel** view (default) or the editor-tab **Spotter**."
           },
           "gemstone.omniSearch.matchMode": {
             "type": "string",
@@ -155,7 +154,7 @@
               "The result starts with the typed text."
             ],
             "default": "fuzzy",
-            "markdownDescription": "How Omni Search matches your query against classes, methods, dictionaries and open editors."
+            "markdownDescription": "How your typed query is matched against the names in each category: classes, method selectors, dictionaries, globals and class categories. **Source** and **Literals** match on the stone instead (whole method source / literal frames), so this setting does not affect them."
           },
           "gemstone.omniSearch.caseSensitive": {
             "type": "boolean",
@@ -207,6 +206,13 @@
             "minimum": 1,
             "maximum": 10,
             "description": "Minimum characters before the Methods category queries the stone (method search hits the stone per keystroke). Raise it if per-keystroke method search feels slow on a large stone; lower it (to 1) to search selectors from the first character."
+          },
+          "gemstone.omniSearch.maxServerScan": {
+            "type": "number",
+            "default": 200,
+            "minimum": 20,
+            "maximum": 20000,
+            "markdownDescription": "How many matches the **Methods** search collects from the stone before it stops looking.\n\nThat search walks every selector of every class in your symbol list, so it gives up early to keep searching-as-you-type fast. This is a limit on the *results*, not just on the time: when a search stops here, no amount of **Load more** or **Load all** can reach the matches beyond it — the footer says `Methods scan capped at 200` when that happens.\n\nRaise it to cast a wider net on broad terms (`add`, `at:`), at the cost of a slower search on every keystroke. Narrowing your search term is usually faster than raising this."
           },
           "gemstone.omniSearch.referencesInPreview": {
             "type": "boolean",
@@ -1183,25 +1189,25 @@
         "command": "gemstoneExplorerDicts.filter",
         "title": "Filter",
         "category": "GemStone",
-        "icon": "$(search)"
+        "icon": "$(filter)"
       },
       {
         "command": "gemstoneExplorerCategories.filter",
         "title": "Filter",
         "category": "GemStone",
-        "icon": "$(search)"
+        "icon": "$(filter)"
       },
       {
         "command": "gemstoneExplorerClasses.filter",
         "title": "Filter",
         "category": "GemStone",
-        "icon": "$(search)"
+        "icon": "$(filter)"
       },
       {
         "command": "gemstoneExplorerMethods.filter",
         "title": "Filter",
         "category": "GemStone",
-        "icon": "$(search)"
+        "icon": "$(filter)"
       },
       {
         "command": "gemstoneExplorerDicts.clearFilter",
@@ -1235,7 +1241,7 @@
       },
       {
         "command": "gemstone.explorer.showMethodsFlat",
-        "title": "Show Methods Without Categories",
+        "title": "Don't Group Methods by Category",
         "category": "GemStone",
         "icon": "$(list-flat)"
       },
@@ -1274,9 +1280,9 @@
       },
       {
         "command": "gemstone.explorer.findClass",
-        "title": "Find Class in Browser Panels",
+        "title": "Find Class in Explorer",
         "category": "GemStone",
-        "icon": "$(search-fuzzy)"
+        "icon": "$(search)"
       },
       {
         "command": "gemstone.explorer.newDictionary",
@@ -1390,13 +1396,13 @@
       },
       {
         "command": "gemstone.explorer.openComment",
-        "title": "Pin Comment",
+        "title": "Open Comment",
         "category": "GemStone",
         "icon": "$(book)"
       },
       {
         "command": "gemstone.explorer.openHierarchyComment",
-        "title": "Pin Comment",
+        "title": "Open Comment",
         "category": "GemStone",
         "icon": "$(book)"
       },
@@ -2251,12 +2257,12 @@
         },
         {
           "command": "gemstone.explorer.openDefinitionToSide",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/",
           "group": "inline@1"
         },
         {
           "command": "gemstone.explorer.openComment",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass",
+          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass.commented",
           "group": "inline@2"
         },
         {
@@ -2316,12 +2322,12 @@
         },
         {
           "command": "gemstone.explorer.addInstVar",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/ && gemstone.rbSupportAvailable",
           "group": "2_generate@2"
         },
         {
           "command": "gemstone.explorer.addClassVar",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/",
           "group": "2_generate@3"
         },
         {
@@ -2386,27 +2392,27 @@
         },
         {
           "command": "gemstone.explorer.renameClass",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/ && gemstone.rbSupportAvailable",
           "group": "inline@3"
         },
         {
           "command": "gemstone.explorer.classHistory",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/ && gemstone.rbSupportAvailable",
           "group": "3_refactor@1"
         },
         {
           "command": "gemstone.explorer.insertSuperclass",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/ && gemstone.rbSupportAvailable",
           "group": "3_refactor@2"
         },
         {
           "command": "gemstone.explorer.extractSuperclass",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/ && gemstone.rbSupportAvailable",
           "group": "3_refactor@3"
         },
         {
           "command": "gemstone.explorer.splitClass",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/ && gemstone.rbSupportAvailable",
           "group": "3_refactor@4"
         },
         {
@@ -2446,7 +2452,7 @@
         },
         {
           "command": "gemstone.generateGrailStub",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/",
           "group": "2_generate@1"
         },
         {
@@ -2456,7 +2462,7 @@
         },
         {
           "command": "gemstone.explorer.removeClass",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/",
           "group": "inline@9"
         },
         {
@@ -2834,16 +2840,6 @@
         "when": "gemstone.hasActiveSession && !terminalFocus"
       },
       {
-        "command": "gemstone.omniSearch.references",
-        "key": "alt+enter",
-        "when": "gemstone.omniSearchActive"
-      },
-      {
-        "command": "gemstone.omniSearch.back",
-        "key": "left",
-        "when": "gemstone.omniSearchInPivot"
-      },
-      {
         "command": "gemstone.findMethodInClass",
         "key": "ctrl+k m",
         "mac": "cmd+k m",
@@ -2872,6 +2868,8 @@
     "serve:seaside": "bash scripts/serve-seaside.sh",
     "lint:github:workflows": "bash scripts/lint-workflow-timeouts.sh",
     "lint:supply-chain": "node scripts/lint-supply-chain.mjs",
+    "//lint:gci-headers": "Asserts vendor/gci-headers/versions.md matches the committed header files (hashes, folder links, and no unreferenced folders). Run after adding a row.",
+    "lint:gci-headers": "node scripts/lint-gci-header-versions.mjs",
     "lint:lockfile": "lockfile-lint --path package-lock.json --allowed-hosts registry.npmjs.org --validate-https --validate-integrity --validate-package-names",
     "//lint": "Results are cached under node_modules/.cache/eslint/, keyed on file content; run lint:cache:clear to force a full re-check.",
     "lint": "eslint . --cache --cache-location node_modules/.cache/eslint/.eslintcache --cache-strategy content",

@@ -20,8 +20,8 @@ function makeController(): ExplorerController {
   ctl.state.dictName = 'Globals';
   ctl.state.dictIndex = 2;
   (ctl as unknown as { classCategoryEntries: ClassCategoryEntry[] }).classCategoryEntries = [
-    { category: 'Collections', className: 'Array' },
-    { category: 'Kernel', className: 'Object' },
+    { category: 'Collections', className: 'Array', hasComment: true },
+    { category: 'Kernel', className: 'Object', hasComment: false },
   ];
   return ctl;
 }

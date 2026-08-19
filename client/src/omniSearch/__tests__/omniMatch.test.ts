@@ -17,8 +17,7 @@ describe('omniMatch — fuzzy (default)', () => {
   it('matches a subsequence in order and rejects out-of-order / missing chars', () => {
     expect(match('oc', 'OrderedCollection', opts('fuzzy'))).not.toBeNull();
     expect(match('ordc', 'OrderedCollection', opts('fuzzy'))).not.toBeNull();
-    // 'co' is NOT a subsequence of 'OrderedCollection' in order? c(9) then o... there is 'o' after
-    // c at index 12 ('Collection' -> C-o-l-l...), so 'co' DOES match. Use a genuine non-match:
+    // 'co' does match ('C-o' in "Collection"), so use chars that really aren't there.
     expect(match('zx', 'OrderedCollection', opts('fuzzy'))).toBeNull();
     expect(match('ocz', 'OrderedCollection', opts('fuzzy'))).toBeNull();
   });
@@ -30,7 +29,7 @@ describe('omniMatch — fuzzy (default)', () => {
     // O at 0, C at 7 → two single-char ranges
     expect(r2?.ranges).toEqual([
       [0, 1],
-      [7, 1 + 7],
+      [7, 8],
     ]);
   });
 

@@ -269,6 +269,7 @@ export const window = {
     hide: vi.fn(),
     dispose: vi.fn(),
   })),
+  registerWebviewViewProvider: vi.fn(() => ({ dispose: () => {} })),
   showInputBox: vi.fn(),
   showQuickPick: vi.fn(),
   // Controllable low-level QuickPick. Each call returns a fresh instance whose
@@ -992,5 +993,11 @@ export class Disposable {
   constructor(private callOnDispose: () => void) {}
   dispose(): void {
     this.callOnDispose();
+  }
+  /** Mirrors the real API: bundle several disposables into one, disposing each in turn. */
+  static from(...disposables: Array<{ dispose(): unknown }>): Disposable {
+    return new Disposable(() => {
+      for (const d of disposables) d.dispose();
+    });
   }
 }

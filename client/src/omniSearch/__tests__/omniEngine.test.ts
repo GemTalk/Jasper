@@ -1,5 +1,13 @@
-import { describe, it, expect } from 'vitest';
-import { createOmniEngine, providersInScope, PIVOT_EXIT_HINT, ReferenceView } from '../omniEngine';
+import { describe, it, expect, vi } from 'vitest';
+import {
+  createOmniEngine,
+  LOAD_ALL_LIMIT,
+  providersInScope,
+  PIVOT_EXIT_HINT,
+  ReferenceView,
+} from '../omniEngine';
+import { createMethodsProvider, SERVER_OVERFETCH } from '../providers/methodsProvider';
+import { SelectorSearchResult } from '../../queries/searchSelectors';
 import { OMNI_DEFAULTS } from '../omniConfig';
 import { CATEGORY_BY_ID, OmniConfig, OmniProvider, OmniResult } from '../omniTypes';
 
@@ -237,6 +245,186 @@ describe('createOmniEngine', () => {
     expect(all!.shownCount).toBe(50);
     expect(all!.hasMore).toBe(false);
     expect(all!.exact).toBe(true);
+    expect(all!.truncations).toEqual([]); // nothing was cut off, so the count really is the total
+  });
+
+  // Triage #14. A provider with a server fetch ceiling (methods) can never return more than a few
+  // hundred rows however high the display cap goes, so "Load all" does NOT make its count a total.
+  // The engine used to derive `exact` from the cap alone, and the footer printed a bare "N results"
+  // over a slice that had been cut off — the one thing it definitely wasn't.
+  describe('a provider bounded by its own fetch ceiling', () => {
+    /** A provider whose server slice stops at `ceiling` rows and says so, like methodsProvider. */
+    function cappedProvider(id: OmniResult['categoryId'], pool: OmniResult[], ceiling: number) {
+      return {
+        category: CATEGORY_BY_ID[id],
+        search(
+          _q: string,
+          c: OmniConfig,
+          _t: unknown,
+          report?: (t: {
+            categoryId: string;
+            scanned: number;
+            ceiling: number;
+            atCeiling: boolean;
+          }) => void,
+        ) {
+          const fetched = pool.slice(0, Math.min(c.maxResultsPerCategory, ceiling));
+          if (fetched.length >= ceiling) {
+            report?.({ categoryId: id, scanned: ceiling, ceiling, atCeiling: true });
+          }
+          return fetched;
+        },
+      } as OmniProvider;
+    }
+
+    it('never reports exact after loadAll, and marks the count as a floor', async () => {
+      const pool = Array.from({ length: 500 }, (_, i) => methodResult(`Foo>>m${i}`, `m${i}`));
+      const engine = createOmniEngine({
+        providers: [cappedProvider('methods', pool, 200)],
+        config: cfg({ maxResultsPerCategory: 20 }),
+      });
+
+      const first = await engine.search('m');
+      expect(first!.shownCount).toBe(20); // the display cap binds first, well under the ceiling
+      expect(first!.truncations).toEqual([]);
+
+      const all = await engine.loadAll();
+      expect(all!.shownCount).toBe(200); // the ceiling bound it, not the 100_000 display cap
+      // Names the scope and the number, so the footer can say "Methods scan capped at 200".
+      expect(all!.truncations).toEqual([
+        {
+          categoryId: 'methods',
+          categoryLabel: 'Methods',
+          scanned: 200,
+          ceiling: 200,
+          atCeiling: true,
+        },
+      ]);
+      expect(all!.exact).toBe(false); // <- the bug: this used to be true
+    });
+
+    it('marks the count as a floor even when the display cap was not filled', async () => {
+      // The Load-more path that walks the cap PAST the ceiling: 60 -> 120 -> 180 -> 240 with only 200
+      // rows reachable. `hasMore` goes false (200 < 240) and the cap is nowhere near LOAD_ALL_LIMIT,
+      // so without `truncated` the footer fell through to a bare, exact-looking "200 results".
+      const pool = Array.from({ length: 500 }, (_, i) => methodResult(`Foo>>m${i}`, `m${i}`));
+      const engine = createOmniEngine({
+        providers: [cappedProvider('methods', pool, 200)],
+        config: cfg({ maxResultsPerCategory: 60 }),
+      });
+
+      await engine.search('m');
+      await engine.loadMore(); // 120
+      await engine.loadMore(); // 180
+      const view = await engine.loadMore(); // 240 — past the ceiling
+
+      expect(view!.shownCount).toBe(200);
+      expect(view!.hasMore).toBe(false);
+      expect(view!.exact).toBe(false);
+      expect(view!.truncations).toHaveLength(1);
+    });
+
+    it('does not mark a term whose results fit under the ceiling', async () => {
+      const pool = Array.from({ length: 3 }, (_, i) => methodResult(`Foo>>m${i}`, `m${i}`));
+      const engine = createOmniEngine({
+        providers: [cappedProvider('methods', pool, 200)],
+        config: cfg({ maxResultsPerCategory: 20 }),
+      });
+
+      await engine.search('m');
+      const all = await engine.loadAll();
+      expect(all!.shownCount).toBe(3);
+      expect(all!.truncations).toEqual([]);
+      expect(all!.exact).toBe(true);
+    });
+
+    // The JOIN: every test above uses a FAKE capped provider, so none of them exercises the real clamp
+    // `min(maxResultsPerCategory × SERVER_OVERFETCH, maxServerScan)`. This wires the REAL
+    // methodsProvider into the REAL engine and drives Load All, which is the gesture a user reaches for
+    // when they want everything — the exact path where the old code claimed an exact total.
+    describe('Load All against the real methodsProvider', () => {
+      const selectorRows = (n: number): SelectorSearchResult[] =>
+        Array.from({ length: n }, (_, i) => ({
+          dictName: 'Globals',
+          className: 'Object',
+          isMeta: false,
+          selector: `addThing${i}`,
+          category: 'accessing',
+        }));
+
+      it('asks the stone for exactly maxServerScan and reports it as the ceiling', async () => {
+        const SCAN = 400;
+        // Far more matches than the ceiling, so the scan is genuinely cut off.
+        const runSearch = vi.fn((_t: string, limit: number) => selectorRows(limit));
+        const engine = createOmniEngine({
+          providers: [createMethodsProvider(1, runSearch)],
+          config: cfg({ methodMinQueryLength: 3, maxResultsPerCategory: 20, maxServerScan: SCAN }),
+        });
+
+        await engine.search('add');
+        const all = await engine.loadAll();
+
+        // Load All raises the display cap to LOAD_ALL_LIMIT, whose over-fetch dwarfs the ceiling — so
+        // the ceiling is provably the binding limit here, and the stone is asked for exactly it.
+        expect(LOAD_ALL_LIMIT * SERVER_OVERFETCH).toBeGreaterThan(SCAN);
+        expect(runSearch).toHaveBeenLastCalledWith('add', SCAN, true);
+
+        // ...and the view carries what the footer needs to SHOW the message: the scope, the configured
+        // number, and atCeiling (Load-more cannot get past it).
+        expect(all!.truncations).toEqual([
+          {
+            categoryId: 'methods',
+            categoryLabel: 'Methods',
+            scanned: SCAN,
+            ceiling: SCAN,
+            atCeiling: true,
+          },
+        ]);
+        expect(all!.exact).toBe(false); // never an exact total over a cut-off scan
+        expect(all!.shownCount).toBe(SCAN);
+      });
+
+      it('reports NO truncation from Load All when the term fits under the ceiling', async () => {
+        const runSearch = vi.fn(() => selectorRows(12)); // fewer matches than any limit asked for
+        const engine = createOmniEngine({
+          providers: [createMethodsProvider(1, runSearch)],
+          config: cfg({ methodMinQueryLength: 3, maxResultsPerCategory: 20, maxServerScan: 400 }),
+        });
+
+        await engine.search('add');
+        const all = await engine.loadAll();
+
+        expect(all!.truncations).toEqual([]);
+        expect(all!.exact).toBe(true); // Load All really did fetch everything
+        expect(all!.shownCount).toBe(12);
+      });
+    });
+
+    it('taints the whole run when only ONE of several in-scope providers is truncated', async () => {
+      // The all-scope fan-out: classes is exhaustive, methods is not. The footer speaks for the whole
+      // list, so one bounded provider is enough to make the total a floor.
+      const methods = Array.from({ length: 500 }, (_, i) => methodResult(`Foo>>m${i}`, `m${i}`));
+      const engine = createOmniEngine({
+        providers: [
+          fakeProvider('classes', [classResult('Foo')]),
+          cappedProvider('methods', methods, 200),
+        ],
+        config: cfg({ maxResultsPerCategory: 20 }),
+      });
+
+      await engine.search('m');
+      const all = await engine.loadAll();
+      expect(all!.truncations).toEqual([
+        {
+          categoryId: 'methods',
+          categoryLabel: 'Methods',
+          scanned: 200,
+          ceiling: 200,
+          atCeiling: true,
+        },
+      ]);
+      expect(all!.exact).toBe(false);
+    });
   });
 
   it('a fresh search term after Load-all restarts at the base cap instead of staying exhaustive', async () => {

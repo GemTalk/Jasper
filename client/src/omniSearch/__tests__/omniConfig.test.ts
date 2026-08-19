@@ -57,6 +57,27 @@ describe('readOmniConfig', () => {
     expect(cfg.methodMinQueryLength).toBe(2); // truncated
   });
 
+  // Triage #14: the server scan cap used to be a hard-coded constant, so a user who wanted a wider
+  // net on a broad term had no way to ask for one.
+  describe('maxServerScan', () => {
+    it('defaults to 200 and accepts a raised value', () => {
+      expect(readOmniConfig(fakeConfig({})).maxServerScan).toBe(200);
+      expect(readOmniConfig(fakeConfig({ maxServerScan: 2000 })).maxServerScan).toBe(2000);
+    });
+
+    it('floors a too-small value so a typo cannot make every search look capped', () => {
+      expect(readOmniConfig(fakeConfig({ maxServerScan: 1 })).maxServerScan).toBe(20);
+    });
+
+    it('ceilings a huge value so settings.json cannot turn each keystroke into a full-image walk', () => {
+      expect(readOmniConfig(fakeConfig({ maxServerScan: 5_000_000 })).maxServerScan).toBe(20_000);
+    });
+
+    it('falls back to the default for a non-number', () => {
+      expect(readOmniConfig(fakeConfig({ maxServerScan: 'lots' })).maxServerScan).toBe(200);
+    });
+  });
+
   it('coerces a non-number to the default', () => {
     expect(
       readOmniConfig(fakeConfig({ maxResultsPerCategory: 'lots' })).maxResultsPerCategory,
