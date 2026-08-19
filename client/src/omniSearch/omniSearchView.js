@@ -37,6 +37,10 @@
     var breadcrumbEl = doc.getElementById('breadcrumb');
     var scopeHintEl = doc.getElementById('scopehint');
     var errorEl = doc.getElementById('error');
+    var previewToggleEl = doc.getElementById('previewToggle');
+    var scopeFilterEl = doc.getElementById('scopeFilter');
+    var scopeFilterMenuEl = doc.getElementById('scopeFilterMenu');
+    var matchModeEl = doc.getElementById('matchMode');
     var refIndicatorEl = doc.getElementById('refindicator');
     // The last category list + active scope pushed from the host. The host owns scope; we just reflect
     // what it sent. Kept so the scope hint can name the scopes an All-scope search leaves out (see
@@ -67,6 +71,18 @@
     // Set when the NEXT results render should scroll the list back to the top — true for a fresh
     // search/clear/scope/case change, false for Load-more (which should keep your place).
     var scrollResetPending = true;
+    // Whether the source-preview pane is shown. The pane costs the result list ~45% of its width,
+    // which the bottom-docked panel (wide but short) can least afford. Seeded from the host config,
+    // then owned here for the session — the host is never told, because hiding a pane has no effect
+    // on the search. Turning it OFF also stops the per-row preview round-trips.
+    var previewEnabled = true;
+    // Categories the user is holding back from the "All" fan-out (ids). Mirrors the engine's own set;
+    // the engine remains the authority — every results message refreshes this from it.
+    var excludedFromAll = [];
+    // The category descriptors last pushed by the host, for rebuilding the scope-filter menu.
+    var tabCategories = [];
+    // The live match algorithm, mirrored from the engine (which owns it, as it does case-sensitivity).
+    var matchMode = 'fuzzy';
 
     function post(command, extra) {
       var msg = { command: command };
@@ -213,6 +229,9 @@
 
     function requestPreview() {
       if (previewTimer) clearTimeout(previewTimer);
+      // Pane off: don't ask the host for source nobody will see. This is the "lighter mode" half of
+      // the toggle — arrowing down a long list stops costing a preview round-trip per row.
+      if (!previewEnabled) return;
       var id = activeRowId();
       if (id === null) return;
       previewTimer = setTimeout(function () {
@@ -393,6 +412,147 @@
       previewEl.classList.remove('has-content');
     }
 
+    // ── Preview-pane toggle (#40) ───────────────────────────────────
+    // Purely a chrome concern — the host is never told. Off hides the pane (so the result list gets
+    // the whole width) AND stops the per-row source requests; on re-fills it for the active row.
+    function setPreviewEnabled(on) {
+      previewEnabled = !!on;
+      if (previewEnabled) doc.body.classList.remove('no-preview');
+      else doc.body.classList.add('no-preview');
+      if (previewToggleEl) {
+        if (previewEnabled) previewToggleEl.classList.add('active');
+        else previewToggleEl.classList.remove('active');
+        previewToggleEl.setAttribute('aria-pressed', previewEnabled ? 'true' : 'false');
+        previewToggleEl.title = previewEnabled
+          ? 'Source preview: ON — click to give the width back to the results'
+          : 'Source preview: OFF — click to show the preview pane';
+      }
+      if (!previewEnabled) {
+        // Drop any in-flight request so a late reply can't repopulate a hidden pane.
+        if (previewTimer) {
+          clearTimeout(previewTimer);
+          previewTimer = null;
+        }
+        clearPreview();
+      } else {
+        requestPreview();
+      }
+    }
+
+    // ── Scope filter: which scopes "All" runs (#41) ─────────────────
+    // Only the ordinary categories are offered: the explicit-only ones (Source/Literals/Categories)
+    // are already outside "All" permanently, so listing them would suggest a choice that isn't one.
+    function excludableCategories() {
+      var out = [];
+      for (var i = 0; i < tabCategories.length; i++) {
+        if (!tabCategories[i].explicitOnly) out.push(tabCategories[i]);
+      }
+      return out;
+    }
+
+    function isExcluded(id) {
+      return excludedFromAll.indexOf(id) >= 0;
+    }
+
+    function renderScopeFilter() {
+      if (!scopeFilterMenuEl) return;
+      scopeFilterMenuEl.textContent = '';
+      var cats = excludableCategories();
+      var title = doc.createElement('div');
+      title.className = 'scope-opt-title';
+      title.textContent = 'Scopes included in All';
+      scopeFilterMenuEl.appendChild(title);
+      for (var i = 0; i < cats.length; i++) {
+        scopeFilterMenuEl.appendChild(makeScopeOption(cats[i]));
+      }
+      // The button reads "active" whenever something is held back, so a narrowed All is visible
+      // without opening the menu — otherwise a missing category looks like a search bug.
+      if (scopeFilterEl) {
+        var narrowed = excludedFromAll.length > 0;
+        if (narrowed) scopeFilterEl.classList.add('active');
+        else scopeFilterEl.classList.remove('active');
+        scopeFilterEl.title = narrowed
+          ? 'All is narrowed — ' + excludedFromAll.length + ' scope(s) left out. Click to change.'
+          : 'Choose which scopes the All search runs';
+      }
+    }
+
+    function makeScopeOption(cat) {
+      var included = !isExcluded(cat.id);
+      var b = doc.createElement('button');
+      b.className = 'scope-opt' + (included ? '' : ' off');
+      b.setAttribute('role', 'menuitemcheckbox');
+      b.setAttribute('aria-checked', included ? 'true' : 'false');
+      b.setAttribute('data-scope-id', cat.id);
+
+      var box = doc.createElement('span');
+      box.className = 'box';
+      box.textContent = included ? '✓' : ' ';
+      b.appendChild(box);
+
+      var label = doc.createElement('span');
+      label.textContent = cat.label;
+      b.appendChild(label);
+
+      b.addEventListener('click', function (ev) {
+        ev.stopPropagation();
+        toggleScopeExclusion(cat.id);
+      });
+      return b;
+    }
+
+    function toggleScopeExclusion(id) {
+      var next = [];
+      var found = false;
+      for (var i = 0; i < excludedFromAll.length; i++) {
+        if (excludedFromAll[i] === id) found = true;
+        else next.push(excludedFromAll[i]);
+      }
+      if (!found) next.push(id);
+      excludedFromAll = next;
+      renderScopeFilter(); // repaint immediately; the host's reply confirms it
+      scrollResetPending = true;
+      post('setExcludedFromAll', { excludedFromAll: excludedFromAll });
+    }
+
+    function setScopeMenuOpen(open) {
+      if (!scopeFilterMenuEl || !scopeFilterEl) return;
+      if (open) {
+        renderScopeFilter();
+        scopeFilterMenuEl.removeAttribute('hidden');
+      } else {
+        scopeFilterMenuEl.setAttribute('hidden', '');
+      }
+      scopeFilterEl.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+
+    function scopeMenuOpen() {
+      return !!scopeFilterMenuEl && !scopeFilterMenuEl.hasAttribute('hidden');
+    }
+
+    // ── Match algorithm, switchable mid-search (#42) ────────────────
+    // A three-state chip rather than a menu: it always SHOWS the current algorithm as text, which is
+    // both the label and the affordance, and cycling is one click. `matchMode` is engine-owned (like
+    // case sensitivity), so every results message refreshes it and the chip cannot drift.
+    var MATCH_MODES = ['fuzzy', 'substring', 'prefix'];
+    var MATCH_MODE_LABEL = { fuzzy: 'Fuzzy', substring: 'Substring', prefix: 'Prefix' };
+    var MATCH_MODE_HELP = {
+      fuzzy: 'Fuzzy — letters in order, gaps allowed (oc matches OrderedCollection)',
+      substring: 'Substring — the text must appear as-is, anywhere',
+      prefix: 'Prefix — the name must start with what you typed',
+    };
+
+    function setMatchMode(mode) {
+      matchMode = MATCH_MODES.indexOf(mode) >= 0 ? mode : 'fuzzy';
+      if (!matchModeEl) return;
+      matchModeEl.textContent = MATCH_MODE_LABEL[matchMode];
+      matchModeEl.title = MATCH_MODE_HELP[matchMode] + ' — click to change';
+    }
+
+    function nextMatchMode() {
+      return MATCH_MODES[(MATCH_MODES.indexOf(matchMode) + 1) % MATCH_MODES.length];
+    }
+
     // ── Inbound host messages ───────────────────────────────────────
     function onMessage(event) {
       var msg = event.data || {};
@@ -401,7 +561,14 @@
           if (typeof msg.referencesInPreview === 'boolean')
             referencesInPreview = msg.referencesInPreview;
           if (typeof msg.keyHint === 'string') referencesKeyHint = msg.keyHint;
+          // Starting values for the two Round-6 controls. `previewPane` arrives ONLY here: after
+          // this the toggle is the webview's own, so results messages must not carry (and undo) it.
+          if (typeof msg.previewPane === 'boolean') setPreviewEnabled(msg.previewPane);
+          if (Array.isArray(msg.excludedFromAll)) excludedFromAll = msg.excludedFromAll.slice();
+          if (typeof msg.matchMode === 'string') setMatchMode(msg.matchMode);
+          tabCategories = msg.categories || [];
           renderTabs(msg.categories, msg.scopeId);
+          renderScopeFilter();
           setCase(msg.caseSensitive);
           setPin(msg.pinned);
           updateClearVisibility();
@@ -409,7 +576,11 @@
           break;
         case 'results':
           setError('');
+          if (Array.isArray(msg.excludedFromAll)) excludedFromAll = msg.excludedFromAll.slice();
+          if (typeof msg.matchMode === 'string') setMatchMode(msg.matchMode);
+          tabCategories = msg.categories || [];
           renderTabs(msg.categories, msg.scopeId);
+          renderScopeFilter();
           setCase(msg.caseSensitive);
           setPin(msg.pinned);
           updateClearVisibility();
@@ -488,6 +659,10 @@
         clearTimeout(previewTimer);
         previewTimer = null;
       }
+      // The references list lives in this pane, so asking for references while the pane is hidden
+      // would be a gesture with no visible result. Treat the request as intent to see the pane and
+      // switch it back on (the toggle updates, so it doesn't look like a glitch).
+      if (!previewEnabled) setPreviewEnabled(true);
       previewMode = 'refs';
       refHighlightTerm = highlightTerm || '';
       previewEl.textContent = '';
@@ -822,6 +997,14 @@
     // to the input would then go silent while the mouse-driven buttons kept working. At the document
     // level the shortcuts fire whenever the panel has focus, wherever it sits.
     doc.addEventListener('keydown', function (ev) {
+      // An open scope menu takes Escape first: closing the menu must not also close the panel (or,
+      // in the docked host, throw focus back to the editor) — one Escape, one dismissal.
+      if (ev.key === 'Escape' && scopeMenuOpen()) {
+        ev.preventDefault();
+        setScopeMenuOpen(false);
+        inputEl.focus();
+        return;
+      }
       // While the references list is open: keys land on it, and Tab from the field dives into it
       // (rather than tabbing to the clear/case buttons).
       if (previewMode === 'refs' && previewEl.contains(ev.target)) {
@@ -931,6 +1114,36 @@
       inputEl.focus();
     });
 
+    if (previewToggleEl) {
+      previewToggleEl.addEventListener('click', function () {
+        setPreviewEnabled(!previewEnabled);
+        inputEl.focus();
+      });
+    }
+
+    if (scopeFilterEl) {
+      scopeFilterEl.addEventListener('click', function (ev) {
+        ev.stopPropagation(); // else the document handler below closes it in the same click
+        setScopeMenuOpen(!scopeMenuOpen());
+      });
+    }
+
+    if (matchModeEl) {
+      matchModeEl.addEventListener('click', function () {
+        scrollResetPending = true; // a different algorithm is a different answer — start at the top
+        post('setMatchMode', { mode: nextMatchMode() });
+        inputEl.focus();
+      });
+    }
+
+    // Click anywhere else dismisses the scope menu (standard menu behaviour; the menu's own clicks
+    // stop propagation so toggling several scopes in a row keeps it open).
+    doc.addEventListener('click', function (ev) {
+      if (!scopeMenuOpen()) return;
+      if (scopeFilterMenuEl && scopeFilterMenuEl.contains(ev.target)) return;
+      setScopeMenuOpen(false);
+    });
+
     if (pinEl) {
       pinEl.addEventListener('click', function () {
         post('togglePin');
@@ -980,6 +1193,19 @@
       activeRowId: activeRowId,
       rowCount: function () {
         return rows.length;
+      },
+      // Round-6 controls (#40 preview toggle / #41 All-scope filter).
+      setPreviewEnabled: setPreviewEnabled,
+      previewEnabled: function () {
+        return previewEnabled;
+      },
+      setScopeMenuOpen: setScopeMenuOpen,
+      scopeMenuOpen: scopeMenuOpen,
+      excludedFromAll: function () {
+        return excludedFromAll.slice();
+      },
+      matchMode: function () {
+        return matchMode;
       },
     };
   }

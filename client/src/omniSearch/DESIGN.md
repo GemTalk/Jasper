@@ -268,6 +268,70 @@ it**, so a new `OmniViewData` field reaches the engine but never the webview. Th
 truncation notice first shipped broken — the flag was computed and never forwarded, so the count still
 read `200 results`. A test in `omniSearchShared.test.ts` now fails if a field is added without forwarding.
 
+## Controlling what a search costs (#428 items #40 / #41)
+
+Two panel controls let the user decide what a search spends, instead of that being fixed in the code
+or reachable only by editing settings.json. Both follow the **`caseSensitive` contract**: a setting
+supplies the STARTING value, the in-panel control owns it for the rest of the session, and toggling
+never rewrites the user's settings. That matters here — writing a setting fires
+`onDidChangeConfiguration`, which drops the cached engine and re-primes the corpus, so a UI toggle
+that persisted itself would pay a stone round-trip for a cosmetic change.
+
+- **Preview-pane toggle (◧, `gemstone.omniSearch.previewPane`).** `#body` is a flex row: `#results`
+  is `flex: 1 1 55%` and `#preview` `flex: 1 1 45%`. The docked panel is wide but SHORT, so that 45%
+  buys a source view only a few lines tall while costing the result labels nearly half their width —
+  the host that pays most gets least. Off adds `body.no-preview` (which outranks
+  `#preview.has-content` on specificity) and short-circuits `requestPreview()`, so it also stops the
+  per-row source fetch as you arrow down. The toggle never reaches the host: hiding a pane has no
+  effect on the search. One exception — asking for references while the pane is hidden switches it
+  back on, since the references list lives in that pane and the gesture would otherwise do nothing
+  visible.
+- **All-scope filter (the `Scopes` button, `gemstone.omniSearch.excludeFromAll`).** `providersInScope` already held
+  `explicitOnly` categories (Source/Literals/Categories) out of the "All" fan-out by design; this
+  lets the user put an ordinary category — in practice **Methods**, which queries the stone on every
+  keystroke — into that same state. Scoping directly to a category always runs it, so an exclusion
+  never makes a scope unreachable. That is precisely what distinguishes it from
+  `gemstone.omniSearch.categories`, which removes the provider AND the tab; conflating the two is
+  the defect #41 reports. The engine owns the set (`setExcludedFromAll` re-runs the term and resets
+  the page cap, as `setScope` does) and echoes it on every results message, so the menu can never
+  drift from what the search actually did.
+
+- **Match algorithm (the `Fuzzy`/`Substring`/`Prefix` chip, `gemstone.omniSearch.matchMode`).** The
+  algorithm was settings-only, so comparing two of them meant leaving the search, editing
+  settings.json and starting over — for a choice whose whole point is that the right answer depends
+  on what you are hunting for. The chip shows the current algorithm as its own label (no legend
+  needed) and cycles on click. The engine owns the live value, exactly as it owns case sensitivity,
+  and echoes it on every results message.
+  ⚠️ **A live algorithm has to reach `filterPivot` too.** That function read `config.matchMode` — the
+  value baked in when the engine was constructed — so switching algorithms did nothing while a
+  references list was open. It now reads the engine's live `matchMode`; there is a test pinning it.
+
+## Why the matcher stays hand-rolled (#428 item #44)
+
+`fuzzysort` was weighed against `omniMatch` and **not adopted**. Measured, not assumed: the real
+`omniMatch.ts` was compiled out of the worktree and benchmarked against `fuzzysort` 4.0.2 on three
+corpora — the repo's own vendored Smalltalk class names (2 063) and selectors (8 230), plus a 20 000
+name corpus scaled from those (synthetic, but with authentic name shapes) to stand in for a real
+image. The benchmark ran outside the repo so no dependency was added to answer the question.
+
+- **Speed: fuzzysort wins, and it does not matter.** It is 3–24× faster (4.4× overall on 20 000
+  names). But `omniMatch`'s absolute worst case there is **16 ms for a single-character query**, and
+  3–8 ms for realistic ones — inside one frame, behind a 120 ms debounce. Nobody is waiting on it.
+- **Recall is identical.** Both returned exactly the same number of hits for every query on all three
+  corpora, so the hand-rolled subsequence matcher is not missing results.
+- **Ranking is at least as good, and arguably better.** For `oc`, `omniMatch` gives
+  `OCCURRENCE, Once, ONCE, OrderedCollection` where fuzzysort gives
+  `OCCURRENCE, SubOnlyCVar, OrderedCollection, Lock` — our word-start and contiguity weights are
+  tuned for camelCase identifiers.
+- **It would cost two shipped features.** fuzzysort is **fuzzy-only** — no `substring` or `prefix` —
+  and has **no case-sensitive option** (it always folds case; `single('OC', 'OrderedCollection')`
+  matches). Jasper exposes both as user settings, and the chip above just made the mode switchable
+  mid-search. Adopting fuzzysort would mean removing them.
+- **Plus a runtime dependency** (17.2 kB minified, no transitive deps — cheap, but not free on a
+  supply-chain surface this repo has been deliberately hardening).
+
+Revisit only if the corpus grows by an order of magnitude AND the matcher shows up in a profile.
+
 ## Deferred / follow-ups (tracked in issue #428)
 
 - **Recents / empty-state** (IntelliJ shows recent files when the field is empty).
