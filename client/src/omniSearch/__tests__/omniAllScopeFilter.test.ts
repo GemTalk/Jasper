@@ -184,6 +184,7 @@ describe('webview message payloads (#40 / #41)', () => {
     shownCount: 0,
     hasMore: false,
     exact: false,
+    truncations: [],
     pivot: false,
   };
 
