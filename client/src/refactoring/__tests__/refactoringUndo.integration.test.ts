@@ -10,6 +10,9 @@ import {
   startRenameMethodPreview,
 } from '../queries/previewRenameMethod';
 import {
+  captureClassHistory,
+  commitHistoryRevert,
+  discardPendingCapture,
   recordReverseRename,
   refactoringUndoStatus,
   startUndoRefactoringPreview,
@@ -917,4 +920,218 @@ cs addClassDefinitionEditInDictionary: nil className: 'Object' oldSource: 'a' ne
       ),
     ).rejects.toThrow(/nothing to take back out/);
   }, 60_000);
+
+  // ---------------------------------------------------------------------------------------
+  // The class reshapes with no opposite operation (#434) -- reversed by returning every class
+  // the refactoring reshaped to the version it had BEFORE it, then unbinding whatever the
+  // refactoring created.
+  //
+  // HELD BACK and these are the REPRODUCTION. End-to-end testing found that
+  // GsClassHistory>>revertClassNamed:toIndex: does not restore a class's own SUPERCLASS: it
+  // restores shape and methods and re-parents SUBCLASSES, but leaves the class itself under its
+  // current parent. So reverting an inserted-superclass refactoring and then unbinding the
+  // inserted parent would leave the class pointing at an unbound class. The commands therefore
+  // record no undo for these four yet (see the gate in each command); these tests are skipped
+  // until the reversal re-parents from the captured definition, at which point they are the
+  // acceptance criteria.
+  // ---------------------------------------------------------------------------------------
+
+  const capture = (root: string): string => captureClassHistory((code) => exec(code), root);
+  const commitRevert = (label: string, engine: string, created: string[] = []): string =>
+    commitHistoryRevert((code) => exec(code), label, engine, created);
+
+  const superclassOf = (cls: string): string => exec(`${cls} superclass name asString`).trim();
+
+  it.skip('returns a pushed-down instance variable to its pre-refactoring state', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    defineFixture();
+    clearRefactoringUndo((code) => exec(code));
+
+    const before = ownInstVarNames(CLS).slice().sort();
+    expect(capture(CLS)).toBe('ok');
+    exec(`(GsInstVarStructureRefactoring class: ${CLS} pushDownInstVar: 'balance')
+      applyDeselected: #()`);
+    expect(commitRevert(`Push down balance from ${CLS}`, 'GsInstVarStructureRefactoring')).toBe(
+      'ok',
+    );
+
+    expect(ownInstVarNames(CLS)).not.toContain('balance');
+    expect(ownInstVarNames(SUB)).toContain('balance');
+    expect(undoStatus().mechanism).toBe('historyRevert');
+
+    expect((await undoEverything()).failed).toHaveLength(0);
+
+    expect(ownInstVarNames(CLS).slice().sort()).toEqual(before);
+    expect(ownInstVarNames(SUB)).not.toContain('balance');
+    // The methods came back with the shape — the whole point of reverting rather than
+    // re-declaring the class by hand.
+    expect(definesSelector(CLS, 'undoUntouched')).toBe(true);
+    expect(definesSelector(CLS, 'undoAlsoUntouched', true)).toBe(true);
+    expect(definesSelector(SUB, 'undoSavingsOwn')).toBe(true);
+  }, 60_000);
+
+  it.skip('reverts the subtree top-down, so a subclass lands on its restored parent', async (ctx) => {
+    // The ordering trap: a child reverted before its parent would be re-parented onto a version
+    // the parent is about to supersede. If that happened, the subclass would no longer be a
+    // subclass of the restored parent.
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    defineFixture();
+    clearRefactoringUndo((code) => exec(code));
+
+    capture(CLS);
+    exec(`(GsInstVarStructureRefactoring class: ${CLS} pushDownInstVar: 'balance')
+      applyDeselected: #()`);
+    commitRevert('Push down balance', 'GsInstVarStructureRefactoring');
+    expect((await undoEverything()).failed).toHaveLength(0);
+
+    expect(superclassOf(SUB)).toBe(CLS);
+  }, 60_000);
+
+  it.skip('names the methods the revert will discard, and discards exactly those', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    defineFixture();
+    clearRefactoringUndo((code) => exec(code));
+
+    capture(CLS);
+    exec(`(GsInstVarStructureRefactoring class: ${CLS} pushDownInstVar: 'balance')
+      applyDeselected: #()`);
+    commitRevert('Push down balance', 'GsInstVarStructureRefactoring');
+
+    // Written AFTER the refactoring — the pre-refactoring state does not include it.
+    q.compileMethod(session(), CLS, false, 'after', 'undoWrittenAfter\n\t^ 7');
+
+    const token = 'undo-revert-preview';
+    const start = parseUndoStartPreview(
+      await startUndoRefactoringPreview(asyncExec, token, PREVIEW_PAGE_BYTES),
+    );
+    clearUndoRefactoringPreview((code) => exec(code), token);
+
+    expect(start.mechanism).toBe('historyRevert');
+    // All-or-nothing, so the panel disables the rows.
+    expect(start.deselection).toBe('ignored');
+    // The count is surfaced, and the row names the method itself.
+    expect(start.dropCount).toBeGreaterThan(0);
+    const warned = start.page.changes.find((c) => (c.warning ?? '').includes('undoWrittenAfter'));
+    expect(warned).toBeDefined();
+    expect(warned?.warning).toContain('pre-refactoring state DISCARDS');
+
+    expect((await undoEverything()).failed).toHaveLength(0);
+    // As warned.
+    expect(definesSelector(CLS, 'undoWrittenAfter')).toBe(false);
+    // And the pre-refactoring methods are all still here.
+    expect(definesSelector(CLS, 'undoUntouched')).toBe(true);
+  }, 60_000);
+
+  it.skip('previews a revert as a definition diff per reshaped class', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    defineFixture();
+    clearRefactoringUndo((code) => exec(code));
+
+    capture(CLS);
+    exec(`(GsInstVarStructureRefactoring class: ${CLS} pushDownInstVar: 'balance')
+      applyDeselected: #()`);
+    commitRevert('Push down balance', 'GsInstVarStructureRefactoring');
+
+    const token = 'undo-revert-diff';
+    const start = parseUndoStartPreview(
+      await startUndoRefactoringPreview(asyncExec, token, PREVIEW_PAGE_BYTES),
+    );
+    clearUndoRefactoringPreview((code) => exec(code), token);
+
+    const edit = start.page.changes.find((c) => c.kind === 'classDefinitionEdit');
+    expect(edit).toBeDefined();
+    // A real diff: what the class is now on the left, what reverting restores on the right.
+    expect(edit?.oldSource).not.toBe(edit?.newSource);
+    expect(edit?.newSource).toContain('balance');
+  }, 60_000);
+
+  it.skip('unbinds the class an extract-superclass created', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    defineFixture();
+    clearRefactoringUndo((code) => exec(code));
+
+    const EXTRACTED = 'UndoItAbstractAccount';
+    const originalParent = superclassOf(CLS);
+
+    capture(CLS);
+    exec(`(GsExtractSuperclassRefactoring
+        class: ${CLS}
+        insertSuperclassNamed: '${EXTRACTED}'
+        inDictionary: UserGlobals) applyDeselected: #()`);
+    commitRevert(`Insert superclass ${EXTRACTED} above ${CLS}`, 'GsExtractSuperclassRefactoring', [
+      EXTRACTED,
+    ]);
+
+    expect(superclassOf(CLS)).toBe(EXTRACTED);
+
+    const token = 'undo-extract-preview';
+    const start = parseUndoStartPreview(
+      await startUndoRefactoringPreview(asyncExec, token, PREVIEW_PAGE_BYTES),
+    );
+    clearUndoRefactoringPreview((code) => exec(code), token);
+    // The created class has no earlier version to revert to, so the reversal unbinds it.
+    expect(start.page.changes.some((c) => c.kind === 'classRemove')).toBe(true);
+
+    expect((await undoEverything()).failed).toHaveLength(0);
+
+    expect(superclassOf(CLS)).toBe(originalParent);
+    expect(exec(`(UserGlobals at: #'${EXTRACTED}' ifAbsent: [nil]) isNil printString`).trim()).toBe(
+      'true',
+    );
+    expect(definesSelector(CLS, 'undoUntouched')).toBe(true);
+  }, 60_000);
+
+  it.skip('reverses a split class, restoring the source and unbinding the component', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    defineFixture();
+    clearRefactoringUndo((code) => exec(code));
+
+    const COMPONENT = 'UndoItBalanceHolder';
+    const before = ownInstVarNames(CLS).slice().sort();
+
+    capture(CLS);
+    exec(`(GsSplitClassRefactoring
+        class: ${CLS}
+        splitIntoClassNamed: '${COMPONENT}'
+        extractingInstVars: #('balance')
+        inDictionary: UserGlobals) applyDeselected: #()`);
+    commitRevert(`Split ${CLS} into ${COMPONENT}`, 'GsSplitClassRefactoring', [COMPONENT]);
+
+    expect(
+      exec(`(UserGlobals at: #'${COMPONENT}' ifAbsent: [nil]) notNil printString`).trim(),
+    ).toBe('true');
+
+    expect((await undoEverything()).failed).toHaveLength(0);
+
+    expect(ownInstVarNames(CLS).slice().sort()).toEqual(before);
+    expect(exec(`(UserGlobals at: #'${COMPONENT}' ifAbsent: [nil]) isNil printString`).trim()).toBe(
+      'true',
+    );
+    expect(definesSelector(CLS, 'undoUntouched')).toBe(true);
+  }, 60_000);
+
+  it('records nothing when the capture was discarded, so a failed reshape offers no undo', (ctx) => {
+    // The pending-capture lifecycle, from the client side: a cancel / error / partial reshape
+    // drops the capture, and promoting it afterwards must refuse rather than record an undo
+    // against a state the capture does not describe.
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    defineFixture();
+    clearRefactoringUndo((code) => exec(code));
+
+    expect(capture(CLS)).toBe('ok');
+    expect(discardPendingCapture((code) => exec(code))).toBe('ok');
+    expect(commitRevert('Push down balance', 'GsInstVarStructureRefactoring')).toBe(
+      'nothing captured',
+    );
+    expect(undoStatus().available).toBe(false);
+  });
+
+  it('refuses to promote a capture that was never taken', (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+    clearRefactoringUndo((code) => exec(code));
+    discardPendingCapture((code) => exec(code));
+
+    expect(commitRevert('x', 'GsInstVarStructureRefactoring')).toBe('nothing captured');
+    expect(undoStatus().available).toBe(false);
+  });
 });

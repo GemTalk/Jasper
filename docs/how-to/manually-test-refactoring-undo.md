@@ -43,7 +43,8 @@ change is skipped; for an instance-variable **rename** un-ticking **deletes** th
 for the all-or-nothing reshapes the boxes are **disabled** because the engine applies its whole
 change set regardless.
 
-**Returned to their pre-refactoring state** — the remaining class reshapes:
+**Not yet reversible** (engine implemented, held back — see section 6c) — the remaining class
+reshapes:
 
 instance-variable push up / push down · convert temporary to instance variable ·
 extract superclass · insert superclass · split class
@@ -202,7 +203,13 @@ instead, the stone version, and whether the refactoring engine was freshly insta
 GemStone GCI output channel (`View → Output → GemStone GCI`) carries a `[undoRefactoring]`
 breadcrumb for every invocation and refusal.
 
-## 6c — Returning a reshape to its pre-refactoring state
+## 6c — Returning a reshape to its pre-refactoring state (NOT YET AVAILABLE)
+
+> ⛔ **Held back.** The engine side is implemented, but `revertClassNamed:toIndex:` does not restore
+> a class's own **superclass**, so reverting an inserted-superclass refactoring and then unbinding
+> the inserted parent would leave the class pointing at an unbound class. No undo is offered for
+> these four yet. The steps below are the acceptance criteria for when it is, and the matching
+> integration tests are `it.skip`ped in `refactoringUndo.integration.test.ts`.
 
 | # | Step | Expect |
 |---|---|---|
