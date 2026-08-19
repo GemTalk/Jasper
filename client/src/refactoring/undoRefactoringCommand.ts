@@ -17,7 +17,12 @@ import * as vscode from 'vscode';
 import { SessionManager } from '../sessionManager';
 import * as queries from '../browserQueries';
 import { PREVIEW_PAGE_BYTES } from './queries/previewRenameMethod';
-import { parseUndoStartPreview, parseUndoPage, parseApplyResult } from './undoRefactoringPreview';
+import {
+  UndoStartPreview,
+  parseUndoStartPreview,
+  parseUndoPage,
+  parseApplyResult,
+} from './undoRefactoringPreview';
 import { showUndoRefactoringPanel } from './undoRefactoringPanel';
 import { ensureRbSupport, refuse } from './renameAtCursorShared';
 import { refreshRefactoringUndoContext } from './refactoringUndoAvailability';
@@ -46,6 +51,38 @@ async function reloadVisibleGemstoneEditors(): Promise<void> {
     } catch {
       /* best-effort */
     }
+  }
+}
+
+/**
+ * After an undo, put the Explorer on the thing that came back (#434).
+ *
+ * Undoing a method rename restores the ORIGINAL selector, and leaving the tree pointed at
+ * whatever it was showing makes the user hunt for what just happened. The inverse change set is
+ * ordered restore-first, so the first `methodAdd` is the restored method — exactly the row to land
+ * on. Falls back to the first method change of any kind, so a plain recompile-style undo still
+ * lands somewhere relevant.
+ *
+ * Deliberately does nothing for a class-shape reversal: there is no single method to land on, and
+ * the Explorer refresh above already re-reads the class.
+ *
+ * Best-effort throughout — a reveal that cannot resolve simply leaves the panes alone.
+ */
+async function revealWhatCameBack(start: UndoStartPreview): Promise<void> {
+  const rows = start.page.changes;
+  const restored =
+    rows.find((c) => c.kind === 'methodAdd' && c.selector !== null) ??
+    rows.find((c) => c.selector !== null && c.kind.startsWith('method'));
+  if (!restored || restored.selector === null) return;
+  try {
+    await vscode.commands.executeCommand(
+      'gemstone.explorer.revealMethodByName',
+      restored.className,
+      restored.selector,
+      restored.isMeta,
+    );
+  } catch {
+    /* the Explorer may not be active, or the row may not be in the rebuilt tree */
   }
 }
 
@@ -130,6 +167,7 @@ export async function undoLastRefactoringCommand(sessions: SessionManager): Prom
   } catch {
     /* the Explorer may not be active */
   }
+  await revealWhatCameBack(start);
   await reloadVisibleGemstoneEditors();
 
   if (result.failed.length > 0) {

@@ -3682,6 +3682,26 @@ export class ExplorerController {
     await this.revealClass(chosen.dictName, chosen.dictIndex, chosen.className);
   }
 
+  /** Reveal+select a method row by class + selector, resolving the class across the whole symbol
+   *  list. Used after an UNDO that restored a method (#434): putting a method back and leaving the
+   *  Explorer pointed elsewhere makes the user hunt for what just happened. Best-effort — an
+   *  unresolvable class or selector simply leaves the panes as they are. */
+  async revealMethodByName(className: string, selector: string, isMeta: boolean): Promise<void> {
+    const session = this.session();
+    if (!session) return;
+    let entries: queries.ClassNameEntry[];
+    try {
+      entries = queries.getAllClassNames(session);
+    } catch {
+      return;
+    }
+    const chosen = entries.find((e) => e.className === className);
+    if (!chosen) return;
+    await this.revealClass(chosen.dictName, chosen.dictIndex, chosen.className, {
+      revealMethod: { selector, isMeta },
+    });
+  }
+
   // Reveal+select a dictionary row by name in the Dictionaries pane (used by Omni
   // Search). Resolves the 1-based symbol-list index from the live list, cascades
   // the panes to that dictionary, and highlights its row. Warns on an unknown name.
@@ -3788,14 +3808,29 @@ export class ExplorerController {
       return;
     }
 
+    // Captured BEFORE the dictionary is switched below: whether to keep the user's category
+    // depends on where they were, not where they are going.
+    const previousDictIndex = this.state.dictIndex;
+    const previousCategory = this.state.classCategory;
+
     this.state.dictName = dictName;
     this.state.dictIndex = dictIndex;
     this.classCategoryEntries = entries;
     this.loadDefinedIvarCounts();
     const catEntry = this.classCategoryEntries.find((e) => e.className === className);
-    // Only pin the category pane when the class has a non-empty one; otherwise
-    // leave it on "all classes" so the target row is guaranteed visible.
-    this.state.classCategory = catEntry && catEntry.category ? catEntry.category : undefined;
+    // Do NOT pin the pane to the revealed class's OWN category. That filters the Classes pane down
+    // to that category -- often a single class -- so the rest of the dictionary looks like it
+    // vanished. Reported after a class rename: the renamed class was revealed correctly and every
+    // other class in the dictionary disappeared behind its category.
+    //
+    // Keep the category the user had ALREADY chosen when the class really is in it, so a deliberate
+    // filter is not yanked away underneath them; otherwise clear it, so the class is revealed in the
+    // dictionary's full class list. A different dictionary means the old selection does not apply.
+    const keepCategory =
+      previousDictIndex === dictIndex &&
+      previousCategory !== undefined &&
+      catEntry?.category === previousCategory;
+    this.state.classCategory = keepCategory ? previousCategory : undefined;
     this.state.className = className;
     this.state.selectedSelector = undefined;
     this.state.selectedIsMeta = undefined;
@@ -5422,6 +5457,14 @@ export function registerGemStoneExplorer(
     // title button or the command palette).
     vscode.commands.registerCommand('gemstone.explorer.findClass', (name?: string) =>
       ctl.findClass(typeof name === 'string' ? name : undefined),
+    ),
+    // Reveal+select a method row by class + selector (used by Undo, #434).
+    vscode.commands.registerCommand(
+      'gemstone.explorer.revealMethodByName',
+      (className?: string, selector?: string, isMeta?: unknown) =>
+        typeof className === 'string' && typeof selector === 'string'
+          ? ctl.revealMethodByName(className, selector, isMeta === true)
+          : undefined,
     ),
     // Reveal+select a dictionary row by name (Omni Search dictionary results).
     vscode.commands.registerCommand('gemstone.explorer.revealDictionary', (name?: string) =>

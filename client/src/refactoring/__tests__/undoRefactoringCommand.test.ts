@@ -143,6 +143,98 @@ describe('undoLastRefactoringCommand', () => {
     expect(refreshRefactoringUndoContext).toHaveBeenCalledTimes(2);
   });
 
+  it('lands the Explorer on the method that came back', async () => {
+    // Undoing a rename restores the ORIGINAL selector; leaving the tree where it was makes the
+    // user hunt for what just happened. The inverse set is ordered restore-first, so the
+    // methodAdd row is the restored method.
+    vi.mocked(queries.startUndoRefactoringPreview).mockResolvedValue(
+      JSON.stringify({
+        token: 't1',
+        label: 'Rename #total to #sum',
+        mechanism: 'changeSet',
+        total: 2,
+        page: {
+          changes: [
+            {
+              id: '1',
+              kind: 'methodAdd',
+              className: 'Account',
+              isMeta: false,
+              selector: 'total',
+              newName: null,
+              category: 'computing',
+              oldSource: null,
+              newSource: 'total ^ 42',
+              warning: null,
+            },
+            {
+              id: '2',
+              kind: 'methodRemove',
+              className: 'Account',
+              isMeta: false,
+              selector: 'sum',
+              newName: null,
+              category: 'computing',
+              oldSource: 'sum ^ 42',
+              newSource: null,
+              warning: null,
+            },
+          ],
+          nextOffset: 0,
+          done: true,
+        },
+      }),
+    );
+
+    await undoLastRefactoringCommand(sessionsWith(true));
+
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+      'gemstone.explorer.revealMethodByName',
+      'Account',
+      'total',
+      false,
+    );
+  });
+
+  it('does not try to land on a row for a class-shape reversal', async () => {
+    // No single method to land on, and the Explorer refresh already re-reads the class.
+    vi.mocked(queries.startUndoRefactoringPreview).mockResolvedValue(
+      JSON.stringify({
+        token: 't1',
+        label: 'Push down balance',
+        mechanism: 'historyRevert',
+        total: 1,
+        page: {
+          changes: [
+            {
+              id: '1',
+              kind: 'classDefinitionEdit',
+              className: 'Account',
+              isMeta: false,
+              selector: null,
+              newName: null,
+              category: null,
+              oldSource: 'a',
+              newSource: 'b',
+              warning: null,
+            },
+          ],
+          nextOffset: 0,
+          done: true,
+        },
+      }),
+    );
+
+    await undoLastRefactoringCommand(sessionsWith(true));
+
+    expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith(
+      'gemstone.explorer.revealMethodByName',
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
   it('refreshes the Explorer and reports what was reversed', async () => {
     await undoLastRefactoringCommand(sessionsWith(true));
 

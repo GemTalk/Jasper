@@ -127,6 +127,7 @@ or the menu item is missing here, that is a bug worth reporting.
 | 3.4 | The Explorer method list | Shows `total`, not `sum` |
 | 3.5 | The toast | `Undid Rename #total to #sum (n changes). Compiled but NOT committed — commit when ready.` |
 | 3.6 | Check `total`'s **category** in the Explorer | Back to `computing` — **not** `as yet unclassified` |
+| 3.6b | Where the Explorer is pointing | The **restored method is selected** in the Methods pane — you should not have to hunt for what came back |
 | 3.7 | Check `untouched` and `UndoDemo class>>make` | Untouched, both of them |
 | 3.8 | Open the palette / the context menu again | The Undo entry is **gone** — the record was used up |
 
@@ -170,6 +171,7 @@ or the menu item is missing here, that is a bug worth reporting.
 | 6b.4 | Read the rows | Badged **Rename back** / **Re-version** / **Rewrite** — never `classRename` / `classReparent` |
 | 6b.5 | The `Rename back` row's label | `UndoRenamed → UndoDemo`, with no phantom `>>` (a class row has no selector) |
 | 6b.6 | Press Undo | Explorer shows `UndoDemo` again; `UndoRenamed` is gone |
+| 6b.6b | The Classes pane | Still lists the **other classes in the dictionary**, with `UndoDemo` selected — not narrowed to just it |
 | 6b.7 | Check `UndoDemo>>writtenLater` | **Still there** — carried forward through the reversal. This is the point of 6b.2 |
 | 6b.8 | Toast | Says it **reversed by renaming back** and that the class keeps its history — not a bare "Undid" |
 | 6b.9 | Class History on `UndoDemo` | More versions than before, not fewer — a reversal adds one |
