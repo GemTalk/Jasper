@@ -8,6 +8,8 @@ const chrome = {
   scopeId: null,
   caseSensitive: false,
   pinned: false,
+  excludedFromAll: OMNI_DEFAULTS.excludedFromAll,
+  matchMode: OMNI_DEFAULTS.matchMode,
 };
 
 /**

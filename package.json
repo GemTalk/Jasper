@@ -218,6 +218,20 @@
             "type": "boolean",
             "default": true,
             "markdownDescription": "Show a row's references/senders (Alt+Enter or the ↗ button) as a sticky list in the right-hand preview pane, leaving the results list in place — click an entry to open its source. Turn this **off** to use the classic behavior, where references replace the whole results list (a pivot you back out of with ← / Esc)."
+          },
+          "gemstone.omniSearch.previewPane": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Show the source preview beside the results, filling in as you move down the list. The pane takes about **45%** of the width, which the bottom panel — wide but short — can least afford, so turning it off gives that room back to the result labels and also stops the per-row source fetches. This is the value the panel **starts** with; the ◧ button in the panel switches it for the current session without changing this setting."
+          },
+          "gemstone.omniSearch.excludeFromAll": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": ["classes", "methods", "dictionaries", "globals"]
+            },
+            "default": [],
+            "markdownDescription": "Scopes to leave out of the **All** search while keeping their own tab, so you can still search them on purpose. Useful for **methods**, which queries the stone on every keystroke. This is different from `#gemstone.omniSearch.categories#`, which removes a scope altogether (no tab, no search). Source, Literals and Class Categories are always outside All and so cannot be listed here. This is the value the panel **starts** with; the **Scopes** button in the panel changes it for the current session without changing this setting."
           }
         }
       },

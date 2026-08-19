@@ -26,7 +26,7 @@ import {
   OmniTruncationSink,
   changeCategoryId,
 } from './omniTypes';
-import { match, compareMatches } from './omniMatch';
+import { match, compareMatches, MatchMode } from './omniMatch';
 import { referenceRequestFor } from './references';
 
 /** A provider's truncation report plus the human scope name, so the webview can say WHICH scope was
@@ -132,13 +132,25 @@ export interface OmniEngineDeps {
 // UIs behave identically.
 export const LOAD_ALL_LIMIT = 100_000;
 
-/** The enabled providers in scope. Under the all-scope (`null`), explicit-only categories are
- *  excluded so heavyweight searches never fire on a plain keystroke. */
+/**
+ * The enabled providers in scope.
+ *
+ * Under the all-scope (`null`) two things are held back, for the same reason but by different
+ * authority: `explicitOnly` categories (Source/Literals/Categories) are held back BY DESIGN so
+ * heavyweight searches never fire on a plain keystroke, and `excludedFromAll` categories are held
+ * back BY THE USER, who decided a category's per-keystroke cost isn't worth it (Methods being the
+ * usual one — it queries the stone on every keystroke).
+ *
+ * Scoping directly to a category always runs it: excluding a category from "All" must never make it
+ * unreachable, which is exactly what the `categories` setting does and why it is not the same knob.
+ */
 export function providersInScope(
   providers: readonly OmniProvider[],
   scopeId: OmniCategoryId | null,
+  excludedFromAll: ReadonlySet<OmniCategoryId> = new Set(),
 ): OmniProvider[] {
-  if (scopeId === null) return providers.filter((p) => !p.category.explicitOnly);
+  if (scopeId === null)
+    return providers.filter((p) => !p.category.explicitOnly && !excludedFromAll.has(p.category.id));
   return providers.filter((p) => p.category.id === scopeId);
 }
 
@@ -273,6 +285,8 @@ export interface OmniEngine {
   setScope(scopeId: OmniCategoryId | null): Promise<OmniViewData | null>;
   /** Toggle case-sensitive matching; re-runs the current term. */
   toggleCase(): Promise<OmniViewData | null>;
+  /** Switch the match algorithm for this session; re-runs the current term. */
+  setMatchMode(mode: MatchMode): Promise<OmniViewData | null>;
   /** Grow the result cap by one page; re-runs the current term. */
   loadMore(): Promise<OmniViewData | null>;
   /** Jump the cap to everything (bounded by the server fetch caps); re-runs the current term. */
@@ -281,6 +295,9 @@ export interface OmniEngine {
   pivot(rowId: number): Promise<OmniViewData | null>;
   /** Leave the reference view and restore the prior search. */
   exitPivot(): Promise<OmniViewData | null>;
+  /** Replace the set of categories held back from the "All" fan-out; re-runs the current term.
+   *  `explicitOnly` ids are ignored (they are never in "All" anyway). */
+  setExcludedFromAll(ids: readonly OmniCategoryId[]): Promise<OmniViewData | null>;
   /** Load a row's references/senders for the sticky preview-pane list WITHOUT pivoting — the search
    *  list and all search state are left intact. Returns null if not referenceable / no resolver. */
   referencesFor(rowId: number): Promise<ReferencePreview | null>;
@@ -288,8 +305,14 @@ export interface OmniEngine {
   referenceResultFor(refId: number): OmniResult | undefined;
   /** The `OmniResult` for a row id in the CURRENT view (for activation), or undefined. */
   resultFor(rowId: number): OmniResult | undefined;
-  /** Current UI state the panel needs to render chrome (scope, case, pivot). */
-  state(): { scopeId: OmniCategoryId | null; caseSensitive: boolean; pivot: boolean };
+  /** Current UI state the panel needs to render chrome (scope, case, pivot, All-scope exclusions). */
+  state(): {
+    scopeId: OmniCategoryId | null;
+    caseSensitive: boolean;
+    pivot: boolean;
+    excludedFromAll: OmniCategoryId[];
+    matchMode: MatchMode;
+  };
 }
 
 export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
@@ -298,7 +321,14 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
   let scopeId: OmniCategoryId | null = null;
   let lastRawValue = '';
   let caseSensitive = config.caseSensitive;
+  // The live match algorithm. Exactly parallel to `caseSensitive`: both change how the SAME corpus is
+  // matched, so both are worth trying mid-search rather than only in settings.json.
+  let matchMode = config.matchMode;
   let scopeLimit = config.maxResultsPerCategory;
+  // Categories the user holds back from the "All" fan-out. Seeded from settings, then owned by the
+  // panel's scope filter for the rest of the session — the toggle does NOT rewrite settings (same
+  // contract as `caseSensitive`), so a live experiment never edits the user's settings.json.
+  let excludedFromAll = new Set<OmniCategoryId>(config.excludedFromAll);
   // When non-null, the list shows the references/senders of a result (a "pivot"), not a live search.
   let pivot: ReferenceView | null = null;
   // The results backing the CURRENT view, indexed by row id.
@@ -310,6 +340,7 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
   const effectiveConfig = (): OmniConfig => ({
     ...config,
     caseSensitive,
+    matchMode,
     maxResultsPerCategory: scopeLimit,
   });
 
@@ -323,7 +354,10 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
     if (term.length === 0) return [...rows];
     const scored: OmniResult[] = [];
     for (const r of rows) {
-      const m = match(term, r.label, { mode: config.matchMode, caseSensitive });
+      // `matchMode`, not `config.matchMode`: the pivot filter has to honour a live algorithm change
+      // like every other match in the engine does, or switching modes would appear to do nothing
+      // while a references list is open.
+      const m = match(term, r.label, { mode: matchMode, caseSensitive });
       if (m) scored.push({ ...r, score: m.score, ranges: m.ranges });
     }
     scored.sort((a, b) =>
@@ -377,7 +411,7 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
         return gen !== generation;
       },
     };
-    const inScope = providersInScope(providers, scopeId);
+    const inScope = providersInScope(providers, scopeId, excludedFromAll);
     // Collected from any provider whose own server fetch ceiling bounded its results (today: methods).
     // A non-empty list means the run can never be an exact total, however high the display cap goes.
     const truncations: OmniViewTruncation[] = [];
@@ -476,6 +510,12 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
       caseSensitive = !caseSensitive;
       return runSearch(lastRawValue);
     },
+    async setMatchMode(mode) {
+      matchMode = mode;
+      // Deliberately does NOT reset the page cap, matching `toggleCase`: changing how the same corpus
+      // is matched is not a new question, so if you had loaded more you keep it.
+      return runSearch(lastRawValue);
+    },
     async loadMore() {
       scopeLimit += config.maxResultsPerCategory;
       return runSearch(lastRawValue);
@@ -500,6 +540,14 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
       pivot = null;
       return runSearch(lastRawValue);
     },
+    async setExcludedFromAll(ids) {
+      excludedFromAll = new Set(ids.filter((id) => CATEGORY_BY_ID[id]?.explicitOnly !== true));
+      // Re-running with the SAME term must not inherit a raised cap from a previous load-more, and
+      // `runSearch` only resets the cap when the term itself changes — so reset it here, as setScope
+      // does. Narrowing "All" is a fresh question, not more of the last answer.
+      scopeLimit = config.maxResultsPerCategory;
+      return runSearch(lastRawValue);
+    },
     async referencesFor(rowId) {
       if (!deps.resolveReferences) return null;
       const result = current[rowId];
@@ -516,6 +564,12 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
     },
     referenceResultFor: (refId) => referenceRows[refId],
     resultFor: (rowId) => current[rowId],
-    state: () => ({ scopeId, caseSensitive, pivot: pivot !== null }),
+    state: () => ({
+      scopeId,
+      caseSensitive,
+      pivot: pivot !== null,
+      excludedFromAll: [...excludedFromAll],
+      matchMode,
+    }),
   };
 }

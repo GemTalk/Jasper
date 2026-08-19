@@ -8,6 +8,7 @@
 import * as crypto from 'crypto';
 import { readWebviewScript } from '../webviewAssets';
 import { CATEGORY_BY_ID, OmniCategoryId, OmniConfig } from './omniTypes';
+import { MatchMode } from './omniMatch';
 import { OmniEngine, OmniViewData } from './omniEngine';
 
 // The Alt+Enter (references) gesture, rendered per platform. On macOS the Alt key is Option, shown
@@ -69,7 +70,14 @@ export function placeholderFor(scopeId: string | null): string {
   return 'Search classes, methods, globals…';
 }
 
-/** The `results` message payload for a fresh view, decorated with the current chrome state. */
+/**
+ * The `results` message payload for a fresh view, decorated with the current chrome state.
+ *
+ * `previewPane` is deliberately NOT included here. Once the webview has it from `configMessage` the
+ * toggle belongs to the webview alone (the engine has no part in it), so re-sending it on every
+ * results message would silently undo the user's toggle on their next keystroke. Anyone adding a
+ * field to this payload should double-check it is engine-owned before forwarding it.
+ */
 export function resultsMessage(
   view: OmniViewData,
   chrome: {
@@ -77,6 +85,8 @@ export function resultsMessage(
     scopeId: OmniCategoryId | null;
     caseSensitive: boolean;
     pinned: boolean;
+    excludedFromAll: OmniCategoryId[];
+    matchMode: MatchMode;
   },
 ): Record<string, unknown> {
   return {
@@ -97,6 +107,11 @@ export function resultsMessage(
     caseSensitive: chrome.caseSensitive,
     pinned: chrome.pinned,
     referencesInPreview: chrome.config.referencesInPreview,
+    // Which categories are currently held back from "All" — the scope filter renders its checkboxes
+    // from this, so the panel always shows what the engine actually did.
+    excludedFromAll: chrome.excludedFromAll,
+    // Engine-owned, like `caseSensitive` — so it IS re-sent every time, unlike `previewPane`.
+    matchMode: chrome.matchMode,
     placeholder: placeholderFor(view.pivot ? null : chrome.scopeId),
   };
 }
@@ -110,6 +125,10 @@ export function configMessage(config: OmniConfig, pinned: boolean): Record<strin
     caseSensitive: config.caseSensitive,
     pinned,
     referencesInPreview: config.referencesInPreview,
+    // Starting values for the two in-panel controls; both are owned by the session afterwards.
+    previewPane: config.previewPane,
+    excludedFromAll: config.excludedFromAll,
+    matchMode: config.matchMode,
     placeholder: placeholderFor(null),
     keyHint: REFERENCES_KEY_HINT,
   };
@@ -121,12 +140,18 @@ export interface CommonInbound {
   value?: string;
   scopeId?: OmniCategoryId | null;
   id?: number;
+  /** Categories to hold back from the "All" fan-out (the scope filter's checkbox state). */
+  excludedFromAll?: OmniCategoryId[];
+  /** The match algorithm picked from the panel. */
+  mode?: MatchMode;
 }
 
 /**
  * Run the engine op for a host-independent message (query / setScope / toggleCase / loadMore /
- * loadAll / references / back). Returns the fresh view, `null` when superseded, or `undefined` when
- * the message isn't one of these (so the host handles it — ready/activate/preview/close/togglePin).
+ * loadAll / references / back / setExcludedFromAll / setMatchMode). Returns the fresh view, `null` when superseded,
+ * or `undefined` when the message isn't one of these (so the host handles it —
+ * ready/activate/preview/close/togglePin). The preview-pane toggle is absent on purpose: it never
+ * reaches the host at all, since hiding the pane is pure chrome with no engine effect.
  */
 export function dispatchEngineMessage(
   engine: OmniEngine,
@@ -147,6 +172,10 @@ export function dispatchEngineMessage(
       return engine.pivot(m.id ?? -1);
     case 'back':
       return engine.exitPivot();
+    case 'setExcludedFromAll':
+      return engine.setExcludedFromAll(m.excludedFromAll ?? []);
+    case 'setMatchMode':
+      return engine.setMatchMode(m.mode ?? 'fuzzy');
     default:
       return undefined;
   }
@@ -473,6 +502,76 @@ export function renderOmniHtml(opts: { showPin: boolean }): string {
     body.busy #query { background:
       linear-gradient(90deg, var(--vscode-input-background) 0%, var(--vscode-list-hoverBackground) 50%, var(--vscode-input-background) 100%);
     }
+    /* Two controls over what a search COSTS: the preview-pane toggle and the All-scope filter.
+       Kept in their own block (and shaped to match the case chip rather than editing its rule) so
+       this stays an additive hunk. No backticks anywhere in here - this is a template literal. */
+    #previewToggle, #scopeFilter, #matchMode {
+      flex: 0 0 auto;
+      padding: 5px 9px;
+      border: 1px solid var(--vscode-input-border, transparent);
+      border-radius: 4px;
+      background: transparent;
+      color: var(--vscode-descriptionForeground);
+      cursor: pointer;
+      font-family: inherit;
+      opacity: 0.65;
+    }
+    #previewToggle.active, #scopeFilter.active {
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+      border-color: var(--vscode-button-background);
+      opacity: 1;
+    }
+    /* The algorithm chip always shows its CURRENT value as text, so it needs no on/off state. */
+    #matchMode {
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+      border-color: var(--vscode-button-background);
+      opacity: 1;
+    }
+    /* The filter button owns the menu's positioning context, so the searchbar rule is left alone. */
+    #scopeFilterWrap { position: relative; flex: 0 0 auto; display: inline-flex; }
+    #scopeFilterMenu {
+      position: absolute;
+      right: 0;
+      top: calc(100% + 4px);
+      z-index: 10;
+      min-width: 190px;
+      padding: 4px 0;
+      background: var(--vscode-menu-background, var(--vscode-editorWidget-background, var(--vscode-editor-background)));
+      color: var(--vscode-menu-foreground, var(--vscode-foreground));
+      border: 1px solid var(--vscode-menu-border, var(--vscode-widget-border, var(--vscode-panel-border, transparent)));
+      border-radius: 4px;
+      box-shadow: 0 2px 8px var(--vscode-widget-shadow, rgba(0,0,0,0.36));
+    }
+    #scopeFilterMenu[hidden] { display: none; }
+    .scope-opt-title {
+      padding: 2px 10px 4px;
+      font-size: 0.8em;
+      color: var(--vscode-descriptionForeground);
+      white-space: nowrap;
+    }
+    .scope-opt {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      padding: 4px 10px;
+      background: transparent;
+      border: none;
+      color: inherit;
+      font-family: inherit;
+      font-size: inherit;
+      text-align: left;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .scope-opt:hover { background: var(--vscode-list-hoverBackground); }
+    .scope-opt .box { flex: 0 0 auto; width: 1em; text-align: center; opacity: 0.9; }
+    .scope-opt.off { color: var(--vscode-descriptionForeground); }
+    /* Preview off: the results list gets the whole body width back. Beats the has-content rule on
+       specificity, so a loaded preview stays hidden until the pane is switched back on. */
+    body.no-preview #preview { display: none; }
   </style>
 </head>
 <body>
@@ -484,6 +583,12 @@ export function renderOmniHtml(opts: { showPin: boolean }): string {
         <button id="clear" title="Clear search" aria-label="Clear search" style="display:none">×</button>
       </div>
       <button id="case" title="Case sensitivity" aria-pressed="false">Aa</button>
+      <button id="previewToggle" title="Show the source preview" aria-label="Show the source preview" aria-pressed="true">&#9707;</button>
+      <span id="scopeFilterWrap">
+        <button id="scopeFilter" title="Choose which scopes the All search runs" aria-label="Choose which scopes the All search runs" aria-haspopup="true" aria-expanded="false">Scopes</button>
+        <div id="scopeFilterMenu" role="menu" hidden></div>
+      </span>
+      <button id="matchMode" title="Match algorithm" aria-label="Match algorithm">Fuzzy</button>
       <button id="refindicator" title="Showing references — click to exit" aria-pressed="false" style="display:none">↗ References</button>
       ${pinButton}
     </div>
