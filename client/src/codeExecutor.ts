@@ -468,6 +468,65 @@ export class CodeExecutor {
     vscode.window.setStatusBarMessage('GemStone: Result copied to clipboard.', 2000);
   }
 
+  /**
+   * Execute `code` with the GemStone debugger enabled, for a caller that has no
+   * editor behind it — a SUnit test started from a tree row, a gutter icon or a
+   * code lens. Deliberately the same execution path as Execute It (interpreted,
+   * debug-enabled, same non-blocking poll, same debugger prompt), so a test that
+   * halts behaves exactly like halted workspace code.
+   *
+   * Answers whether the code raised — and no more than that. Once the process
+   * is suspended it belongs to whichever debugger the user picked, so its
+   * eventual fate isn't ours to report. Throws when the execution could not be
+   * started at all.
+   */
+  async executeWithDebugger(
+    session: ActiveSession,
+    code: string,
+    label: string,
+  ): Promise<{ raised: boolean; message?: string }> {
+    if (this.executing.has(session.id)) {
+      throw new Error('A GemStone execution is already in progress on this session.');
+    }
+
+    const oopClassString = this.resolveUtf8ClassOopUsing(session);
+    this.setExecuting(session.id, true);
+    appendTranscriptOutput(setTranscriptLive(session, true));
+    try {
+      const { success, err: startErr } = session.gci.GciTsNbExecute(
+        session.handle,
+        code,
+        oopClassString,
+        OOP_ILLEGAL,
+        OOP_NIL,
+        GCI_PERFORM_FLAG_ENABLE_DEBUG | GCI_PERFORM_FLAG_INTERPRETED,
+        0,
+      );
+      if (!success) {
+        throw new Error(startErr.message || `GemStone error ${startErr.number}`);
+      }
+
+      await this.pollForResultOop(session);
+      return { raised: false };
+    } catch (e: unknown) {
+      // A cancelled (hard-break) run tells us nothing about the test, so it is
+      // reported as "raised" rather than passed off as a pass.
+      if (e instanceof NbCancelledError) return { raised: true, message: 'Execution cancelled.' };
+
+      const msg = e instanceof Error ? e.message : String(e);
+      logError(session.id, `${label}: ${msg}`);
+
+      if (e instanceof DebuggableError) {
+        await this.promptDebuggableError(session, e.context, `${label} — ${msg}`);
+        return { raised: true, message: msg };
+      }
+      throw e instanceof Error ? e : new Error(msg);
+    } finally {
+      appendTranscriptOutput(setTranscriptLive(session, false));
+      this.setExecuting(session.id, false);
+    }
+  }
+
   /** Show the full most recent Display It result in the Output panel. */
   outputLastResult(): void {
     if (this.lastResult === null) {

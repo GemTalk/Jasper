@@ -943,8 +943,14 @@ export function activate(context: vscode.ExtensionContext) {
     }),
   );
 
+  // ── Code Execution ─────────────────────────────────────
+  // Constructed before the SUnit controller, which borrows its debug-enabled
+  // execution path to run a single test under the debugger.
+  const codeExecutor = new CodeExecutor(sessionManager);
+  context.subscriptions.push(codeExecutor);
+
   // ── SUnit Test Controller ────────────────────────────────
-  const sunitTestController = new SunitTestController(sessionManager);
+  const sunitTestController = new SunitTestController(sessionManager, codeExecutor);
   context.subscriptions.push(sunitTestController);
 
   // Keep the pass/fail indicators honest. A compiled method or class definition
@@ -970,10 +976,6 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(grailNotebookController);
   const smalltalkNotebookController = new SmalltalkNotebookController(sessionManager);
   context.subscriptions.push(smalltalkNotebookController);
-
-  // ── Code Execution ─────────────────────────────────────
-  const codeExecutor = new CodeExecutor(sessionManager);
-  context.subscriptions.push(codeExecutor);
 
   // ── Status Bar: Active Session ─────────────────────────
   const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);

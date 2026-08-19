@@ -1,6 +1,7 @@
 import type { TestItem } from 'vscode';
 import * as vscode from 'vscode';
 import { buildClassDefinitionUri, buildMethodUri } from './gemstoneFileSystemProvider';
+import { debugTestMethodCode } from './queries/debugTestMethod';
 import { ActiveSession, SessionManager } from './sessionManager';
 import * as sunit from './sunitQueries';
 
@@ -48,6 +49,28 @@ function parseTestId(id: string): ParsedTestId {
  * places a run one does.
  */
 export type SunitRunKind = 'run' | 'debug';
+
+/**
+ * What the controller needs in order to run one test under the GemStone
+ * debugger. Narrower than the whole code executor on purpose: the two share the
+ * one debug-enabled execution path (suspend on error, hand the process to a
+ * debugger) without the controller depending on the rest of it.
+ */
+export interface SunitDebugExecutor {
+  executeWithDebugger(
+    session: ActiveSession,
+    code: string,
+    label: string,
+  ): Promise<SunitDebugOutcome>;
+}
+
+/** What became of one test run under the debugger. */
+export interface SunitDebugOutcome {
+  /** True when the test raised and the suspended process went to a debugger. */
+  raised: boolean;
+  /** The GemStone error message, when it raised. */
+  message?: string;
+}
 
 /** State of the most recent run of one test class or test method. */
 export type SunitOutcome = 'running' | 'passed' | 'failed' | 'error';
@@ -117,7 +140,15 @@ export class SunitTestController implements vscode.Disposable {
    */
   readonly onDidChangeResults = this._onDidChangeResults.event;
 
-  constructor(private sessionManager: SessionManager) {
+  constructor(
+    private sessionManager: SessionManager,
+    /**
+     * Absent only where nothing can be debugged anyway (tests of the run path).
+     * The extension always supplies one, so the Debug profile is always there
+     * for a user.
+     */
+    private debugExecutor?: SunitDebugExecutor,
+  ) {
     this.controller = vscode.tests.createTestController('gemstone-sunit', 'GemStone SUnit Tests');
 
     this.controller.resolveHandler = async (item) => {
@@ -134,6 +165,15 @@ export class SunitTestController implements vscode.Disposable {
       (request, token) => this.runTests(request, token),
       true,
     );
+
+    if (this.debugExecutor) {
+      this.controller.createRunProfile(
+        'Debug Tests',
+        vscode.TestRunProfileKind.Debug,
+        (request, token) => this.runTests(request, token, 'debug'),
+        true,
+      );
+    }
 
     this.controller.refreshHandler = async () => {
       this.resetDiscovery();
@@ -557,10 +597,15 @@ export class SunitTestController implements vscode.Disposable {
     className: string,
     selector: string,
     dictName: string,
-    _kind: SunitRunKind,
+    kind: SunitRunKind,
   ): Promise<void> {
     run.started(item);
     await this.markRunning([item]);
+
+    if (kind === 'debug' && this.debugExecutor) {
+      await this.debugSingleTest(session, run, item, className, selector, dictName);
+      return;
+    }
 
     try {
       const result = sunit.runTestMethod(session, className, selector, dictName);
@@ -571,17 +616,60 @@ export class SunitTestController implements vscode.Disposable {
     }
   }
 
+  /**
+   * Run one test under the debugger. Reports into the same store as an ordinary
+   * run — the whole point is that a test debugged from a row or a gutter icon
+   * leaves the same mark as one that was merely run.
+   */
+  private async debugSingleTest(
+    session: ActiveSession,
+    run: vscode.TestRun,
+    item: vscode.TestItem,
+    className: string,
+    selector: string,
+    dictName: string,
+  ): Promise<boolean> {
+    try {
+      const outcome = await this.debugExecutor!.executeWithDebugger(
+        session,
+        debugTestMethodCode(className, selector, dictName),
+        `${className}>>${selector}`,
+      );
+
+      if (!outcome.raised) {
+        this.reportPassed(run, item);
+        return false;
+      }
+
+      // Once the process is suspended and a debugger owns it, we no longer know
+      // whether an assertion failed or something else was raised — SUnit does
+      // that classification inside the handler a debug run deliberately omits.
+      // Report the honest "it raised", with the message, rather than guessing.
+      this.reportError(run, item, outcome.message ?? 'Test raised an exception.');
+      return true;
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.reportError(run, item, `Execution error: ${msg}`);
+      return true;
+    }
+  }
+
   private async runClassTests(
     session: ActiveSession,
     run: vscode.TestRun,
     classItem: vscode.TestItem,
     className: string,
     dictName: string,
-    _kind: SunitRunKind,
+    kind: SunitRunKind,
   ): Promise<void> {
     // Ensure children are resolved
     if (classItem.children.size === 0) {
       await this.resolveTestMethods(classItem);
+    }
+
+    if (kind === 'debug' && this.debugExecutor) {
+      await this.debugClassTests(session, run, classItem, className, dictName);
+      return;
     }
 
     // Mark all children as started
@@ -633,6 +721,53 @@ export class SunitTestController implements vscode.Disposable {
   }
 
   /**
+   * Debug every test in a class, one at a time — a suite run would install the
+   * handler that makes a failure undebuggable — and stop at the first test that
+   * raises, because from that moment a debugger owns the suspended process and
+   * running the next test on top of it would be nonsense. Tests after that one
+   * are left with no result rather than a made-up one.
+   */
+  private async debugClassTests(
+    session: ActiveSession,
+    run: vscode.TestRun,
+    classItem: vscode.TestItem,
+    className: string,
+    dictName: string,
+  ): Promise<void> {
+    const children: vscode.TestItem[] = [];
+    classItem.children.forEach((child) => children.push(child));
+
+    run.started(classItem);
+    await this.markRunning([classItem]);
+
+    let passedCount = 0;
+    for (const child of children) {
+      const selector = parseTestId(child.id).selector!;
+      run.started(child);
+      await this.markRunning([child]);
+
+      const raised = await this.debugSingleTest(session, run, child, className, selector, dictName);
+      if (raised) {
+        run.errored(classItem, new vscode.TestMessage(`${selector} raised.`));
+        this.setResult(dictName, className, undefined, {
+          outcome: 'error',
+          passedCount,
+          totalCount: children.length,
+        });
+        return;
+      }
+      passedCount += 1;
+    }
+
+    run.passed(classItem);
+    this.setResult(dictName, className, undefined, {
+      outcome: 'passed',
+      passedCount,
+      totalCount: children.length,
+    });
+  }
+
+  /**
    * Show the tests as running before the (blocking) stone call starts. The
    * yield matters: the queries are synchronous, so without handing the event
    * loop back the spinner would only ever appear after the answer arrived.
@@ -667,6 +802,13 @@ export class SunitTestController implements vscode.Disposable {
       message: result.message,
       durationMs: result.durationMs,
     });
+  }
+
+  /** A pass with no measured duration — a debugged test's elapsed time is the
+   * user's stepping time, which would be a lie on the row. */
+  private reportPassed(run: vscode.TestRun, item: vscode.TestItem): void {
+    run.passed(item);
+    this.reportOutcome(item, { outcome: 'passed' });
   }
 
   private reportError(run: vscode.TestRun, item: vscode.TestItem, message: string): void {

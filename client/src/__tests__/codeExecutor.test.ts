@@ -1619,4 +1619,79 @@ describe('CodeExecutor', () => {
       expect(diags[0].message).toContain('no socket');
     });
   });
+  describe('executeWithDebugger', () => {
+    // The debug-execution primitive a SUnit test run borrows: no editor, no
+    // result rendering — just "run this with the debugger enabled and tell me
+    // whether it raised".
+    it('runs the code with the debugger enabled and answers that it did not raise', async () => {
+      const gci = makeGci();
+      const session = makeSession(gci);
+      const executor = new CodeExecutor(makeSessionManager(session));
+
+      const outcome = await executor.executeWithDebugger(session, '3 + 4', 'MyTest>>testAdd');
+
+      expect(outcome).toEqual({ raised: false });
+      const flags = (gci.GciTsNbExecute as Mock).mock.calls[0][5] as number;
+      expect(flags & GCI_PERFORM_FLAG_ENABLE_DEBUG).toBe(GCI_PERFORM_FLAG_ENABLE_DEBUG);
+      expect((gci.GciTsNbExecute as Mock).mock.calls[0][1]).toBe('3 + 4');
+    });
+
+    it('needs no active editor — a test is debugged from a row, not from text', async () => {
+      (vscode.window as unknown as Record<string, unknown>).activeTextEditor = undefined;
+      const session = makeSession();
+      const executor = new CodeExecutor(makeSessionManager(session));
+
+      await expect(
+        executor.executeWithDebugger(session, '3 + 4', 'MyTest>>testAdd'),
+      ).resolves.toEqual({ raised: false });
+    });
+
+    it('offers the suspended process to a debugger and reports that it raised', async () => {
+      const gci = makeGci({
+        GciTsNbResult: vi.fn(() => ({
+          result: 0n,
+          err: { number: 2010, message: 'doesNotUnderstand: #foo', context: 999n },
+        })),
+      });
+      const session = makeSession(gci);
+      const executor = new CodeExecutor(makeSessionManager(session));
+
+      const outcome = await executor.executeWithDebugger(session, '3 + 4', 'MyTest>>testAdd');
+
+      expect(outcome).toEqual({ raised: true, message: 'doesNotUnderstand: #foo' });
+      expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+        expect.stringContaining('doesNotUnderstand: #foo'),
+        { modal: true },
+        'Enhanced Debug',
+        'Debug',
+      );
+    });
+
+    it('releases the session lock so the next test can run', async () => {
+      const session = makeSession();
+      const executor = new CodeExecutor(makeSessionManager(session));
+
+      await executor.executeWithDebugger(session, '3 + 4', 'MyTest>>testAdd');
+      await executor.executeWithDebugger(session, '3 + 4', 'MyTest>>testRemove');
+
+      expect((session.gci.GciTsNbExecute as Mock).mock.calls).toHaveLength(2);
+    });
+
+    it('refuses to start on a session that is already executing', async () => {
+      const session = makeSession();
+      const executor = new CodeExecutor(makeSessionManager(session));
+      // Hold the first execution open so the session is genuinely busy.
+      (session.gci.GciTsNbPoll as Mock).mockReturnValue({ result: 0, err: { number: 0 } });
+      const pending = executor.executeWithDebugger(session, '3 + 4', 'MyTest>>testAdd');
+
+      await expect(
+        executor.executeWithDebugger(session, '3 + 4', 'MyTest>>testRemove'),
+      ).rejects.toThrow(/already in progress/);
+
+      // Let it finish: a poll loop still spinning at the end of this test would
+      // be drained by whichever fake-timer test runs next.
+      (session.gci.GciTsNbPoll as Mock).mockReturnValue({ result: 1, err: { number: 0 } });
+      await pending;
+    });
+  });
 });

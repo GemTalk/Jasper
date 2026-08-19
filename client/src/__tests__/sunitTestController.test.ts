@@ -37,8 +37,8 @@ vi.mock('../sunitQueries', () => ({
   },
 }));
 
-import { tests, window } from '../__mocks__/vscode';
-import { SunitTestController } from '../sunitTestController';
+import { tests, window, TestRunProfileKind } from '../__mocks__/vscode';
+import { SunitTestController, SunitDebugOutcome } from '../sunitTestController';
 import { SessionManager } from '../sessionManager';
 import * as sunit from '../sunitQueries';
 
@@ -714,6 +714,96 @@ describe('SunitTestController', () => {
         methodItems.push(child),
       );
       expect(methodItems[0].range.start.line).toBe(0);
+      ctrl.dispose();
+    });
+  });
+
+  describe('debugging a test', () => {
+    // The debugger needs the test to run WITHOUT SUnit's exception handler, so a
+    // debug run can't go through runTestClass/runTestMethod. Everything else —
+    // which items run, and where the outcome is recorded — must stay identical.
+    function makeDebugExecutor(...outcomes: SunitDebugOutcome[]) {
+      const queued = [...outcomes];
+      const executeWithDebugger = vi.fn(
+        async (_session: unknown, _code: string, _label: string): Promise<SunitDebugOutcome> =>
+          queued.shift() ?? { raised: false },
+      );
+      return { executeWithDebugger };
+    }
+
+    it('offers a Debug profile alongside the Run profile', () => {
+      const ctrl = new SunitTestController(makeSessionManager(true), makeDebugExecutor());
+      const mockController = (tests.createTestController as ReturnType<typeof vi.fn>).mock
+        .results[0].value;
+
+      const kinds = (mockController.createRunProfile as ReturnType<typeof vi.fn>).mock.calls.map(
+        (call: unknown[]) => call[1],
+      );
+
+      expect(kinds).toEqual([TestRunProfileKind.Run, TestRunProfileKind.Debug]);
+      ctrl.dispose();
+    });
+
+    it('runs the test through the debug executor, not the ordinary run query', async () => {
+      const debugExecutor = makeDebugExecutor();
+      const ctrl = new SunitTestController(makeSessionManager(true), debugExecutor);
+
+      await ctrl.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd'], 'debug');
+
+      expect(sunit.runTestMethod).not.toHaveBeenCalled();
+      expect(debugExecutor.executeWithDebugger).toHaveBeenCalledOnce();
+      const code = debugExecutor.executeWithDebugger.mock.calls[0][1];
+      expect(code).toContain('MyTestCase');
+      expect(code).toContain('testAdd');
+      ctrl.dispose();
+    });
+
+    it('debugs a class one test at a time, not through the suite run', async () => {
+      const debugExecutor = makeDebugExecutor();
+      const ctrl = new SunitTestController(makeSessionManager(true), debugExecutor);
+
+      await ctrl.runClassByName('UserGlobals', 'MyTestCase', 'debug');
+
+      // runTestClass installs the handler that makes a failure undebuggable.
+      expect(sunit.runTestClass).not.toHaveBeenCalled();
+      expect(debugExecutor.executeWithDebugger).toHaveBeenCalledTimes(2);
+      ctrl.dispose();
+    });
+
+    it('stops a class debug at the first test that raises', async () => {
+      const debugExecutor = makeDebugExecutor({ raised: true, message: 'boom' });
+      const ctrl = new SunitTestController(makeSessionManager(true), debugExecutor);
+
+      await ctrl.runClassByName('UserGlobals', 'MyTestCase', 'debug');
+
+      // A debugger now owns the suspended process; running the next test on top
+      // of it would be nonsense.
+      expect(debugExecutor.executeWithDebugger).toHaveBeenCalledOnce();
+      expect(ctrl.resultFor('UserGlobals', 'MyTestCase', 'testAdd')).toMatchObject({
+        outcome: 'error',
+        message: 'boom',
+      });
+      expect(ctrl.resultFor('UserGlobals', 'MyTestCase', 'testRemove')).toBeUndefined();
+      ctrl.dispose();
+    });
+
+    it('records a debugged pass in the same store an ordinary run writes to', async () => {
+      const ctrl = new SunitTestController(makeSessionManager(true), makeDebugExecutor());
+
+      await ctrl.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd'], 'debug');
+
+      expect(ctrl.resultFor('UserGlobals', 'MyTestCase', 'testAdd')).toMatchObject({
+        outcome: 'passed',
+      });
+      ctrl.dispose();
+    });
+
+    it('leaves no duration on a debugged test — the elapsed time is stepping time', async () => {
+      const ctrl = new SunitTestController(makeSessionManager(true), makeDebugExecutor());
+
+      await ctrl.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd'], 'debug');
+
+      expect(ctrl.resultFor('UserGlobals', 'MyTestCase', 'testAdd')?.durationMs).toBeUndefined();
       ctrl.dispose();
     });
   });
