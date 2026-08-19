@@ -86,7 +86,10 @@ import {
 } from './optionalSupportOffer';
 import { refreshEnhancedInspectorAvailable } from './enhancedInspector/enhancedInspectorAvailability';
 import { refreshRefactoringSupportAvailable } from './refactoring/refactoringAvailability';
-import { refreshRefactoringUndoContext } from './refactoring/refactoringUndoAvailability';
+import {
+  refreshRefactoringUndoContext,
+  createUndoStatusBarItem,
+} from './refactoring/refactoringUndoAvailability';
 import { undoLastRefactoringCommand } from './refactoring/undoRefactoringCommand';
 import { supportsEnhancedInspector } from './enhancedInspector/enhancedInspectorInstall';
 import { DebuggerPanel } from './debuggerPanel';
@@ -1034,6 +1037,8 @@ export function activate(context: vscode.ExtensionContext) {
       refreshRefactoringUndoContext(sessionManager.getSelectedSession()),
     ),
   );
+  // The status-bar button is created before the first probe, so that probe can show it.
+  context.subscriptions.push(createUndoStatusBarItem());
   refreshRefactoringUndoContext(sessionManager.getSelectedSession());
 
   // ── Enhanced Inspector Perf Tracking ───────────────────────────────────

@@ -1547,7 +1547,7 @@
         "command": "gemstone.undoLastRefactoring",
         "title": "Undo Last Refactoring…",
         "category": "GemStone",
-        "icon": "$(debug-step-back)"
+        "icon": "resources/undo-refactoring.svg"
       },
       {
         "command": "gemstone.explorer.inlineMethod",
