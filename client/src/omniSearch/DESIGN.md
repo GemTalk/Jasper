@@ -1,4 +1,4 @@
-# Omni Search (issue #378) — design
+# GemStone Search (issue #378) — design
 
 Global "search anything browsable" for the GemStone IDE — the Jasper answer to Pharo's
 **Spotter** and IntelliJ's **Search Everywhere**, built to feel native to a VS Code user.
@@ -9,6 +9,19 @@ Global "search anything browsable" for the GemStone IDE — the Jasper answer to
 > and the editor-tab **Spotter** (`ui: "spotter"`). Both drive the single, `vscode`-free
 > `omniEngine.ts`, so there is exactly one search path. This document describes the shipped design;
 > where the QuickPick shaped a decision it's called out as origin, not current behaviour.
+
+> **Name & home (settled).** The feature is **GemStone Search** everywhere — the command title, the
+> settings-page section, the panel/Spotter title, the bottom-panel tab, the status-bar button, error
+> toasts, tooltips, and throughout this document. The name keeps the GemStone brand on the panel strip
+> next to Terminal / Output, where a generic name would say nothing about which extension owns it. The
+> code still uses the `omniSearch` identifier prefix — the `client/src/omniSearch/` module, the
+> `OmniSearch*` classes, and the `gemstone.omniSearch.*` setting keys — because those keys live in
+> users' `settings.json` and renaming them would break existing configuration for no user-visible gain.
+> The command itself was renamed to `gemstone.search` (commands are not persisted in user config, so the
+> old `omniSearch` name there was pure internal drift with no compatibility cost). Treat `omniSearch` as
+> an internal identifier, not a second name. This design note **stays in the repo** next to the code it describes rather than moving to an
+> external support doc, so it is reviewed and kept in sync in the same change as the code (both
+> decisions resolve #428 / [#447](https://github.com/GemTalk/Jasper/issues/447)).
 
 ## Prior art that shaped the design
 
@@ -44,7 +57,7 @@ Global "search anything browsable" for the GemStone IDE — the Jasper answer to
 
 2. **Provider-per-category model** (mirrors Spotter processors). `OmniProvider` = `{ category,
    prime?, search(query, cfg, token) }`. Providers in the default fan-out: **Classes, Methods,
-   Dictionaries, Globals**; plus the **explicit-only** **Source, Literals, Categories** (see #3).
+   Dictionaries, Globals**; plus the **explicit-only** **Source, Literals, Class Categories** (see #3).
    Adding a category is a new provider — no engine change. (An Open Editors provider shipped initially
    but was **dropped** — the open-tab list is tiny and VS Code's own Open Editors view covers it.)
 
@@ -78,19 +91,26 @@ Global "search anything browsable" for the GemStone IDE — the Jasper answer to
        as source text). Two forms: a **symbol** (`#at:put:`) via `literalSymbolReferences`, and a
        **string** via `stringLiteralReferences`. The symbol branch is shape-gated by `isSymbolLiteral`
        so a raw expression is never eval'd against the stone.
-     - _Categories_ — class-category names; a whole-image scan (`getAllClassCategories`) so it
-       **lazy-loads on first search**, not on open.
+     - _Class Categories_ — class-category names; a whole-image scan (`getAllClassCategories`) so it
+       **lazy-loads on first search**, not on open. (Tab label "Class Categories"; scope id
+       `categories`, kept because it is a value in users' `settings.json`. The in-code
+       `OMNI_CATEGORIES` array holds *all* scopes, not just this one — a known name collision left
+       as-is rather than renamed, since the scope id is the part that cannot safely move.)
 
      ⚠️ Being excluded from the all-scope fan-out has a UX cost that has to be paid for explicitly: an
      All-scope search silently returns nothing for a term only those scopes could find, so "no results"
      is indistinguishable from "not in the image". Reproduced with `no such element` — 4 hits under
      Source, 0 under All. So while the All scope is active **and** something is typed, the view shows a
      hint under the field naming the skipped scopes, each one a button that switches to it:
-     `Not searched here: Source · Literals · Categories — click one to search it` (`updateScopeHint` in
+     `Not searched here: Source · Literals · Class Categories — click one to search it` (`updateScopeHint` in
      `omniSearchView.js`). It stays silent when a heavy scope is already active (its own
-     placeholder hint applies then), when the field is empty, and when the user has disabled the heavy
-     scopes via the `categories` setting. Enter was deliberately left alone — it activates the selected
-     row, and making it scope-dependent would trade one surprise for another.
+     placeholder hint applies then), when the field is empty, when the user has disabled the heavy
+     scopes via the `categories` setting, and **during a references pivot** — the pivot's rows are a
+     fixed list of senders already fetched from the stone, not a search, so nothing is being skipped;
+     clicking a scope name there would only start a fresh search and silently discard the pivot (this
+     mirrors the placeholder, which `resultsMessage` already blanks for a pivot). Enter was deliberately
+     left alone — it activates the selected row, and making it scope-dependent would trade one surprise
+     for another.
 
 4. **Pluggable, savable match algorithm** (the issue asks for this). A pure matcher (`omniMatch.ts`)
    with modes `fuzzy` (subsequence, default) | `substring` | `prefix`, plus case-sensitivity — read
@@ -99,7 +119,7 @@ Global "search anything browsable" for the GemStone IDE — the Jasper answer to
    every candidate, drop non-matches, sort by the matcher's total order, cap to `maxResultsPerCategory`.
 
 5. **Trigger.** VS Code cannot bind _double-tap-Shift_ (keybindings are chords, not double-taps), so we
-   ship a command `gemstone.omniSearch` + a default keybinding **`ctrl+shift+a`** (`cmd+shift+a` on
+   ship a command `gemstone.search` + a default keybinding **`ctrl+shift+a`** (`cmd+shift+a` on
    macOS), `when: gemstone.hasActiveSession && !terminalFocus` (a Jasper window, not the terminal),
    configurable, plus a palette entry. A single simultaneous chord (not a sequential `ctrl+k` two-step)
    that stays clear of the notebook cell-run gestures (`shift+enter` / `ctrl+enter` / `alt+enter`) — an
@@ -290,7 +310,7 @@ that persisted itself would pay a stone round-trip for a cosmetic change.
   back on, since the references list lives in that pane and the gesture would otherwise do nothing
   visible.
 - **All-scope filter (the `Scopes` button, `gemstone.omniSearch.excludeFromAll`).** `providersInScope` already held
-  `explicitOnly` categories (Source/Literals/Categories) out of the "All" fan-out by design; this
+  `explicitOnly` categories (Source/Literals/Class Categories) out of the "All" fan-out by design; this
   lets the user put an ordinary category — in practice **Methods**, which queries the stone on every
   keystroke — into that same state. Scoping directly to a category always runs it, so an exclusion
   never makes a scope unreachable. That is precisely what distinguishes it from
@@ -343,11 +363,10 @@ Revisit only if the corpus grows by an order of magnitude AND the matcher shows 
   removals fold per class, dictionary changes and commit/abort re-scan), so a class created after the
   UI opened DOES appear now. Still stale until the next commit/abort `resync`: a **global created by
   evaluating code** (nothing announces a new global), a **brand-new class category** when the
-  Categories scope is already loaded, and anything changed by **another session**.
+  Class Categories scope is already loaded, and anything changed by **another session**.
 - Extra providers / scopes: **dedicated Symbols scope**, **method-categories scope**,
   senders/implementors, commands, settings.
 - **Double-tap-Shift** trigger.
-- Naming: settle on "Omni Search" vs "GemStone Search" across command titles and UI (#428).
 
 ## Testing
 

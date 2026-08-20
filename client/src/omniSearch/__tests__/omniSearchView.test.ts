@@ -74,7 +74,7 @@ const CATEGORIES = [
     searchHint: 'Type text to find inside method source',
   },
   { id: 'literals', label: 'Literals', explicitOnly: true },
-  { id: 'categories', label: 'Categories', explicitOnly: true },
+  { id: 'categories', label: 'Class Categories', explicitOnly: true },
 ];
 
 function resultsMsg(over: Record<string, unknown> = {}) {
@@ -105,7 +105,7 @@ beforeEach(() => {
   document.body.className = '';
 });
 
-describe('Omni Search view — tabs', () => {
+describe('GemStone Search view — tabs', () => {
   it('renders an "All" tab plus one labeled tab per category, marking the active scope', () => {
     const { handle } = mount();
     handle.renderTabs(
@@ -169,7 +169,7 @@ describe('Omni Search view — tabs', () => {
   });
 });
 
-describe('Omni Search view — results rendering (flat, no grouping)', () => {
+describe('GemStone Search view — results rendering (flat, no grouping)', () => {
   it('renders a single flat row list with no group dividers', () => {
     const { handle } = mount();
     handle.renderResults(
@@ -244,7 +244,7 @@ describe('Omni Search view — results rendering (flat, no grouping)', () => {
   });
 });
 
-describe('Omni Search view — footer count + load controls', () => {
+describe('GemStone Search view — footer count + load controls', () => {
   it('shows "N results" and hides load buttons when nothing more is available', () => {
     const { handle } = mount();
     handle.renderResults(resultsMsg({ rows: [row(0, 'Foo')], shownCount: 1 }));
@@ -442,7 +442,7 @@ describe('Omni Search view — footer count + load controls', () => {
   });
 });
 
-describe('Omni Search view — case + pin indicators', () => {
+describe('GemStone Search view — case + pin indicators', () => {
   it('a config message reflects the case-sensitivity state on the always-on chip', () => {
     const { handle } = mount();
     handle.onMessage({
@@ -470,7 +470,7 @@ describe('Omni Search view — case + pin indicators', () => {
   });
 });
 
-describe('Omni Search view — preview pane', () => {
+describe('GemStone Search view — preview pane', () => {
   it('a preview message for the active row fills the preview pane', () => {
     const { handle } = mount();
     handle.renderResults(
@@ -512,7 +512,7 @@ describe('Omni Search view — preview pane', () => {
   });
 });
 
-describe('Omni Search view — clear button', () => {
+describe('GemStone Search view — clear button', () => {
   it('is hidden when the field is empty and shown once there is text', () => {
     mount();
     const input = document.getElementById('query') as HTMLInputElement;
@@ -537,7 +537,7 @@ describe('Omni Search view — clear button', () => {
   });
 });
 
-describe('Omni Search view — scroll reset', () => {
+describe('GemStone Search view — scroll reset', () => {
   it('scrolls the result list back to the top on a fresh query but not on load-more', () => {
     const { handle } = mount();
     // jsdom does no layout, so scrollTop stays 0 — record every write instead of reading it back.
@@ -567,7 +567,7 @@ describe('Omni Search view — scroll reset', () => {
   });
 });
 
-describe('Omni Search view — keyboard', () => {
+describe('GemStone Search view — keyboard', () => {
   function keydown(over: Partial<KeyboardEventInit> & { key: string }) {
     document
       .getElementById('query')!
@@ -654,7 +654,7 @@ describe('Omni Search view — keyboard', () => {
   });
 });
 
-describe('Omni Search view — references in the preview pane', () => {
+describe('GemStone Search view — references in the preview pane', () => {
   function seedActive(handle: ReturnType<ViewApi['wire']>) {
     handle.renderResults(
       resultsMsg({
@@ -898,11 +898,11 @@ describe('Omni Search view — references in the preview pane', () => {
   });
 });
 
-// The three explicit-only scopes (Source / Literals / Categories) are dropped by
+// The three explicit-only scopes (Source / Literals / Class Categories) are dropped by
 // `providersInScope` whenever the scope is All, so an All-scope search never runs them and nothing said
 // so. Verified live: `no such element` finds 4 methods under Source and 0 under All. The hint names the
 // skipped scopes and doubles as the one-click way into them.
-describe('Omni Search view — scopes skipped under All', () => {
+describe('GemStone Search view — scopes skipped under All', () => {
   const hint = () => document.getElementById('scopehint') as HTMLElement;
 
   /** Render an All-scope result set with something typed in the field. */
@@ -919,7 +919,7 @@ describe('Omni Search view — scopes skipped under All', () => {
     expect(hint().textContent).toContain('Not searched here');
     expect(hint().textContent).toContain('Source');
     expect(hint().textContent).toContain('Literals');
-    expect(hint().textContent).toContain('Categories');
+    expect(hint().textContent).toContain('Class Categories');
     // The plain scopes ARE searched under All, so naming them would be a lie.
     expect(hint().textContent).not.toContain('Classes');
     expect(hint().textContent).not.toContain('Globals');
@@ -985,5 +985,156 @@ describe('Omni Search view — scopes skipped under All', () => {
     (document.getElementById('clear') as HTMLButtonElement).click();
     expect(hint().style.display).toBe('none');
     expect(hint().textContent).toBe('');
+  });
+
+  it('stays hidden during a references pivot — the rows are fetched senders, not a search', () => {
+    const { handle } = mount();
+    (document.getElementById('query') as HTMLInputElement).value = 'printString';
+
+    handle.onMessage({
+      data: resultsMsg({
+        rows: [refRow(0, 'Foo>>bar')],
+        shownCount: 1,
+        pivot: true,
+        pivotTitle: 'Senders of printString',
+        pivotHint: 'Esc to go back',
+        categories: CATEGORIES,
+        scopeId: null,
+      }),
+    });
+
+    // Nothing is being searched in a pivot, and each scope name would silently discard it.
+    expect(hint().style.display).toBe('none');
+    expect(hint().textContent).toBe('');
+  });
+
+  it('returns after leaving the pivot, back under All with a term still typed', () => {
+    const { handle } = mount();
+    (document.getElementById('query') as HTMLInputElement).value = 'printString';
+
+    handle.onMessage({
+      data: resultsMsg({
+        rows: [refRow(0, 'Foo>>bar')],
+        shownCount: 1,
+        pivot: true,
+        categories: CATEGORIES,
+        scopeId: null,
+      }),
+    });
+    handle.onMessage({
+      data: resultsMsg({
+        rows: [],
+        shownCount: 0,
+        pivot: false,
+        categories: CATEGORIES,
+        scopeId: null,
+      }),
+    });
+
+    expect(hint().style.display).toBe('block');
+    expect(hint().textContent).toContain('Not searched here');
+  });
+});
+
+describe('search field debounce', () => {
+  /** Mount, then push a host config carrying `debounceMs` (the only way the webview learns it). */
+  function mountWithDebounce(debounceMs: number) {
+    const m = mount();
+    m.handle.onMessage({
+      data: { command: 'config', categories: [], scopeId: null, debounceMs },
+    });
+    m.vscode.postMessage.mockClear();
+    return m;
+  }
+
+  function type(text: string) {
+    const input = document.getElementById('query') as HTMLInputElement;
+    input.value = text;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
+  function queries(vscode: { postMessage: ReturnType<typeof vi.fn> }) {
+    return vscode.postMessage.mock.calls
+      .map((c) => c[0] as { command: string; value?: string })
+      .filter((m) => m.command === 'query')
+      .map((m) => m.value);
+  }
+
+  it('coalesces a burst of keystrokes into ONE search, carrying the final text', () => {
+    vi.useFakeTimers();
+    try {
+      const { vscode } = mountWithDebounce(120);
+      type('f');
+      type('fo');
+      type('foo');
+      expect(queries(vscode)).toEqual([]); // nothing sent while the user is still typing
+
+      vi.advanceTimersByTime(120);
+      expect(queries(vscode)).toEqual(['foo']); // one search, the finished term
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('waits for quiet — a keystroke inside the window restarts the delay', () => {
+    vi.useFakeTimers();
+    try {
+      const { vscode } = mountWithDebounce(120);
+      type('f');
+      vi.advanceTimersByTime(100); // not yet
+      type('fo');
+      vi.advanceTimersByTime(100); // still inside the restarted window
+      expect(queries(vscode)).toEqual([]);
+
+      vi.advanceTimersByTime(20);
+      expect(queries(vscode)).toEqual(['fo']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('searches immediately when the delay is 0 (opt-out) and before any config arrives', () => {
+    const immediate = mountWithDebounce(0);
+    type('ab');
+    expect(queries(immediate.vscode)).toEqual(['ab']);
+
+    // No config message at all — the field must still work, just uncoalesced.
+    const bare = mount();
+    type('cd');
+    expect(queries(bare.vscode)).toEqual(['cd']);
+  });
+
+  it('the clear button searches at once and cancels a keystroke still pending', () => {
+    vi.useFakeTimers();
+    try {
+      const { vscode } = mountWithDebounce(120);
+      type('foo');
+      (document.getElementById('clear') as HTMLButtonElement).click();
+      expect(queries(vscode)).toEqual(['']); // immediate, not waiting out the timer
+
+      vi.advanceTimersByTime(500);
+      expect(queries(vscode)).toEqual(['']); // and 'foo' never lands after the clear
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('ignores a nonsense debounce value, keeping the last good one in force', () => {
+    vi.useFakeTimers();
+    try {
+      const { handle, vscode } = mountWithDebounce(120);
+      // A negative value is not a valid delay; adopting it would drop the coalescing entirely.
+      handle.onMessage({
+        data: { command: 'config', categories: [], scopeId: null, debounceMs: -5 },
+      });
+      vscode.postMessage.mockClear();
+
+      type('x');
+      expect(queries(vscode)).toEqual([]); // still coalescing, so -5 was not adopted
+      vi.advanceTimersByTime(120);
+      expect(queries(vscode)).toEqual(['x']);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

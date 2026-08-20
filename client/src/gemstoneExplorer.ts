@@ -739,9 +739,9 @@ export class ExplorerController {
   constructor(
     private readonly sessionManager: SessionManager,
     /** Called after a symbol-list structural change (dictionary add/remove/rename) so other views —
-     *  e.g. Omni Search's cached dictionary corpus — can refresh. Uncommitted, but visible in-session. */
+     *  e.g. GemStone Search's cached dictionary corpus — can refresh. Uncommitted, but visible in-session. */
     private readonly onSymbolListChanged?: (sessionId: number) => void,
-    /** Called once per class removed by Remove Class, so views holding a cached class corpus (Omni
+    /** Called once per class removed by Remove Class, so views holding a cached class corpus (GemStone
      *  Search) can drop it. Per class, not per command: the delete takes the whole subtree. */
     private readonly onClassRemoved?: (sessionId: number, className: string) => void,
   ) {}
@@ -750,7 +750,7 @@ export class ExplorerController {
     return this.sessionManager.getSelectedSession();
   }
 
-  // Resolve the session a reveal should run against. When a caller (Omni Search) names the session its
+  // Resolve the session a reveal should run against. When a caller (GemStone Search) names the session its
   // result came from, switch the Explorer to that session first so the reveal targets the right data —
   // otherwise, after the user switches the active session, a click would resolve against the new one
   // and land in the wrong session (or a same-named dictionary/category). With no id, fall back to the
@@ -3587,7 +3587,7 @@ export class ExplorerController {
   async findClass(name?: string, sessionId?: number): Promise<void> {
     // Resolve rather than require a pre-selected session: if one session is
     // logged in it's chosen automatically (a bare getSelectedSession() no-ops).
-    // An explicit sessionId (Omni Search) pins the reveal to the result's own session.
+    // An explicit sessionId (GemStone Search) pins the reveal to the result's own session.
     const session = await this.resolveSessionFor(sessionId);
     if (!session) return;
 
@@ -3630,7 +3630,7 @@ export class ExplorerController {
     await this.revealClass(chosen.dictName, chosen.dictIndex, chosen.className);
   }
 
-  // Reveal+select a dictionary row by name in the Dictionaries pane (used by Omni
+  // Reveal+select a dictionary row by name in the Dictionaries pane (used by GemStone
   // Search). Resolves the 1-based symbol-list index from the live list, cascades
   // the panes to that dictionary, and highlights its row. Warns on an unknown name.
   async revealDictionaryByName(name: string, sessionId?: number): Promise<void> {
@@ -3650,12 +3650,12 @@ export class ExplorerController {
       // No longer swallowed silently: log it so a future failure is diagnosable from the GCI log
       // (mirrors the category-reveal path below).
       logWarning(
-        `Omni dictionary reveal failed for ${name}: ${e instanceof Error ? e.message : String(e)}`,
+        `GemStone Search dictionary reveal failed for ${name}: ${e instanceof Error ? e.message : String(e)}`,
       );
     }
   }
 
-  // Reveal+select a class-category node by path in the Categories pane (used by Omni Search). Selects
+  // Reveal+select a class-category node by path in the Categories pane (used by GemStone Search). Selects
   // the home dictionary first (so its categories load + the classes pane filters to the category),
   // then selects and reveals the category node itself.
   async revealCategoryByPath(
@@ -3694,7 +3694,7 @@ export class ExplorerController {
     this.selectClassCategory(catItem);
 
     // Surface the Class Categories view FIRST. When it lives in a collapsed/hidden sidebar,
-    // TreeView.reveal() can no-op — which is exactly how an Omni category jump looked like it landed
+    // TreeView.reveal() can no-op — which is exactly how a GemStone Search category jump looked like it landed
     // nowhere (a flat dictionary reveal is less sensitive, so dictionary jumps still worked). Focusing
     // the view makes the subsequent nested reveal land on the real node.
     try {
@@ -3708,7 +3708,7 @@ export class ExplorerController {
     } catch (e) {
       // No longer swallowed silently: log it so a future failure is diagnosable from the GCI log.
       logWarning(
-        `Omni category reveal failed for ${dictName}/${categoryPath}: ${e instanceof Error ? e.message : String(e)}`,
+        `GemStone Search category reveal failed for ${dictName}/${categoryPath}: ${e instanceof Error ? e.message : String(e)}`,
       );
     }
   }
@@ -4269,7 +4269,7 @@ export class ExplorerController {
     this.syncTitles();
 
     // Views that cache a class corpus can't see this deletion — it is uncommitted, so nothing else
-    // announces it, and until now a removed class stayed listed (and clickable) in an open Omni
+    // announces it, and until now a removed class stayed listed (and clickable) in an open GemStone
     // Search until the next commit/abort resync. Notify the ones that ACTUALLY went, so a partial
     // failure doesn't drop a class that is still there.
     for (const name of removed) this.onClassRemoved?.(session.id, name);
@@ -5220,10 +5220,10 @@ export function registerGemStoneExplorer(
   // triggered Rename Method to target a SENT selector under the cursor. Optional
   // so tests (and a not-yet-started LSP) degrade to renaming the edited method.
   selectorAtPosition: SelectorAtPosition = () => Promise.resolve(null),
-  // Called after a dictionary add/remove/rename so other views (Omni Search) can refresh their
+  // Called after a dictionary add/remove/rename so other views (GemStone Search) can refresh their
   // cached symbol-list corpus.
   onSymbolListChanged?: (sessionId: number) => void,
-  // Called once per class that Remove Class actually deleted, so Omni Search can drop it from its
+  // Called once per class that Remove Class actually deleted, so GemStone Search can drop it from its
   // cached corpus instead of showing (and offering to open) a class that no longer exists.
   onClassRemoved?: (sessionId: number, className: string) => void,
 ): ExplorerHandle {
@@ -5371,7 +5371,7 @@ export function registerGemStoneExplorer(
       if (node instanceof MethodItem) void ctl.openMethod(node, 'pin');
     }),
     // Find Class: cascade the panes to a class by name (from the Classes pane
-    // title button or the command palette). The optional sessionId lets a caller (Omni Search) target
+    // title button or the command palette). The optional sessionId lets a caller (GemStone Search) target
     // the session its result came from rather than whatever session is selected now.
     vscode.commands.registerCommand(
       'gemstone.explorer.findClass',
@@ -5381,8 +5381,8 @@ export function registerGemStoneExplorer(
           typeof sessionId === 'number' ? sessionId : undefined,
         ),
     ),
-    // Reveal+select a dictionary row by name (Omni Search dictionary results). Optional sessionId as
-    // above — the result carries the session it was found in.
+    // Reveal+select a dictionary row by name (GemStone Search dictionary results). Optional sessionId
+    // as above — the result carries the session it was found in.
     vscode.commands.registerCommand(
       'gemstone.explorer.revealDictionary',
       (name?: string, sessionId?: number) =>
@@ -5390,7 +5390,7 @@ export function registerGemStoneExplorer(
           ? ctl.revealDictionaryByName(name, typeof sessionId === 'number' ? sessionId : undefined)
           : undefined,
     ),
-    // Reveal+select a class-category node by dict + path (Omni Search category results). Optional
+    // Reveal+select a class-category node by dict + path (GemStone Search category results). Optional
     // sessionId as above.
     vscode.commands.registerCommand(
       'gemstone.explorer.revealCategory',

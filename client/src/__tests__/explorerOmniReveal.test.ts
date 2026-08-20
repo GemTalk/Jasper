@@ -1,5 +1,5 @@
 /**
- * Omni Search → Explorer reveal robustness.
+ * GemStone Search → Explorer reveal robustness.
  *
  * revealDictionaryByName no longer swallows a failed TreeView.reveal with a bare
  * `catch { /* ignore *\/ }`; it logs to the durable GCI channel (mirroring the
@@ -159,7 +159,7 @@ describe('revealCategoryByPath checks existence before mutating the panes', () =
   });
 });
 
-// A reveal that names a session (Omni Search results carry their own sessionId) must run against THAT
+// A reveal that names a session (GemStone Search results carry their own sessionId) must run against THAT
 // session, not whatever session happens to be selected now — otherwise, after the user switches the
 // active session, a click resolves against the new one and lands in the wrong session's data (or, worse,
 // a same-named dictionary/category in it). No id → the old "resolve the selected session" behaviour.
