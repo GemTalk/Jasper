@@ -98,9 +98,26 @@ export interface NbRunOptions {
  * notification so the user can see it registered; a second sends a hard break
  * and rejects with `NbCancelledError`.
  */
+/**
+ * The least time that may pass between a soft break and the hard break that
+ * follows it. Sending both back-to-back crashes the client process outright — a
+ * native fault in the GCI library, not an error that can be caught — so a second
+ * cancel arriving too soon is deferred rather than obeyed. Found by an
+ * integration test that pressed both at once and took the worker down with it.
+ */
+const MIN_HARD_BREAK_GAP_MS = 300;
+
 /** How long to keep collecting the result of a hard-broken call, and how often. */
 const DRAIN_ATTEMPTS = 40;
 const DRAIN_INTERVAL_MS = 50;
+
+/**
+ * Sessions whose abandoned call is still being collected. The next call on that
+ * session waits for it: draining takes as long as the gem takes to notice the
+ * break, and a run started in the meantime would be refused outright — which,
+ * from the user's side, is pressing stop and then having the next run do nothing.
+ */
+const draining = new Map<number, Promise<void>>();
 
 /**
  * Collect and discard the result of a call we gave up on, so the session goes
@@ -112,18 +129,41 @@ const DRAIN_INTERVAL_MS = 50;
  * taken. Gives up after a bounded number of attempts rather than polling a
  * session that is never going to answer.
  */
-function drainAbandonedCall(session: ActiveSession, attempt = 0): void {
-  try {
-    const { result } = pollNbResultReady(session);
-    if (result === 1) {
-      session.gci.GciTsNbResult(session.handle);
-      return;
-    }
-    if (result === -1 || attempt >= DRAIN_ATTEMPTS) return;
-  } catch {
-    return;
-  }
-  setTimeout(() => drainAbandonedCall(session, attempt + 1), DRAIN_INTERVAL_MS);
+function drainAbandonedCall(session: ActiveSession): Promise<void> {
+  const existing = draining.get(session.id);
+  if (existing) return existing;
+
+  const done = new Promise<void>((resolve) => {
+    const attempt = (n: number): void => {
+      try {
+        const { result } = pollNbResultReady(session);
+        if (result === 1) {
+          session.gci.GciTsNbResult(session.handle);
+          resolve();
+          return;
+        }
+        if (result === -1 || n >= DRAIN_ATTEMPTS) {
+          resolve();
+          return;
+        }
+      } catch {
+        resolve();
+        return;
+      }
+      setTimeout(() => attempt(n + 1), DRAIN_INTERVAL_MS);
+    };
+    attempt(0);
+  }).finally(() => {
+    draining.delete(session.id);
+  });
+
+  draining.set(session.id, done);
+  return done;
+}
+
+/** Wait for any abandoned call on this session to be collected. */
+export function awaitSessionDrain(session: ActiveSession): Promise<void> {
+  return draining.get(session.id) ?? Promise.resolve();
 }
 
 export function pollNbToCompletion<T>(
@@ -137,6 +177,8 @@ export function pollNbToCompletion<T>(
     let elapsedMs = 0;
     let progressShown = false;
     let softBreakSent = false;
+    let softBreakAt = 0;
+    let hardBreakScheduled = false;
     let progressResolve: (() => void) | null = null;
 
     const finishProgress = (): void => {
@@ -159,6 +201,21 @@ export function pollNbToCompletion<T>(
     // Soft-then-hard break, shared by the notification's Cancel and any external
     // canceller handed out via opts.onStart. First call asks the gem to stop at a
     // safe point; a second interrupts now and gives up on the call.
+    const sendHardBreak = (): void => {
+      if (settled) return;
+      const { success, err } = session.gci.GciTsBreak(session.handle, true);
+      logInfo(
+        `[Session ${session.id}] Hard break sent: success=${success}` +
+          (err?.number ? ` err=${err.number} ${err.message ?? ''}` : ''),
+      );
+      // A hard break abandons the call, but the session still counts it as in
+      // progress until its (aborted) result is collected. Drain it, or the very
+      // next call on this session is refused with "session is busy" — which reads
+      // as the next run silently doing nothing.
+      void drainAbandonedCall(session);
+      settle(() => reject(new NbCancelledError()));
+    };
+
     const requestCancel = (): void => {
       if (settled) {
         logInfo(`[Session ${session.id}] Break requested, but the call had already settled.`);
@@ -174,19 +231,18 @@ export function pollNbToCompletion<T>(
             (err?.number ? ` err=${err.number} ${err.message ?? ''}` : ''),
         );
         softBreakSent = true;
+        softBreakAt = Date.now();
         progressReport?.({ message: 'Soft break sent — waiting for the gem to stop…' });
       } else {
-        const { success, err } = session.gci.GciTsBreak(session.handle, true);
-        logInfo(
-          `[Session ${session.id}] Hard break sent: success=${success}` +
-            (err?.number ? ` err=${err.number} ${err.message ?? ''}` : ''),
-        );
-        // A hard break abandons the call, but the session still counts it as in
-        // progress until its (aborted) result is collected. Drain it, or the very
-        // next call on this session is refused with "session is busy" — which
-        // reads as the next run silently doing nothing.
-        drainAbandonedCall(session);
-        settle(() => reject(new NbCancelledError()));
+        if (hardBreakScheduled) return;
+        const waited = Date.now() - softBreakAt;
+        if (waited >= MIN_HARD_BREAK_GAP_MS) {
+          sendHardBreak();
+          return;
+        }
+        // Too soon after the soft break to be safe — see MIN_HARD_BREAK_GAP_MS.
+        hardBreakScheduled = true;
+        setTimeout(sendHardBreak, MIN_HARD_BREAK_GAP_MS - waited);
       }
     };
     if (opts.onStart) opts.onStart(requestCancel);
@@ -213,6 +269,11 @@ export function pollNbToCompletion<T>(
         return;
       }
       if (pollResult === -1) {
+        // Abandoning the call without collecting its result leaves the session
+        // reporting a call in progress, and every later call on it refused. A
+        // break that the gem turns into a poll error takes this path, so the
+        // drain belongs here as much as on the hard-break path.
+        void drainAbandonedCall(session);
         settle(() => reject(new Error(pollErr.message || `GemStone poll error ${pollErr.number}`)));
         return;
       }
@@ -276,6 +337,30 @@ export function runNbCall<T>(
   start: () => { success: boolean; err: GciError },
   onReady: () => T,
   opts: NbRunOptions = {},
+): Promise<T> {
+  // A call we gave up on may still be being collected. Starting now would be
+  // refused as "an operation is in progress" — so wait for the session to be free
+  // rather than failing a run whose only crime is following a stop.
+  //
+  // Only ever deferred when there IS something to wait for: the call (and with it
+  // opts.onStart, which hands out the canceller) still begins synchronously in the
+  // ordinary case, so a stop pressed the moment a run starts still has something
+  // to press.
+  // GciTsCallInProgress is no help here: it can answer "idle" while the abandoned
+  // Nb result is still uncollected, and it is that result the next GciTsNbExecute
+  // refuses over ("session has a GciTsNb operation in progress"). Only the drain
+  // itself knows when the session is really free, so wait on it. Bounded by
+  // DRAIN_ATTEMPTS, so it always resolves.
+  const pending = draining.get(session.id);
+  if (pending) return pending.then(() => beginNbCall(session, start, onReady, opts));
+  return beginNbCall(session, start, onReady, opts);
+}
+
+function beginNbCall<T>(
+  session: ActiveSession,
+  start: () => { success: boolean; err: GciError },
+  onReady: () => T,
+  opts: NbRunOptions,
 ): Promise<T> {
   const { success, err } = start();
   if (!success) {
