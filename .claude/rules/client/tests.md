@@ -55,7 +55,7 @@ The **default home** is a `*.integration.test.ts` using `useIntegrationTest`, co
 
 The on-demand `client/src/__tests__/gci/` project **never runs in CI** (see `.claude/rules/client/gci.md`) and is being migrated away. Add a test there only when the harness genuinely cannot host it:
 
-- it must **commit**, and doesn't fit any opt-in commit strategy — every harness session is otherwise armed to refuse commits outright (`TransactionError 2249`). Check [the harness reference](../../../docs/reference/integration-test-harness.md)'s `'nested'` strategy and its exclusions before assuming a commit forces this project;
+- it must **commit**, and doesn't fit `allowedCommits` — every harness session is otherwise armed to refuse commits outright (`TransactionError 2249`). Check [the harness reference](../../../docs/reference/integration-test-harness.md)'s `allowedCommits` option and its exclusions before assuming a commit forces this project;
 - it needs **exclusive access to the stone**, or destroys and restores the whole repository;
 - it drives a **session lifecycle** beyond `login` / `logout` / `withTransientSession` (e.g. many logins with varying flags), or installs process-wide state once for a whole file;
 - it makes a **single blocking GCI call** that can outlast the CI budget and that vitest cannot interrupt, so a hang takes out the whole job;

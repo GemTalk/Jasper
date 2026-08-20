@@ -23,9 +23,21 @@ The commit guard (`System disableCommitsWithReason:`) is armed once per session 
 A guard that always refuses commits leaves a real gap: a test that exercises a SUT whose behavior
 depends on a commit actually succeeding cannot be written at all under the bare guard — it needs
 some other mechanism to exist before it can be written, for the subset of committing tests that
-mechanism actually covers. See the harness reference's ["nested" escape
-hatch](../reference/integration-test-harness.md#commitstrategy-nested--let-a-tests-commit-land-then-discard-it-anyway)
-for the mechanism itself and the cases it does not cover.
+mechanism actually covers. See the harness reference's [`allowedCommits`
+option](../reference/integration-test-harness.md#what-it-provides) for the mechanism itself.
+
+**Not every committing test fits it.** Check a test against these before reaching for it:
+
+- A _second session or gem_ must observe the committed state — nothing written inside a nested
+  transaction is visible outside the session that opened it.
+- The production code's commit path depends on data being _genuinely_ persisted, not just
+  nested-committed — a nested commit only promotes an object as far as the parent transaction,
+  never into the repository, so code that scans the repository for a prior version finds nothing.
+  If unsure whether this applies, spike it first in a throwaway test before writing the real one:
+  the failure mode when it's wrong can be silent (a green `committed: true` next to an unnoticed
+  residue commit), not an obviously wrong number.
+- The test needs to **destroy or replace the whole repository** — a different problem a nested
+  transaction has nothing to do with.
 
 Containment is GemStone's own transaction machinery, not something the harness builds. Committing a
 nested transaction promotes its changes one level up, to the parent transaction, and no further: they
@@ -39,7 +51,17 @@ workers against the shared stone need no coordinating. And nothing survives the 
 afterward.
 
 **Relationship to the commit guard.** The guard from the section above is what turns a
-budget overrun into a loud, safe failure instead of silent corruption: a nested-transaction test whose
-commits spill past its `commitDepth` budget lands in the session's real root transaction, exactly like
+budget overrun into a loud, safe failure instead of silent corruption: a test whose
+commits spill past its `allowedCommits` budget lands in the session's real root transaction, exactly like
 any other commit on a harness session, and hits the same `TransactionError 2249` the guard always
 raises.
+
+**Why the floor check can't apply at zero.** Above zero, `allowedCommits` opens one nested level per
+commit plus one level of headroom, and the teardown's floor check is what catches an overrun: it
+reads the transaction level had already fallen to consuming that headroom before a real commit was
+ever attempted against the root transaction. At `allowedCommits: 0` there is no headroom to consume —
+no nested levels are opened at all — so there is nothing for that check to observe. The commit guard
+alone enforces the invariant at zero, exactly as it always has for every suite that never declares a
+budget. This is a genuine discontinuity between zero and any positive count, not a degenerate case of
+the same formula, and the harness code and its docs name it rather than smoothing it into one
+uniform-sounding rule.
