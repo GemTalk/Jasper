@@ -774,3 +774,162 @@ describe('createOmniEngine — scope vs. the references pivot', () => {
     expect(back!.rows.map((r) => r.label).sort()).toEqual(['Bar>>foo', 'Foo']);
   });
 });
+
+describe('createOmniEngine — out-of-order reference and pivot results', () => {
+  it("supersedes a slow reference load so its rows cannot overwrite a newer row's", async () => {
+    const rowA = classResult('Alpha');
+    const rowB = classResult('Beta');
+    const refsForA: ReferenceView = {
+      title: 'References to Alpha',
+      target: 'Alpha',
+      results: [methodResult('X>>usesAlpha', 'usesAlpha')],
+    };
+    const refsForB: ReferenceView = {
+      title: 'References to Beta',
+      target: 'Beta',
+      results: [methodResult('Y>>usesBeta', 'usesBeta')],
+    };
+    let releaseA: (() => void) | undefined;
+    const gate = new Promise<void>((res) => (releaseA = res));
+    const engine = createOmniEngine({
+      providers: [fakeProvider('classes', [rowA, rowB])],
+      config: cfg(),
+      // Alpha is the slow one and resolves LAST, exactly the order that used to corrupt the list.
+      resolveReferences: async (r) => {
+        if (r.label === 'Alpha') {
+          await gate;
+          return refsForA;
+        }
+        return refsForB;
+      },
+    });
+    const search = await engine.search('a');
+    const idA = search!.rows.find((r) => r.label === 'Alpha')!.id;
+    const idB = search!.rows.find((r) => r.label === 'Beta')!.id;
+
+    const slowA = engine.referencesFor(idA);
+    const fastB = await engine.referencesFor(idB); // arrowed on to Beta while Alpha still resolves
+    releaseA!();
+
+    expect(await slowA).toBeNull(); // stale load discarded rather than written
+    expect(fastB!.rows.map((r) => r.label)).toEqual(['Y>>usesBeta']);
+    // The rows behind the ids the UI is showing are still Beta's — opening one cannot land in Alpha's.
+    expect(engine.referenceResultFor(fastB!.rows[0].id)!.label).toBe('Y>>usesBeta');
+  });
+
+  it('a new search supersedes a reference load the previous term left in flight', async () => {
+    let releaseRefs: (() => void) | undefined;
+    const gate = new Promise<void>((res) => (releaseRefs = res));
+    const engine = createOmniEngine({
+      providers: [fakeProvider('classes', [classResult('Alpha'), classResult('Beta')])],
+      config: cfg(),
+      resolveReferences: async () => {
+        await gate; // still resolving when the next search lands
+        return {
+          title: 'References to Alpha',
+          target: 'Alpha',
+          results: [methodResult('X>>usesAlpha', 'usesAlpha')],
+        };
+      },
+    });
+    const search = await engine.search('a');
+    const idA = search!.rows.find((r) => r.label === 'Alpha')!.id;
+
+    const slowRefs = engine.referencesFor(idA);
+    const next = await engine.search('al'); // a new term starts while the reference load is mid-flight
+    releaseRefs!();
+
+    expect(await slowRefs).toBeNull(); // superseded by the search — its rows never overwrite the list
+    expect(next!.rows.map((r) => r.label).sort()).toEqual(['Alpha', 'Beta']); // the search landed intact
+  });
+
+  it('a reference load neither cancels nor is cancelled by an in-flight search', async () => {
+    let releaseSearch: (() => void) | undefined;
+    const gate = new Promise<void>((res) => (releaseSearch = res));
+    let call = 0;
+    const slow: OmniProvider = {
+      category: CATEGORY_BY_ID.classes,
+      async search() {
+        call++;
+        if (call === 2) await gate; // the SECOND search blocks, with a reference load landing meanwhile
+        return [classResult('Foo')];
+      },
+    };
+    const refView: ReferenceView = {
+      title: 'References to Foo',
+      target: 'Foo',
+      results: [methodResult('A>>useFoo', 'useFoo')],
+    };
+    const engine = createOmniEngine({
+      providers: [slow],
+      config: cfg(),
+      resolveReferences: () => refView,
+    });
+    const first = await engine.search('fo');
+
+    const searchP = engine.search('foo');
+    const preview = await engine.referencesFor(first!.rows[0].id);
+    releaseSearch!();
+
+    expect(preview!.rows.map((r) => r.label)).toEqual(['A>>useFoo']); // not cancelled by the search
+    // ...and it did not cancel the search either: the search's own rows land intact, not clobbered by
+    // the reference load's row.
+    expect((await searchP)!.rows.map((r) => r.label)).toEqual(['Foo']);
+  });
+
+  it('supersedes an earlier pivot when a second pivot is started', async () => {
+    let releaseAlpha: (() => void) | undefined;
+    const gate = new Promise<void>((res) => (releaseAlpha = res));
+    const engine = createOmniEngine({
+      providers: [fakeProvider('classes', [classResult('Alpha'), classResult('Beta')])],
+      config: cfg(),
+      // Alpha resolves LAST — the ordering that used to let the abandoned pivot win.
+      resolveReferences: async (r) => {
+        if (r.label === 'Alpha') {
+          await gate;
+          return {
+            title: 'References to Alpha',
+            results: [methodResult('X>>usesAlpha', 'usesAlpha')],
+          };
+        }
+        return { title: 'References to Beta', results: [methodResult('Y>>usesBeta', 'usesBeta')] };
+      },
+    });
+    const search = await engine.search('a');
+    const idAlpha = search!.rows.find((r) => r.label === 'Alpha')!.id;
+    const idBeta = search!.rows.find((r) => r.label === 'Beta')!.id;
+
+    const slowPivot = engine.pivot(idAlpha);
+    const fastPivot = await engine.pivot(idBeta); // pivoted somewhere else before Alpha came back
+    releaseAlpha!();
+
+    expect(await slowPivot).toBeNull(); // stale pivot discarded
+    expect(fastPivot!.pivotTitle).toBe('References to Beta');
+    // The live list is still Beta's, so activating a row cannot open one of Alpha's references.
+    expect(engine.resultFor(fastPivot!.rows[0].id)!.label).toBe('Y>>usesBeta');
+    expect(engine.state().pivot).toBe(true);
+  });
+
+  it('supersedes a slow pivot so it cannot snap the view back to an abandoned reference view', async () => {
+    let releasePivot: (() => void) | undefined;
+    const gate = new Promise<void>((res) => (releasePivot = res));
+    const engine = createOmniEngine({
+      providers: [fakeProvider('classes', [classResult('Foo')])],
+      config: cfg(),
+      resolveReferences: async () => {
+        await gate;
+        return { title: 'References to Foo', results: [methodResult('A>>useFoo', 'useFoo')] };
+      },
+    });
+    const search = await engine.search('foo');
+
+    const pivotP = engine.pivot(search!.rows[0].id);
+    const retyped = await engine.search('fo'); // a new term while the pivot is still resolving
+    releasePivot!();
+
+    expect(await pivotP).toBeNull(); // stale pivot discarded
+    expect(retyped!.pivot).toBe(false);
+    expect(engine.state().pivot).toBe(false); // the view stayed on the search the user asked for
+    expect(engine.resultFor(retyped!.rows[0].id)!.label).toBe('Foo');
+  });
+});

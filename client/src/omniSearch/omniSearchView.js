@@ -54,6 +54,12 @@
     var activeIndex = -1;
     var inPivot = false;
     var previewTimer = null;
+    // Keystroke coalescing for the search field. `debounceMs` is pushed from the host config; 0 means
+    // search on every keystroke. Without this every character fanned out a full provider search — one
+    // set of stone round-trips per keypress — and the `debounceMs` setting documented in the manifest
+    // had no consumer at all once the Quick Pick (its only reader) was removed.
+    var queryTimer = null;
+    var debounceMs = 0;
     // When true, the references/senders gesture fills the preview pane with a sticky list (instead of
     // pivoting the left list). Pushed from the host config; false = the classic pivot.
     var referencesInPreview = false;
@@ -92,6 +98,37 @@
         }
       }
       vscode.postMessage(msg);
+    }
+
+    /** Drop a keystroke search that has not fired yet (a decisive gesture supersedes typing). */
+    function cancelPendingQuery() {
+      if (queryTimer) {
+        clearTimeout(queryTimer);
+        queryTimer = null;
+      }
+    }
+
+    /**
+     * Search for `value` after `debounceMs` of quiet, replacing any keystroke search still pending.
+     * `debounceMs` of 0 (including before the host's first config message arrives) searches at once, so
+     * the field is never unresponsive — it just is not coalesced yet.
+     *
+     * Marks the field busy at the moment it actually dispatches, NOT on each keystroke: during the quiet
+     * window before the timer fires there is no stone work in flight, so a high `debounceMs` must not
+     * leave the panel reading as busy with nothing happening. Busy means "a query is out to the host."
+     */
+    function sendQueryDebounced(value) {
+      cancelPendingQuery();
+      if (!debounceMs) {
+        setBusy(true);
+        post('query', { value: value });
+        return;
+      }
+      queryTimer = setTimeout(function () {
+        queryTimer = null;
+        setBusy(true);
+        post('query', { value: value });
+      }, debounceMs);
     }
 
     // ── Highlighting ────────────────────────────────────────────────
@@ -566,6 +603,8 @@
           if (typeof msg.previewPane === 'boolean') setPreviewEnabled(msg.previewPane);
           if (Array.isArray(msg.excludedFromAll)) excludedFromAll = msg.excludedFromAll.slice();
           if (typeof msg.matchMode === 'string') setMatchMode(msg.matchMode);
+          if (typeof msg.debounceMs === 'number' && msg.debounceMs >= 0)
+            debounceMs = msg.debounceMs;
           tabCategories = msg.categories || [];
           renderTabs(msg.categories, msg.scopeId);
           renderScopeFilter();
@@ -996,7 +1035,6 @@
 
     // ── Input + keyboard ────────────────────────────────────────────
     inputEl.addEventListener('input', function () {
-      setBusy(true);
       scrollResetPending = true; // a new query starts the list at the top
       previewMode = 'source'; // typing dismisses a sticky references list
       updateClearVisibility();
@@ -1004,7 +1042,7 @@
       // debounced reply would leave it a keystroke behind.
       updateScopeHint();
       rehighlightSourcePreview(); // clear/refresh the stale blue match marks now, not on the fetch
-      post('query', { value: inputEl.value });
+      sendQueryDebounced(inputEl.value);
     });
 
     // Bound to the whole document, NOT just the search field: in a WebviewView the field's focus is
@@ -1118,6 +1156,10 @@
         scrollResetPending = true;
         updateClearVisibility();
         updateScopeHint(); // nothing typed = nothing being skipped, so drop the hint at once
+        // Deliberately NOT debounced, and it cancels any pending keystroke search: clearing is a
+        // single decisive gesture, not typing, so making the user wait for a timer would feel broken —
+        // and a keystroke queued a moment earlier must not land after the clear and refill the list.
+        cancelPendingQuery();
         post('query', { value: '' });
         inputEl.focus();
       });

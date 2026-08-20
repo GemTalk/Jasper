@@ -131,6 +131,10 @@ export function configMessage(config: OmniConfig, pinned: boolean): Record<strin
     previewPane: config.previewPane,
     excludedFromAll: config.excludedFromAll,
     matchMode: config.matchMode,
+    // How long the field waits after a keystroke before searching. The webview owns the timer (it is
+    // the only side that sees keystrokes); the host just forwards the configured value, so a settings
+    // edit takes effect on the next config push like every other field here.
+    debounceMs: config.debounceMs,
     placeholder: placeholderFor(null),
     keyHint: REFERENCES_KEY_HINT,
   };

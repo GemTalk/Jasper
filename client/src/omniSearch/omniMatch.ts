@@ -106,21 +106,28 @@ function matchSubstring(q: string, t: string): number[] | null {
 }
 
 /**
- * A CONTIGUOUS occurrence of `q` in `t` (a real substring), preferring one that begins at a word
+ * A CONTIGUOUS occurrence of `q` in `folded` (a real substring), preferring one that begins at a word
  * boundary — returns its index run, or null if `q` isn't a substring. This runs BEFORE the greedy
  * subsequence so an exact run always wins: greedy-leftmost otherwise grabs a stray early character
  * (the `c` in "Colle**c**tions" / "Announ**c**ements") and misses a clean later "Core", letting a
  * scattered match that happens to start at index 0 outrank an exact mid-string one.
+ *
+ * `folded` is the case-folded target (what we search in), `original` the un-folded one (what we judge
+ * boundaries in). They must be separate: half of `isWordStart` is the camelCase hump test, which needs
+ * a real uppercase letter to fire, and in the DEFAULT case-insensitive mode `folded` has none left.
+ * Asking `folded` about word starts silently reduced the preference to separators only and picked a
+ * mid-word occurrence over a later camelCase one — the majority of searches, since case-insensitive is
+ * the default.
  */
-function contiguousIndices(q: string, t: string): number[] | null {
+function contiguousIndices(q: string, folded: string, original: string): number[] | null {
   let firstAt = -1;
-  let at = t.indexOf(q);
+  let at = folded.indexOf(q);
   while (at >= 0) {
-    if (isWordStart(t, at)) {
+    if (isWordStart(original, at)) {
       return Array.from({ length: q.length }, (_, i) => at + i); // word-start run — the best kind
     }
     if (firstAt < 0) firstAt = at;
-    at = t.indexOf(q, at + 1);
+    at = folded.indexOf(q, at + 1);
   }
   return firstAt < 0 ? null : Array.from({ length: q.length }, (_, i) => firstAt + i);
 }
@@ -130,16 +137,16 @@ function contiguousIndices(q: string, t: string): number[] | null {
  * `contiguousIndices`) so exact runs rank above scattered matches; only when `q` is not a substring
  * does it fall back to a greedy left-to-right subsequence (predictable and cheap).
  */
-function matchFuzzy(q: string, t: string): number[] | null {
-  const contiguous = contiguousIndices(q, t);
+function matchFuzzy(q: string, folded: string, original: string): number[] | null {
+  const contiguous = contiguousIndices(q, folded, original);
   if (contiguous) return contiguous;
 
   const indices: number[] = [];
   let ti = 0;
   for (const qc of q) {
     let found = -1;
-    for (let i = ti; i < t.length; i++) {
-      if (t[i] === qc) {
+    for (let i = ti; i < folded.length; i++) {
+      if (folded[i] === qc) {
         found = i;
         break;
       }
@@ -171,7 +178,7 @@ export function match(query: string, target: string, opts: MatchOptions): MatchR
       break;
     case 'fuzzy':
     default:
-      indices = matchFuzzy(q, t);
+      indices = matchFuzzy(q, t, target);
       break;
   }
   if (indices === null) return null;
