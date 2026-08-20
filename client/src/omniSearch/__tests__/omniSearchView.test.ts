@@ -597,6 +597,21 @@ describe('GemStone Search view — keyboard', () => {
     expect(vscode.postMessage).toHaveBeenCalledWith({ command: 'activate', id: 0, side: true });
   });
 
+  it('Shift+Enter asks the host to reveal the active row in the Testing view', () => {
+    const { handle, vscode } = mount();
+    seed(handle);
+
+    keydown({ key: 'Enter', shiftKey: true });
+
+    expect(vscode.postMessage).toHaveBeenCalledWith({ command: 'revealTest', id: 0 });
+    // and not also opened
+    expect(vscode.postMessage).not.toHaveBeenCalledWith({
+      command: 'activate',
+      id: 0,
+      side: false,
+    });
+  });
+
   it('Alt+Enter pivots to references of the active row', () => {
     const { handle, vscode } = mount();
     seed(handle);

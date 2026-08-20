@@ -15,6 +15,7 @@
 import * as vscode from 'vscode';
 import { OmniConfig, OmniResult } from './omniTypes';
 import { createOmniEngine, OmniEngineDeps, OmniViewData } from './omniEngine';
+import { revealTestForResult } from './omniActions';
 import {
   configMessage,
   dispatchEngineMessage,
@@ -48,6 +49,7 @@ type OmniInbound =
   | { command: 'loadMore' }
   | { command: 'loadAll' }
   | { command: 'activate'; id: number; side: boolean }
+  | { command: 'revealTest'; id: number }
   | { command: 'references'; id: number }
   | { command: 'referencesInline'; id: number }
   | { command: 'previewReference'; refId: number }
@@ -215,6 +217,13 @@ export class OmniSearchPanel {
             preserveFocus: this.pinned && m.side,
           });
           if (!this.pinned) this.panel.dispose();
+          return;
+        }
+        case 'revealTest': {
+          // Shift+Enter: go to the result in the Testing view instead of opening it.
+          // The Spotter stays put — you are moving to another view, not dismissing this one.
+          const result = this.engine.resultFor(m.id);
+          if (result) await revealTestForResult(result);
           return;
         }
         case 'preview': {

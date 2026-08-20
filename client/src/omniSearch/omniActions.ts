@@ -3,7 +3,8 @@
  * the SystemBrowser, and the `gemstone:` uri builders) are injected by `omniSearchCommand.ts`, so
  * this stays unit-testable and the `switch` is exhaustiveness-checked at compile time.
  */
-import { OmniAction } from './omniTypes';
+import * as vscode from 'vscode';
+import { OmniAction, OmniResult } from './omniTypes';
 
 type ByKind<K extends OmniAction['kind']> = Extract<OmniAction, { kind: K }>;
 
@@ -41,5 +42,31 @@ export async function runOmniAction(
       return;
     default:
       assertNever(action);
+  }
+}
+
+/**
+ * Select a result's test in the Testing view, when it has one. Reads the result's
+ * own action rather than its label — the label is display text, the action is the
+ * class/selector the result actually stands for. A result that isn't a test class
+ * or test method is left alone by the command, which says so.
+ */
+export async function revealTestForResult(result: OmniResult): Promise<void> {
+  const a = result.action;
+  if (a.kind === 'openMethod') {
+    await vscode.commands.executeCommand(
+      'gemstone.revealTestInTestingView',
+      a.dictName,
+      a.className,
+      a.selector,
+    );
+    return;
+  }
+  if (a.kind === 'openClass') {
+    await vscode.commands.executeCommand(
+      'gemstone.revealTestInTestingView',
+      a.dictName,
+      a.className,
+    );
   }
 }
