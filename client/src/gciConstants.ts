@@ -30,6 +30,17 @@ export const GCI_PERFORM_FLAG_SINGLE_STEP = 4;
 // No effect where native code is unavailable anyway (e.g. Darwin/ARM builds).
 export const GCI_PERFORM_FLAG_INTERPRETED = 0x20;
 
+// Login flags (from gci.ht)
+// Tells GciTsLogin the `gemstonePassword` argument is already ciphertext, as produced by
+// GciTsEncrypt, rather than plaintext.
+export const GCI_LOGIN_PW_ENCRYPTED = 0x1;
+
+// Suppresses libgcits' unsolicited ` gcits login:` / ` gcits logout:` printf()s
+// to stdout, which are the majority of the test suite's output and bypass the
+// JS console entirely. Present with this value since 3.6.2, so no version
+// gating is needed.
+export const GCI_LOGIN_QUIET = 0x10;
+
 // Class OOPs (from gcioop.ht)
 export const OOP_CLASS_STRING = 74753n;
 export const OOP_CLASS_UTF8 = 154113n;
