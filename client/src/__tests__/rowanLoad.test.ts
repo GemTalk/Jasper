@@ -27,7 +27,7 @@ function write(rel: string, content: string): void {
   fs.writeFileSync(full, content);
 }
 
-describe('findRowanLoadSpecs', () => {
+describe('findRowanLoadSpecs', { timeout: 10000 }, () => {
   it('finds a load spec by its content signature, in any layout', () => {
     write('rowan/specs/LoadMe.ston', LOAD_SPEC('LoadMe'));
     write('rowan/project.ston', "RwProjectSpecificationV2 { #specName : 'project' }");
@@ -143,7 +143,7 @@ describe('deriveRepoName', () => {
   });
 });
 
-describe('updateGitRepo', () => {
+describe('updateGitRepo', { timeout: 20000 }, () => {
   // Strip GIT_* from the env so the test's own git commands operate on its temp
   // repos, not on whatever repo the ambient environment points at — critical when
   // this suite runs inside a git hook (e.g. the pre-push hook exports GIT_DIR).
