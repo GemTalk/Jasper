@@ -85,16 +85,16 @@ describe('integration test harness commit guard (integration)', () => {
 });
 
 /**
- * The `nested` commit strategy (see `useIntegrationTest`'s JSDoc and
- * `commitDepth` option) exists for the rare test that must exercise a real
- * `System commitTransaction` -- the default strategy refuses commits outright
- * via GemStone's own commit guard, so it cannot host those tests at all. These
- * tests prove the strategy's core promise: a commit performed under it still
- * never reaches the repository, because it only ever lands in one of the
- * nested transaction levels opened for the test, and the suite's `afterEach`
- * always aborts every level it opened.
+ * The `allowedCommits` option (see `useIntegrationTest`'s JSDoc) exists for the
+ * rare test that must exercise a real `System commitTransaction` -- an
+ * omitted (or zero) budget refuses commits outright via GemStone's own commit
+ * guard, so it cannot host those tests at all. These tests prove the budget's
+ * core promise: a commit performed under it still never reaches the
+ * repository, because it only ever lands in one of the nested transaction
+ * levels opened for the test, and the suite's `afterEach` always aborts every
+ * level it opened.
  */
-describe('nested-transaction commit strategy (integration)', () => {
+describe('allowedCommits budget (integration)', () => {
   let gci: GciLibrary;
   let session: unknown;
   let login: GciTestContext['login'];
@@ -109,7 +109,7 @@ describe('nested-transaction commit strategy (integration)', () => {
       logout = testContext.logout;
       withTransientSession = testContext.withTransientSession;
     },
-    { commitStrategy: 'nested', commitDepth: 4 },
+    { allowedCommits: 3 },
   );
 
   const isVisibleToOtherSessions = (key: string): boolean => {
@@ -141,8 +141,8 @@ describe('nested-transaction commit strategy (integration)', () => {
     expect(visibleElsewhere).toEqual(keys.map(() => false));
   });
 
-  // This strategy opens its levels with a doit, where the default one uses a
-  // plain begin -- so it is the strategy that can hand a test a session already
+  // A non-zero budget opens its levels with a doit, where a zero budget uses a
+  // plain begin -- so it is the case that can hand a test a session already
   // carrying state a bare login would not have left behind.
   it('hands a test a session as clean as a bare login leaves behind', () => {
     expectUtf8OopToResolveViaSymbolLookup(session, gci);
@@ -160,19 +160,45 @@ describe('nested-transaction commit strategy (integration)', () => {
 });
 
 /**
- * A `commitDepth` says how many commits the suite's budget covers, so it has to
- * be a whole count of at least one level. Anything else describes a budget that
+ * `allowedCommits` says how many commits the suite's budget covers, so it has
+ * to be a whole, non-negative count. Anything else describes a budget that
  * cannot be opened, and the harness refuses it where the suite declares it --
  * rather than accepting it and failing every test in that suite at teardown,
  * blaming tests that did nothing wrong.
  */
-describe('nested-transaction commit strategy configuration', () => {
-  const declaringASuiteWithCommitDepth = (commitDepth: number) => () =>
-    useIntegrationTest(() => {}, { commitStrategy: 'nested', commitDepth });
+describe('allowedCommits configuration', () => {
+  const declaringASuiteWithAllowedCommits = (allowedCommits: number) => () =>
+    useIntegrationTest(() => {}, { allowedCommits });
 
-  it.each([0, -1, 1.5, NaN, Infinity])('refuses a commitDepth of %s', (commitDepth) => {
-    expect(declaringASuiteWithCommitDepth(commitDepth)).toThrow(
-      `commitDepth of at least 1 whole nested level, but got ${commitDepth}`,
-    );
+  it.each([-1, 1.5, NaN, Infinity])(
+    'refuses a commit budget of %s, which is not a whole, non-negative count',
+    (allowedCommits) => {
+      expect(declaringASuiteWithAllowedCommits(allowedCommits)).toThrow(
+        `allowedCommits must be a non-negative whole number, but got ${allowedCommits}`,
+      );
+    },
+  );
+});
+
+describe('explicit zero commit budget (integration)', () => {
+  let gci: GciLibrary;
+  let session: unknown;
+
+  useIntegrationTest(
+    (testContext) => {
+      gci = testContext.gciLibrary;
+      session = testContext.session;
+    },
+    { allowedCommits: 0 },
+  );
+
+  it('opens no nested levels', () => {
+    expect(gci.executeAndFetchInteger(session, 'System transactionLevel')).toBe(1n);
+  });
+
+  it('still refuses a commit', () => {
+    expect(() =>
+      gci.executeAndRelease(session, 'System commitTransaction', (oop) => gci.isTrueOop(oop)),
+    ).toThrow(COMMIT_GUARD_REASON);
   });
 });

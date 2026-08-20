@@ -20,38 +20,9 @@ import { parseStartPreview, parseApplyResult } from '../../refactoring/instVarRe
  * On-demand GCI e2e for the COMMITTING paths of the add / remove instance-variable (V1)
  * refactoring, over the real GCI transport (`npm run test:gci`).
  *
- * The delete-history scenario has moved to
- * `refactoring/__tests__/refactoringInstVar.committing.integration.test.ts`, which runs in CI
- * over the release matrix using the harness's nested-transaction commit strategy: it
- * involves no instance migration, so there is no persistence question. What remains here:
- *
- * - **migrate instances**: a spike run against both 3.6.2 and 3.7.5 established that a nested
- *   commit promotes objects into the *parent* transaction, not into the repository, so under one
- *   level of nesting `migrateInstancesTo:` sees no already-committed instances and cannot migrate
- *   them (it raised `1 instance could not be migrated to the new class version`). This scenario
- *   therefore does not fit the nested strategy and is earmarked for the disposable-stone route instead.
- * - one of the two accessor-atomicity scenarios added for PR #392 finding #10 (`keeps the
- *   committed accessors after a later abort when an add migrates instances`): it also requests
- *   `migrate: true` on a fixture class that only ever exists inside this test's own transaction,
- *   so it hits the same no-op-under-nesting blocker as the migrate test above and is earmarked
- *   for the same disposable-stone route. The sibling scenario (`commits nothing when an accessor
- *   cannot compile, even with migrate requested`) turned out NOT to need a commit at all — the
- *   accessor failure gates `commitStructuralThenMigrate:` before it runs — and has moved to
- *   `refactoringInstVar.integration.test.ts`.
- *
- * `GsInstVarRefactoring>>applyDeselected:options:migrate:deleteHistory:` calls
- * `commitStructuralThenMigrate:` once the structural apply has succeeded, whenever `migrate` or
- * `deleteHistory` is requested, because `migrateInstancesTo:` needs a clean transaction.
- * `useIntegrationTest` arms GemStone's commit guard on every session it hands out, so a commit
- * fails at the commit site with `TransactionError 2249`, with no opt-out. Note the discriminator
- * is what the PRODUCTION code does, not what the test does: a test that merely needs its own
- * fixture belongs in the harness — the auto-abort rolls the fixture back, so it never needs to
- * commit.
- *
- * Guarded on the refactoring engine being installed (the queries reference the in-stone
- * `GsInstVarRefactoring`); the tests skip, with a reason, otherwise. Each test is self-cleaning
- * — it removes the committed class (and any persisted instance) and commits that removal in
- * `finally`, leaving no residue. All Smalltalk is ASCII-only for 3.6.x.
+ * Some scenarios were migrated to the integration test harness, which runs in CI
+ * over the release matrix. What remains here are tests which migrate instances because
+ * they require a real commit.
  */
 describe('instance-variable refactoring, committing paths (gci e2e)', () => {
   let gci: GciLibrary;

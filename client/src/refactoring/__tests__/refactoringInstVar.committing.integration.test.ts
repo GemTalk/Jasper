@@ -23,13 +23,13 @@ import { userIndex as userIndexProbe, hasIvar as hasIvarProbe } from './support/
  * single test, remain in `__tests__/gci/gciInstVar.e2e.test.ts` pending their own migration to a
  * disposable-stone route.
  *
- * `commitDepth: 4` = 3 real commits (fixture commit that bumps the class's history to 2 versions,
- * the structural commit `commitStructuralThenMigrate:deleteHistory:on:` performs before pruning,
- * and the final commit after `deletePriorVersionsOf:` -- `GsInstVarRefactoring.class.st:562,574`)
- * plus 1 headroom level: `useIntegrationTest`'s teardown treats the nested levels reaching exactly
- * their floor (i.e. every opened level consumed) as a budget violation, not just exceeding it, so
- * `commitDepth` must be provisioned one level above the actual commit count -- confirmed
- * empirically here, not by re-deriving the harness's own check.
+ * `allowedCommits: 3` = the test body's own commit at line 63 (bumping the class's history to 2
+ * versions), plus the two commits `GsInstVarRefactoring.class.st` performs while applying: the
+ * structural commit `commitStructuralThenMigrate:deleteHistory:on:` performs before pruning
+ * (`:562`), and the commit after `deletePriorVersionsOf:` (`:574`). The per-class migration commit
+ * at `:600` is NOT reached here -- this fixture passes `migrate=false, deleteHistory=true`, so that
+ * path never runs. Keep this count in sync with the fixture: if it fails at the harness's floor
+ * check, fix this comment and the number together, don't just bump the number.
  */
 describe('add instance variable, delete-history commit path (integration)', () => {
   let gci: GciLibrary;
@@ -40,7 +40,7 @@ describe('add instance variable, delete-history commit path (integration)', () =
       gci = testContext.gciLibrary;
       handle = testContext.session;
     },
-    { commitStrategy: 'nested', commitDepth: 4 },
+    { allowedCommits: 3 },
   );
 
   const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
