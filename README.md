@@ -24,9 +24,9 @@ If you already have a GemStone server running on another machine (or locally), y
 
 1. Install the extension from the VS Code Marketplace or Open VSX (links above).
 2. Open the **GemStone** sidebar (gem icon in the activity bar).
-3. Click the **+** button in the **Logins** section to create a new login.
-4. Fill in the connection details: GemStone version, host, stone name, NetLDI, and credentials.
-5. Click **Login** to connect.
+3. In **Logins & Sessions**, click **Add a Login** to open the login editor.
+4. Fill in the connection details, top to bottom: GemStone version, gem host, stone name, NetLDI (service name or port), and your GemStone user/password. **Host User** and **Host Password** are optional — supply them only when the remote NetLDI requires host authentication; leave them blank for a local stone or a guest-mode NetLDI. (Stuck? Click **Help me login** in the login editor for per-field guidance.)
+5. Click **Save**, then click the saved login to connect. A "Connecting…" notification reports success or failure, and the status bar (bottom right) shows the active session — or turns red, click-to-explain, if the connection fails.
 
 The first time you log in with a given GemStone version, Jasper needs the native GCI library (`libgcits`) for that version:
 

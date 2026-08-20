@@ -145,6 +145,16 @@ export class LoginEditorPanel {
               readOnly: this.readOnly,
             });
             break;
+          case 'openDocs':
+            // GemStone System Administration Guide — "Logging in Gem Sessions": the
+            // authoritative reference for login parameters, NRS syntax, and how the
+            // NetLDI starts the Gem.
+            void vscode.env.openExternal(
+              vscode.Uri.parse(
+                'https://downloads.gemtalksystems.com/docs/GemStone64/3.4.x/GS64-SysAdminGuide-3.4/1-Introduction.htm#pgfId-1621117',
+              ),
+            );
+            break;
         }
       },
       null,
@@ -293,6 +303,42 @@ export class LoginEditorPanel {
       opacity: 0.7;
       margin-top: 4px;
     }
+    a.doc-link {
+      color: var(--vscode-textLink-foreground);
+      cursor: pointer;
+      text-decoration: none;
+    }
+    a.doc-link:hover {
+      color: var(--vscode-textLink-activeForeground);
+      text-decoration: underline;
+    }
+    .help-row {
+      margin: 4px 0 8px;
+    }
+    /* Per-field help, revealed by the "Help me login" toggle. The left accent bar
+       visually ties each note to the field above it. */
+    .field-help {
+      display: none;
+      font-size: 0.9em;
+      opacity: 0.85;
+      margin-top: 4px;
+      padding-left: 8px;
+      border-left: 2px solid var(--vscode-focusBorder);
+    }
+    body.help-on .field-help {
+      display: block;
+    }
+    .help-intro {
+      display: none;
+      padding: 8px 12px;
+      margin-bottom: 12px;
+      border-radius: 2px;
+      background: var(--vscode-inputValidation-infoBackground, var(--vscode-editorWidget-background));
+      border: 1px solid var(--vscode-inputValidation-infoBorder, var(--vscode-focusBorder));
+    }
+    body.help-on .help-intro {
+      display: block;
+    }
     .banner {
       display: none;
       padding: 8px 12px;
@@ -306,6 +352,18 @@ export class LoginEditorPanel {
 <body>
   <h2>GemStone Login Parameters</h2>
 
+  <div class="help-row">
+    <button id="helpToggle" class="secondary" type="button" aria-expanded="false">Help me login</button>
+  </div>
+
+  <div id="helpIntro" class="help-intro">
+    Fill in the fields below to connect to a stone; each field's help explains what to
+    enter. Host User/Password are needed only for a remote stone whose NetLDI requires
+    host authentication. For a full explanation of how GemStone logins work — NRS
+    syntax, linked vs. RPC logins, and how the NetLDI starts your Gem — see GemStone's
+    <a class="doc-link" id="docsLink">Logging in Gem Sessions</a> guide.
+  </div>
+
   <div id="readOnlyBanner" class="banner">
     This login has an active session, so its configuration is read-only. Log out to edit it.
   </div>
@@ -313,21 +371,25 @@ export class LoginEditorPanel {
   <div class="field-group">
     <label for="version">GemStone Version</label>
     <select id="version"></select>
+    <div class="field-help">The GemStone version whose GCI client library Jasper uses. It must match the version of the stone you are connecting to.</div>
 
     <label for="gem_host">Gem Host</label>
     <input type="text" id="gem_host" placeholder="localhost">
+    <div class="field-help">The machine where your Gem process runs. Use <code>localhost</code> for a stone on this computer, or the remote host's name or IP address for a remote stone.</div>
 
     <label for="stone">Stone</label>
     <input type="text" id="stone" placeholder="gs64stone">
+    <div class="field-help">The name of the running stone (repository monitor) to log in to — for example, <code>gs64stone</code>.</div>
 
     <label for="netldi">NetLDI (name or port)</label>
     <input type="text" id="netldi" placeholder="gs64ldi or 50377">
-    <div class="hint">Accepts a NetLDI service name (e.g. gs64ldi) or a port number (e.g. 50377), useful for remote stones.</div>
+    <div class="field-help">The NetLDI network server that launches your Gem. Enter its service name (e.g. <code>gs64ldi</code>) or its port number (e.g. <code>50377</code>). A port number is often easiest for a remote stone.</div>
   </div>
 
   <div class="field-group">
     <label for="gs_user">GemStone User</label>
     <input type="text" id="gs_user" placeholder="DataCurator">
+    <div class="field-help">Your GemStone user — a UserProfile inside the repository, such as <code>DataCurator</code>. This is a GemStone account, not your operating-system login.</div>
 
     <label for="gs_password">GemStone Password</label>
     <input type="password" id="gs_password">
@@ -335,15 +397,16 @@ export class LoginEditorPanel {
       <input type="checkbox" id="password_in_keychain">
       <label for="password_in_keychain" class="inline-label">Store password in OS keychain</label>
     </div>
-    <div class="hint">Leave password blank to be prompted on each login.</div>
+    <div class="field-help">The password for the GemStone user. Leave it blank to be prompted on each login, or check the box above to store it securely in your OS keychain.</div>
   </div>
 
   <div class="field-group">
-    <label for="host_user">Host User</label>
+    <label for="host_user">Host User (optional)</label>
     <input type="text" id="host_user">
 
-    <label for="host_password">Host Password</label>
+    <label for="host_password">Host Password (optional)</label>
     <input type="password" id="host_password">
+    <div class="field-help">The operating-system account on the Gem's host machine. Fill these in only when the remote NetLDI requires host authentication; leave them blank for a local stone or a guest-mode NetLDI. If left blank, your own OS user is used.</div>
   </div>
 
   <div class="field-group">
@@ -351,7 +414,7 @@ export class LoginEditorPanel {
       <input type="checkbox" id="sync_classes" checked>
       <label for="sync_classes" class="inline-label">Sync classes to local files (Find in Files, Go to Definition)</label>
     </div>
-    <div class="hint">Keeps a read-only .gemstone mirror in sync on login/commit. Turn off for slow or remote connections where the initial sync isn't worth it — server-side search still works.</div>
+    <div class="field-help">Keeps a read-only .gemstone mirror in sync on login/commit. Turn off for slow or remote connections where the initial sync isn't worth it — server-side search still works.</div>
   </div>
 
   <div class="button-row">
@@ -363,6 +426,19 @@ export class LoginEditorPanel {
     const vscode = acquireVsCodeApi();
     const fields = ['version','gem_host','stone','gs_user','gs_password','netldi','host_user','host_password'];
     let originalLabel = null;
+
+    let helpOn = false;
+    function setHelp(on) {
+      helpOn = on;
+      document.body.classList.toggle('help-on', on);
+      const btn = document.getElementById('helpToggle');
+      btn.textContent = on ? 'Hide help' : 'Help me login';
+      btn.setAttribute('aria-expanded', String(on));
+    }
+    document.getElementById('helpToggle').addEventListener('click', () => setHelp(!helpOn));
+    document.getElementById('docsLink').addEventListener('click', () => {
+      vscode.postMessage({ command: 'openDocs' });
+    });
 
     vscode.postMessage({ command: 'requestData' });
 
@@ -406,6 +482,11 @@ export class LoginEditorPanel {
         }
         document.getElementById('readOnlyBanner').style.display = readOnly ? 'block' : 'none';
         document.querySelector('.button-row').style.display = readOnly ? 'none' : 'flex';
+
+        // Default the help open for a brand-new login (the first-use case this is
+        // for); keep it closed when editing/viewing an existing one so it stays
+        // out of the way. The user can toggle it either way.
+        setHelp(!readOnly && !originalLabel);
       }
     });
 

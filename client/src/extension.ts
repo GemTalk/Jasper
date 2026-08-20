@@ -979,6 +979,74 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(sessionManager.onDidChangeSelection(() => updateStatusBar()));
   updateStatusBar();
 
+  // ── Status Bar: Connect Feedback (left) ────────────────
+  // A dedicated left-aligned item carries the whole connect lifecycle —
+  // connecting → connected/failed — because that is where the user's eyes already
+  // are during a connect (the "Connecting…" spinner lives here). It is separate
+  // from the right-hand Active Session item, which stays the calm persistent state.
+  //   • connecting: a spinner while the attempt (which may start the stone) runs.
+  //   • success: a green check for a few seconds, then it hides. VS Code status-bar
+  //     backgrounds only support warning/error, so success is a readable green
+  //     foreground, not a filled highlight.
+  //   • failure: turns red and becomes a click-through to the failure reason, since
+  //     the toast that first reported it may already be gone. It persists until the
+  //     next attempt.
+  const CONNECTED_FLASH_MS = 5000;
+  const connectStatusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+  context.subscriptions.push(connectStatusItem);
+  let lastLoginError: string | undefined;
+  let connectedFlashTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function clearFlashTimer(): void {
+    if (connectedFlashTimer) {
+      clearTimeout(connectedFlashTimer);
+      connectedFlashTimer = undefined;
+    }
+  }
+
+  function showConnecting(stone: string): void {
+    clearFlashTimer();
+    lastLoginError = undefined;
+    connectStatusItem.color = undefined;
+    connectStatusItem.backgroundColor = undefined;
+    connectStatusItem.command = undefined;
+    connectStatusItem.text = `$(sync~spin) GemStone: connecting to ${stone}…`;
+    connectStatusItem.tooltip = undefined;
+    connectStatusItem.show();
+  }
+
+  function flashConnected(stone: string): void {
+    clearFlashTimer();
+    lastLoginError = undefined;
+    connectStatusItem.color = new vscode.ThemeColor('charts.green');
+    connectStatusItem.backgroundColor = undefined;
+    connectStatusItem.command = undefined;
+    connectStatusItem.text = `$(pass-filled) Connected to ${stone}`;
+    connectStatusItem.tooltip = 'GemStone: connected';
+    connectStatusItem.show();
+    connectedFlashTimer = setTimeout(() => {
+      connectedFlashTimer = undefined;
+      connectStatusItem.hide();
+    }, CONNECTED_FLASH_MS);
+  }
+
+  function showLoginError(message: string): void {
+    clearFlashTimer();
+    lastLoginError = message;
+    connectStatusItem.color = undefined;
+    connectStatusItem.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
+    connectStatusItem.command = 'gemstone.showLastLoginError';
+    connectStatusItem.text = '$(error) GemStone: login failed';
+    connectStatusItem.tooltip = 'Click to see why the connection failed';
+    connectStatusItem.show();
+  }
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('gemstone.showLastLoginError', () => {
+      void vscode.window.showErrorMessage(lastLoginError ?? 'No recent GemStone login error.');
+    }),
+  );
+
   // Drive the `gemstone.enhancedInspectorSupported` context key off the selected
   // session's version, so the "Install Enhanced Inspector Support" command is
   // only offered where it can actually work (see package.json commandPalette
@@ -1585,13 +1653,14 @@ export function activate(context: vscode.ExtensionContext) {
         // it back to `string | undefined` inside the async closure below.
         const resolvedGciPath = gciPath;
         treeProvider.setConnecting(item.login, true);
-        const connectingStatus = vscode.window.createStatusBarItem(
-          vscode.StatusBarAlignment.Left,
-          0,
-        );
-        connectingStatus.text = `$(sync~spin) GemStone: connecting to ${login.stone}…`;
-        connectingStatus.show();
+        // Drive the left-hand connect-status item through this attempt. showConnecting
+        // also clears any leftover red "login failed" state from a prior attempt.
+        showConnecting(login.stone);
 
+        // Captured across the recovery flow so the failure feedback (toast + red
+        // status bar) can report the reason even when the retry path swallowed the
+        // original throw.
+        let failureMessage: string | undefined;
         let session: ActiveSession | undefined;
         try {
           session = await vscode.window.withProgress(
@@ -1613,6 +1682,7 @@ export function activate(context: vscode.ExtensionContext) {
                 // the case, offers to start it, and reports the outcome —
                 // including re-showing this error untouched when it cannot help.
                 const msg = e instanceof Error ? e.message : String(e);
+                failureMessage = `Login failed: ${msg}`;
                 let recovered: ActiveSession | undefined;
                 await maybeStartDatabaseAndRetry(login, `Login failed: ${msg}`, {
                   getDatabases: () => sysadminStorage.getDatabases(),
@@ -1627,7 +1697,10 @@ export function activate(context: vscode.ExtensionContext) {
                     await setAutoStartMode(mode);
                   },
                   confirm: confirmStartDatabase,
-                  showError: (m) => vscode.window.showErrorMessage(m),
+                  showError: (m) => {
+                    failureMessage = m;
+                    vscode.window.showErrorMessage(m);
+                  },
                   report: (m) => progress.report({ message: m }),
                   retryLogin: async () => {
                     recovered = await sessionManager.loginAsync(login, resolvedGciPath);
@@ -1644,16 +1717,23 @@ export function activate(context: vscode.ExtensionContext) {
           // that rejects shows only "command failed", with nothing about which
           // login or why.
           const msg = e instanceof Error ? e.message : String(e);
-          vscode.window.showErrorMessage(`Login failed: ${msg}`);
+          failureMessage = `Login failed: ${msg}`;
+          vscode.window.showErrorMessage(failureMessage);
+          showLoginError(failureMessage);
           return;
         } finally {
           treeProvider.setConnecting(item.login, false);
-          connectingStatus.dispose();
+          // The connect-status item is not cleared here: the outcome code below
+          // (flashConnected / showLoginError) sets its final connected/failed state.
         }
 
         // Undefined when the login failed and the recovery flow could not (or
-        // was not allowed to) rescue it. It has already reported why.
-        if (!session) return;
+        // was not allowed to) rescue it. It has already shown a toast; mirror that
+        // in the status bar so the reason survives after the toast dismisses.
+        if (!session) {
+          showLoginError(failureMessage ?? 'Login failed');
+          return;
+        }
 
         refreshEnhancedInspectorAvailable(session);
         refreshRefactoringSupportAvailable(session);
@@ -1662,6 +1742,7 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showInformationMessage(
           `Connected to ${login.stone} (${session.stoneVersion}) on ${login.gem_host} as ${login.gs_user}`,
         );
+        flashConnected(login.stone);
         // eslint-disable-next-line @typescript-eslint/no-floating-promises -- FIXME: unhandled floating promise; needs investigation to decide await vs. void vs. .catch before this rule is enabled repo-wide
         exportManager.exportSession(session, true);
         // We no longer auto-open a workspace on every connect (it left a dirty,
