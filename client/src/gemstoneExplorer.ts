@@ -5211,6 +5211,9 @@ export interface ExplorerHandle {
   onMethodCompiled(sessionId: number, className: string): void;
   onClassCompiled(sessionId: number, className: string, dictName?: string): void;
   onSessionAborted(sessionId: number): void;
+  /** Flash a green ✅ connection-success banner atop the Dictionaries view for a
+   * few seconds (called after a successful login). */
+  showConnectedBanner(stone: string): void;
 }
 
 export function registerGemStoneExplorer(
@@ -5804,10 +5807,29 @@ export function registerGemStoneExplorer(
     ivarHighlightDecoration,
   );
 
+  // A green connection-success banner at the top of the Dictionaries view, shown
+  // briefly after a login. The ✅ emoji renders green in every theme (including
+  // High Contrast), and TreeView.message sits above the tree without stealing space
+  // or focus — unlike a status-bar color (which can't be green) or a webview panel
+  // (which is far too large for a transient flash).
+  const CONNECTED_BANNER_MS = 5000;
+  let connectedBannerTimer: ReturnType<typeof setTimeout> | undefined;
+  function showConnectedBanner(stone: string): void {
+    if (connectedBannerTimer) clearTimeout(connectedBannerTimer);
+    const message = `✅ Connected to ${stone}`;
+    dictView.message = message;
+    connectedBannerTimer = setTimeout(() => {
+      connectedBannerTimer = undefined;
+      // Only clear our own banner — a newer message (or another connect) wins.
+      if (dictView.message === message) dictView.message = undefined;
+    }, CONNECTED_BANNER_MS);
+  }
+
   return {
     onMethodCompiled: (sessionId, className) => ctl.onExternalMethodCompiled(sessionId, className),
     onClassCompiled: (sessionId, className, dictName) =>
       ctl.onExternalClassCompiled(sessionId, className, dictName),
     onSessionAborted: (sessionId) => ctl.onSessionAborted(sessionId),
+    showConnectedBanner,
   };
 }

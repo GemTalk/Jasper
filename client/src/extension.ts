@@ -980,32 +980,22 @@ export function activate(context: vscode.ExtensionContext) {
   updateStatusBar();
 
   // ── Status Bar: Connect Feedback (left) ────────────────
-  // A dedicated left-aligned item carries the whole connect lifecycle —
-  // connecting → connected/failed — because that is where the user's eyes already
-  // are during a connect (the "Connecting…" spinner lives here). It is separate
-  // from the right-hand Active Session item, which stays the calm persistent state.
+  // A dedicated left-aligned item carries the connecting/failed states — that is
+  // where the user's eyes already are during a connect. It is separate from the
+  // right-hand Active Session item, which stays the calm persistent state.
   //   • connecting: a spinner while the attempt (which may start the stone) runs.
-  //   • success: a green check for a few seconds, then it hides. VS Code status-bar
-  //     backgrounds only support warning/error, so success is a readable green
-  //     foreground, not a filled highlight.
-  //   • failure: turns red and becomes a click-through to the failure reason, since
-  //     the toast that first reported it may already be gone. It persists until the
-  //     next attempt.
-  const CONNECTED_FLASH_MS = 5000;
+  //   • success: the spinner is cleared, the GemStone Explorer is revealed, and a
+  //     green ✅ banner flashes at the top of it for a few seconds (see the
+  //     explorer's showConnectedBanner). The status bar cannot render green, and a
+  //     webview flash was far too large — the banner is unobtrusive and theme-safe.
+  //   • failure: the item turns red and becomes a click-through to the failure
+  //     reason, since the toast that first reported it may already be gone. It
+  //     persists until the next attempt.
   const connectStatusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   context.subscriptions.push(connectStatusItem);
   let lastLoginError: string | undefined;
-  let connectedFlashTimer: ReturnType<typeof setTimeout> | undefined;
-
-  function clearFlashTimer(): void {
-    if (connectedFlashTimer) {
-      clearTimeout(connectedFlashTimer);
-      connectedFlashTimer = undefined;
-    }
-  }
 
   function showConnecting(stone: string): void {
-    clearFlashTimer();
     lastLoginError = undefined;
     connectStatusItem.color = undefined;
     connectStatusItem.backgroundColor = undefined;
@@ -1016,22 +1006,13 @@ export function activate(context: vscode.ExtensionContext) {
   }
 
   function flashConnected(stone: string): void {
-    clearFlashTimer();
     lastLoginError = undefined;
-    connectStatusItem.color = new vscode.ThemeColor('charts.green');
-    connectStatusItem.backgroundColor = undefined;
-    connectStatusItem.command = undefined;
-    connectStatusItem.text = `$(pass-filled) Connected to ${stone}`;
-    connectStatusItem.tooltip = 'GemStone: connected';
-    connectStatusItem.show();
-    connectedFlashTimer = setTimeout(() => {
-      connectedFlashTimer = undefined;
-      connectStatusItem.hide();
-    }, CONNECTED_FLASH_MS);
+    connectStatusItem.hide();
+    void vscode.commands.executeCommand('workbench.view.extension.gemstoneExplorer');
+    explorer.showConnectedBanner(stone);
   }
 
   function showLoginError(message: string): void {
-    clearFlashTimer();
     lastLoginError = message;
     connectStatusItem.color = undefined;
     connectStatusItem.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
