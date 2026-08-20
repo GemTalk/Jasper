@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { ActiveSession } from './sessionManager';
 import { GciError } from './gciLibrary';
 import { pollReadable } from './socketPoll';
+import { logInfo } from './gciLog';
 
 /**
  * Shared non-blocking GCI call runner.
@@ -97,6 +98,34 @@ export interface NbRunOptions {
  * notification so the user can see it registered; a second sends a hard break
  * and rejects with `NbCancelledError`.
  */
+/** How long to keep collecting the result of a hard-broken call, and how often. */
+const DRAIN_ATTEMPTS = 40;
+const DRAIN_INTERVAL_MS = 50;
+
+/**
+ * Collect and discard the result of a call we gave up on, so the session goes
+ * back to idle.
+ *
+ * A hard break stops the gem but does not, by itself, end the GCI call: until
+ * something reads its result the session reports a call in progress and refuses
+ * the next one. Nothing here cares what the result was — only that it has been
+ * taken. Gives up after a bounded number of attempts rather than polling a
+ * session that is never going to answer.
+ */
+function drainAbandonedCall(session: ActiveSession, attempt = 0): void {
+  try {
+    const { result } = pollNbResultReady(session);
+    if (result === 1) {
+      session.gci.GciTsNbResult(session.handle);
+      return;
+    }
+    if (result === -1 || attempt >= DRAIN_ATTEMPTS) return;
+  } catch {
+    return;
+  }
+  setTimeout(() => drainAbandonedCall(session, attempt + 1), DRAIN_INTERVAL_MS);
+}
+
 export function pollNbToCompletion<T>(
   session: ActiveSession,
   onReady: () => T | Promise<T>,
@@ -131,13 +160,32 @@ export function pollNbToCompletion<T>(
     // canceller handed out via opts.onStart. First call asks the gem to stop at a
     // safe point; a second interrupts now and gives up on the call.
     const requestCancel = (): void => {
-      if (settled) return;
+      if (settled) {
+        logInfo(`[Session ${session.id}] Break requested, but the call had already settled.`);
+        return;
+      }
       if (!softBreakSent) {
-        session.gci.GciTsBreak(session.handle, false);
+        // Logged because a break that the gem ignores is indistinguishable, from
+        // the outside, from a break that was never sent — and the difference is
+        // the whole diagnosis when a stop button appears to do nothing.
+        const { success, err } = session.gci.GciTsBreak(session.handle, false);
+        logInfo(
+          `[Session ${session.id}] Soft break sent: success=${success}` +
+            (err?.number ? ` err=${err.number} ${err.message ?? ''}` : ''),
+        );
         softBreakSent = true;
         progressReport?.({ message: 'Soft break sent — waiting for the gem to stop…' });
       } else {
-        session.gci.GciTsBreak(session.handle, true);
+        const { success, err } = session.gci.GciTsBreak(session.handle, true);
+        logInfo(
+          `[Session ${session.id}] Hard break sent: success=${success}` +
+            (err?.number ? ` err=${err.number} ${err.message ?? ''}` : ''),
+        );
+        // A hard break abandons the call, but the session still counts it as in
+        // progress until its (aborted) result is collected. Drain it, or the very
+        // next call on this session is refused with "session is busy" — which
+        // reads as the next run silently doing nothing.
+        drainAbandonedCall(session);
         settle(() => reject(new NbCancelledError()));
       }
     };
@@ -166,6 +214,23 @@ export function pollNbToCompletion<T>(
       }
       if (pollResult === -1) {
         settle(() => reject(new Error(pollErr.message || `GemStone poll error ${pollErr.number}`)));
+        return;
+      }
+
+      // The call has not answered — but check the session is still there to answer.
+      // A logout (or a lost connection) while a call is outstanding leaves the poll
+      // reporting "not ready" forever: the progress notification would sit there
+      // claiming work is in flight, and whatever awaited this promise would never
+      // hear back. GciTsCallInProgress answers -1 for a session that is gone.
+      const { result: alive, err: aliveErr } = session.gci.GciTsCallInProgress(session.handle);
+      if (alive === -1) {
+        settle(() =>
+          reject(
+            new Error(
+              aliveErr?.message || 'The GemStone session ended while this call was still running.',
+            ),
+          ),
+        );
         return;
       }
 

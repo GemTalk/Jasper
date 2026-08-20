@@ -56,6 +56,8 @@ function makeGci(overrides: Record<string, unknown> = {}) {
       err: { number: 0, message: '' },
     })),
     GciTsNbPoll: vi.fn(() => ({ result: 1, err: { number: 0 } })),
+    // The poll checks the session is still there to answer; -1 would mean it is gone.
+    GciTsCallInProgress: vi.fn(() => ({ result: 0, err: { number: 0 } })),
     isAvailable: vi.fn(() => true),
     GciTsSocket: vi.fn(() => ({ fd: 7, err: { number: 0 } })),
     GciTsNbResult: vi.fn((): Record<string, unknown> => ({

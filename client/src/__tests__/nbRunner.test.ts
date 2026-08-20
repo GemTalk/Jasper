@@ -23,6 +23,10 @@ function makeSession(pollResults: { result: number; err?: unknown }[]): ActiveSe
     }),
     GciTsBreak: vi.fn(() => ({ result: 0, err: noErr })),
     GciTsSocket: vi.fn(() => ({ fd: 3, err: noErr })),
+    // 0 = the session is there and idle-ish; -1 would mean it has gone away, which
+    // the poll treats as "nobody is coming to answer this call".
+    GciTsCallInProgress: vi.fn(() => ({ result: 0, err: noErr })),
+    GciTsNbResult: vi.fn(() => ({ result: 0, err: noErr })),
   };
   return { id: 1, handle: { h: 1 }, gci } as unknown as ActiveSession;
 }
@@ -231,5 +235,27 @@ describe('runNbCall — notification suppression', () => {
       vi.useRealTimers();
       vi.mocked(vscode.window.withProgress).mockReset();
     }
+  });
+});
+
+describe('a session that goes away mid-call', () => {
+  it('settles instead of polling forever', async () => {
+    // A logout (or a lost connection) while a call is outstanding used to leave the
+    // poll reporting "not ready" for good: the progress notification sat there
+    // claiming work was in flight and the awaiting caller never heard back.
+    const session = makeSession([{ result: 0 }, { result: 0 }]);
+    (session.gci.GciTsCallInProgress as ReturnType<typeof vi.fn>).mockReturnValue({
+      result: -1,
+      err: { number: 4100, message: 'session not logged in' },
+    });
+
+    await expect(
+      runNbCall(
+        session,
+        () => ({ success: true, err: noErr as never }),
+        () => 'never',
+        { suppressNotification: true },
+      ),
+    ).rejects.toThrow(/session not logged in/);
   });
 });
