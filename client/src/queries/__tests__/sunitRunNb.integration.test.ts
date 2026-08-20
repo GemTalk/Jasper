@@ -49,7 +49,11 @@ describe('SUnit non-blocking runs (integration)', () => {
     handle = testContext.session;
   });
 
-  const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
+  // One session object for the whole file, as the extension has: a fresh object per
+  // call would look like a different session to anything tracking state per session.
+  let theSession: ActiveSession;
+  const session = (): ActiveSession =>
+    (theSession ??= { id: 1, gci, handle } as unknown as ActiveSession);
   const exec = (code: string): string => q.executeFetchString(session(), code);
 
   beforeEach(() => {

@@ -134,6 +134,10 @@ describe('runNbCall — cancellation', () => {
         () => ({ success: true, err: noErr as never }),
         () => 'unused',
       );
+      // The hard break is deferred now, so this rejects inside a timer tick — a whole
+      // turn before `expect(p).rejects` would attach a handler, which Node reports as
+      // an unhandled rejection. Claim it here; the assertions below still hold.
+      p.catch(() => {});
       // Advance past PROGRESS_THRESHOLD_MS (2000) so the progress block runs and
       // registers the cancellation handler.
       await vi.advanceTimersByTimeAsync(3000);
@@ -175,6 +179,10 @@ describe('runNbCall — cancellation', () => {
           },
         },
       );
+      // The hard break is deferred now, so this rejects inside a timer tick — a whole
+      // turn before `expect(p).rejects` would attach a handler, which Node reports as
+      // an unhandled rejection. Claim it here; the assertions below still hold.
+      p.catch(() => {});
 
       expect(cancel).toBeTypeOf('function');
 
@@ -267,6 +275,10 @@ describe('after a hard break', () => {
           },
         },
       );
+      // The hard break is deferred now, so this rejects inside a timer tick — a whole
+      // turn before `expect(p).rejects` would attach a handler, which Node reports as
+      // an unhandled rejection. Claim it here; the assertions below still hold.
+      p.catch(() => {});
 
       cancel!(); // soft
       cancel!(); // hard — sent once the safety gap has passed
@@ -305,6 +317,10 @@ describe('after a hard break', () => {
           },
         },
       );
+      // The hard break is deferred now, so this rejects inside a timer tick — a whole
+      // turn before `expect(p).rejects` would attach a handler, which Node reports as
+      // an unhandled rejection. Claim it here; the assertions below still hold.
+      p.catch(() => {});
       cancel!();
       cancel!();
       await vi.advanceTimersByTimeAsync(400);

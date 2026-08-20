@@ -116,6 +116,10 @@ const DRAIN_INTERVAL_MS = 50;
  * session waits for it: draining takes as long as the gem takes to notice the
  * break, and a run started in the meantime would be refused outright — which,
  * from the user's side, is pressing stop and then having the next run do nothing.
+ *
+ * Keyed by session id, not by the ActiveSession object: callers build those
+ * freely and two of them can stand for the same logged-in session, which is the
+ * thing that actually has one call outstanding at a time.
  */
 const draining = new Map<number, Promise<void>>();
 
