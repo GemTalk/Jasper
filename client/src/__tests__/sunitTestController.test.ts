@@ -1168,6 +1168,112 @@ describe('SunitTestController', () => {
     });
   });
 
+  describe('isTestItemUri', () => {
+    it('recognises the documents its items point at, and nothing else', async () => {
+      // The Explorer uses this to tell a Testing view row click (which it must not
+      // follow) from any other open (which it must).
+      const ctrl = new SunitTestController(makeSessionManager(true));
+      const mockController = (tests.createTestController as ReturnType<typeof vi.fn>).mock
+        .results[0].value;
+      await mockController.resolveHandler(undefined);
+      const classItem = mockController.items.get('sunit/1/UserGlobals/MyTestCase');
+      const methodUri = buildMethodUri({
+        kind: 'method',
+        sessionId: 1,
+        dictName: 'UserGlobals',
+        className: 'MyTestCase',
+        isMeta: false,
+        category: 'unit tests',
+        selector: 'testAdd',
+        environmentId: 0,
+      });
+
+      expect(ctrl.isTestItemUri(buildClassDefinitionUri(1, 'UserGlobals', 'MyTestCase'))).toBe(
+        true,
+      );
+      // A method only counts once its item exists.
+      expect(ctrl.isTestItemUri(methodUri)).toBe(false);
+      await mockController.resolveHandler(classItem);
+      expect(ctrl.isTestItemUri(methodUri)).toBe(true);
+
+      expect(ctrl.isTestItemUri(buildClassDefinitionUri(1, 'UserGlobals', 'NotATest'))).toBe(false);
+      ctrl.dispose();
+    });
+
+    it('forgets the URIs of items a rediscovery replaced', async () => {
+      const ctrl = new SunitTestController(makeSessionManager(true));
+      const mockController = (tests.createTestController as ReturnType<typeof vi.fn>).mock
+        .results[0].value;
+      await mockController.resolveHandler(undefined);
+      const gone = buildClassDefinitionUri(1, 'UserGlobals', 'MyTestCase');
+      expect(ctrl.isTestItemUri(gone)).toBe(true);
+
+      (sunit.discoverTestClasses as ReturnType<typeof vi.fn>).mockReturnValueOnce([
+        { dictName: 'UserGlobals', className: 'SomethingElseTest', testCount: 1 },
+      ]);
+      await mockController.refreshHandler();
+
+      expect(ctrl.isTestItemUri(gone)).toBe(false);
+      ctrl.dispose();
+    });
+  });
+
+  describe('the test-running context key', () => {
+    it('is set for the life of a run, and cleared when it ends', async () => {
+      // Drives the ■ on the Testing view's rows; VS Code has no per-item key, so a
+      // stuck `true` would leave a stop button on every row for good.
+      const ctrl = new SunitTestController(makeSessionManager(true));
+      const mockController = (tests.createTestController as ReturnType<typeof vi.fn>).mock
+        .results[0].value;
+      await mockController.resolveHandler(undefined);
+      const runHandler = mockController.createRunProfile.mock.calls[0][2];
+      vi.mocked(commands.executeCommand).mockClear();
+
+      await runHandler(
+        { include: undefined, exclude: undefined },
+        {
+          isCancellationRequested: false,
+          onCancellationRequested: () => ({ dispose: () => {} }),
+        },
+      );
+
+      const contextCalls = vi
+        .mocked(commands.executeCommand)
+        .mock.calls.filter((c) => c[0] === 'setContext' && c[1] === 'gemstone.testRunning')
+        .map((c) => c[2]);
+      expect(contextCalls).toEqual([true, false]);
+      ctrl.dispose();
+    });
+
+    it('is cleared even when the run throws', async () => {
+      (sunit.runTestClassNb as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new Error('stone exploded'),
+      );
+      const ctrl = new SunitTestController(makeSessionManager(true));
+      const mockController = (tests.createTestController as ReturnType<typeof vi.fn>).mock
+        .results[0].value;
+      await mockController.resolveHandler(undefined);
+      const runHandler = mockController.createRunProfile.mock.calls[0][2];
+      vi.mocked(commands.executeCommand).mockClear();
+
+      await runHandler(
+        { include: undefined, exclude: undefined },
+        {
+          isCancellationRequested: false,
+          onCancellationRequested: () => ({ dispose: () => {} }),
+        },
+      );
+
+      expect(
+        vi
+          .mocked(commands.executeCommand)
+          .mock.calls.filter((c) => c[0] === 'setContext' && c[1] === 'gemstone.testRunning')
+          .map((c) => c[2]),
+      ).toEqual([true, false]);
+      ctrl.dispose();
+    });
+  });
+
   describe('revealInTestExplorer', () => {
     it('reveals a discovered test class', async () => {
       const ctrl = new SunitTestController(makeSessionManager(true));

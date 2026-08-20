@@ -795,6 +795,17 @@ export class ExplorerController {
     this.attributedOpens.add(uri.toString());
   }
 
+  /**
+   * Navigate the panes to `uri`'s class/method on purpose — what Reveal in
+   * GemStone Explorer does from a Testing view row, where a plain click
+   * deliberately navigates nothing. Claims the open first, so the guard that
+   * ignores test-item documents lets this one through.
+   */
+  async revealDocument(uri: vscode.Uri): Promise<void> {
+    this.markAttributedOpen(uri);
+    await this.syncToEditor(uri);
+  }
+
   // Owns where our source editors land. Balances "open to the side" across only
   // our own groups, so we neither clump nor invade the System Browser's group.
   readonly placement = new SourceEditorPlacement();
@@ -6045,9 +6056,6 @@ export function registerGemStoneExplorer(
       ctl.onExternalClassCompiled(sessionId, className, dictName),
     onSessionAborted: (sessionId) => ctl.onSessionAborted(sessionId),
     markAttributedOpen: (uri) => ctl.markAttributedOpen(uri),
-    revealDocument: async (uri) => {
-      ctl.markAttributedOpen(uri);
-      await ctl.syncToEditor(uri);
-    },
+    revealDocument: (uri) => ctl.revealDocument(uri),
   };
 }

@@ -330,6 +330,17 @@ describe('a click in the Testing view', () => {
     expect(method.reveal).not.toHaveBeenCalled();
   });
 
+  it('revealDocument navigates on purpose, past the guard that ignores test rows', async () => {
+    // Reveal in GemStone Explorer, from a Testing view row. Without the claim it
+    // would take the same early return a plain row click does.
+    const c = ctl();
+    const method = withViews(c);
+
+    await c.revealDocument(Uri.parse(TEST_URI));
+
+    expect(method.reveal).toHaveBeenCalled();
+  });
+
   it('follows an ordinary method that no test item points at', async () => {
     const c = ctl();
     const method = withViews(c);
@@ -458,6 +469,28 @@ describe('ExplorerController.isTestSelector', () => {
     expect(row.contextValue).not.toContain('.running');
     // Nor a ▶ mid-run: the row is neither runnable nor stoppable right now.
     expect(row.contextValue?.endsWith('.test')).toBe(false);
+  });
+
+  it('says on the row when an outcome predates the code it described', () => {
+    const sessionManager = { getSelectedSession: () => SESSION } as unknown as SessionManager;
+    function rowFor(stale: boolean) {
+      const c = new ExplorerController(sessionManager, undefined, undefined, {
+        isTestClass: () => true,
+        isTestItemUri: () => false,
+        resultFor: () => ({ outcome: 'passed' as const, stale }),
+        onDidChangeResults: () => ({ dispose: () => {} }),
+        revealInTestExplorer: () => Promise.resolve(true),
+      });
+      c.state.dictName = 'UserGlobals';
+      c.state.className = 'AnnouncerTest';
+      const row = new MethodItem(false, info({ selector: 'testAnnounceClass' }));
+      c.decorateTestRow(row, 'UserGlobals', 'AnnouncerTest', 'testAnnounceClass');
+      return row;
+    }
+
+    expect(String(rowFor(false).tooltip)).toContain('Last run: passed');
+    expect(String(rowFor(false).tooltip)).not.toContain('recompiled');
+    expect(String(rowFor(true).tooltip)).toContain('before the code was recompiled');
   });
 
   it('leaves a row that has never run with the icon it was built with', () => {
