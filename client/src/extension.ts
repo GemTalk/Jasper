@@ -562,6 +562,13 @@ export function activate(context: vscode.ExtensionContext) {
   // Set when GemStone Search registers (below); the class-compile and commit/abort handlers call its
   // hooks so an open search re-primes/folds in changes instead of going stale.
   let omniSearch: OmniSearchRegistration | undefined;
+  // Set when the SUnit controller is built (below, after the Explorer). The Explorer
+  // asks it which classes are test classes and how each last ran, so its rows can
+  // offer to run them and show the outcome.
+  let sunitTests: SunitTestController | undefined;
+  // Relays the controller's result changes to the Explorer, which is registered first.
+  const sunitResultsChanged = new vscode.EventEmitter<void>();
+  context.subscriptions.push(sunitResultsChanged);
   // Create every output channel up front — not lazily on first use — so the
   // full set is discoverable in the Output view's channel dropdown from
   // activation. (The Class Sync channel is created just after ExportManager is
@@ -768,6 +775,17 @@ export function activate(context: vscode.ExtensionContext) {
     // A removed class has to leave GemStone Search's cached class corpus the same way, but one class at a
     // time — Remove Class takes the whole subtree with it.
     (sid, className) => omniSearch?.notifyClassRemoved(sid, className),
+    {
+      isTestClass: (dictName, className) => sunitTests?.isTestClass(dictName, className) ?? false,
+      isTestItemUri: (uri) => sunitTests?.isTestItemUri(uri) ?? false,
+      resultFor: (dictName, className, selector) =>
+        sunitTests?.resultFor(dictName, className, selector),
+      // The controller is built after this one, so subscribe through a forwarder
+      // rather than handing over an event that does not exist yet.
+      onDidChangeResults: (listener) => sunitResultsChanged.event(listener),
+      revealInTestExplorer: async (dictName, className, selector) =>
+        (await sunitTests?.revealInTestExplorer(dictName, className, selector)) ?? false,
+    },
   );
 
   // ── GemStone FileSystem Provider ─────────────────────────
@@ -950,8 +968,13 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(codeExecutor);
 
   // ── SUnit Test Controller ────────────────────────────────
-  const sunitTestController = new SunitTestController(sessionManager, codeExecutor);
-  context.subscriptions.push(sunitTestController);
+  // Assigned through `sunitTests` so the Explorer's late-bound predicate (declared
+  // at the top of activate) can reach it; the Explorer is registered before this.
+  const sunitTestController = (sunitTests = new SunitTestController(sessionManager, codeExecutor));
+  context.subscriptions.push(
+    sunitTestController,
+    sunitTestController.onDidChangeResults(() => sunitResultsChanged.fire()),
+  );
 
   // Keep the pass/fail indicators honest. A compiled method or class definition
   // means the outcome shown beside it predates the code now in the stone: the
@@ -968,6 +991,16 @@ export function activate(context: vscode.ExtensionContext) {
       // parts: ['', dictName, className, 'definition', …]
       const parts = e.uri.path.split('/').map(decodeURIComponent);
       if (parts.length >= 3) sunitTestController.invalidateForClass(parts[1], parts[2]);
+    }),
+  );
+
+  // A test class lists its methods lazily, but VS Code only draws a gutter run
+  // icon for a test item it already knows about. Someone who opens a test method
+  // from the Explorer never expands the Testing view's class row, so resolve on
+  // open instead of leaving them with no icon.
+  context.subscriptions.push(
+    vscode.window.onDidChangeActiveTextEditor((editor) => {
+      void sunitTestController.ensureTestsForDocument(editor?.document.uri);
     }),
   );
 
@@ -1281,6 +1314,9 @@ export function activate(context: vscode.ExtensionContext) {
         uri: vscode.Uri,
         opts?: { viewColumn?: vscode.ViewColumn; preserveFocus?: boolean; preview?: boolean },
       ) => {
+        // Claim the open: without this the Explorer reads an open of a test method's
+        // document as a Testing-view row click and leaves its panes where they were.
+        explorer.markAttributedOpen(uri);
         const doc = await vscode.workspace.openTextDocument(uri);
         // `opts` is optional and back-compatible: existing callers pass only the uri and get the
         // prior behavior (preview in the active group). GemStone Search's Spotter passes a column +
@@ -2145,6 +2181,52 @@ export function activate(context: vscode.ExtensionContext) {
 
     vscode.commands.registerCommand('gemstone.showTranscript', () => {
       showTranscript();
+    }),
+
+    // Offered on a row in the Testing view. A plain click there deliberately does
+    // not move the Explorer (the two navigations are independent), so this is how
+    // you ask for it.
+    vscode.commands.registerCommand(
+      'gemstone.revealTestInExplorer',
+      async (item?: { uri?: vscode.Uri }) => {
+        if (item?.uri) await explorer.revealDocument(item.uri);
+      },
+    ),
+
+    // Offered from menus rather than as a button, so it takes no room from the rows
+    // it is about. Two stores hold outcomes and both have to go: ours, which paints
+    // the Explorer rows, and VS Code's own run history, which paints the Testing
+    // view — clearing only ours leaves the tester still showing the old verdicts.
+    // Shift+Enter in GemStone Search, and anywhere else that knows a class/selector
+    // but not a test item. Says so when the Testing view has nothing for it, rather
+    // than appearing to do nothing.
+    vscode.commands.registerCommand(
+      'gemstone.revealTestInTestingView',
+      async (dictName: string, className: string, selector?: string) => {
+        if (!(await sunitTestController.revealInTestExplorer(dictName, className, selector))) {
+          void vscode.window.showInformationMessage(
+            `The Testing view has no test for ${className}${selector ? `>>${selector}` : ''}.`,
+          );
+        }
+      },
+    ),
+
+    // The ■ that replaces a row's ▶ while its test is running. Soft break first,
+    // hard break if pressed again — the same escalation the progress toast offers.
+    vscode.commands.registerCommand('gemstone.explorer.stopTest', () => {
+      if (!sunitTestController.cancelActiveRun()) {
+        void vscode.window.showInformationMessage('No GemStone test run to stop.');
+      }
+    }),
+
+    vscode.commands.registerCommand('gemstone.clearTestResults', async () => {
+      sunitTestController.clearResults();
+      try {
+        await vscode.commands.executeCommand('testing.clearTestResults');
+      } catch {
+        // A built-in command id we don't own. If a VS Code release renames it, the
+        // Explorer icons still clear rather than the whole command failing.
+      }
     }),
 
     vscode.commands.registerCommand(

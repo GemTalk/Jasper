@@ -7,6 +7,7 @@ vi.mock('../browserQueries', () => ({}));
 
 import type * as vscode from 'vscode';
 import { ExplorerController, MethodItem } from '../gemstoneExplorer';
+import type { ExplorerTestResult } from '../gemstoneExplorer';
 import { Uri, window, commands, workspace, languages } from '../__mocks__/vscode';
 import type { SessionManager, ActiveSession } from '../sessionManager';
 
@@ -269,5 +270,203 @@ describe('ExplorerController.syncToEditor', () => {
     await ctl.syncToEditor(builtUri);
 
     expect(method.reveal).toHaveBeenCalled();
+  });
+});
+
+describe('a click in the Testing view', () => {
+  const TEST_URI = 'gemstone://1/UserGlobals/Array/instance/accessing/at%3A';
+  const ORDINARY_URI = 'gemstone://1/UserGlobals/Array/instance/accessing/size';
+
+  function ctl(): ExplorerController {
+    const sessionManager = { getSelectedSession: () => SESSION } as unknown as SessionManager;
+    const c = new ExplorerController(sessionManager, undefined, undefined, {
+      isTestClass: () => true,
+      isTestItemUri: (uri) => uri.toString() === TEST_URI,
+      resultFor: () => undefined,
+      onDidChangeResults: () => ({ dispose: () => {} }),
+      revealInTestExplorer: () => Promise.resolve(true),
+    });
+    c.state.dictName = 'UserGlobals';
+    c.state.dictIndex = 1;
+    c.state.className = 'Array';
+    // Both selectors resolve, so each assertion turns on the guard rather than on
+    // whether a reveal was possible at all.
+    vi.spyOn(c as unknown as { selectorsFor: typeof info }, 'selectorsFor').mockReturnValue([
+      info({ selector: 'at:' }),
+      info({ selector: 'size' }),
+    ] as never);
+    return c;
+  }
+
+  it('leaves the panes alone — the Testing view navigates on its own', () => {
+    const c = ctl();
+    const method = withViews(c);
+
+    return c.syncToEditor(Uri.parse(TEST_URI)).then(() => {
+      expect(method.reveal).not.toHaveBeenCalled();
+    });
+  });
+
+  it('follows an open someone claimed, even onto a test method', async () => {
+    // Reveal in GemStone Explorer, and GemStone Search via gemstone.openDocument.
+    const c = ctl();
+    const method = withViews(c);
+    c.markAttributedOpen(Uri.parse(TEST_URI));
+
+    await c.syncToEditor(Uri.parse(TEST_URI));
+
+    expect(method.reveal).toHaveBeenCalled();
+  });
+
+  it('consumes a claim once, so the next unclaimed open is ignored again', async () => {
+    const c = ctl();
+    const method = withViews(c);
+    c.markAttributedOpen(Uri.parse(TEST_URI));
+    await c.syncToEditor(Uri.parse(TEST_URI));
+    method.reveal.mockClear();
+
+    await c.syncToEditor(Uri.parse(TEST_URI));
+
+    expect(method.reveal).not.toHaveBeenCalled();
+  });
+
+  it('follows an ordinary method that no test item points at', async () => {
+    const c = ctl();
+    const method = withViews(c);
+
+    await c.syncToEditor(Uri.parse(ORDINARY_URI));
+
+    expect(method.reveal).toHaveBeenCalled();
+  });
+});
+
+describe('ExplorerController.isTestSelector', () => {
+  function ctlFor(testClasses: string[]): ExplorerController {
+    const sessionManager = { getSelectedSession: () => SESSION } as unknown as SessionManager;
+    const ctl = new ExplorerController(sessionManager, undefined, undefined, {
+      isTestClass: (_dictName: string, className: string) => testClasses.includes(className),
+      isTestItemUri: () => false,
+      resultFor: () => undefined,
+      onDidChangeResults: () => ({ dispose: () => {} }),
+      revealInTestExplorer: () => Promise.resolve(true),
+    });
+    ctl.state.dictName = 'UserGlobals';
+    ctl.state.className = 'AnnouncerTest';
+    return ctl;
+  }
+
+  it('marks an instance-side unary test* selector of a test class', () => {
+    expect(ctlFor(['AnnouncerTest']).isTestSelector(false, 'testAnnounceClass')).toBe(true);
+  });
+
+  it('leaves the class side alone — SUnit runs instance-side tests', () => {
+    expect(ctlFor(['AnnouncerTest']).isTestSelector(true, 'testAnnounceClass')).toBe(false);
+  });
+
+  it('leaves a keyword selector alone, however it is spelled', () => {
+    // testSelectors is unary-only; `testFoo:` is a helper, not a test.
+    expect(ctlFor(['AnnouncerTest']).isTestSelector(false, 'testFoo:')).toBe(false);
+  });
+
+  it('leaves setUp and other non-test selectors alone', () => {
+    const ctl = ctlFor(['AnnouncerTest']);
+    expect(ctl.isTestSelector(false, 'setUp')).toBe(false);
+    expect(ctl.isTestSelector(false, 'newAnnouncer')).toBe(false);
+  });
+
+  it('marks nothing on a class that is not a TestCase subclass', () => {
+    expect(ctlFor([]).isTestSelector(false, 'testAnnounceClass')).toBe(false);
+  });
+
+  it('carries a .test token only for a test row, so the inline run icon lands there alone', () => {
+    const ctl = ctlFor(['AnnouncerTest']);
+    const plain = new MethodItem(false, info({ selector: 'setUp' }));
+    const test = new MethodItem(false, info({ selector: 'testAnnounceClass' }));
+
+    ctl.decorateTestRow(plain, 'UserGlobals', 'AnnouncerTest', 'setUp');
+    ctl.decorateTestRow(test, 'UserGlobals', 'AnnouncerTest', 'testAnnounceClass');
+
+    expect(plain.contextValue).not.toContain('.test');
+    expect(test.contextValue).toContain('.test');
+  });
+
+  it('paints the last-known outcome on the row, and dims it once stale', () => {
+    const sessionManager = { getSelectedSession: () => SESSION } as unknown as SessionManager;
+    const results: Record<string, ExplorerTestResult> = {
+      AnnouncerTest: { outcome: 'failed' },
+      'AnnouncerTest/testAnnounceClass': { outcome: 'passed', stale: true },
+    };
+    const ctl = new ExplorerController(sessionManager, undefined, undefined, {
+      isTestClass: (_d: string, c: string) => c === 'AnnouncerTest',
+      isTestItemUri: () => false,
+      resultFor: (_d: string, c: string, sel?: string) =>
+        results[sel === undefined ? c : `${c}/${sel}`],
+      onDidChangeResults: () => ({ dispose: () => {} }),
+      revealInTestExplorer: () => Promise.resolve(true),
+    });
+    ctl.state.dictName = 'UserGlobals';
+    ctl.state.className = 'AnnouncerTest';
+
+    const classRow = new MethodItem(false, info({ selector: 'x' }));
+    ctl.decorateTestRow(classRow, 'UserGlobals', 'AnnouncerTest');
+    const methodRow = new MethodItem(false, info({ selector: 'testAnnounceClass' }));
+    ctl.decorateTestRow(methodRow, 'UserGlobals', 'AnnouncerTest', 'testAnnounceClass');
+
+    expect((classRow.iconPath as { id: string }).id).toBe('error');
+    // Stale keeps the shape (it did pass) but takes the queued colour.
+    expect((methodRow.iconPath as { id: string }).id).toBe('pass');
+    expect((methodRow.iconPath as { color?: { id: string } }).color?.id).toBe('testing.iconQueued');
+  });
+
+  it('marks a running row so its run button can be swapped for a stop button', () => {
+    const sessionManager = { getSelectedSession: () => SESSION } as unknown as SessionManager;
+    const ctl = new ExplorerController(sessionManager, undefined, undefined, {
+      isTestClass: () => true,
+      isTestItemUri: () => false,
+      resultFor: () => ({ outcome: 'running', stoppable: true }),
+      onDidChangeResults: () => ({ dispose: () => {} }),
+      revealInTestExplorer: () => Promise.resolve(true),
+    });
+    ctl.state.dictName = 'UserGlobals';
+    ctl.state.className = 'AnnouncerTest';
+    const row = new MethodItem(false, info({ selector: 'testAnnounceClass' }));
+
+    ctl.decorateTestRow(row, 'UserGlobals', 'AnnouncerTest', 'testAnnounceClass');
+
+    // The menus anchor on `.test$` for run and `.running$` for stop, so the token
+    // has to come last.
+    expect(row.contextValue?.endsWith('.test.running')).toBe(true);
+  });
+
+  it('offers no stop button for a test suspended in the debugger', () => {
+    // The debugger owns the gem; its own Terminate ends the test. A ■ of ours
+    // would be a button that does nothing.
+    const sessionManager = { getSelectedSession: () => SESSION } as unknown as SessionManager;
+    const ctl = new ExplorerController(sessionManager, undefined, undefined, {
+      isTestClass: () => true,
+      isTestItemUri: () => false,
+      resultFor: () => ({ outcome: 'running', stoppable: false }),
+      onDidChangeResults: () => ({ dispose: () => {} }),
+      revealInTestExplorer: () => Promise.resolve(true),
+    });
+    ctl.state.dictName = 'UserGlobals';
+    ctl.state.className = 'AnnouncerTest';
+    const row = new MethodItem(false, info({ selector: 'testAnnounceClass' }));
+
+    ctl.decorateTestRow(row, 'UserGlobals', 'AnnouncerTest', 'testAnnounceClass');
+
+    expect(row.contextValue).not.toContain('.running');
+    // Nor a ▶ mid-run: the row is neither runnable nor stoppable right now.
+    expect(row.contextValue?.endsWith('.test')).toBe(false);
+  });
+
+  it('leaves a row that has never run with the icon it was built with', () => {
+    const ctl = ctlFor(['AnnouncerTest']);
+    const row = new MethodItem(false, info({ selector: 'testAnnounceClass' }));
+    const built = row.iconPath;
+
+    ctl.decorateTestRow(row, 'UserGlobals', 'AnnouncerTest', 'testAnnounceClass');
+
+    expect(row.iconPath).toBe(built);
   });
 });
