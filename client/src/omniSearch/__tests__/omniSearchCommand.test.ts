@@ -14,23 +14,27 @@ import { OMNI_VIEW_ID } from '../omniSearchViewProvider';
 describe('buildOmniHandlers', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('reveals a dictionary by name via the Explorer command, not a bare pane focus', () => {
+  it('reveals a dictionary by name via the Explorer command, threading the result session', () => {
     void buildOmniHandlers().revealDictionary({
       kind: 'revealDictionary',
-      sessionId: 1,
+      sessionId: 7,
       dictName: 'V8SplitDemo',
     });
 
+    // The result's own sessionId (7) must be passed so the reveal targets that session, not whatever
+    // session is selected now — the fix for the "click after switching sessions lands in the wrong
+    // session" bug. Passing a bare pane focus, or dropping the sessionId, fails here.
     expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
       'gemstone.explorer.revealDictionary',
       'V8SplitDemo',
+      7,
     );
   });
 
-  it('jumps a global to the class of its value, not to the dictionary', () => {
+  it('jumps a global to the class of its value, threading the result session', () => {
     void buildOmniHandlers().revealGlobal({
       kind: 'revealGlobal',
-      sessionId: 1,
+      sessionId: 7,
       dictName: 'Globals',
       name: 'Transcript',
       className: 'GsTerminalStream',
@@ -39,6 +43,7 @@ describe('buildOmniHandlers', () => {
     expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
       'gemstone.explorer.findClass',
       'GsTerminalStream',
+      7,
     );
   });
 
@@ -61,10 +66,10 @@ describe('buildOmniHandlers', () => {
     expect(call[2]).toEqual({ preserveFocus: true, preview: false });
   });
 
-  it('reveals a class category via dict + path, not just the dictionary', () => {
+  it('reveals a class category via dict + path, threading the result session', () => {
     void buildOmniHandlers().revealCategory({
       kind: 'revealCategory',
-      sessionId: 1,
+      sessionId: 7,
       dictName: 'Globals',
       dictIndex: 1,
       category: 'Kernel-Objects',
@@ -74,6 +79,7 @@ describe('buildOmniHandlers', () => {
       'gemstone.explorer.revealCategory',
       'Globals',
       'Kernel-Objects',
+      7,
     );
   });
 });

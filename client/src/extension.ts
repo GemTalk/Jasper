@@ -559,7 +559,7 @@ async function pickGitRevision(url: string): Promise<string | undefined> {
 }
 
 export function activate(context: vscode.ExtensionContext) {
-  // Set when Omni Search registers (below); the class-compile and commit/abort handlers call its
+  // Set when GemStone Search registers (below); the class-compile and commit/abort handlers call its
   // hooks so an open search re-primes/folds in changes instead of going stale.
   let omniSearch: OmniSearchRegistration | undefined;
   // Create every output channel up front — not lazily on first use — so the
@@ -762,10 +762,10 @@ export function activate(context: vscode.ExtensionContext) {
         position,
       });
     },
-    // A dictionary add/remove/rename changes the symbol list — refresh an open Omni Search so the
+    // A dictionary add/remove/rename changes the symbol list — refresh an open GemStone Search so the
     // new/renamed dictionary shows up without waiting for a commit.
     (sid) => omniSearch?.notifySessionSynced(sid),
-    // A removed class has to leave Omni Search's cached class corpus the same way, but one class at a
+    // A removed class has to leave GemStone Search's cached class corpus the same way, but one class at a
     // time — Remove Class takes the whole subtree with it.
     (sid, className) => omniSearch?.notifyClassRemoved(sid, className),
   );
@@ -919,7 +919,7 @@ export function activate(context: vscode.ExtensionContext) {
         // explorer can jump to the dictionary the class was actually created in
         // (which may differ from the selected one for a new-class inDictionary:).
         explorer.onClassCompiled(parseInt(e.uri.authority, 10), parts[2], parts[1]);
-        // Keep an open Omni Search current: fold the freshly compiled class into its cache.
+        // Keep an open GemStone Search current: fold the freshly compiled class into its cache.
         omniSearch?.notifyClassCompiled(parseInt(e.uri.authority, 10), parts[2], parts[1]);
       }
     }),
@@ -1226,7 +1226,7 @@ export function activate(context: vscode.ExtensionContext) {
         await exportManager.refreshSession(session);
         SystemBrowser.refresh(session.id);
         // A sync can surface classes/globals/dicts added elsewhere (incl. other sessions) — rebuild
-        // an open Omni Search's cached corpora so they show up.
+        // an open GemStone Search's cached corpora so they show up.
         omniSearch?.notifySessionSynced(session.id);
       } else {
         vscode.window.showErrorMessage(
@@ -1258,7 +1258,7 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showInformationMessage(`Session ${session.id}: Abort succeeded.`);
         await exportManager.refreshSession(session);
         SystemBrowser.refresh(session.id);
-        // An abort can pull in classes/globals/dicts from other sessions — rebuild an open Omni
+        // An abort can pull in classes/globals/dicts from other sessions — rebuild an open GemStone
         // Search's cached corpora so they show up.
         omniSearch?.notifySessionSynced(session.id);
         explorer.onSessionAborted(session.id);
@@ -1283,7 +1283,7 @@ export function activate(context: vscode.ExtensionContext) {
       ) => {
         const doc = await vscode.workspace.openTextDocument(uri);
         // `opts` is optional and back-compatible: existing callers pass only the uri and get the
-        // prior behavior (preview in the active group). Omni Search's Spotter passes a column +
+        // prior behavior (preview in the active group). GemStone Search's Spotter passes a column +
         // preserveFocus so a result opens BESIDE the panel, and (when pinned) preview:false so it's
         // a regular, persistent source editor rather than a throwaway preview tab.
         await vscode.window.showTextDocument(doc, {

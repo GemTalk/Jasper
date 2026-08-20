@@ -1,5 +1,5 @@
 /**
- * Omni Search → Explorer reveal robustness.
+ * GemStone Search → Explorer reveal robustness.
  *
  * revealDictionaryByName no longer swallows a failed TreeView.reveal with a bare
  * `catch { /* ignore *\/ }`; it logs to the durable GCI channel (mirroring the
@@ -156,5 +156,84 @@ describe('revealCategoryByPath checks existence before mutating the panes', () =
 
     expect(selectCat).toHaveBeenCalledTimes(1);
     expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
+  });
+});
+
+// A reveal that names a session (GemStone Search results carry their own sessionId) must run against THAT
+// session, not whatever session happens to be selected now — otherwise, after the user switches the
+// active session, a click resolves against the new one and lands in the wrong session's data (or, worse,
+// a same-named dictionary/category in it). No id → the old "resolve the selected session" behaviour.
+describe('reveal targets the result’s own session, not whatever is selected now', () => {
+  /** Two logged-in sessions, `selected` is the currently-active one; tracks selectSession calls. */
+  function makeTwoSessionController(selectedId: number) {
+    const sessions = new Map<number, ActiveSession>([
+      [1, { id: 1 } as ActiveSession],
+      [2, { id: 2 } as ActiveSession],
+    ]);
+    let selected = selectedId;
+    const selectSession = vi.fn((id: number) => {
+      selected = id;
+    });
+    const sessionManager = {
+      getSelectedSession: () => sessions.get(selected),
+      resolveSession: () => Promise.resolve(sessions.get(selected)),
+      getSession: (id: number) => sessions.get(id),
+      selectSession,
+    } as unknown as SessionManager;
+    return { ctl: new ExplorerController(sessionManager), selectSession };
+  }
+
+  it('switches to the result’s session before revealing a dictionary', async () => {
+    const { ctl, selectSession } = makeTwoSessionController(2); // active session is 2…
+    const { dict } = withViews(ctl);
+
+    await ctl.revealDictionaryByName('UserGlobals', 1); // …but the result came from session 1
+
+    expect(selectSession).toHaveBeenCalledWith(1); // switched to the result's session
+    expect(dict.reveal).toHaveBeenCalledTimes(1); // and actually revealed
+  });
+
+  it('does not re-select when the result already came from the active session', async () => {
+    const { ctl, selectSession } = makeTwoSessionController(1); // active session is 1…
+    const { dict } = withViews(ctl);
+
+    await ctl.revealDictionaryByName('UserGlobals', 1); // …and the result also came from session 1
+
+    expect(selectSession).not.toHaveBeenCalled(); // no needless switch → no downstream refresh cycle
+    expect(dict.reveal).toHaveBeenCalledTimes(1); // still reveals
+  });
+
+  it('warns and does not reveal when the result’s session is gone', async () => {
+    const { ctl, selectSession } = makeTwoSessionController(2);
+    const { dict } = withViews(ctl);
+
+    await ctl.revealDictionaryByName('UserGlobals', 99); // 99 was logged out
+
+    expect(selectSession).not.toHaveBeenCalled();
+    expect(dict.reveal).not.toHaveBeenCalled(); // no fallback to the selected session
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledTimes(1);
+    expect(String(vi.mocked(vscode.window.showWarningMessage).mock.calls[0][0])).toContain('99');
+  });
+
+  it('does not force-select a session when no id is given (uses the selected one)', async () => {
+    const { ctl, selectSession } = makeTwoSessionController(2);
+    const { dict } = withViews(ctl);
+
+    await ctl.revealDictionaryByName('UserGlobals'); // legacy callers pass no id
+
+    expect(selectSession).not.toHaveBeenCalled();
+    expect(dict.reveal).toHaveBeenCalledTimes(1);
+  });
+
+  it('switches to the result’s session before revealing a category', async () => {
+    const { ctl, selectSession } = makeTwoSessionController(2);
+    const { category } = withViews(ctl);
+    classesInDict.mockReturnValue([{ className: 'Foo', category: 'Kernel' }]);
+    vi.spyOn(ctl, 'selectClassCategory').mockImplementation(() => {});
+
+    await ctl.revealCategoryByPath('UserGlobals', 'Kernel', 1);
+
+    expect(selectSession).toHaveBeenCalledWith(1);
+    expect(category.reveal).toHaveBeenCalledTimes(1);
   });
 });
