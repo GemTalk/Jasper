@@ -78,7 +78,12 @@ export const TreeItemCollapsibleState = {
 // ── ThemeIcon mock ─────────────────────────────────────────
 
 export class ThemeIcon {
-  constructor(public readonly id: string) {}
+  constructor(
+    public readonly id: string,
+    // Real ThemeIcon takes an optional ThemeColor; kept here so a test can assert
+    // which colour a row was painted (pass vs. failed vs. stale).
+    public readonly color?: { id: string },
+  ) {}
 }
 
 // ── CancellationTokenSource mock ───────────────────────────

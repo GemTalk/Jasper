@@ -1,7 +1,13 @@
 import type { TestItem } from 'vscode';
 import * as vscode from 'vscode';
-import { buildClassDefinitionUri, buildMethodUri } from './gemstoneFileSystemProvider';
+import {
+  buildClassDefinitionUri,
+  buildMethodUri,
+  parseMethodUri,
+} from './gemstoneFileSystemProvider';
 import { debugTestMethodCode } from './queries/debugTestMethod';
+import { logInfo } from './gciLog';
+import { NbCancelledError } from './nbRunner';
 import { ActiveSession, SessionManager } from './sessionManager';
 import * as sunit from './sunitQueries';
 
@@ -41,6 +47,20 @@ function parseTestId(id: string): ParsedTestId {
   const [, , dictName, className, selector] = id.split('/');
   return { dictName, className, selector };
 }
+
+/**
+ * Publish whether a test run is in flight, for the `when` clause of the ■ on the
+ * Testing view's rows. A context key is global rather than per-row — VS Code has
+ * no per-test-item key — so the button appears on every test row during a run,
+ * not only the one executing. That is the honest reading anyway: one session runs
+ * one thing at a time, and stopping is stopping THE run.
+ */
+async function setTestRunningContext(running: boolean): Promise<void> {
+  await vscode.commands.executeCommand('setContext', 'gemstone.testRunning', running);
+}
+
+/** How long to wait for a soft break to land before escalating to a hard one. */
+const HARD_BREAK_AFTER_MS = 1500;
 
 /**
  * How a test was launched. Everything above the innermost "execute one test"
@@ -92,6 +112,14 @@ export interface SunitResult {
   passedCount?: number;
   totalCount?: number;
   /**
+   * Running results only: whether this run can be broken. True for an ordinary
+   * run, which goes through the interruptible path; false under the debugger,
+   * where the gem is deliberately suspended and belongs to the debugger — its
+   * own Terminate is what ends it, and a stop button of ours would be a button
+   * that does nothing.
+   */
+  stoppable?: boolean;
+  /**
    * True once code has been compiled since this result was produced, so the
    * outcome may no longer describe the code in the stone. Stale results are
    * shown dimmed rather than dropped — "this was green before your edit" is
@@ -112,6 +140,43 @@ function resultKey(dictName: string, className: string, selector?: string): stri
  * icon always belongs on the first line. */
 function topOfDocument(): vscode.Range {
   return new vscode.Range(new vscode.Position(0, 0), new vscode.Position(0, 0));
+}
+
+/**
+ * What to call one run in the Test Results panel. VS Code names an unnamed run
+ * `Test run at <timestamp>`, which says nothing about WHICH tests ran — with
+ * several classes in the tree every entry in the history reads alike.
+ *
+ * Names come from the items' own labels, not from the raw class name, so a
+ * class whose name exists in two dictionaries keeps the `{Dictionary}`
+ * qualifier discovery gave it.
+ */
+function runLabel(queue: vscode.TestItem[]): string | undefined {
+  if (queue.length === 0) return undefined;
+
+  // A method item's class label lives on its parent; fall back to the id's
+  // class name for an item that has no parent (nothing in the tree does, but
+  // `parent` is optional in the API).
+  const classLabelOf = (item: vscode.TestItem): string =>
+    parseTestId(item.id).selector === undefined
+      ? item.label
+      : (item.parent?.label ?? parseTestId(item.id).className);
+
+  if (queue.length === 1) {
+    const [item] = queue;
+    return parseTestId(item.id).selector === undefined
+      ? classLabelOf(item)
+      : `${classLabelOf(item)}>>${item.label}`;
+  }
+
+  const methodCount = queue.filter((i) => parseTestId(i.id).selector !== undefined).length;
+  if (methodCount === 0) return `${queue.length} test classes`;
+
+  const classLabels = new Set(queue.map(classLabelOf));
+  if (methodCount < queue.length) return `${queue.length} test selections`;
+  return classLabels.size === 1
+    ? `${[...classLabels][0]} (${queue.length} tests)`
+    : `${queue.length} tests in ${classLabels.size} classes`;
 }
 
 /**
@@ -197,6 +262,116 @@ export class SunitTestController implements vscode.Disposable {
     for (const d of this.disposables) d.dispose();
   }
 
+  /**
+   * Every URI a test item currently points at. Clicking a row in the Testing
+   * view opens one, and that open is indistinguishable from any other — no API
+   * says where it came from. The Explorer consults this to leave its panes alone
+   * for a click it did not cause.
+   */
+  private readonly itemUris = new Set<string>();
+  /** Test-method count per class id, as discovery reported it. null when the stone
+   *  answered something unparseable. See isTestClass. */
+  private readonly classTestCount = new Map<string, number | null>();
+
+  /** True when `uri` is the document some test item points at. */
+  isTestItemUri(uri: vscode.Uri): boolean {
+    return this.itemUris.has(uri.toString());
+  }
+
+  /**
+   * Show a class, or one of its test methods, in the Testing view — selected and
+   * scrolled to, the mirror of Reveal in GemStone Explorer.
+   *
+   * Answers false when there is nothing to reveal (not a test class, or a
+   * selector SUnit doesn't run), so the caller can say so instead of appearing
+   * to do nothing. A method's row is listed on demand: the class's methods are
+   * discovered lazily, and revealing one is exactly a reason to have it.
+   */
+  async revealInTestExplorer(
+    dictName: string,
+    className: string,
+    selector?: string,
+  ): Promise<boolean> {
+    const session = this.sessionManager.getSelectedSession();
+    if (!session) return false;
+    const classItem = this.controller.items.get(makeClassId(session.id, dictName, className));
+    if (!classItem) return false;
+
+    let target: vscode.TestItem = classItem;
+    if (selector !== undefined) {
+      if (classItem.children.size === 0) await this.resolveTestMethods(classItem);
+      const child = classItem.children.get(makeMethodId(session.id, dictName, className, selector));
+      if (!child) return false;
+      target = child;
+    }
+    // Bring the Testing view up FIRST. Revealing into a view that isn't showing
+    // scrolls something nobody can see, which reads as the reveal having done
+    // nothing. (Where in the list it lands is VS Code's to decide — there is no
+    // API to centre a revealed test item.)
+    await vscode.commands.executeCommand('workbench.view.testing.focus');
+    await vscode.commands.executeCommand('vscode.revealTestInExplorer', target);
+    return true;
+  }
+
+  /**
+   * True when this class was discovered as a TestCase subclass. Known as soon as
+   * discovery has run — unlike its test methods, which are listed lazily — so a
+   * view that builds rows synchronously can still ask.
+   */
+  isTestClass(dictName: string, className: string): boolean {
+    const session = this.sessionManager.getSelectedSession();
+    if (!session) return false;
+    const id = makeClassId(session.id, dictName, className);
+    if (!this.controller.items.get(id)) return false;
+    // A TestCase subclass with no tests of its own — an abstract base, or one
+    // whose tests all live in subclasses — has nothing to run. Offering a ▶ on it
+    // promises a run that would do nothing. An unknown count (the stone answered
+    // something unparseable) is treated as runnable: better a button that reports
+    // "no tests found" than one silently missing.
+    const count = this.classTestCount.get(id);
+    return count === undefined || count === null || count > 0;
+  }
+
+  /**
+   * Breaks the run currently executing in the stone — soft on the first call,
+   * hard on a second, the same escalation the progress notification's Cancel
+   * does. Set while a run is in flight and cleared when it settles.
+   */
+  private activeCancel: (() => void) | undefined;
+  /** True once a stop was asked for, until the next run starts. Lets a run that
+   *  ends in a Break error be reported as stopped rather than as a test error. */
+  private cancelRequested = false;
+
+  /** True when a run is in flight and can be stopped. */
+  get isRunning(): boolean {
+    return this.activeCancel !== undefined;
+  }
+
+  /**
+   * Stop the run in progress. Answers false when there was nothing to stop, so a
+   * caller can say so rather than pretending it did something.
+   */
+  cancelActiveRun(): boolean {
+    const cancel = this.activeCancel;
+    if (!cancel) {
+      logInfo('SUnit: stop requested, but no run is in flight to stop.');
+      return false;
+    }
+    logInfo('SUnit: stop requested — sending a soft break.');
+    this.cancelRequested = true;
+    cancel();
+    // A soft break is the right first move — it lets the gem stop at a safe point
+    // and leaves the session healthy. But a test spinning in a tight loop never
+    // reaches one, and making the user press stop a second time to find that out
+    // is a poor trade. Escalate on their behalf, unless the run settled first.
+    setTimeout(() => {
+      if (this.activeCancel !== cancel) return;
+      logInfo('SUnit: the run is still going — escalating to a hard break.');
+      cancel();
+    }, HARD_BREAK_AFTER_MS);
+    return true;
+  }
+
   /** Clear items and let resolveHandler re-discover on next view. */
   refresh(): void {
     this.resetDiscovery();
@@ -205,6 +380,8 @@ export class SunitTestController implements vscode.Disposable {
   private resetDiscovery(): void {
     this.methodCategory.clear();
     this.classDictIndex.clear();
+    this.classTestCount.clear();
+    this.itemUris.clear();
     this.controller.items.replace([]);
   }
 
@@ -415,6 +592,10 @@ export class SunitTestController implements vscode.Disposable {
     try {
       const classes = sunit.discoverTestClasses(session);
       const items: vscode.TestItem[] = [];
+      // items.replace below drops every existing item, methods included, so the
+      // URIs they were reachable at stop being test URIs at the same moment.
+      this.itemUris.clear();
+      this.classTestCount.clear();
 
       // A class name is ambiguous when it exists in more than one dictionary.
       // Only then do we qualify the label with the dictionary — the Test
@@ -437,9 +618,10 @@ export class SunitTestController implements vscode.Disposable {
           this.classDefinitionUri(session.id, cls.dictName, cls.className, cls.dictIndex),
         );
         classItem.canResolveChildren = true;
-        // A range is what puts the run/status icon in the editor gutter. The
-        // class definition is its own document, so line 1 is the definition
-        // itself.
+        // A range is what puts the run/status icon in the editor gutter — but
+        // only for an item that exists when the document is open, which is what
+        // ensureTestsForDocument is for. The class definition is its own
+        // document, so line 1 is the definition itself.
         classItem.range = topOfDocument();
         // Dimmed qualifier (sidebar only): test count. The dictionary never
         // goes here — it lives in the label, and only when the name is
@@ -447,10 +629,16 @@ export class SunitTestController implements vscode.Disposable {
         // value; show "(?)" rather than a misleading "(0)".
         classItem.description = cls.testCount === null ? '(?)' : `(${cls.testCount})`;
         this.classDictIndex.set(id, cls.dictIndex);
+        this.classTestCount.set(id, cls.testCount);
+        if (classItem.uri) this.itemUris.add(classItem.uri.toString());
         items.push(classItem);
       }
 
       this.controller.items.replace(items);
+      // A test method may already be open — a session switch or a window
+      // reload discovers with the editor sitting there — and replacing the
+      // items just dropped whatever item its gutter icon was drawn from.
+      await this.ensureTestsForDocument(vscode.window.activeTextEditor?.document.uri);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       vscode.window.showErrorMessage(`SUnit discovery failed: ${msg}`);
@@ -482,6 +670,7 @@ export class SunitTestController implements vscode.Disposable {
         );
         // Gutter icon on line 1 of the method's own document (see above).
         methodItem.range = topOfDocument();
+        if (methodItem.uri) this.itemUris.add(methodItem.uri.toString());
         children.push(methodItem);
       }
 
@@ -493,12 +682,46 @@ export class SunitTestController implements vscode.Disposable {
   }
 
   /**
+   * Make sure the test item a just-opened document could carry a gutter icon
+   * for actually exists.
+   *
+   * Test methods are discovered lazily — normally when someone expands the
+   * class row in the Testing view — but VS Code can only draw the icon for a
+   * test item it already knows about. Opening a test method straight from the
+   * Explorer never expands that row, so without this the gutter stays empty
+   * for the one workflow most likely to want it.
+   *
+   * Idempotent and cheap: it does nothing unless the document is a method of a
+   * class already discovered as a TestCase subclass, and nothing again once
+   * that class's methods are listed.
+   */
+  async ensureTestsForDocument(uri: vscode.Uri | undefined): Promise<void> {
+    if (!uri) return;
+    const method = parseMethodUri(uri);
+    if (!method) return;
+
+    // Items are per-session. A document left open from a session that is no
+    // longer selected has no item here, and must not resolve one against
+    // whichever stone happens to be selected now.
+    const session = this.sessionManager.getSelectedSession();
+    if (!session || session.id !== method.sessionId) return;
+
+    const classItem = this.controller.items.get(
+      makeClassId(session.id, method.dictName, method.className),
+    );
+    // Not a test class, or its methods are already listed.
+    if (!classItem || classItem.children.size > 0) return;
+    await this.resolveTestMethods(classItem);
+  }
+
+  /**
    * The URIs below must be built with the same builders the editor uses, not
    * assembled by hand: VS Code matches a test item to an open document by exact
    * URI, so a differing query string or a hand-encoded segment silently costs
-   * the gutter icon. A malformed name (a category containing '/', say) makes the
-   * builder throw — answer undefined rather than lose the whole discovery pass;
-   * the item still works everywhere except the gutter.
+   * the gutter icon. A name the builder rejects (a dictionary or class name
+   * containing '/') makes it throw — answer undefined rather than lose the whole
+   * discovery pass; the item still works everywhere except the gutter. A category
+   * with a slash is fine: it is escaped in the path, same as a selector.
    */
   private classDefinitionUri(
     sessionId: number,
@@ -551,8 +774,17 @@ export class SunitTestController implements vscode.Disposable {
       return;
     }
 
-    const run = this.controller.createTestRun(request);
     const queue = this.getTestsToRun(request);
+    const run = this.controller.createTestRun(request, runLabel(queue));
+    // The Testing view's stop button. It could do nothing before: the run held the
+    // extension host inside a synchronous GCI call, so this event could not even
+    // be delivered until the run had already finished.
+    const stopped = token.onCancellationRequested(() => this.cancelActiveRun());
+    // Drives the ■ on the Testing view's rows. VS Code draws its own ▶ there and
+    // gives no way to replace it, but an extension may contribute inline actions —
+    // so the stop appears BESIDE the run icon, on class and method rows alike, and
+    // only while there is a run to stop.
+    await setTestRunningContext(true);
 
     try {
       for (const item of queue) {
@@ -570,6 +802,8 @@ export class SunitTestController implements vscode.Disposable {
         }
       }
     } finally {
+      stopped.dispose();
+      await setTestRunningContext(false);
       run.end();
       this.flushResultChanges();
     }
@@ -600,7 +834,8 @@ export class SunitTestController implements vscode.Disposable {
     kind: SunitRunKind,
   ): Promise<void> {
     run.started(item);
-    await this.markRunning([item]);
+    // A debug run is not stoppable — see SunitResult.stoppable.
+    await this.markRunning([item], kind !== 'debug');
 
     if (kind === 'debug' && this.debugExecutor) {
       await this.debugSingleTest(session, run, item, className, selector, dictName);
@@ -608,11 +843,47 @@ export class SunitTestController implements vscode.Disposable {
     }
 
     try {
-      const result = sunit.runTestMethod(session, className, selector, dictName);
+      const result = await this.whileCancellable((onStart) =>
+        sunit.runTestMethodNb(session, className, selector, dictName, onStart),
+      );
       this.reportResult(run, item, result);
     } catch (e: unknown) {
+      if (this.wasStopped(e)) {
+        // Stopped on purpose. A test whose run was interrupted has no outcome —
+        // saying "error" would blame the test for the user's decision.
+        this.reportSkipped(run, item);
+        return;
+      }
       const msg = e instanceof Error ? e.message : String(e);
       this.reportError(run, item, `Execution error: ${msg}`);
+    }
+  }
+
+  /**
+   * Whether a failed run failed because it was stopped. A hard break rejects with
+   * NbCancelledError, but a soft break usually lets the gem raise a Break error
+   * instead, which arrives as an ordinary failure — indistinguishable from a real
+   * one except that we asked for it.
+   */
+  private wasStopped(e: unknown): boolean {
+    return e instanceof NbCancelledError || this.cancelRequested;
+  }
+
+  /**
+   * Run one interruptible stone call, holding onto its canceller for as long as
+   * it is in flight. Only one runs at a time — the session is single-threaded,
+   * and a second would be refused as "session is busy" anyway.
+   */
+  private async whileCancellable<T>(
+    call: (onStart: (cancel: () => void) => void) => Promise<T>,
+  ): Promise<T> {
+    this.cancelRequested = false;
+    try {
+      return await call((cancel) => {
+        this.activeCancel = cancel;
+      });
+    } finally {
+      this.activeCancel = undefined;
     }
   }
 
@@ -672,15 +943,17 @@ export class SunitTestController implements vscode.Disposable {
       return;
     }
 
-    // Mark all children as started
-    run.started(classItem);
+    // Children only: a class the run never settles would sit in the Test
+    // Results list spinning forever, and its state is rolled up from these.
     classItem.children.forEach((child) => run.started(child));
     const running: vscode.TestItem[] = [classItem];
     classItem.children.forEach((child) => running.push(child));
     await this.markRunning(running);
 
     try {
-      const results = sunit.runTestClass(session, className, dictName);
+      const results = await this.whileCancellable((onStart) =>
+        sunit.runTestClassNb(session, className, dictName, onStart),
+      );
       const resultMap = new Map(results.map((r) => [r.selector, r]));
 
       let passedCount = 0;
@@ -700,18 +973,25 @@ export class SunitTestController implements vscode.Disposable {
         if (result.status === 'passed') passedCount += 1;
       });
 
+      // Deliberately no run.passed/failed on the class itself. Every method
+      // already reported, and VS Code rolls a parent's state up from its
+      // children in the tree — reporting the class too only adds a row to the
+      // Test Results list that duplicates the run's own name. The class-level
+      // roll-up below is our own store, which the tree rows read.
       const allPassed = passedCount === totalCount;
-      if (allPassed) {
-        run.passed(classItem);
-      } else {
-        run.failed(classItem, new vscode.TestMessage('Some tests failed.'));
-      }
       this.setResult(dictName, className, undefined, {
         outcome: allPassed ? 'passed' : 'failed',
         passedCount,
         totalCount,
       });
     } catch (e: unknown) {
+      if (this.wasStopped(e)) {
+        // See runSingleTest: an interrupted run leaves no verdict behind.
+        classItem.children.forEach((child) => this.reportSkipped(run, child));
+        this.deleteResult(dictName, className);
+        this.flushResultChanges();
+        return;
+      }
       const msg = e instanceof Error ? e.message : String(e);
       this.reportError(run, classItem, `Execution error: ${msg}`);
       classItem.children.forEach((child) => {
@@ -737,18 +1017,20 @@ export class SunitTestController implements vscode.Disposable {
     const children: vscode.TestItem[] = [];
     classItem.children.forEach((child) => children.push(child));
 
-    run.started(classItem);
-    await this.markRunning([classItem]);
+    // See runClassTests: the class stays out of the run's own reporting; the
+    // store below is what a tree row reads.
+    await this.markRunning([classItem], false);
 
     let passedCount = 0;
     for (const child of children) {
       const selector = parseTestId(child.id).selector!;
       run.started(child);
-      await this.markRunning([child]);
+      await this.markRunning([child], false);
 
       const raised = await this.debugSingleTest(session, run, child, className, selector, dictName);
       if (raised) {
-        run.errored(classItem, new vscode.TestMessage(`${selector} raised.`));
+        // The child already reported the raise; see runClassTests for why the
+        // class itself stays out of the results list.
         this.setResult(dictName, className, undefined, {
           outcome: 'error',
           passedCount,
@@ -759,7 +1041,6 @@ export class SunitTestController implements vscode.Disposable {
       passedCount += 1;
     }
 
-    run.passed(classItem);
     this.setResult(dictName, className, undefined, {
       outcome: 'passed',
       passedCount,
@@ -768,14 +1049,29 @@ export class SunitTestController implements vscode.Disposable {
   }
 
   /**
-   * Show the tests as running before the (blocking) stone call starts. The
-   * yield matters: the queries are synchronous, so without handing the event
-   * loop back the spinner would only ever appear after the answer arrived.
+   * Show the tests as running before the (blocking) stone call starts, having
+   * first shown them as never-run.
+   *
+   * Both yields matter. The queries are synchronous, so without handing the
+   * event loop back nothing repaints until the answer has arrived. And the
+   * blank frame is what makes a re-run visible at all: re-running a test that
+   * failed and fails again would otherwise repaint the ✗ it was already showing,
+   * leaving no way to tell whether the run happened.
    */
-  private async markRunning(items: vscode.TestItem[]): Promise<void> {
+  private async markRunning(items: vscode.TestItem[], stoppable = true): Promise<void> {
     for (const item of items) {
       const { dictName, className, selector } = parseTestId(item.id);
-      this.setResult(dictName, className, selector, { outcome: 'running' });
+      this.deleteResult(dictName, className, selector);
+      // A method's outcome is also part of its class's roll-up, which would
+      // otherwise keep showing the old verdict beside a test being re-run.
+      if (selector !== undefined) this.deleteResult(dictName, className);
+    }
+    this.flushResultChanges();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    for (const item of items) {
+      const { dictName, className, selector } = parseTestId(item.id);
+      this.setResult(dictName, className, selector, { outcome: 'running', stoppable });
     }
     this.flushResultChanges();
     await new Promise((resolve) => setImmediate(resolve));

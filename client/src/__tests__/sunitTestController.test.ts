@@ -18,6 +18,33 @@ vi.mock('../sunitQueries', () => ({
     message: '',
     durationMs: 10,
   })),
+  runTestMethodNb: vi.fn(() =>
+    Promise.resolve({
+      className: 'MyTestCase',
+      selector: 'testAdd',
+      status: 'passed',
+      message: '',
+      durationMs: 10,
+    }),
+  ),
+  runTestClassNb: vi.fn(() =>
+    Promise.resolve([
+      {
+        className: 'MyTestCase',
+        selector: 'testAdd',
+        status: 'passed',
+        message: '',
+        durationMs: 5,
+      },
+      {
+        className: 'MyTestCase',
+        selector: 'testRemove',
+        status: 'failed',
+        message: 'Expected true',
+        durationMs: 3,
+      },
+    ]),
+  ),
   runTestClass: vi.fn(() => [
     { className: 'MyTestCase', selector: 'testAdd', status: 'passed', message: '', durationMs: 5 },
     {
@@ -37,7 +64,9 @@ vi.mock('../sunitQueries', () => ({
   },
 }));
 
-import { tests, window, TestRunProfileKind } from '../__mocks__/vscode';
+import { tests, window, commands, TestRunProfileKind } from '../__mocks__/vscode';
+import { buildClassDefinitionUri, buildMethodUri } from '../gemstoneFileSystemProvider';
+import { NbCancelledError } from '../nbRunner';
 import { SunitTestController, SunitDebugOutcome } from '../sunitTestController';
 import { SessionManager } from '../sessionManager';
 import * as sunit from '../sunitQueries';
@@ -272,10 +301,11 @@ describe('SunitTestController', () => {
 
       await ctrl.runClassByName('UserGlobals', 'MyTestCase');
 
-      expect(sunit.runTestClass).toHaveBeenCalledWith(
+      expect(sunit.runTestClassNb).toHaveBeenCalledWith(
         expect.objectContaining({ id: 1 }),
         'MyTestCase',
         'UserGlobals',
+        expect.any(Function),
       );
       ctrl.dispose();
     });
@@ -316,18 +346,20 @@ describe('SunitTestController', () => {
 
       await ctrl.runClassesByName('UserGlobals', ['MyTestCase', 'OtherTest']);
 
-      expect(sunit.runTestClass).toHaveBeenCalledTimes(2);
-      expect(sunit.runTestClass).toHaveBeenNthCalledWith(
+      expect(sunit.runTestClassNb).toHaveBeenCalledTimes(2);
+      expect(sunit.runTestClassNb).toHaveBeenNthCalledWith(
         1,
         expect.objectContaining({ id: 1 }),
         'MyTestCase',
         'UserGlobals',
+        expect.any(Function),
       );
-      expect(sunit.runTestClass).toHaveBeenNthCalledWith(
+      expect(sunit.runTestClassNb).toHaveBeenNthCalledWith(
         2,
         expect.objectContaining({ id: 1 }),
         'OtherTest',
         'UserGlobals',
+        expect.any(Function),
       );
       ctrl.dispose();
     });
@@ -340,11 +372,12 @@ describe('SunitTestController', () => {
       // Ask for both names but scoped to UserGlobals — only MyTestCase matches.
       await ctrl.runClassesByName('UserGlobals', ['MyTestCase', 'OtherTest']);
 
-      expect(sunit.runTestClass).toHaveBeenCalledTimes(1);
-      expect(sunit.runTestClass).toHaveBeenCalledWith(
+      expect(sunit.runTestClassNb).toHaveBeenCalledTimes(1);
+      expect(sunit.runTestClassNb).toHaveBeenCalledWith(
         expect.objectContaining({ id: 1 }),
         'MyTestCase',
         'UserGlobals',
+        expect.any(Function),
       );
       ctrl.dispose();
     });
@@ -355,7 +388,7 @@ describe('SunitTestController', () => {
 
       await ctrl.runClassesByName('UserGlobals', ['NoSuchTest']);
 
-      expect(sunit.runTestClass).not.toHaveBeenCalled();
+      expect(sunit.runTestClassNb).not.toHaveBeenCalled();
       ctrl.dispose();
     });
   });
@@ -375,12 +408,13 @@ describe('SunitTestController', () => {
     it('runs a single test', async () => {
       await sunitTestController.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd']);
 
-      expect(sunit.runTestMethod).toHaveBeenCalledTimes(1);
-      expect(sunit.runTestMethod).toHaveBeenCalledWith(
+      expect(sunit.runTestMethodNb).toHaveBeenCalledTimes(1);
+      expect(sunit.runTestMethodNb).toHaveBeenCalledWith(
         expect.objectContaining({ id: 1 }),
         'MyTestCase',
         'testAdd',
         'UserGlobals',
+        expect.any(Function),
       );
     });
 
@@ -390,7 +424,7 @@ describe('SunitTestController', () => {
       expect(window.showWarningMessage).toHaveBeenCalledWith(
         sunitTestController.notATestClassErrorMessage('NoSuchClass'),
       );
-      expect(sunit.runTestMethod).not.toHaveBeenCalled();
+      expect(sunit.runTestMethodNb).not.toHaveBeenCalled();
     });
 
     it('does not run tests when no tests methods were found', async () => {
@@ -399,7 +433,7 @@ describe('SunitTestController', () => {
       expect(window.showWarningMessage).toHaveBeenCalledWith(
         sunitTestController.noTestsFoundErrorMessage(),
       );
-      expect(sunit.runTestMethod).not.toHaveBeenCalled();
+      expect(sunit.runTestMethodNb).not.toHaveBeenCalled();
     });
   });
 
@@ -419,18 +453,20 @@ describe('SunitTestController', () => {
       // 'testAdd' and 'testRemove' are both in 'unit tests' per the mock
       await ctrl.runMethodCategoryByName('UserGlobals', 'MyTestCase', 'unit tests');
 
-      expect(sunit.runTestMethod).toHaveBeenCalledTimes(2);
-      expect(sunit.runTestMethod).toHaveBeenCalledWith(
+      expect(sunit.runTestMethodNb).toHaveBeenCalledTimes(2);
+      expect(sunit.runTestMethodNb).toHaveBeenCalledWith(
         expect.objectContaining({ id: 1 }),
         'MyTestCase',
         'testAdd',
         'UserGlobals',
+        expect.any(Function),
       );
-      expect(sunit.runTestMethod).toHaveBeenCalledWith(
+      expect(sunit.runTestMethodNb).toHaveBeenCalledWith(
         expect.objectContaining({ id: 1 }),
         'MyTestCase',
         'testRemove',
         'UserGlobals',
+        expect.any(Function),
       );
     });
 
@@ -440,7 +476,7 @@ describe('SunitTestController', () => {
       expect(window.showWarningMessage).toHaveBeenCalledWith(
         expect.stringContaining('NoSuchClass'),
       );
-      expect(sunit.runTestMethod).not.toHaveBeenCalled();
+      expect(sunit.runTestMethodNb).not.toHaveBeenCalled();
       ctrl.dispose();
     });
 
@@ -448,7 +484,7 @@ describe('SunitTestController', () => {
       await ctrl.runMethodCategoryByName('UserGlobals', 'MyTestCase', 'non-existent category');
 
       expect(window.showWarningMessage).toHaveBeenCalledWith(ctrl.noTestsFoundErrorMessage());
-      expect(sunit.runTestMethod).not.toHaveBeenCalled();
+      expect(sunit.runTestMethodNb).not.toHaveBeenCalled();
       ctrl.dispose();
     });
   });
@@ -474,26 +510,31 @@ describe('SunitTestController', () => {
       // grab the handler the Test Explorer invokes when you click "Run".
       const runHandler = (mockController.createRunProfile as ReturnType<typeof vi.fn>).mock
         .calls[0][2];
-      const cancellationToken = { isCancellationRequested: false };
+      const cancellationToken = {
+        isCancellationRequested: false,
+        onCancellationRequested: () => ({ dispose: () => {} }),
+      };
 
       // Run the UserGlobals copy — must resolve against UserGlobals, not the
       // symbol-list winner.
       await runHandler({ include: [userGlobals], exclude: undefined }, cancellationToken);
-      expect(sunit.runTestClass).toHaveBeenLastCalledWith(
+      expect(sunit.runTestClassNb).toHaveBeenLastCalledWith(
         expect.objectContaining({ id: 1 }),
         'AnnouncerTest',
         'UserGlobals',
+        expect.any(Function),
       );
 
       // Run the Globals copy — must resolve against Globals.
       await runHandler({ include: [globals], exclude: undefined }, cancellationToken);
-      expect(sunit.runTestClass).toHaveBeenLastCalledWith(
+      expect(sunit.runTestClassNb).toHaveBeenLastCalledWith(
         expect.objectContaining({ id: 1 }),
         'AnnouncerTest',
         'Globals',
+        expect.any(Function),
       );
 
-      expect(sunit.runTestClass).toHaveBeenCalledTimes(2);
+      expect(sunit.runTestClassNb).toHaveBeenCalledTimes(2);
       ctrl.dispose();
     });
   });
@@ -553,6 +594,24 @@ describe('SunitTestController', () => {
       await ctrl.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd']);
 
       expect(seen[0]).toBe('running');
+      expect(seen.at(-1)).toBe('passed');
+      ctrl.dispose();
+    });
+
+    it('blanks a previous outcome before re-running, so a repeat run is visible', async () => {
+      // Re-running a failing test that fails again would otherwise repaint the ✗
+      // it was already showing, leaving no sign the run happened.
+      const ctrl = new SunitTestController(makeSessionManager(true));
+      await ctrl.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd']);
+      const seen: (string | undefined)[] = [];
+      ctrl.onDidChangeResults(() => {
+        seen.push(ctrl.resultFor('UserGlobals', 'MyTestCase', 'testAdd')?.outcome);
+      });
+
+      await ctrl.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd']);
+
+      expect(seen[0]).toBeUndefined();
+      expect(seen).toContain('running');
       expect(seen.at(-1)).toBe('passed');
       ctrl.dispose();
     });
@@ -750,7 +809,7 @@ describe('SunitTestController', () => {
 
       await ctrl.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd'], 'debug');
 
-      expect(sunit.runTestMethod).not.toHaveBeenCalled();
+      expect(sunit.runTestMethodNb).not.toHaveBeenCalled();
       expect(debugExecutor.executeWithDebugger).toHaveBeenCalledOnce();
       const code = debugExecutor.executeWithDebugger.mock.calls[0][1];
       expect(code).toContain('MyTestCase');
@@ -765,7 +824,7 @@ describe('SunitTestController', () => {
       await ctrl.runClassByName('UserGlobals', 'MyTestCase', 'debug');
 
       // runTestClass installs the handler that makes a failure undebuggable.
-      expect(sunit.runTestClass).not.toHaveBeenCalled();
+      expect(sunit.runTestClassNb).not.toHaveBeenCalled();
       expect(debugExecutor.executeWithDebugger).toHaveBeenCalledTimes(2);
       ctrl.dispose();
     });
@@ -804,6 +863,357 @@ describe('SunitTestController', () => {
       await ctrl.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd'], 'debug');
 
       expect(ctrl.resultFor('UserGlobals', 'MyTestCase', 'testAdd')?.durationMs).toBeUndefined();
+      ctrl.dispose();
+    });
+  });
+
+  describe('resolving tests for an open document (gutter icons)', () => {
+    // The URI is built with the same builder the editor opens with — a test that
+    // hand-assembled it could pass while the real gutter stayed empty.
+    const methodUri = (
+      selector: string,
+      className = 'MyTestCase',
+      dictName = 'UserGlobals',
+      sessionId = 1,
+    ) =>
+      buildMethodUri({
+        kind: 'method',
+        sessionId,
+        dictName,
+        className,
+        isMeta: false,
+        category: 'unit tests',
+        selector,
+        environmentId: 0,
+      });
+
+    async function discovered() {
+      const ctrl = new SunitTestController(makeSessionManager(true));
+      const mockController = (tests.createTestController as ReturnType<typeof vi.fn>).mock
+        .results[0].value;
+      await mockController.resolveHandler(undefined);
+      return { ctrl, mockController };
+    }
+
+    it("lists a test class's methods when one of them is opened", async () => {
+      const { ctrl, mockController } = await discovered();
+      const classItem = mockController.items.get('sunit/1/UserGlobals/MyTestCase');
+      expect(classItem.children.size).toBe(0);
+
+      await ctrl.ensureTestsForDocument(methodUri('testAdd'));
+
+      // Without this the Testing view knows the class but not the method, and
+      // VS Code has no item to hang a gutter icon on.
+      expect(sunit.discoverTestMethods).toHaveBeenCalled();
+      expect(classItem.children.size).toBe(2);
+      ctrl.dispose();
+    });
+
+    it('does not re-resolve a class whose methods are already listed', async () => {
+      const { ctrl, mockController } = await discovered();
+      const classItem = mockController.items.get('sunit/1/UserGlobals/MyTestCase');
+      await mockController.resolveHandler(classItem);
+      (sunit.discoverTestMethods as ReturnType<typeof vi.fn>).mockClear();
+
+      await ctrl.ensureTestsForDocument(methodUri('testAdd'));
+
+      expect(sunit.discoverTestMethods).not.toHaveBeenCalled();
+      ctrl.dispose();
+    });
+
+    it('ignores a method of a class that is not a test class', async () => {
+      const { ctrl } = await discovered();
+      (sunit.discoverTestMethods as ReturnType<typeof vi.fn>).mockClear();
+
+      await ctrl.ensureTestsForDocument(methodUri('doSomething', 'NotATest'));
+
+      expect(sunit.discoverTestMethods).not.toHaveBeenCalled();
+      ctrl.dispose();
+    });
+
+    it('ignores a document belonging to another session', async () => {
+      // Items are keyed by session; resolving this one would list the selected
+      // stone's methods under a document from a different stone.
+      const { ctrl } = await discovered();
+      (sunit.discoverTestMethods as ReturnType<typeof vi.fn>).mockClear();
+
+      await ctrl.ensureTestsForDocument(methodUri('testAdd', 'MyTestCase', 'UserGlobals', 2));
+
+      expect(sunit.discoverTestMethods).not.toHaveBeenCalled();
+      ctrl.dispose();
+    });
+
+    it('ignores a document that is not a method — a class definition has its own item', async () => {
+      const { ctrl } = await discovered();
+      (sunit.discoverTestMethods as ReturnType<typeof vi.fn>).mockClear();
+
+      await ctrl.ensureTestsForDocument(buildClassDefinitionUri(1, 'UserGlobals', 'MyTestCase'));
+      await ctrl.ensureTestsForDocument(undefined);
+
+      expect(sunit.discoverTestMethods).not.toHaveBeenCalled();
+      ctrl.dispose();
+    });
+  });
+
+  describe('naming a run', () => {
+    // VS Code labels an unnamed run 'Test run at <timestamp>', which does not
+    // say which tests ran.
+    const runNameOf = (mockController: { createTestRun: ReturnType<typeof vi.fn> }) =>
+      mockController.createTestRun.mock.calls.at(-1)?.[1];
+
+    async function run(include?: unknown[]) {
+      const ctrl = new SunitTestController(makeSessionManager(true));
+      const mockController = (tests.createTestController as ReturnType<typeof vi.fn>).mock
+        .results[0].value;
+      await mockController.resolveHandler(undefined);
+      const runHandler = mockController.createRunProfile.mock.calls[0][2];
+      await runHandler(
+        { include, exclude: undefined },
+        { isCancellationRequested: false, onCancellationRequested: () => ({ dispose: () => {} }) },
+      );
+      return { ctrl, mockController };
+    }
+
+    it('names a single-class run after the class', async () => {
+      const ctrl = new SunitTestController(makeSessionManager(true));
+      const mockController = (tests.createTestController as ReturnType<typeof vi.fn>).mock
+        .results[0].value;
+      await mockController.resolveHandler(undefined);
+      const classItem = mockController.items.get('sunit/1/UserGlobals/MyTestCase');
+
+      const runHandler = mockController.createRunProfile.mock.calls[0][2];
+      await runHandler(
+        { include: [classItem], exclude: undefined },
+        {
+          isCancellationRequested: false,
+          onCancellationRequested: () => ({ dispose: () => {} }),
+        },
+      );
+
+      expect(runNameOf(mockController)).toBe('MyTestCase');
+      ctrl.dispose();
+    });
+
+    it('names a single-method run Class>>selector', async () => {
+      const ctrl = new SunitTestController(makeSessionManager(true));
+      const mockController = (tests.createTestController as ReturnType<typeof vi.fn>).mock
+        .results[0].value;
+      await mockController.resolveHandler(undefined);
+      const classItem = mockController.items.get('sunit/1/UserGlobals/MyTestCase');
+      await mockController.resolveHandler(classItem);
+      const methodItem = classItem.children.get('sunit/1/UserGlobals/MyTestCase/testAdd');
+
+      const runHandler = mockController.createRunProfile.mock.calls[0][2];
+      await runHandler(
+        { include: [methodItem], exclude: undefined },
+        {
+          isCancellationRequested: false,
+          onCancellationRequested: () => ({ dispose: () => {} }),
+        },
+      );
+
+      // The mock has no parent link, so the class name comes from the id.
+      expect(runNameOf(mockController)).toBe('MyTestCase>>testAdd');
+      ctrl.dispose();
+    });
+
+    it('names a run-everything after the number of classes', async () => {
+      const { ctrl, mockController } = await run(undefined);
+
+      expect(runNameOf(mockController)).toBe('2 test classes');
+      ctrl.dispose();
+    });
+  });
+
+  describe('stopping a run', () => {
+    it('has nothing to stop when no run is in flight', () => {
+      const ctrl = new SunitTestController(makeSessionManager(true));
+
+      expect(ctrl.cancelActiveRun()).toBe(false);
+      ctrl.dispose();
+    });
+
+    it('hands the run canceller out so a stop button can break the gem', async () => {
+      // The query offers its canceller through onStart; the controller holds it for
+      // as long as the call is in flight, and drops it when the call settles.
+      let cancelled = false;
+      const ctrl = new SunitTestController(makeSessionManager(true));
+      const during: boolean[] = [];
+      (sunit.runTestMethodNb as ReturnType<typeof vi.fn>).mockImplementationOnce(
+        (_s, _c, _sel, _d, onStart?: (cancel: () => void) => void) => {
+          onStart?.(() => {
+            cancelled = true;
+          });
+          during.push(ctrl.cancelActiveRun());
+          return Promise.resolve({
+            className: 'MyTestCase',
+            selector: 'testAdd',
+            status: 'passed',
+            message: '',
+            durationMs: 1,
+          });
+        },
+      );
+
+      await ctrl.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd']);
+
+      expect(during).toEqual([true]);
+      expect(cancelled).toBe(true);
+      // Settled, so there is nothing left to stop.
+      expect(ctrl.cancelActiveRun()).toBe(false);
+      ctrl.dispose();
+    });
+
+    it("breaks the gem when VS Code's own stop button cancels the run", async () => {
+      // The Testing view's stop cancels the run profile's token. Nothing else
+      // connects that to the gem, so if this wiring goes, the button goes quiet.
+      let broke = false;
+      let release: (() => void) | undefined;
+      (sunit.runTestClassNb as ReturnType<typeof vi.fn>).mockImplementationOnce(
+        (_s, _c, _d, onStart?: (cancel: () => void) => void) => {
+          onStart?.(() => {
+            broke = true;
+          });
+          return new Promise((resolve) => {
+            release = () => resolve([]);
+          });
+        },
+      );
+      const ctrl = new SunitTestController(makeSessionManager(true));
+      const mockController = (tests.createTestController as ReturnType<typeof vi.fn>).mock
+        .results[0].value;
+      await mockController.resolveHandler(undefined);
+      const classItem = mockController.items.get('sunit/1/UserGlobals/MyTestCase');
+
+      let requestCancel: (() => void) | undefined;
+      const runHandler = mockController.createRunProfile.mock.calls[0][2];
+      const running = runHandler(
+        { include: [classItem], exclude: undefined },
+        {
+          isCancellationRequested: false,
+          onCancellationRequested: (listener: () => void) => {
+            requestCancel = listener;
+            return { dispose: () => {} };
+          },
+        },
+      );
+      // Let the run reach the (pending) stone call before stopping it: markRunning
+      // yields twice on its own (blank frame, then spinner) before the call starts.
+      for (let i = 0; i < 8; i++) await new Promise((r) => setImmediate(r));
+
+      expect(requestCancel).toBeDefined();
+      requestCancel!();
+
+      expect(broke).toBe(true);
+      release?.();
+      await running;
+      ctrl.dispose();
+    });
+
+    it('leaves no verdict on a test whose run was stopped', async () => {
+      // Reporting "error" would blame the test for the user's decision to stop.
+      (sunit.runTestMethodNb as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new NbCancelledError('Execution cancelled.'),
+      );
+      const ctrl = new SunitTestController(makeSessionManager(true));
+
+      await ctrl.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd']);
+
+      expect(ctrl.resultFor('UserGlobals', 'MyTestCase', 'testAdd')).toBeUndefined();
+      ctrl.dispose();
+    });
+
+    it('leaves no verdict on any test of a class run that was stopped', async () => {
+      (sunit.runTestClassNb as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new NbCancelledError('Execution cancelled.'),
+      );
+      const ctrl = new SunitTestController(makeSessionManager(true));
+
+      await ctrl.runClassByName('UserGlobals', 'MyTestCase');
+
+      expect(ctrl.resultFor('UserGlobals', 'MyTestCase')).toBeUndefined();
+      expect(ctrl.resultFor('UserGlobals', 'MyTestCase', 'testAdd')).toBeUndefined();
+      ctrl.dispose();
+    });
+  });
+
+  describe('a test class with no tests', () => {
+    it('is not offered as runnable — a run would do nothing', async () => {
+      (sunit.discoverTestClasses as ReturnType<typeof vi.fn>).mockReturnValueOnce([
+        { dictName: 'UserGlobals', className: 'AbstractBase', testCount: 0 },
+        { dictName: 'UserGlobals', className: 'MyTestCase', testCount: 2 },
+      ]);
+      const ctrl = new SunitTestController(makeSessionManager(true));
+      const mockController = (tests.createTestController as ReturnType<typeof vi.fn>).mock
+        .results[0].value;
+      await mockController.resolveHandler(undefined);
+
+      expect(ctrl.isTestClass('UserGlobals', 'AbstractBase')).toBe(false);
+      expect(ctrl.isTestClass('UserGlobals', 'MyTestCase')).toBe(true);
+      ctrl.dispose();
+    });
+
+    it('stays runnable when the stone gave no usable count', async () => {
+      // Better a button that reports "no tests found" than one silently missing.
+      (sunit.discoverTestClasses as ReturnType<typeof vi.fn>).mockReturnValueOnce([
+        { dictName: 'UserGlobals', className: 'MyTestCase', testCount: null },
+      ]);
+      const ctrl = new SunitTestController(makeSessionManager(true));
+      const mockController = (tests.createTestController as ReturnType<typeof vi.fn>).mock
+        .results[0].value;
+      await mockController.resolveHandler(undefined);
+
+      expect(ctrl.isTestClass('UserGlobals', 'MyTestCase')).toBe(true);
+      ctrl.dispose();
+    });
+  });
+
+  describe('revealInTestExplorer', () => {
+    it('reveals a discovered test class', async () => {
+      const ctrl = new SunitTestController(makeSessionManager(true));
+      const mockController = (tests.createTestController as ReturnType<typeof vi.fn>).mock
+        .results[0].value;
+      await mockController.resolveHandler(undefined);
+
+      await expect(ctrl.revealInTestExplorer('UserGlobals', 'MyTestCase')).resolves.toBe(true);
+      // The view has to be showing before the reveal, or it scrolls something
+      // nobody can see.
+      expect(commands.executeCommand).toHaveBeenNthCalledWith(1, 'workbench.view.testing.focus');
+      expect(commands.executeCommand).toHaveBeenNthCalledWith(
+        2,
+        'vscode.revealTestInExplorer',
+        expect.objectContaining({ id: 'sunit/1/UserGlobals/MyTestCase' }),
+      );
+      ctrl.dispose();
+    });
+
+    it("lists a class's methods on demand so one can be revealed", async () => {
+      // Methods are discovered lazily; wanting to reveal one is a reason to have it.
+      const ctrl = new SunitTestController(makeSessionManager(true));
+      const mockController = (tests.createTestController as ReturnType<typeof vi.fn>).mock
+        .results[0].value;
+      await mockController.resolveHandler(undefined);
+
+      await expect(ctrl.revealInTestExplorer('UserGlobals', 'MyTestCase', 'testAdd')).resolves.toBe(
+        true,
+      );
+      expect(commands.executeCommand).toHaveBeenCalledWith(
+        'vscode.revealTestInExplorer',
+        expect.objectContaining({ id: 'sunit/1/UserGlobals/MyTestCase/testAdd' }),
+      );
+      ctrl.dispose();
+    });
+
+    it('answers false when there is nothing to reveal', async () => {
+      const ctrl = new SunitTestController(makeSessionManager(true));
+      const mockController = (tests.createTestController as ReturnType<typeof vi.fn>).mock
+        .results[0].value;
+      await mockController.resolveHandler(undefined);
+
+      await expect(ctrl.revealInTestExplorer('UserGlobals', 'NotATest')).resolves.toBe(false);
+      await expect(
+        ctrl.revealInTestExplorer('UserGlobals', 'MyTestCase', 'notATest'),
+      ).resolves.toBe(false);
       ctrl.dispose();
     });
   });
