@@ -1,5 +1,5 @@
 /**
- * Shared chrome + message plumbing for the Omni Search webview, used by BOTH hosts: the editor-tab
+ * Shared chrome + message plumbing for the GemStone Search webview, used by BOTH hosts: the editor-tab
  * Spotter (`omniSearchPanel.ts`) and the bottom-panel view (`omniSearchViewProvider.ts`). Keeping the
  * HTML, the tab/placeholder helpers, and the common engine-message dispatch here means the two hosts
  * differ only in their host-specific concerns (the tab host has a pin + open-beside + auto-close; the
@@ -26,8 +26,8 @@ export const REFERENCES_KEY_HINT_HTML = IS_MAC
   : '<kbd>Alt</kbd>+<kbd>Enter</kbd>';
 
 /**
- * Plain-text hint for the shortcut that opens Omni Search from anywhere in a session, per platform.
- * Must track the `gemstone.omniSearch` keybinding in package.json (`ctrl+shift+a` / `cmd+shift+a`);
+ * Plain-text hint for the shortcut that opens GemStone Search from anywhere in a session, per platform.
+ * Must track the `gemstone.search` keybinding in package.json (`ctrl+shift+a` / `cmd+shift+a`);
  * the keybindings manifest test pins that binding so drift here is caught.
  */
 export const OMNI_OPEN_KEY_HINT = IS_MAC ? '⌘⇧A' : 'Ctrl+Shift+A';
@@ -41,7 +41,7 @@ const SCOPE_LABEL: Record<string, string> = {
   globals: 'globals',
   source: 'source',
   literals: 'literals',
-  categories: 'categories',
+  categories: 'class categories',
 };
 
 /** The enabled categories shaped for the webview's tab row (label + explicit flag + search hint). */
@@ -184,14 +184,14 @@ export function dispatchEngineMessage(
 }
 
 /**
- * The full Omni Search webview HTML. `showPin` includes the 📌 (only the editor-tab host has a tab
+ * The full GemStone Search webview HTML. `showPin` includes the 📌 (only the editor-tab host has a tab
  * to pin). Both hosts get the always-on source-preview pane of the active row.
  */
 export function renderOmniHtml(opts: { showPin: boolean }): string {
   const nonce = crypto.randomBytes(16).toString('hex');
   const script = readWebviewScript('omniSearchView.js', 'omniSearch');
   const pinButton = opts.showPin
-    ? '<button id="pin" title="Keep Omni Search open (pin to a tab)" aria-pressed="false">📌</button>'
+    ? '<button id="pin" title="Keep GemStone Search open (pin to a tab)" aria-pressed="false">📌</button>'
     : '';
   return `<!DOCTYPE html>
 <html lang="en">
@@ -332,7 +332,7 @@ export function renderOmniHtml(opts: { showPin: boolean }): string {
       white-space: nowrap;
     }
     #refindicator:hover { background: var(--vscode-button-hoverBackground, var(--vscode-button-background)); }
-    /* "Not searched here: Source - Literals - Categories" under the field while the All scope is
+    /* "Not searched here: Source - Literals - Class Categories" under the field while the All scope is
        active. Those three are explicitOnly, so an All-scope search silently skips them and "no results"
        is indistinguishable from "not in the image". No display rule here on purpose: the
        element starts hidden via an inline style and the view sets explicit display values, because a
@@ -483,7 +483,7 @@ export function renderOmniHtml(opts: { showPin: boolean }): string {
       white-space: nowrap;
       cursor: help;
     }
-    /* A persistent, unobtrusive gesture legend — useful now that Omni Search is a docked panel you
+    /* A persistent, unobtrusive gesture legend — useful now that GemStone Search is a docked panel you
        keep open (not a glance-once dialog). Distinct from the QuickPick's cluttered field-hover. */
     #hints { flex: 0 0 auto; opacity: 0.7; font-size: 0.95em; }
     #hints kbd {
@@ -584,7 +584,7 @@ export function renderOmniHtml(opts: { showPin: boolean }): string {
     <div id="tabs" role="tablist"></div>
     <div id="searchbar">
       <div id="field">
-        <input id="query" type="text" autocomplete="off" spellcheck="false" placeholder="Search…" aria-label="Omni Search">
+        <input id="query" type="text" autocomplete="off" spellcheck="false" placeholder="Search…" aria-label="GemStone Search">
         <button id="clear" title="Clear search" aria-label="Clear search" style="display:none">×</button>
       </div>
       <button id="case" title="Case sensitivity" aria-pressed="false">Aa</button>

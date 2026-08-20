@@ -1,5 +1,5 @@
 /**
- * Pure, dependency-free matching + ranking for Omni Search (issue #378).
+ * Pure, dependency-free matching + ranking for GemStone Search (issue #378).
  *
  * One `match(query, target, opts)` entry point with three selectable modes — the "customizable,
  * savable search algorithm" the issue calls for (the mode is a user setting; see omniConfig.ts):

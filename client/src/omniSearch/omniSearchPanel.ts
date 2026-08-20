@@ -1,5 +1,5 @@
 /**
- * Omni Search Phase-2 "Spotter" — a webview panel that replaces the Phase-1 `vscode.QuickPick`
+ * GemStone Search Phase-2 "Spotter" — a webview panel that replaces the Phase-1 `vscode.QuickPick`
  * chrome (issue #378). The search behaviour is identical (it drives the pure `OmniEngine`); the
  * webview buys what the QuickPick title bar could not: real labeled scope TABS (not a cramped icon
  * row), our own case-correct match HIGHLIGHTS, an always-on case indicator, a source PREVIEW pane,

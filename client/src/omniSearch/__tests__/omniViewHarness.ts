@@ -1,5 +1,5 @@
 /**
- * Shared jsdom harness for the Omni Search webview tests.
+ * Shared jsdom harness for the GemStone Search webview tests.
  *
  * The DOM these tests mount is derived from `renderOmniHtml` — the SAME function the extension ships
  * to the webview — so a chrome change (a renamed button, a new control, a dropped element) reaches

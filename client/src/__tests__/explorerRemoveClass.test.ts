@@ -143,7 +143,7 @@ describe('ExplorerController.removeClass', () => {
 });
 
 // A removal is uncommitted, so nothing else announces it: without this hook a deleted class stayed
-// listed — and clickable — in an open Omni Search until the next commit/abort. Fired per class rather
+// listed — and clickable — in an open GemStone Search until the next commit/abort. Fired per class rather
 // than per command, because Remove Class takes the whole subtree. See PR #443 review (#428 Round 1).
 describe('ExplorerController.removeClass — telling cached corpora what went', () => {
   it('reports a removed leaf class with its session', async () => {
