@@ -128,7 +128,10 @@ Global "search anything browsable" for the GemStone IDE — the Jasper answer to
 
 6. **Reference Search (Wishlist Task 1).** A result can pivot to "who references it": a **method** row →
    **senders** of its selector, a **class** row → **references to** it (via the shared
-   `sendersOf` / `referencesToObject` queries). Two entry points: the per-row **↗ button** and
+   `sendersOf` / `referencesToObject` queries). The pivot sweeps every method environment
+   (`0..maxEnvironment`) and dedups by class/selector — matching the `sendersOfSelector` /
+   `implementorsOfSelector` commands — so hits in a non-zero environment aren't missed, and each opens
+   in the environment it was found in. Two entry points: the per-row **↗ button** and
    **Alt+Enter** on the highlighted row. `references.ts` is the pure glue (no `vscode`, no session).
    The setting **`referencesInPreview`** (default `true`) shows the references as a sticky list in the
    preview pane, leaving the results list in place; set it `false` for the classic pivot that replaces

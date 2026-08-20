@@ -90,20 +90,30 @@ export function buildOmniHandlers(openOptions?: OmniOpenOptions): OmniActionHand
     revealDictionary(a) {
       // Cascade the Explorer to the named dictionary and select its row (the command resolves the
       // symbol-list index and reveals it — a bare pane `.focus` would not select the dictionary).
-      void vscode.commands.executeCommand('gemstone.explorer.revealDictionary', a.dictName);
+      // Pass the result's own session so the reveal targets it, not whatever session is selected now
+      // (same as openClass/openMethod) — otherwise switching sessions after a search lands you in the
+      // wrong session's data.
+      void vscode.commands.executeCommand(
+        'gemstone.explorer.revealDictionary',
+        a.dictName,
+        a.sessionId,
+      );
     },
     revealGlobal(a) {
       // Jump to the class of the global's value (e.g. Transcript → its stream class) — more useful
       // than landing in the whole dictionary. findClass resolves the class's home dict + reveals it.
-      void vscode.commands.executeCommand('gemstone.explorer.findClass', a.className);
+      // Session-scoped for the same reason as revealDictionary above.
+      void vscode.commands.executeCommand('gemstone.explorer.findClass', a.className, a.sessionId);
     },
     revealCategory(a) {
       // Select the category's home dictionary, then select + reveal the category node (and filter the
-      // classes pane to it) — not just land in the dictionary.
+      // classes pane to it) — not just land in the dictionary. Session-scoped for the same reason as
+      // revealDictionary above.
       void vscode.commands.executeCommand(
         'gemstone.explorer.revealCategory',
         a.dictName,
         a.category,
+        a.sessionId,
       );
     },
   };
@@ -117,12 +127,30 @@ export function resolveReferencesUsing(
   return (result) => {
     const req = referenceRequestFor(result);
     if (!req) return null;
-    const rows =
-      req.kind === 'senders'
-        ? sendersOf(session, req.selector, req.environmentId)
-        : referencesToObject(session, req.className, req.environmentId);
+    // Senders and references can live in ANY method environment, so sweep 0..maxEnvironment the same
+    // way the gemstone.sendersOfSelector / implementorsOfSelector commands do — a single env-0 query
+    // silently misses every hit in environment >= 1 on a multi-environment stone. Dedup by
+    // class/selector keeping the lowest-environment copy, and carry each surviving row's environment
+    // into its open action so it opens where it was found. (maxEnvironment defaults to 0, so the common
+    // single-environment case stays exactly one round trip.)
+    const maxEnv = vscode.workspace.getConfiguration('gemstone').get<number>('maxEnvironment', 0);
+    const seen = new Set<string>();
+    const results: OmniResult[] = [];
+    for (let env = 0; env <= maxEnv; env++) {
+      const rows =
+        req.kind === 'senders'
+          ? sendersOf(session, req.selector, env)
+          : referencesToObject(session, req.className, env);
+      for (const r of methodRowsToResults(rows, session.id, 'methods', env)) {
+        const a = r.action;
+        const key = a.kind === 'openMethod' ? `${a.className}|${a.isMeta}|${a.selector}` : r.label;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        results.push(r);
+      }
+    }
     const target = req.kind === 'senders' ? req.selector : req.className;
-    return { title: req.title, target, results: methodRowsToResults(rows, session.id) };
+    return { title: req.title, target, results };
   };
 }
 
