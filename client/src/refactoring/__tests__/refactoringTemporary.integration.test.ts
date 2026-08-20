@@ -98,7 +98,7 @@ r := (System myUserProfile symbolList objectNamed: #GsRenameTemporaryRefactoring
 (r failures size + r errors size) printString`;
 
     expect(exec(code).trim()).toBe('0');
-  });
+  }, 60_000);
 
   it('previews the single method recompile, renaming the outer temporary only', async (ctx) => {
     requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());

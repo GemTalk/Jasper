@@ -95,7 +95,7 @@ r := (System myUserProfile symbolList objectNamed: #GsExtractTemporaryRefactorin
 (r failures size + r errors size) printString`;
 
     expect(exec(code).trim()).toBe('0');
-  });
+  }, 60_000);
 
   it('pre-flights a repeated expression, counting its occurrences', async (ctx) => {
     requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());

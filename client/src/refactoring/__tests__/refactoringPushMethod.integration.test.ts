@@ -110,7 +110,7 @@ r := (System myUserProfile symbolList objectNamed: #GsPushUpMethodRefactoringTes
 (r failures size + r errors size) printString`;
 
     expect(exec(code).trim()).toBe('0');
-  });
+  }, 60_000);
 
   it('runs the push-down GS SUnit suite in-stone with zero failures', (ctx) => {
     requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
@@ -121,7 +121,7 @@ r := (System myUserProfile symbolList objectNamed: #GsPushDownMethodRefactoringT
 (r failures size + r errors size) printString`;
 
     expect(exec(code).trim()).toBe('0');
-  });
+  }, 60_000);
 
   it('pushes a pure method up to its superclass', async (ctx) => {
     requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());

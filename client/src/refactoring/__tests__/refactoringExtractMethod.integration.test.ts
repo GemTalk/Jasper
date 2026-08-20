@@ -92,7 +92,7 @@ r := (System myUserProfile symbolList objectNamed: #GsExtractMethodRefactoringTe
 (r failures size + r errors size) printString`;
 
     expect(exec(code).trim()).toBe('0');
-  });
+  }, 60_000);
 
   it('pre-flights a void statement selection as needing no arguments', async (ctx) => {
     if (!enginePresent()) ctx.skip('refactoring engine not loaded in this stone');

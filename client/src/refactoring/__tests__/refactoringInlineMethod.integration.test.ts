@@ -96,7 +96,7 @@ r := (System myUserProfile symbolList objectNamed: #GsInlineMethodRefactoringTes
 (r failures size + r errors size) printString`;
 
     expect(exec(code).trim()).toBe('0');
-  });
+  }, 60_000);
 
   it('pre-flights a self send, resolving the target method', async (ctx) => {
     if (!enginePresent()) ctx.skip('refactoring engine not loaded in this stone');

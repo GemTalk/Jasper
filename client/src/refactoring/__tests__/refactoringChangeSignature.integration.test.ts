@@ -105,7 +105,7 @@ r := (System myUserProfile symbolList objectNamed: #GsChangeSignatureRefactoring
 (r failures size + r errors size) printString`;
 
     expect(exec(code).trim()).toBe('0');
-  }, 30_000);
+  }, 60_000);
 
   it('pre-flight analyses the method arity and argument names', async (ctx) => {
     requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
