@@ -15,7 +15,11 @@ import { parseAnalysis, parseStartPreview, parseApplyResult } from '../instVarSt
 import type { ActiveSession } from '../../sessionManager';
 import { requireServerPluginFeature } from '../../__tests__/requireServerPluginFeature';
 import { pluginFeatures } from '../../serverPlugin/pluginFeatures';
-import { fileInEngineTestsExpr } from './support/refactoring';
+import {
+  fileInEngineTestsExpr,
+  ownIvars as ownIvarsProbe,
+  definesSelector as definesSelectorProbe,
+} from './support/refactoring';
 
 /**
  * Automatic GCI integration test for the instance-variable structure refactorings (V2
@@ -75,13 +79,10 @@ describe('instance-variable structure (integration)', () => {
     q.compileMethod(session(), LEAF, false, 'accessing', 'leafM\n\t^leaf');
   };
 
-  const ownIvars = (cls: string): string =>
-    exec(`(${cls} instVarNames collect: [:e | e asString]) printString`);
+  const ownIvars = (cls: string): string => ownIvarsProbe(exec, cls);
 
   const definesSelector = (cls: string, selector: string): boolean =>
-    exec(
-      `(${cls} compiledMethodAt: #'${selector}' environmentId: 0 otherwise: nil) notNil printString`,
-    ).trim() === 'true';
+    definesSelectorProbe(exec, cls, selector);
 
   const runToApply = async (
     op: 'convertTemp' | 'pushUp' | 'pushDown' | 'move',

@@ -26,6 +26,27 @@ type LoginOptions = {
   user?: string;
 };
 
+/** Options accepted by {@link useIntegrationTest}. */
+type UseIntegrationTestOptions = {
+  /**
+   * How many `System commitTransaction`s this suite's tests -- and the
+   * production code they exercise -- perform. Defaults to 0 (no commits
+   * allowed at all). Opens that many levels of nested transaction before each
+   * test, plus one level of headroom, so a commit lands in one of those
+   * nested levels instead of the harness's own transaction -- the `afterEach`
+   * abort then discards all of it.
+   *
+   * What it really budgets is nested transaction *levels*, so a `System
+   * abortTransaction` during the test spends one too -- GemStone collapses a
+   * level either way, and the teardown check can't tell them apart. Count
+   * aborts here as well, but prefer not to abort at all under a budget: it
+   * unwinds only the innermost nested level, so a test aborting to observe a
+   * rollback is observing that level's rollback, not the repository's. See
+   * `docs/reference/integration-test-harness.md` for the full contract.
+   */
+  allowedCommits?: number;
+};
+
 /**
  * Sets up a full GemStone integration test environment for a Vitest describe block.
  *
@@ -62,11 +83,34 @@ type LoginOptions = {
  * of each suite and restored afterward, so a local GemStone installation is
  * unaffected outside of test runs.
  */
-export function useIntegrationTest(callback: UseIntegrationTestCallback) {
+export function useIntegrationTest(
+  callback: UseIntegrationTestCallback,
+  options?: UseIntegrationTestOptions,
+) {
   let gciLibrary: GciLibrary;
   let session: unknown;
   let originalGemstoneGlobalDir: string | undefined;
   let sessionCleanupFailed = false;
+  // The transaction level a currently-open commit budget sits on top of, or
+  // undefined when no budget is open right now -- nothing is nested, so no
+  // floor applies. Inferred by subtraction after opening the nested levels,
+  // rather than measured before nesting or hardcoded -- see
+  // openNestedCommitBudget below.
+  let budgetFloorTransactionLevel: bigint | undefined;
+  // Whether the transaction beforeEach wraps around a test is currently open,
+  // so a login() issued from inside a test body knows it has to re-establish
+  // that transaction on the session it just created.
+  let testTransactionIsOpen = false;
+
+  const allowedCommits = options?.allowedCommits ?? 0;
+  assertUsableAllowedCommits(allowedCommits);
+
+  // One nested level per allowed commit, plus one of headroom so the teardown
+  // check can catch an overrun before a real commit is ever attempted against
+  // the harness's own transaction. A budget of zero opens nothing at all:
+  // there is no commit to catch, and the commit guard is the sole enforcement
+  // -- a genuine discontinuity rather than a degenerate case of the formula.
+  const nestedTransactionCount = allowedCommits === 0 ? 0 : allowedCommits + 1;
 
   // gciLibrary and session are created inside a beforeAll hook, so they don't
   // exist at call time. The callback fires at the end of that hook, letting
@@ -110,40 +154,71 @@ export function useIntegrationTest(callback: UseIntegrationTestCallback) {
       );
       login();
     }
-    gciLibrary.beginTransaction(session);
+    openTestTransaction();
   });
 
   afterEach(() => {
+    // The transaction beforeEach opened is over, whatever became of it, so
+    // neither of these describes anything live from here on. Reading the floor
+    // into a local drops the suite-level copy before any early return or throw
+    // below could leave it behind for the next test to be policed against --
+    // including a beforeEach that fails before opening a budget of its own.
+    testTransactionIsOpen = false;
+    const budgetFloorAtTeardown = budgetFloorTransactionLevel;
+    budgetFloorTransactionLevel = undefined;
+
     if (!session) return;
+
+    let transactionLevelBeforeAbort: bigint | undefined;
 
     try {
       // Checked before the cleanup below on purpose: if the commit guard is no longer armed, that means a test
       // committed and left the session dirty, so the cleanup below is not guaranteed to succeed. Bail out early
       assertCommitGuardIsStillArmed(session);
 
-      gciLibrary.abortTransaction(session);
+      transactionLevelBeforeAbort = unwindAllTransactionLevels();
+
       gciLibrary.resetNonTransactionalSessionState(session);
     } catch (error) {
       sessionCleanupFailed = true;
       throw error;
     }
+
+    // No floor means no open budget, so there is nothing to overrun.
+    if (
+      budgetFloorAtTeardown !== undefined &&
+      transactionLevelBeforeAbort <= budgetFloorAtTeardown
+    ) {
+      throw new Error(
+        `useIntegrationTest: transaction level fell to ${transactionLevelBeforeAbort} during "${expect.getState().currentTestName}", at or below the allowedCommits: ${allowedCommits} budget's floor of ${budgetFloorAtTeardown} — the test, or the code it exercises, collapsed more nested transaction levels than the budget opened. A "System abortTransaction" collapses one just like a "System commitTransaction" does, and GemStone leaves nothing behind that says which, so look for either. Raise allowedCommits to cover every level the test spends — but read its doc comment first if the culprit is an abort.`,
+      );
+    }
   });
 
   /**
-   * Logs in (using `options.user`, or `VITE_GEMSTONE_USER` by default) and
+   * Logs in (using `loginOptions.user`, or `VITE_GEMSTONE_USER` by default) and
    * stores the result as the current session, then re-invokes `callback`
    * with a fresh {@link GciTestContext} so callers stay in sync.
    *
+   * Named `loginOptions` rather than `options` so it doesn't shadow the suite's
+   * own options.
+   *
    * @throws {GciLibraryError} If login fails (see `GciLibrary.login`).
    */
-  function login(options?: LoginOptions) {
+  function login(loginOptions?: LoginOptions) {
     session = gciLibrary.login(
       process.env.VITE_GEMSTONE_STONE_NRS!,
       process.env.VITE_GEMSTONE_GEM_NRS!,
-      options?.user ?? process.env.VITE_GEMSTONE_USER!,
+      loginOptions?.user ?? process.env.VITE_GEMSTONE_USER!,
       process.env.VITE_GEMSTONE_PASSWORD!,
     );
     armCommitGuard(session);
+
+    // A test that logs out and back in gets a session of its own: it is not
+    // inside the transaction beforeEach opened, and carries none of the nested
+    // levels opened within it. Re-open both here, so the re-established
+    // session gets whatever commit budget the suite declared, zero included.
+    if (testTransactionIsOpen) openTestTransaction();
 
     callback({
       gciLibrary,
@@ -152,6 +227,72 @@ export function useIntegrationTest(callback: UseIntegrationTestCallback) {
       logout,
       withTransientSession,
     });
+  }
+
+  /**
+   * Wraps the current session in the transaction each test runs inside, opening
+   * the suite's nested commit budget within it when it asked for one. Called
+   * for each test, and again for a session a test logs in mid-flight, which
+   * would otherwise carry no budget for its own commits.
+   */
+  function openTestTransaction() {
+    gciLibrary.beginTransaction(session);
+    openNestedCommitBudget();
+    testTransactionIsOpen = true;
+  }
+
+  /**
+   * Opens `nestedTransactionCount` nested levels on the current session and
+   * records the floor the teardown check polices. Re-derives
+   * `budgetFloorTransactionLevel` from the level it observes each time, so
+   * re-opening the budget for a re-logged-in session leaves the teardown
+   * comparing against that session rather than the replaced one -- whose floor
+   * describes a transaction that no longer exists.
+   */
+  function openNestedCommitBudget() {
+    if (nestedTransactionCount === 0) return;
+
+    const transactionLevelAfterNesting = openNestedTransactionLevels(nestedTransactionCount);
+
+    if (transactionLevelAfterNesting < nestedTransactionCount + 1) {
+      throw new Error(
+        `useIntegrationTest: expected to be at least ${nestedTransactionCount + 1} levels deep after opening ${nestedTransactionCount} nested transaction(s), but "System transactionLevel" reports ${transactionLevelAfterNesting} — "System beginNestedTransaction" may have degraded to a plain "beginTransaction" outside of a transaction.`,
+      );
+    }
+
+    budgetFloorTransactionLevel = transactionLevelAfterNesting - BigInt(nestedTransactionCount);
+
+    // Opening the levels is itself a doit: it re-caches the Utf8 class oop
+    // and leaves oops in the PureExportSet, undoing the reset armCommitGuard
+    // performed on this session. Reset again so a committing test starts as
+    // clean as a zero-budget one -- the levels just opened are untouched by
+    // this, which is non-transactional.
+    gciLibrary.resetNonTransactionalSessionState(session);
+  }
+
+  /**
+   * Reads the current transaction level and aborts every level of it, in one
+   * round-trip -- however many `openNestedCommitBudget` opened, uniformly
+   * regardless of this suite's `allowedCommits`.
+   *
+   * @returns The transaction level observed just before the abort.
+   */
+  function unwindAllTransactionLevels(): bigint {
+    return gciLibrary.executeAndFetchInteger(
+      session,
+      '| level | level := System transactionLevel. level timesRepeat: [System abortTransaction]. level',
+    );
+  }
+
+  /**
+   * Opens `levelsToOpen` nested transaction levels on the current session and
+   * returns the resulting transaction level, in one round-trip.
+   */
+  function openNestedTransactionLevels(levelsToOpen: number): bigint {
+    return gciLibrary.executeAndFetchInteger(
+      session,
+      `${levelsToOpen} timesRepeat: [System beginNestedTransaction]. System transactionLevel`,
+    );
   }
 
   /**
@@ -311,4 +452,19 @@ export function useIntegrationTest(callback: UseIntegrationTestCallback) {
       process.env.GEMSTONE_GLOBAL_DIR = originalGemstoneGlobalDir;
     }
   }
+}
+
+/**
+ * Rejects an `allowedCommits` that cannot describe a budget. Levels are whole
+ * things, and below zero of them the floor sits at or above the level a test
+ * starts at -- so the teardown check, which reads *reaching* the floor as a
+ * commit too many, would fail every test in the suite for a budget that was
+ * never openable in the first place.
+ */
+function assertUsableAllowedCommits(allowedCommits: number) {
+  if (Number.isInteger(allowedCommits) && allowedCommits >= 0) return;
+
+  throw new Error(
+    `useIntegrationTest: allowedCommits must be a non-negative whole number, but got ${allowedCommits}.`,
+  );
 }
