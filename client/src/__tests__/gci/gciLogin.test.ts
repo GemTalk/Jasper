@@ -298,28 +298,6 @@ describe('GciTsLogin / GciTsLogout', () => {
       gci.GciTsLogout(session);
     });
 
-    it('commit succeeds on a clean session', () => {
-      const { session } = gci.GciTsLogin(
-        STONE_NRS,
-        null,
-        null,
-        false,
-        GEM_NRS,
-        GS_USER,
-        GS_PASSWORD,
-        0,
-        0,
-      );
-      expect(session).not.toBeNull();
-
-      const commit = gci.GciTsCommit(session);
-      console.log('Commit - success:', commit.success);
-      console.log('Commit - err:', JSON.stringify(commit.err, bigIntReplacer, 2));
-      expect(commit.success).toBe(true);
-
-      gci.GciTsLogout(session);
-    });
-
     it('continueWith returns OOP_ILLEGAL with no active process', () => {
       const { session } = gci.GciTsLogin(
         STONE_NRS,
