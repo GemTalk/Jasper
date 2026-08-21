@@ -507,9 +507,7 @@
   function databasesDo(databases) {
     return {
       command: 'createDatabaseDefaults',
-      label: (databases || []).length
-        ? 'Create another with the defaults'
-        : 'Create one with the defaults',
+      label: (databases || []).length ? 'Create another and start it' : 'Create one and start it',
     };
   }
 
@@ -569,7 +567,8 @@
         'NetLDI name — the listener that starts a gem process for each session.',
       ],
       note: 'Once it exists, opening its row lists the log, configuration and backup files it owns: a configuration file opens in the editor to be changed by hand, and Terminal and Reveal open the database on disk for anything the panel does not cover.',
-      action: 'Usually: + , accept the four defaults, then Start to bring the stone and NetLDI up.',
+      action:
+        'Usually: + , accept the four defaults, then Start to bring the stone and NetLDI up. Doing it from here does all of that at once.',
       do: databasesDo(state.databases),
       done: (state.databases || []).length > 0,
     });

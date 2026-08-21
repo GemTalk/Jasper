@@ -51,3 +51,21 @@ export interface GemStoneProcess {
   /** True when status is "OK". */
   responding: boolean;
 }
+
+/**
+ * The stone and NetLDI names for a database created with the defaults, numbered
+ * past whatever is already in use. Both are identified by name, so a second
+ * `gs64stone` would contend with the first over locks and registration — and the
+ * pair stays on one number so a database's two servers read as a set.
+ */
+export function defaultDatabaseNames(taken: Iterable<string>): {
+  stoneName: string;
+  ldiName: string;
+} {
+  const used = new Set(taken);
+  let suffix = '';
+  for (let n = 2; used.has(`gs64stone${suffix}`) || used.has(`gs64ldi${suffix}`); n += 1) {
+    suffix = String(n);
+  }
+  return { stoneName: `gs64stone${suffix}`, ldiName: `gs64ldi${suffix}` };
+}

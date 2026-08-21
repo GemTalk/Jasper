@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { loginsTargetingStone, buildDataCuratorLogin, loginLabel } from '../loginTypes';
+import { defaultDatabaseNames } from '../sysadminTypes';
 import type { GemStoneLogin } from '../loginTypes';
 
 // Creating a database auto-creates a DataCurator login for its stone, but
@@ -59,5 +60,34 @@ describe('logins orphaned by deleting a database', () => {
 
   it('finds nothing to remove when no login pointed at it', () => {
     expect(loginsTargetingStone([], CONFIG, versionsMatch)).toEqual([]);
+  });
+});
+
+// The default database is named against what already exists: a stone and a
+// NetLDI are identified by name, so a second gs64stone would contend with the
+// first over locks and registration.
+describe('naming a default database', () => {
+  const nextNames = defaultDatabaseNames;
+
+  it('uses the plain names on a machine with no databases', () => {
+    expect(nextNames([])).toEqual({ stoneName: 'gs64stone', ldiName: 'gs64ldi' });
+  });
+
+  it('steps past a name already in use', () => {
+    expect(nextNames(['gs64stone', 'gs64ldi'])).toEqual({
+      stoneName: 'gs64stone2',
+      ldiName: 'gs64ldi2',
+    });
+  });
+
+  it('keeps the stone and its NetLDI on the same number', () => {
+    const { stoneName, ldiName } = nextNames(['gs64stone', 'gs64ldi', 'gs64stone2', 'gs64ldi2']);
+
+    expect(stoneName).toBe('gs64stone3');
+    expect(ldiName).toBe('gs64ldi3');
+  });
+
+  it('steps past a clash on either half of the pair', () => {
+    expect(nextNames(['gs64ldi']).stoneName).toBe('gs64stone2');
   });
 });

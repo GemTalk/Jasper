@@ -1731,7 +1731,7 @@
       },
       {
         "command": "gemstone.createDatabaseDefaults",
-        "title": "New Database with Defaults",
+        "title": "New Database with Defaults, Started",
         "category": "GemStone Admin",
         "icon": "$(add)"
       },

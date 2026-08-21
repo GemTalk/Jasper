@@ -132,6 +132,7 @@ import { appendSysadmin, getSysadminChannel } from './sysadminChannel';
 import { VersionManager } from './versionManager';
 import { VersionTreeProvider, VersionItem } from './versionTreeProvider';
 import { DatabaseManager } from './databaseManager';
+import { defaultDatabaseNames } from './sysadminTypes';
 import { DatabaseTreeProvider, DatabaseNode } from './databaseTreeProvider';
 import { runLogicalBackup } from './backupManager';
 import { runOnlineExtentBackup, resolveExtentBackupSession } from './extentBackupManager';
@@ -3615,18 +3616,9 @@ export function activate(context: vscode.ExtensionContext) {
         );
         return;
       }
-      // Quick Setup's names, made unique against the databases already here: a
-      // stone and a NetLDI are identified by name, so a second gs64stone would
-      // contend with the first over locks and registration.
-      const taken = new Set(
+      const { stoneName, ldiName } = defaultDatabaseNames(
         sysadminStorage.getDatabases().flatMap((d) => [d.config.stoneName, d.config.ldiName]),
       );
-      let suffix = '';
-      for (let n = 2; taken.has(`gs64stone${suffix}`) || taken.has(`gs64ldi${suffix}`); n += 1) {
-        suffix = String(n);
-      }
-      const stoneName = `gs64stone${suffix}`;
-      const ldiName = `gs64ldi${suffix}`;
 
       let db;
       try {
@@ -3649,6 +3641,11 @@ export function activate(context: vscode.ExtensionContext) {
         await storage.saveLogin(newLogin);
         treeProvider.refresh();
       }
+      // A database nobody can reach is not a finished job: bring the stone and
+      // NetLDI up too, through the same commands the panel and the sidebar use,
+      // so this inherits the shared-memory preflight and their reporting.
+      await vscode.commands.executeCommand('gemstone.startStone', { kind: 'stone', db });
+      await vscode.commands.executeCommand('gemstone.startNetldi', { kind: 'netldi', db });
       refreshAdminViews();
     }),
 

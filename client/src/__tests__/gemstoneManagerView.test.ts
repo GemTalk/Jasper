@@ -936,7 +936,7 @@ describe('a step can do itself', () => {
 
     start(root);
     goTo('databases');
-    expect(doBtn()?.textContent).toBe('Create one with the defaults');
+    expect(doBtn()?.textContent).toBe('Create one and start it');
 
     doBtn()?.click();
     expect(host.postMessage).toHaveBeenCalledWith({ command: 'createDatabaseDefaults' });
@@ -1052,7 +1052,7 @@ describe('a step can do itself', () => {
     goTo('databases');
 
     expect(doBtn()?.hidden).toBe(false);
-    expect(doBtn()?.textContent).toBe('Create another with the defaults');
+    expect(doBtn()?.textContent).toBe('Create another and start it');
 
     doBtn()?.click();
     expect(host.postMessage).toHaveBeenCalledWith({ command: 'createDatabaseDefaults' });
