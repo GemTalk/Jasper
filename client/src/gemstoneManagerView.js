@@ -566,12 +566,6 @@
     return steps;
   }
 
-  /** The first step not yet satisfied — where the user actually is. */
-  function firstTodo(steps) {
-    const i = steps.findIndex((s) => !s.done);
-    return i === -1 ? steps.length - 1 : i;
-  }
-
   // A line above the sections saying what is left and offering to point at it.
   // Quick Setup earns its place here: on a machine with nothing installed it does
   // all four steps in one go, and it is otherwise only offered inside the OS
@@ -659,6 +653,7 @@
     if (!tour) return;
     tour.index = Math.max(0, Math.min(i, tour.steps.length - 1));
     const step = tour.steps[tour.index];
+    tour.call.dataset.section = step.section;
 
     // A collapsed or scrolled-away section cannot be pointed at, so open it and
     // bring it into view before measuring.
@@ -783,10 +778,7 @@
       onKey,
       returnFocusTo: '[data-tour="start"]',
     };
-    // Open on the step the user is actually on rather than always at the top:
-    // walking someone through two finished steps to reach their problem is the
-    // thing a checklist is supposed to save them.
-    showStep(firstTodo(steps));
+    showStep(0);
   }
 
   /** Tour clicks are handled here, not posted to the host — nothing leaves the webview. */
@@ -1188,7 +1180,7 @@
       const acted = tour.advanceFrom;
       tour.advanceFrom = undefined;
       const settled = acted !== undefined && tour.steps[acted] && tour.steps[acted].done;
-      showStep(settled ? firstTodo(tour.steps) : tour.index);
+      showStep(settled ? acted + 1 : tour.index);
     }
   }
 
@@ -1260,7 +1252,6 @@
     renderDatabases,
     orderedSections,
     tourSteps,
-    firstTodo,
     renderHeader,
     osHasWarning,
     versionState,

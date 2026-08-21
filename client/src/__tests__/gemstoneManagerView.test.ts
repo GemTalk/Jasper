@@ -89,6 +89,20 @@ function sectionOrder(root: HTMLElement): string[] {
   );
 }
 
+/**
+ * Walk the open tour forward to the step describing `section`. The tour always
+ * opens at the first step, so a test about a later one has to get there the way
+ * a reader would.
+ */
+function goTo(section: string): void {
+  for (let i = 0; i < 8; i++) {
+    const call = document.querySelector('.gm-call');
+    if (!call || call.getAttribute('data-section') === section) return;
+    call.querySelector<HTMLElement>('[data-tour="next"]')?.click();
+  }
+  throw new Error(`tour never reached the "${section}" step`);
+}
+
 afterEach(() => {
   document.body.innerHTML = '';
 });
@@ -421,7 +435,6 @@ type TourStep = {
 };
 type TourApi = {
   tourSteps(state: unknown): TourStep[];
-  firstTodo(steps: TourStep[]): number;
 };
 
 function tour(): TourApi {
@@ -494,17 +507,10 @@ describe('setup steps', () => {
     expect(tour().tourSteps(state())[0].done).toBe(true);
   });
 
-  it('points at the first unfinished step', () => {
-    const steps = tour().tourSteps(state({ versions: [NOTHING_INSTALLED], databases: [] }));
-
-    expect(tour().firstTodo(steps)).toBe(1);
-  });
-
-  it('points at the last step when everything is done, rather than off the end', () => {
+  it('reports every step done once a session is open', () => {
     const steps = tour().tourSteps(state({ logins: [SESSION_OPEN] }));
 
     expect(steps.every((s) => s.done)).toBe(true);
-    expect(tour().firstTodo(steps)).toBe(steps.length - 1);
   });
 });
 
@@ -561,28 +567,39 @@ describe('the tour', () => {
     expect(root.querySelector('[data-tour="start"]')).not.toBeNull();
   });
 
-  it('opens on the step the user is actually stuck on', () => {
+  // Opening partway in saved a click but left the reader somewhere they had not
+  // agreed to be, having to walk back to see the earlier steps.
+  it('opens at the first step, whatever the machine has already done', () => {
     const { root } = open(state({ versions: [NOTHING_INSTALLED], databases: [] }));
 
     start(root);
 
-    expect(callout()?.querySelector('.gm-call-title')?.textContent).toBe('Install a version');
-    expect(callout()?.querySelector('.gm-call-step')?.textContent).toBe('Step 2 of 4');
+    expect(callout()?.getAttribute('data-section')).toBe('os');
+    expect(callout()?.querySelector('.gm-call-step')?.textContent).toBe('Step 1 of 4');
   });
 
   it('marks a step the machine has already satisfied', () => {
     const { root } = open(state({ versions: [NOTHING_INSTALLED], databases: [] }));
 
     start(root);
-    callout()?.querySelector<HTMLElement>('[data-tour="prev"]')?.click();
 
     expect(callout()?.querySelector('.gm-call-mark')?.textContent).toBe('Already done');
+  });
+
+  it('marks a step still outstanding', () => {
+    const { root } = open(state({ versions: [NOTHING_INSTALLED], databases: [] }));
+
+    start(root);
+    goTo('versions');
+
+    expect(callout()?.querySelector('.gm-call-mark')?.textContent).toBe('To do');
   });
 
   it('opens the section it is pointing at, so the step is not describing a closed box', () => {
     const { root } = open(state({ versions: [NOTHING_INSTALLED], databases: [] }));
 
     start(root);
+    goTo('versions');
 
     const versions = root.querySelector<HTMLDetailsElement>('details[data-section="versions"]');
     expect(versions?.open).toBe(true);
@@ -593,14 +610,14 @@ describe('the tour', () => {
 
     start(root);
     callout()?.querySelector<HTMLElement>('[data-tour="next"]')?.click();
-    expect(callout()?.querySelector('.gm-call-step')?.textContent).toBe('Step 3 of 4');
+    expect(callout()?.querySelector('.gm-call-step')?.textContent).toBe('Step 2 of 4');
 
     callout()?.querySelector<HTMLElement>('[data-tour="prev"]')?.click();
-    expect(callout()?.querySelector('.gm-call-step')?.textContent).toBe('Step 2 of 4');
+    expect(callout()?.querySelector('.gm-call-step')?.textContent).toBe('Step 1 of 4');
   });
 
   it('cannot walk back off the front', () => {
-    const { root } = open(state({ os: { supported: false }, versions: [NOTHING_INSTALLED] }));
+    const { root } = open(state({ versions: [NOTHING_INSTALLED] }));
 
     start(root);
 
@@ -611,6 +628,7 @@ describe('the tour', () => {
     const { root } = open(state({ logins: [LOGIN] }));
 
     start(root);
+    goTo('connect');
 
     expect(callout()?.querySelector<HTMLElement>('[data-tour="next"]')?.hidden).toBe(true);
     expect(callout()?.querySelector('[data-tour="end"]')?.textContent).toBe('Done');
@@ -640,7 +658,7 @@ describe('the tour', () => {
     start(root);
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
 
-    expect(callout()?.querySelector('.gm-call-step')?.textContent).toBe('Step 3 of 4');
+    expect(callout()?.querySelector('.gm-call-step')?.textContent).toBe('Step 2 of 4');
   });
 
   // The panel rebuilds itself on every admin change, replacing every section
@@ -649,6 +667,7 @@ describe('the tour', () => {
     const { root } = open(state({ versions: [NOTHING_INSTALLED], databases: [] }));
 
     start(root);
+    goTo('versions');
     api().render(state({ versions: [NOTHING_INSTALLED], databases: [] }));
 
     expect(callout()).not.toBeNull();
@@ -703,6 +722,7 @@ describe('what a step asks the user to do', () => {
     const { root } = open(state({ versions: [NOTHING_INSTALLED], databases: [] }));
 
     root.querySelector<HTMLElement>('[data-tour="start"]')?.click();
+    goTo('versions');
     const call = document.querySelector('.gm-call');
 
     expect(call?.querySelector('.gm-call-do')?.textContent).toMatch(/^Usually/);
@@ -754,6 +774,7 @@ describe('the four questions read one per line', () => {
     const { root } = open(state({ databases: [] }));
 
     root.querySelector<HTMLElement>('[data-tour="start"]')?.click();
+    goTo('databases');
     const items = [...document.querySelectorAll('.gm-call-list li')].map((li) => li.textContent);
 
     expect(items).toHaveLength(4);
@@ -763,6 +784,7 @@ describe('the four questions read one per line', () => {
     const { root } = open(state({ versions: [NOTHING_INSTALLED], databases: [] }));
 
     root.querySelector<HTMLElement>('[data-tour="start"]')?.click();
+    goTo('versions');
 
     expect(document.querySelector<HTMLElement>('.gm-call-list')?.hidden).toBe(true);
   });
@@ -879,6 +901,7 @@ describe('a step can do itself', () => {
     const { root } = open(state({ versions: [NOTHING_INSTALLED, older], databases: [] }));
 
     start(root);
+    goTo('versions');
 
     expect(doBtn()?.hidden).toBe(false);
     expect(doBtn()?.textContent).toBe('Install 3.7.5');
@@ -888,6 +911,7 @@ describe('a step can do itself', () => {
     const { root, host } = open(state({ versions: [NOTHING_INSTALLED], databases: [] }));
 
     start(root);
+    goTo('versions');
     doBtn()?.click();
 
     expect(host.postMessage).toHaveBeenCalledWith({
@@ -900,6 +924,7 @@ describe('a step can do itself', () => {
     const { root, host } = open(state({ versions: [NOTHING_INSTALLED], databases: [] }));
 
     start(root);
+    goTo('versions');
     doBtn()?.click();
 
     const [msg] = host.postMessage.mock.calls.at(-1) as [Record<string, unknown>];
@@ -910,6 +935,7 @@ describe('a step can do itself', () => {
     const { root, host } = open(state({ databases: [] }));
 
     start(root);
+    goTo('databases');
     expect(doBtn()?.textContent).toBe('Create one with the defaults');
 
     doBtn()?.click();
@@ -920,6 +946,7 @@ describe('a step can do itself', () => {
     const { root, host } = open(state({ databases: [database()], logins: [] }));
 
     start(root);
+    goTo('connect');
     expect(doBtn()?.textContent).toBe('Log in as DataCurator');
 
     doBtn()?.click();
@@ -933,6 +960,7 @@ describe('a step can do itself', () => {
     const { root, host } = open(state({ logins: [LOGIN] }));
 
     start(root);
+    goTo('connect');
     expect(doBtn()?.textContent).toBe('Log in as DataCurator');
 
     doBtn()?.click();
@@ -946,6 +974,7 @@ describe('a step can do itself', () => {
     const { root } = open(state({ logins: [{ ...LOGIN, running: false }] }));
 
     start(root);
+    goTo('connect');
 
     expect(doBtn()?.textContent).toBe('Start devKit and log in');
   });
@@ -954,8 +983,7 @@ describe('a step can do itself', () => {
     const { root } = open(state({ logins: [], databases: [] }));
 
     start(root);
-    // Databases is the outstanding step here, so walk on to Connect.
-    document.querySelector<HTMLElement>('[data-tour="next"]')?.click();
+    goTo('connect');
 
     expect(doBtn()?.textContent).toBe('Add a login…');
   });
@@ -977,6 +1005,7 @@ describe('a step can do itself', () => {
     const { root, host } = open(state({ os: short }));
 
     start(root);
+    goTo('os');
     doBtn()?.click();
 
     expect(host.postMessage).toHaveBeenCalledWith({
@@ -989,6 +1018,7 @@ describe('a step can do itself', () => {
     const { root } = open(state({ logins: [SESSION_OPEN] }));
 
     start(root);
+    goTo('connect');
 
     expect(doBtn()?.hidden).toBe(true);
   });
@@ -998,6 +1028,7 @@ describe('a step can do itself', () => {
     const { root } = open(state({ versions: [NOTHING_INSTALLED], databases: [] }));
 
     start(root);
+    goTo('versions');
     expect(document.querySelector('.gm-call-step')?.textContent).toBe('Step 2 of 4');
 
     doBtn()?.click();
@@ -1012,6 +1043,7 @@ describe('a step can do itself', () => {
     const { root } = open(state({ versions: [NOTHING_INSTALLED], databases: [] }));
 
     start(root);
+    goTo('versions');
     doBtn()?.click();
     api().render(state({ versions: [NOTHING_INSTALLED], databases: [] }));
 
@@ -1022,6 +1054,7 @@ describe('a step can do itself', () => {
     const { root } = open(state({ versions: [NOTHING_INSTALLED], databases: [] }));
 
     start(root);
+    goTo('versions');
     api().render(state({ versions: [INSTALLED_VERSION], databases: [] }));
 
     expect(document.querySelector('.gm-call-step')?.textContent).toBe('Step 2 of 4');
