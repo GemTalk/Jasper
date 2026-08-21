@@ -33,10 +33,12 @@ describe('GciTsCommit (integration)', () => {
    * is not a pattern to copy for a test that needs to commit real changes.
    */
   function commitEmptyTransaction(gciLibrary: GciLibrary): { success: boolean; err: GciError } {
+    // eslint-disable-next-line no-restricted-syntax -- the one sanctioned unarmed login in this repo; safe only because assertTransactionIsEmpty runs before the commit below. If you are reading this comment in a second file, that is the bug.
     const session = gciLibrary.login(
       process.env.VITE_GEMSTONE_STONE_NRS!,
       process.env.VITE_GEMSTONE_GEM_NRS!,
       process.env.VITE_GEMSTONE_USER!,
+      // eslint-disable-next-line no-restricted-syntax -- credentials for the sanctioned unarmed login above; see that comment before copying either line
       process.env.VITE_GEMSTONE_PASSWORD!,
     );
 
