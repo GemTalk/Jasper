@@ -10,8 +10,12 @@ import { classLookupOrRaiseExpr, escapeString } from './util';
  * a failing test undebuggable. Without a handler, a raise suspends the GemStone
  * process instead, and the debugger gets the live stack.
  *
- * tearDown runs through `ensure:` so a suspended — then terminated — test still
- * tears its fixture down.
+ * setUp AND the test run inside the `ensure:`, matching GemStone's own
+ * TestCase>>runCase, so tearDown still runs when a suspended — then terminated —
+ * test unwinds, and also when setUp itself raises (the case a debug run exists
+ * for). tearDown is only attempted, not guaranteed to complete: a tearDown that
+ * touches state a failed setUp never initialised can raise in turn — same as the
+ * framework.
  *
  * Answers 'passed' when nothing raised: the caller otherwise has no way to tell
  * "the test finished" from "a debugger took the process".
@@ -25,7 +29,6 @@ export function debugTestMethodCode(
   return `| cls tc |
 ${classLookupOrRaiseExpr(className, dictName)}
 tc := cls selector: #'${sel}'.
-tc setUp.
-[tc perform: #'${sel}'] ensure: [tc tearDown].
+[tc setUp. tc perform: #'${sel}'] ensure: [tc tearDown].
 'passed'`;
 }

@@ -19,6 +19,16 @@ describe('debugTestMethodCode', () => {
     expect(code).toContain('ensure: [tc tearDown]');
   });
 
+  it('runs setUp inside the ensure block, so tearDown runs even when setUp raises', () => {
+    // Regression: setUp used to sit as a bare statement before the ensure:, so a
+    // setUp that raised skipped tearDown — the exact case a debug run exists for.
+    // Wrapping setUp too matches GemStone's own TestCase>>runCase.
+    const code = debugTestMethodCode('MyTestCase', 'testAdd', 'UserGlobals');
+    expect(code).toContain("[tc setUp. tc perform: #'testAdd'] ensure: [tc tearDown]");
+    // And never the old, unprotected shape.
+    expect(code).not.toMatch(/tc setUp\.\s*\n\s*\[tc perform/);
+  });
+
   it('resolves the class in the dictionary it was found in', () => {
     const code = debugTestMethodCode('MyTestCase', 'testAdd', 'UserGlobals');
     expect(code).toContain('UserGlobals');
