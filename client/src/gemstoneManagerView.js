@@ -667,8 +667,11 @@
     call.style.left = `${left}px`;
   }
 
-  function showStep(i) {
+  function showStep(i, keepError) {
     if (!tour) return;
+    if (!keepError && tour.index !== Math.max(0, Math.min(i, tour.steps.length - 1))) {
+      tour.error = undefined;
+    }
     tour.index = Math.max(0, Math.min(i, tour.steps.length - 1));
     const step = tour.steps[tour.index];
     tour.call.dataset.section = step.section;
@@ -717,6 +720,10 @@
     const settled = tour.call.querySelector('.gm-call-settled');
     settled.hidden = !!step.do;
 
+    const failure = tour.call.querySelector('.gm-call-error');
+    failure.textContent = tour.error || '';
+    failure.hidden = !tour.error;
+
     tour.call.querySelector('[data-tour="prev"]').disabled = tour.index === 0;
     const last = tour.index === tour.steps.length - 1;
     tour.call.querySelector('[data-tour="next"]').hidden = last;
@@ -753,6 +760,7 @@
       <p class="gm-call-do"></p>
       <p class="gm-call-hint">Escape closes this box — the highlighted controls work either way.</p>
       <p class="gm-call-settled">Nothing to do here.</p>
+      <p class="gm-call-error"></p>
       <button type="button" class="btn btn-primary gm-call-do-btn" data-tour="do"><span></span></button>
       <div class="gm-call-acts">
         <button type="button" class="btn" data-tour="prev">Back</button>
@@ -825,6 +833,10 @@
     if (!step.do) return;
     const { label, ...msg } = step.do;
     void label;
+    // A new attempt starts without the last one's complaint on screen, so clear
+    // it and redraw before anything is sent.
+    tour.error = undefined;
+    showStep(tour.index, true);
     post(msg);
     // The host redraws the panel once the command lands. If that settles this
     // step, move to the next outstanding one rather than leaving the user
@@ -1202,7 +1214,7 @@
       const acted = tour.advanceFrom;
       tour.advanceFrom = undefined;
       const settled = acted !== undefined && tour.steps[acted] && tour.steps[acted].done;
-      showStep(settled ? acted + 1 : tour.index);
+      showStep(settled ? acted + 1 : tour.index, true);
     }
   }
 
@@ -1257,6 +1269,14 @@
       if (!msg || typeof msg !== 'object') return;
       if (msg.command === 'loading') {
         els.root.setAttribute('aria-busy', 'true');
+      } else if (msg.command === 'actionFailed') {
+        // The step stays where it is: what it offered to do did not happen, so
+        // ticking on to the next would be counting a failure as progress.
+        if (tour) {
+          tour.error = String(msg.message || 'That did not work.');
+          tour.advanceFrom = undefined;
+          showStep(tour.index, true);
+        }
       } else if (msg.command === 'state') {
         if (!msg.state || typeof msg.state !== 'object') return;
         els.root.setAttribute('aria-busy', 'false');

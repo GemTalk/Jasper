@@ -1166,3 +1166,92 @@ describe('the callout keeps its buttons inside the box', () => {
     expect(css).toMatch(/\.gm-call-acts \{[^}]*flex-wrap: wrap/);
   });
 });
+
+// Creating the default database also starts its stone and NetLDI, and either can
+// fail. The step must not tick over on the strength of a command that did not
+// work, and the reason has to be readable — a notification truncates a
+// startstone error long before it has finished explaining itself.
+describe('an action that fails', () => {
+  const start = (root: HTMLElement) =>
+    root.querySelector<HTMLElement>('[data-tour="start"]')?.click();
+  const doBtn = () => document.querySelector<HTMLButtonElement>('[data-tour="do"]');
+  const failed = (message: string) =>
+    window.dispatchEvent(
+      new MessageEvent('message', { data: { command: 'actionFailed', message } }),
+    );
+
+  const STARTED = { versions: [INSTALLED_VERSION], databases: [] };
+
+  it('shows what went wrong, in full', () => {
+    const { root } = open(state(STARTED));
+    start(root);
+    goTo('databases');
+    doBtn()?.click();
+
+    failed(
+      "gs64stone2 was created, but its stone did not start. startstone[Error]: The environment variable 'GEMSTONE' is not defined.",
+    );
+
+    const shown = document.querySelector<HTMLElement>('.gm-call-error');
+    expect(shown?.hidden).toBe(false);
+    expect(shown?.textContent).toContain("The environment variable 'GEMSTONE' is not defined");
+  });
+
+  it('does not move on, even though the database now exists', () => {
+    const { root } = open(state(STARTED));
+    start(root);
+    goTo('databases');
+    const was = document.querySelector('.gm-call-step')?.textContent;
+
+    doBtn()?.click();
+    failed('its stone did not start');
+    // The host redraws: the database was created, so this step now reads done.
+    api().render(state({ versions: [INSTALLED_VERSION], databases: [database()] }));
+
+    expect(document.querySelector('.gm-call-step')?.textContent).toBe(was);
+    expect(document.querySelector<HTMLElement>('.gm-call-error')?.hidden).toBe(false);
+  });
+
+  it('keeps the complaint while the panel redraws under it', () => {
+    const { root } = open(state(STARTED));
+    start(root);
+    goTo('databases');
+    doBtn()?.click();
+    failed('its stone did not start');
+    api().render(state(STARTED));
+
+    expect(document.querySelector<HTMLElement>('.gm-call-error')?.hidden).toBe(false);
+  });
+
+  it('drops it when the user tries again', () => {
+    const { root } = open(state(STARTED));
+    start(root);
+    goTo('databases');
+    doBtn()?.click();
+    failed('its stone did not start');
+
+    doBtn()?.click();
+
+    expect(document.querySelector<HTMLElement>('.gm-call-error')?.hidden).toBe(true);
+  });
+
+  it('drops it when the user walks to another step', () => {
+    const { root } = open(state(STARTED));
+    start(root);
+    goTo('databases');
+    doBtn()?.click();
+    failed('its stone did not start');
+
+    document.querySelector<HTMLElement>('[data-tour="next"]')?.click();
+
+    expect(document.querySelector<HTMLElement>('.gm-call-error')?.hidden).toBe(true);
+  });
+
+  it('says nothing when nothing has failed', () => {
+    const { root } = open(state(STARTED));
+
+    start(root);
+
+    expect(document.querySelector<HTMLElement>('.gm-call-error')?.hidden).toBe(true);
+  });
+});

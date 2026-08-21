@@ -3644,8 +3644,29 @@ export function activate(context: vscode.ExtensionContext) {
       // A database nobody can reach is not a finished job: bring the stone and
       // NetLDI up too, through the same commands the panel and the sidebar use,
       // so this inherits the shared-memory preflight and their reporting.
-      await vscode.commands.executeCommand('gemstone.startStone', { kind: 'stone', db });
-      await vscode.commands.executeCommand('gemstone.startNetldi', { kind: 'netldi', db });
+      //
+      // A failure stops the chain and is thrown on to the caller. Starting a
+      // NetLDI for a stone that never came up only produces a second error, and
+      // a caller told nothing would report a database that works.
+      type StartResult = { ok: boolean; message?: string } | undefined;
+      const stone: StartResult = await vscode.commands.executeCommand('gemstone.startStone', {
+        kind: 'stone',
+        db,
+      });
+      if (stone && !stone.ok) {
+        refreshAdminViews();
+        throw new Error(`${stoneName} was created, but its stone did not start. ${stone.message}`);
+      }
+      const netldi: StartResult = await vscode.commands.executeCommand('gemstone.startNetldi', {
+        kind: 'netldi',
+        db,
+      });
+      if (netldi && !netldi.ok) {
+        refreshAdminViews();
+        throw new Error(
+          `${stoneName} was created, but ${ldiName} did not start. ${netldi.message}`,
+        );
+      }
       refreshAdminViews();
     }),
 
@@ -3704,16 +3725,22 @@ export function activate(context: vscode.ExtensionContext) {
     }),
 
     vscode.commands.registerCommand('gemstone.startStone', async (node: DatabaseNode) => {
-      if (node?.kind !== 'stone') return;
-      if (!(await ensureStonePreconditions())) return;
+      if (node?.kind !== 'stone') return { ok: false, message: 'No stone to start.' };
+      if (!(await ensureStonePreconditions())) {
+        return { ok: false, message: 'This machine is not configured to run a stone yet.' };
+      }
+      let result: { ok: boolean; message?: string };
       try {
         await processManager.startStone(node.db);
         vscode.window.showInformationMessage(`Stone "${node.db.config.stoneName}" started.`);
+        result = { ok: true };
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         vscode.window.showErrorMessage(msg);
+        result = { ok: false, message: msg };
       }
       refreshAdminViews();
+      return result;
     }),
 
     vscode.commands.registerCommand('gemstone.stopStone', async (node: DatabaseNode) => {
@@ -3783,15 +3810,19 @@ export function activate(context: vscode.ExtensionContext) {
     }),
 
     vscode.commands.registerCommand('gemstone.startNetldi', async (node: DatabaseNode) => {
-      if (node?.kind !== 'netldi') return;
+      if (node?.kind !== 'netldi') return { ok: false, message: 'No NetLDI to start.' };
+      let result: { ok: boolean; message?: string };
       try {
         await processManager.startNetldi(node.db);
         vscode.window.showInformationMessage(`NetLDI "${node.db.config.ldiName}" started.`);
+        result = { ok: true };
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         vscode.window.showErrorMessage(msg);
+        result = { ok: false, message: msg };
       }
       refreshAdminViews();
+      return result;
     }),
 
     vscode.commands.registerCommand('gemstone.stopNetldi', async (node: DatabaseNode) => {

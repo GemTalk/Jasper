@@ -459,6 +459,19 @@ export class GemstoneManagerPanel {
     const detail = error instanceof Error ? error.message : String(error);
     appendSysadmin(`GemStone Manager: ${what} failed: ${detail}`);
     void vscode.window.showErrorMessage(`GemStone Manager: ${detail}`);
+    this.actionFailed(error);
+  }
+
+  /**
+   * Tell the panel an action it asked for did not work. The guided steps must not
+   * advance on the strength of a command that failed, and a notification is
+   * truncated well before a `startstone` error has finished explaining itself —
+   * so the text goes into the panel, where it can wrap and be read.
+   */
+  private actionFailed(error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error);
+    appendSysadmin(`GemStone Manager: ${message}`);
+    void this.panel.webview.postMessage({ command: 'actionFailed', message });
   }
 
   /**
@@ -588,7 +601,14 @@ export class GemstoneManagerPanel {
         await this.postState();
         return;
       case 'createDatabaseDefaults':
-        await vscode.commands.executeCommand('gemstone.createDatabaseDefaults');
+        try {
+          await vscode.commands.executeCommand('gemstone.createDatabaseDefaults');
+        } catch (e) {
+          // Told before the redraw, deliberately. The panel refreshes either way
+          // — the database really was created — and a coach step that ticks over
+          // on a redraw would read a failed start as progress.
+          this.actionFailed(e);
+        }
         await this.postState();
         return;
       case 'createDefaultLogin':
@@ -1614,6 +1634,17 @@ th.v-num { text-align: right; }
   margin: 9px 0 0; font-size: 12.5px; font-weight: 600; color: var(--gm-ok);
 }
 .gm-call-settled[hidden] { display: none; }
+/* What went wrong, where there is room to read it: a notification truncates a
+   startstone error long before it has finished explaining itself. */
+.gm-call-error {
+  margin: 9px 0 0; padding: 8px 10px; border-radius: 4px;
+  font-family: var(--vscode-editor-font-family, monospace); font-size: 11.5px; line-height: 1.5;
+  color: var(--vscode-inputValidation-errorForeground, inherit);
+  background: var(--vscode-inputValidation-errorBackground, rgba(241, 76, 76, .12));
+  border: 1px solid var(--vscode-inputValidation-errorBorder, var(--vscode-errorForeground, #f14c4c));
+  max-height: 8.5em; overflow-y: auto; white-space: pre-wrap; word-break: break-word;
+}
+.gm-call-error[hidden] { display: none; }
 .gm-call-acts .btn:disabled { opacity: .45; cursor: default; }
 
 /* ── Empty / note states ──────────────────────────────────────────────────── */
