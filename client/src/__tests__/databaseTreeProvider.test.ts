@@ -3,7 +3,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
 import { DatabaseTreeProvider, DatabaseNode } from '../databaseTreeProvider';
-import { GemStoneDatabase } from '../sysadminTypes';
+import { GemStoneDatabase, GemStoneProcess } from '../sysadminTypes';
+import { ExternalServer, ExternalServerFinding, HostServerProcess } from '../externalServerScan';
 
 function makeDatabase(overrides: Partial<GemStoneDatabase> = {}): GemStoneDatabase {
   return {
@@ -22,14 +23,50 @@ function makeDatabase(overrides: Partial<GemStoneDatabase> = {}): GemStoneDataba
 function makeStorage(databases: GemStoneDatabase[] = [makeDatabase()]) {
   return {
     getDatabases: vi.fn(() => databases),
+    getRootPath: vi.fn(() => '/home/user/gemstone'),
   };
 }
 
-function makeProcessManager(stoneRunning = false, netldiRunning = false) {
+function makeProcessManager(
+  processes: GemStoneProcess[] = [],
+  external: ExternalServerFinding = {},
+) {
   return {
-    isStoneRunning: vi.fn(() => stoneRunning),
-    isNetldiRunning: vi.fn(() => netldiRunning),
-    getProcesses: vi.fn(() => []),
+    isStoneRunning: vi.fn(() => processes.some((p) => p.type === 'stone')),
+    isNetldiRunning: vi.fn(() => processes.some((p) => p.type === 'netldi')),
+    getProcesses: vi.fn(() => processes),
+    getExternalServers: vi.fn(() => external),
+  };
+}
+
+function proc(overrides: Partial<GemStoneProcess> = {}): GemStoneProcess {
+  return {
+    type: 'stone',
+    name: 'gs64stone',
+    version: '3.7.4',
+    pid: 11,
+    status: 'OK',
+    responding: true,
+    ...overrides,
+  };
+}
+
+const STONE_UP = proc();
+const LDI_UP = proc({ type: 'netldi', name: 'gs64ldi', pid: 12, port: 50378 });
+
+function hostServer(overrides: Partial<HostServerProcess> = {}): ExternalServer {
+  return {
+    process: {
+      pid: 9001,
+      type: 'stone',
+      name: 'gs64stone',
+      version: '3.7.4',
+      globalDir: '/somewhere/else',
+      dbPathHints: ['/home/user/gemstone/db-1/conf/gs64stone.conf'],
+      command: '/gs/sys/stoned gs64stone',
+      ...overrides,
+    },
+    identity: 'confirmed',
   };
 }
 
@@ -61,15 +98,53 @@ describe('DatabaseTreeProvider', () => {
       expect(kinds).toEqual(['stone', 'netldi', 'logs', 'config']);
     });
 
-    it('queries running state with the database version so same-named stones stay distinct', () => {
+    it('ignores a same-named stone belonging to a different version', () => {
       const db = makeDatabase({ config: { ...makeDatabase().config, version: '3.6.2' } });
-      const pm = makeProcessManager();
+      const pm = makeProcessManager([STONE_UP, LDI_UP]);
       const provider = new DatabaseTreeProvider(makeStorage([db]) as never, pm as never);
 
-      provider.getChildren({ kind: 'database', db });
+      const children = provider.getChildren({ kind: 'database', db });
 
-      expect(pm.isStoneRunning).toHaveBeenCalledWith('gs64stone', '3.6.2');
-      expect(pm.isNetldiRunning).toHaveBeenCalledWith('gs64ldi', '3.6.2');
+      expect(children[0]).toMatchObject({ kind: 'stone', status: 'stopped' });
+      expect(children[1]).toMatchObject({ kind: 'netldi', status: 'stopped' });
+    });
+
+    it('shows a healthy database as running on both rows', () => {
+      const db = makeDatabase();
+      const provider = new DatabaseTreeProvider(
+        makeStorage([db]) as never,
+        makeProcessManager([STONE_UP, LDI_UP]) as never,
+      );
+
+      const children = provider.getChildren({ kind: 'database', db });
+
+      expect(children[0]).toMatchObject({ kind: 'stone', status: 'running' });
+      expect(children[1]).toMatchObject({ kind: 'netldi', status: 'running' });
+    });
+
+    it('does not call a stone running when nothing can reach it', () => {
+      const db = makeDatabase();
+      const provider = new DatabaseTreeProvider(
+        makeStorage([db]) as never,
+        makeProcessManager([STONE_UP]) as never,
+      );
+
+      const children = provider.getChildren({ kind: 'database', db });
+
+      expect(children[0]).toMatchObject({ kind: 'stone', status: 'unreachable' });
+    });
+
+    it('does not call a server stopped when it is alive but started outside Jasper', () => {
+      const db = makeDatabase();
+      const external = hostServer();
+      const provider = new DatabaseTreeProvider(
+        makeStorage([db]) as never,
+        makeProcessManager([], { stone: external }) as never,
+      );
+
+      const children = provider.getChildren({ kind: 'database', db });
+
+      expect(children[0]).toMatchObject({ kind: 'stone', status: 'external', external });
     });
   });
 
@@ -93,19 +168,70 @@ describe('DatabaseTreeProvider', () => {
     });
 
     it('renders stone node', () => {
-      const node: DatabaseNode = { kind: 'stone', db, running: true };
+      const node: DatabaseNode = { kind: 'stone', db, status: 'running' };
       const item = provider.getTreeItem(node);
 
       expect(item.label).toBe('Stone: gs64stone');
+      expect(item.description).toBe('Running');
       expect(item.contextValue).toBe('gemstoneDbStoneRunning');
     });
 
     it('renders netldi node', () => {
-      const node: DatabaseNode = { kind: 'netldi', db, running: false };
+      const node: DatabaseNode = { kind: 'netldi', db, status: 'stopped' };
       const item = provider.getTreeItem(node);
 
       expect(item.label).toBe('NetLDI: gs64ldi');
+      expect(item.description).toBe('Stopped');
       expect(item.contextValue).toBe('gemstoneDbNetldiStopped');
+    });
+
+    it('says a stone is not connectable rather than plainly running', () => {
+      const node: DatabaseNode = { kind: 'stone', db, status: 'unreachable' };
+      const item = provider.getTreeItem(node);
+
+      expect(item.description).toBe('Running — not connectable');
+      expect(String(item.tooltip)).toContain('a connect will fail');
+    });
+
+    it('keeps the stop action available on a stone that is not responding', () => {
+      // The row needs its Stop button most in this state, so the context value
+      // has to stay the one the menu is bound to.
+      const node: DatabaseNode = { kind: 'stone', db, status: 'not-responding' };
+      const item = provider.getTreeItem(node);
+
+      expect(item.description).toBe('Running — not responding');
+      expect(item.contextValue).toBe('gemstoneDbStoneRunning');
+    });
+
+    it('offers its own action for a server started outside Jasper', () => {
+      const node: DatabaseNode = { kind: 'stone', db, status: 'external', external: hostServer() };
+
+      const item = provider.getTreeItem(node);
+
+      expect(item.description).toBe('Running outside Jasper');
+      expect(item.contextValue).toBe('gemstoneDbStoneExternal');
+    });
+
+    it('tells the reader where an externally started server is registered', () => {
+      // Without this the row says a process is alive somewhere and gives the
+      // reader no way to go find it.
+      const node: DatabaseNode = { kind: 'stone', db, status: 'external', external: hostServer() };
+
+      const item = provider.getTreeItem(node);
+
+      expect(String(item.tooltip)).toContain('PID 9001');
+      expect(String(item.tooltip)).toContain('/somewhere/else');
+    });
+
+    it('shows the port of a healthy netldi', () => {
+      const provider = new DatabaseTreeProvider(
+        makeStorage([db]) as never,
+        makeProcessManager([STONE_UP, LDI_UP]) as never,
+      );
+
+      const item = provider.getTreeItem({ kind: 'netldi', db, status: 'running' });
+
+      expect(item.description).toBe('Running (port 50378)');
     });
   });
 });

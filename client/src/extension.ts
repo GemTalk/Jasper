@@ -25,6 +25,9 @@ import { InFlightGuard } from './inFlightGuard';
 import { LoginEditorPanel } from './loginEditorPanel';
 import { SessionManager, ActiveSession } from './sessionManager';
 import { maybeStartDatabaseAndRetry } from './autoStartDatabase';
+import { describeExternalServers, reconcileExternalServers } from './externalServerReconcile';
+import { hasExternalServer } from './externalServerScan';
+import { confirmReconcileExternalServers } from './externalServerPrompt';
 import {
   getAutoStartMode,
   setAutoStartMode,
@@ -1683,6 +1686,14 @@ export function activate(context: vscode.ExtensionContext) {
                 await maybeStartDatabaseAndRetry(login, `Login failed: ${msg}`, {
                   getDatabases: () => sysadminStorage.getDatabases(),
                   refreshProcesses: () => processManager.refreshProcesses(),
+                  getExternalServers: (db) => processManager.getExternalServers(db),
+                  describeExternalServers: (db, finding) =>
+                    describeExternalServers(db, finding, sysadminStorage.getRootPath()),
+                  reconcile: {
+                    confirm: confirmReconcileExternalServers,
+                    stopExternal: (db, server) => processManager.stopExternalServer(db, server),
+                    killExternal: (server) => processManager.killHostServer(server),
+                  },
                   // Quiet: the connect's own progress notification and the
                   // spinner on the login row are the feedback here. Revealing
                   // the Admin panel mid-login would yank focus off the editor.
@@ -3805,6 +3816,60 @@ export function activate(context: vscode.ExtensionContext) {
       }
       refreshAdminViews();
     }),
+
+    // Offered on a row the tree marks as "Running outside Jasper". The same
+    // reconcile the login path runs, reachable without waiting for a connect to
+    // fail — a user who has just seen the tree explain the state should be able
+    // to act on it there.
+    vscode.commands.registerCommand(
+      'gemstone.restartExternalServers',
+      async (node: DatabaseNode) => {
+        if (node?.kind !== 'stone' && node?.kind !== 'netldi') return;
+        const db = node.db;
+        // The row was rendered from the last refresh, and the user may have
+        // dealt with the server by hand since. Re-read before stopping
+        // anything, so the PIDs acted on are the ones alive now.
+        processManager.refreshProcesses();
+        const finding = processManager.getExternalServers(db);
+        if (!hasExternalServer(finding)) {
+          vscode.window.showInformationMessage(
+            `Nothing to reconcile: "${db.config.stoneName}" has no servers running outside Jasper's environment.`,
+          );
+          refreshAdminViews();
+          return;
+        }
+        const outcome = await reconcileExternalServers(
+          db,
+          finding,
+          describeExternalServers(db, finding, sysadminStorage.getRootPath()),
+          {
+            confirm: confirmReconcileExternalServers,
+            stopExternal: (d, server) => processManager.stopExternalServer(d, server),
+            killExternal: (server) => processManager.killHostServer(server),
+            report: () => {
+              /* no surrounding progress notification here; the Admin channel has the detail */
+            },
+            showError: (m) => vscode.window.showErrorMessage(m),
+          },
+        );
+        if (outcome.kind === 'stopped') {
+          // Restart under Jasper's environment, which is the whole point: both
+          // servers now land in Jasper's own locks directory.
+          if (await ensureStonePreconditions()) {
+            try {
+              await processManager.startStone(db);
+              await processManager.startNetldi(db);
+              vscode.window.showInformationMessage(
+                `"${db.config.stoneName}" restarted under Jasper's environment.`,
+              );
+            } catch (e) {
+              vscode.window.showErrorMessage(e instanceof Error ? e.message : String(e));
+            }
+          }
+        }
+        refreshAdminViews();
+      },
+    ),
 
     vscode.commands.registerCommand('jasper.openMcpInspector', () => {
       const port = readMcpSetting<number>('httpPort', DEFAULT_MCP_HTTP_PORT);
