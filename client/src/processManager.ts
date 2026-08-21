@@ -12,6 +12,7 @@ import {
   ExternalServer,
   ExternalServerFinding,
   HostServerProcess,
+  commandIsServer,
   findExternalServers,
   hasExternalServer,
   parseHostServerProcesses,
@@ -318,10 +319,13 @@ export class ProcessManager {
    *
    * Unlike `forceKillStone` this does not go through gslist — an external
    * server is by definition absent from it — so the PID comes from the process
-   * scan. The same safety rule still applies: the PID is re-checked to still be
-   * a GemStone server immediately before signalling, so a PID recycled onto
-   * something unrelated in the meantime is never killed. No lock file is
-   * cleared, because the lock lives in a directory Jasper does not own.
+   * scan. The safety re-check before signalling is correspondingly stricter:
+   * not just "is this still a GemStone server" but "is it still *this* server,
+   * by name". The reconcile that leads here holds its PID across a modal dialog
+   * the user can sit on indefinitely, so the number has had real time to be
+   * recycled — possibly onto another stone, which the weaker check would wave
+   * through. No lock file is cleared, because the lock lives in a directory
+   * Jasper does not own.
    */
   async killHostServer(
     server: ExternalServer,
@@ -347,22 +351,35 @@ export class ProcessManager {
         reason: `PID ${pid} is now an unrelated process (${ownership.command}); refusing to kill.`,
       };
     }
+    if (!commandIsServer(ownership.command, type, name)) {
+      return {
+        killed: false,
+        reason:
+          `PID ${pid} is a GemStone server, but no longer ${label} — it is now ` +
+          `${ownership.command}. Refusing to kill it.`,
+      };
+    }
 
     try {
       const graceMs = opts.graceMs ?? 800;
       const settle = async (): Promise<void> => {
         if (graceMs > 0) await new Promise((r) => setTimeout(r, graceMs));
       };
+      // "Is this server still there", not "is something GemStone-ish still
+      // there": anything else under that PID — gone, recycled, a different
+      // server — means the one we set out to stop is no longer running, and
+      // signalling again would hit a bystander.
+      const stillRunning = (): boolean => commandIsServer(psFor(pid), type, name);
       wslExecSync(`kill ${pid} 2>/dev/null || true`);
       await settle();
-      if (classifyPidOwnership(psFor(pid)).isGemStoneServer) {
+      if (stillRunning()) {
         wslExecSync(`kill -9 ${pid} 2>/dev/null || true`);
         // Wait again before believing the worst: SIGKILL is immediate but
         // reaping is not, so checking straight away can still see the process
         // and report a failure that would send the user off to resolve by hand
         // something that in fact died.
         await settle();
-        if (classifyPidOwnership(psFor(pid)).isGemStoneServer) {
+        if (stillRunning()) {
           return { killed: false, reason: `${label} (PID ${pid}) survived SIGKILL.` };
         }
       }

@@ -3,6 +3,7 @@ import {
   HostServerProcess,
   allExternalServersConfirmed,
   classifyServerIdentity,
+  commandIsServer,
   findExternalServers,
   hasExternalServer,
   parseHostServerProcesses,
@@ -113,6 +114,47 @@ describe('parseHostServerProcesses', () => {
   it('reads nothing out of an empty listing', () => {
     expect(parseHostServerProcesses('')).toEqual([]);
   });
+
+  it('ignores a server that has already died and not been reaped', () => {
+    // ps renders a zombie as "[stoned] <defunct>". It is not a running server,
+    // and reporting it as one would have Jasper offer to stop a corpse.
+    expect(parseHostServerProcesses(' 5005 [stoned] <defunct>')).toEqual([]);
+  });
+});
+
+describe('commandIsServer', () => {
+  it('recognises the server it was asked about', () => {
+    expect(
+      commandIsServer('/gs/sys/stoned gs64stone -e /db/conf/s.conf', 'stone', 'gs64stone'),
+    ).toBe(true);
+  });
+
+  it('rejects a server of the same kind running under another name', () => {
+    // The whole point of the check: killing "a stoned" is not the same as
+    // killing "the stoned we meant".
+    expect(commandIsServer('/gs/sys/stoned other-stone', 'stone', 'gs64stone')).toBe(false);
+  });
+
+  it('rejects the other kind of server sharing the name', () => {
+    expect(commandIsServer('/gs/sys/netldid gs64stone', 'stone', 'gs64stone')).toBe(false);
+  });
+
+  it('rejects an unrelated process that inherited the process id', () => {
+    expect(commandIsServer('/usr/bin/ssh-agent', 'stone', 'gs64stone')).toBe(false);
+  });
+
+  it('rejects a process id that no longer exists', () => {
+    expect(commandIsServer('GONE', 'stone', 'gs64stone')).toBe(false);
+    expect(commandIsServer('', 'stone', 'gs64stone')).toBe(false);
+  });
+
+  it('accepts a server invoked without a path', () => {
+    expect(commandIsServer('netldid gs64ldi -g', 'netldi', 'gs64ldi')).toBe(true);
+  });
+
+  it('does not accept a name that merely starts the same way', () => {
+    expect(commandIsServer('/gs/sys/stoned gs64stone_375', 'stone', 'gs64stone')).toBe(false);
+  });
 });
 
 describe('parseProductVersion', () => {
@@ -142,6 +184,15 @@ describe('parseServerEnvironment', () => {
 
   it('reads nothing when the environment was not available', () => {
     expect(parseServerEnvironment('/x/sys/stoned gs64stone_375')).toEqual({});
+  });
+
+  it('truncates a path containing a space rather than inventing one', () => {
+    // ps separates the pairs with spaces and quotes nothing, so a path with a
+    // space in it cannot be recovered. The truncated value then reads as
+    // pointing outside the database, which refuses a stop — the safe direction.
+    expect(parseServerEnvironment('GEMSTONE_SYS_CONF=/my dbs/db-1/conf')).toEqual({
+      GEMSTONE_SYS_CONF: '/my',
+    });
   });
 });
 

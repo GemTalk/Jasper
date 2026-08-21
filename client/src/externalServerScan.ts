@@ -89,6 +89,26 @@ export function parseHostServerProcesses(psOutput: string): HostServerProcess[] 
   return found;
 }
 
+/**
+ * True when `command` is the command line of a `stoned`/`netldid` running under
+ * this exact name.
+ *
+ * The re-check before signalling a PID. `classifyPidOwnership` answers the
+ * weaker question — is this still *a* GemStone server — which is enough when
+ * the PID was read moments ago, but not here: a reconcile holds a PID across a
+ * modal dialog the user can sit on indefinitely, and in that window the number
+ * can be recycled onto a different server entirely. Killing "a stoned" is not
+ * the same as killing "the stoned we meant".
+ *
+ * Takes a bare command line (`ps -p <pid> -o command=`), so unlike
+ * parseHostServerProcesses there is no PID to skip past.
+ */
+export function commandIsServer(command: string, type: 'stone' | 'netldi', name: string): boolean {
+  const match = command.trim().match(/^(?:\S*\/)?(stoned|netldid)\s+(\S+)/);
+  if (!match) return false;
+  return match[1] === (type === 'stone' ? 'stoned' : 'netldid') && match[2] === name;
+}
+
 /** Pull the version out of a `GemStone64Bit3.7.5-x86_64.Linux` product
  *  directory anywhere in `text`. The same directory-name convention
  *  SysadminStorage uses to lay installs out, read back. */

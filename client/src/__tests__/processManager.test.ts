@@ -59,6 +59,16 @@ function makeStorage(gsPath = '/gs/3.7.4'): SysadminStorage {
   return rawStorage(gsPath) as unknown as SysadminStorage;
 }
 
+/** Storage for the needsWsl() === true branches, which reach for the WSL-side
+ *  accessors rather than the host-native ones. */
+function makeWslStorage(gsPath = '/gs/3.7.4'): SysadminStorage {
+  return {
+    ...rawStorage(gsPath),
+    getWslRootPath: vi.fn(() => '/home/user/gemstone'),
+    getWslGemstonePath: vi.fn(() => gsPath),
+  } as unknown as SysadminStorage;
+}
+
 /** Create a mock ChildProcess that emits 'close' with the given exit code. */
 // `signal` models a process killed by a signal, which Node reports as a null
 // exit code plus the signal name — what macOS jetsam does under memory
@@ -807,6 +817,42 @@ describe('ProcessManager', () => {
       expect(manager.getExternalServers(makeDatabase())).toEqual({});
     });
 
+    it('matches a Windows database path against the WSL paths the server reports', () => {
+      // Under WSL the database is a UNC path on the Windows side while the
+      // running server reports Linux paths, so identity has to be judged after
+      // converting — otherwise it never confirms on Windows and the restart is
+      // silently never offered.
+      vi.mocked(wslBridge.needsWsl).mockReturnValue(true);
+      const db = makeDatabase({ path: '\\\\wsl$\\Ubuntu\\home\\user\\gemstone\\db-1' });
+      const manager = new ProcessManager(makeWslStorage());
+      seedGslist(manager, []);
+      vi.mocked(wslBridge.wslExecSync)
+        .mockReturnValueOnce(
+          ' 700 /gs/GemStone64Bit3.7.4-x86_64.Linux/sys/stoned gs64stone ' +
+            '-e /home/user/gemstone/db-1/conf/gs64stone.conf',
+        )
+        .mockReturnValue('GEMSTONE_GLOBAL_DIR=/elsewhere');
+
+      const finding = manager.getExternalServers(db);
+
+      expect(finding.stone?.identity).toBe('confirmed');
+    });
+
+    it('does not confirm a WSL server belonging to another database', () => {
+      vi.mocked(wslBridge.needsWsl).mockReturnValue(true);
+      const db = makeDatabase({ path: '\\\\wsl$\\Ubuntu\\home\\user\\gemstone\\db-1' });
+      const manager = new ProcessManager(makeWslStorage());
+      seedGslist(manager, []);
+      vi.mocked(wslBridge.wslExecSync)
+        .mockReturnValueOnce(
+          ' 700 /gs/GemStone64Bit3.7.4-x86_64.Linux/sys/stoned gs64stone ' +
+            '-e /home/user/gemstone/db-9/conf/gs64stone.conf',
+        )
+        .mockReturnValue('GEMSTONE_GLOBAL_DIR=/elsewhere');
+
+      expect(manager.getExternalServers(db).stone?.identity).toBe('different');
+    });
+
     it('scans the process table once for repeated questions about a database', () => {
       const manager = new ProcessManager(makeStorage());
       seedGslist(manager, []);
@@ -991,6 +1037,50 @@ describe('ProcessManager', () => {
       expect(result.killed).toBe(true);
       const commands = vi.mocked(wslBridge.wslExecSync).mock.calls.map((c) => c[0]);
       expect(commands.some((c) => /^kill -9 4106/.test(c))).toBe(true);
+    });
+
+    it('refuses to signal a process id now held by a different GemStone server', async () => {
+      // The reconcile holds this PID across a modal dialog the user can sit on,
+      // so the number has had real time to be recycled — and "some stoned" is
+      // not the same as "the stoned we meant".
+      vi.mocked(wslBridge.wslExecSync).mockReturnValueOnce('/gs/sys/stoned someone-elses-stone');
+
+      const result = await new ProcessManager(makeStorage()).killHostServer(server, {
+        graceMs: 0,
+      });
+
+      expect(result.killed).toBe(false);
+      expect(result.reason).toMatch(/no longer/);
+      const commands = vi.mocked(wslBridge.wslExecSync).mock.calls.map((c) => c[0]);
+      expect(commands.some((c) => /kill/.test(c))).toBe(false);
+    });
+
+    it('does not mistake the netldi of the same name for the stone', async () => {
+      vi.mocked(wslBridge.wslExecSync).mockReturnValueOnce('/gs/sys/netldid gs64stone');
+
+      const result = await new ProcessManager(makeStorage()).killHostServer(server, {
+        graceMs: 0,
+      });
+
+      expect(result.killed).toBe(false);
+      expect(result.reason).toMatch(/no longer/);
+    });
+
+    it('stops after SIGTERM when the process id is taken over mid-kill', async () => {
+      // Between the SIGTERM and the check, the PID came back as a different
+      // server. Ours is gone; escalating would SIGKILL a bystander.
+      vi.mocked(wslBridge.wslExecSync)
+        .mockReturnValueOnce('/gs/sys/stoned gs64stone')
+        .mockReturnValueOnce('')
+        .mockReturnValueOnce('/gs/sys/stoned someone-elses-stone');
+
+      const result = await new ProcessManager(makeStorage()).killHostServer(server, {
+        graceMs: 0,
+      });
+
+      expect(result.killed).toBe(true);
+      const commands = vi.mocked(wslBridge.wslExecSync).mock.calls.map((c) => c[0]);
+      expect(commands.some((c) => /kill -9/.test(c))).toBe(false);
     });
 
     it('admits failure rather than claiming a server it could not kill is stopped', async () => {
