@@ -9,12 +9,9 @@ export interface TestRunResult {
   durationMs: number;
 }
 
-export function runTestMethod(
-  execute: QueryExecutor,
-  className: string,
-  selector: string,
-  dictName?: string,
-): TestRunResult {
+/** See runTestClassCode: code and parse are split so one test can also be run
+ *  non-blocking, and therefore interrupted. */
+export function runTestMethodCode(className: string, selector: string, dictName?: string): string {
   const sel = escapeString(selector);
   // Resolve dictionary-scoped (see runTestClass for the rationale): a bare
   // name can resolve to the wrong same-named class in another dictionary.
@@ -54,7 +51,14 @@ captured isNil
     ws tab].
 ws nextPutAll: (endMs - startMs) printString.
 ws contents encodeAsUTF8`;
-  const data = execute(code);
+  return code;
+}
+
+export function parseTestMethodResult(
+  data: string,
+  className: string,
+  selector: string,
+): TestRunResult {
   const parts = data.split('\t');
   return {
     className,
@@ -63,4 +67,17 @@ ws contents encodeAsUTF8`;
     message: parts[1] || '',
     durationMs: parseInt(parts[2] || '0', 10) || 0,
   };
+}
+
+export function runTestMethod(
+  execute: QueryExecutor,
+  className: string,
+  selector: string,
+  dictName?: string,
+): TestRunResult {
+  return parseTestMethodResult(
+    execute(runTestMethodCode(className, selector, dictName)),
+    className,
+    selector,
+  );
 }

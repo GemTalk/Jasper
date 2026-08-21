@@ -1,6 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
-import { runOmniAction, OmniActionHandlers } from '../omniActions';
-import { OmniAction } from '../omniTypes';
+
+vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
+
+import { commands } from '../../__mocks__/vscode';
+import { runOmniAction, OmniActionHandlers, revealTestForResult } from '../omniActions';
+import { OmniAction, OmniResult } from '../omniTypes';
 
 function handlers(): OmniActionHandlers & { calls: Record<string, unknown[]> } {
   const calls: Record<string, unknown[]> = {};
@@ -64,5 +68,62 @@ describe('runOmniAction', () => {
       h,
     );
     expect(done).toBe(true);
+  });
+});
+
+describe('revealTestForResult', () => {
+  function result(action: OmniAction): OmniResult {
+    return { categoryId: 'classes', label: 'x', score: 1, ranges: [], action };
+  }
+
+  it('reveals a class result by its dictionary and class', async () => {
+    await revealTestForResult(
+      result({
+        kind: 'openClass',
+        sessionId: 1,
+        dictName: 'Published',
+        className: 'RsrStressTest',
+        dictIndex: 2,
+      }),
+    );
+
+    expect(commands.executeCommand).toHaveBeenCalledWith(
+      'gemstone.revealTestInTestingView',
+      'Published',
+      'RsrStressTest',
+    );
+  });
+
+  it('reveals a method result down to its selector', async () => {
+    await revealTestForResult(
+      result({
+        kind: 'openMethod',
+        sessionId: 1,
+        dictName: 'Published',
+        className: 'RsrStressTest',
+        isMeta: false,
+        category: 'tests',
+        selector: 'test1KBytes',
+        environmentId: 0,
+        dictIndex: 2,
+      }),
+    );
+
+    expect(commands.executeCommand).toHaveBeenCalledWith(
+      'gemstone.revealTestInTestingView',
+      'Published',
+      'RsrStressTest',
+      'test1KBytes',
+    );
+  });
+
+  it('does nothing for a result that is neither a class nor a method', async () => {
+    vi.mocked(commands.executeCommand).mockClear();
+
+    await revealTestForResult(
+      result({ kind: 'revealDictionary', sessionId: 1, dictName: 'Published' }),
+    );
+
+    expect(commands.executeCommand).not.toHaveBeenCalled();
   });
 });

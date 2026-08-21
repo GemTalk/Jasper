@@ -1,10 +1,22 @@
 import { ActiveSession } from './sessionManager';
-import { BrowserQueryError, defaultQueryExecutorUsing } from './browserQueries';
+import {
+  BrowserQueryError,
+  defaultQueryExecutorUsing,
+  executeFetchStringNb,
+} from './browserQueries';
 
 import { discoverTestClasses as sharedDiscoverTestClasses } from './queries/discoverTestClasses';
 import { discoverTestMethods as sharedDiscoverTestMethods } from './queries/discoverTestMethods';
-import { runTestMethod as sharedRunTestMethod } from './queries/runTestMethod';
-import { runTestClass as sharedRunTestClass } from './queries/runTestClass';
+import {
+  runTestMethod as sharedRunTestMethod,
+  runTestMethodCode,
+  parseTestMethodResult,
+} from './queries/runTestMethod';
+import {
+  runTestClass as sharedRunTestClass,
+  runTestClassCode,
+  parseTestClassResults,
+} from './queries/runTestClass';
 import { runFailingTests as sharedRunFailingTests } from './queries/runFailingTests';
 import { describeTestFailure as sharedDescribeTestFailure } from './queries/describeTestFailure';
 
@@ -36,6 +48,46 @@ export function runTestMethod(
 
 export function runTestClass(session: ActiveSession, className: string, dictName?: string) {
   return sharedRunTestClass(defaultQueryExecutorUsing(session), className, dictName);
+}
+
+/**
+ * Non-blocking counterparts of the two run queries. A test can run for minutes,
+ * and the blocking call freezes the extension host for its whole duration —
+ * which is why nothing, not even VS Code's own stop button, could interrupt a
+ * run. These poll instead, so the UI stays live and `onStart`'s canceller can
+ * break the gem (soft first, hard on a second call).
+ */
+export function runTestClassNb(
+  session: ActiveSession,
+  className: string,
+  dictName?: string,
+  onStart?: (cancel: () => void) => void,
+) {
+  return executeFetchStringNb(
+    session,
+    `Run tests: ${className}`,
+    runTestClassCode(className, dictName),
+    `GemStone: running ${className} tests…`,
+    false,
+    onStart,
+  ).then((data) => parseTestClassResults(data, className));
+}
+
+export function runTestMethodNb(
+  session: ActiveSession,
+  className: string,
+  selector: string,
+  dictName?: string,
+  onStart?: (cancel: () => void) => void,
+) {
+  return executeFetchStringNb(
+    session,
+    `Run test: ${className}>>${selector}`,
+    runTestMethodCode(className, selector, dictName),
+    `GemStone: running ${className}>>${selector}…`,
+    false,
+    onStart,
+  ).then((data) => parseTestMethodResult(data, className, selector));
 }
 
 export function runFailingTests(

@@ -609,7 +609,7 @@ export function renderOmniHtml(opts: { showPin: boolean }): string {
       <div id="preview"></div>
     </div>
     <div id="footer">
-      <span id="hints"><kbd>Enter</kbd> open · ${REFERENCES_KEY_HINT_HTML} references · <kbd>Tab</kbd>/<kbd>&#8679;Tab</kbd> switch scope</span>
+      <span id="hints"><kbd>Enter</kbd> open · ${REFERENCES_KEY_HINT_HTML} references · <kbd>&#8679;Enter</kbd> in tests · <kbd>Tab</kbd>/<kbd>&#8679;Tab</kbd> switch scope</span>
       <span id="count"></span>
       <span id="capnote" role="status" style="visibility:hidden"></span>
       <button id="loadMore" title="Load more results" style="display:none">Load more</button>
