@@ -2331,12 +2331,12 @@
         },
         {
           "command": "gemstone.explorer.removeInstVar",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerIvar && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerIvar/ && gemstone.rbSupportAvailable",
           "group": "inline@4"
         },
         {
           "command": "gemstone.explorer.removeInstVar",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerIvar && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerIvar/ && gemstone.rbSupportAvailable",
           "group": "3_refactor@1"
         },
         {

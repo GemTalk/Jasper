@@ -18,12 +18,20 @@
  * would take away something the Explorer can do today. What the guard changes is that you
  * are told first.
  *
+ * What a scan can and cannot see is worth being honest about. For a METHOD the question is
+ * asked of the selector, image-wide, because that is what the image can answer — so a
+ * dispatch through `perform:` or a symbol built at runtime is invisible to it, and a
+ * same-named selector on an unrelated class is a false positive. The caller narrows this
+ * where it can: removing an override is not offered as a risk at all, since those sends
+ * resolve to the inherited implementation. For the two VARIABLE kinds the scan is exact —
+ * bytecode access and binding identity leave no room for either error.
+ *
  * The scans themselves live with the queries — sendersOf, referencesToClassInDict,
  * methodsAccessingInstVar, methodsAccessingClassVar — so this module is pure decision, and
  * unit-tests without a stone.
  */
 import * as vscode from 'vscode';
-import { MethodSearchResult } from '../queries/methodSearch';
+import { MethodSearchResult, METHOD_SEARCH_RESULT_LIMIT } from '../queries/methodSearch';
 import { showMethodResults } from '../methodResultsPicker';
 
 export type SafeDeleteKind = 'method' | 'class' | 'instance variable' | 'class variable';
@@ -51,6 +59,10 @@ export interface SafeDeleteTarget {
   /** Label for the confirm button; defaults to `Remove Anyway` when something is in the
    *  way and `Remove` when the only reason to ask is that we could not check. */
   confirmLabel?: string;
+  /** Replaces "nothing referenced it" in the notification for a deletion that goes through
+   *  unasked for a reason other than having no references at all — removing an override,
+   *  where the senders survive because they resolve to the inherited implementation. */
+  silentNote?: string;
 }
 
 /** What the guard decided. `silent` means nothing was in the way and no question was
@@ -97,18 +109,31 @@ function listing(items: string[]): string {
  *  cannot come from a superclass — the scan starts at the class that declares it and walks
  *  down — so those lists only ever name that class and its subclasses.) */
 export function groupReferencesByReceiver(references: MethodSearchResult[]): string[] {
-  const byReceiver = new Map<string, { receiver: string; selectors: string[] }>();
+  const byReceiver = new Map<
+    string,
+    { receiver: string; className: string; isMeta: boolean; selectors: string[] }
+  >();
   for (const r of references) {
     const receiver = `${r.className}${r.isMeta ? ' class' : ''}`;
     const key = `${r.className}|${r.isMeta}`;
-    const group = byReceiver.get(key) ?? { receiver, selectors: [] };
+    const group = byReceiver.get(key) ?? {
+      receiver,
+      className: r.className,
+      isMeta: r.isMeta,
+      selectors: [],
+    };
     // A receiver can legitimately repeat a selector across environments; the caller
     // dedupes, but don't render a duplicate if one slips through.
     if (!group.selectors.includes(r.selector)) group.selectors.push(r.selector);
     byReceiver.set(key, group);
   }
 
-  const groups = [...byReceiver.values()].sort((a, b) => a.receiver.localeCompare(b.receiver));
+  // Sort on the parts rather than the rendered string: the intent is "by class name, then
+  // instance side before class side", and saying that directly does not depend on how a
+  // collator happens to weigh the space in `Account class`.
+  const groups = [...byReceiver.values()].sort(
+    (a, b) => a.className.localeCompare(b.className) || Number(a.isMeta) - Number(b.isMeta),
+  );
   const shown = groups.slice(0, NAMED_RECEIVER_LIMIT);
   const restReceivers = groups.length - shown.length;
 
@@ -131,8 +156,14 @@ function detailFor(target: SafeDeleteTarget): string {
   }
   if (target.references.length > 0) {
     const n = target.references.length;
+    // The scan is capped server-side and the client cannot tell a full page from an exact
+    // answer, so at the cap the count is stated as a floor rather than as fact. Saying
+    // "500 methods reference it" when the truth may be thousands is a worse failure than
+    // hedging, because the whole point of the dialog is that its numbers can be trusted.
+    const atCap = n >= METHOD_SEARCH_RESULT_LIMIT;
+    const count = atCap ? `At least ${n}` : `${n}`;
     lines.push(
-      `${n} ${plural(n, 'method', 'methods')} still ${plural(n, 'references', 'reference')} it:`,
+      `${count} ${plural(n, 'method', 'methods')} still ${plural(n, 'references', 'reference')} it${atCap ? ' (the list below is not complete)' : ''}:`,
     );
     // One line per referencing class, so the block reads as a list rather than a paragraph.
     lines.push(groupReferencesByReceiver(target.references).join('\n'));
@@ -194,16 +225,18 @@ export async function decideSafeDelete(
  *  Only for the `silent` decision — a confirmed deletion already had the user's attention. */
 export function announceSilentDelete(target: SafeDeleteTarget): void {
   void vscode.window.showInformationMessage(
-    `Removed ${target.kind} ${target.label} — nothing referenced it.`,
+    `Removed ${target.kind} ${target.label} — ${target.silentNote ?? 'nothing referenced it'}.`,
   );
 }
 
-/** Drop the rows two scans (or two environments) both found. Method rows are identified by
- *  class, side and selector — the same key the Senders / Implementors commands dedupe on. */
+/** Drop the rows two scans both found. A method row is identified by class, side, selector
+ *  AND environment: the same selector implemented on the same class in two environments is
+ *  two different methods, so folding them together would under-report the references and
+ *  leave one of them unreachable from the list. */
 export function dedupeMethodResults(results: MethodSearchResult[]): MethodSearchResult[] {
   const seen = new Set<string>();
   return results.filter((r) => {
-    const key = `${r.className}|${r.isMeta}|${r.selector}`;
+    const key = `${r.className}|${r.isMeta}|${r.selector}|${r.environmentId}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;

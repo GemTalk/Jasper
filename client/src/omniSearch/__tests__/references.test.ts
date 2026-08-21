@@ -97,6 +97,7 @@ describe('methodRowsToResults', () => {
         isMeta: false,
         selector: 'do:',
         category: 'enumerating',
+        environmentId: 0,
       },
       {
         dictName: 'Globals',
@@ -104,6 +105,7 @@ describe('methodRowsToResults', () => {
         isMeta: true,
         selector: 'with:',
         category: 'instance creation',
+        environmentId: 0,
       },
     ];
 
@@ -132,6 +134,7 @@ describe('methodRowsToResults', () => {
         isMeta: false,
         selector: 'do:',
         category: 'enumerating',
+        environmentId: 0,
       },
     ];
 

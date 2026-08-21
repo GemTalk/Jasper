@@ -64,6 +64,7 @@ const accessor = (over: Partial<MethodSearchResult> = {}): MethodSearchResult =>
   isMeta: false,
   selector: 'record',
   category: 'accessing',
+  environmentId: 0,
   ...over,
 });
 

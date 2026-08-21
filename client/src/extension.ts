@@ -1153,13 +1153,15 @@ export function activate(context: vscode.ExtensionContext) {
   }
 
   // Thin adapter over the shared picker (methodResultsPicker.ts), which the safe-delete
-  // confirmation shares: every caller here has the session, not just its id.
-  async function showMethodResults(
+  // confirmation shares: every caller here has the session, not just its id. Returns the
+  // picker's promise directly rather than awaiting it — these callers ignore whether
+  // anything was opened, and an async wrapper would add a tick for nothing.
+  function showMethodResults(
     session: { id: number },
     results: queries.MethodSearchResult[],
     title: string,
-  ): Promise<void> {
-    await showMethodResultsFor(session.id, results, title);
+  ): Promise<boolean> {
+    return showMethodResultsFor(session.id, results, title);
   }
 
   // Commit / Abort a session, with the same confirmations and post-action
@@ -1816,6 +1818,7 @@ export function activate(context: vscode.ExtensionContext) {
         isMeta: false,
         selector: '',
         category: '',
+        environmentId: 0,
       });
     }),
 

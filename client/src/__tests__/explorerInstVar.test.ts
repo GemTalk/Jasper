@@ -227,6 +227,7 @@ describe('ExplorerController remove instance variable', () => {
     isMeta: false,
     selector,
     category: 'accessing',
+    environmentId: 0,
   });
 
   it('does nothing when there is no selected session', async () => {

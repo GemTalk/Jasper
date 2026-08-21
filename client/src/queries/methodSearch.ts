@@ -7,6 +7,11 @@ export interface MethodSearchResult {
   isMeta: boolean;
   selector: string;
   category: string;
+  /** The method environment the row was FOUND in. A selector can be implemented in more
+   *  than one environment on the same class, and those are different methods — so this is
+   *  part of a row's identity (callers dedupe on it) and is what opens the right document.
+   *  Without it a row found in environment 1 opens the environment-0 method, or nothing. */
+  environmentId: number;
 }
 
 // Shared Smalltalk snippet: build classDict mapping classes to their first
@@ -14,6 +19,12 @@ export interface MethodSearchResult {
 // before this snippet runs) as tab-separated lines. Exported because the
 // safe-delete reference scans (refactoring/queries/) build the same rows from
 // their own scan, and must agree with these searches on what a method row is.
+/** The most rows any one scan returns. The cap is server-side, so a caller that gets exactly
+ *  this many cannot tell "there were exactly this many" from "there were thousands" — which
+ *  is why anything reporting a COUNT to the user has to hedge at the cap rather than state it
+ *  as fact. */
+export const METHOD_SEARCH_RESULT_LIMIT = 500;
+
 export function methodSerialization(envId: number): string {
   return `sl := System myUserProfile symbolList.
 classDict := IdentityDictionary new.
@@ -26,7 +37,7 @@ sl do: [:dict |
     (v isBehavior and: [(classDict includesKey: v) not and: [k = v name asSymbol]])
       ifTrue: [classDict at: v put: dict name]]].
 stream := WriteStream on: Unicode7 new.
-limit := methods size min: 500.
+limit := methods size min: ${METHOD_SEARCH_RESULT_LIMIT}.
 1 to: limit do: [:i |
   | each cls baseClass |
   each := methods at: i.
@@ -37,7 +48,8 @@ limit := methods size min: 500.
     nextPutAll: baseClass name; tab;
     nextPutAll: (cls isMeta ifTrue: ['1'] ifFalse: ['0']); tab;
     nextPutAll: each selector; tab;
-    nextPutAll: ((cls categoryOfSelector: each selector environmentId: ${envId}) ifNil: ['']); lf.
+    nextPutAll: ((cls categoryOfSelector: each selector environmentId: ${envId}) ifNil: ['']); tab;
+    nextPutAll: '${envId}'; lf.
 ].
 stream contents`;
 }
@@ -50,12 +62,17 @@ export function parseMethodSearchResults(raw: string): MethodSearchResult[] {
     if (line.length === 0) continue;
     const parts = line.split('\t');
     if (parts.length < 5) continue;
+    // The environment column is last and was added after the first four; tolerate its
+    // absence rather than dropping a row, since a row with no environment is still a
+    // usable result and environment 0 is what every pre-existing caller meant.
+    const environmentId = Number(parts[5]);
     results.push({
       dictName: parts[0],
       className: parts[1],
       isMeta: parts[2] === '1',
       selector: parts[3],
       category: parts[4],
+      environmentId: Number.isFinite(environmentId) ? environmentId : 0,
     });
   }
   return results;
@@ -138,6 +155,13 @@ ${methodSerialization(environmentId)}`;
 // shadowed in another dictionary still answers the references to the class the caller
 // means. Compare referencesToObject, which takes the first binding of the name anywhere
 // in the symbol list. A dictionary that does not bind the name answers nothing.
+//
+// The environment goes on the ORGANIZER, not just on the serialization: a bare
+// `ClassOrganizer new` scans environment 0 whatever the caller asked for, so a class
+// referenced only from a method in another environment would come back unreferenced —
+// and a safe delete would then report that nothing referenced it. Verified on a live
+// stone: with the same method compiled into environments 0 and 1, the bare organizer
+// answers only the environment-0 one and `environmentId: 1` answers only the other.
 export function referencesToClassInDict(
   execute: QueryExecutor,
   className: string,
@@ -147,7 +171,8 @@ export function referencesToClassInDict(
   const code = `| cls methods stream limit classDict sl |
 cls := ${classLookupExpr(className, dict)}.
 cls isNil ifTrue: [^ ''].
-methods := (ClassOrganizer new referencesToObject: cls) asArray.
+methods := ((ClassOrganizer new environmentId: ${environmentId}; yourself)
+  referencesToObject: cls) asArray.
 ${methodSerialization(environmentId)}`;
 
   return parseMethodSearchResults(execute(code));

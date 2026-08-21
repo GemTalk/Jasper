@@ -7,7 +7,9 @@ import {
 import { classLookupExpr, escapeString } from '../../queries/util';
 
 /** Every method that references a class variable: the instance- AND class-side methods of
- *  the class that declares it and of every subclass, as browsable method rows.
+ *  the class that declares it and of every subclass, IN THE GIVEN ENVIRONMENT, as browsable
+ *  method rows. The caller sweeps the environments it cares about and folds the answers
+ *  together.
  *
  *  A class variable is a shared binding, so detection is by literal-frame IDENTITY — a
  *  method references the variable exactly when its literals hold that association object —
@@ -20,7 +22,8 @@ import { classLookupExpr, escapeString } from '../../queries/util';
  *  ancestor's. A name no class in the chain declares answers nothing.
  *
  *  Like methodsAccessingInstVar this asks the base image directly, so the safe-delete guard
- *  works with or without the server plugin installed. */
+ *  works with or without the server plugin installed, and enumerates selectors with
+ *  `selectorsForEnvironment:` rather than `selectors`, which would see environment 0 only. */
 export function methodsAccessingClassVar(
   execute: QueryExecutor,
   className: string,
@@ -45,7 +48,7 @@ scanned addAll: owner allSubclasses.
 methods := OrderedCollection new.
 scanned do: [:each |
   (Array with: each with: each class) do: [:side |
-    side selectors do: [:sel | | m |
+    (side selectorsForEnvironment: ${environmentId}) do: [:sel | | m |
       m := side compiledMethodAt: sel environmentId: ${environmentId} otherwise: nil.
       (m notNil and: [m literals anySatisfy: [:e | e == assoc]])
         ifTrue: [methods add: m]]]].

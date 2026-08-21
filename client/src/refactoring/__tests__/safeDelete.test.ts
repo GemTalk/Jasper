@@ -18,7 +18,7 @@ import {
   SafeDeleteTarget,
 } from '../safeDelete';
 import { showMethodResults } from '../../methodResultsPicker';
-import type { MethodSearchResult } from '../../queries/methodSearch';
+import { METHOD_SEARCH_RESULT_LIMIT, type MethodSearchResult } from '../../queries/methodSearch';
 
 /**
  * The safe-delete decision: what the user is asked before a method, class, instance
@@ -40,6 +40,7 @@ const reference = (over: Partial<MethodSearchResult> = {}): MethodSearchResult =
   isMeta: false,
   selector: 'callsIt',
   category: 'accessing',
+  environmentId: 0,
   ...over,
 });
 
@@ -413,6 +414,7 @@ describe('the reference list as it reads for a real removal', () => {
     isMeta,
     selector,
     category: 'safe-delete-fixture',
+    environmentId: 0,
   });
 
   it('reads as one line per receiver when removing a class variable', () => {
@@ -454,6 +456,7 @@ describe('folding repeated scan results together', () => {
     isMeta,
     selector,
     category: 'accessing',
+    environmentId: 0,
   });
 
   it('keeps one entry for a method found more than once', () => {
@@ -485,5 +488,68 @@ describe('folding repeated scan results together', () => {
 
   it('answers nothing for nothing', () => {
     expect(dedupeMethodResults([])).toEqual([]);
+  });
+});
+
+// The scan is capped server-side and the client cannot tell a full page from an exact answer,
+// so at the cap the dialog must stop stating the count as fact.
+describe('reporting a reference count that hit the scan cap', () => {
+  const many = (n: number): MethodSearchResult[] =>
+    Array.from({ length: n }, (_, i) => reference({ className: `C${i}`, selector: 'usesIt' }));
+
+  it('states the count as a floor when the scan came back full', async () => {
+    warn.mockResolvedValue(undefined);
+
+    await decideSafeDelete(1, target({ references: many(METHOD_SEARCH_RESULT_LIMIT) }));
+
+    const detail = warn.mock.calls[0][1].detail as string;
+    expect(detail).toContain(`At least ${METHOD_SEARCH_RESULT_LIMIT} methods still reference it`);
+  });
+
+  it('says the list is incomplete when the scan came back full', async () => {
+    warn.mockResolvedValue(undefined);
+
+    await decideSafeDelete(1, target({ references: many(METHOD_SEARCH_RESULT_LIMIT) }));
+
+    expect(warn.mock.calls[0][1].detail).toContain('not complete');
+  });
+
+  it('states the count plainly when the scan came back short of the cap', async () => {
+    warn.mockResolvedValue(undefined);
+
+    await decideSafeDelete(1, target({ references: many(3) }));
+
+    const detail = warn.mock.calls[0][1].detail as string;
+    expect(detail).toContain('3 methods still reference it:');
+    expect(detail).not.toContain('At least');
+  });
+});
+
+// Removing an override does not break dispatch, so the caller can say what actually happens
+// to the senders instead of the untrue "nothing referenced it".
+describe('announcing a removal that senders survive', () => {
+  it('says where the senders now resolve', () => {
+    announceSilentDelete(target({ silentNote: 'senders now resolve to Object >> #printOn:' }));
+
+    expect(info).toHaveBeenCalledWith(
+      expect.stringContaining('senders now resolve to Object >> #printOn:'),
+    );
+  });
+
+  it('does not claim nothing referenced it', () => {
+    announceSilentDelete(target({ silentNote: 'senders now resolve to Object >> #printOn:' }));
+
+    expect(info).not.toHaveBeenCalledWith(expect.stringContaining('nothing referenced it'));
+  });
+});
+
+// A selector implemented on both sides of a class, or in two environments, is more than one
+// method; the dialog must not merge them into one line.
+describe('keeping methods that differ only by environment apart', () => {
+  it('lists a selector found in two environments once per environment', () => {
+    const env0 = reference({ className: 'Account', selector: 'balance', environmentId: 0 });
+    const env1 = reference({ className: 'Account', selector: 'balance', environmentId: 1 });
+
+    expect(dedupeMethodResults([env0, env1])).toEqual([env0, env1]);
   });
 });

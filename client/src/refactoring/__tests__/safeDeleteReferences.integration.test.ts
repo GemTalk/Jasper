@@ -255,6 +255,89 @@ b := (${OTHER_CALLER} compiledMethodAt: #usesIt) literals
     });
   });
 
+  // A method can live in an environment other than 0, and the scans loop over the
+  // environments the user has configured. Both bugs these cover were live: the class scan
+  // built a bare ClassOrganizer (environment 0 whatever it was asked for), and the two
+  // variable scans enumerated `selectors`, which lists environment 0 only. Either way a
+  // reference in a higher environment was invisible, and safe delete would have deleted the
+  // target while reporting that nothing referenced it.
+  describe('scanning an environment other than zero', () => {
+    const ENV = 1;
+
+    const defineEnvFixture = (): void => {
+      defineClass(
+        `Object subclass: '${BASE}' instVarNames: #(balance) classVars: #(SdItRegistry) ` +
+          'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals options: #()',
+      );
+      defineClass(
+        `Object subclass: '${CALLER}' instVarNames: #() classVars: #() ` +
+          'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals options: #()',
+      );
+      // Compiled into environment 1 only — invisible to an environment-0 scan.
+      q.compileMethod(
+        session(),
+        CALLER,
+        false,
+        'safe-delete-fixture',
+        `usesInEnvOne\n  ^${BASE} new`,
+        ENV,
+      );
+      q.compileMethod(
+        session(),
+        BASE,
+        false,
+        'safe-delete-fixture',
+        'touchesInEnvOne\n  balance := SdItRegistry',
+        ENV,
+      );
+      // The premise: these really are environment-1 methods and environment 0 cannot see them.
+      expect(exec(`(${CALLER} includesSelector: #usesInEnvOne) printString`).trim()).toBe('false');
+      expect(exec(`(${CALLER} selectorsForEnvironment: ${ENV}) asArray printString`)).toContain(
+        'usesInEnvOne',
+      );
+    };
+
+    it('finds a class reference that exists only in a higher environment', () => {
+      defineEnvFixture();
+
+      const found = q.referencesToClassInDict(session(), BASE, userIndex(), ENV);
+
+      expect(selectorsIn(found)).toContain(`${CALLER}>>usesInEnvOne`);
+    });
+
+    it('does not report that environment-1 reference when asked about environment 0', () => {
+      defineEnvFixture();
+
+      const found = q.referencesToClassInDict(session(), BASE, userIndex(), 0);
+
+      expect(selectorsIn(found)).not.toContain(`${CALLER}>>usesInEnvOne`);
+    });
+
+    it('finds an instance-variable accessor that exists only in a higher environment', () => {
+      defineEnvFixture();
+
+      const found = q.methodsAccessingInstVar(session(), BASE, 'balance', userIndex(), ENV);
+
+      expect(selectorsIn(found)).toContain(`${BASE}>>touchesInEnvOne`);
+    });
+
+    it('finds a class-variable accessor that exists only in a higher environment', () => {
+      defineEnvFixture();
+
+      const found = q.methodsAccessingClassVar(session(), BASE, 'SdItRegistry', userIndex(), ENV);
+
+      expect(selectorsIn(found)).toContain(`${BASE}>>touchesInEnvOne`);
+    });
+
+    it('reports the environment each row was found in, so rows stay distinguishable', () => {
+      defineEnvFixture();
+
+      const found = q.referencesToClassInDict(session(), BASE, userIndex(), ENV);
+
+      expect(found.every((r) => r.environmentId === ENV)).toBe(true);
+    });
+  });
+
   describe('removing a class variable', () => {
     it('removes the named variable', () => {
       defineFixture();

@@ -2161,7 +2161,7 @@ export class ExplorerController {
     const session = this.session();
     if (!session) return;
 
-    const scan = this.scanReferences((env) =>
+    const scan = await this.scanReferences(`Finding methods that use ${item.ivarName}…`, (env) =>
       queries.methodsAccessingInstVar(
         session,
         item.className,
@@ -2212,25 +2212,20 @@ export class ExplorerController {
       return;
     }
 
-    // A class variable is visible to the whole subtree, so a row can name one an ANCESTOR
-    // declares. Removing it from here would act on the wrong class — say so instead. (The
-    // query refuses too; this is the message that explains why.)
-    try {
-      if (
-        !queries
-          .getDefinedClassVarNames(session, className, this.state.dictIndex)
-          .includes(classVarName)
-      ) {
-        void vscode.window.showWarningMessage(
-          `'${classVarName}' is not declared in ${className} — remove it from the class that declares it.`,
-        );
-        return;
-      }
-    } catch {
-      /* non-fatal: fall through and let the removal surface any real problem */
+    // Belt and braces, not a case the tree produces: class-variable rows are built from
+    // definedClassVarNames, which lists only what the class DECLARES, so no row can name a
+    // variable an ancestor owns. The real guard is server-side in deleteClassVariable, which
+    // also covers the query and MCP paths; this is here so that if a caller ever does hand
+    // over an inherited name, it is refused with a sentence rather than silently acting on
+    // the wrong class. Uses the memoized accessor — the same list the row was built from.
+    if (!this.definedClassVarNames(className).includes(classVarName)) {
+      void vscode.window.showWarningMessage(
+        `'${classVarName}' is not declared in ${className} — remove it from the class that declares it.`,
+      );
+      return;
     }
 
-    const scan = this.scanReferences((env) =>
+    const scan = await this.scanReferences(`Finding methods that use ${classVarName}…`, (env) =>
       queries.methodsAccessingClassVar(session, className, classVarName, this.state.dictIndex, env),
     );
     const target: SafeDeleteTarget = {
@@ -3647,25 +3642,68 @@ export class ExplorerController {
   // Every environment the user has asked to see, so a scan covers the same ground the
   // Senders / Implementors commands do.
   private environmentsToScan(): number[] {
-    const maxEnv = vscode.workspace.getConfiguration('gemstone').get<number>('maxEnvironment', 0);
     const envs: number[] = [];
-    for (let env = 0; env <= maxEnv; env++) envs.push(env);
+    for (let env = 0; env <= this.maxEnv(); env++) envs.push(env);
     return envs;
+  }
+
+  // The nearest ancestor that also implements `selector`, or undefined. Answers the class a
+  // send would reach once this implementation is gone, which is what makes removing an
+  // override harmless. Best-effort: a failure here answers undefined, which only means the
+  // caller falls back to the full sender scan.
+  private superclassImplementorOf(
+    session: ActiveSession,
+    className: string,
+    selector: string,
+    isMeta: boolean,
+  ): string | undefined {
+    try {
+      const above = queries.hierarchyImplementorsOf(
+        session,
+        this.state.dictIndex ?? 1,
+        className,
+        selector,
+        isMeta,
+        'up',
+      );
+      return above[0]?.className;
+    } catch {
+      return undefined;
+    }
   }
 
   // Run a reference scan over every environment, or report why it could not answer. A scan
   // that fails is NOT the same as a scan that found nothing: safe delete confirms in that
   // case rather than deleting unasked, so the reason travels with the (empty) result.
-  private scanReferences(scan: (environmentId: number) => queries.MethodSearchResult[]): {
-    references: queries.MethodSearchResult[];
-    scanFailed?: string;
-  } {
-    try {
-      const found = this.environmentsToScan().flatMap((env) => scan(env));
-      return { references: dedupeMethodResults(found) };
-    } catch (e: unknown) {
-      return { references: [], scanFailed: e instanceof Error ? e.message : String(e) };
-    }
+  //
+  // Shown under a progress notification because these are whole-image scans that block the
+  // extension host: without it, clicking a delete freezes the editor with no explanation for
+  // as long as the scan takes, where the old unguarded delete popped a modal instantly. The
+  // GCI call is synchronous so the notification cannot spin, but it does say what is
+  // happening and why the window is busy — the same treatment the Senders command gives the
+  // identical loop.
+  private async scanReferences(
+    title: string,
+    scan: (environmentId: number) => queries.MethodSearchResult[],
+  ): Promise<{ references: queries.MethodSearchResult[]; scanFailed?: string }> {
+    return vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title,
+        cancellable: false,
+      },
+      () => {
+        try {
+          const found = this.environmentsToScan().flatMap((env) => scan(env));
+          return Promise.resolve({ references: dedupeMethodResults(found) });
+        } catch (e: unknown) {
+          return Promise.resolve({
+            references: [],
+            scanFailed: e instanceof Error ? e.message : String(e),
+          });
+        }
+      },
+    );
   }
 
   // Remove a method from its class (the row's 🗑 button). Guarded by a sender scan: a
@@ -3689,7 +3727,24 @@ export class ExplorerController {
       return;
     }
 
-    const scan = this.scanReferences((env) => queries.sendersOf(session, selector, env));
+    // An override is the common case, and for it the sender scan is both expensive and
+    // beside the point: if a superclass still implements the selector, every send that
+    // resolved here simply resolves there instead and nothing is left calling into a hole.
+    // Asking the hierarchy first is bounded by its depth, where the sender scan is a
+    // whole-image walk that, for an ordinary selector like #printOn:, would list hundreds
+    // of methods that were never going to break.
+    //
+    // The check is deliberately one-directional: finding an implementor above skips the
+    // scan, but failing to find one only means we fall through and ask, so a hierarchy
+    // probe that under-reports (it reads environment 0) costs a question, never a wrong
+    // silent delete.
+    const inheritedFrom = this.superclassImplementorOf(session, className, selector, node.isMeta);
+
+    const scan = inheritedFrom
+      ? { references: [] as queries.MethodSearchResult[], scanFailed: undefined }
+      : await this.scanReferences(`Finding senders of #${selector}…`, (env) =>
+          queries.sendersOf(session, selector, env),
+        );
     const target: SafeDeleteTarget = {
       kind: 'method',
       label: `#${selector} from ${side}`,
@@ -3699,6 +3754,11 @@ export class ExplorerController {
         (r) => !(r.className === className && r.isMeta === node.isMeta && r.selector === selector),
       ),
       scanFailed: scan.scanFailed,
+      // Says what actually happens to the senders, rather than the untrue "nothing
+      // referenced it" the plain silent path would report.
+      silentNote: inheritedFrom
+        ? `senders now resolve to ${inheritedFrom} >> #${selector}`
+        : undefined,
     };
 
     const decision = await decideSafeDelete(session.id, target);
@@ -4373,7 +4433,7 @@ export class ExplorerController {
     // (Doomed class >> new naming Doomed, a subclass's own method), so it is no reason to
     // ask. What is left is the references that will still be there afterwards.
     const doomed = new Set(targets.map((t) => t.className));
-    const scan = this.scanReferences((env) =>
+    const scan = await this.scanReferences(`Finding references to ${className}…`, (env) =>
       queries.referencesToClassInDict(session, className, dictIndex, env),
     );
     const target: SafeDeleteTarget = {

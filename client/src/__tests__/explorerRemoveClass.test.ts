@@ -59,6 +59,7 @@ const reference = (over: Partial<MethodSearchResult> = {}): MethodSearchResult =
   isMeta: false,
   selector: 'buildsOne',
   category: 'instance creation',
+  environmentId: 0,
   ...over,
 });
 

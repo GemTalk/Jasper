@@ -238,6 +238,7 @@ describe('registerMcpTools', () => {
           isMeta: false,
           selector: 'size',
           category: 'accessing',
+          environmentId: 0,
         },
       ]);
       const result = await server.getTool('find_implementors')!.handler({ selector: 'size' });
@@ -268,6 +269,7 @@ describe('registerMcpTools', () => {
           isMeta: false,
           selector: 'size',
           category: 'accessing',
+          environmentId: 0,
         },
       ]);
       await server.getTool('find_implementors')!.handler({ selector: 'size' });
@@ -345,6 +347,7 @@ describe('registerMcpTools', () => {
           isMeta: false,
           selector: 'use',
           category: 'client',
+          environmentId: 0,
         },
       ]);
       const result = await server

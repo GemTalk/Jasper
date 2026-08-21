@@ -13,6 +13,37 @@ import {
 
 const row = 'Globals\tArray\t0\tsize\taccessing\n';
 
+describe('environment on a result row', () => {
+  it('reads the environment column when the scan reports one', () => {
+    const results = searchMethodSource(
+      vi.fn<QueryExecutor>(() => 'Globals\tArray\t0\tsize\taccessing\t3\n'),
+      'size',
+      true,
+    );
+
+    expect(results[0].environmentId).toBe(3);
+  });
+
+  it('falls back to environment 0 rather than dropping a row that has no column', () => {
+    const results = searchMethodSource(
+      vi.fn<QueryExecutor>(() => 'Globals\tArray\t0\tsize\taccessing\n'),
+      'size',
+      true,
+    );
+
+    expect(results).toHaveLength(1);
+    expect(results[0].environmentId).toBe(0);
+  });
+
+  it('serializes the environment it was asked for', () => {
+    const execute = vi.fn<QueryExecutor>(() => '');
+
+    sendersOf(execute, 'size', 2);
+
+    expect(execute.mock.calls[0][0]).toContain("nextPutAll: '2'");
+  });
+});
+
 describe('methodSearch shared parser', () => {
   it('parses tab-separated rows into MethodSearchResult', () => {
     const results = searchMethodSource(
@@ -27,6 +58,7 @@ describe('methodSearch shared parser', () => {
         isMeta: false,
         selector: 'size',
         category: 'accessing',
+        environmentId: 0,
       },
     ]);
   });
@@ -98,6 +130,25 @@ describe('referencesToObject', () => {
 });
 
 describe('referencesToClassInDict', () => {
+  it('scopes the organizer to the environment, not just the serialization', () => {
+    // A bare `ClassOrganizer new` scans environment 0 whatever the caller asked for, so a
+    // class referenced only from another environment came back unreferenced — and safe
+    // delete would then report that nothing referenced it and delete without asking.
+    const execute = vi.fn<QueryExecutor>(() => '');
+
+    referencesToClassInDict(execute, 'Account', 3, 2);
+
+    const code = execute.mock.calls[0][0];
+    expect(code).toContain('ClassOrganizer new environmentId: 2; yourself');
+    expect(code).not.toMatch(/ClassOrganizer new referencesToObject:/);
+  });
+
+  it('reports the environment each row was found in', () => {
+    const execute = vi.fn<QueryExecutor>(() => 'Globals\tArray\t0\tsize\taccessing\t2\n');
+
+    expect(referencesToClassInDict(execute, 'Array', 1, 2)[0].environmentId).toBe(2);
+  });
+
   it('resolves the class through its dictionary rather than by bare name', () => {
     const execute = vi.fn<QueryExecutor>(() => '');
 
@@ -229,6 +280,7 @@ describe('hierarchyImplementorsOf', () => {
         isMeta: false,
         selector: 'at:',
         category: 'accessing',
+        environmentId: 0,
       },
     ]);
   });

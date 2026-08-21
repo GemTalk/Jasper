@@ -1770,6 +1770,7 @@ export class DebuggerPanel {
         isMeta: target.isMeta,
         selector: raw.selector,
         category: target.category,
+        environmentId: 0,
       },
       vscode.ViewColumn.Beside,
     );

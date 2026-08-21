@@ -34,6 +34,7 @@ const result = (over: Partial<MethodSearchResult> = {}): MethodSearchResult => (
   isMeta: false,
   selector: 'balance',
   category: 'accessing',
+  environmentId: 0,
   ...over,
 });
 
@@ -125,6 +126,18 @@ describe('choosing a result', () => {
       expect.objectContaining({ kind: 'method', sessionId: 7, selector: 'balance' }),
     );
     expect(executeCommand).toHaveBeenCalledWith('gemstone.openDocument', expect.anything());
+  });
+
+  it('opens the document in the environment the row was found in', async () => {
+    // Hard-coding environment 0 opened the wrong method -- or none -- for a row found
+    // elsewhere, which safe delete reaches by scanning every configured environment.
+    const chosen = result({ environmentId: 2 });
+    navigateTo.mockReturnValue(false);
+    quickPick.mockResolvedValue({ result: chosen });
+
+    await showMethodResults(7, [chosen], 'Senders');
+
+    expect(buildMethodUri).toHaveBeenCalledWith(expect.objectContaining({ environmentId: 2 }));
   });
 
   it('reports that something was opened', async () => {

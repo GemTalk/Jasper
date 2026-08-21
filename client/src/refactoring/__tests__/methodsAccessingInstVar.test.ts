@@ -45,6 +45,7 @@ describe('instance-variable reference scan', () => {
         isMeta: false,
         selector: 'balance',
         category: 'accessing',
+        environmentId: 0,
       },
       {
         dictName: 'UserGlobals',
@@ -52,8 +53,22 @@ describe('instance-variable reference scan', () => {
         isMeta: false,
         selector: 'accrue',
         category: 'accessing',
+        environmentId: 0,
       },
     ]);
+  });
+
+  it('enumerates the selectors of the environment it was asked about', () => {
+    // `selectors` lists environment 0 only, so a method that exists solely in another
+    // environment was never offered to the accessed-variables test and the variable looked
+    // unused — a delete would then go through without asking.
+    const exec = vi.fn().mockReturnValue('');
+
+    methodsAccessingInstVar(exec, 'Account', 'balance', 3, 2);
+
+    const code = exec.mock.calls[0][0] as string;
+    expect(code).toContain('selectorsForEnvironment: 2');
+    expect(code).not.toMatch(/\bselectors do:/);
   });
 
   it('reports nothing when no method touches the variable', () => {

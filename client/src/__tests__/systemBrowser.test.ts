@@ -2446,6 +2446,7 @@ describe('SystemBrowser', () => {
       className: 'Array',
       isMeta: false,
       category: 'Accessing',
+      environmentId: 0,
       selector: 'name',
     };
 
@@ -2672,6 +2673,7 @@ describe('SystemBrowser', () => {
       className: 'Array',
       isMeta: false,
       category: 'Accessing',
+      environmentId: 0,
       selector: 'name',
     };
 

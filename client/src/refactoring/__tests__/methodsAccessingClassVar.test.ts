@@ -58,6 +58,7 @@ describe('class-variable reference scan', () => {
         isMeta: false,
         selector: 'record',
         category: 'accessing',
+        environmentId: 0,
       },
       {
         dictName: 'UserGlobals',
@@ -65,8 +66,22 @@ describe('class-variable reference scan', () => {
         isMeta: true,
         selector: 'reset',
         category: 'accessing',
+        environmentId: 0,
       },
     ]);
+  });
+
+  it('enumerates the selectors of the environment it was asked about', () => {
+    // `selectors` lists environment 0 only, so a method that exists solely in another
+    // environment was never offered to the accessed-variables test and the variable looked
+    // unused — a delete would then go through without asking.
+    const exec = vi.fn().mockReturnValue('');
+
+    methodsAccessingClassVar(exec, 'Account', 'Registry', 3, 2);
+
+    const code = exec.mock.calls[0][0] as string;
+    expect(code).toContain('selectorsForEnvironment: 2');
+    expect(code).not.toMatch(/\bselectors do:/);
   });
 
   it('reports nothing when the variable is not declared anywhere in the chain', () => {

@@ -9,6 +9,7 @@ vi.mock('../browserQueries', () => ({
   deleteMethod: vi.fn(() => 'Deleted: Array >> at:'),
   getClassEnvironments: vi.fn(() => []),
   sendersOf: vi.fn(() => []),
+  hierarchyImplementorsOf: vi.fn(() => []),
 }));
 // The reference picker navigates a System Browser; the decision is covered in
 // safeDelete.test.ts, so here it only has to not reach live wiring.
@@ -70,12 +71,14 @@ const sender = (over: Partial<MethodSearchResult> = {}): MethodSearchResult => (
   isMeta: false,
   selector: 'usesIt',
   category: 'accessing',
+  environmentId: 0,
   ...over,
 });
 
 const deleteMethod = queries.deleteMethod as ReturnType<typeof vi.fn>;
 const canClassBeWritten = queries.canClassBeWritten as ReturnType<typeof vi.fn>;
 const sendersOf = queries.sendersOf as ReturnType<typeof vi.fn>;
+const hierarchyImplementorsOf = queries.hierarchyImplementorsOf as ReturnType<typeof vi.fn>;
 const showWarningMessage = window.showWarningMessage as ReturnType<typeof vi.fn>;
 const showInformationMessage = window.showInformationMessage as ReturnType<typeof vi.fn>;
 const showErrorMessage = window.showErrorMessage as ReturnType<typeof vi.fn>;
@@ -89,6 +92,7 @@ beforeEach(() => {
   canClassBeWritten.mockReturnValue(true);
   deleteMethod.mockReturnValue('Deleted: Array >> at:');
   sendersOf.mockReturnValue([]);
+  hierarchyImplementorsOf.mockReturnValue([]);
 });
 
 describe('ExplorerController.removeMethod — nothing sends the selector', () => {
@@ -339,5 +343,101 @@ describe('ExplorerController.removeMethod — scanning every environment', () =>
     await ctl.removeMethod(methodItem());
 
     expect(showWarningMessage.mock.calls[0][1].detail).toContain('1 method still references it');
+  });
+});
+
+// Removing an override is the common case and it breaks nothing: every send that resolved
+// here resolves to the inherited implementation instead. Asking the image for senders of the
+// selector would list every unrelated sender of a name like #printOn: -- hundreds of methods
+// that were never at risk -- and cost a whole-image walk to do it.
+describe('ExplorerController.removeMethod — the selector is still implemented above', () => {
+  const inherited = (className: string) => [
+    {
+      dictName: 'Globals',
+      className,
+      isMeta: false,
+      selector: 'at:',
+      category: 'accessing',
+      environmentId: 0,
+    },
+  ];
+
+  it('removes the override without asking', async () => {
+    hierarchyImplementorsOf.mockReturnValue(inherited('Object'));
+    const ctl = makeController();
+
+    await ctl.removeMethod(methodItem());
+
+    expect(showWarningMessage).not.toHaveBeenCalled();
+    expect(deleteMethod).toHaveBeenCalled();
+  });
+
+  it('does not walk the image looking for senders', async () => {
+    hierarchyImplementorsOf.mockReturnValue(inherited('Object'));
+    const ctl = makeController();
+
+    await ctl.removeMethod(methodItem());
+
+    expect(sendersOf).not.toHaveBeenCalled();
+  });
+
+  it('says where the senders now resolve rather than that nothing referenced it', async () => {
+    hierarchyImplementorsOf.mockReturnValue(inherited('Object'));
+    const ctl = makeController();
+
+    await ctl.removeMethod(methodItem());
+
+    expect(showInformationMessage).toHaveBeenCalledWith(
+      expect.stringContaining('senders now resolve to Object >> #at:'),
+    );
+  });
+
+  it('names the nearest ancestor when several implement it', async () => {
+    // hierarchyImplementorsOf answers immediate-superclass first.
+    hierarchyImplementorsOf.mockReturnValue([...inherited('Collection'), ...inherited('Object')]);
+    const ctl = makeController();
+
+    await ctl.removeMethod(methodItem());
+
+    expect(showInformationMessage).toHaveBeenCalledWith(
+      expect.stringContaining('resolve to Collection >> #at:'),
+    );
+  });
+
+  it('asks about senders when nothing above implements it', async () => {
+    hierarchyImplementorsOf.mockReturnValue([]);
+    sendersOf.mockReturnValue([sender()]);
+    showWarningMessage.mockResolvedValue(undefined);
+    const ctl = makeController();
+
+    await ctl.removeMethod(methodItem());
+
+    expect(sendersOf).toHaveBeenCalled();
+    expect(showWarningMessage).toHaveBeenCalled();
+  });
+
+  it('falls back to the sender scan when the hierarchy probe fails', async () => {
+    // Failing to find an implementor above only costs a question; it can never turn into a
+    // wrong silent delete.
+    hierarchyImplementorsOf.mockImplementation(() => {
+      throw new Error('boom');
+    });
+    sendersOf.mockReturnValue([sender()]);
+    showWarningMessage.mockResolvedValue(undefined);
+    const ctl = makeController();
+
+    await ctl.removeMethod(methodItem());
+
+    expect(sendersOf).toHaveBeenCalled();
+    expect(showWarningMessage).toHaveBeenCalled();
+  });
+
+  it('asks the hierarchy about the same side the method is on', async () => {
+    hierarchyImplementorsOf.mockReturnValue([]);
+    const ctl = makeController();
+
+    await ctl.removeMethod(methodItem({ selector: 'new' }, true));
+
+    expect(hierarchyImplementorsOf).toHaveBeenCalledWith(SESSION, 1, 'Array', 'new', true, 'up');
   });
 });
