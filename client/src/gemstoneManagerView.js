@@ -754,8 +754,8 @@
       <p class="gm-call-do"></p>
       <p class="gm-call-hint">Escape closes this box — the highlighted controls work either way.</p>
       <p class="gm-call-settled">Nothing to do here.</p>
+      <button type="button" class="btn btn-primary gm-call-do-btn" data-tour="do"><span></span></button>
       <div class="gm-call-acts">
-        <button type="button" class="btn btn-primary gm-call-do-btn" data-tour="do"><span></span></button>
         <button type="button" class="btn" data-tour="prev">Back</button>
         <button type="button" class="btn" data-tour="next">Next</button>
         <button type="button" class="btn" data-tour="end">Skip</button>

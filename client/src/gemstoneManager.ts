@@ -1599,9 +1599,15 @@ th.v-num { text-align: right; }
 .gm-call-list li { margin: 0 0 3px; }
 .gm-call-list li:last-child { margin-bottom: 0; }
 .gm-call-note { margin: 8px 0 0; font-size: 12px; line-height: 1.5; color: var(--vscode-descriptionForeground, #9d9d9d); }
-.gm-call-acts { display: flex; align-items: center; gap: 8px; margin: 14px 0 0; }
+.gm-call-acts { display: flex; align-items: center; gap: 8px; margin: 12px 0 0; flex-wrap: wrap; }
 .gm-call-acts [data-tour="end"] { margin-left: auto; }
-/* Doing the step is the point of the box, so it leads the row. */
+/* The action takes its own full-width row. Its label says what it will do, which
+   runs longer than a nav button — four on one line overflowed the box, and the
+   box has a fixed width, so the label wraps rather than widening it. */
+.gm-call-do-btn {
+  display: flex; width: 100%; justify-content: center; margin: 14px 0 0;
+  padding: 6px 12px; white-space: normal; text-align: center;
+}
 .gm-call-do-btn[hidden] { display: none; }
 /* Said out loud, because an absent button is indistinguishable from a missing one. */
 .gm-call-settled {

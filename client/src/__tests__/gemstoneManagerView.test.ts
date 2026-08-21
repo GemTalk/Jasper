@@ -1130,3 +1130,39 @@ describe('refreshing the panel', () => {
     );
   });
 });
+
+// Four buttons on one line overflowed the callout: the action's label says what
+// it will do, so it runs much longer than Back/Next/Skip and pushed Skip past the
+// right edge. The action gets its own row.
+describe('the callout keeps its buttons inside the box', () => {
+  it('does not put the action in the navigation row', () => {
+    const { root } = open(state({ databases: [] }));
+
+    root.querySelector<HTMLElement>('[data-tour="start"]')?.click();
+    goTo('databases');
+
+    const nav = document.querySelector('.gm-call-acts');
+    expect(nav?.querySelector('[data-tour="do"]')).toBeNull();
+    expect(document.querySelector('.gm-call > [data-tour="do"]')).not.toBeNull();
+  });
+
+  it('keeps every navigation button in that row', () => {
+    const { root } = open(state({ databases: [] }));
+
+    root.querySelector<HTMLElement>('[data-tour="start"]')?.click();
+    const nav = document.querySelector('.gm-call-acts');
+
+    expect(
+      [...nav!.querySelectorAll('[data-tour]')].map((b) => b.getAttribute('data-tour')),
+    ).toEqual(['prev', 'next', 'end']);
+  });
+
+  // The styles live in the host file, so this is pinned at the source.
+  it('gives the action the full width and lets its label wrap', () => {
+    const css = fs.readFileSync(path.resolve(__dirname, '..', 'gemstoneManager.ts'), 'utf8');
+
+    expect(css).toMatch(/\.gm-call-do-btn \{[^}]*width: 100%/);
+    expect(css).toMatch(/\.gm-call-do-btn \{[^}]*white-space: normal/);
+    expect(css).toMatch(/\.gm-call-acts \{[^}]*flex-wrap: wrap/);
+  });
+});
