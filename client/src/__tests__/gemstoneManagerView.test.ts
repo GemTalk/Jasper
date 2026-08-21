@@ -410,7 +410,15 @@ describe('GemStone Manager webview', () => {
 // the header that reports where the user is, and the tour that points at each
 // section in turn.
 
-type TourStep = { section: string; title: string; body: string; done: boolean };
+type TourStep = {
+  section: string;
+  title: string;
+  body: string;
+  action: string;
+  done: boolean;
+  lines?: string[];
+  note?: string;
+};
 type TourApi = {
   tourSteps(state: unknown): TourStep[];
   firstTodo(steps: TourStep[]): number;
@@ -721,5 +729,71 @@ describe('creating a database explains itself', () => {
 
   it('says which base extent to pick', () => {
     expect(source()).toMatch(/extent0\.dbf is the standard one/);
+  });
+});
+
+describe('the four questions read one per line', () => {
+  it('lists each question separately rather than running them into a sentence', () => {
+    const databases = tour()
+      .tourSteps(state())
+      .find((s) => s.section === 'databases');
+
+    expect(databases?.lines).toHaveLength(4);
+    expect(databases?.lines?.[0]).toMatch(/^Version —/);
+    expect(databases?.lines?.[1]).toMatch(/^Base extent —/);
+    expect(databases?.lines?.[2]).toMatch(/^Stone name —/);
+    expect(databases?.lines?.[3]).toMatch(/^NetLDI name —/);
+  });
+
+  it('renders them as list items in the callout', () => {
+    const { root } = open(state({ databases: [] }));
+
+    root.querySelector<HTMLElement>('[data-tour="start"]')?.click();
+    const items = [...document.querySelectorAll('.gm-call-list li')].map((li) => li.textContent);
+
+    expect(items).toHaveLength(4);
+  });
+
+  it('hides the list on steps that have none', () => {
+    const { root } = open(state({ versions: [NOTHING_INSTALLED], databases: [] }));
+
+    root.querySelector<HTMLElement>('[data-tour="start"]')?.click();
+
+    expect(document.querySelector<HTMLElement>('.gm-call-list')?.hidden).toBe(true);
+  });
+
+  it('says the database can be opened on disk and its configuration changed', () => {
+    const databases = tour()
+      .tourSteps(state())
+      .find((s) => s.section === 'databases');
+
+    expect(databases?.note).toMatch(/configuration file opens in the editor/);
+    expect(databases?.note).toMatch(/on disk/);
+  });
+});
+
+// Replacing an extent rebuilds the database from a fresh one, which
+// databaseManager.replaceExtent refuses outright while the stone is up. Offering
+// the chooser anyway invited a click whose only outcome was an error.
+describe('the extent chooser follows what the command will accept', () => {
+  const chooser = (root: HTMLElement) => root.querySelector<HTMLSelectElement>('.extent-select');
+
+  it('is available while the stone is stopped', () => {
+    const { root } = open(state({ databases: [database({ stoneRunning: false })] }));
+    root.querySelector<HTMLDetailsElement>('details.db-item')!.open = true;
+
+    expect(chooser(root)?.disabled).toBe(false);
+  });
+
+  it('is unavailable while the stone is running', () => {
+    const { root } = open(state({ databases: [database({ stoneRunning: true })] }));
+
+    expect(chooser(root)?.disabled).toBe(true);
+  });
+
+  it('says why, rather than just refusing', () => {
+    const { root } = open(state({ databases: [database({ stoneRunning: true })] }));
+
+    expect(root.querySelector('.extent')?.getAttribute('title')).toContain('Stop the stone');
   });
 });

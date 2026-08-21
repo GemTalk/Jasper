@@ -387,6 +387,10 @@ export class GemstoneManagerPanel {
     // follow the selection rather than only refreshing on demand.
     this.deps.sessionManager.onDidChangeSelection(() => this.markStale(), null, this.disposables);
     this.deps.sessionManager.onDidRemoveSession(() => this.markStale(), null, this.disposables);
+    // A second session changes no selection — only the first is auto-selected —
+    // so without this the row for a login that just connected kept offering
+    // "Log in" until something else happened to redraw the panel.
+    this.deps.sessionManager.onDidAddSession(() => this.markStale(), null, this.disposables);
     for (const onChange of this.deps.onAdminChange) {
       onChange(() => this.markStale(), null, this.disposables);
     }
@@ -1464,6 +1468,9 @@ th.v-num { text-align: right; }
   border: 1px solid var(--vscode-dropdown-border, var(--gm-line));
   background: var(--vscode-dropdown-background); color: var(--vscode-dropdown-foreground); cursor: pointer;
 }
+/* A running stone cannot have its extent replaced, so the chooser reads as
+   unavailable rather than accepting a change the command will refuse. */
+.extent-select:disabled { opacity: .5; cursor: default; }
 .db-cols { display: flex; flex-direction: column; gap: 6px; }
 
 /* Groups inside a database body (Logins / Processes / Files). */
@@ -1575,6 +1582,10 @@ th.v-num { text-align: right; }
   background: color-mix(in srgb, var(--vscode-focusBorder, #007fd4) 12%, transparent);
 }
 .gm-call-hint { margin: 9px 0 0; font-size: 11.5px; color: var(--vscode-descriptionForeground, #9d9d9d); }
+.gm-call-list { margin: 7px 0 0; padding-left: 18px; font-size: 12.5px; line-height: 1.5; }
+.gm-call-list li { margin: 0 0 3px; }
+.gm-call-list li:last-child { margin-bottom: 0; }
+.gm-call-note { margin: 8px 0 0; font-size: 12px; line-height: 1.5; color: var(--vscode-descriptionForeground, #9d9d9d); }
 .gm-call-acts { display: flex; align-items: center; gap: 8px; margin: 14px 0 0; }
 .gm-call-acts [data-tour="end"] { margin-left: auto; }
 .gm-call-acts .btn:disabled { opacity: .45; cursor: default; }

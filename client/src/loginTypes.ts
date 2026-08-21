@@ -171,6 +171,27 @@ export function buildDataCuratorLogin(config: ManagedStoneConfig): GemStoneLogin
 }
 
 /**
+ * The configured logins a database's removal would leave pointing at nothing:
+ * same stone, same version. Creating a database auto-creates a DataCurator login
+ * for its stone, so deleting one without consulting this leaves behind an entry
+ * Jasper made itself — plus any others the user added for the same stone.
+ *
+ * Matches on stone and version, the same pairing used to associate a login with
+ * a database everywhere else. `versionsMatch` is injected rather than imported:
+ * processManager owns it and already imports this module, so importing it back
+ * would be a cycle.
+ */
+export function loginsTargetingStone(
+  logins: GemStoneLogin[],
+  config: Pick<ManagedStoneConfig, 'stoneName' | 'version'>,
+  versionsMatch: (a: string, b: string) => boolean,
+): GemStoneLogin[] {
+  return logins.filter(
+    (l) => l.stone === config.stoneName && versionsMatch(l.version, config.version),
+  );
+}
+
+/**
  * The DataCurator login to auto-create for a freshly-created stone, or undefined
  * when one already targets it — so creating a stone never duplicates an entry or
  * clobbers a login the user has since edited (or deliberately deleted and does

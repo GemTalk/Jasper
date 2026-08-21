@@ -135,11 +135,16 @@ function fakeDeps(
     isNetldiRunning?: () => boolean;
     processes?: unknown[];
     selectionChanged?: (fire: () => void) => void;
+    sessionAdded?: (fire: () => void) => void;
   } = {},
 ): GemstoneManagerDeps {
   const noSubscription = () => ({ dispose: () => {} });
   const onSelection = (handler: () => void) => {
     running.selectionChanged?.(handler);
+    return { dispose: () => {} };
+  };
+  const onAdded = (handler: () => void) => {
+    running.sessionAdded?.(handler);
     return { dispose: () => {} };
   };
   return {
@@ -175,6 +180,7 @@ function fakeDeps(
     sessionManager: {
       onDidChangeSelection: onSelection,
       onDidRemoveSession: noSubscription,
+      onDidAddSession: onAdded,
       getSessions: () => [A_SESSION],
       getSelectedSession: () => A_SESSION,
       getSession: (id: number) => (id === A_SESSION.id ? A_SESSION : undefined),
@@ -209,6 +215,7 @@ function openPanel(
     isNetldiRunning?: () => boolean;
     processes?: unknown[];
     selectionChanged?: (fire: () => void) => void;
+    sessionAdded?: (fire: () => void) => void;
   } = {},
 ): {
   panel: MockPanel;
@@ -471,6 +478,22 @@ describe('GemStone Manager panel', () => {
     });
 
     fireSelection();
+
+    await vi.waitFor(() => expect(postedStates(panel).length).toBeGreaterThan(0));
+  });
+
+  // Only the first session is auto-selected, so a second login changed no
+  // selection and the panel never heard about it — the row for a login that had
+  // just connected went on offering "Log in".
+  it('redraws when another session is opened, not only the first', async () => {
+    let fireAdded = (): void => {};
+    const { panel } = openPanel(() => [], {
+      sessionAdded: (fire) => {
+        fireAdded = fire;
+      },
+    });
+
+    fireAdded();
 
     await vi.waitFor(() => expect(postedStates(panel).length).toBeGreaterThan(0));
   });

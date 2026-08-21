@@ -17,6 +17,7 @@ import {
   GemStoneLogin,
   buildDataCuratorLogin,
   dataCuratorLoginToCreate,
+  loginsTargetingStone,
   loginLabel,
   loginTargetKey,
   sameLoginTarget,
@@ -137,7 +138,7 @@ import { runOnlineExtentBackup, resolveExtentBackupSession } from './extentBacku
 import { runLogicalRestore, RestoreSession } from './restoreManager';
 import { hasFileControlPrivilege, serverBackupFilePaths } from './queries/backup';
 import { backupFolderInServer } from './queries/extentBackup';
-import { ProcessManager } from './processManager';
+import { ProcessManager, versionsMatch } from './processManager';
 import { openMcpInspector } from './openMcpInspector';
 import { McpSocketServer, writeClaudeDesktopMcpConfig } from './mcpSocketServer';
 import { writeClaudeCodeUserMcpConfig } from './claudeCodeUserMcpConfig';
@@ -3600,10 +3601,25 @@ export function activate(context: vscode.ExtensionContext) {
 
     vscode.commands.registerCommand('gemstone.deleteDatabase', async (node: DatabaseNode) => {
       if (node?.kind !== 'database') return;
+      // Read the orphans first: once the database is gone there is nothing left
+      // to match them against.
+      const orphaned = loginsTargetingStone(storage.getLogins(), node.db.config, versionsMatch);
       const deleted = await databaseManager.deleteDatabase(node.db);
-      if (deleted) {
-        refreshAdminViews();
+      if (!deleted) return;
+      // Creating a database adds a login for its stone, so deleting one takes
+      // that login with it rather than leaving an entry that can only fail.
+      for (const orphan of orphaned) {
+        await storage.deleteLogin(loginLabel(orphan));
       }
+      if (orphaned.length) {
+        treeProvider.refresh();
+        void vscode.window.showInformationMessage(
+          orphaned.length === 1
+            ? `Also removed the login "${loginLabel(orphaned[0])}", which pointed at that database.`
+            : `Also removed ${orphaned.length} logins that pointed at that database.`,
+        );
+      }
+      refreshAdminViews();
     }),
 
     vscode.commands.registerCommand('gemstone.refreshDatabases', () => {

@@ -494,7 +494,14 @@
     steps.push({
       section: 'databases',
       title: 'Create a database, and start it',
-      body: 'A database is built from an installed version. Creating one asks four questions: which version, which base extent to copy, a name for the stone, and a name for the NetLDI. Each is explained as it is asked, and the defaults are right unless you have a reason otherwise.',
+      body: 'A database is built from an installed version. Creating one asks four questions, each explained again as it is asked:',
+      lines: [
+        'Version — which installed release this database runs.',
+        'Base extent — the starting repository to copy. extent0.dbf is the standard one.',
+        'Stone name — the process that owns the repository, and the name you log in to.',
+        'NetLDI name — the listener that starts a gem process for each session.',
+      ],
+      note: 'Once it exists, opening its row lists the log, configuration and backup files it owns: a configuration file opens in the editor to be changed by hand, and Terminal and Reveal open the database on disk for anything the panel does not cover.',
       action: 'Usually: + , accept the four defaults, then Start to bring the stone and NetLDI up.',
       done: (state.databases || []).length > 0,
     });
@@ -622,6 +629,21 @@
     mark.className = `gm-call-mark ${step.done ? 'is-done' : 'is-todo'}`;
     tour.call.querySelector('.gm-call-title').textContent = step.title;
     tour.call.querySelector('.gm-call-body').textContent = step.body;
+    // Built as elements with textContent rather than markup: these are the only
+    // strings in the panel that describe themselves, and there is no reason for
+    // them to travel as HTML.
+    const list = tour.call.querySelector('.gm-call-list');
+    list.replaceChildren(
+      ...(step.lines || []).map((line) => {
+        const li = document.createElement('li');
+        li.textContent = line;
+        return li;
+      }),
+    );
+    list.hidden = !(step.lines || []).length;
+    const note = tour.call.querySelector('.gm-call-note');
+    note.textContent = step.note || '';
+    note.hidden = !step.note;
     tour.call.querySelector('.gm-call-do').textContent = step.action;
     tour.call.querySelector('[data-tour="prev"]').disabled = tour.index === 0;
     const last = tour.index === tour.steps.length - 1;
@@ -654,6 +676,8 @@
       </div>
       <h2 class="gm-call-title" id="gm-call-title"></h2>
       <p class="gm-call-body"></p>
+      <ul class="gm-call-list"></ul>
+      <p class="gm-call-note"></p>
       <p class="gm-call-do"></p>
       <p class="gm-call-hint">Escape closes this box — the highlighted controls work either way.</p>
       <div class="gm-call-acts">
@@ -952,9 +976,13 @@
     const options = (extents.includes(current) ? extents : [current, ...extents])
       .map((e) => `<option value="${esc(e)}"${e === current ? ' selected' : ''}>${esc(e)}</option>`)
       .join('');
-    return `<label class="extent" title="Base extent — choosing another replaces the database">
+    const locked = !!db.stoneRunning;
+    const title = locked
+      ? 'Stop the stone to replace its base extent'
+      : 'Base extent — choosing another replaces the database';
+    return `<label class="extent" title="${esc(title)}">
       <span class="extent-label">Extent</span>
-      <select class="extent-select" data-select="replaceExtent" data-dir="${esc(db.dirName)}">${options}</select>
+      <select class="extent-select" data-select="replaceExtent" data-dir="${esc(db.dirName)}"${locked ? ' disabled' : ''}>${options}</select>
     </label>`;
   }
 
