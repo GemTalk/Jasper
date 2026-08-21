@@ -1,5 +1,5 @@
 import { QueryExecutor } from './types';
-import { escapeString } from './util';
+import { classLookupExpr, escapeString } from './util';
 
 export interface MethodSearchResult {
   dictName: string;
@@ -11,8 +11,10 @@ export interface MethodSearchResult {
 
 // Shared Smalltalk snippet: build classDict mapping classes to their first
 // dictionary name, then serialize an array of GsNMethods (bound as `methods`
-// before this snippet runs) as tab-separated lines.
-function methodSerialization(envId: number): string {
+// before this snippet runs) as tab-separated lines. Exported because the
+// safe-delete reference scans (refactoring/queries/) build the same rows from
+// their own scan, and must agree with these searches on what a method row is.
+export function methodSerialization(envId: number): string {
   return `sl := System myUserProfile symbolList.
 classDict := IdentityDictionary new.
 sl do: [:dict |
@@ -40,7 +42,9 @@ limit := methods size min: 500.
 stream contents`;
 }
 
-function parseMethodSearchResults(raw: string): MethodSearchResult[] {
+/** Read the tab-separated rows `methodSerialization` writes. Exported alongside it,
+ *  for the same reason. */
+export function parseMethodSearchResults(raw: string): MethodSearchResult[] {
   const results: MethodSearchResult[] = [];
   for (const line of raw.split('\n')) {
     if (line.length === 0) continue;
@@ -124,6 +128,26 @@ class := (System myUserProfile symbolList at: ${dictIndex}) at: #'${escapeString
 methods := OrderedCollection new.
 ${collect}
 methods := methods asArray.
+${methodSerialization(environmentId)}`;
+
+  return parseMethodSearchResults(execute(code));
+}
+
+// Every method that references the class bound to `className` in `dict` — resolved by
+// OBJECT IDENTITY through the dictionary rather than by a bare name lookup, so a name
+// shadowed in another dictionary still answers the references to the class the caller
+// means. Compare referencesToObject, which takes the first binding of the name anywhere
+// in the symbol list. A dictionary that does not bind the name answers nothing.
+export function referencesToClassInDict(
+  execute: QueryExecutor,
+  className: string,
+  dict?: number | string,
+  environmentId: number = 0,
+): MethodSearchResult[] {
+  const code = `| cls methods stream limit classDict sl |
+cls := ${classLookupExpr(className, dict)}.
+cls isNil ifTrue: [^ ''].
+methods := (ClassOrganizer new referencesToObject: cls) asArray.
 ${methodSerialization(environmentId)}`;
 
   return parseMethodSearchResults(execute(code));

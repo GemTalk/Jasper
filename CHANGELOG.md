@@ -4,6 +4,15 @@ All notable changes to the **GemStone Smalltalk** extension will be documented i
 
 ## [Unreleased]
 
+### Changed
+
+- **The two variable removals now show the trash can, like every other Explorer delete.** Removing an instance variable or a class variable used the `$(remove)` minus sign while removing a method, a class or a dictionary used the trash can — so the variable rows read as "take out of this list" rather than "delete this", a different gesture from the rows right above them. All five now match. ([#433](https://github.com/GemTalk/Jasper/issues/433))
+
+### Added
+
+- **Deleting now looks for what still uses the thing first.** Removing a method, a class, an instance variable or a class variable used to pop the same confirmation whatever the target, and check nothing — you found out afterwards, from a doesNotUnderstand or a failed recompile, that something still needed it. Each of the four now scans first: senders for a method, references and subclasses for a class, accessing methods for either kind of variable. When nothing references it the deletion just happens and is reported in a notification, so the click is one step instead of two; when something does, the confirmation says how many and which — one line per referencing class, the class named once however many of its methods are involved — and **Show References…** lists them for browsing before you decide whether to remove it anyway. Opening one of those references abandons the deletion rather than re-raising the question — you asked to go read that method, and a modal whose default action is destructive should not follow you there; closing the list without opening anything brings the question back, since that is still deciding rather than going somewhere. References that go away *with* the target don't count: a recursive method's send of its own selector, or a doomed subclass's use of the class being removed. A scan that cannot answer falls back to asking. The variable scans match the way the refactoring engine does — bytecode access for an instance variable, binding identity for a class variable — so a name in a comment, or a same-named global, is not a reference; none of it needs the server plugin installed. ([#433](https://github.com/GemTalk/Jasper/issues/433))
+- **Remove Class Variable.** The Explorer could add and rename a class variable but never remove one. The trash can on a class-variable row (and its context-menu entry) now does, guarded like every other delete. Like adding one it is lightweight — a class variable is not part of instance layout, so nothing is reshaped, no class version is created, and no refactoring engine is involved — and it refuses a variable the row's class merely *inherits*, pointing at the class that declares it. Nothing is committed until you commit the session. ([#433](https://github.com/GemTalk/Jasper/issues/433))
+
 ## [1.8.13] - 2026-08-20
 
 A follow-up release for **GemStone Search**: correctness fixes for multi-session and multi-environment use, matching and debounce repairs found by a review pass over the feature, one naming pass, and the senders/implementors counts moving off the method source.

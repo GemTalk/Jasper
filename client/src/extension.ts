@@ -41,6 +41,7 @@ import {
 } from './enhancedInspector/enhancedInspectorPerfTracker';
 import { CodeExecutor } from './codeExecutor';
 import { SystemBrowser } from './systemBrowser';
+import { showMethodResults as showMethodResultsFor } from './methodResultsPicker';
 import { registerOmniSearch, OmniSearchRegistration } from './omniSearch/omniSearchCommand';
 import {
   startSeasideServer,
@@ -95,7 +96,6 @@ import {
   ClassDefinitionCompiledEvent,
   closeGemstoneTabsForSession,
   installStaleGemstoneTabReaper,
-  buildMethodUri,
   parseUri,
 } from './gemstoneFileSystemProvider';
 import { openWorkspace } from './workspace';
@@ -1152,38 +1152,14 @@ export function activate(context: vscode.ExtensionContext) {
     });
   }
 
+  // Thin adapter over the shared picker (methodResultsPicker.ts), which the safe-delete
+  // confirmation shares: every caller here has the session, not just its id.
   async function showMethodResults(
     session: { id: number },
     results: queries.MethodSearchResult[],
     title: string,
   ): Promise<void> {
-    if (results.length === 0) {
-      vscode.window.showInformationMessage(`${title}: no results found.`);
-      return;
-    }
-
-    const items = results.map((r) => ({
-      label: `${r.className}${r.isMeta ? ' class' : ''} >> #${r.selector}`,
-      description: r.category,
-      detail: r.dictName,
-      result: r,
-    }));
-
-    const picked = await vscode.window.showQuickPick(items, {
-      placeHolder: `${results.length} method${results.length === 1 ? '' : 's'} found`,
-      matchOnDescription: true,
-      matchOnDetail: true,
-    });
-    if (!picked) return;
-
-    const r = picked.result;
-    // If a System Browser is open for this session, navigate it to the selected
-    // method (updates all 5 columns) and open the method editor from there.
-    // Otherwise fall back to opening the document directly.
-    if (!SystemBrowser.navigateTo(session.id, r)) {
-      const uri = buildMethodUri({ kind: 'method', sessionId: session.id, ...r, environmentId: 0 });
-      vscode.commands.executeCommand('gemstone.openDocument', uri);
-    }
+    await showMethodResultsFor(session.id, results, title);
   }
 
   // Commit / Abort a session, with the same confirmations and post-action

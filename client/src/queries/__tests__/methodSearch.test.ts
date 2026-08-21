@@ -5,6 +5,7 @@ import {
   sendersOf,
   implementorsOf,
   referencesToObject,
+  referencesToClassInDict,
   literalSymbolReferences,
   stringLiteralReferences,
   hierarchyImplementorsOf,
@@ -93,6 +94,27 @@ describe('referencesToObject', () => {
     const code = execute.mock.calls[0][0];
     expect(code).toContain('referencesToObject:');
     expect(code).toContain("objectNamed: #'MyGlobal'");
+  });
+});
+
+describe('referencesToClassInDict', () => {
+  it('resolves the class through its dictionary rather than by bare name', () => {
+    const execute = vi.fn<QueryExecutor>(() => '');
+
+    referencesToClassInDict(execute, 'Account', 3);
+
+    const code = execute.mock.calls[0][0];
+    expect(code).toContain('symbolList at: 3');
+    expect(code).toContain('referencesToObject:');
+    // A bare objectNamed: would answer the first binding of the name anywhere in the
+    // symbol list — the wrong class when the name is shadowed.
+    expect(code).not.toContain('objectNamed:');
+  });
+
+  it('reports nothing when the dictionary does not bind the class', () => {
+    const execute = vi.fn<QueryExecutor>(() => '');
+
+    expect(referencesToClassInDict(execute, 'Missing', 3)).toEqual([]);
   });
 });
 

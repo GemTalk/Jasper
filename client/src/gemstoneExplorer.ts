@@ -40,6 +40,12 @@ import {
   validateNewIvarName,
 } from './refactoring/renameInstVarPreview';
 import { showRenameInstVarPanel } from './refactoring/renameInstVarPanel';
+import {
+  decideSafeDelete,
+  announceSilentDelete,
+  dedupeMethodResults,
+  SafeDeleteTarget,
+} from './refactoring/safeDelete';
 import { formatRenameFailureLog, formatRenameFailureToast } from './refactoring/renameFailureLog';
 import { getGciLog, logWarning } from './gciLog';
 import { supportsServerUtf8FileIn } from './refactoring/refactoringInstall';
@@ -2147,19 +2153,131 @@ export class ExplorerController {
     return choice === undefined ? undefined : choice === YES;
   }
 
-  // "−" inline on an instance-variable row: remove it (with the will-not-recompile
-  // preview).
+  // 🗑 inline on an instance-variable row: remove it. Guarded like every other delete —
+  // a variable no method reads or writes goes straight through (no preview to show, since
+  // nothing can break) and is announced afterwards, while one that IS accessed raises a
+  // confirmation naming the accessors and then opens the will-not-recompile preview.
   async removeInstVar(item: IvarItem): Promise<void> {
     const session = this.session();
     if (!session) return;
+
+    const scan = this.scanReferences((env) =>
+      queries.methodsAccessingInstVar(
+        session,
+        item.className,
+        item.ivarName,
+        this.state.dictIndex,
+        env,
+      ),
+    );
+    const target: SafeDeleteTarget = {
+      kind: 'instance variable',
+      label: `${item.ivarName} from ${item.className}`,
+      references: scan.references,
+      scanFailed: scan.scanFailed,
+    };
+
+    const decision = await decideSafeDelete(session.id, target);
+    if (decision === 'cancelled') return;
+
     const outcome = await runInstVarRefactor({
       session,
       op: 'remove',
       className: item.className,
       ivarName: item.ivarName,
       dict: this.state.dictIndex,
+      autoApply: decision === 'silent',
     });
-    if (outcome) await this.refreshAfterClassReshape(item.className);
+    if (!outcome) return;
+    await this.refreshAfterClassReshape(item.className);
+    // Only when the panel really was skipped: the engine can send an autoApply request to
+    // the panel after all, and that removal was not unasked.
+    if (outcome.autoApplied) announceSilentDelete(target);
+  }
+
+  // 🗑 inline on a class-variable row: remove it. The mirror of addClassVarOnClass and
+  // just as lightweight — a class variable is not part of instance layout, so removing one
+  // reshapes nothing, needs no preview panel and no refactoring engine. Guarded the same
+  // way as every other delete: a variable no method references goes without a question and
+  // is announced, one that is referenced asks first. Nothing is committed.
+  async removeClassVar(item: ClassVarItem): Promise<void> {
+    const session = this.session();
+    if (!session) return;
+
+    const { className, classVarName } = item;
+
+    // Kernel/system classes can't be modified here, so a removal could only fail.
+    if (!queries.canClassBeWritten(session, className, this.state.dictIndex)) {
+      void vscode.window.showWarningMessage(`${className} cannot be modified in this repository.`);
+      return;
+    }
+
+    // A class variable is visible to the whole subtree, so a row can name one an ANCESTOR
+    // declares. Removing it from here would act on the wrong class — say so instead. (The
+    // query refuses too; this is the message that explains why.)
+    try {
+      if (
+        !queries
+          .getDefinedClassVarNames(session, className, this.state.dictIndex)
+          .includes(classVarName)
+      ) {
+        void vscode.window.showWarningMessage(
+          `'${classVarName}' is not declared in ${className} — remove it from the class that declares it.`,
+        );
+        return;
+      }
+    } catch {
+      /* non-fatal: fall through and let the removal surface any real problem */
+    }
+
+    const scan = this.scanReferences((env) =>
+      queries.methodsAccessingClassVar(session, className, classVarName, this.state.dictIndex, env),
+    );
+    const target: SafeDeleteTarget = {
+      kind: 'class variable',
+      label: `${classVarName} from ${className}`,
+      references: scan.references,
+      scanFailed: scan.scanFailed,
+      note: 'Methods that reference it keep their binding and will read a variable nothing declares.',
+    };
+
+    const decision = await decideSafeDelete(session.id, target);
+    if (decision === 'cancelled') return;
+
+    let result: string;
+    try {
+      result = queries.deleteClassVariable(session, className, classVarName, this.state.dictIndex);
+    } catch (e: unknown) {
+      void vscode.window.showErrorMessage(
+        `Remove class variable failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return;
+    }
+    if (result.trim() !== 'ok') {
+      void vscode.window.showErrorMessage(
+        `Couldn't remove the class variable '${classVarName}' from ${className} (${result.trim()}).`,
+      );
+      return;
+    }
+
+    // Removing a class variable does NOT reshape the class (no new version); this is just
+    // the general "class members changed" pane refresh, reused despite its name.
+    await this.refreshAfterClassReshape(className);
+    // The variable's row is gone, so land the selection on the class-variable side node —
+    // the parent row — falling back to the class itself when that side is now empty.
+    try {
+      await this.views?.klass.reveal(new VarSideItem(className, true), {
+        select: true,
+        focus: false,
+      });
+    } catch {
+      try {
+        await this.views?.klass.reveal(new ClassItem(className), { select: true, focus: false });
+      } catch {
+        /* best-effort — leave the class selected if neither row can be revealed */
+      }
+    }
+    if (decision === 'silent') announceSilentDelete(target);
   }
 
   // Move an instance variable up the hierarchy (▲) or down into subclasses (▼), from the ivar
@@ -3526,16 +3644,42 @@ export class ExplorerController {
     this.refreshIvarHighlights();
   }
 
-  // Remove a method from its class (the row's 🗑 button). Destructive, so it
-  // asks for a modal confirmation first; nothing is committed (the user commits
-  // explicitly, same as every other Explorer edit). After removal the class's
-  // method set changed, so re-cascade the method panes.
+  // Every environment the user has asked to see, so a scan covers the same ground the
+  // Senders / Implementors commands do.
+  private environmentsToScan(): number[] {
+    const maxEnv = vscode.workspace.getConfiguration('gemstone').get<number>('maxEnvironment', 0);
+    const envs: number[] = [];
+    for (let env = 0; env <= maxEnv; env++) envs.push(env);
+    return envs;
+  }
+
+  // Run a reference scan over every environment, or report why it could not answer. A scan
+  // that fails is NOT the same as a scan that found nothing: safe delete confirms in that
+  // case rather than deleting unasked, so the reason travels with the (empty) result.
+  private scanReferences(scan: (environmentId: number) => queries.MethodSearchResult[]): {
+    references: queries.MethodSearchResult[];
+    scanFailed?: string;
+  } {
+    try {
+      const found = this.environmentsToScan().flatMap((env) => scan(env));
+      return { references: dedupeMethodResults(found) };
+    } catch (e: unknown) {
+      return { references: [], scanFailed: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
+  // Remove a method from its class (the row's 🗑 button). Guarded by a sender scan: a
+  // selector nothing sends goes without a question and is announced afterwards, while one
+  // that still has senders raises a confirmation naming them (see safeDelete.ts). Nothing
+  // is committed either way (the user commits explicitly, same as every other Explorer
+  // edit). After removal the class's method set changed, so re-cascade the method panes.
   async removeMethod(node: MethodItem): Promise<void> {
     const session = this.session();
     if (!session || this.state.className === undefined) return;
 
     const className = this.state.className;
     const selector = node.info.selector;
+    const side = node.isMeta ? `${className} class` : className;
 
     // Kernel/system classes can't be modified in this repository, so a removal
     // there can only fail. Guard before prompting (mirrors createNewMethod's
@@ -3545,12 +3689,20 @@ export class ExplorerController {
       return;
     }
 
-    const confirmed = await vscode.window.showWarningMessage(
-      `Remove method #${selector} from ${node.isMeta ? `${className} class` : className}?`,
-      { modal: true },
-      'Remove',
-    );
-    if (confirmed !== 'Remove') return;
+    const scan = this.scanReferences((env) => queries.sendersOf(session, selector, env));
+    const target: SafeDeleteTarget = {
+      kind: 'method',
+      label: `#${selector} from ${side}`,
+      // The method's own send of its own selector goes away with it, so a recursive method
+      // is not a method with a surviving sender.
+      references: scan.references.filter(
+        (r) => !(r.className === className && r.isMeta === node.isMeta && r.selector === selector),
+      ),
+      scanFailed: scan.scanFailed,
+    };
+
+    const decision = await decideSafeDelete(session.id, target);
+    if (decision === 'cancelled') return;
 
     // deleteMethod reports failure two ways: a non-"Deleted:" status string
     // (class/selector not found) or a raised error (e.g. removeSelector: on an
@@ -3575,6 +3727,7 @@ export class ExplorerController {
       void vscode.window.showErrorMessage(`Remove method failed: ${result}`);
       return;
     }
+    if (decision === 'silent') announceSilentDelete(target);
     this.reloadCurrentClassMethods();
   }
 
@@ -4150,7 +4303,9 @@ export class ExplorerController {
   // Classes-pane or Hierarchy-pane row; falls back to the selected class. The delete
   // is dict-scoped (a shadowed name deletes the one the user sees). If the class has
   // subclasses it's all-or-none: confirm removing the whole subtree, or cancel.
-  // Nothing is committed — the user commits the session.
+  // A leaf class nothing references goes without a confirmation and is announced instead
+  // (see safeDelete.ts); references from inside the doomed subtree don't count, since they
+  // go with it. Nothing is committed — the user commits the session.
   async removeClass(item?: ClassItem | HierarchyItem): Promise<void> {
     const session = this.session();
     if (!session) {
@@ -4214,29 +4369,28 @@ export class ExplorerController {
       return;
     }
 
-    if (descendants.length > 0) {
-      const names = descendants.map((d) => d.className);
-      const preview =
-        names.slice(0, 8).join(', ') + (names.length > 8 ? `, …(+${names.length - 8} more)` : '');
-      const confirmed = await vscode.window.showWarningMessage(
-        `Remove ${className} and all ${names.length} of its subclass${names.length === 1 ? '' : 'es'}?`,
-        {
-          modal: true,
-          detail:
-            `Subclasses: ${preview}\n\n` +
-            'This removes the whole subtree — all or none. Nothing is committed until you commit the session.',
-        },
-        'Remove All',
-      );
-      if (confirmed !== 'Remove All') return;
-    } else {
-      const confirmed = await vscode.window.showWarningMessage(
-        `Remove class ${className} from ${dictName}?`,
-        { modal: true, detail: 'Nothing is committed until you commit the session.' },
-        'Remove',
-      );
-      if (confirmed !== 'Remove') return;
-    }
+    // A method that references the class from INSIDE the doomed subtree goes away with it
+    // (Doomed class >> new naming Doomed, a subclass's own method), so it is no reason to
+    // ask. What is left is the references that will still be there afterwards.
+    const doomed = new Set(targets.map((t) => t.className));
+    const scan = this.scanReferences((env) =>
+      queries.referencesToClassInDict(session, className, dictIndex, env),
+    );
+    const target: SafeDeleteTarget = {
+      kind: 'class',
+      label: `${className} from ${dictName}`,
+      references: scan.references.filter((r) => !doomed.has(r.className)),
+      scanFailed: scan.scanFailed,
+      // Subclasses always earn a confirmation: removing the subtree takes classes the user
+      // did not click on, whether or not anything outside references them.
+      blockers: descendants.map((d) => d.className),
+      blockerLead: `Subclass${descendants.length === 1 ? '' : 'es'} removed with it (all or none)`,
+      note: 'Nothing is committed until you commit the session.',
+      confirmLabel: descendants.length > 0 ? 'Remove All' : undefined,
+    };
+
+    const decision = await decideSafeDelete(session.id, target);
+    if (decision === 'cancelled') return;
 
     const failures: string[] = [];
     const removed: string[] = [];
@@ -4276,6 +4430,9 @@ export class ExplorerController {
 
     if (failures.length > 0) {
       void vscode.window.showErrorMessage(`Remove class had errors — ${failures.join('; ')}`);
+    } else if (decision === 'silent') {
+      // Nothing was asked, so the status bar alone is too quiet for a whole class going away.
+      announceSilentDelete(target);
     } else if (targets.length > 1) {
       const n = targets.length - 1;
       void vscode.window.setStatusBarMessage(
@@ -5596,6 +5753,14 @@ export function registerGemStoneExplorer(
         if (item instanceof ClassVarItem) void ctl.renameClassVariable(item);
       },
     ),
+    // Remove a class variable (lightweight — no reshape/preview; see removeClassVar).
+    vscode.commands.registerCommand('gemstone.explorer.removeClassVar', (item?: ClassVarItem) => {
+      if (!(item instanceof ClassVarItem)) return;
+      void ctl.removeClassVar(item).catch((e: unknown) => {
+        const msg = e instanceof Error ? e.message : String(e);
+        void vscode.window.showErrorMessage(`Remove class variable failed: ${msg}`);
+      });
+    }),
     // Rename a method / selector across implementors and senders (pencil on the
     // method row).
     vscode.commands.registerCommand('gemstone.explorer.renameMethod', (item?: MethodItem) => {

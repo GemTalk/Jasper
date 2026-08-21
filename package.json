@@ -1474,13 +1474,19 @@
         "command": "gemstone.explorer.removeInstVar",
         "title": "Remove Instance Variable…",
         "category": "GemStone",
-        "icon": "$(remove)"
+        "icon": "$(trash)"
       },
       {
         "command": "gemstone.explorer.renameClassVariable",
         "title": "Rename Class Variable…",
         "category": "GemStone",
         "icon": "$(edit)"
+      },
+      {
+        "command": "gemstone.explorer.removeClassVar",
+        "title": "Remove Class Variable…",
+        "category": "GemStone",
+        "icon": "$(trash)"
       },
       {
         "command": "gemstone.explorer.moveUpInstVar",
@@ -2357,6 +2363,16 @@
           "command": "gemstone.explorer.renameClassVariable",
           "when": "view == gemstoneExplorerClasses && viewItem == explorerClassVar && gemstone.rbSupportAvailable",
           "group": "inline"
+        },
+        {
+          "command": "gemstone.explorer.removeClassVar",
+          "when": "view == gemstoneExplorerClasses && viewItem == explorerClassVar",
+          "group": "inline@2"
+        },
+        {
+          "command": "gemstone.explorer.removeClassVar",
+          "when": "view == gemstoneExplorerClasses && viewItem == explorerClassVar",
+          "group": "3_refactor@1"
         },
         {
           "command": "gemstone.explorer.addAccessors",
