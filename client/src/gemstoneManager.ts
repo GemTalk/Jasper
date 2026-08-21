@@ -217,6 +217,8 @@ type Inbound =
   | { command: 'registerLocalVersion' }
   | { command: 'installNewVersion' }
   | { command: 'createDatabase' }
+  | { command: 'createDatabaseDefaults' }
+  | { command: 'createDefaultLogin'; dirName: string }
   | { command: 'deleteDatabase'; dirName: string }
   | { command: 'startDatabase'; dirName: string }
   | { command: 'stopDatabase'; dirName: string }
@@ -583,6 +585,16 @@ export class GemstoneManagerPanel {
         // editor, so a database made from the panel ended up different from one
         // made anywhere else.
         await vscode.commands.executeCommand('gemstone.createDatabase');
+        await this.postState();
+        return;
+      case 'createDatabaseDefaults':
+        await vscode.commands.executeCommand('gemstone.createDatabaseDefaults');
+        await this.postState();
+        return;
+      case 'createDefaultLogin':
+        await vscode.commands.executeCommand('gemstone.createDefaultLogin', {
+          dirName: msg.dirName,
+        });
         await this.postState();
         return;
       case 'deleteDatabase':

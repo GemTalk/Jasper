@@ -906,12 +906,27 @@ describe('a step can do itself', () => {
     expect(msg.label).toBeUndefined();
   });
 
-  it('offers to create a database, and says that it will ask', () => {
-    const { root } = open(state({ databases: [] }));
+  it('offers to create a database without asking anything', () => {
+    const { root, host } = open(state({ databases: [] }));
 
     start(root);
+    expect(doBtn()?.textContent).toBe('Create one with the defaults');
 
-    expect(doBtn()?.textContent).toBe('Create a database…');
+    doBtn()?.click();
+    expect(host.postMessage).toHaveBeenCalledWith({ command: 'createDatabaseDefaults' });
+  });
+
+  it('makes and uses the login a database implies, when it has none', () => {
+    const { root, host } = open(state({ databases: [database()], logins: [] }));
+
+    start(root);
+    expect(doBtn()?.textContent).toBe('Log in as DataCurator');
+
+    doBtn()?.click();
+    expect(host.postMessage).toHaveBeenCalledWith({
+      command: 'createDefaultLogin',
+      dirName: 'devKit',
+    });
   });
 
   it('offers to log in when a login is configured and its stone is up', () => {
@@ -935,10 +950,12 @@ describe('a step can do itself', () => {
     expect(doBtn()?.textContent).toBe('Start devKit and log in');
   });
 
-  it('offers to add a login when there is none', () => {
-    const { root } = open(state({ logins: [] }));
+  it('falls back to adding a login by hand when there is no database either', () => {
+    const { root } = open(state({ logins: [], databases: [] }));
 
     start(root);
+    // Databases is the outstanding step here, so walk on to Connect.
+    document.querySelector<HTMLElement>('[data-tour="next"]')?.click();
 
     expect(doBtn()?.textContent).toBe('Add a login…');
   });
@@ -1008,5 +1025,31 @@ describe('a step can do itself', () => {
     api().render(state({ versions: [INSTALLED_VERSION], databases: [] }));
 
     expect(document.querySelector('.gm-call-step')?.textContent).toBe('Step 2 of 4');
+  });
+});
+
+// The panel follows the admin views' change events, but nothing there can ask the
+// download catalogue again or forget the cached WSL answers the checklist reads.
+describe('refreshing the panel', () => {
+  it('offers a refresh', () => {
+    const { root } = open(state());
+
+    expect(root.querySelector('[data-action="refresh"]')).not.toBeNull();
+  });
+
+  it('asks the host to read the machine again', () => {
+    const { root, host } = open(state());
+
+    root.querySelector<HTMLElement>('[data-action="refresh"]')?.click();
+
+    expect(host.postMessage).toHaveBeenCalledWith(expect.objectContaining({ command: 'refresh' }));
+  });
+
+  it('says what it will do', () => {
+    const { root } = open(state());
+
+    expect(root.querySelector('[data-action="refresh"]')?.getAttribute('title')).toMatch(
+      /download catalogue/,
+    );
   });
 });

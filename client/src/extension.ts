@@ -139,6 +139,7 @@ import { runLogicalRestore, RestoreSession } from './restoreManager';
 import { hasFileControlPrivilege, serverBackupFilePaths } from './queries/backup';
 import { backupFolderInServer } from './queries/extentBackup';
 import { ProcessManager, versionsMatch } from './processManager';
+import { compareGemStoneVersions } from './gemStoneVersion';
 import { openMcpInspector } from './openMcpInspector';
 import { McpSocketServer, writeClaudeDesktopMcpConfig } from './mcpSocketServer';
 import { writeClaudeCodeUserMcpConfig } from './claudeCodeUserMcpConfig';
@@ -3598,6 +3599,70 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showInformationMessage(`Database "${db.dirName}" created.`);
       }
     }),
+
+    // A database with no questions asked, for a machine that has none. Uses the
+    // same answers Quick Setup uses, and creates the stone's DataCurator login
+    // the same way the interactive create does — `gemstone.login` resolves the
+    // GCI library itself, so the login it leaves behind is usable as it stands.
+    vscode.commands.registerCommand('gemstone.createDatabaseDefaults', async () => {
+      const installed = [...sysadminStorage.getExtractedVersions()].sort((a, b) =>
+        compareGemStoneVersions(b, a),
+      );
+      const version = installed[0];
+      if (!version) {
+        void vscode.window.showErrorMessage(
+          'No GemStone version is installed yet. Install one before creating a database.',
+        );
+        return;
+      }
+      let db;
+      try {
+        db = await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: `Creating database on GemStone ${version}...`,
+          },
+          (progress) =>
+            databaseManager.createDatabaseDirect(
+              version,
+              'extent0',
+              'gs64stone',
+              'gs64ldi',
+              progress,
+            ),
+        );
+      } catch (e) {
+        void vscode.window.showErrorMessage(
+          `Database creation failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
+        return;
+      }
+      const newLogin = dataCuratorLoginToCreate(storage.getLogins(), db.config);
+      if (newLogin) {
+        await storage.saveLogin(newLogin);
+        treeProvider.refresh();
+      }
+      refreshAdminViews();
+    }),
+
+    // The login a managed database implies, for a database that has none — then
+    // straight into it, since adding a login is never the point in itself.
+    vscode.commands.registerCommand(
+      'gemstone.createDefaultLogin',
+      async (arg: { dirName?: string }) => {
+        const db = sysadminStorage.getDatabases().find((d) => d.dirName === arg?.dirName);
+        if (!db) return;
+        const login =
+          dataCuratorLoginToCreate(storage.getLogins(), db.config) ??
+          storage.getLogins().find((l) => sameLoginTarget(l, buildDataCuratorLogin(db.config)));
+        if (!login) return;
+        if (dataCuratorLoginToCreate(storage.getLogins(), db.config)) {
+          await storage.saveLogin(login);
+          treeProvider.refresh();
+        }
+        await vscode.commands.executeCommand('gemstone.login', { login });
+      },
+    ),
 
     vscode.commands.registerCommand('gemstone.deleteDatabase', async (node: DatabaseNode) => {
       if (node?.kind !== 'database') return;

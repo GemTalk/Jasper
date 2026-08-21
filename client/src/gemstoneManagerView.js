@@ -57,6 +57,7 @@
     output: 'output',
     archive: 'archive',
     restore: 'history',
+    refresh: 'refresh',
   };
 
   /** The codicon name for an internal key (or the name itself, if already one). */
@@ -496,9 +497,14 @@
       : undefined;
   }
 
-  function connectDo(logins) {
+  function connectDo(logins, databases) {
     const list = logins || [];
-    if (!list.length) return { command: 'createLogin', label: 'Add a login…' };
+    if (!list.length) {
+      const db = (databases || [])[0];
+      return db
+        ? { command: 'createDefaultLogin', dirName: db.dirName, label: 'Log in as DataCurator' }
+        : { command: 'createLogin', label: 'Add a login…' };
+    }
     // A login whose stone is up can be logged straight into; otherwise the stone
     // has to come up first, which the panel treats as one action.
     const up = list.find((l) => l.running);
@@ -545,7 +551,7 @@
       ],
       note: 'Once it exists, opening its row lists the log, configuration and backup files it owns: a configuration file opens in the editor to be changed by hand, and Terminal and Reveal open the database on disk for anything the panel does not cover.',
       action: 'Usually: + , accept the four defaults, then Start to bring the stone and NetLDI up.',
-      do: { command: 'createDatabase', label: 'Create a database…' },
+      do: { command: 'createDatabaseDefaults', label: 'Create one with the defaults' },
       done: (state.databases || []).length > 0,
     });
     steps.push({
@@ -554,7 +560,7 @@
       body: 'A login pairs a user with a stone. The session it opens is what the class browser, workspaces and the debugger all work through.',
       action:
         'Usually: + to add a login, then Log in. Use Start & log in when the stone is not running yet — it does both.',
-      do: connectDo(state.logins),
+      do: connectDo(state.logins, state.databases),
       done: (state.logins || []).some((l) => l.connected),
     });
     return steps;
@@ -587,6 +593,7 @@
       <div class="gm-head-acts">
         ${quick}
         <button type="button" class="btn" data-tour="start">${ICONS.target}<span>Show me how</span></button>
+        ${btn('refresh', 'Refresh', 'refresh', null, { iconOnly: true, title: 'Read this machine again, and ask the download catalogue for new releases' })}
       </div>
     </div>`;
   }

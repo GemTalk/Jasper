@@ -1730,6 +1730,18 @@
         "icon": "$(add)"
       },
       {
+        "command": "gemstone.createDatabaseDefaults",
+        "title": "New Database with Defaults",
+        "category": "GemStone Admin",
+        "icon": "$(add)"
+      },
+      {
+        "command": "gemstone.createDefaultLogin",
+        "title": "Add the Default Login and Connect",
+        "category": "GemStone Admin",
+        "icon": "$(key)"
+      },
+      {
         "command": "gemstone.deleteDatabase",
         "title": "Delete Database",
         "category": "GemStone Admin",
