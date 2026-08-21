@@ -513,14 +513,6 @@
       ],
       "gemstoneExplorer": [
         {
-          "id": "gemstoneExplorerOpenEditors",
-          "name": "Open Editors",
-          "type": "tree",
-          "icon": "$(go-to-file)",
-          "when": "gemstone.explorerActive && gemstone.explorerHasOpenEditors",
-          "size": 1
-        },
-        {
           "id": "gemstoneExplorerDicts",
           "name": "Dictionaries",
           "type": "tree",
@@ -1169,17 +1161,6 @@
         "icon": "$(discard)"
       },
       {
-        "command": "gemstone.explorer.revealOpenEditor",
-        "title": "Reveal Open Editor",
-        "category": "GemStone"
-      },
-      {
-        "command": "gemstone.explorer.closeOpenEditor",
-        "title": "Close Editor",
-        "category": "GemStone",
-        "icon": "$(close)"
-      },
-      {
         "command": "gemstone.explorer.closeAllOpenEditors",
         "title": "Close All GemStone Editors",
         "category": "GemStone",
@@ -1187,12 +1168,12 @@
       },
       {
         "command": "gemstone.explorer.openSelectedMethodToSide",
-        "title": "Pin Method",
+        "title": "Keep Method Open (Pin)",
         "category": "GemStone"
       },
       {
         "command": "gemstone.explorer.openMethodToSide",
-        "title": "Pin Method",
+        "title": "Keep Method Open (Pin)",
         "category": "GemStone",
         "icon": "$(pin)"
       },
@@ -1965,14 +1946,6 @@
           "when": "false"
         },
         {
-          "command": "gemstone.explorer.revealOpenEditor",
-          "when": "false"
-        },
-        {
-          "command": "gemstone.explorer.closeOpenEditor",
-          "when": "false"
-        },
-        {
           "command": "gemstone.explorer.openSelectedMethodToSide",
           "when": "false"
         },
@@ -2060,11 +2033,6 @@
           "command": "gemstone.explorer.abort",
           "when": "view == gemstoneExplorerDicts",
           "group": "navigation@5"
-        },
-        {
-          "command": "gemstone.explorer.closeAllOpenEditors",
-          "when": "view == gemstoneExplorerOpenEditors",
-          "group": "navigation"
         },
         {
           "command": "gemstoneExplorerDicts.filter",
@@ -2252,11 +2220,6 @@
           "command": "gemstone.explorer.openMethodToSide",
           "when": "view == gemstoneExplorerMethods && viewItem =~ /^explorerMethod/",
           "group": "inline@3"
-        },
-        {
-          "command": "gemstone.explorer.closeOpenEditor",
-          "when": "view == gemstoneExplorerOpenEditors && viewItem == explorerOpenEditorItem",
-          "group": "inline@0"
         },
         {
           "command": "gemstone.explorer.implementorsOf",

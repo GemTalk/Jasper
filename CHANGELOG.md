@@ -4,6 +4,14 @@ All notable changes to the **GemStone Smalltalk** extension will be documented i
 
 ## [Unreleased]
 
+### Added
+
+- **A one-time hint explains how to keep multiple methods open in the Explorer.** The Methods pane opens a method in a single reusable preview tab, so single-clicking another method replaces it — a first-time user reads that as the method being lost, and doesn't see how to view two at once. The first time a click is about to replace a previewed method, a one-time toast points out that double-clicking it (or its **Keep Method Open** button) keeps it open while you browse others. The pin button and the method-row tooltip now say the same thing: the button was retitled from **Pin Method** to **Keep Method Open (Pin)**, and the tooltip spells out preview-vs-keep. ([#468](https://github.com/GemTalk/Jasper/issues/468))
+
+### Removed
+
+- **The GemStone Explorer's Open Editors pane is gone; a status-bar button replaces it.** As the topmost pane it appeared the instant you opened your first editor, which reshuffled the sidebar and scrolled your class selection out of view — and it spent a pane's worth of height duplicating what the editor tabs already show. Your open editors are just editor tabs now, and a left status-bar button (**GemStone: Close All GemStone Editors**, also in the Command Palette) tallies them and closes them all in one click. ([#468](https://github.com/GemTalk/Jasper/issues/468))
+
 ## [1.8.13] - 2026-08-20
 
 A follow-up release for **GemStone Search**: correctness fixes for multi-session and multi-environment use, matching and debounce repairs found by a review pass over the feature, one naming pass, and the senders/implementors counts moving off the method source.

@@ -166,9 +166,9 @@ Long-running expressions show a progress notification with soft-break and hard-b
 
 ### GemStone Explorer
 
-The **GemStone Explorer** is the primary way to browse and edit code, and the view to reach for first. It lives in its own activity-bar container as a set of linked panes — **Dictionaries**, **Class Categories**, **Classes**, **Hierarchy**, and **Methods** — plus **Open Editors** for what you have open.
+The **GemStone Explorer** is the primary way to browse and edit code, and the view to reach for first. It lives in its own activity-bar container as a set of linked panes — **Dictionaries**, **Class Categories**, **Classes**, **Hierarchy**, and **Methods**. Your open editors appear as ordinary editor tabs; a status-bar button tallies them and closes them all at once (**GemStone: Close All GemStone Editors**).
 
-Selecting down the panes narrows what the next one shows. Click a method to open its source; **Cmd+S** (Ctrl+S) compiles it back to GemStone. Class definitions and comments are editable the same way.
+Selecting down the panes narrows what the next one shows. Click a method to open its source; **Cmd+S** (Ctrl+S) compiles it back to GemStone. Class definitions and comments are editable the same way. A single click previews a method in one reusable tab, so clicking another replaces it — double-click a method (or use **Keep Method Open**) to keep it open while you browse others.
 
 Beyond browsing, the Explorer is where the code-changing operations live:
 
