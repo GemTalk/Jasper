@@ -82,23 +82,6 @@ export interface NbRunOptions {
 }
 
 /**
- * Poll an ALREADY-STARTED non-blocking GemStone call to completion without
- * blocking the extension host.
- *
- * @param onReady reads the result once polling reports it's ready (typically
- *                `GciTsNbResult`) and returns the caller's value; may throw to
- *                signal failure. May be async: when it returns a promise (e.g.
- *                the transcript-forwarding settle loop, which chains async
- *                GciTsContinueWith calls), the run only settles when that
- *                promise does — so the progress notification and its
- *                soft/hard-break Cancel keep working for the whole run.
- *
- * If the call outlives `PROGRESS_THRESHOLD_MS`, a cancellable progress
- * notification appears: the first cancel sends a soft break and updates the
- * notification so the user can see it registered; a second sends a hard break
- * and rejects with `NbCancelledError`.
- */
-/**
  * The least time that may pass between a soft break and the hard break that
  * follows it. Sending both back-to-back crashes the client process outright — a
  * native fault in the GCI library, not an error that can be caught — so a second
@@ -165,11 +148,26 @@ function drainAbandonedCall(session: ActiveSession): Promise<void> {
   return done;
 }
 
-/** Wait for any abandoned call on this session to be collected. */
-export function awaitSessionDrain(session: ActiveSession): Promise<void> {
-  return draining.get(session.id) ?? Promise.resolve();
-}
-
+/**
+ * Poll an ALREADY-STARTED non-blocking GemStone call to completion without
+ * blocking the extension host.
+ *
+ * @param onReady reads the result once polling reports it's ready (typically
+ *                `GciTsNbResult`) and returns the caller's value; may throw to
+ *                signal failure. May be async: when it returns a promise (e.g.
+ *                the transcript-forwarding settle loop, which chains async
+ *                GciTsContinueWith calls), the run only settles when that
+ *                promise does — so the progress notification and its
+ *                soft/hard-break Cancel keep working for the whole run.
+ *
+ * If the call outlives `PROGRESS_THRESHOLD_MS`, a cancellable progress
+ * notification appears: the first cancel sends a soft break and updates the
+ * notification so the user can see it registered; a second sends a hard break
+ * and rejects with `NbCancelledError`. A second cancel that lands within
+ * `MIN_HARD_BREAK_GAP_MS` of the soft break isn't obeyed immediately — the hard
+ * break is deferred until that gap has elapsed, because sending both back-to-back
+ * crashes the client.
+ */
 export function pollNbToCompletion<T>(
   session: ActiveSession,
   onReady: () => T | Promise<T>,

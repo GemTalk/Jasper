@@ -1092,14 +1092,17 @@ export class SunitTestController implements vscode.Disposable {
   }
 
   /**
-   * Show the tests as running before the (blocking) stone call starts, having
-   * first shown them as never-run.
+   * Show the tests as running before the stone call starts, having first shown
+   * them as never-run.
    *
-   * Both yields matter. The queries are synchronous, so without handing the
-   * event loop back nothing repaints until the answer has arrived. And the
-   * blank frame is what makes a re-run visible at all: re-running a test that
-   * failed and fails again would otherwise repaint the ✗ it was already showing,
-   * leaving no way to tell whether the run happened.
+   * Both yields matter, and the blank frame is why. Re-running a test that failed
+   * and fails again would otherwise repaint the ✗ it was already showing, leaving
+   * no way to tell the run happened; clearing to blank and then to "running" makes
+   * the re-run visible — but each intermediate state only paints if the event loop
+   * gets a turn, hence the yield after each. (The queries no longer block the host
+   * — runTestClassNb/runTestMethodNb went non-blocking in this PR — so this is now
+   * purely about letting those frames paint, not about unblocking a synchronous
+   * call.)
    */
   private async markRunning(items: vscode.TestItem[], stoppable = true): Promise<void> {
     for (const item of items) {

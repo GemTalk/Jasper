@@ -688,6 +688,17 @@ function testResultIcon(result: ExplorerTestResult): vscode.ThemeIcon {
   );
 }
 
+/**
+ * The selector-shape half of "SUnit would run this": an instance-side unary
+ * selector beginning with 'test'. Matches GemStone's own `TestCase>>testSelectors`.
+ * The class-level check (a discovered TestCase subclass) is the caller's — see
+ * ExplorerController.isTestSelector and decorateTestRow, which share this so the
+ * rule lives in exactly one place.
+ */
+function isTestSelectorShape(isMeta: boolean, selector: string): boolean {
+  return !isMeta && selector.startsWith('test') && !selector.includes(':');
+}
+
 function testResultTooltip(result: ExplorerTestResult): string {
   const said =
     result.outcome === 'running'
@@ -797,6 +808,15 @@ export class ExplorerController {
     this.attributedOpens.add(uri.toString());
   }
 
+  /** Drop a claim that was never consumed — the open threw, kept focus, or the
+   *  document was already active, so no editor-change fired to spend it. Without
+   *  this the claim lingers and the next genuine Testing-view click on the same
+   *  URI is misread as a deliberate navigation. A no-op once syncToEditor has
+   *  already consumed the claim. */
+  clearAttributedOpen(uri: vscode.Uri): void {
+    this.attributedOpens.delete(uri.toString());
+  }
+
   /**
    * Navigate the panes to `uri`'s class/method on purpose — what Reveal in
    * GemStone Explorer does from a Testing view row, where a plain click
@@ -839,19 +859,17 @@ export class ExplorerController {
    * True when SUnit would run this selector of the class the Methods pane is
    * showing — i.e. the row should offer to run it.
    *
-   * Matches GemStone's own `TestCase>>testSelectors`: an instance-side unary
-   * selector beginning with 'test', on a class discovered as a TestCase
-   * subclass. Decided from the selector rather than by asking the SUnit
-   * controller for the class's test methods, because those are listed lazily
-   * and this is answered while building rows, synchronously. A selector that
-   * slips through runs and reports that it found no such test.
+   * Combines the class check (a discovered TestCase subclass) with the selector
+   * shape rule in `isTestSelectorShape`. Decided from the selector rather than by
+   * asking the SUnit controller for the class's test methods, because those are
+   * listed lazily and this is answered while building rows, synchronously. A
+   * selector that slips through runs and reports that it found no such test.
    */
   isTestSelector(isMeta: boolean, selector: string): boolean {
-    if (isMeta) return false;
     const { dictName, className } = this.state;
     if (dictName === undefined || className === undefined) return false;
     if (!this.sunit?.isTestClass(dictName, className)) return false;
-    return selector.startsWith('test') && !selector.includes(':');
+    return isTestSelectorShape(isMeta, selector);
   }
 
   /**
@@ -875,11 +893,9 @@ export class ExplorerController {
   ): void {
     if (dictName === undefined || !this.sunit?.isTestClass(dictName, className)) return;
     // A test class's non-test methods (setUp, helpers) are not runnable rows.
-    if (
-      selector !== undefined &&
-      !(!isMeta && selector.startsWith('test') && !selector.includes(':'))
-    )
-      return;
+    // Same selector-shape rule isTestSelector uses — one home, so the copy under
+    // test is the copy that runs.
+    if (selector !== undefined && !isTestSelectorShape(isMeta, selector)) return;
 
     item.contextValue = `${item.contextValue ?? ''}.test`;
     const result = this.sunit.resultFor(dictName, className, selector);
@@ -5392,6 +5408,9 @@ export interface ExplorerHandle {
   /** Claim an about-to-happen open so it navigates the panes; see
    *  ExplorerController.markAttributedOpen. */
   markAttributedOpen(uri: vscode.Uri): void;
+  /** Drop a claim whose open never fired an editor-change; see
+   *  ExplorerController.clearAttributedOpen. */
+  clearAttributedOpen(uri: vscode.Uri): void;
   /** Navigate the panes to `uri`'s class/method — the explicit Reveal action a
    *  Testing-view row offers, since a plain click deliberately does not. */
   revealDocument(uri: vscode.Uri): Promise<void>;
@@ -5410,9 +5429,6 @@ export function registerGemStoneExplorer(
   // Called once per class that Remove Class actually deleted, so GemStone Search can drop it from its
   // cached corpus instead of showing (and offering to open) a class that no longer exists.
   onClassRemoved?: (sessionId: number, className: string) => void,
-  // True when a URI is the document a SUnit test item points at; see
-  // ExplorerController.isTestItemUri. Late-bound, because the SUnit controller is
-  // built after this one.
   // Test affordances on class/method rows. Late-bound, because the SUnit controller is
   // built after this one.
   sunit?: ExplorerSunitHooks,
@@ -6058,6 +6074,7 @@ export function registerGemStoneExplorer(
       ctl.onExternalClassCompiled(sessionId, className, dictName),
     onSessionAborted: (sessionId) => ctl.onSessionAborted(sessionId),
     markAttributedOpen: (uri) => ctl.markAttributedOpen(uri),
+    clearAttributedOpen: (uri) => ctl.clearAttributedOpen(uri),
     revealDocument: (uri) => ctl.revealDocument(uri),
   };
 }

@@ -330,6 +330,21 @@ describe('a click in the Testing view', () => {
     expect(method.reveal).not.toHaveBeenCalled();
   });
 
+  it('drops an unconsumed claim, so a later row click on the same URI is not hijacked', async () => {
+    // A4: when an open never fires an editor-change (it threw, kept focus, or the
+    // document was already active) the claim is never consumed. clearAttributedOpen
+    // removes it, so the next genuine Testing-view click still takes the row-click
+    // early return instead of following the stale claim.
+    const c = ctl();
+    const method = withViews(c);
+    c.markAttributedOpen(Uri.parse(TEST_URI));
+    c.clearAttributedOpen(Uri.parse(TEST_URI));
+
+    await c.syncToEditor(Uri.parse(TEST_URI));
+
+    expect(method.reveal).not.toHaveBeenCalled();
+  });
+
   it('revealDocument navigates on purpose, past the guard that ignores test rows', async () => {
     // Reveal in GemStone Explorer, from a Testing view row. Without the claim it
     // would take the same early return a plain row click does.
