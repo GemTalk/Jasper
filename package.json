@@ -19,8 +19,16 @@
     "node": ">=22.15.1"
   },
   "devEngines": {
-    "packageManager": { "name": "npm", "version": ">=11.16.0", "onFail": "error" },
-    "runtime": { "name": "node", "version": ">=22.15.1", "onFail": "error" }
+    "packageManager": {
+      "name": "npm",
+      "version": ">=11.16.0",
+      "onFail": "error"
+    },
+    "runtime": {
+      "name": "node",
+      "version": ">=22.15.1",
+      "onFail": "error"
+    }
   },
   "icon": "resources/gemstone-icon.png",
   "categories": [
@@ -137,7 +145,10 @@
         "properties": {
           "gemstone.omniSearch.ui": {
             "type": "string",
-            "enum": ["spotter", "panel"],
+            "enum": [
+              "spotter",
+              "panel"
+            ],
             "enumDescriptions": [
               "Editor-tab Spotter: a webview in an editor tab with labeled scope tabs, a source-preview pane, own match highlighting, and an always-on case indicator.",
               "Bottom-panel view (default): the same webview docked in the panel strip (next to Terminal/Output). Stays out of the way; results open in the editor area above it."
@@ -147,7 +158,11 @@
           },
           "gemstone.omniSearch.matchMode": {
             "type": "string",
-            "enum": ["fuzzy", "substring", "prefix"],
+            "enum": [
+              "fuzzy",
+              "substring",
+              "prefix"
+            ],
             "enumDescriptions": [
               "Subsequence match: the typed characters appear in order (the Quick-Open feel).",
               "The typed text appears as a contiguous run.",
@@ -237,7 +252,12 @@
             "type": "array",
             "items": {
               "type": "string",
-              "enum": ["classes", "methods", "dictionaries", "globals"]
+              "enum": [
+                "classes",
+                "methods",
+                "dictionaries",
+                "globals"
+              ]
             },
             "default": [],
             "markdownDescription": "Scopes to leave out of the **All** search while keeping their own tab, so you can still search them on purpose. Useful for **methods**, which queries the stone on every keystroke. This is different from `#gemstone.omniSearch.categories#`, which removes a scope altogether (no tab, no search). Source, Literals and Class Categories are always outside All and so cannot be listed here. This is the value the panel **starts** with; the **Scopes** button in the panel changes it for the current session without changing this setting."
@@ -513,14 +533,6 @@
       ],
       "gemstoneExplorer": [
         {
-          "id": "gemstoneExplorerOpenEditors",
-          "name": "Open Editors",
-          "type": "tree",
-          "icon": "$(go-to-file)",
-          "when": "gemstone.explorerActive && gemstone.explorerHasOpenEditors",
-          "size": 1
-        },
-        {
           "id": "gemstoneExplorerDicts",
           "name": "Dictionaries",
           "type": "tree",
@@ -742,6 +754,28 @@
             ]
           },
           {
+            "id": "browseClasses",
+            "title": "Browse classes",
+            "description": "Open the GemStone Explorer and click a class — its methods appear in the Methods pane below. Or jump straight to any class by name.\n[Find Class…](command:gemstone.findClass)",
+            "media": {
+              "markdown": "resources/walkthrough/browseClasses.md"
+            },
+            "completionEvents": [
+              "onCommand:gemstone.findClass"
+            ]
+          },
+          {
+            "id": "search",
+            "title": "Search your code",
+            "description": "One box searches across classes, methods, and method source — the fastest way to find something when you don't know where it lives.\n[GemStone Search…](command:gemstone.search)",
+            "media": {
+              "markdown": "resources/walkthrough/search.md"
+            },
+            "completionEvents": [
+              "onCommand:gemstone.search"
+            ]
+          },
+          {
             "id": "serverSupport",
             "title": "Install optional server support",
             "description": "Jasper can install two optional server-side supports: the Enhanced Inspector (rich object views, GemStone 3.7.5+) and the refactoring engine (rename instance variable, and more). On connect it offers to install whatever a stone is missing; the `gemstone.serverSupport.autoInstall` setting (ask / always / never) controls that.\n[Install GemStone Support…](command:gemstone.installServerSupport)\n\n[Uninstall GemStone Support…](command:gemstone.uninstallServerSupport) removes both from the stone (does nothing if neither is installed).",
@@ -916,8 +950,13 @@
         "icon": "$(mortar-board)"
       },
       {
+        "command": "gemstone.startHere",
+        "title": "Start Here",
+        "category": "GemStone"
+      },
+      {
         "command": "gemstone.resetGettingStarted",
-        "title": "Reset Getting Started (Show Walkthrough on Next Startup)",
+        "title": "Reset Getting Started (Walkthrough + Start Here Button)",
         "category": "GemStone"
       },
       {
@@ -1139,6 +1178,18 @@
         "icon": "$(search)"
       },
       {
+        "command": "gemstone.navigateBack",
+        "title": "GemStone Go Back",
+        "category": "GemStone",
+        "icon": "$(arrow-left)"
+      },
+      {
+        "command": "gemstone.navigateForward",
+        "title": "GemStone Go Forward",
+        "category": "GemStone",
+        "icon": "$(arrow-right)"
+      },
+      {
         "command": "gemstone.toggleSelectorBreakpoint",
         "title": "Toggle Selector Breakpoint",
         "category": "GemStone",
@@ -1169,17 +1220,6 @@
         "icon": "$(discard)"
       },
       {
-        "command": "gemstone.explorer.revealOpenEditor",
-        "title": "Reveal Open Editor",
-        "category": "GemStone"
-      },
-      {
-        "command": "gemstone.explorer.closeOpenEditor",
-        "title": "Close Editor",
-        "category": "GemStone",
-        "icon": "$(close)"
-      },
-      {
         "command": "gemstone.explorer.closeAllOpenEditors",
         "title": "Close All GemStone Editors",
         "category": "GemStone",
@@ -1187,12 +1227,12 @@
       },
       {
         "command": "gemstone.explorer.openSelectedMethodToSide",
-        "title": "Pin Method",
+        "title": "Keep Method Open (Pin)",
         "category": "GemStone"
       },
       {
         "command": "gemstone.explorer.openMethodToSide",
-        "title": "Pin Method",
+        "title": "Keep Method Open (Pin)",
         "category": "GemStone",
         "icon": "$(pin)"
       },
@@ -1853,6 +1893,14 @@
           "when": "false"
         },
         {
+          "command": "gemstone.navigateBack",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.navigateForward",
+          "when": "false"
+        },
+        {
           "command": "gemstone.renameTemporary",
           "when": "false"
         },
@@ -1965,14 +2013,6 @@
           "when": "false"
         },
         {
-          "command": "gemstone.explorer.revealOpenEditor",
-          "when": "false"
-        },
-        {
-          "command": "gemstone.explorer.closeOpenEditor",
-          "when": "false"
-        },
-        {
           "command": "gemstone.explorer.openSelectedMethodToSide",
           "when": "false"
         },
@@ -2060,11 +2100,6 @@
           "command": "gemstone.explorer.abort",
           "when": "view == gemstoneExplorerDicts",
           "group": "navigation@5"
-        },
-        {
-          "command": "gemstone.explorer.closeAllOpenEditors",
-          "when": "view == gemstoneExplorerOpenEditors",
-          "group": "navigation"
         },
         {
           "command": "gemstoneExplorerDicts.filter",
@@ -2252,11 +2287,6 @@
           "command": "gemstone.explorer.openMethodToSide",
           "when": "view == gemstoneExplorerMethods && viewItem =~ /^explorerMethod/",
           "group": "inline@3"
-        },
-        {
-          "command": "gemstone.explorer.closeOpenEditor",
-          "when": "view == gemstoneExplorerOpenEditors && viewItem == explorerOpenEditorItem",
-          "group": "inline@0"
         },
         {
           "command": "gemstone.explorer.implementorsOf",
@@ -2751,6 +2781,18 @@
           "command": "gemstone.toggleSelectorBreakpoint",
           "when": "editorTextFocus && resourceLangId == gemstone-smalltalk",
           "group": "3_gemstoneBreakpoints@0"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "gemstone.navigateBack",
+          "when": "resourceScheme == gemstone",
+          "group": "navigation@1"
+        },
+        {
+          "command": "gemstone.navigateForward",
+          "when": "resourceScheme == gemstone",
+          "group": "navigation@2"
         }
       ]
     },

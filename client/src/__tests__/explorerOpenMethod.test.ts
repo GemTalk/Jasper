@@ -6,7 +6,7 @@ vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 vi.mock('../browserQueries', () => ({}));
 
 import type * as vscode from 'vscode';
-import { ExplorerController, MethodItem } from '../gemstoneExplorer';
+import { ExplorerController, MethodItem, shouldHintKeepMethodsOpen } from '../gemstoneExplorer';
 import { Uri, window, commands, workspace, languages } from '../__mocks__/vscode';
 import type { SessionManager, ActiveSession } from '../sessionManager';
 
@@ -32,6 +32,26 @@ function controllerFor(session: ActiveSession | undefined): ExplorerController {
 function makeController(): ExplorerController {
   return controllerFor(SESSION);
 }
+
+// A controller wired with a fake global-storage memento, backed by `store`, so the
+// one-time "keep methods open" hint can be exercised.
+function controllerWithGlobalState(store: Record<string, unknown>): ExplorerController {
+  const sessionManager = { getSelectedSession: () => SESSION } as unknown as SessionManager;
+  const memento = {
+    get: (k: string) => store[k],
+    update: (k: string, v: unknown) => {
+      store[k] = v;
+      return Promise.resolve();
+    },
+  } as unknown as vscode.Memento;
+  const ctl = new ExplorerController(sessionManager, undefined, undefined, memento);
+  ctl.state.dictName = 'UserGlobals';
+  ctl.state.dictIndex = 1;
+  ctl.state.className = 'Array';
+  return ctl;
+}
+
+const HINT_KEY = 'gemstone.explorer.keepMethodsOpenHintShown';
 
 function info(over: Partial<SelectorInfo> = {}): SelectorInfo {
   return { selector: 'at:', category: 'accessing', overrideBits: 0, sessionBit: 0, ...over };
@@ -153,6 +173,55 @@ describe('ExplorerController.openMethod', () => {
       expect.objectContaining({ preview: false, preserveFocus: false }),
     );
     expect(executeCommand).toHaveBeenCalledWith('workbench.action.pinEditor');
+  });
+});
+
+describe('keep-methods-open hint', () => {
+  const showInfo = window.showInformationMessage as ReturnType<typeof vi.fn>;
+
+  it('fires only when a different method replaces a previewed one, and only once', () => {
+    expect(shouldHintKeepMethodsOpen(undefined, 'a', false)).toBe(false);
+    expect(shouldHintKeepMethodsOpen('a', 'a', false)).toBe(false);
+    expect(shouldHintKeepMethodsOpen('a', 'b', false)).toBe(true);
+    expect(shouldHintKeepMethodsOpen('a', 'b', true)).toBe(false);
+  });
+
+  it('stays quiet on the first previewed method', async () => {
+    const ctl = controllerWithGlobalState({});
+
+    await ctl.openMethod(methodItem({ selector: 'at:' }), 'preview');
+
+    expect(showInfo).not.toHaveBeenCalled();
+  });
+
+  it('explains once when a second, different method replaces the first', async () => {
+    const store: Record<string, unknown> = {};
+    const ctl = controllerWithGlobalState(store);
+
+    await ctl.openMethod(methodItem({ selector: 'at:' }), 'preview');
+    await ctl.openMethod(methodItem({ selector: 'size' }), 'preview');
+    await ctl.openMethod(methodItem({ selector: 'first' }), 'preview');
+
+    expect(showInfo).toHaveBeenCalledTimes(1);
+    expect(store[HINT_KEY]).toBe(true);
+  });
+
+  it('does not fire when it has been shown in a previous session', async () => {
+    const ctl = controllerWithGlobalState({ [HINT_KEY]: true });
+
+    await ctl.openMethod(methodItem({ selector: 'at:' }), 'preview');
+    await ctl.openMethod(methodItem({ selector: 'size' }), 'preview');
+
+    expect(showInfo).not.toHaveBeenCalled();
+  });
+
+  it('does not fire when a pin or keep open replaces the preview (only single-click preview does)', async () => {
+    const ctl = controllerWithGlobalState({});
+
+    await ctl.openMethod(methodItem({ selector: 'at:' }), 'preview');
+    await ctl.openMethod(methodItem({ selector: 'size' }), 'pin');
+
+    expect(showInfo).not.toHaveBeenCalled();
   });
 });
 

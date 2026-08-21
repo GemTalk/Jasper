@@ -294,7 +294,17 @@ describe('LoginEditorPanel', () => {
     it('renders a hint about leaving the password blank to be prompted', async () => {
       await LoginEditorPanel.show(storage, secretsArg, treeProvider);
       const panel = window.createWebviewPanel.mock.results[0].value;
-      expect(panel.webview.html).toContain('Leave password blank to be prompted on each login');
+      expect(panel.webview.html).toContain('Leave it blank to be prompted on each login');
+    });
+
+    it('renders the "Help me login" toggle with per-field help', async () => {
+      await LoginEditorPanel.show(storage, secretsArg, treeProvider);
+      const html = window.createWebviewPanel.mock.results[0].value.webview.html;
+      expect(html).toContain('id="helpToggle"');
+      expect(html).toContain('Help me login');
+      expect(html).toContain('class="field-help"');
+      // The Host User/Password guidance — the field this help exists for.
+      expect(html).toContain('requires host authentication');
     });
 
     it('pre-fills password from SecretStorage when editing a keychain-backed login', async () => {

@@ -1,15 +1,14 @@
 import * as vscode from 'vscode';
 
 // Tints the tree row whose gemstone:// source is the CURRENTLY ACTIVE editor —
-// the matching method in the Methods pane and the matching row in the Open Editors
-// pane — so you can see at a glance which method/class the front editor is. A
-// tree's own selection goes muted grey once focus moves into the editor, leaving no
-// strong link back to the row; this decoration is focus-independent.
+// the matching method in the Methods pane — so you can see at a glance which
+// method/class the front editor is. A tree's own selection goes muted grey once
+// focus moves into the editor, leaving no strong link back to the row; this
+// decoration is focus-independent.
 //
-// Colour only (no badge), so it composes with the unsaved-changes dot
-// (DirtyDecorationProvider) rather than competing for the single badge slot. Uses
-// the same FileDecoration mechanism the git/SCM views use for row badges (each row
-// carries a resourceUri).
+// Colour only (no badge), so it composes with any row badge rather than competing
+// for the single badge slot. Uses the same FileDecoration mechanism the git/SCM
+// views use for row badges (each row carries a resourceUri).
 export class ActiveEditorDecorationProvider implements vscode.FileDecorationProvider {
   private readonly _onDidChange = new vscode.EventEmitter<vscode.Uri | vscode.Uri[] | undefined>();
   readonly onDidChangeFileDecorations = this._onDidChange.event;

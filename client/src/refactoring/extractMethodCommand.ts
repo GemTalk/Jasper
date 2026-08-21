@@ -209,8 +209,8 @@ export async function extractMethodCommand(sessions: SessionManager): Promise<vo
   await reloadMethodEditor(editor);
 
   // Surface the newly-created method: refresh the Explorer so its method tree lists
-  // it, then open + focus its source editor (which also lands it in the Explorer's
-  // Open Editors pane). The new method carries the source method's category.
+  // it, then open + focus its source editor. The new method carries the source
+  // method's category.
   try {
     await vscode.commands.executeCommand('gemstone.explorer.refresh');
   } catch {
