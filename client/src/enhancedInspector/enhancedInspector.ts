@@ -344,6 +344,7 @@ export class EnhancedInspector {
           isMeta: msg.isClassSide,
           selector: msg.methodSelector,
           category: loc.category,
+          environmentId: 0,
         });
         break;
       }

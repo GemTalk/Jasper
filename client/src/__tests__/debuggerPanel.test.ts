@@ -89,6 +89,7 @@ vi.mock('../debugQueries', () => ({
     isMeta: false,
     dictName: 'UserGlobals',
     category: 'running',
+    environmentId: 0,
   })),
   // Whole-stack dump (#10/#11): one batched call. Default = a Receiver row per
   // frame whose printString/oop mirror the per-frame receiverOop (level * 100).
@@ -774,6 +775,7 @@ describe('DebuggerPanel', () => {
           isMeta: false,
           selector: 'halt',
           category: 'running',
+          environmentId: 0,
         },
         vscode.ViewColumn.Beside,
       );
@@ -1056,6 +1058,7 @@ describe('DebuggerPanel', () => {
       className: 'JasperDebugDemo',
       isMeta: false,
       category: 'accessing',
+      environmentId: 0,
       selector: 'accumulateFrom:to:',
     };
 
@@ -2560,6 +2563,7 @@ describe('DebuggerPanel', () => {
         className: 'JasperDebugDemo',
         isMeta: false,
         category: 'accessing',
+        environmentId: 0,
         selector: 'accumulateFrom:to:',
       };
       const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -3187,6 +3191,7 @@ describe('DebuggerPanel', () => {
       className: 'JasperDebugDemo',
       isMeta: false,
       category: 'accessing',
+      environmentId: 0,
       selector: 'accumulateFrom:to:',
     };
 
@@ -3343,6 +3348,7 @@ describe('DebuggerPanel', () => {
       className: 'JasperDebugDemo',
       isMeta: false,
       category: 'running',
+      environmentId: 0,
       selector: 'finish',
     };
 

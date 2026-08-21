@@ -7,8 +7,14 @@ vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 vi.mock('../browserQueries', () => ({
   addAccessors: vi.fn(),
   getClassEnvironments: vi.fn(() => []),
+  methodsAccessingInstVar: vi.fn(() => []),
 }));
 vi.mock('../refactoring/instVarRefactorCommand', () => ({ runInstVarRefactor: vi.fn() }));
+vi.mock('../methodResultsPicker', () => ({
+  showMethodResults: vi.fn(),
+  describeMethodResult: (r: { className: string; isMeta: boolean; selector: string }) =>
+    `${r.className}${r.isMeta ? ' class' : ''} >> #${r.selector}`,
+}));
 
 import * as vscode from 'vscode';
 import { ExplorerController } from '../gemstoneExplorer';
@@ -54,6 +60,7 @@ const outcome = (over: Partial<InstVarRefactorOutcome> = {}): InstVarRefactorOut
   applied: 2,
   committed: false,
   dropped: [],
+  autoApplied: true,
   ...over,
 });
 
@@ -62,6 +69,10 @@ beforeEach(() => {
   // Default the accessors prompt to "No accessors" so the add flows through without
   // generating them; individual tests override to opt in or to escape.
   vi.mocked(vscode.window.showQuickPick).mockResolvedValue('No accessors' as never);
+  // clearAllMocks drops call history but keeps implementations, so restore the two a
+  // remove test overrides — otherwise the override leaks into a shuffled neighbour.
+  vi.mocked(queries.methodsAccessingInstVar).mockReturnValue([]);
+  vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(undefined);
 });
 
 describe('ExplorerController add instance variable', () => {
@@ -210,6 +221,15 @@ describe('ExplorerController add instance variable from the variable-side node',
 });
 
 describe('ExplorerController remove instance variable', () => {
+  const accessor = (selector: string) => ({
+    dictName: 'UserGlobals',
+    className: 'Foo',
+    isMeta: false,
+    selector,
+    category: 'accessing',
+    environmentId: 0,
+  });
+
   it('does nothing when there is no selected session', async () => {
     const { ctl, refresh } = makeController(undefined);
 
@@ -238,5 +258,85 @@ describe('ExplorerController remove instance variable', () => {
     await ctl.removeInstVar({ className: 'Foo', ivarName: 'count' });
 
     expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it('removes a variable no method accesses without a preview or a question', async () => {
+    const { ctl } = makeController({} as ActiveSession);
+    vi.mocked(runInstVarRefactor).mockResolvedValue(outcome());
+
+    await ctl.removeInstVar({ className: 'Foo', ivarName: 'count' });
+
+    expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
+    expect(runInstVarRefactor).toHaveBeenCalledWith(expect.objectContaining({ autoApply: true }));
+  });
+
+  it('announces a removal nothing had to be asked about', async () => {
+    const { ctl } = makeController({} as ActiveSession);
+    vi.mocked(runInstVarRefactor).mockResolvedValue(outcome());
+
+    await ctl.removeInstVar({ className: 'Foo', ivarName: 'count' });
+
+    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+      expect.stringContaining('Removed instance variable count from Foo'),
+    );
+  });
+
+  it('asks before removing a variable methods still access', async () => {
+    vi.mocked(queries.methodsAccessingInstVar).mockReturnValue([accessor('total')]);
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(undefined);
+    const { ctl } = makeController({} as ActiveSession);
+
+    await ctl.removeInstVar({ className: 'Foo', ivarName: 'count' });
+
+    expect(vscode.window.showWarningMessage).toHaveBeenCalled();
+    expect(runInstVarRefactor).not.toHaveBeenCalled();
+  });
+
+  it('names the accessing methods in the confirmation', async () => {
+    vi.mocked(queries.methodsAccessingInstVar).mockReturnValue([accessor('total')]);
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(undefined);
+    const { ctl } = makeController({} as ActiveSession);
+
+    await ctl.removeInstVar({ className: 'Foo', ivarName: 'count' });
+
+    const detail = vi.mocked(vscode.window.showWarningMessage).mock.calls[0][1] as {
+      detail: string;
+    };
+    expect(detail.detail).toContain('Foo >> #total');
+  });
+
+  it('opens the preview once the user chooses to remove an accessed variable anyway', async () => {
+    vi.mocked(queries.methodsAccessingInstVar).mockReturnValue([accessor('total')]);
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValue('Remove Anyway' as never);
+    vi.mocked(runInstVarRefactor).mockResolvedValue(outcome({ autoApplied: false }));
+    const { ctl } = makeController({} as ActiveSession);
+
+    await ctl.removeInstVar({ className: 'Foo', ivarName: 'count' });
+
+    expect(runInstVarRefactor).toHaveBeenCalledWith(expect.objectContaining({ autoApply: false }));
+  });
+
+  it('does not announce a removal the engine sent to the preview after all', async () => {
+    // The client scan found no accessors, but the engine reported methods that will not
+    // recompile — so the panel opened and the user was asked. That is not a silent delete.
+    vi.mocked(runInstVarRefactor).mockResolvedValue(outcome({ autoApplied: false }));
+    const { ctl } = makeController({} as ActiveSession);
+
+    await ctl.removeInstVar({ className: 'Foo', ivarName: 'count' });
+
+    expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
+  });
+
+  it('asks rather than removing unasked when the access scan fails', async () => {
+    vi.mocked(queries.methodsAccessingInstVar).mockImplementation(() => {
+      throw new Error('a SecurityError occurred');
+    });
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(undefined);
+    const { ctl } = makeController({} as ActiveSession);
+
+    await ctl.removeInstVar({ className: 'Foo', ivarName: 'count' });
+
+    expect(vscode.window.showWarningMessage).toHaveBeenCalled();
+    expect(runInstVarRefactor).not.toHaveBeenCalled();
   });
 });

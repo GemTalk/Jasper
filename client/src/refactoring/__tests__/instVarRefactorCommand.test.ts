@@ -31,6 +31,11 @@ import type { ApplyResult } from '../instVarRefactorPreview';
  * resolves undefined for all of them — so their coverage lives in the panel / preview tests; the
  * command's only remaining stake is the abort handler it hands the panel. The parsers run for
  * real; only the GCI queries and the preview panel are mocked.
+ *
+ * `autoApply` is the safe-delete path: the caller has already established that no method
+ * accesses the variable, so there is nothing for a preview to show and the change applies
+ * straight through. The engine still has the last word — if IT reports methods that will
+ * not recompile, the panel opens after all.
  */
 
 const req = (over: Partial<InstVarRefactorRequest> = {}): InstVarRefactorRequest => ({
@@ -221,7 +226,7 @@ describe('add / remove instance variable command', () => {
 
     const outcome = await runInstVarRefactor(req({ op: 'add', ivarName: 'bar', className: 'Foo' }));
 
-    expect(outcome).toEqual({ applied: 2, committed: false, dropped: [] });
+    expect(outcome).toEqual({ applied: 2, committed: false, dropped: [], autoApplied: false });
     expect(vi.mocked(showInstVarRefactorPanel).mock.calls[0][0]).toBe('Add bar to Foo');
     expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
       expect.stringContaining('Add bar to Foo'),
@@ -283,6 +288,101 @@ describe('add / remove instance variable command', () => {
     expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
       expect.stringContaining('Committed.'),
     );
+  });
+
+  describe('applying without the preview panel', () => {
+    it('applies straight through when nothing will fail to recompile', async () => {
+      vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson({ operation: 'remove' }));
+      vi.mocked(queries.startInstVarPreview).mockResolvedValue(startJson());
+      vi.mocked(queries.applyInstVar).mockResolvedValue(
+        JSON.stringify({ applied: 2, failed: [], dropped: [], committed: false }),
+      );
+
+      const outcome = await runInstVarRefactor(req({ op: 'remove', autoApply: true }));
+
+      expect(showInstVarRefactorPanel).not.toHaveBeenCalled();
+      expect(outcome).toEqual({ applied: 2, committed: false, dropped: [], autoApplied: true });
+    });
+
+    it('leaves the announcement to the caller rather than reporting the change itself', async () => {
+      vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson({ operation: 'remove' }));
+      vi.mocked(queries.startInstVarPreview).mockResolvedValue(startJson());
+      vi.mocked(queries.applyInstVar).mockResolvedValue(
+        JSON.stringify({ applied: 2, failed: [], dropped: [], committed: false }),
+      );
+
+      await runInstVarRefactor(req({ op: 'remove', autoApply: true }));
+
+      expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
+    });
+
+    it('releases the preview token', async () => {
+      vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson({ operation: 'remove' }));
+      vi.mocked(queries.startInstVarPreview).mockResolvedValue(startJson());
+      vi.mocked(queries.applyInstVar).mockResolvedValue(
+        JSON.stringify({ applied: 2, failed: [], dropped: [], committed: false }),
+      );
+
+      await runInstVarRefactor(req({ op: 'remove', autoApply: true }));
+
+      const token = vi.mocked(queries.startInstVarPreview).mock.calls[0][4];
+      expect(queries.clearInstVarPreview).toHaveBeenCalledWith(expect.anything(), token);
+    });
+
+    it('opens the panel after all when the engine says methods will not recompile', async () => {
+      vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson({ operation: 'remove' }));
+      vi.mocked(queries.startInstVarPreview).mockResolvedValue(
+        startJson({
+          outOfScope: {
+            decline: null,
+            willNotRecompile: [{ class: 'Foo', selector: 'total' }],
+            actedOnClass: 'Foo',
+            note: null,
+          },
+        }),
+      );
+      vi.mocked(showInstVarRefactorPanel).mockResolvedValue(applied());
+
+      const outcome = await runInstVarRefactor(req({ op: 'remove', autoApply: true }));
+
+      expect(showInstVarRefactorPanel).toHaveBeenCalled();
+      expect(queries.applyInstVar).not.toHaveBeenCalled();
+      // The caller must be able to tell this apart from a genuinely unattended apply.
+      expect(outcome?.autoApplied).toBe(false);
+    });
+
+    it('reports an apply that raises, and answers no outcome', async () => {
+      vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson({ operation: 'remove' }));
+      vi.mocked(queries.startInstVarPreview).mockResolvedValue(startJson());
+      vi.mocked(queries.applyInstVar).mockRejectedValue(new Error('the token expired'));
+
+      const outcome = await runInstVarRefactor(req({ op: 'remove', autoApply: true }));
+
+      expect(outcome).toBeUndefined();
+      expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+        expect.stringContaining('the token expired'),
+      );
+    });
+
+    it('reports an apply the engine refused, and answers no outcome', async () => {
+      vi.mocked(queries.analyzeInstVar).mockResolvedValue(analysisJson({ operation: 'remove' }));
+      vi.mocked(queries.startInstVarPreview).mockResolvedValue(startJson());
+      vi.mocked(queries.applyInstVar).mockResolvedValue(
+        JSON.stringify({
+          applied: 0,
+          failed: [{ id: 'c1', label: 'Foo', error: 'could not recompile' }],
+          dropped: [],
+          committed: false,
+        }),
+      );
+
+      const outcome = await runInstVarRefactor(req({ op: 'remove', autoApply: true }));
+
+      expect(outcome).toBeUndefined();
+      expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+        expect.stringContaining('could not recompile'),
+      );
+    });
   });
 
   it('wires the panel loadPage / apply / cleanup callbacks to the GCI queries', async () => {
