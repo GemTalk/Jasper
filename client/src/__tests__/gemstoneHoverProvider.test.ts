@@ -122,6 +122,23 @@ describe('GemStoneHoverProvider', () => {
       expect(md.value).toContain('0 implementors](command:gemstone.implementorsOfSelector?');
     });
 
+    it('survives implementorsOf throwing — degrades to senders-only, does not kill the hover', async () => {
+      // A thrown GCI query (busy session, browser/RB plugin absent) must not reject
+      // the whole hover and silently show nothing.
+      mockImplementorsOf.mockImplementation(() => {
+        throw new Error('session busy');
+      });
+      mockSendersOf.mockReturnValue(Array.from({ length: 4 }, () => ({}) as never));
+      const resolver: SelectorResolver = { getSelector: vi.fn(async () => 'size') };
+      const provider = new GemStoneHoverProvider(makeSessionManager(true), resolver);
+      const result = await provider.provideHover(makeDocument('self size'), pos(0, 5));
+
+      expect(result).not.toBeNull();
+      const md = result!.contents as unknown as MarkdownString;
+      expect(md.value).toContain('4 senders](command:gemstone.sendersOfSelector?');
+      expect(md.value).toContain('0 implementors](command:gemstone.implementorsOfSelector?');
+    });
+
     it('shows singular "implementor" for one result', async () => {
       mockImplementorsOf.mockReturnValue([
         {

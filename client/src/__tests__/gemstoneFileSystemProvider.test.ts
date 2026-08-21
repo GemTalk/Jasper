@@ -22,6 +22,16 @@ vi.mock('../browserQueries', () => ({
   compileClassDefinition: vi.fn(),
   setClassComment: vi.fn(),
   canClassBeWritten: vi.fn(() => true),
+  // Listing queries used by readDirectory (the breadcrumb drill-down).
+  getDictionaryNames: vi.fn(() => ['UserGlobals', 'Globals']),
+  getClassNames: vi.fn(() => ['Array', 'OrderedCollection']),
+  getMethodCategories: vi.fn(() => ['accessing', 'testing']),
+  getMethodList: vi.fn(() => [
+    { isMeta: false, category: 'accessing', selector: 'at:' },
+    { isMeta: false, category: 'accessing', selector: 'at:put:' },
+    { isMeta: false, category: 'testing', selector: 'isEmpty' },
+    { isMeta: true, category: 'instance creation', selector: 'new' },
+  ]),
 }));
 
 // Keep the real gciLog but spy logInfo so the recategorize soft-failure log is observable.
@@ -49,6 +59,7 @@ import {
   installStaleGemstoneTabReaper,
   escapeSelectorSlashes,
   parseUri,
+  parseDirUri,
   parseMethodUri,
   listOpenGemstoneTabs,
 } from '../gemstoneFileSystemProvider';
@@ -134,6 +145,151 @@ describe('GemStoneFileSystemProvider', () => {
       const p = new GemStoneFileSystemProvider(mgr);
       const stat = p.stat(Uri.parse('gemstone://99/Globals/Array/instance/accessing/at%3A'));
       expect(stat.permissions).toBeUndefined();
+    });
+  });
+
+  describe('parseDirUri (breadcrumb drill-down classification)', () => {
+    it('classifies the session root as the dictionary list', () => {
+      expect(parseDirUri(Uri.parse('gemstone://1/'))?.kind).toBe('root');
+      expect(parseDirUri(Uri.parse('gemstone://1'))?.kind).toBe('root');
+    });
+
+    it('classifies a dictionary, a class, a side, and a category', () => {
+      expect(parseDirUri(Uri.parse('gemstone://1/Globals'))).toMatchObject({
+        kind: 'dict',
+        dictName: 'Globals',
+      });
+      expect(parseDirUri(Uri.parse('gemstone://1/Globals/Array'))).toMatchObject({
+        kind: 'class',
+        className: 'Array',
+      });
+      expect(parseDirUri(Uri.parse('gemstone://1/Globals/Array/instance'))).toMatchObject({
+        kind: 'side',
+        isMeta: false,
+      });
+      expect(parseDirUri(Uri.parse('gemstone://1/Globals/Array/class'))).toMatchObject({
+        kind: 'side',
+        isMeta: true,
+      });
+      expect(parseDirUri(Uri.parse('gemstone://1/Globals/Array/instance/accessing'))).toMatchObject(
+        {
+          kind: 'category',
+          category: 'accessing',
+          isMeta: false,
+        },
+      );
+    });
+
+    it('carries the ?dict index into deeper levels for scoped lookups', () => {
+      expect(parseDirUri(Uri.parse('gemstone://1/Globals/Array?dict=7'))).toMatchObject({
+        kind: 'class',
+        className: 'Array',
+        dictIndex: 7,
+      });
+    });
+
+    it('does NOT classify real files as directories', () => {
+      // method, definition, comment, new-class, new-method are files parseUri owns
+      expect(
+        parseDirUri(Uri.parse('gemstone://1/Globals/Array/instance/accessing/at%3A')),
+      ).toBeNull();
+      expect(parseDirUri(Uri.parse('gemstone://1/Globals/Array/definition'))).toBeNull();
+      expect(parseDirUri(Uri.parse('gemstone://1/Globals/Array/comment'))).toBeNull();
+      expect(parseDirUri(Uri.parse('gemstone://1/UserGlobals/new-class'))).toBeNull();
+      expect(
+        parseDirUri(Uri.parse('gemstone://1/Globals/Array/instance/accessing/new-method')),
+      ).toBeNull();
+      // The 5-segment definition/comment display variants stay files too.
+      expect(parseDirUri(Uri.parse('gemstone://1/Globals/Array/definition/Array'))).toBeNull();
+    });
+
+    it('ignores non-gemstone schemes', () => {
+      expect(parseDirUri(Uri.parse('file:///Globals/Array'))).toBeNull();
+    });
+  });
+
+  describe('stat (directory levels)', () => {
+    it('reports a read-only Directory for an intermediate breadcrumb URI', () => {
+      const stat = provider.stat(Uri.parse('gemstone://1/Globals/Array/instance'));
+      expect(stat.type).toBe(2); // FileType.Directory
+      expect(stat.permissions).toBe(FilePermission.Readonly);
+    });
+
+    it('still reports a File for a method URI', () => {
+      const stat = provider.stat(Uri.parse('gemstone://1/Globals/Array/instance/accessing/at%3A'));
+      expect(stat.type).toBe(1); // FileType.File
+    });
+  });
+
+  describe('readDirectory (breadcrumb drill-down listing)', () => {
+    it('lists dictionaries at the root', () => {
+      const entries = provider.readDirectory(Uri.parse('gemstone://1/'));
+      expect(entries).toEqual([
+        ['UserGlobals', 2],
+        ['Globals', 2],
+      ]);
+    });
+
+    it('lists classes in a dictionary', () => {
+      const entries = provider.readDirectory(Uri.parse('gemstone://1/Globals'));
+      expect(entries).toEqual([
+        ['Array', 2],
+        ['OrderedCollection', 2],
+      ]);
+    });
+
+    it('lists the two sides plus the class definition under a class', () => {
+      const entries = provider.readDirectory(Uri.parse('gemstone://1/Globals/Array'));
+      expect(entries).toEqual([
+        ['instance', 2],
+        ['class', 2],
+        ['definition', 1],
+      ]);
+    });
+
+    it('lists method categories under a side', () => {
+      const entries = provider.readDirectory(Uri.parse('gemstone://1/Globals/Array/instance'));
+      expect(entries).toEqual([
+        ['accessing', 2],
+        ['testing', 2],
+      ]);
+    });
+
+    it('lists only the selectors of the matching side and category', () => {
+      const entries = provider.readDirectory(
+        Uri.parse('gemstone://1/Globals/Array/instance/accessing'),
+      );
+      expect(entries).toEqual([
+        ['at:', 1],
+        ['at:put:', 1],
+      ]);
+    });
+
+    it('escapes slashes in binary selectors so they survive the URI path', () => {
+      vi.mocked(queries.getMethodList).mockReturnValueOnce([
+        { isMeta: false, category: 'arithmetic', selector: '/' },
+      ]);
+      const entries = provider.readDirectory(
+        Uri.parse('gemstone://1/Globals/Number/instance/arithmetic'),
+      );
+      expect(entries).toEqual([[escapeSelectorSlashes('/'), 1]]);
+      expect(entries[0][0]).not.toContain('/');
+    });
+
+    it('returns an empty listing when a query throws (no broken breadcrumb)', () => {
+      vi.mocked(queries.getClassNames).mockImplementationOnce(() => {
+        throw new BrowserQueryError('session busy');
+      });
+      expect(provider.readDirectory(Uri.parse('gemstone://1/Globals'))).toEqual([]);
+    });
+
+    it('returns an empty listing for a dead session without reaping tabs', () => {
+      const mgr = {
+        getSessions: vi.fn(() => []),
+        getSession: vi.fn(() => undefined),
+      } as unknown as SessionManager;
+      const p = new GemStoneFileSystemProvider(mgr);
+      expect(p.readDirectory(Uri.parse('gemstone://99/Globals'))).toEqual([]);
     });
   });
 
