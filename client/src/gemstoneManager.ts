@@ -1568,6 +1568,13 @@ th.v-num { text-align: right; }
 .gm-call-mark.is-todo { color: var(--gm-warn); }
 .gm-call-title { margin: 5px 0 0; font-size: 14px; font-weight: 600; }
 .gm-call-body { margin: 6px 0 0; font-size: 12.5px; line-height: 1.55; }
+/* What a user actually does here — including "nothing", which is the answer on a
+   machine that is already configured and is worth saying rather than implying. */
+.gm-call-do {
+  margin: 9px 0 0; padding: 8px 10px; border-radius: 4px; font-size: 12.5px; line-height: 1.5;
+  background: color-mix(in srgb, var(--vscode-focusBorder, #007fd4) 12%, transparent);
+}
+.gm-call-hint { margin: 9px 0 0; font-size: 11.5px; color: var(--vscode-descriptionForeground, #9d9d9d); }
 .gm-call-acts { display: flex; align-items: center; gap: 8px; margin: 14px 0 0; }
 .gm-call-acts [data-tour="end"] { margin-left: auto; }
 .gm-call-acts .btn:disabled { opacity: .45; cursor: default; }

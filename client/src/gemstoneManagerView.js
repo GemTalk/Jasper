@@ -478,25 +478,32 @@
         section: 'os',
         title: 'Let the machine run a stone',
         body: 'GemStone keeps its object cache in shared memory, so the operating system has to allow a large enough segment before a stone will start. This section reads what this machine reports and carries the fix for anything short.',
+        action:
+          'Usually nothing — every row here is already ok on a machine that has run GemStone before. A row that is not carries the one button that fixes it.',
         done: !osHasWarning(state.os),
       });
     }
     steps.push({
       section: 'versions',
       title: 'Install a version',
-      body: 'Nothing downstream can happen until a GemStone release is on disk — a database is made from one, and a login runs against one. Use + to download and install, or Register Local to point at a build you already have.',
+      body: 'Nothing downstream can happen until a GemStone release is on disk — a database is made from one, and a login runs against one.',
+      action:
+        'Usually: + , then pick the newest release and let it download and install. Register Local instead if you already have a build on this machine.',
       done: versionsInstalledCount(state.versions || []) > 0,
     });
     steps.push({
       section: 'databases',
       title: 'Create a database, and start it',
-      body: 'A database is built from an installed version. Use + to create one, then Start to bring its stone and NetLDI up — the row shows both, with their process ids, once they are running.',
+      body: 'A database is built from an installed version. Creating one asks four questions: which version, which base extent to copy, a name for the stone, and a name for the NetLDI. Each is explained as it is asked, and the defaults are right unless you have a reason otherwise.',
+      action: 'Usually: + , accept the four defaults, then Start to bring the stone and NetLDI up.',
       done: (state.databases || []).length > 0,
     });
     steps.push({
       section: 'connect',
       title: 'Log in',
-      body: 'A login pairs a user with a stone. Add one with +, then Log in — the session it opens is what the class browser, workspaces and the debugger all work through.',
+      body: 'A login pairs a user with a stone. The session it opens is what the class browser, workspaces and the debugger all work through.',
+      action:
+        'Usually: + to add a login, then Log in. Use Start & log in when the stone is not running yet — it does both.',
       done: (state.logins || []).length > 0,
     });
     return steps;
@@ -615,6 +622,7 @@
     mark.className = `gm-call-mark ${step.done ? 'is-done' : 'is-todo'}`;
     tour.call.querySelector('.gm-call-title').textContent = step.title;
     tour.call.querySelector('.gm-call-body').textContent = step.body;
+    tour.call.querySelector('.gm-call-do').textContent = step.action;
     tour.call.querySelector('[data-tour="prev"]').disabled = tour.index === 0;
     const last = tour.index === tour.steps.length - 1;
     tour.call.querySelector('[data-tour="next"]').hidden = last;
@@ -646,6 +654,8 @@
       </div>
       <h2 class="gm-call-title" id="gm-call-title"></h2>
       <p class="gm-call-body"></p>
+      <p class="gm-call-do"></p>
+      <p class="gm-call-hint">Escape closes this box — the highlighted controls work either way.</p>
       <div class="gm-call-acts">
         <button type="button" class="btn" data-tour="prev">Back</button>
         <button type="button" class="btn btn-primary" data-tour="next">Next</button>

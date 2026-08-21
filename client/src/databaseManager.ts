@@ -35,7 +35,11 @@ export class DatabaseManager {
     }
     const versionPick = await vscode.window.showQuickPick(
       versions.map((v) => ({ label: v })),
-      { placeHolder: 'Select GemStone version', title: 'New GemStone Database (1/4)' },
+      {
+        placeHolder:
+          'Which GemStone release this database runs — the newest unless you need to match a server',
+        title: 'New Database — 1 of 4: version',
+      },
     );
     if (!versionPick) return undefined;
     const version = versionPick.label;
@@ -48,25 +52,30 @@ export class DatabaseManager {
     }
     const extentPick = await vscode.window.showQuickPick(
       extents.map((e) => ({ label: e })),
-      { placeHolder: 'Select base extent', title: 'New GemStone Database (2/4)' },
+      {
+        placeHolder: 'The starting repository to copy — extent0.dbf is the standard one',
+        title: 'New Database — 2 of 4: base extent',
+      },
     );
     if (!extentPick) return undefined;
     const baseExtent = extentPick.label;
 
     // Step 3: Stone name
     const stoneName = await vscode.window.showInputBox({
-      prompt: 'Stone name',
+      prompt:
+        'Names the stone — the process that owns this repository and coordinates every session in it. You log in to a stone by this name.',
       value: 'gs64stone',
-      title: 'New GemStone Database (3/4)',
+      title: 'New Database — 3 of 4: stone name',
       validateInput: (v) => (/^\w+$/.test(v) ? null : 'Alphanumeric and underscore only'),
     });
     if (!stoneName) return undefined;
 
     // Step 4: NetLDI name
     const ldiName = await vscode.window.showInputBox({
-      prompt: 'NetLDI name',
+      prompt:
+        'Names the NetLDI — the listener that starts a gem process for each session reaching this stone. The default is right unless another NetLDI already uses the name.',
       value: 'gs64ldi',
-      title: 'New GemStone Database (4/4)',
+      title: 'New Database — 4 of 4: NetLDI name',
       validateInput: (v) => (/^\w+$/.test(v) ? null : 'Alphanumeric and underscore only'),
     });
     if (!ldiName) return undefined;

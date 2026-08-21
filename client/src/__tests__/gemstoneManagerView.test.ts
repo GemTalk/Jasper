@@ -664,3 +664,62 @@ describe('the tour', () => {
     expect(css).toMatch(/\.gm-call \{[^}]*pointer-events: auto/);
   });
 });
+
+describe('what a step asks the user to do', () => {
+  it('names the common action for every step', () => {
+    const steps = tour().tourSteps(state());
+
+    expect(steps.every((s) => typeof s.action === 'string' && s.action.length > 0)).toBe(true);
+  });
+
+  it('says outright that a configured machine needs nothing done to it', () => {
+    const [os] = tour().tourSteps(state());
+
+    expect(os.section).toBe('os');
+    expect(os.action).toMatch(/nothing/i);
+  });
+
+  it('warns that creating a database asks four questions', () => {
+    const steps = tour().tourSteps(state());
+    const databases = steps.find((s) => s.section === 'databases');
+
+    expect(databases?.body).toMatch(/four questions/i);
+  });
+
+  it('shows the action and how to get out of the way in the callout', () => {
+    const { root } = open(state({ versions: [NOTHING_INSTALLED], databases: [] }));
+
+    root.querySelector<HTMLElement>('[data-tour="start"]')?.click();
+    const call = document.querySelector('.gm-call');
+
+    expect(call?.querySelector('.gm-call-do')?.textContent).toMatch(/^Usually/);
+    expect(call?.querySelector('.gm-call-hint')?.textContent).toMatch(/Escape/);
+  });
+});
+
+// The four questions behind + on Databases are asked through native quick-input
+// widgets, which the webview cannot annotate — so each carries its own
+// explanation. A bare "NetLDI name" tells a first-time user nothing.
+describe('creating a database explains itself', () => {
+  const source = () => fs.readFileSync(path.resolve(__dirname, '..', 'databaseManager.ts'), 'utf8');
+
+  it('titles each of the four questions with what it is asking for', () => {
+    const src = source();
+
+    expect(src).toContain('New Database — 1 of 4: version');
+    expect(src).toContain('New Database — 2 of 4: base extent');
+    expect(src).toContain('New Database — 3 of 4: stone name');
+    expect(src).toContain('New Database — 4 of 4: NetLDI name');
+  });
+
+  it('says what a stone and a NetLDI actually are', () => {
+    const src = source();
+
+    expect(src).toMatch(/Names the stone — the process that owns this repository/);
+    expect(src).toMatch(/Names the NetLDI — the listener that starts a gem process/);
+  });
+
+  it('says which base extent to pick', () => {
+    expect(source()).toMatch(/extent0\.dbf is the standard one/);
+  });
+});
