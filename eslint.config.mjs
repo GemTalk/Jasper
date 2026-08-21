@@ -32,6 +32,30 @@ const banChain = (matcher, message, negatedMessage) =>
     ]),
   );
 
+// An integration test never acquires a session; it receives one. Every session
+// `useIntegrationTest` hands out is armed with GemStone's session-level commit
+// guard, so nothing the test does can outlive its automatic abort. A test that
+// logs in on its own gets an *unarmed* session -- and unlike a refused commit,
+// which fails loudly with GemStone error 2249, that succeeds silently and
+// writes to the shared stone. Nothing detects it at runtime, which is why the
+// rules below catch it at lint time instead.
+//
+// Building a session outside the harness takes three things: a library
+// instance, a login call, and credentials. Each is banned separately, so
+// working around one selector (by renaming the receiver, say) still trips
+// another. Committing is deliberately *not* banned -- the harness already
+// refuses it, in the stone, with a message naming itself.
+const OWN_GCI_LIBRARY =
+  'Prefer the loaded library on the test context (`testContext.gciLibrary`). A second GciLibrary instance is the first half of a session the harness never armed.';
+const RAW_GCI_LOGIN =
+  'Prefer the session on the test context (`testContext.session`), or `withTransientSession(...)` for a second one. The raw GciTs*Login* wrappers return a session the harness never armed with the commit guard.';
+const GCI_LIBRARY_LOGIN =
+  'Prefer the session on the test context (`testContext.session`), or `withTransientSession(...)` for a second one. `GciLibrary.login` returns a session the harness never armed with the commit guard.';
+const LOGIN_CREDENTIALS =
+  'Prefer letting `useIntegrationTest` read the connection environment. A test reaching for the password is assembling its own login, and that session is not armed with the commit guard.';
+const FORKED_GEM =
+  'Prefer running the expression on the test context session. A forked gem runs in a session of its own that the harness never armed, and it outlives the test.';
+
 export default tseslint.config(
   // Keep lint ignores in sync with every `.gitignore` in the repo, instead of
   // a hand-maintained duplicate list that drifts (e.g. missed `.vscode-test/`
@@ -53,8 +77,7 @@ export default tseslint.config(
     // finds the nearest tsconfig per file rather than needing an explicit list.
     // Enabling type-aware rules individually rather than the full
     // `recommendedTypeChecked` set, which surfaces ~2k pre-existing findings
-    // across the codebase that need separate triage (see
-    // playground/research/jasper-eslint-type-aware-rules.md for the full breakdown).
+    // across the codebase that need separate triage
     files: ['**/*.ts'],
     languageOptions: {
       parserOptions: {
@@ -188,6 +211,46 @@ export default tseslint.config(
     // not fixed in place.
     files: ['client/src/__tests__/gci/**/*.test.ts'],
     rules: { 'vitest/no-conditional-expect': 'off' },
+  },
+  {
+    // Confines integration tests to the harness's session (see the message
+    // constants above for why). Scoped to `*.integration.test.ts` only: the
+    // plain `*.test.ts` files are unit tests whose `vi.mock` factories stub
+    // `GciTsLogin`/`login` by name, which is syntactically identical to the
+    // real thing -- 19 such files today, so a wider glob is all noise.
+    files: ['client/src/**/__tests__/**/*.integration.test.ts'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        { selector: "NewExpression[callee.name='GciLibrary']", message: OWN_GCI_LIBRARY },
+        {
+          selector: 'MemberExpression[property.name=/^GciTsN?b?Login_?$/]',
+          message: RAW_GCI_LOGIN,
+        },
+        {
+          // Keyed on the receiver, not the bare name: `login` is also the
+          // harness's own re-login on the test context, and `testContext.login`
+          // / `testContext.login()` / a destructured `login()` are all
+          // legitimate. Only a `login` sent to the GciLibrary itself is the
+          // escape hatch.
+          selector:
+            "CallExpression[callee.object.name=/^gci(Library)?$/][callee.property.name='login']",
+          message: GCI_LIBRARY_LOGIN,
+        },
+        {
+          // The sharpest of the four and the hardest to work around: there is
+          // no login without a password, whatever the receiver is called. The
+          // other VITE_GEMSTONE_* values stay allowed -- tests read the gem NRS
+          // and library path for reasons that have nothing to do with logging in.
+          selector: "MemberExpression[property.name='VITE_GEMSTONE_PASSWORD']",
+          message: LOGIN_CREDENTIALS,
+        },
+      ],
+      'no-restricted-imports': [
+        'error',
+        { patterns: [{ group: ['**/queries/forkGem'], message: FORKED_GEM }] },
+      ],
+    },
   },
   // Disables stylistic ESLint rules that would conflict with Prettier; must stay last.
   eslintConfigPrettier,
