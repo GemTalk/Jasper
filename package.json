@@ -470,7 +470,7 @@
       "activitybar": [
         {
           "id": "gemstone",
-          "title": "GemStone",
+          "title": "GemStone Explorer",
           "icon": "resources/gemstone-sidebar.png"
         }
       ],
@@ -612,7 +612,7 @@
     "viewsWelcome": [
       {
         "view": "gemstoneExplorerDicts",
-        "contents": "Not connected to a stone.\nThe GemStone Manager sets up this machine, installs a version, creates a database, and connects.\n[Open GemStone Manager](command:gemstone.openManager)",
+        "contents": "Not connected to a stone.\nUse the GemStone Manager to set up a server, install a version, create a database, and log in.\n[Open GemStone Manager](command:gemstone.openManager)",
         "when": "!gemstone.explorerActive"
       },
       {
