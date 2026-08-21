@@ -20,6 +20,9 @@
   const sectionChoice = new Map();
   // Windows with WSL: gates the actions that only mean anything there.
   let windowsHost = false;
+  // The last state drawn, so the tour can be started from a click without the
+  // host having to post it again.
+  let lastState = {};
 
   // Internal key -> the real codicon name. This is the single place a key is
   // translated; nothing else invents a glyph.
@@ -460,6 +463,248 @@
     return versions.filter((v) => v.extracted || v.local).length;
   }
 
+  // ── Getting set up: the order, and where each step lives ────────────────────
+  // The sections are ordered by what needs attention, which answers "what is
+  // wrong" but not "what do I do first" — a new user reading Connect at the top
+  // cannot tell that a version has to exist before any of it works. These steps
+  // name that order once, and the tour below points at each section in turn.
+  //
+  // Every step reports whether it is already satisfied, so the sequence doubles
+  // as a progress read: the first `todo` is where the user actually is.
+  function tourSteps(state) {
+    const steps = [];
+    if (state.os && state.os.supported) {
+      steps.push({
+        section: 'os',
+        title: 'Let the machine run a stone',
+        body: 'GemStone keeps its object cache in shared memory, so the operating system has to allow a large enough segment before a stone will start. This section reads what this machine reports and carries the fix for anything short.',
+        done: !osHasWarning(state.os),
+      });
+    }
+    steps.push({
+      section: 'versions',
+      title: 'Install a version',
+      body: 'Nothing downstream can happen until a GemStone release is on disk — a database is made from one, and a login runs against one. Use + to download and install, or Register Local to point at a build you already have.',
+      done: versionsInstalledCount(state.versions || []) > 0,
+    });
+    steps.push({
+      section: 'databases',
+      title: 'Create a database, and start it',
+      body: 'A database is built from an installed version. Use + to create one, then Start to bring its stone and NetLDI up — the row shows both, with their process ids, once they are running.',
+      done: (state.databases || []).length > 0,
+    });
+    steps.push({
+      section: 'connect',
+      title: 'Log in',
+      body: 'A login pairs a user with a stone. Add one with +, then Log in — the session it opens is what the class browser, workspaces and the debugger all work through.',
+      done: (state.logins || []).length > 0,
+    });
+    return steps;
+  }
+
+  /** The first step not yet satisfied — where the user actually is. */
+  function firstTodo(steps) {
+    const i = steps.findIndex((s) => !s.done);
+    return i === -1 ? steps.length - 1 : i;
+  }
+
+  // A line above the sections saying what is left and offering to point at it.
+  // Quick Setup earns its place here: on a machine with nothing installed it does
+  // all four steps in one go, and it is otherwise only offered inside the OS
+  // warning — which a machine with healthy shared memory never shows.
+  function renderHeader(state) {
+    const steps = tourSteps(state);
+    const todo = steps.filter((s) => !s.done);
+    const nothingInstalled = versionsInstalledCount(state.versions || []) === 0;
+    const lead = todo.length
+      ? `<span class="gm-head-lead">Next: ${esc(todo[0].title.charAt(0).toLowerCase() + todo[0].title.slice(1))}</span>
+         <span class="dim">${esc(steps.length - todo.length)} of ${esc(steps.length)} done</span>`
+      : `<span class="gm-head-lead">Ready to connect.</span>`;
+    const quick =
+      nothingInstalled && !(state.databases || []).length
+        ? btn('quickSetup', 'Run Quick Setup', 'gear', 'btn-primary')
+        : '';
+    return `<div class="gm-head">
+      <div class="gm-head-text">${lead}</div>
+      <div class="gm-head-acts">
+        ${quick}
+        <button type="button" class="btn" data-tour="start">${ICONS.target}<span>Show me how</span></button>
+      </div>
+    </div>`;
+  }
+
+  // ── The tour: a spotlight on one section at a time ──────────────────────────
+  // The overlay is built in document.body rather than inside #root, because a
+  // rebuild replaces #root wholesale — a tour anchored inside it would vanish the
+  // moment anything in the environment changed. It re-anchors after each render
+  // instead.
+  let tour = null;
+
+  function endTour() {
+    if (!tour) return;
+    const { overlay, onScroll, onKey, returnFocusTo } = tour;
+    window.removeEventListener('scroll', onScroll, true);
+    window.removeEventListener('resize', onScroll);
+    document.removeEventListener('keydown', onKey, true);
+    overlay.remove();
+    tour = null;
+    // Hand focus back to the button that started it, so a keyboard user is not
+    // dropped at the top of the document.
+    const back = returnFocusTo && document.querySelector(returnFocusTo);
+    if (back) back.focus();
+  }
+
+  /** The element a step points at: the section's header row. */
+  function stepTarget(step) {
+    return els.root.querySelector(`details.section[data-section="${step.section}"]`);
+  }
+
+  function positionTour() {
+    if (!tour) return;
+    const step = tour.steps[tour.index];
+    const details = stepTarget(step);
+    if (!details) {
+      // The section a step names is not on the page (a platform that surfaces no
+      // OS prerequisites, say). Nothing to point at, so leave the tour.
+      endTour();
+      return;
+    }
+    const head = details.querySelector('.section-head') || details;
+    const r = head.getBoundingClientRect();
+    const pad = 6;
+    Object.assign(tour.spot.style, {
+      top: `${r.top - pad}px`,
+      left: `${r.left - pad}px`,
+      width: `${r.width + pad * 2}px`,
+      height: `${r.height + pad * 2}px`,
+    });
+
+    // Below the target when there is room, above it otherwise; the arrow flips
+    // with it so it always points at the thing being described.
+    const call = tour.call;
+    const ch = call.offsetHeight;
+    const below = r.bottom + 14 + ch < window.innerHeight || r.top - 14 - ch < 0;
+    call.classList.toggle('gm-call-above', !below);
+    call.style.top = below ? `${r.bottom + 14}px` : `${r.top - 14 - ch}px`;
+    const left = Math.max(12, Math.min(r.left, window.innerWidth - call.offsetWidth - 12));
+    call.style.left = `${left}px`;
+  }
+
+  function showStep(i) {
+    if (!tour) return;
+    tour.index = Math.max(0, Math.min(i, tour.steps.length - 1));
+    const step = tour.steps[tour.index];
+
+    // A collapsed or scrolled-away section cannot be pointed at, so open it and
+    // bring it into view before measuring.
+    const details = stepTarget(step);
+    if (details) {
+      if (!details.open) {
+        details.open = true;
+        sectionChoice.set(step.section, true);
+      }
+      // Guarded: not every host implements scrollIntoView, and failing to scroll
+      // is not a reason to abandon the step.
+      if (details.scrollIntoView) details.scrollIntoView({ block: 'center', behavior: 'auto' });
+    }
+
+    tour.call.querySelector('.gm-call-step').textContent =
+      `Step ${tour.index + 1} of ${tour.steps.length}`;
+    const mark = tour.call.querySelector('.gm-call-mark');
+    mark.textContent = step.done ? 'Already done' : 'To do';
+    mark.className = `gm-call-mark ${step.done ? 'is-done' : 'is-todo'}`;
+    tour.call.querySelector('.gm-call-title').textContent = step.title;
+    tour.call.querySelector('.gm-call-body').textContent = step.body;
+    tour.call.querySelector('[data-tour="prev"]').disabled = tour.index === 0;
+    const last = tour.index === tour.steps.length - 1;
+    tour.call.querySelector('[data-tour="next"]').hidden = last;
+    tour.call.querySelector('[data-tour="end"]').textContent = last ? 'Done' : 'Skip';
+
+    positionTour();
+    tour.call.focus();
+  }
+
+  function startTour(state) {
+    endTour();
+    const steps = tourSteps(state);
+    if (!steps.length) return;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'gm-tour';
+    const spot = document.createElement('div');
+    spot.className = 'gm-spot';
+    const call = document.createElement('div');
+    call.className = 'gm-call';
+    call.setAttribute('role', 'dialog');
+    call.setAttribute('aria-modal', 'true');
+    call.setAttribute('aria-labelledby', 'gm-call-title');
+    call.tabIndex = -1;
+    call.innerHTML = `<div class="gm-call-arrow" aria-hidden="true"></div>
+      <div class="gm-call-meta">
+        <span class="gm-call-step"></span>
+        <span class="gm-call-mark"></span>
+      </div>
+      <h2 class="gm-call-title" id="gm-call-title"></h2>
+      <p class="gm-call-body"></p>
+      <div class="gm-call-acts">
+        <button type="button" class="btn" data-tour="prev">Back</button>
+        <button type="button" class="btn btn-primary" data-tour="next">Next</button>
+        <button type="button" class="btn" data-tour="end">Skip</button>
+      </div>`;
+    overlay.append(spot, call);
+    // The overlay sits outside #root, so the panel's delegated click handler
+    // never sees it — it carries its own.
+    overlay.addEventListener('click', (e) => {
+      const el = e.target.closest('[data-tour]');
+      if (!el) return;
+      e.preventDefault();
+      onTourClick(el);
+    });
+    document.body.appendChild(overlay);
+
+    const onScroll = () => positionTour();
+    const onKey = (e) => {
+      if (!tour) return;
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        endTour();
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        if (tour.index < tour.steps.length - 1) showStep(tour.index + 1);
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        showStep(tour.index - 1);
+      }
+    };
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', onScroll);
+    document.addEventListener('keydown', onKey, true);
+
+    tour = {
+      overlay,
+      spot,
+      call,
+      steps,
+      index: 0,
+      onScroll,
+      onKey,
+      returnFocusTo: '[data-tour="start"]',
+    };
+    // Open on the step the user is actually on rather than always at the top:
+    // walking someone through two finished steps to reach their problem is the
+    // thing a checklist is supposed to save them.
+    showStep(firstTodo(steps));
+  }
+
+  /** Tour clicks are handled here, not posted to the host — nothing leaves the webview. */
+  function onTourClick(el) {
+    const what = el.dataset.tour;
+    if (what === 'start') startTour(lastState);
+    else if (what === 'next') showStep(tour ? tour.index + 1 : 0);
+    else if (what === 'prev') showStep(tour ? tour.index - 1 : 0);
+    else if (what === 'end') endTour();
+  }
+
   function renderVersions(versions, open) {
     const onDisk = versions.filter((v) => v.extracted || v.downloaded || v.local);
     const installed = versionsInstalledCount(versions);
@@ -781,9 +1026,12 @@
 
   function render(state) {
     windowsHost = !!state.windows;
-    els.root.innerHTML = orderedSections(state)
-      .map((s) => s.html)
-      .join('');
+    lastState = state;
+    els.root.innerHTML =
+      renderHeader(state) +
+      orderedSections(state)
+        .map((s) => s.html)
+        .join('');
     // Which sections start open follows what needs attention, which is right on
     // arrival and wrong afterwards: the panel redraws itself whenever anything
     // changes, and a reader who opened Operating System to work through it would
@@ -809,6 +1057,11 @@
         else expandedFiles.delete(d.dataset.db);
       });
     });
+    // The section the tour points at was just replaced, so re-anchor onto the new
+    // element rather than leaving the spotlight over stale coordinates. If the
+    // overlay is gone from the document, the tour went with it.
+    if (tour && !tour.overlay.isConnected) endTour();
+    else if (tour) showStep(tour.index);
   }
 
   function post(msg) {
@@ -816,6 +1069,12 @@
   }
 
   function onClick(e) {
+    const tourEl = e.target.closest('[data-tour]');
+    if (tourEl) {
+      e.preventDefault();
+      onTourClick(tourEl);
+      return;
+    }
     const el = e.target.closest('[data-action]');
     if (!el) return;
     // Prevent an action button inside a <summary> from also toggling the section.
@@ -872,6 +1131,9 @@
     renderVersions,
     renderDatabases,
     orderedSections,
+    tourSteps,
+    firstTodo,
+    renderHeader,
     osHasWarning,
     versionState,
     formatBytes,

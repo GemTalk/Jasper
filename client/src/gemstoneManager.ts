@@ -1522,6 +1522,56 @@ th.v-num { text-align: right; }
 .file-row:hover { background: var(--vscode-list-hoverBackground, rgba(128,128,128,.14)); }
 .file-empty { list-style: none; font-size: 11px; color: var(--vscode-descriptionForeground, #9d9d9d); padding: 2px 6px 4px 27px; }
 
+/* ── Getting-set-up header ────────────────────────────────────────────────── */
+.gm-head {
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  margin: 0 0 16px; padding: 10px 14px; border-radius: 6px;
+  border: 1px solid var(--gm-line);
+  background: var(--vscode-sideBarSectionHeader-background, transparent);
+}
+.gm-head-text { display: flex; align-items: baseline; gap: 10px; flex: 1 1 240px; min-width: 0; font-size: 12.5px; }
+.gm-head-lead { font-weight: 600; }
+.gm-head-acts { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; }
+
+/* ── Tour: a spotlight on one section, and a callout beside it ─────────────── */
+/* Deliberately not a blocking modal — pointer events pass through the dim, so
+   the control being pointed at can be used while the callout still explains it.
+   Only the callout itself takes clicks. */
+.gm-tour { position: fixed; inset: 0; z-index: 50; pointer-events: none; }
+.gm-spot {
+  position: fixed; border-radius: 6px; pointer-events: none;
+  border: 2px solid var(--vscode-focusBorder, #007fd4);
+  box-shadow: 0 0 0 9999px color-mix(in srgb, var(--vscode-editor-background, #1e1e1e) 68%, transparent);
+  transition: top .16s ease, left .16s ease, width .16s ease, height .16s ease;
+}
+.gm-call {
+  position: fixed; pointer-events: auto; width: min(380px, calc(100vw - 24px));
+  padding: 14px 16px 12px; border-radius: 6px;
+  border: 1px solid var(--vscode-widget-border, var(--gm-line));
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  color: var(--vscode-editorWidget-foreground, var(--vscode-foreground));
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .34);
+}
+.gm-call:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
+/* The arrow flips to the underside when the callout sits above its target. */
+.gm-call-arrow {
+  position: absolute; top: -6px; left: 22px; width: 10px; height: 10px;
+  background: inherit; border-left: 1px solid var(--vscode-widget-border, var(--gm-line));
+  border-top: 1px solid var(--vscode-widget-border, var(--gm-line));
+  transform: rotate(45deg);
+}
+.gm-call-above .gm-call-arrow { top: auto; bottom: -6px; transform: rotate(225deg); }
+.gm-call-meta { display: flex; align-items: center; gap: 10px; font-size: 11px; }
+.gm-call-step { color: var(--vscode-descriptionForeground, #9d9d9d); font-variant-numeric: tabular-nums; }
+.gm-call-mark { font-weight: 600; letter-spacing: .02em; }
+.gm-call-mark.is-done { color: var(--gm-ok); }
+.gm-call-mark.is-todo { color: var(--gm-warn); }
+.gm-call-title { margin: 5px 0 0; font-size: 14px; font-weight: 600; }
+.gm-call-body { margin: 6px 0 0; font-size: 12.5px; line-height: 1.55; }
+.gm-call-acts { display: flex; align-items: center; gap: 8px; margin: 14px 0 0; }
+.gm-call-acts [data-tour="end"] { margin-left: auto; }
+.gm-call-acts .btn:disabled { opacity: .45; cursor: default; }
+
 /* ── Empty / note states ──────────────────────────────────────────────────── */
 .empty { text-align: center; color: var(--vscode-descriptionForeground, #9d9d9d); padding: 22px 12px; }
 .empty div { margin-top: 10px; }

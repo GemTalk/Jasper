@@ -403,3 +403,264 @@ describe('GemStone Manager webview', () => {
     );
   });
 });
+
+// ── Getting set up ──────────────────────────────────────────────────────────
+// The sections are ordered by what needs attention, which tells a new user what
+// is wrong but not what to do first. These cover the steps that name the order,
+// the header that reports where the user is, and the tour that points at each
+// section in turn.
+
+type TourStep = { section: string; title: string; body: string; done: boolean };
+type TourApi = {
+  tourSteps(state: unknown): TourStep[];
+  firstTodo(steps: TourStep[]): number;
+};
+
+function tour(): TourApi {
+  return (globalThis as unknown as { GemstoneManager: TourApi }).GemstoneManager;
+}
+
+const NOTHING_INSTALLED = {
+  ...INSTALLED_VERSION,
+  extracted: false,
+  downloaded: false,
+};
+
+const LOGIN = {
+  label: 'DataCurator@devKit',
+  user: 'DataCurator',
+  stone: 'devKit',
+  version: '3.7.5',
+  dirName: 'devKit',
+  running: true,
+  connected: false,
+  current: false,
+};
+
+describe('setup steps', () => {
+  it('names the four steps in the order they have to happen', () => {
+    const steps = tour().tourSteps(state());
+
+    expect(steps.map((s) => s.section)).toEqual(['os', 'versions', 'databases', 'connect']);
+  });
+
+  it('drops the operating system step where no prerequisites are surfaced', () => {
+    const steps = tour().tourSteps(state({ os: { supported: false, platformLabel: 'AIX' } }));
+
+    expect(steps.map((s) => s.section)).toEqual(['versions', 'databases', 'connect']);
+  });
+
+  it('counts a version step done only once one is on disk', () => {
+    const without = tour().tourSteps(state({ versions: [NOTHING_INSTALLED] }));
+    const with_ = tour().tourSteps(state({ versions: [INSTALLED_VERSION] }));
+
+    expect(without.find((s) => s.section === 'versions')?.done).toBe(false);
+    expect(with_.find((s) => s.section === 'versions')?.done).toBe(true);
+  });
+
+  it('counts a database step done only once one exists', () => {
+    const without = tour().tourSteps(state({ databases: [] }));
+    const with_ = tour().tourSteps(state({ databases: [database()] }));
+
+    expect(without.find((s) => s.section === 'databases')?.done).toBe(false);
+    expect(with_.find((s) => s.section === 'databases')?.done).toBe(true);
+  });
+
+  it('counts connecting done only once a login exists', () => {
+    const without = tour().tourSteps(state({ logins: [] }));
+    const with_ = tour().tourSteps(state({ logins: [LOGIN] }));
+
+    expect(without.find((s) => s.section === 'connect')?.done).toBe(false);
+    expect(with_.find((s) => s.section === 'connect')?.done).toBe(true);
+  });
+
+  it('counts the operating system step against its own warning', () => {
+    const short = { ...HEALTHY_OS, sharedMemoryConfigured: false, gbLabel: '0' };
+
+    expect(tour().tourSteps(state({ os: short }))[0].done).toBe(false);
+    expect(tour().tourSteps(state())[0].done).toBe(true);
+  });
+
+  it('points at the first unfinished step', () => {
+    const steps = tour().tourSteps(state({ versions: [NOTHING_INSTALLED], databases: [] }));
+
+    expect(tour().firstTodo(steps)).toBe(1);
+  });
+
+  it('points at the last step when everything is done, rather than off the end', () => {
+    const steps = tour().tourSteps(state({ logins: [LOGIN] }));
+
+    expect(steps.every((s) => s.done)).toBe(true);
+    expect(tour().firstTodo(steps)).toBe(steps.length - 1);
+  });
+});
+
+describe('setup header', () => {
+  it('says which step is next, so the order is readable without starting a tour', () => {
+    const { root } = open(state({ versions: [NOTHING_INSTALLED], databases: [] }));
+
+    expect(root.querySelector('.gm-head-lead')?.textContent).toContain('install a version');
+  });
+
+  it('reports how many steps are done', () => {
+    const { root } = open(state({ versions: [NOTHING_INSTALLED], databases: [] }));
+
+    expect(root.querySelector('.gm-head-text')?.textContent).toContain('1 of 4 done');
+  });
+
+  it('says the environment is ready when nothing is left', () => {
+    const { root } = open(state({ logins: [LOGIN] }));
+
+    expect(root.querySelector('.gm-head-lead')?.textContent).toContain('Ready to connect');
+  });
+
+  it('offers Quick Setup on a machine with nothing installed and no database', () => {
+    const { root } = open(state({ versions: [NOTHING_INSTALLED], databases: [] }));
+
+    expect(root.querySelector('[data-action="quickSetup"]')).not.toBeNull();
+  });
+
+  it('does not offer Quick Setup once there is something to lose', () => {
+    const { root } = open(state({ versions: [NOTHING_INSTALLED], databases: [database()] }));
+
+    expect(root.querySelector('[data-action="quickSetup"]')).toBeNull();
+  });
+
+  it('runs Quick Setup through the host', () => {
+    const { root, host } = open(state({ versions: [NOTHING_INSTALLED], databases: [] }));
+
+    root.querySelector<HTMLElement>('[data-action="quickSetup"]')?.click();
+
+    expect(host.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'quickSetup' }),
+    );
+  });
+});
+
+describe('the tour', () => {
+  const start = (root: HTMLElement) =>
+    root.querySelector<HTMLElement>('[data-tour="start"]')?.click();
+  const callout = () => document.querySelector('.gm-call');
+
+  it('offers to walk the user through it', () => {
+    const { root } = open(state());
+
+    expect(root.querySelector('[data-tour="start"]')).not.toBeNull();
+  });
+
+  it('opens on the step the user is actually stuck on', () => {
+    const { root } = open(state({ versions: [NOTHING_INSTALLED], databases: [] }));
+
+    start(root);
+
+    expect(callout()?.querySelector('.gm-call-title')?.textContent).toBe('Install a version');
+    expect(callout()?.querySelector('.gm-call-step')?.textContent).toBe('Step 2 of 4');
+  });
+
+  it('marks a step the machine has already satisfied', () => {
+    const { root } = open(state({ versions: [NOTHING_INSTALLED], databases: [] }));
+
+    start(root);
+    callout()?.querySelector<HTMLElement>('[data-tour="prev"]')?.click();
+
+    expect(callout()?.querySelector('.gm-call-mark')?.textContent).toBe('Already done');
+  });
+
+  it('opens the section it is pointing at, so the step is not describing a closed box', () => {
+    const { root } = open(state({ versions: [NOTHING_INSTALLED], databases: [] }));
+
+    start(root);
+
+    const versions = root.querySelector<HTMLDetailsElement>('details[data-section="versions"]');
+    expect(versions?.open).toBe(true);
+  });
+
+  it('walks forward and back through the steps', () => {
+    const { root } = open(state({ versions: [NOTHING_INSTALLED], databases: [] }));
+
+    start(root);
+    callout()?.querySelector<HTMLElement>('[data-tour="next"]')?.click();
+    expect(callout()?.querySelector('.gm-call-step')?.textContent).toBe('Step 3 of 4');
+
+    callout()?.querySelector<HTMLElement>('[data-tour="prev"]')?.click();
+    expect(callout()?.querySelector('.gm-call-step')?.textContent).toBe('Step 2 of 4');
+  });
+
+  it('cannot walk back off the front', () => {
+    const { root } = open(state({ os: { supported: false }, versions: [NOTHING_INSTALLED] }));
+
+    start(root);
+
+    expect(callout()?.querySelector<HTMLButtonElement>('[data-tour="prev"]')?.disabled).toBe(true);
+  });
+
+  it('offers Done rather than Next on the last step', () => {
+    const { root } = open(state({ logins: [LOGIN] }));
+
+    start(root);
+
+    expect(callout()?.querySelector<HTMLElement>('[data-tour="next"]')?.hidden).toBe(true);
+    expect(callout()?.querySelector('[data-tour="end"]')?.textContent).toBe('Done');
+  });
+
+  it('closes when dismissed', () => {
+    const { root } = open(state());
+
+    start(root);
+    callout()?.querySelector<HTMLElement>('[data-tour="end"]')?.click();
+
+    expect(callout()).toBeNull();
+  });
+
+  it('closes on Escape', () => {
+    const { root } = open(state());
+
+    start(root);
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+    expect(callout()).toBeNull();
+  });
+
+  it('steps with the arrow keys', () => {
+    const { root } = open(state({ versions: [NOTHING_INSTALLED], databases: [] }));
+
+    start(root);
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+
+    expect(callout()?.querySelector('.gm-call-step')?.textContent).toBe('Step 3 of 4');
+  });
+
+  // The panel rebuilds itself on every admin change, replacing every section
+  // element. A tour anchored to the old ones has to find the new ones.
+  it('survives the panel redrawing under it', () => {
+    const { root } = open(state({ versions: [NOTHING_INSTALLED], databases: [] }));
+
+    start(root);
+    api().render(state({ versions: [NOTHING_INSTALLED], databases: [] }));
+
+    expect(callout()).not.toBeNull();
+    expect(root.querySelector<HTMLDetailsElement>('details[data-section="versions"]')?.open).toBe(
+      true,
+    );
+  });
+
+  it('builds the overlay outside the panel root, so a redraw cannot take it', () => {
+    const { root } = open(state());
+
+    start(root);
+
+    const overlay = document.querySelector('.gm-tour');
+    expect(overlay).not.toBeNull();
+    expect(root.contains(overlay as Node)).toBe(false);
+  });
+
+  // The point of the spotlight is to explain a control while it stays usable, so
+  // the dim must not swallow clicks. The styles live in the host file (injected
+  // into the panel's <style>), not here, so this is pinned at the source.
+  it('does not block the page it is pointing at', () => {
+    const css = fs.readFileSync(path.resolve(__dirname, '..', 'gemstoneManager.ts'), 'utf8');
+
+    expect(css).toMatch(/\.gm-tour \{[^}]*pointer-events: none/);
+    expect(css).toMatch(/\.gm-call \{[^}]*pointer-events: auto/);
+  });
+});
