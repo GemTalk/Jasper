@@ -88,12 +88,20 @@ export interface SunitDebugExecutor {
 export interface SunitDebugOutcome {
   /** True when the test raised and the suspended process went to a debugger. */
   raised: boolean;
+  /** True when the user cancelled the run (a soft or hard break). Distinct from
+   *  `raised`: a cancel is the user's decision, not a test outcome, so the caller
+   *  leaves no verdict rather than blaming the test. */
+  cancelled?: boolean;
   /** The GemStone error message, when it raised. */
   message?: string;
 }
 
 /** State of the most recent run of one test class or test method. */
 export type SunitOutcome = 'running' | 'passed' | 'failed' | 'error';
+
+/** What one test's debug run settled as, for a class-debug loop to act on:
+ *  it passed, it raised (a debugger took the process), or the user cancelled. */
+type DebugStepResult = 'passed' | 'raised' | 'cancelled';
 
 /**
  * The last-known outcome of a class or method, kept so the tree rows, code
@@ -899,7 +907,7 @@ export class SunitTestController implements vscode.Disposable {
     className: string,
     selector: string,
     dictName: string,
-  ): Promise<boolean> {
+  ): Promise<DebugStepResult> {
     try {
       const outcome = await this.debugExecutor!.executeWithDebugger(
         session,
@@ -907,9 +915,17 @@ export class SunitTestController implements vscode.Disposable {
         `${className}>>${selector}`,
       );
 
+      if (outcome.cancelled) {
+        // The user cancelled the debug run (a soft or hard break). That was
+        // their decision, not a test outcome — leave no verdict, exactly as a
+        // stopped ordinary run does (see runSingleTest / wasStopped).
+        this.reportSkipped(run, item);
+        return 'cancelled';
+      }
+
       if (!outcome.raised) {
         this.reportPassed(run, item);
-        return false;
+        return 'passed';
       }
 
       // Once the process is suspended and a debugger owns it, we no longer know
@@ -917,11 +933,11 @@ export class SunitTestController implements vscode.Disposable {
       // that classification inside the handler a debug run deliberately omits.
       // Report the honest "it raised", with the message, rather than guessing.
       this.reportError(run, item, outcome.message ?? 'Test raised an exception.');
-      return true;
+      return 'raised';
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       this.reportError(run, item, `Execution error: ${msg}`);
-      return true;
+      return 'raised';
     }
   }
 
@@ -978,12 +994,22 @@ export class SunitTestController implements vscode.Disposable {
       // children in the tree — reporting the class too only adds a row to the
       // Test Results list that duplicates the run's own name. The class-level
       // roll-up below is our own store, which the tree rows read.
-      const allPassed = passedCount === totalCount;
-      this.setResult(dictName, className, undefined, {
-        outcome: allPassed ? 'passed' : 'failed',
-        passedCount,
-        totalCount,
-      });
+      if (totalCount === 0) {
+        // Nothing ran: every child was reported skipped because no result came
+        // back for its selector — an empty answer from the stone, or the
+        // selectors moved under us. Storing a roll-up here would put a pass
+        // check on the class (`passedCount === totalCount` holds at 0 === 0)
+        // over methods that never executed. Leave no verdict, so the class row
+        // reads the same as its skipped children.
+        this.deleteResult(dictName, className);
+      } else {
+        const allPassed = passedCount === totalCount;
+        this.setResult(dictName, className, undefined, {
+          outcome: allPassed ? 'passed' : 'failed',
+          passedCount,
+          totalCount,
+        });
+      }
     } catch (e: unknown) {
       if (this.wasStopped(e)) {
         // See runSingleTest: an interrupted run leaves no verdict behind.
@@ -1027,8 +1053,15 @@ export class SunitTestController implements vscode.Disposable {
       run.started(child);
       await this.markRunning([child], false);
 
-      const raised = await this.debugSingleTest(session, run, child, className, selector, dictName);
-      if (raised) {
+      const result = await this.debugSingleTest(session, run, child, className, selector, dictName);
+      if (result === 'cancelled') {
+        // Stopped mid-debug on the user's request: leave no class verdict, the
+        // same as a stopped run. The cancelled child already reported skipped;
+        // the ones already run keep their outcome.
+        this.deleteResult(dictName, className);
+        return;
+      }
+      if (result === 'raised') {
         // The child already reported the raise; see runClassTests for why the
         // class itself stays out of the results list.
         this.setResult(dictName, className, undefined, {

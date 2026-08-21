@@ -60,10 +60,17 @@ const DISPLAY_RESULT_CONTEXT = 'gemstone.displayResultVisible';
 // is always available via the hover and the Expand action).
 const MAX_OVERLAY_PREVIEW = 100;
 
+// GemStone's "a soft break was received" error. A soft break only ever reaches
+// the gem because the user asked to cancel, so it says nothing about the code
+// that was running — see executeWithDebugger, which reports it as a cancellation
+// rather than opening a debugger on it.
+const SOFT_BREAK_ERROR_NUMBER = 6003;
+
 class DebuggableError extends Error {
   constructor(
     message: string,
     public readonly context: bigint,
+    public readonly errorNumber: number,
   ) {
     super(message);
   }
@@ -475,16 +482,18 @@ export class CodeExecutor {
    * debug-enabled, same non-blocking poll, same debugger prompt), so a test that
    * halts behaves exactly like halted workspace code.
    *
-   * Answers whether the code raised — and no more than that. Once the process
-   * is suspended it belongs to whichever debugger the user picked, so its
-   * eventual fate isn't ours to report. Throws when the execution could not be
-   * started at all.
+   * Answers whether the code raised, or whether the user cancelled it — and no
+   * more than that. Once the process is suspended it belongs to whichever
+   * debugger the user picked, so its eventual fate isn't ours to report. A
+   * cancel (a soft or hard break) is reported as `cancelled`, not `raised`, and
+   * never opens a debugger: it was the user's decision, not the code's fault.
+   * Throws when the execution could not be started at all.
    */
   async executeWithDebugger(
     session: ActiveSession,
     code: string,
     label: string,
-  ): Promise<{ raised: boolean; message?: string }> {
+  ): Promise<{ raised: boolean; cancelled?: boolean; message?: string }> {
     if (this.executing.has(session.id)) {
       throw new Error('A GemStone execution is already in progress on this session.');
     }
@@ -509,9 +518,16 @@ export class CodeExecutor {
       await this.pollForResultOop(session);
       return { raised: false };
     } catch (e: unknown) {
-      // A cancelled (hard-break) run tells us nothing about the test, so it is
-      // reported as "raised" rather than passed off as a pass.
-      if (e instanceof NbCancelledError) return { raised: true, message: 'Execution cancelled.' };
+      // A cancelled run tells us nothing about the code — it was the user's
+      // decision, not the test's fault — so report it as cancelled and never
+      // open a debugger on it. Cancel arrives two ways: a hard break rejects
+      // with NbCancelledError, while a soft break lets the gem raise its "a soft
+      // break was received" error (6003), which surfaces here as a
+      // DebuggableError with a live context like any other break.
+      if (e instanceof NbCancelledError) return { raised: false, cancelled: true };
+      if (e instanceof DebuggableError && e.errorNumber === SOFT_BREAK_ERROR_NUMBER) {
+        return { raised: false, cancelled: true };
+      }
 
       const msg = e instanceof Error ? e.message : String(e);
       logError(session.id, `${label}: ${msg}`);
@@ -719,7 +735,7 @@ export class CodeExecutor {
       const context = toBigInt(resultErr.context);
       if (context !== OOP_NIL && context !== 0n) {
         this.validateContextOop(session, context);
-        throw new DebuggableError(msg, context);
+        throw new DebuggableError(msg, context, resultErr.number);
       }
       throw new Error(msg);
     }

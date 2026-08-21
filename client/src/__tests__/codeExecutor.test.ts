@@ -1669,6 +1669,25 @@ describe('CodeExecutor', () => {
       );
     });
 
+    it('reports a soft-break cancel as cancelled, without opening a debugger', async () => {
+      // A soft break (error 6003) only arrives because the user cancelled the
+      // run. It says nothing about the code, so it must not be offered to a
+      // debugger or reported as a raise.
+      const gci = makeGci({
+        GciTsNbResult: vi.fn(() => ({
+          result: 0n,
+          err: { number: 6003, message: 'A soft break was received.', context: 999n },
+        })),
+      });
+      const session = makeSession(gci);
+      const executor = new CodeExecutor(makeSessionManager(session));
+
+      const outcome = await executor.executeWithDebugger(session, '3 + 4', 'MyTest>>testSlow');
+
+      expect(outcome).toEqual({ raised: false, cancelled: true });
+      expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
+    });
+
     it('releases the session lock so the next test can run', async () => {
       const session = makeSession();
       const executor = new CodeExecutor(makeSessionManager(session));

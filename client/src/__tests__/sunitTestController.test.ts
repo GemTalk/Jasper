@@ -573,6 +573,19 @@ describe('SunitTestController', () => {
       ctrl.dispose();
     });
 
+    it('stores no class roll-up when nothing ran, so an empty result is not a pass', async () => {
+      // A class run where no selector matched (the stone answered nothing, or
+      // the selectors moved under us) reports every method skipped. With
+      // totalCount 0, passedCount === totalCount holds, which would otherwise
+      // store the class as passed — a pass check over methods that never ran.
+      vi.mocked(sunit.runTestClassNb).mockResolvedValueOnce([]);
+      const ctrl = new SunitTestController(makeSessionManager(true));
+      await runClass(ctrl);
+
+      expect(ctrl.resultFor('UserGlobals', 'MyTestCase')).toBeUndefined();
+      ctrl.dispose();
+    });
+
     it('records the outcome of a single-method run', async () => {
       const ctrl = new SunitTestController(makeSessionManager(true));
       await ctrl.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd']);
@@ -863,6 +876,34 @@ describe('SunitTestController', () => {
       await ctrl.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd'], 'debug');
 
       expect(ctrl.resultFor('UserGlobals', 'MyTestCase', 'testAdd')?.durationMs).toBeUndefined();
+      ctrl.dispose();
+    });
+
+    it('reports a cancelled debug run as skipped, not as a test error', async () => {
+      // Cancelling a debug run (a soft or hard break) is the user's decision,
+      // not a test failure — it must leave no verdict, like a stopped run,
+      // rather than storing an error and blaming the test.
+      const debugExecutor = makeDebugExecutor({ raised: false, cancelled: true });
+      const ctrl = new SunitTestController(makeSessionManager(true), debugExecutor);
+
+      await ctrl.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd'], 'debug');
+
+      expect(debugExecutor.executeWithDebugger).toHaveBeenCalledOnce();
+      expect(ctrl.resultFor('UserGlobals', 'MyTestCase', 'testAdd')).toBeUndefined();
+      ctrl.dispose();
+    });
+
+    it('leaves no class verdict when a class debug is cancelled', async () => {
+      // A cancel is not a raise: the class roll-up must not be stored as an
+      // error (that path is for a genuine raise), and the run stops.
+      const debugExecutor = makeDebugExecutor({ raised: false, cancelled: true });
+      const ctrl = new SunitTestController(makeSessionManager(true), debugExecutor);
+
+      await ctrl.runClassByName('UserGlobals', 'MyTestCase', 'debug');
+
+      expect(debugExecutor.executeWithDebugger).toHaveBeenCalledOnce();
+      expect(ctrl.resultFor('UserGlobals', 'MyTestCase')).toBeUndefined();
+      expect(ctrl.resultFor('UserGlobals', 'MyTestCase', 'testAdd')).toBeUndefined();
       ctrl.dispose();
     });
   });
