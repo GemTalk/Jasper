@@ -56,6 +56,7 @@
     files: 'files',
     output: 'output',
     archive: 'archive',
+    restore: 'history',
   };
 
   /** The codicon name for an internal key (or the name itself, if already one). */
@@ -264,6 +265,9 @@
     ['gemstone.sessionCommit', 'check', 'Commit'],
     ['gemstone.sessionAbort', 'discard', 'Abort'],
     ['gemstone.sessionPing', 'pulse', 'Ping session'],
+    ['gemstone.exportClasses', 'output', 'Export Classes'],
+    ['gemstone.fullLogicalBackup', 'archive', 'Full Logical Backup'],
+    ['gemstone.fullLogicalRestore', 'restore', 'Full Logical Restore'],
     ['gemstone.sessionLogout', 'disconnect', 'Log out'],
   ];
 
@@ -802,7 +806,10 @@
   /** What the row says about liveness: how long it has been up, when it is. */
   function dbState(db) {
     if (!db.stoneRunning) return '';
-    return `<span class="db-state">${db.startedAtMs ? esc(since(db.startedAtMs)) : 'running'}</span>`;
+    const stone = (db.processes || []).find((p) => p.type === 'stone');
+    const parts = [db.startedAtMs ? since(db.startedAtMs) : 'running'];
+    if (stone) parts.push(`pid ${stone.pid}`);
+    return `<span class="db-state">${parts.map((t) => esc(t)).join(' · ')}</span>`;
   }
 
   // Logins that target this database, plus a New Login affordance. Logins lead the

@@ -797,3 +797,66 @@ describe('the extent chooser follows what the command will accept', () => {
     expect(root.querySelector('.extent')?.getAttribute('title')).toContain('Stop the stone');
   });
 });
+
+describe('a running stone shows its pid where it says it is running', () => {
+  const RUNNING = {
+    dirName: 'devKit',
+    stoneRunning: true,
+    processes: [
+      { type: 'stone', name: 'devKit', pid: 393722, status: 'running', responding: true },
+      {
+        type: 'netldi',
+        name: 'devKit_ldi',
+        pid: 393770,
+        port: 10416,
+        status: 'running',
+        responding: true,
+      },
+    ],
+  };
+
+  it('carries the pid in the database row, not only under Processes', () => {
+    const { root } = open(state({ databases: [database(RUNNING)] }));
+
+    expect(root.querySelector('.db-state')?.textContent).toContain('pid 393722');
+  });
+
+  it('still reports the pid on the process row itself', () => {
+    const { root } = open(state({ databases: [database(RUNNING)] }));
+    root.querySelector<HTMLDetailsElement>('details.db-item')!.open = true;
+
+    const meta = [...root.querySelectorAll('.db-line-meta')].map((m) => m.textContent);
+    expect(meta.some((m) => m?.includes('pid 393770') && m?.includes('port 10416'))).toBe(true);
+  });
+
+  it('says nothing about a pid for a stopped stone', () => {
+    const { root } = open(state({ databases: [database({ stoneRunning: false })] }));
+
+    expect(root.querySelector('.db-state')).toBeNull();
+  });
+});
+
+// Export Classes, Full Logical Backup and Full Logical Restore lived only in the
+// sidebar's session context menu. Two were permitted by the host but never drawn;
+// the restore was not permitted at all.
+describe('session actions cover what the sidebar offered', () => {
+  const CONNECTED = { ...LOGIN, connected: true, sessionId: 7 };
+  const actions = (root: HTMLElement) =>
+    [...root.querySelectorAll('[data-action="sessionAction"]')].map((b) =>
+      b.getAttribute('data-cmd'),
+    );
+
+  it('offers the backup, restore and export a session used to carry', () => {
+    const { root } = open(state({ logins: [CONNECTED] }));
+
+    expect(actions(root)).toContain('gemstone.fullLogicalBackup');
+    expect(actions(root)).toContain('gemstone.fullLogicalRestore');
+    expect(actions(root)).toContain('gemstone.exportClasses');
+  });
+
+  it('offers none of them without a session to run them through', () => {
+    const { root } = open(state({ logins: [{ ...LOGIN, connected: false }] }));
+
+    expect(actions(root)).toEqual([]);
+  });
+});

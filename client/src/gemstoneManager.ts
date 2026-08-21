@@ -280,6 +280,7 @@ export const SESSION_ACTIONS: ReadonlySet<string> = new Set([
   'gemstone.sessionLogout',
   'gemstone.exportClasses',
   'gemstone.fullLogicalBackup',
+  'gemstone.fullLogicalRestore',
 ]);
 
 /**

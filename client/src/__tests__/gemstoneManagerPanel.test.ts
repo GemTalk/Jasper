@@ -665,3 +665,17 @@ describe('GemStone Manager panel', () => {
     await vi.waitFor(() => expect(postedStates(panel)).toHaveLength(1));
   });
 });
+
+// The sidebar's session context menu carried a full logical restore; the panel's
+// allow-list did not, so the button would have been refused on arrival.
+describe('the session-action allow-list', () => {
+  it('permits every action the Connect rows actually draw', () => {
+    const view = fs.readFileSync(path.resolve(__dirname, '..', 'gemstoneManagerView.js'), 'utf8');
+    const drawn = [...view.matchAll(/\['(gemstone\.[A-Za-z]+)',\s*'[a-zA-Z]+',/g)].map((m) => m[1]);
+
+    expect(drawn.length).toBeGreaterThan(0);
+    for (const command of drawn) {
+      expect([...SESSION_ACTIONS]).toContain(command);
+    }
+  });
+});
