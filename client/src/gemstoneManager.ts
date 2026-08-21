@@ -1603,6 +1603,11 @@ th.v-num { text-align: right; }
 .gm-call-acts [data-tour="end"] { margin-left: auto; }
 /* Doing the step is the point of the box, so it leads the row. */
 .gm-call-do-btn[hidden] { display: none; }
+/* Said out loud, because an absent button is indistinguishable from a missing one. */
+.gm-call-settled {
+  margin: 9px 0 0; font-size: 12.5px; font-weight: 600; color: var(--gm-ok);
+}
+.gm-call-settled[hidden] { display: none; }
 .gm-call-acts .btn:disabled { opacity: .45; cursor: default; }
 
 /* ── Empty / note states ──────────────────────────────────────────────────── */

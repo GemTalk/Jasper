@@ -3615,21 +3615,28 @@ export function activate(context: vscode.ExtensionContext) {
         );
         return;
       }
+      // Quick Setup's names, made unique against the databases already here: a
+      // stone and a NetLDI are identified by name, so a second gs64stone would
+      // contend with the first over locks and registration.
+      const taken = new Set(
+        sysadminStorage.getDatabases().flatMap((d) => [d.config.stoneName, d.config.ldiName]),
+      );
+      let suffix = '';
+      for (let n = 2; taken.has(`gs64stone${suffix}`) || taken.has(`gs64ldi${suffix}`); n += 1) {
+        suffix = String(n);
+      }
+      const stoneName = `gs64stone${suffix}`;
+      const ldiName = `gs64ldi${suffix}`;
+
       let db;
       try {
         db = await vscode.window.withProgress(
           {
             location: vscode.ProgressLocation.Notification,
-            title: `Creating database on GemStone ${version}...`,
+            title: `Creating database ${stoneName} on GemStone ${version}...`,
           },
           (progress) =>
-            databaseManager.createDatabaseDirect(
-              version,
-              'extent0',
-              'gs64stone',
-              'gs64ldi',
-              progress,
-            ),
+            databaseManager.createDatabaseDirect(version, 'extent0', stoneName, ldiName, progress),
         );
       } catch (e) {
         void vscode.window.showErrorMessage(

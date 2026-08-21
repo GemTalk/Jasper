@@ -1023,6 +1023,50 @@ describe('a step can do itself', () => {
     expect(doBtn()?.hidden).toBe(true);
   });
 
+  // A missing button and a button that is not needed look identical, so the box
+  // says which it is.
+  it('says so when a step needs nothing done', () => {
+    const { root } = open(state({ logins: [SESSION_OPEN] }));
+
+    start(root);
+    goTo('connect');
+
+    expect(document.querySelector<HTMLElement>('.gm-call-settled')?.hidden).toBe(false);
+  });
+
+  it('keeps that line out of the way when there is something to do', () => {
+    const { root } = open(state({ databases: [] }));
+
+    start(root);
+    goTo('databases');
+
+    expect(document.querySelector<HTMLElement>('.gm-call-settled')?.hidden).toBe(true);
+  });
+
+  // Eric's machine: five releases installed and a database already made. The
+  // step reads Already done, and creating another is still on offer.
+  it('still offers a default database once one exists', () => {
+    const { root, host } = open(state({ databases: [database()] }));
+
+    start(root);
+    goTo('databases');
+
+    expect(doBtn()?.hidden).toBe(false);
+    expect(doBtn()?.textContent).toBe('Create another with the defaults');
+
+    doBtn()?.click();
+    expect(host.postMessage).toHaveBeenCalledWith({ command: 'createDatabaseDefaults' });
+  });
+
+  it('stops offering a version once the machine has one', () => {
+    const { root } = open(state({ versions: [INSTALLED_VERSION, NOTHING_INSTALLED] }));
+
+    start(root);
+    goTo('versions');
+
+    expect(doBtn()?.hidden).toBe(true);
+  });
+
   // Doing the step is only worth offering if the tour then moves on.
   it('moves to the next outstanding step once the action lands', () => {
     const { root } = open(state({ versions: [NOTHING_INSTALLED], databases: [] }));

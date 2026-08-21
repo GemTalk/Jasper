@@ -489,6 +489,10 @@
   }
 
   function versionsDo(versions) {
+    // Only while there is nothing installed. Once there is, the newest release
+    // this machine lacks is an older one it never asked for, and offering to
+    // fetch it is noise rather than help.
+    if (versionsInstalledCount(versions || []) > 0) return undefined;
     // The list is newest first, so the first row not already on disk is the
     // newest release this machine could install.
     const next = (versions || []).find((v) => !v.extracted && !v.local);
@@ -497,8 +501,23 @@
       : undefined;
   }
 
+  // Creating a database with the defaults stays on offer after the first one:
+  // the names are made unique against the databases that already exist, so a
+  // second is as safe as the first.
+  function databasesDo(databases) {
+    return {
+      command: 'createDatabaseDefaults',
+      label: (databases || []).length
+        ? 'Create another with the defaults'
+        : 'Create one with the defaults',
+    };
+  }
+
   function connectDo(logins, databases) {
     const list = logins || [];
+    // Already in. Offering to log in again would read as the session not being
+    // there at all.
+    if (list.some((l) => l.connected)) return undefined;
     if (!list.length) {
       const db = (databases || [])[0];
       return db
@@ -551,7 +570,7 @@
       ],
       note: 'Once it exists, opening its row lists the log, configuration and backup files it owns: a configuration file opens in the editor to be changed by hand, and Terminal and Reveal open the database on disk for anything the panel does not cover.',
       action: 'Usually: + , accept the four defaults, then Start to bring the stone and NetLDI up.',
-      do: { command: 'createDatabaseDefaults', label: 'Create one with the defaults' },
+      do: databasesDo(state.databases),
       done: (state.databases || []).length > 0,
     });
     steps.push({
@@ -694,9 +713,10 @@
     // The callout offers to do the step only while it is still outstanding, and
     // only when one action is unambiguously the right one.
     const doBtn = tour.call.querySelector('[data-tour="do"]');
-    const offer = !step.done && step.do;
-    doBtn.hidden = !offer;
-    if (offer) doBtn.querySelector('span').textContent = step.do.label;
+    doBtn.hidden = !step.do;
+    if (step.do) doBtn.querySelector('span').textContent = step.do.label;
+    const settled = tour.call.querySelector('.gm-call-settled');
+    settled.hidden = !!step.do;
 
     tour.call.querySelector('[data-tour="prev"]').disabled = tour.index === 0;
     const last = tour.index === tour.steps.length - 1;
@@ -733,6 +753,7 @@
       <p class="gm-call-note"></p>
       <p class="gm-call-do"></p>
       <p class="gm-call-hint">Escape closes this box — the highlighted controls work either way.</p>
+      <p class="gm-call-settled">Nothing to do here.</p>
       <div class="gm-call-acts">
         <button type="button" class="btn btn-primary gm-call-do-btn" data-tour="do"><span></span></button>
         <button type="button" class="btn" data-tour="prev">Back</button>
@@ -800,7 +821,9 @@
   function runStepAction() {
     if (!tour) return;
     const step = tour.steps[tour.index];
-    if (!step.do || step.done) return;
+    // Whether there is anything to do is the step's `do` — a settled step can
+    // still carry an action worth taking, like a second default database.
+    if (!step.do) return;
     const { label, ...msg } = step.do;
     void label;
     post(msg);
