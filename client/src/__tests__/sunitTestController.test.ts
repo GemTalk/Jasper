@@ -683,6 +683,38 @@ describe('SunitTestController', () => {
       ctrl.dispose();
     });
 
+    it('leaves other classes fresh — a method edit stales only its own class', async () => {
+      // Saving one method used to grey every result in every dictionary. A test
+      // in an unrelated class has no reason to doubt its outcome because this
+      // method changed.
+      const ctrl = new SunitTestController(makeSessionManager(true));
+      await ctrl.runClassByName('UserGlobals', 'MyTestCase');
+      await ctrl.runClassByName('Globals', 'OtherTest');
+
+      ctrl.invalidateForMethod('UserGlobals', 'MyTestCase', 'testAdd');
+
+      // The edited class's sibling method is stale…
+      expect(ctrl.resultFor('UserGlobals', 'MyTestCase', 'testRemove')).toMatchObject({
+        stale: true,
+      });
+      // …but the unrelated class keeps its outcomes, unstaled.
+      expect(ctrl.resultFor('Globals', 'OtherTest', 'testAdd')?.stale).toBeUndefined();
+      expect(ctrl.resultFor('Globals', 'OtherTest')?.stale).toBeUndefined();
+      ctrl.dispose();
+    });
+
+    it('leaves other classes fresh when a class definition is recompiled', async () => {
+      const ctrl = new SunitTestController(makeSessionManager(true));
+      await ctrl.runClassByName('UserGlobals', 'MyTestCase');
+      await ctrl.runClassByName('Globals', 'OtherTest');
+
+      ctrl.invalidateForClass('UserGlobals', 'MyTestCase');
+
+      expect(ctrl.resultFor('Globals', 'OtherTest', 'testAdd')?.stale).toBeUndefined();
+      expect(ctrl.resultFor('Globals', 'OtherTest')?.stale).toBeUndefined();
+      ctrl.dispose();
+    });
+
     it('drops every result for a class whose definition was recompiled', async () => {
       const ctrl = new SunitTestController(makeSessionManager(true));
       await ctrl.runClassByName('UserGlobals', 'MyTestCase');

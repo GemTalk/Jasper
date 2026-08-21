@@ -668,9 +668,11 @@ export interface ExplorerSunitHooks {
 }
 
 /**
- * The row icon for an outcome. A stale result keeps its shape but takes the
- * queued colour: what it says was true of code that has since been recompiled,
- * so it should read as "was passing" rather than "is passing".
+ * The row icon for an outcome. A stale result keeps its shape but is dimmed to a
+ * muted grey: what it says was true of code that has since been recompiled, so it
+ * should read as "was passing" rather than "is passing". Deliberately NOT the
+ * queued yellow — that colour already means "skipped" in the Testing view and
+ * most IDEs, so a stale pass in yellow reads as a test that never ran.
  */
 function testResultIcon(result: ExplorerTestResult): vscode.ThemeIcon {
   if (result.outcome === 'running') return new vscode.ThemeIcon('loading~spin');
@@ -682,7 +684,7 @@ function testResultIcon(result: ExplorerTestResult): vscode.ThemeIcon {
         : ['warning', 'testing.iconErrored'];
   return new vscode.ThemeIcon(
     icon,
-    new vscode.ThemeColor(result.stale ? 'testing.iconQueued' : color),
+    new vscode.ThemeColor(result.stale ? 'disabledForeground' : color),
   );
 }
 

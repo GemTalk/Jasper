@@ -424,9 +424,10 @@ describe('ExplorerController.isTestSelector', () => {
     ctl.decorateTestRow(methodRow, 'UserGlobals', 'AnnouncerTest', 'testAnnounceClass');
 
     expect((classRow.iconPath as { id: string }).id).toBe('error');
-    // Stale keeps the shape (it did pass) but takes the queued colour.
+    // Stale keeps the shape (it did pass) but is dimmed to a muted grey — not
+    // the queued yellow, which already means "skipped".
     expect((methodRow.iconPath as { id: string }).id).toBe('pass');
-    expect((methodRow.iconPath as { color?: { id: string } }).color?.id).toBe('testing.iconQueued');
+    expect((methodRow.iconPath as { color?: { id: string } }).color?.id).toBe('disabledForeground');
   });
 
   it('marks a running row so its run button can be swapped for a stop button', () => {

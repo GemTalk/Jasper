@@ -430,20 +430,27 @@ export class SunitTestController implements vscode.Disposable {
 
   /**
    * A method was recompiled: its own result and its class's roll-up no longer
-   * describe what is in the stone, so they go. Everything else is marked stale
-   * rather than dropped — recompiling any method can change what any test does,
-   * but only the edited one is known to be wrong.
+   * describe what is in the stone, so they go. The class's other methods are
+   * marked stale rather than dropped — recompiling one method can change what a
+   * sibling test does, but only the edited one is known to be wrong.
+   *
+   * Staleness stops at the edited class. Earlier this staled every result in
+   * every dictionary, so saving one method greyed the whole tree — a test in an
+   * unrelated class has no reason to doubt its outcome because this method
+   * changed. (A subclass that inherits this method arguably should go stale too;
+   * that hierarchy walk isn't done here yet.)
    */
   invalidateForMethod(dictName: string, className: string, selector: string): void {
     this.deleteResult(dictName, className, selector);
     this.deleteResult(dictName, className);
-    this.markRemainingStale();
+    this.markClassStale(dictName, className);
     this.flushResultChanges();
   }
 
   /**
    * A class definition was recompiled: every result for that class goes (its
-   * methods may not even exist any more), and the rest go stale.
+   * methods may not even exist any more). Other classes keep their outcomes —
+   * redefining this class says nothing certain about a test elsewhere.
    */
   invalidateForClass(dictName: string, className: string): void {
     const classPrefix = `${resultKey(dictName, className)}/`;
@@ -454,7 +461,6 @@ export class SunitTestController implements vscode.Disposable {
         this.resultsDirty = true;
       }
     }
-    this.markRemainingStale();
     this.flushResultChanges();
   }
 
@@ -462,10 +468,14 @@ export class SunitTestController implements vscode.Disposable {
     if (this.results.delete(resultKey(dictName, className, selector))) this.resultsDirty = true;
   }
 
-  /** Mark every settled result stale. A running test is left alone — it is
-   * about to be overwritten with a fresh outcome anyway. */
-  private markRemainingStale(): void {
+  /** Mark one class's settled results stale — its roll-up and its methods, and
+   *  nothing in any other class. A running test is left alone: it is about to be
+   *  overwritten with a fresh outcome anyway. */
+  private markClassStale(dictName: string, className: string): void {
+    const classOwn = resultKey(dictName, className);
+    const classPrefix = `${classOwn}/`;
     for (const [key, result] of this.results) {
+      if (key !== classOwn && !key.startsWith(classPrefix)) continue;
       if (result.stale || result.outcome === 'running') continue;
       this.results.set(key, { ...result, stale: true });
       this.resultsDirty = true;
