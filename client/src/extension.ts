@@ -2166,8 +2166,14 @@ export function activate(context: vscode.ExtensionContext) {
         if (!selected?.enhancedInspectorAvailable) {
           const existing = inspectorProvider.findRootByLabel(args.className);
           if (existing) {
-            await inspectorView.reveal(existing, { select: true, focus: true });
-            return;
+            try {
+              await inspectorView.reveal(existing, { select: true, focus: true });
+              return;
+            } catch {
+              // The Inspector pane is gated out of the sidebar, so there is
+              // nothing to reveal into — inspect afresh rather than fail the
+              // command, which is what the Enhanced Inspector path does anyway.
+            }
           }
         }
         await codeExecutor.inspectExpression(inspectorProvider, args.className, args.className);

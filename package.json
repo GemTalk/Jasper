@@ -545,7 +545,7 @@
           "name": "Configure OS",
           "type": "tree",
           "icon": "$(memory)",
-          "when": "gemstone.isWindows && gemstone.hasActiveSession",
+          "when": "gemstone.isWindows && gemstone.adminViewsInSidebar",
           "visibility": "collapsed"
         },
         {
@@ -553,35 +553,35 @@
           "name": "Versions",
           "type": "tree",
           "icon": "$(versions)",
-          "when": "gemstone.hasActiveSession"
+          "when": "gemstone.adminViewsInSidebar"
         },
         {
           "id": "gemstoneDatabases",
           "name": "Databases",
           "type": "tree",
           "icon": "$(database)",
-          "when": "gemstone.hasActiveSession"
+          "when": "gemstone.adminViewsInSidebar"
         },
         {
           "id": "gemstoneProcesses",
           "name": "Processes",
           "type": "tree",
           "icon": "$(server-process)",
-          "when": "gemstone.hasActiveSession"
+          "when": "gemstone.adminViewsInSidebar"
         },
         {
           "id": "gemstoneLogins",
           "name": "Logins & Sessions",
           "type": "tree",
           "icon": "$(key)",
-          "when": "gemstone.hasActiveSession"
+          "when": "gemstone.adminViewsInSidebar"
         },
         {
           "id": "gemstoneRowan",
           "name": "Rowan",
           "type": "tree",
           "icon": "$(package)",
-          "when": "gemstone.hasActiveSession"
+          "when": "gemstone.adminViewsInSidebar"
         },
         {
           "id": "jasperMcpServer",
@@ -589,14 +589,14 @@
           "type": "tree",
           "icon": "$(remote-explorer)",
           "visibility": "collapsed",
-          "when": "gemstone.hasActiveSession"
+          "when": "gemstone.adminViewsInSidebar"
         },
         {
           "id": "gemstoneInspector",
           "name": "Inspector",
           "type": "tree",
           "icon": "$(eye)",
-          "when": "gemstone.hasActiveSession"
+          "when": "gemstone.adminViewsInSidebar"
         }
       ],
       "explorer": [
