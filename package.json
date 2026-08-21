@@ -580,23 +580,20 @@
           "id": "gemstoneRowan",
           "name": "Rowan",
           "type": "tree",
-          "icon": "$(package)",
-          "when": "gemstone.adminViewsInSidebar"
+          "icon": "$(package)"
         },
         {
           "id": "jasperMcpServer",
           "name": "MCP Server",
           "type": "tree",
           "icon": "$(remote-explorer)",
-          "visibility": "collapsed",
-          "when": "gemstone.adminViewsInSidebar"
+          "visibility": "collapsed"
         },
         {
           "id": "gemstoneInspector",
           "name": "Inspector",
           "type": "tree",
-          "icon": "$(eye)",
-          "when": "gemstone.adminViewsInSidebar"
+          "icon": "$(eye)"
         }
       ],
       "explorer": [
