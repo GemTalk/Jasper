@@ -472,11 +472,6 @@
           "id": "gemstone",
           "title": "GemStone",
           "icon": "resources/gemstone-sidebar.png"
-        },
-        {
-          "id": "gemstoneExplorer",
-          "title": "GemStone Explorer",
-          "icon": "resources/gemstone-browser.svg"
         }
       ],
       "panel": [
@@ -496,7 +491,7 @@
           "when": "gemstone.hasActiveSession"
         }
       ],
-      "gemstoneExplorer": [
+      "gemstone": [
         {
           "id": "gemstoneExplorerOpenEditors",
           "name": "Open Editors",
@@ -544,9 +539,7 @@
           "icon": "$(symbol-method)",
           "when": "gemstone.explorerActive",
           "size": 4
-        }
-      ],
-      "gemstone": [
+        },
         {
           "id": "gemstoneSharedMemory",
           "name": "Configure OS",

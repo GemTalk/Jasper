@@ -22,11 +22,14 @@ export class ThisProjectView {
     // context key, which flips the section back to a "Create Rowan Project"
     // welcome mid-transition — a race we avoid by never reloading.)
     //
-    // The activity bar has both "Explorer" and "GemStone Explorer" — anchor to
-    // the file Explorer, then confirm it's the active sidebar by waiting for a
+    // The activity bar has "Explorer" and "GemStone" — anchor to the file
+    // Explorer, then confirm it's the active sidebar by waiting for a
     // GemStone-only section ("Versions") to disappear. The GemStone sidebar has
     // its own "Rowan Section" pane, so until the switch settles the match below
     // would be ambiguous.
+    //
+    // Note that Versions is also hidden whenever no session is connected, so
+    // this wait only proves the sidebar switched when one is.
     await touch(this.page.getByRole('tab', { name: /^Explorer/ }));
     await expect(this.sidebar.getByRole('button', { name: 'Versions Section' })).toBeHidden({
       timeout: 30_000,
