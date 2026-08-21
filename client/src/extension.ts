@@ -3364,6 +3364,24 @@ export function activate(context: vscode.ExtensionContext) {
     ),
   );
 
+  // The manager's dependency bag. Built on demand so every opener — the command,
+  // startup, and the last logout — passes the same thing.
+  const managerDeps = () => ({
+    storage: sysadminStorage,
+    versionManager,
+    processManager,
+    getLogins: () => storage.getLogins(),
+    sessionManager,
+    extensionUri: context.extensionUri,
+    // The same signals the admin trees redraw on: every command that changes
+    // a version, database or process refreshes one of these providers.
+    onAdminChange: [
+      versionProvider.onDidChangeTreeData,
+      databaseProvider.onDidChangeTreeData,
+      processProvider.onDidChangeTreeData,
+    ],
+  });
+
   // ── SysAdmin Commands ───────────────────────────────────
   context.subscriptions.push(
     vscode.commands.registerCommand('gemstone.refreshVersions', async () => {
@@ -3593,21 +3611,11 @@ export function activate(context: vscode.ExtensionContext) {
     }),
 
     vscode.commands.registerCommand('gemstone.openManager', () => {
-      GemstoneManagerPanel.show({
-        storage: sysadminStorage,
-        versionManager,
-        processManager,
-        getLogins: () => storage.getLogins(),
-        sessionManager,
-        extensionUri: context.extensionUri,
-        // The same signals the admin trees redraw on: every command that changes
-        // a version, database or process refreshes one of these providers.
-        onAdminChange: [
-          versionProvider.onDidChangeTreeData,
-          databaseProvider.onDidChangeTreeData,
-          processProvider.onDidChangeTreeData,
-        ],
-      });
+      GemstoneManagerPanel.show(managerDeps());
+    }),
+
+    vscode.commands.registerCommand('gemstone.closeManager', () => {
+      GemstoneManagerPanel.close();
     }),
 
     vscode.commands.registerCommand('gemstone.startStone', async (node: DatabaseNode) => {
@@ -4019,6 +4027,26 @@ export function activate(context: vscode.ExtensionContext) {
       },
     ),
   );
+
+  // ── GemStone Manager: the surface for a window with nothing connected ─────
+  // With no session the admin views are gated off and the Explorer has nothing
+  // to browse, so the manager is the only surface with anything to say — it
+  // opens itself rather than waiting to be found in the palette. Without focus:
+  // the window may have restored an editor the user was working in.
+  const openManagerForEmptyEnvironment = () => {
+    if (sessionManager.getSessions().length === 0) {
+      GemstoneManagerPanel.show(managerDeps(), true);
+    }
+  };
+
+  // Logging out of the *last* session returns the window to that same state.
+  // Logging out of one of several does not — the Explorer still has a session to
+  // browse, and the manager should not come barging back in.
+  context.subscriptions.push(
+    sessionManager.onDidRemoveSession(() => openManagerForEmptyEnvironment()),
+  );
+
+  openManagerForEmptyEnvironment();
 }
 
 export function deactivate(): Thenable<void> | undefined {

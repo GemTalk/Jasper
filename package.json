@@ -19,8 +19,16 @@
     "node": ">=22.15.1"
   },
   "devEngines": {
-    "packageManager": { "name": "npm", "version": ">=11.16.0", "onFail": "error" },
-    "runtime": { "name": "node", "version": ">=22.15.1", "onFail": "error" }
+    "packageManager": {
+      "name": "npm",
+      "version": ">=11.16.0",
+      "onFail": "error"
+    },
+    "runtime": {
+      "name": "node",
+      "version": ">=22.15.1",
+      "onFail": "error"
+    }
   },
   "icon": "resources/gemstone-icon.png",
   "categories": [
@@ -137,7 +145,10 @@
         "properties": {
           "gemstone.omniSearch.ui": {
             "type": "string",
-            "enum": ["spotter", "panel"],
+            "enum": [
+              "spotter",
+              "panel"
+            ],
             "enumDescriptions": [
               "Editor-tab Spotter: a webview in an editor tab with labeled scope tabs, a source-preview pane, own match highlighting, and an always-on case indicator.",
               "Bottom-panel view (default): the same webview docked in the panel strip (next to Terminal/Output). Stays out of the way; results open in the editor area above it."
@@ -147,7 +158,11 @@
           },
           "gemstone.omniSearch.matchMode": {
             "type": "string",
-            "enum": ["fuzzy", "substring", "prefix"],
+            "enum": [
+              "fuzzy",
+              "substring",
+              "prefix"
+            ],
             "enumDescriptions": [
               "Subsequence match: the typed characters appear in order (the Quick-Open feel).",
               "The typed text appears as a contiguous run.",
@@ -495,7 +510,6 @@
           "name": "Dictionaries",
           "type": "tree",
           "icon": "$(symbol-namespace)",
-          "when": "gemstone.explorerActive",
           "size": 1
         },
         {
@@ -538,51 +552,58 @@
           "name": "Configure OS",
           "type": "tree",
           "icon": "$(memory)",
-          "when": "gemstone.isWindows",
+          "when": "gemstone.isWindows && gemstone.hasActiveSession",
           "visibility": "collapsed"
         },
         {
           "id": "gemstoneVersions",
           "name": "Versions",
           "type": "tree",
-          "icon": "$(versions)"
+          "icon": "$(versions)",
+          "when": "gemstone.hasActiveSession"
         },
         {
           "id": "gemstoneDatabases",
           "name": "Databases",
           "type": "tree",
-          "icon": "$(database)"
+          "icon": "$(database)",
+          "when": "gemstone.hasActiveSession"
         },
         {
           "id": "gemstoneProcesses",
           "name": "Processes",
           "type": "tree",
-          "icon": "$(server-process)"
+          "icon": "$(server-process)",
+          "when": "gemstone.hasActiveSession"
         },
         {
           "id": "gemstoneLogins",
           "name": "Logins & Sessions",
           "type": "tree",
-          "icon": "$(key)"
+          "icon": "$(key)",
+          "when": "gemstone.hasActiveSession"
         },
         {
           "id": "gemstoneRowan",
           "name": "Rowan",
           "type": "tree",
-          "icon": "$(package)"
+          "icon": "$(package)",
+          "when": "gemstone.hasActiveSession"
         },
         {
           "id": "jasperMcpServer",
           "name": "MCP Server",
           "type": "tree",
           "icon": "$(remote-explorer)",
-          "visibility": "collapsed"
+          "visibility": "collapsed",
+          "when": "gemstone.hasActiveSession"
         },
         {
           "id": "gemstoneInspector",
           "name": "Inspector",
           "type": "tree",
-          "icon": "$(eye)"
+          "icon": "$(eye)",
+          "when": "gemstone.hasActiveSession"
         }
       ],
       "explorer": [
@@ -596,6 +617,11 @@
       ]
     },
     "viewsWelcome": [
+      {
+        "view": "gemstoneExplorerDicts",
+        "contents": "Not connected to a stone.\nThe GemStone Manager sets up this machine, installs a version, creates a database, and connects.\n[Open GemStone Manager](command:gemstone.openManager)",
+        "when": "!gemstone.explorerActive"
+      },
       {
         "view": "gemstoneLogins",
         "contents": "Add a login to connect to a stone.\n[Add a Login](command:gemstone.addLogin)\nNo database yet? Create one from the Databases view."
@@ -1732,6 +1758,12 @@
         "icon": "$(settings-gear)"
       },
       {
+        "command": "gemstone.closeManager",
+        "title": "Close GemStone Manager",
+        "category": "GemStone Admin",
+        "icon": "$(settings-gear)"
+      },
+      {
         "command": "gemstone.startStone",
         "title": "Start Stone",
         "category": "GemStone Admin",
@@ -2022,6 +2054,16 @@
         }
       ],
       "view/title": [
+        {
+          "command": "gemstone.openManager",
+          "when": "view == gemstoneExplorerDicts && !gemstone.managerOpen",
+          "group": "navigation@-1"
+        },
+        {
+          "command": "gemstone.closeManager",
+          "when": "view == gemstoneExplorerDicts && gemstone.managerOpen",
+          "group": "navigation@-1"
+        },
         {
           "command": "gemstone.explorer.refresh",
           "when": "view == gemstoneExplorerDicts",

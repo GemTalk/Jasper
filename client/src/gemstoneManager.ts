@@ -328,17 +328,37 @@ export class GemstoneManagerPanel {
   private rebuildAgain = false;
   private staleWhileHidden = false;
 
-  /** Open the manager, revealing the existing panel if one is already open. */
-  static show(deps: GemstoneManagerDeps): void {
+  /**
+   * Publishes whether a panel is open, so the Dictionaries title bar can offer
+   * Open or Close rather than one button that means both.
+   */
+  private static setOpenContext(open: boolean): void {
+    void vscode.commands.executeCommand('setContext', 'gemstone.managerOpen', open);
+  }
+
+  /** Close the manager if one is open; a no-op otherwise. */
+  static close(): void {
+    GemstoneManagerPanel.current?.dispose();
+  }
+
+  /**
+   * Open the manager, revealing the existing panel if one is already open.
+   *
+   * `preserveFocus` is for the times the panel opens because the environment
+   * said so rather than because the user asked — at startup with nothing
+   * connected, or when the last session goes away. Taking focus there would pull
+   * the user out of whatever editor they were in.
+   */
+  static show(deps: GemstoneManagerDeps, preserveFocus = false): void {
     if (GemstoneManagerPanel.current) {
-      GemstoneManagerPanel.current.panel.reveal();
+      GemstoneManagerPanel.current.panel.reveal(undefined, preserveFocus);
       void GemstoneManagerPanel.current.postState();
       return;
     }
     const panel = vscode.window.createWebviewPanel(
       GemstoneManagerPanel.viewType,
       'GemStone Manager',
-      vscode.ViewColumn.Active,
+      { viewColumn: vscode.ViewColumn.Active, preserveFocus },
       {
         enableScripts: true,
         retainContextWhenHidden: true,
@@ -349,6 +369,7 @@ export class GemstoneManagerPanel {
       },
     );
     GemstoneManagerPanel.current = new GemstoneManagerPanel(panel, deps);
+    GemstoneManagerPanel.setOpenContext(true);
   }
 
   private constructor(
@@ -464,6 +485,7 @@ export class GemstoneManagerPanel {
   private dispose(): void {
     if (GemstoneManagerPanel.current === this) {
       GemstoneManagerPanel.current = undefined;
+      GemstoneManagerPanel.setOpenContext(false);
     }
     if (this.coalesceTimer) clearTimeout(this.coalesceTimer);
     this.panel.dispose();
