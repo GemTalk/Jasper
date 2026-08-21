@@ -100,6 +100,7 @@ import {
   parseUri,
 } from './gemstoneFileSystemProvider';
 import { openWorkspace } from './workspace';
+import { registerStartHere, StartHereStatusBar, resetStartHere } from './startHere';
 import { openTutorialNotebook } from './tutorialNotebook';
 import { GemStoneDebugSession } from './gemstoneDebugSession';
 import { InspectorTreeProvider, InspectorNode } from './inspectorTreeProvider';
@@ -996,6 +997,18 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(connectStatusItem);
   let lastLoginError: string | undefined;
 
+  // A "Start Here" status-bar button pointing a new user at the basics (browse a
+  // class, search, open a workspace, take the tour). Shown on connect below; stays
+  // until the user hides it from its own menu (issue #468, item 10).
+  const startHereStatusBar = new StartHereStatusBar(context);
+  context.subscriptions.push(
+    ...startHereStatusBar.register(),
+    // When the last session goes away, hide the button until the next connect.
+    sessionManager.onDidRemoveSession(() => {
+      if (sessionManager.getSessions().length === 0) startHereStatusBar.hideForDisconnection();
+    }),
+  );
+
   function showConnecting(stone: string): void {
     lastLoginError = undefined;
     connectStatusItem.color = undefined;
@@ -1011,6 +1024,7 @@ export function activate(context: vscode.ExtensionContext) {
     connectStatusItem.hide();
     void vscode.commands.executeCommand('workbench.view.extension.gemstoneExplorer');
     explorer.showConnectedBanner(stone);
+    startHereStatusBar.showForConnection();
   }
 
   function showLoginError(message: string): void {
@@ -1412,6 +1426,8 @@ export function activate(context: vscode.ExtensionContext) {
       await openWorkspace();
     }),
 
+    registerStartHere(),
+
     vscode.commands.registerCommand('gemstone.openTutorial', async () => {
       await openTutorialNotebook();
     }),
@@ -1473,9 +1489,13 @@ export function activate(context: vscode.ExtensionContext) {
 
     vscode.commands.registerCommand('gemstone.resetGettingStarted', async () => {
       await context.globalState.update(GETTING_STARTED_SEEN_KEY, undefined);
+      // Also un-retire the "Start Here" status-bar button, so one reset restores
+      // every first-run onboarding surface.
+      await resetStartHere(context);
       const openNow = 'Open Walkthrough Now';
       const choice = await vscode.window.showInformationMessage(
-        'Getting Started reset — the walkthrough will open automatically the next time VS Code starts.',
+        'Getting Started reset — the walkthrough will open automatically the next time VS Code starts, ' +
+          'and the "Start Here" button will show again on your next connect.',
         openNow,
       );
       if (choice === openNow) {
@@ -1763,6 +1783,9 @@ export function activate(context: vscode.ExtensionContext) {
         // maybeOpenGettingStarted), so its "how to connect" step arrives before the
         // user connects rather than after. The workspace stays available via the
         // gemstone.openWorkspace command and the Logins & Sessions welcome view.
+
+        // The "Start Here" status-bar button (shown from flashConnected above) points
+        // a new user at the basics; see StartHereStatusBar (issue #468, item 10).
 
         // Offer the optional server-side supports this stone lacks (Enhanced
         // Inspector + refactoring engine) as one bundle, per

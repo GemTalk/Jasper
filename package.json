@@ -754,6 +754,28 @@
             ]
           },
           {
+            "id": "browseClasses",
+            "title": "Browse classes",
+            "description": "Open the GemStone Explorer and click a class — its methods appear in the Methods pane below. Or jump straight to any class by name.\n[Find Class…](command:gemstone.findClass)",
+            "media": {
+              "markdown": "resources/walkthrough/browseClasses.md"
+            },
+            "completionEvents": [
+              "onCommand:gemstone.findClass"
+            ]
+          },
+          {
+            "id": "search",
+            "title": "Search your code",
+            "description": "One box searches across classes, methods, and method source — the fastest way to find something when you don't know where it lives.\n[GemStone Search…](command:gemstone.search)",
+            "media": {
+              "markdown": "resources/walkthrough/search.md"
+            },
+            "completionEvents": [
+              "onCommand:gemstone.search"
+            ]
+          },
+          {
             "id": "serverSupport",
             "title": "Install optional server support",
             "description": "Jasper can install two optional server-side supports: the Enhanced Inspector (rich object views, GemStone 3.7.5+) and the refactoring engine (rename instance variable, and more). On connect it offers to install whatever a stone is missing; the `gemstone.serverSupport.autoInstall` setting (ask / always / never) controls that.\n[Install GemStone Support…](command:gemstone.installServerSupport)\n\n[Uninstall GemStone Support…](command:gemstone.uninstallServerSupport) removes both from the stone (does nothing if neither is installed).",
@@ -928,8 +950,13 @@
         "icon": "$(mortar-board)"
       },
       {
+        "command": "gemstone.startHere",
+        "title": "Start Here",
+        "category": "GemStone"
+      },
+      {
         "command": "gemstone.resetGettingStarted",
-        "title": "Reset Getting Started (Show Walkthrough on Next Startup)",
+        "title": "Reset Getting Started (Walkthrough + Start Here Button)",
         "category": "GemStone"
       },
       {
