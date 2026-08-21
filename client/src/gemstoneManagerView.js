@@ -475,6 +475,42 @@
   //
   // Every step reports whether it is already satisfied, so the sequence doubles
   // as a progress read: the first `todo` is where the user actually is.
+  // The one action that moves a step forward, when exactly one choice is
+  // obvious. Each is a message the section's own button already sends, so the
+  // host runs the same command with the same confirmations, prompts and progress
+  // — the callout is a shortcut to those controls, not a second implementation.
+  // A label ending in an ellipsis is one that will ask the user something.
+  function osDo(os) {
+    const failing = (os.checks || []).find((c) => c.state !== 'ok' && c.remedy);
+    return failing
+      ? { command: 'osRemedy', action: failing.remedy.command, label: failing.remedy.label }
+      : undefined;
+  }
+
+  function versionsDo(versions) {
+    // The list is newest first, so the first row not already on disk is the
+    // newest release this machine could install.
+    const next = (versions || []).find((v) => !v.extracted && !v.local);
+    return next
+      ? { command: 'installVersion', version: next.version, label: `Install ${next.version}` }
+      : undefined;
+  }
+
+  function connectDo(logins) {
+    const list = logins || [];
+    if (!list.length) return { command: 'createLogin', label: 'Add a login…' };
+    // A login whose stone is up can be logged straight into; otherwise the stone
+    // has to come up first, which the panel treats as one action.
+    const up = list.find((l) => l.running);
+    return up
+      ? { command: 'connectLogin', login: up.label, label: `Log in as ${up.user}` }
+      : {
+          command: 'startAndConnect',
+          login: list[0].label,
+          label: `Start ${list[0].stone} and log in`,
+        };
+  }
+
   function tourSteps(state) {
     const steps = [];
     if (state.os && state.os.supported) {
@@ -484,6 +520,7 @@
         body: 'GemStone keeps its object cache in shared memory, so the operating system has to allow a large enough segment before a stone will start. This section reads what this machine reports and carries the fix for anything short.',
         action:
           'Usually nothing — every row here is already ok on a machine that has run GemStone before. A row that is not carries the one button that fixes it.',
+        do: osDo(state.os),
         done: !osHasWarning(state.os),
       });
     }
@@ -493,6 +530,7 @@
       body: 'Nothing downstream can happen until a GemStone release is on disk — a database is made from one, and a login runs against one.',
       action:
         'Usually: + , then pick the newest release and let it download and install. Register Local instead if you already have a build on this machine.',
+      do: versionsDo(state.versions),
       done: versionsInstalledCount(state.versions || []) > 0,
     });
     steps.push({
@@ -507,6 +545,7 @@
       ],
       note: 'Once it exists, opening its row lists the log, configuration and backup files it owns: a configuration file opens in the editor to be changed by hand, and Terminal and Reveal open the database on disk for anything the panel does not cover.',
       action: 'Usually: + , accept the four defaults, then Start to bring the stone and NetLDI up.',
+      do: { command: 'createDatabase', label: 'Create a database…' },
       done: (state.databases || []).length > 0,
     });
     steps.push({
@@ -515,7 +554,8 @@
       body: 'A login pairs a user with a stone. The session it opens is what the class browser, workspaces and the debugger all work through.',
       action:
         'Usually: + to add a login, then Log in. Use Start & log in when the stone is not running yet — it does both.',
-      done: (state.logins || []).length > 0,
+      do: connectDo(state.logins),
+      done: (state.logins || []).some((l) => l.connected),
     });
     return steps;
   }
@@ -537,7 +577,7 @@
     const lead = todo.length
       ? `<span class="gm-head-lead">Next: ${esc(todo[0].title.charAt(0).toLowerCase() + todo[0].title.slice(1))}</span>
          <span class="dim">${esc(steps.length - todo.length)} of ${esc(steps.length)} done</span>`
-      : `<span class="gm-head-lead">Ready to connect.</span>`;
+      : `<span class="gm-head-lead">Set up and connected.</span>`;
     const quick =
       nothingInstalled && !(state.databases || []).length
         ? btn('quickSetup', 'Run Quick Setup', 'gear', 'btn-primary')
@@ -649,6 +689,13 @@
     note.textContent = step.note || '';
     note.hidden = !step.note;
     tour.call.querySelector('.gm-call-do').textContent = step.action;
+    // The callout offers to do the step only while it is still outstanding, and
+    // only when one action is unambiguously the right one.
+    const doBtn = tour.call.querySelector('[data-tour="do"]');
+    const offer = !step.done && step.do;
+    doBtn.hidden = !offer;
+    if (offer) doBtn.querySelector('span').textContent = step.do.label;
+
     tour.call.querySelector('[data-tour="prev"]').disabled = tour.index === 0;
     const last = tour.index === tour.steps.length - 1;
     tour.call.querySelector('[data-tour="next"]').hidden = last;
@@ -685,8 +732,9 @@
       <p class="gm-call-do"></p>
       <p class="gm-call-hint">Escape closes this box — the highlighted controls work either way.</p>
       <div class="gm-call-acts">
+        <button type="button" class="btn btn-primary gm-call-do-btn" data-tour="do"><span></span></button>
         <button type="button" class="btn" data-tour="prev">Back</button>
-        <button type="button" class="btn btn-primary" data-tour="next">Next</button>
+        <button type="button" class="btn" data-tour="next">Next</button>
         <button type="button" class="btn" data-tour="end">Skip</button>
       </div>`;
     overlay.append(spot, call);
@@ -741,6 +789,27 @@
     else if (what === 'next') showStep(tour ? tour.index + 1 : 0);
     else if (what === 'prev') showStep(tour ? tour.index - 1 : 0);
     else if (what === 'end') endTour();
+    else if (what === 'do') runStepAction();
+  }
+
+  /**
+   * Do the current step, by sending the message the section's own control sends.
+   * Nothing is reimplemented here and nothing is decided here: the host runs the
+   * same command, so a step that prompts still prompts and a step that shows
+   * progress still shows it.
+   */
+  function runStepAction() {
+    if (!tour) return;
+    const step = tour.steps[tour.index];
+    if (!step.do || step.done) return;
+    const { label, ...msg } = step.do;
+    void label;
+    post(msg);
+    // The host redraws the panel once the command lands. If that settles this
+    // step, move to the next outstanding one rather than leaving the user
+    // looking at a finished step — but only after an action they asked for, not
+    // on every redraw.
+    tour.advanceFrom = tour.index;
   }
 
   function renderVersions(versions, open) {
@@ -1105,8 +1174,15 @@
     // The section the tour points at was just replaced, so re-anchor onto the new
     // element rather than leaving the spotlight over stale coordinates. If the
     // overlay is gone from the document, the tour went with it.
-    if (tour && !tour.overlay.isConnected) endTour();
-    else if (tour) showStep(tour.index);
+    if (tour && !tour.overlay.isConnected) {
+      endTour();
+    } else if (tour) {
+      tour.steps = tourSteps(state);
+      const acted = tour.advanceFrom;
+      tour.advanceFrom = undefined;
+      const settled = acted !== undefined && tour.steps[acted] && tour.steps[acted].done;
+      showStep(settled ? firstTodo(tour.steps) : tour.index);
+    }
   }
 
   function post(msg) {

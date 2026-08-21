@@ -445,6 +445,9 @@ const LOGIN = {
   current: false,
 };
 
+/** A login with a session already open — what finishes the setup sequence. */
+const SESSION_OPEN = { ...LOGIN, connected: true, sessionId: 7, current: true };
+
 describe('setup steps', () => {
   it('names the four steps in the order they have to happen', () => {
     const steps = tour().tourSteps(state());
@@ -474,12 +477,14 @@ describe('setup steps', () => {
     expect(with_.find((s) => s.section === 'databases')?.done).toBe(true);
   });
 
-  it('counts connecting done only once a login exists', () => {
-    const without = tour().tourSteps(state({ logins: [] }));
-    const with_ = tour().tourSteps(state({ logins: [LOGIN] }));
+  it('counts connecting done only once a session is open, not merely configured', () => {
+    const none = tour().tourSteps(state({ logins: [] }));
+    const configured = tour().tourSteps(state({ logins: [LOGIN] }));
+    const connected = tour().tourSteps(state({ logins: [SESSION_OPEN] }));
 
-    expect(without.find((s) => s.section === 'connect')?.done).toBe(false);
-    expect(with_.find((s) => s.section === 'connect')?.done).toBe(true);
+    expect(none.find((s) => s.section === 'connect')?.done).toBe(false);
+    expect(configured.find((s) => s.section === 'connect')?.done).toBe(false);
+    expect(connected.find((s) => s.section === 'connect')?.done).toBe(true);
   });
 
   it('counts the operating system step against its own warning', () => {
@@ -496,7 +501,7 @@ describe('setup steps', () => {
   });
 
   it('points at the last step when everything is done, rather than off the end', () => {
-    const steps = tour().tourSteps(state({ logins: [LOGIN] }));
+    const steps = tour().tourSteps(state({ logins: [SESSION_OPEN] }));
 
     expect(steps.every((s) => s.done)).toBe(true);
     expect(tour().firstTodo(steps)).toBe(steps.length - 1);
@@ -516,10 +521,10 @@ describe('setup header', () => {
     expect(root.querySelector('.gm-head-text')?.textContent).toContain('1 of 4 done');
   });
 
-  it('says the environment is ready when nothing is left', () => {
-    const { root } = open(state({ logins: [LOGIN] }));
+  it('says so when nothing is left to set up', () => {
+    const { root } = open(state({ logins: [SESSION_OPEN] }));
 
-    expect(root.querySelector('.gm-head-lead')?.textContent).toContain('Ready to connect');
+    expect(root.querySelector('.gm-head-lead')?.textContent).toContain('Set up and connected');
   });
 
   it('offers Quick Setup on a machine with nothing installed and no database', () => {
@@ -858,5 +863,150 @@ describe('session actions cover what the sidebar offered', () => {
     const { root } = open(state({ logins: [{ ...LOGIN, connected: false }] }));
 
     expect(actions(root)).toEqual([]);
+  });
+});
+
+// A coach step can also just do the thing. Each action is the message the
+// section's own control sends, so the host applies the same command — the callout
+// never decides anything the panel would not.
+describe('a step can do itself', () => {
+  const start = (root: HTMLElement) =>
+    root.querySelector<HTMLElement>('[data-tour="start"]')?.click();
+  const doBtn = () => document.querySelector<HTMLButtonElement>('[data-tour="do"]');
+
+  it('offers to install the newest release when none is on disk', () => {
+    const older = { ...NOTHING_INSTALLED, version: '3.6.8' };
+    const { root } = open(state({ versions: [NOTHING_INSTALLED, older], databases: [] }));
+
+    start(root);
+
+    expect(doBtn()?.hidden).toBe(false);
+    expect(doBtn()?.textContent).toBe('Install 3.7.5');
+  });
+
+  it('installs it through the host, not by reimplementing the download', () => {
+    const { root, host } = open(state({ versions: [NOTHING_INSTALLED], databases: [] }));
+
+    start(root);
+    doBtn()?.click();
+
+    expect(host.postMessage).toHaveBeenCalledWith({
+      command: 'installVersion',
+      version: '3.7.5',
+    });
+  });
+
+  it('never sends the button label to the host', () => {
+    const { root, host } = open(state({ versions: [NOTHING_INSTALLED], databases: [] }));
+
+    start(root);
+    doBtn()?.click();
+
+    const [msg] = host.postMessage.mock.calls.at(-1) as [Record<string, unknown>];
+    expect(msg.label).toBeUndefined();
+  });
+
+  it('offers to create a database, and says that it will ask', () => {
+    const { root } = open(state({ databases: [] }));
+
+    start(root);
+
+    expect(doBtn()?.textContent).toBe('Create a database…');
+  });
+
+  it('offers to log in when a login is configured and its stone is up', () => {
+    const { root, host } = open(state({ logins: [LOGIN] }));
+
+    start(root);
+    expect(doBtn()?.textContent).toBe('Log in as DataCurator');
+
+    doBtn()?.click();
+    expect(host.postMessage).toHaveBeenCalledWith({
+      command: 'connectLogin',
+      login: 'DataCurator@devKit',
+    });
+  });
+
+  it('offers to start the stone first when it is down', () => {
+    const { root } = open(state({ logins: [{ ...LOGIN, running: false }] }));
+
+    start(root);
+
+    expect(doBtn()?.textContent).toBe('Start devKit and log in');
+  });
+
+  it('offers to add a login when there is none', () => {
+    const { root } = open(state({ logins: [] }));
+
+    start(root);
+
+    expect(doBtn()?.textContent).toBe('Add a login…');
+  });
+
+  it('offers the remedy for the prerequisite that is actually failing', () => {
+    const short = {
+      ...HEALTHY_OS,
+      sharedMemoryConfigured: false,
+      checks: [
+        {
+          key: 'shm',
+          label: 'Shared memory',
+          state: 'warn',
+          detail: '0',
+          remedy: { command: 'gemstone.runSetSharedMemory', label: 'Configure' },
+        },
+      ],
+    };
+    const { root, host } = open(state({ os: short }));
+
+    start(root);
+    doBtn()?.click();
+
+    expect(host.postMessage).toHaveBeenCalledWith({
+      command: 'osRemedy',
+      action: 'gemstone.runSetSharedMemory',
+    });
+  });
+
+  it('offers nothing on a step the machine has already settled', () => {
+    const { root } = open(state({ logins: [SESSION_OPEN] }));
+
+    start(root);
+
+    expect(doBtn()?.hidden).toBe(true);
+  });
+
+  // Doing the step is only worth offering if the tour then moves on.
+  it('moves to the next outstanding step once the action lands', () => {
+    const { root } = open(state({ versions: [NOTHING_INSTALLED], databases: [] }));
+
+    start(root);
+    expect(document.querySelector('.gm-call-step')?.textContent).toBe('Step 2 of 4');
+
+    doBtn()?.click();
+    // The host redraws with the version now installed, as it would after the
+    // command finishes.
+    api().render(state({ versions: [INSTALLED_VERSION], databases: [] }));
+
+    expect(document.querySelector('.gm-call-step')?.textContent).toBe('Step 3 of 4');
+  });
+
+  it('stays put when a redraw did not settle the step', () => {
+    const { root } = open(state({ versions: [NOTHING_INSTALLED], databases: [] }));
+
+    start(root);
+    doBtn()?.click();
+    api().render(state({ versions: [NOTHING_INSTALLED], databases: [] }));
+
+    expect(document.querySelector('.gm-call-step')?.textContent).toBe('Step 2 of 4');
+  });
+
+  it('does not wander on a redraw the user did not ask for', () => {
+    const { root } = open(state({ versions: [NOTHING_INSTALLED], databases: [] }));
+
+    start(root);
+    api().render(state({ versions: [INSTALLED_VERSION], databases: [] }));
+
+    expect(document.querySelector('.gm-call-step')?.textContent).toBe('Step 2 of 4');
   });
 });
