@@ -4,6 +4,20 @@ All notable changes to the **GemStone Smalltalk** extension will be documented i
 
 ## [Unreleased]
 
+### Added
+
+- **Breakpoints you can set, aim, disable and manage.** Setting a breakpoint used to mean a gutter click, which lands on the leftmost step point of the line — but a Smalltalk line routinely holds several, so the one you wanted was often not the one you got, and there was no way to disable a breakpoint, act on all of them at once, or see what the session actually had. Breakpoints now live in VS Code's own breakpoint list, which makes it the durable record: it survives a restart, and the gutter, the per-breakpoint checkbox and the built-in Enable/Disable/Remove All controls drive GemStone through it. GemStone breakpoints are per-gem state that no `commit` persists, so Jasper re-applies them on login and after a recompile. **Toggle Breakpoint at Cursor** (`Shift+F9`) breaks at the step point under the caret rather than the line's first, and the token that will actually break is outlined — dashed when disabled. A disabled breakpoint is kept in the gem as set-then-disabled, so re-arming it is instant. **Enable All**, **Disable All** and **Remove All Breakpoints** cover every GemStone breakpoint, including ones set outside Jasper. ([#262](https://github.com/GemTalk/Jasper/issues/262))
+- **Step points are numbered where they are, without getting in the way.** Step point numbers are drawn as inlay hints — VS Code's own dim, recessive style, suppressed or restyled by its `editor.inlayHints.*` settings like any other — and each number is clickable to toggle a breakpoint at that step point. `gemstone.stepPoints.display` decides when they show: `debugging` (the default, so they appear while a debug session runs and stay out of the way while you are reading or writing code), `always`, or `off`, with **Toggle Step Point Numbers** to flip them. Whatever the setting, hovering a step point reports its number and breakpoint state with links to set, clear, enable or disable it. Numbers are withheld while a buffer has unsaved edits, since the stone's offsets no longer describe the text on screen and a wrong number is worse than none. ([#262](https://github.com/GemTalk/Jasper/issues/262))
+- **A Breakpoints view in the GemStone sidebar.** Lists what the current session's gem actually holds — grouped by class and method, each row naming the step point the breakpoint resolved to, with an enable checkbox and a click that opens the method with the caret on that step point. It is deliberately the gem's truth rather than a copy of VS Code's list, so it also surfaces breakpoints Jasper never set (from topaz, another tool, or a `halt` left in the code), which were previously invisible right up until execution stopped on one. ([#262](https://github.com/GemTalk/Jasper/issues/262))
+
+### Changed
+
+- **`gemstone.toggleSelectorBreakpoint` is now `gemstone.breakpoints.toggleAtCursor`.** No alias is kept, so a **custom keybinding, task, or macro naming the old id will stop working** and needs the new one. The command also behaves differently in a way worth knowing: it used to track its breakpoints privately, which meant they never appeared in the Breakpoints view and were silently wiped whenever a gutter breakpoint on the same method was applied. It now adds a normal VS Code breakpoint at the step point, so the two kinds are the same kind and no longer erase each other.
+
+### Fixed
+
+- **A gutter breakpoint could be set one step point later than the line asked for.** Line-to-step-point mapping compared GemStone's 1-based source offsets against 0-based line offsets, so a step point sitting exactly on a line boundary was read as belonging to the previous line. Run to Cursor already corrected for this; the gutter path did not.
+
 ## [1.8.13] - 2026-08-20
 
 A follow-up release for **GemStone Search**: correctness fixes for multi-session and multi-environment use, matching and debounce repairs found by a review pass over the feature, one naming pass, and the senders/implementors counts moving off the method source.

@@ -233,8 +233,46 @@ When code execution hits an error, a **Debug** button opens the VS Code debugger
 
 ### Breakpoints
 
-- **Line breakpoints** — click the editor gutter in a `gemstone://` method to set/clear breakpoints mapped to GemStone step points
-- **Selector breakpoints** — right-click a selector and choose **Toggle Selector Breakpoint** to break whenever that selector is sent; breakpointed selectors are highlighted with a red border
+Breakpoints live in VS Code's own breakpoint list, so they survive a restart and
+the familiar gutter, checkbox and Enable/Disable/Remove All controls all drive
+GemStone. Each one is applied to the session as a step-point break — GemStone
+breakpoints are per-session gem state, so Jasper re-applies them on login and
+after a recompile.
+
+- **Line breakpoints** — click the editor gutter in a `gemstone://` method. A
+  gutter click means "this line", and lands on the leftmost step point on it
+- **Step-point breakpoints** — a Smalltalk line usually holds several step
+  points. **Toggle Breakpoint at Cursor** (`Shift+F9`) breaks at the step point
+  under the caret, not the first one on the line, and the token that will
+  actually break is outlined
+- **Enable / disable** — per breakpoint from the Breakpoints view checkbox or
+  **Enable/Disable Breakpoint at Cursor**; a disabled breakpoint is kept in the
+  gem (drawn dashed) so re-arming it is instant
+- **All at once** — **Enable All**, **Disable All** and **Remove All
+  Breakpoints** act on every GemStone breakpoint, including any set outside
+  Jasper by topaz or a `halt` left in the code
+- **Clear All Breakpoints in Method** drops every breakpoint in the method you
+  are in
+
+#### Step points
+
+- **Numbered inline** — step point numbers are drawn as inlay hints, and each is
+  clickable to toggle a breakpoint there. `gemstone.stepPoints.display` controls
+  when: `debugging` (the default — visible while a debug session runs, out of the
+  way otherwise), `always`, or `off`. **Toggle Step Point Numbers** flips them
+- **On hover** — hovering a step point always reports its number and breakpoint
+  state, with links to set, clear, enable or disable it, whatever the numbering
+  is set to
+- Numbers are suppressed while a buffer has unsaved edits, since the stone's
+  offsets no longer line up with what you are looking at
+
+#### Breakpoint manager
+
+The **Breakpoints** view in the GemStone sidebar lists what the current session's
+gem actually holds, grouped by class and method with the step point each
+breakpoint resolved to. It shows breakpoints Jasper never set, which are
+otherwise invisible until execution stops on one. Rows carry an enable checkbox;
+clicking one opens the method with the caret on the step point.
 
 ### SUnit Test Runner
 

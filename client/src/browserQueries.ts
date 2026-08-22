@@ -242,6 +242,15 @@ import { moveDictionaryDown as sharedMoveDictionaryDown } from './queries/moveDi
 import { setBreakAtStepPoint as sharedSetBreakAtStepPoint } from './queries/setBreakAtStepPoint';
 import { clearBreakAtStepPoint as sharedClearBreakAtStepPoint } from './queries/clearBreakAtStepPoint';
 import { clearAllBreaks as sharedClearAllBreaks } from './queries/clearAllBreaks';
+import { disableBreakAtStepPoint as sharedDisableBreakAtStepPoint } from './queries/disableBreakAtStepPoint';
+import { getAllBreakpoints as sharedGetAllBreakpoints } from './queries/getAllBreakpoints';
+import {
+  enableAllBreakpoints as sharedEnableAllBreakpoints,
+  disableAllBreakpoints as sharedDisableAllBreakpoints,
+  removeAllBreakpoints as sharedRemoveAllBreakpoints,
+  hasBreakpoints as sharedHasBreakpoints,
+  breakpointByOop as sharedBreakpointByOop,
+} from './queries/breakpointGlobals';
 
 // Re-export shared types so existing callers (extension.ts, systemBrowser.ts, etc.)
 // can continue to import them from './browserQueries'.
@@ -256,6 +265,7 @@ export type { DescendantClass } from './refactoring/queries/getClassDescendantNa
 export type { MoveArgs } from './refactoring/queries/previewInstVarStructure';
 export type { MethodEntry } from './queries/getMethodList';
 export type { StepPointSelectorInfo } from './queries/getStepPointSelectorRanges';
+export type { GemStoneBreakpoint } from './queries/getAllBreakpoints';
 export type { MethodSearchResult } from './queries/methodSearch';
 export type { RowanProject, RowanProjectList } from './queries/rowan/listRowanProjects';
 export type { RowanExportResult } from './queries/rowan/exportRowanProject';
@@ -2210,4 +2220,53 @@ export function clearAllBreaks(
     environmentId,
     dict,
   );
+}
+
+export function disableBreakAtStepPoint(
+  session: ActiveSession,
+  className: string,
+  isMeta: boolean,
+  selector: string,
+  stepPoint: number,
+  environmentId: number = 0,
+  dict?: number | string,
+): string {
+  return sharedDisableBreakAtStepPoint(
+    defaultQueryExecutorUsing(session),
+    className,
+    isMeta,
+    selector,
+    stepPoint,
+    environmentId,
+    dict,
+  );
+}
+
+export function getAllBreakpoints(session: ActiveSession) {
+  return sharedGetAllBreakpoints(defaultQueryExecutorUsing(session));
+}
+
+export function enableAllBreakpoints(session: ActiveSession): string {
+  return sharedEnableAllBreakpoints(defaultQueryExecutorUsing(session));
+}
+
+export function disableAllBreakpoints(session: ActiveSession): string {
+  return sharedDisableAllBreakpoints(defaultQueryExecutorUsing(session));
+}
+
+export function removeAllBreakpoints(session: ActiveSession): string {
+  return sharedRemoveAllBreakpoints(defaultQueryExecutorUsing(session));
+}
+
+export function hasBreakpoints(session: ActiveSession): boolean {
+  return sharedHasBreakpoints(defaultQueryExecutorUsing(session));
+}
+
+export function breakpointByOop(
+  session: ActiveSession,
+  methodOop: string,
+  op: 'setBreakAtStepPoint:' | 'disableBreakAtStepPoint:' | 'clearBreakAtStepPoint:',
+  stepPoint: number,
+): string {
+  return sharedBreakpointByOop(defaultQueryExecutorUsing(session), methodOop, op, stepPoint);
 }
