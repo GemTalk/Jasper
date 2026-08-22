@@ -87,21 +87,27 @@ describe('isConnectable', () => {
     expect(isConnectable(state({}, OUTSIDE))).toBe(false);
   });
 
-  it('agrees with what the tree shows: nothing but a plain Running connects', () => {
-    // The tree and the login-failure recovery share this predicate precisely so
-    // they cannot tell the user different things.
-    const cases: DatabaseProcessState[] = [
-      state(DOWN, {}),
-      state(WEDGED, {}),
-      state(OUTSIDE, {}),
-      state({}, DOWN),
-      state({}, WEDGED),
-      state({}, OUTSIDE),
+  it('says a connect works only where the tree shows a plain Running on both rows', () => {
+    // `classifyStartNeed` leads with this predicate and the tree derives its
+    // statuses from the same notion, so the two cannot tell the user different
+    // things — this pins the correspondence rather than restating it. Expected
+    // values are written out, not derived from databaseStatus, so a change that
+    // moved both in the same wrong direction still fails here.
+    const cases: [DatabaseProcessState, boolean][] = [
+      [state(), true],
+      [state(DOWN, {}), false],
+      [state(WEDGED, {}), false],
+      [state(OUTSIDE, {}), false],
+      [state({}, DOWN), false],
+      [state({}, WEDGED), false],
+      [state({}, OUTSIDE), false],
+      [state(DOWN, DOWN), false],
     ];
 
-    for (const s of cases) {
+    for (const [s, expected] of cases) {
+      expect(isConnectable(s)).toBe(expected);
       const status = databaseStatus(s);
-      expect(isConnectable(s)).toBe(status.stone === 'running' && status.netldi === 'running');
+      expect(status.stone === 'running' && status.netldi === 'running').toBe(expected);
     }
   });
 });

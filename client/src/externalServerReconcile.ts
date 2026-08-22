@@ -1,6 +1,12 @@
 import { GemStoneDatabase } from './sysadminTypes';
 import { ForceKillResult } from './processManager';
-import { ExternalServer, ExternalServerFinding, ServerIdentity } from './externalServerScan';
+import {
+  ExternalServer,
+  ExternalServerFinding,
+  ServerIdentity,
+  allExternalServersConfirmed,
+  externalServersOf,
+} from './externalServerScan';
 
 /** One external server, reduced to what the user needs to see about it. */
 export interface ExternalServerDetail {
@@ -71,7 +77,10 @@ export function describeExternalServers(
     ldiName: db.config.ldiName,
     jasperRoot,
     servers,
-    confirmed: servers.length > 0 && servers.every((s) => s.identity === 'confirmed'),
+    // The same predicate the reconcile's own gate uses, rather than a second
+    // copy of the rule: the flag shown to the user and the check that decides
+    // whether anything may be stopped must not be able to disagree.
+    confirmed: allExternalServersConfirmed(finding),
   };
 }
 
@@ -158,10 +167,10 @@ function unconfirmedWarning(report: ExternalServerReport): string {
  * What to show when Jasper could not stop an external server.
  *
  * The point is not to dead-end: everything needed to finish the job by hand —
- * both names, the PIDs, the directory each server registered in, and the
- * `gslist` invocation that will actually show them — goes in the message, so
- * the user is not left hunting for a server Jasper has just told them it cannot
- * see.
+ * both names, the PIDs, the directory each server registered in, the `gslist`
+ * invocation that will actually show them, and the lock files a kill leaves
+ * behind — goes in the message, so the user is not left hunting for a server
+ * Jasper has just told them it cannot see.
  */
 export function manualResolutionMessage(report: ExternalServerReport, failure: string): string {
   const dirs = [...new Set(report.servers.map((s) => s.registeredIn).filter(Boolean))];
@@ -169,12 +178,24 @@ export function manualResolutionMessage(report: ExternalServerReport, failure: s
     dirs.length > 0
       ? dirs.map((d) => `  GEMSTONE_GLOBAL_DIR=${d} gslist -cvl`).join('\n')
       : '  gslist -cvl   (in the shell the servers were started from)';
+  // Killing a server leaves its lock behind, and a lock nobody mentions is the
+  // next surprise: gslist keeps listing the dead server and the next startstone
+  // refuses. Name the files so following the "kill the PIDs" half of this advice
+  // does not land the user back where they started.
+  const lockHint = report.servers
+    .filter((s) => s.registeredIn)
+    .map((s) => `  ${s.registeredIn}/locks/${s.name}..LCK`)
+    .join('\n');
   return (
     `Could not stop the externally started servers for "${report.stoneName}": ${failure}\n\n` +
     `Stone: ${report.stoneName}\nNetLDI: ${report.ldiName}\n${serverLines(report)}\n\n` +
     `To inspect them where they are actually registered:\n${gslistHint}\n\n` +
     `Stop them from a shell with that GEMSTONE_GLOBAL_DIR (stopstone / stopnetldi), or kill ` +
-    `the PIDs above, then start the database from Jasper.`
+    `the PIDs above, then start the database from Jasper.` +
+    (lockHint
+      ? `\n\nIf you kill them, remove the lock files they leave behind, or gslist there will ` +
+        `keep reporting a server that is gone and the next start will refuse:\n${lockHint}`
+      : '')
   );
 }
 
@@ -204,10 +225,14 @@ export async function reconcileExternalServers(
   if (choice === 'as-is') return { kind: 'connect-as-is' };
   if (choice !== 'restart') return { kind: 'abandoned' };
 
-  // The dialog does not offer Restart when identity is unconfirmed, but a
-  // caller with its own prompt could still ask for it, and stopping the wrong
+  // Gated on `finding`, not on `report.confirmed` — deliberately, because
+  // `finding` is what the loop below actually stops. A report is only a
+  // description, and taking permission from the description while acting on the
+  // servers lets a mismatch between the two authorize stopping a server nobody
+  // confirmed. The dialog does not offer Restart when identity is unconfirmed
+  // anyway, but a caller with its own prompt could, and stopping the wrong
   // stone is not a mistake worth leaving to a dialog's wording.
-  if (!report.confirmed) {
+  if (!allExternalServersConfirmed(finding)) {
     deps.showError(
       `Jasper did not stop anything: ${unconfirmedWarning(report)} ` +
         `Stop it by hand if you are sure, then start the database from Jasper.`,
@@ -215,10 +240,7 @@ export async function reconcileExternalServers(
     return { kind: 'abandoned' };
   }
 
-  const ordered = [finding.stone, finding.netldi].filter(
-    (s): s is ExternalServer => s !== undefined,
-  );
-  for (const server of ordered) {
+  for (const server of externalServersOf(finding)) {
     const what = server.process.type === 'stone' ? 'stone' : 'NetLDI';
     deps.report(`Stopping externally started ${what} ${server.process.name}…`);
     try {

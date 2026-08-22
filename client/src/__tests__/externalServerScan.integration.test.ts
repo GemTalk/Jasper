@@ -15,7 +15,9 @@ import {
   parseHostServerProcesses,
   parseServerEnvironment,
 } from '../externalServerScan';
+
 import { parseGslist } from '../processManager';
+import { posix } from 'path';
 
 /**
  * The scan, run against the live test stone rather than against fixtures.
@@ -46,6 +48,16 @@ const GSLIST = process.env.VITE_GEMSTONE_GCI_LIBRARY_PATH?.replace(/\/lib\/[^/]+
 
 const configured = Boolean(GLOBAL_DIR && VERSION && STONE_NAME && LDI_NAME && GSLIST);
 
+/** A running process's GemStone environment, read the way ProcessManager reads
+ *  it. On a platform that refuses to expose it this comes back empty, leaving
+ *  the command line as the only identity evidence — a fallback, not a parser
+ *  bug, and the tests below say which of the two they are looking at. */
+function readEnvironment(pid: number): Record<string, string> {
+  return parseServerEnvironment(
+    execSync(`ps eww -p ${pid} -o command= 2>/dev/null || true`, { encoding: 'utf-8' }),
+  );
+}
+
 /**
  * Run the real gslist against a chosen lock directory.
  *
@@ -75,11 +87,17 @@ describe('the process-table scan, against a live stone', () => {
 
   beforeAll(() => {
     if (!configured) return;
-    hostServers = parseHostServerProcesses(execSync('ps -eo pid=,command=', { encoding: 'utf-8' }));
+    hostServers = parseHostServerProcesses(execSync('ps -Ao pid=,command=', { encoding: 'utf-8' }));
   });
 
   const stone = (): HostServerProcess | undefined =>
     hostServers.find((p) => p.type === 'stone' && p.name === STONE_NAME);
+  /** The live stone with its own environment folded in — the same two steps
+   *  ProcessManager takes before judging identity. */
+  const enrichedStone = (): HostServerProcess => {
+    const found = stone() as HostServerProcess;
+    return applyServerEnvironment(found, readEnvironment(found.pid));
+  };
   const netldi = (): HostServerProcess | undefined =>
     hostServers.find((p) => p.type === 'netldi' && p.name === LDI_NAME);
 
@@ -105,12 +123,12 @@ describe('the process-table scan, against a live stone', () => {
     // `ps eww` exposes a process's environment on Linux; if a platform refuses,
     // this fails loudly here rather than silently costing the reconcile the one
     // detail a user needs to go find the server by hand.
-    const found = stone() as HostServerProcess;
-    const env = parseServerEnvironment(
-      execSync(`ps eww -p ${found.pid} -o command= 2>/dev/null || true`, { encoding: 'utf-8' }),
-    );
-
-    expect(applyServerEnvironment(found, env).globalDir).toBe(GLOBAL_DIR);
+    // A macOS failure here means "fall back to another identity source", not
+    // "the parser broke": Darwin has not let ps read another process's
+    // environment for many releases, and if that holds then globalDir is always
+    // undefined there and Restart & Connect is never offered — only
+    // Connect as-is. Worth failing loudly over rather than discovering later.
+    expect(enrichedStone().globalDir).toBe(GLOBAL_DIR);
   });
 
   it('sees the running servers when gslist is pointed at their own lock directory', (ctx) => {
@@ -185,24 +203,37 @@ describe('the process-table scan, against a live stone', () => {
     );
   });
 
+  it('confirms a real server against the database directory it was pointed at', (ctx) => {
+    if (!configured) return ctx.skip('no .env.test — run npm run test:server:start');
+
+    // `confirmed` is the only state that authorizes a kill, and everything else
+    // proving it is built from recorded strings. This is the positive control:
+    // take the directory the *live* process names and check that the classifier
+    // recognizes it. The harness may start its stone with no such path at all
+    // (it passes no -e/-z/-l and sets no GEMSTONE_SYS_CONF), in which case there
+    // is nothing to control against and saying so beats asserting a tautology.
+    const enriched = enrichedStone();
+    const hint = enriched.dbPathHints.find((p) => p.startsWith('/'));
+    if (!hint) {
+      return ctx.skip(
+        'the live stone names no absolute database path, so there is no directory to confirm against',
+      );
+    }
+
+    expect(classifyServerIdentity(enriched, posix.dirname(hint))).toBe('confirmed');
+  });
+
   it('refuses to vouch for a real server whose database it cannot place', (ctx) => {
     if (!configured) return ctx.skip('no .env.test — run npm run test:server:start');
 
-    // The harness starts its stone without the conf and log arguments Jasper's
-    // own start path passes, so there is nothing on the command line or in the
-    // environment tying it to a database directory. That is exactly the case
-    // that must come back unconfirmed: a server Jasper cannot place is a server
-    // Jasper does not stop, however well the name matches.
-    const found = stone() as HostServerProcess;
-    const env = parseServerEnvironment(
-      execSync(`ps eww -p ${found.pid} -o command= 2>/dev/null || true`, { encoding: 'utf-8' }),
-    );
+    // The counterpart, asserted to the exact verdict rather than merely
+    // "not confirmed" — which would pass even if the classifier were hardcoded.
+    // Which verdict is right depends on whether the live process names any
+    // absolute path at all: one that does points elsewhere, one that does not
+    // gives nothing to go on.
+    const enriched = enrichedStone();
+    const expected = enriched.dbPathHints.some((p) => p.startsWith('/')) ? 'different' : 'unknown';
 
-    const identity = classifyServerIdentity(
-      applyServerEnvironment(found, env),
-      '/somewhere/that/is/not/its/database',
-    );
-
-    expect(identity).not.toBe('confirmed');
+    expect(classifyServerIdentity(enriched, '/somewhere/that/is/not/its/database')).toBe(expected);
   });
 });

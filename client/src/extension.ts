@@ -24,7 +24,7 @@ import {
 import { InFlightGuard } from './inFlightGuard';
 import { LoginEditorPanel } from './loginEditorPanel';
 import { SessionManager, ActiveSession } from './sessionManager';
-import { maybeStartDatabaseAndRetry } from './autoStartDatabase';
+import { maybeStartDatabaseAndRetry, isAlreadyRunning } from './autoStartDatabase';
 import { describeExternalServers, reconcileExternalServers } from './externalServerReconcile';
 import { hasExternalServer } from './externalServerScan';
 import { confirmReconcileExternalServers } from './externalServerPrompt';
@@ -3856,14 +3856,32 @@ export function activate(context: vscode.ExtensionContext) {
           // Restart under Jasper's environment, which is the whole point: both
           // servers now land in Jasper's own locks directory.
           if (await ensureStonePreconditions()) {
-            try {
-              await processManager.startStone(db);
-              await processManager.startNetldi(db);
+            // Started independently, and an "already running" is not a failure:
+            // when only the netldi was external, the stone is still up under
+            // Jasper and startstone exits non-zero. Letting that abort the
+            // sequence would leave the one server that actually needed starting
+            // down, and tell the user the restart failed. Same rule the login
+            // recovery path uses.
+            const startFailure = async (
+              start: () => Promise<string>,
+            ): Promise<string | undefined> => {
+              try {
+                await start();
+                return undefined;
+              } catch (e) {
+                const msg = e instanceof Error ? e.message : String(e);
+                return isAlreadyRunning(msg) ? undefined : msg;
+              }
+            };
+            const failure =
+              (await startFailure(() => processManager.startStone(db))) ??
+              (await startFailure(() => processManager.startNetldi(db)));
+            if (failure) {
+              vscode.window.showErrorMessage(failure);
+            } else {
               vscode.window.showInformationMessage(
                 `"${db.config.stoneName}" restarted under Jasper's environment.`,
               );
-            } catch (e) {
-              vscode.window.showErrorMessage(e instanceof Error ? e.message : String(e));
             }
           }
         }

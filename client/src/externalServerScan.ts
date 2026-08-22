@@ -1,3 +1,4 @@
+import { posix } from 'path';
 import { GemStoneProcess } from './sysadminTypes';
 import { versionsMatch } from './versionMatch';
 
@@ -58,7 +59,7 @@ export interface ExternalServerFinding {
 }
 
 /**
- * Parse `ps -eo pid=,command=` output into the `stoned` / `netldid` processes
+ * Parse `ps -Ao pid=,command=` output into the `stoned` / `netldid` processes
  * it contains.
  *
  * Only an executable whose *basename* is exactly `stoned` or `netldid` counts,
@@ -176,10 +177,18 @@ export function applyServerEnvironment(
   };
 }
 
-/** True when `candidate` is `dir` or lies inside it. */
+/** True when `candidate` is `dir` or lies inside it.
+ *
+ *  Both sides are normalized first, so a path carrying `/./` or a doubled
+ *  slash — which a hand-typed `startstone -e` easily produces — still matches
+ *  the directory it is actually in. Symlinks are *not* resolved: doing so needs
+ *  the filesystem, and a database reached through a symlinked root therefore
+ *  reads as unrecognized rather than as a different database (see
+ *  classifyServerIdentity, which only downgrades to `unknown` for that). */
 function isInside(candidate: string, dir: string): boolean {
-  const base = dir.replace(/\/+$/, '');
-  return candidate === base || candidate.startsWith(`${base}/`);
+  const base = posix.normalize(dir).replace(/\/+$/, '');
+  const target = posix.normalize(candidate);
+  return target === base || target.startsWith(`${base}/`);
 }
 
 /**
@@ -191,12 +200,20 @@ function isInside(candidate: string, dir: string): boolean {
  * paths that all point elsewhere mark it as a different database of the same
  * name; no paths at all leaves it unknown.
  *
+ * Only *absolute* paths can say where a process was pointed. A relative one
+ * (`startstone -e gs64stone.conf`, run from inside the database directory) is
+ * no evidence either way, and reading it as evidence *against* produced the
+ * worst answer available: a confident "this is probably a different database"
+ * built from nothing. Relative hints are therefore ignored, and a process with
+ * none left is `unknown`.
+ *
  * `unknown` and `different` are both "not confirmed" to callers: nothing gets
  * stopped on a guess.
  */
 export function classifyServerIdentity(proc: HostServerProcess, dbPath: string): ServerIdentity {
-  if (proc.dbPathHints.length === 0) return 'unknown';
-  return proc.dbPathHints.some((p) => isInside(p, dbPath)) ? 'confirmed' : 'different';
+  const absolute = proc.dbPathHints.filter((p) => p.startsWith('/'));
+  if (absolute.length === 0) return 'unknown';
+  return absolute.some((p) => isInside(p, dbPath)) ? 'confirmed' : 'different';
 }
 
 /**
@@ -210,30 +227,89 @@ export function classifyServerIdentity(proc: HostServerProcess, dbPath: string):
  * parsed is accepted on name alone: refusing it would hide exactly the
  * unusual-install case this detection exists for.
  */
-export function findExternalServers(
-  db: { path: string; config: { stoneName: string; ldiName: string; version: string } },
+/** A database, as much of one as the cross-check needs. */
+export type ScanTarget = {
+  path: string;
+  config: { stoneName: string; ldiName: string; version: string };
+};
+
+/** Every host process that could be a database's external stone or netldi. */
+export interface ExternalServerCandidates {
+  stone: ExternalServer[];
+  netldi: ExternalServer[];
+}
+
+/** Best-identified first: a server we can place beats one we cannot, which
+ *  beats one we can place somewhere else. */
+const IDENTITY_RANK: Record<ServerIdentity, number> = { confirmed: 0, unknown: 1, different: 2 };
+
+/**
+ * Every candidate for one database's stone and netldi: alive as a process but
+ * missing from `gslist` — started outside Jasper's environment and registered
+ * where Jasper does not look.
+ *
+ * Returns *all* matches rather than the first, because the same name can belong
+ * to more than one live server and picking before judging throws away the only
+ * evidence that can tell them apart. With two `stoned gs64stone` running, one
+ * pointed at this database and one elsewhere, taking the first listed reports
+ * "probably a different database" about a server that is running right there.
+ *
+ * Matches on name *and* version, the same pairing the Databases view uses, so
+ * a stone name shared by two installed versions cannot make one version's
+ * server look like the other's. A host process whose version could not be
+ * parsed is accepted on name alone: refusing it would hide exactly the
+ * unusual-install case this detection exists for. (Once the environment has
+ * been read, ProcessManager re-checks any version learned that way.)
+ */
+export function findExternalServerCandidates(
+  db: ScanTarget,
   gslistProcesses: GemStoneProcess[],
   hostProcesses: HostServerProcess[],
-): ExternalServerFinding {
-  const { stoneName, ldiName, version } = db.config;
-  const finding: ExternalServerFinding = {};
+): ExternalServerCandidates {
+  const { version } = db.config;
 
-  const external = (type: 'stone' | 'netldi', name: string): ExternalServer | undefined => {
+  const candidates = (type: 'stone' | 'netldi', name: string): ExternalServer[] => {
     const inGslist = gslistProcesses.some(
       (p) => p.type === type && p.name === name && versionsMatch(p.version, version),
     );
-    if (inGslist) return undefined;
-    const proc = hostProcesses.find(
-      (p) =>
-        p.type === type && p.name === name && (!p.version || versionsMatch(p.version, version)),
-    );
-    if (!proc) return undefined;
-    return { process: proc, identity: classifyServerIdentity(proc, db.path) };
+    if (inGslist) return [];
+    return hostProcesses
+      .filter(
+        (p) =>
+          p.type === type && p.name === name && (!p.version || versionsMatch(p.version, version)),
+      )
+      .map((p) => ({ process: p, identity: classifyServerIdentity(p, db.path) }));
   };
 
-  const stone = external('stone', stoneName);
+  return {
+    stone: candidates('stone', db.config.stoneName),
+    netldi: candidates('netldi', db.config.ldiName),
+  };
+}
+
+/** The candidate to act on: the one whose identity is best established. */
+export function pickExternalServer(candidates: ExternalServer[]): ExternalServer | undefined {
+  return [...candidates].sort((a, b) => IDENTITY_RANK[a.identity] - IDENTITY_RANK[b.identity])[0];
+}
+
+/**
+ * The cross-check, reduced to one server per kind.
+ *
+ * Judges identity from command lines alone. ProcessManager goes the longer way
+ * round — candidates, then each one's environment, then the pick — because a
+ * server the command line cannot place is often placed by its environment, and
+ * that can change which candidate wins.
+ */
+export function findExternalServers(
+  db: ScanTarget,
+  gslistProcesses: GemStoneProcess[],
+  hostProcesses: HostServerProcess[],
+): ExternalServerFinding {
+  const candidates = findExternalServerCandidates(db, gslistProcesses, hostProcesses);
+  const finding: ExternalServerFinding = {};
+  const stone = pickExternalServer(candidates.stone);
   if (stone) finding.stone = stone;
-  const netldi = external('netldi', ldiName);
+  const netldi = pickExternalServer(candidates.netldi);
   if (netldi) finding.netldi = netldi;
   return finding;
 }
@@ -264,11 +340,16 @@ export function hasExternalServer(finding: ExternalServerFinding | undefined): b
   return finding !== undefined && (finding.stone !== undefined || finding.netldi !== undefined);
 }
 
+/** The servers a finding actually names, in the order they are acted on. */
+export function externalServersOf(finding: ExternalServerFinding): ExternalServer[] {
+  return [finding.stone, finding.netldi].filter((s): s is ExternalServer => s !== undefined);
+}
+
 /** True when every external server found is confirmed to be this database's —
- *  the only case in which Jasper may stop them on the user's behalf. */
+ *  the only case in which Jasper may stop them on the user's behalf. The one
+ *  predicate behind both the report's `confirmed` flag and the reconcile's
+ *  refusal to act, so the flag shown and the gate enforced cannot diverge. */
 export function allExternalServersConfirmed(finding: ExternalServerFinding): boolean {
-  const servers = [finding.stone, finding.netldi].filter(
-    (s): s is ExternalServer => s !== undefined,
-  );
+  const servers = externalServersOf(finding);
   return servers.length > 0 && servers.every((s) => s.identity === 'confirmed');
 }

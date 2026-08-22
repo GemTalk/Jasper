@@ -1,4 +1,4 @@
-import { DatabaseProcessState } from './databaseServerStatus';
+import { DatabaseProcessState, isConnectable } from './databaseServerStatus';
 
 // The state model moved to databaseServerStatus.ts, which the Databases view
 // shares, so the tree and this flow cannot disagree about what is running.
@@ -17,8 +17,10 @@ export type StartNeed =
   | { kind: 'already-running' }
   /** A server is alive on the host but registered outside Jasper's
    *  environment. Starting it would collide with the running one; it has to be
-   *  stopped and restarted under Jasper's environment instead. */
-  | { kind: 'external'; stone: boolean; netldi: boolean }
+   *  stopped and restarted under Jasper's environment instead. Which of the two
+   *  it was is not carried here — the recovery flow hands the whole scan finding
+   *  to the reconcile, which needs the PIDs and directories anyway. */
+  | { kind: 'external' }
   /** A process exists but is not responding. `startstone` cannot fix this;
    *  the user needs the stale-lock tooling. */
   | { kind: 'not-responding'; what: 'stone' | 'netldi' }
@@ -43,8 +45,13 @@ export type StartNeed =
  * so that case wants the stale-lock tooling, not a second `startstone`.
  */
 export function classifyStartNeed(state: DatabaseProcessState): StartNeed {
+  // Leading with the same predicate the Databases view uses for a plain
+  // *Running* is what makes the two agree by construction: this flow decides
+  // the login failed for some other reason exactly when the tree would have
+  // shown both rows healthy. Everything below is the diagnosis of why not.
+  if (isConnectable(state)) return { kind: 'already-running' };
   if (state.stone.external || state.netldi.external) {
-    return { kind: 'external', stone: state.stone.external, netldi: state.netldi.external };
+    return { kind: 'external' };
   }
   if (!state.stone.running || !state.netldi.running) {
     return {
@@ -57,8 +64,7 @@ export function classifyStartNeed(state: DatabaseProcessState): StartNeed {
   if (!state.stone.responding) {
     return { kind: 'not-responding', what: 'stone' };
   }
-  if (!state.netldi.responding) {
-    return { kind: 'not-responding', what: 'netldi' };
-  }
-  return { kind: 'already-running' };
+  // Only one way left to be unconnectable: both up, nothing external, the stone
+  // responding — so it is the netldi that is wedged.
+  return { kind: 'not-responding', what: 'netldi' };
 }

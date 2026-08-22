@@ -13,13 +13,20 @@ import {
   ExternalServerFinding,
   HostServerProcess,
   commandIsServer,
-  findExternalServers,
-  hasExternalServer,
+  findExternalServerCandidates,
   parseHostServerProcesses,
   parseServerEnvironment,
+  pickExternalServer,
   withServerEnvironment,
 } from './externalServerScan';
 import { explainMissingInstall, explainStartFailure } from './startFailureMessage';
+
+/** Ceiling on the `ps` calls the external-server scan makes. They run
+ *  synchronously from the Databases tree's getChildren, on the extension host's
+ *  event loop, and under WSL each is a `wsl.exe` spawn — so a hung one would
+ *  freeze the editor with no way out. Generous for a process-table read; the
+ *  callers' catch degrades to "saw nothing", which is the safe direction. */
+const PS_TIMEOUT_MS = 5000;
 
 // versionsMatch lives in versionMatch.ts so the process-table scan can share it
 // without importing this module (which would make the two circular). Re-exported
@@ -114,8 +121,20 @@ export class ProcessManager {
   /** Host process table, scanned at most once per refresh and only when
    *  something is missing from gslist. Undefined = not scanned yet. */
   private cachedHostServers: HostServerProcess[] | undefined;
-  /** External-server verdict per database dirName, for the same refresh. */
+  /** External-server verdict per database dirName, for the same refresh.
+   *  Absent = not asked yet; a stored `{}` is a real "nothing external". */
   private cachedExternal = new Map<string, ExternalServerFinding>();
+  /**
+   * Whether the last `refreshProcesses` actually got an answer out of gslist.
+   *
+   * `cachedProcesses` goes empty for three different reasons — gslist ran and
+   * found nothing, there was no extracted version to run it from, or the spawn
+   * threw — and only the first means "nothing is registered where Jasper
+   * looks". The external-server cross-check turns that distinction into an
+   * accusation and then into a kill, so it must not guess: "we could not look"
+   * can never be allowed to read as "we looked and it wasn't there".
+   */
+  private gslistReadable = false;
 
   constructor(private storage: SysadminStorage) {}
 
@@ -129,6 +148,7 @@ export class ProcessManager {
     // meaningful next to a given gslist reading, so they expire with it.
     this.cachedHostServers = undefined;
     this.cachedExternal.clear();
+    this.gslistReadable = false;
     const gslistPath = this.findGslist();
     if (!gslistPath) {
       this.cachedProcesses = [];
@@ -140,6 +160,9 @@ export class ProcessManager {
       const env = this.versionEnvironment(gsPath, rootPath);
       const output = wslExecSync(`"${gslistPath}" -cvl`, env);
       this.cachedProcesses = parseGslist(output);
+      // Reaching here at all is the signal that the read happened, so an empty
+      // parse is a real "nothing registered" rather than a failure to look.
+      this.gslistReadable = true;
     } catch {
       this.cachedProcesses = [];
     }
@@ -152,19 +175,33 @@ export class ProcessManager {
    *  hung server that the operator should investigate, not auto-clean). */
   inspectStaleLock(proc: GemStoneProcess): StaleLockReport {
     const rootPath = needsWsl() ? this.storage.getWslRootPath() : this.storage.getRootPath();
-    const lockPath = `${rootPath}/locks/${proc.name}..LCK`;
+    return this.inspectLockAt(proc.name, proc.pid, rootPath);
+  }
+
+  /**
+   * The same safety rule as `inspectStaleLock`, for a lock whose directory is
+   * named explicitly rather than assumed to be Jasper's own root.
+   *
+   * Split out because a server started outside Jasper has no gslist record to
+   * pass — that is what makes it external — and its lock lives in whichever
+   * `locks/` directory it registered in. The rule itself is unchanged and is
+   * exactly the one wanted there: a PID that is still a live GemStone server
+   * means the lock is in use, whoever owns the directory.
+   */
+  inspectLockAt(name: string, pid: number, rootPath: string): StaleLockReport {
+    const lockPath = `${rootPath.replace(/\/+$/, '')}/locks/${name}..LCK`;
     let psOutput = '';
     try {
       // `|| echo GONE` collapses the "no such pid" exit into stdout so we get
       // one branch to parse instead of catching and decoding errno strings.
-      psOutput = wslExecSync(`ps -p ${proc.pid} -o command= 2>/dev/null || echo GONE`).trim();
+      psOutput = wslExecSync(`ps -p ${pid} -o command= 2>/dev/null || echo GONE`).trim();
     } catch {
       // execSync threw before producing output — likely no shell or ps. Treat
       // as inconclusive; the safer default is to refuse.
       return {
         lockPath,
         safe: false,
-        reason: `Could not check PID ${proc.pid} (ps unavailable). Refusing to delete the lock.`,
+        reason: `Could not check PID ${pid} (ps unavailable). Refusing to delete the lock.`,
       };
     }
     const ownership = classifyPidOwnership(psOutput);
@@ -172,21 +209,21 @@ export class ProcessManager {
       return {
         lockPath,
         safe: true,
-        reason: `PID ${proc.pid} no longer exists. The lock file is orphaned.`,
+        reason: `PID ${pid} no longer exists. The lock file is orphaned.`,
       };
     }
     if (ownership.isGemStoneServer) {
       return {
         lockPath,
         safe: false,
-        reason: `PID ${proc.pid} is still a running GemStone server (${ownership.command}). Use stopstone instead.`,
+        reason: `PID ${pid} is still a running GemStone server (${ownership.command}). Use stopstone instead.`,
         currentPidOwner: ownership.command,
       };
     }
     return {
       lockPath,
       safe: true,
-      reason: `PID ${proc.pid} has been reused by an unrelated process (${ownership.command}). The lock file is orphaned.`,
+      reason: `PID ${pid} has been reused by an unrelated process (${ownership.command}). The lock file is orphaned.`,
       currentPidOwner: ownership.command,
     };
   }
@@ -210,7 +247,15 @@ export class ProcessManager {
   private hostServers(): HostServerProcess[] {
     if (this.cachedHostServers) return this.cachedHostServers;
     try {
-      this.cachedHostServers = parseHostServerProcesses(wslExecSync('ps -eo pid=,command='));
+      // `-A`, not `-e`: on procps the two are synonyms for "every process", but
+      // on BSD/Darwin `-e` means "also show the environment" and is not a
+      // selection flag at all — so `ps -eo …` there lists only the invoking
+      // user's processes that have a controlling terminal, which a detached
+      // stoned or netldid never does, and the scan would come back empty on
+      // every Mac. `-A` selects on both.
+      this.cachedHostServers = parseHostServerProcesses(
+        wslExecSync('ps -Ao pid=,command=', undefined, { timeout: PS_TIMEOUT_MS }),
+      );
     } catch {
       // No ps, or a process table we could not read. An empty scan means "we
       // saw nothing", which leaves every state exactly as it was before this
@@ -224,11 +269,15 @@ export class ProcessManager {
    *  environment to the command line, which is where `GEMSTONE_GLOBAL_DIR`
    *  (the directory the server registered in) and the conf/log paths that
    *  identify its database live. Best effort: an unreadable environment just
-   *  leaves what the command line already told us. */
+   *  leaves what the command line already told us — which on macOS may be
+   *  always, since it has not let `ps` read another process's environment for
+   *  many releases. There the command line is the only identity evidence. */
   private serverEnvironment(pid: number): Record<string, string> {
     try {
       return parseServerEnvironment(
-        wslExecSync(`ps eww -p ${pid} -o command= 2>/dev/null || true`),
+        wslExecSync(`ps eww -p ${pid} -o command= 2>/dev/null || true`, undefined, {
+          timeout: PS_TIMEOUT_MS,
+        }),
       );
     } catch {
       return {};
@@ -249,6 +298,11 @@ export class ProcessManager {
    * Costs nothing in the healthy case: when both servers are already visible to
    * `gslist` there is nothing to explain, so the process table is never
    * scanned. Memoized per database until the next `refreshProcesses()`.
+   *
+   * Reports nothing at all unless the gslist read succeeded. An unreadable
+   * gslist leaves an empty process list, which would otherwise make every live
+   * server look absent from it — including servers Jasper started itself, which
+   * would then be offered up for a restart and a kill.
    */
   getExternalServers(db: GemStoneDatabase): ExternalServerFinding {
     const cached = this.cachedExternal.get(db.dirName);
@@ -258,21 +312,50 @@ export class ProcessManager {
     const bothVisible =
       this.isStoneRunning(db.config.stoneName, db.config.version) &&
       this.isNetldiRunning(db.config.ldiName, db.config.version);
-    if (!bothVisible) {
+    if (this.gslistReadable && !bothVisible) {
       const dbPath = needsWsl() ? windowsPathToWsl(db.path) : db.path;
-      finding = findExternalServers(
-        { path: dbPath, config: db.config },
-        this.cachedProcesses,
+      const target = { path: dbPath, config: db.config };
+      const candidates = findExternalServerCandidates(
+        target,
+        this.getProcesses(),
         this.hostServers(),
       );
-      if (hasExternalServer(finding)) {
-        const enrich = (s: ExternalServer | undefined): ExternalServer | undefined =>
-          s && withServerEnvironment(s, this.serverEnvironment(s.process.pid), dbPath);
-        finding = { stone: enrich(finding.stone), netldi: enrich(finding.netldi) };
-      }
+      // Every candidate's environment is read before any of them is picked: a
+      // server the command line cannot place is often placed by its
+      // environment, and that can change which of two same-named servers wins.
+      const settle = (found: ExternalServer[]): ExternalServer | undefined =>
+        pickExternalServer(
+          found
+            .map((s) => withServerEnvironment(s, this.serverEnvironment(s.process.pid), dbPath))
+            .filter((s) => this.stillMatchesVersion(s, db.config.version))
+            .filter((s) => !this.registeredWhereJasperLooks(s)),
+        );
+      const stone = settle(candidates.stone);
+      const netldi = settle(candidates.netldi);
+      finding = { ...(stone && { stone }), ...(netldi && { netldi }) };
     }
     this.cachedExternal.set(db.dirName, finding);
     return finding;
+  }
+
+  /** Drop a candidate whose version only became known from its environment and
+   *  turns out to belong to a different install. `findExternalServerCandidates`
+   *  admits an unparseable version on name alone — deliberately — but once the
+   *  real one is in hand there is no reason to keep guessing. */
+  private stillMatchesVersion(server: ExternalServer, version: string): boolean {
+    const found = server.process.version;
+    return !found || versionsMatch(found, version);
+  }
+
+  /** True when the server is registered in the very directory Jasper's own
+   *  gslist reads, which makes "started outside Jasper's environment" false
+   *  whatever gslist reported. The backstop behind `gslistReadable`: it catches
+   *  any other way a server Jasper manages could go missing from that listing,
+   *  and it is the one fact that settles the question outright. */
+  private registeredWhereJasperLooks(server: ExternalServer): boolean {
+    const root = needsWsl() ? this.storage.getWslRootPath() : this.storage.getRootPath();
+    const globalDir = server.process.globalDir;
+    return globalDir !== undefined && globalDir.replace(/\/+$/, '') === root.replace(/\/+$/, '');
   }
 
   /**
@@ -283,6 +366,14 @@ export class ProcessManager {
    * Jasper's `locks/` directory and report it as not running — the very blind
    * spot that got us here. Pointing them at the directory the server actually
    * registered in is what lets it stop cleanly instead of being killed.
+   *
+   * Only `GEMSTONE_GLOBAL_DIR` is taken from the running server, not its
+   * `GEMSTONE_NRS_ALL`. That variable can carry `#dir:` and `#netldi:`
+   * components which would also steer the stop, and `parseServerEnvironment`
+   * does capture it — but adopting a foreign NRS string wholesale is how a
+   * command ends up somewhere nobody intended, which is the hazard this branch
+   * exists to remove rather than spread. When the global dir is not enough to
+   * reach the server, the kill fallback is the answer.
    *
    * Rejects if the stop fails, leaving the caller to fall back to
    * `killHostServer`.
@@ -324,8 +415,17 @@ export class ProcessManager {
    * by name". The reconcile that leads here holds its PID across a modal dialog
    * the user can sit on indefinitely, so the number has had real time to be
    * recycled — possibly onto another stone, which the weaker check would wave
-   * through. No lock file is cleared, because the lock lives in a directory
-   * Jasper does not own.
+   * through.
+   *
+   * A SIGKILL leaves the server's `..LCK` behind, so a confirmed server whose
+   * registration directory is known gets that lock cleared too. It is a lock on
+   * the database Jasper manages, orphaned by Jasper's own signal: leaving it
+   * means `gslist` in the user's own shell keeps listing a dead stone, and their
+   * next `startstone` from that shell refuses (for a netldi, the lock also holds
+   * its port). Jasper's own restart would work, because it starts in its own
+   * root — which is exactly why this would never show up in Jasper's own
+   * testing. Only *unconfirmed* identity or an unknown directory is left alone;
+   * that really is a directory Jasper has no business writing in.
    */
   async killHostServer(
     server: ExternalServer,
@@ -370,23 +470,69 @@ export class ProcessManager {
       // server — means the one we set out to stop is no longer running, and
       // signalling again would hit a bystander.
       const stillRunning = (): boolean => commandIsServer(psFor(pid), type, name);
-      wslExecSync(`kill ${pid} 2>/dev/null || true`);
+      const refusal = this.signal(pid, '');
       await settle();
       if (stillRunning()) {
-        wslExecSync(`kill -9 ${pid} 2>/dev/null || true`);
+        this.signal(pid, '-9');
         // Wait again before believing the worst: SIGKILL is immediate but
         // reaping is not, so checking straight away can still see the process
         // and report a failure that would send the user off to resolve by hand
         // something that in fact died.
         await settle();
         if (stillRunning()) {
-          return { killed: false, reason: `${label} (PID ${pid}) survived SIGKILL.` };
+          // Say which of the two it is. "Survived SIGKILL" sends the user
+          // looking for a wedged process; a server owned by another user needs
+          // sudo, and nothing else will do.
+          return {
+            killed: false,
+            reason: refusal
+              ? `${label} (PID ${pid}) could not be signalled: ${refusal}. It is probably ` +
+                `owned by another user — stop it from that user's shell, or with sudo.`
+              : `${label} (PID ${pid}) survived SIGKILL.`,
+          };
         }
       }
     } catch {
       return { killed: false, reason: `Failed to signal PID ${pid}.` };
     }
-    return { killed: true, reason: `${label} stopped (PID ${pid}).` };
+    return {
+      killed: true,
+      reason: `${label} stopped (PID ${pid}).${this.clearExternalLock(server)}`,
+    };
+  }
+
+  /** Send a signal and hand back `kill`'s complaint, if it made one. The plain
+   *  `2>/dev/null || true` form swallows EPERM, which then reads downstream as a
+   *  process that ignored SIGKILL rather than one we were never allowed to
+   *  touch. */
+  private signal(pid: number, flag: string): string | undefined {
+    const complaint = wslExecSync(`kill ${flag} ${pid} 2>&1 || true`).trim();
+    return complaint === '' ? undefined : complaint;
+  }
+
+  /**
+   * Clear the `..LCK` a killed external server left in its own registration
+   * directory, when Jasper is entitled to: identity confirmed, directory known.
+   *
+   * Returns a sentence to append to the kill's reason — including when it
+   * declined — so the outcome is never silent. Best effort: a lock we cannot
+   * remove is a nuisance, not a reason to report the kill as failed.
+   */
+  private clearExternalLock(server: ExternalServer): string {
+    const { name, pid, globalDir } = server.process;
+    if (server.identity !== 'confirmed' || !globalDir) {
+      return ' Its lock file was left in place, since Jasper could not confirm which database it belongs to.';
+    }
+    try {
+      const report = this.inspectLockAt(name, pid, globalDir);
+      if (!report.safe)
+        return ` Its lock file ${report.lockPath} was left in place: ${report.reason}`;
+      return this.deleteStaleLock(report.lockPath)
+        ? ` Its stale lock file ${report.lockPath} was removed.`
+        : ` Its stale lock file ${report.lockPath} could not be removed; delete it by hand.`;
+    } catch {
+      return ` Its lock file in ${globalDir}/locks may need removing by hand.`;
+    }
   }
 
   private findGslist(): string | undefined {
@@ -529,13 +675,40 @@ export class ProcessManager {
         reason: `PID ${proc.pid} is now an unrelated process (${ownership.command}); refusing to kill.`,
       };
     }
+    // The stricter name check killHostServer uses. The window here is smaller
+    // (refreshProcesses ran moments ago), but it is not zero — a modal
+    // escalation dialog and an optional password prompt sit in front of this —
+    // and there is no reason for the two kill paths to differ in rigor.
+    if (!commandIsServer(ownership.command, 'stone', proc.name)) {
+      return {
+        killed: false,
+        reason:
+          `PID ${proc.pid} is a GemStone server, but no longer stone "${proc.name}" — it is ` +
+          `now ${ownership.command}. Refusing to kill it.`,
+      };
+    }
 
     try {
-      wslExecSync(`kill ${proc.pid} 2>/dev/null || true`);
       const graceMs = opts.graceMs ?? 800;
-      if (graceMs > 0) await new Promise((r) => setTimeout(r, graceMs));
-      if (classifyPidOwnership(psFor(proc.pid)).isGemStoneServer) {
+      const settle = async (): Promise<void> => {
+        if (graceMs > 0) await new Promise((r) => setTimeout(r, graceMs));
+      };
+      const stillRunning = (): boolean => commandIsServer(psFor(proc.pid), 'stone', proc.name);
+      wslExecSync(`kill ${proc.pid} 2>/dev/null || true`);
+      await settle();
+      if (stillRunning()) {
         wslExecSync(`kill -9 ${proc.pid} 2>/dev/null || true`);
+        // Settle before both the verdict and the lock cleanup. Without it the
+        // lock check runs against a not-yet-reaped stoned, reads it as a live
+        // server, and silently keeps the lock — in the escalation case, the one
+        // where the lock matters most.
+        await settle();
+        if (stillRunning()) {
+          return {
+            killed: false,
+            reason: `Stone "${proc.name}" (PID ${proc.pid}) survived SIGKILL.`,
+          };
+        }
       }
     } catch {
       return { killed: false, reason: `Failed to signal PID ${proc.pid}.` };

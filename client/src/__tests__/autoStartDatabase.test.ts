@@ -261,13 +261,18 @@ describe('maybeStartDatabaseAndRetry — failures', () => {
   it('surfaces the actionable message when the version is not extracted', async () => {
     const deps = makeDeps({
       startStone: vi.fn(async () => {
-        throw new Error('GemStone 3.7.5 not found. Please extract it first.');
+        throw new Error(
+          'Jasper has no GemStone 3.7.5 install under /root. It looks for a ' +
+            '"GemStone64Bit3.7.5…" directory there.',
+        );
       }),
     });
 
     await run(deps);
 
-    expect(deps.showError).toHaveBeenCalledWith(expect.stringContaining('Please extract it first'));
+    expect(deps.showError).toHaveBeenCalledWith(
+      expect.stringMatching(/no GemStone 3\.7\.5 install under/),
+    );
   });
 
   it('treats "already running" as success — a silently failed process refresh must not block the login', async () => {
@@ -412,6 +417,24 @@ describe('maybeStartDatabaseAndRetry — servers started outside Jasper', () => 
 
     expect(deps.startStone).not.toHaveBeenCalled();
     expect(deps.showError).toHaveBeenCalledWith(expect.stringContaining('owned by root'));
+  });
+
+  it('still starts the netldi when only it was external and the stone is up', async () => {
+    // startstone against an already-running stone exits non-zero. Treating that
+    // as a failure would abandon the one server that actually needed starting
+    // and tell the user the restart failed.
+    const deps = outsideDeps({
+      getExternalServers: vi.fn(() => ({ netldi: stoneOutside.stone })),
+      startStone: vi.fn(async () => {
+        throw new Error('startstone: stone gs64stone is already running');
+      }),
+    });
+
+    await run(deps);
+
+    expect(deps.startNetldi).toHaveBeenCalledWith(DB);
+    expect(deps.showError).not.toHaveBeenCalled();
+    expect(deps.retryLogin).toHaveBeenCalled();
   });
 
   it('refreshes the views so the tree reflects whatever was done', async () => {

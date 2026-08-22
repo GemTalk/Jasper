@@ -50,6 +50,7 @@ function makeManager(overrides?: {
   } as unknown as SysadminStorage;
   const processManager = {
     isServerAlive: vi.fn(() => false),
+    getExternalServers: vi.fn(() => ({})),
     ...overrides?.processManager,
   } as unknown as ProcessManager;
   return new DatabaseManager(storage, processManager);

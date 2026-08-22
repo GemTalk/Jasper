@@ -32,8 +32,6 @@ function makeProcessManager(
   external: ExternalServerFinding = {},
 ) {
   return {
-    isStoneRunning: vi.fn(() => processes.some((p) => p.type === 'stone')),
-    isNetldiRunning: vi.fn(() => processes.some((p) => p.type === 'netldi')),
     getProcesses: vi.fn(() => processes),
     getExternalServers: vi.fn(() => external),
   };
@@ -210,6 +208,20 @@ describe('DatabaseTreeProvider', () => {
 
       expect(item.description).toBe('Running outside Jasper');
       expect(item.contextValue).toBe('gemstoneDbStoneExternal');
+    });
+
+    it('offers the same action on a netldi started outside Jasper', () => {
+      const node: DatabaseNode = {
+        kind: 'netldi',
+        db,
+        status: 'external',
+        external: hostServer({ type: 'netldi', name: 'gs64ldi' }),
+      };
+
+      const item = provider.getTreeItem(node);
+
+      expect(item.description).toBe('Running outside Jasper');
+      expect(item.contextValue).toBe('gemstoneDbNetldiExternal');
     });
 
     it('tells the reader where an externally started server is registered', () => {

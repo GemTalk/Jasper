@@ -164,7 +164,9 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseNod
         return (
           `"${what}" is running on this host${pid} but was started outside Jasper's ` +
           `environment, so it is ${where} rather than under ${this.storage.getRootPath()}, ` +
-          `where Jasper's own gslist looks.\n\n` +
+          `where Jasper's own gslist looks. It will not appear in the Processes view either — ` +
+          `that view shows the same gslist, so its stale-lock tooling cannot reach this ` +
+          `server's lock.\n\n` +
           `Connecting will offer to restart it under Jasper's environment.`
         );
       }

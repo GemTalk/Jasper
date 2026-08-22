@@ -127,6 +127,8 @@ Because two databases can use the same stone name, Jasper stops a server only wh
 
 The **Processes** view shows all running GemStone processes (stones and NetLDIs) detected via `gslist`, including version, PID, and port information.
 
+This view *is* Jasper's `gslist` view, so a server started outside Jasper's environment does not appear here even while it is running — the Databases view is where that shows up, as **Running outside Jasper** (see [Servers started outside Jasper](#servers-started-outside-jasper) above).
+
 Stale processes — where `gslist` reports a `frozen`, `killed`, or `exe deleted` status — are rendered with a red icon and the status prefixed onto the description. A **Delete Stale Lock File** inline action lets you remove the orphaned `*.LCK` after Jasper confirms the recorded PID is either gone or has been reused by an unrelated process. (On macOS, `gslist -c` can't detect a recycled PID on its own, so this manual step is sometimes necessary; see [docs/mcp-server.md](docs/mcp-server.md#limitations) for context.)
 
 ### MCP Server view

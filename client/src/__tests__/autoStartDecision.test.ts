@@ -179,11 +179,7 @@ describe('classifyStartNeed', () => {
   it('reports an external server instead of offering to start it', () => {
     // startstone against a name a live process already holds collides with it
     // rather than helping, so this must never come back as "can start".
-    expect(classifyStartNeed(externalStone)).toEqual({
-      kind: 'external',
-      stone: true,
-      netldi: false,
-    });
+    expect(classifyStartNeed(externalStone)).toEqual({ kind: 'external' });
   });
 
   it('reports the external server even when the other side is also down', () => {
@@ -191,18 +187,16 @@ describe('classifyStartNeed', () => {
     // connect, so the mismatch is what the user needs to hear about first.
     expect(classifyStartNeed({ stone: externalStone.stone, netldi: neither.netldi })).toEqual({
       kind: 'external',
-      stone: true,
-      netldi: false,
     });
   });
 
-  it('names both sides when both were started outside Jasper', () => {
+  it('reports the mismatch when both sides were started outside Jasper', () => {
     expect(
       classifyStartNeed({
         stone: { running: false, responding: false, external: true },
         netldi: { running: false, responding: false, external: true },
       }),
-    ).toEqual({ kind: 'external', stone: true, netldi: true });
+    ).toEqual({ kind: 'external' });
   });
 
   it('offers to start a down side even when the other is wedged', () => {

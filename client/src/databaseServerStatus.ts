@@ -122,8 +122,12 @@ export function databaseStatus(state: DatabaseProcessState): DatabaseStatus {
 }
 
 /** True when a connect can be expected to succeed — both servers visible to
- *  Jasper and healthy. The tree and the login-failure recovery agree on this
- *  one predicate so they cannot tell the user different things. */
+ *  Jasper and healthy.
+ *
+ *  `classifyStartNeed` leads with this, and `databaseStatus` derives its
+ *  statuses from the same `usable` notion, so "the tree shows a plain Running on
+ *  both rows" and "the login-failure recovery decides the database was already
+ *  up" are the same condition rather than two that happen to agree. */
 export function isConnectable(state: DatabaseProcessState): boolean {
   return usable(state.stone) && usable(state.netldi);
 }

@@ -186,6 +186,12 @@ describe('parseServerEnvironment', () => {
     expect(parseServerEnvironment('/x/sys/stoned gs64stone_375')).toEqual({});
   });
 
+  it('ignores keys that only resemble the GemStone ones', () => {
+    expect(
+      parseServerEnvironment('GEMSTONE2=/x gemstone_log=/y GEMSTONEISH=/z GEMSTONE_LOG=/real'),
+    ).toEqual({ GEMSTONE_LOG: '/real' });
+  });
+
   it('truncates a path containing a space rather than inventing one', () => {
     // ps separates the pairs with spaces and quotes nothing, so a path with a
     // space in it cannot be recovered. The truncated value then reads as
@@ -211,6 +217,37 @@ describe('classifyServerIdentity', () => {
 
   it('leaves identity unknown when the process gave nothing away', () => {
     expect(classifyServerIdentity(hostProc(), DB.path)).toBe('unknown');
+  });
+
+  it('will not claim a relative path points at another database', () => {
+    // `startstone -e gs64stone.conf`, run from inside the database directory.
+    // A relative path says nothing about which directory, so calling it a
+    // different database is a confident claim built from no evidence at all.
+    const proc = hostProc({ dbPathHints: ['gs64stone_375.conf'] });
+
+    expect(classifyServerIdentity(proc, DB.path)).toBe('unknown');
+  });
+
+  it('judges on the absolute paths when a relative one is mixed in', () => {
+    const proc = hostProc({
+      dbPathHints: ['gs64stone_375.conf', '/home/u/jasperStones/db-1/log/s.log'],
+    });
+
+    expect(classifyServerIdentity(proc, DB.path)).toBe('confirmed');
+  });
+
+  it('recognises the database directory through a redundant path segment', () => {
+    const proc = hostProc({
+      dbPathHints: ['/home/u/jasperStones/./db-1/conf/gs64stone_375.conf'],
+    });
+
+    expect(classifyServerIdentity(proc, DB.path)).toBe('confirmed');
+  });
+
+  it('recognises it through a doubled separator', () => {
+    const proc = hostProc({ dbPathHints: ['/home/u/jasperStones//db-1/conf/s.conf'] });
+
+    expect(classifyServerIdentity(proc, DB.path)).toBe('confirmed');
   });
 
   it('does not mistake a sibling directory for the database directory', () => {
@@ -305,6 +342,32 @@ describe('findExternalServers', () => {
     const hosts = [hostProc({ version: undefined })];
 
     expect(findExternalServers(DB, [], hosts).stone?.process.pid).toBe(100);
+  });
+
+  it('prefers the same-named server it can place over one it cannot', () => {
+    // Two live stones share the name. Picking the first listed and judging that
+    // one reports "probably a different database" about a server running right
+    // there — the ambiguity the identity check exists to resolve, thrown away.
+    const hosts = [
+      hostProc({ pid: 111, dbPathHints: ['/elsewhere/db-9/conf/s.conf'] }),
+      hostProc({ pid: 222, dbPathHints: [`${DB.path}/conf/s.conf`] }),
+    ];
+
+    const finding = findExternalServers(DB, [], hosts);
+
+    expect(finding.stone?.process.pid).toBe(222);
+    expect(finding.stone?.identity).toBe('confirmed');
+  });
+
+  it('prefers a server it cannot place over one placed elsewhere', () => {
+    // Neither can be stopped, but "could not confirm" is the honest report;
+    // "this is a different database" would be a claim about the wrong process.
+    const hosts = [
+      hostProc({ pid: 111, dbPathHints: ['/elsewhere/db-9/conf/s.conf'] }),
+      hostProc({ pid: 222, dbPathHints: [] }),
+    ];
+
+    expect(findExternalServers(DB, [], hosts).stone?.identity).toBe('unknown');
   });
 
   it('does not treat a netldi as the stone of the same name', () => {

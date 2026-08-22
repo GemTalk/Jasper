@@ -101,6 +101,16 @@ describe('reconcileMessage', () => {
     expect(message).toContain('alive on the host');
   });
 
+  it('names both servers when both were started outside Jasper', () => {
+    expect(reconcileMessage(report())).toContain('"gs64stone" and "gs64ldi" are running');
+  });
+
+  it('names just the one server when only one was', () => {
+    const finding = { netldi: server('netldi') };
+
+    expect(reconcileMessage(report(finding))).toContain('"gs64ldi" are running');
+  });
+
   it('warns that a restart loses uncommitted work', () => {
     expect(reconcileMessage(report())).toContain('uncommitted sessions');
   });
@@ -166,6 +176,22 @@ describe('manualResolutionMessage', () => {
   it('repeats the reason the stop failed', () => {
     expect(manualResolutionMessage(report(), 'ps unavailable')).toContain('ps unavailable');
   });
+
+  it('names the lock files a kill would leave behind', () => {
+    // It tells the user to kill the PIDs; following that advice without
+    // removing the locks leaves gslist reporting a server that is gone and the
+    // next start refusing.
+    const message = manualResolutionMessage(report(), 'refused');
+
+    expect(message).toContain('/opt/GemStone64Bit3.7.5-x86_64.Linux/locks/gs64stone..LCK');
+    expect(message).toContain('/opt/GemStone64Bit3.7.5-x86_64.Linux/locks/gs64ldi..LCK');
+  });
+
+  it('says nothing about locks it cannot locate', () => {
+    const finding = { stone: server('stone', 'confirmed', { globalDir: undefined }) };
+
+    expect(manualResolutionMessage(report(finding), 'refused')).not.toContain('..LCK');
+  });
 });
 
 describe('reconcileExternalServers', () => {
@@ -229,13 +255,29 @@ describe('reconcileExternalServers', () => {
   });
 
   it('stops only what was actually found running outside Jasper', async () => {
+    const finding = { netldi: server('netldi') };
     const deps = makeDeps();
 
-    await reconcileExternalServers(DB, { netldi: server('netldi') }, report(), deps);
+    await reconcileExternalServers(DB, finding, report(finding), deps);
 
     expect(vi.mocked(deps.stopExternal).mock.calls.map((c) => c[1].process.type)).toEqual([
       'netldi',
     ]);
+  });
+
+  it('stops nothing when the report claims more is confirmed than the finding shows', async () => {
+    // The gate has to read the servers that will actually be stopped, not a
+    // description handed in alongside them: taking permission from the
+    // description is how an unconfirmed server gets stopped anyway.
+    const finding = { stone: server('stone', 'unknown') };
+    const confirmedReport = report({ stone: server('stone', 'confirmed') });
+    const deps = makeDeps();
+
+    const outcome = await reconcileExternalServers(DB, finding, confirmedReport, deps);
+
+    expect(outcome).toEqual({ kind: 'abandoned' });
+    expect(deps.stopExternal).not.toHaveBeenCalled();
+    expect(deps.killExternal).not.toHaveBeenCalled();
   });
 
   it('refuses to stop a server it could not confirm, even if asked to', async () => {
