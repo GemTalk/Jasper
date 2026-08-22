@@ -27,6 +27,7 @@ import {
   versionsMatch,
 } from '../processManager';
 import { GemStoneDatabase, GemStoneProcess } from '../sysadminTypes';
+import { DEFAULT_GS_PW } from '../loginTypes';
 import { appendSysadmin, showSysadmin } from '../sysadminChannel';
 import * as wslBridge from '../wslBridge';
 import { SysadminStorage } from '../sysadminStorage';
@@ -59,6 +60,16 @@ function makeStorage(gsPath = '/gs/3.7.4'): SysadminStorage {
   return rawStorage(gsPath) as unknown as SysadminStorage;
 }
 
+/** Storage for the needsWsl() === true branches, which reach for the WSL-side
+ *  accessors rather than the host-native ones. */
+function makeWslStorage(gsPath = '/gs/3.7.4'): SysadminStorage {
+  return {
+    ...rawStorage(gsPath),
+    getWslRootPath: vi.fn(() => '/home/user/gemstone'),
+    getWslGemstonePath: vi.fn(() => gsPath),
+  } as unknown as SysadminStorage;
+}
+
 /** Create a mock ChildProcess that emits 'close' with the given exit code. */
 // `signal` models a process killed by a signal, which Node reports as a null
 // exit code plus the signal name — what macOS jetsam does under memory
@@ -82,6 +93,11 @@ function makeChildProcess(exitCode: number | null = 0, signal: string | null = n
     on: vi.fn((event: string, cb: (code: number | null, signal: string | null) => void) => {
       if (event === 'close') closeCallback = cb;
     }),
+    // Call this to simulate the process writing to stderr, which is where the
+    // GemStone shell scripts put their complaints.
+    emitStderr(text: string) {
+      for (const listener of stderrListeners) listener(Buffer.from(text));
+    },
     // Call this to simulate the process finishing
     finish() {
       closeCallback?.(exitCode, signal);
@@ -97,6 +113,19 @@ function mockSpawnReturn(proc: ReturnType<typeof makeChildProcess>) {
 
 function setPlatform(platform: string) {
   Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+}
+
+/** The binary and argv a spawn call really asked for, past the `/bin/bash -c
+ *  'ulimit …' --` wrapper wslSpawn adds on Linux. Lets a test say which GemStone
+ *  script ran without also encoding how the wrapping works. */
+function spawnedCommand(callIndex = 0): { cmd: string; args: string[] } {
+  const [cmd, args] = vi.mocked(spawn).mock.calls[callIndex];
+  const argv = (args ?? []) as string[];
+  const sentinel = argv.indexOf('--');
+  if (cmd === '/bin/bash' && sentinel !== -1) {
+    return { cmd: argv[sentinel + 1], args: argv.slice(sentinel + 2) };
+  }
+  return { cmd, args: argv };
 }
 
 function staleStone(overrides: Partial<GemStoneProcess> = {}): GemStoneProcess {
@@ -693,11 +722,44 @@ describe('ProcessManager', () => {
       expect(commands.some((c) => /kill/.test(c))).toBe(false);
     });
 
+    /** A real `stoned` command line: the server name is the first argument,
+     *  before any flags — which is what the name re-check reads. */
+    const STONED = '/gs/sys/stoned gs64stone -l /log';
+
+    it('replaces the scripts’ bare GEMSTONE complaint with the real situation', async () => {
+      // Without this the user is told their GEMSTONE variable is undefined —
+      // which Jasper just set — and goes off to debug a shell profile that is
+      // fine. The wording is unit-tested; this covers it actually being used.
+      setPlatform('linux');
+      const child = makeChildProcess(1);
+      mockSpawnReturn(child);
+      const manager = new ProcessManager(makeStorage('/gs/3.7.4'));
+
+      const promise = manager.startStone(makeDatabase());
+      child.emitStderr('startstone[52]: GEMSTONE environment variable is not defined.\n');
+      child.finish();
+
+      await expect(promise).rejects.toThrow(/not a problem with your shell profile/);
+    });
+
+    it('leaves any other start failure reported as it came', async () => {
+      setPlatform('linux');
+      const child = makeChildProcess(1);
+      mockSpawnReturn(child);
+      const manager = new ProcessManager(makeStorage('/gs/3.7.4'));
+
+      const promise = manager.startStone(makeDatabase());
+      child.emitStderr('extent0.dbf is already in use\n');
+      child.finish();
+
+      await expect(promise).rejects.toThrow(/extent0\.dbf is already in use/);
+    });
+
     it('SIGTERMs a running stone, clears its lock, and reports recovery', async () => {
       const manager = new ProcessManager(makeStorage());
       vi.spyOn(manager, 'refreshProcesses').mockReturnValue([staleStone()]);
       vi.mocked(wslBridge.wslExecSync)
-        .mockReturnValueOnce('/gs/sys/stoned -l /log gs64stone')
+        .mockReturnValueOnce(STONED)
         .mockReturnValueOnce('')
         .mockReturnValueOnce('GONE')
         .mockReturnValueOnce('GONE')
@@ -716,10 +778,11 @@ describe('ProcessManager', () => {
       const manager = new ProcessManager(makeStorage());
       vi.spyOn(manager, 'refreshProcesses').mockReturnValue([staleStone()]);
       vi.mocked(wslBridge.wslExecSync)
-        .mockReturnValueOnce('/gs/sys/stoned -l /log gs64stone')
+        .mockReturnValueOnce(STONED)
         .mockReturnValueOnce('')
-        .mockReturnValueOnce('/gs/sys/stoned -l /log gs64stone')
+        .mockReturnValueOnce(STONED)
         .mockReturnValueOnce('')
+        .mockReturnValueOnce('GONE')
         .mockReturnValueOnce('GONE')
         .mockReturnValueOnce('');
 
@@ -728,6 +791,696 @@ describe('ProcessManager', () => {
       expect(result.killed).toBe(true);
       const commands = vi.mocked(wslBridge.wslExecSync).mock.calls.map((c) => c[0]);
       expect(commands.some((c) => /^kill -9 4106/.test(c))).toBe(true);
+    });
+
+    it('still clears the lock after escalating to SIGKILL', async () => {
+      // The case the lock matters most in, and the one that used to skip it:
+      // the check ran before the process had been reaped, read it as a live
+      // server, and kept the lock — silently.
+      const manager = new ProcessManager(makeStorage());
+      vi.spyOn(manager, 'refreshProcesses').mockReturnValue([staleStone()]);
+      vi.mocked(wslBridge.wslExecSync)
+        .mockReturnValueOnce(STONED)
+        .mockReturnValueOnce('')
+        .mockReturnValueOnce(STONED)
+        .mockReturnValueOnce('')
+        .mockReturnValueOnce('GONE')
+        .mockReturnValueOnce('GONE')
+        .mockReturnValueOnce('');
+
+      await manager.forceKillStone(makeDatabase(), { graceMs: 0 });
+
+      const commands = vi.mocked(wslBridge.wslExecSync).mock.calls.map((c) => c[0]);
+      expect(commands.some((c) => /rm -f/.test(c) && c.includes('gs64stone..LCK'))).toBe(true);
+    });
+
+    it('reports failure when the stone outlives SIGKILL', async () => {
+      const manager = new ProcessManager(makeStorage());
+      vi.spyOn(manager, 'refreshProcesses').mockReturnValue([staleStone()]);
+      vi.mocked(wslBridge.wslExecSync).mockReturnValue(STONED);
+
+      const result = await manager.forceKillStone(makeDatabase(), { graceMs: 0 });
+
+      expect(result.killed).toBe(false);
+      expect(result.reason).toMatch(/survived SIGKILL/);
+    });
+
+    it('refuses to kill a process id now held by a different stone', async () => {
+      // Same rigor as the external-server kill path: a modal escalation dialog
+      // and an optional password prompt sit in front of this.
+      const manager = new ProcessManager(makeStorage());
+      vi.spyOn(manager, 'refreshProcesses').mockReturnValue([staleStone()]);
+      vi.mocked(wslBridge.wslExecSync).mockReturnValueOnce('/gs/sys/stoned someone-elses-stone');
+
+      const result = await manager.forceKillStone(makeDatabase(), { graceMs: 0 });
+
+      expect(result.killed).toBe(false);
+      expect(result.reason).toMatch(/no longer stone/);
+      const commands = vi.mocked(wslBridge.wslExecSync).mock.calls.map((c) => c[0]);
+      expect(commands.some((c) => /kill/.test(c))).toBe(false);
+    });
+  });
+
+  // ── external servers ──────────────────────────────────────
+
+  describe('getExternalServers', () => {
+    const PS_LINE =
+      ' 1889606 /gs/GemStone64Bit3.7.4-x86_64.Linux/sys/stoned gs64stone ' +
+      '-e /home/user/gemstone/db-1/conf/gs64stone.conf';
+    const PS_LDI_LINE =
+      ' 1889602 /gs/GemStone64Bit3.7.4-x86_64.Linux/sys/netldid gs64ldi -g ' +
+      '-l /home/user/gemstone/db-1/log/gs64ldi.log';
+
+    beforeEach(() => {
+      vi.mocked(wslBridge.wslExecSync).mockReset();
+      vi.mocked(wslBridge.needsWsl).mockReturnValue(false);
+    });
+
+    /**
+     * Put a *successful* gslist reading in place, reporting `processes`.
+     *
+     * It drives the real `refreshProcesses` rather than only stubbing the
+     * accessors, because the cross-check refuses to report anything unless that
+     * read actually succeeded — so a stub that skips it would leave every case
+     * below silently answering `{}` for the wrong reason.
+     */
+    function seedGslist(manager: ProcessManager, processes: GemStoneProcess[]) {
+      // `test -x` for findGslist, then the `gslist -cvl` output itself.
+      vi.mocked(wslBridge.wslExecSync).mockReset().mockReturnValue('');
+      manager.refreshProcesses();
+      vi.mocked(wslBridge.wslExecSync).mockReset();
+      vi.spyOn(manager, 'getProcesses').mockReturnValue(processes);
+      vi.spyOn(manager, 'isStoneRunning').mockReturnValue(
+        processes.some((p) => p.type === 'stone'),
+      );
+      vi.spyOn(manager, 'isNetldiRunning').mockReturnValue(
+        processes.some((p) => p.type === 'netldi'),
+      );
+    }
+
+    /** The same, but with gslist unreadable — the state that must never be
+     *  mistaken for "gslist looked and saw nothing". */
+    function gslistUnreadable(manager: ProcessManager) {
+      vi.mocked(wslBridge.wslExecSync)
+        .mockReset()
+        .mockImplementation(() => {
+          throw new Error('gslist: cannot execute');
+        });
+      manager.refreshProcesses();
+      vi.mocked(wslBridge.wslExecSync).mockReset();
+    }
+
+    it('never scans the process table while both servers are accounted for', () => {
+      // The healthy case is the common one, and it has nothing to explain.
+      const manager = new ProcessManager(makeStorage());
+      seedGslist(manager, [
+        staleStone({ status: 'OK', responding: true }),
+        staleStone({ type: 'netldi', name: 'gs64ldi', status: 'OK', responding: true }),
+      ]);
+
+      expect(manager.getExternalServers(makeDatabase())).toEqual({});
+      expect(wslBridge.wslExecSync).not.toHaveBeenCalled();
+    });
+
+    it('accuses nothing of being external when gslist could not be run at all', () => {
+      // With no extracted version there is no gslist to run, so the process
+      // list is empty for a reason that says nothing about what is registered.
+      // Reading it as "nothing is registered" would make every live server —
+      // including ones Jasper started — look external, confirmed, and killable.
+      const storage = {
+        ...rawStorage(),
+        getExtractedVersions: vi.fn(() => []),
+      } as unknown as SysadminStorage;
+      const manager = new ProcessManager(storage);
+      manager.refreshProcesses();
+      vi.mocked(wslBridge.wslExecSync).mockReset().mockReturnValue(PS_LINE);
+
+      expect(manager.getExternalServers(makeDatabase())).toEqual({});
+    });
+
+    it('accuses nothing of being external when the gslist read failed', () => {
+      const manager = new ProcessManager(makeStorage());
+      gslistUnreadable(manager);
+      vi.mocked(wslBridge.wslExecSync).mockReturnValue(PS_LINE);
+
+      expect(manager.getExternalServers(makeDatabase())).toEqual({});
+    });
+
+    it('does not call a server external when it is registered where Jasper looks', () => {
+      // The backstop behind the gslist-readable guard: whatever the listing
+      // said, a server registered in Jasper's own root is not outside it.
+      const manager = new ProcessManager(makeStorage());
+      seedGslist(manager, []);
+      vi.mocked(wslBridge.wslExecSync)
+        .mockReturnValueOnce(PS_LINE)
+        .mockReturnValue('GEMSTONE_GLOBAL_DIR=/home/user/gemstone');
+
+      expect(manager.getExternalServers(makeDatabase())).toEqual({});
+    });
+
+    it('reports only the side its own gslist cannot see', () => {
+      const manager = new ProcessManager(makeStorage());
+      // Version has to match the database's, or the cross-check rightly treats
+      // this as another install's stone rather than as "gslist can see it".
+      seedGslist(manager, [staleStone({ version: '3.7.4', status: 'OK', responding: true })]);
+      vi.mocked(wslBridge.wslExecSync)
+        .mockReturnValueOnce(`${PS_LINE}\n${PS_LDI_LINE}`)
+        .mockReturnValue('GEMSTONE_GLOBAL_DIR=/elsewhere');
+
+      const finding = manager.getExternalServers(makeDatabase());
+
+      expect(finding.stone).toBeUndefined();
+      expect(finding.netldi?.process.pid).toBe(1889602);
+    });
+
+    it('drops a candidate whose version only its environment revealed as another install', () => {
+      const manager = new ProcessManager(makeStorage());
+      seedGslist(manager, []);
+      vi.mocked(wslBridge.wslExecSync)
+        // No product directory in the path, so the version is unknown here and
+        // the candidate is admitted on name alone…
+        .mockReturnValueOnce(
+          ' 700 /opt/sys/stoned gs64stone -e /home/user/gemstone/db-1/conf/s.conf',
+        )
+        // …and its environment then reveals it belongs to a different install.
+        .mockReturnValue(
+          'GEMSTONE=/opt/GemStone64Bit3.6.2-x86_64.Linux GEMSTONE_GLOBAL_DIR=/elsewhere',
+        );
+
+      expect(manager.getExternalServers(makeDatabase())).toEqual({});
+    });
+
+    it('prefers the same-named server it can place over one it cannot', () => {
+      // Two live stones share the name. Picking the first listed would report
+      // "probably a different database" about a server running right there.
+      const manager = new ProcessManager(makeStorage());
+      seedGslist(manager, []);
+      vi.mocked(wslBridge.wslExecSync)
+        .mockReturnValueOnce(
+          ' 111 /gs/GemStone64Bit3.7.4-x86_64.Linux/sys/stoned gs64stone -e /elsewhere/db-9/conf/s.conf\n' +
+            ' 222 /gs/GemStone64Bit3.7.4-x86_64.Linux/sys/stoned gs64stone -e /home/user/gemstone/db-1/conf/s.conf',
+        )
+        .mockReturnValue('GEMSTONE_GLOBAL_DIR=/elsewhere');
+
+      const finding = manager.getExternalServers(makeDatabase());
+
+      expect(finding.stone?.process.pid).toBe(222);
+      expect(finding.stone?.identity).toBe('confirmed');
+    });
+
+    it('finds a server that is alive on the host but absent from its own gslist', () => {
+      const manager = new ProcessManager(makeStorage());
+      seedGslist(manager, []);
+      vi.mocked(wslBridge.wslExecSync)
+        .mockReturnValueOnce(`${PS_LINE}\n${PS_LDI_LINE}`)
+        .mockReturnValue('GEMSTONE_GLOBAL_DIR=/elsewhere GEMSTONE=/gs');
+
+      const finding = manager.getExternalServers(makeDatabase());
+
+      expect(finding.stone?.process.pid).toBe(1889606);
+      expect(finding.netldi?.process.pid).toBe(1889602);
+    });
+
+    it('reads the directory an externally started server registered in', () => {
+      // Without it the user is told a process is alive somewhere and given no
+      // way to go find it.
+      const manager = new ProcessManager(makeStorage());
+      seedGslist(manager, []);
+      vi.mocked(wslBridge.wslExecSync)
+        .mockReturnValueOnce(PS_LINE)
+        .mockReturnValue('GEMSTONE_GLOBAL_DIR=/elsewhere GEMSTONE=/gs');
+
+      const finding = manager.getExternalServers(makeDatabase());
+
+      expect(finding.stone?.process.globalDir).toBe('/elsewhere');
+      expect(finding.stone?.identity).toBe('confirmed');
+    });
+
+    it('reports nothing rather than guessing when the process table cannot be read', () => {
+      const manager = new ProcessManager(makeStorage());
+      seedGslist(manager, []);
+      vi.mocked(wslBridge.wslExecSync).mockImplementation(() => {
+        throw new Error('ps: command not found');
+      });
+
+      expect(manager.getExternalServers(makeDatabase())).toEqual({});
+    });
+
+    it('matches a Windows database path against the WSL paths the server reports', () => {
+      // Under WSL the database is a UNC path on the Windows side while the
+      // running server reports Linux paths, so identity has to be judged after
+      // converting — otherwise it never confirms on Windows and the restart is
+      // silently never offered.
+      vi.mocked(wslBridge.needsWsl).mockReturnValue(true);
+      const db = makeDatabase({ path: '\\\\wsl$\\Ubuntu\\home\\user\\gemstone\\db-1' });
+      const manager = new ProcessManager(makeWslStorage());
+      seedGslist(manager, []);
+      vi.mocked(wslBridge.wslExecSync)
+        .mockReturnValueOnce(
+          ' 700 /gs/GemStone64Bit3.7.4-x86_64.Linux/sys/stoned gs64stone ' +
+            '-e /home/user/gemstone/db-1/conf/gs64stone.conf',
+        )
+        .mockReturnValue('GEMSTONE_GLOBAL_DIR=/elsewhere');
+
+      const finding = manager.getExternalServers(db);
+
+      expect(finding.stone?.identity).toBe('confirmed');
+    });
+
+    it('does not confirm a WSL server belonging to another database', () => {
+      vi.mocked(wslBridge.needsWsl).mockReturnValue(true);
+      const db = makeDatabase({ path: '\\\\wsl$\\Ubuntu\\home\\user\\gemstone\\db-1' });
+      const manager = new ProcessManager(makeWslStorage());
+      seedGslist(manager, []);
+      vi.mocked(wslBridge.wslExecSync)
+        .mockReturnValueOnce(
+          ' 700 /gs/GemStone64Bit3.7.4-x86_64.Linux/sys/stoned gs64stone ' +
+            '-e /home/user/gemstone/db-9/conf/gs64stone.conf',
+        )
+        .mockReturnValue('GEMSTONE_GLOBAL_DIR=/elsewhere');
+
+      expect(manager.getExternalServers(db).stone?.identity).toBe('different');
+    });
+
+    it('scans the process table once for repeated questions about a database', () => {
+      const manager = new ProcessManager(makeStorage());
+      seedGslist(manager, []);
+      vi.mocked(wslBridge.wslExecSync).mockReturnValue('');
+
+      manager.getExternalServers(makeDatabase());
+      manager.getExternalServers(makeDatabase());
+
+      expect(vi.mocked(wslBridge.wslExecSync).mock.calls).toHaveLength(1);
+    });
+
+    it('scans the process table once for several databases', () => {
+      // One scan answers for every database, which is the point of caching it
+      // rather than the per-database verdict alone.
+      const manager = new ProcessManager(makeStorage());
+      seedGslist(manager, []);
+      vi.mocked(wslBridge.wslExecSync).mockReturnValue('');
+
+      manager.getExternalServers(makeDatabase());
+      manager.getExternalServers(
+        makeDatabase({ dirName: 'db-2', path: '/home/user/gemstone/db-2' }),
+      );
+
+      expect(vi.mocked(wslBridge.wslExecSync).mock.calls).toHaveLength(1);
+    });
+
+    it('scans the process table again after the next refresh', () => {
+      const manager = new ProcessManager(makeStorage());
+      seedGslist(manager, []);
+      vi.mocked(wslBridge.wslExecSync).mockReturnValue('');
+      manager.getExternalServers(makeDatabase());
+
+      seedGslist(manager, []);
+      vi.mocked(wslBridge.wslExecSync).mockReturnValue('');
+      manager.getExternalServers(makeDatabase());
+
+      expect(vi.mocked(wslBridge.wslExecSync).mock.calls).toHaveLength(1);
+    });
+  });
+
+  describe('isServerAlive', () => {
+    it('counts a server its own gslist can see', () => {
+      const manager = new ProcessManager(makeStorage());
+      vi.spyOn(manager, 'isStoneRunning').mockReturnValue(true);
+      vi.spyOn(manager, 'getExternalServers').mockReturnValue({});
+
+      expect(manager.isServerAlive(makeDatabase(), 'stone')).toBe(true);
+    });
+
+    it('counts a server that is alive on the host but absent from gslist', () => {
+      // The guard for anything destructive: such a stone has the extent open,
+      // so deleting or replacing under it would corrupt a running database.
+      const manager = new ProcessManager(makeStorage());
+      vi.spyOn(manager, 'isStoneRunning').mockReturnValue(false);
+      vi.spyOn(manager, 'getExternalServers').mockReturnValue({
+        stone: {
+          process: {
+            pid: 1,
+            type: 'stone',
+            name: 'gs64stone',
+            dbPathHints: [],
+            command: 'stoned gs64stone',
+          },
+          identity: 'confirmed',
+        },
+      });
+
+      expect(manager.isServerAlive(makeDatabase(), 'stone')).toBe(true);
+    });
+
+    it('does not count the other server as this one', () => {
+      const manager = new ProcessManager(makeStorage());
+      vi.spyOn(manager, 'isStoneRunning').mockReturnValue(false);
+      vi.spyOn(manager, 'isNetldiRunning').mockReturnValue(false);
+      vi.spyOn(manager, 'getExternalServers').mockReturnValue({
+        stone: {
+          process: {
+            pid: 1,
+            type: 'stone',
+            name: 'gs64stone',
+            dbPathHints: [],
+            command: 'stoned gs64stone',
+          },
+          identity: 'confirmed',
+        },
+      });
+
+      expect(manager.isServerAlive(makeDatabase(), 'netldi')).toBe(false);
+    });
+
+    it('reports nothing alive when neither view sees anything', () => {
+      const manager = new ProcessManager(makeStorage());
+      vi.spyOn(manager, 'isStoneRunning').mockReturnValue(false);
+      vi.spyOn(manager, 'getExternalServers').mockReturnValue({});
+
+      expect(manager.isServerAlive(makeDatabase(), 'stone')).toBe(false);
+    });
+  });
+
+  describe('stopExternalServer', () => {
+    beforeEach(() => {
+      vi.mocked(wslBridge.needsWsl).mockReturnValue(false);
+      setPlatform('linux');
+    });
+
+    it('aims the stop at the directory the server actually registered in', async () => {
+      // Run in Jasper's own environment the stop script looks in Jasper's locks
+      // directory, does not find the server, and reports it as not running —
+      // the very blind spot being reconciled.
+      const proc = makeChildProcess(0);
+      mockSpawnReturn(proc);
+      const manager = new ProcessManager(makeStorage('/gs/3.7.4'));
+
+      const promise = manager.stopExternalServer(makeDatabase(), {
+        process: {
+          pid: 1,
+          type: 'stone',
+          name: 'gs64stone',
+          globalDir: '/elsewhere',
+          dbPathHints: [],
+          command: 'stoned gs64stone',
+        },
+        identity: 'confirmed',
+      });
+      proc.finish();
+      await promise;
+
+      const options = vi.mocked(spawn).mock.calls[0][2];
+      expect(options.env?.GEMSTONE_GLOBAL_DIR).toBe('/elsewhere');
+    });
+
+    it('runs stopstone, with DataCurator credentials, at a stone', async () => {
+      // Which binary and which argv each server kind gets was asserted nowhere:
+      // the two could be swapped and every test stayed green, while at runtime
+      // both stops would fail and fall straight through to kill -9, losing
+      // uncommitted work with the clean-stop failure deliberately swallowed.
+      const proc = makeChildProcess(0);
+      mockSpawnReturn(proc);
+      const manager = new ProcessManager(makeStorage('/gs/3.7.4'));
+
+      const promise = manager.stopExternalServer(makeDatabase(), {
+        process: {
+          pid: 1,
+          type: 'stone',
+          name: 'gs64stone',
+          globalDir: '/elsewhere',
+          dbPathHints: [],
+          command: 'stoned gs64stone',
+        },
+        identity: 'confirmed',
+      });
+      proc.finish();
+      await promise;
+
+      expect(spawnedCommand()).toEqual({
+        cmd: '/gs/3.7.4/bin/stopstone',
+        args: ['gs64stone', 'DataCurator', DEFAULT_GS_PW],
+      });
+    });
+
+    it('runs stopnetldi, with just the name, at a netldi', async () => {
+      const proc = makeChildProcess(0);
+      mockSpawnReturn(proc);
+      const manager = new ProcessManager(makeStorage('/gs/3.7.4'));
+
+      const promise = manager.stopExternalServer(makeDatabase(), {
+        process: {
+          pid: 1,
+          type: 'netldi',
+          name: 'gs64ldi',
+          globalDir: '/elsewhere',
+          dbPathHints: [],
+          command: 'netldid gs64ldi',
+        },
+        identity: 'confirmed',
+      });
+      proc.finish();
+      await promise;
+
+      expect(spawnedCommand()).toEqual({ cmd: '/gs/3.7.4/bin/stopnetldi', args: ['gs64ldi'] });
+    });
+
+    it('falls back to the root Jasper manages when the directory is unknown', async () => {
+      const proc = makeChildProcess(0);
+      mockSpawnReturn(proc);
+      const manager = new ProcessManager(makeStorage('/gs/3.7.4'));
+
+      const promise = manager.stopExternalServer(makeDatabase(), {
+        process: {
+          pid: 1,
+          type: 'netldi',
+          name: 'gs64ldi',
+          dbPathHints: [],
+          command: 'netldid gs64ldi',
+        },
+        identity: 'confirmed',
+      });
+      proc.finish();
+      await promise;
+
+      const options = vi.mocked(spawn).mock.calls[0][2];
+      expect(options.env?.GEMSTONE_GLOBAL_DIR).toBe('/home/user/gemstone');
+    });
+  });
+
+  describe('killHostServer', () => {
+    const server = {
+      process: {
+        pid: 4106,
+        type: 'stone' as const,
+        name: 'gs64stone',
+        dbPathHints: [],
+        command: 'stoned gs64stone',
+      },
+      identity: 'confirmed' as const,
+    };
+
+    beforeEach(() => {
+      vi.mocked(wslBridge.wslExecSync).mockReset();
+      vi.mocked(wslBridge.needsWsl).mockReturnValue(false);
+    });
+
+    it('refuses to signal a process id that now belongs to something else', async () => {
+      // An external server's PID comes from a scan, not from gslist, so this
+      // check is the only thing standing between a reconcile and an unrelated
+      // process that inherited the number.
+      vi.mocked(wslBridge.wslExecSync).mockReturnValueOnce('/usr/bin/ssh-agent');
+
+      const result = await new ProcessManager(makeStorage()).killHostServer(server, {
+        graceMs: 0,
+      });
+
+      expect(result.killed).toBe(false);
+      expect(result.reason).toMatch(/unrelated process/);
+      const commands = vi.mocked(wslBridge.wslExecSync).mock.calls.map((c) => c[0]);
+      expect(commands.some((c) => /kill/.test(c))).toBe(false);
+    });
+
+    it('reports success when the process has already gone', async () => {
+      vi.mocked(wslBridge.wslExecSync).mockReturnValueOnce('GONE');
+
+      const result = await new ProcessManager(makeStorage()).killHostServer(server, {
+        graceMs: 0,
+      });
+
+      expect(result.killed).toBe(true);
+    });
+
+    it('escalates to SIGKILL when the server survives SIGTERM', async () => {
+      vi.mocked(wslBridge.wslExecSync)
+        .mockReturnValueOnce('/gs/sys/stoned gs64stone')
+        .mockReturnValueOnce('')
+        .mockReturnValueOnce('/gs/sys/stoned gs64stone')
+        .mockReturnValueOnce('')
+        .mockReturnValueOnce('GONE');
+
+      const result = await new ProcessManager(makeStorage()).killHostServer(server, {
+        graceMs: 0,
+      });
+
+      expect(result.killed).toBe(true);
+      const commands = vi.mocked(wslBridge.wslExecSync).mock.calls.map((c) => c[0]);
+      expect(commands.some((c) => /^kill -9 4106/.test(c))).toBe(true);
+    });
+
+    it('refuses to signal a process id now held by a different GemStone server', async () => {
+      // The reconcile holds this PID across a modal dialog the user can sit on,
+      // so the number has had real time to be recycled — and "some stoned" is
+      // not the same as "the stoned we meant".
+      vi.mocked(wslBridge.wslExecSync).mockReturnValueOnce('/gs/sys/stoned someone-elses-stone');
+
+      const result = await new ProcessManager(makeStorage()).killHostServer(server, {
+        graceMs: 0,
+      });
+
+      expect(result.killed).toBe(false);
+      expect(result.reason).toMatch(/no longer/);
+      const commands = vi.mocked(wslBridge.wslExecSync).mock.calls.map((c) => c[0]);
+      expect(commands.some((c) => /kill/.test(c))).toBe(false);
+    });
+
+    it('does not mistake the netldi of the same name for the stone', async () => {
+      vi.mocked(wslBridge.wslExecSync).mockReturnValueOnce('/gs/sys/netldid gs64stone');
+
+      const result = await new ProcessManager(makeStorage()).killHostServer(server, {
+        graceMs: 0,
+      });
+
+      expect(result.killed).toBe(false);
+      expect(result.reason).toMatch(/no longer/);
+    });
+
+    it('stops after SIGTERM when the process id is taken over mid-kill', async () => {
+      // Between the SIGTERM and the check, the PID came back as a different
+      // server. Ours is gone; escalating would SIGKILL a bystander.
+      vi.mocked(wslBridge.wslExecSync)
+        .mockReturnValueOnce('/gs/sys/stoned gs64stone')
+        .mockReturnValueOnce('')
+        .mockReturnValueOnce('/gs/sys/stoned someone-elses-stone');
+
+      const result = await new ProcessManager(makeStorage()).killHostServer(server, {
+        graceMs: 0,
+      });
+
+      expect(result.killed).toBe(true);
+      const commands = vi.mocked(wslBridge.wslExecSync).mock.calls.map((c) => c[0]);
+      expect(commands.some((c) => /kill -9/.test(c))).toBe(false);
+    });
+
+    it('admits failure rather than claiming a server it could not kill is stopped', async () => {
+      // The caller shows the resolve-it-by-hand details on this, so reporting a
+      // false success would dead-end the user. `kill` says nothing, so this is a
+      // process that genuinely ignored the signal.
+      vi.mocked(wslBridge.wslExecSync).mockImplementation((cmd: string) =>
+        /^kill/.test(cmd) ? '' : '/gs/sys/stoned gs64stone',
+      );
+
+      const result = await new ProcessManager(makeStorage()).killHostServer(server, {
+        graceMs: 0,
+      });
+
+      expect(result.killed).toBe(false);
+      expect(result.reason).toMatch(/survived SIGKILL/);
+    });
+
+    it('says a signal was refused rather than blaming a stubborn process', async () => {
+      // An external server owned by another user needs sudo, and nothing else
+      // will do — "survived SIGKILL" sends the user hunting a wedged process.
+      vi.mocked(wslBridge.wslExecSync).mockImplementation((cmd: string) =>
+        /^kill/.test(cmd) ? 'kill: (4106) - Operation not permitted' : '/gs/sys/stoned gs64stone',
+      );
+
+      const result = await new ProcessManager(makeStorage()).killHostServer(server, {
+        graceMs: 0,
+      });
+
+      expect(result.killed).toBe(false);
+      expect(result.reason).toMatch(/not permitted/);
+      expect(result.reason).toMatch(/sudo/);
+    });
+
+    it('removes the stale lock a confirmed server left in its own directory', async () => {
+      // Jasper's SIGKILL orphaned that lock. Left behind, gslist in the user's
+      // own shell keeps listing a dead server and their next start refuses —
+      // while Jasper's own restart works, which is why this would never show up
+      // in Jasper's own testing.
+      const confirmed = {
+        ...server,
+        process: { ...server.process, globalDir: '/elsewhere' },
+      };
+      vi.mocked(wslBridge.wslExecSync)
+        .mockReturnValueOnce('/gs/sys/stoned gs64stone')
+        .mockReturnValueOnce('')
+        .mockReturnValueOnce('GONE')
+        .mockReturnValueOnce('GONE')
+        .mockReturnValueOnce('');
+
+      const result = await new ProcessManager(makeStorage()).killHostServer(confirmed, {
+        graceMs: 0,
+      });
+
+      const commands = vi.mocked(wslBridge.wslExecSync).mock.calls.map((c) => c[0]);
+      expect(
+        commands.some((c) => /rm -f/.test(c) && c.includes('/elsewhere/locks/gs64stone..LCK')),
+      ).toBe(true);
+      expect(result.reason).toContain('/elsewhere/locks/gs64stone..LCK');
+    });
+
+    it("never touches a lock under Jasper's own root for an external server", async () => {
+      const confirmed = {
+        ...server,
+        process: { ...server.process, globalDir: '/elsewhere' },
+      };
+      vi.mocked(wslBridge.wslExecSync)
+        .mockReturnValueOnce('/gs/sys/stoned gs64stone')
+        .mockReturnValueOnce('')
+        .mockReturnValueOnce('GONE')
+        .mockReturnValueOnce('GONE')
+        .mockReturnValueOnce('');
+
+      await new ProcessManager(makeStorage()).killHostServer(confirmed, { graceMs: 0 });
+
+      const commands = vi.mocked(wslBridge.wslExecSync).mock.calls.map((c) => c[0]);
+      expect(commands.some((c) => c.includes('/home/user/gemstone/locks'))).toBe(false);
+    });
+
+    it('leaves the lock alone when it could not confirm whose database it is', async () => {
+      // Then it really is a directory Jasper has no business writing in.
+      const unknown = {
+        process: { ...server.process, globalDir: '/elsewhere' },
+        identity: 'unknown' as const,
+      };
+      vi.mocked(wslBridge.wslExecSync)
+        .mockReturnValueOnce('/gs/sys/stoned gs64stone')
+        .mockReturnValueOnce('')
+        .mockReturnValueOnce('GONE');
+
+      const result = await new ProcessManager(makeStorage()).killHostServer(unknown, {
+        graceMs: 0,
+      });
+
+      const commands = vi.mocked(wslBridge.wslExecSync).mock.calls.map((c) => c[0]);
+      expect(commands.some((c) => /rm -f/.test(c))).toBe(false);
+      expect(result.reason).toMatch(/left in place/);
+    });
+
+    it('leaves the lock alone when it does not know where the server registered', async () => {
+      vi.mocked(wslBridge.wslExecSync)
+        .mockReturnValueOnce('/gs/sys/stoned gs64stone')
+        .mockReturnValueOnce('')
+        .mockReturnValueOnce('GONE');
+
+      const result = await new ProcessManager(makeStorage()).killHostServer(server, {
+        graceMs: 0,
+      });
+
+      const commands = vi.mocked(wslBridge.wslExecSync).mock.calls.map((c) => c[0]);
+      expect(commands.some((c) => /rm -f/.test(c))).toBe(false);
+      expect(result.reason).toMatch(/left in place/);
     });
   });
 
@@ -763,9 +1516,26 @@ describe('ProcessManager', () => {
       expect(options.env?.GEMSTONE).toBe('/gs/3.7.4');
       expect(options.env?.GEMSTONE_GLOBAL_DIR).toBe('/home/user/gemstone');
       expect(options.env?.DYLD_LIBRARY_PATH).toBe('/gs/3.7.4/lib');
-      // Still not tied to a particular stone.
+      // Still not tied to a particular stone. GEMSTONE_NRS_ALL is set, but
+      // blanked: it has to be exported to override whatever the shell that
+      // launched the editor left in it, and only a per-database environment
+      // gives it a real value.
       expect(options.env?.GEMSTONE_SYS_CONF).toBeUndefined();
-      expect(options.env?.GEMSTONE_NRS_ALL).toBeUndefined();
+      expect(options.env?.GEMSTONE_NRS_ALL).toBe('');
+    });
+
+    it('blanks an inherited NRS setting so the shell cannot steer the terminal', () => {
+      // A stray GEMSTONE_NRS_ALL from the launching shell carries #netldi: and
+      // #dir: components that would send commands somewhere other than what
+      // Jasper manages.
+      setPlatform('linux');
+      const manager = new ProcessManager(makeStorage('/gs/3.7.4'));
+
+      manager.openVersionTerminal('3.7.4');
+
+      const options = vi.mocked(vscode.window.createTerminal).mock
+        .calls[0][0] as vscode.TerminalOptions;
+      expect(options.env).toHaveProperty('GEMSTONE_NRS_ALL', '');
     });
 
     it('uses LD_LIBRARY_PATH (not DYLD_LIBRARY_PATH) on Linux', () => {
@@ -787,7 +1557,12 @@ describe('ProcessManager', () => {
       } as unknown as SysadminStorage;
       const manager = new ProcessManager(storage);
 
-      expect(() => manager.openVersionTerminal('9.9.9')).toThrow(/not found/);
+      // The message has to name the directory searched, not read as a lost
+      // setting — a user who installed 9.9.9 elsewhere needs to know where
+      // Jasper looked.
+      expect(() => manager.openVersionTerminal('9.9.9')).toThrow(
+        /no GemStone 9\.9\.9 install under \/home\/user\/gemstone/,
+      );
       expect(vscode.window.createTerminal).not.toHaveBeenCalled();
     });
 

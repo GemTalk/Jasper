@@ -49,7 +49,8 @@ function makeManager(overrides?: {
     ...overrides?.storage,
   } as unknown as SysadminStorage;
   const processManager = {
-    isStoneRunning: vi.fn(() => false),
+    isServerAlive: vi.fn(() => false),
+    getExternalServers: vi.fn(() => ({})),
     ...overrides?.processManager,
   } as unknown as ProcessManager;
   return new DatabaseManager(storage, processManager);
@@ -131,12 +132,23 @@ describe('DatabaseManager.replaceExtent', () => {
 
   it('refuses to replace while the stone is running', async () => {
     const ok = await makeManager({
-      processManager: { isStoneRunning: vi.fn(() => true) },
+      processManager: { isServerAlive: vi.fn(() => true) },
     }).replaceExtent(makeDb());
 
     expect(ok).toBe(false);
     expect(vscode.window.showErrorMessage).toHaveBeenCalled();
     expect(vscode.window.showQuickPick).not.toHaveBeenCalled();
+    expect(wslImportFileSync).not.toHaveBeenCalled();
+  });
+
+  it('refuses to replace under a stone that was started outside Jasper', async () => {
+    // Such a stone is absent from Jasper's own gslist but has the extent open,
+    // so replacing it would pull the files out from under a live database.
+    const isServerAlive = vi.fn((_db, type: 'stone' | 'netldi') => type === 'stone');
+
+    const ok = await makeManager({ processManager: { isServerAlive } }).replaceExtent(makeDb());
+
+    expect(ok).toBe(false);
     expect(wslImportFileSync).not.toHaveBeenCalled();
   });
 

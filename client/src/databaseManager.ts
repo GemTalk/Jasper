@@ -299,19 +299,45 @@ export class DatabaseManager {
     };
   }
 
+  /**
+   * Why a destructive operation was refused, and what the user can do about it.
+   *
+   * "Stop it before deleting" is a dead end for a server started outside
+   * Jasper's environment: its row offers no Stop button, and `stopstone` run in
+   * Jasper's environment cannot find it — that blind spot is the whole reason
+   * the server is being reported at all. So that case names the process, says
+   * where it is registered, and points at the action that does work.
+   */
+  private stillRunningMessage(
+    db: GemStoneDatabase,
+    type: 'stone' | 'netldi',
+    operation: string,
+  ): string {
+    const what =
+      type === 'stone' ? `Stone "${db.config.stoneName}"` : `NetLDI "${db.config.ldiName}"`;
+    // Already memoized against the current gslist reading, so this costs nothing.
+    const external = this.processManager.getExternalServers(db)[type];
+    if (!external) return `${what} is still running. Stop it before ${operation}.`;
+    const where = external.process.globalDir ? `, registered in ${external.process.globalDir}` : '';
+    return (
+      `${what} is running, but was started outside Jasper's environment ` +
+      `(PID ${external.process.pid}${where}), so Jasper cannot stop it directly. Use ` +
+      `"Restart Under Jasper's Environment" on its row in the Databases view, or stop it from ` +
+      `the shell it was started in, then try ${operation} again.`
+    );
+  }
+
   /** Delete a database directory after confirmation */
   async deleteDatabase(db: GemStoneDatabase): Promise<boolean> {
-    // Check if processes are running
-    if (this.processManager.isStoneRunning(db.config.stoneName, db.config.version)) {
-      vscode.window.showErrorMessage(
-        `Stone "${db.config.stoneName}" is still running. Stop it before deleting.`,
-      );
+    // isServerAlive, not isStoneRunning: a server started outside Jasper's
+    // environment is absent from Jasper's gslist but has the extent open, and
+    // deleting the directory under it would corrupt a running database.
+    if (this.processManager.isServerAlive(db, 'stone')) {
+      vscode.window.showErrorMessage(this.stillRunningMessage(db, 'stone', 'deleting'));
       return false;
     }
-    if (this.processManager.isNetldiRunning(db.config.ldiName, db.config.version)) {
-      vscode.window.showErrorMessage(
-        `NetLDI "${db.config.ldiName}" is still running. Stop it before deleting.`,
-      );
+    if (this.processManager.isServerAlive(db, 'netldi')) {
+      vscode.window.showErrorMessage(this.stillRunningMessage(db, 'netldi', 'deleting'));
       return false;
     }
 
@@ -329,10 +355,10 @@ export class DatabaseManager {
 
   /** Replace the extent and transaction logs with a fresh base extent */
   async replaceExtent(db: GemStoneDatabase): Promise<boolean> {
-    if (this.processManager.isStoneRunning(db.config.stoneName, db.config.version)) {
-      vscode.window.showErrorMessage(
-        `Stone "${db.config.stoneName}" is still running. Stop it before replacing the extent.`,
-      );
+    // See deleteDatabase: this has to refuse for a stone alive anywhere on the
+    // host, not just one Jasper's own gslist can see.
+    if (this.processManager.isServerAlive(db, 'stone')) {
+      vscode.window.showErrorMessage(this.stillRunningMessage(db, 'stone', 'replacing the extent'));
       return false;
     }
 

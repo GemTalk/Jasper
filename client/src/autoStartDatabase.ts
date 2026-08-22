@@ -2,6 +2,12 @@ import { GemStoneLogin } from './loginTypes';
 import { GemStoneDatabase, GemStoneProcess } from './sysadminTypes';
 import { findDatabaseForLogin } from './databaseForLogin';
 import { classifyStartNeed, inspectDatabaseProcesses } from './autoStartDecision';
+import { ExternalServerFinding } from './externalServerScan';
+import {
+  ExternalServerReport,
+  ReconcileDeps,
+  reconcileExternalServers,
+} from './externalServerReconcile';
 
 /** What the user chose at the "start the database?" prompt. `undefined` when
  *  the prompt was dismissed without choosing. */
@@ -18,6 +24,16 @@ export interface AutoStartDeps {
   getDatabases(): GemStoneDatabase[];
   /** Must be a *refresh*, not the cache — see the note in the flow below. */
   refreshProcesses(): GemStoneProcess[];
+  /** Servers alive on the host but missing from Jasper's gslist. Called after
+   *  `refreshProcesses`, so it can be answered from that same reading. */
+  getExternalServers(db: GemStoneDatabase): ExternalServerFinding;
+  /** Turn a finding into the report its dialog and failure paths need. */
+  describeExternalServers(
+    db: GemStoneDatabase,
+    finding: ExternalServerFinding,
+  ): ExternalServerReport;
+  /** The reconcile half of the flow: prompt, and stop what the user agreed to. */
+  reconcile: Omit<ReconcileDeps, 'report' | 'showError'>;
   startStone(db: GemStoneDatabase): Promise<string>;
   startNetldi(db: GemStoneDatabase): Promise<string>;
   getMode(): AutoStartMode;
@@ -86,7 +102,40 @@ async function recoverLogin(
 
   // isStoneRunning and friends read a cache that only the admin views refresh,
   // so ask for fresh process state rather than trusting whatever was last seen.
-  const need = classifyStartNeed(inspectDatabaseProcesses(db, deps.refreshProcesses()));
+  const processes = deps.refreshProcesses();
+  const external = deps.getExternalServers(db);
+  const need = classifyStartNeed(inspectDatabaseProcesses(db, processes, external));
+
+  if (need.kind === 'external') {
+    // Starting is not an option here: the name is already taken by a live
+    // process, so startstone collides with it instead of helping. Offer to
+    // stop it and start again under Jasper's environment.
+    const outcome = await reconcileExternalServers(
+      db,
+      external,
+      deps.describeExternalServers(db, external),
+      { ...deps.reconcile, report: deps.report, showError: deps.showError },
+    );
+    if (outcome.kind === 'abandoned') {
+      // Either the user backed out — the dialog explained the situation, so
+      // following it with the raw login error would just be nagging — or a stop
+      // failed and reconcileExternalServers already said what to do by hand.
+      deps.refreshViews();
+      return;
+    }
+    if (outcome.kind === 'connect-as-is') {
+      // The user asked us not to touch the servers. Retrying against them is
+      // what "as-is" means, and it can genuinely work — a login that does not
+      // have to traverse Jasper's view of the NetLDI will connect.
+      await retryAndReport(db, deps);
+      return;
+    }
+    // Stopped. Fall through to the ordinary start of both servers, which is
+    // now unobstructed, without asking a second time: the reconcile dialog
+    // already got consent to restart and connect.
+    await startAndConnect(db, { startStone: true, startNetldi: true }, deps);
+    return;
+  }
 
   if (need.kind === 'already-running') {
     // The database is up; the login failed for some other reason (wrong
@@ -126,6 +175,17 @@ async function recoverLogin(
     }
   }
 
+  await startAndConnect(db, need, deps);
+}
+
+/** Start whichever servers are down, then connect. Shared by the ordinary
+ *  stopped-database path and the reconcile path, which reaches it with both
+ *  servers just stopped. */
+async function startAndConnect(
+  db: GemStoneDatabase,
+  need: { startStone: boolean; startNetldi: boolean },
+  deps: AutoStartDeps,
+): Promise<void> {
   // Each process is started independently: an "already running" stone must not
   // stop us from starting a NetLDI that really is down.
   const startFailure = async (start: () => Promise<string>): Promise<string | undefined> => {
@@ -153,6 +213,11 @@ async function recoverLogin(
     return;
   }
 
+  await retryAndReport(db, deps);
+}
+
+/** Retry the login once and report whatever it does. */
+async function retryAndReport(db: GemStoneDatabase, deps: AutoStartDeps): Promise<void> {
   try {
     deps.report(`Connecting to ${db.config.stoneName}…`);
     await deps.retryLogin();

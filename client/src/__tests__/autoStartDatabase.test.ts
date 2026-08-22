@@ -5,6 +5,8 @@ vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 import { maybeStartDatabaseAndRetry, AutoStartDeps } from '../autoStartDatabase';
 import { DEFAULT_LOGIN, GemStoneLogin } from '../loginTypes';
 import { GemStoneDatabase, GemStoneProcess } from '../sysadminTypes';
+import { ExternalServerFinding } from '../externalServerScan';
+import { describeExternalServers } from '../externalServerReconcile';
 
 const LOGIN: GemStoneLogin = {
   ...DEFAULT_LOGIN,
@@ -38,6 +40,13 @@ function makeDeps(overrides: Partial<AutoStartDeps> = {}): AutoStartDeps {
   return {
     getDatabases: vi.fn(() => [DB]),
     refreshProcesses: vi.fn(() => [] as GemStoneProcess[]),
+    getExternalServers: vi.fn(() => ({})),
+    describeExternalServers: vi.fn((db, finding) => describeExternalServers(db, finding, '/root')),
+    reconcile: {
+      confirm: vi.fn(async () => 'restart' as const),
+      stopExternal: vi.fn(async () => 'stopped'),
+      killExternal: vi.fn(async () => ({ killed: true, reason: 'killed' })),
+    },
     startStone: vi.fn(async () => 'started'),
     startNetldi: vi.fn(async () => 'started'),
     getMode: vi.fn(() => 'ask' as const),
@@ -252,13 +261,18 @@ describe('maybeStartDatabaseAndRetry — failures', () => {
   it('surfaces the actionable message when the version is not extracted', async () => {
     const deps = makeDeps({
       startStone: vi.fn(async () => {
-        throw new Error('GemStone 3.7.5 not found. Please extract it first.');
+        throw new Error(
+          'Jasper has no GemStone 3.7.5 install under /root. It looks for a ' +
+            '"GemStone64Bit3.7.5…" directory there.',
+        );
       }),
     });
 
     await run(deps);
 
-    expect(deps.showError).toHaveBeenCalledWith(expect.stringContaining('Please extract it first'));
+    expect(deps.showError).toHaveBeenCalledWith(
+      expect.stringMatching(/no GemStone 3\.7\.5 install under/),
+    );
   });
 
   it('treats "already running" as success — a silently failed process refresh must not block the login', async () => {
@@ -303,6 +317,141 @@ describe('maybeStartDatabaseAndRetry — failures', () => {
     await run(deps);
 
     expect(deps.retryLogin).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('maybeStartDatabaseAndRetry — servers started outside Jasper', () => {
+  const stoneOutside: ExternalServerFinding = {
+    stone: {
+      process: {
+        pid: 1889606,
+        type: 'stone',
+        name: 'alpha',
+        version: '3.7.5',
+        globalDir: '/elsewhere',
+        dbPathHints: ['/root/db-1/conf/alpha.conf'],
+        command: '/gs/sys/stoned alpha',
+      },
+      identity: 'confirmed',
+    },
+  };
+
+  function outsideDeps(overrides: Partial<AutoStartDeps> = {}): AutoStartDeps {
+    return makeDeps({ getExternalServers: vi.fn(() => stoneOutside), ...overrides });
+  }
+
+  it('offers to reconcile instead of offering to start the database', async () => {
+    // startstone against a name a live process already holds collides with it,
+    // so the plain "start the database?" prompt is the wrong question.
+    const deps = outsideDeps();
+
+    await run(deps);
+
+    expect(deps.reconcile.confirm).toHaveBeenCalled();
+    expect(deps.confirm).not.toHaveBeenCalled();
+  });
+
+  it('starts both servers under Jasper once the external ones are stopped', async () => {
+    const deps = outsideDeps();
+
+    await run(deps);
+
+    expect(deps.startStone).toHaveBeenCalledWith(DB);
+    expect(deps.startNetldi).toHaveBeenCalledWith(DB);
+    expect(deps.retryLogin).toHaveBeenCalled();
+  });
+
+  it('does not ask a second time after the reconcile prompt agreed to restart', async () => {
+    const deps = outsideDeps();
+
+    await run(deps);
+
+    expect(deps.confirm).not.toHaveBeenCalled();
+  });
+
+  it('connects without touching the servers when asked to leave them alone', async () => {
+    const deps = outsideDeps({
+      reconcile: {
+        confirm: vi.fn(async () => 'as-is' as const),
+        stopExternal: vi.fn(async () => 'stopped'),
+        killExternal: vi.fn(async () => ({ killed: true, reason: 'killed' })),
+      },
+    });
+
+    await run(deps);
+
+    expect(deps.startStone).not.toHaveBeenCalled();
+    expect(deps.retryLogin).toHaveBeenCalled();
+  });
+
+  it('starts nothing and repeats no error when the user backs out', async () => {
+    // The reconcile dialog already explained the situation; following it with
+    // the raw login error would just be nagging.
+    const deps = outsideDeps({
+      reconcile: {
+        confirm: vi.fn(async () => 'cancel' as const),
+        stopExternal: vi.fn(async () => 'stopped'),
+        killExternal: vi.fn(async () => ({ killed: true, reason: 'killed' })),
+      },
+    });
+
+    await run(deps);
+
+    expect(deps.startStone).not.toHaveBeenCalled();
+    expect(deps.retryLogin).not.toHaveBeenCalled();
+    expect(deps.showError).not.toHaveBeenCalled();
+  });
+
+  it('does not start the database when the external server could not be stopped', async () => {
+    const deps = outsideDeps({
+      reconcile: {
+        confirm: vi.fn(async () => 'restart' as const),
+        stopExternal: vi.fn(async () => {
+          throw new Error('stopstone: stone not found');
+        }),
+        killExternal: vi.fn(async () => ({ killed: false, reason: 'owned by root' })),
+      },
+    });
+
+    await run(deps);
+
+    expect(deps.startStone).not.toHaveBeenCalled();
+    expect(deps.showError).toHaveBeenCalledWith(expect.stringContaining('owned by root'));
+  });
+
+  it('still starts the netldi when only it was external and the stone is up', async () => {
+    // startstone against an already-running stone exits non-zero. Treating that
+    // as a failure would abandon the one server that actually needed starting
+    // and tell the user the restart failed.
+    const deps = outsideDeps({
+      getExternalServers: vi.fn(() => ({ netldi: stoneOutside.stone })),
+      startStone: vi.fn(async () => {
+        throw new Error('startstone: stone gs64stone is already running');
+      }),
+    });
+
+    await run(deps);
+
+    expect(deps.startNetldi).toHaveBeenCalledWith(DB);
+    expect(deps.showError).not.toHaveBeenCalled();
+    expect(deps.retryLogin).toHaveBeenCalled();
+  });
+
+  it('refreshes the views so the tree reflects whatever was done', async () => {
+    const deps = outsideDeps();
+
+    await run(deps);
+
+    expect(deps.refreshViews).toHaveBeenCalled();
+  });
+
+  it('leaves an ordinary stopped database on the normal start path', async () => {
+    const deps = makeDeps();
+
+    await run(deps);
+
+    expect(deps.reconcile.confirm).not.toHaveBeenCalled();
+    expect(deps.confirm).toHaveBeenCalledWith('alpha');
   });
 });
 
