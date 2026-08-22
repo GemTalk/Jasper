@@ -156,6 +156,10 @@ export class GemStoneDebugSession extends DebugSession {
     }
 
     const requestedLines = args.breakpoints.map((bp) => bp.line);
+    // DAP carries an optional column for an inline breakpoint; forwarding it is what
+    // lets a breakpoint mid-line resolve to the step point the developer clicked
+    // rather than the leftmost one on the line.
+    const requestedColumns = args.breakpoints.map((bp) => bp.column);
 
     // Try to resolve from source path (gemstone:// URI) if available
     if (args.source.path && this.breakpointManager) {
@@ -178,6 +182,7 @@ export class GemStoneDebugSession extends DebugSession {
             this.session,
             actualUri,
             requestedLines,
+            requestedColumns,
           );
           for (let i = 0; i < results.length; i++) {
             breakpoints.push({

@@ -62,6 +62,7 @@ export class TreeItem {
   contextValue?: string;
   command?: unknown;
   collapsibleState?: number;
+  checkboxState?: number;
 
   constructor(label: string, collapsibleState?: number) {
     this.label = label;
@@ -73,6 +74,11 @@ export const TreeItemCollapsibleState = {
   None: 0,
   Collapsed: 1,
   Expanded: 2,
+};
+
+export const TreeItemCheckboxState = {
+  Unchecked: 0,
+  Checked: 1,
 };
 
 // ── ThemeIcon mock ─────────────────────────────────────────
@@ -270,6 +276,8 @@ export const window = {
   showWarningMessage: vi.fn(),
   createTreeView: vi.fn(() => ({
     onDidChangeVisibility: new EventEmitter<{ visible: boolean }>().event,
+    onDidChangeCheckboxState: new EventEmitter<{ items: [unknown, number][] }>().event,
+    reveal: vi.fn(),
     dispose: () => {},
   })),
   registerFileDecorationProvider: vi.fn(() => ({ dispose: () => {} })),
@@ -620,10 +628,18 @@ export class Selection extends Range {
 }
 
 export class Location {
+  public readonly range: Range;
+  // The real API normalizes a Position into an empty Range, and callers rely on
+  // `location.range.start` always being there — so the mock must too.
   constructor(
     public readonly uri: Uri,
-    public readonly range: Position | Range,
-  ) {}
+    rangeOrPosition: Position | Range,
+  ) {
+    this.range =
+      rangeOrPosition instanceof Range
+        ? rangeOrPosition
+        : new Range(rangeOrPosition, rangeOrPosition);
+  }
 }
 
 export class CodeActionKind {
@@ -704,6 +720,7 @@ export const languages = {
   registerHoverProvider: vi.fn(() => ({ dispose: () => {} })),
   registerCompletionItemProvider: vi.fn(() => ({ dispose: () => {} })),
   registerCodeLensProvider: vi.fn(() => ({ dispose: () => {} })),
+  registerInlayHintsProvider: vi.fn(() => ({ dispose: () => {} })),
   setTextDocumentLanguage: vi.fn(),
   createDiagnosticCollection: vi.fn((_name?: string) => createMockDiagnosticCollection()),
   getDiagnostics: vi.fn((_uri?: unknown) => [] as Diagnostic[]),
@@ -792,7 +809,18 @@ export const CompletionItemKind = {
 
 export const debug = {
   breakpoints: [] as unknown[],
+  activeDebugSession: undefined as unknown,
   onDidChangeBreakpoints: vi.fn(() => ({ dispose: () => {} })),
+  onDidStartDebugSession: vi.fn(() => ({ dispose: () => {} })),
+  onDidTerminateDebugSession: vi.fn(() => ({ dispose: () => {} })),
+  // Mirror the real API's side effect on `debug.breakpoints`, so a test can
+  // drive the manager the way VS Code does and then read the list back.
+  addBreakpoints: vi.fn((bps: unknown[]) => {
+    debug.breakpoints = [...debug.breakpoints, ...bps];
+  }),
+  removeBreakpoints: vi.fn((bps: unknown[]) => {
+    debug.breakpoints = debug.breakpoints.filter((bp) => !bps.includes(bp));
+  }),
   startDebugging: vi.fn(),
   registerDebugAdapterDescriptorFactory: vi.fn(() => ({ dispose: () => {} })),
   registerDebugConfigurationProvider: vi.fn(() => ({ dispose: () => {} })),
@@ -810,10 +838,39 @@ export class SourceBreakpoint extends Breakpoint {
   constructor(
     public location: Location,
     enabled = true,
+    condition?: string,
+    hitCondition?: string,
+    logMessage?: string,
   ) {
     super();
     this.enabled = enabled;
+    this.condition = condition;
+    this.hitCondition = hitCondition;
+    this.logMessage = logMessage;
   }
+}
+
+// ── Inlay hint mock ──────────────────────────────────────
+
+export const InlayHintKind = {
+  Type: 1,
+  Parameter: 2,
+};
+
+export class InlayHintLabelPart {
+  tooltip?: unknown;
+  command?: unknown;
+  constructor(public value: string) {}
+}
+
+export class InlayHint {
+  paddingLeft?: boolean;
+  paddingRight?: boolean;
+  constructor(
+    public position: Position,
+    public label: string | InlayHintLabelPart[],
+    public kind?: number,
+  ) {}
 }
 
 // ── Test API mock ────────────────────────────────────────
