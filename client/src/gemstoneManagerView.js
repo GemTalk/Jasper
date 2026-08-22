@@ -24,6 +24,22 @@
   // host having to post it again.
   let lastState = {};
 
+  // Configuration section (issue #232). The values are fetched from the session
+  // on demand rather than carried in the state, so they live here between the
+  // request and the reply, and across the state rebuilds that redraw the panel.
+  //   lastConfig  — the configuration payload for the selected session, or null.
+  //   configError — the stone's words when a load or a set was refused.
+  //   configLoading — a request is out; the section shows it is working.
+  //   configEditing — `${scope}:${key}` of rows whose inline editor is open,
+  //     re-applied on render so a redraw does not close an edit mid-type.
+  //   configFilter — the current filter text, applied without a re-render so the
+  //     filter box keeps focus as it is typed into.
+  let lastConfig = null;
+  let configError = '';
+  let configLoading = false;
+  const configEditing = new Set();
+  let configFilter = '';
+
   // Internal key -> the real codicon name. This is the single place a key is
   // translated; nothing else invents a glyph.
   const CODICON = {
@@ -58,6 +74,7 @@
     archive: 'archive',
     restore: 'history',
     refresh: 'refresh',
+    edit: 'edit',
   };
 
   /** The codicon name for an internal key (or the name itself, if already one). */
@@ -1149,6 +1166,113 @@
     );
   }
 
+  // ── Configuration section (issue #232) ──────────────────────────────────────
+
+  // The inline editor for one runtime-settable value: a true/false select for a
+  // Boolean, a plain input otherwise, with Set and Cancel beside it. The current
+  // value is the starting point, so Set with no change is a no-op the stone
+  // simply accepts.
+  function configEditor(param, scope) {
+    const control =
+      param.type === 'boolean'
+        ? `<select class="config-input" data-config-input>
+             <option value="true"${param.value === 'true' ? ' selected' : ''}>true</option>
+             <option value="false"${param.value === 'false' ? ' selected' : ''}>false</option>
+           </select>`
+        : `<input type="text" class="config-input" data-config-input value="${esc(param.value)}"${
+            param.type === 'integer' ? ' inputmode="numeric"' : ''
+          } />`;
+    return `<span class="config-edit">
+      ${control}
+      <button type="button" class="icon-btn" data-action="saveConfig" data-scope="${esc(scope)}" data-key="${esc(param.key)}" data-vtype="${esc(param.type)}" title="Set ${esc(param.key)}" aria-label="Set value">${ICONS.check}</button>
+      <button type="button" class="icon-btn" data-action="cancelConfig" data-scope="${esc(scope)}" data-key="${esc(param.key)}" title="Cancel" aria-label="Cancel">${ICONS.discard}</button>
+    </span>`;
+  }
+
+  // One parameter row. The key carries its purpose as a tooltip when system.conf
+  // named it; a runtime-settable value is editable, an all-caps config-file value
+  // is read-only and says so.
+  function configRow(param, scope) {
+    const id = `${scope}:${param.key}`;
+    const editing = configEditing.has(id);
+    const keyTitle = param.description ? `${param.key}\n\n${param.description}` : param.key;
+    const tag = param.settable ? badge('runtime', 'runtime') : badge('read-only', 'readonly');
+    const valueCell = editing
+      ? configEditor(param, scope)
+      : `<span class="config-value">${esc(param.value === '' ? "''" : param.value)}</span>${
+          param.editable
+            ? `<button type="button" class="icon-btn config-pencil" data-action="editConfig" data-scope="${esc(scope)}" data-key="${esc(param.key)}" title="Edit ${esc(param.key)}" aria-label="Edit value">${icon('edit')}</button>`
+            : ''
+        }`;
+    return `<tr class="config-item" data-config-key="${esc(param.key.toLowerCase())}" data-config-scope="${esc(scope)}">
+      <td class="config-key"><span title="${esc(keyTitle)}">${esc(param.key)}</span>${
+        param.description
+          ? ' <i class="codicon codicon-info config-info" aria-hidden="true"></i>'
+          : ''
+      }</td>
+      <td class="config-val">${valueCell}</td>
+      <td class="config-tag">${tag}</td>
+    </tr>`;
+  }
+
+  function configTable(title, scope, params) {
+    if (!params || !params.length) return '';
+    const settable = params.filter((p) => p.settable).length;
+    const rows = params.map((p) => configRow(p, scope)).join('');
+    return `<div class="config-group">
+      <div class="config-group-head">${esc(title)} <span class="section-count">${params.length}</span>${
+        settable ? ` <span class="config-note">${settable} runtime-settable</span>` : ''
+      }</div>
+      <table class="config-table"><tbody>${rows}</tbody></table>
+    </div>`;
+  }
+
+  // The Configuration section: the stone and gem configuration of the selected
+  // session. Values load on demand — the section carries a Refresh, and opening
+  // it the first time asks the host to read them (see render's toggle wiring).
+  function renderConfiguration(state) {
+    const session = state.session || {};
+    if (!session.connected) return '';
+    const stale = lastConfig && lastConfig.sessionId !== session.sessionId;
+    const config = stale ? null : lastConfig;
+
+    const actions = btn('loadConfiguration', 'Refresh', 'refresh', 'btn-ghost', {
+      iconOnly: true,
+      title: 'Reload configuration from the session',
+    });
+
+    let body;
+    if (configError && !config) {
+      body = `<div class="config-error">${esc(configError)}</div>
+        <div>${btn('loadConfiguration', 'Try again', 'refresh', 'btn-ghost')}</div>`;
+    } else if (!config) {
+      body = configLoading
+        ? `<div class="config-loading">Reading configuration…</div>`
+        : `<div class="empty">Configuration for ${esc(session.label || 'this session')}.
+             <div>${btn('loadConfiguration', 'Load configuration', 'refresh', 'btn-ghost')}</div></div>`;
+    } else {
+      const errLine = configError ? `<div class="config-error">${esc(configError)}</div>` : '';
+      body = `<div class="config-toolbar">
+          <input type="text" class="config-filter" data-config-filter placeholder="Filter parameters…" value="${esc(configFilter)}" aria-label="Filter configuration parameters" />
+          <span class="config-legend">${badge('runtime', 'runtime')} may be changed in this session · ${badge('read-only', 'readonly')} set in the config file before startup</span>
+        </div>
+        ${errLine}
+        ${configTable('Stone', 'stone', config.stoneParams)}
+        ${configTable('Session (Gem)', 'gem', config.gemParams)}`;
+    }
+
+    return section(
+      {
+        key: 'configuration',
+        title: 'Configuration',
+        desc: session.label,
+        actions,
+        open: false,
+      },
+      body,
+    );
+  }
+
   // Connect leads (it is what the screen is opened to do), then Databases, then
   // the reference sections. Everything stacks full-width: a single readable column
   // beats two dense panels racing each other for room.
@@ -1166,6 +1290,12 @@
     out.push({ html: renderConnect(state, true) });
     out.push({ html: renderDatabases(state.databases, true, currentDir) });
 
+    // Configuration is session-scoped, so it appears only once something is
+    // connected — right after Databases, where a reader who just logged in finds
+    // it without hunting.
+    const configHtml = renderConfiguration(state);
+    if (configHtml) out.push({ html: configHtml });
+
     if (!nothingInstalled) out.push({ html: renderVersions(state.versions, true) });
     if (!osWarn) out.push({ html: renderOs(state.os, false, state.rootPath) });
     return out;
@@ -1174,6 +1304,18 @@
   function render(state) {
     windowsHost = !!state.windows;
     lastState = state;
+    // A configuration payload belongs to the session it was read from; when the
+    // selected session changes (or goes away), the old values, error, edits and
+    // filter no longer describe what is on screen, so drop them.
+    const sessionId =
+      state.session && state.session.connected ? state.session.sessionId : undefined;
+    if (lastConfig && lastConfig.sessionId !== sessionId) {
+      lastConfig = null;
+      configError = '';
+      configLoading = false;
+      configEditing.clear();
+      configFilter = '';
+    }
     els.root.innerHTML =
       renderHeader(state) +
       orderedSections(state)
@@ -1186,7 +1328,12 @@
     els.root.querySelectorAll('details.section[data-section]').forEach((d) => {
       const chosen = sectionChoice.get(d.dataset.section);
       if (chosen !== undefined) d.open = chosen;
-      d.addEventListener('toggle', () => sectionChoice.set(d.dataset.section, d.open));
+      d.addEventListener('toggle', () => {
+        sectionChoice.set(d.dataset.section, d.open);
+        // Opening Configuration for the first time reads the values, so the
+        // section fills itself the moment it is expanded — no separate click.
+        if (d.dataset.section === 'configuration' && d.open) requestConfiguration(false);
+      });
     });
     // Restore each database's expanded state across re-renders, and keep the sets
     // in sync as the user opens and closes them. Scoped to .db-item so it does not
@@ -1204,6 +1351,20 @@
         else expandedFiles.delete(d.dataset.db);
       });
     });
+    // The filter is applied to the freshly-drawn rows, and focus is returned to
+    // the box when it was the active element before the redraw — so a rebuild
+    // arriving mid-type does not steal the cursor.
+    const hadFilterFocus =
+      document.activeElement && document.activeElement.hasAttribute('data-config-filter');
+    applyConfigFilter();
+    if (hadFilterFocus) {
+      const box = els.root.querySelector('[data-config-filter]');
+      if (box) {
+        box.focus();
+        const end = box.value.length;
+        box.setSelectionRange(end, end);
+      }
+    }
     // The section the tour points at was just replaced, so re-anchor onto the new
     // element rather than leaving the spotlight over stale coordinates. If the
     // overlay is gone from the document, the tour went with it.
@@ -1222,6 +1383,76 @@
     vscode.postMessage(msg);
   }
 
+  // Ask the host to read the selected session's configuration. `force` is a
+  // manual Refresh (always re-reads); the unforced call is the auto-load when the
+  // section first opens, which does nothing if values are already in hand or a
+  // read is already out.
+  function requestConfiguration(force) {
+    if (!force && (lastConfig || configLoading)) return;
+    configLoading = true;
+    configError = '';
+    post({ command: 'loadConfiguration' });
+    if (lastState) render(lastState);
+  }
+
+  // Hide the parameter rows whose key does not contain the filter text. Done in
+  // place so typing never triggers a full re-render (which would drop focus).
+  function applyConfigFilter() {
+    const needle = configFilter.trim().toLowerCase();
+    els.root.querySelectorAll('tr.config-item').forEach((row) => {
+      const match = !needle || row.dataset.configKey.includes(needle);
+      row.style.display = match ? '' : 'none';
+    });
+  }
+
+  // Save the value in a row's inline editor. Reads it at click time (not render
+  // time) so what the user just typed is what is sent.
+  function saveConfig(el) {
+    const box = el.closest('.config-edit');
+    const input = box && box.querySelector('[data-config-input]');
+    if (!input) return;
+    configEditing.delete(`${el.dataset.scope}:${el.dataset.key}`);
+    configError = '';
+    post({
+      command: 'setConfiguration',
+      scope: el.dataset.scope,
+      key: el.dataset.key,
+      valueType: el.dataset.vtype,
+      value: input.value,
+    });
+    if (lastState) render(lastState);
+  }
+
+  // Config actions are handled here rather than through the generic post: some
+  // are pure view state (open/close an editor), and Set reads a live input value.
+  // Returns true when it consumed the click.
+  function onConfigClick(el) {
+    const id = `${el.dataset.scope}:${el.dataset.key}`;
+    if (el.dataset.action === 'editConfig') {
+      configEditing.add(id);
+      if (lastState) render(lastState);
+      const input = els.root.querySelector(
+        `tr[data-config-scope="${el.dataset.scope}"][data-config-key="${el.dataset.key.toLowerCase()}"] [data-config-input]`,
+      );
+      if (input) input.focus();
+      return true;
+    }
+    if (el.dataset.action === 'cancelConfig') {
+      configEditing.delete(id);
+      if (lastState) render(lastState);
+      return true;
+    }
+    if (el.dataset.action === 'saveConfig') {
+      saveConfig(el);
+      return true;
+    }
+    if (el.dataset.action === 'loadConfiguration') {
+      requestConfiguration(true);
+      return true;
+    }
+    return false;
+  }
+
   function onClick(e) {
     const tourEl = e.target.closest('[data-tour]');
     if (tourEl) {
@@ -1233,6 +1464,15 @@
     if (!el) return;
     // Prevent an action button inside a <summary> from also toggling the section.
     e.preventDefault();
+    if (
+      el.dataset.action === 'editConfig' ||
+      el.dataset.action === 'cancelConfig' ||
+      el.dataset.action === 'saveConfig' ||
+      el.dataset.action === 'loadConfiguration'
+    ) {
+      onConfigClick(el);
+      return;
+    }
     post({
       command: el.dataset.action,
       version: el.dataset.version,
@@ -1246,6 +1486,32 @@
     });
   }
 
+  // The filter box types into configFilter and re-filters in place — no post,
+  // no re-render.
+  function onInput(e) {
+    const box = e.target.closest('[data-config-filter]');
+    if (!box) return;
+    configFilter = box.value;
+    applyConfigFilter();
+  }
+
+  // Enter commits an inline edit, Escape abandons it — the keyboard equivalents
+  // of the Set and Cancel buttons beside the input.
+  function onKeydown(e) {
+    const input = e.target.closest('[data-config-input]');
+    if (!input) return;
+    const box = input.closest('.config-edit');
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const save = box && box.querySelector('[data-action="saveConfig"]');
+      if (save) saveConfig(save);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      const cancel = box && box.querySelector('[data-action="cancelConfig"]');
+      if (cancel) onConfigClick(cancel);
+    }
+  }
+
   // Changing the extent select is destructive, so it opens the guarded replace
   // flow through the host rather than swapping the file silently.
   function onChange(e) {
@@ -1257,8 +1523,17 @@
   function init(refs, api) {
     els = refs;
     vscode = api;
+    // A fresh panel carries no configuration — reset the on-demand state so a
+    // reopened panel (and each test that inits a new one) starts clean.
+    lastConfig = null;
+    configError = '';
+    configLoading = false;
+    configEditing.clear();
+    configFilter = '';
     els.root.addEventListener('click', onClick);
     els.root.addEventListener('change', onChange);
+    els.root.addEventListener('input', onInput);
+    els.root.addEventListener('keydown', onKeydown);
     els.root.innerHTML = '<div class="skeleton">Loading GemStone environment…</div>';
     // Messages arrive from the extension host, which VS Code relays in from the
     // frame around this one — so `ev.source` is never this window, and testing
@@ -1277,6 +1552,17 @@
           tour.advanceFrom = undefined;
           showStep(tour.index, true);
         }
+      } else if (msg.command === 'configuration') {
+        if (!msg.config || typeof msg.config !== 'object') return;
+        lastConfig = msg.config;
+        configLoading = false;
+        configError = '';
+        configEditing.clear();
+        if (lastState) render(lastState);
+      } else if (msg.command === 'configurationError') {
+        configLoading = false;
+        configError = String(msg.message || 'The configuration could not be read.');
+        if (lastState) render(lastState);
       } else if (msg.command === 'state') {
         if (!msg.state || typeof msg.state !== 'object') return;
         els.root.setAttribute('aria-busy', 'false');
@@ -1292,6 +1578,7 @@
     renderOs,
     renderVersions,
     renderDatabases,
+    renderConfiguration,
     orderedSections,
     tourSteps,
     renderHeader,

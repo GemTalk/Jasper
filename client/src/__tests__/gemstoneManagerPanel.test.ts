@@ -666,6 +666,125 @@ describe('GemStone Manager panel', () => {
   });
 });
 
+// The Configuration section (issue #232) reads the selected session's stone and
+// gem reports over GCI on demand, and writes a runtime value back through the
+// same session. These drive the panel's message handlers against a session whose
+// GCI is stubbed to canned report output.
+describe('configuration', () => {
+  type Posted = { command: string; config?: unknown; message?: string };
+
+  /** A session whose GCI answers `execute(code)` for every executed string. */
+  function sessionWith(execute: (code: string) => string): unknown {
+    return {
+      id: 1,
+      login: aLogin('DataCurator'),
+      handle: {},
+      stoneVersion: '3.6.2',
+      gci: {
+        GciTsCallInProgress: () => ({ result: 0 }),
+        executeAndFetchString: (_h: unknown, code: string) => execute(code),
+      },
+    };
+  }
+
+  /** Canned report/setter output, keyed off what the executed Smalltalk asks. */
+  function cannedGci(setterResult = 'OK'): (code: string) => string {
+    return (code: string) => {
+      if (code.includes('stoneConfigurationReport'))
+        return 'StnGemTimeout\tSmallInteger\t60\nSHR_PAGE_CACHE_SIZE_KB\tSmallInteger\t75000\n';
+      if (code.includes('gemConfigurationReport')) return 'GemConvertArrayBuilder\tBoolean\ttrue\n';
+      if (code.includes('stoneConfigurationAt') || code.includes('gemConfigurationAt'))
+        return setterResult;
+      return '';
+    };
+  }
+
+  function openWithSession(session: unknown): MockPanel {
+    const adminChanged = new vscode.EventEmitter<void>();
+    const deps = fakeDeps(() => []);
+    const sm = deps.sessionManager as unknown as Record<string, unknown>;
+    sm.getSelectedSession = () => session;
+    sm.getSessions = () => (session ? [session] : []);
+    GemstoneManagerPanel.show({ ...deps, onAdminChange: [adminChanged.event] });
+    return lastPanel();
+  }
+
+  function posted(panel: MockPanel, command: string): Posted[] {
+    return panel.webview.postMessage.mock.calls
+      .map(([m]) => m as Posted)
+      .filter((m) => m.command === command);
+  }
+
+  afterEach(() => {
+    const [onDispose] = lastPanel().onDidDispose.mock.calls[0] as [() => void];
+    onDispose();
+    vi.clearAllMocks();
+  });
+
+  it('reads the stone and gem reports and posts them, typed and classified', () => {
+    const panel = openWithSession(sessionWith(cannedGci()));
+
+    send(panel, { command: 'loadConfiguration' });
+
+    const [msg] = posted(panel, 'configuration');
+    expect(msg).toBeDefined();
+    const config = msg.config as {
+      stoneParams: { key: string; editable: boolean; settable: boolean }[];
+      gemParams: { key: string; type: string }[];
+    };
+    expect(config.stoneParams).toEqual([
+      expect.objectContaining({ key: 'StnGemTimeout', settable: true, editable: true }),
+      expect.objectContaining({ key: 'SHR_PAGE_CACHE_SIZE_KB', settable: false, editable: false }),
+    ]);
+    expect(config.gemParams).toEqual([
+      expect.objectContaining({ key: 'GemConvertArrayBuilder', type: 'boolean', editable: true }),
+    ]);
+  });
+
+  it('reports an error rather than reading when no session is selected', () => {
+    const panel = openWithSession(undefined);
+
+    send(panel, { command: 'loadConfiguration' });
+
+    expect(posted(panel, 'configuration')).toHaveLength(0);
+    expect(posted(panel, 'configurationError')[0]?.message).toMatch(/no gemstone session/i);
+  });
+
+  it('sets a runtime value, then reloads so the settled value is shown', () => {
+    const panel = openWithSession(sessionWith(cannedGci()));
+
+    send(panel, {
+      command: 'setConfiguration',
+      scope: 'stone',
+      key: 'StnGemTimeout',
+      valueType: 'integer',
+      value: '0',
+    });
+
+    // A successful set is followed by a fresh read — the panel shows what the
+    // stone settled on, not what was typed.
+    expect(posted(panel, 'configuration')).toHaveLength(1);
+    expect(posted(panel, 'configurationError')).toHaveLength(0);
+  });
+
+  it("relays the stone's refusal when a set is not allowed", () => {
+    const refusal =
+      'GS-ERROR: a SecurityError occurred (error 2213), only be performed by SystemUser.';
+    const panel = openWithSession(sessionWith(cannedGci(refusal)));
+
+    send(panel, {
+      command: 'setConfiguration',
+      scope: 'stone',
+      key: 'StnGemTimeout',
+      valueType: 'integer',
+      value: '0',
+    });
+
+    expect(posted(panel, 'configuration')).toHaveLength(0);
+    expect(posted(panel, 'configurationError')[0]?.message).toContain('SystemUser');
+  });
+});
+
 // The sidebar's session context menu carried a full logical restore; the panel's
 // allow-list did not, so the button would have been refused on arrival.
 describe('the session-action allow-list', () => {

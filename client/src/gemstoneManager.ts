@@ -5,6 +5,13 @@
 // to the existing `gemstone.*` commands (so it inherits their confirmation
 // modals, progress notifications, and sidebar-tree refreshes for free).
 //
+// The one exception is Configuration (issue #232): the stone and gem
+// configuration reports are read from the *selected session* over its GCI, and
+// a runtime-settable value is written back through that same session — there is
+// no `gemstone.*` command for either, so this module talks to the session
+// directly. That read is on demand (a `loadConfiguration` message), never part
+// of the state rebuild, so an admin action never pays for a GCI round-trip.
+//
 // Follows the webview conventions established in enhancedInspector.ts /
 // debuggerPanel.ts: createWebviewPanel with a strict CSP, all styles inline in
 // the host HTML, all behavior in a companion gemstoneManagerView.js read at module
@@ -15,6 +22,7 @@
 import * as vscode from 'vscode';
 import * as crypto from 'crypto';
 import * as path from 'path';
+import * as fs from 'fs';
 
 import { SysadminStorage } from './sysadminStorage';
 import { VersionManager, CatalogEntry } from './versionManager';
@@ -41,12 +49,26 @@ import { GemStoneLogin, loginLabel } from './loginTypes';
 import { SessionManager } from './sessionManager';
 import { readWebviewScript } from './webviewAssets';
 import { appendSysadmin } from './sysadminChannel';
+import { defaultQueryExecutorUsing } from './browserQueries';
+import {
+  stoneConfiguration,
+  gemConfiguration,
+  setConfiguration as setSessionConfiguration,
+  isEditable,
+  ConfigScope,
+  ConfigValueType,
+  ConfigEntry,
+} from './queries/configurationReport';
+import { parseConfigDescriptions, descriptionFor } from './gemstoneConfigDescriptions';
 
 const gemstoneManagerJs = readWebviewScript('gemstoneManagerView.js');
 
 /**
- * The managers this panel reads from. Actions are dispatched through the
- * existing `gemstone.*` commands, so no action methods are needed here.
+ * The managers this panel reads from. Environment actions are dispatched
+ * through the existing `gemstone.*` commands, so no action methods are needed
+ * for them here — the exception is Configuration, which reads and writes the
+ * selected session's config directly through `sessionManager` (see the module
+ * header).
  */
 export interface GemstoneManagerDeps {
   storage: SysadminStorage;
@@ -189,6 +211,44 @@ interface FileEntry {
   path: string;
 }
 
+/**
+ * The selected session, as the Configuration section needs it: enough to label
+ * the panel and know whether there is anything to show, carried in every state
+ * so the section can appear the moment a session is selected — without the
+ * state rebuild ever touching the GCI (the config values themselves load on
+ * demand).
+ */
+interface SessionInfo {
+  connected: boolean;
+  sessionId?: number;
+  label?: string;
+  user?: string;
+  stone?: string;
+  version?: string;
+}
+
+/** One configuration parameter as the webview draws it. */
+interface ConfigParam {
+  key: string;
+  value: string;
+  type: ConfigValueType;
+  /** CamelCase runtime key (as opposed to a read-only config-file parameter). */
+  settable: boolean;
+  /** Runtime key whose value kind the inline editor can round-trip. */
+  editable: boolean;
+  /** Purpose text from system.conf, shown as a tooltip when the file named it. */
+  description?: string;
+}
+
+/** The configuration of the selected session, sent in reply to loadConfiguration. */
+interface ConfigurationPayload {
+  sessionId: number;
+  label: string;
+  version: string;
+  stoneParams: ConfigParam[];
+  gemParams: ConfigParam[];
+}
+
 interface ManagerState {
   platform: string;
   /** Windows with WSL — where the client install and Copy Host actions mean anything. */
@@ -198,6 +258,7 @@ interface ManagerState {
   versions: VersionRow[];
   databases: DatabaseRow[];
   logins: LoginTarget[];
+  session: SessionInfo;
 }
 
 type Inbound =
@@ -245,6 +306,14 @@ type Inbound =
   | { command: 'selectSession'; sessionId: number }
   | { command: 'sessionAction'; sessionId: number; action: string }
   | { command: 'openSettings' }
+  | { command: 'loadConfiguration' }
+  | {
+      command: 'setConfiguration';
+      scope: ConfigScope;
+      key: string;
+      valueType: ConfigValueType;
+      value: string;
+    }
   | { command: 'copyNetldiHost'; dirName: string; name: string }
   | { command: 'deleteStaleLock'; dirName: string; name: string }
   | { command: 'openWalkthrough' }
@@ -330,6 +399,11 @@ export class GemstoneManagerPanel {
   private rebuilding = false;
   private rebuildAgain = false;
   private staleWhileHidden = false;
+  // Parsed system.conf descriptions, one map per version — the file does not
+  // change under a running stone, so it is read and parsed once per version and
+  // kept (an unreadable file caches as an empty map, so a remote stone whose
+  // product tree is not on this machine is not re-probed on every load).
+  private configDescCache = new Map<string, Map<string, string>>();
 
   /**
    * Publishes whether a panel is open, so the Dictionaries title bar can offer
@@ -691,6 +765,12 @@ export class GemstoneManagerPanel {
       case 'openSettings':
         // Extensions link to Settings rather than reimplementing it.
         await vscode.commands.executeCommand('workbench.action.openSettings', 'gemstone.rootPath');
+        return;
+      case 'loadConfiguration':
+        this.loadConfiguration();
+        return;
+      case 'setConfiguration':
+        this.setConfiguration(msg.scope, msg.key, msg.valueType, msg.value);
         return;
       case 'createLogin':
         await vscode.commands.executeCommand('gemstone.addLogin');
@@ -1056,7 +1136,131 @@ export class GemstoneManagerPanel {
       versions,
       databases,
       logins: this.buildLoginTargets(databases),
+      session: this.buildSessionInfo(),
     };
+  }
+
+  /**
+   * The selected session, without touching the GCI. This rides along with every
+   * state so the Configuration section can appear the instant a session is
+   * selected; the values it shows are fetched separately, on demand.
+   */
+  private buildSessionInfo(): SessionInfo {
+    const session = this.deps.sessionManager.getSelectedSession();
+    if (!session) return { connected: false };
+    return {
+      connected: true,
+      sessionId: session.id,
+      label: loginLabel(session.login),
+      user: session.login.gs_user,
+      stone: session.login.stone,
+      version: session.login.version,
+    };
+  }
+
+  // ── Configuration (issue #232) ──────────────────────────────────────────────
+
+  /**
+   * Read the selected session's stone and gem configuration reports and post
+   * them to the panel. On demand only — never part of a state rebuild — so an
+   * admin action never pays for these two GCI round-trips. A busy or dropped
+   * session, or a report that raises, becomes a `configurationError` the section
+   * can show, rather than a thrown rejection the tour would misread.
+   */
+  private loadConfiguration(): void {
+    const session = this.deps.sessionManager.getSelectedSession();
+    if (!session) {
+      this.configurationError('No GemStone session is selected. Log in and try again.');
+      return;
+    }
+    try {
+      const execute = defaultQueryExecutorUsing(session);
+      const stone = stoneConfiguration(execute);
+      const gem = gemConfiguration(execute);
+      const descriptions = this.configDescriptions(session.login.version);
+      const config: ConfigurationPayload = {
+        sessionId: session.id,
+        label: loginLabel(session.login),
+        version: session.login.version,
+        stoneParams: stone.map((e) => this.toConfigParam(e, descriptions)),
+        gemParams: gem.map((e) => this.toConfigParam(e, descriptions)),
+      };
+      void this.panel.webview.postMessage({ command: 'configuration', config });
+    } catch (e: unknown) {
+      this.configurationError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  /**
+   * Set one runtime-settable value through the session, then reload so the panel
+   * shows the settled value rather than what was typed. The stone is the
+   * authority on whether the change is allowed; its refusal (a SystemUser-only
+   * stone key, a gem key frozen after login) comes back as a
+   * `configurationError` with the stone's own words.
+   */
+  private setConfiguration(
+    scope: ConfigScope,
+    key: string,
+    valueType: ConfigValueType,
+    value: string,
+  ): void {
+    const session = this.deps.sessionManager.getSelectedSession();
+    if (!session) {
+      this.configurationError('No GemStone session is selected. Log in and try again.');
+      return;
+    }
+    try {
+      const execute = defaultQueryExecutorUsing(session);
+      const result = setSessionConfiguration(execute, scope, key, valueType, value);
+      if (!result.ok) {
+        this.configurationError(result.message ?? `Could not set ${key}.`);
+        return;
+      }
+      appendSysadmin(`GemStone Manager: set ${scope} configuration ${key} = ${value}`);
+      this.loadConfiguration();
+    } catch (e: unknown) {
+      this.configurationError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  private configurationError(message: string): void {
+    appendSysadmin(`GemStone Manager: configuration: ${message}`);
+    void this.panel.webview.postMessage({ command: 'configurationError', message });
+  }
+
+  private toConfigParam(entry: ConfigEntry, descriptions: Map<string, string>): ConfigParam {
+    const description = descriptionFor(descriptions, entry.key);
+    return {
+      key: entry.key,
+      value: entry.value,
+      type: entry.type,
+      settable: entry.settable,
+      editable: isEditable(entry),
+      ...(description ? { description } : {}),
+    };
+  }
+
+  /**
+   * The parsed system.conf descriptions for a version, read from the installed
+   * product tree this machine knows about. Best-effort: a version whose tree is
+   * not local (a remote stone) simply yields no descriptions, cached as an empty
+   * map so it is not read again.
+   */
+  private configDescriptions(version: string): Map<string, string> {
+    const cached = this.configDescCache.get(version);
+    if (cached) return cached;
+    let map = new Map<string, string>();
+    try {
+      const gsPath = this.deps.storage.getGemstonePath(version);
+      if (gsPath) {
+        const confPath = path.join(gsPath, 'data', 'system.conf');
+        map = parseConfigDescriptions(fs.readFileSync(confPath, 'utf8'));
+      }
+    } catch {
+      // No readable system.conf for this version — tooltips are optional.
+    }
+    this.configDescCache.set(version, map);
+    return map;
   }
 
   private async buildOsStatus(): Promise<OsStatus> {
@@ -1653,4 +1857,42 @@ th.v-num { text-align: right; }
 .note { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; color: var(--vscode-descriptionForeground, #9d9d9d); }
 .note .codicon { color: var(--gm-warn); }
 .skeleton { color: var(--vscode-descriptionForeground, #9d9d9d); padding: 30px 12px; text-align: center; }
+
+/* ── Configuration section (issue #232) ───────────────────────────────────── */
+.badge-runtime { background: color-mix(in srgb, var(--vscode-charts-blue, #4daafc) 26%, transparent); color: var(--vscode-foreground); }
+.badge-readonly { background: transparent; color: var(--vscode-descriptionForeground, #9d9d9d); border: 1px solid var(--gm-line); }
+.config-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 12px; }
+.config-filter {
+  flex: 1 1 220px; min-width: 160px; padding: 3px 8px;
+  background: var(--vscode-input-background); color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border, var(--gm-line)); border-radius: 4px;
+}
+.config-filter:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+.config-legend { font-size: 11px; color: var(--vscode-descriptionForeground, #9d9d9d); display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.config-loading { color: var(--vscode-descriptionForeground, #9d9d9d); padding: 16px 4px; }
+.config-error {
+  margin: 0 0 10px; padding: 6px 10px; font-size: 12px; border-radius: 4px;
+  background: color-mix(in srgb, var(--gm-warn) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--gm-warn) 40%, transparent);
+}
+.config-group { margin: 0 0 16px; }
+.config-group-head { font-weight: 600; margin: 0 0 6px; display: flex; align-items: center; gap: 8px; }
+.config-note { font-size: 11px; font-weight: 400; color: var(--vscode-descriptionForeground, #9d9d9d); }
+.config-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.config-table td { padding: 3px 8px; border-bottom: 1px solid var(--gm-line); vertical-align: top; }
+.config-key { white-space: nowrap; font-family: var(--vscode-editor-font-family, monospace); font-size: 12px; }
+.config-info { font-size: 12px; color: var(--vscode-descriptionForeground, #9d9d9d); cursor: help; }
+.config-val { width: 100%; }
+.config-value { font-family: var(--vscode-editor-font-family, monospace); font-size: 12px; word-break: break-all; }
+.config-pencil { opacity: 0; margin-left: 6px; vertical-align: -3px; }
+.config-item:hover .config-pencil, .config-pencil:focus-visible { opacity: 1; }
+.config-tag { text-align: right; white-space: nowrap; }
+.config-edit { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.config-input {
+  padding: 2px 6px; min-width: 120px;
+  background: var(--vscode-input-background); color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border, var(--gm-line)); border-radius: 4px;
+  font-family: var(--vscode-editor-font-family, monospace); font-size: 12px;
+}
+.config-input:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
 `;
