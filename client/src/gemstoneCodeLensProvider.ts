@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { SessionManager, ActiveSession } from './sessionManager';
 import { parseTopazDocument } from './topazFileIn';
-import { extractSelector } from './systemBrowser';
+import { extractSelector } from './methodPattern';
 import * as queries from './browserQueries';
 
 interface CodeLensData {

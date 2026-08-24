@@ -1,8 +1,8 @@
-# Manually test refactoring undo
+# Manually test undo
 
-A hands-on pass over **Undo Last Refactoring** ([#434]), for an F5 dev host against a
-live stone. Automated coverage already pins the engine ([GS SUnit] `GsRefactoringUndoTest`),
-the client model and command ([client .ts]), and the whole round trip
+A hands-on pass over **Undo** ([#434]), for an F5 dev host against a live stone.
+Automated coverage already pins the refactoring engine ([GS SUnit] `GsRefactoringUndoTest`),
+the client model, stack and commands ([client .ts]), and the whole round trip
 ([GCI integration] `refactoringUndo.integration.test.ts`) — so what is worth a human's
 time is the part tests cannot see: does the affordance turn up where you expect it,
 does the preview read correctly, and does the Explorer land somewhere sensible.
@@ -13,8 +13,21 @@ Work through it in order; each section builds on the fixture from **Setup**.
 
 ## What undo covers
 
-Undo reverses **the last refactoring you applied in this session**, by one of two
-mechanisms, and the difference is visible in the UI.
+Undo reverses **the last thing you did in this session**, and there is one Undo for
+everything — a saved method and an applied refactoring come off the same stack, most
+recent first.
+
+Two kinds of thing go on it, and they behave differently on purpose:
+
+**An ordinary method edit — saving a method, adding one, deleting one — reverses
+immediately, with no preview.** You just made it, and it is one method. The only thing
+that stops and asks is *drift*: if the method has changed since, undoing discards that
+change, so it says so first. This needs **no refactoring engine on the stone** — it is
+plain `compileMethod:` / `removeSelector:`, so it works wherever Jasper can log in.
+
+**A refactoring keeps its preview**, because it can have rewritten dozens of methods
+across a hierarchy. It is reversed by the engine, by one of three mechanisms, and the
+difference is visible in the UI.
 
 **Recorded inverse** — the refactorings that change methods:
 
@@ -57,8 +70,10 @@ all-or-nothing (each subclass is restored onto its parent), so the boxes are dis
 An apply that **migrated instances** or **deleted old versions from the class history** records
 no undo at all — both commit and both are irreversible.
 
-There is **one** undo, not a stack: applying a second refactoring replaces the record, and
-undoing uses it up.
+There is **one** REFACTORING undo: applying a second refactoring replaces the stone's
+record, and undoing uses it up. Method edits are not limited that way — the last 25 of them
+stay reversible, most recent first. Both are per session: a reconnect starts empty, and an
+**abort** clears the stack, since it rewinds the stone underneath every entry.
 
 ## Setup
 
@@ -88,16 +103,36 @@ undoing uses it up.
 4. **Do not commit.** Everything here is meant to be abortable; finish by aborting the
    transaction (Explorer → Abort) and the fixture disappears.
 
+## 0 — Undoing an ordinary edit (no preview)
+
+Start here: this is the path that does not involve the refactoring engine at all.
+
+| # | Step | Expect |
+|---|---|---|
+| 0.1 | Open `UndoDemo>>total` in an editor, change the body to `^ 99`, **save** | Toast: `Compiled method UndoDemo>>#total` |
+| 0.2 | Look at the **status bar** | The purple **↩ Undo** button, tooltip **GemStone — Undo Save UndoDemo>>#total** — it names the edit, not just "undo" |
+| 0.3 | Press it | **No panel.** The method reverts on the spot, the open editor reloads showing `^ 40 + 2` again, and a toast says `Undid Save UndoDemo>>#total — reverted UndoDemo>>#total. Compiled but NOT committed` |
+| 0.4 | The Undo button | **Gone** — the entry was used up |
+| 0.5 | Create a **new** method on `UndoDemo` (`scratch ^ 1`) and save it | Tooltip now reads **Undo Add UndoDemo>>#scratch** |
+| 0.6 | Press Undo | `scratch` is **removed** from the Explorer's method list |
+| 0.7 | Delete `untouched` from the Explorer (the 🗑 on the row), confirm | Tooltip reads **Undo Delete UndoDemo>>#untouched** |
+| 0.8 | Press Undo | `untouched` is **back**, with its original source *and* its original category — not `as yet unclassified` |
+| 0.9 | Save `total` three times with three different bodies, then press Undo three times | Each press walks back one save, newest first — it is a stack, not a single slot |
+| 0.10 | Save `total`, then open it in a second editor, change it there and save, then Undo | A **modal** warning: the method changed since that save, and undoing discards the change. **Cancel** leaves everything alone and the Undo button stays |
+| 0.11 | Do 0.10 again and press **Undo Anyway** | It proceeds — drift is a warning, never a refusal |
+| 0.12 | Save a method, then **Abort** (Explorer → Abort), then look at the status bar | Undo is **gone** — an abort already rewound the stone, so every entry describes a state that no longer exists |
+| 0.13 | Save a method on a stone with **no refactoring engine installed** | Undo still works — a method edit needs no engine |
+
 ## 1 — The ways in
 
 | # | Step | Expect |
 |---|---|---|
-| 1.1 | Before doing anything, open the command palette and type `GemStone: Undo` | **No** "Undo Last Refactoring…" entry — there is nothing to undo yet |
+| 1.1 | Before doing anything, open the command palette and type `GemStone: Undo` | **No** "Undo Last Change…" entry — there is nothing to undo yet |
 | 1.2 | Look at the **status bar** (left end) and the **Dictionaries** pane title bar | **No** Undo button in either — there is nothing to undo |
 | 1.3 | Rename `total` → `sum` (Explorer → the method → Rename), apply the preview | A toast: `Renamed 'total' → 'sum' … NOT committed` **with an Undo button** |
 | 1.4 | Do **not** press it. Dismiss the toast (the ✕, or just let it fade) | — |
-| 1.5 | Open the command palette, type `GemStone: Undo` | "Undo Last Refactoring…" is now there |
-| 1.6 | Look at the **status bar** | A **purple ↩ Undo Refactoring** button has appeared at the left end — it should catch your eye against the neutral items |
+| 1.5 | Open the command palette, type `GemStone: Undo` | "Undo Last Change…" is now there |
+| 1.6 | Look at the **status bar** | A **purple ↩ Undo** button has appeared at the left end — it should catch your eye against the neutral items |
 | 1.6b | Hover it | Tooltip reads **GemStone — Undo Rename 'total' → 'sum'**: it says which extension it belongs to *and* which refactoring it will undo |
 | 1.6c | Dictionaries pane title bar | The same action is there too, beside Commit and Abort, with the purple icon |
 | 1.7 | Right-click a class, a method, an instance variable | **No** Undo item on any context menu — one button, not an entry on every row |
@@ -190,7 +225,7 @@ or the menu item is missing here, that is a bug worth reporting.
 | # | Step | Expect |
 |---|---|---|
 | 7.1 | Rename `total` → `sum`, apply, and **do not** undo | Undo offered |
-| 7.2 | Log out and log back in to the same stone | Undo is **gone** — the record lives for the session's lifetime only |
+| 7.2 | Log out and log back in to the same stone | Undo is **gone** — both the stone's record and the client's stack live for the session's lifetime only |
 | 7.3 | Rename again, apply, **commit**, then Undo | The undo runs and says `NOT committed` — undoing a committed refactoring needs **your** commit, exactly like applying one did |
 | 7.4 | Abort instead of committing at 7.3 | The undo's changes go with the abort, as any uncommitted work does |
 | 7.5 | With two sessions connected, apply a refactoring in one and switch to the other | Undo follows the **selected session**: offered in the one that applied it, not in the other |
@@ -204,8 +239,9 @@ or the menu item is missing here, that is a bug worth reporting.
 
 If something here does not behave as described, note **which numbered step**, what you saw
 instead, the stone version, and whether the refactoring engine was freshly installed. The
-GemStone GCI output channel (`View → Output → GemStone GCI`) carries a `[undoRefactoring]`
-breadcrumb for every invocation and refusal.
+GemStone GCI output channel (`View → Output → GemStone GCI`) carries a breadcrumb for every
+recording, invocation and refusal — `[undo]` for the stack and method edits, and
+`[undoRefactoring]` for the engine's side of it.
 
 ## 6c — Returning a reshape to its pre-refactoring state
 

@@ -8,22 +8,22 @@ vi.mock('../../browserQueries', () => ({
 }));
 vi.mock('../undoRefactoringPanel', () => ({ showUndoRefactoringPanel: vi.fn() }));
 vi.mock('../refactoringUndoAvailability', () => ({
-  refreshRefactoringUndoContext: vi.fn(),
+  checkRefactoringUndoAvailable: vi.fn(),
 }));
 
 import * as vscode from 'vscode';
 import * as queries from '../../browserQueries';
 import { showUndoRefactoringPanel } from '../undoRefactoringPanel';
-import { refreshRefactoringUndoContext } from '../refactoringUndoAvailability';
+import { checkRefactoringUndoAvailable } from '../refactoringUndoAvailability';
 import { undoLastRefactoringCommand } from '../undoRefactoringCommand';
 import type { SessionManager } from '../../sessionManager';
 
 /**
- * The undo COMMAND (#434) — the one flow all three entry points land in. What is
- * pinned here is the order of the gates (session → engine → "is there an undo" →
- * preview), that "nothing to undo" is a plain refusal rather than an empty panel, and
- * that the entry's fate is RE-PROBED after an apply instead of assumed (a clean undo
- * consumes it in the stone; a partial one does not).
+ * The refactoring REVERSER (#434) — what `undo/undoLastCommand.ts` calls when the entry it
+ * pops is a refactoring. What is pinned here is the order of the gates (session → engine →
+ * "is there an undo" → preview) and that "nothing to undo" is a plain refusal rather than
+ * an empty panel. Whether the entry survives the apply is the DISPATCHER's question, and is
+ * pinned in `undo/__tests__/undoLastCommand.test.ts`.
  */
 
 const START = JSON.stringify({
@@ -61,7 +61,7 @@ const noSession = (): SessionManager => sessionsWith(true, null);
 describe('undoLastRefactoringCommand', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(refreshRefactoringUndoContext).mockReturnValue(status(true));
+    vi.mocked(checkRefactoringUndoAvailable).mockReturnValue(status(true));
     vi.mocked(queries.startUndoRefactoringPreview).mockResolvedValue(START);
     vi.mocked(showUndoRefactoringPanel).mockResolvedValue({ applied: 2, failed: [] });
     vi.mocked(queries.applyUndoRefactoring).mockResolvedValue('{"applied":2,"failed":[]}');
@@ -80,7 +80,7 @@ describe('undoLastRefactoringCommand', () => {
   });
 
   it('refuses plainly when there is nothing to undo, without opening a panel', async () => {
-    vi.mocked(refreshRefactoringUndoContext).mockReturnValue(status(false));
+    vi.mocked(checkRefactoringUndoAvailable).mockReturnValue(status(false));
 
     await undoLastRefactoringCommand(sessionsWith(true));
 
@@ -133,14 +133,11 @@ describe('undoLastRefactoringCommand', () => {
     await undoLastRefactoringCommand(sessionsWith(true));
 
     expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
-    // The entry survives a cancel, so the context key is left exactly as the pre-flight
-    // probe published it.
-    expect(refreshRefactoringUndoContext).toHaveBeenCalledTimes(1);
   });
 
-  it('re-probes the entry after an apply rather than assuming it was consumed', async () => {
+  it('probes once, on the way in — the dispatcher owns the after-probe', async () => {
     await undoLastRefactoringCommand(sessionsWith(true));
-    expect(refreshRefactoringUndoContext).toHaveBeenCalledTimes(2);
+    expect(checkRefactoringUndoAvailable).toHaveBeenCalledTimes(1);
   });
 
   it('lands the Explorer on the method that came back', async () => {

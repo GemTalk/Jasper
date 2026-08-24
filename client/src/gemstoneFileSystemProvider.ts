@@ -12,6 +12,9 @@ import {
   dictNameFromDefinition,
   DEFAULT_CLASS_CATEGORY,
 } from './classDefinitionText';
+import { extractSelector } from './methodPattern';
+import { beginMethodEdit, MethodEditRecording, present } from './undo/recordMethodEdit';
+import { MethodSlot, slotLabel } from './undo/undoTypes';
 
 // A binary selector can contain '/', but a slash in a URI path segment (raw or
 // %2F-encoded) is collapsed by VS Code's path normalization, losing the
@@ -440,6 +443,59 @@ export interface ClassDefinitionCompiledEvent {
   previousUriIsTemplate: boolean;
 }
 
+// ── Undo recording for a save ─────────────────────────────────
+
+/**
+ * The method slots a save could touch (issue #434).
+ *
+ * Usually one — the method being saved, or the one being created. Two when the user
+ * edits the MESSAGE PATTERN of an existing method: GemStone compiles that as a new
+ * method and leaves the original in place, so undoing the save has to take the new one
+ * away as well as leave the old one alone.
+ *
+ * The new selector is read from the source with `extractSelector` rather than waited for,
+ * because by the time GemStone reports it authoritatively the previous state is already
+ * gone. A guess that turns out wrong costs the undo, not the save: `recordSave` checks the
+ * compiled selector against these slots and records nothing when it is not among them.
+ */
+function undoSlotsForSave(
+  parsed: ParsedNewMethodUri | ParsedMethodUri,
+  sourceCode: string,
+): MethodSlot[] {
+  const selectors: string[] = [];
+  if (parsed.kind === 'method') selectors.push(parsed.selector);
+  const guessed = extractSelector(sourceCode.split('\n')[0] ?? '');
+  if (guessed && !selectors.includes(guessed)) selectors.push(guessed);
+  return selectors.map((selector) => ({
+    dict: parsed.dictIndex ?? parsed.dictName,
+    className: parsed.className,
+    isMeta: parsed.isMeta,
+    selector,
+    environmentId: parsed.environmentId,
+  }));
+}
+
+/** Record a completed save against the slot GemStone actually compiled into. Every other
+ *  slot is left reading exactly as it did before, so the reversal has nothing to do there. */
+function recordSave(
+  recording: MethodEditRecording,
+  slots: MethodSlot[],
+  compiledSelector: string,
+  sourceCode: string,
+  category: string,
+): void {
+  const at = slots.findIndex((s) => s.selector === compiledSelector);
+  if (at < 0) {
+    logInfo(`[undo] not recording: compiled #${compiledSelector}, which was not snapshotted`);
+    return;
+  }
+  const after = slots.map((slot, i) =>
+    i === at ? present(sourceCode, category) : recording.before[i],
+  );
+  const verb = recording.before[at].exists ? 'Save' : 'Add';
+  recording.commit(`${verb} ${slotLabel(slots[at])}`, after);
+}
+
 // ── FileSystemProvider ────────────────────────────────────────
 
 export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
@@ -633,6 +689,11 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
     sourceCode: string,
     session: ActiveSession,
   ) {
+    // Snapshot BEFORE compiling — this is the one moment the previous source still
+    // exists. A capture that fails answers undefined and the save proceeds unrecorded.
+    const slots = undoSlotsForSave(parsedMethodUri, sourceCode);
+    const recording = beginMethodEdit(session, slots);
+
     const result = queries.compileMethod(
       session,
       parsedMethodUri.className,
@@ -646,6 +707,10 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
 
     if (!selector) {
       throw new BrowserQueryError(result);
+    }
+
+    if (recording) {
+      recordSave(recording, slots, selector, sourceCode, parsedMethodUri.category);
     }
 
     const recv = receiver(parsedMethodUri.className, parsedMethodUri.isMeta);

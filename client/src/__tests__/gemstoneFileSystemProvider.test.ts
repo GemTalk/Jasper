@@ -22,6 +22,14 @@ vi.mock('../browserQueries', () => ({
   compileClassDefinition: vi.fn(),
   setClassComment: vi.fn(),
   canClassBeWritten: vi.fn(() => true),
+  defaultQueryExecutorUsing: vi.fn(() => () => ''),
+}));
+
+// The undo recorder's one round trip. Stubbed so a save's snapshot is data the test
+// controls, rather than a live doit (#434).
+vi.mock('../undo/queries/methodSlotQueries', () => ({
+  captureMethodSlots: vi.fn(),
+  applyMethodSlotOps: vi.fn(),
 }));
 
 // Keep the real gciLog but spy logInfo so the recategorize soft-failure log is observable.
@@ -56,6 +64,8 @@ import { SessionManager } from '../sessionManager';
 import * as queries from '../browserQueries';
 import { BrowserQueryError } from '../browserQueries';
 import type { ExportManager } from '../exportManager';
+import { captureMethodSlots } from '../undo/queries/methodSlotQueries';
+import { peekUndoEntry, resetUndoStacks } from '../undo/undoStack';
 
 function makeSession(id = 1, gs_user = 'DataCurator') {
   return { id, gci: {}, handle: {}, login: { label: 'Test', gs_user }, stoneVersion: '3.7.2' };
@@ -1910,5 +1920,104 @@ describe('listOpenGemstoneTabs', () => {
     expect(listOpenGemstoneTabs()).toEqual([]);
 
     window.tabGroups.all = [];
+  });
+});
+
+describe('recording a save for undo (#434)', () => {
+  /**
+   * A save is snapshotted BEFORE it compiles, because that is the only moment the previous
+   * source still exists. What is pinned here is which slots get snapshotted — in particular
+   * the two-slot case, which is the one a reader would not guess: editing an existing
+   * method's MESSAGE PATTERN compiles a new method and leaves the original in place, so
+   * undoing has to take the new one away without disturbing the old.
+   */
+  const session = makeSession();
+  let provider: GemStoneFileSystemProvider;
+
+  const write = (uri: ReturnType<typeof buildMethodUri>, source: string): void =>
+    provider.writeFile(uri, new TextEncoder().encode(source), { create: true, overwrite: true });
+
+  const existingMethodUri = buildMethodUri({
+    kind: 'method',
+    sessionId: 1,
+    dictName: 'Globals',
+    className: 'Array',
+    isMeta: false,
+    category: 'accessing',
+    selector: 'at:',
+    environmentId: 0,
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetUndoStacks();
+    provider = new GemStoneFileSystemProvider(makeSessionManager());
+    vi.mocked(queries.compileMethod).mockReturnValue('Compiled: Array >> at:');
+  });
+
+  it('records a Save when the method was already there', () => {
+    vi.mocked(captureMethodSlots).mockReturnValue([
+      { exists: true, source: 'at: i\n  ^1', category: 'accessing' },
+    ]);
+
+    write(existingMethodUri, 'at: i\n  ^2');
+
+    const entry = peekUndoEntry(session.id);
+    expect(entry).toMatchObject({ kind: 'methodEdit', label: 'Save Array>>#at:' });
+  });
+
+  it('records an Add when the method is new', () => {
+    vi.mocked(captureMethodSlots).mockReturnValue([
+      { exists: false, source: null, category: null },
+    ]);
+    vi.mocked(queries.compileMethod).mockReturnValue('Compiled: Array >> total');
+
+    write(buildNewMethodUri(1, 'Globals', 'Array', false, 'accessing', 0), 'total\n  ^42');
+
+    expect(peekUndoEntry(session.id)).toMatchObject({ label: 'Add Array>>#total' });
+  });
+
+  it('snapshots both selectors when the message pattern changes', () => {
+    vi.mocked(captureMethodSlots).mockReturnValue([
+      { exists: true, source: 'at: i\n  ^1', category: 'accessing' },
+      { exists: false, source: null, category: null },
+    ]);
+    vi.mocked(queries.compileMethod).mockReturnValue('Compiled: Array >> at:put:');
+
+    write(existingMethodUri, 'at: i put: v\n  ^v');
+
+    expect(vi.mocked(captureMethodSlots).mock.calls[0][1].map((s) => s.selector)).toEqual([
+      'at:',
+      'at:put:',
+    ]);
+    // The original is left exactly as it was, so reversing has nothing to do there; only
+    // the newly compiled selector is undone.
+    const entry = peekUndoEntry(session.id);
+    expect(entry).toMatchObject({ label: 'Add Array>>#at:put:' });
+    expect(entry?.kind === 'methodEdit' && entry.after[0]).toEqual({
+      exists: true,
+      source: 'at: i\n  ^1',
+      category: 'accessing',
+    });
+  });
+
+  it('records nothing when the save changed nothing', () => {
+    vi.mocked(captureMethodSlots).mockReturnValue([
+      { exists: true, source: 'at: i\n  ^1', category: 'accessing' },
+    ]);
+
+    write(existingMethodUri, 'at: i\n  ^1');
+
+    expect(peekUndoEntry(session.id)).toBeUndefined();
+  });
+
+  it('saves normally when the snapshot fails — undo is never allowed to break an edit', () => {
+    vi.mocked(captureMethodSlots).mockImplementation(() => {
+      throw new Error('session busy');
+    });
+
+    expect(() => write(existingMethodUri, 'at: i\n  ^2')).not.toThrow();
+    expect(queries.compileMethod).toHaveBeenCalled();
+    expect(peekUndoEntry(session.id)).toBeUndefined();
   });
 });

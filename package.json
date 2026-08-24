@@ -1544,10 +1544,10 @@
         "icon": "$(edit)"
       },
       {
-        "command": "gemstone.undoLastRefactoring",
-        "title": "Undo Last Refactoring…",
+        "command": "gemstone.undoLast",
+        "title": "Undo Last Change…",
         "category": "GemStone",
-        "icon": "resources/undo-refactoring.svg"
+        "icon": "resources/undo.svg"
       },
       {
         "command": "gemstone.explorer.inlineMethod",
@@ -1850,8 +1850,8 @@
           "when": "false"
         },
         {
-          "command": "gemstone.undoLastRefactoring",
-          "when": "gemstone.refactoringUndoAvailable"
+          "command": "gemstone.undoLast",
+          "when": "gemstone.undoAvailable"
         },
         {
           "command": "gemstone.renameTemporary",
@@ -2138,8 +2138,8 @@
           "group": "navigation@5"
         },
         {
-          "command": "gemstone.undoLastRefactoring",
-          "when": "view == gemstoneExplorerDicts && gemstone.refactoringUndoAvailable",
+          "command": "gemstone.undoLast",
+          "when": "view == gemstoneExplorerDicts && gemstone.undoAvailable",
           "group": "navigation@6"
         },
         {

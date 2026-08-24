@@ -86,11 +86,9 @@ import {
 } from './optionalSupportOffer';
 import { refreshEnhancedInspectorAvailable } from './enhancedInspector/enhancedInspectorAvailability';
 import { refreshRefactoringSupportAvailable } from './refactoring/refactoringAvailability';
-import {
-  refreshRefactoringUndoContext,
-  createUndoStatusBarItem,
-} from './refactoring/refactoringUndoAvailability';
-import { undoLastRefactoringCommand } from './refactoring/undoRefactoringCommand';
+import { refreshUndoUi, createUndoStatusBarItem } from './undo/undoUi';
+import { undoLastCommand } from './undo/undoLastCommand';
+import { clearUndoStack, onUndoStackChanged } from './undo/undoStack';
 import { supportsEnhancedInspector } from './enhancedInspector/enhancedInspectorInstall';
 import { DebuggerPanel } from './debuggerPanel';
 import { InlineValuesCodeLensProvider } from './inlineValuesCodeLens';
@@ -1029,17 +1027,29 @@ export function activate(context: vscode.ExtensionContext) {
   );
   updateRefactoringSupportContext();
 
-  // Drive `gemstone.refactoringUndoAvailable` the same way. The undo record lives in
-  // the stone, so switching sessions switches which undo (if any) is on offer -- and a
-  // reconnect clears it, which this re-probe picks up.
+  // Drive `gemstone.undoAvailable` the same way. The undo stack is per session, so
+  // switching sessions switches which undo (if any) is on offer.
   context.subscriptions.push(
-    sessionManager.onDidChangeSelection(() =>
-      refreshRefactoringUndoContext(sessionManager.getSelectedSession()),
+    sessionManager.onDidChangeSelection(() => refreshUndoUi(sessionManager.getSelectedSession())),
+  );
+  // A session's stack goes with the session: its entries name source in a transaction that
+  // no longer exists, and a later session reusing the id must not inherit them.
+  context.subscriptions.push(
+    sessionManager.onDidRemoveSession((id: number) => {
+      clearUndoStack(id);
+      refreshUndoUi(sessionManager.getSelectedSession());
+    }),
+  );
+  // The status-bar button is created before the first refresh, so that refresh can show it.
+  context.subscriptions.push(createUndoStatusBarItem());
+  // Every recording site pushes onto the stack and nothing else; this is what turns a
+  // push into a visible button, so no site has to remember to update the UI.
+  context.subscriptions.push(
+    new vscode.Disposable(
+      onUndoStackChanged(() => refreshUndoUi(sessionManager.getSelectedSession())),
     ),
   );
-  // The status-bar button is created before the first probe, so that probe can show it.
-  context.subscriptions.push(createUndoStatusBarItem());
-  refreshRefactoringUndoContext(sessionManager.getSelectedSession());
+  refreshUndoUi(sessionManager.getSelectedSession());
 
   // ── Enhanced Inspector Perf Tracking ───────────────────────────────────
   const enhancedInspectorPerfChannel = vscode.window.createOutputChannel(
@@ -1258,6 +1268,11 @@ export function activate(context: vscode.ExtensionContext) {
         // Search's cached corpora so they show up.
         omniSearch?.notifySessionSynced(session.id);
         explorer.onSessionAborted(session.id);
+        // An abort rewinds the stone underneath every recorded undo, so each entry now
+        // describes a "before" state that never existed in the transaction the session is
+        // now in. Offering them would put back source the abort already discarded.
+        clearUndoStack(session.id);
+        refreshUndoUi(sessionManager.getSelectedSession());
       } else {
         vscode.window.showErrorMessage(
           `Session ${session.id}: Abort failed — ${err.message || `error ${err.number}`}`,
@@ -1380,11 +1395,12 @@ export function activate(context: vscode.ExtensionContext) {
       await extractMethodCommand(sessionManager);
     }),
 
-    // Undo the last applied refactoring (#434). Reached three ways -- the Undo button on
-    // the post-apply toast, this palette entry, and the Explorer context-menu item -- all
-    // of which land in the one flow.
-    vscode.commands.registerCommand('gemstone.undoLastRefactoring', async () => {
-      await undoLastRefactoringCommand(sessionManager);
+    // Undo the last thing done in this session -- a method edit or an applied refactoring
+    // (#434). Reached four ways: the purple status-bar button, the Undo button on the
+    // post-apply toast, this palette entry, and the Explorer title-bar button -- all of
+    // which land in the one dispatcher.
+    vscode.commands.registerCommand('gemstone.undoLast', async () => {
+      await undoLastCommand(sessionManager);
     }),
 
     vscode.commands.registerCommand(
@@ -1682,7 +1698,7 @@ export function activate(context: vscode.ExtensionContext) {
         refreshEnhancedInspectorAvailable(session);
         refreshRefactoringSupportAvailable(session);
         updateRefactoringSupportContext();
-        refreshRefactoringUndoContext(session);
+        refreshUndoUi(session);
         treeProvider.refresh();
         vscode.window.showInformationMessage(
           `Connected to ${login.stone} (${session.stoneVersion}) on ${login.gem_host} as ${login.gs_user}`,

@@ -75,13 +75,13 @@ import {
 } from '../__mocks__/vscode';
 import {
   SystemBrowser,
-  extractSelector,
   planDictionaryFileOut,
   isComputedMethodCategory,
   ALL_CLASSES_CATEGORY,
   ALL_METHODS_CATEGORY,
   SESSION_METHODS_CATEGORY,
 } from '../systemBrowser';
+import { extractSelector } from '../methodPattern';
 import * as queries from '../browserQueries';
 import { GlobalsBrowser } from '../globalsBrowser';
 import { ClassBrowser } from '../classBrowser';

@@ -1,18 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
-vi.mock('../../browserQueries', () => ({
-  refactoringUndoStatus: vi.fn(),
-}));
 
 import * as vscode from 'vscode';
-import * as queries from '../../browserQueries';
 import {
   createUndoStatusBarItem,
   setUndoStatusBarItem,
-  refreshRefactoringUndoContext,
+  refreshUndoUi,
   UNDO_AVAILABLE_CONTEXT_KEY,
-} from '../refactoringUndoAvailability';
-import { UNDO_COMMAND } from '../refactoringAppliedToast';
+  UNDO_COMMAND,
+} from '../undoUi';
+import { pushUndoEntry, resetUndoStacks } from '../undoStack';
 import type { ActiveSession } from '../../sessionManager';
 
 /**
@@ -20,9 +17,9 @@ import type { ActiveSession } from '../../sessionManager';
  *
  * The Explorer title-bar button is easy to miss unless you are already looking at the Explorer, so
  * the action also sits in the status bar. What these pin is what makes it findable and honest:
- * it shows and hides with the record, it is coloured so it stands out from the neutral items
- * around it, and its tooltip says both GEMSTONE and WHICH refactoring — the latter being something
- * a contributed menu title can never do, since those are static.
+ * it shows and hides with the stack, it is coloured so it stands out from the neutral items
+ * around it, and its tooltip says both GEMSTONE and WHICH change would be undone — the latter
+ * being something a contributed menu title can never do, since those are static.
  */
 
 const session = { id: 1 } as ActiveSession;
@@ -39,7 +36,14 @@ function fakeItem() {
   };
 }
 
-beforeEach(() => vi.clearAllMocks());
+function recordSomething(label: string): void {
+  pushUndoEntry({ kind: 'refactoring', sessionId: session.id, label, sequence: 1 });
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  resetUndoStacks();
+});
 
 describe('the undo status-bar button', () => {
   it('is wired to the undo command and coloured to stand out', () => {
@@ -54,39 +58,64 @@ describe('the undo status-bar button', () => {
     expect((item.color as { id: string }).id).toBe('charts.purple');
   });
 
-  it('appears when there is something to undo, naming GemStone and the refactoring', () => {
+  it('appears when there is something to undo, naming GemStone and the change', () => {
     const item = fakeItem();
     setUndoStatusBarItem(item as never);
-    vi.mocked(queries.refactoringUndoStatus).mockReturnValue(
-      '{"available":true,"label":"Rename #total to #sum","total":3}',
-    );
+    recordSomething('Rename #total to #sum');
 
-    refreshRefactoringUndoContext(session);
+    refreshUndoUi(session);
 
     expect(item.show).toHaveBeenCalled();
     expect(item.tooltip).toContain('GemStone');
-    // The specific refactoring — the thing a static menu title cannot say.
+    // The specific change — the thing a static menu title cannot say.
     expect(item.tooltip).toContain('Rename #total to #sum');
     expect(item.text).toContain('Undo');
   });
 
-  it('disappears once the record is used up', () => {
+  it('names the most recent change, not the first one recorded', () => {
     const item = fakeItem();
     setUndoStatusBarItem(item as never);
-    vi.mocked(queries.refactoringUndoStatus).mockReturnValue('{"available":false}');
+    pushUndoEntry({
+      kind: 'methodEdit',
+      sessionId: session.id,
+      label: 'Save Account>>#balance',
+      slots: [],
+      before: [],
+      after: [],
+    });
+    recordSomething('Rename #total to #sum');
 
-    refreshRefactoringUndoContext(session);
+    refreshUndoUi(session);
+
+    expect(item.tooltip).toContain('Rename #total to #sum');
+  });
+
+  it('disappears once the stack is empty', () => {
+    const item = fakeItem();
+    setUndoStatusBarItem(item as never);
+
+    refreshUndoUi(session);
 
     expect(item.hide).toHaveBeenCalled();
     expect(item.show).not.toHaveBeenCalled();
   });
 
+  it('shows nothing for a session that recorded nothing, even when another one did', () => {
+    const item = fakeItem();
+    setUndoStatusBarItem(item as never);
+    recordSomething('Rename #total to #sum');
+
+    refreshUndoUi({ id: 2 } as ActiveSession);
+
+    expect(item.hide).toHaveBeenCalled();
+  });
+
   it('publishes the context key alongside, so the Explorer button tracks it', () => {
     const item = fakeItem();
     setUndoStatusBarItem(item as never);
-    vi.mocked(queries.refactoringUndoStatus).mockReturnValue('{"available":true,"label":"x"}');
+    recordSomething('x');
 
-    refreshRefactoringUndoContext(session);
+    refreshUndoUi(session);
 
     expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
       'setContext',
@@ -97,8 +126,8 @@ describe('the undo status-bar button', () => {
 
   it('does not fall over when no status item has been created', () => {
     setUndoStatusBarItem(undefined);
-    vi.mocked(queries.refactoringUndoStatus).mockReturnValue('{"available":true,"label":"x"}');
+    recordSomething('x');
 
-    expect(() => refreshRefactoringUndoContext(session)).not.toThrow();
+    expect(() => refreshUndoUi(session)).not.toThrow();
   });
 });

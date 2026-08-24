@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import { beginMethodDeletion } from './undo/recordMethodEdit';
+import { extractSelector } from './methodPattern';
 import * as crypto from 'crypto';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -55,34 +57,6 @@ interface BrowserState {
   viewMode: 'category' | 'hierarchy';
   hierarchyEntries: queries.ClassHierarchyEntry[];
   hierarchyClassName: string | null;
-}
-
-// ── Selector extraction ──────────────────────────────────────
-
-/**
- * Extract the Smalltalk selector from a message pattern (first line of a method).
- *
- *   "name"                   → "name"       (unary)
- *   "+ anObject"             → "+"          (binary)
- *   "at: index put: value"  → "at:put:"    (keyword)
- */
-export function extractSelector(messagePattern: string): string {
-  const trimmed = messagePattern.trim();
-  if (!trimmed) return '';
-
-  // Keyword messages: one or more word: pairs
-  const keywords = trimmed.match(/\b([a-zA-Z_]\w*:)/g);
-  if (keywords && keywords.length > 0) return keywords.join('');
-
-  // Binary messages: start with special characters
-  const binaryMatch = trimmed.match(/^([~!@%&*\-+=|\\<>,?/]+)/);
-  if (binaryMatch) return binaryMatch[1];
-
-  // Unary: just the first word
-  const unaryMatch = trimmed.match(/^(\w+)/);
-  if (unaryMatch) return unaryMatch[1];
-
-  return trimmed;
 }
 
 // ── File-out planning ────────────────────────────────────────
@@ -1798,7 +1772,16 @@ export class SystemBrowser {
     );
     if (confirmed !== 'Delete') return;
 
+    // Snapshot before removing: the source only exists until the removal lands (#434).
+    const recording = beginMethodDeletion(this.session, {
+      dict: dictIndex,
+      className,
+      isMeta: this.state.isMeta,
+      selector,
+      environmentId: 0,
+    });
     queries.deleteMethod(this.session, className, this.state.isMeta, selector, dictIndex);
+    recording?.commit();
     this.syncSelectedClass(className);
     this.envCache.delete(`${dictIndex}/${className}`);
     this.state.selectedMethod = null;

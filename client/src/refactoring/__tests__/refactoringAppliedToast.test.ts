@@ -1,22 +1,25 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 vi.mock('../refactoringUndoAvailability', () => ({
-  refreshRefactoringUndoContext: vi.fn(),
+  checkRefactoringUndoAvailable: vi.fn(),
 }));
 
 import * as vscode from 'vscode';
-import { refreshRefactoringUndoContext } from '../refactoringUndoAvailability';
-import { notifyRefactoringApplied, UNDO_COMMAND } from '../refactoringAppliedToast';
+import { checkRefactoringUndoAvailable } from '../refactoringUndoAvailability';
+import { notifyRefactoringApplied } from '../refactoringAppliedToast';
+import { UNDO_COMMAND } from '../../undo/undoUi';
+import { peekUndoEntry, resetUndoStacks } from '../../undo/undoStack';
 import type { ActiveSession } from '../../sessionManager';
 
 /**
- * The shared post-apply notice (#434). This is the FIRST of the three ways to undo,
- * so what is pinned here is that the Undo button appears exactly when the stone
- * actually recorded something to undo — and that a stone which recorded nothing keeps
- * the quiet notice the refactorings had before, rather than growing a dead button.
+ * The shared post-apply notice (#434). This is where an applied refactoring joins Jasper's
+ * undo stack, and the first of the four ways to reach an undo, so what is pinned here is
+ * that the entry and the Undo button appear exactly when the stone actually recorded
+ * something to undo — and that a stone which recorded nothing keeps the quiet notice the
+ * refactorings had before, rather than growing a dead button.
  */
 
-const session = {} as ActiveSession;
+const session = { id: 7 } as ActiveSession;
 const status = (available: boolean) => ({
   available,
   label: 'Rename #total to #sum',
@@ -35,11 +38,12 @@ const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 describe('notifyRefactoringApplied', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetUndoStacks();
     vi.mocked(vscode.window.showInformationMessage).mockResolvedValue(undefined);
   });
 
   it('offers Undo on the toast when the stone recorded one', async () => {
-    vi.mocked(refreshRefactoringUndoContext).mockReturnValue(status(true));
+    vi.mocked(checkRefactoringUndoAvailable).mockReturnValue(status(true));
 
     notifyRefactoringApplied(session, 'Renamed it.');
     await settle();
@@ -48,7 +52,7 @@ describe('notifyRefactoringApplied', () => {
   });
 
   it('runs the undo command when the button is pressed', async () => {
-    vi.mocked(refreshRefactoringUndoContext).mockReturnValue(status(true));
+    vi.mocked(checkRefactoringUndoAvailable).mockReturnValue(status(true));
     vi.mocked(vscode.window.showInformationMessage).mockResolvedValue('Undo' as never);
 
     notifyRefactoringApplied(session, 'Renamed it.');
@@ -58,7 +62,7 @@ describe('notifyRefactoringApplied', () => {
   });
 
   it('does nothing when the toast is dismissed', async () => {
-    vi.mocked(refreshRefactoringUndoContext).mockReturnValue(status(true));
+    vi.mocked(checkRefactoringUndoAvailable).mockReturnValue(status(true));
     vi.mocked(vscode.window.showInformationMessage).mockResolvedValue(undefined);
 
     notifyRefactoringApplied(session, 'Renamed it.');
@@ -68,7 +72,7 @@ describe('notifyRefactoringApplied', () => {
   });
 
   it('falls back to the quiet status-bar notice when nothing was recorded', async () => {
-    vi.mocked(refreshRefactoringUndoContext).mockReturnValue(status(false));
+    vi.mocked(checkRefactoringUndoAvailable).mockReturnValue(status(false));
 
     notifyRefactoringApplied(session, 'Extracted #answer.');
     await settle();
@@ -78,7 +82,7 @@ describe('notifyRefactoringApplied', () => {
   });
 
   it('falls back to a plain toast for the refactorings that ask for one', async () => {
-    vi.mocked(refreshRefactoringUndoContext).mockReturnValue(status(false));
+    vi.mocked(checkRefactoringUndoAvailable).mockReturnValue(status(false));
 
     notifyRefactoringApplied(session, 'Moved 2 methods.', 'toast');
     await settle();
@@ -87,17 +91,32 @@ describe('notifyRefactoringApplied', () => {
     expect(vscode.window.setStatusBarMessage).not.toHaveBeenCalled();
   });
 
-  it('publishes the context key on every apply, so the menu item appears at once', async () => {
-    vi.mocked(refreshRefactoringUndoContext).mockReturnValue(status(true));
+  it('puts the refactoring on the undo stack, carrying the stone sequence', async () => {
+    vi.mocked(checkRefactoringUndoAvailable).mockReturnValue(status(true));
 
     notifyRefactoringApplied(session, 'Renamed it.');
     await settle();
 
-    expect(refreshRefactoringUndoContext).toHaveBeenCalledWith(session);
+    const entry = peekUndoEntry(session.id);
+    expect(entry).toMatchObject({
+      kind: 'refactoring',
+      label: 'Rename #total to #sum',
+      // The pointer back to the stone's record, so a stale entry can be recognised later.
+      sequence: 1,
+    });
+  });
+
+  it('records nothing when the stone recorded nothing', async () => {
+    vi.mocked(checkRefactoringUndoAvailable).mockReturnValue(status(false));
+
+    notifyRefactoringApplied(session, 'Extracted #answer.');
+    await settle();
+
+    expect(peekUndoEntry(session.id)).toBeUndefined();
   });
 
   it('returns while the toast is still unanswered', async () => {
-    vi.mocked(refreshRefactoringUndoContext).mockReturnValue(status(true));
+    vi.mocked(checkRefactoringUndoAvailable).mockReturnValue(status(true));
     // A toast nobody answers: showInformationMessage never settles.
     vi.mocked(vscode.window.showInformationMessage).mockReturnValue(new Promise(() => {}) as never);
 

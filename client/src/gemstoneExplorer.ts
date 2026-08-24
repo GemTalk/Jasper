@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { beginMethodDeletion } from './undo/recordMethodEdit';
 import * as crypto from 'crypto';
 import { SessionManager, ActiveSession } from './sessionManager';
 import * as queries from './browserQueries';
@@ -3609,6 +3610,16 @@ export class ExplorerController {
     // (class/selector not found) or a raised error (e.g. removeSelector: on an
     // unwritable class). Surface either — otherwise the pane just redraws with
     // the method still present and the user thinks the click didn't register.
+    // Snapshot before removing: the source only exists until the removal lands, so undo
+    // has to capture it here (#434). A capture that fails just means no undo.
+    const recording = beginMethodDeletion(session, {
+      dict: this.state.dictIndex,
+      className,
+      isMeta: node.isMeta,
+      selector,
+      environmentId: 0,
+    });
+
     let result: string;
     try {
       result = queries.deleteMethod(
@@ -3628,6 +3639,7 @@ export class ExplorerController {
       void vscode.window.showErrorMessage(`Remove method failed: ${result}`);
       return;
     }
+    recording?.commit();
     this.reloadCurrentClassMethods();
   }
 
