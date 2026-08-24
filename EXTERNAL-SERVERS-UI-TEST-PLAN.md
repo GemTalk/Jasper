@@ -27,7 +27,7 @@ sideways, jump to *Cleanup* rather than clicking around trying to recover.
 |---|---|
 | 0 · Works with a hostile `.bashrc` | ✅ **passed 2026-08-24** — all boxes |
 | 1 · Stays out of the way | ✅ **passed 2026-08-24** |
-| 2 · Safety gate holds | ⬜ not run |
+| 2 · Safety gate holds | ✅ **passed 2026-08-24** — found the gate was too strict for a NetLDI |
 | 3 · Tree tells the truth | ⬜ not run |
 | 4 · Catches the reported bug | ⬜ not run |
 | 5 · Reconcile actually reconciles | ⬜ not run |
@@ -46,27 +46,26 @@ also dry-run for real.
 Use **`db-2`** (stone `gs64stone2`, NetLDI `gs64ldi2`) — it is stopped, so nothing here
 disturbs `db-1`, whose servers are up under Jasper. Tests 0–2 need no terminal at all.
 
-For tests 3 and up, prepare the "outside Jasper" shell:
+For tests 3 and up you need an "outside Jasper" shell. **Source the setup script in
+every terminal you use** — the variables do not survive a new terminal, and the failure
+is quiet rather than loud: `$DB` expands to nothing, so `-l "$DB/log/x.log"` becomes
+`-l /log/x.log` and GemStone complains about a missing directory rather than a missing
+variable.
 
 ```bash
-ROOT=/uffda1/users/ewinger/jasperStones
-GS=$ROOT/GemStone64Bit3.7.5-x86_64.Linux
-DB=$ROOT/db-2
-OUTSIDE=/tmp/gemstone-outside          # a different environment
-
-mkdir -p "$OUTSIDE/locks" "$OUTSIDE/log"
-
-export GEMSTONE=$GS
-export GEMSTONE_GLOBAL_DIR=$OUTSIDE    # ← the whole point: NOT $ROOT
-export PATH=$GS/bin:$PATH
+cd /export/uffda1/users/ewinger/worktrees/issue472-external-servers
+source ./external-server-test-env.sh
 ```
 
-Check that this shell and Jasper disagree about nothing yet:
+It prints what it set. Then check that this shell and Jasper disagree about nothing yet:
 
 ```bash
 gslist -cvl                                    # $OUTSIDE — empty
 GEMSTONE_GLOBAL_DIR=$ROOT gslist -cvl          # Jasper's — shows db-1's servers
 ```
+
+Before every `startstone` / `startnetldi` below, confirm the variables are live —
+`echo "$DB"` should print a path, not a blank line.
 
 ### How identity gets decided (read once)
 
@@ -144,7 +143,7 @@ What stops Jasper killing a stranger's server that happens to share a name.
 > servers cannot hold the same name.
 
 ```bash
-unset GEMSTONE_SYS_CONF GEMSTONE_EXE_CONF
+source ./external-server-test-env.sh           # in a new terminal, or $DB is empty
 startnetldi -a "$USER" -g gs64ldi2             # the database's real name, and no -l
 ```
 
@@ -182,8 +181,11 @@ Clean up: `stopstone gs64stone2 DataCurator swordfish` and `rm -rf /tmp/other-db
 ## 3 · Tree tells the truth · ~10 min
 
 ```bash
-export GEMSTONE_SYS_CONF=$DB/conf
-export GEMSTONE_EXE_CONF=$DB/conf
+source ./external-server-test-env.sh           # in a new terminal, or $DB is empty
+echo "$DB"                                     # must print a path, not a blank line
+
+export GEMSTONE_SYS_CONF=$DB/conf              # these two are what make the
+export GEMSTONE_EXE_CONF=$DB/conf              # servers identifiable as db-2's
 startnetldi -a "$USER" -g -l "$DB/log/gs64ldi2.log" gs64ldi2
 startstone  -l "$DB/log/gs64stone2.log" gs64stone2
 ```
