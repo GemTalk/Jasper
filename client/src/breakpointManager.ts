@@ -372,19 +372,24 @@ export class BreakpointManager {
   stepPointAtCursor(
     editor: vscode.TextEditor,
   ): { info: StepPointInfo; resolved: NonNullable<ReturnType<typeof stepPointAtOffset>> } | null {
-    if (editor.document.uri.scheme !== 'gemstone') return null;
-    if (!this.sessionManager.getSelectedSession()) {
-      vscode.window.showErrorMessage('No active GemStone session.');
+    // Every failure here says so. These commands are invoked deliberately — from
+    // a keystroke, a menu, or the palette — and a silent no-op is unreadable:
+    // "nothing happened" looks exactly like a broken keybinding, so the developer
+    // has no way to tell an unsaved buffer from a command that never fired.
+    const result = this.stepPoints.explain(editor.document);
+    if ('problem' in result) {
+      vscode.window.showWarningMessage(result.problem);
       return null;
     }
-    const info = this.stepPoints.get(editor.document);
-    if (!info) return null;
-    if (info.offsets.length === 0) {
-      vscode.window.showInformationMessage('This method has no step points to break at.');
-      return null;
-    }
+    const info = result.info;
+
     const resolved = stepPointAtOffset(info, editor.document.offsetAt(editor.selection.active));
-    if (!resolved) return null;
+    if (!resolved) {
+      vscode.window.showWarningMessage(
+        'No step point at or after the cursor — put it on the code you want to break at.',
+      );
+      return null;
+    }
     return { info, resolved };
   }
 

@@ -239,6 +239,65 @@ describe('StepPointModel', () => {
     expect(model.get(makeDocument())).toBeNull();
   });
 
+  describe('explain', () => {
+    /** The reason `explain` gave, or '' when it produced step points. */
+    const problemFor = (doc: import('vscode').TextDocument) => {
+      const result = new StepPointModel(makeSessionManager()).explain(doc);
+      return 'problem' in result ? result.problem : '';
+    };
+
+    it('names the unsaved buffer, the case a developer can actually fix', () => {
+      expect(problemFor(makeDocument(METHOD_URI, true))).toContain('Save the method first');
+    });
+
+    it('says breakpoints need GemStone method source for another scheme', () => {
+      expect(problemFor(makeDocument('file:///a.st'))).toContain('GemStone method source');
+    });
+
+    it('points at the real method for a comparison view', () => {
+      const diff = makeDocument(
+        'gemstone://1/Globals/Array/instance/accessing/at%3A%20(base)?base=1',
+      );
+      expect(problemFor(diff)).toContain('comparison view');
+    });
+
+    it('reports a missing session', () => {
+      const model = new StepPointModel(makeSessionManager(false));
+      const result = model.explain(makeDocument());
+      expect(result).toEqual({ problem: 'No active GemStone session.' });
+    });
+
+    it("passes the stone's own words along when the query fails", () => {
+      mockGetMethodSource.mockImplementation(() => {
+        throw new Error('method not found');
+      });
+      const problem = problemFor(makeDocument());
+      expect(problem).toContain('Array>>at:');
+      expect(problem).toContain('method not found');
+    });
+
+    it('says so when the method compiles but has no step points', () => {
+      mockGetSourceOffsets.mockReturnValue([]);
+      expect(problemFor(makeDocument())).toContain('no step points');
+    });
+
+    it('returns the step points when there is nothing wrong', () => {
+      const result = new StepPointModel(makeSessionManager()).explain(makeDocument());
+      expect('info' in result && result.info.offsets).toEqual([10]);
+    });
+
+    it('does not leak a stale error into a later successful fetch', () => {
+      const model = new StepPointModel(makeSessionManager());
+      mockGetMethodSource.mockImplementationOnce(() => {
+        throw new Error('transient');
+      });
+      expect('problem' in model.explain(makeDocument())).toBe(true);
+
+      model.invalidate(Uri.parse(METHOD_URI));
+      expect('info' in model.explain(makeDocument())).toBe(true);
+    });
+  });
+
   it('invalidateSession drops only that session', () => {
     const model = new StepPointModel(makeSessionManager());
     model.get(makeDocument());

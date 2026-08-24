@@ -12,7 +12,7 @@ vi.mock('../browserQueries', () => ({
   clearAllBreaks: vi.fn(),
 }));
 
-import { Uri, debug, Location, Position, SourceBreakpoint } from '../__mocks__/vscode';
+import { Uri, debug, window, Location, Position, SourceBreakpoint } from '../__mocks__/vscode';
 import {
   BreakpointManager,
   buildLineOffsets,
@@ -20,7 +20,7 @@ import {
   mapOffsetToStepPoint,
 } from '../breakpointManager';
 import { SessionManager } from '../sessionManager';
-import { StepPointModel } from '../stepPointModel';
+import { StepPointModel, buildLineStarts } from '../stepPointModel';
 import {
   getMethodSource,
   getSourceOffsets,
@@ -444,6 +444,98 @@ describe('BreakpointManager', () => {
 
       manager.clearAllForSession(2);
       expect(manager.appliedFor(uri)).toHaveLength(1);
+    });
+  });
+
+  describe('toggleAtCursor', () => {
+    /**
+     * An editor whose caret is at `offset` in the fixture source. Positions map
+     * through the source's real line geometry, because the product relies on the
+     * editor's offsets agreeing with the stone's — which they do whenever the
+     * buffer is saved, and which is exactly what `explain` refuses to assume
+     * when it isn't.
+     */
+    function makeEditor(source: string, offset: number, isDirty = false) {
+      const starts = buildLineStarts(source); // 1-based; [0, 0, ...]
+      const positionAt = (o: number) => {
+        let line = 1;
+        for (let l = 1; l < starts.length; l++) {
+          if (starts[l] <= o) line = l;
+          else break;
+        }
+        return new Position(line - 1, o - starts[line]);
+      };
+      return {
+        document: {
+          uri: Uri.parse(METHOD_URI),
+          isDirty,
+          getText: () => source,
+          offsetAt: () => offset,
+          positionAt,
+        },
+        selection: { active: positionAt(offset) },
+      } as unknown as import('vscode').TextEditor;
+    }
+
+    const warn = () => vi.mocked(window.showWarningMessage);
+
+    beforeEach(() => {
+      warn().mockClear();
+    });
+
+    it('adds a VS Code breakpoint at the caret’s step point', () => {
+      mockGetMethodSource.mockReturnValue('m\nx := self foo');
+      mockGetSourceOffsets.mockReturnValue([8, 13]);
+
+      makeManager().toggleAtCursor(makeEditor('m\nx := self foo', 12));
+
+      expect(vi.mocked(debug.addBreakpoints)).toHaveBeenCalledTimes(1);
+      expect(warn()).not.toHaveBeenCalled();
+    });
+
+    it('says why nothing happened when the buffer is unsaved', () => {
+      // The failure a developer is most likely to hit and least likely to guess:
+      // a silent no-op here is indistinguishable from a dead keybinding.
+      makeManager().toggleAtCursor(makeEditor('m\n^1', 2, true));
+
+      expect(vi.mocked(debug.addBreakpoints)).not.toHaveBeenCalled();
+      expect(warn()).toHaveBeenCalledWith(expect.stringContaining('Save the method first'));
+    });
+
+    it('says why nothing happened when the method has no step points', () => {
+      mockGetMethodSource.mockReturnValue('m\n^1');
+      mockGetSourceOffsets.mockReturnValue([]);
+
+      makeManager().toggleAtCursor(makeEditor('m\n^1', 2));
+
+      expect(warn()).toHaveBeenCalledWith(expect.stringContaining('no step points'));
+    });
+
+    it('says why nothing happened when the method cannot be read', () => {
+      mockGetMethodSource.mockImplementation(() => {
+        throw new Error('method not found');
+      });
+
+      makeManager().toggleAtCursor(makeEditor('m\n^1', 2));
+
+      expect(warn()).toHaveBeenCalledWith(expect.stringContaining('method not found'));
+    });
+
+    it('removes the breakpoint again on a second toggle at the same step point', () => {
+      mockGetMethodSource.mockReturnValue('m\nx := self foo');
+      mockGetSourceOffsets.mockReturnValue([8, 13]);
+
+      // Offset 12 in 'm\nx := self foo' is line 1, column 10 — the same place
+      // the caret is, so the toggle must recognise it as the same breakpoint.
+      const existing = new SourceBreakpoint(
+        new Location(Uri.parse(METHOD_URI), new Position(1, 10)),
+      );
+      debug.breakpoints = [existing];
+
+      makeManager().toggleAtCursor(makeEditor('m\nx := self foo', 12));
+
+      expect(vi.mocked(debug.removeBreakpoints)).toHaveBeenCalledWith([existing]);
+      expect(vi.mocked(debug.addBreakpoints)).not.toHaveBeenCalled();
     });
   });
 

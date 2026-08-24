@@ -30,6 +30,9 @@ export interface StepPointInfo {
   lineStarts: number[];
 }
 
+/** Either a method's step points, or why it hasn't got any we can use. */
+export type StepPointResult = { info: StepPointInfo } | { problem: string };
+
 /**
  * Per-method step point positions, fetched once and cached.
  *
@@ -40,7 +43,7 @@ export interface StepPointInfo {
  *
  * Everything is expressed against the *stone's* source rather than an editor
  * buffer, so the debug adapter (which only ever has line numbers) and the editor
- * features resolve step points through the same code. `get` refuses a dirty
+ * features resolve step points through the same code. It refuses a dirty
  * document because the stone's offsets would then point at the wrong tokens —
  * a wrong step point number is worse than none, and it would send a breakpoint
  * somewhere the developer didn't ask for.
@@ -48,24 +51,64 @@ export interface StepPointInfo {
 export class StepPointModel {
   private cache = new Map<string, StepPointInfo>();
 
+  /** Why the last `fetch` returned null, for `explain` to pass on. */
+  private lastError: string | undefined;
+
   constructor(private sessionManager: SessionManager) {}
 
   /**
-   * Step points for `document`, or null when they can't be trusted or fetched:
-   * a non-method URI, a diff view, no session, an unsaved edit, or a method the
-   * stone no longer has.
+   * Step points for `document`, or null when they can't be trusted or fetched.
+   *
+   * For the quiet consumers — the hover and the inlay hints — which have nothing
+   * useful to say about a document that has no step points and must not nag. A
+   * command the developer invoked deliberately should use `explain` instead, so
+   * "nothing happened" can be told apart from "nothing was supposed to happen".
    */
   get(document: vscode.TextDocument): StepPointInfo | null {
-    if (document.uri.scheme !== 'gemstone') return null;
-    if (document.isDirty) return null;
+    const result = this.explain(document);
+    return 'info' in result ? result.info : null;
+  }
+
+  /**
+   * Step points for `document`, or the reason there are none — phrased for the
+   * developer, because every one of these is something they can act on.
+   */
+  explain(document: vscode.TextDocument): StepPointResult {
+    if (document.uri.scheme !== 'gemstone') {
+      return { problem: 'Breakpoints can only be set in GemStone method source.' };
+    }
+    if (document.isDirty) {
+      // Step point offsets come from the compiled method, so they describe the
+      // saved source, not what is on screen. Acting on them now would put the
+      // breakpoint somewhere the developer didn't point at.
+      return { problem: 'Save the method first — step points come from the compiled method.' };
+    }
 
     const method = parseMethodUri(document.uri);
-    if (!method || method.diffView) return null;
+    if (!method) {
+      return { problem: 'This editor is not a saved method, so it has no step points.' };
+    }
+    if (method.diffView) {
+      return {
+        problem: 'This is a read-only comparison view — set the breakpoint in the method itself.',
+      };
+    }
 
     const session = this.sessionManager.getSelectedSession();
-    if (!session) return null;
+    if (!session) return { problem: 'No active GemStone session.' };
 
-    return this.fetch(session, document.uri, method);
+    const info = this.fetch(session, document.uri, method);
+    if (!info) {
+      return {
+        problem: `Could not read step points for ${method.className}>>${method.selector}${
+          this.lastError ? ` — ${this.lastError}` : ''
+        }`,
+      };
+    }
+    if (info.offsets.length === 0) {
+      return { problem: 'This method has no step points to break at.' };
+    }
+    return { info };
   }
 
   /**
@@ -102,12 +145,15 @@ export class StepPointModel {
         method.selector,
         method.environmentId,
       );
-    } catch {
+    } catch (e) {
       // The method may have been removed, or its class renamed, since the editor
-      // opened. Callers treat null as "no step points known".
+      // opened. Callers treat null as "no step points known"; `explain` reports
+      // the stone's own words, which say which of those it was.
+      this.lastError = e instanceof Error ? e.message : String(e);
       return null;
     }
 
+    this.lastError = undefined;
     const info: StepPointInfo = {
       source,
       // _sourceOffsets is 1-based; every consumer here works in 0-based offsets.
