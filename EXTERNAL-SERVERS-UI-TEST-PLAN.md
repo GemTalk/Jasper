@@ -28,10 +28,10 @@ sideways, jump to *Cleanup* rather than clicking around trying to recover.
 | 0 · Works with a hostile `.bashrc` | ✅ **passed 2026-08-24** — all boxes |
 | 1 · Stays out of the way | ✅ **passed 2026-08-24** |
 | 2 · Safety gate holds | ✅ **passed 2026-08-24** — found the gate was too strict for a NetLDI |
-| 3 · Tree tells the truth | ⬜ not run |
+| 3 · Tree tells the truth | ✅ **passed 2026-08-24** |
 | 4 · Catches the reported bug | ⬜ not run |
 | 5 · Reconcile actually reconciles | ⬜ not run |
-| 6 · Dialog says the right thing | ⬜ not run |
+| 6 · Dialog says the right thing | ✅ **passed 2026-08-24** — both variants read: unconfirmed in test 2, confirmed in test 3 |
 | 7 · Fails without dead-ending | ⬜ not run |
 
 Already machine-verified, so **do not re-test by hand**: parsing, identity logic, version
