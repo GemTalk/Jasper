@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
@@ -237,9 +237,18 @@ function changeVisibility(panel: MockPanel, visible: boolean): void {
   handler();
 }
 
-/** Long enough for the panel's coalescing window to close and a rebuild to land. */
-function settle(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 400));
+/** The panel's coalescing window (GemstoneManagerPanel.COALESCE_MS, which is private). */
+const COALESCE_MS = 200;
+
+/**
+ * Advance the fake clock past the coalescing window and flush the async rebuild it
+ * schedules — the deterministic, instant replacement for a real sleep. Only valid
+ * under the fake timers the 'GemStone Manager panel' describe installs;
+ * advanceTimersByTimeAsync both fires the pending timer and drains the microtask
+ * queue, so an awaited rebuild (and any pass it queues) has completed on return.
+ */
+async function settle(): Promise<void> {
+  await vi.advanceTimersByTimeAsync(COALESCE_MS + 1);
 }
 
 /** Deliver a message from the webview, as the panel's own handler would receive it. */
@@ -265,7 +274,7 @@ function postedStates(panel: MockPanel): PostedState[] {
 
 /** What the latest state says about one operating-system prerequisite. */
 async function osCheck(panel: MockPanel, key: string): Promise<OsCheck> {
-  await vi.waitFor(() => expect(postedStates(panel).length).toBeGreaterThan(0));
+  await settle();
 
   return postedStates(panel)
     .at(-1)!
@@ -283,12 +292,19 @@ function changeSetting(section: string): void {
 }
 
 describe('GemStone Manager panel', () => {
+  // Fake only the timer functions (not Date) so the coalescing window can be
+  // advanced instantly and exactly, rather than slept through — see settle().
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+  });
+
   afterEach(() => {
     // The panel is a singleton; fire its dispose handler so the next test opens
     // a fresh one rather than revealing this one.
     const [onDispose] = lastPanel().onDidDispose.mock.calls[0] as [() => void];
     onDispose();
     vi.clearAllMocks();
+    vi.useRealTimers();
     machine.inUseBytes = 512 * 1024 * 1024;
   });
 
@@ -320,7 +336,8 @@ describe('GemStone Manager panel', () => {
     const { panel, adminChanged } = openPanel(() => [elsewhere], { isStoneRunning: () => true });
 
     adminChanged.fire();
-    await vi.waitFor(() => expect(postedStates(panel).length).toBeGreaterThan(0));
+    await settle();
+    expect(postedStates(panel).length).toBeGreaterThan(0);
 
     expect(postedStates(panel).at(-1)!.logins[0]).toMatchObject({ running: true });
   });
@@ -465,7 +482,8 @@ describe('GemStone Manager panel', () => {
     const { panel, adminChanged } = openPanel(() => [], { processes: [foreign] });
 
     adminChanged.fire();
-    await vi.waitFor(() => expect(postedStates(panel).length).toBeGreaterThan(0));
+    await settle();
+    expect(postedStates(panel).length).toBeGreaterThan(0);
 
     expect(postedStates(panel).at(-1)!.databases[0].processes).toEqual([]);
   });
@@ -480,7 +498,8 @@ describe('GemStone Manager panel', () => {
 
     fireSelection();
 
-    await vi.waitFor(() => expect(postedStates(panel).length).toBeGreaterThan(0));
+    await settle();
+    expect(postedStates(panel).length).toBeGreaterThan(0);
   });
 
   // Only the first session is auto-selected, so a second login changed no
@@ -496,7 +515,8 @@ describe('GemStone Manager panel', () => {
 
     fireAdded();
 
-    await vi.waitFor(() => expect(postedStates(panel).length).toBeGreaterThan(0));
+    await settle();
+    expect(postedStates(panel).length).toBeGreaterThan(0);
   });
 
   it('says so when a command it dispatched fails', async () => {
@@ -552,7 +572,8 @@ describe('GemStone Manager panel', () => {
 
     logins = [aLogin('DataCurator')];
     changeSetting('gemstone.logins');
-    await vi.waitFor(() => expect(postedStates(panel).length).toBeGreaterThan(0));
+    await settle();
+    expect(postedStates(panel).length).toBeGreaterThan(0);
 
     const latest = postedStates(panel).at(-1)!;
     expect(latest.logins.map((l) => l.label)).toEqual(['DataCurator on db-1 (localhost)']);
@@ -563,7 +584,8 @@ describe('GemStone Manager panel', () => {
 
     changeSetting('gemstone.rootPath');
 
-    await vi.waitFor(() => expect(postedStates(panel)).toHaveLength(1));
+    await settle();
+    expect(postedStates(panel)).toHaveLength(1);
   });
 
   it('ignores a setting it does not read', async () => {
@@ -583,7 +605,8 @@ describe('GemStone Manager panel', () => {
 
     adminChanged.fire();
 
-    await vi.waitFor(() => expect(postedStates(panel)).toHaveLength(1));
+    await settle();
+    expect(postedStates(panel)).toHaveLength(1);
   });
 
   it('rebuilds once for a burst of changes, not once per change', async () => {
@@ -724,7 +747,8 @@ describe('GemStone Manager panel', () => {
 
     changeVisibility(panel, true);
 
-    await vi.waitFor(() => expect(postedStates(panel)).toHaveLength(1));
+    await settle();
+    expect(postedStates(panel)).toHaveLength(1);
   });
 
   it('cancels a coalesce timer armed just before the tab is hidden', async () => {
@@ -739,7 +763,8 @@ describe('GemStone Manager panel', () => {
 
     // The deferred change is honored when the tab comes back.
     changeVisibility(panel, true);
-    await vi.waitFor(() => expect(postedStates(panel).length).toBeGreaterThan(0));
+    await settle();
+    expect(postedStates(panel).length).toBeGreaterThan(0);
   });
 });
 
@@ -796,10 +821,18 @@ describe('configuration', () => {
       .filter((m) => m.command === command);
   }
 
+  // Fake timers here too, so the one test that awaits a rebuild (the Refresh
+  // cache-drop) can advance the clock via settle(); the synchronous message tests
+  // are unaffected by it.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+  });
+
   afterEach(() => {
     const [onDispose] = lastPanel().onDidDispose.mock.calls[0] as [() => void];
     onDispose();
     vi.clearAllMocks();
+    vi.useRealTimers();
   });
 
   it('reads the stone and gem reports and posts them, typed and classified', () => {
