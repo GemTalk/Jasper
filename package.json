@@ -2838,6 +2838,11 @@
           "group": "inline@1"
         },
         {
+          "command": "gemstone.restartExternalServers",
+          "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDb(Stone|Netldi)External$/",
+          "group": "navigation@1"
+        },
+        {
           "command": "gemstone.openDbInFinder",
           "when": "view == gemstoneDatabases && viewItem == gemstoneDb",
           "group": "inline@2"
