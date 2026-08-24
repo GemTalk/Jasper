@@ -522,6 +522,52 @@ describe('reporting a reference count that hit the scan cap', () => {
   });
 });
 
+// A method's environment is part of which method it is, so the dialog has to name it. Without
+// the label, `Account >> #x` in environment 0 and the same selector in environment 1 collapse
+// into one line and the reader is told "1 method" for what is really two.
+describe('naming the environment a reference lives in', () => {
+  it('gives a selector found in two environments a line each, labelled', () => {
+    const env0 = reference({ className: 'Account', selector: 'balance', environmentId: 0 });
+    const env1 = reference({ className: 'Account', selector: 'balance', environmentId: 1 });
+
+    expect(groupReferencesByReceiver([env0, env1])).toEqual([
+      'Account >> #balance',
+      'Account [env 1] >> #balance',
+    ]);
+  });
+
+  it('leaves environment 0 unadorned, so an ordinary stone reads as it always did', () => {
+    const plain = reference({ className: 'Account', selector: 'balance' });
+
+    expect(groupReferencesByReceiver([plain])).toEqual(['Account >> #balance']);
+  });
+
+  it('labels the class side too', () => {
+    const meta = reference({
+      className: 'Account',
+      isMeta: true,
+      selector: 'reset',
+      environmentId: 2,
+    });
+
+    expect(groupReferencesByReceiver([meta])).toEqual(['Account class [env 2] >> #reset']);
+  });
+
+  it('orders a receiver’s environments low to high, after class name and side', () => {
+    const rows = [
+      reference({ className: 'Account', selector: 'b', environmentId: 2 }),
+      reference({ className: 'Account', selector: 'a', environmentId: 1 }),
+      reference({ className: 'Account', selector: 'c', environmentId: 0 }),
+    ];
+
+    expect(groupReferencesByReceiver(rows)).toEqual([
+      'Account >> #c',
+      'Account [env 1] >> #a',
+      'Account [env 2] >> #b',
+    ]);
+  });
+});
+
 // Removing an override does not break dispatch, so the caller can say what actually happens
 // to the senders instead of the untrue "nothing referenced it".
 describe('announcing a removal that senders survive', () => {

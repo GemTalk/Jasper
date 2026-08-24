@@ -96,6 +96,12 @@ function listing(items: string[]): string {
   return rest > 0 ? `${shown.join(', ')}, …(+${rest} more)` : shown.join(', ');
 }
 
+/** How a non-default method environment is named in the dialog. Environment 0 is left
+ *  unadorned so the ordinary single-environment stone reads exactly as it always did. */
+export function environmentSuffix(environmentId: number): string {
+  return environmentId === 0 ? '' : ` [env ${environmentId}]`;
+}
+
 /** The referencing methods as one line per receiver, the receiver named once however many
  *  of its methods are involved:
  *
@@ -108,37 +114,59 @@ function listing(items: string[]): string {
  *  to scan. A class and its metaclass are different receivers and stay on separate lines —
  *  `Account >> #x` and `Account class >> #x` are different methods.
  *
- *  Receivers are ordered by name, instance side before class side, so the same reference
- *  set always reads the same way. A superclass, or any class outside the target's own
- *  hierarchy, is just another receiver and likewise appears once: senders of a method and
- *  references to a class can come from anywhere in the image. (A VARIABLE's accessors
- *  cannot come from a superclass — the scan starts at the class that declares it and walks
- *  down — so those lists only ever name that class and its subclasses.) */
+ *  So are `Account >> #x` in environment 0 and `Account >> #x` in environment 1, and those
+ *  get their own line too, labelled with the environment:
+ *
+ *      Account >> #balance
+ *      Account [env 1] >> #balance
+ *
+ *  Without the label the two are indistinguishable, and the reader is told "1 method" for
+ *  what is really two — the same collapse the scans themselves were just fixed not to make.
+ *  Environment 0 stays unlabelled, so nothing changes on a stone that never raised
+ *  `gemstone.maxEnvironment`, which is the overwhelmingly common case.
+ *
+ *  Receivers are ordered by name, instance side before class side, then by environment, so
+ *  the same reference set always reads the same way. A superclass, or any class outside the
+ *  target's own hierarchy, is just another receiver and likewise appears once: senders of a
+ *  method and references to a class can come from anywhere in the image. (A VARIABLE's
+ *  accessors cannot come from a superclass — the scan starts at the class that declares it
+ *  and walks down — so those lists only ever name that class and its subclasses.) */
 export function groupReferencesByReceiver(references: MethodSearchResult[]): string[] {
   const byReceiver = new Map<
     string,
-    { receiver: string; className: string; isMeta: boolean; selectors: string[] }
+    {
+      receiver: string;
+      className: string;
+      isMeta: boolean;
+      environmentId: number;
+      selectors: string[];
+    }
   >();
   for (const r of references) {
-    const receiver = `${r.className}${r.isMeta ? ' class' : ''}`;
-    const key = `${r.className}|${r.isMeta}`;
+    const receiver = `${r.className}${r.isMeta ? ' class' : ''}${environmentSuffix(r.environmentId)}`;
+    const key = `${r.className}|${r.isMeta}|${r.environmentId}`;
     const group = byReceiver.get(key) ?? {
       receiver,
       className: r.className,
       isMeta: r.isMeta,
+      environmentId: r.environmentId,
       selectors: [],
     };
-    // A receiver can legitimately repeat a selector across environments; the caller
-    // dedupes, but don't render a duplicate if one slips through.
+    // The caller dedupes on all four parts of a method's identity, so a repeat here would
+    // be the same method twice; don't render it twice if one slips through.
     if (!group.selectors.includes(r.selector)) group.selectors.push(r.selector);
     byReceiver.set(key, group);
   }
 
   // Sort on the parts rather than the rendered string: the intent is "by class name, then
-  // instance side before class side", and saying that directly does not depend on how a
-  // collator happens to weigh the space in `Account class`.
+  // instance side before class side, then by environment", and saying that directly does
+  // not depend on how a collator happens to weigh the space in `Account class` or the
+  // bracket in `[env 1]`.
   const groups = [...byReceiver.values()].sort(
-    (a, b) => a.className.localeCompare(b.className) || Number(a.isMeta) - Number(b.isMeta),
+    (a, b) =>
+      a.className.localeCompare(b.className) ||
+      Number(a.isMeta) - Number(b.isMeta) ||
+      a.environmentId - b.environmentId,
   );
   const shown = groups.slice(0, NAMED_RECEIVER_LIMIT);
   const restReceivers = groups.length - shown.length;

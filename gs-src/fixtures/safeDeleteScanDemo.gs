@@ -46,7 +46,10 @@
 !  C. The same selector implemented in two environments
 !
 !     Remove method  SdScanEnvTarget >> sdScanTwoEnv   (the Methods pane row)
-!       → MUST ask, naming  SdScanEnvTarget >> #sdScanTwoEnv
+!       → MUST ask, naming  SdScanEnvTarget [env 1] >> #sdScanTwoEnv  — the label says
+!         which environment the surviving sender is in, and the dialog also says
+!         "SdScanEnvTarget also implements #sdScanTwoEnv in environment 1; only the
+!          environment 0 method is removed".
 !       Both environments implement it and both send it to themselves. The pane
 !       removes the environment-0 one, so only ITS self-send goes away; the
 !       environment-1 method stays, and its send with it.
@@ -56,9 +59,10 @@
 !        the environment-0 method and leaves the environment-1 one standing.)
 !
 !     Remove method  SdScanEnvTarget >> sdScanOneEnvOnly
-!       → MUST go quietly. Only environment 0 implements it, and its self-send
-!         really does go away with it. (The check that the fix did not simply
-!         turn every recursive method back into a question.)
+!       → MUST go quietly, and the notification must NOT claim an implementation
+!         survives. Only environment 0 implements it, and its self-send really does
+!         go away with it. (The check that the fix did not simply turn every
+!         recursive method back into a question.)
 !
 !  D. Opening a result that lives outside environment 0
 !

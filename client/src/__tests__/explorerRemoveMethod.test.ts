@@ -79,6 +79,7 @@ const deleteMethod = queries.deleteMethod as ReturnType<typeof vi.fn>;
 const canClassBeWritten = queries.canClassBeWritten as ReturnType<typeof vi.fn>;
 const sendersOf = queries.sendersOf as ReturnType<typeof vi.fn>;
 const hierarchyImplementorsOf = queries.hierarchyImplementorsOf as ReturnType<typeof vi.fn>;
+const getClassEnvironments = queries.getClassEnvironments as ReturnType<typeof vi.fn>;
 const showWarningMessage = window.showWarningMessage as ReturnType<typeof vi.fn>;
 const showInformationMessage = window.showInformationMessage as ReturnType<typeof vi.fn>;
 const showErrorMessage = window.showErrorMessage as ReturnType<typeof vi.fn>;
@@ -93,6 +94,7 @@ beforeEach(() => {
   deleteMethod.mockReturnValue('Deleted: Array >> at:');
   sendersOf.mockReturnValue([]);
   hierarchyImplementorsOf.mockReturnValue([]);
+  getClassEnvironments.mockReturnValue([]);
 });
 
 describe('ExplorerController.removeMethod — nothing sends the selector', () => {
@@ -537,5 +539,82 @@ describe('ExplorerController.removeMethod — the selector is still implemented 
     await ctl.removeMethod(methodItem({ selector: 'new' }, true));
 
     expect(hierarchyImplementorsOf).toHaveBeenCalledWith(SESSION, 1, 'Array', 'new', true, 'up');
+  });
+});
+
+// The Methods pane shows ONE row per selector however many environments implement it, and a
+// removal takes the environment-0 method only. So a row can stand for more methods than the one
+// about to go, and saying nothing would leave "removed, nothing referenced it" reading as though
+// the selector were gone from the class when an implementation is still standing.
+describe('ExplorerController.removeMethod — the selector also lives in another environment', () => {
+  // envLines is what the Methods pane is built from; reloadCurrentClassMethods fills it the same
+  // way selecting the class in the tree does.
+  const seedEnvironments = (
+    ctl: ExplorerController,
+    lines: { isMeta: boolean; envId: number; category: string; selectors: string[] }[],
+  ) => {
+    getClassEnvironments.mockReturnValue(lines);
+    ctl.reloadCurrentClassMethods();
+    getClassEnvironments.mockReturnValue(lines);
+  };
+
+  const bothEnvironments = [
+    { isMeta: false, envId: 0, category: 'accessing', selectors: ['at:'] },
+    { isMeta: false, envId: 1, category: 'accessing', selectors: ['at:'] },
+  ];
+
+  it('names the surviving environment in the notification when nothing else is in the way', async () => {
+    const ctl = makeController();
+    seedEnvironments(ctl, bothEnvironments);
+
+    await ctl.removeMethod(methodItem());
+
+    expect(showWarningMessage).not.toHaveBeenCalled();
+    expect(showInformationMessage).toHaveBeenCalledWith(
+      expect.stringContaining('Array still implements it in environment 1'),
+    );
+  });
+
+  it('says only the environment 0 method goes when it has to ask anyway', async () => {
+    const ctl = makeController();
+    seedEnvironments(ctl, bothEnvironments);
+    sendersOf.mockReturnValue([sender()]);
+    showWarningMessage.mockResolvedValue(undefined);
+
+    await ctl.removeMethod(methodItem());
+
+    const detail = showWarningMessage.mock.calls[0][1].detail as string;
+    expect(detail).toContain('also implements #at: in environment 1');
+    expect(detail).toContain('only the environment 0 method is removed');
+  });
+
+  it('says nothing extra when the selector lives in environment 0 alone', async () => {
+    const ctl = makeController();
+    seedEnvironments(ctl, [{ isMeta: false, envId: 0, category: 'accessing', selectors: ['at:'] }]);
+
+    await ctl.removeMethod(methodItem());
+
+    expect(showInformationMessage).toHaveBeenCalledWith(
+      expect.stringContaining('nothing referenced it'),
+    );
+    expect(showInformationMessage).not.toHaveBeenCalledWith(
+      expect.stringContaining('still implements'),
+    );
+  });
+
+  it('does not confuse the class side with the instance side', async () => {
+    const ctl = makeController();
+    // Only the CLASS side has an environment-1 twin; removing the instance-side method
+    // must not claim one survives.
+    seedEnvironments(ctl, [
+      { isMeta: false, envId: 0, category: 'accessing', selectors: ['at:'] },
+      { isMeta: true, envId: 1, category: 'accessing', selectors: ['at:'] },
+    ]);
+
+    await ctl.removeMethod(methodItem());
+
+    expect(showInformationMessage).not.toHaveBeenCalledWith(
+      expect.stringContaining('still implements'),
+    );
   });
 });

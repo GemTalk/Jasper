@@ -3715,6 +3715,30 @@ export class ExplorerController {
     }
   }
 
+  // The environments OTHER than 0 in which this class implements `selector` on this side.
+  //
+  // The Methods pane shows one row per selector however many environments implement it (see
+  // selectorsFor), and a removal takes the environment-0 method only. So when the answer here
+  // is non-empty the row the user clicked stands for more methods than the one about to go,
+  // and the dialog has to say so — otherwise "removed, nothing referenced it" reads as though
+  // the selector is gone from the class, when an implementation is still there.
+  //
+  // Read off envLines, which the method list is already built from, so this costs no query.
+  private otherEnvironmentsImplementing(isMeta: boolean, selector: string): number[] {
+    return [
+      ...new Set(
+        this.envLines
+          .filter(
+            (l) =>
+              l.isMeta === isMeta &&
+              l.envId !== EXPLORER_METHOD_ENVIRONMENT &&
+              l.selectors.includes(selector),
+          )
+          .map((l) => l.envId),
+      ),
+    ].sort((a, b) => a - b);
+  }
+
   // Selectors under a category (real or computed) with per-method metadata.
   selectorsFor(isMeta: boolean, category: string): SelectorInfo[] {
     const lines = this.envLines.filter((l) => l.isMeta === isMeta);
@@ -3984,6 +4008,20 @@ export class ExplorerController {
         ? `senders now resolve to ${inheritedFrom} >> #${selector}`
         : undefined,
     };
+
+    // One row in the pane can stand for the same selector in several environments, and only
+    // the environment-0 one is removed. Say which are left, on the confirmation and on the
+    // notification alike — a removal that silently leaves an implementation standing is the
+    // kind of thing you find out about much later.
+    const alsoIn = this.otherEnvironmentsImplementing(node.isMeta, selector);
+    if (alsoIn.length > 0) {
+      const envList = alsoIn.map((e) => `environment ${e}`).join(', ');
+      const stays = `${side} also implements #${selector} in ${envList}; only the environment ${EXPLORER_METHOD_ENVIRONMENT} method is removed.`;
+      target.note = target.note ? `${target.note}\n\n${stays}` : stays;
+      target.silentNote = target.silentNote
+        ? `${target.silentNote}; ${side} still implements it in ${envList}`
+        : `${side} still implements it in ${envList}`;
+    }
 
     const decision = await decideSafeDelete(session.id, target);
     if (decision === 'cancelled') return;
