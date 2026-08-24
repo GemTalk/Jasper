@@ -21,6 +21,17 @@ vi.mock('../sharedMemoryTreeProvider', async () => {
   };
 });
 
+// These are host-message unit tests; they do not exercise the WSL bridge. Without
+// this, on Windows `needsWsl()` is true and the refresh handler awaits a real
+// getWslInfoAsync() (WSL I/O) — a macrotask the fake-timer clock cannot drain, so
+// the post-refresh rebuild lands after the assertion and "asks the download site
+// again" sees one fetch instead of two. Forcing it false keeps refresh off real
+// I/O and makes the suite behave the same on every platform.
+vi.mock('../wslBridge', async () => {
+  const actual = await vi.importActual<typeof import('../wslBridge')>('../wslBridge');
+  return { ...actual, needsWsl: () => false };
+});
+
 import * as vscode from 'vscode';
 
 import * as fs from 'fs';
