@@ -1,0 +1,304 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+vi.mock('vscode', () => import('../__mocks__/vscode.js'));
+
+vi.mock('../browserQueries', () => ({
+  implementorsOf: vi.fn(() => []),
+  getSourceOffsets: vi.fn(() => []),
+  getMethodSource: vi.fn(() => ''),
+}));
+
+import { debug, window, FunctionBreakpoint, SourceBreakpoint } from '../__mocks__/vscode';
+import {
+  FunctionBreakpointResolver,
+  parseFunctionName,
+  qualifiedName,
+} from '../functionBreakpoints';
+import { SessionManager } from '../sessionManager';
+import { implementorsOf, getSourceOffsets, getMethodSource } from '../browserQueries';
+
+const mockImplementors = vi.mocked(implementorsOf);
+const mockOffsets = vi.mocked(getSourceOffsets);
+const mockSource = vi.mocked(getMethodSource);
+
+describe('parseFunctionName', () => {
+  it('reads a bare selector as "whoever implements it"', () => {
+    expect(parseFunctionName('balance')).toEqual({ isMeta: false, selector: 'balance' });
+  });
+
+  it('reads a keyword selector', () => {
+    expect(parseFunctionName('at:put:')).toEqual({ isMeta: false, selector: 'at:put:' });
+  });
+
+  it('reads a binary selector, which looks nothing like an identifier', () => {
+    expect(parseFunctionName('//')).toEqual({ isMeta: false, selector: '//' });
+    expect(parseFunctionName(',')).toEqual({ isMeta: false, selector: ',' });
+  });
+
+  it('reads an instance-side qualified name', () => {
+    expect(parseFunctionName('Account>>balance')).toEqual({
+      className: 'Account',
+      isMeta: false,
+      selector: 'balance',
+    });
+  });
+
+  it('reads a class-side qualified name', () => {
+    expect(parseFunctionName('Account class>>new')).toEqual({
+      className: 'Account',
+      isMeta: true,
+      selector: 'new',
+    });
+  });
+
+  it('tolerates the spacing a Smalltalker actually types', () => {
+    expect(parseFunctionName('  Account class >> at:put:  ')).toEqual({
+      className: 'Account',
+      isMeta: true,
+      selector: 'at:put:',
+    });
+  });
+
+  it('tolerates a # on the selector', () => {
+    expect(parseFunctionName('Account>>#balance')).toEqual({
+      className: 'Account',
+      isMeta: false,
+      selector: 'balance',
+    });
+    expect(parseFunctionName('#balance')).toEqual({ isMeta: false, selector: 'balance' });
+  });
+
+  it('keeps a qualified keyword selector whole', () => {
+    expect(parseFunctionName('Dictionary>>at:ifAbsent:')?.selector).toBe('at:ifAbsent:');
+  });
+
+  it('rejects empty input', () => {
+    expect(parseFunctionName('   ')).toBeNull();
+  });
+
+  it('rejects a malformed qualified name rather than reading it as a selector', () => {
+    // '>>' present but the class half is not a class name — treating the whole
+    // string as a selector would look up something that cannot exist.
+    expect(parseFunctionName('123>>balance')).toBeNull();
+    expect(parseFunctionName('>>balance')).toBeNull();
+  });
+});
+
+describe('qualifiedName', () => {
+  const target = {
+    dictName: 'Globals',
+    className: 'Account',
+    isMeta: false,
+    selector: 'balance',
+    category: 'accessing',
+  };
+
+  it('names the instance side plainly', () => {
+    expect(qualifiedName(target)).toBe('Account>>balance');
+  });
+
+  it('names the class side the way Smalltalk writes it', () => {
+    expect(qualifiedName({ ...target, isMeta: true, selector: 'new' })).toBe('Account class>>new');
+  });
+});
+
+describe('FunctionBreakpointResolver', () => {
+  function makeSessionManager(hasSession = true) {
+    return {
+      getSelectedSession: vi.fn(() =>
+        hasSession ? { id: 1, gci: {}, handle: 'h', login: {}, stoneVersion: '3.7.5' } : undefined,
+      ),
+      onDidChangeSelection: vi.fn(() => ({ dispose: () => {} })),
+    } as unknown as SessionManager;
+  }
+
+  const account = {
+    dictName: 'Globals',
+    className: 'Account',
+    isMeta: false,
+    selector: 'balance',
+    category: 'accessing',
+  };
+  const savings = { ...account, className: 'SavingsAccount' };
+
+  const warn = () => vi.mocked(window.showWarningMessage);
+  const added = () => vi.mocked(debug.addBreakpoints);
+  const removed = () => vi.mocked(debug.removeBreakpoints);
+
+  beforeEach(() => {
+    debug.breakpoints = [];
+    added().mockClear();
+    removed().mockClear();
+    warn().mockClear();
+    vi.mocked(window.showQuickPick).mockReset();
+    mockImplementors.mockReset().mockReturnValue([]);
+    // 'balance\n^total' — first step point at 1-based 9, i.e. line 2 column 0.
+    mockOffsets.mockReset().mockReturnValue([9]);
+    mockSource.mockReset().mockReturnValue('balance\n^total');
+  });
+
+  /** The SourceBreakpoint the resolver added, if any. */
+  const addedSourceBreakpoint = () =>
+    added().mock.calls.at(-1)?.[0]?.[0] as SourceBreakpoint | undefined;
+
+  it('converts a single implementor into a located breakpoint on entry', async () => {
+    mockImplementors.mockReturnValue([account]);
+    const bp = new FunctionBreakpoint('balance');
+
+    await new FunctionBreakpointResolver(makeSessionManager()).handleAdded([bp]);
+
+    // The named breakpoint is replaced, not kept alongside.
+    expect(removed()).toHaveBeenCalledWith([bp]);
+    const source = addedSourceBreakpoint();
+    expect(source).toBeInstanceOf(SourceBreakpoint);
+    // Offset 8 in 'balance\n^total' is line 1 (0-based), column 0.
+    expect(source?.location.range.start).toMatchObject({ line: 1, character: 0 });
+    expect(source?.location.uri.toString()).toContain(
+      '/Globals/Account/instance/accessing/balance',
+    );
+  });
+
+  it('does not prompt when only one class implements the selector', async () => {
+    mockImplementors.mockReturnValue([account]);
+    await new FunctionBreakpointResolver(makeSessionManager()).handleAdded([
+      new FunctionBreakpoint('balance'),
+    ]);
+    expect(vi.mocked(window.showQuickPick)).not.toHaveBeenCalled();
+  });
+
+  it('asks which class when several implement the selector', async () => {
+    mockImplementors.mockReturnValue([savings, account]);
+    vi.mocked(window.showQuickPick).mockResolvedValue({ target: savings });
+
+    await new FunctionBreakpointResolver(makeSessionManager()).handleAdded([
+      new FunctionBreakpoint('balance'),
+    ]);
+
+    const items = vi.mocked(window.showQuickPick).mock.calls[0][0] as { label: string }[];
+    // Sorted, so the list doesn't reorder between invocations.
+    expect(items.map((i) => i.label)).toEqual(['Account', 'SavingsAccount']);
+    expect(addedSourceBreakpoint()?.location.uri.toString()).toContain('/SavingsAccount/');
+  });
+
+  it('drops the breakpoint when the class picker is dismissed', async () => {
+    mockImplementors.mockReturnValue([savings, account]);
+    vi.mocked(window.showQuickPick).mockResolvedValue(undefined);
+    const bp = new FunctionBreakpoint('balance');
+
+    await new FunctionBreakpointResolver(makeSessionManager()).handleAdded([bp]);
+
+    // Leaving an unresolved one in the panel is the dead-breakpoint problem again.
+    expect(removed()).toHaveBeenCalledWith([bp]);
+    expect(added()).not.toHaveBeenCalled();
+    expect(warn()).toHaveBeenCalledWith(expect.stringContaining('No class chosen'));
+  });
+
+  it('takes a qualified name at its word without prompting', async () => {
+    mockImplementors.mockReturnValue([savings, account]);
+    await new FunctionBreakpointResolver(makeSessionManager()).handleAdded([
+      new FunctionBreakpoint('Account>>balance'),
+    ]);
+    expect(vi.mocked(window.showQuickPick)).not.toHaveBeenCalled();
+    expect(addedSourceBreakpoint()?.location.uri.toString()).toContain(
+      '/Globals/Account/instance/',
+    );
+  });
+
+  it('resolves a class-side qualified name to the metaclass', async () => {
+    const meta = { ...account, isMeta: true, selector: 'new', category: 'instance creation' };
+    mockImplementors.mockReturnValue([meta]);
+    await new FunctionBreakpointResolver(makeSessionManager()).handleAdded([
+      new FunctionBreakpoint('Account class>>new'),
+    ]);
+    expect(addedSourceBreakpoint()?.location.uri.toString()).toContain('/Account/class/');
+  });
+
+  it('refuses a qualified name whose class does not implement it', async () => {
+    // Trusting the typing would set a breakpoint that silently never fires.
+    mockImplementors.mockReturnValue([savings]);
+    const bp = new FunctionBreakpoint('Account>>balance');
+
+    await new FunctionBreakpointResolver(makeSessionManager()).handleAdded([bp]);
+
+    expect(removed()).toHaveBeenCalledWith([bp]);
+    expect(added()).not.toHaveBeenCalled();
+    expect(warn()).toHaveBeenCalledWith(expect.stringContaining('Nothing implements'));
+  });
+
+  it('says nothing implements an unknown selector', async () => {
+    mockImplementors.mockReturnValue([]);
+    await new FunctionBreakpointResolver(makeSessionManager()).handleAdded([
+      new FunctionBreakpoint('noSuchThing'),
+    ]);
+    expect(warn()).toHaveBeenCalledWith(expect.stringContaining('Nothing implements #noSuchThing'));
+  });
+
+  it('explains a name that is not a method name at all', async () => {
+    await new FunctionBreakpointResolver(makeSessionManager()).handleAdded([
+      new FunctionBreakpoint('>>oops'),
+    ]);
+    expect(warn()).toHaveBeenCalledWith(expect.stringContaining('is not a method name'));
+  });
+
+  it('asks for a login rather than failing silently', async () => {
+    await new FunctionBreakpointResolver(makeSessionManager(false)).handleAdded([
+      new FunctionBreakpoint('balance'),
+    ]);
+    expect(warn()).toHaveBeenCalledWith(expect.stringContaining('No active GemStone session'));
+  });
+
+  it('refuses a method with no step points', async () => {
+    mockImplementors.mockReturnValue([account]);
+    mockOffsets.mockReturnValue([]);
+    await new FunctionBreakpointResolver(makeSessionManager()).handleAdded([
+      new FunctionBreakpoint('balance'),
+    ]);
+    expect(warn()).toHaveBeenCalledWith(expect.stringContaining('no step points'));
+  });
+
+  it('reports a lookup that throws instead of swallowing it', async () => {
+    mockImplementors.mockImplementation(() => {
+      throw new Error('session busy');
+    });
+    await new FunctionBreakpointResolver(makeSessionManager()).handleAdded([
+      new FunctionBreakpoint('balance'),
+    ]);
+    expect(warn()).toHaveBeenCalledWith(expect.stringContaining('session busy'));
+  });
+
+  it('carries the enabled flag across the conversion', async () => {
+    mockImplementors.mockReturnValue([account]);
+    await new FunctionBreakpointResolver(makeSessionManager()).handleAdded([
+      new FunctionBreakpoint('balance', false),
+    ]);
+    expect(addedSourceBreakpoint()?.enabled).toBe(false);
+  });
+
+  it('ignores an ordinary source breakpoint', async () => {
+    await new FunctionBreakpointResolver(makeSessionManager()).handleAdded([
+      new SourceBreakpoint({ uri: 'x', range: { start: {} } } as never),
+    ]);
+    expect(added()).not.toHaveBeenCalled();
+    expect(removed()).not.toHaveBeenCalled();
+  });
+
+  it('resolves the same name once when events overlap', async () => {
+    // Choosing a class is a prompt, so a second event can land mid-await.
+    mockImplementors.mockReturnValue([savings, account]);
+    let release: (v: unknown) => void = () => {};
+    vi.mocked(window.showQuickPick).mockReturnValue(
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+    );
+
+    const resolver = new FunctionBreakpointResolver(makeSessionManager());
+    const first = resolver.handleAdded([new FunctionBreakpoint('balance')]);
+    const second = resolver.handleAdded([new FunctionBreakpoint('balance')]);
+
+    release({ target: account });
+    await Promise.all([first, second]);
+
+    expect(added()).toHaveBeenCalledTimes(1);
+  });
+});

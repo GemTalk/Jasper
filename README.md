@@ -258,10 +258,13 @@ window. Within a session they are re-applied after a recompile.
   Jasper by topaz or a `halt` left in the code
 - **Clear All Breakpoints in Method** drops every breakpoint in the method you
   are in
-- **Not supported:** *function* breakpoints — the ones the `+` button in VS
-  Code's Breakpoints panel creates, named rather than located. Jasper warns if
-  you add one, since it would otherwise sit in the list looking live and never
-  fire
+- **Break on entry by name** — the `+` button in VS Code's Breakpoints panel
+  takes a method name instead of a location. Type a selector (`balance`) and
+  Jasper finds the implementors, asking which class you meant when there is more
+  than one; or qualify it yourself (`Account>>balance`, `Account class>>new`).
+  The name is then replaced by an ordinary breakpoint on the method's first step
+  point, so it gets a real location, a red dot, and everything else breakpoints
+  do — handy for stopping in a method without going to find it first
 
 #### Step points
 

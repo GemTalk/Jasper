@@ -3,6 +3,7 @@ import { SessionManager, ActiveSession } from './sessionManager';
 import { parseMethodUri } from './gemstoneFileSystemProvider';
 import * as queries from './browserQueries';
 import { GemStoneBreakpoint } from './browserQueries';
+import { FunctionBreakpointResolver } from './functionBreakpoints';
 import {
   StepPointModel,
   StepPointInfo,
@@ -95,10 +96,19 @@ export class BreakpointManager {
   /** Fires after breakpoints are pushed to the gem, so views can refresh. */
   readonly onDidApply = this._onDidApply.event;
 
+  /**
+   * Turns a named (function) breakpoint into a located one on the method's
+   * entry. Kept here rather than wired separately so the conversion happens on
+   * the same event that applies everything else.
+   */
+  private functionBreakpoints: FunctionBreakpointResolver;
+
   constructor(
     private sessionManager: SessionManager,
     private stepPoints: StepPointModel,
-  ) {}
+  ) {
+    this.functionBreakpoints = new FunctionBreakpointResolver(sessionManager);
+  }
 
   register(context: vscode.ExtensionContext): void {
     context.subscriptions.push(
@@ -664,7 +674,10 @@ export class BreakpointManager {
     // idempotent, and the removal it triggers re-enters here with nothing left
     // to prune, so this does not loop.
     if (event.added.length > 0) this.pruneOrphans();
-    this.warnAboutFunctionBreakpoints(event.added);
+    // Resolving a name can need a prompt, so this runs on its own; the
+    // SourceBreakpoint it produces comes back through this handler and is
+    // applied like any other.
+    void this.functionBreakpoints.handleAdded(event.added);
 
     const session = this.sessionManager.getSelectedSession();
     if (!session) return;
@@ -678,26 +691,6 @@ export class BreakpointManager {
     for (const uriStr of affected) {
       this.applyToUri(session, vscode.Uri.parse(uriStr));
     }
-  }
-
-  /**
-   * Say so when a *function* breakpoint is added — the kind VS Code's `+` button
-   * in the Breakpoints panel creates, named rather than located.
-   *
-   * Jasper only implements source breakpoints, so a function breakpoint sits in
-   * the list looking exactly like a working one and never fires. Left unsaid,
-   * that reads as "breakpoints are broken" rather than "this kind isn't wired
-   * up". Warn rather than delete it: the developer typed it deliberately, and
-   * silently removing what someone just typed is its own kind of confusing.
-   */
-  private warnAboutFunctionBreakpoints(added: readonly vscode.Breakpoint[]): void {
-    const named = added.filter((bp) => bp instanceof vscode.FunctionBreakpoint);
-    if (named.length === 0) return;
-    vscode.window.showWarningMessage(
-      'Jasper does not support function breakpoints (the + button in the Breakpoints panel) — ' +
-        'they will never fire. Set a breakpoint in the method source instead: click the gutter, ' +
-        'or put the caret on a step point and use Toggle Breakpoint at Cursor.',
-    );
   }
 
   private refreshEditorsFor(uri: vscode.Uri): void {

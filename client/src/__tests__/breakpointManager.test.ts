@@ -432,27 +432,28 @@ describe('BreakpointManager', () => {
     }
 
     beforeEach(() => {
-      vi.mocked(window.showWarningMessage).mockClear();
       vi.mocked(debug.onDidChangeBreakpoints).mockClear();
+      // Tests run in random order, so a warning from an earlier one would
+      // otherwise be counted here.
+      vi.mocked(window.showWarningMessage).mockClear();
+      mockGetMethodSource.mockReturnValue('balance\n^total');
+      mockGetSourceOffsets.mockReturnValue([9]);
     });
 
-    it('warns that a function breakpoint will never fire', () => {
-      // The + button in the Breakpoints panel makes one of these. Jasper only
-      // implements source breakpoints, so it would sit there looking live.
-      fireAdded([new FunctionBreakpoint('breakpointTesting')]);
-      expect(vi.mocked(window.showWarningMessage)).toHaveBeenCalledWith(
-        expect.stringContaining('does not support function breakpoints'),
-      );
-    });
-
-    it('leaves it in place rather than deleting what the developer typed', () => {
-      const named = new FunctionBreakpoint('breakpointTesting');
+    it('hands a named breakpoint to the resolver, which replaces it', async () => {
+      // The + button in the Breakpoints panel makes one of these — a name with no
+      // location. It is converted to a located breakpoint on the method's entry;
+      // functionBreakpoints.test.ts covers the resolution itself.
+      const named = new FunctionBreakpoint('at:');
       debug.breakpoints = [named];
       fireAdded([named]);
-      expect(debug.breakpoints).toContain(named);
+
+      // Resolution is async (it may prompt), so let it settle.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(vi.mocked(debug.removeBreakpoints)).toHaveBeenCalledWith([named]);
     });
 
-    it('says nothing for an ordinary source breakpoint', () => {
+    it('applies an ordinary source breakpoint without involving the resolver', () => {
       fireAdded([new SourceBreakpoint(new Location(Uri.parse(METHOD_URI), new Position(0, 0)))]);
       expect(vi.mocked(window.showWarningMessage)).not.toHaveBeenCalled();
     });
