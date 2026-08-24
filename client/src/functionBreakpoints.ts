@@ -77,16 +77,26 @@ export class FunctionBreakpointResolver {
   constructor(private sessionManager: SessionManager) {}
 
   /**
-   * Resolve and convert every function breakpoint among `added`.
+   * Resolve and convert every function breakpoint among `breakpoints`.
+   *
+   * Callers must pass **both** the added and the changed breakpoints. VS Code's
+   * `+` button creates the breakpoint *first*, with an empty name, and only then
+   * opens it for editing — so the name a developer types arrives as a *change*,
+   * not as an addition. Watching additions alone sees nothing but the blank.
+   *
+   * A blank name is therefore left strictly alone: it means "still being typed",
+   * and treating it as unresolvable deleted the row out from under the developer
+   * before they could type into it.
    *
    * Never rejects. The caller fires this without awaiting (resolution can
    * prompt), so a thrown error would otherwise vanish into an unhandled
    * rejection and the breakpoint would just sit there doing nothing — the exact
    * failure this class exists to remove.
    */
-  async handleAdded(added: readonly vscode.Breakpoint[]): Promise<void> {
-    const named = added.filter(
-      (bp): bp is vscode.FunctionBreakpoint => bp instanceof vscode.FunctionBreakpoint,
+  async handle(breakpoints: readonly vscode.Breakpoint[]): Promise<void> {
+    const named = breakpoints.filter(
+      (bp): bp is vscode.FunctionBreakpoint =>
+        bp instanceof vscode.FunctionBreakpoint && bp.functionName.trim().length > 0,
     );
     for (const bp of named) {
       if (this.inFlight.has(bp.functionName)) continue;

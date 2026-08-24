@@ -440,6 +440,24 @@ describe('BreakpointManager', () => {
       mockGetSourceOffsets.mockReturnValue([9]);
     });
 
+    it('hands a name arriving as a change to the resolver, not just an addition', async () => {
+      // VS Code's + creates the breakpoint blank and opens it for editing, so the
+      // typed name arrives in `changed`.
+      const named = new FunctionBreakpoint('at:');
+      debug.breakpoints = [named];
+
+      const manager = makeManager();
+      const context = {
+        subscriptions: [] as unknown[],
+      } as unknown as import('vscode').ExtensionContext;
+      manager.register(context);
+      const calls = vi.mocked(debug.onDidChangeBreakpoints).mock.calls;
+      calls[calls.length - 1][0]({ added: [], removed: [], changed: [named] });
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(vi.mocked(debug.removeBreakpoints)).toHaveBeenCalledWith([named]);
+    });
+
     it('hands a named breakpoint to the resolver, which replaces it', async () => {
       // The + button in the Breakpoints panel makes one of these — a name with no
       // location. It is converted to a located breakpoint on the method's entry;

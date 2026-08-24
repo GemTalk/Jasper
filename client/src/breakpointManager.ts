@@ -674,11 +674,15 @@ export class BreakpointManager {
     // idempotent, and the removal it triggers re-enters here with nothing left
     // to prune, so this does not loop.
     if (event.added.length > 0) this.pruneOrphans();
+    // Added *and* changed: VS Code's `+` button creates a function breakpoint
+    // with an empty name and only then opens it for editing, so the name the
+    // developer types arrives as a change rather than an addition.
+    //
     // Resolving a name can need a prompt, so this runs on its own; the
     // SourceBreakpoint it produces comes back through this handler and is
-    // applied like any other. handleAdded never rejects — it reports its own
+    // applied like any other. `handle` never rejects — it reports its own
     // failures — so there is nothing here for a caller to handle.
-    void this.functionBreakpoints.handleAdded(event.added);
+    void this.functionBreakpoints.handle([...event.added, ...event.changed]);
 
     const session = this.sessionManager.getSelectedSession();
     if (!session) return;

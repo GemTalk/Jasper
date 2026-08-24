@@ -145,7 +145,7 @@ describe('FunctionBreakpointResolver', () => {
     mockImplementors.mockReturnValue([account]);
     const bp = new FunctionBreakpoint('balance');
 
-    await new FunctionBreakpointResolver(makeSessionManager()).handleAdded([bp]);
+    await new FunctionBreakpointResolver(makeSessionManager()).handle([bp]);
 
     // The named breakpoint is replaced, not kept alongside.
     expect(removed()).toHaveBeenCalledWith([bp]);
@@ -160,7 +160,7 @@ describe('FunctionBreakpointResolver', () => {
 
   it('does not prompt when only one class implements the selector', async () => {
     mockImplementors.mockReturnValue([account]);
-    await new FunctionBreakpointResolver(makeSessionManager()).handleAdded([
+    await new FunctionBreakpointResolver(makeSessionManager()).handle([
       new FunctionBreakpoint('balance'),
     ]);
     expect(vi.mocked(window.showQuickPick)).not.toHaveBeenCalled();
@@ -170,7 +170,7 @@ describe('FunctionBreakpointResolver', () => {
     mockImplementors.mockReturnValue([savings, account]);
     vi.mocked(window.showQuickPick).mockResolvedValue({ target: savings });
 
-    await new FunctionBreakpointResolver(makeSessionManager()).handleAdded([
+    await new FunctionBreakpointResolver(makeSessionManager()).handle([
       new FunctionBreakpoint('balance'),
     ]);
 
@@ -185,7 +185,7 @@ describe('FunctionBreakpointResolver', () => {
     vi.mocked(window.showQuickPick).mockResolvedValue(undefined);
     const bp = new FunctionBreakpoint('balance');
 
-    await new FunctionBreakpointResolver(makeSessionManager()).handleAdded([bp]);
+    await new FunctionBreakpointResolver(makeSessionManager()).handle([bp]);
 
     // Leaving an unresolved one in the panel is the dead-breakpoint problem again.
     expect(removed()).toHaveBeenCalledWith([bp]);
@@ -195,7 +195,7 @@ describe('FunctionBreakpointResolver', () => {
 
   it('takes a qualified name at its word without prompting', async () => {
     mockImplementors.mockReturnValue([savings, account]);
-    await new FunctionBreakpointResolver(makeSessionManager()).handleAdded([
+    await new FunctionBreakpointResolver(makeSessionManager()).handle([
       new FunctionBreakpoint('Account>>balance'),
     ]);
     expect(vi.mocked(window.showQuickPick)).not.toHaveBeenCalled();
@@ -207,7 +207,7 @@ describe('FunctionBreakpointResolver', () => {
   it('resolves a class-side qualified name to the metaclass', async () => {
     const meta = { ...account, isMeta: true, selector: 'new', category: 'instance creation' };
     mockImplementors.mockReturnValue([meta]);
-    await new FunctionBreakpointResolver(makeSessionManager()).handleAdded([
+    await new FunctionBreakpointResolver(makeSessionManager()).handle([
       new FunctionBreakpoint('Account class>>new'),
     ]);
     expect(addedSourceBreakpoint()?.location.uri.toString()).toContain('/Account/class/');
@@ -218,7 +218,7 @@ describe('FunctionBreakpointResolver', () => {
     mockImplementors.mockReturnValue([savings]);
     const bp = new FunctionBreakpoint('Account>>balance');
 
-    await new FunctionBreakpointResolver(makeSessionManager()).handleAdded([bp]);
+    await new FunctionBreakpointResolver(makeSessionManager()).handle([bp]);
 
     expect(removed()).toHaveBeenCalledWith([bp]);
     expect(added()).not.toHaveBeenCalled();
@@ -227,21 +227,21 @@ describe('FunctionBreakpointResolver', () => {
 
   it('says nothing implements an unknown selector', async () => {
     mockImplementors.mockReturnValue([]);
-    await new FunctionBreakpointResolver(makeSessionManager()).handleAdded([
+    await new FunctionBreakpointResolver(makeSessionManager()).handle([
       new FunctionBreakpoint('noSuchThing'),
     ]);
     expect(warn()).toHaveBeenCalledWith(expect.stringContaining('Nothing implements #noSuchThing'));
   });
 
   it('explains a name that is not a method name at all', async () => {
-    await new FunctionBreakpointResolver(makeSessionManager()).handleAdded([
+    await new FunctionBreakpointResolver(makeSessionManager()).handle([
       new FunctionBreakpoint('>>oops'),
     ]);
     expect(warn()).toHaveBeenCalledWith(expect.stringContaining('is not a method name'));
   });
 
   it('asks for a login rather than failing silently', async () => {
-    await new FunctionBreakpointResolver(makeSessionManager(false)).handleAdded([
+    await new FunctionBreakpointResolver(makeSessionManager(false)).handle([
       new FunctionBreakpoint('balance'),
     ]);
     expect(warn()).toHaveBeenCalledWith(expect.stringContaining('No active GemStone session'));
@@ -250,7 +250,7 @@ describe('FunctionBreakpointResolver', () => {
   it('refuses a method with no step points', async () => {
     mockImplementors.mockReturnValue([account]);
     mockOffsets.mockReturnValue([]);
-    await new FunctionBreakpointResolver(makeSessionManager()).handleAdded([
+    await new FunctionBreakpointResolver(makeSessionManager()).handle([
       new FunctionBreakpoint('balance'),
     ]);
     expect(warn()).toHaveBeenCalledWith(expect.stringContaining('no step points'));
@@ -260,7 +260,7 @@ describe('FunctionBreakpointResolver', () => {
     mockImplementors.mockImplementation(() => {
       throw new Error('session busy');
     });
-    await new FunctionBreakpointResolver(makeSessionManager()).handleAdded([
+    await new FunctionBreakpointResolver(makeSessionManager()).handle([
       new FunctionBreakpoint('balance'),
     ]);
     expect(warn()).toHaveBeenCalledWith(expect.stringContaining('session busy'));
@@ -272,7 +272,7 @@ describe('FunctionBreakpointResolver', () => {
     mockImplementors.mockReturnValue([{ ...account, dictName: '' }]);
     const bp = new FunctionBreakpoint('balance');
 
-    await new FunctionBreakpointResolver(makeSessionManager()).handleAdded([bp]);
+    await new FunctionBreakpointResolver(makeSessionManager()).handle([bp]);
 
     expect(removed()).toHaveBeenCalledWith([bp]);
     expect(added()).not.toHaveBeenCalled();
@@ -289,22 +289,54 @@ describe('FunctionBreakpointResolver', () => {
     const bp = new FunctionBreakpoint('balance');
 
     await expect(
-      new FunctionBreakpointResolver(makeSessionManager()).handleAdded([bp]),
+      new FunctionBreakpointResolver(makeSessionManager()).handle([bp]),
     ).resolves.toBeUndefined();
     expect(warn()).toHaveBeenCalled();
     expect(removed()).toHaveBeenCalledWith([bp]);
   });
 
+  it('leaves a blank name alone — the developer is still typing', async () => {
+    // VS Code's + button creates the breakpoint empty and *then* opens it for
+    // editing. Rejecting the blank deleted the row before it could be typed in.
+    const bp = new FunctionBreakpoint('');
+
+    await new FunctionBreakpointResolver(makeSessionManager()).handle([bp]);
+
+    expect(removed()).not.toHaveBeenCalled();
+    expect(added()).not.toHaveBeenCalled();
+    expect(warn()).not.toHaveBeenCalled();
+  });
+
+  it('leaves a whitespace-only name alone too', async () => {
+    await new FunctionBreakpointResolver(makeSessionManager()).handle([
+      new FunctionBreakpoint('   '),
+    ]);
+    expect(warn()).not.toHaveBeenCalled();
+    expect(removed()).not.toHaveBeenCalled();
+  });
+
+  it('resolves the name that arrives as a change, not an addition', async () => {
+    // The typed name reaches us through onDidChangeBreakpoints' `changed` list;
+    // the manager passes added and changed together, so `handle` sees both.
+    mockImplementors.mockReturnValue([account]);
+    const typed = new FunctionBreakpoint('balance');
+
+    await new FunctionBreakpointResolver(makeSessionManager()).handle([typed]);
+
+    expect(removed()).toHaveBeenCalledWith([typed]);
+    expect(addedSourceBreakpoint()).toBeInstanceOf(SourceBreakpoint);
+  });
+
   it('carries the enabled flag across the conversion', async () => {
     mockImplementors.mockReturnValue([account]);
-    await new FunctionBreakpointResolver(makeSessionManager()).handleAdded([
+    await new FunctionBreakpointResolver(makeSessionManager()).handle([
       new FunctionBreakpoint('balance', false),
     ]);
     expect(addedSourceBreakpoint()?.enabled).toBe(false);
   });
 
   it('ignores an ordinary source breakpoint', async () => {
-    await new FunctionBreakpointResolver(makeSessionManager()).handleAdded([
+    await new FunctionBreakpointResolver(makeSessionManager()).handle([
       new SourceBreakpoint({ uri: 'x', range: { start: {} } } as never),
     ]);
     expect(added()).not.toHaveBeenCalled();
@@ -322,8 +354,8 @@ describe('FunctionBreakpointResolver', () => {
     );
 
     const resolver = new FunctionBreakpointResolver(makeSessionManager());
-    const first = resolver.handleAdded([new FunctionBreakpoint('balance')]);
-    const second = resolver.handleAdded([new FunctionBreakpoint('balance')]);
+    const first = resolver.handle([new FunctionBreakpoint('balance')]);
+    const second = resolver.handle([new FunctionBreakpoint('balance')]);
 
     release({ target: account });
     await Promise.all([first, second]);
