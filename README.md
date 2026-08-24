@@ -263,6 +263,11 @@ the thing it was set in goes away:
   Jasper by topaz or a `halt` left in the code
 - **Clear All Breakpoints in Method** drops every breakpoint in the method you
   are in
+- **Not honoured: conditions, hit counts and log messages.** VS Code's *Edit
+  Breakpoint* accepts all three; GemStone breakpoints stop every time the step
+  point is reached, so Jasper warns when you set one rather than quietly ignoring
+  it. Conditional breakpoints are tracked under
+  [#277](https://github.com/GemTalk/Jasper/issues/277)
 - **Avoid VS Code's own "Deactivate Breakpoints"** button (the filled-dot icon in
   the Breakpoints panel header). It greys the breakpoints out in the panel, but
   the VS Code API exposes no way for an extension to observe that state — so

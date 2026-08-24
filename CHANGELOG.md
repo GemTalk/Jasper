@@ -23,6 +23,7 @@ All notable changes to the **GemStone Smalltalk** extension will be documented i
 
 ### Documentation
 
+- **Setting a breakpoint condition now says it will not be honoured.** VS Code's *Edit Breakpoint* accepts a condition, a hit count or a log message, and all three are the debugger's job — Jasper does not implement them, so the breakpoint stopped every time it was reached with nothing to say so. That is the worst shape this failure takes: the developer wrote down a precise intent, the UI accepted it, and execution ignored it. It now warns. The fields are still carried across enable/disable and name-conversion, so nothing is lost when conditional breakpoints do arrive ([#277](https://github.com/GemTalk/Jasper/issues/277)).
 - **Known limitation: VS Code's "Deactivate Breakpoints" does not reach GemStone.** That button greys the breakpoints out in the Breakpoints panel, but `vscode.debug` exposes no activation state and no event for it, so an extension cannot observe it — Jasper's breakpoints stay armed in the gem and execution still stops. **Disable All Breakpoints** does the right thing and should be used instead.
 
 ## [1.8.13] - 2026-08-20

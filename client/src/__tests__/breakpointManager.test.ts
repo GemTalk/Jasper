@@ -477,6 +477,103 @@ describe('BreakpointManager', () => {
     });
   });
 
+  describe('conditions, hit counts and log messages', () => {
+    /** Drive the manager through the change event, the way VS Code does. */
+    function fire(event: { added?: unknown[]; removed?: unknown[]; changed?: unknown[] }) {
+      const manager = makeManager();
+      const context = {
+        subscriptions: [] as unknown[],
+      } as unknown as import('vscode').ExtensionContext;
+      manager.register(context);
+      const calls = vi.mocked(debug.onDidChangeBreakpoints).mock.calls;
+      calls[calls.length - 1][0]({
+        added: event.added ?? [],
+        removed: event.removed ?? [],
+        changed: event.changed ?? [],
+      });
+    }
+
+    const withFields = (fields: {
+      condition?: string;
+      hitCondition?: string;
+      logMessage?: string;
+    }) =>
+      new SourceBreakpoint(
+        new Location(Uri.parse(METHOD_URI), new Position(0, 0)),
+        true,
+        fields.condition,
+        fields.hitCondition,
+        fields.logMessage,
+      );
+
+    beforeEach(() => {
+      vi.mocked(debug.onDidChangeBreakpoints).mockClear();
+      vi.mocked(window.showWarningMessage).mockClear();
+      mockGetMethodSource.mockReturnValue('foo\n^1');
+      mockGetSourceOffsets.mockReturnValue([1, 5]);
+    });
+
+    it('warns that a condition is ignored, rather than silently not honouring it', () => {
+      fire({ added: [withFields({ condition: 'x > 3' })] });
+      expect(vi.mocked(window.showWarningMessage)).toHaveBeenCalledWith(
+        expect.stringContaining('ignore conditions'),
+      );
+    });
+
+    it('warns for a hit count', () => {
+      fire({ added: [withFields({ hitCondition: '5' })] });
+      expect(vi.mocked(window.showWarningMessage)).toHaveBeenCalled();
+    });
+
+    it('warns for a log message (a logpoint)', () => {
+      fire({ added: [withFields({ logMessage: 'here' })] });
+      expect(vi.mocked(window.showWarningMessage)).toHaveBeenCalled();
+    });
+
+    it('warns when a condition is added to an existing breakpoint', () => {
+      // Edit Breakpoint on an existing one arrives as a change, not an addition.
+      fire({ changed: [withFields({ condition: 'x > 3' })] });
+      expect(vi.mocked(window.showWarningMessage)).toHaveBeenCalled();
+    });
+
+    it('says nothing for a plain breakpoint', () => {
+      fire({
+        added: [new SourceBreakpoint(new Location(Uri.parse(METHOD_URI), new Position(0, 0)))],
+      });
+      expect(vi.mocked(window.showWarningMessage)).not.toHaveBeenCalled();
+    });
+
+    it('warns once for several conditional breakpoints, not once each', () => {
+      fire({ added: [withFields({ condition: 'a' }), withFields({ condition: 'b' })] });
+      expect(vi.mocked(window.showWarningMessage)).toHaveBeenCalledTimes(1);
+    });
+
+    it('ignores a conditional breakpoint on a non-gemstone file', () => {
+      const fileBp = new SourceBreakpoint(
+        new Location(Uri.parse('file:///a.ts'), new Position(0, 0)),
+        true,
+        'x > 3',
+      );
+      fire({ added: [fileBp] });
+      expect(vi.mocked(window.showWarningMessage)).not.toHaveBeenCalled();
+    });
+
+    it('still carries the fields across an enable/disable round trip', () => {
+      // Nothing is lost if conditions are honoured later.
+      const bp = withFields({ condition: 'x > 3', hitCondition: '2', logMessage: 'hi' });
+      debug.breakpoints = [bp];
+
+      makeManager().setAllEnabled(false);
+
+      const replacement = vi.mocked(debug.addBreakpoints).mock.calls.at(-1)?.[0][0] as
+        SourceBreakpoint | undefined;
+      expect(replacement?.condition).toBe('x > 3');
+      expect(replacement?.hitCondition).toBe('2');
+      expect(replacement?.logMessage).toBe('hi');
+      expect(replacement?.enabled).toBe(false);
+    });
+  });
+
   describe('pruneOrphans', () => {
     it('drops a restored breakpoint whose session is gone', () => {
       // VS Code persists its list across restarts; a GemStone breakpoint lives in

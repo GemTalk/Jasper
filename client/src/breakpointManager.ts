@@ -686,6 +686,8 @@ export class BreakpointManager {
     // idempotent, and the removal it triggers re-enters here with nothing left
     // to prune, so this does not loop.
     if (event.added.length > 0) this.pruneOrphans();
+    this.warnAboutUnsupportedFields([...event.added, ...event.changed]);
+
     // Added *and* changed: VS Code's `+` button creates a function breakpoint
     // with an empty name and only then opens it for editing, so the name the
     // developer types arrives as a change rather than an addition.
@@ -708,6 +710,34 @@ export class BreakpointManager {
     for (const uriStr of affected) {
       this.applyToUri(session, vscode.Uri.parse(uriStr));
     }
+  }
+
+  /**
+   * Say so when a breakpoint carries a condition, hit count or log message.
+   *
+   * VS Code offers all three through *Edit Breakpoint*, and they are honoured
+   * entirely by the debugger — Jasper does not implement them, so the breakpoint
+   * stops every time it is reached. Left unsaid, that is the worst kind of
+   * failure this feature has: the developer has written down a precise intent,
+   * the UI accepts it, and execution quietly ignores it. The fields are still
+   * carried across enable/disable and name-conversion, so nothing is lost if
+   * they are honoured later.
+   */
+  private warnAboutUnsupportedFields(breakpoints: readonly vscode.Breakpoint[]): void {
+    const ignored = breakpoints.filter(
+      (bp) =>
+        bp instanceof vscode.SourceBreakpoint &&
+        bp.location.uri.scheme === 'gemstone' &&
+        (bp.condition !== undefined ||
+          bp.hitCondition !== undefined ||
+          bp.logMessage !== undefined),
+    );
+    if (ignored.length === 0) return;
+    vscode.window.showWarningMessage(
+      'GemStone breakpoints ignore conditions, hit counts and log messages — ' +
+        `${ignored.length === 1 ? 'this breakpoint' : 'these breakpoints'} will stop every time ` +
+        'the step point is reached.',
+    );
   }
 
   private refreshEditorsFor(uri: vscode.Uri): void {
