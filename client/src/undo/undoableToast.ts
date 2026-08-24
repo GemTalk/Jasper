@@ -7,7 +7,7 @@
  * keybinding — exists for the case where this one was missed or dismissed.
  *
  * Refactorings had this from the start (`refactoring/refactoringAppliedToast.ts`, which
- * additionally has to ask the stone whether anything was recorded). Ordinary method edits
+ * additionally has to ask the stone whether anything was recorded). Method and class edits
  * know the answer already — `commit` hands back the entry, or nothing — so they come here.
  *
  * The button runs the ordinary Undo, which reverses whatever is on TOP of the stack. If
@@ -19,10 +19,8 @@
  * dismisses it, and the edit that triggered it must not stay "running" until then.
  */
 import * as vscode from 'vscode';
-import { UNDO_COMMAND } from './undoUi';
+import { UNDO_COMMAND, undoVerb } from './undoUi';
 import { UndoEntry } from './undoTypes';
-
-const UNDO_ACTION = 'Undo';
 
 /**
  * Announce a completed action, offering Undo when one was recorded for it.
@@ -36,9 +34,12 @@ export function notifyUndoable(message: string, entry: UndoEntry | undefined): v
     void vscode.window.showInformationMessage(message);
     return;
   }
+  // The button says what pressing it does: "Revert" for a class edit, which binds an
+  // earlier version rather than rolling anything back, and "Undo" for everything else.
+  const action = undoVerb(entry);
   void (async () => {
-    const choice = await vscode.window.showInformationMessage(message, UNDO_ACTION);
-    if (choice !== UNDO_ACTION) return;
+    const choice = await vscode.window.showInformationMessage(message, action);
+    if (choice !== action) return;
     await vscode.commands.executeCommand(UNDO_COMMAND);
   })();
 }

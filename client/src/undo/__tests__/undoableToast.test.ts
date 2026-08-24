@@ -49,6 +49,40 @@ describe('notifyUndoable', () => {
     expect(vscode.commands.executeCommand).toHaveBeenCalledWith(UNDO_COMMAND);
   });
 
+  it('labels the button Revert for a class edit', async () => {
+    notifyUndoable('Class definition updated for Account', {
+      id: 2,
+      kind: 'classEdit',
+      sessionId: 1,
+      label: 'Redefine class Account',
+      slots: [],
+      before: [],
+      after: [],
+      stashKeys: [],
+    });
+    await settle();
+    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+      'Class definition updated for Account',
+      'Revert',
+    );
+  });
+
+  it('runs the undo command from the Revert button too — one command, one stack', async () => {
+    vi.mocked(vscode.window.showInformationMessage).mockResolvedValue('Revert' as never);
+    notifyUndoable('Class definition updated for Account', {
+      id: 2,
+      kind: 'classEdit',
+      sessionId: 1,
+      label: 'Redefine class Account',
+      slots: [],
+      before: [],
+      after: [],
+      stashKeys: [],
+    });
+    await settle();
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith(UNDO_COMMAND);
+  });
+
   it('shows a plain notice when nothing was recorded', async () => {
     notifyUndoable('Compiled method Account>>#balance', undefined);
     await settle();

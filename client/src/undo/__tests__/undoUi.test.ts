@@ -60,6 +60,46 @@ describe('the undo status-bar button', () => {
     expect((item.color as { id: string }).id).toBe('charts.purple');
   });
 
+  it('calls a class edit a REVERT, in the button and the tooltip', () => {
+    // Every message that action goes on to produce says "Revert" — binding an earlier class
+    // version is not a rollback. Promising an Undo and handing over a Revert would be worse
+    // than one button that names what it will do.
+    const item = fakeItem();
+    setUndoStatusBarItem(item as never);
+    pushUndoEntry({
+      kind: 'classEdit',
+      sessionId: session.id,
+      label: 'Redefine class Account',
+      slots: [],
+      before: [],
+      after: [],
+      stashKeys: [],
+    });
+
+    refreshUndoUi(session);
+
+    expect(item.text).toContain('Revert');
+    expect(item.text).not.toContain('Undo');
+    expect(item.tooltip).toBe('GemStone — Revert: Redefine class Account (Ctrl+K U)');
+  });
+
+  it('separates the verb from the label, so two verbs do not run together', () => {
+    const item = fakeItem();
+    setUndoStatusBarItem(item as never);
+    pushUndoEntry({
+      kind: 'methodEdit',
+      sessionId: session.id,
+      label: 'Delete Account>>#balance',
+      slots: [],
+      before: [],
+      after: [],
+    });
+
+    refreshUndoUi(session);
+
+    expect(item.tooltip).toBe('GemStone — Undo: Delete Account>>#balance (Ctrl+K U)');
+  });
+
   it('names its keybinding, which is how the shortcut gets learned', () => {
     const item = fakeItem();
     setUndoStatusBarItem(item as never);

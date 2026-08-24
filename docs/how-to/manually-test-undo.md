@@ -35,7 +35,9 @@ change, so it says so first. This needs **no refactoring engine on the stone** �
 plain `compileMethod:` / `removeSelector:`, so it works wherever Jasper can log in.
 
 Both kinds are reached the same way, by the same button and the same key — semantically they
-are the same act, and splitting them into two commands would only make the user pick.
+are the same act, and splitting them into two commands would only make the user pick. The
+button and its tooltip say which of the two it is about to do: **Undo** for a method edit or a
+refactoring, **Revert** for a class edit, always naming the specific change.
 
 Undo is reached five ways, and the first is the one that matters: **the Undo button on the
 notice that follows the action**, where you are already looking. If that is missed, there is a
@@ -130,14 +132,14 @@ Start here: this is the path that does not involve the refactoring engine at all
 | 0.0 | Connect, and before editing anything look at the **status bar** (left end) | A **dimmed ↩ Undo** button is already there, tooltip **GemStone — nothing to undo yet (Ctrl+K U)**. It does not come and go — that is the point: you can learn where it lives |
 | 0.0b | Click it while dimmed | A plain "there is nothing to undo" message — the button explains itself rather than being inert |
 | 0.1 | Open `UndoDemo>>total` in an editor, change the body to `^ 99`, **save** | Toast: `Compiled method UndoDemo>>#total` **with an Undo button** |
-| 0.2 | Look at the **status bar** | The same button, now **purple**, tooltip **GemStone — Undo Save UndoDemo>>#total (Ctrl+K U)** — it names the edit, not just "undo" |
+| 0.2 | Look at the **status bar** | The same button, now **purple**, tooltip **GemStone — Undo: Save UndoDemo>>#total (Ctrl+K U)** — it names the edit, not just "undo" |
 | 0.2b | Look at the **editor title bar** and the **Methods** pane title | The ↩ icon is in both — beside the method you just saved, and above the list you just changed |
 | 0.3 | Press the toast's Undo (or the status-bar button, or **Ctrl+K U**) | **No panel.** The method reverts on the spot, the open editor reloads showing `^ 40 + 2` again, and a toast says `Undid Save UndoDemo>>#total — reverted UndoDemo>>#total. Compiled but NOT committed` |
 | 0.3b | The status-bar button now | Back to **dimmed** — still there, just nothing left to undo |
 | 0.4 | The Undo button | **Gone** — the entry was used up |
-| 0.5 | Create a **new** method on `UndoDemo` (`scratch ^ 1`) and save it | Tooltip now reads **Undo Add UndoDemo>>#scratch** |
+| 0.5 | Create a **new** method on `UndoDemo` (`scratch ^ 1`) and save it | Tooltip now reads **GemStone — Undo: Add UndoDemo>>#scratch (Ctrl+K U)** |
 | 0.6 | Press Undo | `scratch` is **removed** from the Explorer's method list |
-| 0.7 | Delete `untouched` from the Explorer (the 🗑 on the row), confirm | Toast `Removed UndoDemo>>#untouched` **with an Undo button**; the status-bar tooltip reads **Undo Delete UndoDemo>>#untouched** |
+| 0.7 | Delete `untouched` from the Explorer (the 🗑 on the row), confirm | Toast `Removed UndoDemo>>#untouched` **with an Undo button**; the status-bar tooltip reads **GemStone — Undo: Delete UndoDemo>>#untouched (Ctrl+K U)** |
 | 0.8 | Press Undo | `untouched` is **back**, with its original source *and* its original category — not `as yet unclassified` |
 | 0.9 | Save `total` three times with three different bodies, then press Undo three times | Each press walks back one save, newest first — it is a stack, not a single slot |
 | 0.10 | Save `total`, then open it in a second editor, change it there and save, then Undo | A **modal** warning: the method changed since that save, and undoing discards the change. **Cancel** leaves everything alone and the Undo button stays |
@@ -151,16 +153,17 @@ Note the word: **Revert**, not Undo, in every message this produces.
 
 | # | Step | Expect |
 |---|---|---|
-| 0b.1 | Create a class `UndoDemo2` in `UserGlobals` from the Explorer's new-class editor and save | Toast `Class created: UndoDemo2` **with an Undo button**; status-bar tooltip **Undo Add class UndoDemo2** |
-| 0b.2 | Press Undo | `UndoDemo2` is gone from the Classes pane. No modal — nothing had been written on it |
-| 0b.3 | Open `UndoDemo`'s **definition**, add an instance variable (`instVarNames: #('balance' 'extra')`), save | Toast `Class definition updated for UndoDemo` with an Undo button. **Note the Methods pane: it is now empty.** See "A sharp edge worth knowing" below |
-| 0b.4 | Press Undo | A toast: `Reverted Redefine class UndoDemo — restored UndoDemo to its earlier version. The class keeps its history.` The instance variable is gone **and every method is back** |
+| 0b.0 | After any class action, look at the **status-bar button itself** | It reads **↩ Revert**, not ↩ Undo, and the toast's button says **Revert** too. Same button, same **Ctrl+K U** — the word changes because binding an earlier class version is not a rollback |
+| 0b.1 | Create a class `UndoDemo2` in `UserGlobals` from the Explorer's new-class editor and save | Toast `Class created: UndoDemo2` **with a Revert button**; status-bar tooltip **GemStone — Revert: Add class UndoDemo2 (Ctrl+K U)** |
+| 0b.2 | Press Revert | `UndoDemo2` is gone from the Classes pane. No modal — nothing had been written on it |
+| 0b.3 | Open `UndoDemo`'s **definition**, add an instance variable (`instVarNames: #('balance' 'extra')`), save | Toast `Class definition updated for UndoDemo` with a Revert button. **Note the Methods pane: it is now empty.** See "A sharp edge worth knowing" below |
+| 0b.4 | Press Revert | A toast: `Reverted Redefine class UndoDemo — restored UndoDemo to its earlier version. The class keeps its history.` The instance variable is gone **and every method is back** |
 | 0b.5 | Class History on `UndoDemo` | **More** versions than before, not fewer — a revert binds an earlier version, it does not delete a later one |
-| 0b.6 | Repeat 0b.3, then write a new method on the redefined class (`writtenLater ^ 1`) and save it, then Undo | A **modal** first: reverting leaves 1 method behind, and it **names** `UndoDemo>>#writtenLater`. Cancel and nothing happens |
+| 0b.6 | Repeat 0b.3, then write a new method on the redefined class (`writtenLater ^ 1`) and save it, then Revert | A **modal** first: reverting leaves 1 method behind, and it **names** `UndoDemo>>#writtenLater`. Cancel and nothing happens |
 | 0b.7 | Do it again and press **Revert Anyway** | The class is back with its original methods; `writtenLater` is **not** there — it belongs to the version that is no longer bound, exactly as warned |
-| 0b.8 | Remove `UndoDemo` from the Explorer (right-click → Remove), confirm | Toast `Removed class UndoDemo` **with an Undo button** |
-| 0b.9 | Press Undo | The class is back — **the same version**, with its methods, its class-side methods and its history. No modal: nothing newer existed to leave behind |
-| 0b.10 | Remove a class that has **subclasses** (the Explorer removes the whole subtree) | One entry, named `Remove N classes (X and its subclasses)`. One Undo puts the **whole subtree** back — putting half of it back is not a reversal of what you asked for |
+| 0b.8 | Remove `UndoDemo` from the Explorer (right-click → Remove), confirm | Toast `Removed class UndoDemo` **with a Revert button** |
+| 0b.9 | Press Revert | The class is back — **the same version**, with its methods, its class-side methods and its history. No modal: nothing newer existed to leave behind |
+| 0b.10 | Remove a class that has **subclasses** (the Explorer removes the whole subtree) | One entry, named `Remove N classes (X and its subclasses)`. One Revert puts the **whole subtree** back — putting half of it back is not a reversal of what you asked for |
 | 0b.11 | Save a definition, then **log out and back in**, then look at the status bar | Dimmed. The earlier version was held in the session, and the session is gone |
 
 ### A sharp edge worth knowing
@@ -184,7 +187,7 @@ class object — so no version is created, no methods are lost, and nothing is r
 | 1.4 | Do **not** press it. Dismiss the toast (the ✕, or just let it fade) | — |
 | 1.5 | Press **Ctrl+K U** | The undo runs — no hunting for a button at all. (Undo it back, or re-apply, before continuing) |
 | 1.6 | Look at the **status bar** | The ↩ Undo button has gone from dimmed to **purple** — it should catch your eye against the neutral items |
-| 1.6b | Hover it | Tooltip reads **GemStone — Undo Rename 'total' → 'sum' (Ctrl+K U)**: it says which extension it belongs to, *which* refactoring it will undo, and the shortcut |
+| 1.6b | Hover it | Tooltip reads **GemStone — Undo: Rename 'total' → 'sum' (Ctrl+K U)**: it says which extension it belongs to, *which* refactoring it will undo, and the shortcut |
 | 1.6c | **Methods** pane title bar, and the title bar of any open method editor | The same action is in both. It is **not** on the Dictionaries pane — undo is not a dictionary operation |
 | 1.7 | Right-click a class, a method, an instance variable | **No** Undo item on any context menu — one button, not an entry on every row |
 

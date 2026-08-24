@@ -12,6 +12,12 @@
  * names both GemStone and the specific thing that would be undone — which is exactly what
  * a contributed menu title cannot do, since those are static.
  *
+ * The VERB follows the entry. A class edit is reversed by binding the earlier version
+ * again, which is a revert and not a rollback, and every message that action produces says
+ * so; the button has to agree, or the user is promised an undo and handed a revert. It is
+ * still the one button and the one keybinding — semantically it is the same act, and making
+ * the user pick between two commands would be worse than one that names what it will do.
+ *
  * It STAYS PUT while a session is connected, dimmed when there is nothing to undo, rather
  * than appearing and vanishing with the stack. A control that is usually absent cannot be
  * learned: you find it once, by accident, and then never again, because there is nowhere
@@ -23,6 +29,7 @@
 import * as vscode from 'vscode';
 import { ActiveSession } from '../sessionManager';
 import { peekUndoEntry } from './undoStack';
+import { UndoEntry } from './undoTypes';
 
 /** The command every Undo affordance runs. */
 export const UNDO_COMMAND = 'gemstone.undoLast';
@@ -67,10 +74,18 @@ export function refreshUndoUi(session: ActiveSession | undefined): void {
     statusItem.hide();
     return;
   }
-  statusItem.text = '$(discard) Undo';
+  statusItem.text = `$(discard) ${entry ? undoVerb(entry) : 'Undo'}`;
   statusItem.color = new vscode.ThemeColor(entry ? 'charts.purple' : 'disabledForeground');
+  // A colon, so the verb and the entry's own verb do not run together: "Revert: Remove
+  // class Account" rather than "Revert Remove class Account".
   statusItem.tooltip = entry
-    ? `GemStone — Undo ${entry.label} (Ctrl+K U)`
+    ? `GemStone — ${undoVerb(entry)}: ${entry.label} (Ctrl+K U)`
     : 'GemStone — nothing to undo yet (Ctrl+K U)';
   statusItem.show();
+}
+
+/** What reversing this entry is honestly called. A class edit binds an earlier version
+ *  rather than rolling anything back, so it is a revert; everything else is an undo. */
+export function undoVerb(entry: UndoEntry): 'Undo' | 'Revert' {
+  return entry.kind === 'classEdit' ? 'Revert' : 'Undo';
 }
