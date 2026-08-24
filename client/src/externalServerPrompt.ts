@@ -2,12 +2,16 @@ import * as vscode from 'vscode';
 import {
   ExternalServerReport,
   ReconcileChoice,
+  RESTART_AND_CONNECT,
+  RESTART_ONLY,
   reconcileMessage,
   reconcileTitle,
 } from './externalServerReconcile';
 
-const RESTART = 'Restart & Connect';
 const AS_IS = 'Connect as-is';
+/** Same choice, from a caller with no login to attempt: it only means "leave
+ *  the running servers alone". */
+const LEAVE_AS_IS = 'Leave as-is';
 
 /**
  * Ask what to do about servers running outside Jasper's environment.
@@ -25,14 +29,20 @@ const AS_IS = 'Connect as-is';
  */
 export async function confirmReconcileExternalServers(
   report: ExternalServerReport,
+  opts: { connects?: boolean } = {},
 ): Promise<ReconcileChoice> {
-  const actions = report.mayRestart ? [RESTART, AS_IS] : [AS_IS];
+  // The Databases row's own action has no login to retry, so offering
+  // "Restart & Connect" there promises something that will not happen.
+  const connects = opts.connects !== false;
+  const restart = connects ? RESTART_AND_CONNECT : RESTART_ONLY;
+  const asIs = connects ? AS_IS : LEAVE_AS_IS;
+  const actions = report.mayRestart ? [restart, asIs] : [asIs];
   const choice = await vscode.window.showWarningMessage(
     reconcileTitle(report),
-    { modal: true, detail: reconcileMessage(report) },
+    { modal: true, detail: reconcileMessage(report, restart) },
     ...actions,
   );
-  if (choice === RESTART) return 'restart';
-  if (choice === AS_IS) return 'as-is';
+  if (choice === restart) return 'restart';
+  if (choice === asIs) return 'as-is';
   return 'cancel';
 }

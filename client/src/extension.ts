@@ -3843,7 +3843,9 @@ export function activate(context: vscode.ExtensionContext) {
           finding,
           describeExternalServers(db, finding, sysadminStorage.getRootPath()),
           {
-            confirm: confirmReconcileExternalServers,
+            // No login is being retried here, so the dialog must not offer to
+            // connect — the row's action restarts and stops there.
+            confirm: (r) => confirmReconcileExternalServers(r, { connects: false }),
             stopExternal: (d, server) => processManager.stopExternalServer(d, server),
             killExternal: (server) => processManager.killHostServer(server),
             report: () => {

@@ -99,6 +99,31 @@ describe('confirmReconcileExternalServers', () => {
     expect(await confirmReconcileExternalServers(report())).toBe('as-is');
   });
 
+  it('does not promise a connect when no login is waiting', async () => {
+    // The Databases row's own action has nothing to connect to, so offering
+    // "Restart & Connect" there promises something that will not happen — and
+    // a dialog doing careful work cannot afford a small lie in its buttons.
+    await confirmReconcileExternalServers(report(), { connects: false });
+
+    expect(offered()).toEqual(['Restart', 'Leave as-is']);
+  });
+
+  it('still reports the choices correctly without a connect', async () => {
+    mocks.showWarningMessage.mockResolvedValueOnce('Restart');
+    expect(await confirmReconcileExternalServers(report(), { connects: false })).toBe('restart');
+
+    mocks.showWarningMessage.mockResolvedValueOnce('Leave as-is');
+    expect(await confirmReconcileExternalServers(report(), { connects: false })).toBe('as-is');
+  });
+
+  it('names the offered action in the body, whichever it is', async () => {
+    await confirmReconcileExternalServers(report(false, true), { connects: false });
+
+    const options = mocks.showWarningMessage.mock.calls[0][1] as { detail: string };
+    expect(options.detail).toContain('"Restart" is offered');
+    expect(options.detail).not.toContain('Restart & Connect');
+  });
+
   it('treats a dismissed dialog as a cancel', async () => {
     expect(await confirmReconcileExternalServers(report())).toBe('cancel');
   });

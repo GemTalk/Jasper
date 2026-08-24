@@ -36,6 +36,15 @@ export interface ExternalServerReport {
   mayRestart: boolean;
 }
 
+/** The action label when a connect follows the restart — the login-failure
+ *  path, where there is a login waiting to be retried. */
+export const RESTART_AND_CONNECT = 'Restart & Connect';
+/** The label when nothing will connect afterwards — the Databases row's own
+ *  action, which has no login to retry. Promising a connect there and not
+ *  delivering one is the kind of small lie that makes a user distrust the rest
+ *  of the dialog, which is doing careful work. */
+export const RESTART_ONLY = 'Restart';
+
 /** The dialog's title: what was actually started outside Jasper.
  *
  *  Naming the database's stone here was wrong whenever the stone was not the
@@ -147,7 +156,10 @@ function serverLines(report: ExternalServerReport): string {
  * in the first place. It explains that Jasper's `gslist` and the host's can
  * disagree, because without that the "Stopped" the tree showed makes no sense.
  */
-export function reconcileMessage(report: ExternalServerReport): string {
+export function reconcileMessage(
+  report: ExternalServerReport,
+  action = RESTART_AND_CONNECT,
+): string {
   const { is, was, it } = agreement(report);
   const lines = [
     `${serverList(report)} ${is} running, but ${was} started outside Jasper's environment, ` +
@@ -173,7 +185,7 @@ export function reconcileMessage(report: ExternalServerReport): string {
       unconfirmedWarning(report),
       '',
       'A NetLDI holds no data, so restarting the wrong one drops connections rather than ' +
-        'losing work — "Restart & Connect" is offered on that basis. Only you can say ' +
+        `losing work — "${action}" is offered on that basis. Only you can say ` +
         'whether anything else is using it.',
     );
   } else {
@@ -182,7 +194,7 @@ export function reconcileMessage(report: ExternalServerReport): string {
       unconfirmedWarning(report),
       '',
       'Stopping the wrong stone would lose whatever its sessions had not committed, so ' +
-        'Jasper will not do it on a guess and "Restart & Connect" is not offered. Stop it by ' +
+        `Jasper will not do it on a guess and "${action}" is not offered. Stop it by ` +
         'hand if you are sure it is the right one, or connect as-is.',
     );
   }
