@@ -688,8 +688,12 @@ describe('configuration', () => {
   }
 
   /** Canned report/setter output, keyed off what the executed Smalltalk asks. */
-  function cannedGci(setterResult = 'OK'): (code: string) => string {
+  function cannedGci(
+    opts: { setterResult?: string; systemUser?: boolean } = {},
+  ): (code: string) => string {
+    const { setterResult = 'OK', systemUser = false } = opts;
     return (code: string) => {
+      if (code.includes('AllUsers')) return systemUser ? 'true' : 'false';
       if (code.includes('stoneConfigurationReport'))
         return 'StnGemTimeout\tSmallInteger\t60\nSHR_PAGE_CACHE_SIZE_KB\tSmallInteger\t75000\n';
       if (code.includes('gemConfigurationReport')) return 'GemConvertArrayBuilder\tBoolean\ttrue\n';
@@ -729,17 +733,34 @@ describe('configuration', () => {
     const [msg] = posted(panel, 'configuration');
     expect(msg).toBeDefined();
     const config = msg.config as {
+      isSystemUser: boolean;
       stoneParams: { key: string; editable: boolean; settable: boolean }[];
-      gemParams: { key: string; type: string }[];
+      gemParams: { key: string; type: string; editable: boolean }[];
     };
+    // The session is DataCurator, so a stone runtime key is settable in principle
+    // but not editable here; the gem runtime key still is.
+    expect(config.isSystemUser).toBe(false);
     // Alphabetized case-insensitively, so SHR_… sorts ahead of StnGemTimeout.
     expect(config.stoneParams).toEqual([
       expect.objectContaining({ key: 'SHR_PAGE_CACHE_SIZE_KB', settable: false, editable: false }),
-      expect.objectContaining({ key: 'StnGemTimeout', settable: true, editable: true }),
+      expect.objectContaining({ key: 'StnGemTimeout', settable: true, editable: false }),
     ]);
     expect(config.gemParams).toEqual([
       expect.objectContaining({ key: 'GemConvertArrayBuilder', type: 'boolean', editable: true }),
     ]);
+  });
+
+  it('offers stone runtime keys as editable only to SystemUser', () => {
+    const panel = openWithSession(sessionWith(cannedGci({ systemUser: true })));
+
+    send(panel, { command: 'loadConfiguration' });
+
+    const config = posted(panel, 'configuration')[0].config as {
+      isSystemUser: boolean;
+      stoneParams: { key: string; editable: boolean }[];
+    };
+    expect(config.isSystemUser).toBe(true);
+    expect(config.stoneParams.find((p) => p.key === 'StnGemTimeout')?.editable).toBe(true);
   });
 
   it('reports an error rather than reading when no session is selected', () => {
@@ -756,10 +777,10 @@ describe('configuration', () => {
 
     send(panel, {
       command: 'setConfiguration',
-      scope: 'stone',
-      key: 'StnGemTimeout',
-      valueType: 'integer',
-      value: '0',
+      scope: 'gem',
+      key: 'GemConvertArrayBuilder',
+      valueType: 'boolean',
+      value: 'true',
     });
 
     // A successful set is followed by a fresh read — the panel shows what the
@@ -769,48 +790,48 @@ describe('configuration', () => {
   });
 
   it('warns when the stone accepts a set but the value does not change', () => {
-    // The canned report keeps StnGemTimeout at 60 no matter what is set, standing
-    // in for a runtime-immutable parameter the stone accepts and ignores.
+    // The canned report keeps GemConvertArrayBuilder at true no matter what is
+    // set, standing in for a parameter the stone accepts and then ignores.
     const panel = openWithSession(sessionWith(cannedGci()));
 
     send(panel, {
       command: 'setConfiguration',
-      scope: 'stone',
-      key: 'StnGemTimeout',
-      valueType: 'integer',
-      value: '0',
+      scope: 'gem',
+      key: 'GemConvertArrayBuilder',
+      valueType: 'boolean',
+      value: 'false',
     });
 
     const [notice] = posted(panel, 'configurationNotice') as { tone?: string; message?: string }[];
     expect(notice).toBeDefined();
     expect(notice.tone).toBe('warn');
-    expect(notice.message).toContain('still reports 60');
-    expect(notice.message).toContain('not 0');
+    expect(notice.message).toContain('still reports true');
+    expect(notice.message).toContain('not false');
   });
 
   it('confirms the settled value when a set does take', () => {
-    // Setting StnGemTimeout to the value the canned report already holds (60)
-    // stands in for a change that stuck.
+    // Setting GemConvertArrayBuilder to the value the canned report already holds
+    // (true) stands in for a change that stuck.
     const panel = openWithSession(sessionWith(cannedGci()));
 
     send(panel, {
       command: 'setConfiguration',
-      scope: 'stone',
-      key: 'StnGemTimeout',
-      valueType: 'integer',
-      value: '60',
+      scope: 'gem',
+      key: 'GemConvertArrayBuilder',
+      valueType: 'boolean',
+      value: 'true',
     });
 
     const [notice] = posted(panel, 'configurationNotice') as { tone?: string; message?: string }[];
     expect(notice).toBeDefined();
     expect(notice.tone).toBe('ok');
-    expect(notice.message).toContain('now reports 60');
+    expect(notice.message).toContain('now reports true');
   });
 
   it("relays the stone's refusal when a set is not allowed", () => {
     const refusal =
       'GS-ERROR: a SecurityError occurred (error 2213), only be performed by SystemUser.';
-    const panel = openWithSession(sessionWith(cannedGci(refusal)));
+    const panel = openWithSession(sessionWith(cannedGci({ setterResult: refusal })));
 
     send(panel, {
       command: 'setConfiguration',

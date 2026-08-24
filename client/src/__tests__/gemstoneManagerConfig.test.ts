@@ -189,6 +189,38 @@ describe('loading configuration', () => {
     );
   });
 
+  it('marks a runtime key the user cannot change, and offers no editor for it', () => {
+    const { root } = open(connectedState());
+    // A stone runtime key with editable:false — settable in principle, but this
+    // session (not SystemUser) may not change it.
+    sendMessage({
+      command: 'configuration',
+      config: configPayload({
+        isSystemUser: false,
+        stoneParams: [
+          {
+            key: 'StnCheckpointInterval',
+            value: '300',
+            type: 'integer',
+            settable: true,
+            editable: false,
+          },
+        ],
+        gemParams: [],
+      }),
+    });
+
+    const row = [...root.querySelectorAll('tr.config-item')].find(
+      (r) => r.querySelector('.config-name')?.textContent?.trim() === 'StnCheckpointInterval',
+    )!;
+    // Still classified runtime, but no editor, and the tooltip says why.
+    expect(row.querySelector('.badge-runtime')).not.toBeNull();
+    expect(row.querySelector('[data-action="editConfig"]')).toBeNull();
+    expect(row.querySelector('.config-info')!.getAttribute('title')).toContain(
+      'needs SystemUser to change',
+    );
+  });
+
   it('reports the settled value after a set that took', () => {
     const { root } = open(connectedState());
     sendMessage({ command: 'configuration', config: configPayload() });

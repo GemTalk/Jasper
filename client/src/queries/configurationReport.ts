@@ -170,6 +170,20 @@ export function gemConfiguration(execute: QueryExecutor): ConfigEntry[] {
   return runReport(execute, buildGemReportCode());
 }
 
+/**
+ * Whether this session is logged in as SystemUser. Stone-level configuration
+ * changes (`stoneConfigurationAt:put:`) are allowed only for SystemUser — every
+ * other user is refused with a SecurityError — so knowing this up front lets the
+ * viewer decline to offer an editor it knows the stone will reject, rather than
+ * marking a stone parameter runtime-editable and letting the user find out on
+ * Set. Answers false when the check itself cannot be made.
+ */
+export function sessionIsSystemUser(execute: QueryExecutor): boolean {
+  const code =
+    "([System myUserProfile == (AllUsers userWithId: 'SystemUser')] on: Error do: [:e | false]) printString";
+  return execute(code).trim() === 'true';
+}
+
 // A key is only ever formed from the report's own keys, but it is still spliced
 // into Smalltalk, so it is checked against the shape a configuration name can
 // take before it goes anywhere near the gem.

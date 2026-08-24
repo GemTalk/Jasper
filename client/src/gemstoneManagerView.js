@@ -1209,7 +1209,15 @@
   function configRow(param, scope) {
     const id = `${scope}:${param.key}`;
     const editing = configEditing.has(id);
-    const settleWord = param.settable ? 'runtime-settable' : 'read-only (set before startup)';
+    // A runtime key the current session may not change (a stone parameter, when
+    // not logged in as SystemUser) is settable in principle but not editable
+    // here — say why rather than offer an editor the stone would reject.
+    const needsSystemUser = param.settable && !param.editable && param.type !== 'other';
+    const settleWord = param.settable
+      ? needsSystemUser
+        ? 'runtime-settable · needs SystemUser to change'
+        : 'runtime-settable'
+      : 'read-only (set before startup)';
     const tip = `${typeLabel(param.type)} · ${settleWord}${
       param.description ? '\n\n' + param.description : ''
     }`;

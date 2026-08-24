@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   isRuntimeSettable,
   isEditable,
+  sessionIsSystemUser,
   parseConfigReport,
   buildStoneReportCode,
   buildGemReportCode,
@@ -161,6 +162,20 @@ describe('stoneConfiguration / gemConfiguration', () => {
     expect(gemConfiguration(execute)).toEqual([
       { key: 'GemFreePageIdsCache', value: '200', type: 'integer', settable: true },
     ]);
+  });
+});
+
+describe('sessionIsSystemUser', () => {
+  it('is true only when the profile check answers true', () => {
+    expect(sessionIsSystemUser(() => 'true')).toBe(true);
+    expect(sessionIsSystemUser(() => 'false')).toBe(false);
+    expect(sessionIsSystemUser(() => ' true \n')).toBe(true);
+  });
+
+  it('asks whether the session profile is SystemUser', () => {
+    const execute = vi.fn((_code: string) => 'false');
+    sessionIsSystemUser(execute);
+    expect(execute.mock.calls[0][0]).toContain("userWithId: 'SystemUser'");
   });
 });
 

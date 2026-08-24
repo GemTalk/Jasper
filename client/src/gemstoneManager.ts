@@ -54,6 +54,7 @@ import {
   stoneConfiguration,
   gemConfiguration,
   setConfiguration as setSessionConfiguration,
+  sessionIsSystemUser,
   configValuesMatch,
   isEditable,
   ConfigScope,
@@ -236,7 +237,12 @@ interface ConfigParam {
   type: ConfigValueType;
   /** CamelCase runtime key (as opposed to a read-only config-file parameter). */
   settable: boolean;
-  /** Runtime key whose value kind the inline editor can round-trip. */
+  /**
+   * Whether this session may actually change it: a runtime key of an editable
+   * kind, and — for a stone parameter — only when the session is SystemUser.
+   * A settable-but-not-editable row is a runtime key the current user lacks the
+   * authority to change; the panel shows why rather than offering a doomed edit.
+   */
   editable: boolean;
   /** Purpose text from system.conf, shown as a tooltip when the file named it. */
   description?: string;
@@ -247,6 +253,8 @@ interface ConfigurationPayload {
   sessionId: number;
   label: string;
   version: string;
+  /** SystemUser may change stone parameters; other users may not. */
+  isSystemUser: boolean;
   stoneParams: ConfigParam[];
   gemParams: ConfigParam[];
 }
@@ -1188,6 +1196,7 @@ export class GemstoneManagerPanel {
   /** Read both reports for a session and shape them for the panel. */
   private readConfiguration(session: ActiveSession): ConfigurationPayload {
     const execute = defaultQueryExecutorUsing(session);
+    const isSystemUser = sessionIsSystemUser(execute);
     const stone = stoneConfiguration(execute);
     const gem = gemConfiguration(execute);
     const descriptions = this.configDescriptions(session.login.version);
@@ -1195,8 +1204,9 @@ export class GemstoneManagerPanel {
       sessionId: session.id,
       label: loginLabel(session.login),
       version: session.login.version,
-      stoneParams: stone.map((e) => this.toConfigParam(e, descriptions)),
-      gemParams: gem.map((e) => this.toConfigParam(e, descriptions)),
+      isSystemUser,
+      stoneParams: stone.map((e) => this.toConfigParam(e, descriptions, 'stone', isSystemUser)),
+      gemParams: gem.map((e) => this.toConfigParam(e, descriptions, 'gem', isSystemUser)),
     };
   }
 
@@ -1257,14 +1267,23 @@ export class GemstoneManagerPanel {
     void this.panel.webview.postMessage({ command: 'configurationError', message });
   }
 
-  private toConfigParam(entry: ConfigEntry, descriptions: Map<string, string>): ConfigParam {
+  private toConfigParam(
+    entry: ConfigEntry,
+    descriptions: Map<string, string>,
+    scope: ConfigScope,
+    isSystemUser: boolean,
+  ): ConfigParam {
     const description = descriptionFor(descriptions, entry.key);
+    // A stone parameter can only be changed by SystemUser; a gem parameter may be
+    // attempted by any user (whether it takes is up to the stone, reported after
+    // the set). So a non-SystemUser sees stone runtime keys as not-editable.
+    const editable = isEditable(entry) && (scope === 'gem' || isSystemUser);
     return {
       key: entry.key,
       value: entry.value,
       type: entry.type,
       settable: entry.settable,
-      editable: isEditable(entry),
+      editable,
       ...(description ? { description } : {}),
     };
   }
