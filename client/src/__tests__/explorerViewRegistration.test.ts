@@ -17,9 +17,27 @@ import * as path from 'path';
 const pkgPath = path.resolve(__dirname, '..', '..', '..', 'package.json');
 const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
 
-const explorerViews: Array<{ id: string; when?: string }> = pkg.contributes.views.gemstoneExplorer;
+// Jasper contributes one activity-bar container, so the Explorer panes share it
+// with the admin views. Select them by id rather than by container.
+const gemstoneViews: Array<{ id: string; when?: string; visibility?: string }> =
+  pkg.contributes.views.gemstone;
+const explorerViews = gemstoneViews.filter((v) => v.id.startsWith('gemstoneExplorer'));
 
 const OPEN_EDITORS = 'gemstoneExplorerOpenEditors';
+
+describe('Jasper contributes one activity-bar container', () => {
+  it('shows a single GemStone icon in the activity bar', () => {
+    const ids = (pkg.contributes.viewsContainers.activitybar as Array<{ id: string }>).map(
+      (c) => c.id,
+    );
+
+    expect(ids).toEqual(['gemstone']);
+  });
+
+  it('puts the Explorer panes in that container', () => {
+    expect(explorerViews.map((v) => v.id)).toContain('gemstoneExplorerDicts');
+  });
+});
 
 describe('GemStone Explorer views are registrable when created', () => {
   it('registers an Open Editors pane', () => {

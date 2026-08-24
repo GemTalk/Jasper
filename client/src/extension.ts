@@ -17,6 +17,7 @@ import {
   GemStoneLogin,
   buildDataCuratorLogin,
   dataCuratorLoginToCreate,
+  loginsTargetingStone,
   loginLabel,
   loginTargetKey,
   sameLoginTarget,
@@ -88,6 +89,7 @@ import { refreshEnhancedInspectorAvailable } from './enhancedInspector/enhancedI
 import { refreshRefactoringSupportAvailable } from './refactoring/refactoringAvailability';
 import { supportsEnhancedInspector } from './enhancedInspector/enhancedInspectorInstall';
 import { DebuggerPanel } from './debuggerPanel';
+import { GemstoneManagerPanel } from './gemstoneManager';
 import { InlineValuesCodeLensProvider } from './inlineValuesCodeLens';
 import {
   GemStoneFileSystemProvider,
@@ -131,13 +133,15 @@ import { appendSysadmin, getSysadminChannel } from './sysadminChannel';
 import { VersionManager } from './versionManager';
 import { VersionTreeProvider, VersionItem } from './versionTreeProvider';
 import { DatabaseManager } from './databaseManager';
+import { defaultDatabaseNames } from './sysadminTypes';
 import { DatabaseTreeProvider, DatabaseNode } from './databaseTreeProvider';
 import { runLogicalBackup } from './backupManager';
 import { runOnlineExtentBackup, resolveExtentBackupSession } from './extentBackupManager';
 import { runLogicalRestore, RestoreSession } from './restoreManager';
 import { hasFileControlPrivilege, serverBackupFilePaths } from './queries/backup';
 import { backupFolderInServer } from './queries/extentBackup';
-import { ProcessManager } from './processManager';
+import { ProcessManager, versionsMatch } from './processManager';
+import { compareGemStoneVersions } from './gemStoneVersion';
 import { openMcpInspector } from './openMcpInspector';
 import { McpSocketServer, writeClaudeDesktopMcpConfig } from './mcpSocketServer';
 import { writeClaudeCodeUserMcpConfig } from './claudeCodeUserMcpConfig';
@@ -3475,6 +3479,24 @@ export function activate(context: vscode.ExtensionContext) {
     ),
   );
 
+  // The manager's dependency bag. Built on demand so every opener — the command,
+  // startup, and the last logout — passes the same thing.
+  const managerDeps = () => ({
+    storage: sysadminStorage,
+    versionManager,
+    processManager,
+    getLogins: () => storage.getLogins(),
+    sessionManager,
+    extensionUri: context.extensionUri,
+    // The same signals the admin trees redraw on: every command that changes
+    // a version, database or process refreshes one of these providers.
+    onAdminChange: [
+      versionProvider.onDidChangeTreeData,
+      databaseProvider.onDidChangeTreeData,
+      processProvider.onDidChangeTreeData,
+    ],
+  });
+
   // ── SysAdmin Commands ───────────────────────────────────
   context.subscriptions.push(
     vscode.commands.registerCommand('gemstone.refreshVersions', async () => {
@@ -3691,29 +3713,146 @@ export function activate(context: vscode.ExtensionContext) {
       }
     }),
 
+    // A database with no questions asked, for a machine that has none. Uses the
+    // same answers Quick Setup uses, and creates the stone's DataCurator login
+    // the same way the interactive create does — `gemstone.login` resolves the
+    // GCI library itself, so the login it leaves behind is usable as it stands.
+    vscode.commands.registerCommand('gemstone.createDatabaseDefaults', async () => {
+      const installed = [...sysadminStorage.getExtractedVersions()].sort((a, b) =>
+        compareGemStoneVersions(b, a),
+      );
+      const version = installed[0];
+      if (!version) {
+        void vscode.window.showErrorMessage(
+          'No GemStone version is installed yet. Install one before creating a database.',
+        );
+        return;
+      }
+      const { stoneName, ldiName } = defaultDatabaseNames(
+        sysadminStorage.getDatabases().flatMap((d) => [d.config.stoneName, d.config.ldiName]),
+      );
+
+      let db;
+      try {
+        db = await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: `Creating database ${stoneName} on GemStone ${version}...`,
+          },
+          (progress) =>
+            databaseManager.createDatabaseDirect(version, 'extent0', stoneName, ldiName, progress),
+        );
+      } catch (e) {
+        void vscode.window.showErrorMessage(
+          `Database creation failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
+        return;
+      }
+      const newLogin = dataCuratorLoginToCreate(storage.getLogins(), db.config);
+      if (newLogin) {
+        await storage.saveLogin(newLogin);
+        treeProvider.refresh();
+      }
+      // A database nobody can reach is not a finished job: bring the stone and
+      // NetLDI up too, through the same commands the panel and the sidebar use,
+      // so this inherits the shared-memory preflight and their reporting.
+      //
+      // A failure stops the chain and is thrown on to the caller. Starting a
+      // NetLDI for a stone that never came up only produces a second error, and
+      // a caller told nothing would report a database that works.
+      type StartResult = { ok: boolean; message?: string } | undefined;
+      const stone: StartResult = await vscode.commands.executeCommand('gemstone.startStone', {
+        kind: 'stone',
+        db,
+      });
+      if (stone && !stone.ok) {
+        refreshAdminViews();
+        throw new Error(`${stoneName} was created, but its stone did not start. ${stone.message}`);
+      }
+      const netldi: StartResult = await vscode.commands.executeCommand('gemstone.startNetldi', {
+        kind: 'netldi',
+        db,
+      });
+      if (netldi && !netldi.ok) {
+        refreshAdminViews();
+        throw new Error(
+          `${stoneName} was created, but ${ldiName} did not start. ${netldi.message}`,
+        );
+      }
+      refreshAdminViews();
+    }),
+
+    // The login a managed database implies, for a database that has none — then
+    // straight into it, since adding a login is never the point in itself.
+    vscode.commands.registerCommand(
+      'gemstone.createDefaultLogin',
+      async (arg: { dirName?: string }) => {
+        const db = sysadminStorage.getDatabases().find((d) => d.dirName === arg?.dirName);
+        if (!db) return;
+        const login =
+          dataCuratorLoginToCreate(storage.getLogins(), db.config) ??
+          storage.getLogins().find((l) => sameLoginTarget(l, buildDataCuratorLogin(db.config)));
+        if (!login) return;
+        if (dataCuratorLoginToCreate(storage.getLogins(), db.config)) {
+          await storage.saveLogin(login);
+          treeProvider.refresh();
+        }
+        await vscode.commands.executeCommand('gemstone.login', { login });
+      },
+    ),
+
     vscode.commands.registerCommand('gemstone.deleteDatabase', async (node: DatabaseNode) => {
       if (node?.kind !== 'database') return;
+      // Read the orphans first: once the database is gone there is nothing left
+      // to match them against.
+      const orphaned = loginsTargetingStone(storage.getLogins(), node.db.config, versionsMatch);
       const deleted = await databaseManager.deleteDatabase(node.db);
-      if (deleted) {
-        refreshAdminViews();
+      if (!deleted) return;
+      // Creating a database adds a login for its stone, so deleting one takes
+      // that login with it rather than leaving an entry that can only fail.
+      for (const orphan of orphaned) {
+        await storage.deleteLogin(loginLabel(orphan));
       }
+      if (orphaned.length) {
+        treeProvider.refresh();
+        void vscode.window.showInformationMessage(
+          orphaned.length === 1
+            ? `Also removed the login "${loginLabel(orphaned[0])}", which pointed at that database.`
+            : `Also removed ${orphaned.length} logins that pointed at that database.`,
+        );
+      }
+      refreshAdminViews();
     }),
 
     vscode.commands.registerCommand('gemstone.refreshDatabases', () => {
       refreshAdminViews();
     }),
 
+    vscode.commands.registerCommand('gemstone.openManager', () => {
+      GemstoneManagerPanel.show(managerDeps());
+    }),
+
+    vscode.commands.registerCommand('gemstone.closeManager', () => {
+      GemstoneManagerPanel.close();
+    }),
+
     vscode.commands.registerCommand('gemstone.startStone', async (node: DatabaseNode) => {
-      if (node?.kind !== 'stone') return;
-      if (!(await ensureStonePreconditions())) return;
+      if (node?.kind !== 'stone') return { ok: false, message: 'No stone to start.' };
+      if (!(await ensureStonePreconditions())) {
+        return { ok: false, message: 'This machine is not configured to run a stone yet.' };
+      }
+      let result: { ok: boolean; message?: string };
       try {
         await processManager.startStone(node.db);
         vscode.window.showInformationMessage(`Stone "${node.db.config.stoneName}" started.`);
+        result = { ok: true };
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         vscode.window.showErrorMessage(msg);
+        result = { ok: false, message: msg };
       }
       refreshAdminViews();
+      return result;
     }),
 
     vscode.commands.registerCommand('gemstone.stopStone', async (node: DatabaseNode) => {
@@ -3783,15 +3922,19 @@ export function activate(context: vscode.ExtensionContext) {
     }),
 
     vscode.commands.registerCommand('gemstone.startNetldi', async (node: DatabaseNode) => {
-      if (node?.kind !== 'netldi') return;
+      if (node?.kind !== 'netldi') return { ok: false, message: 'No NetLDI to start.' };
+      let result: { ok: boolean; message?: string };
       try {
         await processManager.startNetldi(node.db);
         vscode.window.showInformationMessage(`NetLDI "${node.db.config.ldiName}" started.`);
+        result = { ok: true };
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         vscode.window.showErrorMessage(msg);
+        result = { ok: false, message: msg };
       }
       refreshAdminViews();
+      return result;
     }),
 
     vscode.commands.registerCommand('gemstone.stopNetldi', async (node: DatabaseNode) => {
@@ -3888,13 +4031,16 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.window.showInformationMessage(`Copied ${host}${portSuffix} to clipboard.`);
     }),
 
-    vscode.commands.registerCommand('gemstone.replaceExtent', async (node: DatabaseNode) => {
-      if (node?.kind !== 'stone') return;
-      const replaced = await databaseManager.replaceExtent(node.db);
-      if (replaced) {
-        refreshAdminViews();
-      }
-    }),
+    vscode.commands.registerCommand(
+      'gemstone.replaceExtent',
+      async (node: DatabaseNode & { preselect?: string }) => {
+        if (node?.kind !== 'stone') return;
+        const replaced = await databaseManager.replaceExtent(node.db, node.preselect);
+        if (replaced) {
+          refreshAdminViews();
+        }
+      },
+    ),
 
     vscode.commands.registerCommand(
       'gemstone.fullLogicalBackup',
@@ -4112,6 +4258,26 @@ export function activate(context: vscode.ExtensionContext) {
       },
     ),
   );
+
+  // ── GemStone Manager: the surface for a window with nothing connected ─────
+  // With no session the admin views are gated off and the Explorer has nothing
+  // to browse, so the manager is the only surface with anything to say — it
+  // opens itself rather than waiting to be found in the palette. Without focus:
+  // the window may have restored an editor the user was working in.
+  const openManagerForEmptyEnvironment = () => {
+    if (sessionManager.getSessions().length === 0) {
+      GemstoneManagerPanel.show(managerDeps(), true);
+    }
+  };
+
+  // Logging out of the *last* session returns the window to that same state.
+  // Logging out of one of several does not — the Explorer still has a session to
+  // browse, and the manager should not come barging back in.
+  context.subscriptions.push(
+    sessionManager.onDidRemoveSession(() => openManagerForEmptyEnvironment()),
+  );
+
+  openManagerForEmptyEnvironment();
 }
 
 export function deactivate(): Thenable<void> | undefined {

@@ -80,6 +80,40 @@ describe('runtime-injected webview assets are shipped in the .vsix', () => {
   );
 });
 
+// The GemStone Manager draws every icon with the codicon font, which a webview
+// inherits nothing of — it loads the stylesheet from node_modules through
+// asWebviewUri at runtime. `node_modules/**` is excluded wholesale, so these two
+// files survive only by an explicit whitelist, and nothing else would notice
+// their loss: the panel still renders, with every glyph a blank box, and only in
+// the packaged .vsix. That is the same shape as the v1.7.0 regression above, so
+// it gets the same kind of guard.
+describe('the codicon font the manager draws with is shipped in the .vsix', () => {
+  const repoRoot = path.resolve(__dirname, '..', '..', '..');
+  const whitelist = new Set(
+    fs
+      .readFileSync(path.join(repoRoot, '.vscodeignore'), 'utf8')
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith('!')),
+  );
+
+  it.each([
+    'node_modules/@vscode/codicons/dist/codicon.css',
+    'node_modules/@vscode/codicons/dist/codicon.ttf',
+  ])('ships %s (exists on disk and is whitelisted in .vscodeignore)', (file) => {
+    expect(fs.existsSync(path.join(repoRoot, file))).toBe(true);
+    expect(whitelist.has(`!${file}`)).toBe(true);
+  });
+
+  // vsce prunes devDependencies before it packages, so a whitelist over one
+  // would find nothing left to ship.
+  it('keeps codicons a production dependency, which is what leaves it there to whitelist', () => {
+    const manifest = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
+
+    expect(manifest.dependencies).toHaveProperty('@vscode/codicons');
+  });
+});
+
 // The integration-test setup (npm run test:setup) downloads a full ~1GB GemStone install
 // into client/tmp/. It is gitignored, so it never shows up in a clean checkout — but after
 // running integration tests locally it sits on disk, and vsce packages from the working

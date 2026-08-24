@@ -1,0 +1,1147 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+vi.mock('vscode', () => import('../__mocks__/vscode.js'));
+
+/** What this machine reports about shared memory; a test may say otherwise. */
+const machine = vi.hoisted(() => ({ inUseBytes: 512 * 1024 * 1024 }));
+const A_GIGABYTE = 2 ** 30;
+
+// The 1 GB limit configured, expressed the way each probe reports it (shmall
+// counts 4 KB pages). Spreading the real module keeps every other probe the
+// panel reads present: an omitted one used to arrive as an OS section quietly
+// saying it could not look, rather than as a failure here.
+vi.mock('../sharedMemoryTreeProvider', async () => {
+  const actual = await vi.importActual<typeof import('../sharedMemoryTreeProvider')>(
+    '../sharedMemoryTreeProvider',
+  );
+  return {
+    ...actual,
+    getSharedMemory: () => Promise.resolve({ shmmax: 2 ** 30, shmall: 2 ** 18 }),
+    getSharedMemoryInUse: () => Promise.resolve(machine.inUseBytes),
+  };
+});
+
+// These are host-message unit tests; they do not exercise the WSL bridge. Without
+// this, on Windows `needsWsl()` is true and the refresh handler awaits a real
+// getWslInfoAsync() (WSL I/O) — a macrotask the fake-timer clock cannot drain, so
+// the post-refresh rebuild lands after the assertion and "asks the download site
+// again" sees one fetch instead of two. Forcing it false keeps refresh off real
+// I/O and makes the suite behave the same on every platform.
+vi.mock('../wslBridge', async () => {
+  const actual = await vi.importActual<typeof import('../wslBridge')>('../wslBridge');
+  return { ...actual, needsWsl: () => false };
+});
+
+import * as vscode from 'vscode';
+
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+
+import {
+  GemstoneManagerPanel,
+  parseGslistStart,
+  SESSION_ACTIONS,
+  OS_REMEDIES,
+} from '../gemstoneManager';
+import type { GemstoneManagerDeps } from '../gemstoneManager';
+import { GemStoneLogin } from '../loginTypes';
+
+describe('parseGslistStart', () => {
+  it('reads a yearless start time as this year', () => {
+    const started = parseGslistStart('Apr 22 10:00:00', new Date('2026-08-05T12:00:00'));
+
+    expect(started).toBe(Date.parse('Apr 22 10:00:00 2026'));
+  });
+
+  it('reads the minute-resolution form gslist actually prints', () => {
+    const started = parseGslistStart('Aug 06 17:40', new Date('2026-08-06T18:00:00'));
+
+    expect(started).toBe(Date.parse('Aug 06 17:40 2026'));
+  });
+
+  it('rolls back a year when this year would put the start in the future', () => {
+    const started = parseGslistStart('Dec 30 10:00:00', new Date('2026-01-02T12:00:00'));
+
+    expect(started).toBe(Date.parse('Dec 30 10:00:00 2025'));
+  });
+
+  it('keeps a start time from the last day, which clock skew can place slightly ahead', () => {
+    const started = parseGslistStart('Aug 05 23:00:00', new Date('2026-08-05T22:00:00'));
+
+    expect(started).toBe(Date.parse('Aug 05 23:00:00 2026'));
+  });
+
+  it('has no answer when the process reports no start time', () => {
+    expect(parseGslistStart(undefined)).toBeUndefined();
+  });
+
+  // gslist is being read for a field whose format has already changed once
+  // between releases, so text that is not a date at all has to answer nothing
+  // rather than an epoch or a NaN that renders as "running NaN min".
+  it('has no answer when the start time is not a date', () => {
+    expect(parseGslistStart('Zzz 99 99:99')).toBeUndefined();
+  });
+});
+
+// The two allow-lists are the panel's whole defence against running a command
+// name the webview made up, which also makes them hand-written copies of ids
+// owned elsewhere. Nothing else would notice a rename: the id stops matching,
+// the dispatch is dropped exactly as an invented one would be, and the button
+// goes quiet with no error anywhere.
+//
+// Registration is the property that matters, not `contributes.commands` — three
+// of the OS remedies are registered without being declared there, since they are
+// reached from a tree node rather than the palette.
+describe('the commands the panel will run on request', () => {
+  const registered = new Set<string>();
+  const sourcesUnder = (dir: string): string[] =>
+    fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) return entry.name === 'node_modules' ? [] : sourcesUnder(full);
+      return entry.name.endsWith('.ts') ? [full] : [];
+    });
+  for (const file of sourcesUnder(path.resolve(__dirname, '..'))) {
+    for (const match of fs.readFileSync(file, 'utf8').matchAll(/registerCommand\(\s*'([^']+)'/g)) {
+      registered.add(match[1]);
+    }
+  }
+
+  it('finds the registrations at all (guards against a broken scan)', () => {
+    expect(registered).toContain('gemstone.openManager');
+  });
+
+  it.each([...SESSION_ACTIONS, ...OS_REMEDIES])(
+    '%s is a command this extension registers',
+    (id) => {
+      expect(registered.has(id)).toBe(true);
+    },
+  );
+});
+
+function aLogin(user: string): GemStoneLogin {
+  return {
+    label: `${user}-login`,
+    version: '3.7.5',
+    gem_host: 'localhost',
+    stone: 'db-1',
+    gs_user: user,
+    gs_password: '',
+    netldi: 'gs64ldi',
+    host_user: '',
+    host_password: '',
+  };
+}
+
+/** Every trip to the downloads page the panel has made. */
+const fetchCatalog = vi.fn(() => Promise.resolve([]));
+
+/** A session the panel can be asked to act on, as the session manager holds it. */
+const A_SESSION = { id: 1, login: aLogin('DataCurator') };
+
+/** The managers the panel reads, stubbed down to what building a state needs. */
+function fakeDeps(
+  getLogins: () => GemStoneLogin[],
+  running: {
+    isStoneRunning?: () => boolean;
+    isNetldiRunning?: () => boolean;
+    processes?: unknown[];
+    selectionChanged?: (fire: () => void) => void;
+    sessionAdded?: (fire: () => void) => void;
+  } = {},
+): GemstoneManagerDeps {
+  const noSubscription = () => ({ dispose: () => {} });
+  const onSelection = (handler: () => void) => {
+    running.selectionChanged?.(handler);
+    return { dispose: () => {} };
+  };
+  const onAdded = (handler: () => void) => {
+    running.sessionAdded?.(handler);
+    return { dispose: () => {} };
+  };
+  return {
+    storage: {
+      getPlatformKey: () => 'x86_64.Darwin',
+      getRootPath: () => '/gs',
+      getDatabases: () => [
+        {
+          dirName: 'db-1',
+          path: '/gs/db-1',
+          config: {
+            stoneName: 'db-1',
+            ldiName: 'db-1_ldi',
+            version: '3.7.5',
+            baseExtent: 'extent0.dbf',
+          },
+        },
+      ],
+      getAvailableExtents: () => ['extent0.dbf'],
+    },
+    versionManager: {
+      getInstalledVersions: () => [],
+      fetchCatalog,
+      fetchAvailableVersions: () => Promise.resolve([]),
+    },
+    processManager: {
+      refreshProcesses: () => {},
+      getProcesses: () => running.processes ?? [],
+      isStoneRunning: running.isStoneRunning ?? (() => false),
+      isNetldiRunning: running.isNetldiRunning ?? (() => false),
+    },
+    getLogins,
+    sessionManager: {
+      onDidChangeSelection: onSelection,
+      onDidRemoveSession: noSubscription,
+      onDidAddSession: onAdded,
+      getSessions: () => [A_SESSION],
+      getSelectedSession: () => A_SESSION,
+      getSession: (id: number) => (id === A_SESSION.id ? A_SESSION : undefined),
+    },
+    extensionUri: vscode.Uri.file('/ext'),
+  } as unknown as GemstoneManagerDeps;
+}
+
+type MockPanel = {
+  webview: {
+    postMessage: ReturnType<typeof vi.fn>;
+    onDidReceiveMessage: ReturnType<typeof vi.fn>;
+  };
+  onDidDispose: ReturnType<typeof vi.fn>;
+  onDidChangeViewState: ReturnType<typeof vi.fn>;
+  visible: boolean;
+};
+
+function lastPanel(): MockPanel {
+  const created = vi.mocked(vscode.window.createWebviewPanel).mock.results;
+  return created[created.length - 1].value as MockPanel;
+}
+
+/**
+ * Open a panel wired to a broadcaster standing in for the admin tree providers,
+ * whose change events are what tell the panel its state is stale.
+ */
+function openPanel(
+  getLogins: () => GemStoneLogin[] = () => [],
+  running: {
+    isStoneRunning?: () => boolean;
+    isNetldiRunning?: () => boolean;
+    processes?: unknown[];
+    selectionChanged?: (fire: () => void) => void;
+    sessionAdded?: (fire: () => void) => void;
+  } = {},
+): {
+  panel: MockPanel;
+  adminChanged: { fire(data: void): void };
+} {
+  const adminChanged = new vscode.EventEmitter<void>();
+  GemstoneManagerPanel.show({
+    ...fakeDeps(getLogins, running),
+    onAdminChange: [adminChanged.event],
+  });
+  return { panel: lastPanel(), adminChanged };
+}
+
+/** Tell the panel its tab was shown or hidden, as VS Code would. */
+function changeVisibility(panel: MockPanel, visible: boolean): void {
+  panel.visible = visible;
+  const [handler] = panel.onDidChangeViewState.mock.calls[0] as [() => void];
+  handler();
+}
+
+/** The panel's coalescing window (GemstoneManagerPanel.COALESCE_MS, which is private). */
+const COALESCE_MS = 200;
+
+/**
+ * Advance the fake clock past the coalescing window and flush the async rebuild it
+ * schedules — the deterministic, instant replacement for a real sleep. Only valid
+ * under the fake timers the 'GemStone Manager panel' describe installs;
+ * advanceTimersByTimeAsync both fires the pending timer and drains the microtask
+ * queue, so an awaited rebuild (and any pass it queues) has completed on return.
+ */
+async function settle(): Promise<void> {
+  await vi.advanceTimersByTimeAsync(COALESCE_MS + 1);
+}
+
+/** Deliver a message from the webview, as the panel's own handler would receive it. */
+function send(panel: MockPanel, msg: unknown): void {
+  const [handler] = panel.webview.onDidReceiveMessage.mock.calls[0] as [(m: unknown) => void];
+  handler(msg);
+}
+
+type OsCheck = { key: string; state: string; detail: string };
+type PostedState = {
+  logins: { label: string; running: boolean }[];
+  os: { checks: OsCheck[] };
+  databases: { processes: unknown[] }[];
+};
+
+/** The states the panel has pushed to its webview, oldest first. */
+function postedStates(panel: MockPanel): PostedState[] {
+  return panel.webview.postMessage.mock.calls
+    .map(([msg]) => msg as { command: string; state?: PostedState })
+    .filter((msg) => msg.command === 'state')
+    .map((msg) => msg.state!);
+}
+
+/** What the latest state says about one operating-system prerequisite. */
+async function osCheck(panel: MockPanel, key: string): Promise<OsCheck> {
+  await settle();
+
+  return postedStates(panel)
+    .at(-1)!
+    .os.checks.find((c) => c.key === key)!;
+}
+
+/** Fire the handler the panel registered for configuration changes. */
+function changeSetting(section: string): void {
+  const calls = vi.mocked(vscode.workspace.onDidChangeConfiguration).mock.calls;
+  for (const [handler] of calls) {
+    (handler as (e: { affectsConfiguration(s: string): boolean }) => void)({
+      affectsConfiguration: (s: string) => s === section,
+    });
+  }
+}
+
+describe('GemStone Manager panel', () => {
+  // Fake only the timer functions (not Date) so the coalescing window can be
+  // advanced instantly and exactly, rather than slept through — see settle().
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+  });
+
+  afterEach(() => {
+    // The panel is a singleton; fire its dispose handler so the next test opens
+    // a fresh one rather than revealing this one.
+    const [onDispose] = lastPanel().onDidDispose.mock.calls[0] as [() => void];
+    onDispose();
+    vi.clearAllMocks();
+    vi.useRealTimers();
+    machine.inUseBytes = 512 * 1024 * 1024;
+  });
+
+  it('says how much of the shared-memory limit is still free', async () => {
+    const { panel, adminChanged } = openPanel();
+
+    adminChanged.fire();
+
+    expect(await osCheck(panel, 'sharedMemory')).toMatchObject({
+      state: 'ok',
+      detail: '1 GB · 512 MB free',
+    });
+  });
+
+  it('warns when no room is left for another cache, however high the limit', async () => {
+    machine.inUseBytes = A_GIGABYTE - 40 * 1024 * 1024;
+    const { panel, adminChanged } = openPanel();
+
+    adminChanged.fire();
+
+    expect(await osCheck(panel, 'sharedMemory')).toMatchObject({
+      state: 'warn',
+      detail: '1 GB · 40 MB free — no room for another cache',
+    });
+  });
+
+  it('says a stone is up even when no database here made it', async () => {
+    const elsewhere = { ...aLogin('DataCurator'), stone: 'a-stone-made-elsewhere' };
+    const { panel, adminChanged } = openPanel(() => [elsewhere], { isStoneRunning: () => true });
+
+    adminChanged.fire();
+    await settle();
+    expect(postedStates(panel).length).toBeGreaterThan(0);
+
+    expect(postedStates(panel).at(-1)!.logins[0]).toMatchObject({ running: true });
+  });
+
+  it('asks the download site once, however often it rebuilds', async () => {
+    const { panel, adminChanged } = openPanel();
+    adminChanged.fire();
+    await settle();
+
+    adminChanged.fire();
+    await settle();
+
+    expect(postedStates(panel).length).toBeGreaterThan(1);
+    expect(fetchCatalog).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks the download site again when the user refreshes', async () => {
+    const { panel, adminChanged } = openPanel();
+    adminChanged.fire();
+    await settle();
+
+    send(panel, { command: 'refresh' });
+    await settle();
+
+    expect(fetchCatalog).toHaveBeenCalledTimes(2);
+  });
+
+  // One manager, however many times it is asked for: a second panel would show
+  // the same environment beside the first and drift from it as soon as either
+  // acted, since each keeps its own state.
+  it('reveals the manager already open rather than opening another', () => {
+    const { panel } = openPanel();
+
+    GemstoneManagerPanel.show({ ...fakeDeps(() => []), onAdminChange: [] });
+
+    expect(vscode.window.createWebviewPanel).toHaveBeenCalledTimes(1);
+    expect((panel as unknown as { reveal: ReturnType<typeof vi.fn> }).reveal).toHaveBeenCalled();
+  });
+
+  it('opens a fresh manager once the last one was closed', () => {
+    openPanel();
+    const [onDispose] = lastPanel().onDidDispose.mock.calls[0] as [() => void];
+    onDispose();
+
+    GemstoneManagerPanel.show({ ...fakeDeps(() => []), onAdminChange: [] });
+
+    expect(vscode.window.createWebviewPanel).toHaveBeenCalledTimes(2);
+  });
+
+  // A scan outlives its coalescing window, so changes keep arriving while one is
+  // in flight. They have to collapse into exactly one more pass: run them
+  // concurrently and two scans race to post, and the older one can land last.
+  it('answers a burst arriving mid-scan with exactly one more pass', async () => {
+    let releaseCatalog = (): void => {};
+    fetchCatalog.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          releaseCatalog = () => resolve([]);
+        }),
+    );
+    const { panel, adminChanged } = openPanel();
+
+    adminChanged.fire();
+    await settle();
+    adminChanged.fire();
+    await settle();
+    adminChanged.fire();
+    await settle();
+    releaseCatalog();
+    await settle();
+
+    expect(postedStates(panel)).toHaveLength(2);
+  });
+
+  // Being looked at is not the same as having something new to show. Rebuilding
+  // on every view-state change would scan the disk each time the tab regained
+  // focus, for a picture already on screen.
+  it('does not rebuild when its tab is shown with nothing having changed', async () => {
+    const { panel } = openPanel();
+
+    changeVisibility(panel, true);
+    await settle();
+
+    expect(postedStates(panel)).toHaveLength(0);
+  });
+
+  it('runs a session action the webview asks for', async () => {
+    const { panel } = openPanel();
+
+    send(panel, { command: 'sessionAction', sessionId: 1, action: 'gemstone.sessionCommit' });
+    await settle();
+
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+      'gemstone.sessionCommit',
+      expect.anything(),
+    );
+  });
+
+  // The webview names the command to run, so the name is the untrusted part —
+  // matched against the allow-list rather than executed on trust.
+  it('refuses a session action that is not one it offers', async () => {
+    const { panel } = openPanel();
+
+    send(panel, { command: 'sessionAction', sessionId: 1, action: 'gemstone.deleteDatabase' });
+    await settle();
+
+    expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith(
+      'gemstone.deleteDatabase',
+      expect.anything(),
+    );
+  });
+
+  it('runs an operating-system remedy the webview asks for', async () => {
+    const { panel } = openPanel();
+
+    send(panel, { command: 'osRemedy', action: 'gemstone.runSetRemoveIPC' });
+    await settle();
+
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith('gemstone.runSetRemoveIPC');
+  });
+
+  it('refuses a remedy that is not one it offers', async () => {
+    const { panel } = openPanel();
+
+    send(panel, { command: 'osRemedy', action: 'gemstone.deleteDatabase' });
+    await settle();
+
+    expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith('gemstone.deleteDatabase');
+  });
+
+  // Two databases can carry the same stone name under different versions, which
+  // is the whole reason pairing goes through versionsMatch rather than the name.
+  it('leaves a process of another version out of a database it does not belong to', async () => {
+    const foreign = {
+      type: 'stone',
+      name: 'db-1',
+      version: '3.6.2',
+      pid: 42,
+      status: 'running',
+      responding: true,
+    };
+    const { panel, adminChanged } = openPanel(() => [], { processes: [foreign] });
+
+    adminChanged.fire();
+    await settle();
+    expect(postedStates(panel).length).toBeGreaterThan(0);
+
+    expect(postedStates(panel).at(-1)!.databases[0].processes).toEqual([]);
+  });
+
+  it('redraws when the session being worked in changes', async () => {
+    let fireSelection = (): void => {};
+    const { panel } = openPanel(() => [], {
+      selectionChanged: (fire) => {
+        fireSelection = fire;
+      },
+    });
+
+    fireSelection();
+
+    await settle();
+    expect(postedStates(panel).length).toBeGreaterThan(0);
+  });
+
+  // Only the first session is auto-selected, so a second login changed no
+  // selection and the panel never heard about it — the row for a login that had
+  // just connected went on offering "Log in".
+  it('redraws when another session is opened, not only the first', async () => {
+    let fireAdded = (): void => {};
+    const { panel } = openPanel(() => [], {
+      sessionAdded: (fire) => {
+        fireAdded = fire;
+      },
+    });
+
+    fireAdded();
+
+    await settle();
+    expect(postedStates(panel).length).toBeGreaterThan(0);
+  });
+
+  it('says so when a command it dispatched fails', async () => {
+    const { panel } = openPanel(() => [aLogin('DataCurator')]);
+    vi.mocked(vscode.commands.executeCommand).mockRejectedValueOnce(new Error('NetLDI is down'));
+
+    send(panel, { command: 'connectLogin', login: 'DataCurator on db-1 (localhost)' });
+    await settle();
+
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining('NetLDI is down'),
+    );
+    // The failure also goes into the panel (where it can wrap and be read), which
+    // is the message the guided tour consumes to stop advancing.
+    expect(panel.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: 'actionFailed',
+        message: expect.stringContaining('NetLDI is down'),
+      }),
+    );
+  });
+
+  it('tells the panel a default-database start failed, before the redraw', async () => {
+    const { panel } = openPanel();
+    vi.mocked(vscode.commands.executeCommand).mockImplementation((cmd: string) =>
+      cmd === 'gemstone.createDatabaseDefaults'
+        ? Promise.reject(new Error('startstone failed'))
+        : Promise.resolve(undefined),
+    );
+
+    send(panel, { command: 'createDatabaseDefaults' });
+    await settle();
+
+    const calls = panel.webview.postMessage.mock.calls;
+    const failedAt = calls.findIndex(
+      ([m]) => (m as { command: string }).command === 'actionFailed',
+    );
+    const stateAfter = calls.findIndex(
+      ([m], i) => i > failedAt && (m as { command: string }).command === 'state',
+    );
+    expect(failedAt).toBeGreaterThanOrEqual(0);
+    // The failure is posted before the state redraw, so a coach step does not read
+    // the refresh (the DB really was created) as a successful start.
+    expect(stateAfter).toBeGreaterThan(failedAt);
+    expect((calls[failedAt][0] as { message: string }).message).toContain('startstone failed');
+    // This path uses actionFailed into the panel, not the generic error toast.
+    expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
+  });
+
+  it('lists a login added while it is open', async () => {
+    let logins: GemStoneLogin[] = [];
+    const { panel } = openPanel(() => logins);
+
+    logins = [aLogin('DataCurator')];
+    changeSetting('gemstone.logins');
+    await settle();
+    expect(postedStates(panel).length).toBeGreaterThan(0);
+
+    const latest = postedStates(panel).at(-1)!;
+    expect(latest.logins.map((l) => l.label)).toEqual(['DataCurator on db-1 (localhost)']);
+  });
+
+  it('rebuilds when the folder its databases live in is changed', async () => {
+    const { panel } = openPanel();
+
+    changeSetting('gemstone.rootPath');
+
+    await settle();
+    expect(postedStates(panel)).toHaveLength(1);
+  });
+
+  it('ignores a setting it does not read', async () => {
+    const { panel } = openPanel();
+
+    changeSetting('editor.fontSize');
+    // Wait past the coalesce window a real rebuild would have used: at 0ms the
+    // timer has not fired yet, so the assertion would pass even if the setting
+    // had wrongly triggered a rebuild. settle() lets that rebuild land first.
+    await settle();
+
+    expect(postedStates(panel)).toHaveLength(0);
+  });
+
+  it('rebuilds when the admin views report a change', async () => {
+    const { panel, adminChanged } = openPanel();
+
+    adminChanged.fire();
+
+    await settle();
+    expect(postedStates(panel)).toHaveLength(1);
+  });
+
+  it('rebuilds once for a burst of changes, not once per change', async () => {
+    const { panel, adminChanged } = openPanel();
+
+    adminChanged.fire();
+    adminChanged.fire();
+    adminChanged.fire();
+    await settle();
+
+    expect(postedStates(panel)).toHaveLength(1);
+  });
+
+  it('never flashes busy on a rebuild it started itself', async () => {
+    const { panel, adminChanged } = openPanel();
+
+    adminChanged.fire();
+    await settle();
+
+    const loading = panel.webview.postMessage.mock.calls.filter(
+      ([msg]) => (msg as { command: string }).command === 'loading',
+    );
+    expect(loading).toHaveLength(0);
+  });
+
+  it('opens the login editor on the login it was asked about', async () => {
+    const wanted = aLogin('DataCurator');
+    const { panel } = openPanel(() => [aLogin('SystemUser'), wanted]);
+
+    send(panel, { command: 'editLogin', login: 'DataCurator on db-1 (localhost)' });
+    await settle();
+
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith('gemstone.editLogin', {
+      login: wanted,
+    });
+  });
+
+  it('starts only what is down when asked to start and log in', async () => {
+    const { panel, adminChanged } = openPanel(() => [aLogin('DataCurator')], {
+      isStoneRunning: () => false,
+      isNetldiRunning: () => true,
+    });
+    adminChanged.fire();
+    await settle();
+
+    send(panel, { command: 'startAndConnect', login: 'DataCurator on db-1 (localhost)' });
+    await settle();
+
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+      'gemstone.startStone',
+      expect.anything(),
+    );
+    expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith(
+      'gemstone.startNetldi',
+      expect.anything(),
+    );
+  });
+
+  it('starts both when neither is up', async () => {
+    const { panel, adminChanged } = openPanel(() => [aLogin('DataCurator')], {
+      isStoneRunning: () => false,
+      isNetldiRunning: () => false,
+    });
+    adminChanged.fire();
+    await settle();
+
+    send(panel, { command: 'startAndConnect', login: 'DataCurator on db-1 (localhost)' });
+    await settle();
+
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+      'gemstone.startNetldi',
+      expect.anything(),
+    );
+  });
+
+  // A remote login can share the default stone name with a local database. "Start
+  // & log in" on it must attempt the login but must NOT start the local stone of
+  // that name — otherwise it starts the wrong server behind the user's back.
+  it('does not start a local stone for a remote login that shares its name', async () => {
+    const remote = { ...aLogin('DataCurator'), gem_host: 'prod-server.example.com' };
+    const { panel, adminChanged } = openPanel(() => [remote], { isStoneRunning: () => false });
+    adminChanged.fire();
+    await settle();
+
+    send(panel, {
+      command: 'startAndConnect',
+      login: 'DataCurator on db-1 (prod-server.example.com)',
+    });
+    await settle();
+
+    // The login was found and attempted (so the test is not passing vacuously)…
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+      'gemstone.login',
+      expect.anything(),
+    );
+    // …but the local db-1 stone was never started for it.
+    expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith(
+      'gemstone.startStone',
+      expect.anything(),
+    );
+  });
+
+  // The mirror of bringUp: taking a database down must stop only what is up, so a
+  // stop is never issued against an already-stopped process.
+  it('stops only what is up when taking a database down', async () => {
+    const { panel, adminChanged } = openPanel(() => [aLogin('DataCurator')], {
+      isStoneRunning: () => true,
+      isNetldiRunning: () => false,
+    });
+    adminChanged.fire();
+    await settle();
+
+    send(panel, { command: 'stopDatabase', dirName: 'db-1' });
+    await settle();
+
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+      'gemstone.stopStone',
+      expect.anything(),
+    );
+    expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith(
+      'gemstone.stopNetldi',
+      expect.anything(),
+    );
+  });
+
+  it('restores from a backup inside the database it belongs to', async () => {
+    const { panel, adminChanged } = openPanel();
+    adminChanged.fire();
+    await settle();
+
+    send(panel, {
+      command: 'restoreBackup',
+      dirName: 'db-1',
+      path: '/gs/db-1/backups/db-1.dbf',
+    });
+    await settle();
+
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+      'gemstone.fullLogicalRestore',
+      expect.objectContaining({ kind: 'backupFile', filePath: '/gs/db-1/backups/db-1.dbf' }),
+    );
+  });
+
+  it('refuses to restore a file from outside the database it belongs to', async () => {
+    const { panel, adminChanged } = openPanel();
+    adminChanged.fire();
+    await settle();
+
+    send(panel, { command: 'restoreBackup', dirName: 'db-1', path: '/etc/passwd' });
+    await settle();
+
+    expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith(
+      'gemstone.fullLogicalRestore',
+      expect.anything(),
+    );
+  });
+
+  it('holds a change made while hidden until the tab is shown again', async () => {
+    const { panel, adminChanged } = openPanel();
+    changeVisibility(panel, false);
+
+    adminChanged.fire();
+    await settle();
+    expect(postedStates(panel)).toHaveLength(0);
+
+    changeVisibility(panel, true);
+
+    await settle();
+    expect(postedStates(panel)).toHaveLength(1);
+  });
+
+  it('cancels a coalesce timer armed just before the tab is hidden', async () => {
+    const { panel, adminChanged } = openPanel();
+    // Arm the 200ms coalesce timer while visible, then hide before it fires.
+    adminChanged.fire();
+    changeVisibility(panel, false);
+
+    await settle();
+    // The timer was cancelled, so no scan ran against the hidden panel.
+    expect(postedStates(panel)).toHaveLength(0);
+
+    // The deferred change is honored when the tab comes back.
+    changeVisibility(panel, true);
+    await settle();
+    expect(postedStates(panel).length).toBeGreaterThan(0);
+  });
+});
+
+// The Configuration section (issue #232) reads the selected session's stone and
+// gem reports over GCI on demand, and writes a runtime value back through the
+// same session. These drive the panel's message handlers against a session whose
+// GCI is stubbed to canned report output.
+describe('configuration', () => {
+  type Posted = { command: string; config?: unknown; message?: string };
+
+  /** A session whose GCI answers `execute(code)` for every executed string. */
+  function sessionWith(execute: (code: string) => string): unknown {
+    return {
+      id: 1,
+      login: aLogin('DataCurator'),
+      handle: {},
+      stoneVersion: '3.6.2',
+      gci: {
+        GciTsCallInProgress: () => ({ result: 0 }),
+        executeAndFetchString: (_h: unknown, code: string) => execute(code),
+      },
+    };
+  }
+
+  /** Canned report/setter output, keyed off what the executed Smalltalk asks. */
+  function cannedGci(
+    opts: { setterResult?: string; systemUser?: boolean } = {},
+  ): (code: string) => string {
+    const { setterResult = 'OK', systemUser = false } = opts;
+    return (code: string) => {
+      if (code.includes('AllUsers')) return systemUser ? 'true' : 'false';
+      if (code.includes('stoneConfigurationReport'))
+        return 'StnGemTimeout\tSmallInteger\t60\nSHR_PAGE_CACHE_SIZE_KB\tSmallInteger\t75000\n';
+      if (code.includes('gemConfigurationReport')) return 'GemConvertArrayBuilder\tBoolean\ttrue\n';
+      if (code.includes('stoneConfigurationAt') || code.includes('gemConfigurationAt'))
+        return setterResult;
+      return '';
+    };
+  }
+
+  function openWithSession(session: unknown): MockPanel {
+    const adminChanged = new vscode.EventEmitter<void>();
+    const deps = fakeDeps(() => []);
+    const sm = deps.sessionManager as unknown as Record<string, unknown>;
+    sm.getSelectedSession = () => session;
+    sm.getSessions = () => (session ? [session] : []);
+    GemstoneManagerPanel.show({ ...deps, onAdminChange: [adminChanged.event] });
+    return lastPanel();
+  }
+
+  function posted(panel: MockPanel, command: string): Posted[] {
+    return panel.webview.postMessage.mock.calls
+      .map(([m]) => m as Posted)
+      .filter((m) => m.command === command);
+  }
+
+  // Fake timers here too, so the one test that awaits a rebuild (the Refresh
+  // cache-drop) can advance the clock via settle(); the synchronous message tests
+  // are unaffected by it.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+  });
+
+  afterEach(() => {
+    const [onDispose] = lastPanel().onDidDispose.mock.calls[0] as [() => void];
+    onDispose();
+    vi.clearAllMocks();
+    vi.useRealTimers();
+  });
+
+  it('reads the stone and gem reports and posts them, typed and classified', () => {
+    const panel = openWithSession(sessionWith(cannedGci()));
+
+    send(panel, { command: 'loadConfiguration' });
+
+    const [msg] = posted(panel, 'configuration');
+    expect(msg).toBeDefined();
+    const config = msg.config as {
+      isSystemUser: boolean;
+      descriptionsAvailable: boolean;
+      stoneParams: { key: string; editable: boolean; settable: boolean }[];
+      gemParams: { key: string; type: string; editable: boolean }[];
+    };
+    // The session is DataCurator, so a stone runtime key is settable in principle
+    // but not editable here; the gem runtime key still is.
+    expect(config.isSystemUser).toBe(false);
+    // The stubbed storage exposes no product tree, so no system.conf is read.
+    expect(config.descriptionsAvailable).toBe(false);
+    // Alphabetized case-insensitively, so SHR_… sorts ahead of StnGemTimeout.
+    expect(config.stoneParams).toEqual([
+      expect.objectContaining({ key: 'SHR_PAGE_CACHE_SIZE_KB', settable: false, editable: false }),
+      expect.objectContaining({ key: 'StnGemTimeout', settable: true, editable: false }),
+    ]);
+    expect(config.gemParams).toEqual([
+      expect.objectContaining({ key: 'GemConvertArrayBuilder', type: 'boolean', editable: true }),
+    ]);
+  });
+
+  it('offers stone runtime keys as editable only to SystemUser', () => {
+    const panel = openWithSession(sessionWith(cannedGci({ systemUser: true })));
+
+    send(panel, { command: 'loadConfiguration' });
+
+    const config = posted(panel, 'configuration')[0].config as {
+      isSystemUser: boolean;
+      stoneParams: { key: string; editable: boolean }[];
+    };
+    expect(config.isSystemUser).toBe(true);
+    expect(config.stoneParams.find((p) => p.key === 'StnGemTimeout')?.editable).toBe(true);
+  });
+
+  it('reports an error rather than reading when no session is selected', () => {
+    const panel = openWithSession(undefined);
+
+    send(panel, { command: 'loadConfiguration' });
+
+    expect(posted(panel, 'configuration')).toHaveLength(0);
+    expect(posted(panel, 'configurationError')[0]?.message).toMatch(/no gemstone session/i);
+  });
+
+  it('sets a runtime value, then reloads and reports the settled value', () => {
+    const panel = openWithSession(sessionWith(cannedGci()));
+
+    send(panel, {
+      command: 'setConfiguration',
+      scope: 'gem',
+      key: 'GemConvertArrayBuilder',
+      valueType: 'boolean',
+      value: 'true',
+    });
+
+    // A successful set is followed by a fresh read — the panel shows what the
+    // stone settled on, not what was typed.
+    expect(posted(panel, 'configuration')).toHaveLength(1);
+    expect(posted(panel, 'configurationError')).toHaveLength(0);
+  });
+
+  it('warns when the stone accepts a set but the value does not change', () => {
+    // The canned report keeps GemConvertArrayBuilder at true no matter what is
+    // set, standing in for a parameter the stone accepts and then ignores.
+    const panel = openWithSession(sessionWith(cannedGci()));
+
+    send(panel, {
+      command: 'setConfiguration',
+      scope: 'gem',
+      key: 'GemConvertArrayBuilder',
+      valueType: 'boolean',
+      value: 'false',
+    });
+
+    const [notice] = posted(panel, 'configurationNotice') as { tone?: string; message?: string }[];
+    expect(notice).toBeDefined();
+    expect(notice.tone).toBe('warn');
+    expect(notice.message).toContain('still reports true');
+    expect(notice.message).toContain('not false');
+  });
+
+  it('confirms the settled value when a set does take', () => {
+    // Setting GemConvertArrayBuilder to the value the canned report already holds
+    // (true) stands in for a change that stuck.
+    const panel = openWithSession(sessionWith(cannedGci()));
+
+    send(panel, {
+      command: 'setConfiguration',
+      scope: 'gem',
+      key: 'GemConvertArrayBuilder',
+      valueType: 'boolean',
+      value: 'true',
+    });
+
+    const [notice] = posted(panel, 'configurationNotice') as { tone?: string; message?: string }[];
+    expect(notice).toBeDefined();
+    expect(notice.tone).toBe('ok');
+    expect(notice.message).toContain('now reports true');
+  });
+
+  it("relays the stone's refusal when a set is not allowed", () => {
+    const refusal =
+      'GS-ERROR: a SecurityError occurred (error 2213), only be performed by SystemUser.';
+    const panel = openWithSession(sessionWith(cannedGci({ setterResult: refusal })));
+
+    send(panel, {
+      command: 'setConfiguration',
+      scope: 'stone',
+      key: 'StnGemTimeout',
+      valueType: 'integer',
+      value: '0',
+    });
+
+    expect(posted(panel, 'configuration')).toHaveLength(0);
+    expect(posted(panel, 'configurationError')[0]?.message).toContain('SystemUser');
+  });
+
+  it('surfaces a configurationError when a report raises, rather than throwing', () => {
+    // The load's try/catch exists so a report that raises becomes a showable
+    // error, not a rejection the guided tour would misread as progress.
+    const raising = (code: string) => {
+      if (code.includes('stoneConfigurationReport')) throw new Error('report blew up');
+      return cannedGci()(code);
+    };
+    const panel = openWithSession(sessionWith(raising));
+
+    send(panel, { command: 'loadConfiguration' });
+
+    expect(posted(panel, 'configuration')).toHaveLength(0);
+    expect(posted(panel, 'configurationError')[0]?.message).toContain('report blew up');
+  });
+
+  it('surfaces a configurationError when the set itself throws', () => {
+    // A set that starts but throws mid-flight (session dropped, GCI raises) must
+    // land as an error — not an unhandled rejection, and not a false notice.
+    const raising = (code: string) => {
+      if (code.includes('stoneConfigurationAt') || code.includes('gemConfigurationAt'))
+        throw new Error('Session is busy');
+      return cannedGci()(code);
+    };
+    const panel = openWithSession(sessionWith(raising));
+
+    send(panel, {
+      command: 'setConfiguration',
+      scope: 'gem',
+      key: 'GemConvertArrayBuilder',
+      valueType: 'boolean',
+      value: 'true',
+    });
+
+    expect(posted(panel, 'configuration')).toHaveLength(0);
+    expect(posted(panel, 'configurationNotice')).toHaveLength(0);
+    expect(posted(panel, 'configurationError')[0]?.message).toContain('busy');
+  });
+
+  it('reports an error rather than setting when no session is selected', () => {
+    const panel = openWithSession(undefined);
+
+    send(panel, {
+      command: 'setConfiguration',
+      scope: 'gem',
+      key: 'GemConvertArrayBuilder',
+      valueType: 'boolean',
+      value: 'true',
+    });
+
+    expect(posted(panel, 'configuration')).toHaveLength(0);
+    expect(posted(panel, 'configurationError')[0]?.message).toMatch(/no gemstone session/i);
+  });
+
+  it('reads and parses system.conf once per version, attaching descriptions', () => {
+    // The host reads the product's system.conf for tooltips and caches the parse
+    // per version. Every other config test hits the empty-map (no product tree)
+    // branch; this one drives the real read + attach + cache against a temp tree.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsconf-'));
+    fs.mkdirSync(path.join(dir, 'data'));
+    const confPath = path.join(dir, 'data', 'system.conf');
+    fs.writeFileSync(
+      confPath,
+      '#===\n# STN_GEM_TIMEOUT: how long the stone waits for a gem.\n#STN_GEM_TIMEOUT = 60;\n',
+    );
+
+    const adminChanged = new vscode.EventEmitter<void>();
+    const deps = fakeDeps(() => []);
+    (deps.storage as unknown as Record<string, unknown>).getGemstonePath = () => dir;
+    const session = sessionWith(cannedGci());
+    const sm = deps.sessionManager as unknown as Record<string, unknown>;
+    sm.getSelectedSession = () => session;
+    sm.getSessions = () => [session];
+    GemstoneManagerPanel.show({ ...deps, onAdminChange: [adminChanged.event] });
+    const panel = lastPanel();
+
+    try {
+      send(panel, { command: 'loadConfiguration' });
+      const descOf = (i: number) =>
+        (
+          posted(panel, 'configuration')[i].config as {
+            stoneParams: { key: string; description?: string }[];
+          }
+        ).stoneParams.find((p) => p.key === 'StnGemTimeout')?.description;
+      expect(
+        (posted(panel, 'configuration')[0].config as { descriptionsAvailable: boolean })
+          .descriptionsAvailable,
+      ).toBe(true);
+      expect(descOf(0)).toContain('how long the stone waits');
+
+      // Cache: delete the file, load again — the description still comes back, so
+      // the parse was cached per version rather than re-read from disk.
+      fs.rmSync(confPath);
+      send(panel, { command: 'loadConfiguration' });
+      expect(descOf(1)).toContain('how long the stone waits');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('drops the description cache on Refresh, so a re-read reflects the tree again', async () => {
+    // A version whose product tree was absent at first read must pick up (or here,
+    // lose) its tooltips after Refresh — Refresh clears configDescCache.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsconf-'));
+    fs.mkdirSync(path.join(dir, 'data'));
+    const confPath = path.join(dir, 'data', 'system.conf');
+    fs.writeFileSync(
+      confPath,
+      '#===\n# STN_GEM_TIMEOUT: waits for a gem.\n#STN_GEM_TIMEOUT = 60;\n',
+    );
+    const adminChanged = new vscode.EventEmitter<void>();
+    const deps = fakeDeps(() => []);
+    (deps.storage as unknown as Record<string, unknown>).getGemstonePath = () => dir;
+    const session = sessionWith(cannedGci());
+    const sm = deps.sessionManager as unknown as Record<string, unknown>;
+    sm.getSelectedSession = () => session;
+    sm.getSessions = () => [session];
+    GemstoneManagerPanel.show({ ...deps, onAdminChange: [adminChanged.event] });
+    const panel = lastPanel();
+    const available = (i: number) =>
+      (posted(panel, 'configuration')[i].config as { descriptionsAvailable: boolean })
+        .descriptionsAvailable;
+    try {
+      send(panel, { command: 'loadConfiguration' }); // caches the parsed descriptions
+      fs.rmSync(confPath); // the tree "changes" under the panel
+      send(panel, { command: 'refresh' }); // must drop configDescCache
+      await settle();
+      send(panel, { command: 'loadConfiguration' }); // re-read: file is gone now
+
+      expect(available(0)).toBe(true);
+      expect(available(posted(panel, 'configuration').length - 1)).toBe(false);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// The sidebar's session context menu carried a full logical restore; the panel's
+// allow-list did not, so the button would have been refused on arrival.
+describe('the session-action allow-list', () => {
+  it('permits every action the Connect rows actually draw', () => {
+    const view = fs.readFileSync(path.resolve(__dirname, '..', 'gemstoneManagerView.js'), 'utf8');
+    const drawn = [...view.matchAll(/\['(gemstone\.[A-Za-z]+)',\s*'[a-zA-Z]+',/g)].map((m) => m[1]);
+
+    expect(drawn.length).toBeGreaterThan(0);
+    for (const command of drawn) {
+      expect([...SESSION_ACTIONS]).toContain(command);
+    }
+  });
+});

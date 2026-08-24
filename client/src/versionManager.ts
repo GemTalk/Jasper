@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { execSync, spawnSync } from 'child_process';
-import { SysadminStorage } from './sysadminStorage';
+import { SysadminStorage, ExtractedVersionInfo } from './sysadminStorage';
 import { GemStoneVersion } from './sysadminTypes';
 import { appendSysadmin } from './sysadminChannel';
 import { needsWsl, wslSpawn, wslExecSync } from './wslBridge';
@@ -14,23 +14,99 @@ import { compareGemStoneVersions } from './gemStoneVersion';
 const WIN_CLIENT_BASE_URL = 'https://downloads.gemtalksystems.com/pub/GemStone64/';
 const MINIMUM_SUPPORTED_GEMSTONE_VERSION = '3.6.2';
 
+/** One row of the downloads page — what the catalog says before any disk is read. */
+export interface CatalogEntry {
+  version: string;
+  fileName: string;
+  url: string;
+  date: string;
+  size: number;
+}
+
 export class VersionManager {
   constructor(private storage: SysadminStorage) {}
 
-  /** Fetch available versions from the downloads page */
-  async fetchAvailableVersions(): Promise<GemStoneVersion[]> {
+  /**
+   * The versions present on disk, described from their `version.txt`. Reads the
+   * filesystem only, so it answers while the download catalog is unreachable —
+   * or before it has been asked.
+   *
+   * A catalog that lists nothing already means exactly this: every extracted
+   * version becomes a row, since none of them can be in it. Saying it that way
+   * rather than mapping the rows again is what keeps this list ordered and
+   * filtered like the other one — two lists of the same versions that disagreed
+   * about either would show a user their versions rearranging as the catalog
+   * arrived.
+   */
+  getInstalledVersions(): GemStoneVersion[] {
+    return this.versionsFrom([]);
+  }
+
+  /** One on-disk version as a catalog-shaped row: no file, no size, no URL. */
+  private installedVersion(info: ExtractedVersionInfo): GemStoneVersion {
+    const gsPath = this.storage.getGemstonePath(info.version);
+    const txt = gsPath ? SysadminStorage.readVersionTxt(gsPath) : undefined;
+    return {
+      version: info.version,
+      fileName: '',
+      url: '',
+      size: 0,
+      date: txt?.date ?? '',
+      downloaded: false,
+      extracted: true,
+      // Only a symlinked build carries the flag at all. A real directory leaves
+      // it absent rather than false — the shape the catalog pass has always
+      // produced, and which localVersion.test.ts pins.
+      ...(info.isLocal ? { local: true as const } : {}),
+      buildDescription: txt?.description,
+    };
+  }
+
+  /**
+   * The downloads page for this platform, parsed. This is the only part of
+   * building a version list that needs the network, which is why it is separate:
+   * a caller that rebuilds often can hold one catalog and re-derive rows from
+   * disk — the flags that actually change — without asking the site again.
+   */
+  async fetchCatalog(): Promise<CatalogEntry[]> {
     const platformKey = this.storage.getCatalogPlatformKey();
     const ext = platformKey.endsWith('.Darwin') ? 'dmg' : 'zip';
     const url = `https://downloads.gemtalksystems.com/platforms/${platformKey}/`;
     const html = await this.fetchUrl(url);
 
-    const versions: GemStoneVersion[] = [];
     const regex = new RegExp(
       `href="(GemStone64Bit([\\d.]+)-${platformKey.replace('.', '\\.')}\\.${ext})"[^>]*>.*?` +
         `(\\d{2}-\\w{3}-\\d{4})\\s+\\d{2}:\\d{2}\\s+(\\d+)`,
       'g',
     );
 
+    const entries: CatalogEntry[] = [];
+    let match;
+    while ((match = regex.exec(html)) !== null) {
+      entries.push({
+        version: match[2],
+        fileName: match[1],
+        url: `${url}${match[1]}`,
+        date: match[3],
+        size: parseInt(match[4], 10),
+      });
+    }
+    return entries;
+  }
+
+  /** Fetch available versions from the downloads page. */
+  async fetchAvailableVersions(): Promise<GemStoneVersion[]> {
+    return this.versionsFrom(await this.fetchCatalog());
+  }
+
+  /**
+   * What a catalog and the disk together say is available — the whole of the
+   * answer that does not need the network. A caller holding a catalog can ask
+   * this as often as it likes: what changes between two asks is on disk, and
+   * this reads it afresh every time.
+   */
+  versionsFrom(catalog: CatalogEntry[]): GemStoneVersion[] {
+    const versions: GemStoneVersion[] = [];
     const hasLocalServer = this.storage.getPlatformKey() !== undefined;
     const downloaded = hasLocalServer
       ? this.storage.getDownloadedFiles()
@@ -49,37 +125,17 @@ export class VersionManager {
     // Add local (symlinked) versions first
     for (const info of extractedInfos) {
       if (!info.isLocal) continue;
-      const gsPath = this.storage.getGemstonePath(info.version);
-      const txt = gsPath ? SysadminStorage.readVersionTxt(gsPath) : undefined;
-      versions.push({
-        version: info.version,
-        fileName: '',
-        url: '',
-        size: 0,
-        date: txt?.date ?? '',
-        downloaded: false,
-        extracted: true,
-        local: true,
-        buildDescription: txt?.description,
-      });
+      versions.push(this.installedVersion(info));
     }
 
     const catalogVersions = new Set<string>();
-    let match;
-    while ((match = regex.exec(html)) !== null) {
-      const fileName = match[1];
-      const version = match[2];
-      const date = match[3];
-      const size = parseInt(match[4], 10);
+    for (const entry of catalog) {
+      const { version, size } = entry;
       catalogVersions.add(version);
       const isDownloaded = downloaded.has(version) && downloaded.get(version) === size;
       const extractedKind = extractedMap.get(version);
       versions.push({
-        version,
-        fileName,
-        url: `${url}${fileName}`,
-        size,
-        date,
+        ...entry,
         downloaded: isDownloaded,
         extracted: extractedKind === false, // dir, not symlink
         clientExtracted: clientExtracted.has(version),
@@ -97,17 +153,27 @@ export class VersionManager {
     for (const info of extractedInfos) {
       if (info.isLocal) continue;
       if (catalogVersions.has(info.version)) continue;
-      const gsPath = this.storage.getGemstonePath(info.version);
-      const txt = gsPath ? SysadminStorage.readVersionTxt(gsPath) : undefined;
+      versions.push(this.installedVersion(info));
+    }
+
+    // A downloaded archive the catalog does not list — which is *every* downloaded
+    // archive when the catalog is empty (offline, or the fetch failed). The catalog
+    // loop is the only place a downloaded row is otherwise produced, so without
+    // this the version, and its no-network "Install (extract)" action, silently
+    // vanish offline. Extracted versions are already covered by the loops above.
+    for (const [version, size] of downloaded) {
+      if (catalogVersions.has(version)) continue;
+      if (extractedMap.has(version)) continue;
       versions.push({
-        version: info.version,
+        version,
         fileName: '',
         url: '',
-        size: 0,
-        date: txt?.date ?? '',
-        downloaded: false,
-        extracted: true,
-        buildDescription: txt?.description,
+        size,
+        date: '',
+        downloaded: true,
+        extracted: false,
+        clientExtracted: clientExtracted.has(version),
+        bundled: bundled.has(version),
       });
     }
 
