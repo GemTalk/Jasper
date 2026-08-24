@@ -676,7 +676,8 @@ export class BreakpointManager {
     if (event.added.length > 0) this.pruneOrphans();
     // Resolving a name can need a prompt, so this runs on its own; the
     // SourceBreakpoint it produces comes back through this handler and is
-    // applied like any other.
+    // applied like any other. handleAdded never rejects — it reports its own
+    // failures — so there is nothing here for a caller to handle.
     void this.functionBreakpoints.handleAdded(event.added);
 
     const session = this.sessionManager.getSelectedSession();

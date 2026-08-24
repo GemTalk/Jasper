@@ -266,6 +266,35 @@ describe('FunctionBreakpointResolver', () => {
     expect(warn()).toHaveBeenCalledWith(expect.stringContaining('session busy'));
   });
 
+  it('refuses a class whose dictionary could not be determined', async () => {
+    // implementorsOf reports '' for a class not bound under its own name; an
+    // empty dictionary segment builds a URI that resolves to nothing.
+    mockImplementors.mockReturnValue([{ ...account, dictName: '' }]);
+    const bp = new FunctionBreakpoint('balance');
+
+    await new FunctionBreakpointResolver(makeSessionManager()).handleAdded([bp]);
+
+    expect(removed()).toHaveBeenCalledWith([bp]);
+    expect(added()).not.toHaveBeenCalled();
+    expect(warn()).toHaveBeenCalledWith(expect.stringContaining('which dictionary'));
+  });
+
+  it('reports rather than swallows an unexpected failure', async () => {
+    // handleAdded is fired without await, so a rejection would otherwise vanish
+    // and leave the breakpoint sitting there doing nothing.
+    mockImplementors.mockReturnValue([account]);
+    mockSource.mockImplementation(() => {
+      throw new Error('boom');
+    });
+    const bp = new FunctionBreakpoint('balance');
+
+    await expect(
+      new FunctionBreakpointResolver(makeSessionManager()).handleAdded([bp]),
+    ).resolves.toBeUndefined();
+    expect(warn()).toHaveBeenCalled();
+    expect(removed()).toHaveBeenCalledWith([bp]);
+  });
+
   it('carries the enabled flag across the conversion', async () => {
     mockImplementors.mockReturnValue([account]);
     await new FunctionBreakpointResolver(makeSessionManager()).handleAdded([

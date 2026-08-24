@@ -4,6 +4,7 @@ import { buildMethodUri } from './gemstoneFileSystemProvider';
 import * as queries from './browserQueries';
 import { MethodSearchResult } from './browserQueries';
 import { buildLineStarts, lineOfOffset } from './stepPointModel';
+import { logInfo } from './gciLog';
 
 /** A method name typed into the Breakpoints panel, taken apart. */
 export interface ParsedFunctionName {
@@ -75,7 +76,14 @@ export class FunctionBreakpointResolver {
 
   constructor(private sessionManager: SessionManager) {}
 
-  /** Resolve and convert every function breakpoint among `added`. */
+  /**
+   * Resolve and convert every function breakpoint among `added`.
+   *
+   * Never rejects. The caller fires this without awaiting (resolution can
+   * prompt), so a thrown error would otherwise vanish into an unhandled
+   * rejection and the breakpoint would just sit there doing nothing — the exact
+   * failure this class exists to remove.
+   */
   async handleAdded(added: readonly vscode.Breakpoint[]): Promise<void> {
     const named = added.filter(
       (bp): bp is vscode.FunctionBreakpoint => bp instanceof vscode.FunctionBreakpoint,
@@ -85,6 +93,9 @@ export class FunctionBreakpointResolver {
       this.inFlight.add(bp.functionName);
       try {
         await this.convert(bp);
+      } catch (e) {
+        logInfo(`[breakpoints] resolving "${bp.functionName}" failed: ${message(e)}`);
+        this.reject(bp, `Could not set a breakpoint for ${bp.functionName}: ${message(e)}`);
       } finally {
         this.inFlight.delete(bp.functionName);
       }
@@ -116,6 +127,11 @@ export class FunctionBreakpointResolver {
       return;
     }
 
+    logInfo(
+      `[breakpoints] "${bp.functionName}" parsed as ${describe(parsed)}; ` +
+        `${candidates.length} candidate(s): ${candidates.map(qualifiedName).join(', ') || 'none'}`,
+    );
+
     if (candidates.length === 0) {
       this.reject(bp, `Nothing implements ${describe(parsed)}.`);
       return;
@@ -136,6 +152,19 @@ export class FunctionBreakpointResolver {
       return;
     }
 
+    // implementorsOf reports no dictionary for a class not bound under its own
+    // name in the symbol list. The method URI needs one, and an empty segment
+    // builds a URI the file system provider cannot resolve — so say so rather
+    // than hand back a breakpoint that silently points nowhere.
+    if (target.dictName === '') {
+      this.reject(
+        bp,
+        `Could not tell which dictionary holds ${target.className} — ` +
+          'set the breakpoint from the method source instead.',
+      );
+      return;
+    }
+
     const uri = buildMethodUri({
       kind: 'method',
       sessionId: session.id,
@@ -146,6 +175,11 @@ export class FunctionBreakpointResolver {
       selector: target.selector,
       environmentId: entry.environmentId,
     });
+
+    logInfo(
+      `[breakpoints] ${qualifiedName(target)} entry is line ${entry.line} col ${entry.character}; ` +
+        `converting to ${uri.toString()}`,
+    );
 
     // Replace, don't add alongside: the function breakpoint has done its job as
     // a way of naming a method, and leaving it would show two rows for one break.
