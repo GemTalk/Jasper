@@ -1,7 +1,7 @@
 /**
  * Messages for the two ways starting or stopping a GemStone server fails
- * unhelpfully: an install Jasper cannot locate, and a GemStone shell script
- * complaining about its own environment.
+ * unhelpfully: an install Jasper cannot locate, and GemStone itself complaining
+ * about its own environment.
  *
  * Both are here, free of vscode and of ProcessManager, because the wording *is*
  * the fix — each of these replaced a message that sent users off to debug the
@@ -9,12 +9,30 @@
  * test.
  */
 
-/** The GemStone shell scripts' own complaint when they are run without
- *  `GEMSTONE` set. Relayed verbatim it reads as a broken shell profile, which
- *  is almost never what is wrong. */
-const BARE_GEMSTONE_UNDEFINED = /GEMSTONE environment variable is not defined/i;
+/**
+ * GemStone's own complaint when a command runs without `GEMSTONE` set.
+ *
+ * The two alternatives are the real message templates, lifted out of the
+ * `startstone` binary rather than paraphrased:
+ *
+ *     %s[Error]: The environment variable '%s' is not defined.
+ *     NRS Parse Error: the environment variable '%s' is not defined.
+ *
+ * The first form is what actually reaches users; the second fires when an NRS
+ * string references an unset variable. An earlier version of this matcher was
+ * written from the wording in the issue report — "GEMSTONE environment variable
+ * is not defined" — which is a *paraphrase* GemStone never emits, so it matched
+ * nothing in practice while its tests passed against the same paraphrase. That
+ * wording is kept as a third alternative only so anyone quoting the issue still
+ * gets a hit.
+ *
+ * Deliberately anchored on a `GEMSTONE`-prefixed variable name: an unset `PATH`
+ * or `HOME` is a different problem and must not be explained away as this one.
+ */
+const BARE_GEMSTONE_UNDEFINED =
+  /environment variable\s+'?GEMSTONE[A-Z_]*'?\s+is not defined|GEMSTONE[A-Z_]*\s+environment variable is not defined/i;
 
-/** True when a child's output is the shell scripts' bare environment complaint. */
+/** True when a child's output is GemStone's bare environment complaint. */
 export function isBareGemstoneUndefined(output: string): boolean {
   return BARE_GEMSTONE_UNDEFINED.test(output);
 }
@@ -43,14 +61,10 @@ export function explainMissingInstall(version: string, rootPath: string): string
  * with something that names the real situation, or return undefined to let the
  * original output stand.
  *
- * Jasper's own start path always sets `GEMSTONE` — a clean Jasper start and
- * connect works even with `GEMSTONE` unset in the shell — so this error never
- * means what it says. In practice it shows up when the command was aimed at a
- * server that is registered outside Jasper's environment: the script gets far
- * enough to hand off to another script that inherits a different environment,
- * and complains about the variable rather than about the mismatch. Passing that
- * through sends the user into their shell profile after a problem that is not
- * there.
+ * Jasper's own start path always sets `GEMSTONE` — `getEnvironment` either sets it
+ * or throws before anything is spawned — so relaying this verbatim sends the
+ * user into a shell profile that is not the problem. It has been seen in
+ * practice while a mismatched or externally started server was in the picture.
  */
 export function explainStartFailure(
   label: string,
@@ -59,12 +73,15 @@ export function explainStartFailure(
 ): string | undefined {
   if (!isBareGemstoneUndefined(output)) return undefined;
   return (
-    `${label} failed. GemStone reported that its GEMSTONE environment variable is not ` +
-    `defined, but Jasper did set it, to ${gemstonePath} — so this is not a problem with ` +
-    `your shell profile or your GemStone install.\n\n` +
-    `This usually means the command reached a server that was started outside Jasper's ` +
-    `environment and is registered where Jasper's own gslist does not look. Refresh the ` +
-    `Databases view: a server in that state is shown as started outside Jasper, and Jasper ` +
-    `can offer to restart it under its own environment.\n\n${output}`
+    `${label} failed. GemStone reported that GEMSTONE is not defined, but Jasper passed it ` +
+    `as ${gemstonePath} — so the variable was set and did not reach the command. Your shell ` +
+    `profile and your GemStone install are not the problem.\n\n` +
+    `Two things are worth checking, in this order:\n` +
+    `  • Open Terminal on the database and run "printenv GEMSTONE". That terminal is built ` +
+    `from the same environment as this command, so if GEMSTONE is missing there too, the ` +
+    `fault is in how Jasper resolved it — please report that.\n` +
+    `  • Refresh the Databases view. If a server for this database is shown as started ` +
+    `outside Jasper, the command may have reached that one instead, and Jasper can offer to ` +
+    `restart it under its own environment.\n\n${output}`
   );
 }

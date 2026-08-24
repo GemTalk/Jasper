@@ -5,15 +5,44 @@ import {
   isBareGemstoneUndefined,
 } from '../startFailureMessage';
 
-const SCRIPT_COMPLAINT = 'startstone[52]: GEMSTONE environment variable is not defined.\nExiting.';
+/** The real thing, copied out of the `startstone` binary's message table and
+ *  confirmed by running it with GEMSTONE unset — not a paraphrase. The first
+ *  matcher written here was built from the issue report's wording instead, so
+ *  it matched nothing GemStone actually emits while its tests passed. */
+const REAL_COMPLAINT =
+  "startstone[Info]: GemStone version '3.7.5'\n" +
+  'startstone[Info]: Starting Stone repository monitor gs64stone2.\n' +
+  "startstone[Error]: The environment variable 'GEMSTONE' is not defined.";
+
+/** The other template in the same binary, for an NRS string naming an unset var. */
+const REAL_NRS_COMPLAINT =
+  "NRS Parse Error: the environment variable 'GEMSTONE_NRS_ALL' is not defined.";
+
+/** The wording the issue report used, which GemStone never emits. Kept so that
+ *  quoting the issue still gets a hit. */
+const PARAPHRASE = 'GEMSTONE environment variable is not defined';
 
 describe('isBareGemstoneUndefined', () => {
-  it('recognises the shell scripts complaining about their own environment', () => {
-    expect(isBareGemstoneUndefined(SCRIPT_COMPLAINT)).toBe(true);
+  it('recognises what GemStone actually prints when GEMSTONE is unset', () => {
+    expect(isBareGemstoneUndefined(REAL_COMPLAINT)).toBe(true);
+  });
+
+  it('recognises the NRS form of the same complaint', () => {
+    expect(isBareGemstoneUndefined(REAL_NRS_COMPLAINT)).toBe(true);
+  });
+
+  it('still recognises the wording used in the issue report', () => {
+    expect(isBareGemstoneUndefined(PARAPHRASE)).toBe(true);
   });
 
   it('leaves any other failure alone', () => {
     expect(isBareGemstoneUndefined('stopstone: stone gs64stone is not running')).toBe(false);
+  });
+
+  it('does not claim an unrelated missing variable as this problem', () => {
+    // Same sentence, different variable — a missing PATH is its own bug and
+    // must not be explained away as the GemStone-environment one.
+    expect(isBareGemstoneUndefined("The environment variable 'PATH' is not defined.")).toBe(false);
   });
 });
 
@@ -38,32 +67,51 @@ describe('explainMissingInstall', () => {
 });
 
 describe('explainStartFailure', () => {
-  it('contradicts the script: Jasper did set the variable, and says to what', () => {
+  it('contradicts GemStone: Jasper did set the variable, and says to what', () => {
     const message = explainStartFailure(
       'Starting stone gs64stone',
-      SCRIPT_COMPLAINT,
+      REAL_COMPLAINT,
       '/opt/GemStone64Bit3.7.5-x86_64.Linux',
     );
 
     expect(message).toContain('/opt/GemStone64Bit3.7.5-x86_64.Linux');
-    expect(message).toContain('not a problem with your shell profile');
+    expect(message).toContain('Your shell profile and your GemStone install are not the problem');
   });
 
-  it('points at the real cause, a server started outside Jasper', () => {
-    const message = explainStartFailure('Starting stone gs64stone', SCRIPT_COMPLAINT, '/opt/gs');
+  it('offers the diagnostic before the diagnosis', () => {
+    // An earlier version asserted "this usually means a server was started
+    // outside Jasper" — which is wrong whenever nothing external is running,
+    // and is the same confident misdirection this whole message replaced.
+    const message = explainStartFailure('Starting stone gs64stone', REAL_COMPLAINT, '/opt/gs');
 
-    expect(message).toContain("outside Jasper's environment");
-    expect(message).toContain('Databases view');
+    expect(message).toContain('printenv GEMSTONE');
+    expect(message).not.toMatch(/this usually means/i);
+  });
+
+  it('mentions the external-server case as a possibility, not a verdict', () => {
+    const message = explainStartFailure('Starting stone gs64stone', REAL_COMPLAINT, '/opt/gs');
+
+    expect(message).toContain('outside Jasper');
+    expect(message).toContain('may have');
+  });
+
+  it('says the variable was set and did not arrive, which is the one certain fact', () => {
+    const message = explainStartFailure('Starting stone gs64stone', REAL_COMPLAINT, '/opt/gs');
+
+    expect(message).toContain('did not reach the command');
   });
 
   it('keeps the original output so nothing is hidden', () => {
-    const message = explainStartFailure('Starting stone gs64stone', SCRIPT_COMPLAINT, '/opt/gs');
+    const message = explainStartFailure('Starting stone gs64stone', REAL_COMPLAINT, '/opt/gs');
 
-    expect(message).toContain('startstone[52]');
+    expect(message).toContain(
+      "startstone[Error]: The environment variable 'GEMSTONE' is not defined.",
+    );
+    expect(message).toContain("GemStone version '3.7.5'");
   });
 
   it('names what was being attempted', () => {
-    const message = explainStartFailure('Starting NetLDI gs64ldi', SCRIPT_COMPLAINT, '/opt/gs');
+    const message = explainStartFailure('Starting NetLDI gs64ldi', REAL_COMPLAINT, '/opt/gs');
 
     expect(message).toContain('Starting NetLDI gs64ldi');
   });

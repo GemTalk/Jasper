@@ -25,6 +25,7 @@ import {
   parseGslist,
   classifyPidOwnership,
   versionsMatch,
+  exportCommand,
 } from '../processManager';
 import { GemStoneDatabase, GemStoneProcess } from '../sysadminTypes';
 import { DEFAULT_GS_PW } from '../loginTypes';
@@ -181,11 +182,31 @@ describe('ProcessManager', () => {
       expect(spawn).toHaveBeenCalledOnce();
       const [cmd, args] = vi.mocked(spawn).mock.calls[0];
       expect(cmd).toBe('/bin/bash');
-      expect(args[0]).toBe('-c');
-      expect(args[1]).toBe('ulimit -n 1024; exec "$@"');
-      expect(args[2]).toBe('--');
-      // The actual startstone binary should follow as the first exec argument
-      expect(args[3]).toContain('startstone');
+      expect(args).toContain('-c');
+      expect(args).toContain('ulimit -n 1024; exec "$@"');
+      expect(spawnedCommand().cmd).toContain('startstone');
+    });
+
+    it('on Linux does not let the user shell rewrite the environment it built', async () => {
+      // The wrapper exists only to set ulimit before exec, so it has no business
+      // running startup files. Users do have `unset GEMSTONE` in their .bashrc,
+      // and a GemStone command whose GEMSTONE was unset out from under it
+      // reports a broken install rather than a hijacked environment.
+      setPlatform('linux');
+      const proc = makeChildProcess(0);
+      mockSpawnReturn(proc);
+      const manager = new ProcessManager(makeStorage('/gs/3.7.4'));
+
+      const promise = manager.startStone(makeDatabase());
+      proc.finish();
+      await promise;
+
+      const [, args, options] = vi.mocked(spawn).mock.calls[0];
+      expect(args).toContain('--noprofile');
+      expect(args).toContain('--norc');
+      // BASH_ENV is the remaining way a non-interactive shell reads a file.
+      expect(options.env?.BASH_ENV).toBe('');
+      expect(options.env?.GEMSTONE).toBe('/gs/3.7.4');
     });
 
     it('on Linux passes the stone arguments after the exec sentinel', async () => {
@@ -429,9 +450,8 @@ describe('ProcessManager', () => {
       proc.finish();
       await promise;
 
-      const [cmd, args] = vi.mocked(spawn).mock.calls[0];
-      expect(cmd).toBe('/bin/bash');
-      expect(args[3]).toContain('startnetldi');
+      expect(vi.mocked(spawn).mock.calls[0][0]).toBe('/bin/bash');
+      expect(spawnedCommand().cmd).toContain('startnetldi');
     });
 
     it('on macOS spawns startnetldi directly', async () => {
@@ -726,7 +746,7 @@ describe('ProcessManager', () => {
      *  before any flags — which is what the name re-check reads. */
     const STONED = '/gs/sys/stoned gs64stone -l /log';
 
-    it('replaces the scripts’ bare GEMSTONE complaint with the real situation', async () => {
+    it('replaces GemStone’s bare GEMSTONE complaint with the real situation', async () => {
       // Without this the user is told their GEMSTONE variable is undefined —
       // which Jasper just set — and goes off to debug a shell profile that is
       // fine. The wording is unit-tested; this covers it actually being used.
@@ -736,10 +756,10 @@ describe('ProcessManager', () => {
       const manager = new ProcessManager(makeStorage('/gs/3.7.4'));
 
       const promise = manager.startStone(makeDatabase());
-      child.emitStderr('startstone[52]: GEMSTONE environment variable is not defined.\n');
+      child.emitStderr("startstone[Error]: The environment variable 'GEMSTONE' is not defined.\n");
       child.finish();
 
-      await expect(promise).rejects.toThrow(/not a problem with your shell profile/);
+      await expect(promise).rejects.toThrow(/did not reach the command/);
     });
 
     it('leaves any other start failure reported as it came', async () => {
@@ -1588,6 +1608,28 @@ describe('ProcessManager', () => {
       expect(sent).toContain("export GEMSTONE_GLOBAL_DIR='/mnt/c/gemstone'");
       expect(sent).toContain("export PATH='/mnt/c/gs/3.7.4/bin:");
       expect(sent).toContain("export LD_LIBRARY_PATH='/mnt/c/gs/3.7.4/lib'");
+    });
+  });
+
+  describe('exportCommand', () => {
+    it('re-asserts every variable as a shell export', () => {
+      expect(exportCommand({ GEMSTONE: '/gs', GEMSTONE_LOG: '/db/log' })).toBe(
+        "export GEMSTONE='/gs'; export GEMSTONE_LOG='/db/log'",
+      );
+    });
+
+    it('survives a value containing a single quote', () => {
+      // Paths are Jasper-made and rarely contain one, but a broken quote here
+      // would corrupt every export that follows it in the same line.
+      expect(exportCommand({ GEMSTONE_LOG: "/db/o'brien/log" })).toBe(
+        "export GEMSTONE_LOG='/db/o'\\''brien/log'",
+      );
+    });
+
+    it('keeps an empty value empty rather than dropping it', () => {
+      // GEMSTONE_NRS_ALL is deliberately blanked; it has to be exported blank,
+      // not omitted, or an inherited one survives.
+      expect(exportCommand({ GEMSTONE_NRS_ALL: '' })).toBe("export GEMSTONE_NRS_ALL=''");
     });
   });
 

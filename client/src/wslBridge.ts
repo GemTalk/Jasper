@@ -487,11 +487,21 @@ export function wslSpawn(cmd: string, args: string[], env?: Record<string, strin
     const wslArgs = ['-e', 'env', ...envPairs, cmd, ...args];
     return spawn('wsl.exe', wslArgs, { env: process.env });
   }
-  const mergedEnv = { ...process.env, ...env };
+  // BASH_ENV is the one way a non-interactive `bash -c` can still be made to
+  // read a startup file, and a startup file is free to clobber the environment
+  // Jasper just built. Users really do have `unset GEMSTONE` in their .bashrc —
+  // and a GemStone command whose GEMSTONE has been unset out from under it
+  // reports the variable as undefined, which reads as a broken install rather
+  // than as someone else's shell rewriting Jasper's environment.
+  const mergedEnv = { ...process.env, ...env, BASH_ENV: '' };
   if (process.platform === 'linux') {
-    return spawn('/bin/bash', ['-c', 'ulimit -n 1024; exec "$@"', '--', cmd, ...args], {
-      env: mergedEnv,
-    });
+    // --noprofile --norc for the same reason: the wrapper exists only to set
+    // ulimit before exec, so it has no business running the user's rc files.
+    return spawn(
+      '/bin/bash',
+      ['--noprofile', '--norc', '-c', 'ulimit -n 1024; exec "$@"', '--', cmd, ...args],
+      { env: mergedEnv },
+    );
   }
   return spawn(cmd, args, { env: mergedEnv });
 }

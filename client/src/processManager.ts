@@ -116,6 +116,16 @@ export function parseGslist(output: string): GemStoneProcess[] {
   return processes;
 }
 
+/** Shell `export` statements for an environment, single-quote escaped.
+ *  Used both to seed a WSL terminal and to re-assert Jasper's values in a
+ *  native one after the user's startup files have had their turn. */
+export function exportCommand(env: Record<string, string>): string {
+  const quote = (v: string): string => `'${v.split("'").join(`'\\''`)}'`;
+  return Object.entries(env)
+    .map(([k, v]) => `export ${k}=${quote(v)}`)
+    .join('; ');
+}
+
 export class ProcessManager {
   private cachedProcesses: GemStoneProcess[] = [];
   /** Host process table, scanned at most once per refresh and only when
@@ -843,6 +853,14 @@ export class ProcessManager {
         cwd: db.path,
       });
       terminal.show();
+      // Re-export after the shell has started, the way the WSL branch above
+      // already does. `env` is applied *before* the interactive shell reads the
+      // user's startup files, so an `unset GEMSTONE` or a competing
+      // `export GEMSTONE=…` in .bashrc silently wins — and this terminal is
+      // supposed to be the one place a user can trust to have the database's
+      // environment. Sending the exports afterwards makes Jasper's values
+      // authoritative without taking the user's shell customizations away.
+      terminal.sendText(exportCommand(env), true);
     }
   }
 
