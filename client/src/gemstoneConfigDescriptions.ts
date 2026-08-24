@@ -42,8 +42,8 @@ export function parseConfigDescriptions(text: string): Map<string, string> {
   const flush = (): void => {
     if (key) {
       const desc = lines.join('\n').replace(/^\n+/, '').replace(/\n+$/, '');
-      // A later, fuller block for the same key wins only if this one had text;
-      // an empty block never overwrites a real description.
+      // The first non-empty block for a key wins: once set it is never
+      // overwritten, and an empty block never sets it in the first place.
       if (desc && !map.has(key)) map.set(key, desc);
     }
     key = undefined;

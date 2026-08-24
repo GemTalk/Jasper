@@ -382,6 +382,30 @@ describe('filtering', () => {
     const keys = visible.map((r) => r.querySelector('.config-key')?.textContent?.trim());
     expect(keys).toEqual(['StnGemTimeout']);
   });
+
+  it('keeps the filter text, filtered rows, and box focus across a redraw', () => {
+    // The whole point of applying the filter in place (and restoring focus) is
+    // that the panel's frequent redraws do not drop what the user typed.
+    const { root } = open(connectedState());
+    sendMessage({ command: 'configuration', config: configPayload() });
+
+    const box = root.querySelector<HTMLInputElement>('[data-config-filter]')!;
+    box.value = 'stn';
+    box.dispatchEvent(new Event('input', { bubbles: true }));
+    box.focus();
+
+    api().render(connectedState());
+
+    const box2 = root.querySelector<HTMLInputElement>('[data-config-filter]')!;
+    expect(box2.value).toBe('stn');
+    const visible = [...root.querySelectorAll('tr.config-item')].filter(
+      (r) => (r as HTMLElement).style.display !== 'none',
+    );
+    expect(visible.map((r) => r.querySelector('.config-key')?.textContent?.trim())).toEqual([
+      'StnGemTimeout',
+    ]);
+    expect(document.activeElement).toBe(box2);
+  });
 });
 
 describe('editing a value', () => {
@@ -455,6 +479,61 @@ describe('editing a value', () => {
       expect.objectContaining({ command: 'setConfiguration' }),
     );
   });
+
+  const openEditor = (root: HTMLElement) => {
+    root
+      .querySelector<HTMLButtonElement>('[data-action="editConfig"][data-key="StnGemTimeout"]')!
+      .click();
+    return root.querySelector<HTMLInputElement>('.config-edit [data-config-input]')!;
+  };
+
+  it('commits an edit on Enter, the keyboard twin of Set', () => {
+    const { root, host } = open(connectedState());
+    sendMessage({ command: 'configuration', config: configPayload() });
+
+    const input = openEditor(root);
+    input.value = '90';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+
+    expect(host.postMessage).toHaveBeenCalledWith({
+      command: 'setConfiguration',
+      scope: 'stone',
+      key: 'StnGemTimeout',
+      valueType: 'integer',
+      value: '90',
+    });
+    expect(root.querySelector('.config-edit')).toBeNull();
+  });
+
+  it('abandons an edit on Escape, the keyboard twin of Cancel', () => {
+    const { root, host } = open(connectedState());
+    sendMessage({ command: 'configuration', config: configPayload() });
+
+    const input = openEditor(root);
+    input.value = '90';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+    expect(root.querySelector('.config-edit')).toBeNull();
+    expect(host.postMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'setConfiguration' }),
+    );
+  });
+
+  it('keeps an open editor across a redraw, resetting to the stored value', () => {
+    // The panel redraws often; an edit in progress must not be closed by one.
+    // The editor is rebuilt from the stored value, so half-typed text is reset —
+    // pin that so the behaviour is a conscious contract, not an accident.
+    const { root } = open(connectedState());
+    sendMessage({ command: 'configuration', config: configPayload() });
+
+    const input = openEditor(root);
+    input.value = '9'; // mid-type
+    api().render(connectedState());
+
+    const reopened = root.querySelector<HTMLInputElement>('.config-edit [data-config-input]');
+    expect(reopened).not.toBeNull();
+    expect(reopened!.value).toBe('60');
+  });
 });
 
 describe('filter clear', () => {
@@ -525,6 +604,34 @@ describe('info tooltip pinning', () => {
     expect(document.querySelector('.config-info-pop')).not.toBeNull();
 
     api().render(connectedState());
+    expect(document.querySelector('.config-info-pop')).toBeNull();
+  });
+
+  it('closes on a click away, but not on a click inside the bubble', () => {
+    const { root } = open(connectedState());
+    sendMessage({ command: 'configuration', config: configPayload() });
+
+    infoFor(root, 'StnGemTimeout').click();
+    const pop = document.querySelector<HTMLElement>('.config-info-pop')!;
+    expect(pop).not.toBeNull();
+
+    // A click inside the bubble keeps it open.
+    pop.click();
+    expect(document.querySelector('.config-info-pop')).not.toBeNull();
+
+    // A click anywhere else dismisses it.
+    document.body.click();
+    expect(document.querySelector('.config-info-pop')).toBeNull();
+  });
+
+  it('closes the pinned tooltip on Escape', () => {
+    const { root } = open(connectedState());
+    sendMessage({ command: 'configuration', config: configPayload() });
+
+    infoFor(root, 'StnGemTimeout').click();
+    expect(document.querySelector('.config-info-pop')).not.toBeNull();
+
+    root.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     expect(document.querySelector('.config-info-pop')).toBeNull();
   });
 });

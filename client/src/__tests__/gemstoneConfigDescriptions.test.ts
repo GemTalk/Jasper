@@ -59,6 +59,50 @@ describe('parseConfigDescriptions', () => {
       'STN_MAX_SESSIONS',
     ]);
   });
+
+  it('requires a divider between blocks — without one, the second key is lost', () => {
+    // The parser's key boundary is the divider line. Two blocks with a divider
+    // yield two keys; drop the divider and the second header is absorbed as the
+    // first key's description text, so its parameter silently gets no tooltip.
+    const divided = '#===\n# STN_A: first.\n#STN_A = 1;\n#===\n# STN_B: second.\n#STN_B = 2;\n';
+    expect([...parseConfigDescriptions(divided).keys()].sort()).toEqual(['STN_A', 'STN_B']);
+
+    const undivided = '#===\n# STN_A: first.\n# STN_B: second.\n#STN_A = 1;\n';
+    const m = parseConfigDescriptions(undivided);
+    expect(m.has('STN_A')).toBe(true);
+    expect(m.has('STN_B')).toBe(false);
+    expect(m.get('STN_A')).toContain('STN_B');
+  });
+
+  it('preserves an interior blank comment line but drops a wholly empty one', () => {
+    // A `#` line becomes a blank line inside the tooltip; a truly empty line is
+    // skipped. Surrounding blank lines are trimmed.
+    const text = '#===\n# STN_D: line one\n#\n# line three\n\n# line five\n#STN_D = 1;\n';
+    expect(parseConfigDescriptions(text).get('STN_D')?.split('\n')).toEqual([
+      'line one',
+      '',
+      'line three',
+      'line five',
+    ]);
+  });
+
+  it('returns an empty map — never throws — for empty or key-less input', () => {
+    // gemstoneManager.ts relies on this: a missing/odd system.conf means "no
+    // tooltips", not a thrown parse.
+    expect(parseConfigDescriptions('').size).toBe(0);
+    expect(parseConfigDescriptions('# a banner with no divider and no key\n').size).toBe(0);
+    expect(parseConfigDescriptions('plain text, no hash at all\n').size).toBe(0);
+  });
+
+  it('keeps the first non-empty description for a duplicated key', () => {
+    // flush(): the first non-empty block wins; an empty block never sets the key,
+    // and a later block never overwrites it.
+    const emptyThenFull = '#===\n# STN_G\n#STN_G = 1;\n#===\n# STN_G: real desc.\n#STN_G = 1;\n';
+    expect(parseConfigDescriptions(emptyThenFull).get('STN_G')).toBe('real desc.');
+
+    const fullThenFull = '#===\n# STN_H: first.\n#===\n# STN_H: second.\n';
+    expect(parseConfigDescriptions(fullThenFull).get('STN_H')).toBe('first.');
+  });
 });
 
 describe('toConfigFileKey', () => {
@@ -71,6 +115,12 @@ describe('toConfigFileKey', () => {
   });
   it('splits a run of capitals before a following word', () => {
     expect(toConfigFileKey('ShrPcTargetPercentDirty')).toBe('SHR_PC_TARGET_PERCENT_DIRTY');
+  });
+  it('is lossy for TempObj — a known miss the module header documents', () => {
+    // The real config-file key is GEM_TEMPOBJ_CACHE_SIZE, but the transform splits
+    // Temp|Obj and yields GEM_TEMP_OBJ_CACHE_SIZE, which resolves to nothing. Pin
+    // the actual (lossy) output so any change to the transform is a conscious one.
+    expect(toConfigFileKey('GemTempObjCacheSize')).toBe('GEM_TEMP_OBJ_CACHE_SIZE');
   });
 });
 
@@ -87,5 +137,18 @@ describe('descriptionFor', () => {
 
   it('is undefined when the file named neither spelling', () => {
     expect(descriptionFor(map, 'StnGemTimeout')).toBeUndefined();
+  });
+
+  it('misses an irregular runtime key whose file name is not a mechanical transform', () => {
+    // ShrPcTargetPercentDirty's real config-file key is STN_SHR_TARGET_PERCENT_DIRTY,
+    // but toConfigFileKey yields SHR_PC_TARGET_PERCENT_DIRTY — so even when the file
+    // describes the parameter, descriptionFor returns undefined. The contract is
+    // "no tooltip, never a wrong one"; resolving these would need a curated alias
+    // table. Pin the miss so the boundary is explicit, not assumed-covered.
+    const m = parseConfigDescriptions(
+      '#===\n# STN_SHR_TARGET_PERCENT_DIRTY: page-dirty threshold.\n#STN_SHR_TARGET_PERCENT_DIRTY = 40;\n',
+    );
+    expect(m.has('STN_SHR_TARGET_PERCENT_DIRTY')).toBe(true);
+    expect(descriptionFor(m, 'ShrPcTargetPercentDirty')).toBeUndefined();
   });
 });

@@ -24,6 +24,7 @@ vi.mock('../sharedMemoryTreeProvider', async () => {
 import * as vscode from 'vscode';
 
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 
 import {
@@ -508,6 +509,41 @@ describe('GemStone Manager panel', () => {
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
       expect.stringContaining('NetLDI is down'),
     );
+    // The failure also goes into the panel (where it can wrap and be read), which
+    // is the message the guided tour consumes to stop advancing.
+    expect(panel.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: 'actionFailed',
+        message: expect.stringContaining('NetLDI is down'),
+      }),
+    );
+  });
+
+  it('tells the panel a default-database start failed, before the redraw', async () => {
+    const { panel } = openPanel();
+    vi.mocked(vscode.commands.executeCommand).mockImplementation((cmd: string) =>
+      cmd === 'gemstone.createDatabaseDefaults'
+        ? Promise.reject(new Error('startstone failed'))
+        : Promise.resolve(undefined),
+    );
+
+    send(panel, { command: 'createDatabaseDefaults' });
+    await settle();
+
+    const calls = panel.webview.postMessage.mock.calls;
+    const failedAt = calls.findIndex(
+      ([m]) => (m as { command: string }).command === 'actionFailed',
+    );
+    const stateAfter = calls.findIndex(
+      ([m], i) => i > failedAt && (m as { command: string }).command === 'state',
+    );
+    expect(failedAt).toBeGreaterThanOrEqual(0);
+    // The failure is posted before the state redraw, so a coach step does not read
+    // the refresh (the DB really was created) as a successful start.
+    expect(stateAfter).toBeGreaterThan(failedAt);
+    expect((calls[failedAt][0] as { message: string }).message).toContain('startstone failed');
+    // This path uses actionFailed into the panel, not the generic error toast.
+    expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
   });
 
   it('lists a login added while it is open', async () => {
@@ -846,6 +882,105 @@ describe('configuration', () => {
 
     expect(posted(panel, 'configuration')).toHaveLength(0);
     expect(posted(panel, 'configurationError')[0]?.message).toContain('SystemUser');
+  });
+
+  it('surfaces a configurationError when a report raises, rather than throwing', () => {
+    // The load's try/catch exists so a report that raises becomes a showable
+    // error, not a rejection the guided tour would misread as progress.
+    const raising = (code: string) => {
+      if (code.includes('stoneConfigurationReport')) throw new Error('report blew up');
+      return cannedGci()(code);
+    };
+    const panel = openWithSession(sessionWith(raising));
+
+    send(panel, { command: 'loadConfiguration' });
+
+    expect(posted(panel, 'configuration')).toHaveLength(0);
+    expect(posted(panel, 'configurationError')[0]?.message).toContain('report blew up');
+  });
+
+  it('surfaces a configurationError when the set itself throws', () => {
+    // A set that starts but throws mid-flight (session dropped, GCI raises) must
+    // land as an error — not an unhandled rejection, and not a false notice.
+    const raising = (code: string) => {
+      if (code.includes('stoneConfigurationAt') || code.includes('gemConfigurationAt'))
+        throw new Error('Session is busy');
+      return cannedGci()(code);
+    };
+    const panel = openWithSession(sessionWith(raising));
+
+    send(panel, {
+      command: 'setConfiguration',
+      scope: 'gem',
+      key: 'GemConvertArrayBuilder',
+      valueType: 'boolean',
+      value: 'true',
+    });
+
+    expect(posted(panel, 'configuration')).toHaveLength(0);
+    expect(posted(panel, 'configurationNotice')).toHaveLength(0);
+    expect(posted(panel, 'configurationError')[0]?.message).toContain('busy');
+  });
+
+  it('reports an error rather than setting when no session is selected', () => {
+    const panel = openWithSession(undefined);
+
+    send(panel, {
+      command: 'setConfiguration',
+      scope: 'gem',
+      key: 'GemConvertArrayBuilder',
+      valueType: 'boolean',
+      value: 'true',
+    });
+
+    expect(posted(panel, 'configuration')).toHaveLength(0);
+    expect(posted(panel, 'configurationError')[0]?.message).toMatch(/no gemstone session/i);
+  });
+
+  it('reads and parses system.conf once per version, attaching descriptions', () => {
+    // The host reads the product's system.conf for tooltips and caches the parse
+    // per version. Every other config test hits the empty-map (no product tree)
+    // branch; this one drives the real read + attach + cache against a temp tree.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsconf-'));
+    fs.mkdirSync(path.join(dir, 'data'));
+    const confPath = path.join(dir, 'data', 'system.conf');
+    fs.writeFileSync(
+      confPath,
+      '#===\n# STN_GEM_TIMEOUT: how long the stone waits for a gem.\n#STN_GEM_TIMEOUT = 60;\n',
+    );
+
+    const adminChanged = new vscode.EventEmitter<void>();
+    const deps = fakeDeps(() => []);
+    (deps.storage as unknown as Record<string, unknown>).getGemstonePath = () => dir;
+    const session = sessionWith(cannedGci());
+    const sm = deps.sessionManager as unknown as Record<string, unknown>;
+    sm.getSelectedSession = () => session;
+    sm.getSessions = () => [session];
+    GemstoneManagerPanel.show({ ...deps, onAdminChange: [adminChanged.event] });
+    const panel = lastPanel();
+
+    try {
+      send(panel, { command: 'loadConfiguration' });
+      const descOf = (i: number) =>
+        (
+          posted(panel, 'configuration')[i].config as {
+            stoneParams: { key: string; description?: string }[];
+          }
+        ).stoneParams.find((p) => p.key === 'StnGemTimeout')?.description;
+      expect(
+        (posted(panel, 'configuration')[0].config as { descriptionsAvailable: boolean })
+          .descriptionsAvailable,
+      ).toBe(true);
+      expect(descOf(0)).toContain('how long the stone waits');
+
+      // Cache: delete the file, load again — the description still comes back, so
+      // the parse was cached per version rather than re-read from disk.
+      fs.rmSync(confPath);
+      send(panel, { command: 'loadConfiguration' });
+      expect(descOf(1)).toContain('how long the stone waits');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

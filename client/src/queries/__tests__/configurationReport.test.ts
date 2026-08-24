@@ -12,6 +12,7 @@ import {
   stoneConfiguration,
   gemConfiguration,
   setConfiguration,
+  configValuesMatch,
 } from '../configurationReport';
 
 describe('isRuntimeSettable', () => {
@@ -93,6 +94,53 @@ describe('parseConfigReport', () => {
     ]);
   });
 
+  it('keeps a value whole even if a tab slipped through the server-side flatten', () => {
+    // Everything after the second tab is the value: it is sliced, not split, so a
+    // stray tab is preserved rather than truncating the value. This is the whole
+    // reason the parser slices instead of splitting on tab.
+    const [entry] = parseConfigReport('K\tString\ta\tb\tc\n');
+    expect(entry.value).toBe('a\tb\tc');
+  });
+
+  it('reads an empty value, still classifying by its class', () => {
+    // Blank path/name parameters are real; the value slice must yield ''.
+    const [entry] = parseConfigReport('DBF_PRE_GROW\tString\t\n');
+    expect(entry).toEqual({ key: 'DBF_PRE_GROW', value: '', type: 'string', settable: false });
+  });
+
+  it('skips a line with only one tab, and a line with an empty key', () => {
+    // Two distinct guards: a line missing its second tab (no value field), and a
+    // line whose key is empty. Both are dropped rather than guessed at.
+    expect(parseConfigReport('K\tString')).toEqual([]);
+    expect(parseConfigReport('\tString\tv')).toEqual([]);
+  });
+
+  it('classifies every known integer and string class, and unknowns as other', () => {
+    // The class-name sets are a contract: dropping a member would silently
+    // reclassify a real report value (and, for integers/strings, stop offering
+    // its editor). Pin every member.
+    const typeOf = (cls: string) => parseConfigReport(`K\t${cls}\tv\n`)[0].type;
+    for (const cls of [
+      'SmallInteger',
+      'LargePositiveInteger',
+      'LargeNegativeInteger',
+      'LargeInteger',
+    ])
+      expect(typeOf(cls)).toBe('integer');
+    for (const cls of [
+      'String',
+      'Symbol',
+      'DoubleByteString',
+      'QuadByteString',
+      'Unicode7',
+      'Unicode16',
+      'Unicode32',
+    ])
+      expect(typeOf(cls)).toBe('string');
+    expect(typeOf('Boolean')).toBe('boolean');
+    expect(typeOf('Float')).toBe('other');
+  });
+
   it('raises the error the report came back with', () => {
     expect(() => parseConfigReport('GS-ERROR: something broke')).toThrow('something broke');
   });
@@ -133,6 +181,14 @@ describe('configValueLiteral', () => {
   it('rejects an uneditable type', () => {
     expect(() => configValueLiteral('other', 'x')).toThrow(ConfigValueError);
   });
+  it('trims surrounding whitespace off a boolean or integer the user typed', () => {
+    expect(configValueLiteral('integer', ' 5 ')).toBe('5');
+    expect(configValueLiteral('boolean', ' TRUE ')).toBe('true');
+  });
+  it('rejects a leading + and an empty integer', () => {
+    expect(() => configValueLiteral('integer', '+5')).toThrow(ConfigValueError);
+    expect(() => configValueLiteral('integer', '')).toThrow(ConfigValueError);
+  });
 });
 
 describe('buildSetConfigCode', () => {
@@ -145,10 +201,30 @@ describe('buildSetConfigCode', () => {
     const code = buildSetConfigCode('gem', 'GemFreePageIdsCache', 'integer', '200');
     expect(code).toContain('System gemConfigurationAt: #GemFreePageIdsCache put: 200');
   });
-  it('refuses a key that is not a configuration name', () => {
-    expect(() => buildSetConfigCode('gem', 'Gem foo. System', 'integer', '1')).toThrow(
-      ConfigValueError,
-    );
+  it('accepts a legitimate ALL_CAPS underscored key', () => {
+    // The accept side of the shape guard: an underscored config-file name is a
+    // valid key, so building set code for it must not throw.
+    expect(() =>
+      buildSetConfigCode('stone', 'SHR_PAGE_CACHE_SIZE_KB', 'integer', '1'),
+    ).not.toThrow();
+  });
+  it('refuses a key that does not start with a letter', () => {
+    expect(() => buildSetConfigCode('gem', '9Bad', 'integer', '1')).toThrow(ConfigValueError);
+  });
+});
+
+describe('configValuesMatch', () => {
+  it('folds case and trims for boolean and integer', () => {
+    expect(configValuesMatch('boolean', 'True', 'true')).toBe(true);
+    expect(configValuesMatch('integer', ' 60 ', '60')).toBe(true);
+    expect(configValuesMatch('integer', '60', '61')).toBe(false);
+  });
+  it('compares a string verbatim, without trimming', () => {
+    // A string's surrounding whitespace is significant (a path, an argument
+    // list), so it must NOT be folded away the way a number is.
+    expect(configValuesMatch('string', 'x', 'x')).toBe(true);
+    expect(configValuesMatch('string', ' x ', 'x')).toBe(false);
+    expect(configValuesMatch('other', 'A', 'a')).toBe(false);
   });
 });
 
@@ -203,5 +279,15 @@ describe('setConfiguration', () => {
       ConfigValueError,
     );
     expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('relays a bare (non-sentinel) failure message verbatim', () => {
+    const result = setConfiguration(() => 'weird', 'gem', 'GemFreePageIdsCache', 'integer', '1');
+    expect(result).toEqual({ ok: false, message: 'weird' });
+  });
+
+  it('falls back to a default message when the stone answers nothing', () => {
+    const result = setConfiguration(() => '', 'gem', 'GemFreePageIdsCache', 'integer', '1');
+    expect(result).toEqual({ ok: false, message: 'The configuration value could not be set.' });
   });
 });

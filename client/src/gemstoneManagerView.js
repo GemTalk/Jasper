@@ -1370,6 +1370,12 @@
       configEditing.clear();
       configFilter = '';
     }
+    // Whether the filter box holds focus must be read BEFORE the DOM is replaced:
+    // rewriting innerHTML removes the old box, so focus has already fallen back to
+    // the body by the time the fresh rows exist. Reading it afterwards always
+    // misses, and the caret is lost on every redraw arriving mid-type.
+    const hadFilterFocus =
+      document.activeElement && document.activeElement.hasAttribute('data-config-filter');
     els.root.innerHTML =
       renderHeader(state) +
       orderedSections(state)
@@ -1413,10 +1419,8 @@
       });
     });
     // The filter is applied to the freshly-drawn rows, and focus is returned to
-    // the box when it was the active element before the redraw — so a rebuild
-    // arriving mid-type does not steal the cursor.
-    const hadFilterFocus =
-      document.activeElement && document.activeElement.hasAttribute('data-config-filter');
+    // the box (captured above, before the rebuild) so a redraw arriving mid-type
+    // does not steal the cursor.
     applyConfigFilter();
     updateFilterClear();
     if (hadFilterFocus) {
