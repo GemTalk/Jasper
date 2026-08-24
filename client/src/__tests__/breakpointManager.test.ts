@@ -403,7 +403,9 @@ describe('BreakpointManager', () => {
   });
 
   describe('reapplyAll', () => {
-    it('re-applies every gemstone breakpoint, which is what a new login needs', () => {
+    it('re-applies this session’s breakpoints, which is what a login needs', () => {
+      // VS Code restores its list at startup without firing onDidChangeBreakpoints
+      // and before any session exists, so without this the gutter marker is a lie.
       mockGetMethodSource.mockReturnValue('foo\n^1');
       mockGetSourceOffsets.mockReturnValue([1, 5]);
 
@@ -413,10 +415,49 @@ describe('BreakpointManager', () => {
         new SourceBreakpoint(new Location(Uri.parse('file:///a.ts'), new Position(3, 0))),
       ];
 
-      makeManager().reapplyAll(session());
-
+      expect(makeManager().reapplyAll(session())).toBe(1);
       expect(mockSetBreakAtStepPoint).toHaveBeenCalledTimes(1);
       expect(mockGetMethodSource).toHaveBeenCalledWith(expect.anything(), 'Array', false, 'at:', 0);
+    });
+
+    it('ignores a breakpoint belonging to another session', () => {
+      // Method URIs carry the session id. Pushing session 2's breakpoint into
+      // session 1's gem would set a breakpoint in a stone nobody asked about.
+      mockGetMethodSource.mockReturnValue('foo\n^1');
+      mockGetSourceOffsets.mockReturnValue([1, 5]);
+
+      debug.breakpoints = [
+        new SourceBreakpoint(
+          new Location(
+            Uri.parse('gemstone://2/Globals/Array/instance/accessing/at%3A'),
+            new Position(0, 0),
+          ),
+        ),
+      ];
+
+      expect(makeManager().reapplyAll(session())).toBe(0);
+      expect(mockSetBreakAtStepPoint).not.toHaveBeenCalled();
+      expect(mockClearAllBreaks).not.toHaveBeenCalled();
+    });
+
+    it('counts methods, not breakpoints, so two breaks in one method are one apply', () => {
+      mockGetMethodSource.mockReturnValue('foo\n^1');
+      mockGetSourceOffsets.mockReturnValue([1, 5]);
+
+      debug.breakpoints = [
+        new SourceBreakpoint(new Location(Uri.parse(METHOD_URI), new Position(0, 0))),
+        new SourceBreakpoint(new Location(Uri.parse(METHOD_URI), new Position(1, 0))),
+      ];
+
+      expect(makeManager().reapplyAll(session())).toBe(1);
+      // One clear for the method, both breakpoints set within it.
+      expect(mockClearAllBreaks).toHaveBeenCalledTimes(1);
+      expect(mockSetBreakAtStepPoint).toHaveBeenCalledTimes(2);
+    });
+
+    it('reports nothing to do when the session has no breakpoints', () => {
+      debug.breakpoints = [];
+      expect(makeManager().reapplyAll(session())).toBe(0);
     });
   });
 

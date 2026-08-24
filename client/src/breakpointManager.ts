@@ -235,17 +235,35 @@ export class BreakpointManager {
     );
   }
 
-  /** Re-apply every gemstone breakpoint to `session` — after a login, or on demand. */
-  reapplyAll(session: ActiveSession): void {
+  /**
+   * Push this session's breakpoints into its gem. Returns how many methods were
+   * (re)applied, so a caller can tell whether anything happened.
+   *
+   * **Required on login, not just on demand.** VS Code persists its breakpoint
+   * list across restarts and restores it at startup — silently, without firing
+   * `onDidChangeBreakpoints`, and before any session exists. So a restored
+   * breakpoint has a red dot in the gutter and nothing whatsoever in the gem:
+   * the marker claims execution will stop somewhere it won't. Re-applying when a
+   * session is selected is what makes the marker true again.
+   *
+   * Scoped to breakpoints whose URI names *this* session. Method URIs carry the
+   * session id (`gemstone://<id>/…`), and a breakpoint recorded against one
+   * session must not be pushed into another session's gem — that would set a
+   * breakpoint in a stone the developer never asked about. A restored breakpoint
+   * whose session id no longer exists simply waits: ids restart at 1 in each
+   * window, so the usual first login reclaims it.
+   */
+  reapplyAll(session: ActiveSession): number {
+    const prefix = `gemstone://${session.id}/`;
     const uris = new Set<string>();
-    for (const bp of vscode.debug.breakpoints) {
-      if (bp instanceof vscode.SourceBreakpoint && bp.location.uri.scheme === 'gemstone') {
-        uris.add(bp.location.uri.toString());
-      }
+    for (const bp of gemstoneBreakpoints()) {
+      const uriStr = bp.location.uri.toString();
+      if (uriStr.startsWith(prefix)) uris.add(uriStr);
     }
     for (const uriStr of uris) {
       this.applyToUri(session, vscode.Uri.parse(uriStr));
     }
+    return uris.size;
   }
 
   // ── Editor commands ──────────────────────────────────────

@@ -16,6 +16,7 @@ All notable changes to the **GemStone Smalltalk** extension will be documented i
 
 ### Fixed
 
+- **A restored breakpoint showed a gutter marker with nothing behind it.** VS Code persists its breakpoint list across restarts and restores it at startup — silently, without firing `onDidChangeBreakpoints`, and before any session exists. Nothing then pushed those breakpoints into a gem, so after reopening the window the marker claimed execution would stop somewhere it wouldn't. Selecting a session (which a login does) now re-applies that session's breakpoints, scoped by the session id in the method URI so one session's breakpoints are never pushed into another's gem.
 - **A gutter breakpoint could be set one step point later than the line asked for.** Line-to-step-point mapping compared GemStone's 1-based source offsets against 0-based line offsets, so a step point sitting exactly on a line boundary was read as belonging to the previous line. Run to Cursor already corrected for this; the gutter path did not.
 
 ## [1.8.13] - 2026-08-20
