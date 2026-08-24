@@ -25,7 +25,7 @@ sideways, jump to *Cleanup* rather than clicking around trying to recover.
 
 | Test | State |
 |---|---|
-| 0 · Works with a hostile `.bashrc` | ✅ **passed 2026-08-24** |
+| 0 · Works with a hostile `.bashrc` | ✅ **passed 2026-08-24** — all boxes |
 | 1 · Stays out of the way | ⬜ not run |
 | 2 · Safety gate holds | ⬜ not run |
 | 3 · Tree tells the truth | ⬜ not run |
@@ -99,8 +99,9 @@ Jasper set.
 
 - [x] With `unset GEMSTONE` **present** in `.bashrc`, Start Stone on `db-2` succeeds.
 - [x] Stop and restart from Jasper both work.
-- [ ] `db-2 → Open Terminal` → `printenv GEMSTONE` prints the product path. *(worth a
-      second look — the terminal fix is separate from the spawn fix)*
+- [x] `db-2 → Open Terminal` → `printenv GEMSTONE` prints the product path. Confirmed
+      separately from the spawn fix, since the two use different mechanisms: the terminal
+      re-exports after your startup files run, the spawn refuses to read them at all.
 
 **A fix that requires editing your shell is not a fix**; the point is that the line can
 stay.
