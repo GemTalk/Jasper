@@ -457,6 +457,78 @@ describe('editing a value', () => {
   });
 });
 
+describe('filter clear', () => {
+  const filterBox = (root: HTMLElement) =>
+    root.querySelector<HTMLInputElement>('[data-config-filter]')!;
+  const clearBtn = (root: HTMLElement) =>
+    root.querySelector<HTMLButtonElement>('[data-config-filter-clear]')!;
+
+  it('shows the × only when the filter has text, and clears the filter in place', () => {
+    const { root, host } = open(connectedState());
+    sendMessage({ command: 'configuration', config: configPayload() });
+
+    // Empty filter: no × to see.
+    expect(clearBtn(root).hidden).toBe(true);
+
+    // Type a filter: rows narrow and the × appears.
+    const box = filterBox(root);
+    box.value = 'StnGemTimeout';
+    box.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(clearBtn(root).hidden).toBe(false);
+    const visible = () =>
+      [...root.querySelectorAll<HTMLElement>('tr.config-item')].filter(
+        (r) => r.style.display !== 'none',
+      );
+    expect(visible().length).toBe(1);
+
+    // Click the ×: the box empties, every row is shown again, and the × hides —
+    // all in place, with no message to the host.
+    host.postMessage.mockClear();
+    clearBtn(root).click();
+    expect(box.value).toBe('');
+    expect(clearBtn(root).hidden).toBe(true);
+    expect(visible().length).toBe(root.querySelectorAll('tr.config-item').length);
+    expect(host.postMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe('info tooltip pinning', () => {
+  const infoFor = (root: HTMLElement, key: string) =>
+    [...root.querySelectorAll('tr.config-item')]
+      .find((r) => r.querySelector('.config-name')?.textContent?.trim() === key)!
+      .querySelector<HTMLButtonElement>('.config-info')!;
+
+  it('pins the tooltip on click and closes it on a second click', () => {
+    const { root } = open(connectedState());
+    sendMessage({ command: 'configuration', config: configPayload() });
+
+    // Hover still works: the title is untouched.
+    const info = infoFor(root, 'StnGemTimeout');
+    expect(info.getAttribute('title')).toContain('How long the stone waits');
+
+    // Click pins a bubble carrying the same text.
+    info.click();
+    const pop = document.querySelector('.config-info-pop');
+    expect(pop).not.toBeNull();
+    expect(pop!.textContent).toContain('How long the stone waits');
+
+    // A second click on the same ⓘ dismisses it.
+    info.click();
+    expect(document.querySelector('.config-info-pop')).toBeNull();
+  });
+
+  it('closes the pinned tooltip on a redraw', () => {
+    const { root } = open(connectedState());
+    sendMessage({ command: 'configuration', config: configPayload() });
+
+    infoFor(root, 'StnGemTimeout').click();
+    expect(document.querySelector('.config-info-pop')).not.toBeNull();
+
+    api().render(connectedState());
+    expect(document.querySelector('.config-info-pop')).toBeNull();
+  });
+});
+
 describe('session changes', () => {
   it('drops configuration read for a session that is no longer selected', () => {
     const { root } = open(connectedState());

@@ -1205,9 +1205,10 @@
     );
   }
 
-  // One parameter row. Every row carries an ⓘ whose hover tooltip states the
-  // value's type and whether it is runtime-settable or a read-only config-file
-  // parameter, plus the purpose text from system.conf when it named this key. A
+  // One parameter row. Every row carries an ⓘ that states the value's type and
+  // whether it is runtime-settable or a read-only config-file parameter, plus the
+  // purpose text from system.conf when it named this key — shown on hover and,
+  // because the text can run long, pinned on screen when the ⓘ is clicked. A
   // runtime value is editable; an all-caps config-file value is read-only.
   function configRow(param, scope) {
     const id = `${scope}:${param.key}`;
@@ -1246,7 +1247,7 @@
         : `<span class="config-value">${shownValue}</span>`;
     return `<tr class="config-item" data-config-key="${esc(param.key.toLowerCase())}" data-config-scope="${esc(scope)}">
       <td class="config-key"><span class="config-name" title="${esc(tip)}">${esc(param.key)}</span>
-        <i class="codicon codicon-info config-info" title="${esc(tip)}" tabindex="0" role="img" aria-label="${esc(param.key + ': ' + tip)}"></i></td>
+        <button type="button" class="config-info" data-config-info data-tip="${esc(tip)}" title="${esc(tip)}" aria-label="${esc(param.key + ': ' + tip)}"><i class="codicon codicon-info" aria-hidden="true"></i></button></td>
       <td class="config-val">${valueCell}</td>
       <td class="config-tag">${tag}</td>
     </tr>`;
@@ -1300,7 +1301,10 @@
         ? `<div class="config-notice ${configNotice.tone === 'warn' ? 'warn' : 'ok'}">${esc(configNotice.message)}</div>`
         : '';
       body = `<div class="config-toolbar">
-          <input type="text" class="config-filter" data-config-filter placeholder="Filter parameters…" value="${esc(configFilter)}" aria-label="Filter configuration parameters" />
+          <div class="config-filter-wrap">
+            <input type="text" class="config-filter" data-config-filter placeholder="Filter parameters…" value="${esc(configFilter)}" aria-label="Filter configuration parameters" />
+            <button type="button" class="config-filter-clear" data-config-filter-clear title="Clear filter" aria-label="Clear filter"${configFilter ? '' : ' hidden'}><i class="codicon codicon-close" aria-hidden="true"></i></button>
+          </div>
           <span class="config-legend">${badge('runtime', 'runtime')} may be changed in this session · ${badge('read-only', 'readonly')} set in the config file before startup · click a value with ${icon('edit')} to change it</span>
         </div>
         ${errLine}
@@ -1352,6 +1356,8 @@
   function render(state) {
     windowsHost = !!state.windows;
     lastState = state;
+    // The redraw replaces the row the pinned ⓘ was anchored to, so drop the bubble.
+    closeInfoPopover();
     // A configuration payload belongs to the session it was read from; when the
     // selected session changes (or goes away), the old values, error, edits and
     // filter no longer describe what is on screen, so drop them.
@@ -1412,6 +1418,7 @@
     const hadFilterFocus =
       document.activeElement && document.activeElement.hasAttribute('data-config-filter');
     applyConfigFilter();
+    updateFilterClear();
     if (hadFilterFocus) {
       const box = els.root.querySelector('[data-config-filter]');
       if (box) {
@@ -1516,6 +1523,23 @@
       onTourClick(tourEl);
       return;
     }
+    // Clicking an ⓘ pins its tooltip on screen (the hover title is untouched);
+    // clicking the same ⓘ again closes it. A click anywhere else that is not in
+    // the pinned bubble dismisses it (see also the capture-phase away-click).
+    const info = e.target.closest('[data-config-info]');
+    if (info) {
+      e.preventDefault();
+      toggleInfoPopover(info);
+      return;
+    }
+    if (!e.target.closest('.config-info-pop')) closeInfoPopover();
+    // The filter's × empties the box in place — no post, no re-render.
+    const clearFilter = e.target.closest('[data-config-filter-clear]');
+    if (clearFilter) {
+      e.preventDefault();
+      clearConfigFilter();
+      return;
+    }
     const el = e.target.closest('[data-action]');
     if (!el) return;
     // Prevent an action button inside a <summary> from also toggling the section.
@@ -1549,11 +1573,77 @@
     if (!box) return;
     configFilter = box.value;
     applyConfigFilter();
+    updateFilterClear();
+  }
+
+  // Empty the filter in place — same in-place filtering as typing, no post, no
+  // re-render — and return focus to the box so typing can continue.
+  function clearConfigFilter() {
+    configFilter = '';
+    const box = els.root.querySelector('[data-config-filter]');
+    if (box) {
+      box.value = '';
+      box.focus();
+    }
+    applyConfigFilter();
+    updateFilterClear();
+  }
+
+  // The × shows only when there is text to clear.
+  function updateFilterClear() {
+    const x = els.root.querySelector('[data-config-filter-clear]');
+    if (x) x.hidden = configFilter.trim() === '';
+  }
+
+  // The ⓘ tooltip, pinned: the same text the hover title carries, kept on screen
+  // so a long description can be read without holding the pointer still. The
+  // native title is left in place, so hover still works exactly as before. A
+  // redraw, Escape, a second click on the ⓘ, or a click away all close it.
+  let infoPopover = null;
+  let infoAnchor = null;
+  function closeInfoPopover() {
+    if (infoPopover) infoPopover.remove();
+    infoPopover = null;
+    infoAnchor = null;
+  }
+  function toggleInfoPopover(anchor) {
+    if (infoAnchor === anchor) {
+      closeInfoPopover();
+      return;
+    }
+    closeInfoPopover();
+    const pop = document.createElement('div');
+    pop.className = 'config-info-pop';
+    pop.setAttribute('role', 'tooltip');
+    // textContent (not innerHTML) — the tip is plain text with newlines that
+    // `white-space: pre-line` renders as line breaks; nothing here is markup.
+    pop.textContent = anchor.dataset.tip || anchor.getAttribute('title') || '';
+    document.body.appendChild(pop);
+    // Anchor under the ⓘ, pulled back inside the viewport if it would overflow.
+    const r = anchor.getBoundingClientRect();
+    const left = Math.max(6, Math.min(r.left, window.innerWidth - pop.offsetWidth - 6));
+    pop.style.left = `${left}px`;
+    pop.style.top = `${r.bottom + 4}px`;
+    infoPopover = pop;
+    infoAnchor = anchor;
+  }
+  // A click anywhere outside the ⓘ and its bubble dismisses the bubble. Capture
+  // phase so it runs even for clicks the panel handles and stops; it ignores the
+  // ⓘ itself (the bubble's own toggle in onClick owns that) and clicks inside
+  // the bubble.
+  function onAwayClick(e) {
+    if (!infoPopover) return;
+    if (e.target.closest('[data-config-info]') || e.target.closest('.config-info-pop')) return;
+    closeInfoPopover();
   }
 
   // Enter commits an inline edit, Escape abandons it — the keyboard equivalents
   // of the Set and Cancel buttons beside the input.
   function onKeydown(e) {
+    if (e.key === 'Escape' && infoPopover) {
+      closeInfoPopover();
+      return;
+    }
     const input = e.target.closest('[data-config-input]');
     if (!input) return;
     const box = input.closest('.config-edit');
@@ -1592,6 +1682,9 @@
     els.root.addEventListener('change', onChange);
     els.root.addEventListener('input', onInput);
     els.root.addEventListener('keydown', onKeydown);
+    // A pinned ⓘ bubble lives on document.body, outside the panel root, so its
+    // dismiss-on-click-away has to watch the document, not just the root.
+    document.addEventListener('click', onAwayClick, true);
     els.root.innerHTML = '<div class="skeleton">Loading GemStone environment…</div>';
     // Messages arrive from the extension host, which VS Code relays in from the
     // frame around this one — so `ev.source` is never this window, and testing

@@ -1919,12 +1919,22 @@ th.v-num { text-align: right; }
 .badge-runtime { background: color-mix(in srgb, var(--vscode-charts-blue, #4daafc) 26%, transparent); color: var(--vscode-foreground); }
 .badge-readonly { background: transparent; color: var(--vscode-descriptionForeground, #9d9d9d); border: 1px solid var(--gm-line); }
 .config-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 12px; }
+.config-filter-wrap { position: relative; display: flex; flex: 1 1 220px; min-width: 160px; align-items: center; }
 .config-filter {
-  flex: 1 1 220px; min-width: 160px; padding: 3px 8px;
+  flex: 1 1 auto; min-width: 0; padding: 3px 26px 3px 8px;
   background: var(--vscode-input-background); color: var(--vscode-input-foreground);
   border: 1px solid var(--vscode-input-border, var(--gm-line)); border-radius: 4px;
 }
 .config-filter:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+.config-filter-clear {
+  position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+  display: inline-flex; align-items: center; justify-content: center;
+  background: none; border: 0; padding: 2px; border-radius: 3px; line-height: 1;
+  color: var(--vscode-descriptionForeground, #9d9d9d); cursor: pointer; opacity: .7;
+}
+.config-filter-clear:hover { opacity: 1; background: var(--vscode-toolbar-hoverBackground, rgba(128,128,128,.15)); }
+.config-filter-clear:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; opacity: 1; }
+.config-filter-clear[hidden] { display: none; }
 .config-legend { font-size: 11px; color: var(--vscode-descriptionForeground, #9d9d9d); display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .config-loading { color: var(--vscode-descriptionForeground, #9d9d9d); padding: 16px 4px; }
 .config-error {
@@ -1957,9 +1967,19 @@ th.v-num { text-align: right; }
 .config-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
 .config-table td { padding: 3px 8px; border-bottom: 1px solid var(--gm-line); vertical-align: top; }
 .config-key { white-space: nowrap; font-family: var(--vscode-editor-font-family, monospace); font-size: 12px; }
-.config-info { font-size: 12px; color: var(--vscode-descriptionForeground, #9d9d9d); cursor: help; margin-left: 5px; vertical-align: -1px; opacity: .6; }
-.config-item:hover .config-info { opacity: 1; }
+.config-info { font: inherit; font-size: 12px; line-height: 1; background: none; border: 0; padding: 0; color: var(--vscode-descriptionForeground, #9d9d9d); cursor: pointer; margin-left: 5px; vertical-align: -1px; opacity: .6; }
+.config-item:hover .config-info, .config-info:hover { opacity: 1; }
 .config-info:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; opacity: 1; }
+/* The ⓘ tooltip pinned on screen after a click, so a long description can be
+   read without holding the pointer still. Positioned in the viewport by script. */
+.config-info-pop {
+  position: fixed; z-index: 40; max-width: 340px; white-space: pre-line;
+  padding: 8px 10px; font-size: 12px; line-height: 1.4;
+  background: var(--vscode-editorHoverWidget-background, var(--vscode-editorWidget-background));
+  color: var(--vscode-editorHoverWidget-foreground, var(--vscode-foreground));
+  border: 1px solid var(--vscode-editorHoverWidget-border, var(--gm-line));
+  border-radius: 4px; box-shadow: 0 2px 8px rgba(0, 0, 0, .35);
+}
 .config-val { width: 100%; }
 .config-value { font-family: var(--vscode-editor-font-family, monospace); font-size: 12px; word-break: break-all; }
 /* An editable value is a subtle button carrying a persistent pencil, so which
