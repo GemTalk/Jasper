@@ -258,6 +258,11 @@ window. Within a session they are re-applied after a recompile.
   Jasper by topaz or a `halt` left in the code
 - **Clear All Breakpoints in Method** drops every breakpoint in the method you
   are in
+- **Avoid VS Code's own "Deactivate Breakpoints"** button (the filled-dot icon in
+  the Breakpoints panel header). It greys the breakpoints out in the panel, but
+  the VS Code API exposes no way for an extension to observe that state — so
+  Jasper never hears about it and GemStone keeps stopping on them. Use
+  **Disable All Breakpoints** instead, which disarms them in the gem
 - **Break on entry by name** — the `+` button in VS Code's Breakpoints panel
   takes a method name instead of a location. Type a selector (`balance`) and
   Jasper finds the implementors, asking which class you meant when there is more
