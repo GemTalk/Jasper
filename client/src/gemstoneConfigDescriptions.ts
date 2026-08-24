@@ -20,7 +20,8 @@
 // CamelCase runtime spellings (see queries/configurationReport.ts). system.conf
 // is keyed only by the ALL_CAPS names, so {@link descriptionFor} also tries the
 // CamelCase -> UPPER_SNAKE spelling. The mapping is heuristic and misses a few
-// (TempObj vs TEMPOBJ); a miss simply means no tooltip, never a wrong one.
+// (TempObj vs TEMPOBJ); a miss yields no matched description here, and the viewer
+// then says why (no matching entry) rather than showing a wrong one.
 
 /** A line that separates one parameter's comment block from the next. */
 const DIVIDER = /^#[=-]{3,}/;
@@ -97,7 +98,8 @@ export function toConfigFileKey(key: string): string {
 /**
  * The description for a report key, trying its own spelling first and then the
  * config-file spelling of a CamelCase key. Undefined when the file named
- * neither — the viewer simply shows no tooltip.
+ * neither — the viewer then explains the miss (no matching entry, or no
+ * system.conf for the version) rather than showing a blank.
  */
 export function descriptionFor(descriptions: Map<string, string>, key: string): string | undefined {
   return descriptions.get(key) ?? descriptions.get(toConfigFileKey(key));

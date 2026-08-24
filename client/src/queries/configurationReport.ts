@@ -84,12 +84,15 @@ export function isEditable(entry: ConfigEntry): boolean {
   return entry.settable && entry.type !== 'other';
 }
 
+// The prefix a report emitter or setter puts on a caught error, so the client
+// can tell a failure from real report output or an `'OK'`. Matched with
+// `startsWith`, not an end-of-line marker.
+const ERROR_SENTINEL = 'GS-ERROR:';
+
 // The report is serialised one parameter per line as `key<TAB>class<TAB>value`,
 // with any tab/newline inside a value flattened to a space on the server so a
 // value can never span or split a line. Everything after the second tab is the
-// value, rejoined defensively in case one slipped through.
-const REPORT_TERMINATOR = 'GS-ERROR:';
-
+// value, parsed by slicing (not splitting) in case one slipped through.
 function reportCode(reportSelector: string): string {
   return `[ | ws rpt |
 ws := WriteStream on: String new.
@@ -104,7 +107,7 @@ rpt := System ${reportSelector}.
   ws nextPutAll: k asString; nextPut: Character tab;
      nextPutAll: cls; nextPut: Character tab;
      nextPutAll: dv; nextPut: Character lf ].
-ws contents ] on: Error do: [:e | '${REPORT_TERMINATOR} ', e messageText]`;
+ws contents ] on: Error do: [:e | '${ERROR_SENTINEL} ', e messageText]`;
 }
 
 export function buildStoneReportCode(): string {
@@ -123,10 +126,8 @@ export function buildGemReportCode(): string {
  */
 export function parseConfigReport(raw: string): ConfigEntry[] {
   const trimmed = raw.trim();
-  if (trimmed.startsWith(REPORT_TERMINATOR)) {
-    throw new Error(
-      trimmed.slice(REPORT_TERMINATOR.length).trim() || 'configuration report failed',
-    );
+  if (trimmed.startsWith(ERROR_SENTINEL)) {
+    throw new Error(trimmed.slice(ERROR_SENTINEL.length).trim() || 'configuration report failed');
   }
   const entries: ConfigEntry[] = [];
   for (const line of raw.split('\n')) {
@@ -227,7 +228,7 @@ export function buildSetConfigCode(
   const literal = configValueLiteral(type, value);
   const keyword = scope === 'stone' ? 'stoneConfigurationAt' : 'gemConfigurationAt';
   return `[ System ${keyword}: #${key} put: ${literal}. 'OK' ]
-  on: Error do: [:e | '${REPORT_TERMINATOR} ', e messageText]`;
+  on: Error do: [:e | '${ERROR_SENTINEL} ', e messageText]`;
 }
 
 /**
@@ -268,8 +269,8 @@ export function setConfiguration(
 ): SetConfigResult {
   const result = execute(buildSetConfigCode(scope, key, type, value)).trim();
   if (result === 'OK') return { ok: true };
-  const message = result.startsWith(REPORT_TERMINATOR)
-    ? result.slice(REPORT_TERMINATOR.length).trim()
+  const message = result.startsWith(ERROR_SENTINEL)
+    ? result.slice(ERROR_SENTINEL.length).trim()
     : result;
   return { ok: false, message: message || 'The configuration value could not be set.' };
 }

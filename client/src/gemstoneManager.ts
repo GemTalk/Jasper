@@ -1,9 +1,11 @@
 // GemStone Manager — a single, consolidated editor-tab webview that manages the
-// GemStone environment: OS prerequisites, installed/available versions, and
-// databases. It is a *read/coordinate* surface: it renders live state pulled
-// directly from the sysadmin managers, and every mutating action is delegated
-// to the existing `gemstone.*` commands (so it inherits their confirmation
-// modals, progress notifications, and sidebar-tree refreshes for free).
+// GemStone environment: OS prerequisites, installed/available versions, the
+// databases made from them, the logins that reach those databases, and a
+// selected session's configuration. It is a *read/coordinate* surface: it
+// renders live state pulled directly from the sysadmin managers, and every
+// mutating action is delegated to the existing `gemstone.*` commands (so it
+// inherits their confirmation modals, progress notifications, and admin-view
+// refreshes for free).
 //
 // The one exception is Configuration (issue #232): the stone and gem
 // configuration reports are read from the *selected session* over its GCI, and
