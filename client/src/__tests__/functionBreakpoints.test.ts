@@ -8,7 +8,14 @@ vi.mock('../browserQueries', () => ({
   getMethodSource: vi.fn(() => ''),
 }));
 
-import { debug, window, FunctionBreakpoint, SourceBreakpoint } from '../__mocks__/vscode';
+import {
+  debug,
+  window,
+  FunctionBreakpoint,
+  SourceBreakpoint,
+  __setConfig,
+  __resetConfig,
+} from '../__mocks__/vscode';
 import {
   FunctionBreakpointResolver,
   parseFunctionName,
@@ -126,6 +133,7 @@ describe('FunctionBreakpointResolver', () => {
   const removed = () => vi.mocked(debug.removeBreakpoints);
 
   beforeEach(() => {
+    __resetConfig();
     debug.breakpoints = [];
     added().mockClear();
     removed().mockClear();
@@ -325,6 +333,51 @@ describe('FunctionBreakpointResolver', () => {
 
     expect(removed()).toHaveBeenCalledWith([typed]);
     expect(addedSourceBreakpoint()).toBeInstanceOf(SourceBreakpoint);
+  });
+
+  it('finds an environment-0 method when maxEnvironment is above 0', async () => {
+    // gemstone.maxEnvironment is a ceiling, not a selection. Searching only that
+    // number skipped environment 0, where practically every method lives, so on
+    // such a stone nothing was ever found.
+    __setConfig('gemstone', 'maxEnvironment', 2);
+    mockImplementors.mockImplementation((_session, _selector, env) => (env === 0 ? [account] : []));
+
+    await new FunctionBreakpointResolver(makeSessionManager()).handle([
+      new FunctionBreakpoint('balance'),
+    ]);
+
+    expect(mockImplementors.mock.calls.map((c) => c[2])).toEqual([0, 1, 2]);
+    expect(warn()).not.toHaveBeenCalled();
+    expect(addedSourceBreakpoint()).toBeInstanceOf(SourceBreakpoint);
+  });
+
+  it('sets the breakpoint against the environment the method was found in', async () => {
+    __setConfig('gemstone', 'maxEnvironment', 2);
+    mockImplementors.mockImplementation((_session, _selector, env) => (env === 1 ? [account] : []));
+
+    await new FunctionBreakpointResolver(makeSessionManager()).handle([
+      new FunctionBreakpoint('balance'),
+    ]);
+
+    // Not the configured ceiling of 2 — the environment that actually had it.
+    expect(mockOffsets).toHaveBeenCalledWith(expect.anything(), 'Account', false, 'balance', 1);
+    // Decoded, because the URI library percent-encodes '=' in the query.
+    expect(decodeURIComponent(addedSourceBreakpoint()?.location.uri.toString() ?? '')).toContain(
+      'env=1',
+    );
+  });
+
+  it('does not offer the same class twice when it appears in two environments', async () => {
+    __setConfig('gemstone', 'maxEnvironment', 2);
+    mockImplementors.mockReturnValue([account]);
+
+    await new FunctionBreakpointResolver(makeSessionManager()).handle([
+      new FunctionBreakpoint('balance'),
+    ]);
+
+    // Three passes all report Account; one candidate means no needless picker.
+    expect(vi.mocked(window.showQuickPick)).not.toHaveBeenCalled();
+    expect(added()).toHaveBeenCalledTimes(1);
   });
 
   it('carries the enabled flag across the conversion', async () => {

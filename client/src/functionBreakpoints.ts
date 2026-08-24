@@ -44,6 +44,14 @@ export function parseFunctionName(raw: string): ParsedFunctionName | null {
   return { isMeta: false, selector: name.replace(/^#\s*/, '') };
 }
 
+/**
+ * An implementor, together with the method-dictionary environment it was found
+ * in. `MethodSearchResult` has no environment field, but the search runs once
+ * per environment, so the caller has to remember which pass produced a hit —
+ * without it the breakpoint would be set against the wrong environment.
+ */
+export type Candidate = MethodSearchResult & { environmentId: number };
+
 /** How a name should be shown once it has been pinned to one class. */
 export function qualifiedName(target: MethodSearchResult): string {
   return `${target.className}${target.isMeta ? ' class' : ''}>>${target.selector}`;
@@ -129,7 +137,7 @@ export class FunctionBreakpointResolver {
       return;
     }
 
-    let candidates: MethodSearchResult[];
+    let candidates: Candidate[];
     try {
       candidates = this.findCandidates(session, parsed);
     } catch (e) {
@@ -210,29 +218,36 @@ export class FunctionBreakpointResolver {
    * developer who wrote `Account>>balance` does not want a list — while a bare
    * selector is looked up across the image.
    */
-  private findCandidates(session: ActiveSession, parsed: ParsedFunctionName): MethodSearchResult[] {
-    const environmentId = maxEnvironment();
-    if (parsed.className === undefined) {
-      return queries
-        .implementorsOf(session, parsed.selector, environmentId)
-        .filter((m) => m.selector === parsed.selector);
+  private findCandidates(session: ActiveSession, parsed: ParsedFunctionName): Candidate[] {
+    // Sweep environments 0..maxEnvironment rather than searching the maximum
+    // alone. `gemstone.maxEnvironment` is a ceiling, not a selection — querying
+    // only that number skips environment 0, where practically every method
+    // lives, so on a stone configured above 0 nothing would ever be found.
+    const maxEnv = maxEnvironment();
+    const found: Candidate[] = [];
+    const seen = new Set<string>();
+
+    for (let environmentId = 0; environmentId <= maxEnv; environmentId++) {
+      for (const m of queries.implementorsOf(session, parsed.selector, environmentId)) {
+        if (m.selector !== parsed.selector) continue;
+        // Confirm a named class really implements it, rather than trusting the
+        // typing and setting a breakpoint that silently never fires.
+        if (parsed.className !== undefined) {
+          if (m.className !== parsed.className || m.isMeta !== parsed.isMeta) continue;
+        }
+        const key = `${m.className}|${m.isMeta}|${m.selector}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        found.push({ ...m, environmentId });
+      }
     }
-    // Confirm the named class really implements it, rather than trusting the
-    // typing and setting a breakpoint that silently never fires.
-    return queries
-      .implementorsOf(session, parsed.selector, environmentId)
-      .filter(
-        (m) =>
-          m.className === parsed.className &&
-          m.isMeta === parsed.isMeta &&
-          m.selector === parsed.selector,
-      );
+    return found;
   }
 
   private async chooseClass(
-    candidates: MethodSearchResult[],
+    candidates: Candidate[],
     selector: string,
-  ): Promise<MethodSearchResult | undefined> {
+  ): Promise<Candidate | undefined> {
     const items = candidates
       .map((target) => ({
         label: `${target.className}${target.isMeta ? ' class' : ''}`,
@@ -257,9 +272,11 @@ export class FunctionBreakpointResolver {
    */
   private entryPosition(
     session: ActiveSession,
-    target: MethodSearchResult,
+    target: Candidate,
   ): { line: number; character: number; environmentId: number } | null {
-    const environmentId = maxEnvironment();
+    // The environment the method was actually found in — not the configured
+    // ceiling, which is very likely a different one.
+    const environmentId = target.environmentId;
     try {
       const offsets = queries.getSourceOffsets(
         session,
