@@ -1218,9 +1218,15 @@
         ? 'runtime-settable · needs SystemUser to change'
         : 'runtime-settable'
       : 'read-only (set before startup)';
-    const tip = `${typeLabel(param.type)} · ${settleWord}${
-      param.description ? '\n\n' + param.description : ''
-    }`;
+    // Say why there is no description rather than leaving the tooltip bare: either
+    // system.conf named this parameter differently than its runtime name (so the
+    // lookup could not match it), or no system.conf was found for this version.
+    const help = param.description
+      ? param.description
+      : lastConfig && lastConfig.descriptionsAvailable
+        ? 'No description: this parameter has no matching entry in system.conf — a runtime setting whose config-file name differs from its runtime name.'
+        : 'No descriptions: system.conf was not found for this version (for example, a remote stone whose product tree is not on this machine).';
+    const tip = `${typeLabel(param.type)} · ${settleWord}\n\n${help}`;
     const tag = param.settable ? badge('runtime', 'runtime') : badge('read-only', 'readonly');
     const valueCell = editing
       ? configEditor(param, scope)

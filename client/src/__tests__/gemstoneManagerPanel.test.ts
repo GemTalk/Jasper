@@ -734,12 +734,15 @@ describe('configuration', () => {
     expect(msg).toBeDefined();
     const config = msg.config as {
       isSystemUser: boolean;
+      descriptionsAvailable: boolean;
       stoneParams: { key: string; editable: boolean; settable: boolean }[];
       gemParams: { key: string; type: string; editable: boolean }[];
     };
     // The session is DataCurator, so a stone runtime key is settable in principle
     // but not editable here; the gem runtime key still is.
     expect(config.isSystemUser).toBe(false);
+    // The stubbed storage exposes no product tree, so no system.conf is read.
+    expect(config.descriptionsAvailable).toBe(false);
     // Alphabetized case-insensitively, so SHR_… sorts ahead of StnGemTimeout.
     expect(config.stoneParams).toEqual([
       expect.objectContaining({ key: 'SHR_PAGE_CACHE_SIZE_KB', settable: false, editable: false }),

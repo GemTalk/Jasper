@@ -57,6 +57,8 @@ function configPayload(overrides: Record<string, unknown> = {}): Record<string, 
     sessionId: 1,
     label: 'DataCurator on jasper',
     version: '3.6.2',
+    isSystemUser: false,
+    descriptionsAvailable: true,
     stoneParams: [
       {
         key: 'StnGemTimeout',
@@ -187,6 +189,45 @@ describe('loading configuration', () => {
     expect(root.querySelectorAll('tr.config-item').length).toBe(
       root.querySelectorAll('tr.config-item .config-info').length,
     );
+  });
+
+  it('says why a parameter has no description when system.conf was read', () => {
+    const { root } = open(connectedState());
+    sendMessage({ command: 'configuration', config: configPayload() });
+
+    // SHR_PAGE_CACHE_SIZE_KB has no description in the payload; descriptions were
+    // available, so the tooltip explains the miss rather than showing nothing.
+    const tip =
+      [...root.querySelectorAll('tr.config-item')]
+        .find(
+          (r) => r.querySelector('.config-name')?.textContent?.trim() === 'SHR_PAGE_CACHE_SIZE_KB',
+        )!
+        .querySelector('.config-info')!
+        .getAttribute('title') ?? '';
+    expect(tip).toContain('no matching entry in system.conf');
+  });
+
+  it('says why there are no descriptions at all when system.conf was not found', () => {
+    const { root } = open(connectedState());
+    sendMessage({
+      command: 'configuration',
+      config: configPayload({
+        descriptionsAvailable: false,
+        stoneParams: [
+          {
+            key: 'SHR_PAGE_CACHE_SIZE_KB',
+            value: '75000',
+            type: 'integer',
+            settable: false,
+            editable: false,
+          },
+        ],
+        gemParams: [],
+      }),
+    });
+
+    const tip = root.querySelector('.config-info')!.getAttribute('title') ?? '';
+    expect(tip).toContain('system.conf was not found');
   });
 
   it('marks a runtime key the user cannot change, and offers no editor for it', () => {

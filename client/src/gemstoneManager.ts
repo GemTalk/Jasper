@@ -255,6 +255,13 @@ interface ConfigurationPayload {
   version: string;
   /** SystemUser may change stone parameters; other users may not. */
   isSystemUser: boolean;
+  /**
+   * Whether a system.conf was found and parsed for this version. When false, no
+   * parameter has a description and the panel says why (the product tree is not
+   * on this machine — e.g. a remote stone); when true, a parameter with no
+   * description simply had no matching entry.
+   */
+  descriptionsAvailable: boolean;
   stoneParams: ConfigParam[];
   gemParams: ConfigParam[];
 }
@@ -1205,6 +1212,7 @@ export class GemstoneManagerPanel {
       label: loginLabel(session.login),
       version: session.login.version,
       isSystemUser,
+      descriptionsAvailable: descriptions.size > 0,
       stoneParams: stone.map((e) => this.toConfigParam(e, descriptions, 'stone', isSystemUser)),
       gemParams: gem.map((e) => this.toConfigParam(e, descriptions, 'gem', isSystemUser)),
     };
