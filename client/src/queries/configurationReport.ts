@@ -146,6 +146,13 @@ export function parseConfigReport(raw: string): ConfigEntry[] {
       settable: isRuntimeSettable(key),
     });
   }
+  // Alphabetize case-insensitively. The report interns keys as Symbols and sorts
+  // them by ASCII, which puts every ALL_CAPS config-file name ahead of every
+  // CamelCase runtime name — two runs that read as "not sorted" to a person
+  // scanning for a name. Folding case interleaves them into one A–Z list.
+  entries.sort(
+    (a, b) => a.key.toLowerCase().localeCompare(b.key.toLowerCase()) || a.key.localeCompare(b.key),
+  );
   return entries;
 }
 
@@ -207,6 +214,23 @@ export function buildSetConfigCode(
   const keyword = scope === 'stone' ? 'stoneConfigurationAt' : 'gemConfigurationAt';
   return `[ System ${keyword}: #${key} put: ${literal}. 'OK' ]
   on: Error do: [:e | '${REPORT_TERMINATOR} ', e messageText]`;
+}
+
+/**
+ * Whether a value the session now reports is the one that was requested — used
+ * to tell a change that stuck from one the stone accepted and then ignored.
+ * Boolean and integer values are compared case- and whitespace-insensitively
+ * (`True` == `true`, ` 60 ` == `60`); anything else is compared verbatim.
+ */
+export function configValuesMatch(
+  type: ConfigValueType,
+  requested: string,
+  settled: string,
+): boolean {
+  if (type === 'boolean' || type === 'integer') {
+    return requested.trim().toLowerCase() === settled.trim().toLowerCase();
+  }
+  return requested === settled;
 }
 
 export interface SetConfigResult {

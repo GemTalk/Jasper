@@ -732,9 +732,10 @@ describe('configuration', () => {
       stoneParams: { key: string; editable: boolean; settable: boolean }[];
       gemParams: { key: string; type: string }[];
     };
+    // Alphabetized case-insensitively, so SHR_… sorts ahead of StnGemTimeout.
     expect(config.stoneParams).toEqual([
-      expect.objectContaining({ key: 'StnGemTimeout', settable: true, editable: true }),
       expect.objectContaining({ key: 'SHR_PAGE_CACHE_SIZE_KB', settable: false, editable: false }),
+      expect.objectContaining({ key: 'StnGemTimeout', settable: true, editable: true }),
     ]);
     expect(config.gemParams).toEqual([
       expect.objectContaining({ key: 'GemConvertArrayBuilder', type: 'boolean', editable: true }),
@@ -750,7 +751,7 @@ describe('configuration', () => {
     expect(posted(panel, 'configurationError')[0]?.message).toMatch(/no gemstone session/i);
   });
 
-  it('sets a runtime value, then reloads so the settled value is shown', () => {
+  it('sets a runtime value, then reloads and reports the settled value', () => {
     const panel = openWithSession(sessionWith(cannedGci()));
 
     send(panel, {
@@ -765,6 +766,45 @@ describe('configuration', () => {
     // stone settled on, not what was typed.
     expect(posted(panel, 'configuration')).toHaveLength(1);
     expect(posted(panel, 'configurationError')).toHaveLength(0);
+  });
+
+  it('warns when the stone accepts a set but the value does not change', () => {
+    // The canned report keeps StnGemTimeout at 60 no matter what is set, standing
+    // in for a runtime-immutable parameter the stone accepts and ignores.
+    const panel = openWithSession(sessionWith(cannedGci()));
+
+    send(panel, {
+      command: 'setConfiguration',
+      scope: 'stone',
+      key: 'StnGemTimeout',
+      valueType: 'integer',
+      value: '0',
+    });
+
+    const [notice] = posted(panel, 'configurationNotice') as { tone?: string; message?: string }[];
+    expect(notice).toBeDefined();
+    expect(notice.tone).toBe('warn');
+    expect(notice.message).toContain('still reports 60');
+    expect(notice.message).toContain('not 0');
+  });
+
+  it('confirms the settled value when a set does take', () => {
+    // Setting StnGemTimeout to the value the canned report already holds (60)
+    // stands in for a change that stuck.
+    const panel = openWithSession(sessionWith(cannedGci()));
+
+    send(panel, {
+      command: 'setConfiguration',
+      scope: 'stone',
+      key: 'StnGemTimeout',
+      valueType: 'integer',
+      value: '60',
+    });
+
+    const [notice] = posted(panel, 'configurationNotice') as { tone?: string; message?: string }[];
+    expect(notice).toBeDefined();
+    expect(notice.tone).toBe('ok');
+    expect(notice.message).toContain('now reports 60');
   });
 
   it("relays the stone's refusal when a set is not allowed", () => {

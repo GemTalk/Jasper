@@ -39,6 +39,10 @@
   let configLoading = false;
   const configEditing = new Set();
   let configFilter = '';
+  // Result of the last set: { message, tone: 'ok' | 'warn' }. 'warn' is a change
+  // the stone accepted but did not actually apply (a runtime-immutable value),
+  // which would otherwise look like a silent revert. Cleared on the next load.
+  let configNotice = null;
 
   // Internal key -> the real codicon name. This is the single place a key is
   // translated; nothing else invents a glyph.
@@ -1189,13 +1193,26 @@
     </span>`;
   }
 
-  // One parameter row. The key carries its purpose as a tooltip when system.conf
-  // named it; a runtime-settable value is editable, an all-caps config-file value
-  // is read-only and says so.
+  // How a value's type reads in a tooltip. The report types every value, but that
+  // was invisible until it landed here — so the type now leads the info tooltip,
+  // which is also what tells you what an edit expects (true/false, a number, text).
+  function typeLabel(type) {
+    return (
+      { boolean: 'Boolean', integer: 'Integer', string: 'String', other: 'Value' }[type] || 'Value'
+    );
+  }
+
+  // One parameter row. Every row carries an ⓘ whose hover tooltip states the
+  // value's type and whether it is runtime-settable or a read-only config-file
+  // parameter, plus the purpose text from system.conf when it named this key. A
+  // runtime value is editable; an all-caps config-file value is read-only.
   function configRow(param, scope) {
     const id = `${scope}:${param.key}`;
     const editing = configEditing.has(id);
-    const keyTitle = param.description ? `${param.key}\n\n${param.description}` : param.key;
+    const settleWord = param.settable ? 'runtime-settable' : 'read-only (set before startup)';
+    const tip = `${typeLabel(param.type)} · ${settleWord}${
+      param.description ? '\n\n' + param.description : ''
+    }`;
     const tag = param.settable ? badge('runtime', 'runtime') : badge('read-only', 'readonly');
     const valueCell = editing
       ? configEditor(param, scope)
@@ -1205,11 +1222,8 @@
             : ''
         }`;
     return `<tr class="config-item" data-config-key="${esc(param.key.toLowerCase())}" data-config-scope="${esc(scope)}">
-      <td class="config-key"><span title="${esc(keyTitle)}">${esc(param.key)}</span>${
-        param.description
-          ? ' <i class="codicon codicon-info config-info" aria-hidden="true"></i>'
-          : ''
-      }</td>
+      <td class="config-key"><span class="config-name" title="${esc(tip)}">${esc(param.key)}</span>
+        <i class="codicon codicon-info config-info" title="${esc(tip)}" tabindex="0" role="img" aria-label="${esc(param.key + ': ' + tip)}"></i></td>
       <td class="config-val">${valueCell}</td>
       <td class="config-tag">${tag}</td>
     </tr>`;
@@ -1252,11 +1266,15 @@
              <div>${btn('loadConfiguration', 'Load configuration', 'refresh', 'btn-ghost')}</div></div>`;
     } else {
       const errLine = configError ? `<div class="config-error">${esc(configError)}</div>` : '';
+      const noticeLine = configNotice
+        ? `<div class="config-notice ${configNotice.tone === 'warn' ? 'warn' : 'ok'}">${esc(configNotice.message)}</div>`
+        : '';
       body = `<div class="config-toolbar">
           <input type="text" class="config-filter" data-config-filter placeholder="Filter parameters…" value="${esc(configFilter)}" aria-label="Filter configuration parameters" />
           <span class="config-legend">${badge('runtime', 'runtime')} may be changed in this session · ${badge('read-only', 'readonly')} set in the config file before startup</span>
         </div>
         ${errLine}
+        ${noticeLine}
         ${configTable('Stone', 'stone', config.stoneParams)}
         ${configTable('Session (Gem)', 'gem', config.gemParams)}`;
     }
@@ -1413,6 +1431,7 @@
     if (!input) return;
     configEditing.delete(`${el.dataset.scope}:${el.dataset.key}`);
     configError = '';
+    configNotice = null;
     post({
       command: 'setConfiguration',
       scope: el.dataset.scope,
@@ -1530,6 +1549,7 @@
     configLoading = false;
     configEditing.clear();
     configFilter = '';
+    configNotice = null;
     els.root.addEventListener('click', onClick);
     els.root.addEventListener('change', onChange);
     els.root.addEventListener('input', onInput);
@@ -1557,10 +1577,20 @@
         lastConfig = msg.config;
         configLoading = false;
         configError = '';
+        // A fresh read clears the last set's notice; a set that wants to leave one
+        // sends its configurationNotice right after this message.
+        configNotice = null;
         configEditing.clear();
+        if (lastState) render(lastState);
+      } else if (msg.command === 'configurationNotice') {
+        configNotice = {
+          message: String(msg.message || ''),
+          tone: msg.tone === 'warn' ? 'warn' : 'ok',
+        };
         if (lastState) render(lastState);
       } else if (msg.command === 'configurationError') {
         configLoading = false;
+        configNotice = null;
         configError = String(msg.message || 'The configuration could not be read.');
         if (lastState) render(lastState);
       } else if (msg.command === 'state') {

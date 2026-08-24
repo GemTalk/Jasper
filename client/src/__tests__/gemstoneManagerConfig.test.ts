@@ -162,11 +162,75 @@ describe('loading configuration', () => {
     expect(rowFor('SHR_PAGE_CACHE_SIZE_KB').querySelector('[data-action="editConfig"]')).toBeNull();
   });
 
-  it('carries a description into the key tooltip', () => {
+  it('states the type and settability in every row info tooltip, with the description when present', () => {
     const { root } = open(connectedState());
     sendMessage({ command: 'configuration', config: configPayload() });
-    const tip = root.querySelector('.config-key span')?.getAttribute('title') ?? '';
-    expect(tip).toContain('How long the stone waits');
+
+    const infoFor = (key: string) =>
+      [...root.querySelectorAll('tr.config-item')]
+        .find((r) => r.querySelector('.config-name')?.textContent?.trim() === key)!
+        .querySelector('.config-info')!
+        .getAttribute('title') ?? '';
+
+    // The type was invisible before; it now leads the tooltip (issue #232 item 2).
+    const described = infoFor('StnGemTimeout');
+    expect(described).toContain('Integer');
+    expect(described).toContain('runtime-settable');
+    expect(described).toContain('How long the stone waits');
+
+    // A read-only config-file key: type shown, marked read-only, no description here.
+    const readonly = infoFor('SHR_PAGE_CACHE_SIZE_KB');
+    expect(readonly).toContain('Integer');
+    expect(readonly).toContain('read-only');
+
+    // Every row has the info affordance, even without a description.
+    expect(root.querySelectorAll('tr.config-item').length).toBe(
+      root.querySelectorAll('tr.config-item .config-info').length,
+    );
+  });
+
+  it('reports the settled value after a set that took', () => {
+    const { root } = open(connectedState());
+    sendMessage({ command: 'configuration', config: configPayload() });
+    sendMessage({
+      command: 'configurationNotice',
+      tone: 'ok',
+      message: 'Set StnGemTimeout — the session now reports 90.',
+    });
+
+    const notice = root.querySelector('.config-notice');
+    expect(notice).not.toBeNull();
+    expect(notice!.classList.contains('ok')).toBe(true);
+    expect(notice!.textContent).toContain('now reports 90');
+  });
+
+  it('warns when a set was accepted but the value did not change', () => {
+    const { root } = open(connectedState());
+    sendMessage({ command: 'configuration', config: configPayload() });
+    sendMessage({
+      command: 'configurationNotice',
+      tone: 'warn',
+      message:
+        'SpinLockCount was accepted without error, but the session still reports 5000, not 6000.',
+    });
+
+    const notice = root.querySelector('.config-notice.warn');
+    expect(notice).not.toBeNull();
+    expect(notice!.textContent).toContain('still reports 5000');
+  });
+
+  it('drops a set notice on the next fresh read', () => {
+    const { root } = open(connectedState());
+    sendMessage({ command: 'configuration', config: configPayload() });
+    sendMessage({
+      command: 'configurationNotice',
+      tone: 'ok',
+      message: 'Set StnGemTimeout — the session now reports 90.',
+    });
+    expect(root.querySelector('.config-notice')).not.toBeNull();
+
+    sendMessage({ command: 'configuration', config: configPayload() });
+    expect(root.querySelector('.config-notice')).toBeNull();
   });
 
   it('shows the error when the read is refused, and offers to try again', () => {

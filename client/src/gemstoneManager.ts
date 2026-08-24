@@ -54,11 +54,13 @@ import {
   stoneConfiguration,
   gemConfiguration,
   setConfiguration as setSessionConfiguration,
+  configValuesMatch,
   isEditable,
   ConfigScope,
   ConfigValueType,
   ConfigEntry,
 } from './queries/configurationReport';
+import { ActiveSession } from './sessionManager';
 import { parseConfigDescriptions, descriptionFor } from './gemstoneConfigDescriptions';
 
 const gemstoneManagerJs = readWebviewScript('gemstoneManagerView.js');
@@ -1174,29 +1176,39 @@ export class GemstoneManagerPanel {
       return;
     }
     try {
-      const execute = defaultQueryExecutorUsing(session);
-      const stone = stoneConfiguration(execute);
-      const gem = gemConfiguration(execute);
-      const descriptions = this.configDescriptions(session.login.version);
-      const config: ConfigurationPayload = {
-        sessionId: session.id,
-        label: loginLabel(session.login),
-        version: session.login.version,
-        stoneParams: stone.map((e) => this.toConfigParam(e, descriptions)),
-        gemParams: gem.map((e) => this.toConfigParam(e, descriptions)),
-      };
-      void this.panel.webview.postMessage({ command: 'configuration', config });
+      void this.panel.webview.postMessage({
+        command: 'configuration',
+        config: this.readConfiguration(session),
+      });
     } catch (e: unknown) {
       this.configurationError(e instanceof Error ? e.message : String(e));
     }
   }
 
+  /** Read both reports for a session and shape them for the panel. */
+  private readConfiguration(session: ActiveSession): ConfigurationPayload {
+    const execute = defaultQueryExecutorUsing(session);
+    const stone = stoneConfiguration(execute);
+    const gem = gemConfiguration(execute);
+    const descriptions = this.configDescriptions(session.login.version);
+    return {
+      sessionId: session.id,
+      label: loginLabel(session.login),
+      version: session.login.version,
+      stoneParams: stone.map((e) => this.toConfigParam(e, descriptions)),
+      gemParams: gem.map((e) => this.toConfigParam(e, descriptions)),
+    };
+  }
+
   /**
-   * Set one runtime-settable value through the session, then reload so the panel
-   * shows the settled value rather than what was typed. The stone is the
-   * authority on whether the change is allowed; its refusal (a SystemUser-only
-   * stone key, a gem key frozen after login) comes back as a
-   * `configurationError` with the stone's own words.
+   * Set one runtime-settable value through the session, then re-read and report
+   * the *settled* value. The stone is the authority: a refusal (a SystemUser-only
+   * stone key, a gem key frozen after login) comes back as a `configurationError`
+   * with the stone's own words. But some parameters are accepted without error
+   * and then ignored — set at cache/gem creation, not at runtime — so a bare
+   * "OK" would read as success while the value snapped back. Comparing what the
+   * session now reports against what was asked turns that silent revert into a
+   * plain statement of what actually happened.
    */
   private setConfiguration(
     scope: ConfigScope,
@@ -1217,7 +1229,24 @@ export class GemstoneManagerPanel {
         return;
       }
       appendSysadmin(`GemStone Manager: set ${scope} configuration ${key} = ${value}`);
-      this.loadConfiguration();
+
+      const config = this.readConfiguration(session);
+      void this.panel.webview.postMessage({ command: 'configuration', config });
+
+      const settled = (scope === 'stone' ? config.stoneParams : config.gemParams).find(
+        (p) => p.key === key,
+      );
+      const now = settled ? settled.value : '(unknown)';
+      const took = settled !== undefined && configValuesMatch(valueType, value, settled.value);
+      void this.panel.webview.postMessage({
+        command: 'configurationNotice',
+        tone: took ? 'ok' : 'warn',
+        message: took
+          ? `Set ${key} — the session now reports ${now}.`
+          : `${key} was accepted without error, but the session still reports ${now}, not ${value.trim()}. ` +
+            `This parameter is likely read-only at runtime — many settings can only change in the config ` +
+            `file before startup, and stone-level settings need SystemUser.`,
+      });
     } catch (e: unknown) {
       this.configurationError(e instanceof Error ? e.message : String(e));
     }
@@ -1875,13 +1904,26 @@ th.v-num { text-align: right; }
   background: color-mix(in srgb, var(--gm-warn) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--gm-warn) 40%, transparent);
 }
+/* The result of a set: a plain confirmation, or a warning that the stone
+   accepted the value but did not actually apply it. */
+.config-notice { margin: 0 0 10px; padding: 6px 10px; font-size: 12px; border-radius: 4px; }
+.config-notice.ok {
+  background: color-mix(in srgb, var(--gm-ok) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--gm-ok) 40%, transparent);
+}
+.config-notice.warn {
+  background: color-mix(in srgb, var(--gm-warn) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--gm-warn) 40%, transparent);
+}
 .config-group { margin: 0 0 16px; }
 .config-group-head { font-weight: 600; margin: 0 0 6px; display: flex; align-items: center; gap: 8px; }
 .config-note { font-size: 11px; font-weight: 400; color: var(--vscode-descriptionForeground, #9d9d9d); }
 .config-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
 .config-table td { padding: 3px 8px; border-bottom: 1px solid var(--gm-line); vertical-align: top; }
 .config-key { white-space: nowrap; font-family: var(--vscode-editor-font-family, monospace); font-size: 12px; }
-.config-info { font-size: 12px; color: var(--vscode-descriptionForeground, #9d9d9d); cursor: help; }
+.config-info { font-size: 12px; color: var(--vscode-descriptionForeground, #9d9d9d); cursor: help; margin-left: 5px; vertical-align: -1px; opacity: .6; }
+.config-item:hover .config-info { opacity: 1; }
+.config-info:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; opacity: 1; }
 .config-val { width: 100%; }
 .config-value { font-family: var(--vscode-editor-font-family, monospace); font-size: 12px; word-break: break-all; }
 .config-pencil { opacity: 0; margin-left: 6px; vertical-align: -3px; }

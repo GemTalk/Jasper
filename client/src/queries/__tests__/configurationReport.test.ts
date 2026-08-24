@@ -41,21 +41,37 @@ describe('isEditable', () => {
 });
 
 describe('parseConfigReport', () => {
-  it('reads key, type and value from tab-delimited lines', () => {
+  it('reads key, type and value from tab-delimited lines, alphabetized', () => {
     const raw =
       'StnMaxSessions\tSmallInteger\t10\n' +
       'SHR_PAGE_CACHE_LOCKED\tBoolean\tfalse\n' +
       'DBF_EXTENT_NAMES\tString\t$GEMSTONE/data/extent0.dbf\n';
     const entries = parseConfigReport(raw);
     expect(entries).toEqual([
-      { key: 'StnMaxSessions', value: '10', type: 'integer', settable: true },
-      { key: 'SHR_PAGE_CACHE_LOCKED', value: 'false', type: 'boolean', settable: false },
       {
         key: 'DBF_EXTENT_NAMES',
         value: '$GEMSTONE/data/extent0.dbf',
         type: 'string',
         settable: false,
       },
+      { key: 'SHR_PAGE_CACHE_LOCKED', value: 'false', type: 'boolean', settable: false },
+      { key: 'StnMaxSessions', value: '10', type: 'integer', settable: true },
+    ]);
+  });
+
+  it('alphabetizes case-insensitively, interleaving ALL_CAPS and CamelCase', () => {
+    // ASCII order would group every ALL_CAPS key ahead of every CamelCase one;
+    // case-folded order interleaves them the way a person reads a name list.
+    const raw =
+      'StnMaxSessions\tSmallInteger\t10\n' +
+      'DUMP_OPTIONS\tBoolean\ttrue\n' +
+      'StnCheckpointInterval\tSmallInteger\t300\n' +
+      'SHR_PAGE_CACHE_SIZE_KB\tSmallInteger\t75000\n';
+    expect(parseConfigReport(raw).map((e) => e.key)).toEqual([
+      'DUMP_OPTIONS',
+      'SHR_PAGE_CACHE_SIZE_KB',
+      'StnCheckpointInterval',
+      'StnMaxSessions',
     ]);
   });
 
