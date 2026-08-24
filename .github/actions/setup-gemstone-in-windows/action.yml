@@ -1,0 +1,64 @@
+name: Setup GemStone in Windows
+description: >-
+  Provisions WSL, downloads the native Windows GCI client, and installs and
+  starts GemStone inside the WSL guest, so a native Windows test run can
+  connect into it remotely. Only ever meant to be called when
+  runner.os == 'Windows'; the caller is responsible for that `if:` guard.
+inputs:
+  gemstone-version:
+    description: GemStone version to install and start (e.g. 3.7.5)
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Setup WSL
+      # zizmor(unpinned-uses): actions must be pinned to a commit SHA,
+      # not a mutable tag like @v6
+      uses: Vampire/setup-wsl@d1da7f2c0322a5ee4f24975344f67fc0f5baf364 # v7.0.0
+      with:
+        distribution: Ubuntu-22.04
+        additional-packages: curl unzip
+    - name: Cache GemStone Windows client download
+      # The client build is always native Windows (this action only ever
+      # runs on windows-latest), so there's only ever one platform's archive
+      # to cache here, and no runner.os is needed in the key.
+      # zizmor(unpinned-uses): actions must be pinned to a commit SHA,
+      # not a mutable tag like @v6
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}\gemstone-windows-client
+        key: gemstone-windows-client-${{ inputs.gemstone-version }}
+    - name: Install GCI Windows client
+      id: windows-gci-client
+      # zizmor(template-injection): bind the untrusted matrix value to an
+      # env var instead of interpolating ${{ }} directly into the script
+      env:
+        GEMSTONE_VERSION: ${{ inputs.gemstone-version }}
+      # Composite action steps have no `runs-on`, so nothing here lets
+      # actionlint infer this is a Windows job; the shell has to be made
+      # explicit instead.
+      shell: pwsh
+      run: client/bin/gs-download-windows-gci-client.ps1 "$env:GEMSTONE_VERSION"
+    - name: Setup test environment
+      # This needs to run inside WSL, where gs-config.sh's `uname -s`
+      # resolves to Linux, native windows-latest has no GemStone server
+      # build at all, only the WSL-hosted one does. gs-test-setup-wsl.sh
+      # covers everything else this leg needs from inside WSL: creating
+      # the unprivileged user GemStone runs as, installing and starting
+      # it, and writing a .env.test the native Windows test run below can
+      # connect into remotely.
+      # zizmor(template-injection): bind the untrusted matrix value to an
+      # env var instead of interpolating ${{ }} directly into the script
+      env:
+        GEMSTONE_VERSION: ${{ inputs.gemstone-version }}
+        GCI_LIBRARY_PATH: ${{ steps.windows-gci-client.outputs.dll-path }}
+        GEMSTONE_GLOBAL_DIR: ${{ steps.windows-gci-client.outputs.global-dir }}
+        # The server download cache (health-check.yml's "Cache GemStone
+        # server download" step) restores onto this native Windows
+        # checkout, at a path WSL can't see without translation. WSLENV's
+        # /p flag converts it to the equivalent /mnt/... path crossing
+        # into the wsl-bash process below.
+        WINDOWS_DOWNLOAD_CACHE_DIR: ${{ github.workspace }}\client\tmp\downloads
+        WSLENV: GEMSTONE_VERSION:GCI_LIBRARY_PATH:GEMSTONE_GLOBAL_DIR:WINDOWS_DOWNLOAD_CACHE_DIR/p
+      shell: wsl-bash {0}
+      run: client/bin/gs-test-setup-wsl.sh "$GEMSTONE_VERSION" 'windows-ci' "$GCI_LIBRARY_PATH" "$GEMSTONE_GLOBAL_DIR" "$WINDOWS_DOWNLOAD_CACHE_DIR"
