@@ -45,8 +45,26 @@ const STONE_NAME = process.env.VITE_GEMSTONE_STONE_NRS?.split('!').pop();
 const LDI_NAME = process.env.VITE_GEMSTONE_GEM_NRS?.match(/#netldi:([^#!]+)/)?.[1];
 /** `<product>/lib/libgcits-….so` → `<product>/bin/gslist` */
 const GSLIST = process.env.VITE_GEMSTONE_GCI_LIBRARY_PATH?.replace(/\/lib\/[^/]+$/, '/bin/gslist');
+/** `<product>` — the install this suite's stone belongs to. */
+const PRODUCT = GSLIST?.replace(/\/bin\/gslist$/, '');
 
-const configured = Boolean(GLOBAL_DIR && VERSION && STONE_NAME && LDI_NAME && GSLIST);
+/**
+ * `ps` is POSIX-only, and this suite calls it directly rather than through
+ * `wslExecSync`. On Windows, Jasper reaches the process table through WSL, which
+ * this test is not set up to drive — so there is nothing here it could honestly
+ * check, and running it only produced "Command failed: ps -Ao pid=,command=".
+ *
+ * The Windows/WSL path stays untested, which is a known gap recorded in the PR
+ * rather than something this skip is hiding.
+ */
+const POSIX_HOST = process.platform !== 'win32';
+
+const configured = Boolean(POSIX_HOST && GLOBAL_DIR && VERSION && STONE_NAME && LDI_NAME && GSLIST);
+
+/** Why this run is skipping, in the words that will show up in the report. */
+const SKIP_REASON = POSIX_HOST
+  ? 'no .env.test — run npm run test:server:start'
+  : 'ps is POSIX-only; on Windows Jasper reads the process table through WSL, which this test does not drive';
 
 /** A running process's GemStone environment, read the way ProcessManager reads
  *  it. On a platform that refuses to expose it this comes back empty, leaving
@@ -87,11 +105,21 @@ describe('the process-table scan, against a live stone', () => {
 
   beforeAll(() => {
     if (!configured) return;
+    // Guarded as well as gated: a throw here fails the whole suite before any
+    // test's own skip can report why, which is exactly how this first went
+    // wrong on Windows.
     hostServers = parseHostServerProcesses(execSync('ps -Ao pid=,command=', { encoding: 'utf-8' }));
   });
 
+  // Matched on the product directory as well as the name. Several worktrees on
+  // one machine each run a harness stone and they all use the same name, so
+  // picking by name alone hands back whichever `ps` listed first — which may be
+  // another checkout's. That is the very ambiguity this feature exists to
+  // resolve, so the test must not fall for it either. `.env.test` names the
+  // install this suite belongs to, and that is the tiebreak.
+  const ours = (p: HostServerProcess): boolean => p.command.startsWith(`${PRODUCT}/`);
   const stone = (): HostServerProcess | undefined =>
-    hostServers.find((p) => p.type === 'stone' && p.name === STONE_NAME);
+    hostServers.find((p) => p.type === 'stone' && p.name === STONE_NAME && ours(p));
   /** The live stone with its own environment folded in — the same two steps
    *  ProcessManager takes before judging identity. */
   const enrichedStone = (): HostServerProcess => {
@@ -99,17 +127,17 @@ describe('the process-table scan, against a live stone', () => {
     return applyServerEnvironment(found, readEnvironment(found.pid));
   };
   const netldi = (): HostServerProcess | undefined =>
-    hostServers.find((p) => p.type === 'netldi' && p.name === LDI_NAME);
+    hostServers.find((p) => p.type === 'netldi' && p.name === LDI_NAME && ours(p));
 
   it('finds the running stone and netldi in the real process table', (ctx) => {
-    if (!configured) return ctx.skip('no .env.test — run npm run test:server:start');
+    if (!configured) return ctx.skip(SKIP_REASON);
 
     expect(stone()).toBeDefined();
     expect(netldi()).toBeDefined();
   });
 
   it('reads the version out of a real product directory path', (ctx) => {
-    if (!configured) return ctx.skip('no .env.test — run npm run test:server:start');
+    if (!configured) return ctx.skip(SKIP_REASON);
 
     // Version matching is what keeps two installs sharing a stone name apart,
     // so a version the scan cannot read would quietly disable that guard.
@@ -118,7 +146,7 @@ describe('the process-table scan, against a live stone', () => {
   });
 
   it('reads the lock directory a real server registered in', (ctx) => {
-    if (!configured) return ctx.skip('no .env.test — run npm run test:server:start');
+    if (!configured) return ctx.skip(SKIP_REASON);
 
     // `ps eww` exposes a process's environment on Linux; if a platform refuses,
     // this fails loudly here rather than silently costing the reconcile the one
@@ -132,7 +160,7 @@ describe('the process-table scan, against a live stone', () => {
   });
 
   it('sees the running servers when gslist is pointed at their own lock directory', (ctx) => {
-    if (!configured) return ctx.skip('no .env.test — run npm run test:server:start');
+    if (!configured) return ctx.skip(SKIP_REASON);
 
     const listed = parseGslist(gslist(GLOBAL_DIR as string));
 
@@ -141,7 +169,7 @@ describe('the process-table scan, against a live stone', () => {
   });
 
   it('sees nothing when gslist is pointed anywhere else, though the servers are still up', (ctx) => {
-    if (!configured) return ctx.skip('no .env.test — run npm run test:server:start');
+    if (!configured) return ctx.skip(SKIP_REASON);
 
     // This is the whole bug, reproduced: same live servers, same gslist binary,
     // a different GEMSTONE_GLOBAL_DIR — and they vanish. Jasper always points
@@ -159,7 +187,7 @@ describe('the process-table scan, against a live stone', () => {
   });
 
   it('reports both servers as started outside Jasper when gslist looked elsewhere', (ctx) => {
-    if (!configured) return ctx.skip('no .env.test — run npm run test:server:start');
+    if (!configured) return ctx.skip(SKIP_REASON);
 
     // The end-to-end claim: a real gslist reading that missed real running
     // servers, crossed against the real process table, produces the finding the
@@ -185,7 +213,7 @@ describe('the process-table scan, against a live stone', () => {
   });
 
   it('finds nothing to reconcile while gslist can see the servers', (ctx) => {
-    if (!configured) return ctx.skip('no .env.test — run npm run test:server:start');
+    if (!configured) return ctx.skip(SKIP_REASON);
 
     // The healthy case, which must stay silent: these servers are registered
     // exactly where this gslist looks, so nothing is "outside".
@@ -204,7 +232,7 @@ describe('the process-table scan, against a live stone', () => {
   });
 
   it('confirms a real server against the database directory it was pointed at', (ctx) => {
-    if (!configured) return ctx.skip('no .env.test — run npm run test:server:start');
+    if (!configured) return ctx.skip(SKIP_REASON);
 
     // `confirmed` is the only state that authorizes a kill, and everything else
     // proving it is built from recorded strings. This is the positive control:
@@ -224,7 +252,7 @@ describe('the process-table scan, against a live stone', () => {
   });
 
   it('refuses to vouch for a real server whose database it cannot place', (ctx) => {
-    if (!configured) return ctx.skip('no .env.test — run npm run test:server:start');
+    if (!configured) return ctx.skip(SKIP_REASON);
 
     // The counterpart, asserted to the exact verdict rather than merely
     // "not confirmed" — which would pass even if the classifier were hardcoded.
