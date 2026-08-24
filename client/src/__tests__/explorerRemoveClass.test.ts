@@ -112,6 +112,43 @@ describe('ExplorerController.removeClass — nothing references the class', () =
 
     expect(warn.mock.calls[0][1].detail).not.toContain('Sub1 >> #buildsOne');
   });
+
+  // The scan resolves its target through the dictionary by object identity precisely so a
+  // same-named class elsewhere cannot collide. Excluding the doomed subtree by bare NAME put
+  // that collision back: an unrelated class that merely shares a name with a subclass had its
+  // real, surviving reference thrown away, and the delete went through as "nothing references
+  // it" — the silent wrong answer this guard exists to prevent.
+  it('still counts a reference from an unrelated class that shares a doomed subclass’s name', async () => {
+    // "Shadowed" in dict 3 is going away with Doomed. A DIFFERENT class, also called
+    // "Shadowed", lives in OtherDict and is not going anywhere — its reference survives.
+    descendantsMock.mockReturnValue([descendant('Shadowed', 3, 'MyDict')]);
+    referencesMock.mockReturnValue([
+      reference({ className: 'Shadowed', dictName: 'OtherDict', selector: 'stillUsesIt' }),
+    ]);
+    const ctl = makeController();
+    warn.mockResolvedValueOnce(undefined);
+
+    await ctl.removeClass();
+
+    expect(warn).toHaveBeenCalled();
+    expect(warn.mock.calls[0][1].detail).toContain('Shadowed >> #stillUsesIt');
+    expect(deleteClassMock).not.toHaveBeenCalled();
+  });
+
+  // The other half of the same rule: the genuinely doomed one, matched on name AND dictionary,
+  // is still excluded — the fix must not turn every subclass reference back into a question.
+  it('does not count a reference from the doomed subclass in its own dictionary', async () => {
+    descendantsMock.mockReturnValue([descendant('Shadowed', 3, 'MyDict')]);
+    referencesMock.mockReturnValue([
+      reference({ className: 'Shadowed', dictName: 'MyDict', selector: 'goesAwayToo' }),
+    ]);
+    const ctl = makeController();
+    warn.mockResolvedValueOnce('Remove All');
+
+    await ctl.removeClass();
+
+    expect(warn.mock.calls[0][1].detail).not.toContain('#goesAwayToo');
+  });
 });
 
 describe('ExplorerController.removeClass — methods still reference the class', () => {

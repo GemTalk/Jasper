@@ -13,7 +13,6 @@ import { window } from '../../__mocks__/vscode';
 import {
   decideSafeDelete,
   announceSilentDelete,
-  dedupeMethodResults,
   groupReferencesByReceiver,
   SafeDeleteTarget,
 } from '../safeDelete';
@@ -447,52 +446,12 @@ describe('the reference list as it reads for a real removal', () => {
   });
 });
 
-// A scan runs once per method environment, so the same method can come back more than once;
-// the caller folds the rounds together before anything counts them or renders them.
-describe('folding repeated scan results together', () => {
-  const found = (className: string, isMeta: boolean, selector: string): MethodSearchResult => ({
-    dictName: 'UserGlobals',
-    className,
-    isMeta,
-    selector,
-    category: 'accessing',
-    environmentId: 0,
-  });
-
-  it('keeps one entry for a method found more than once', () => {
-    const hit = found('Account', false, 'balance');
-
-    expect(dedupeMethodResults([hit, { ...hit }])).toEqual([hit]);
-  });
-
-  it('keeps the same selector on both sides of a class, which are different methods', () => {
-    const instance = found('Account', false, 'reset');
-    const classSide = found('Account', true, 'reset');
-
-    expect(dedupeMethodResults([instance, classSide])).toEqual([instance, classSide]);
-  });
-
-  it('keeps the same selector implemented by different classes', () => {
-    const account = found('Account', false, 'balance');
-    const savings = found('Savings', false, 'balance');
-
-    expect(dedupeMethodResults([account, savings])).toEqual([account, savings]);
-  });
-
-  it('keeps the first sighting, so the earliest environment wins', () => {
-    const first = found('Account', false, 'balance');
-    const later = { ...first, category: 'a different category' };
-
-    expect(dedupeMethodResults([first, later])).toEqual([first]);
-  });
-
-  it('answers nothing for nothing', () => {
-    expect(dedupeMethodResults([])).toEqual([]);
-  });
-});
-
 // The scan is capped server-side and the client cannot tell a full page from an exact answer,
-// so at the cap the dialog must stop stating the count as fact.
+// so at the cap the dialog must stop stating the count as fact. Whether the cap was hit is the
+// CALLER's observation of the raw scan (`truncated`), NOT something this module re-derives from
+// how many references it was handed: the caller drops the references that go away with the
+// target before getting here, so a capped scan can arrive under the cap — and a count that no
+// longer looks capped would then be stated as exact.
 describe('reporting a reference count that hit the scan cap', () => {
   const many = (n: number): MethodSearchResult[] =>
     Array.from({ length: n }, (_, i) => reference({ className: `C${i}`, selector: 'usesIt' }));
@@ -500,7 +459,10 @@ describe('reporting a reference count that hit the scan cap', () => {
   it('states the count as a floor when the scan came back full', async () => {
     warn.mockResolvedValue(undefined);
 
-    await decideSafeDelete(1, target({ references: many(METHOD_SEARCH_RESULT_LIMIT) }));
+    await decideSafeDelete(
+      1,
+      target({ references: many(METHOD_SEARCH_RESULT_LIMIT), truncated: true }),
+    );
 
     const detail = warn.mock.calls[0][1].detail as string;
     expect(detail).toContain(`At least ${METHOD_SEARCH_RESULT_LIMIT} methods still reference it`);
@@ -509,9 +471,44 @@ describe('reporting a reference count that hit the scan cap', () => {
   it('says the list is incomplete when the scan came back full', async () => {
     warn.mockResolvedValue(undefined);
 
-    await decideSafeDelete(1, target({ references: many(METHOD_SEARCH_RESULT_LIMIT) }));
+    await decideSafeDelete(
+      1,
+      target({ references: many(METHOD_SEARCH_RESULT_LIMIT), truncated: true }),
+    );
 
     expect(warn.mock.calls[0][1].detail).toContain('not complete');
+  });
+
+  // The bug this replaced: the hedge was computed from the surviving count, so excluding even
+  // one reference from a capped scan took it under the cap and the warning silently vanished —
+  // understating the risk in exactly the case the hedge exists for.
+  it('still hedges when exclusions took a capped scan back under the cap', async () => {
+    warn.mockResolvedValue(undefined);
+
+    await decideSafeDelete(
+      1,
+      target({ references: many(METHOD_SEARCH_RESULT_LIMIT - 1), truncated: true }),
+    );
+
+    const detail = warn.mock.calls[0][1].detail as string;
+    expect(detail).toContain(`At least ${METHOD_SEARCH_RESULT_LIMIT - 1} methods still reference`);
+    expect(detail).toContain('not complete');
+  });
+
+  // The mirror of the above: several environments can sum past the cap without any one query
+  // reaching it, and that list IS complete. Hedging there would invent a doubt that is not real.
+  it('states a count past the cap plainly when no single scan came back full', async () => {
+    warn.mockResolvedValue(undefined);
+
+    await decideSafeDelete(
+      1,
+      target({ references: many(METHOD_SEARCH_RESULT_LIMIT + 10), truncated: false }),
+    );
+
+    const detail = warn.mock.calls[0][1].detail as string;
+    expect(detail).toContain(`${METHOD_SEARCH_RESULT_LIMIT + 10} methods still reference it:`);
+    expect(detail).not.toContain('At least');
+    expect(detail).not.toContain('not complete');
   });
 
   it('states the count plainly when the scan came back short of the cap', async () => {
@@ -540,16 +537,5 @@ describe('announcing a removal that senders survive', () => {
     announceSilentDelete(target({ silentNote: 'senders now resolve to Object >> #printOn:' }));
 
     expect(info).not.toHaveBeenCalledWith(expect.stringContaining('nothing referenced it'));
-  });
-});
-
-// A selector implemented on both sides of a class, or in two environments, is more than one
-// method; the dialog must not merge them into one line.
-describe('keeping methods that differ only by environment apart', () => {
-  it('lists a selector found in two environments once per environment', () => {
-    const env0 = reference({ className: 'Account', selector: 'balance', environmentId: 0 });
-    const env1 = reference({ className: 'Account', selector: 'balance', environmentId: 1 });
-
-    expect(dedupeMethodResults([env0, env1])).toEqual([env0, env1]);
   });
 });

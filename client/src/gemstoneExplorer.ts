@@ -40,12 +40,8 @@ import {
   validateNewIvarName,
 } from './refactoring/renameInstVarPreview';
 import { showRenameInstVarPanel } from './refactoring/renameInstVarPanel';
-import {
-  decideSafeDelete,
-  announceSilentDelete,
-  dedupeMethodResults,
-  SafeDeleteTarget,
-} from './refactoring/safeDelete';
+import { decideSafeDelete, announceSilentDelete, SafeDeleteTarget } from './refactoring/safeDelete';
+import { METHOD_SEARCH_RESULT_LIMIT, dedupeMethodResults } from './queries/methodSearch';
 import { formatRenameFailureLog, formatRenameFailureToast } from './refactoring/renameFailureLog';
 import { getGciLog, logWarning } from './gciLog';
 import { supportsServerUtf8FileIn } from './refactoring/refactoringInstall';
@@ -210,6 +206,14 @@ export async function openGemstoneDocument(
 // one controller that holds the cascade state, the current dictionary's
 // class→category listing, and the selected class's per-method metadata
 // (categories, override arrows, session-method flags).
+
+// The method environment the Methods pane acts in. The pane collapses a class's
+// selectors across every environment into ONE row per selector (see selectorsFor),
+// so a row carries no environment of its own, and both opening and removing a row
+// address environment 0. Named rather than written as a bare 0 so the places that
+// depend on that assumption can be found together — notably the safe-delete
+// self-send exclusion, which has to know WHICH method is going away.
+const EXPLORER_METHOD_ENVIRONMENT = 0;
 
 interface ExplorerState {
   dictName?: string;
@@ -2351,6 +2355,7 @@ export class ExplorerController {
       label: `${item.ivarName} from ${item.className}`,
       references: scan.references,
       scanFailed: scan.scanFailed,
+      truncated: scan.truncated,
     };
 
     const decision = await decideSafeDelete(session.id, target);
@@ -2409,6 +2414,7 @@ export class ExplorerController {
       label: `${classVarName} from ${className}`,
       references: scan.references,
       scanFailed: scan.scanFailed,
+      truncated: scan.truncated,
       note: 'Methods that reference it keep their binding and will read a variable nothing declares.',
     };
 
@@ -3766,7 +3772,7 @@ export class ExplorerController {
       isMeta,
       category: info.category,
       selector: escapeSelectorSlashes(info.selector),
-      environmentId: 0,
+      environmentId: EXPLORER_METHOD_ENVIRONMENT,
       dictIndex: this.state.dictIndex,
     });
   }
@@ -3789,7 +3795,7 @@ export class ExplorerController {
       isMeta: node.isMeta,
       category: node.info.category,
       selector: escapeSelectorSlashes(node.info.selector),
-      environmentId: 0,
+      environmentId: EXPLORER_METHOD_ENVIRONMENT,
       dictIndex: this.state.dictIndex,
     });
     // This open normally fires onDidChangeActiveTextEditor, so mark it — syncToEditor
@@ -3859,6 +3865,17 @@ export class ExplorerController {
   // that fails is NOT the same as a scan that found nothing: safe delete confirms in that
   // case rather than deleting unasked, so the reason travels with the (empty) result.
   //
+  // `truncated` says the SCAN came back full, and is the only honest source for that. It has
+  // to be observed here, on the raw per-environment rows, because it stops being visible
+  // afterwards: callers drop references that go away with the target (a self-send, a doomed
+  // subclass), so a capped scan of 500 can arrive at the dialog as 499 and no longer look
+  // capped, and deduping across environments can shrink it further. Re-deriving it downstream
+  // from the surviving count answers "no" for a list that really was cut off — precisely the
+  // overconfident number this guard exists to avoid. It is per environment because the cap is
+  // applied per query: one environment coming back full means rows were dropped, whatever the
+  // others returned, and several environments summing past the cap without any one of them
+  // reaching it means nothing was dropped at all.
+  //
   // Shown under a progress notification because these are whole-image scans that block the
   // extension host: without it, clicking a delete freezes the editor with no explanation for
   // as long as the scan takes, where the old unguarded delete popped a modal instantly. The
@@ -3868,7 +3885,11 @@ export class ExplorerController {
   private async scanReferences(
     title: string,
     scan: (environmentId: number) => queries.MethodSearchResult[],
-  ): Promise<{ references: queries.MethodSearchResult[]; scanFailed?: string }> {
+  ): Promise<{
+    references: queries.MethodSearchResult[];
+    scanFailed?: string;
+    truncated: boolean;
+  }> {
     return vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
@@ -3877,12 +3898,17 @@ export class ExplorerController {
       },
       () => {
         try {
-          const found = this.environmentsToScan().flatMap((env) => scan(env));
-          return Promise.resolve({ references: dedupeMethodResults(found) });
+          const perEnv = this.environmentsToScan().map((env) => scan(env));
+          const truncated = perEnv.some((rows) => rows.length >= METHOD_SEARCH_RESULT_LIMIT);
+          return Promise.resolve({
+            references: dedupeMethodResults(perEnv.flat()),
+            truncated,
+          });
         } catch (e: unknown) {
           return Promise.resolve({
             references: [],
             scanFailed: e instanceof Error ? e.message : String(e),
+            truncated: false,
           });
         }
       },
@@ -3924,7 +3950,7 @@ export class ExplorerController {
     const inheritedFrom = this.superclassImplementorOf(session, className, selector, node.isMeta);
 
     const scan = inheritedFrom
-      ? { references: [] as queries.MethodSearchResult[], scanFailed: undefined }
+      ? { references: [] as queries.MethodSearchResult[], scanFailed: undefined, truncated: false }
       : await this.scanReferences(`Finding senders of #${selector}…`, (env) =>
           queries.sendersOf(session, selector, env),
         );
@@ -3933,10 +3959,25 @@ export class ExplorerController {
       label: `#${selector} from ${side}`,
       // The method's own send of its own selector goes away with it, so a recursive method
       // is not a method with a surviving sender.
+      //
+      // The environment is part of what makes it "its own" send. A class can implement the
+      // same selector on the same side in two environments, and those are two different
+      // methods: only the one being removed disappears. Matching on class/side/selector
+      // alone crossed off the OTHER environment's method as if it were this one's recursion,
+      // hiding a sender that really does survive — the under-report this guard exists to
+      // prevent. The pane removes the environment-0 method (see EXPLORER_METHOD_ENVIRONMENT),
+      // so that is the row, and only that row, which goes away with it.
       references: scan.references.filter(
-        (r) => !(r.className === className && r.isMeta === node.isMeta && r.selector === selector),
+        (r) =>
+          !(
+            r.className === className &&
+            r.isMeta === node.isMeta &&
+            r.selector === selector &&
+            r.environmentId === EXPLORER_METHOD_ENVIRONMENT
+          ),
       ),
       scanFailed: scan.scanFailed,
+      truncated: scan.truncated,
       // Says what actually happens to the senders, rather than the untrue "nothing
       // referenced it" the plain silent path would report.
       silentNote: inheritedFrom
@@ -4599,7 +4640,9 @@ export class ExplorerController {
     // holds: if any member can't be located in a dictionary or can't be written, abort
     // deleting nothing rather than half-removing the subtree. The root is already
     // writable-checked above.
-    const targets: { className: string; dictIndex: number }[] = [{ className, dictIndex }];
+    const targets: { className: string; dictName: string; dictIndex: number }[] = [
+      { className, dictName, dictIndex },
+    ];
     const blockers: string[] = [];
     for (const d of descendants) {
       if (d.dictIndex <= 0) {
@@ -4607,7 +4650,7 @@ export class ExplorerController {
       } else if (!queries.canClassBeWritten(session, d.className, d.dictIndex)) {
         blockers.push(`${d.className} (not writable)`);
       } else {
-        targets.push({ className: d.className, dictIndex: d.dictIndex });
+        targets.push({ className: d.className, dictName: d.dictName, dictIndex: d.dictIndex });
       }
     }
     if (blockers.length > 0) {
@@ -4620,15 +4663,31 @@ export class ExplorerController {
     // A method that references the class from INSIDE the doomed subtree goes away with it
     // (Doomed class >> new naming Doomed, a subclass's own method), so it is no reason to
     // ask. What is left is the references that will still be there afterwards.
-    const doomed = new Set(targets.map((t) => t.className));
+    //
+    // A doomed class is identified by name AND home dictionary, never by name alone. The
+    // scan deliberately resolves its target through the dictionary by object identity so a
+    // same-named class elsewhere does not collide; excluding on the bare name puts that
+    // collision straight back, because an unrelated class that merely SHARES a name with
+    // something in the subtree would have its real, surviving reference thrown away — and
+    // the delete would then go through silently as "nothing references it". Over-matching
+    // here is the one failure this guard cannot afford, so the key carries the dictionary.
+    //
+    // The two sides derive a home dictionary by slightly different rules (the descendant
+    // walk takes the first dictionary binding the class object; a result row takes the
+    // first that binds it under its own name, skipping alias entries), so an aliased class
+    // can fail to match. That costs a confirmation that was not strictly needed, which is
+    // the direction to err in: asking too often is a nuisance, not a lost reference.
+    const doomedKey = (className: string, dictName: string) => `${className}|${dictName}`;
+    const doomed = new Set(targets.map((t) => doomedKey(t.className, t.dictName)));
     const scan = await this.scanReferences(`Finding references to ${className}…`, (env) =>
       queries.referencesToClassInDict(session, className, dictIndex, env),
     );
     const target: SafeDeleteTarget = {
       kind: 'class',
       label: `${className} from ${dictName}`,
-      references: scan.references.filter((r) => !doomed.has(r.className)),
+      references: scan.references.filter((r) => !doomed.has(doomedKey(r.className, r.dictName))),
       scanFailed: scan.scanFailed,
+      truncated: scan.truncated,
       // Subclasses always earn a confirmation: removing the subtree takes classes the user
       // did not click on, whether or not anything outside references them.
       blockers: descendants.map((d) => d.className),

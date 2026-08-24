@@ -126,6 +126,7 @@ import { showTranscript, getTranscriptChannel } from './transcriptChannel';
 import { getGciLog } from './gciLog';
 import { GemStoneCodeLensProvider } from './gemstoneCodeLensProvider';
 import * as queries from './browserQueries';
+import { dedupeMethodResults } from './queries/methodSearch';
 import { SysadminStorage } from './sysadminStorage';
 import { appendSysadmin, getSysadminChannel } from './sysadminChannel';
 import { VersionManager } from './versionManager';
@@ -2276,13 +2277,7 @@ export function activate(context: vscode.ExtensionContext) {
         for (let env = 0; env <= maxEnv; env++) {
           all.push(...queries.sendersOf(session, args.selector, env));
         }
-        const seen = new Set<string>();
-        const results = all.filter((r) => {
-          const key = `${r.className}|${r.isMeta}|${r.selector}`;
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        });
+        const results = dedupeMethodResults(all);
         await showMethodResults(session, results, `Senders of #${args.selector}`);
       },
     ),
@@ -2299,13 +2294,7 @@ export function activate(context: vscode.ExtensionContext) {
         for (let env = 0; env <= maxEnv; env++) {
           all.push(...queries.implementorsOf(session, args.selector, env));
         }
-        const seen = new Set<string>();
-        const results = all.filter((r) => {
-          const key = `${r.className}|${r.isMeta}|${r.selector}`;
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        });
+        const results = dedupeMethodResults(all);
         await showMethodResults(session, results, `Implementors of #${args.selector}`);
       },
     ),
@@ -2339,13 +2328,7 @@ export function activate(context: vscode.ExtensionContext) {
             ),
           );
         }
-        const seen = new Set<string>();
-        const results = all.filter((r) => {
-          const key = `${r.className}|${r.isMeta}|${r.selector}`;
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        });
+        const results = dedupeMethodResults(all);
         const side = args.isMeta ? ' class' : '';
         const title =
           args.direction === 'up'
@@ -2367,13 +2350,7 @@ export function activate(context: vscode.ExtensionContext) {
         for (let env = 0; env <= maxEnv; env++) {
           all.push(...queries.referencesToObject(session, args.objectName, env));
         }
-        const seen = new Set<string>();
-        const results = all.filter((r) => {
-          const key = `${r.className}|${r.isMeta}|${r.selector}`;
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        });
+        const results = dedupeMethodResults(all);
         await showMethodResults(session, results, `References to ${args.objectName}`);
       },
     ),
@@ -2453,16 +2430,7 @@ export function activate(context: vscode.ExtensionContext) {
             for (let env = 0; env <= maxEnv; env++) {
               all.push(...queries.sendersOf(session, selector, env));
             }
-            // Deduplicate by class+meta+selector
-            const seen = new Set<string>();
-            return Promise.resolve(
-              all.filter((r) => {
-                const key = `${r.className}|${r.isMeta}|${r.selector}`;
-                if (seen.has(key)) return false;
-                seen.add(key);
-                return true;
-              }),
-            );
+            return Promise.resolve(dedupeMethodResults(all));
           },
         );
       } catch (e: unknown) {
@@ -2496,15 +2464,7 @@ export function activate(context: vscode.ExtensionContext) {
             for (let env = 0; env <= maxEnv; env++) {
               all.push(...queries.implementorsOf(session, selector, env));
             }
-            const seen = new Set<string>();
-            return Promise.resolve(
-              all.filter((r) => {
-                const key = `${r.className}|${r.isMeta}|${r.selector}`;
-                if (seen.has(key)) return false;
-                seen.add(key);
-                return true;
-              }),
-            );
+            return Promise.resolve(dedupeMethodResults(all));
           },
         );
       } catch (e: unknown) {

@@ -9,6 +9,8 @@ import {
   literalSymbolReferences,
   stringLiteralReferences,
   hierarchyImplementorsOf,
+  dedupeMethodResults,
+  type MethodSearchResult,
 } from '../methodSearch';
 
 const row = 'Globals\tArray\t0\tsize\taccessing\n';
@@ -283,5 +285,64 @@ describe('hierarchyImplementorsOf', () => {
         environmentId: 0,
       },
     ]);
+  });
+});
+
+// Every caller that sweeps environments runs one query per environment and folds the rounds
+// into one list, so the same method can come back more than once. What must NOT fold together
+// is two methods that merely look alike: a selector on both sides of a class, on two classes,
+// or in two environments is more than one method, and merging them under-reports the results
+// and leaves one of them unreachable from the list that is shown.
+describe('folding repeated scan results together', () => {
+  const found = (
+    className: string,
+    isMeta: boolean,
+    selector: string,
+    environmentId = 0,
+  ): MethodSearchResult => ({
+    dictName: 'UserGlobals',
+    className,
+    isMeta,
+    selector,
+    category: 'accessing',
+    environmentId,
+  });
+
+  it('keeps one entry for a method found more than once', () => {
+    const hit = found('Account', false, 'balance');
+
+    expect(dedupeMethodResults([hit, { ...hit }])).toEqual([hit]);
+  });
+
+  it('keeps the same selector on both sides of a class, which are different methods', () => {
+    const instance = found('Account', false, 'reset');
+    const classSide = found('Account', true, 'reset');
+
+    expect(dedupeMethodResults([instance, classSide])).toEqual([instance, classSide]);
+  });
+
+  it('keeps the same selector implemented by different classes', () => {
+    const account = found('Account', false, 'balance');
+    const savings = found('Savings', false, 'balance');
+
+    expect(dedupeMethodResults([account, savings])).toEqual([account, savings]);
+  });
+
+  it('lists a selector found in two environments once per environment', () => {
+    const env0 = found('Account', false, 'balance', 0);
+    const env1 = found('Account', false, 'balance', 1);
+
+    expect(dedupeMethodResults([env0, env1])).toEqual([env0, env1]);
+  });
+
+  it('keeps the first sighting, so the earliest environment wins', () => {
+    const first = found('Account', false, 'balance');
+    const later = { ...first, category: 'a different category' };
+
+    expect(dedupeMethodResults([first, later])).toEqual([first]);
+  });
+
+  it('answers nothing for nothing', () => {
+    expect(dedupeMethodResults([])).toEqual([]);
   });
 });

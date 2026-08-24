@@ -31,7 +31,7 @@
  * unit-tests without a stone.
  */
 import * as vscode from 'vscode';
-import { MethodSearchResult, METHOD_SEARCH_RESULT_LIMIT } from '../queries/methodSearch';
+import { MethodSearchResult } from '../queries/methodSearch';
 import { showMethodResults } from '../methodResultsPicker';
 
 export type SafeDeleteKind = 'method' | 'class' | 'instance variable' | 'class variable';
@@ -56,6 +56,12 @@ export interface SafeDeleteTarget {
   /** Why the reference scan could not answer. Set means we do not KNOW the target is
    *  unreferenced, so the deletion is confirmed rather than assumed safe. */
   scanFailed?: string;
+  /** The scan came back at the server-side row cap, so `references` is a page rather than
+   *  the whole truth and the count is reported as a floor. Set by the caller from the RAW
+   *  scan, before it excludes the references that go away with the target: those exclusions
+   *  can take a capped 500 down to 499, and a count that no longer looks capped would then be
+   *  stated as exact fact when the real number may be thousands. */
+  truncated?: boolean;
   /** Label for the confirm button; defaults to `Remove Anyway` when something is in the
    *  way and `Remove` when the only reason to ask is that we could not check. */
   confirmLabel?: string;
@@ -160,7 +166,12 @@ function detailFor(target: SafeDeleteTarget): string {
     // answer, so at the cap the count is stated as a floor rather than as fact. Saying
     // "500 methods reference it" when the truth may be thousands is a worse failure than
     // hedging, because the whole point of the dialog is that its numbers can be trusted.
-    const atCap = n >= METHOD_SEARCH_RESULT_LIMIT;
+    //
+    // Whether the cap was hit is the CALLER's observation of the raw scan, not something to
+    // re-derive from `n`: by the time the references reach here the caller has dropped the
+    // ones that go away with the target, so a capped scan can arrive under the cap and would
+    // then read as exact.
+    const atCap = target.truncated === true;
     const count = atCap ? `At least ${n}` : `${n}`;
     lines.push(
       `${count} ${plural(n, 'method', 'methods')} still ${plural(n, 'references', 'reference')} it${atCap ? ' (the list below is not complete)' : ''}:`,
@@ -227,18 +238,4 @@ export function announceSilentDelete(target: SafeDeleteTarget): void {
   void vscode.window.showInformationMessage(
     `Removed ${target.kind} ${target.label} — ${target.silentNote ?? 'nothing referenced it'}.`,
   );
-}
-
-/** Drop the rows two scans both found. A method row is identified by class, side, selector
- *  AND environment: the same selector implemented on the same class in two environments is
- *  two different methods, so folding them together would under-report the references and
- *  leave one of them unreachable from the list. */
-export function dedupeMethodResults(results: MethodSearchResult[]): MethodSearchResult[] {
-  const seen = new Set<string>();
-  return results.filter((r) => {
-    const key = `${r.className}|${r.isMeta}|${r.selector}|${r.environmentId}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
 }

@@ -2534,6 +2534,67 @@ describe('SystemBrowser', () => {
       expect(uri.path).toContain('/class/');
     });
 
+    // A result row carries the environment it was FOUND in, and a selector implemented in two
+    // environments is two different methods. This is the path taken whenever a browser is
+    // already open — the usual one — and it used to ignore the row's environment entirely and
+    // open whatever the browser happened to have selected, i.e. the wrong method or none.
+    describe('honouring the environment the row was found in', () => {
+      const inEnv1: queries.MethodSearchResult = {
+        dictName: 'UserGlobals',
+        className: 'Array',
+        isMeta: false,
+        category: 'Ruby',
+        environmentId: 1,
+        selector: 'rb_name',
+      };
+
+      beforeEach(() => {
+        __setConfig('gemstone', 'maxEnvironment', 2);
+        vi.mocked(queries.getClassEnvironments).mockReturnValue([
+          { isMeta: false, envId: 0, category: 'Accessing', selectors: ['name', 'name:'] },
+          { isMeta: false, envId: 1, category: 'Ruby', selectors: ['rb_name'] },
+          { isMeta: true, envId: 0, category: 'Instance Creation', selectors: ['new', 'new:'] },
+        ]);
+      });
+
+      afterEach(() => {
+        __resetConfig();
+      });
+
+      it("opens the row's environment, not the one the browser was showing", async () => {
+        SystemBrowser.navigateTo(session.id, inEnv1);
+
+        await vi.waitFor(() => expect(workspace.openTextDocument).toHaveBeenCalled());
+        const uri = vi.mocked(workspace.openTextDocument).mock.calls[0][0] as { query: string };
+        expect(uri.query).toContain('env=1');
+      });
+
+      it('checks the matching environment control so the browser says where it is', () => {
+        SystemBrowser.navigateTo(session.id, inEnv1);
+
+        expect(mockPanel.webview.postMessage).toHaveBeenCalledWith({
+          command: 'setEnvironment',
+          envId: 1,
+        });
+      });
+
+      it("selects the row's category, which only exists in that environment", () => {
+        SystemBrowser.navigateTo(session.id, inEnv1);
+
+        expect(mockPanel.webview.postMessage).toHaveBeenCalledWith(
+          expect.objectContaining({ command: 'loadMethodCategories', selected: 'Ruby' }),
+        );
+      });
+
+      it('leaves an environment-0 row opening environment 0, with no env in the URI', async () => {
+        SystemBrowser.navigateTo(session.id, result);
+
+        await vi.waitFor(() => expect(workspace.openTextDocument).toHaveBeenCalled());
+        const uri = vi.mocked(workspace.openTextDocument).mock.calls[0][0] as { query: string };
+        expect(uri.query).not.toContain('env=');
+      });
+    });
+
     it('navigates only the most recently active browser', async () => {
       const firstPanel = mockPanel;
       // Open a second browser for the same session

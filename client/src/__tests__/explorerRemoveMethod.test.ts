@@ -344,6 +344,104 @@ describe('ExplorerController.removeMethod — scanning every environment', () =>
 
     expect(showWarningMessage.mock.calls[0][1].detail).toContain('1 method still references it');
   });
+
+  // A class can implement the same selector on the same side in two environments, and those
+  // are two different methods. The Methods pane removes the environment-0 one, so only its
+  // own send goes away with it. Discounting on class/side/selector alone crossed off the
+  // OTHER environment's method too, hiding a sender that really does survive.
+  it('counts a same-selector method in another environment as a surviving sender', async () => {
+    __setConfig('gemstone', 'maxEnvironment', 1);
+    sendersOf.mockImplementation((_s: unknown, _sel: string, env: number) =>
+      // Array >> #at: sends #at: in BOTH environments. Only the environment-0 method is
+      // being removed; the environment-1 one stays, and its send with it.
+      [sender({ className: 'Array', selector: 'at:', environmentId: env })],
+    );
+    showWarningMessage.mockResolvedValue(undefined);
+    const ctl = makeController();
+
+    await ctl.removeMethod(methodItem());
+
+    expect(showWarningMessage).toHaveBeenCalled();
+    expect(showWarningMessage.mock.calls[0][1].detail).toContain('1 method still references it');
+    expect(deleteMethod).not.toHaveBeenCalled();
+  });
+
+  // The other half of the same rule: the environment-0 self-send IS still discounted, so the
+  // fix must not turn every recursive method back into a question.
+  it('still discounts the removed method’s own send in environment 0', async () => {
+    __setConfig('gemstone', 'maxEnvironment', 1);
+    sendersOf.mockImplementation((_s: unknown, _sel: string, env: number) =>
+      env === 0 ? [sender({ className: 'Array', selector: 'at:', environmentId: 0 })] : [],
+    );
+    const ctl = makeController();
+
+    await ctl.removeMethod(methodItem());
+
+    expect(showWarningMessage).not.toHaveBeenCalled();
+    expect(deleteMethod).toHaveBeenCalled();
+  });
+});
+
+// The scan is capped per query, server-side. Whether it came back full has to be observed on
+// the RAW rows, because the exclusions that run afterwards hide it: a capped scan of 500 that
+// loses its self-send arrives at the dialog as 499 and no longer looks capped. Re-deriving the
+// hedge from the surviving count dropped it in exactly that case, stating a number as fact when
+// the truth may be thousands.
+describe('ExplorerController.removeMethod — reporting a scan that came back full', () => {
+  const CAP = 500;
+  const fullPage = (over: Partial<MethodSearchResult> = {}) =>
+    Array.from({ length: CAP }, (_, i) =>
+      sender({ className: `C${i}`, selector: 'usesIt', ...over }),
+    );
+
+  it('hedges the count when the scan came back full', async () => {
+    sendersOf.mockReturnValue(fullPage());
+    showWarningMessage.mockResolvedValue(undefined);
+    const ctl = makeController();
+
+    await ctl.removeMethod(methodItem());
+
+    const detail = showWarningMessage.mock.calls[0][1].detail as string;
+    expect(detail).toContain(`At least ${CAP} methods still reference it`);
+    expect(detail).toContain('not complete');
+  });
+
+  it('still hedges when discounting the self-send took the count under the cap', async () => {
+    // A recursive method whose scan came back full: 499 other senders plus its own send.
+    // The self-send is excluded, so the dialog shows 499 — but the list was still cut off.
+    sendersOf.mockReturnValue([
+      ...fullPage().slice(0, CAP - 1),
+      sender({ className: 'Array', selector: 'at:', environmentId: 0 }),
+    ]);
+    showWarningMessage.mockResolvedValue(undefined);
+    const ctl = makeController();
+
+    await ctl.removeMethod(methodItem());
+
+    const detail = showWarningMessage.mock.calls[0][1].detail as string;
+    expect(detail).toContain(`At least ${CAP - 1} methods still reference it`);
+    expect(detail).toContain('not complete');
+  });
+
+  // The mirror: two environments can sum past the cap without either query reaching it, and
+  // that combined list IS complete. Hedging there would invent a doubt that is not real.
+  it('does not hedge when several environments sum past the cap but none came back full', async () => {
+    __setConfig('gemstone', 'maxEnvironment', 1);
+    sendersOf.mockImplementation((_s: unknown, _sel: string, env: number) =>
+      Array.from({ length: 300 }, (_, i) =>
+        sender({ className: `C${env}_${i}`, selector: 'usesIt', environmentId: env }),
+      ),
+    );
+    showWarningMessage.mockResolvedValue(undefined);
+    const ctl = makeController();
+
+    await ctl.removeMethod(methodItem());
+
+    const detail = showWarningMessage.mock.calls[0][1].detail as string;
+    expect(detail).toContain('600 methods still reference it:');
+    expect(detail).not.toContain('At least');
+    expect(detail).not.toContain('not complete');
+  });
 });
 
 // Removing an override is the common case and it breaks nothing: every send that resolved

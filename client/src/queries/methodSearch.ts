@@ -25,6 +25,25 @@ export interface MethodSearchResult {
  *  as fact. */
 export const METHOD_SEARCH_RESULT_LIMIT = 500;
 
+/** Drop the rows two scans both found. A method row is identified by class, side, selector
+ *  AND environment: the same selector implemented on the same class in two environments is
+ *  two different methods, so folding them together would under-report the results and leave
+ *  one of them unreachable from the list.
+ *
+ *  Lives here, with the row type, because every caller that sweeps environments needs it —
+ *  Senders, Implementors, hierarchy implementors, References, the method-source search and
+ *  the safe-delete scans all build one list out of one query per environment, and each of
+ *  them used to hand-roll the same fold on class/side/selector alone. */
+export function dedupeMethodResults(results: MethodSearchResult[]): MethodSearchResult[] {
+  const seen = new Set<string>();
+  return results.filter((r) => {
+    const key = `${r.className}|${r.isMeta}|${r.selector}|${r.environmentId}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 export function methodSerialization(envId: number): string {
   return `sl := System myUserProfile symbolList.
 classDict := IdentityDictionary new.

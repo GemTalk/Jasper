@@ -47,11 +47,12 @@ export async function showMethodResults(
   if (!picked) return false;
 
   const r = picked.result;
+  // The row carries the environment it was found in, and the method is opened there on BOTH
+  // paths: navigateTo switches an open browser to the row's environment, and the direct open
+  // below spreads the row into the URI. Hard-coding environment 0 opened the wrong method — or
+  // none — for a row found anywhere else, which the safe-delete confirmation reaches by
+  // scanning every environment the user has configured.
   if (!SystemBrowser.navigateTo(sessionId, r)) {
-    // The row carries the environment it was found in, and the document is opened there.
-    // Hard-coding environment 0 here opened the wrong method — or none — for a row found
-    // anywhere else, which the safe-delete confirmation reaches by scanning every
-    // environment the user has configured.
     const uri = buildMethodUri({ kind: 'method', sessionId, ...r });
     vscode.commands.executeCommand('gemstone.openDocument', uri);
   }
