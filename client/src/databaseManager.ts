@@ -364,12 +364,12 @@ export class DatabaseManager {
     // back to the current one when invoked without a choice (the sidebar). It is
     // listed first and marked picked, so the confirmation opens on what the user
     // actually selected instead of forgetting it.
+    const extents = this.storage.getAvailableExtents(db.config.version);
     const target =
-      preselect && this.storage.getAvailableExtents(db.config.version).includes(preselect)
+      preselect && extents.includes(preselect)
         ? preselect
         : db.config.baseExtent.replace(/\.dbf$/, '');
     const items: vscode.QuickPickItem[] = [browseItem];
-    const extents = this.storage.getAvailableExtents(db.config.version);
     if (extents.length > 0) {
       const ordered = [...extents].sort((a, b) => (a === target ? -1 : b === target ? 1 : 0));
       items.push({ label: 'Initial databases', kind: vscode.QuickPickItemKind.Separator });
