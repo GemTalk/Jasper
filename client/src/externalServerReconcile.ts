@@ -36,6 +36,20 @@ export interface ExternalServerReport {
   mayRestart: boolean;
 }
 
+/** The dialog's title: what was actually started outside Jasper.
+ *
+ *  Naming the database's stone here was wrong whenever the stone was not the
+ *  external one — the title announced that "gs64stone2" had been started
+ *  outside Jasper while the body correctly said it was the NetLDI. */
+export function reconcileTitle(report: ExternalServerReport): string {
+  const servers = report.servers;
+  if (servers.length === 0) return `"${report.stoneName}" — nothing started outside Jasper`;
+  if (servers.length === 1) {
+    return `${servers[0].kind} "${servers[0].name}" was started outside Jasper`;
+  }
+  return `${servers.map((s) => `"${s.name}"`).join(' and ')} were started outside Jasper`;
+}
+
 /** What the user chose. `undefined` when the dialog was dismissed. */
 export type ReconcileChoice = 'restart' | 'as-is' | 'cancel' | undefined;
 
@@ -96,9 +110,18 @@ export function describeExternalServers(
  *  sentence that is trying to explain a subtle situation. */
 function serverList(report: ExternalServerReport): string {
   const names = report.servers.map((s) => `"${s.name}"`);
-  if (names.length === 0) return '';
-  if (names.length === 1) return `${names[0]} is`;
-  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]} are`;
+  if (names.length <= 1) return names[0] ?? '';
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+}
+
+/** Verb and pronoun forms for however many servers the finding names. A single
+ *  external NetLDI is the common case, so the singular has to read properly —
+ *  and the sentence below carries three agreeing words, so getting one right
+ *  and the others wrong is worse than not trying. */
+function agreement(report: ExternalServerReport): { is: string; was: string; it: string } {
+  return report.servers.length > 1
+    ? { is: 'are', was: 'were', it: "they're" }
+    : { is: 'is', was: 'was', it: "it's" };
 }
 
 /** One line per server: what it is, its PID, and where it registered. Shared by
@@ -125,9 +148,10 @@ function serverLines(report: ExternalServerReport): string {
  * disagree, because without that the "Stopped" the tree showed makes no sense.
  */
 export function reconcileMessage(report: ExternalServerReport): string {
+  const { is, was, it } = agreement(report);
   const lines = [
-    `${serverList(report)} running, but was started outside Jasper's environment, so ` +
-      `it's registered where Jasper's own gslist doesn't look.`,
+    `${serverList(report)} ${is} running, but ${was} started outside Jasper's environment, ` +
+      `so ${it} registered where Jasper's own gslist doesn't look.`,
     '',
     `Jasper runs its own gslist against ${report.jasperRoot}, which can differ from gslist on ` +
       `the host — so a server can look Stopped to Jasper while it's alive on the host, and a ` +
@@ -166,22 +190,37 @@ export function reconcileMessage(report: ExternalServerReport): string {
 }
 
 /** Why a same-named server cannot be assumed to be this database's. Identity by
- *  name alone is ambiguous — two databases can use the same stone name — and
- *  the only evidence available is the conf/log paths the process was started
- *  with, which a stone started against a different extent will not have. */
+ *  name alone is ambiguous — two databases can use the same stone or NetLDI
+ *  name — and the only evidence available is the conf/log paths the process was
+ *  started with, which a server started without them will not have.
+ *
+ *  Names the servers that are actually unidentified. Reaching for the database's
+ *  stone name instead put the wrong name and the wrong noun in the warning
+ *  whenever the NetLDI was the external one, which is the common case. */
 function unconfirmedWarning(report: ExternalServerReport): string {
   const different = report.servers.filter((s) => s.identity === 'different');
   if (different.length > 0) {
+    const subject = different.map((s) => `${s.kind} "${s.name}"`).join(' and ');
+    const verb = different.length > 1 ? 'were' : 'was';
     return (
-      `Warning: the paths ${different.map((s) => s.kind.toLowerCase()).join(' and ')} was ` +
-      `started with point outside this database's directory, so this is probably a different ` +
+      `Warning: the paths ${subject} ${verb} started with point outside this database's ` +
+      `directory, so ${different.length > 1 ? 'these are' : 'this is'} probably a different ` +
       `database that happens to share the name.`
     );
   }
+  const unknown = report.servers.filter((s) => s.identity === 'unknown');
+  const subject = unknown.map((s) => `${s.kind} "${s.name}"`).join(' and ');
+  const verb = unknown.length > 1 ? 'these are' : 'this is';
+  // A stone has a database open; a NetLDI only serves connections for one. The
+  // distinction matters here because the sentence is explaining what evidence
+  // was looked for and not found.
+  const evidence = unknown.every((s) => s.kind === 'NetLDI')
+    ? 'which database it serves'
+    : 'which database it has open';
   return (
-    `Warning: Jasper could not confirm this is "${report.stoneName}" rather than a different ` +
-    `stone of the same name — the running process gave nothing away about which database it ` +
-    `has open.`
+    `Warning: Jasper could not confirm ${verb} ${subject} belonging to this database rather ` +
+    `than another of the same name — the running process gave nothing away about ` +
+    `${evidence}.`
   );
 }
 

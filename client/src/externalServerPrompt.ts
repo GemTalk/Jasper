@@ -1,6 +1,10 @@
 import * as vscode from 'vscode';
-import { ExternalServerReport, ReconcileChoice } from './externalServerReconcile';
-import { reconcileMessage } from './externalServerReconcile';
+import {
+  ExternalServerReport,
+  ReconcileChoice,
+  reconcileMessage,
+  reconcileTitle,
+} from './externalServerReconcile';
 
 const RESTART = 'Restart & Connect';
 const AS_IS = 'Connect as-is';
@@ -24,7 +28,7 @@ export async function confirmReconcileExternalServers(
 ): Promise<ReconcileChoice> {
   const actions = report.mayRestart ? [RESTART, AS_IS] : [AS_IS];
   const choice = await vscode.window.showWarningMessage(
-    `"${report.stoneName}" was started outside Jasper`,
+    reconcileTitle(report),
     { modal: true, detail: reconcileMessage(report) },
     ...actions,
   );

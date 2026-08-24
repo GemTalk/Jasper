@@ -131,11 +131,45 @@ describe('reconcileMessage', () => {
     expect(reconcileMessage(report(finding))).toContain('registration directory unknown');
   });
 
+  it('names the server that is actually unidentified, not the database stone', () => {
+    // With only the NetLDI external, the warning used to name the stone and
+    // call it "a different stone of the same name" — the wrong name and the
+    // wrong noun, in the sentence carrying the safety argument.
+    const finding = { netldi: server('netldi', 'unknown') };
+
+    const message = reconcileMessage(report(finding));
+
+    expect(message).toContain('NetLDI "gs64ldi"');
+    expect(message).not.toContain('different stone');
+    expect(message).toContain('which database it serves');
+  });
+
+  it('says a stone has a database open, not that it serves one', () => {
+    const finding = { stone: server('stone', 'unknown') };
+
+    expect(reconcileMessage(report(finding))).toContain('which database it has open');
+  });
+
+  it('agrees its verbs when two servers are external', () => {
+    const message = reconcileMessage(report());
+
+    expect(message).toContain('are running, but were started');
+    expect(message).toContain("so they're registered");
+  });
+
+  it('agrees its verbs when one server is external', () => {
+    const message = reconcileMessage(report({ netldi: server('netldi') }));
+
+    expect(message).toContain('is running, but was started');
+    expect(message).toContain("so it's registered");
+  });
+
   it('warns that a same-named server may be a different database', () => {
     const message = reconcileMessage(report({ stone: server('stone', 'unknown') }));
 
     expect(message).toContain('could not confirm');
     expect(message).toContain('"Restart & Connect" is not offered');
+    expect(message).toContain('Stone "gs64stone"');
   });
 
   it('says outright when the paths point at another database', () => {

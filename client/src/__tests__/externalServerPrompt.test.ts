@@ -72,6 +72,17 @@ describe('confirmReconcileExternalServers', () => {
     expect(mocks.showWarningMessage.mock.calls[0][1]).toMatchObject({ modal: true });
   });
 
+  it('names what was actually started outside Jasper in the title', async () => {
+    // The title used to name the database's stone, so it announced that the
+    // stone had been started outside Jasper while the body correctly said it
+    // was the NetLDI.
+    await confirmReconcileExternalServers(report());
+
+    expect(mocks.showWarningMessage.mock.calls[0][0]).toBe(
+      'Stone "gs64stone" was started outside Jasper',
+    );
+  });
+
   it('names the database in the title and explains the state in the body', async () => {
     await confirmReconcileExternalServers(report());
 
