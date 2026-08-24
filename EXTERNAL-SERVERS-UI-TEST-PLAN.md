@@ -23,6 +23,13 @@ sideways, jump to *Cleanup* rather than clicking around trying to recover.
 
 ## Status
 
+**All 8 passed, 2026-08-24 (Linux).** Four real bugs came out of this pass, all fixed:
+a `.bashrc` that unset `GEMSTONE` broke Jasper's own commands; the message meant to
+replace GemStone's complaint was built from the issue's paraphrase and never matched;
+the identity gate was too strict for a NetLDI, making the restart unreachable in its
+commonest case; and the row's action promised a connect it never performed. macOS and
+Windows/WSL remain untested — see the end of this file.
+
 | Test | State |
 |---|---|
 | 0 · Works with a hostile `.bashrc` | ✅ **passed 2026-08-24** — all boxes |
@@ -32,7 +39,7 @@ sideways, jump to *Cleanup* rather than clicking around trying to recover.
 | 4 · Catches the reported bug | ✅ **passed 2026-08-24** |
 | 5 · Reconcile actually reconciles | ✅ **passed 2026-08-24** — via the row action; found it promised a connect it did not do |
 | 6 · Dialog says the right thing | ✅ **passed 2026-08-24** — both variants read: unconfirmed in test 2, confirmed in test 3 |
-| 7 · Fails without dead-ending | ⬜ not run |
+| 7 · Fails without dead-ending | ✅ **passed 2026-08-24** |
 
 Already machine-verified, so **do not re-test by hand**: parsing, identity logic, version
 matching, kill safety rules, and message wording, across 6,590 automated tests including
