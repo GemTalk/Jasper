@@ -12,7 +12,15 @@ vi.mock('../browserQueries', () => ({
   clearAllBreaks: vi.fn(),
 }));
 
-import { Uri, debug, window, Location, Position, SourceBreakpoint } from '../__mocks__/vscode';
+import {
+  Uri,
+  debug,
+  window,
+  Location,
+  Position,
+  SourceBreakpoint,
+  FunctionBreakpoint,
+} from '../__mocks__/vscode';
 import {
   BreakpointManager,
   buildLineOffsets,
@@ -406,6 +414,47 @@ describe('BreakpointManager', () => {
 
       manager.applyToUri(session(), uri, []);
       expect(manager.appliedFor(uri)).toHaveLength(0);
+    });
+  });
+
+  describe('function breakpoints', () => {
+    /** Drive the manager the way VS Code does, through the change event. */
+    function fireAdded(added: unknown[]) {
+      const manager = makeManager();
+      const context = {
+        subscriptions: [] as unknown[],
+      } as unknown as import('vscode').ExtensionContext;
+      manager.register(context);
+      const calls = vi.mocked(debug.onDidChangeBreakpoints).mock.calls;
+      const handler = calls[calls.length - 1][0];
+      handler({ added, removed: [], changed: [] });
+      return manager;
+    }
+
+    beforeEach(() => {
+      vi.mocked(window.showWarningMessage).mockClear();
+      vi.mocked(debug.onDidChangeBreakpoints).mockClear();
+    });
+
+    it('warns that a function breakpoint will never fire', () => {
+      // The + button in the Breakpoints panel makes one of these. Jasper only
+      // implements source breakpoints, so it would sit there looking live.
+      fireAdded([new FunctionBreakpoint('breakpointTesting')]);
+      expect(vi.mocked(window.showWarningMessage)).toHaveBeenCalledWith(
+        expect.stringContaining('does not support function breakpoints'),
+      );
+    });
+
+    it('leaves it in place rather than deleting what the developer typed', () => {
+      const named = new FunctionBreakpoint('breakpointTesting');
+      debug.breakpoints = [named];
+      fireAdded([named]);
+      expect(debug.breakpoints).toContain(named);
+    });
+
+    it('says nothing for an ordinary source breakpoint', () => {
+      fireAdded([new SourceBreakpoint(new Location(Uri.parse(METHOD_URI), new Position(0, 0)))]);
+      expect(vi.mocked(window.showWarningMessage)).not.toHaveBeenCalled();
     });
   });
 

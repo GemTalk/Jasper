@@ -258,6 +258,10 @@ window. Within a session they are re-applied after a recompile.
   Jasper by topaz or a `halt` left in the code
 - **Clear All Breakpoints in Method** drops every breakpoint in the method you
   are in
+- **Not supported:** *function* breakpoints — the ones the `+` button in VS
+  Code's Breakpoints panel creates, named rather than located. Jasper warns if
+  you add one, since it would otherwise sit in the list looking live and never
+  fire
 
 #### Step points
 

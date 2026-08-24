@@ -664,6 +664,7 @@ export class BreakpointManager {
     // idempotent, and the removal it triggers re-enters here with nothing left
     // to prune, so this does not loop.
     if (event.added.length > 0) this.pruneOrphans();
+    this.warnAboutFunctionBreakpoints(event.added);
 
     const session = this.sessionManager.getSelectedSession();
     if (!session) return;
@@ -677,6 +678,26 @@ export class BreakpointManager {
     for (const uriStr of affected) {
       this.applyToUri(session, vscode.Uri.parse(uriStr));
     }
+  }
+
+  /**
+   * Say so when a *function* breakpoint is added — the kind VS Code's `+` button
+   * in the Breakpoints panel creates, named rather than located.
+   *
+   * Jasper only implements source breakpoints, so a function breakpoint sits in
+   * the list looking exactly like a working one and never fires. Left unsaid,
+   * that reads as "breakpoints are broken" rather than "this kind isn't wired
+   * up". Warn rather than delete it: the developer typed it deliberately, and
+   * silently removing what someone just typed is its own kind of confusing.
+   */
+  private warnAboutFunctionBreakpoints(added: readonly vscode.Breakpoint[]): void {
+    const named = added.filter((bp) => bp instanceof vscode.FunctionBreakpoint);
+    if (named.length === 0) return;
+    vscode.window.showWarningMessage(
+      'Jasper does not support function breakpoints (the + button in the Breakpoints panel) — ' +
+        'they will never fire. Set a breakpoint in the method source instead: click the gutter, ' +
+        'or put the caret on a step point and use Toggle Breakpoint at Cursor.',
+    );
   }
 
   private refreshEditorsFor(uri: vscode.Uri): void {

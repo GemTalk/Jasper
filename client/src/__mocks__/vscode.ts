@@ -810,7 +810,17 @@ export const CompletionItemKind = {
 export const debug = {
   breakpoints: [] as unknown[],
   activeDebugSession: undefined as unknown,
-  onDidChangeBreakpoints: vi.fn(() => ({ dispose: () => {} })),
+  // Declares its listener parameter so a test can recover the registered handler
+  // from mock.calls and drive the manager the way VS Code does.
+  onDidChangeBreakpoints: vi.fn(
+    (
+      _listener: (e: {
+        added: readonly unknown[];
+        removed: readonly unknown[];
+        changed: readonly unknown[];
+      }) => void,
+    ) => ({ dispose: () => {} }),
+  ),
   onDidStartDebugSession: vi.fn(() => ({ dispose: () => {} })),
   onDidTerminateDebugSession: vi.fn(() => ({ dispose: () => {} })),
   // Mirror the real API's side effect on `debug.breakpoints`, so a test can
@@ -847,6 +857,18 @@ export class SourceBreakpoint extends Breakpoint {
     this.condition = condition;
     this.hitCondition = hitCondition;
     this.logMessage = logMessage;
+  }
+}
+
+// A breakpoint named rather than located — what the Breakpoints panel's `+`
+// button creates. Jasper only implements SourceBreakpoint, so it warns on these.
+export class FunctionBreakpoint extends Breakpoint {
+  constructor(
+    public functionName: string,
+    enabled = true,
+  ) {
+    super();
+    this.enabled = enabled;
   }
 }
 
