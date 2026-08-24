@@ -1668,6 +1668,7 @@ body {
 details[open] > .section-head > .section-twist,
 details[open] > .db-head > .section-twist,
 details[open] > .db-group-head > .section-twist,
+details[open] > .config-group-head > .section-twist,
 details[open] > .file-root-head > .section-twist { transform: rotate(90deg); }
 
 .col-lead { margin-bottom: 4px; }
@@ -1943,7 +1944,15 @@ th.v-num { text-align: right; }
   border: 1px solid color-mix(in srgb, var(--gm-warn) 40%, transparent);
 }
 .config-group { margin: 0 0 16px; }
-.config-group-head { font-weight: 600; margin: 0 0 6px; display: flex; align-items: center; gap: 8px; }
+.config-group-head {
+  list-style: none; cursor: pointer; user-select: none;
+  font-weight: 600; margin: 0 0 6px; padding: 3px 4px; border-radius: 4px;
+  display: flex; align-items: center; gap: 8px;
+}
+.config-group-head::-webkit-details-marker { display: none; }
+.config-group-head:hover { background: var(--vscode-list-hoverBackground, rgba(128,128,128,.08)); }
+.config-group-head:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+.config-group .section-twist { font-size: 14px; }
 .config-note { font-size: 11px; font-weight: 400; color: var(--vscode-descriptionForeground, #9d9d9d); }
 .config-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
 .config-table td { padding: 3px 8px; border-bottom: 1px solid var(--gm-line); vertical-align: top; }

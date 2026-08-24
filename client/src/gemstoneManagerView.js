@@ -43,6 +43,9 @@
   // the stone accepted but did not actually apply (a runtime-immutable value),
   // which would otherwise look like a silent revert. Cleared on the next load.
   let configNotice = null;
+  // Which config groups (scope -> open?) the user has collapsed, kept across the
+  // panel's redraws so a collapsed Stone group does not spring back open.
+  const configGroupsOpen = new Map();
 
   // Internal key -> the real codicon name. This is the single place a key is
   // translated; nothing else invents a glyph.
@@ -1249,16 +1252,23 @@
     </tr>`;
   }
 
+  // Each family is its own disclosure, so a reader can collapse Stone (161 rows)
+  // to get straight to the gem settings, and back. Open/closed is remembered
+  // across the panel's frequent redraws (see render).
   function configTable(title, scope, params) {
     if (!params || !params.length) return '';
     const settable = params.filter((p) => p.settable).length;
     const rows = params.map((p) => configRow(p, scope)).join('');
-    return `<div class="config-group">
-      <div class="config-group-head">${esc(title)} <span class="section-count">${params.length}</span>${
-        settable ? ` <span class="config-note">${settable} runtime-settable</span>` : ''
-      }</div>
+    return `<details class="config-group" data-config-group="${esc(scope)}" open>
+      <summary class="config-group-head">
+        <i class="codicon codicon-chevron-right section-twist" aria-hidden="true"></i>
+        <span class="config-group-title">${esc(title)}</span>
+        <span class="section-count">${params.length}</span>${
+          settable ? `<span class="config-note">${settable} runtime-settable</span>` : ''
+        }
+      </summary>
       <table class="config-table"><tbody>${rows}</tbody></table>
-    </div>`;
+    </details>`;
   }
 
   // The Configuration section: the stone and gem configuration of the selected
@@ -1376,6 +1386,13 @@
     // Restore each database's expanded state across re-renders, and keep the sets
     // in sync as the user opens and closes them. Scoped to .db-item so it does not
     // also match the Files group, which carries data-db for its own key.
+    // The Stone/Gem config groups follow the same remembered-choice rule as the
+    // sections, so collapsing one to reach the other sticks across redraws.
+    els.root.querySelectorAll('details.config-group[data-config-group]').forEach((d) => {
+      const key = d.dataset.configGroup;
+      if (configGroupsOpen.has(key)) d.open = configGroupsOpen.get(key);
+      d.addEventListener('toggle', () => configGroupsOpen.set(key, d.open));
+    });
     els.root.querySelectorAll('details.db-item[data-db]').forEach((d) => {
       if (expandedDbs.has(d.dataset.db)) d.open = true;
       d.addEventListener('toggle', () => {
@@ -1570,6 +1587,7 @@
     configEditing.clear();
     configFilter = '';
     configNotice = null;
+    configGroupsOpen.clear();
     els.root.addEventListener('click', onClick);
     els.root.addEventListener('change', onChange);
     els.root.addEventListener('input', onInput);

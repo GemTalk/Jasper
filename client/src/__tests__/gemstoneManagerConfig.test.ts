@@ -214,6 +214,35 @@ describe('loading configuration', () => {
     expect(readonly.querySelector('.config-pencil')).toBeNull();
   });
 
+  it('renders Stone and Gem as collapsible groups, and remembers a collapse across redraws', () => {
+    const { root } = open(connectedState());
+    sendMessage({ command: 'configuration', config: configPayload() });
+
+    const stone = root.querySelector<HTMLDetailsElement>(
+      'details.config-group[data-config-group="stone"]',
+    );
+    const gem = root.querySelector<HTMLDetailsElement>(
+      'details.config-group[data-config-group="gem"]',
+    );
+    expect(stone).not.toBeNull();
+    expect(gem).not.toBeNull();
+    expect(stone!.querySelector('summary.config-group-head')).not.toBeNull();
+
+    // Collapse Stone, then force a redraw — it must stay collapsed.
+    stone!.open = false;
+    stone!.dispatchEvent(new Event('toggle'));
+    sendMessage({ command: 'configuration', config: configPayload() });
+
+    const stoneAfter = root.querySelector<HTMLDetailsElement>(
+      'details.config-group[data-config-group="stone"]',
+    )!;
+    expect(stoneAfter.open).toBe(false);
+    // Gem was left open.
+    expect(
+      root.querySelector<HTMLDetailsElement>('details.config-group[data-config-group="gem"]')!.open,
+    ).toBe(true);
+  });
+
   it('says why a parameter has no description when system.conf was read', () => {
     const { root } = open(connectedState());
     sendMessage({ command: 'configuration', config: configPayload() });
