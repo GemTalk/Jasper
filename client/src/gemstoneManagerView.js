@@ -1228,13 +1228,19 @@
         : 'No descriptions: system.conf was not found for this version (for example, a remote stone whose product tree is not on this machine).';
     const tip = `${typeLabel(param.type)} · ${settleWord}\n\n${help}`;
     const tag = param.settable ? badge('runtime', 'runtime') : badge('read-only', 'readonly');
+    const shownValue = esc(param.value === '' ? "''" : param.value);
+    // An editable value is a clickable control with an always-visible pencil, so
+    // which values can be changed reads at a glance (and the whole value is the
+    // click target, not just the icon). A value the user cannot change is plain
+    // text with no pencil.
     const valueCell = editing
       ? configEditor(param, scope)
-      : `<span class="config-value">${esc(param.value === '' ? "''" : param.value)}</span>${
-          param.editable
-            ? `<button type="button" class="icon-btn config-pencil" data-action="editConfig" data-scope="${esc(scope)}" data-key="${esc(param.key)}" title="Edit ${esc(param.key)}" aria-label="Edit value">${icon('edit')}</button>`
-            : ''
-        }`;
+      : param.editable
+        ? `<button type="button" class="config-value-btn" data-action="editConfig" data-scope="${esc(scope)}" data-key="${esc(param.key)}" title="Click to edit ${esc(param.key)}">
+             <span class="config-value">${shownValue}</span>
+             <i class="codicon codicon-edit config-pencil" aria-hidden="true"></i>
+           </button>`
+        : `<span class="config-value">${shownValue}</span>`;
     return `<tr class="config-item" data-config-key="${esc(param.key.toLowerCase())}" data-config-scope="${esc(scope)}">
       <td class="config-key"><span class="config-name" title="${esc(tip)}">${esc(param.key)}</span>
         <i class="codicon codicon-info config-info" title="${esc(tip)}" tabindex="0" role="img" aria-label="${esc(param.key + ': ' + tip)}"></i></td>
@@ -1285,7 +1291,7 @@
         : '';
       body = `<div class="config-toolbar">
           <input type="text" class="config-filter" data-config-filter placeholder="Filter parameters…" value="${esc(configFilter)}" aria-label="Filter configuration parameters" />
-          <span class="config-legend">${badge('runtime', 'runtime')} may be changed in this session · ${badge('read-only', 'readonly')} set in the config file before startup</span>
+          <span class="config-legend">${badge('runtime', 'runtime')} may be changed in this session · ${badge('read-only', 'readonly')} set in the config file before startup · click a value with ${icon('edit')} to change it</span>
         </div>
         ${errLine}
         ${noticeLine}

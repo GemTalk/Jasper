@@ -1953,8 +1953,18 @@ th.v-num { text-align: right; }
 .config-info:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; opacity: 1; }
 .config-val { width: 100%; }
 .config-value { font-family: var(--vscode-editor-font-family, monospace); font-size: 12px; word-break: break-all; }
-.config-pencil { opacity: 0; margin-left: 6px; vertical-align: -3px; }
-.config-item:hover .config-pencil, .config-pencil:focus-visible { opacity: 1; }
+/* An editable value is a subtle button carrying a persistent pencil, so which
+   rows can be changed is visible without hovering each one. */
+.config-value-btn {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
+  padding: 1px 6px; margin: -1px -6px; text-align: left; cursor: pointer;
+  background: transparent; border: 1px solid transparent; border-radius: 4px;
+  color: inherit; font: inherit;
+}
+.config-value-btn:hover { background: color-mix(in srgb, var(--vscode-foreground) 7%, transparent); border-color: var(--gm-line); }
+.config-value-btn:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 0; }
+.config-pencil { flex: none; color: var(--vscode-descriptionForeground, #9d9d9d); opacity: .55; vertical-align: -1px; }
+.config-value-btn:hover .config-pencil, .config-value-btn:focus-visible .config-pencil { opacity: 1; color: var(--vscode-charts-blue, #4daafc); }
 .config-tag { text-align: right; white-space: nowrap; }
 .config-edit { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .config-input {

@@ -191,6 +191,29 @@ describe('loading configuration', () => {
     );
   });
 
+  it('shows an editable value as a clickable control with a pencil, and read-only as plain text', () => {
+    const { root } = open(connectedState());
+    sendMessage({ command: 'configuration', config: configPayload() });
+
+    const rowFor = (key: string) =>
+      [...root.querySelectorAll('tr.config-item')].find(
+        (r) => r.querySelector('.config-name')?.textContent?.trim() === key,
+      )!;
+
+    // Editable: a value button carrying an always-present pencil (no hover needed).
+    const editable = rowFor('StnGemTimeout');
+    const btn = editable.querySelector<HTMLButtonElement>(
+      '.config-value-btn[data-action="editConfig"]',
+    );
+    expect(btn).not.toBeNull();
+    expect(btn!.querySelector('.config-pencil')).not.toBeNull();
+
+    // Read-only: plain value, no button, no pencil.
+    const readonly = rowFor('SHR_PAGE_CACHE_SIZE_KB');
+    expect(readonly.querySelector('.config-value-btn')).toBeNull();
+    expect(readonly.querySelector('.config-pencil')).toBeNull();
+  });
+
   it('says why a parameter has no description when system.conf was read', () => {
     const { root } = open(connectedState());
     sendMessage({ command: 'configuration', config: configPayload() });
