@@ -26,7 +26,7 @@ sideways, jump to *Cleanup* rather than clicking around trying to recover.
 | Test | State |
 |---|---|
 | 0 · Works with a hostile `.bashrc` | ✅ **passed 2026-08-24** — all boxes |
-| 1 · Stays out of the way | ⬜ not run |
+| 1 · Stays out of the way | ✅ **passed 2026-08-24** |
 | 2 · Safety gate holds | ⬜ not run |
 | 3 · Tree tells the truth | ⬜ not run |
 | 4 · Catches the reported bug | ⬜ not run |
@@ -133,9 +133,19 @@ quiet.
 
 What stops Jasper killing a stranger's server that happens to share a name.
 
+> **The name has to be `gs64ldi2`.** Detection is per *managed database*: for each one
+> Jasper asks whether a process is running under **that database's** configured stone or
+> NetLDI name that its own `gslist` cannot see. A NetLDI called anything else — `ldibert0`,
+> say — matches no database and is correctly ignored, and it will not appear in the
+> Processes view either, since that view is Jasper's `gslist` and an external server is not
+> in it. Nothing to see is the right answer there, not a bug.
+>
+> **Stop db-2's NetLDI from Jasper first** if it is running from an earlier test — two
+> servers cannot hold the same name.
+
 ```bash
 unset GEMSTONE_SYS_CONF GEMSTONE_EXE_CONF
-startnetldi -a "$USER" -g gs64ldi2             # note: no -l
+startnetldi -a "$USER" -g gs64ldi2             # the database's real name, and no -l
 ```
 
 Confirm it gives nothing away:
