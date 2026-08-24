@@ -126,7 +126,7 @@ export function wslReaddirSync(p: string): string[] {
  * Callers that want this list have to have it in one round trip: a readdir
  * followed by a wslIsFile per entry costs one `wsl.exe` spawn per file, which
  * a directory of stone logs turns into seconds of a frozen extension host.
- * `ls -Ap` marks directories with a trailing `/`, and readdir's Dirent answers
+ * `ls -A1p` marks directories with a trailing `/`, and readdir's Dirent answers
  * the same question natively, so neither side needs a stat per name.
  */
 export function wslListFilesSync(p: string): string[] {

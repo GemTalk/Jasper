@@ -715,9 +715,9 @@
 
     tour.call.querySelector('.gm-call-step').textContent =
       `Step ${tour.index + 1} of ${tour.steps.length}`;
-    const mark = tour.call.querySelector('.gm-call-mark');
-    mark.textContent = step.done ? 'Already done' : 'To do';
-    mark.className = `gm-call-mark ${step.done ? 'is-done' : 'is-todo'}`;
+    const markEl = tour.call.querySelector('.gm-call-mark');
+    markEl.textContent = step.done ? 'Already done' : 'To do';
+    markEl.className = `gm-call-mark ${step.done ? 'is-done' : 'is-todo'}`;
     tour.call.querySelector('.gm-call-title').textContent = step.title;
     tour.call.querySelector('.gm-call-body').textContent = step.body;
     // Built as elements with textContent rather than markup: these are the only
@@ -1609,6 +1609,8 @@
     if (infoPopover) infoPopover.remove();
     infoPopover = null;
     infoAnchor = null;
+    window.removeEventListener('scroll', closeInfoPopover, true);
+    window.removeEventListener('resize', closeInfoPopover);
   }
   function toggleInfoPopover(anchor) {
     if (infoAnchor === anchor) {
@@ -1630,6 +1632,11 @@
     pop.style.top = `${r.bottom + 4}px`;
     infoPopover = pop;
     infoAnchor = anchor;
+    // The bubble is fixed-positioned from the ⓘ's current viewport spot, so a
+    // scroll or resize would leave it stranded — close it, matching "a redraw
+    // closes it". Capture phase catches scrolls on any inner scroller too.
+    window.addEventListener('scroll', closeInfoPopover, true);
+    window.addEventListener('resize', closeInfoPopover);
   }
   // A click anywhere outside the ⓘ and its bubble dismisses the bubble. Capture
   // phase so it runs even for clicks the panel handles and stops; it ignores the
@@ -1690,50 +1697,55 @@
     // dismiss-on-click-away has to watch the document, not just the root.
     document.addEventListener('click', onAwayClick, true);
     els.root.innerHTML = '<div class="skeleton">Loading GemStone environment…</div>';
-    // Messages arrive from the extension host, which VS Code relays in from the
-    // frame around this one — so `ev.source` is never this window, and testing
-    // for that drops every message the panel exists to receive. What guards this
-    // listener is the webview boundary itself: nothing else can reach it.
-    window.addEventListener('message', (ev) => {
-      const msg = ev.data;
-      if (!msg || typeof msg !== 'object') return;
-      if (msg.command === 'loading') {
-        els.root.setAttribute('aria-busy', 'true');
-      } else if (msg.command === 'actionFailed') {
-        // The step stays where it is: what it offered to do did not happen, so
-        // ticking on to the next would be counting a failure as progress.
-        if (tour) {
-          tour.error = String(msg.message || 'That did not work.');
-          tour.advanceFrom = undefined;
-          showStep(tour.index, true);
-        }
-      } else if (msg.command === 'configuration') {
-        if (!msg.config || typeof msg.config !== 'object') return;
-        lastConfig = msg.config;
-        configLoading = false;
-        configError = '';
-        // A fresh read clears the last set's notice; a set that wants to leave one
-        // sends its configurationNotice right after this message.
-        configNotice = null;
-        configEditing.clear();
-        if (lastState) render(lastState);
-      } else if (msg.command === 'configurationNotice') {
-        configNotice = {
-          message: String(msg.message || ''),
-          tone: msg.tone === 'warn' ? 'warn' : 'ok',
-        };
-        if (lastState) render(lastState);
-      } else if (msg.command === 'configurationError') {
-        configLoading = false;
-        configNotice = null;
-        configError = String(msg.message || 'The configuration could not be read.');
-        if (lastState) render(lastState);
-      } else if (msg.command === 'state') {
-        if (!msg.state || typeof msg.state !== 'object') return;
-        els.root.setAttribute('aria-busy', 'false');
-        render(msg.state);
+    window.addEventListener('message', onHostMessage);
+  }
+
+  // Messages arrive from the extension host, which VS Code relays in from the
+  // frame around this one — so `ev.source` is never this window, and testing
+  // for that drops every message the panel exists to receive. What guards this
+  // listener is the webview boundary itself: nothing else can reach it. Declared
+  // at module scope so it is a stable reference — re-registering it (init runs
+  // once per document in production, once per test in jsdom) is then a no-op
+  // rather than stacking another handler.
+  function onHostMessage(ev) {
+    const msg = ev.data;
+    if (!msg || typeof msg !== 'object') return;
+    if (msg.command === 'loading') {
+      els.root.setAttribute('aria-busy', 'true');
+    } else if (msg.command === 'actionFailed') {
+      // The step stays where it is: what it offered to do did not happen, so
+      // ticking on to the next would be counting a failure as progress.
+      if (tour) {
+        tour.error = String(msg.message || 'That did not work.');
+        tour.advanceFrom = undefined;
+        showStep(tour.index, true);
       }
-    });
+    } else if (msg.command === 'configuration') {
+      if (!msg.config || typeof msg.config !== 'object') return;
+      lastConfig = msg.config;
+      configLoading = false;
+      configError = '';
+      // A fresh read clears the last set's notice; a set that wants to leave one
+      // sends its configurationNotice right after this message.
+      configNotice = null;
+      configEditing.clear();
+      if (lastState) render(lastState);
+    } else if (msg.command === 'configurationNotice') {
+      configNotice = {
+        message: String(msg.message || ''),
+        tone: msg.tone === 'warn' ? 'warn' : 'ok',
+      };
+      if (lastState) render(lastState);
+    } else if (msg.command === 'configurationError') {
+      configLoading = false;
+      configNotice = null;
+      configError = String(msg.message || 'The configuration could not be read.');
+      if (lastState) render(lastState);
+    } else if (msg.command === 'state') {
+      if (!msg.state || typeof msg.state !== 'object') return;
+      els.root.setAttribute('aria-busy', 'false');
+      render(msg.state);
+    }
   }
 
   const root = typeof globalThis !== 'undefined' ? globalThis : window;

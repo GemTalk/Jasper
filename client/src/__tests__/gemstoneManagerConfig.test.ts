@@ -634,6 +634,17 @@ describe('info tooltip pinning', () => {
     root.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     expect(document.querySelector('.config-info-pop')).toBeNull();
   });
+
+  it('closes the pinned tooltip on scroll (it is fixed to the icon position)', () => {
+    const { root } = open(connectedState());
+    sendMessage({ command: 'configuration', config: configPayload() });
+
+    infoFor(root, 'StnGemTimeout').click();
+    expect(document.querySelector('.config-info-pop')).not.toBeNull();
+
+    window.dispatchEvent(new Event('scroll'));
+    expect(document.querySelector('.config-info-pop')).toBeNull();
+  });
 });
 
 describe('session changes', () => {

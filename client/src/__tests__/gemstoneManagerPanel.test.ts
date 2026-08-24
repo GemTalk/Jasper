@@ -656,6 +656,29 @@ describe('GemStone Manager panel', () => {
     );
   });
 
+  // The mirror of bringUp: taking a database down must stop only what is up, so a
+  // stop is never issued against an already-stopped process.
+  it('stops only what is up when taking a database down', async () => {
+    const { panel, adminChanged } = openPanel(() => [aLogin('DataCurator')], {
+      isStoneRunning: () => true,
+      isNetldiRunning: () => false,
+    });
+    adminChanged.fire();
+    await settle();
+
+    send(panel, { command: 'stopDatabase', dirName: 'db-1' });
+    await settle();
+
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+      'gemstone.stopStone',
+      expect.anything(),
+    );
+    expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith(
+      'gemstone.stopNetldi',
+      expect.anything(),
+    );
+  });
+
   it('restores from a backup inside the database it belongs to', async () => {
     const { panel, adminChanged } = openPanel();
     adminChanged.fire();
@@ -699,6 +722,21 @@ describe('GemStone Manager panel', () => {
     changeVisibility(panel, true);
 
     await vi.waitFor(() => expect(postedStates(panel)).toHaveLength(1));
+  });
+
+  it('cancels a coalesce timer armed just before the tab is hidden', async () => {
+    const { panel, adminChanged } = openPanel();
+    // Arm the 200ms coalesce timer while visible, then hide before it fires.
+    adminChanged.fire();
+    changeVisibility(panel, false);
+
+    await settle();
+    // The timer was cancelled, so no scan ran against the hidden panel.
+    expect(postedStates(panel)).toHaveLength(0);
+
+    // The deferred change is honored when the tab comes back.
+    changeVisibility(panel, true);
+    await vi.waitFor(() => expect(postedStates(panel).length).toBeGreaterThan(0));
   });
 });
 
@@ -978,6 +1016,42 @@ describe('configuration', () => {
       fs.rmSync(confPath);
       send(panel, { command: 'loadConfiguration' });
       expect(descOf(1)).toContain('how long the stone waits');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('drops the description cache on Refresh, so a re-read reflects the tree again', async () => {
+    // A version whose product tree was absent at first read must pick up (or here,
+    // lose) its tooltips after Refresh — Refresh clears configDescCache.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsconf-'));
+    fs.mkdirSync(path.join(dir, 'data'));
+    const confPath = path.join(dir, 'data', 'system.conf');
+    fs.writeFileSync(
+      confPath,
+      '#===\n# STN_GEM_TIMEOUT: waits for a gem.\n#STN_GEM_TIMEOUT = 60;\n',
+    );
+    const adminChanged = new vscode.EventEmitter<void>();
+    const deps = fakeDeps(() => []);
+    (deps.storage as unknown as Record<string, unknown>).getGemstonePath = () => dir;
+    const session = sessionWith(cannedGci());
+    const sm = deps.sessionManager as unknown as Record<string, unknown>;
+    sm.getSelectedSession = () => session;
+    sm.getSessions = () => [session];
+    GemstoneManagerPanel.show({ ...deps, onAdminChange: [adminChanged.event] });
+    const panel = lastPanel();
+    const available = (i: number) =>
+      (posted(panel, 'configuration')[i].config as { descriptionsAvailable: boolean })
+        .descriptionsAvailable;
+    try {
+      send(panel, { command: 'loadConfiguration' }); // caches the parsed descriptions
+      fs.rmSync(confPath); // the tree "changes" under the panel
+      send(panel, { command: 'refresh' }); // must drop configDescCache
+      await settle();
+      send(panel, { command: 'loadConfiguration' }); // re-read: file is gone now
+
+      expect(available(0)).toBe(true);
+      expect(available(posted(panel, 'configuration').length - 1)).toBe(false);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

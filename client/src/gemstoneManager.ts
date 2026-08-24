@@ -412,6 +412,10 @@ export class GemstoneManagerPanel {
    * published while the panel sits open is one click away.
    */
   private catalog: CatalogEntry[] | undefined;
+  // The in-flight catalog fetch, so two concurrent readers (a postState and a
+  // coalesced rebuild that overlap on first open) await one network round-trip
+  // rather than each starting their own.
+  private catalogFetch: Promise<CatalogEntry[]> | undefined;
   private coalesceTimer: ReturnType<typeof setTimeout> | undefined;
   private rebuilding = false;
   private rebuildAgain = false;
@@ -495,6 +499,12 @@ export class GemstoneManagerPanel {
         if (this.panel.visible && this.staleWhileHidden) {
           this.staleWhileHidden = false;
           void this.rebuild().catch((e) => this.failed('refresh', e));
+        } else if (!this.panel.visible && this.coalesceTimer) {
+          // A coalesce timer armed while visible must not fire a full scan at a
+          // panel nobody is looking at — defer it until the tab comes back.
+          clearTimeout(this.coalesceTimer);
+          this.coalesceTimer = undefined;
+          this.staleWhileHidden = true;
         }
       },
       null,
@@ -581,15 +591,18 @@ export class GemstoneManagerPanel {
       // pass carries no catalog rows, so replaying it here would shrink the
       // version list and re-grow it on every admin action. And no `loading`
       // ping — the panel is refreshing itself under someone who is reading it,
-      // so it must not flash busy.
-      const state = await this.buildState('remote');
-      this.panel.webview.postMessage({ command: 'state', state });
+      // so it must not flash busy. A notification arriving mid-scan sets
+      // rebuildAgain and is drained by this loop, so exactly one more pass runs.
+      do {
+        this.rebuildAgain = false;
+        const state = await this.buildState('remote');
+        this.panel.webview.postMessage({ command: 'state', state });
+      } while (this.rebuildAgain);
     } finally {
+      // Clear both here so a pass that throws does not leave rebuildAgain set to
+      // leak into — and force a spurious extra run of — the next rebuild.
       this.rebuilding = false;
-    }
-    if (this.rebuildAgain) {
       this.rebuildAgain = false;
-      await this.rebuild();
     }
   }
 
@@ -616,6 +629,11 @@ export class GemstoneManagerPanel {
         // Refresh is the one place that asks the network again: everything the
         // panel caches is dropped here, so the button means what it says.
         this.catalog = undefined;
+        this.catalogFetch = undefined;
+        // Drop the per-version system.conf descriptions too, so a version whose
+        // product tree was not present at first read (an as-yet-uninstalled
+        // version) picks up its tooltips once it is installed and refreshed.
+        this.configDescCache.clear();
         // The WSL answers are cached, and the OS checklist reads them — so a
         // refresh has to forget them, or a machine stays "WSL not reachable"
         // after the user has made it reachable.
@@ -1525,12 +1543,16 @@ export class GemstoneManagerPanel {
       list = this.deps.versionManager.getInstalledVersions();
     } else {
       try {
-        this.catalog ??= await this.deps.versionManager.fetchCatalog();
+        if (this.catalog === undefined) {
+          this.catalogFetch ??= this.deps.versionManager.fetchCatalog();
+          this.catalog = await this.catalogFetch;
+        }
         list = this.deps.versionManager.versionsFrom(this.catalog);
       } catch {
         // Offline: fall back to what's installed / downloaded on disk so the
         // panel still manages local versions when the download catalog is
-        // unreachable.
+        // unreachable. Drop the failed fetch so a later pass can retry it.
+        this.catalogFetch = undefined;
         list = this.deps.versionManager.getInstalledVersions();
       }
     }
