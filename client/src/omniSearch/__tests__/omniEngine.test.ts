@@ -1,5 +1,13 @@
-import { describe, it, expect } from 'vitest';
-import { createOmniEngine, providersInScope, ReferenceView } from '../omniEngine';
+import { describe, it, expect, vi } from 'vitest';
+import {
+  createOmniEngine,
+  LOAD_ALL_LIMIT,
+  providersInScope,
+  PIVOT_EXIT_HINT,
+  ReferenceView,
+} from '../omniEngine';
+import { createMethodsProvider, SERVER_OVERFETCH } from '../providers/methodsProvider';
+import { SelectorSearchResult } from '../../queries/searchSelectors';
 import { OMNI_DEFAULTS } from '../omniConfig';
 import { CATEGORY_BY_ID, OmniConfig, OmniProvider, OmniResult } from '../omniTypes';
 
@@ -237,6 +245,186 @@ describe('createOmniEngine', () => {
     expect(all!.shownCount).toBe(50);
     expect(all!.hasMore).toBe(false);
     expect(all!.exact).toBe(true);
+    expect(all!.truncations).toEqual([]); // nothing was cut off, so the count really is the total
+  });
+
+  // A provider with a server fetch ceiling (methods) can never return more than a few
+  // hundred rows however high the display cap goes, so "Load all" does NOT make its count a total.
+  // The engine used to derive `exact` from the cap alone, and the footer printed a bare "N results"
+  // over a slice that had been cut off — the one thing it definitely wasn't.
+  describe('a provider bounded by its own fetch ceiling', () => {
+    /** A provider whose server slice stops at `ceiling` rows and says so, like methodsProvider. */
+    function cappedProvider(id: OmniResult['categoryId'], pool: OmniResult[], ceiling: number) {
+      return {
+        category: CATEGORY_BY_ID[id],
+        search(
+          _q: string,
+          c: OmniConfig,
+          _t: unknown,
+          report?: (t: {
+            categoryId: string;
+            scanned: number;
+            ceiling: number;
+            atCeiling: boolean;
+          }) => void,
+        ) {
+          const fetched = pool.slice(0, Math.min(c.maxResultsPerCategory, ceiling));
+          if (fetched.length >= ceiling) {
+            report?.({ categoryId: id, scanned: ceiling, ceiling, atCeiling: true });
+          }
+          return fetched;
+        },
+      } as OmniProvider;
+    }
+
+    it('never reports exact after loadAll, and marks the count as a floor', async () => {
+      const pool = Array.from({ length: 500 }, (_, i) => methodResult(`Foo>>m${i}`, `m${i}`));
+      const engine = createOmniEngine({
+        providers: [cappedProvider('methods', pool, 200)],
+        config: cfg({ maxResultsPerCategory: 20 }),
+      });
+
+      const first = await engine.search('m');
+      expect(first!.shownCount).toBe(20); // the display cap binds first, well under the ceiling
+      expect(first!.truncations).toEqual([]);
+
+      const all = await engine.loadAll();
+      expect(all!.shownCount).toBe(200); // the ceiling bound it, not the 100_000 display cap
+      // Names the scope and the number, so the footer can say "Methods scan capped at 200".
+      expect(all!.truncations).toEqual([
+        {
+          categoryId: 'methods',
+          categoryLabel: 'Methods',
+          scanned: 200,
+          ceiling: 200,
+          atCeiling: true,
+        },
+      ]);
+      expect(all!.exact).toBe(false); // <- the bug: this used to be true
+    });
+
+    it('marks the count as a floor even when the display cap was not filled', async () => {
+      // The Load-more path that walks the cap PAST the ceiling: 60 -> 120 -> 180 -> 240 with only 200
+      // rows reachable. `hasMore` goes false (200 < 240) and the cap is nowhere near LOAD_ALL_LIMIT,
+      // so without `truncated` the footer fell through to a bare, exact-looking "200 results".
+      const pool = Array.from({ length: 500 }, (_, i) => methodResult(`Foo>>m${i}`, `m${i}`));
+      const engine = createOmniEngine({
+        providers: [cappedProvider('methods', pool, 200)],
+        config: cfg({ maxResultsPerCategory: 60 }),
+      });
+
+      await engine.search('m');
+      await engine.loadMore(); // 120
+      await engine.loadMore(); // 180
+      const view = await engine.loadMore(); // 240 — past the ceiling
+
+      expect(view!.shownCount).toBe(200);
+      expect(view!.hasMore).toBe(false);
+      expect(view!.exact).toBe(false);
+      expect(view!.truncations).toHaveLength(1);
+    });
+
+    it('does not mark a term whose results fit under the ceiling', async () => {
+      const pool = Array.from({ length: 3 }, (_, i) => methodResult(`Foo>>m${i}`, `m${i}`));
+      const engine = createOmniEngine({
+        providers: [cappedProvider('methods', pool, 200)],
+        config: cfg({ maxResultsPerCategory: 20 }),
+      });
+
+      await engine.search('m');
+      const all = await engine.loadAll();
+      expect(all!.shownCount).toBe(3);
+      expect(all!.truncations).toEqual([]);
+      expect(all!.exact).toBe(true);
+    });
+
+    // The JOIN: every test above uses a FAKE capped provider, so none of them exercises the real clamp
+    // `min(maxResultsPerCategory × SERVER_OVERFETCH, maxServerScan)`. This wires the REAL
+    // methodsProvider into the REAL engine and drives Load All, which is the gesture a user reaches for
+    // when they want everything — the exact path where the old code claimed an exact total.
+    describe('Load All against the real methodsProvider', () => {
+      const selectorRows = (n: number): SelectorSearchResult[] =>
+        Array.from({ length: n }, (_, i) => ({
+          dictName: 'Globals',
+          className: 'Object',
+          isMeta: false,
+          selector: `addThing${i}`,
+          category: 'accessing',
+        }));
+
+      it('asks the stone for exactly maxServerScan and reports it as the ceiling', async () => {
+        const SCAN = 400;
+        // Far more matches than the ceiling, so the scan is genuinely cut off.
+        const runSearch = vi.fn((_t: string, limit: number) => selectorRows(limit));
+        const engine = createOmniEngine({
+          providers: [createMethodsProvider(1, runSearch)],
+          config: cfg({ methodMinQueryLength: 3, maxResultsPerCategory: 20, maxServerScan: SCAN }),
+        });
+
+        await engine.search('add');
+        const all = await engine.loadAll();
+
+        // Load All raises the display cap to LOAD_ALL_LIMIT, whose over-fetch dwarfs the ceiling — so
+        // the ceiling is provably the binding limit here, and the stone is asked for exactly it.
+        expect(LOAD_ALL_LIMIT * SERVER_OVERFETCH).toBeGreaterThan(SCAN);
+        expect(runSearch).toHaveBeenLastCalledWith('add', SCAN, true);
+
+        // ...and the view carries what the footer needs to SHOW the message: the scope, the configured
+        // number, and atCeiling (Load-more cannot get past it).
+        expect(all!.truncations).toEqual([
+          {
+            categoryId: 'methods',
+            categoryLabel: 'Methods',
+            scanned: SCAN,
+            ceiling: SCAN,
+            atCeiling: true,
+          },
+        ]);
+        expect(all!.exact).toBe(false); // never an exact total over a cut-off scan
+        expect(all!.shownCount).toBe(SCAN);
+      });
+
+      it('reports NO truncation from Load All when the term fits under the ceiling', async () => {
+        const runSearch = vi.fn(() => selectorRows(12)); // fewer matches than any limit asked for
+        const engine = createOmniEngine({
+          providers: [createMethodsProvider(1, runSearch)],
+          config: cfg({ methodMinQueryLength: 3, maxResultsPerCategory: 20, maxServerScan: 400 }),
+        });
+
+        await engine.search('add');
+        const all = await engine.loadAll();
+
+        expect(all!.truncations).toEqual([]);
+        expect(all!.exact).toBe(true); // Load All really did fetch everything
+        expect(all!.shownCount).toBe(12);
+      });
+    });
+
+    it('taints the whole run when only ONE of several in-scope providers is truncated', async () => {
+      // The all-scope fan-out: classes is exhaustive, methods is not. The footer speaks for the whole
+      // list, so one bounded provider is enough to make the total a floor.
+      const methods = Array.from({ length: 500 }, (_, i) => methodResult(`Foo>>m${i}`, `m${i}`));
+      const engine = createOmniEngine({
+        providers: [
+          fakeProvider('classes', [classResult('Foo')]),
+          cappedProvider('methods', methods, 200),
+        ],
+        config: cfg({ maxResultsPerCategory: 20 }),
+      });
+
+      await engine.search('m');
+      const all = await engine.loadAll();
+      expect(all!.truncations).toEqual([
+        {
+          categoryId: 'methods',
+          categoryLabel: 'Methods',
+          scanned: 200,
+          ceiling: 200,
+          atCeiling: true,
+        },
+      ]);
+      expect(all!.exact).toBe(false);
+    });
   });
 
   it('a fresh search term after Load-all restarts at the base cap instead of staying exhaustive', async () => {
@@ -392,6 +580,53 @@ describe('createOmniEngine', () => {
     expect(engine.state().pivot).toBe(false);
   });
 
+  it('the pivot breadcrumb names its own way out (Esc), so the exit is discoverable', async () => {
+    const refView: ReferenceView = {
+      title: 'References to Foo',
+      results: [methodResult('A>>useFoo', 'useFoo'), methodResult('B>>alsoFoo', 'alsoFoo')],
+    };
+    const engine = createOmniEngine({
+      providers: [fakeProvider('classes', [classResult('Foo')])],
+      config: cfg(),
+      resolveReferences: () => refView,
+    });
+    const search = await engine.search('foo');
+
+    const pivot = await engine.pivot(search!.rows[0].id);
+    expect(pivot!.pivotHint).toBe(PIVOT_EXIT_HINT);
+    expect(PIVOT_EXIT_HINT).toContain('Esc');
+    // The hint is its OWN field, so the title stays the plain name of the list and each host decides
+    // how (or whether) to show the way out. Glued into the title, the only way to style or drop the
+    // hint would be to split the string back apart.
+    expect(pivot!.pivotTitle).toBe('References to Foo');
+
+    // The hint must survive filtering inside the pivot — that is exactly when a user is looking for
+    // the way out, and the pivot branch of runSearch rebuilds the view.
+    const filtered = await engine.search('also');
+    expect(filtered!.pivotTitle).toBe('References to Foo');
+    expect(filtered!.pivotHint).toBe(PIVOT_EXIT_HINT);
+  });
+
+  it('the sticky preview references list keeps a CLEAN title (no Esc hint)', async () => {
+    // In `referencesInPreview` mode there is no pivot to escape from — Esc closes the panel — so the
+    // hint would be a lie in the preview pane's header.
+    const refView: ReferenceView = {
+      title: 'References to Foo',
+      target: 'Foo',
+      results: [methodResult('A>>useFoo', 'useFoo')],
+    };
+    const engine = createOmniEngine({
+      providers: [fakeProvider('classes', [classResult('Foo')])],
+      config: cfg(),
+      resolveReferences: () => refView,
+    });
+    const search = await engine.search('foo');
+
+    const preview = await engine.referencesFor(search!.rows[0].id);
+    expect(preview!.title).toBe('References to Foo');
+    expect(preview!.title).not.toContain('Esc');
+  });
+
   it('supersedes a slow in-flight search (returns null for the stale run)', async () => {
     let releaseFirst: (() => void) | undefined;
     const gate = new Promise<void>((res) => (releaseFirst = res));
@@ -411,5 +646,290 @@ describe('createOmniEngine', () => {
     const [first, second] = await Promise.all([firstP, secondP]);
     expect(first).toBeNull(); // stale run discarded
     expect(second).not.toBeNull();
+  });
+});
+
+/**
+ * The references pivot used to ignore the selected scope while CLAIMING to apply it.
+ *
+ * Before the fix: `runSearch` returned early through its pivot branch, so a `setScope` during a pivot
+ * changed nothing on screen, yet the reply's chrome carried the new `scopeId` and the tab lit up as
+ * active. The scope was then applied silently when the pivot was dismissed, narrowing a search the
+ * user never asked to narrow.
+ *
+ * The decision these tests pin: a scope belongs to the SEARCH, not to a references view (every pivot
+ * row is a method — see `methodRowsToResults` — so filtering them by scope is meaningless), therefore
+ * picking a scope LEAVES the pivot and applies the scope to the restored search.
+ */
+describe('createOmniEngine — scope vs. the references pivot', () => {
+  const refView: ReferenceView = {
+    title: 'References to Foo',
+    results: [methodResult('A>>useFoo', 'useFoo'), methodResult('B>>alsoFoo', 'alsoFoo')],
+  };
+
+  /** Search 'foo' in the all-scope (a class hit AND a method hit), then pivot on the class row. */
+  async function pivotedEngine() {
+    const classes = fakeProvider('classes', [classResult('Foo')]);
+    const methods = fakeProvider('methods', [methodResult('Bar>>foo', 'foo')]);
+    const engine = createOmniEngine({
+      providers: [classes, methods],
+      config: cfg(),
+      resolveReferences: () => refView,
+    });
+    const search = await engine.search('foo');
+    expect(search!.rows.map((r) => r.label).sort()).toEqual(['Bar>>foo', 'Foo']);
+    const classRow = search!.rows.find((r) => r.label === 'Foo')!;
+    const pivot = await engine.pivot(classRow.id);
+    expect(pivot!.pivot).toBe(true);
+    expect(pivot!.rows.map((r) => r.label)).toEqual(['A>>useFoo', 'B>>alsoFoo']);
+    return { engine, classes, methods };
+  }
+
+  it('picking a scope during a pivot LEAVES the pivot instead of silently doing nothing', async () => {
+    const { engine } = await pivotedEngine();
+
+    const view = await engine.setScope('classes');
+
+    expect(view!.pivot).toBe(false); // no longer a references view…
+    expect(engine.state().pivot).toBe(false); // …and the engine agrees
+    expect(view!.pivotTitle).toBeUndefined();
+    expect(view!.pivotHint).toBeUndefined(); // no pivot, so nothing to escape from
+    // The reference rows are gone: what is shown is the SEARCH, narrowed to the chosen scope.
+    expect(view!.rows.map((r) => r.label)).toEqual(['Foo']);
+    expect(engine.state().scopeId).toBe('classes');
+  });
+
+  it('the tab no longer lies: the shown rows match the scope the chrome reports', async () => {
+    const { engine } = await pivotedEngine();
+
+    const view = await engine.setScope('methods');
+
+    // Before the fix this returned the 2 reference rows while reporting scopeId 'methods'.
+    expect(engine.state().scopeId).toBe('methods');
+    expect(view!.rows.map((r) => r.label)).toEqual(['Bar>>foo']);
+    expect(view!.rows.some((r) => r.label.endsWith('useFoo'))).toBe(false);
+  });
+
+  it('no silent narrowing on the way out — there is no pivot left to exit', async () => {
+    const { engine } = await pivotedEngine();
+
+    await engine.setScope('classes');
+
+    // The old bug's second half: Esc/← after a scope click re-ran the search THEN, applying a filter
+    // the user could not see. The scope change already restored the list, so the exit is a no-op.
+    expect(await engine.exitPivot()).toBeNull();
+    expect(engine.state().pivot).toBe(false);
+  });
+
+  it('re-runs the restored search itself rather than reusing the pivot rows', async () => {
+    const { engine, classes, methods } = await pivotedEngine();
+    expect(classes.searched).toEqual(['foo']); // pivoting does not re-query
+    expect(methods.searched).toEqual(['foo']);
+
+    await engine.setScope('classes');
+
+    expect(classes.searched).toEqual(['foo', 'foo']); // the restored search really ran
+    expect(methods.searched).toEqual(['foo']); // out of scope now, so not re-queried
+  });
+
+  it('a scope chosen BEFORE the pivot still survives an Esc exit (unchanged behavior)', async () => {
+    const classes = fakeProvider('classes', [classResult('Foo')]);
+    const methods = fakeProvider('methods', [methodResult('Bar>>foo', 'foo')]);
+    const engine = createOmniEngine({
+      providers: [classes, methods],
+      config: cfg(),
+      resolveReferences: () => refView,
+    });
+    await engine.setScope('classes');
+    const search = await engine.search('foo');
+    expect(search!.rows.map((r) => r.label)).toEqual(['Foo']);
+
+    await engine.pivot(search!.rows[0].id);
+    const back = await engine.exitPivot();
+
+    // Deliberate: this scope was applied to a search the user could SEE being narrowed, so Esc must
+    // put that same narrowed search back. Only a scope picked *during* a pivot is the bug.
+    expect(back!.pivot).toBe(false);
+    expect(back!.rows.map((r) => r.label)).toEqual(['Foo']);
+    expect(engine.state().scopeId).toBe('classes');
+  });
+
+  it('clearing the box stays a FILTER RESET inside the pivot — Esc is the way out', async () => {
+    const { engine } = await pivotedEngine();
+
+    const filtered = await engine.search('also');
+    expect(filtered!.rows.map((r) => r.label)).toEqual(['B>>alsoFoo']);
+
+    const cleared = await engine.search('');
+
+    // Deliberate decision (Eric's call): clearing widens back to every reference row rather than
+    // escaping, because an empty filter matching everything is the honest reading of "clear". The
+    // discoverability half is handled by the breadcrumb naming Esc — see PIVOT_EXIT_HINT.
+    expect(cleared!.pivot).toBe(true);
+    expect(engine.state().pivot).toBe(true);
+    expect(cleared!.rows.map((r) => r.label)).toEqual(['A>>useFoo', 'B>>alsoFoo']);
+
+    const back = await engine.exitPivot();
+    expect(back!.pivot).toBe(false);
+    expect(back!.rows.map((r) => r.label).sort()).toEqual(['Bar>>foo', 'Foo']);
+  });
+});
+
+describe('createOmniEngine — out-of-order reference and pivot results', () => {
+  it("supersedes a slow reference load so its rows cannot overwrite a newer row's", async () => {
+    const rowA = classResult('Alpha');
+    const rowB = classResult('Beta');
+    const refsForA: ReferenceView = {
+      title: 'References to Alpha',
+      target: 'Alpha',
+      results: [methodResult('X>>usesAlpha', 'usesAlpha')],
+    };
+    const refsForB: ReferenceView = {
+      title: 'References to Beta',
+      target: 'Beta',
+      results: [methodResult('Y>>usesBeta', 'usesBeta')],
+    };
+    let releaseA: (() => void) | undefined;
+    const gate = new Promise<void>((res) => (releaseA = res));
+    const engine = createOmniEngine({
+      providers: [fakeProvider('classes', [rowA, rowB])],
+      config: cfg(),
+      // Alpha is the slow one and resolves LAST, exactly the order that used to corrupt the list.
+      resolveReferences: async (r) => {
+        if (r.label === 'Alpha') {
+          await gate;
+          return refsForA;
+        }
+        return refsForB;
+      },
+    });
+    const search = await engine.search('a');
+    const idA = search!.rows.find((r) => r.label === 'Alpha')!.id;
+    const idB = search!.rows.find((r) => r.label === 'Beta')!.id;
+
+    const slowA = engine.referencesFor(idA);
+    const fastB = await engine.referencesFor(idB); // arrowed on to Beta while Alpha still resolves
+    releaseA!();
+
+    expect(await slowA).toBeNull(); // stale load discarded rather than written
+    expect(fastB!.rows.map((r) => r.label)).toEqual(['Y>>usesBeta']);
+    // The rows behind the ids the UI is showing are still Beta's — opening one cannot land in Alpha's.
+    expect(engine.referenceResultFor(fastB!.rows[0].id)!.label).toBe('Y>>usesBeta');
+  });
+
+  it('a new search supersedes a reference load the previous term left in flight', async () => {
+    let releaseRefs: (() => void) | undefined;
+    const gate = new Promise<void>((res) => (releaseRefs = res));
+    const engine = createOmniEngine({
+      providers: [fakeProvider('classes', [classResult('Alpha'), classResult('Beta')])],
+      config: cfg(),
+      resolveReferences: async () => {
+        await gate; // still resolving when the next search lands
+        return {
+          title: 'References to Alpha',
+          target: 'Alpha',
+          results: [methodResult('X>>usesAlpha', 'usesAlpha')],
+        };
+      },
+    });
+    const search = await engine.search('a');
+    const idA = search!.rows.find((r) => r.label === 'Alpha')!.id;
+
+    const slowRefs = engine.referencesFor(idA);
+    const next = await engine.search('al'); // a new term starts while the reference load is mid-flight
+    releaseRefs!();
+
+    expect(await slowRefs).toBeNull(); // superseded by the search — its rows never overwrite the list
+    expect(next!.rows.map((r) => r.label).sort()).toEqual(['Alpha', 'Beta']); // the search landed intact
+  });
+
+  it('a reference load neither cancels nor is cancelled by an in-flight search', async () => {
+    let releaseSearch: (() => void) | undefined;
+    const gate = new Promise<void>((res) => (releaseSearch = res));
+    let call = 0;
+    const slow: OmniProvider = {
+      category: CATEGORY_BY_ID.classes,
+      async search() {
+        call++;
+        if (call === 2) await gate; // the SECOND search blocks, with a reference load landing meanwhile
+        return [classResult('Foo')];
+      },
+    };
+    const refView: ReferenceView = {
+      title: 'References to Foo',
+      target: 'Foo',
+      results: [methodResult('A>>useFoo', 'useFoo')],
+    };
+    const engine = createOmniEngine({
+      providers: [slow],
+      config: cfg(),
+      resolveReferences: () => refView,
+    });
+    const first = await engine.search('fo');
+
+    const searchP = engine.search('foo');
+    const preview = await engine.referencesFor(first!.rows[0].id);
+    releaseSearch!();
+
+    expect(preview!.rows.map((r) => r.label)).toEqual(['A>>useFoo']); // not cancelled by the search
+    // ...and it did not cancel the search either: the search's own rows land intact, not clobbered by
+    // the reference load's row.
+    expect((await searchP)!.rows.map((r) => r.label)).toEqual(['Foo']);
+  });
+
+  it('supersedes an earlier pivot when a second pivot is started', async () => {
+    let releaseAlpha: (() => void) | undefined;
+    const gate = new Promise<void>((res) => (releaseAlpha = res));
+    const engine = createOmniEngine({
+      providers: [fakeProvider('classes', [classResult('Alpha'), classResult('Beta')])],
+      config: cfg(),
+      // Alpha resolves LAST — the ordering that used to let the abandoned pivot win.
+      resolveReferences: async (r) => {
+        if (r.label === 'Alpha') {
+          await gate;
+          return {
+            title: 'References to Alpha',
+            results: [methodResult('X>>usesAlpha', 'usesAlpha')],
+          };
+        }
+        return { title: 'References to Beta', results: [methodResult('Y>>usesBeta', 'usesBeta')] };
+      },
+    });
+    const search = await engine.search('a');
+    const idAlpha = search!.rows.find((r) => r.label === 'Alpha')!.id;
+    const idBeta = search!.rows.find((r) => r.label === 'Beta')!.id;
+
+    const slowPivot = engine.pivot(idAlpha);
+    const fastPivot = await engine.pivot(idBeta); // pivoted somewhere else before Alpha came back
+    releaseAlpha!();
+
+    expect(await slowPivot).toBeNull(); // stale pivot discarded
+    expect(fastPivot!.pivotTitle).toBe('References to Beta');
+    // The live list is still Beta's, so activating a row cannot open one of Alpha's references.
+    expect(engine.resultFor(fastPivot!.rows[0].id)!.label).toBe('Y>>usesBeta');
+    expect(engine.state().pivot).toBe(true);
+  });
+
+  it('supersedes a slow pivot so it cannot snap the view back to an abandoned reference view', async () => {
+    let releasePivot: (() => void) | undefined;
+    const gate = new Promise<void>((res) => (releasePivot = res));
+    const engine = createOmniEngine({
+      providers: [fakeProvider('classes', [classResult('Foo')])],
+      config: cfg(),
+      resolveReferences: async () => {
+        await gate;
+        return { title: 'References to Foo', results: [methodResult('A>>useFoo', 'useFoo')] };
+      },
+    });
+    const search = await engine.search('foo');
+
+    const pivotP = engine.pivot(search!.rows[0].id);
+    const retyped = await engine.search('fo'); // a new term while the pivot is still resolving
+    releasePivot!();
+
+    expect(await pivotP).toBeNull(); // stale pivot discarded
+    expect(retyped!.pivot).toBe(false);
+    expect(engine.state().pivot).toBe(false); // the view stayed on the search the user asked for
+    expect(engine.resultFor(retyped!.rows[0].id)!.label).toBe('Foo');
   });
 });

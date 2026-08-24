@@ -1,29 +1,40 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
+vi.mock('../../gciLog', async () => {
+  const actual = await vi.importActual<typeof import('../../gciLog')>('../../gciLog');
+  return { ...actual, logWarning: vi.fn() };
+});
 
 import * as vscode from 'vscode';
-import { buildOmniHandlers } from '../omniSearchCommand';
+import { __resetConfig, __setConfig } from '../../__mocks__/vscode';
+import { logWarning } from '../../gciLog';
+import { buildOmniHandlers, registerOmniSearch, revealPanelAfterLogin } from '../omniSearchCommand';
+import { OMNI_VIEW_ID } from '../omniSearchViewProvider';
 
 describe('buildOmniHandlers', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('reveals a dictionary by name via the Explorer command, not a bare pane focus', () => {
+  it('reveals a dictionary by name via the Explorer command, threading the result session', () => {
     void buildOmniHandlers().revealDictionary({
       kind: 'revealDictionary',
-      sessionId: 1,
+      sessionId: 7,
       dictName: 'V8SplitDemo',
     });
 
+    // The result's own sessionId (7) must be passed so the reveal targets that session, not whatever
+    // session is selected now — the fix for the "click after switching sessions lands in the wrong
+    // session" bug. Passing a bare pane focus, or dropping the sessionId, fails here.
     expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
       'gemstone.explorer.revealDictionary',
       'V8SplitDemo',
+      7,
     );
   });
 
-  it('jumps a global to the class of its value, not to the dictionary', () => {
+  it('jumps a global to the class of its value, threading the result session', () => {
     void buildOmniHandlers().revealGlobal({
       kind: 'revealGlobal',
-      sessionId: 1,
+      sessionId: 7,
       dictName: 'Globals',
       name: 'Transcript',
       className: 'GsTerminalStream',
@@ -32,6 +43,7 @@ describe('buildOmniHandlers', () => {
     expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
       'gemstone.explorer.findClass',
       'GsTerminalStream',
+      7,
     );
   });
 
@@ -54,10 +66,10 @@ describe('buildOmniHandlers', () => {
     expect(call[2]).toEqual({ preserveFocus: true, preview: false });
   });
 
-  it('reveals a class category via dict + path, not just the dictionary', () => {
+  it('reveals a class category via dict + path, threading the result session', () => {
     void buildOmniHandlers().revealCategory({
       kind: 'revealCategory',
-      sessionId: 1,
+      sessionId: 7,
       dictName: 'Globals',
       dictIndex: 1,
       category: 'Kernel-Objects',
@@ -67,6 +79,122 @@ describe('buildOmniHandlers', () => {
       'gemstone.explorer.revealCategory',
       'Globals',
       'Kernel-Objects',
+      7,
     );
+  });
+});
+
+describe('revealPanelAfterLogin', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('sets the hasActiveSession context key before revealing, so the view is allowed to exist', async () => {
+    // The context key the view's `when` clause reads must already be set when the reveal runs —
+    // asserting it from inside focus() pins the ordering without restubbing executeCommand.
+    let contextWasSetFirst = false;
+    const provider = {
+      focus: vi.fn<() => Promise<boolean>>(() => {
+        contextWasSetFirst = vi
+          .mocked(vscode.commands.executeCommand)
+          .mock.calls.some(
+            (c) => c[0] === 'setContext' && c[1] === 'gemstone.hasActiveSession' && c[2] === true,
+          );
+        return Promise.resolve(true);
+      }),
+    };
+
+    await expect(revealPanelAfterLogin(provider)).resolves.toBe(true);
+
+    expect(contextWasSetFirst).toBe(true);
+  });
+
+  it('reveals once and says nothing when the panel comes forward', async () => {
+    const provider = { focus: vi.fn<() => Promise<boolean>>(() => Promise.resolve(true)) };
+
+    await expect(revealPanelAfterLogin(provider)).resolves.toBe(true);
+
+    expect(provider.focus).toHaveBeenCalledTimes(1); // the wait lives in focus(), not in a retry here
+    expect(logWarning).not.toHaveBeenCalled();
+  });
+
+  it('logs instead of failing silently when the reveal never lands', async () => {
+    const provider = { focus: vi.fn<() => Promise<boolean>>(() => Promise.resolve(false)) };
+
+    await expect(revealPanelAfterLogin(provider)).resolves.toBe(false);
+
+    expect(provider.focus).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(logWarning).mock.calls[0][0]).toMatch(/did not appear after login/);
+  });
+});
+
+describe('registerOmniSearch: when a login reveals the panel', () => {
+  /** Drive the real registration with a stub session manager, and hand back a way to fire its
+   *  selection event with a chosen number of live sessions. */
+  const registerWith = (ui: string) => {
+    __setConfig('gemstone.omniSearch', 'ui', ui);
+
+    let sessionCount = 0;
+    let fire: () => void = () => {};
+    const sessionManager = {
+      getSessions: () => Array.from({ length: sessionCount }, (_, i) => ({ id: i + 1 })),
+      getSelectedSession: () => undefined,
+      onDidChangeSelection: (listener: () => void) => {
+        fire = listener;
+        return { dispose: () => {} };
+      },
+    };
+
+    const disposable = registerOmniSearch(sessionManager as never);
+    // The reveal is fire-and-forget from the listener, so let its awaits settle before asserting.
+    const select = async (count: number): Promise<void> => {
+      sessionCount = count;
+      fire();
+      await Promise.resolve();
+      await Promise.resolve();
+    };
+    const revealed = (): boolean =>
+      vi
+        .mocked(vscode.commands.executeCommand)
+        .mock.calls.some((c) => c[0] === `${OMNI_VIEW_ID}.focus`);
+    return { select, revealed, disposable };
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // focus() waits on the view resolving, which never happens under the mock; keep that wait off the
+    // clock so the test does not sit out the real deadline.
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    __resetConfig();
+  });
+
+  it('reveals the panel when a session appears where there were none (a login)', async () => {
+    const { select, revealed, disposable } = registerWith('panel');
+
+    await select(1);
+
+    expect(revealed()).toBe(true);
+    disposable.dispose();
+  });
+
+  it('does not reveal when switching between sessions that already existed', async () => {
+    const { select, revealed, disposable } = registerWith('panel');
+
+    await select(2); // already logged in when the listener was wired: not a 0 -> active transition
+    vi.mocked(vscode.commands.executeCommand).mockClear();
+    await select(2); // a switch between the two
+
+    expect(revealed()).toBe(false);
+    disposable.dispose();
+  });
+
+  it('does not reveal the panel at all when the Spotter is the chosen UI', async () => {
+    const { select, revealed, disposable } = registerWith('spotter');
+
+    await select(1);
+
+    expect(revealed()).toBe(false);
+    disposable.dispose();
   });
 });

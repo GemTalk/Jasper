@@ -72,6 +72,7 @@ jobs:
         with:
           sparse-checkout: |
             .github/workflows
+            .github/actions
           sparse-checkout-cone-mode: false
           # zizmor(artipacked): checkout must not persist the token past
           # this job
@@ -121,12 +122,42 @@ jobs:
         run: npm audit signatures
 
   health-check:
-    timeout-minutes: 5
-    name: GemStone S/64 ${{ matrix.gemstone-version }}${{ matrix.node-version && format(' (Node {0})', matrix.node-version) || '' }}
+    # The Windows leg needs extra headroom (WSL provisioning + GCI client
+    # download); the Linux legs still fit in 5. Scoped per-platform so a
+    # Linux-side regression that doubles the runtime still trips the guard
+    # instead of quietly passing under the Windows leg's larger budget.
+    timeout-minutes: ${{ matrix.platform == 'windows-latest' && 10 || 5 }}
+    name: ${{ matrix.platform }} ${{ matrix.gemstone-version }}${{ matrix.node-version && format(' (Node {0})', matrix.node-version) || '' }}
     needs: prepare
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.platform }}
+    # zizmor(template-injection): bind the untrusted matrix values to an env
+    # var instead of interpolating ${{ }} directly into a script
+    env:
+      # One name (for upload-artifact's `name`) and one path (for
+      # VITEST_JSON_OUTPUT and upload-artifact's `path`) per skip-report
+      # file. Both include matrix.platform, gemstone-version and
+      # node-version so the Linux and Windows legs of the same
+      # version/node combo don't produce same-named files — upload-artifact
+      # rejects duplicate names within a run, and report-skips'
+      # merge-multiple download would clobber same-named files. Paths are
+      # absolute (github.workspace-rooted): VITEST_JSON_OUTPUT is read by
+      # each npm workspace's vitest run, which cwds into client/, server/,
+      # or mcp-server/, so a relative path would land inside whichever
+      # workspace ran last instead of one shared test-results/ at the repo
+      # root.
+      #
+      # Each var spells out the matrix expression on its own rather than
+      # building on a shared base var: GitHub Actions' env context can't
+      # see sibling keys from the same env mapping (they'd silently
+      # resolve empty), so there's no legal way to factor this out further
+      # short of an extra step writing to $GITHUB_ENV.
+      SKIP_REPORT_BARE_NAME: skips-${{ matrix.platform }}-${{ matrix.gemstone-version }}-${{ matrix.node-version || 'nvmrc' }}-bare
+      SKIP_REPORT_BARE_PATH: ${{ github.workspace }}/test-results/skips-${{ matrix.platform }}-${{ matrix.gemstone-version }}-${{ matrix.node-version || 'nvmrc' }}-bare.json
+      SKIP_REPORT_PLUGIN_NAME: skips-${{ matrix.platform }}-${{ matrix.gemstone-version }}-${{ matrix.node-version || 'nvmrc' }}-plugin
+      SKIP_REPORT_PLUGIN_PATH: ${{ github.workspace }}/test-results/skips-${{ matrix.platform }}-${{ matrix.gemstone-version }}-${{ matrix.node-version || 'nvmrc' }}-plugin.json
     strategy:
       matrix:
+        platform: [ubuntu-latest, windows-latest]
         gemstone-version: ${{ fromJson(needs.prepare.outputs.versions) }}
         node-version: ['']            # empty ⇒ dev jobs resolve Node from .nvmrc (node-version-file); floor include overrides
         # node-version's declared axis value is only '' (which falls back to
@@ -136,7 +167,8 @@ jobs:
         # and the Node floor, as a smoke test to verify tests run on the
         # Node floor too. This is to support older VS Code versions.
         include:
-          - gemstone-version: ${{ needs.prepare.outputs.oldest-version }}
+          - platform: ubuntu-latest # smoke test only cares about the Node floor, not the OS-specific WSL/GCI-DLL path
+            gemstone-version: ${{ needs.prepare.outputs.oldest-version }}
             node-version: '22.15.1'   # pin the floor for the smoke-test
 
     steps:
@@ -215,50 +247,84 @@ jobs:
         run: npm ci
       - name: Compile
         run: npm run compile
-      - name: Cache GemStone installation
+      - name: Cache GemStone server download
         # zizmor(unpinned-uses): actions must be pinned to a commit SHA,
         # not a mutable tag like @v6
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: client/tmp/downloads
-          key: gemstone-download-${{ runner.os }}-${{ matrix.gemstone-version }}
-      - name: Setup test environment
+          # The Windows leg's server install also runs as Linux (inside WSL,
+          # see setup-gemstone-in-windows), so every current matrix platform
+          # downloads the same archive for a given version: one shared key,
+          # no runner.os, lets either leg warm the cache for the other.
+          # IMPORTANT: this assumes every platform downloads the Linux archive, which
+          # is only true today. gs-config.sh also has a Darwin branch that
+          # resolves a different filename (a .dmg, not this .zip); if a
+          # macos-latest leg ever joins the matrix, it needs its own key
+          # instead of reusing this one, or it'll silently stop caching.
+          key: gemstone-server-download-linux-${{ matrix.gemstone-version }}
+          # enableCrossOsArchive is required for that sharing to actually
+          # happen: actions/cache scopes its restore lookup by key *and* a
+          # version hash that silently appends a windows-only tag on
+          # Windows runners unless this is set, so without it the two
+          # platforms would never satisfy each other's cache despite using
+          # the same key string.
+          enableCrossOsArchive: true
+      - name: Setup GemStone in Windows
+        if: runner.os == 'Windows'
+        uses: ./.github/actions/setup-gemstone-in-windows
+        with:
+          gemstone-version: ${{ matrix.gemstone-version }}
+      - name: Setup GemStone in Linux
+        if: runner.os != 'Windows'
         # zizmor(template-injection): bind the untrusted matrix value to an
         # env var instead of interpolating ${{ }} directly into the script
         env:
           GEMSTONE_VERSION: ${{ matrix.gemstone-version }}
         run: npm run test:server:start -- "$GEMSTONE_VERSION"
       - name: Run tests (without server plugin)
-        # zizmor(template-injection): bind the untrusted matrix values to an
-        # env var instead of interpolating ${{ }} directly into the script
         env:
-          VITEST_JSON_OUTPUT: ${{ github.workspace }}/test-results/skips-${{ matrix.gemstone-version }}-${{ matrix.node-version || 'nvmrc' }}-bare.json
+          VITEST_JSON_OUTPUT: ${{ env.SKIP_REPORT_BARE_PATH }}
         run: npm test
+      - name: Relativize skip report paths (without server plugin)
+        env:
+          SKIP_REPORT_PATH: ${{ env.SKIP_REPORT_BARE_PATH }}
+        # windows-latest defaults to pwsh, which doesn't understand bash's
+        # $VAR syntax — force bash (present on both runner images) so this
+        # one shell script works unchanged on either platform.
+        shell: bash
+        run: node scripts/relativize-skip-report.mjs "$SKIP_REPORT_PATH" "$GITHUB_WORKSPACE"
       - name: Upload skip report (without server plugin)
         if: always()
         # zizmor(unpinned-uses): actions must be pinned to a commit SHA,
         # not a mutable tag like @v7
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: skips-${{ matrix.gemstone-version }}-${{ matrix.node-version || 'nvmrc' }}-bare
-          path: test-results/skips-${{ matrix.gemstone-version }}-${{ matrix.node-version || 'nvmrc' }}-bare.json
+          name: ${{ env.SKIP_REPORT_BARE_NAME }}
+          path: ${{ env.SKIP_REPORT_BARE_PATH }}
           if-no-files-found: ignore
       - name: Install server plugin
         run: npm run test:server:install-plugin
       - name: Run tests (with server plugin)
-        # zizmor(template-injection): bind the untrusted matrix values to an
-        # env var instead of interpolating ${{ }} directly into the script
         env:
-          VITEST_JSON_OUTPUT: ${{ github.workspace }}/test-results/skips-${{ matrix.gemstone-version }}-${{ matrix.node-version || 'nvmrc' }}-plugin.json
+          VITEST_JSON_OUTPUT: ${{ env.SKIP_REPORT_PLUGIN_PATH }}
         run: npm test
+      - name: Relativize skip report paths (with server plugin)
+        env:
+          SKIP_REPORT_PATH: ${{ env.SKIP_REPORT_PLUGIN_PATH }}
+        # windows-latest defaults to pwsh, which doesn't understand bash's
+        # $VAR syntax — force bash (present on both runner images) so this
+        # one shell script works unchanged on either platform.
+        shell: bash
+        run: node scripts/relativize-skip-report.mjs "$SKIP_REPORT_PATH" "$GITHUB_WORKSPACE"
       - name: Upload skip report (with server plugin)
         if: always()
         # zizmor(unpinned-uses): actions must be pinned to a commit SHA,
         # not a mutable tag like @v7
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: skips-${{ matrix.gemstone-version }}-${{ matrix.node-version || 'nvmrc' }}-plugin
-          path: test-results/skips-${{ matrix.gemstone-version }}-${{ matrix.node-version || 'nvmrc' }}-plugin.json
+          name: ${{ env.SKIP_REPORT_PLUGIN_NAME }}
+          path: ${{ env.SKIP_REPORT_PLUGIN_PATH }}
           if-no-files-found: ignore
 
   package-check:

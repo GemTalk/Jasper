@@ -17,8 +17,7 @@ describe('omniMatch — fuzzy (default)', () => {
   it('matches a subsequence in order and rejects out-of-order / missing chars', () => {
     expect(match('oc', 'OrderedCollection', opts('fuzzy'))).not.toBeNull();
     expect(match('ordc', 'OrderedCollection', opts('fuzzy'))).not.toBeNull();
-    // 'co' is NOT a subsequence of 'OrderedCollection' in order? c(9) then o... there is 'o' after
-    // c at index 12 ('Collection' -> C-o-l-l...), so 'co' DOES match. Use a genuine non-match:
+    // 'co' does match ('C-o' in "Collection"), so use chars that really aren't there.
     expect(match('zx', 'OrderedCollection', opts('fuzzy'))).toBeNull();
     expect(match('ocz', 'OrderedCollection', opts('fuzzy'))).toBeNull();
   });
@@ -30,7 +29,7 @@ describe('omniMatch — fuzzy (default)', () => {
     // O at 0, C at 7 → two single-char ranges
     expect(r2?.ranges).toEqual([
       [0, 1],
-      [7, 1 + 7],
+      [7, 8],
     ]);
   });
 
@@ -116,6 +115,36 @@ describe('omniMatch — empty query is a neutral match-all', () => {
 
   it('never matches against an empty target for a non-empty query', () => {
     expect(match('x', '', opts('fuzzy'))).toBeNull();
+  });
+});
+
+describe('omniMatch — a camelCase boundary is preferred even with case folding on', () => {
+  // The default is caseSensitive:false, which folds the target before matching. The word-start
+  // preference must still be judged against the ORIGINAL case, or its camelCase-hump half can never
+  // fire and a mid-word occurrence wins over a later camelCase one.
+  it('picks the camelCase-hump occurrence over an earlier mid-word one (case-INSENSITIVE)', () => {
+    const r = match('co', 'xcoreFooCore', opts('fuzzy'));
+    expect(r?.ranges).toEqual([[8, 10]]); // the "Co" of "Core", not the "co" at index 1
+  });
+
+  it('agrees with the case-SENSITIVE result — folding changes equality, not the preference', () => {
+    const insensitive = match('co', 'xcoreFooCore', opts('fuzzy'));
+    const sensitive = match('Co', 'xcoreFooCore', opts('fuzzy', true));
+    expect(insensitive?.ranges).toEqual(sensitive?.ranges);
+  });
+
+  it('still prefers a separator boundary, which folding never hid', () => {
+    const r = match('core', 'xcore-core', opts('fuzzy'));
+    expect(r?.ranges).toEqual([[6, 10]]); // after the '-', not the mid-word run at 1
+  });
+
+  it('falls back to the leftmost occurrence when no occurrence is at a boundary', () => {
+    const r = match('or', 'worldform', opts('fuzzy'));
+    expect(r?.ranges).toEqual([[1, 3]]); // no boundary anywhere → leftmost, unchanged behaviour
+  });
+
+  it('ranks the camelCase-boundary target above a mid-word one for the same query', () => {
+    expect(rank('co', ['xcoreish', 'FooCore'], 'fuzzy')).toEqual(['FooCore', 'xcoreish']);
   });
 });
 

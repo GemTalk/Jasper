@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 
 // The engine is expensive and session-bound; stub it so we can count how often the provider (re)builds
@@ -14,7 +14,11 @@ vi.mock('../omniEngine', () => ({
 }));
 
 import { createOmniEngine } from '../omniEngine';
-import { OmniSearchViewProvider, OmniViewContext } from '../omniSearchViewProvider';
+import {
+  OmniSearchViewProvider,
+  OmniViewContext,
+  REVEAL_DEADLINE_MS,
+} from '../omniSearchViewProvider';
 
 function fakeContext(): OmniViewContext {
   const config = {
@@ -51,7 +55,7 @@ function fakeView(visible: boolean) {
   return { view, on };
 }
 
-describe('Omni Search docked panel — reacting to settings changes', () => {
+describe('GemStone Search docked panel — reacting to settings changes', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('rebuilds the engine when a setting changes while the panel is open, so the edit takes effect', async () => {
@@ -83,7 +87,7 @@ describe('Omni Search docked panel — reacting to settings changes', () => {
   });
 });
 
-describe('Omni Search docked panel — reacting to image changes', () => {
+describe('GemStone Search docked panel — reacting to image changes', () => {
   beforeEach(() => vi.clearAllMocks());
 
   async function openForSession1() {
@@ -153,8 +157,8 @@ describe('Omni Search docked panel — reacting to image changes', () => {
 
 // A sync rebuild re-primes every provider, three of them via image-wide synchronous GCI executes. The
 // engine outlives a hidden panel, so without this gate every commit/abort — and every dictionary
-// add/remove/rename — paid that cost with nothing on screen. See PR #443 review (#428 Round 1).
-describe('Omni Search docked panel — a session sync while hidden', () => {
+// add/remove/rename — paid that cost with nothing on screen. See the PR #443 review.
+describe('GemStone Search docked panel — a session sync while hidden', () => {
   beforeEach(() => vi.clearAllMocks());
 
   // The provider's webview callback is `void this.onMessage(m)`, so awaiting `on.message(...)` returns
@@ -225,5 +229,45 @@ describe('Omni Search docked panel — a session sync while hidden', () => {
     await settle();
     expect(createOmniEngine).toHaveBeenCalledTimes(1);
     expect(engine.resync).not.toHaveBeenCalled();
+  });
+});
+
+describe('GemStone Search docked panel — reporting whether a reveal landed', () => {
+  // The mocked `<viewId>.focus` never builds a view, so every reveal here is one that did not land.
+  // What focus() must NOT do is answer from the fact that a view was built at some point in the past:
+  // that field is set once and never cleared, so reading it would report success for the rest of the
+  // window — and the post-login reveal would have no way to notice a panel that failed to appear.
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it('reports failure when the view never resolves, without waiting forever', async () => {
+    const provider = new OmniSearchViewProvider(async () => null);
+
+    const landed = provider.focus();
+    await vi.advanceTimersByTimeAsync(REVEAL_DEADLINE_MS);
+
+    await expect(landed).resolves.toBe(false);
+  });
+
+  it('answers at once for a view that is already built, without waiting on a fresh event', async () => {
+    const provider = new OmniSearchViewProvider(async () => null);
+    provider.resolveWebviewView(fakeView(false).view as never);
+
+    // An existing view IS a landed reveal — `<viewId>.focus` had something to show. Waiting for another
+    // resolve event here would hang until the deadline on every reveal after the first.
+    await expect(provider.focus()).resolves.toBe(true);
+  });
+
+  it('returns as soon as the view resolves, rather than sitting out the deadline', async () => {
+    const provider = new OmniSearchViewProvider(async () => null);
+
+    const landed = provider.focus();
+    await vi.advanceTimersByTimeAsync(0); // let the reveal command settle
+    provider.resolveWebviewView(fakeView(false).view as never); // the workbench catches up
+
+    await expect(landed).resolves.toBe(true);
   });
 });

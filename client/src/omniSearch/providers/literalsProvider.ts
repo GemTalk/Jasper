@@ -23,6 +23,9 @@ import { methodRowsToResults } from '../references';
 export type LiteralSymbolRunner = (symbolExpr: string) => MethodSearchResult[];
 /** Source substring search for a string literal's content. Injected so the provider stays stone-free. */
 export type LiteralStringRunner = (text: string, ignoreCase: boolean) => MethodSearchResult[];
+/** Reports a REAL runner failure (GCI drop, aborted transaction, ...) so it can be logged rather than
+ *  masquerading as "no results". Injected so the provider stays stone-free (and UI-/logger-free). */
+export type LiteralSearchErrorSink = (message: string) => void;
 
 /** The content of a complete `'...'` string literal, or null if it isn't a closed, non-empty string. */
 export function parseStringLiteral(term: string): string | null {
@@ -51,26 +54,41 @@ export function createLiteralsProvider(
   sessionId: number,
   runSymbol: LiteralSymbolRunner,
   runString: LiteralStringRunner,
+  onError?: LiteralSearchErrorSink,
 ): OmniProvider {
   return {
     category: CATEGORY_BY_ID.literals,
     search(query: string, cfg: OmniConfig): OmniResult[] {
       const term = query.trim();
 
+      // Resolve the term to a runner call, or bail out for the "not a literal / still typing" cases.
+      // These bailouts are pure (no server round-trip), so anything that reaches the try below is a
+      // COMPLETE, well-formed literal — which means a throw from the runner is a real backend failure,
+      // never "not yet compilable". Keep the `isSymbolLiteral` gate before `runSymbol`: the symbol
+      // branch evaluates on the server, so only a whole `#symbol` may reach the stone.
+      let run: () => MethodSearchResult[];
+      if (term.startsWith('#')) {
+        if (!isSymbolLiteral(term)) return []; // partial or malformed — don't eval raw input
+        run = () => runSymbol(term);
+      } else if (term.startsWith("'")) {
+        const content = parseStringLiteral(term);
+        if (content === null) return []; // still typing an unclosed/empty string
+        run = () => runString(content, !cfg.caseSensitive);
+      } else {
+        return []; // not a #symbol or 'string' — the placeholder instructs the user
+      }
+
       let rows: MethodSearchResult[];
       try {
-        if (term.startsWith('#')) {
-          if (!isSymbolLiteral(term)) return []; // partial or malformed — don't eval raw input
-          rows = runSymbol(term);
-        } else if (term.startsWith("'")) {
-          const content = parseStringLiteral(term);
-          if (content === null) return []; // still typing an unclosed/empty string
-          rows = runString(content, !cfg.caseSensitive);
-        } else {
-          return []; // not a #symbol or 'string' — the placeholder instructs the user
-        }
-      } catch {
-        return []; // not (yet) a compilable expression
+        rows = run();
+      } catch (e) {
+        // A real failure from the server-side runner (GCI drop, aborted transaction, ...). Surface it
+        // so it's diagnosable instead of masquerading as "no results". Still return [] — the sync
+        // provider API has no error row, and throwing would abort sibling providers in the All scope.
+        onError?.(
+          `Literals search failed for ${term}: ${e instanceof Error ? e.message : String(e)}`,
+        );
+        return [];
       }
       return methodRowsToResults(rows, sessionId, 'literals').slice(0, cfg.maxResultsPerCategory);
     },

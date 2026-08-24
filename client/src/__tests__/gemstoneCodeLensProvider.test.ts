@@ -90,10 +90,14 @@ name: aString
       expect(lenses).toHaveLength(4); // 2 methods × 2 lenses
     });
 
-    it('returns a senders+implementors lens pair for gemstone:// method URIs', () => {
+    it('returns no lenses for gemstone:// method URIs (#432: the selector hover owns those)', () => {
+      // The editable gemstone:// method editor no longer carries a
+      // senders/implementors CodeLens (it jiggled the source on open). Those counts
+      // now live in the selector hover (GemStoneHoverProvider) as clickable links,
+      // so the CodeLens provider emits nothing there.
       const doc = createMockDocument('name\n  ^ name', 'gemstone');
       const lenses = provider.provideCodeLenses(doc);
-      expect(lenses).toHaveLength(2); // 1 method × 2 lenses
+      expect(lenses).toHaveLength(0);
     });
 
     it('returns no lenses for an unsaved new-method template', () => {

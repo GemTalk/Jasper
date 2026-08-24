@@ -2,7 +2,7 @@
   "name": "gemstone-ide",
   "displayName": "Jasper: A GemStone Smalltalk IDE",
   "description": "GemStone/S IDE for Visual Studio Code",
-  "version": "1.8.11",
+  "version": "1.8.13",
   "publisher": "gemtalksystems",
   "license": "MIT",
   "author": "James Foster",
@@ -169,7 +169,7 @@
               "The result starts with the typed text."
             ],
             "default": "fuzzy",
-            "markdownDescription": "How Omni Search matches your query against classes, methods, dictionaries and open editors."
+            "markdownDescription": "How your typed query is matched against the names in each category: classes, method selectors, dictionaries, globals and class categories. **Source** and **Literals** match on the stone instead (whole method source / literal frames), so this setting does not affect them."
           },
           "gemstone.omniSearch.caseSensitive": {
             "type": "boolean",
@@ -188,6 +188,15 @@
                 "source",
                 "literals",
                 "categories"
+              ],
+              "enumDescriptions": [
+                "Class names.",
+                "Method selectors (queries the stone as you type).",
+                "SymbolDictionary names.",
+                "Global variable names.",
+                "Full method source (heavyweight; explicit scope only).",
+                "Methods referencing a literal you type, e.g. #at:put: (heavyweight; explicit scope only).",
+                "Class category names — not method categories (heavyweight; explicit scope only)."
               ]
             },
             "default": [
@@ -199,7 +208,7 @@
               "literals",
               "categories"
             ],
-            "markdownDescription": "Which categories Omni Search includes. Narrow a single search on the fly with the category buttons in the picker's title bar; the Clear-filter button resets to searching everything. **Source** (full method-source search) and **Literals** (methods referencing a compilable literal you type, e.g. `#at:put:`) are heavyweight, so they never run in the default search — pick their button to use them."
+            "markdownDescription": "Which search scopes GemStone Search includes. Narrow a single search on the fly with the scope tabs above the results; the Clear-filter button resets to searching everything. **Source** (full method-source search), **Literals** (methods referencing a compilable literal you type, e.g. `#at:put:`) and **Class Categories** (class-category names) are heavyweight, so they never run in the default search — pick their tab to use them."
           },
           "gemstone.omniSearch.maxResultsPerCategory": {
             "type": "number",
@@ -222,10 +231,31 @@
             "maximum": 10,
             "description": "Minimum characters before the Methods category queries the stone (method search hits the stone per keystroke). Raise it if per-keystroke method search feels slow on a large stone; lower it (to 1) to search selectors from the first character."
           },
+          "gemstone.omniSearch.maxServerScan": {
+            "type": "number",
+            "default": 200,
+            "minimum": 20,
+            "maximum": 20000,
+            "markdownDescription": "How many matches the **Methods** search collects from the stone before it stops looking.\n\nThat search walks every selector of every class in your symbol list, so it gives up early to keep searching-as-you-type fast. This is a limit on the *results*, not just on the time: when a search stops here, no amount of **Load more** or **Load all** can reach the matches beyond it — the footer says `Methods scan capped at 200` when that happens.\n\nRaise it to cast a wider net on broad terms (`add`, `at:`), at the cost of a slower search on every keystroke. Narrowing your search term is usually faster than raising this."
+          },
           "gemstone.omniSearch.referencesInPreview": {
             "type": "boolean",
             "default": true,
             "markdownDescription": "Show a row's references/senders (Alt+Enter or the ↗ button) as a sticky list in the right-hand preview pane, leaving the results list in place — click an entry to open its source. Turn this **off** to use the classic behavior, where references replace the whole results list (a pivot you back out of with ← / Esc)."
+          },
+          "gemstone.omniSearch.previewPane": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Show the source preview beside the results, filling in as you move down the list. The pane takes about **45%** of the width, which the bottom panel — wide but short — can least afford, so turning it off gives that room back to the result labels and also stops the per-row source fetches. This is the value the panel **starts** with; the ◧ button in the panel switches it for the current session without changing this setting."
+          },
+          "gemstone.omniSearch.excludeFromAll": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": ["classes", "methods", "dictionaries", "globals"]
+            },
+            "default": [],
+            "markdownDescription": "Scopes to leave out of the **All** search while keeping their own tab, so you can still search them on purpose. Useful for **methods**, which queries the stone on every keystroke. This is different from `#gemstone.omniSearch.categories#`, which removes a scope altogether (no tab, no search). Source, Literals and Class Categories are always outside All and so cannot be listed here. This is the value the panel **starts** with; the **Scopes** button in the panel changes it for the current session without changing this setting."
           }
         }
       },
@@ -1113,7 +1143,7 @@
         "icon": "$(search)"
       },
       {
-        "command": "gemstone.omniSearch",
+        "command": "gemstone.search",
         "title": "GemStone Search…",
         "category": "GemStone",
         "icon": "$(search-fuzzy)"
@@ -1181,6 +1211,40 @@
         "title": "Pin Method",
         "category": "GemStone",
         "icon": "$(pin)"
+      },
+      {
+        "command": "gemstone.explorer.runTestMethod",
+        "title": "Run Test",
+        "category": "GemStone",
+        "icon": "$(run)"
+      },
+      {
+        "command": "gemstone.explorer.runTestClass",
+        "title": "Run Tests",
+        "category": "GemStone",
+        "icon": "$(run-all)"
+      },
+      {
+        "command": "gemstone.revealTestInExplorer",
+        "title": "Reveal in GemStone Explorer",
+        "category": "GemStone",
+        "icon": "$(list-tree)"
+      },
+      {
+        "command": "gemstone.clearTestResults",
+        "title": "Clear Test Results",
+        "category": "GemStone"
+      },
+      {
+        "command": "gemstone.explorer.stopTest",
+        "title": "Stop Test Run",
+        "category": "GemStone",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "gemstone.explorer.revealInTestingView",
+        "title": "Reveal in Testing View",
+        "category": "GemStone"
       },
       {
         "command": "gemstone.explorer.removeMethod",
@@ -2055,6 +2119,30 @@
           "when": "gemstone.hasActiveSession"
         }
       ],
+      "testing/item/context": [
+        {
+          "command": "gemstone.explorer.stopTest",
+          "when": "gemstone.testRunning",
+          "group": "inline@0"
+        },
+        {
+          "command": "gemstone.revealTestInExplorer",
+          "group": "inline@1"
+        },
+        {
+          "command": "gemstone.explorer.stopTest",
+          "when": "gemstone.testRunning",
+          "group": "gemstone@0"
+        },
+        {
+          "command": "gemstone.revealTestInExplorer",
+          "group": "gemstone@1"
+        },
+        {
+          "command": "gemstone.clearTestResults",
+          "group": "gemstone@2"
+        }
+      ],
       "view/title": [
         {
           "command": "gemstone.openManager",
@@ -2065,6 +2153,18 @@
           "command": "gemstone.closeManager",
           "when": "view == gemstoneExplorerDicts && gemstone.managerOpen",
           "group": "navigation@-1"
+        },
+        {
+          "command": "gemstone.clearTestResults",
+          "when": "view == gemstoneExplorerClasses"
+        },
+        {
+          "command": "gemstone.clearTestResults",
+          "when": "view == gemstoneExplorerMethods"
+        },
+        {
+          "command": "gemstone.clearTestResults",
+          "when": "view == gemstoneExplorerClassHierarchy"
         },
         {
           "command": "gemstone.explorer.refresh",
@@ -2274,6 +2374,71 @@
           "group": "inline@3"
         },
         {
+          "command": "gemstone.explorer.runTestMethod",
+          "when": "view == gemstoneExplorerMethods && viewItem =~ /\\.test$/",
+          "group": "inline@0"
+        },
+        {
+          "command": "gemstone.explorer.stopTest",
+          "when": "viewItem =~ /\\.running$/",
+          "group": "inline@0"
+        },
+        {
+          "command": "gemstone.explorer.runTestClass",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /\\.test$/",
+          "group": "inline@0"
+        },
+        {
+          "command": "gemstone.explorer.runTestClass",
+          "when": "view == gemstoneExplorerClassHierarchy && viewItem =~ /\\.test$/",
+          "group": "inline@0"
+        },
+        {
+          "command": "gemstone.explorer.runTestClass",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /\\.test$/",
+          "group": "1_browse@0"
+        },
+        {
+          "command": "gemstone.explorer.runTestClass",
+          "when": "view == gemstoneExplorerClassHierarchy && viewItem =~ /\\.test$/",
+          "group": "1_browse@0"
+        },
+        {
+          "command": "gemstone.explorer.revealInTestingView",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /\\.test/",
+          "group": "1_browse@1"
+        },
+        {
+          "command": "gemstone.explorer.revealInTestingView",
+          "when": "view == gemstoneExplorerClassHierarchy && viewItem =~ /\\.test/",
+          "group": "1_browse@1"
+        },
+        {
+          "command": "gemstone.explorer.revealInTestingView",
+          "when": "view == gemstoneExplorerMethods && viewItem =~ /\\.test/",
+          "group": "1_browse@1"
+        },
+        {
+          "command": "gemstone.clearTestResults",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /\\.test$/",
+          "group": "1_browse@2"
+        },
+        {
+          "command": "gemstone.clearTestResults",
+          "when": "view == gemstoneExplorerClassHierarchy && viewItem =~ /\\.test$/",
+          "group": "1_browse@2"
+        },
+        {
+          "command": "gemstone.clearTestResults",
+          "when": "view == gemstoneExplorerMethods && viewItem =~ /\\.test$/",
+          "group": "1_browse@2"
+        },
+        {
+          "command": "gemstone.explorer.runTestMethod",
+          "when": "view == gemstoneExplorerMethods && viewItem =~ /\\.test$/",
+          "group": "1_browse@0"
+        },
+        {
           "command": "gemstone.explorer.closeOpenEditor",
           "when": "view == gemstoneExplorerOpenEditors && viewItem == explorerOpenEditorItem",
           "group": "inline@0"
@@ -2300,7 +2465,7 @@
         },
         {
           "command": "gemstone.explorer.openDefinitionToSide",
-          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/",
           "group": "inline@1"
         },
         {
@@ -2365,12 +2530,12 @@
         },
         {
           "command": "gemstone.explorer.addInstVar",
-          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/ && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/ && gemstone.rbSupportAvailable",
           "group": "2_generate@2"
         },
         {
           "command": "gemstone.explorer.addClassVar",
-          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/",
           "group": "2_generate@3"
         },
         {
@@ -2435,82 +2600,82 @@
         },
         {
           "command": "gemstone.explorer.renameClass",
-          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/ && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/ && gemstone.rbSupportAvailable",
           "group": "inline@3"
         },
         {
           "command": "gemstone.explorer.classHistory",
-          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/ && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/ && gemstone.rbSupportAvailable",
           "group": "3_refactor@1"
         },
         {
           "command": "gemstone.explorer.insertSuperclass",
-          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/ && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/ && gemstone.rbSupportAvailable",
           "group": "3_refactor@2"
         },
         {
           "command": "gemstone.explorer.extractSuperclass",
-          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/ && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/ && gemstone.rbSupportAvailable",
           "group": "3_refactor@3"
         },
         {
           "command": "gemstone.explorer.splitClass",
-          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/ && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/ && gemstone.rbSupportAvailable",
           "group": "3_refactor@4"
         },
         {
           "command": "gemstone.explorer.openHierarchyDefinition",
-          "when": "view == gemstoneExplorerClassHierarchy && viewItem == explorerHierClass",
+          "when": "view == gemstoneExplorerClassHierarchy && viewItem =~ /^explorerHierClass(\\.test(\\.running|\\.debugging)?)?$/",
           "group": "inline@1"
         },
         {
           "command": "gemstone.explorer.openHierarchyComment",
-          "when": "view == gemstoneExplorerClassHierarchy && viewItem == explorerHierClass",
+          "when": "view == gemstoneExplorerClassHierarchy && viewItem =~ /^explorerHierClass(\\.test(\\.running|\\.debugging)?)?$/",
           "group": "inline@2"
         },
         {
           "command": "gemstone.explorer.renameClass",
-          "when": "view == gemstoneExplorerClassHierarchy && viewItem == explorerHierClass && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClassHierarchy && viewItem =~ /^explorerHierClass(\\.test(\\.running|\\.debugging)?)?$/ && gemstone.rbSupportAvailable",
           "group": "inline@3"
         },
         {
           "command": "gemstone.explorer.classHistory",
-          "when": "view == gemstoneExplorerClassHierarchy && viewItem == explorerHierClass && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClassHierarchy && viewItem =~ /^explorerHierClass(\\.test(\\.running|\\.debugging)?)?$/ && gemstone.rbSupportAvailable",
           "group": "3_refactor@1"
         },
         {
           "command": "gemstone.explorer.insertSuperclass",
-          "when": "view == gemstoneExplorerClassHierarchy && viewItem == explorerHierClass && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClassHierarchy && viewItem =~ /^explorerHierClass(\\.test(\\.running|\\.debugging)?)?$/ && gemstone.rbSupportAvailable",
           "group": "3_refactor@2"
         },
         {
           "command": "gemstone.explorer.extractSuperclass",
-          "when": "view == gemstoneExplorerClassHierarchy && viewItem == explorerHierClass && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClassHierarchy && viewItem =~ /^explorerHierClass(\\.test(\\.running|\\.debugging)?)?$/ && gemstone.rbSupportAvailable",
           "group": "3_refactor@3"
         },
         {
           "command": "gemstone.explorer.splitClass",
-          "when": "view == gemstoneExplorerClassHierarchy && viewItem == explorerHierClass && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClassHierarchy && viewItem =~ /^explorerHierClass(\\.test(\\.running|\\.debugging)?)?$/ && gemstone.rbSupportAvailable",
           "group": "3_refactor@4"
         },
         {
           "command": "gemstone.generateGrailStub",
-          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/",
           "group": "2_generate@1"
         },
         {
           "command": "gemstone.generateGrailStub",
-          "when": "view == gemstoneExplorerClassHierarchy && viewItem == explorerHierClass",
+          "when": "view == gemstoneExplorerClassHierarchy && viewItem =~ /^explorerHierClass(\\.test(\\.running|\\.debugging)?)?$/",
           "group": "2_generate@1"
         },
         {
           "command": "gemstone.explorer.removeClass",
-          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/",
           "group": "inline@9"
         },
         {
           "command": "gemstone.explorer.removeClass",
-          "when": "view == gemstoneExplorerClassHierarchy && viewItem == explorerHierClass",
+          "when": "view == gemstoneExplorerClassHierarchy && viewItem =~ /^explorerHierClass(\\.test(\\.running|\\.debugging)?)?$/",
           "group": "inline@9"
         },
         {
@@ -2877,7 +3042,7 @@
         "when": "gemstone.hasActiveSession"
       },
       {
-        "command": "gemstone.omniSearch",
+        "command": "gemstone.search",
         "key": "ctrl+shift+a",
         "mac": "cmd+shift+a",
         "when": "gemstone.hasActiveSession && !terminalFocus"

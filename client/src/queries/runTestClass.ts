@@ -2,11 +2,14 @@ import { QueryExecutor } from './types';
 import { classLookupOrRaiseExpr, splitLines } from './util';
 import { TestRunResult } from './runTestMethod';
 
-export function runTestClass(
-  execute: QueryExecutor,
-  className: string,
-  dictName?: string,
-): TestRunResult[] {
+/**
+ * The Smalltalk for running a whole test class, and the parse of what it
+ * answers, are exported separately from the blocking `runTestClass` below so a
+ * caller can run the same code non-blocking (see sunitQueries.runTestClassNb).
+ * A test can run for minutes, and the synchronous GCI call freezes the whole
+ * extension host for the duration — which is also why nothing could interrupt it.
+ */
+export function runTestClassCode(className: string, dictName?: string): string {
   // Resolve the class dictionary-scoped (when dictName is given) rather than
   // by bare name. Two distinct TestCase subclasses can share a name across
   // dictionaries; bare-name `objectNamed:` would silently run only the
@@ -61,7 +64,10 @@ result errors do: [:each |
   captureMessage value: each.
   ws lf].
 ws contents encodeAsUTF8`;
-  const data = execute(code);
+  return code;
+}
+
+export function parseTestClassResults(data: string, className: string): TestRunResult[] {
   return splitLines(data).map((line) => {
     const parts = line.split('\t');
     return {
@@ -72,4 +78,12 @@ ws contents encodeAsUTF8`;
       durationMs: 0,
     };
   });
+}
+
+export function runTestClass(
+  execute: QueryExecutor,
+  className: string,
+  dictName?: string,
+): TestRunResult[] {
+  return parseTestClassResults(execute(runTestClassCode(className, dictName)), className);
 }

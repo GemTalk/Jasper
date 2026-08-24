@@ -1,5 +1,5 @@
 /**
- * Command entry point for Omni Search (`gemstone.omniSearch`).
+ * Command entry point for GemStone Search (`gemstone.search`).
  *
  * This is the thin wiring layer: resolve the active session, build the session-bound providers +
  * result-activation handlers (the only place that touches `vscode`, the SystemBrowser and the
@@ -9,6 +9,7 @@
  */
 import * as vscode from 'vscode';
 import { SessionManager, ActiveSession } from '../sessionManager';
+import { logWarning } from '../gciLog';
 import {
   defaultQueryExecutorUsing,
   sendersOf,
@@ -89,20 +90,30 @@ export function buildOmniHandlers(openOptions?: OmniOpenOptions): OmniActionHand
     revealDictionary(a) {
       // Cascade the Explorer to the named dictionary and select its row (the command resolves the
       // symbol-list index and reveals it — a bare pane `.focus` would not select the dictionary).
-      void vscode.commands.executeCommand('gemstone.explorer.revealDictionary', a.dictName);
+      // Pass the result's own session so the reveal targets it, not whatever session is selected now
+      // (same as openClass/openMethod) — otherwise switching sessions after a search lands you in the
+      // wrong session's data.
+      void vscode.commands.executeCommand(
+        'gemstone.explorer.revealDictionary',
+        a.dictName,
+        a.sessionId,
+      );
     },
     revealGlobal(a) {
       // Jump to the class of the global's value (e.g. Transcript → its stream class) — more useful
       // than landing in the whole dictionary. findClass resolves the class's home dict + reveals it.
-      void vscode.commands.executeCommand('gemstone.explorer.findClass', a.className);
+      // Session-scoped for the same reason as revealDictionary above.
+      void vscode.commands.executeCommand('gemstone.explorer.findClass', a.className, a.sessionId);
     },
     revealCategory(a) {
       // Select the category's home dictionary, then select + reveal the category node (and filter the
-      // classes pane to it) — not just land in the dictionary.
+      // classes pane to it) — not just land in the dictionary. Session-scoped for the same reason as
+      // revealDictionary above.
       void vscode.commands.executeCommand(
         'gemstone.explorer.revealCategory',
         a.dictName,
         a.category,
+        a.sessionId,
       );
     },
   };
@@ -116,12 +127,30 @@ export function resolveReferencesUsing(
   return (result) => {
     const req = referenceRequestFor(result);
     if (!req) return null;
-    const rows =
-      req.kind === 'senders'
-        ? sendersOf(session, req.selector, req.environmentId)
-        : referencesToObject(session, req.className, req.environmentId);
+    // Senders and references can live in ANY method environment, so sweep 0..maxEnvironment the same
+    // way the gemstone.sendersOfSelector / implementorsOfSelector commands do — a single env-0 query
+    // silently misses every hit in environment >= 1 on a multi-environment stone. Dedup by
+    // class/selector keeping the lowest-environment copy, and carry each surviving row's environment
+    // into its open action so it opens where it was found. (maxEnvironment defaults to 0, so the common
+    // single-environment case stays exactly one round trip.)
+    const maxEnv = vscode.workspace.getConfiguration('gemstone').get<number>('maxEnvironment', 0);
+    const seen = new Set<string>();
+    const results: OmniResult[] = [];
+    for (let env = 0; env <= maxEnv; env++) {
+      const rows =
+        req.kind === 'senders'
+          ? sendersOf(session, req.selector, env)
+          : referencesToObject(session, req.className, env);
+      for (const r of methodRowsToResults(rows, session.id, 'methods', env)) {
+        const a = r.action;
+        const key = a.kind === 'openMethod' ? `${a.className}|${a.isMeta}|${a.selector}` : r.label;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        results.push(r);
+      }
+    }
     const target = req.kind === 'senders' ? req.selector : req.className;
-    return { title: req.title, target, results: methodRowsToResults(rows, session.id) };
+    return { title: req.title, target, results };
   };
 }
 
@@ -146,6 +175,9 @@ export function buildProviders(session: ActiveSession, enabled: readonly string[
       session.id,
       (symbolExpr) => literalSymbolReferences(exec, symbolExpr),
       (text, ignoreCase) => stringLiteralReferences(exec, text, ignoreCase),
+      // Surface a real runner failure (GCI drop / aborted transaction) to the durable log instead of
+      // letting it masquerade as "no results". A bare string, so the thunk is all we need.
+      (msg) => logWarning(msg),
     ),
     createCategoriesProvider(session.id, () => getAllClassCategories(exec)),
   ];
@@ -210,7 +242,7 @@ export function buildViewContextResolver(
             ),
           ),
         previewSource: buildPreviewSource(session),
-        onError: (message) => vscode.window.showErrorMessage(`Omni Search: ${message}`),
+        onError: (message) => vscode.window.showErrorMessage(`GemStone Search: ${message}`),
       },
     };
   };
@@ -252,7 +284,7 @@ export async function runOmniSearch(
           ),
         ),
       previewSource: buildPreviewSource(session),
-      onError: (message) => vscode.window.showErrorMessage(`Omni Search: ${message}`),
+      onError: (message) => vscode.window.showErrorMessage(`GemStone Search: ${message}`),
     });
     return;
   }
@@ -264,7 +296,40 @@ export async function runOmniSearch(
 /** globalState flag: the one-time "Ctrl/Cmd+Shift+A opens GemStone Search" tip has been shown. */
 const SEARCH_TIP_SHOWN_KEY = 'gemstone.gemstoneSearchTipShown';
 
-/** The disposable for the Omni Search registration, plus hooks the extension calls when the image
+/**
+ * Reveal the search panel after a login, waiting on the signals the view actually depends on instead of
+ * guessing how long the workbench needs.
+ *
+ * Two things must have happened before the panel can appear, and each has a signal to wait on:
+ *
+ * 1. `gemstone.hasActiveSession` — the view's `when` clause — must be true. `SessionManager.selectSession`
+ *    fires `onDidChangeSelection` BEFORE it sets that key, so a reveal driven straight off the event
+ *    finds no view to show. Asserting the key here is a stopgap for a race that belongs to the session
+ *    manager: it should start the write before it fires the event and hand listeners something to await,
+ *    which would fix every consumer of the key rather than this one. Deferred to a follow-up — it changes
+ *    ordering for code well outside the search feature. The write is idempotent, so asserting it costs
+ *    nothing beyond awaiting the value we already expect.
+ * 2. The workbench must have instantiated the view, which can lag the reveal even when the `when` clause
+ *    was true throughout. `focus()` waits on the view's own resolve event and reports whether THIS reveal
+ *    landed, so a reveal that never lands is logged rather than swallowed. The shortcut and status-bar
+ *    button still work, so it is a warning, not an error.
+ *
+ * The previous version slept a flat 400 ms and hoped, then briefly polled `focus()`; both were guesses
+ * about a duration that has an event behind it.
+ */
+export async function revealPanelAfterLogin(
+  viewProvider: Pick<OmniSearchViewProvider, 'focus'>,
+): Promise<boolean> {
+  await vscode.commands.executeCommand('setContext', 'gemstone.hasActiveSession', true);
+  if (await viewProvider.focus()) return true;
+  logWarning(
+    'GemStone Search: the search panel did not appear after login — the view never resolved. ' +
+      `Open it with ${OMNI_OPEN_KEY_HINT} or the GemStone Search button in the status bar.`,
+  );
+  return false;
+}
+
+/** The disposable for the GemStone Search registration, plus hooks the extension calls when the image
  *  changes so an open search stays current: a local class compile, a class REMOVAL, and a session sync
  *  (commit/abort/file-in). All forward to whichever host is live (the docked panel view and/or the
  *  Spotter). */
@@ -290,7 +355,7 @@ export function registerOmniSearch(
   // is active (the shortcut's own `when`).
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   status.text = '$(search-fuzzy) GemStone Search';
-  status.command = 'gemstone.omniSearch';
+  status.command = 'gemstone.search';
   status.tooltip = new vscode.MarkdownString(
     `Search classes, methods, globals, source, literals & categories.\n\nPress **${OMNI_OPEN_KEY_HINT}** from anywhere.`,
   );
@@ -311,7 +376,7 @@ export function registerOmniSearch(
         'Open now',
       )
       .then((pick) => {
-        if (pick === 'Open now') void vscode.commands.executeCommand('gemstone.omniSearch');
+        if (pick === 'Open now') void vscode.commands.executeCommand('gemstone.search');
       });
   };
 
@@ -327,10 +392,11 @@ export function registerOmniSearch(
       const ui = vscode.workspace
         .getConfiguration('gemstone.omniSearch')
         .get<string>('ui', 'panel');
-      // Defer the reveal: `selectSession` fires THIS event BEFORE it sets the `gemstone.hasActiveSession`
-      // context that gates the view's `when` clause, so focusing synchronously finds no view to reveal.
-      // A short delay lets the context propagate (and the login flow settle) before we switch tabs.
-      if (ui === 'panel') setTimeout(() => void viewProvider.focus(), 400);
+      // `selectSession` fires THIS event BEFORE it sets the `gemstone.hasActiveSession` context that
+      // gates the view's `when` clause, so revealing right here finds no view. `revealPanelAfterLogin`
+      // waits on the context key and on the view resolving, rather than on a timer, and reports a
+      // reveal that never lands.
+      if (ui === 'panel') void revealPanelAfterLogin(viewProvider);
     }
     hadSession = nowActive;
   };
@@ -349,7 +415,7 @@ export function registerOmniSearch(
     vscode.window.registerWebviewViewProvider(OMNI_VIEW_ID, viewProvider, {
       webviewOptions: { retainContextWhenHidden: true },
     }),
-    vscode.commands.registerCommand('gemstone.omniSearch', () =>
+    vscode.commands.registerCommand('gemstone.search', () =>
       runOmniSearch(sessionManager, viewProvider),
     ),
   );

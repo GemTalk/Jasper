@@ -11,7 +11,9 @@ moves another slice.
 ## What is here, and why only this
 
 `__tests__/` holds integration tests for the **raw bindings** only — the wrappers that are
-1:1 with a GCI C entry point (`GciTs*`, plus the session-free `Gci*` host utilities).
+1:1 with a GCI C entry point (`GciTs*`, plus the session-free `Gci*` host utilities), with one
+deliberate exception: the login wrappers force `GCI_LOGIN_QUIET` into `loginFlags` — see
+`quietedLoginFlags` in `client/src/gciLibrary.ts`.
 
 The narrow scope is deliberate. Raw-binding tests can move without touching the wrapper
 code, which keeps this first step reviewable. The ergonomic layer on top of the bindings,

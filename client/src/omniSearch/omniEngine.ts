@@ -1,5 +1,5 @@
 /**
- * Transport-agnostic Omni Search engine for the webview UIs (issue #378).
+ * Transport-agnostic GemStone Search engine for the webview UIs (issue #378).
  *
  * Both webview surfaces — the docked bottom-panel view (`omniSearchViewProvider.ts`) and the
  * editor-tab Spotter (`omniSearchPanel.ts`) — drive their search through this engine: hold the active
@@ -22,10 +22,19 @@ import {
   OmniCorpusChange,
   OmniProvider,
   OmniResult,
+  OmniTruncation,
+  OmniTruncationSink,
   changeCategoryId,
 } from './omniTypes';
-import { match, compareMatches } from './omniMatch';
+import { match, compareMatches, MatchMode } from './omniMatch';
 import { referenceRequestFor } from './references';
+
+/** A provider's truncation report plus the human scope name, so the webview can say WHICH scope was
+ *  capped and at what number without carrying a category table of its own. */
+export interface OmniViewTruncation extends OmniTruncation {
+  /** e.g. "Methods" — the category's display label. */
+  categoryLabel: string;
+}
 
 /** A single result row, flattened for the webview (no non-serialisable `action`). */
 export interface OmniViewRow {
@@ -63,14 +72,35 @@ export interface OmniViewData {
   shownCount: number;
   /** True when at least one category filled its cap — more results are available. */
   hasMore: boolean;
-  /** True once the cap has been jumped to "load all", so `shownCount` is the exact total (bounded
-   *  only by the providers' server fetch caps) rather than a capped subset. */
+  /** True when `shownCount` IS the total for this term — nothing was left unfetched. Requires both
+   *  that the cap was jumped to "load all" and that no provider hit its own fetch ceiling; see
+   *  `truncations`. Derived from the cap alone, this used to let the footer report a ceiling-truncated
+   *  slice as an exact count. */
   exact: boolean;
+  /** One entry per in-scope provider whose own server fetch ceiling bounded its results, so
+   *  `shownCount` is a floor and raising the display cap cannot reveal the rest. Empty = nothing was
+   *  cut off. Non-empty is never `exact`, and the view surfaces it as a visible notice naming the
+   *  scope and the number it stopped at. */
+  truncations: OmniViewTruncation[];
   /** True while showing a reference pivot (typing then filters these rows client-side). */
   pivot: boolean;
-  /** Breadcrumb title while pivoted (e.g. "Senders of printString"). */
+  /** Breadcrumb title while pivoted (e.g. "Senders of printString"). Just the title: the way out
+   *  travels separately, in `pivotHint`. */
   pivotTitle?: string;
+  /** How to leave the pivot, offered ALONGSIDE `pivotTitle` rather than glued into it, so each host
+   *  decides how to present it: the webview renders it as a quieter aside beside the breadcrumb, and a
+   *  host whose own chrome already shows an exit can simply ignore the field. Set only while pivoted;
+   *  the wording is `PIVOT_EXIT_HINT`. */
+  pivotHint?: string;
 }
+
+/** Carried beside the pivot breadcrumb (as `OmniViewData.pivotHint`) so the way OUT of a references
+ *  view is discoverable. The pivot replaces the whole result list and offers no visible exit
+ *  affordance, so a user who does not already know the gesture has to guess — clearing the box looks
+ *  like it should work and doesn't (an empty filter matches every reference row). Deliberately NOT
+ *  added to `ReferencePreview.title`: in `referencesInPreview` mode there is no pivot and Esc closes
+ *  the panel, so the hint would be false. */
+export const PIVOT_EXIT_HINT = 'Esc to go back';
 
 /** Short, singular per-row category tag (the flat list has no group header to carry the name). */
 const CATEGORY_TAG: Record<OmniCategoryId, string> = {
@@ -110,30 +140,47 @@ export interface OmniEngineDeps {
 }
 
 // "Load all" jumps the display cap here — big enough to mean "everything" in practice; the true
-// ceiling is each provider's own server fetch cap (a few hundred), so this never runs away.
-const LOAD_ALL_LIMIT = 100_000;
+// ceiling is each provider's own server fetch cap (a few hundred), so this never runs away. Because
+// that ceiling can bind BEFORE this cap does, reaching this value does not by itself mean the results
+// are complete — see `truncated`.
+export const LOAD_ALL_LIMIT = 100_000;
 
-/** The enabled providers in scope. Under the all-scope (`null`), explicit-only categories are
- *  excluded so heavyweight searches never fire on a plain keystroke. */
+/**
+ * The enabled providers in scope.
+ *
+ * Under the all-scope (`null`) two things are held back, for the same reason but by different
+ * authority: `explicitOnly` categories (Source/Literals/Categories) are held back BY DESIGN so
+ * heavyweight searches never fire on a plain keystroke, and `excludedFromAll` categories are held
+ * back BY THE USER, who decided a category's per-keystroke cost isn't worth it (Methods being the
+ * usual one — it queries the stone on every keystroke).
+ *
+ * Scoping directly to a category always runs it: excluding a category from "All" must never make it
+ * unreachable, which is exactly what the `categories` setting does and why it is not the same knob.
+ */
 export function providersInScope(
   providers: readonly OmniProvider[],
   scopeId: OmniCategoryId | null,
+  excludedFromAll: ReadonlySet<OmniCategoryId> = new Set(),
 ): OmniProvider[] {
-  if (scopeId === null) return providers.filter((p) => !p.category.explicitOnly);
+  if (scopeId === null)
+    return providers.filter((p) => !p.category.explicitOnly && !excludedFromAll.has(p.category.id));
   return providers.filter((p) => p.category.id === scopeId);
 }
 
-/** Run each in-scope provider and collect its results (each already ranked + capped). */
+/** Run each in-scope provider and collect its results (each already ranked + capped). Providers with
+ *  a server fetch ceiling of their own report through `reportTruncated` when that ceiling cut them
+ *  off, so the caller can tell a complete result set from a bounded slice. */
 export async function gatherResults(
   term: string,
   providers: readonly OmniProvider[],
   cfg: OmniConfig,
   token: OmniCancel,
+  reportTruncated?: OmniTruncationSink,
 ): Promise<OmniResult[]> {
   const all: OmniResult[] = [];
   for (const p of providers) {
     if (token.isCancelled) break;
-    const part = await p.search(term, cfg, token);
+    const part = await p.search(term, cfg, token, reportTruncated);
     all.push(...part);
   }
   return all;
@@ -251,23 +298,36 @@ export interface OmniEngine {
   setScope(scopeId: OmniCategoryId | null): Promise<OmniViewData | null>;
   /** Toggle case-sensitive matching; re-runs the current term. */
   toggleCase(): Promise<OmniViewData | null>;
+  /** Switch the match algorithm for this session; re-runs the current term. */
+  setMatchMode(mode: MatchMode): Promise<OmniViewData | null>;
   /** Grow the result cap by one page; re-runs the current term. */
   loadMore(): Promise<OmniViewData | null>;
   /** Jump the cap to everything (bounded by the server fetch caps); re-runs the current term. */
   loadAll(): Promise<OmniViewData | null>;
-  /** Pivot the list to a row's references/senders. Returns null if not referenceable / no resolver. */
+  /** Pivot the list to a row's references/senders. Returns null if not referenceable, if there is no
+   *  resolver, or if a newer call superseded this one while it resolved. */
   pivot(rowId: number): Promise<OmniViewData | null>;
   /** Leave the reference view and restore the prior search. */
   exitPivot(): Promise<OmniViewData | null>;
+  /** Replace the set of categories held back from the "All" fan-out; re-runs the current term.
+   *  `explicitOnly` ids are ignored (they are never in "All" anyway). */
+  setExcludedFromAll(ids: readonly OmniCategoryId[]): Promise<OmniViewData | null>;
   /** Load a row's references/senders for the sticky preview-pane list WITHOUT pivoting — the search
-   *  list and all search state are left intact. Returns null if not referenceable / no resolver. */
+   *  list and all search state are left intact. Returns null if not referenceable, if there is no
+   *  resolver, or if a newer reference load superseded this one while it resolved. */
   referencesFor(rowId: number): Promise<ReferencePreview | null>;
   /** The `OmniResult` for a reference row id from the last `referencesFor` (for opening its source). */
   referenceResultFor(refId: number): OmniResult | undefined;
   /** The `OmniResult` for a row id in the CURRENT view (for activation), or undefined. */
   resultFor(rowId: number): OmniResult | undefined;
-  /** Current UI state the panel needs to render chrome (scope, case, pivot). */
-  state(): { scopeId: OmniCategoryId | null; caseSensitive: boolean; pivot: boolean };
+  /** Current UI state the panel needs to render chrome (scope, case, pivot, All-scope exclusions). */
+  state(): {
+    scopeId: OmniCategoryId | null;
+    caseSensitive: boolean;
+    pivot: boolean;
+    excludedFromAll: OmniCategoryId[];
+    matchMode: MatchMode;
+  };
 }
 
 export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
@@ -276,7 +336,14 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
   let scopeId: OmniCategoryId | null = null;
   let lastRawValue = '';
   let caseSensitive = config.caseSensitive;
+  // The live match algorithm. Exactly parallel to `caseSensitive`: both change how the SAME corpus is
+  // matched, so both are worth trying mid-search rather than only in settings.json.
+  let matchMode = config.matchMode;
   let scopeLimit = config.maxResultsPerCategory;
+  // Categories the user holds back from the "All" fan-out. Seeded from settings, then owned by the
+  // panel's scope filter for the rest of the session — the toggle does NOT rewrite settings (same
+  // contract as `caseSensitive`), so a live experiment never edits the user's settings.json.
+  let excludedFromAll = new Set<OmniCategoryId>(config.excludedFromAll);
   // When non-null, the list shows the references/senders of a result (a "pivot"), not a live search.
   let pivot: ReferenceView | null = null;
   // The results backing the CURRENT view, indexed by row id.
@@ -284,10 +351,16 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
   // The reference rows from the last `referencesFor`, indexed by the preview list's row id. Kept
   // separate from `current` so loading references never disturbs the search list or its ids.
   let referenceRows: OmniResult[] = [];
+  // Ordering token for `referencesFor`, deliberately SEPARATE from `generation`: loading the preview
+  // list leaves the search alone, so a reference load must neither cancel an in-flight search nor be
+  // cancelled by one. All it has to supersede is an earlier reference load, whose slower resolve would
+  // otherwise land in `referenceRows` after a newer row's — see the guard in `referencesFor`.
+  let referenceGeneration = 0;
 
   const effectiveConfig = (): OmniConfig => ({
     ...config,
     caseSensitive,
+    matchMode,
     maxResultsPerCategory: scopeLimit,
   });
 
@@ -301,7 +374,10 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
     if (term.length === 0) return [...rows];
     const scored: OmniResult[] = [];
     for (const r of rows) {
-      const m = match(term, r.label, { mode: config.matchMode, caseSensitive });
+      // `matchMode`, not `config.matchMode`: the pivot filter has to honour a live algorithm change
+      // like every other match in the engine does, or switching modes would appear to do nothing
+      // while a references list is open.
+      const m = match(term, r.label, { mode: matchMode, caseSensitive });
       if (m) scored.push({ ...r, score: m.score, ranges: m.ranges });
     }
     scored.sort((a, b) =>
@@ -316,8 +392,11 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
       {
         hasMore: false,
         exact: true,
+        // The pivot shows a fully-loaded reference list, not a bounded provider fan-out.
+        truncations: [],
         pivot: true,
         pivotTitle: pivot?.title,
+        pivotHint: pivot ? PIVOT_EXIT_HINT : undefined,
       },
       // Reference rows are already the senders/references; don't offer a further pivot on them.
       () => ({ referenceable: false }),
@@ -331,6 +410,12 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
       current = filterPivot(pivot.results, rawValue.trim());
       return pivotView();
     }
+    // A new search supersedes any reference load already in flight: otherwise its rows would land in
+    // this search's preview under a row id that now points at a different result (ids are array
+    // indices), and `referenceResultFor` would then open from that stale list. A reference load
+    // started AFTER this point takes a newer token and is unaffected — a search and a later reference
+    // load stay independent (see the tests in "out-of-order reference and pivot results").
+    ++referenceGeneration;
     const term = rawValue.trim();
     // A genuinely new term restarts at the base cap: load-more/load-all raise `scopeLimit` for the
     // term in the box, but that must not leak into the next search (else every keystroke fans out at
@@ -343,7 +428,7 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
     if (term.length === 0) {
       ++generation;
       current = [];
-      return buildView([], { hasMore: false, exact: false, pivot: false }, () => ({
+      return buildView([], { hasMore: false, exact: false, truncations: [], pivot: false }, () => ({
         referenceable: false,
       }));
     }
@@ -353,8 +438,14 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
         return gen !== generation;
       },
     };
-    const inScope = providersInScope(providers, scopeId);
-    const results = await gatherResults(term, inScope, effectiveConfig(), token);
+    const inScope = providersInScope(providers, scopeId, excludedFromAll);
+    // Collected from any provider whose own server fetch ceiling bounded its results (today: methods).
+    // A non-empty list means the run can never be an exact total, however high the display cap goes.
+    const truncations: OmniViewTruncation[] = [];
+    const results = await gatherResults(term, inScope, effectiveConfig(), token, (t) => {
+      const label = OMNI_CATEGORIES.find((c) => c.id === t.categoryId)?.label ?? t.categoryId;
+      truncations.push({ ...t, categoryLabel: label });
+    });
     if (token.isCancelled) return null; // a newer call superseded this run
 
     // Offer "load more" whenever ANY category filled its cap (so it works in the all-scope too).
@@ -365,7 +456,14 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
     current = results;
     return buildView(
       results,
-      { hasMore, exact: scopeLimit >= LOAD_ALL_LIMIT, pivot: false },
+      // "Load all" alone does NOT make the count exact: a ceiling-truncated provider leaves rows
+      // unfetched that no cap can reach, so claim exactness only when nothing was cut off.
+      {
+        hasMore,
+        exact: scopeLimit >= LOAD_ALL_LIMIT && truncations.length === 0,
+        truncations,
+        pivot: false,
+      },
       referenceInfo,
       term,
     );
@@ -433,10 +531,23 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
     async setScope(newScope) {
       scopeId = newScope;
       scopeLimit = config.maxResultsPerCategory; // a fresh scope starts at the base cap
+      // A scope belongs to the SEARCH, not to a references view, so picking one LEAVES the pivot.
+      // Every pivot row is a method (`methodRowsToResults`), so there is nothing meaningful for a
+      // Classes/Globals/Dictionaries filter to do to them. Without this the tab lit up as active
+      // while `runSearch`'s pivot branch returned the unchanged reference rows — the chrome claimed a
+      // filter that was never applied — and the scope then took effect invisibly on the way out,
+      // narrowing a restored search the user never asked to narrow.
+      pivot = null;
       return runSearch(lastRawValue);
     },
     async toggleCase() {
       caseSensitive = !caseSensitive;
+      return runSearch(lastRawValue);
+    },
+    async setMatchMode(mode) {
+      matchMode = mode;
+      // Deliberately does NOT reset the page cap, matching `toggleCase`: changing how the same corpus
+      // is matched is not a new question, so if you had loaded more you keep it.
       return runSearch(lastRawValue);
     },
     async loadMore() {
@@ -451,8 +562,14 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
       if (!deps.resolveReferences) return null;
       const result = current[rowId];
       if (!result) return null;
-      ++generation; // supersede any in-flight search so its late result can't land over the pivot
+      // Take a token of our own as we supersede in-flight work. Bumping `generation` stops an older
+      // search from landing over this pivot, but the resolve below can be slow (senders of a common
+      // selector), and anything the user does while we wait — a new term, another pivot — bumps the
+      // generation again. Without re-checking afterwards this call would snap the view back to a pivot
+      // that has already been left behind.
+      const gen = ++generation;
       const view = await deps.resolveReferences(result);
+      if (gen !== generation) return null; // a newer call superseded this pivot
       if (!view) return null; // not referenceable — leave the current list as-is
       pivot = view;
       current = view.results;
@@ -463,20 +580,43 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
       pivot = null;
       return runSearch(lastRawValue);
     },
+    async setExcludedFromAll(ids) {
+      excludedFromAll = new Set(ids.filter((id) => CATEGORY_BY_ID[id]?.explicitOnly !== true));
+      // Re-running with the SAME term must not inherit a raised cap from a previous load-more, and
+      // `runSearch` only resets the cap when the term itself changes — so reset it here, as setScope
+      // does. Narrowing "All" is a fresh question, not more of the last answer.
+      scopeLimit = config.maxResultsPerCategory;
+      return runSearch(lastRawValue);
+    },
     async referencesFor(rowId) {
       if (!deps.resolveReferences) return null;
       const result = current[rowId];
       if (!result) return null;
+      // `referenceRows` is the single array every preview row id indexes into, so a slow load must not
+      // land after a newer one: arrowing from row A to row B while A is still resolving would leave B's
+      // list on screen over A's rows, and `referenceResultFor` would then open the wrong method. A new
+      // search bumps `referenceGeneration` too (see `runSearch`), so a load the previous term left in
+      // flight is discarded rather than dropped over the new results.
+      const gen = ++referenceGeneration;
       const view = await deps.resolveReferences(result);
+      if (gen !== referenceGeneration) return null; // a newer reference load superseded this one
       if (!view) return null; // not referenceable
       referenceRows = view.results;
-      const built = buildView(referenceRows, { hasMore: false, exact: true, pivot: false }, () => ({
-        referenceable: false,
-      }));
+      const built = buildView(
+        referenceRows,
+        { hasMore: false, exact: true, truncations: [], pivot: false },
+        () => ({ referenceable: false }),
+      );
       return { title: view.title, highlightTerm: view.target, rows: built.rows };
     },
     referenceResultFor: (refId) => referenceRows[refId],
     resultFor: (rowId) => current[rowId],
-    state: () => ({ scopeId, caseSensitive, pivot: pivot !== null }),
+    state: () => ({
+      scopeId,
+      caseSensitive,
+      pivot: pivot !== null,
+      excludedFromAll: [...excludedFromAll],
+      matchMode,
+    }),
   };
 }

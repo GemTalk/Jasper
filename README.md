@@ -242,8 +242,14 @@ The extension integrates with VS Code's native Test Explorer:
 
 - Auto-discovers all `TestCase` subclasses and their `test*` methods
 - Run individual tests or entire test classes
+- Debug a test, or a whole class, under the GemStone debugger — a debug run omits SUnit's exception handler, so a failing test suspends on a live stack instead of being recorded and discarded
 - Pass/fail/error results with failure messages
-- Test items link to method source
+- Stop a long-running test: the Testing view's stop button, the ■ that replaces a row's ▶ in the Explorer while it runs, or the Cancel on the progress notification. First press asks the gem to stop at a safe point; a second interrupts it
+- Test items link to method source, and a run/status icon appears in the editor gutter beside an open test class or test method
+- Run from the GemStone Explorer too: a ▶ on a test class row (Classes or Hierarchy pane) or a test method row (Methods pane), each showing the outcome of its last run
+- Clicking a row in the Testing view opens the code without moving the Explorer; **Reveal in GemStone Explorer** — the ⊟ on the row, or its context menu — navigates the panes when you want it
+- The reverse too: **Reveal in Testing View** on a test class or test method row in the Explorer selects it in the Testing view
+- **Clear Test Results** wipes the outcome icons — in the Explorer and in the Testing view both — when a run in progress is hard to see. Right-click a test row in either place, or use the `…` overflow on the Classes / Hierarchy / Methods pane headers, or the Command Palette
 
 ### Jupyter Notebooks (Smalltalk and Grail Python)
 

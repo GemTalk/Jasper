@@ -1,4 +1,4 @@
-# Omni Search (issue #378) — design
+# GemStone Search (issue #378) — design
 
 Global "search anything browsable" for the GemStone IDE — the Jasper answer to Pharo's
 **Spotter** and IntelliJ's **Search Everywhere**, built to feel native to a VS Code user.
@@ -9,6 +9,19 @@ Global "search anything browsable" for the GemStone IDE — the Jasper answer to
 > and the editor-tab **Spotter** (`ui: "spotter"`). Both drive the single, `vscode`-free
 > `omniEngine.ts`, so there is exactly one search path. This document describes the shipped design;
 > where the QuickPick shaped a decision it's called out as origin, not current behaviour.
+
+> **Name & home (settled).** The feature is **GemStone Search** everywhere — the command title, the
+> settings-page section, the panel/Spotter title, the bottom-panel tab, the status-bar button, error
+> toasts, tooltips, and throughout this document. The name keeps the GemStone brand on the panel strip
+> next to Terminal / Output, where a generic name would say nothing about which extension owns it. The
+> code still uses the `omniSearch` identifier prefix — the `client/src/omniSearch/` module, the
+> `OmniSearch*` classes, and the `gemstone.omniSearch.*` setting keys — because those keys live in
+> users' `settings.json` and renaming them would break existing configuration for no user-visible gain.
+> The command itself was renamed to `gemstone.search` (commands are not persisted in user config, so the
+> old `omniSearch` name there was pure internal drift with no compatibility cost). Treat `omniSearch` as
+> an internal identifier, not a second name. This design note **stays in the repo** next to the code it describes rather than moving to an
+> external support doc, so it is reviewed and kept in sync in the same change as the code (both
+> decisions resolve #428 / [#447](https://github.com/GemTalk/Jasper/issues/447)).
 
 ## Prior art that shaped the design
 
@@ -44,7 +57,7 @@ Global "search anything browsable" for the GemStone IDE — the Jasper answer to
 
 2. **Provider-per-category model** (mirrors Spotter processors). `OmniProvider` = `{ category,
    prime?, search(query, cfg, token) }`. Providers in the default fan-out: **Classes, Methods,
-   Dictionaries, Globals**; plus the **explicit-only** **Source, Literals, Categories** (see #3).
+   Dictionaries, Globals**; plus the **explicit-only** **Source, Literals, Class Categories** (see #3).
    Adding a category is a new provider — no engine change. (An Open Editors provider shipped initially
    but was **dropped** — the open-tab list is tiny and VS Code's own Open Editors view covers it.)
 
@@ -77,9 +90,27 @@ Global "search anything browsable" for the GemStone IDE — the Jasper answer to
      - _Literals_ — find methods that use a value **as a literal** (not as a message send, not merely
        as source text). Two forms: a **symbol** (`#at:put:`) via `literalSymbolReferences`, and a
        **string** via `stringLiteralReferences`. The symbol branch is shape-gated by `isSymbolLiteral`
-       so a raw expression is never eval'd against the stone (#428 #5).
-     - _Categories_ — class-category names; a whole-image scan (`getAllClassCategories`) so it
-       **lazy-loads on first search**, not on open.
+       so a raw expression is never eval'd against the stone.
+     - _Class Categories_ — class-category names; a whole-image scan (`getAllClassCategories`) so it
+       **lazy-loads on first search**, not on open. (Tab label "Class Categories"; scope id
+       `categories`, kept because it is a value in users' `settings.json`. The in-code
+       `OMNI_CATEGORIES` array holds *all* scopes, not just this one — a known name collision left
+       as-is rather than renamed, since the scope id is the part that cannot safely move.)
+
+     ⚠️ Being excluded from the all-scope fan-out has a UX cost that has to be paid for explicitly: an
+     All-scope search silently returns nothing for a term only those scopes could find, so "no results"
+     is indistinguishable from "not in the image". Reproduced with `no such element` — 4 hits under
+     Source, 0 under All. So while the All scope is active **and** something is typed, the view shows a
+     hint under the field naming the skipped scopes, each one a button that switches to it:
+     `Not searched here: Source · Literals · Class Categories — click one to search it` (`updateScopeHint` in
+     `omniSearchView.js`). It stays silent when a heavy scope is already active (its own
+     placeholder hint applies then), when the field is empty, when the user has disabled the heavy
+     scopes via the `categories` setting, and **during a references pivot** — the pivot's rows are a
+     fixed list of senders already fetched from the stone, not a search, so nothing is being skipped;
+     clicking a scope name there would only start a fresh search and silently discard the pivot (this
+     mirrors the placeholder, which `resultsMessage` already blanks for a pivot). Enter was deliberately
+     left alone — it activates the selected row, and making it scope-dependent would trade one surprise
+     for another.
 
 4. **Pluggable, savable match algorithm** (the issue asks for this). A pure matcher (`omniMatch.ts`)
    with modes `fuzzy` (subsequence, default) | `substring` | `prefix`, plus case-sensitivity — read
@@ -88,20 +119,47 @@ Global "search anything browsable" for the GemStone IDE — the Jasper answer to
    every candidate, drop non-matches, sort by the matcher's total order, cap to `maxResultsPerCategory`.
 
 5. **Trigger.** VS Code cannot bind _double-tap-Shift_ (keybindings are chords, not double-taps), so we
-   ship a command `gemstone.omniSearch` + a default keybinding **`ctrl+shift+a`** (`cmd+shift+a` on
+   ship a command `gemstone.search` + a default keybinding **`ctrl+shift+a`** (`cmd+shift+a` on
    macOS), `when: gemstone.hasActiveSession && !terminalFocus` (a Jasper window, not the terminal),
    configurable, plus a palette entry. A single simultaneous chord (not a sequential `ctrl+k` two-step)
    that stays clear of the notebook cell-run gestures (`shift+enter` / `ctrl+enter` / `alt+enter`) — an
-   earlier `shift+enter` default shadowed the notebook's run-cell (#428 #2). The double-Shift aspiration
+   earlier `shift+enter` default shadowed the notebook's run-cell. The double-Shift aspiration
    is a follow-up (would need a fragile keystroke hack).
 
 6. **Reference Search (Wishlist Task 1).** A result can pivot to "who references it": a **method** row →
    **senders** of its selector, a **class** row → **references to** it (via the shared
-   `sendersOf` / `referencesToObject` queries). Two entry points: the per-row **↗ button** and
+   `sendersOf` / `referencesToObject` queries). The pivot sweeps every method environment
+   (`0..maxEnvironment`) and dedups by class/selector — matching the `sendersOfSelector` /
+   `implementorsOfSelector` commands — so hits in a non-zero environment aren't missed, and each opens
+   in the environment it was found in. Two entry points: the per-row **↗ button** and
    **Alt+Enter** on the highlighted row. `references.ts` is the pure glue (no `vscode`, no session).
    The setting **`referencesInPreview`** (default `true`) shows the references as a sticky list in the
    preview pane, leaving the results list in place; set it `false` for the classic pivot that replaces
    the whole list (backed out with ← / Esc).
+
+6a. **A scope belongs to the search, not to a references view.** The pivot is not a search: it
+   is a fixed list of rows already fetched from the stone, and **every one of them is a method**
+   (`methodRowsToResults`), so a Classes/Globals/Dictionaries filter has nothing meaningful to do to
+   them. Picking a scope while pivoted therefore **leaves the pivot** and applies that scope to the
+   restored search. The rejected alternatives, for the record: *filtering the pivot rows by scope*
+   (meaningless — one category, so every tab is either a no-op or empties the list) and *making the
+   tabs inert while pivoted* (honest, but it hides a control rather than giving it a meaning, and it
+   lives in the webview rather than the engine). What must never happen again is the original
+   behaviour: the tab lit up as active while the list was left untouched, so the chrome advertised a
+   filter that was never applied — and the scope then took effect **invisibly** when the pivot was
+   dismissed, narrowing a search the user never asked to narrow.
+   **The pivot names its own exit.** Its only ways out are `Esc` and `←` (the latter only with the
+   caret at the start of the field), neither of them visible, and clearing the box does *not* escape —
+   an empty filter matches every reference row, so clearing widens the list instead. Rather than
+   overload the clear gesture, the breadcrumb carries the exit: `PIVOT_EXIT_HINT` ("Esc to go back")
+   travels as its own field, **`OmniViewData.pivotHint`**, beside the plain `pivotTitle` — *not*
+   concatenated into it. That keeps the wording and the styling a **view** decision: the webview renders
+   the hint as a quieter aside (`.crumb-hint`) next to the title, and a host whose own chrome already
+   shows a way out ignores the field instead of having to split a string on its separator. It is
+   deliberately **not** added to `ReferencePreview.title` — in `referencesInPreview` mode there is no
+   pivot and `Esc` closes the panel, so the same words there would be false. The hint is only as visible
+   as the breadcrumb, which needs the *explicit* `display: block` that `setBreadcrumb` sets — clearing
+   the inline style falls back to the stylesheet's `display: none` and the whole breadcrumb disappears.
 
 7. **Scope filtering** ("filter buttons on top", per the issue). The webview renders one **labeled tab**
    per enabled category plus an "All" tab; picking one narrows the search to that category and re-runs
@@ -141,7 +199,10 @@ New shared query (if needed) lives under `client/src/queries/` per repo conventi
 - `caseSensitive`: boolean (default `false`).
 - `categories`: which providers are enabled (default: all seven —
   `classes, methods, dictionaries, globals, source, literals, categories`).
-- `maxResultsPerCategory`: number (default `20`).
+- `maxResultsPerCategory`: number (default `20`) — how many rows are **shown** per scope.
+- `maxServerScan`: number (default `200`, clamped 20–20 000) — how many matches a scope's
+  **server-side scan** collects before it stops. A different bound from `maxResultsPerCategory`; see
+  "Two different limits bound a result set" below.
 - `debounceMs`: number (default `120`).
 - `methodMinQueryLength`: number (default `2`) — min chars before the Methods provider queries the stone.
 - `referencesInPreview`: boolean (default `true`) — references as a sticky preview list vs a full-list pivot.
@@ -165,7 +226,7 @@ Behaviour decisions (Eric's review of the first webview cut):
   Each row wears a small **category tag** (Class / Method / Global / …) so you still see what it is.
 - **Scroll resets to the top** on a fresh query / clear / scope / case change, but NOT on Load-more.
 - **The result cap resets** to the base `maxResultsPerCategory` on a genuine term change (and on clear),
-  so a raised "Load all" cap never silently persists into the next search (#428 #1/#6/#7).
+  so a raised "Load all" cap never silently persists into the next search.
 - **Activation:** in the Spotter, unpinned Enter opens in the active group and dismisses it; pinned,
   Enter opens beside and Ctrl+Enter opens beside keeping the field focused. Alt+Enter → references.
 
@@ -177,6 +238,123 @@ Behaviour decisions (Eric's review of the first webview cut):
 - **#387 items 1–5 (funnel=filter, magnifier=find, wording):** the "find" affordance #387 wants to
   free up is the same entry point #377 adds. Kept out of this branch; noted for the #377/#387 work.
 
+## Two different limits bound a result set
+
+The display cap (`maxResultsPerCategory`, raised by Load-more/Load-all) is not the only bound — the
+**Methods** scope also has a server-side one. `searchSelectors` short-circuits the moment it has
+`limit` matches, and `methodsProvider` clamps that limit to `maxServerScan` (default 200) however high
+the display cap goes. So with the default a broad selector term can never yield more than 200 rows,
+Load-all included. That ceiling is a **setting** rather than a constant precisely because the honest
+answer to "I want more than 200" is "raise the scan, and accept a slower search".
+
+The two bounds mean different things to the user, so a provider reports when its OWN ceiling was the
+one that bound it (`OmniTruncationSink`, an optional 4th argument to `OmniProvider.search`, carrying
+the category and the number it stopped at; providers that scan exhaustively and cap client-side never
+report). The engine collects those into `OmniViewData.truncations`:
+
+- **display cap reached** → `hasMore`; more rows are one Load-more away → `N+ shown` + the Load buttons.
+- **fetch ceiling reached** → a `truncations` entry; that scope's rows are a floor and raising the cap
+  cannot reveal more *of it* → `N+ shown` **and a visible note beside the count** naming the scope and
+  its limit: `⚠ Methods scan capped at 200 — narrow the search for the rest`. The Load buttons are
+  **not** hidden — `updateFooter` keys them off `hasMore && !exact` alone, deliberately: they raise the
+  display cap for the whole view, which still widens any *other* in-scope provider that has more to
+  show; only the capped scope can't grow, and the note (not a vanished button) is what says so.
+- **neither** → `exact`; `shownCount` is the real total → `N results`.
+
+There is a third case, and getting it wrong was a bug worth remembering. The server slice is
+`min(maxResultsPerCategory × SERVER_OVERFETCH, maxServerScan)`, so the **over-fetch** can be the
+tighter bound — with the cap at 60 and `maxServerScan` at 400 the scan is `min(240, 400)` = 240. Those
+results are incomplete, so the count keeps its `+`, but this is NOT a wall: Load-more raises the cap
+and genuinely widens the scan (240 → 400). So `OmniTruncation` carries `atCeiling`, and:
+
+- the **`+`** on the count is driven by any truncation;
+- the **note** only appears for `atCeiling` entries — warning while "Load more" is right there and
+  working would tell the user to narrow their search for no reason;
+- the note shows **`ceiling`** (the configured `maxServerScan`), never `scanned`. Reporting `scanned`
+  displayed a limit the user never set and made the number climb on every Load-more — Eric saw
+  "capped at 240" become "capped at 400".
+
+Footer layout: the note is `flex: 1 1 auto` and is the footer's only slack absorber, so it stays a flex
+item at all times and the view toggles **`visibility`**, never `display`. Removing it from the flow
+hands the slack to another item and drops one of the footer's `10px` gaps, which slid the Load buttons
+sideways whenever the note appeared — and both can be on screen together.
+
+`exact` therefore requires Load-all **and** an empty `truncations`. Deriving it from the cap alone was
+the bug behind the truncation notice: at the ceiling the footer printed a bare `200 results` over a
+slice that had been cut off, with nothing on screen saying the scan had given up rather than run out.
+
+Because the cap is reported per scope rather than as one boolean, any provider that gains a server
+ceiling later is surfaced by the same note with no view changes.
+
+⚠️ **`resultsMessage` (omniSearchShared.ts) lists the view's fields one by one instead of spreading
+it**, so a new `OmniViewData` field reaches the engine but never the webview. That is how the
+truncation notice first shipped broken — the flag was computed and never forwarded, so the count still
+read `200 results`. A test in `omniSearchShared.test.ts` now fails if a field is added without forwarding.
+
+## Controlling what a search costs (#428 items #40 / #41)
+
+Two panel controls let the user decide what a search spends, instead of that being fixed in the code
+or reachable only by editing settings.json. Both follow the **`caseSensitive` contract**: a setting
+supplies the STARTING value, the in-panel control owns it for the rest of the session, and toggling
+never rewrites the user's settings. That matters here — writing a setting fires
+`onDidChangeConfiguration`, which drops the cached engine and re-primes the corpus, so a UI toggle
+that persisted itself would pay a stone round-trip for a cosmetic change.
+
+- **Preview-pane toggle (◧, `gemstone.omniSearch.previewPane`).** `#body` is a flex row: `#results`
+  is `flex: 1 1 55%` and `#preview` `flex: 1 1 45%`. The docked panel is wide but SHORT, so that 45%
+  buys a source view only a few lines tall while costing the result labels nearly half their width —
+  the host that pays most gets least. Off adds `body.no-preview` (which outranks
+  `#preview.has-content` on specificity) and short-circuits `requestPreview()`, so it also stops the
+  per-row source fetch as you arrow down. The toggle never reaches the host: hiding a pane has no
+  effect on the search. One exception — asking for references while the pane is hidden switches it
+  back on, since the references list lives in that pane and the gesture would otherwise do nothing
+  visible.
+- **All-scope filter (the `Scopes` button, `gemstone.omniSearch.excludeFromAll`).** `providersInScope` already held
+  `explicitOnly` categories (Source/Literals/Class Categories) out of the "All" fan-out by design; this
+  lets the user put an ordinary category — in practice **Methods**, which queries the stone on every
+  keystroke — into that same state. Scoping directly to a category always runs it, so an exclusion
+  never makes a scope unreachable. That is precisely what distinguishes it from
+  `gemstone.omniSearch.categories`, which removes the provider AND the tab; conflating the two is
+  the defect #41 reports. The engine owns the set (`setExcludedFromAll` re-runs the term and resets
+  the page cap, as `setScope` does) and echoes it on every results message, so the menu can never
+  drift from what the search actually did.
+
+- **Match algorithm (the `Fuzzy`/`Substring`/`Prefix` chip, `gemstone.omniSearch.matchMode`).** The
+  algorithm was settings-only, so comparing two of them meant leaving the search, editing
+  settings.json and starting over — for a choice whose whole point is that the right answer depends
+  on what you are hunting for. The chip shows the current algorithm as its own label (no legend
+  needed) and cycles on click. The engine owns the live value, exactly as it owns case sensitivity,
+  and echoes it on every results message.
+  ⚠️ **A live algorithm has to reach `filterPivot` too.** That function read `config.matchMode` — the
+  value baked in when the engine was constructed — so switching algorithms did nothing while a
+  references list was open. It now reads the engine's live `matchMode`; there is a test pinning it.
+
+## Why the matcher stays hand-rolled (#428 item #44)
+
+`fuzzysort` was weighed against `omniMatch` and **not adopted**. Measured, not assumed: the real
+`omniMatch.ts` was compiled out of the worktree and benchmarked against `fuzzysort` 4.0.2 on three
+corpora — the repo's own vendored Smalltalk class names (2 063) and selectors (8 230), plus a 20 000
+name corpus scaled from those (synthetic, but with authentic name shapes) to stand in for a real
+image. The benchmark ran outside the repo so no dependency was added to answer the question.
+
+- **Speed: fuzzysort wins, and it does not matter.** It is 3–24× faster (4.4× overall on 20 000
+  names). But `omniMatch`'s absolute worst case there is **16 ms for a single-character query**, and
+  3–8 ms for realistic ones — inside one frame, behind a 120 ms debounce. Nobody is waiting on it.
+- **Recall is identical.** Both returned exactly the same number of hits for every query on all three
+  corpora, so the hand-rolled subsequence matcher is not missing results.
+- **Ranking is at least as good, and arguably better.** For `oc`, `omniMatch` gives
+  `OCCURRENCE, Once, ONCE, OrderedCollection` where fuzzysort gives
+  `OCCURRENCE, SubOnlyCVar, OrderedCollection, Lock` — our word-start and contiguity weights are
+  tuned for camelCase identifiers.
+- **It would cost two shipped features.** fuzzysort is **fuzzy-only** — no `substring` or `prefix` —
+  and has **no case-sensitive option** (it always folds case; `single('OC', 'OrderedCollection')`
+  matches). Jasper exposes both as user settings, and the chip above just made the mode switchable
+  mid-search. Adopting fuzzysort would mean removing them.
+- **Plus a runtime dependency** (17.2 kB minified, no transitive deps — cheap, but not free on a
+  supply-chain surface this repo has been deliberately hardening).
+
+Revisit only if the corpus grows by an order of magnitude AND the matcher shows up in a profile.
+
 ## Deferred / follow-ups (tracked in issue #428)
 
 - **Recents / empty-state** (IntelliJ shows recent files when the field is empty).
@@ -185,11 +363,10 @@ Behaviour decisions (Eric's review of the first webview cut):
   removals fold per class, dictionary changes and commit/abort re-scan), so a class created after the
   UI opened DOES appear now. Still stale until the next commit/abort `resync`: a **global created by
   evaluating code** (nothing announces a new global), a **brand-new class category** when the
-  Categories scope is already loaded, and anything changed by **another session**.
+  Class Categories scope is already loaded, and anything changed by **another session**.
 - Extra providers / scopes: **dedicated Symbols scope**, **method-categories scope**,
   senders/implementors, commands, settings.
 - **Double-tap-Shift** trigger.
-- Naming: settle on "Omni Search" vs "GemStone Search" across command titles and UI (#428).
 
 ## Testing
 
@@ -198,4 +375,4 @@ Every pure module is unit-tested: the matcher/ranker (`omniMatch`, via providers
 parsing against a mocked `QueryExecutor` (the `methodSearch.test.ts` pattern). The webview DOM
 (`omniSearchView.js`) is jsdom-tested. `omniSettings.test.ts` guards the contributed `ui` enum (exactly
 `panel` + `spotter`); `keybindings.test.ts` covers the trigger. A live-stone integration test
-(`queries/__tests__/methodSearch.integration.test.ts`) covers the Literals symbol query (#428 #9).
+(`queries/__tests__/methodSearch.integration.test.ts`) covers the Literals symbol query.

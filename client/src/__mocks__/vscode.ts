@@ -85,7 +85,35 @@ export const TreeItemCollapsibleState = {
 // ── ThemeIcon mock ─────────────────────────────────────────
 
 export class ThemeIcon {
-  constructor(public readonly id: string) {}
+  constructor(
+    public readonly id: string,
+    // Real ThemeIcon takes an optional ThemeColor; kept here so a test can assert
+    // which colour a row was painted (pass vs. failed vs. stale).
+    public readonly color?: { id: string },
+  ) {}
+}
+
+// ── CancellationTokenSource mock ───────────────────────────
+
+export class CancellationTokenSource {
+  private listeners: Array<() => void> = [];
+
+  readonly token = {
+    isCancellationRequested: false,
+    onCancellationRequested: (listener: () => void) => {
+      this.listeners.push(listener);
+      return { dispose: () => {} };
+    },
+  };
+
+  cancel(): void {
+    this.token.isCancellationRequested = true;
+    for (const listener of this.listeners) listener();
+  }
+
+  dispose(): void {
+    this.listeners = [];
+  }
 }
 
 // ── EventEmitter mock ──────────────────────────────────────
@@ -281,6 +309,7 @@ export const window = {
     hide: vi.fn(),
     dispose: vi.fn(),
   })),
+  registerWebviewViewProvider: vi.fn(() => ({ dispose: () => {} })),
   showInputBox: vi.fn(),
   showQuickPick: vi.fn(),
   // Controllable low-level QuickPick. Each call returns a fresh instance whose
@@ -726,6 +755,10 @@ export const InputBoxValidationSeverity = {
 // ── MarkdownString mock ──────────────────────────────────
 
 export class MarkdownString {
+  // Mirror the real MarkdownString flags the extension sets: `isTrusted` enables
+  // command: links, `supportThemeIcons` enables $(codicon) rendering.
+  isTrusted?: boolean;
+  supportThemeIcons?: boolean;
   constructor(public value: string = '') {}
   appendMarkdown(value: string): MarkdownString {
     this.value += value;
@@ -1004,5 +1037,11 @@ export class Disposable {
   constructor(private callOnDispose: () => void) {}
   dispose(): void {
     this.callOnDispose();
+  }
+  /** Mirrors the real API: bundle several disposables into one, disposing each in turn. */
+  static from(...disposables: Array<{ dispose(): unknown }>): Disposable {
+    return new Disposable(() => {
+      for (const d of disposables) d.dispose();
+    });
   }
 }

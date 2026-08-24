@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { mockKoffiModule } from '../__mocks__/koffi';
 
 // Functions that older / client GCI libraries do NOT export.
 // The GciTs* functions below (per a gcits.hf diff of 3.6.2 vs 3.7.5) were added
@@ -31,27 +32,14 @@ const OPTIONAL_FUNCTIONS = [
 // Mock koffi before importing GciLibrary
 vi.mock('koffi', () => {
   const stubFn = vi.fn();
-  const mockLib = {
-    func: vi.fn((signature: string) => {
-      for (const name of OPTIONAL_FUNCTIONS) {
-        if (signature.includes(name)) {
-          throw new Error(`Cannot find function '${name}' in shared library`);
-        }
+  return mockKoffiModule((signature: string) => {
+    for (const name of OPTIONAL_FUNCTIONS) {
+      if (signature.includes(name)) {
+        throw new Error(`Cannot find function '${name}' in shared library`);
       }
-      return stubFn;
-    }),
-    unload: vi.fn(),
-  };
-  return {
-    default: {
-      struct: vi.fn(() => 'MockStruct'),
-      array: vi.fn(() => 'MockArray'),
-      opaque: vi.fn(() => 'MockOpaque'),
-      pointer: vi.fn(() => 'MockPointer'),
-      union: vi.fn(() => 'MockUnion'),
-      load: vi.fn(() => mockLib),
-    },
-  };
+    }
+    return stubFn;
+  });
 });
 
 import { GciLibrary } from '../gciLibrary';
