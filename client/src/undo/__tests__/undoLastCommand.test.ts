@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 vi.mock('../../gciLog', () => ({ logInfo: vi.fn() }));
 vi.mock('../reverseMethodEdit', () => ({ reverseMethodEdit: vi.fn() }));
+vi.mock('../reverseClassEdit', () => ({ reverseClassEdit: vi.fn() }));
 vi.mock('../undoUi', () => ({ refreshUndoUi: vi.fn() }));
 vi.mock('../../refactoring/refactoringUndoAvailability', () => ({
   checkRefactoringUndoAvailable: vi.fn(),
@@ -12,6 +13,7 @@ vi.mock('../../refactoring/undoRefactoringCommand', () => ({
 
 import * as vscode from 'vscode';
 import { reverseMethodEdit } from '../reverseMethodEdit';
+import { reverseClassEdit } from '../reverseClassEdit';
 import { checkRefactoringUndoAvailable } from '../../refactoring/refactoringUndoAvailability';
 import { undoLastRefactoringCommand } from '../../refactoring/undoRefactoringCommand';
 import { undoLastCommand } from '../undoLastCommand';
@@ -40,6 +42,16 @@ const status = (available: boolean, sequence = 1) => ({
   reverseKind: null,
   sequence,
   total: 2,
+});
+
+const classEdit = (label: string): NewUndoEntry => ({
+  kind: 'classEdit',
+  sessionId: session.id,
+  label,
+  slots: [],
+  before: [],
+  after: [],
+  stashKeys: [],
 });
 
 const methodEdit = (label: string): NewUndoEntry => ({
@@ -73,6 +85,27 @@ describe('undoLastCommand', () => {
     expect(reverseMethodEdit).toHaveBeenCalled();
     expect(undoLastRefactoringCommand).not.toHaveBeenCalled();
     expect(undoStackDepth(session.id)).toBe(0);
+  });
+
+  it('hands a class edit to the class reverser, which also skips the preview', async () => {
+    pushUndoEntry(classEdit('Redefine class Account'));
+    vi.mocked(reverseClassEdit).mockResolvedValue(true);
+
+    await undoLastCommand(sessions);
+
+    expect(reverseClassEdit).toHaveBeenCalled();
+    expect(reverseMethodEdit).not.toHaveBeenCalled();
+    expect(undoLastRefactoringCommand).not.toHaveBeenCalled();
+    expect(undoStackDepth(session.id)).toBe(0);
+  });
+
+  it('leaves a class edit on the stack when the user backs out of the cost', async () => {
+    pushUndoEntry(classEdit('Redefine class Account'));
+    vi.mocked(reverseClassEdit).mockResolvedValue(false);
+
+    await undoLastCommand(sessions);
+
+    expect(undoStackDepth(session.id)).toBe(1);
   });
 
   it('leaves a method edit on the stack when the user backs out of it', async () => {

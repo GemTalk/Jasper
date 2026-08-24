@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { beginMethodDeletion } from './undo/recordMethodEdit';
 import { notifyUndoable } from './undo/undoableToast';
+import { beginClassDeletion } from './undo/recordClassEdit';
 import { extractSelector } from './methodPattern';
 import * as crypto from 'crypto';
 import * as path from 'path';
@@ -1507,7 +1508,11 @@ export class SystemBrowser {
     );
     if (confirmed !== 'Delete') return;
 
+    // Snapshot before removing: deleteClass unbinds the name, and the class version is only
+    // reachable afterwards while something holds it (#434).
+    const recording = beginClassDeletion(this.session, [{ dict: dictIndex, className }]);
     queries.deleteClass(this.session, dictIndex, className);
+    notifyUndoable(`Deleted class ${className}`, recording?.commit());
     this.exportManager.removeClassFile(
       this.session,
       dictIndex,

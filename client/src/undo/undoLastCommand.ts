@@ -9,11 +9,14 @@
  * branch here and a reverser beside it — not a change to the stack, the UI, or any
  * recording site.
  *
- * The two kinds behave differently on purpose, and the difference is the point of the
+ * The three kinds behave differently on purpose, and the difference is the point of the
  * design:
  *
  *  - a METHOD EDIT reverses immediately, because the user just made it and it is one
  *    method;
+ *  - a CLASS EDIT reverses immediately too, but calls itself a REVERT and asks first when
+ *    binding the earlier version would leave methods behind — GemStone re-versions a class
+ *    rather than rolling it back, and the user has to know that before it happens;
  *  - a REFACTORING opens the preview panel it already has, because it can have rewritten
  *    dozens of methods across a hierarchy and undoing it wholesale, unseen, is not a
  *    decision to take on the user's behalf.
@@ -24,6 +27,7 @@ import { logInfo } from '../gciLog';
 import { dropUndoEntry, peekUndoEntry, popUndoEntry } from './undoStack';
 import { refreshUndoUi } from './undoUi';
 import { reverseMethodEdit } from './reverseMethodEdit';
+import { reverseClassEdit } from './reverseClassEdit';
 import { checkRefactoringUndoAvailable } from '../refactoring/refactoringUndoAvailability';
 import { undoLastRefactoringCommand } from '../refactoring/undoRefactoringCommand';
 
@@ -54,11 +58,16 @@ export async function undoLastCommand(sessions: SessionManager): Promise<void> {
 
     logInfo(`[undo] invoked on #${entry.id} (${entry.kind}) "${entry.label}"`);
 
+    // Popping is enough: the stack's change listener updates the button and the context key.
+    // Leaving the entry in place when it was not spent is what keeps a cancelled or
+    // unreadable undo on offer.
     if (entry.kind === 'methodEdit') {
-      // Popping is enough: the stack's change listener updates the button and the context
-      // key. Leaving the entry in place when it was not spent is what keeps a cancelled or
-      // unreadable undo on offer.
       if (await reverseMethodEdit(session, entry)) popUndoEntry(session.id);
+      return;
+    }
+
+    if (entry.kind === 'classEdit') {
+      if (await reverseClassEdit(session, entry)) popUndoEntry(session.id);
       return;
     }
 

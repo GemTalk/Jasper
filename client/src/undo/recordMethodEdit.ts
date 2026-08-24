@@ -72,6 +72,8 @@ export function beginMethodEdit(
     return undefined;
   }
 
+  // The executor lookup is inside the guard too: recording must never be the reason an
+  // edit fails.
   let before: MethodSlotState[];
   try {
     before = captureMethodSlots(defaultQueryExecutorUsing(session), slots);

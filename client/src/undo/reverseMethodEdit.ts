@@ -41,12 +41,9 @@ export async function reverseMethodEdit(
     return false;
   }
 
-  const drifted = driftedSlots(entry.slots, entry.after, now);
-  if (drifted.length > 0 && !(await confirmDrift(entry, drifted.map(slotLabel)))) {
-    logInfo(`[undo] #${entry.id} declined at the drift prompt`);
-    return false;
-  }
-
+  // Plan BEFORE asking anything. A slot that is already back the way it was needs no work,
+  // and drift on a slot nothing is going to touch is not worth a modal — the commonest case
+  // being an entry the user has already undone by hand.
   const ops = planReversal(entry.slots, entry.before, now);
   if (ops.length === 0) {
     void vscode.window.setStatusBarMessage(
@@ -54,6 +51,12 @@ export async function reverseMethodEdit(
       4000,
     );
     return true;
+  }
+
+  const drifted = driftedSlots(entry.slots, entry.after, now);
+  if (drifted.length > 0 && !(await confirmDrift(entry, drifted.map(slotLabel)))) {
+    logInfo(`[undo] #${entry.id} declined at the drift prompt`);
+    return false;
   }
 
   let results;

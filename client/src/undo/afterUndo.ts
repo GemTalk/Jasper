@@ -1,8 +1,8 @@
 /**
  * Putting the IDE back in step after an undo (issue #434).
  *
- * Shared by both reversers — a method edit and a refactoring — because the problem is
- * the same either way: the stone has changed underneath whatever the user is looking at,
+ * Shared by every reverser — a method edit, a class edit, a refactoring — because the
+ * problem is the same whichever it was: the stone has changed underneath whatever the user is looking at,
  * and a pane or editor still showing the pre-undo text is how an undo gets silently
  * re-done on the next save.
  */

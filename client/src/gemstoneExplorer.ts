@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { beginMethodDeletion } from './undo/recordMethodEdit';
 import { notifyUndoable } from './undo/undoableToast';
+import { beginClassDeletion } from './undo/recordClassEdit';
 import * as crypto from 'crypto';
 import { SessionManager, ActiveSession } from './sessionManager';
 import * as queries from './browserQueries';
@@ -4338,6 +4339,15 @@ export class ExplorerController {
       if (confirmed !== 'Remove') return;
     }
 
+    // Snapshot the whole subtree before removing any of it, and stash each class version in
+    // the stone -- `deleteClass` only unbinds the name, so the very same version can go back
+    // exactly as it was, but only while something still holds it (#434). One entry for the
+    // subtree: putting half of it back is not a reversal of what the user asked for.
+    const recording = beginClassDeletion(
+      session,
+      targets.map((t) => ({ dict: t.dictIndex, className: t.className })),
+    );
+
     const failures: string[] = [];
     const removed: string[] = [];
     for (const t of targets) {
@@ -4373,6 +4383,13 @@ export class ExplorerController {
     // Search until the next commit/abort resync. Notify the ones that ACTUALLY went, so a partial
     // failure doesn't drop a class that is still there.
     for (const name of removed) this.onClassRemoved?.(session.id, name);
+
+    if (removed.length > 0) {
+      notifyUndoable(
+        removed.length === 1 ? `Removed class ${removed[0]}` : `Removed ${removed.length} classes`,
+        recording?.commit(),
+      );
+    }
 
     if (failures.length > 0) {
       void vscode.window.showErrorMessage(`Remove class had errors — ${failures.join('; ')}`);

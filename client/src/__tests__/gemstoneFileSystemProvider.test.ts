@@ -31,6 +31,11 @@ vi.mock('../undo/queries/methodSlotQueries', () => ({
   captureMethodSlots: vi.fn(),
   applyMethodSlotOps: vi.fn(),
 }));
+vi.mock('../undo/queries/classSlotQueries', () => ({
+  captureClassSlots: vi.fn(() => []),
+  applyClassSlotOps: vi.fn(),
+  newStashKey: vi.fn(() => 'JasperUndoStash_1'),
+}));
 
 // Keep the real gciLog but spy logInfo so the recategorize soft-failure log is observable.
 vi.mock('../gciLog', async (orig) => ({
@@ -65,7 +70,18 @@ import * as queries from '../browserQueries';
 import { BrowserQueryError } from '../browserQueries';
 import type { ExportManager } from '../exportManager';
 import { captureMethodSlots } from '../undo/queries/methodSlotQueries';
+import { captureClassSlots } from '../undo/queries/classSlotQueries';
 import { peekUndoEntry, resetUndoStacks } from '../undo/undoStack';
+
+// The two undo-capture mocks are shared by every suite in this file, and `clearAllMocks`
+// clears recorded CALLS without removing an implementation. Reset them per test so a
+// `mockReturnValue` set by the recording suites below cannot leak into the plain writeFile
+// ones and turn their toast into one carrying an Undo button — which only shows up under
+// some shuffled seeds.
+beforeEach(() => {
+  vi.mocked(captureMethodSlots).mockReset();
+  vi.mocked(captureClassSlots).mockReset();
+});
 
 function makeSession(id = 1, gs_user = 'DataCurator') {
   return { id, gci: {}, handle: {}, login: { label: 'Test', gs_user }, stoneVersion: '3.7.2' };
@@ -2043,6 +2059,108 @@ describe('recording a save for undo (#434)', () => {
 
     expect(() => write(existingMethodUri, 'at: i\n  ^2')).not.toThrow();
     expect(queries.compileMethod).toHaveBeenCalled();
+    expect(peekUndoEntry(session.id)).toBeUndefined();
+  });
+});
+
+describe('recording a class definition save for revert (#434)', () => {
+  /**
+   * Reverting a class edit is not the same shape as reverting a method edit, and the reason
+   * is a GemStone fact worth stating: re-sending `Object subclass: …` with a changed shape
+   * answers a NEW, EMPTY version — it does not carry the methods forward. So the only
+   * faithful way back is the earlier class OBJECT, which the capture stashes in the stone
+   * before the save. What is pinned here is that the capture happens before the compile, and
+   * that the entry is named for what actually happened.
+   */
+  const session = makeSession();
+  let provider: GemStoneFileSystemProvider;
+
+  const write = (uri: ReturnType<typeof buildClassDefinitionUri>, source: string): void =>
+    provider.writeFile(uri, new TextEncoder().encode(source), { create: true, overwrite: true });
+
+  const definitionUri = buildClassDefinitionUri(1, 'UserGlobals', 'Array');
+  const DEF = "Object subclass: 'Array'\n  instVarNames: #('a')\n  category: 'demo'";
+
+  const boundState = (oop: string) => ({ bound: true, oop, selectors: [] });
+  const unboundState = { bound: false, oop: null, selectors: [] };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetUndoStacks();
+    provider = new GemStoneFileSystemProvider(makeSessionManager());
+    vi.mocked(queries.compileClassDefinition).mockReturnValue('Array');
+    vi.mocked(queries.recategorizeClass).mockReturnValue('Recategorized: Array');
+    vi.mocked(queries.canClassBeWritten).mockReturnValue(true);
+  });
+
+  it('stashes the bound version before compiling, not after', () => {
+    // After the compile the earlier version is no longer the bound one, and there is nothing
+    // left to identify it by.
+    const order: string[] = [];
+    vi.mocked(captureClassSlots).mockImplementation((_e, _slots, keys) => {
+      order.push(keys?.[0] ? 'capture-with-stash' : 'capture-plain');
+      return [boundState('1')];
+    });
+    vi.mocked(queries.compileClassDefinition).mockImplementation(() => {
+      order.push('compile');
+      return 'Array';
+    });
+
+    write(definitionUri, DEF);
+
+    expect(order[0]).toBe('capture-with-stash');
+    expect(order[1]).toBe('compile');
+  });
+
+  it('records a redefinition when the save produced a new version', () => {
+    vi.mocked(captureClassSlots)
+      .mockReturnValueOnce([boundState('1')])
+      .mockReturnValueOnce([boundState('2')]);
+
+    write(definitionUri, DEF);
+
+    expect(peekUndoEntry(session.id)).toMatchObject({
+      kind: 'classEdit',
+      label: 'Redefine class Array',
+      stashKeys: ['JasperUndoStash_1'],
+    });
+  });
+
+  it('records nothing when the definition was unchanged', () => {
+    // An identical redefinition answers the SAME class object, so there is no new version
+    // and nothing to revert.
+    vi.mocked(captureClassSlots).mockReturnValue([boundState('1')]);
+
+    write(definitionUri, DEF);
+
+    expect(peekUndoEntry(session.id)).toBeUndefined();
+  });
+
+  it('records an Add for a new class, with no earlier version to keep', () => {
+    vi.mocked(captureClassSlots)
+      .mockReturnValueOnce([unboundState])
+      .mockReturnValueOnce([boundState('2')]);
+    vi.mocked(queries.classExistsInDictionary).mockReturnValue(false);
+    vi.mocked(queries.compileClassDefinition).mockReturnValue('Fresh');
+
+    write(
+      Uri.parse('gemstone://1/UserGlobals/new-class'),
+      "Object subclass: 'Fresh'\n  inDictionary: UserGlobals\n  category: 'demo'",
+    );
+
+    const entry = peekUndoEntry(session.id);
+    expect(entry).toMatchObject({ kind: 'classEdit', label: 'Add class Fresh' });
+    // Nothing was bound, so nothing was stashed — a key resolving to nil would be a lie.
+    expect(entry?.kind === 'classEdit' && entry.stashKeys).toEqual([null]);
+  });
+
+  it('saves normally when the capture fails — revert is never allowed to break a save', () => {
+    vi.mocked(captureClassSlots).mockImplementation(() => {
+      throw new Error('session busy');
+    });
+
+    expect(() => write(definitionUri, DEF)).not.toThrow();
+    expect(queries.compileClassDefinition).toHaveBeenCalled();
     expect(peekUndoEntry(session.id)).toBeUndefined();
   });
 });

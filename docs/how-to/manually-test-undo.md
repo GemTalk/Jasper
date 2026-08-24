@@ -19,11 +19,23 @@ recent first.
 
 Two kinds of thing go on it, and they behave differently on purpose:
 
+**A class edit — creating a class, changing its definition, removing it — is a REVERT, and
+the word is not pedantry.** GemStone has no transaction savepoints and re-versions a class on
+every shape change, so reversing binds the *earlier version* again: the class history grows,
+it never shrinks, and anything written on the newer version since is left behind on it. There
+is no preview, but there is a modal that names what would be left behind, by method, before
+anything happens. Removing a class is the exception that really is exact — `deleteClass` only
+unbinds the name, so the very same version goes back with its methods, its history and its
+instances intact.
+
 **An ordinary method edit — saving a method, adding one, deleting one — reverses
 immediately, with no preview.** You just made it, and it is one method. The only thing
 that stops and asks is *drift*: if the method has changed since, undoing discards that
 change, so it says so first. This needs **no refactoring engine on the stone** — it is
 plain `compileMethod:` / `removeSelector:`, so it works wherever Jasper can log in.
+
+Both kinds are reached the same way, by the same button and the same key — semantically they
+are the same act, and splitting them into two commands would only make the user pick.
 
 Undo is reached five ways, and the first is the one that matters: **the Undo button on the
 notice that follows the action**, where you are already looking. If that is missed, there is a
@@ -132,6 +144,35 @@ Start here: this is the path that does not involve the refactoring engine at all
 | 0.11 | Do 0.10 again and press **Undo Anyway** | It proceeds — drift is a warning, never a refusal |
 | 0.12 | Save a method, then **Abort** (Explorer → Abort), then look at the status bar | Undo is **dimmed** — an abort already rewound the stone, so every entry describes a state that no longer exists |
 | 0.13 | Save a method on a stone with **no refactoring engine installed** | Undo still works — a method edit needs no engine |
+
+## 0b — Reverting a class edit
+
+Note the word: **Revert**, not Undo, in every message this produces.
+
+| # | Step | Expect |
+|---|---|---|
+| 0b.1 | Create a class `UndoDemo2` in `UserGlobals` from the Explorer's new-class editor and save | Toast `Class created: UndoDemo2` **with an Undo button**; status-bar tooltip **Undo Add class UndoDemo2** |
+| 0b.2 | Press Undo | `UndoDemo2` is gone from the Classes pane. No modal — nothing had been written on it |
+| 0b.3 | Open `UndoDemo`'s **definition**, add an instance variable (`instVarNames: #('balance' 'extra')`), save | Toast `Class definition updated for UndoDemo` with an Undo button. **Note the Methods pane: it is now empty.** See "A sharp edge worth knowing" below |
+| 0b.4 | Press Undo | A toast: `Reverted Redefine class UndoDemo — restored UndoDemo to its earlier version. The class keeps its history.` The instance variable is gone **and every method is back** |
+| 0b.5 | Class History on `UndoDemo` | **More** versions than before, not fewer — a revert binds an earlier version, it does not delete a later one |
+| 0b.6 | Repeat 0b.3, then write a new method on the redefined class (`writtenLater ^ 1`) and save it, then Undo | A **modal** first: reverting leaves 1 method behind, and it **names** `UndoDemo>>#writtenLater`. Cancel and nothing happens |
+| 0b.7 | Do it again and press **Revert Anyway** | The class is back with its original methods; `writtenLater` is **not** there — it belongs to the version that is no longer bound, exactly as warned |
+| 0b.8 | Remove `UndoDemo` from the Explorer (right-click → Remove), confirm | Toast `Removed class UndoDemo` **with an Undo button** |
+| 0b.9 | Press Undo | The class is back — **the same version**, with its methods, its class-side methods and its history. No modal: nothing newer existed to leave behind |
+| 0b.10 | Remove a class that has **subclasses** (the Explorer removes the whole subtree) | One entry, named `Remove N classes (X and its subclasses)`. One Undo puts the **whole subtree** back — putting half of it back is not a reversal of what you asked for |
+| 0b.11 | Save a definition, then **log out and back in**, then look at the status bar | Dimmed. The earlier version was held in the session, and the session is gone |
+
+### A sharp edge worth knowing
+
+Saving a **shape change** from the class-definition editor is a GemStone re-version, and
+GemStone does **not** carry methods forward: the new version arrives **empty**. That is why
+the refactoring engine has its own Add/Remove Instance Variable — it recompiles the methods
+onto the new version. It is not something this undo work introduced, and step 0b.4 is now the
+quickest way back from it without aborting the whole transaction.
+
+Saving a definition you have **not** changed is a true no-op — GemStone answers the same
+class object — so no version is created, no methods are lost, and nothing is recorded.
 
 ## 1 — The ways in
 

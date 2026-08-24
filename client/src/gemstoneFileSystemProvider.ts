@@ -15,6 +15,7 @@ import {
 import { extractSelector } from './methodPattern';
 import { beginMethodEdit, MethodEditRecording, present } from './undo/recordMethodEdit';
 import { notifyUndoable } from './undo/undoableToast';
+import { beginClassEdit } from './undo/recordClassEdit';
 import { MethodSlot, slotLabel, UndoEntry } from './undo/undoTypes';
 
 // A binary selector can contain '/', but a slash in a URI path segment (raw or
@@ -800,6 +801,16 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
       }
     }
 
+    // Snapshot the class binding BEFORE compiling, and stash the version bound now: a
+    // shape-changing save answers a NEW version, and the old one is the only way back (#434).
+    // A new-class save has no name until the definition is parsed -- which the guard above
+    // just did -- so both kinds can be recorded here.
+    const undoName =
+      parsed.kind === 'definition' ? parsed.className : classNameFromDefinition(defSource);
+    const recording = undoName
+      ? beginClassEdit(session, [{ dict: dictRef, className: undoName }])
+      : undefined;
+
     const className = queries.compileClassDefinition(session, defSource);
 
     // Apply the category the subclass message could not carry — always, including an
@@ -836,11 +847,14 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
           `The change will be lost when the session ends.`,
       );
     } else {
-      const message =
-        parsed.kind === 'new-class'
-          ? `Class created: ${className}`
-          : `Class definition updated for ${className}`;
-      vscode.window.showInformationMessage(message);
+      const created = parsed.kind === 'new-class';
+      const message = created
+        ? `Class created: ${className}`
+        : `Class definition updated for ${className}`;
+      notifyUndoable(
+        message,
+        recording?.commit(created ? `Add class ${className}` : `Redefine class ${className}`),
+      );
     }
 
     // Use the name GemStone returned, not parsed.className: for a new-class URI the segment is
