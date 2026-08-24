@@ -33,6 +33,7 @@ describe('editor/context menu', () => {
       'gemstone.breakpoints.enableAtCursor',
       'gemstone.breakpoints.disableAtCursor',
       'gemstone.breakpoints.clearMethod',
+      'gemstone.breakpoints.toggleStepPoints',
     ]);
   });
 
@@ -87,6 +88,7 @@ describe('editor/context menu', () => {
       'gemstone.breakpoints.enableAtCursor',
       'gemstone.breakpoints.disableAtCursor',
       'gemstone.breakpoints.clearMethod',
+      'gemstone.breakpoints.toggleStepPoints',
     ];
     // Compared as a map so a mismatch names the offending command itself.
     expect(Object.fromEntries(commands.map((c) => [c, getMenuItem(c)?.when]))).toEqual(

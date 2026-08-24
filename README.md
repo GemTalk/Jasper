@@ -265,6 +265,8 @@ window. Within a session they are re-applied after a recompile.
   clickable to toggle a breakpoint there. `gemstone.stepPoints.display` controls
   when: `debugging` (the default — visible while a debug session runs, out of the
   way otherwise), `always`, or `off`. **Toggle Step Point Numbers** flips them
+  without leaving the editor — it's the `123` button in the editor title bar, and
+  on the right-click menu
 - **On hover** — hovering a step point always reports its number and breakpoint
   state, with links to set, clear, enable or disable it, whatever the numbering
   is set to

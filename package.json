@@ -3042,6 +3042,13 @@
           "when": "view == gemstoneDatabases && viewItem == gemstoneDb"
         }
       ],
+      "editor/title": [
+        {
+          "command": "gemstone.breakpoints.toggleStepPoints",
+          "when": "resourceScheme == gemstone && resourceLangId == gemstone-smalltalk",
+          "group": "navigation@0"
+        }
+      ],
       "editor/context": [
         {
           "command": "gemstone.displayIt",
@@ -3097,6 +3104,11 @@
           "command": "gemstone.breakpoints.clearMethod",
           "when": "editorTextFocus && resourceLangId == gemstone-smalltalk",
           "group": "3_gemstoneBreakpoints@3"
+        },
+        {
+          "command": "gemstone.breakpoints.toggleStepPoints",
+          "when": "editorTextFocus && resourceLangId == gemstone-smalltalk",
+          "group": "3_gemstoneBreakpoints@4"
         }
       ]
     },
