@@ -250,8 +250,9 @@ window. Within a session they are re-applied after a recompile.
   under the caret, not the first one on the line, and the token that will
   actually break is outlined
 - **Enable / disable** — per breakpoint from the Breakpoints view checkbox or
-  **Enable/Disable Breakpoint at Cursor**; a disabled breakpoint is kept in the
-  gem (drawn dashed) so re-arming it is instant
+  **Enable/Disable Breakpoint at Cursor**. A disabled breakpoint stays set in the
+  gem so re-arming it is instant; its token marker turns grey and faded, matching
+  the grey the gutter dot goes
 - **All at once** — **Enable All**, **Disable All** and **Remove All
   Breakpoints** act on every GemStone breakpoint, including any set outside
   Jasper by topaz or a `halt` left in the code

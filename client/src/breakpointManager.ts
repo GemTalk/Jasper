@@ -27,6 +27,18 @@ export interface AppliedBreakpoint {
   enabled: boolean;
 }
 
+/**
+ * Marks the exact token a breakpoint sits on.
+ *
+ * The gutter dot only says "this line"; a Smalltalk line usually holds several
+ * step points, so this is what says *which one*.
+ *
+ * Enabled and disabled are told apart mainly by **colour** — the same
+ * red-versus-grey pair VS Code uses for the gutter dot itself — because a
+ * dashed-versus-solid 1px border is not a difference anyone notices. The
+ * disabled marker also fades its token, which reads as inert without needing the
+ * border to be seen at all.
+ */
 const enabledDecoration = vscode.window.createTextEditorDecorationType({
   borderWidth: '1px',
   borderStyle: 'solid',
@@ -36,13 +48,15 @@ const enabledDecoration = vscode.window.createTextEditorDecorationType({
   overviewRulerLane: vscode.OverviewRulerLane.Left,
 });
 
-// Dashed and drawn in the "unverified" grey so a disabled breakpoint reads as
-// present-but-inert at a glance, the way the gutter dot hollows out.
 const disabledDecoration = vscode.window.createTextEditorDecorationType({
   borderWidth: '1px',
   borderStyle: 'dashed',
   borderColor: new vscode.ThemeColor('debugIcon.breakpointDisabledForeground'),
   borderRadius: '2px',
+  // Fading the token is the cue that survives a theme where the grey border is
+  // nearly invisible — and "is this breakpoint live?" is exactly the question
+  // the marker exists to answer.
+  opacity: '0.75',
 });
 
 /**
