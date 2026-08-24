@@ -1,4 +1,4 @@
-import { expect } from 'vitest';
+import { expect, type MatcherState } from 'vitest';
 
 // Constructor of an `Error` subclass. `NewableFunction` (not `new (...) => Error`)
 // so it also accepts classes with non-public constructors, and still exposes
@@ -39,40 +39,64 @@ expect.extend({
   },
 
   /**
-   * Used to test that a function throws an instance of the given class
-   * with the given message.
+   * Used to test that a function throws, or a promise rejects with, an
+   * instance of the given class with the given message.
    *
-   * @param callback - The function expected to throw.
-   * @param ExpectedClass - The `Error` subclass `callback` must throw an instance of.
+   * Two call shapes: direct on a callback (`expect(callback)...`), invoked
+   * and caught here; or via `.rejects` (`expect(promise).rejects...`),
+   * where vitest hands this the already-awaited rejection reason instead of
+   * a callback -- detected via `this.promise`. `.resolves` is deliberately
+   * unsupported (no thrown error to inspect) and throws loudly rather than
+   * misinterpreting the resolved value.
+   *
+   * @param received - The function expected to throw, or (via `.rejects`) the already-caught rejection reason.
+   * @param ExpectedClass - The `Error` subclass that must have been thrown.
    * @param expectedMessage - The exact `message` the thrown error must have.
    */
-  toThrowInstanceOf(callback: () => unknown, ExpectedClass: ErrorClass, expectedMessage: string) {
-    try {
-      callback();
+  toThrowInstanceOf(
+    this: MatcherState,
+    received: unknown,
+    ExpectedClass: ErrorClass,
+    expectedMessage: string,
+  ) {
+    if (this.promise === 'resolves') {
+      throw new Error('toThrowInstanceOf does not support .resolves; use .rejects instead.');
+    }
+
+    let error: unknown;
+
+    if (this.promise === 'rejects') {
+      error = received;
+    } else {
+      const callback = received as () => unknown;
+      try {
+        callback();
+        return {
+          pass: false,
+          message: () =>
+            `Expected callback to throw a ${ExpectedClass.name} with message '${expectedMessage}', but it did not throw.`,
+        };
+      } catch (thrown) {
+        error = thrown;
+      }
+    }
+
+    if (!(error instanceof ExpectedClass)) {
+      return {
+        pass: false,
+        message: () => `Expected callback to throw a ${ExpectedClass.name}, but it threw ${error}.`,
+        actual: error,
+        expected: ExpectedClass,
+      };
+    }
+
+    const thrownError = error as Error;
+    if (thrownError.message !== expectedMessage) {
       return {
         pass: false,
         message: () =>
-          `Expected callback to throw a ${ExpectedClass.name} with message '${expectedMessage}', but it did not throw.`,
+          `Expected callback to throw a ${ExpectedClass.name} with message '${expectedMessage}', but got '${thrownError.message}'.`,
       };
-    } catch (error) {
-      if (!(error instanceof ExpectedClass)) {
-        return {
-          pass: false,
-          message: () =>
-            `Expected callback to throw a ${ExpectedClass.name}, but it threw ${error}.`,
-          actual: error,
-          expected: ExpectedClass,
-        };
-      }
-
-      const thrownError = error as Error;
-      if (thrownError.message !== expectedMessage) {
-        return {
-          pass: false,
-          message: () =>
-            `Expected callback to throw a ${ExpectedClass.name} with message '${expectedMessage}', but got '${thrownError.message}'.`,
-        };
-      }
     }
 
     return {
@@ -93,10 +117,10 @@ declare module 'vitest' {
      */
     toThrowExactly(expectedError: Error): void;
     /**
-     * Used to test that a function throws an instance of the given class
-     * with the given message.
+     * Used to test that a function throws, or (via `.rejects`) a promise
+     * rejects with, an instance of the given class with the given message.
      *
-     * @param ExpectedClass - The `Error` subclass the received function must throw an instance of.
+     * @param ExpectedClass - The `Error` subclass that must have been thrown.
      * @param expectedMessage - The exact `message` the thrown error must have.
      */
     toThrowInstanceOf(ExpectedClass: ErrorClass, expectedMessage: string): void;
