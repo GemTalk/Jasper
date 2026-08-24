@@ -340,3 +340,54 @@ describe('ExplorerController remove instance variable', () => {
     expect(runInstVarRefactor).not.toHaveBeenCalled();
   });
 });
+
+// The scan is capped per query, server-side, and the client cannot tell a full page from an
+// exact answer — so at the cap the count has to read as a floor. Each delete kind wires the cap
+// through from its own scan, so each needs its own test: one kind getting it right says nothing
+// about the other three.
+describe('ExplorerController.removeInstVar — reporting a scan that came back full', () => {
+  const CAP = 500;
+  const accessorRow = (className: string, selector: string) => ({
+    dictName: 'UserGlobals',
+    className,
+    isMeta: false,
+    selector,
+    category: 'accessing',
+    environmentId: 0,
+  });
+
+  beforeEach(() => {
+    vi.mocked(runInstVarRefactor).mockResolvedValue(undefined);
+  });
+
+  it('states the count as a floor and says the list is incomplete', async () => {
+    vi.mocked(queries.methodsAccessingInstVar).mockReturnValue(
+      Array.from({ length: CAP }, (_, i) => accessorRow(`C${i}`, 'usesIt')),
+    );
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(undefined);
+    const { ctl } = makeController({} as ActiveSession);
+
+    await ctl.removeInstVar({ className: 'Foo', ivarName: 'count' });
+
+    const detail = vi.mocked(vscode.window.showWarningMessage).mock.calls[0][1] as {
+      detail: string;
+    };
+    expect(detail.detail).toContain(`At least ${CAP} methods still reference it`);
+    expect(detail.detail).toContain('not complete');
+  });
+
+  it('states a short count plainly, with no hedge', async () => {
+    vi.mocked(queries.methodsAccessingInstVar).mockReturnValue([accessorRow('Foo', 'total')]);
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(undefined);
+    const { ctl } = makeController({} as ActiveSession);
+
+    await ctl.removeInstVar({ className: 'Foo', ivarName: 'count' });
+
+    const detail = vi.mocked(vscode.window.showWarningMessage).mock.calls[0][1] as {
+      detail: string;
+    };
+    expect(detail.detail).toContain('1 method still references it:');
+    expect(detail.detail).not.toContain('At least');
+    expect(detail.detail).not.toContain('not complete');
+  });
+});

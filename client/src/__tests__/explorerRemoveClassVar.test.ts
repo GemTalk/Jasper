@@ -265,3 +265,38 @@ describe('ExplorerController.removeClassVar — guards and failures', () => {
     expect(info).not.toHaveBeenCalled();
   });
 });
+
+// The scan is capped per query, server-side, and the client cannot tell a full page from an
+// exact answer — so at the cap the count has to read as a floor. Every delete kind wires the
+// cap through from its own scan, and each needs its own test: the wiring is per call site, so
+// one kind getting it right says nothing about the other three.
+describe('ExplorerController.removeClassVar — reporting a scan that came back full', () => {
+  const CAP = 500;
+  const fullPage = () =>
+    Array.from({ length: CAP }, (_, i) => accessor({ className: `C${i}`, selector: 'usesIt' }));
+
+  it('states the count as a floor and says the list is incomplete', async () => {
+    accessors.mockReturnValue(fullPage());
+    warn.mockResolvedValue(undefined);
+    const { ctl } = makeController();
+
+    await ctl.removeClassVar(varRow);
+
+    const detail = warn.mock.calls[0][1].detail as string;
+    expect(detail).toContain(`At least ${CAP} methods still reference it`);
+    expect(detail).toContain('not complete');
+  });
+
+  it('states a short count plainly, with no hedge', async () => {
+    accessors.mockReturnValue([accessor()]);
+    warn.mockResolvedValue(undefined);
+    const { ctl } = makeController();
+
+    await ctl.removeClassVar(varRow);
+
+    const detail = warn.mock.calls[0][1].detail as string;
+    expect(detail).toContain('1 method still references it:');
+    expect(detail).not.toContain('At least');
+    expect(detail).not.toContain('not complete');
+  });
+});

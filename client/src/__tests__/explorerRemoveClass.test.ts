@@ -350,3 +350,58 @@ describe('ExplorerController.removeClass — telling cached corpora what went', 
     expect(onClassRemoved).not.toHaveBeenCalled();
   });
 });
+
+// The scan is capped per query, server-side, and the client cannot tell a full page from an
+// exact answer — so at the cap the count has to read as a floor. Each delete kind wires the cap
+// through from its own scan, so each needs its own test; removeClass matters most, because it is
+// the kind that also EXCLUDES rows (the doomed subtree) after the scan, and it is exactly that
+// exclusion which can take a capped count back under the cap and hide that it was cut off.
+describe('ExplorerController.removeClass — reporting a scan that came back full', () => {
+  const CAP = 500;
+  const fullPage = () =>
+    Array.from({ length: CAP }, (_, i) => reference({ className: `C${i}`, selector: 'usesIt' }));
+
+  it('states the count as a floor and says the list is incomplete', async () => {
+    referencesMock.mockReturnValue(fullPage());
+    warn.mockResolvedValueOnce(undefined);
+    const ctl = makeController();
+
+    await ctl.removeClass();
+
+    const detail = warn.mock.calls[0][1].detail as string;
+    expect(detail).toContain(`At least ${CAP} methods still reference it`);
+    expect(detail).toContain('not complete');
+  });
+
+  it('still hedges when excluding the doomed subtree took the count under the cap', async () => {
+    // A capped page of 500 whose last row belongs to a subclass going away with the target:
+    // the exclusion drops it to 499, which no longer looks capped, but the list WAS cut off.
+    descendantsMock.mockReturnValue([descendant('Sub1', 1)]);
+    referencesMock.mockReturnValue([
+      ...fullPage().slice(0, CAP - 1),
+      reference({ className: 'Sub1', selector: 'goesAwayToo' }),
+    ]);
+    warn.mockResolvedValueOnce(undefined);
+    const ctl = makeController();
+
+    await ctl.removeClass();
+
+    const detail = warn.mock.calls[0][1].detail as string;
+    expect(detail).toContain(`At least ${CAP - 1} methods still reference it`);
+    expect(detail).toContain('not complete');
+    expect(detail).not.toContain('#goesAwayToo');
+  });
+
+  it('states a short count plainly, with no hedge', async () => {
+    referencesMock.mockReturnValue([reference()]);
+    warn.mockResolvedValueOnce(undefined);
+    const ctl = makeController();
+
+    await ctl.removeClass();
+
+    const detail = warn.mock.calls[0][1].detail as string;
+    expect(detail).toContain('1 method still references it:');
+    expect(detail).not.toContain('At least');
+    expect(detail).not.toContain('not complete');
+  });
+});
