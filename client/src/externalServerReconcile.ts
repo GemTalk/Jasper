@@ -6,6 +6,7 @@ import {
   ServerIdentity,
   allExternalServersConfirmed,
   externalServersOf,
+  mayStopExternalServers,
 } from './externalServerScan';
 
 /** One external server, reduced to what the user needs to see about it. */
@@ -26,9 +27,13 @@ export interface ExternalServerReport {
   /** The directory Jasper looks in, for contrast with `registeredIn`. */
   jasperRoot: string;
   servers: ExternalServerDetail[];
-  /** True when every external server found is confirmed to be this database's,
-   *  which is the only case in which Jasper may stop them. */
+  /** True when every external server found is confirmed to be this database's.
+   *  Drives the wording — whether the dialog warns about identity at all. */
   confirmed: boolean;
+  /** True when Jasper may stop what it found, which is a weaker condition than
+   *  `confirmed`: an unidentifiable netldi may still be restarted, an
+   *  unidentifiable stone may not. Drives whether Restart & Connect is offered. */
+  mayRestart: boolean;
 }
 
 /** What the user chose. `undefined` when the dialog was dismissed. */
@@ -81,14 +86,19 @@ export function describeExternalServers(
     // copy of the rule: the flag shown to the user and the check that decides
     // whether anything may be stopped must not be able to disagree.
     confirmed: allExternalServersConfirmed(finding),
+    mayRestart: mayStopExternalServers(finding),
   };
 }
 
-/** "<stone> and <netldi>" / "<stone>" — whichever of them is actually external. */
+/** `"<stone>" and "<netldi>" are` / `"<stone>" is` — whichever of them is
+ *  actually external, with a verb that agrees. One server is the common case
+ *  (a netldi on its own), and "\"gs64ldi2\" are running" reads as a bug in the
+ *  sentence that is trying to explain a subtle situation. */
 function serverList(report: ExternalServerReport): string {
   const names = report.servers.map((s) => `"${s.name}"`);
-  if (names.length <= 1) return names[0] ?? '';
-  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+  if (names.length === 0) return '';
+  if (names.length === 1) return `${names[0]} is`;
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]} are`;
 }
 
 /** One line per server: what it is, its PID, and where it registered. Shared by
@@ -116,8 +126,8 @@ function serverLines(report: ExternalServerReport): string {
  */
 export function reconcileMessage(report: ExternalServerReport): string {
   const lines = [
-    `${serverList(report)} are running, but were started outside Jasper's environment, so ` +
-      `they're registered where Jasper's own gslist doesn't look.`,
+    `${serverList(report)} running, but was started outside Jasper's environment, so ` +
+      `it's registered where Jasper's own gslist doesn't look.`,
     '',
     `Jasper runs its own gslist against ${report.jasperRoot}, which can differ from gslist on ` +
       `the host — so a server can look Stopped to Jasper while it's alive on the host, and a ` +
@@ -128,15 +138,27 @@ export function reconcileMessage(report: ExternalServerReport): string {
   if (report.confirmed) {
     lines.push(
       '',
-      "Restarting them under Jasper's environment drops any uncommitted sessions on the " +
+      "Restarting under Jasper's environment drops any uncommitted sessions on the " +
         'stone — anything not committed is lost.',
+    );
+  } else if (report.mayRestart) {
+    // Identity is unproven but nothing irreversible is at stake, so the choice
+    // is the user's to make rather than Jasper's to refuse.
+    lines.push(
+      '',
+      unconfirmedWarning(report),
+      '',
+      'A NetLDI holds no data, so restarting the wrong one drops connections rather than ' +
+        'losing work — "Restart & Connect" is offered on that basis. Only you can say ' +
+        'whether anything else is using it.',
     );
   } else {
     lines.push(
       '',
       unconfirmedWarning(report),
       '',
-      'Jasper will not stop it on a guess, so "Restart & Connect" is not offered. Stop it by ' +
+      'Stopping the wrong stone would lose whatever its sessions had not committed, so ' +
+        'Jasper will not do it on a guess and "Restart & Connect" is not offered. Stop it by ' +
         'hand if you are sure it is the right one, or connect as-is.',
     );
   }
@@ -232,7 +254,7 @@ export async function reconcileExternalServers(
   // confirmed. The dialog does not offer Restart when identity is unconfirmed
   // anyway, but a caller with its own prompt could, and stopping the wrong
   // stone is not a mistake worth leaving to a dialog's wording.
-  if (!allExternalServersConfirmed(finding)) {
+  if (!mayStopExternalServers(finding)) {
     deps.showError(
       `Jasper did not stop anything: ${unconfirmedWarning(report)} ` +
         `Stop it by hand if you are sure, then start the database from Jasper.`,

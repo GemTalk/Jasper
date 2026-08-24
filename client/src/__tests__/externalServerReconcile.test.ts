@@ -105,10 +105,12 @@ describe('reconcileMessage', () => {
     expect(reconcileMessage(report())).toContain('"gs64stone" and "gs64ldi" are running');
   });
 
-  it('names just the one server when only one was', () => {
+  it('uses a singular verb when only one server was', () => {
+    // The common case is a netldi on its own, and '"gs64ldi" are running' reads
+    // as a broken sentence in the dialog that is explaining a subtlety.
     const finding = { netldi: server('netldi') };
 
-    expect(reconcileMessage(report(finding))).toContain('"gs64ldi" are running');
+    expect(reconcileMessage(report(finding))).toContain('"gs64ldi" is running');
   });
 
   it('warns that a restart loses uncommitted work', () => {
@@ -278,6 +280,34 @@ describe('reconcileExternalServers', () => {
     expect(outcome).toEqual({ kind: 'abandoned' });
     expect(deps.stopExternal).not.toHaveBeenCalled();
     expect(deps.killExternal).not.toHaveBeenCalled();
+  });
+
+  it('stops a netldi it cannot identify, because nothing irreversible is at stake', async () => {
+    // A netldi started without -l can never be identified, so refusing here
+    // makes Restart & Connect permanently unreachable in the most ordinary case
+    // this feature exists for — while the worst outcome of being wrong is
+    // dropped connections, not lost work.
+    const finding = { netldi: server('netldi', 'unknown') };
+    const deps = makeDeps();
+
+    const outcome = await reconcileExternalServers(DB, finding, report(finding), deps);
+
+    expect(outcome).toEqual({ kind: 'stopped' });
+    expect(vi.mocked(deps.stopExternal).mock.calls.map((c) => c[1].process.type)).toEqual([
+      'netldi',
+    ]);
+  });
+
+  it('still refuses when an unidentifiable stone is in the finding', async () => {
+    // Losing a stranger's uncommitted work is the outcome no warning makes
+    // recoverable, so the stone keeps the hard gate.
+    const finding = { stone: server('stone', 'unknown'), netldi: server('netldi', 'unknown') };
+    const deps = makeDeps();
+
+    const outcome = await reconcileExternalServers(DB, finding, report(finding), deps);
+
+    expect(outcome).toEqual({ kind: 'abandoned' });
+    expect(deps.stopExternal).not.toHaveBeenCalled();
   });
 
   it('refuses to stop a server it could not confirm, even if asked to', async () => {

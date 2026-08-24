@@ -12,15 +12,17 @@ const AS_IS = 'Connect as-is';
  * on: a toast auto-hides and is suppressed under Do Not Disturb, and this one
  * asks about stopping a running stone.
  *
- * "Restart & Connect" appears only when the running server is confirmed to be
- * this database's. VS Code supplies the Cancel button on a modal dialog itself,
+ * "Restart & Connect" appears whenever Jasper may act — which is not the same
+ * as being sure whose server it is. An unidentifiable NetLDI may be restarted
+ * (it holds no data, and it can never be identified, so refusing would make the
+ * action permanently unreachable); an unidentifiable stone may not. VS Code supplies the Cancel button on a modal dialog itself,
  * so there is none here — anything other than the two offered actions
  * (including dismissal) is a cancel.
  */
 export async function confirmReconcileExternalServers(
   report: ExternalServerReport,
 ): Promise<ReconcileChoice> {
-  const actions = report.confirmed ? [RESTART, AS_IS] : [AS_IS];
+  const actions = report.mayRestart ? [RESTART, AS_IS] : [AS_IS];
   const choice = await vscode.window.showWarningMessage(
     `"${report.stoneName}" was started outside Jasper`,
     { modal: true, detail: reconcileMessage(report) },

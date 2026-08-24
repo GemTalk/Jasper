@@ -345,11 +345,34 @@ export function externalServersOf(finding: ExternalServerFinding): ExternalServe
   return [finding.stone, finding.netldi].filter((s): s is ExternalServer => s !== undefined);
 }
 
-/** True when every external server found is confirmed to be this database's —
- *  the only case in which Jasper may stop them on the user's behalf. The one
- *  predicate behind both the report's `confirmed` flag and the reconcile's
- *  refusal to act, so the flag shown and the gate enforced cannot diverge. */
+/** True when every external server found is confirmed to be this database's.
+ *  Drives what the dialog *says*; what it may *do* is `mayStopExternalServers`,
+ *  which is deliberately less strict. */
 export function allExternalServersConfirmed(finding: ExternalServerFinding): boolean {
   const servers = externalServersOf(finding);
   return servers.length > 0 && servers.every((s) => s.identity === 'confirmed');
+}
+
+/**
+ * Whether Jasper may stop what it found, given how bad it would be to stop the
+ * wrong thing.
+ *
+ * A **stone** must be positively identified. Stopping a stranger's stone drops
+ * whatever its sessions had not committed, and no warning makes that
+ * recoverable — so an unconfirmed stone is simply not touched.
+ *
+ * A **netldi** is a different risk. It holds no data: stopping the wrong one
+ * drops connections, which is disruptive and recoverable, not destructive. And
+ * a netldi started without `-l` carries nothing that could ever identify it —
+ * no conf, no log path — so demanding confirmation there does not make Jasper
+ * careful, it makes the restart permanently unreachable in the most ordinary
+ * case this feature exists for. The dialog still warns; the user still decides.
+ *
+ * This is the distinction the issue drew and this code first missed: its
+ * criterion is about "a different **stone** that merely shares the name".
+ */
+export function mayStopExternalServers(finding: ExternalServerFinding): boolean {
+  const servers = externalServersOf(finding);
+  if (servers.length === 0) return false;
+  return servers.every((s) => s.process.type !== 'stone' || s.identity === 'confirmed');
 }

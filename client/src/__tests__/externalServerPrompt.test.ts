@@ -11,12 +11,13 @@ vi.mock('vscode', () => ({
 import { confirmReconcileExternalServers } from '../externalServerPrompt';
 import { ExternalServerReport } from '../externalServerReconcile';
 
-function report(confirmed = true): ExternalServerReport {
+function report(confirmed = true, mayRestart = confirmed): ExternalServerReport {
   return {
     stoneName: 'gs64stone',
     ldiName: 'gs64ldi',
     jasperRoot: '/home/u/jasperStones',
     confirmed,
+    mayRestart,
     servers: [
       {
         kind: 'Stone',
@@ -46,12 +47,21 @@ describe('confirmReconcileExternalServers', () => {
     expect(offered()).toEqual(['Restart & Connect', 'Connect as-is']);
   });
 
-  it('withholds the restart when the server could not be confirmed', async () => {
+  it('withholds the restart when an unidentifiable stone is involved', async () => {
     // Stopping a stone that merely shares the name would take down an unrelated
-    // database, so the action is not offered at all.
-    await confirmReconcileExternalServers(report(false));
+    // database and lose whatever it had not committed, so it is not offered.
+    await confirmReconcileExternalServers(report(false, false));
 
     expect(offered()).toEqual(['Connect as-is']);
+  });
+
+  it('still offers the restart for a netldi it cannot identify', async () => {
+    // A netldi started without -l can never be identified, so refusing here
+    // would make the action permanently unreachable in the ordinary case — and
+    // it holds no data, so the worst outcome is dropped connections.
+    await confirmReconcileExternalServers(report(false, true));
+
+    expect(offered()).toEqual(['Restart & Connect', 'Connect as-is']);
   });
 
   it('interrupts rather than passing by in a toast', async () => {
