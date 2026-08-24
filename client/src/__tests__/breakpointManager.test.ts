@@ -47,13 +47,20 @@ function session() {
   return makeSessionManager(true).getSelectedSession()!;
 }
 
+const TEST_SESSION = {
+  id: 1,
+  gci: {},
+  handle: 'h1',
+  login: { label: 'Test' },
+  stoneVersion: '3.7.2',
+};
+
 function makeSessionManager(hasSession: boolean) {
   return {
-    getSelectedSession: vi.fn(() =>
-      hasSession
-        ? { id: 1, gci: {}, handle: 'h1', login: { label: 'Test' }, stoneVersion: '3.7.2' }
-        : undefined,
-    ),
+    getSelectedSession: vi.fn(() => (hasSession ? TEST_SESSION : undefined)),
+    // pruneOrphans asks which sessions are logged in, to tell a live breakpoint
+    // from one whose gem is gone.
+    getSessions: vi.fn(() => (hasSession ? [TEST_SESSION] : [])),
     onDidChangeSelection: vi.fn(() => ({ dispose: () => {} })),
   } as unknown as SessionManager;
 }
@@ -402,62 +409,53 @@ describe('BreakpointManager', () => {
     });
   });
 
-  describe('reapplyAll', () => {
-    it('re-applies this session’s breakpoints, which is what a login needs', () => {
-      // VS Code restores its list at startup without firing onDidChangeBreakpoints
-      // and before any session exists, so without this the gutter marker is a lie.
-      mockGetMethodSource.mockReturnValue('foo\n^1');
-      mockGetSourceOffsets.mockReturnValue([1, 5]);
+  describe('pruneOrphans', () => {
+    it('drops a restored breakpoint whose session is gone', () => {
+      // VS Code persists its list across restarts; a GemStone breakpoint lives in
+      // the gem and dies with it, so a restored marker points at nothing.
+      const orphan = new SourceBreakpoint(
+        new Location(
+          Uri.parse('gemstone://7/Globals/Array/instance/accessing/at%3A'),
+          new Position(0, 0),
+        ),
+      );
+      debug.breakpoints = [orphan];
 
-      debug.breakpoints = [
-        new SourceBreakpoint(new Location(Uri.parse(METHOD_URI), new Position(0, 0))),
-        // A non-gemstone breakpoint must be left entirely alone.
-        new SourceBreakpoint(new Location(Uri.parse('file:///a.ts'), new Position(3, 0))),
-      ];
-
-      expect(makeManager().reapplyAll(session())).toBe(1);
-      expect(mockSetBreakAtStepPoint).toHaveBeenCalledTimes(1);
-      expect(mockGetMethodSource).toHaveBeenCalledWith(expect.anything(), 'Array', false, 'at:', 0);
+      expect(makeManager().pruneOrphans()).toBe(1);
+      expect(vi.mocked(debug.removeBreakpoints)).toHaveBeenCalledWith([orphan]);
+      expect(debug.breakpoints).toEqual([]);
     });
 
-    it('ignores a breakpoint belonging to another session', () => {
-      // Method URIs carry the session id. Pushing session 2's breakpoint into
-      // session 1's gem would set a breakpoint in a stone nobody asked about.
-      mockGetMethodSource.mockReturnValue('foo\n^1');
-      mockGetSourceOffsets.mockReturnValue([1, 5]);
+    it('keeps a breakpoint whose session is logged in', () => {
+      const live = new SourceBreakpoint(new Location(Uri.parse(METHOD_URI), new Position(0, 0)));
+      debug.breakpoints = [live];
 
+      expect(makeManager().pruneOrphans()).toBe(0);
+      expect(debug.breakpoints).toEqual([live]);
+    });
+
+    it('never touches a non-gemstone breakpoint', () => {
+      const fileBp = new SourceBreakpoint(
+        new Location(Uri.parse('file:///a.ts'), new Position(1, 0)),
+      );
+      debug.breakpoints = [fileBp];
+
+      expect(makeManager().pruneOrphans()).toBe(0);
+      expect(debug.breakpoints).toEqual([fileBp]);
+    });
+
+    it('is idempotent, so the removal it triggers cannot loop', () => {
       debug.breakpoints = [
         new SourceBreakpoint(
           new Location(
-            Uri.parse('gemstone://2/Globals/Array/instance/accessing/at%3A'),
+            Uri.parse('gemstone://7/Globals/Array/instance/accessing/at%3A'),
             new Position(0, 0),
           ),
         ),
       ];
-
-      expect(makeManager().reapplyAll(session())).toBe(0);
-      expect(mockSetBreakAtStepPoint).not.toHaveBeenCalled();
-      expect(mockClearAllBreaks).not.toHaveBeenCalled();
-    });
-
-    it('counts methods, not breakpoints, so two breaks in one method are one apply', () => {
-      mockGetMethodSource.mockReturnValue('foo\n^1');
-      mockGetSourceOffsets.mockReturnValue([1, 5]);
-
-      debug.breakpoints = [
-        new SourceBreakpoint(new Location(Uri.parse(METHOD_URI), new Position(0, 0))),
-        new SourceBreakpoint(new Location(Uri.parse(METHOD_URI), new Position(1, 0))),
-      ];
-
-      expect(makeManager().reapplyAll(session())).toBe(1);
-      // One clear for the method, both breakpoints set within it.
-      expect(mockClearAllBreaks).toHaveBeenCalledTimes(1);
-      expect(mockSetBreakAtStepPoint).toHaveBeenCalledTimes(2);
-    });
-
-    it('reports nothing to do when the session has no breakpoints', () => {
-      debug.breakpoints = [];
-      expect(makeManager().reapplyAll(session())).toBe(0);
+      const manager = makeManager();
+      expect(manager.pruneOrphans()).toBe(1);
+      expect(manager.pruneOrphans()).toBe(0);
     });
   });
 
@@ -473,6 +471,25 @@ describe('BreakpointManager', () => {
 
       manager.clearAllForSession(1);
       expect(manager.appliedFor(uri)).toHaveLength(0);
+    });
+
+    it('removes the session’s breakpoints from VS Code too, so none outlive the gem', () => {
+      const mine = new SourceBreakpoint(new Location(Uri.parse(METHOD_URI), new Position(0, 0)));
+      const other = new SourceBreakpoint(
+        new Location(
+          Uri.parse('gemstone://2/Globals/Array/instance/accessing/at%3A'),
+          new Position(0, 0),
+        ),
+      );
+      const fileBp = new SourceBreakpoint(
+        new Location(Uri.parse('file:///a.ts'), new Position(1, 0)),
+      );
+      debug.breakpoints = [mine, other, fileBp];
+
+      makeManager().clearAllForSession(1);
+
+      // Session 1's breakpoint is gone; session 2's and the file's survive.
+      expect(debug.breakpoints).toEqual([other, fileBp]);
     });
 
     it("leaves another session's breakpoints alone", () => {

@@ -1198,12 +1198,6 @@
         "icon": "$(clear-all)"
       },
       {
-        "command": "gemstone.breakpoints.reapply",
-        "title": "Re-apply Breakpoints to Session",
-        "category": "GemStone",
-        "icon": "$(debug-restart)"
-      },
-      {
         "command": "gemstone.breakpoints.refresh",
         "title": "Refresh Breakpoints",
         "category": "GemStone",
@@ -2280,11 +2274,6 @@
           "command": "gemstone.breakpoints.refresh",
           "when": "view == gemstoneBreakpoints",
           "group": "navigation@3"
-        },
-        {
-          "command": "gemstone.breakpoints.reapply",
-          "when": "view == gemstoneBreakpoints",
-          "group": "1_gemstoneBreakpoints@0"
         },
         {
           "command": "gemstone.clearTestResults",

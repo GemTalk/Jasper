@@ -899,17 +899,11 @@ export function activate(context: vscode.ExtensionContext) {
   const stepPointHints = new StepPointHintsProvider(stepPointModel);
   stepPointHints.register(context);
 
-  context.subscriptions.push(
-    // Breakpoints are per-gem state, but VS Code persists its own list across
-    // restarts and restores it before any session exists — so a restored
-    // breakpoint shows a gutter marker with nothing behind it until it is pushed
-    // into a gem. Selecting a session (which a login does) is when that happens.
-    sessionManager.onDidChangeSelection((id) => {
-      if (id == null) return;
-      const session = sessionManager.getSession(id);
-      if (session) breakpointManager.reapplyAll(session);
-    }),
-  );
+  // A GemStone breakpoint lives in the gem, so it dies with the session. VS Code
+  // persists its breakpoint list across restarts regardless, so anything it just
+  // restored belongs to a gem that no longer exists — drop it rather than show a
+  // marker that cannot stop execution.
+  breakpointManager.pruneOrphans();
 
   const breakpointTree = new BreakpointTreeProvider(sessionManager, breakpointManager);
   breakpointTree.register(context);
@@ -2691,20 +2685,6 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('gemstone.breakpoints.removeAll', () =>
       breakpointManager.removeAll(),
     ),
-
-    vscode.commands.registerCommand('gemstone.breakpoints.reapply', () => {
-      const session = sessionManager.getSelectedSession();
-      if (!session) {
-        vscode.window.showErrorMessage('No active GemStone session.');
-        return;
-      }
-      const count = breakpointManager.reapplyAll(session);
-      vscode.window.showInformationMessage(
-        count === 0
-          ? 'No GemStone breakpoints to re-apply to this session.'
-          : `Re-applied breakpoints in ${count} method${count === 1 ? '' : 's'}.`,
-      );
-    }),
 
     vscode.commands.registerCommand('gemstone.breakpoints.refresh', () => breakpointTree.refresh()),
 

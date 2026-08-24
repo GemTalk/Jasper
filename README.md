@@ -233,11 +233,15 @@ When code execution hits an error, a **Debug** button opens the VS Code debugger
 
 ### Breakpoints
 
-Breakpoints live in VS Code's own breakpoint list, so they survive a restart and
-the familiar gutter, checkbox and Enable/Disable/Remove All controls all drive
-GemStone. Each one is applied to the session as a step-point break — GemStone
-breakpoints are per-session gem state, so Jasper re-applies them on login and
-after a recompile.
+Breakpoints live in VS Code's own breakpoint list, so the familiar gutter,
+checkbox and Enable/Disable/Remove All controls all drive GemStone. Each one is
+applied to the session as a step-point break.
+
+**A GemStone breakpoint dies with its session.** It lives in the gem, not the
+repository — no `commit` persists it — so logging out clears the breakpoint from
+VS Code's list too, rather than leaving a marker for something that no longer
+exists. Unlike a breakpoint on a file, it does not come back when you reopen the
+window. Within a session they are re-applied after a recompile.
 
 - **Line breakpoints** — click the editor gutter in a `gemstone://` method. A
   gutter click means "this line", and lands on the leftmost step point on it

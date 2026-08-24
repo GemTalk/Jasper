@@ -48,14 +48,20 @@ const disabledDecoration = vscode.window.createTextEditorDecorationType({
 /**
  * Applies Jasper's breakpoints to a GemStone session and keeps the two in step.
  *
- * **The durable model is VS Code's own breakpoint list.** GemStone method
+ * **VS Code's breakpoint list is the working model, for the life of a session.**
+ * Expressing breakpoints as `vscode.debug.breakpoints` is what makes the gutter,
+ * the per-breakpoint enable checkbox and the built-in Enable/Disable/Remove All
+ * commands drive GemStone for free — they arrive here as
+ * `onDidChangeBreakpoints`.
+ *
+ * It is **not** a durable record, though, and deliberately so. GemStone method
  * breakpoints are per-gem VM state: they do not survive logout, and a `commit`
- * does not persist them (verified against 3.7.5). So the stone can never be the
- * record of what the developer wants — only of what one session currently has.
- * Keeping `vscode.debug.breakpoints` as the record means VS Code persists
- * breakpoints across restarts, and the gutter, the per-breakpoint enable
- * checkbox and the built-in Enable/Disable/Remove All commands all drive
- * GemStone for free, arriving here as `onDidChangeBreakpoints`.
+ * does not persist them (verified against 3.6.2 and 3.7.5). A breakpoint that
+ * outlived its session would be a marker pointing at a gem that no longer
+ * exists — promising to stop execution it cannot stop. So logging out takes the
+ * session's breakpoints out of VS Code's list with it, and anything VS Code's
+ * own cross-restart persistence brings back is pruned. See `pruneOrphans` and
+ * `clearAllForSession`.
  *
  * Step point precision rides on the breakpoint's **column**: a gutter click has
  * none and means "the leftmost step point on this line", while an inline
@@ -68,7 +74,7 @@ const disabledDecoration = vscode.window.createTextEditorDecorationType({
  * point with no breakpoint, hence the two calls.
  */
 export class BreakpointManager {
-  /** What we last applied, per method URI — drives decorations and re-apply. */
+  /** What we last applied, per method URI — drives decorations and re-application. */
   private applied = new Map<string, AppliedBreakpoint[]>();
 
   private _onDidApply = new vscode.EventEmitter<void>();
@@ -236,34 +242,25 @@ export class BreakpointManager {
   }
 
   /**
-   * Push this session's breakpoints into its gem. Returns how many methods were
-   * (re)applied, so a caller can tell whether anything happened.
+   * Drop every GemStone breakpoint with no live session behind it.
    *
-   * **Required on login, not just on demand.** VS Code persists its breakpoint
-   * list across restarts and restores it at startup — silently, without firing
-   * `onDidChangeBreakpoints`, and before any session exists. So a restored
-   * breakpoint has a red dot in the gutter and nothing whatsoever in the gem:
-   * the marker claims execution will stop somewhere it won't. Re-applying when a
-   * session is selected is what makes the marker true again.
+   * VS Code persists its breakpoint list and restores it at startup, which is
+   * right for a file but wrong for us: a GemStone breakpoint lives in the gem,
+   * so it dies with the session. A restored marker would point at a gem that no
+   * longer exists — a red dot promising to stop execution that cannot stop
+   * anything. Rather than re-apply it to whatever session logs in next (which
+   * would resurrect a breakpoint in a stone nobody asked about), it goes.
    *
-   * Scoped to breakpoints whose URI names *this* session. Method URIs carry the
-   * session id (`gemstone://<id>/…`), and a breakpoint recorded against one
-   * session must not be pushed into another session's gem — that would set a
-   * breakpoint in a stone the developer never asked about. A restored breakpoint
-   * whose session id no longer exists simply waits: ids restart at 1 in each
-   * window, so the usual first login reclaims it.
+   * Method URIs carry the session id, so "live" means a session of that id is
+   * logged in right now. Returns how many were dropped.
    */
-  reapplyAll(session: ActiveSession): number {
-    const prefix = `gemstone://${session.id}/`;
-    const uris = new Set<string>();
-    for (const bp of gemstoneBreakpoints()) {
-      const uriStr = bp.location.uri.toString();
-      if (uriStr.startsWith(prefix)) uris.add(uriStr);
-    }
-    for (const uriStr of uris) {
-      this.applyToUri(session, vscode.Uri.parse(uriStr));
-    }
-    return uris.size;
+  pruneOrphans(): number {
+    const live = new Set(this.sessionManager.getSessions().map((s) => `gemstone://${s.id}/`));
+    const orphans = gemstoneBreakpoints().filter(
+      (bp) => ![...live].some((prefix) => bp.location.uri.toString().startsWith(prefix)),
+    );
+    if (orphans.length > 0) vscode.debug.removeBreakpoints(orphans);
+    return orphans.length;
   }
 
   // ── Editor commands ──────────────────────────────────────
@@ -556,6 +553,15 @@ export class BreakpointManager {
   /** Called when a session logs out — its gem, and our view of it, are gone. */
   clearAllForSession(sessionId: number): void {
     const prefix = `gemstone://${sessionId}/`;
+
+    // The gem is gone, so its breakpoints are gone — including VS Code's record
+    // of them. Leaving those behind would show a marker for a breakpoint that no
+    // longer exists anywhere, and VS Code would then persist it past this window.
+    const stale = gemstoneBreakpoints().filter((bp) =>
+      bp.location.uri.toString().startsWith(prefix),
+    );
+    if (stale.length > 0) vscode.debug.removeBreakpoints(stale);
+
     for (const key of [...this.applied.keys()]) {
       if (key.startsWith(prefix)) this.applied.delete(key);
     }
@@ -639,6 +645,12 @@ export class BreakpointManager {
   }
 
   private onBreakpointsChanged(event: vscode.BreakpointsChangeEvent): void {
+    // Catches a startup restore that lands after activation, and a gutter click
+    // in a stale editor from a session that has since logged out. Pruning is
+    // idempotent, and the removal it triggers re-enters here with nothing left
+    // to prune, so this does not loop.
+    if (event.added.length > 0) this.pruneOrphans();
+
     const session = this.sessionManager.getSelectedSession();
     if (!session) return;
 
