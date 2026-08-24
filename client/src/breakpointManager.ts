@@ -72,11 +72,14 @@ const disabledDecoration = vscode.window.createTextEditorDecorationType({
  * It is **not** a durable record, though, and deliberately so. GemStone method
  * breakpoints are per-gem VM state: they do not survive logout, and a `commit`
  * does not persist them (verified against 3.6.2 and 3.7.5). A breakpoint that
- * outlived its session would be a marker pointing at a gem that no longer
- * exists — promising to stop execution it cannot stop. So logging out takes the
- * session's breakpoints out of VS Code's list with it, and anything VS Code's
- * own cross-restart persistence brings back is pruned. See `pruneOrphans` and
- * `clearAllForSession`.
+ * outlived the thing it was set in would be a marker promising to stop execution
+ * it cannot stop. So a breakpoint is dropped from VS Code's list — not just the
+ * gem — when either of those things goes away:
+ *
+ * - the **session** logs out (`clearAllForSession`), and anything VS Code's own
+ *   cross-restart persistence brings back is pruned (`pruneOrphans`);
+ * - the **method** is recompiled (`invalidateForUri`), since the new method is a
+ *   different object and the same step point may now be different code.
  *
  * Step point precision rides on the breakpoint's **column**: a gutter click has
  * none and means "the leftmost step point on this line", while an inline
@@ -557,21 +560,30 @@ export class BreakpointManager {
   // ── Lifecycle ────────────────────────────────────────────
 
   /**
-   * Called after a method is recompiled. Recompiling replaces the `GsNMethod`,
-   * so the gem's breakpoints on the old one are gone and its step point offsets
-   * may have moved — drop the cache and re-apply from VS Code's model.
+   * Called after a method is recompiled. Its breakpoints go away.
+   *
+   * Recompiling replaces the `GsNMethod`, so the gem's breakpoints on the old
+   * one are unreachable and its step point offsets may have moved. They are
+   * dropped rather than re-applied to the new method: a breakpoint belongs to
+   * the code it was set in, and after an edit "step point 4" may be a different
+   * expression entirely — silently moving it is worse than losing it. Removing
+   * them from VS Code's list as well is what makes the gutter, the Breakpoints
+   * panel and the GemStone Breakpoints view all agree, which is the same rule
+   * that applies when a session logs out.
    */
   invalidateForUri(uri: vscode.Uri): void {
     this.stepPoints.invalidate(uri);
     this.applied.delete(uri.toString());
 
-    const session = this.sessionManager.getSelectedSession();
-    if (!session) return;
-    if (readVsCodeBreakpoints(uri).length === 0) {
-      this.refreshEditorsFor(uri);
-      return;
-    }
-    this.applyToUri(session, uri);
+    // Removing these re-enters onBreakpointsChanged with none left for the
+    // method, which clears the gem's breaks and refreshes the view.
+    const stale = gemstoneBreakpoints().filter(
+      (bp) => bp.location.uri.toString() === uri.toString(),
+    );
+    if (stale.length > 0) vscode.debug.removeBreakpoints(stale);
+
+    this.refreshEditorsFor(uri);
+    this._onDidApply.fire();
   }
 
   /** Called when a session logs out — its gem, and our view of it, are gone. */

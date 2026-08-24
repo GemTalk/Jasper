@@ -527,6 +527,75 @@ describe('BreakpointManager', () => {
     });
   });
 
+  describe('invalidateForUri', () => {
+    it('drops the method’s breakpoints when it is recompiled', () => {
+      // A breakpoint belongs to the code it was set in. After an edit, "step
+      // point 4" may be a different expression, so moving it silently would be
+      // worse than losing it — and a recompiled method's old breaks are
+      // unreachable in the gem anyway.
+      mockGetMethodSource.mockReturnValue('foo\n^1');
+      mockGetSourceOffsets.mockReturnValue([1, 5]);
+
+      const mine = new SourceBreakpoint(new Location(Uri.parse(METHOD_URI), new Position(0, 0)));
+      const other = new SourceBreakpoint(
+        new Location(
+          Uri.parse('gemstone://1/Globals/Array/instance/accessing/size'),
+          new Position(0, 0),
+        ),
+      );
+      const fileBp = new SourceBreakpoint(
+        new Location(Uri.parse('file:///a.ts'), new Position(1, 0)),
+      );
+      debug.breakpoints = [mine, other, fileBp];
+
+      const manager = makeManager();
+      manager.applyToUri(session(), Uri.parse(METHOD_URI), [{ line: 1, enabled: true }]);
+      expect(manager.appliedFor(Uri.parse(METHOD_URI))).toHaveLength(1);
+
+      manager.invalidateForUri(Uri.parse(METHOD_URI));
+
+      // Gone from VS Code's list, and only this method's — another method's
+      // breakpoint and a file breakpoint are untouched.
+      expect(vi.mocked(debug.removeBreakpoints)).toHaveBeenCalledWith([mine]);
+      expect(debug.breakpoints).toEqual([other, fileBp]);
+      expect(manager.appliedFor(Uri.parse(METHOD_URI))).toHaveLength(0);
+    });
+
+    it('does not re-set the breakpoints on the new method', () => {
+      mockGetMethodSource.mockReturnValue('foo\n^1');
+      mockGetSourceOffsets.mockReturnValue([1, 5]);
+      debug.breakpoints = [
+        new SourceBreakpoint(new Location(Uri.parse(METHOD_URI), new Position(0, 0))),
+      ];
+
+      const manager = makeManager();
+      mockSetBreakAtStepPoint.mockClear();
+      manager.invalidateForUri(Uri.parse(METHOD_URI));
+
+      expect(mockSetBreakAtStepPoint).not.toHaveBeenCalled();
+    });
+
+    it('is harmless for a method that had no breakpoints', () => {
+      debug.breakpoints = [];
+      makeManager().invalidateForUri(Uri.parse(METHOD_URI));
+      expect(vi.mocked(debug.removeBreakpoints)).not.toHaveBeenCalled();
+    });
+
+    it('re-queries step points afterwards, since the offsets may have moved', () => {
+      mockGetMethodSource.mockReturnValue('foo\n^1');
+      mockGetSourceOffsets.mockReturnValue([1, 5]);
+
+      const manager = makeManager();
+      manager.applyToUri(session(), Uri.parse(METHOD_URI), [{ line: 1, enabled: true }]);
+      const before = mockGetSourceOffsets.mock.calls.length;
+
+      manager.invalidateForUri(Uri.parse(METHOD_URI));
+      manager.applyToUri(session(), Uri.parse(METHOD_URI), [{ line: 1, enabled: true }]);
+
+      expect(mockGetSourceOffsets.mock.calls.length).toBeGreaterThan(before);
+    });
+  });
+
   describe('clearAllForSession', () => {
     it('forgets a logged-out session, so nothing is re-pushed for it', () => {
       mockGetMethodSource.mockReturnValue('foo\n^1');

@@ -237,11 +237,16 @@ Breakpoints live in VS Code's own breakpoint list, so the familiar gutter,
 checkbox and Enable/Disable/Remove All controls all drive GemStone. Each one is
 applied to the session as a step-point break.
 
-**A GemStone breakpoint dies with its session.** It lives in the gem, not the
-repository — no `commit` persists it — so logging out clears the breakpoint from
-VS Code's list too, rather than leaving a marker for something that no longer
-exists. Unlike a breakpoint on a file, it does not come back when you reopen the
-window. Within a session they are re-applied after a recompile.
+**A GemStone breakpoint is tied to the compiled method it was set in.** It lives
+in the gem, not the repository — no `commit` persists it — so it goes away when
+the thing it was set in goes away:
+
+- **logging out** clears it, from VS Code's list as well as the gem, so no marker
+  is left for something that no longer exists. Unlike a breakpoint on a file, it
+  does not come back when you reopen the window;
+- **recompiling the method** clears it too. The recompile replaces the method, and
+  after an edit the same step point may be a different expression — so the
+  breakpoint is dropped rather than quietly moved somewhere you didn't put it.
 
 - **Line breakpoints** — click the editor gutter in a `gemstone://` method. A
   gutter click means "this line", and lands on the leftmost step point on it
