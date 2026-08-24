@@ -7,11 +7,21 @@ vi.mock('../browserQueries', async (orig) => ({
   getClassDescendantNames: vi.fn(() => []),
   getClassesWithCategory: vi.fn(() => []),
   deleteClass: vi.fn(() => 'Deleted class: X'),
+  defaultQueryExecutorUsing: vi.fn(() => () => ''),
+}));
+// The revert recorder's one round trip, stubbed so the snapshot is data this test controls
+// rather than a live doit (#434).
+vi.mock('../undo/queries/classSlotQueries', () => ({
+  captureClassSlots: vi.fn(),
+  applyClassSlotOps: vi.fn(),
+  newStashKey: vi.fn(() => 'k1'),
 }));
 
 import { window } from '../__mocks__/vscode';
 import { ExplorerController } from '../gemstoneExplorer';
 import { canClassBeWritten, getClassDescendantNames, deleteClass } from '../browserQueries';
+import { captureClassSlots } from '../undo/queries/classSlotQueries';
+import { peekUndoEntry, resetUndoStacks } from '../undo/undoStack';
 import type { SessionManager, ActiveSession } from '../sessionManager';
 
 function makeController(onClassRemoved?: (sessionId: number, className: string) => void) {
@@ -193,5 +203,88 @@ describe('ExplorerController.removeClass — telling cached corpora what went', 
     await ctl.removeClass();
 
     expect(onClassRemoved).not.toHaveBeenCalled();
+  });
+});
+
+describe('removeClass records a revert (#434)', () => {
+  /**
+   * `deleteClass` only unbinds the name — the class version itself survives — so the very
+   * same version can be bound again. That is only true while something still holds it, which
+   * is why the capture has to happen BEFORE the removal, and why it stashes.
+   */
+  const bound = (oop: string) => ({ bound: true, oop, selectors: [] });
+  const unbound = { bound: false, oop: null, selectors: [] };
+
+  beforeEach(() => {
+    resetUndoStacks();
+    vi.mocked(captureClassSlots).mockReset();
+  });
+
+  it('captures and stashes before the class is removed', async () => {
+    const order: string[] = [];
+    vi.mocked(captureClassSlots).mockImplementation((_e, _slots, keys) => {
+      order.push(keys ? 'capture-with-stash' : 'capture-plain');
+      return keys ? [bound('1')] : [unbound];
+    });
+    deleteClassMock.mockImplementation(() => {
+      order.push('delete');
+      return 'Deleted class: Doomed';
+    });
+    warn.mockResolvedValue('Remove');
+
+    await makeController().removeClass();
+
+    expect(order[0]).toBe('capture-with-stash');
+    expect(order[1]).toBe('delete');
+  });
+
+  it('records one entry naming the class, with its stash key', async () => {
+    vi.mocked(captureClassSlots)
+      .mockReturnValueOnce([bound('1')])
+      .mockReturnValueOnce([unbound]);
+    warn.mockResolvedValue('Remove');
+
+    await makeController().removeClass();
+
+    expect(peekUndoEntry(1)).toMatchObject({
+      kind: 'classEdit',
+      label: 'Remove class Doomed',
+      stashKeys: ['k1'],
+    });
+  });
+
+  it('records the whole subtree as ONE entry', async () => {
+    descendantsMock.mockReturnValue([descendant('Child', 1)]);
+    vi.mocked(captureClassSlots)
+      .mockReturnValueOnce([bound('1'), bound('2')])
+      .mockReturnValueOnce([unbound, unbound]);
+    warn.mockResolvedValue('Remove All');
+
+    await makeController().removeClass();
+
+    const entry = peekUndoEntry(1);
+    expect(entry?.kind === 'classEdit' && entry.slots).toHaveLength(2);
+    expect(entry?.label).toContain('2 classes');
+  });
+
+  it('records nothing when the removal was refused at the prompt', async () => {
+    warn.mockResolvedValue(undefined);
+
+    await makeController().removeClass();
+
+    expect(captureClassSlots).not.toHaveBeenCalled();
+    expect(peekUndoEntry(1)).toBeUndefined();
+  });
+
+  it('removes the class normally when the capture fails', async () => {
+    // Recording must never be the reason a removal fails.
+    vi.mocked(captureClassSlots).mockImplementation(() => {
+      throw new Error('session busy');
+    });
+    warn.mockResolvedValue('Remove');
+
+    await expect(makeController().removeClass()).resolves.toBeUndefined();
+    expect(deleteClassMock).toHaveBeenCalled();
+    expect(peekUndoEntry(1)).toBeUndefined();
   });
 });

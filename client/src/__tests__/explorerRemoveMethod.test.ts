@@ -8,11 +8,20 @@ vi.mock('../browserQueries', () => ({
   canClassBeWritten: vi.fn(() => true),
   deleteMethod: vi.fn(() => 'Deleted: Array >> at:'),
   getClassEnvironments: vi.fn(() => []),
+  defaultQueryExecutorUsing: vi.fn(() => () => ''),
+}));
+// The undo recorder's one round trip, stubbed so the snapshot is data this test controls
+// rather than a live doit (#434).
+vi.mock('../undo/queries/methodSlotQueries', () => ({
+  captureMethodSlots: vi.fn(),
+  applyMethodSlotOps: vi.fn(),
 }));
 
 import { ExplorerController, MethodItem } from '../gemstoneExplorer';
 import * as queries from '../browserQueries';
 import { window } from '../__mocks__/vscode';
+import { captureMethodSlots } from '../undo/queries/methodSlotQueries';
+import { peekUndoEntry, resetUndoStacks } from '../undo/undoStack';
 import type { SessionManager, ActiveSession } from '../sessionManager';
 
 type SelectorInfo = {
@@ -178,5 +187,77 @@ describe('ExplorerController.removeMethod', () => {
 
     expect(showErrorMessage).toHaveBeenCalledWith(expect.stringContaining('a SecurityError'));
     expect(refresh).not.toHaveBeenCalled();
+  });
+});
+
+describe('removeMethod records an undo (#434)', () => {
+  /**
+   * The source only exists until the removal lands, so the capture has to straddle it. What
+   * is pinned here is that ordering, that the entry is only recorded once GemStone has
+   * actually confirmed the removal, and that a failed capture still leaves a working delete.
+   */
+  const present = (source: string, category: string) => ({ exists: true, source, category });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetUndoStacks();
+    vi.mocked(captureMethodSlots).mockReset();
+    (queries.deleteMethod as ReturnType<typeof vi.fn>).mockReturnValue('Deleted: Array >> at:');
+    (window.showWarningMessage as ReturnType<typeof vi.fn>).mockResolvedValue('Remove');
+  });
+
+  it('captures the source before the method is removed', () => {
+    const order: string[] = [];
+    vi.mocked(captureMethodSlots).mockImplementation(() => {
+      order.push('capture');
+      return [present('at: i\n  ^1', 'accessing')];
+    });
+    (queries.deleteMethod as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      order.push('delete');
+      return 'Deleted: Array >> at:';
+    });
+
+    return makeController()
+      .removeMethod(methodItem())
+      .then(() => expect(order).toEqual(['capture', 'delete']));
+  });
+
+  it('records an entry naming the method', async () => {
+    vi.mocked(captureMethodSlots).mockReturnValue([present('at: i\n  ^1', 'accessing')]);
+
+    await makeController().removeMethod(methodItem());
+
+    expect(peekUndoEntry(1)).toMatchObject({
+      kind: 'methodEdit',
+      label: 'Delete Array>>#at:',
+    });
+  });
+
+  it('records nothing when GemStone refused the removal', async () => {
+    // The method is still there; offering to restore it would be a lie.
+    vi.mocked(captureMethodSlots).mockReturnValue([present('at: i\n  ^1', 'accessing')]);
+    (queries.deleteMethod as ReturnType<typeof vi.fn>).mockReturnValue('Selector not found');
+
+    await makeController().removeMethod(methodItem());
+
+    expect(peekUndoEntry(1)).toBeUndefined();
+  });
+
+  it('records nothing when the removal was refused at the prompt', async () => {
+    (window.showWarningMessage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+    await makeController().removeMethod(methodItem());
+
+    expect(captureMethodSlots).not.toHaveBeenCalled();
+  });
+
+  it('removes the method normally when the capture fails', async () => {
+    vi.mocked(captureMethodSlots).mockImplementation(() => {
+      throw new Error('session busy');
+    });
+
+    await expect(makeController().removeMethod(methodItem())).resolves.toBeUndefined();
+    expect(queries.deleteMethod).toHaveBeenCalled();
+    expect(peekUndoEntry(1)).toBeUndefined();
   });
 });
