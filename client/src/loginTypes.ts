@@ -171,15 +171,19 @@ export function buildDataCuratorLogin(config: ManagedStoneConfig): GemStoneLogin
 }
 
 /**
- * The configured logins a database's removal would leave pointing at nothing:
- * same stone, same version. Creating a database auto-creates a DataCurator login
- * for its stone, so deleting one without consulting this leaves behind an entry
- * Jasper made itself — plus any others the user added for the same stone.
+ * The configured logins a *local* database's removal would leave pointing at
+ * nothing: local host, same stone, same version. Creating a database auto-creates
+ * a DataCurator login for its stone, so deleting one without consulting this
+ * leaves behind an entry Jasper made itself — plus any others the user added for
+ * the same local stone.
  *
- * Matches on stone and version, the same pairing used to associate a login with
- * a database everywhere else. `versionsMatch` is injected rather than imported:
- * processManager owns it and already imports this module, so importing it back
- * would be a cycle.
+ * Restricted to `gem_host === 'localhost'`, because a Jasper-managed database runs
+ * on this machine (buildDataCuratorLogin sets `gem_host: 'localhost'`). A *remote*
+ * login that merely shares the default stone name and version — a login to a stone
+ * on another server — must NEVER be swept: deleting a local database must not
+ * delete someone's remote credentials. `versionsMatch` is injected rather than
+ * imported: processManager owns it and already imports this module, so importing
+ * it back would be a cycle.
  */
 export function loginsTargetingStone(
   logins: GemStoneLogin[],
@@ -187,7 +191,10 @@ export function loginsTargetingStone(
   versionsMatch: (a: string, b: string) => boolean,
 ): GemStoneLogin[] {
   return logins.filter(
-    (l) => l.stone === config.stoneName && versionsMatch(l.version, config.version),
+    (l) =>
+      l.gem_host === 'localhost' &&
+      l.stone === config.stoneName &&
+      versionsMatch(l.version, config.version),
   );
 }
 

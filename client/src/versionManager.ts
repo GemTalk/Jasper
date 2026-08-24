@@ -156,6 +156,27 @@ export class VersionManager {
       versions.push(this.installedVersion(info));
     }
 
+    // A downloaded archive the catalog does not list — which is *every* downloaded
+    // archive when the catalog is empty (offline, or the fetch failed). The catalog
+    // loop is the only place a downloaded row is otherwise produced, so without
+    // this the version, and its no-network "Install (extract)" action, silently
+    // vanish offline. Extracted versions are already covered by the loops above.
+    for (const [version, size] of downloaded) {
+      if (catalogVersions.has(version)) continue;
+      if (extractedMap.has(version)) continue;
+      versions.push({
+        version,
+        fileName: '',
+        url: '',
+        size,
+        date: '',
+        downloaded: true,
+        extracted: false,
+        clientExtracted: clientExtracted.has(version),
+        bundled: bundled.has(version),
+      });
+    }
+
     // Drop remote versions older than the minimum; local installs are always kept
     const supportedVersions = versions.filter(
       (version) =>

@@ -122,6 +122,28 @@ describe('GemStone Manager webview', () => {
     expect(sectionOrder(root)[0]).toBe('os');
   });
 
+  it('leads with the operating system when a check warns even though the limit clears 1 GB', () => {
+    // "No room for another cache": the limit clears 1 GB (sharedMemoryConfigured
+    // true) but the shared-memory check still reports warn. The OS section must
+    // not read settled just because the top-level flag is set.
+    const noRoom = {
+      ...HEALTHY_OS,
+      sharedMemoryConfigured: true,
+      checks: [
+        {
+          key: 'sharedMemory',
+          label: 'Shared memory',
+          state: 'warn',
+          detail: '1 GB — no room for another cache',
+        },
+      ],
+    };
+
+    const { root } = open(state({ os: noRoom }));
+
+    expect(sectionOrder(root)[0]).toBe('os');
+  });
+
   it('leads with the versions when no release is installed', () => {
     const { root } = open(state({ versions: [] }));
 
@@ -193,8 +215,18 @@ describe('GemStone Manager webview', () => {
     expect(root.querySelector('.db-state')!.textContent).toBe('running 20 min');
   });
   it('offers a remedy only for the prerequisite that failed', () => {
+    // Both rows carry a remedy — buildOsChecks attaches one to every check,
+    // failing or not — so this pins that the green row's remedy is NOT rendered
+    // (a "run setup script · requires sudo" button on a healthy row would invite
+    // a privileged run against a non-problem).
     const checks = [
-      { key: 'sharedMemory', label: 'Shared memory', state: 'ok', detail: '2.0 GB' },
+      {
+        key: 'sharedMemory',
+        label: 'Shared memory',
+        state: 'ok',
+        detail: '2.0 GB',
+        remedy: { command: 'gemstone.runSetSharedMemory', label: 'Run setup script' },
+      },
       {
         key: 'removeIpc',
         label: 'RemoveIPC',

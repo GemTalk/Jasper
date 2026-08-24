@@ -207,10 +207,19 @@
   }
 
   // ── OS section ──────────────────────────────────────────────────────────────
-  // An OS "warning" is anything the user may need to fix: shared memory below
-  // the 1 GB threshold, or state that couldn't be read at all.
+  // An OS "warning" is anything the user may need to fix: shared memory below the
+  // 1 GB threshold, state that couldn't be read at all, or any individual check
+  // reporting warn/unknown — including "no room for another cache" on a machine
+  // whose limit clears 1 GB but whose free shared memory does not, which
+  // sharedMemoryConfigured alone does not capture. Without the per-check test the
+  // header counts the OS step done and the section sinks, while the row shows warn.
   function osHasWarning(os) {
-    return !!os.supported && (os.unknown || !os.sharedMemoryConfigured);
+    return (
+      !!os.supported &&
+      (os.unknown ||
+        !os.sharedMemoryConfigured ||
+        (os.checks || []).some((c) => c.state === 'warn' || c.state === 'unknown'))
+    );
   }
 
   // A bare button doesn't explain itself. When a check fails, say what is wrong,
@@ -241,11 +250,17 @@
         const tone = c.state === 'ok' ? 'ok' : c.state === 'warn' ? 'warn' : 'off';
         const glyph =
           c.state === 'ok' ? 'pass-filled' : c.state === 'warn' ? 'warning' : 'circle-outline';
-        const remedy = c.remedy
-          ? `<button type="button" class="btn" data-action="osRemedy" data-cmd="${esc(c.remedy.command)}" title="${esc(c.remedy.note ? `${c.remedy.label} — ${c.remedy.note}` : c.remedy.label)}"><span>${esc(c.remedy.label)}</span></button>${
-              c.remedy.note ? `<span class="os-check-note">${esc(c.remedy.note)}</span>` : ''
-            }`
-          : '';
+        // Only offer the remedy while the check is failing. buildOsChecks attaches
+        // a remedy to every row for reference, but a green row must not show its
+        // button — several are "run this privileged script", and offering that
+        // against a problem that isn't there is worse than useless. (The header's
+        // next-step logic already gates the same way.)
+        const remedy =
+          c.remedy && c.state !== 'ok'
+            ? `<button type="button" class="btn" data-action="osRemedy" data-cmd="${esc(c.remedy.command)}" title="${esc(c.remedy.note ? `${c.remedy.label} — ${c.remedy.note}` : c.remedy.label)}"><span>${esc(c.remedy.label)}</span></button>${
+                c.remedy.note ? `<span class="os-check-note">${esc(c.remedy.note)}</span>` : ''
+              }`
+            : '';
         return `<li class="os-check">
           ${mark(glyph, tone, c.label)}
           <span class="os-check-label">${esc(c.label)}</span>
@@ -284,10 +299,11 @@
     return section({ key: 'os', title: 'Operating System', desc: os.platformLabel, open }, body);
   }
 
-  // The actions a live session offers, mirroring the sidebar's inline set. They
-  // only appear on a connected row: none of them mean anything without a session.
+  // The actions a live session offers on a connected row — none of them mean
+  // anything without a session, so they appear only there. (Opening the System
+  // Browser is deliberately not among them: that inline action was retired from
+  // session rows, and this surface must not quietly bring it back.)
   const SESSION_ACTIONS = [
-    ['gemstone.openBrowser', 'listTree', 'Open System Browser'],
     ['gemstone.sessionOpenWorkspace', 'notebook', 'Open Workspace'],
     ['gemstone.sessionCommit', 'check', 'Commit'],
     ['gemstone.sessionAbort', 'discard', 'Abort'],

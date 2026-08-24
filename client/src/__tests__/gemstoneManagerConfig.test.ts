@@ -174,7 +174,8 @@ describe('loading configuration', () => {
         .querySelector('.config-info')!
         .getAttribute('title') ?? '';
 
-    // The type was invisible before; it now leads the tooltip (issue #232 item 2).
+    // The value's type leads the tooltip, so an editor knows what an edit expects
+    // (true/false, a number, or text) before opening it.
     const described = infoFor('StnGemTimeout');
     expect(described).toContain('Integer');
     expect(described).toContain('runtime-settable');

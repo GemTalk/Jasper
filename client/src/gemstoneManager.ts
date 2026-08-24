@@ -356,12 +356,12 @@ export const OS_REMEDIES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * The session actions the panel may dispatch — exactly the inline set the sidebar
- * offers a live session. The webview sends a command *name*, so it is matched
- * against this list rather than executed on trust.
+ * The session actions the panel may dispatch. The webview sends a command *name*,
+ * so it is matched against this list rather than executed on trust. (Deliberately
+ * excludes gemstone.openBrowser: opening the System Browser was retired from
+ * session rows, so this surface does not offer it either.)
  */
 export const SESSION_ACTIONS: ReadonlySet<string> = new Set([
-  'gemstone.openBrowser',
   'gemstone.sessionOpenWorkspace',
   'gemstone.sessionCommit',
   'gemstone.sessionAbort',
@@ -865,9 +865,16 @@ export class GemstoneManagerPanel {
   private async startAndConnect(label: string): Promise<void> {
     const login = this.deps.getLogins().find((l) => loginLabel(l) === label);
     if (!login) return;
-    const db = this.lastDatabases.find(
-      (d) => d.config.stoneName === login.stone && versionsMatch(d.config.version, login.version),
-    );
+    // Only a local login may bring a database up: a remote login that merely
+    // shares the default stone name must not start the *local* stone of that name
+    // (and then try to log in to the remote one). See buildLoginTargets.
+    const db =
+      login.gem_host === 'localhost'
+        ? this.lastDatabases.find(
+            (d) =>
+              d.config.stoneName === login.stone && versionsMatch(d.config.version, login.version),
+          )
+        : undefined;
     if (db) await this.bringUp(db);
     await this.connectLogin(label);
     await this.postState();
@@ -1391,7 +1398,17 @@ export class GemstoneManagerPanel {
     const shmallBytes = mem ? mem.shmall * 4096 : undefined;
     const free = shmallBytes !== undefined && inUse !== undefined ? shmallBytes - inUse : undefined;
     const roomForACache = free === undefined || free >= cacheBytes;
-    const headroom = free === undefined ? '' : ` · ${formatBytes(free)} free`;
+    // A stock Linux host ships shmall as a near-2^64 "unlimited" sentinel, so a raw
+    // byte readout of the free space reads as nonsense (e.g. "68719476736 TB free").
+    // Above a sane cap the exact number is meaningless — show it as a floor, the
+    // same way sharedMemoryStatus clamps the limit label to "≥ 1".
+    const FREE_DISPLAY_CAP = 1024 ** 4; // 1 TiB
+    const headroom =
+      free === undefined
+        ? ''
+        : free > FREE_DISPLAY_CAP
+          ? ` · ${formatBytes(FREE_DISPLAY_CAP)}+ free`
+          : ` · ${formatBytes(free)} free`;
     const checks: OsCheck[] = [
       {
         key: 'sharedMemory',
@@ -1516,9 +1533,13 @@ export class GemstoneManagerPanel {
 
     const targets = this.deps.getLogins().map((l) => {
       const label = loginLabel(l);
-      const db = databases.find(
-        (d) => d.stoneName === l.stone && versionsMatch(d.version, l.version),
-      );
+      // Only a local login (localhost) pairs to a database this machine made; a
+      // remote login that shares the stone name must not inherit the local db's
+      // dirName (and its db-scoped actions) or its running state.
+      const db =
+        l.gem_host === 'localhost'
+          ? databases.find((d) => d.stoneName === l.stone && versionsMatch(d.version, l.version))
+          : undefined;
       return {
         label,
         user: l.gs_user,

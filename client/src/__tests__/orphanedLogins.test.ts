@@ -58,6 +58,19 @@ describe('logins orphaned by deleting a database', () => {
     expect(loginsTargetingStone(logins, CONFIG, versionsMatch)).toEqual([]);
   });
 
+  it('never touches a remote login that merely shares the default stone name', () => {
+    // A local database uses the default name (gs64stone/devKit); a remote server
+    // can too. Deleting the local database must not delete the remote login's
+    // credentials — the swept set is restricted to gem_host 'localhost'.
+    const remote = login({ gem_host: 'prod-server.example.com' });
+    const local = login();
+
+    const orphans = loginsTargetingStone([remote, local], CONFIG, versionsMatch);
+
+    expect(orphans).toHaveLength(1);
+    expect(orphans[0].gem_host).toBe('localhost');
+  });
+
   it('finds nothing to remove when no login pointed at it', () => {
     expect(loginsTargetingStone([], CONFIG, versionsMatch)).toEqual([]);
   });

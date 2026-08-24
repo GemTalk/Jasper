@@ -327,6 +327,24 @@ describe('VersionManager.getInstalledVersions', () => {
 
     expect(versions.map((v) => v.version)).toEqual(['3.7.5']);
   });
+
+  // A downloaded archive that has not been extracted, with no catalog (offline).
+  // getInstalledVersions is versionsFrom([]), and the catalog loop is the only
+  // other place a downloaded row is produced — so without a dedicated path this
+  // version, and its no-network Install (extract) action, vanish offline.
+  onSupportedPosixIt('keeps a downloaded-but-unextracted archive when offline', () => {
+    const storage = new SysadminStorage();
+    const manager = new VersionManager(storage);
+    const suffix = storage.getPlatformSuffix();
+    const ext = storage.getDownloadExtension();
+    fs.writeFileSync(path.join(tmpDir, `GemStone64Bit3.7.5${suffix}.${ext}`), 'x'.repeat(100));
+
+    const versions = manager.getInstalledVersions();
+
+    expect(versions).toEqual([
+      expect.objectContaining({ version: '3.7.5', downloaded: true, extracted: false }),
+    ]);
+  });
 });
 
 // ── VersionManager.fetchAvailableVersions (local inclusion) ──

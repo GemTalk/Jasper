@@ -682,6 +682,33 @@ describe('GemStone Manager panel', () => {
     );
   });
 
+  // A remote login can share the default stone name with a local database. "Start
+  // & log in" on it must attempt the login but must NOT start the local stone of
+  // that name — otherwise it starts the wrong server behind the user's back.
+  it('does not start a local stone for a remote login that shares its name', async () => {
+    const remote = { ...aLogin('DataCurator'), gem_host: 'prod-server.example.com' };
+    const { panel, adminChanged } = openPanel(() => [remote], { isStoneRunning: () => false });
+    adminChanged.fire();
+    await settle();
+
+    send(panel, {
+      command: 'startAndConnect',
+      login: 'DataCurator on db-1 (prod-server.example.com)',
+    });
+    await settle();
+
+    // The login was found and attempted (so the test is not passing vacuously)…
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+      'gemstone.login',
+      expect.anything(),
+    );
+    // …but the local db-1 stone was never started for it.
+    expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith(
+      'gemstone.startStone',
+      expect.anything(),
+    );
+  });
+
   // The mirror of bringUp: taking a database down must stop only what is up, so a
   // stop is never issued against an already-stopped process.
   it('stops only what is up when taking a database down', async () => {
