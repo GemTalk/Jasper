@@ -25,6 +25,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 
 import { SysadminStorage } from './sysadminStorage';
+import { DEFAULT_SHR_PAGE_CACHE_SIZE_KB } from './databaseManager';
 import { VersionManager, CatalogEntry } from './versionManager';
 import { ProcessManager, versionsMatch } from './processManager';
 import {
@@ -304,7 +305,7 @@ type Inbound =
   | { command: 'stopStone'; dirName: string }
   | { command: 'startNetldi'; dirName: string }
   | { command: 'stopNetldi'; dirName: string }
-  | { command: 'replaceExtent'; dirName: string }
+  | { command: 'replaceExtent'; dirName: string; extent?: string }
   | { command: 'backupDatabase'; dirName: string }
   | { command: 'installServerSupport'; dirName: string }
   | { command: 'restoreBackup'; dirName: string; path: string }
@@ -760,7 +761,12 @@ export class GemstoneManagerPanel {
         await this.runDbCommand('gemstone.stopNetldi', msg.dirName, 'netldi');
         return;
       case 'replaceExtent':
-        await this.runDbCommand('gemstone.replaceExtent', msg.dirName, 'stone');
+        // Carry the extent the user picked in the dropdown through to the guarded
+        // replace flow, so its confirmation starts on that extent rather than
+        // forgetting the choice and reopening on the current one.
+        await this.runDbCommand('gemstone.replaceExtent', msg.dirName, 'stone', true, {
+          preselect: msg.extent,
+        });
         return;
       case 'installServerSupport':
         // The command resolves the session it needs and says so when there is
@@ -842,17 +848,6 @@ export class GemstoneManagerPanel {
     }
   }
 
-  /**
-   * Connect as a specific login. Rows are identified by their display label, the
-   * same string `buildDatabases` puts on the wire, so the panel never has to ship
-   * credentials to the webview. Delegates to `gemstone.login`, inheriting its
-   * keychain lookup, password prompt and session wiring.
-   */
-  /**
-   * Bring a stopped database up and then log in — the two steps a stopped login
-   * would otherwise need, in the order that works. The stone must answer before
-   * the login is attempted, so the start is awaited rather than fired alongside.
-   */
   /** Run one of the allowed session commands against a live session. */
   private async runSessionAction(sessionId: number, action: string): Promise<void> {
     if (!SESSION_ACTIONS.has(action)) return;
@@ -862,6 +857,11 @@ export class GemstoneManagerPanel {
     await this.postState();
   }
 
+  /**
+   * Bring a stopped database up and then log in — the two steps a stopped login
+   * would otherwise need, in the order that works. The stone must answer before
+   * the login is attempted, so the start is awaited rather than fired alongside.
+   */
   private async startAndConnect(label: string): Promise<void> {
     const login = this.deps.getLogins().find((l) => loginLabel(l) === label);
     if (!login) return;
@@ -901,6 +901,12 @@ export class GemstoneManagerPanel {
     }
   }
 
+  /**
+   * Connect as a specific login. Rows are identified by their display label, the
+   * same string `buildDatabases` puts on the wire, so the panel never has to ship
+   * credentials to the webview. Delegates to `gemstone.login`, inheriting its
+   * keychain lookup, password prompt and session wiring.
+   */
   private async connectLogin(label: string): Promise<void> {
     const login = this.deps.getLogins().find((l) => loginLabel(l) === label);
     if (!login) return;
@@ -920,11 +926,6 @@ export class GemstoneManagerPanel {
     await this.postState();
   }
 
-  /**
-   * Installing a chosen release is a single action: fetch the archive, then
-   * extract it. The extract only runs once the download has actually landed, so a
-   * cancelled or failed fetch never tries to unpack a file that isn't there.
-   */
   /**
    * Adding a release the machine does not have yet. The published catalogue runs
    * to dozens of entries, so it is offered as a quick pick — the editor's own
@@ -954,6 +955,11 @@ export class GemstoneManagerPanel {
     await this.installVersion(picked.label);
   }
 
+  /**
+   * Installing a chosen release is a single action: fetch the archive, then
+   * extract it. The extract only runs once the download has actually landed, so a
+   * cancelled or failed fetch never tries to unpack a file that isn't there.
+   */
   private async installVersion(version: string): Promise<void> {
     const target = this.lastVersions.find((v) => v.version === version);
     if (!target) return;
@@ -1011,10 +1017,11 @@ export class GemstoneManagerPanel {
     dirName: string,
     kind: 'database' | 'stone' | 'netldi',
     refresh = true,
+    extra: Record<string, unknown> = {},
   ): Promise<void> {
     const db = this.lastDatabases.find((d) => d.dirName === dirName);
     if (!db) return;
-    await vscode.commands.executeCommand(command, { kind, db });
+    await vscode.commands.executeCommand(command, { kind, db, ...extra });
     if (refresh) await this.postState();
   }
 
@@ -1376,12 +1383,14 @@ export class GemstoneManagerPanel {
     inUse: number | undefined,
   ): OsCheck[] {
     // shmall is a ceiling for the machine, not for one stone: caches other stones
-    // already hold count against it. A database Jasper creates asks for a 100 MB
-    // cache (SHR_PAGE_CACHE_SIZE_KB), so less than that free means the next start
-    // fails however comfortably the limit itself clears 1 GB.
+    // already hold count against it. A database Jasper creates asks for a cache of
+    // DEFAULT_SHR_PAGE_CACHE_SIZE_KB (the exact figure written into its conf), so
+    // less than that free means the next start fails however comfortably the limit
+    // itself clears 1 GB — reading the same constant keeps the two in step.
+    const cacheBytes = DEFAULT_SHR_PAGE_CACHE_SIZE_KB * 1024;
     const shmallBytes = mem ? mem.shmall * 4096 : undefined;
     const free = shmallBytes !== undefined && inUse !== undefined ? shmallBytes - inUse : undefined;
-    const roomForACache = free === undefined || free >= 100 * 1024 * 1024;
+    const roomForACache = free === undefined || free >= cacheBytes;
     const headroom = free === undefined ? '' : ` · ${formatBytes(free)} free`;
     const checks: OsCheck[] = [
       {
@@ -1548,10 +1557,19 @@ export class GemstoneManagerPanel {
           this.catalog = await this.catalogFetch;
         }
         list = this.deps.versionManager.versionsFrom(this.catalog);
-      } catch {
-        // Offline: fall back to what's installed / downloaded on disk so the
-        // panel still manages local versions when the download catalog is
-        // unreachable. Drop the failed fetch so a later pass can retry it.
+      } catch (e) {
+        // Usually offline — but this catch also covers versionsFrom, which is
+        // pure disk work, so a scrape whose regex stopped matching or a malformed
+        // install would otherwise shrink the list to what's on disk with nothing
+        // said. Log the real reason before falling back, so "my versions
+        // disappeared" has something to go on.
+        appendSysadmin(
+          `GemStone Manager: could not read the version catalog, showing installed versions only — ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        );
+        // Fall back to what's installed / downloaded on disk, and drop the failed
+        // fetch so a later pass can retry it.
         this.catalogFetch = undefined;
         list = this.deps.versionManager.getInstalledVersions();
       }

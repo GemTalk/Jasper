@@ -139,8 +139,10 @@
 
   // A button. Ordinary buttons carry a label (and maybe a leading icon); icon-only
   // buttons are a bare glyph with an accessible label. `cls` picks the visual
-  // weight: `btn-primary` is the one filled call to action; everything else is the
-  // quieter secondary treatment.
+  // weight, and only `'btn-primary'` changes it — that one call to action gets the
+  // filled treatment; every other value (there is only `'btn-secondary'`) renders
+  // as the default quiet button, which is the base `.btn` style itself. There is
+  // deliberately no separate "ghost" variant, so don't invent a class name for one.
   function btn(action, label, iconKey, cls, attrs) {
     const a = attrs || {};
     const data =
@@ -276,7 +278,7 @@
         <dt>Databases folder</dt>
         <dd class="facts-action">
           <span class="mono dim">${esc(rootPath || '')}</span>
-          ${btn('openSettings', 'Change…', 'gear', 'btn-ghost')}
+          ${btn('openSettings', 'Change…', 'gear', 'btn-secondary')}
         </dd>
       </dl>`;
     return section({ key: 'os', title: 'Operating System', desc: os.platformLabel, open }, body);
@@ -388,7 +390,7 @@
         key: 'connect',
         title: 'Connect',
         desc: current ? `${current.user} · ${current.stone}` : 'Not connected',
-        actions: btn('createLogin', 'New Login', 'plus', 'btn-ghost', { iconOnly: true }),
+        actions: btn('createLogin', 'New Login', 'plus', 'btn-secondary', { iconOnly: true }),
         open,
       },
       body,
@@ -408,12 +410,12 @@
   function versionActions(v) {
     const state = versionState(v);
     const cell = (html) => `<td class="v-cell">${html || ''}</td>`;
-    const openFolder = btn('openVersionFolder', 'Open Folder', 'folder', 'btn-ghost', {
+    const openFolder = btn('openVersionFolder', 'Open Folder', 'folder', 'btn-secondary', {
       version: v.version,
       iconOnly: true,
       title: 'Open product folder',
     });
-    const openTerminal = btn('openVersionTerminal', 'Open Terminal', 'terminal', 'btn-ghost', {
+    const openTerminal = btn('openVersionTerminal', 'Open Terminal', 'terminal', 'btn-secondary', {
       version: v.version,
       iconOnly: true,
       title: 'Open a terminal for this version',
@@ -423,17 +425,17 @@
     const client = !windowsHost
       ? ''
       : v.clientExtracted
-        ? btn('openWindowsClientFolder', 'Open Client Folder', 'folderOpen', 'btn-ghost', {
+        ? btn('openWindowsClientFolder', 'Open Client Folder', 'folderOpen', 'btn-secondary', {
             version: v.version,
             iconOnly: true,
             title: 'Open the Windows client folder',
           }) +
-          btn('deleteWindowsClient', 'Delete Client', 'trash', 'btn-ghost', {
+          btn('deleteWindowsClient', 'Delete Client', 'trash', 'btn-secondary', {
             version: v.version,
             iconOnly: true,
             title: 'Remove the extracted Windows client',
           })
-        : btn('installWindowsClient', 'Install Client', 'install', 'btn-ghost', {
+        : btn('installWindowsClient', 'Install Client', 'install', 'btn-secondary', {
             version: v.version,
             iconOnly: true,
             title: 'Download and extract the Windows client',
@@ -442,7 +444,7 @@
     if (state === 'downloaded') {
       return (
         cell(
-          btn('deleteDownload', 'Delete Download', 'trash', 'btn-ghost', {
+          btn('deleteDownload', 'Delete Download', 'trash', 'btn-secondary', {
             version: v.version,
             iconOnly: true,
             title: 'Delete the downloaded archive',
@@ -460,7 +462,7 @@
       return (
         cell(openFolder + openTerminal + client) +
         cell(
-          btn('unregisterLocalVersion', 'Unregister', null, 'btn-ghost', {
+          btn('unregisterLocalVersion', 'Unregister', null, 'btn-secondary', {
             version: v.version,
             title: 'Remove the local symlink',
           }),
@@ -470,7 +472,7 @@
     return (
       cell(openFolder + openTerminal + client) +
       cell(
-        btn('uninstallVersion', 'Uninstall', 'trash', 'btn-ghost', {
+        btn('uninstallVersion', 'Uninstall', 'trash', 'btn-secondary', {
           version: v.version,
           title: 'Remove the extracted product',
         }),
@@ -873,11 +875,11 @@
     const onDisk = versions.filter((v) => v.extracted || v.downloaded || v.local);
     const installed = versionsInstalledCount(versions);
     const actions =
-      btn('installNewVersion', 'Install Version…', 'plus', 'btn-ghost', { iconOnly: true }) +
-      btn('registerLocalVersion', 'Register Local…', 'folderOpen', 'btn-ghost', {
+      btn('installNewVersion', 'Install Version…', 'plus', 'btn-secondary', { iconOnly: true }) +
+      btn('registerLocalVersion', 'Register Local…', 'folderOpen', 'btn-secondary', {
         iconOnly: true,
       }) +
-      btn('openWalkthrough', 'Get Started with GemStone', 'notebook', 'btn-ghost', {
+      btn('openWalkthrough', 'Get Started with GemStone', 'notebook', 'btn-secondary', {
         iconOnly: true,
       });
 
@@ -978,7 +980,7 @@
 
     const extras =
       (stale
-        ? btn('deleteStaleLock', 'Delete stale lock', 'trash', 'btn-ghost', {
+        ? btn('deleteStaleLock', 'Delete stale lock', 'trash', 'btn-secondary', {
             dir: db.dirName,
             name: proc.name,
             iconOnly: true,
@@ -986,7 +988,7 @@
           })
         : '') +
       (!isStone && windowsHost && proc
-        ? btn('copyNetldiHost', 'Copy host', 'target', 'btn-ghost', {
+        ? btn('copyNetldiHost', 'Copy host', 'target', 'btn-secondary', {
             dir: db.dirName,
             name: proc.name,
             iconOnly: true,
@@ -995,12 +997,12 @@
         : '');
 
     const toggle = running
-      ? btn(isStone ? 'stopStone' : 'stopNetldi', 'Stop', 'stop', 'btn-ghost', {
+      ? btn(isStone ? 'stopStone' : 'stopNetldi', 'Stop', 'stop', 'btn-secondary', {
           dir: db.dirName,
           iconOnly: true,
           title: `Stop ${label}`,
         })
-      : btn(isStone ? 'startStone' : 'startNetldi', 'Start', 'play', 'btn-ghost', {
+      : btn(isStone ? 'startStone' : 'startNetldi', 'Start', 'play', 'btn-secondary', {
           dir: db.dirName,
           iconOnly: true,
           title: `Start ${label}`,
@@ -1075,7 +1077,7 @@
     // Backing up copies live extents, so it is only offered while the stone is
     // up — the same condition the sidebar put it behind.
     const backup = db.stoneRunning
-      ? btn('backupDatabase', 'Back up', 'archive', 'btn-ghost', {
+      ? btn('backupDatabase', 'Back up', 'archive', 'btn-secondary', {
           dir: db.dirName,
           iconOnly: true,
           title: 'Online extent backup',
@@ -1083,17 +1085,17 @@
       : '';
     return (
       backup +
-      btn('installServerSupport', 'Install Server Support', 'install', 'btn-ghost', {
+      btn('installServerSupport', 'Install Server Support', 'install', 'btn-secondary', {
         dir: db.dirName,
         iconOnly: true,
         title: 'Install the Enhanced Inspector and refactoring support into this stone',
       }) +
-      btn('openDbTerminal', 'Terminal', 'terminal', 'btn-ghost', {
+      btn('openDbTerminal', 'Terminal', 'terminal', 'btn-secondary', {
         dir: db.dirName,
         iconOnly: true,
         title: 'Open a terminal for this database',
       }) +
-      btn('openDbInFinder', 'Reveal', 'reveal', 'btn-ghost', {
+      btn('openDbInFinder', 'Reveal', 'reveal', 'btn-secondary', {
         dir: db.dirName,
         iconOnly: true,
         title: 'Reveal the database folder',
@@ -1143,7 +1145,7 @@
         </div>
         ${renderFiles(db, expandedFiles.has(db.dirName))}
         <div class="db-footer">
-          ${btn('deleteDatabase', 'Delete Database', 'trash', 'btn-ghost', { dir: db.dirName })}
+          ${btn('deleteDatabase', 'Delete Database', 'trash', 'btn-secondary', { dir: db.dirName })}
         </div>
       </div>
     </details>`;
@@ -1159,14 +1161,16 @@
         (rest.length
           ? `<div class="col-rest">${rest.map((d) => renderDbItem(d, false)).join('')}</div>`
           : '')
-      : `<div class="empty">No databases yet.<div>${btn('createDatabase', 'New Database…', 'plus', 'btn-ghost')}</div></div>`;
+      : `<div class="empty">No databases yet.<div>${btn('createDatabase', 'New Database…', 'plus', 'btn-secondary')}</div></div>`;
     return section(
       {
         key: 'databases',
         title: 'Databases',
         desc: lead ? `${lead.stoneName} · ${lead.dirName}` : undefined,
         count: databases.length,
-        actions: btn('createDatabase', 'New Database…', 'plus', 'btn-ghost', { iconOnly: true }),
+        actions: btn('createDatabase', 'New Database…', 'plus', 'btn-secondary', {
+          iconOnly: true,
+        }),
         open,
       },
       body,
@@ -1281,7 +1285,7 @@
     const stale = lastConfig && lastConfig.sessionId !== session.sessionId;
     const config = stale ? null : lastConfig;
 
-    const actions = btn('loadConfiguration', 'Refresh', 'refresh', 'btn-ghost', {
+    const actions = btn('loadConfiguration', 'Refresh', 'refresh', 'btn-secondary', {
       iconOnly: true,
       title: 'Reload configuration from the session',
     });
@@ -1289,12 +1293,12 @@
     let body;
     if (configError && !config) {
       body = `<div class="config-error">${esc(configError)}</div>
-        <div>${btn('loadConfiguration', 'Try again', 'refresh', 'btn-ghost')}</div>`;
+        <div>${btn('loadConfiguration', 'Try again', 'refresh', 'btn-secondary')}</div>`;
     } else if (!config) {
       body = configLoading
         ? `<div class="config-loading">Reading configuration…</div>`
         : `<div class="empty">Configuration for ${esc(session.label || 'this session')}.
-             <div>${btn('loadConfiguration', 'Load configuration', 'refresh', 'btn-ghost')}</div></div>`;
+             <div>${btn('loadConfiguration', 'Load configuration', 'refresh', 'btn-secondary')}</div></div>`;
     } else {
       const errLine = configError ? `<div class="config-error">${esc(configError)}</div>` : '';
       const noticeLine = configNotice
@@ -1674,7 +1678,9 @@
   function onChange(e) {
     const el = e.target.closest('[data-select]');
     if (!el) return;
-    post({ command: el.dataset.select, dirName: el.dataset.dir });
+    // Send the option the user actually chose, so the guarded replace flow starts
+    // on it rather than reopening on the current extent.
+    post({ command: el.dataset.select, dirName: el.dataset.dir, extent: el.value });
   }
 
   function init(refs, api) {

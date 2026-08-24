@@ -17,6 +17,14 @@ import {
   wslReaddirSync,
 } from './wslFs';
 
+/**
+ * The Shared Page Cache size (in KB) written into the conf of every database
+ * Jasper creates. The GemStone Manager's "room for another cache" preflight
+ * checks free shared memory against this same figure, so exporting it keeps the
+ * two from drifting — bump the cache here and the check follows.
+ */
+export const DEFAULT_SHR_PAGE_CACHE_SIZE_KB = 100000;
+
 export class DatabaseManager {
   constructor(
     private storage: SysadminStorage,
@@ -258,7 +266,7 @@ export class DatabaseManager {
       path.join(dbDir, 'conf', `${stoneName}.conf`),
       `# Edit this file to change your stone configuration.\n` +
         `# For example, you might want a larger Shared Page Cache.\n\n` +
-        `SHR_PAGE_CACHE_SIZE_KB = 100000;\n` +
+        `SHR_PAGE_CACHE_SIZE_KB = ${DEFAULT_SHR_PAGE_CACHE_SIZE_KB};\n` +
         `KEYFILE = "${confPath}/conf/gemstone.key";\n`,
     );
 
@@ -337,7 +345,7 @@ export class DatabaseManager {
   }
 
   /** Replace the extent and transaction logs with a fresh base extent */
-  async replaceExtent(db: GemStoneDatabase): Promise<boolean> {
+  async replaceExtent(db: GemStoneDatabase, preselect?: string): Promise<boolean> {
     if (this.processManager.isStoneRunning(db.config.stoneName, db.config.version)) {
       vscode.window.showErrorMessage(
         `Stone "${db.config.stoneName}" is still running. Stop it before replacing the extent.`,
@@ -352,12 +360,20 @@ export class DatabaseManager {
       label: '$(folder-opened) Browse for extent file…',
       detail: 'Copy an extent from another location (e.g. a copy from another machine)',
     };
-    const currentExtent = db.config.baseExtent.replace(/\.dbf$/, '');
+    // Start on the extent the caller pre-chose (the Manager's dropdown), falling
+    // back to the current one when invoked without a choice (the sidebar). It is
+    // listed first and marked picked, so the confirmation opens on what the user
+    // actually selected instead of forgetting it.
+    const target =
+      preselect && this.storage.getAvailableExtents(db.config.version).includes(preselect)
+        ? preselect
+        : db.config.baseExtent.replace(/\.dbf$/, '');
     const items: vscode.QuickPickItem[] = [browseItem];
     const extents = this.storage.getAvailableExtents(db.config.version);
     if (extents.length > 0) {
+      const ordered = [...extents].sort((a, b) => (a === target ? -1 : b === target ? 1 : 0));
       items.push({ label: 'Initial databases', kind: vscode.QuickPickItemKind.Separator });
-      items.push(...extents.map((e) => ({ label: e, picked: e === currentExtent })));
+      items.push(...ordered.map((e) => ({ label: e, picked: e === target })));
     }
 
     const pick = await vscode.window.showQuickPick(items, {

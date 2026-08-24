@@ -570,7 +570,10 @@ describe('GemStone Manager panel', () => {
     const { panel } = openPanel();
 
     changeSetting('editor.fontSize');
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    // Wait past the coalesce window a real rebuild would have used: at 0ms the
+    // timer has not fired yet, so the assertion would pass even if the setting
+    // had wrongly triggered a rebuild. settle() lets that rebuild land first.
+    await settle();
 
     expect(postedStates(panel)).toHaveLength(0);
   });

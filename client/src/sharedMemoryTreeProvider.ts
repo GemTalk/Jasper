@@ -31,7 +31,6 @@ export type OsConfigNode =
 /** Does `/etc/services` inside the default WSL distro have a
  *  `gs64ldi <port>/tcp` entry? Routed through wslExecSync so the check
  *  inspects the Linux distro, not any Windows file of the same name. */
-/** Does the WSL distro's /etc/services carry the gs64ldi entry? */
 export function wslServicesHasGs64ldi(): boolean {
   try {
     wslExecSync(
@@ -45,7 +44,6 @@ export function wslServicesHasGs64ldi(): boolean {
 
 /** Does the Windows services file (drivers\etc\services) have a
  *  `gs64ldi <port>/tcp` entry? */
-/** The same question for the Windows services file. */
 export function windowsServicesHasGs64ldi(): boolean {
   try {
     const systemRoot = process.env.SystemRoot ?? 'C:\\Windows';
@@ -146,6 +144,11 @@ export function sharedMemoryStatus(mem: { shmmax: number; shmall: number } | und
   };
 }
 
+/**
+ * Whether shared memory is configured high enough to start a stone. Treats an
+ * unreadable sysctl (getSharedMemory answering undefined) as not configured, so
+ * a machine we cannot inspect is reported as needing attention, not as OK.
+ */
 export async function isSharedMemoryConfigured(): Promise<boolean> {
   return sharedMemoryStatus(await getSharedMemory()).configured;
 }

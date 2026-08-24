@@ -4031,13 +4031,16 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.window.showInformationMessage(`Copied ${host}${portSuffix} to clipboard.`);
     }),
 
-    vscode.commands.registerCommand('gemstone.replaceExtent', async (node: DatabaseNode) => {
-      if (node?.kind !== 'stone') return;
-      const replaced = await databaseManager.replaceExtent(node.db);
-      if (replaced) {
-        refreshAdminViews();
-      }
-    }),
+    vscode.commands.registerCommand(
+      'gemstone.replaceExtent',
+      async (node: DatabaseNode & { preselect?: string }) => {
+        if (node?.kind !== 'stone') return;
+        const replaced = await databaseManager.replaceExtent(node.db, node.preselect);
+        if (replaced) {
+          refreshAdminViews();
+        }
+      },
+    ),
 
     vscode.commands.registerCommand(
       'gemstone.fullLogicalBackup',
