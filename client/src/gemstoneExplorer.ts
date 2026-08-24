@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { beginMethodDeletion } from './undo/recordMethodEdit';
+import { notifyUndoable } from './undo/undoableToast';
 import * as crypto from 'crypto';
 import { SessionManager, ActiveSession } from './sessionManager';
 import * as queries from './browserQueries';
@@ -3639,7 +3640,11 @@ export class ExplorerController {
       void vscode.window.showErrorMessage(`Remove method failed: ${result}`);
       return;
     }
-    recording?.commit();
+    // Say it worked AND offer to put it back, on the one notice the user is looking at (#434).
+    notifyUndoable(
+      `Removed ${className}${node.isMeta ? ' class' : ''}>>#${selector}`,
+      recording?.commit(),
+    );
     this.reloadCurrentClassMethods();
   }
 

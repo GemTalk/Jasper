@@ -2011,6 +2011,31 @@ describe('recording a save for undo (#434)', () => {
     expect(peekUndoEntry(session.id)).toBeUndefined();
   });
 
+  it('puts Undo on the toast that follows the save', () => {
+    // The affordance with no discovery cost: it is where the user is already looking at the
+    // moment they would want it.
+    vi.mocked(captureMethodSlots).mockReturnValue([
+      { exists: true, source: 'at: i\n  ^1', category: 'accessing' },
+    ]);
+
+    write(existingMethodUri, 'at: i\n  ^2');
+
+    expect(window.showInformationMessage).toHaveBeenCalledWith(
+      'Compiled method Array>>#at:',
+      'Undo',
+    );
+  });
+
+  it('leaves the toast plain when nothing was recorded — no dead Undo button', () => {
+    vi.mocked(captureMethodSlots).mockImplementation(() => {
+      throw new Error('session busy');
+    });
+
+    write(existingMethodUri, 'at: i\n  ^2');
+
+    expect(window.showInformationMessage).toHaveBeenCalledWith('Compiled method Array>>#at:');
+  });
+
   it('saves normally when the snapshot fails — undo is never allowed to break an edit', () => {
     vi.mocked(captureMethodSlots).mockImplementation(() => {
       throw new Error('session busy');

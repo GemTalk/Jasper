@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { beginMethodDeletion } from './undo/recordMethodEdit';
+import { notifyUndoable } from './undo/undoableToast';
 import { extractSelector } from './methodPattern';
 import * as crypto from 'crypto';
 import * as path from 'path';
@@ -1781,7 +1782,10 @@ export class SystemBrowser {
       environmentId: 0,
     });
     queries.deleteMethod(this.session, className, this.state.isMeta, selector, dictIndex);
-    recording?.commit();
+    notifyUndoable(
+      `Deleted ${className}${this.state.isMeta ? ' class' : ''}>>#${selector}`,
+      recording?.commit(),
+    );
     this.syncSelectedClass(className);
     this.envCache.delete(`${dictIndex}/${className}`);
     this.state.selectedMethod = null;

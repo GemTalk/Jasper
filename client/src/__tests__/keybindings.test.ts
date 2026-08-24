@@ -50,6 +50,7 @@ describe('keybindings', () => {
       b: 'gemstone.openBrowser',
       c: 'gemstone.findClass',
       m: 'gemstone.findMethodInClass',
+      u: 'gemstone.undoLast',
     };
 
     for (const kb of chordBindings) {

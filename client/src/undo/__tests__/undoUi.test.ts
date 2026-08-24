@@ -17,9 +17,11 @@ import type { ActiveSession } from '../../sessionManager';
  *
  * The Explorer title-bar button is easy to miss unless you are already looking at the Explorer, so
  * the action also sits in the status bar. What these pin is what makes it findable and honest:
- * it shows and hides with the stack, it is coloured so it stands out from the neutral items
- * around it, and its tooltip says both GEMSTONE and WHICH change would be undone — the latter
- * being something a contributed menu title can never do, since those are static.
+ * it STAYS PUT while a session is connected — dimmed rather than gone when there is nothing to
+ * undo, because a control that is usually absent cannot be learned — it is coloured so it stands
+ * out from the neutral items around it, and its tooltip says both GEMSTONE and WHICH change would
+ * be undone, the latter being something a contributed menu title can never do, since those are
+ * static.
  */
 
 const session = { id: 1 } as ActiveSession;
@@ -58,6 +60,16 @@ describe('the undo status-bar button', () => {
     expect((item.color as { id: string }).id).toBe('charts.purple');
   });
 
+  it('names its keybinding, which is how the shortcut gets learned', () => {
+    const item = fakeItem();
+    setUndoStatusBarItem(item as never);
+    recordSomething('Rename #total to #sum');
+
+    refreshUndoUi(session);
+
+    expect(item.tooltip).toContain('Ctrl+K U');
+  });
+
   it('appears when there is something to undo, naming GemStone and the change', () => {
     const item = fakeItem();
     setUndoStatusBarItem(item as never);
@@ -90,24 +102,40 @@ describe('the undo status-bar button', () => {
     expect(item.tooltip).toContain('Rename #total to #sum');
   });
 
-  it('disappears once the stack is empty', () => {
+  it('stays put, dimmed, when there is nothing to undo', () => {
+    // The whole point: a button that vanishes when it is not usable can be found once, by
+    // accident, and then never again — there is nowhere to look when it is not there.
     const item = fakeItem();
     setUndoStatusBarItem(item as never);
 
     refreshUndoUi(session);
 
-    expect(item.hide).toHaveBeenCalled();
-    expect(item.show).not.toHaveBeenCalled();
+    expect(item.show).toHaveBeenCalled();
+    expect(item.hide).not.toHaveBeenCalled();
+    expect((item.color as { id: string }).id).toBe('disabledForeground');
+    // Dimmed still says what it is for, so clicking it is not a mystery.
+    expect(item.tooltip).toContain('nothing to undo');
   });
 
-  it('shows nothing for a session that recorded nothing, even when another one did', () => {
+  it('dims for a session that recorded nothing, even when another one did', () => {
     const item = fakeItem();
     setUndoStatusBarItem(item as never);
     recordSomething('Rename #total to #sum');
 
     refreshUndoUi({ id: 2 } as ActiveSession);
 
+    expect((item.color as { id: string }).id).toBe('disabledForeground');
+  });
+
+  it('goes away entirely when no session is selected', () => {
+    // Undo is per session; with none there is nothing GemStone-ish to offer.
+    const item = fakeItem();
+    setUndoStatusBarItem(item as never);
+
+    refreshUndoUi(undefined);
+
     expect(item.hide).toHaveBeenCalled();
+    expect(item.show).not.toHaveBeenCalled();
   });
 
   it('publishes the context key alongside, so the Explorer button tracks it', () => {

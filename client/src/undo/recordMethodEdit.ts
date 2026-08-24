@@ -23,7 +23,7 @@ import { defaultQueryExecutorUsing } from '../browserQueries';
 import { logInfo } from '../gciLog';
 import { captureMethodSlots } from './queries/methodSlotQueries';
 import { pushUndoEntry } from './undoStack';
-import { MethodSlot, MethodSlotState, slotLabel } from './undoTypes';
+import { MethodSlot, MethodSlotState, slotLabel, UndoEntry } from './undoTypes';
 
 /** The state of a slot that holds a method. */
 export function present(source: string, category: string): MethodSlotState {
@@ -39,8 +39,11 @@ export interface MethodEditRecording {
    *  (the FS provider uses it to tell "created" from "overwrote"). */
   readonly before: MethodSlotState[];
   /** Record the edit. `after` is what the edit left, parallel to the slots — the caller
-   *  already knows it, so recording costs no second round trip. */
-  commit(label: string, after: MethodSlotState[]): void;
+   *  already knows it, so recording costs no second round trip.
+   *
+   *  Answers the stored entry, or `undefined` when nothing was recorded, so the caller can
+   *  offer an Undo button on its own notice without asking a second time. */
+  commit(label: string, after: MethodSlotState[]): UndoEntry | undefined;
 }
 
 /** Whether two states describe the same method. */
@@ -85,10 +88,10 @@ export function beginMethodEdit(
 
   return {
     before,
-    commit(label: string, after: MethodSlotState[]): void {
+    commit(label: string, after: MethodSlotState[]): UndoEntry | undefined {
       if (after.length === slots.length && after.every((s, i) => same(s, before[i]))) {
         logInfo(`[undo] not recording "${label}": the edit changed nothing`);
-        return;
+        return undefined;
       }
       const entry = pushUndoEntry({
         kind: 'methodEdit',
@@ -99,6 +102,7 @@ export function beginMethodEdit(
         after,
       });
       logInfo(`[undo] recorded #${entry.id} "${label}" (${slots.length} slot(s))`);
+      return entry;
     },
   };
 }
@@ -121,7 +125,7 @@ function describe(e: unknown): string {
 export function beginMethodDeletion(
   session: ActiveSession,
   slot: MethodSlot,
-): { commit(): void } | undefined {
+): { commit(): UndoEntry | undefined } | undefined {
   const recording = beginMethodEdit(session, [slot]);
   if (!recording) return undefined;
   // Nothing was there to begin with: the removal is a no-op and there is nothing to undo.

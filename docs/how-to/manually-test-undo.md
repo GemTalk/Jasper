@@ -25,6 +25,12 @@ that stops and asks is *drift*: if the method has changed since, undoing discard
 change, so it says so first. This needs **no refactoring engine on the stone** — it is
 plain `compileMethod:` / `removeSelector:`, so it works wherever Jasper can log in.
 
+Undo is reached five ways, and the first is the one that matters: **the Undo button on the
+notice that follows the action**, where you are already looking. If that is missed, there is a
+**dimmed-or-purple ↩ Undo button in the status bar** that stays in one place whether or not
+there is anything to undo, **Ctrl+K U**, an ↩ icon on the **Methods** pane and on an open
+method editor's title bar, and the **Command Palette**.
+
 **A refactoring keeps its preview**, because it can have rewritten dozens of methods
 across a hierarchy. It is reversed by the engine, by one of three mechanisms, and the
 difference is visible in the UI.
@@ -109,32 +115,36 @@ Start here: this is the path that does not involve the refactoring engine at all
 
 | # | Step | Expect |
 |---|---|---|
-| 0.1 | Open `UndoDemo>>total` in an editor, change the body to `^ 99`, **save** | Toast: `Compiled method UndoDemo>>#total` |
-| 0.2 | Look at the **status bar** | The purple **↩ Undo** button, tooltip **GemStone — Undo Save UndoDemo>>#total** — it names the edit, not just "undo" |
-| 0.3 | Press it | **No panel.** The method reverts on the spot, the open editor reloads showing `^ 40 + 2` again, and a toast says `Undid Save UndoDemo>>#total — reverted UndoDemo>>#total. Compiled but NOT committed` |
+| 0.0 | Connect, and before editing anything look at the **status bar** (left end) | A **dimmed ↩ Undo** button is already there, tooltip **GemStone — nothing to undo yet (Ctrl+K U)**. It does not come and go — that is the point: you can learn where it lives |
+| 0.0b | Click it while dimmed | A plain "there is nothing to undo" message — the button explains itself rather than being inert |
+| 0.1 | Open `UndoDemo>>total` in an editor, change the body to `^ 99`, **save** | Toast: `Compiled method UndoDemo>>#total` **with an Undo button** |
+| 0.2 | Look at the **status bar** | The same button, now **purple**, tooltip **GemStone — Undo Save UndoDemo>>#total (Ctrl+K U)** — it names the edit, not just "undo" |
+| 0.2b | Look at the **editor title bar** and the **Methods** pane title | The ↩ icon is in both — beside the method you just saved, and above the list you just changed |
+| 0.3 | Press the toast's Undo (or the status-bar button, or **Ctrl+K U**) | **No panel.** The method reverts on the spot, the open editor reloads showing `^ 40 + 2` again, and a toast says `Undid Save UndoDemo>>#total — reverted UndoDemo>>#total. Compiled but NOT committed` |
+| 0.3b | The status-bar button now | Back to **dimmed** — still there, just nothing left to undo |
 | 0.4 | The Undo button | **Gone** — the entry was used up |
 | 0.5 | Create a **new** method on `UndoDemo` (`scratch ^ 1`) and save it | Tooltip now reads **Undo Add UndoDemo>>#scratch** |
 | 0.6 | Press Undo | `scratch` is **removed** from the Explorer's method list |
-| 0.7 | Delete `untouched` from the Explorer (the 🗑 on the row), confirm | Tooltip reads **Undo Delete UndoDemo>>#untouched** |
+| 0.7 | Delete `untouched` from the Explorer (the 🗑 on the row), confirm | Toast `Removed UndoDemo>>#untouched` **with an Undo button**; the status-bar tooltip reads **Undo Delete UndoDemo>>#untouched** |
 | 0.8 | Press Undo | `untouched` is **back**, with its original source *and* its original category — not `as yet unclassified` |
 | 0.9 | Save `total` three times with three different bodies, then press Undo three times | Each press walks back one save, newest first — it is a stack, not a single slot |
 | 0.10 | Save `total`, then open it in a second editor, change it there and save, then Undo | A **modal** warning: the method changed since that save, and undoing discards the change. **Cancel** leaves everything alone and the Undo button stays |
 | 0.11 | Do 0.10 again and press **Undo Anyway** | It proceeds — drift is a warning, never a refusal |
-| 0.12 | Save a method, then **Abort** (Explorer → Abort), then look at the status bar | Undo is **gone** — an abort already rewound the stone, so every entry describes a state that no longer exists |
+| 0.12 | Save a method, then **Abort** (Explorer → Abort), then look at the status bar | Undo is **dimmed** — an abort already rewound the stone, so every entry describes a state that no longer exists |
 | 0.13 | Save a method on a stone with **no refactoring engine installed** | Undo still works — a method edit needs no engine |
 
 ## 1 — The ways in
 
 | # | Step | Expect |
 |---|---|---|
-| 1.1 | Before doing anything, open the command palette and type `GemStone: Undo` | **No** "Undo Last Change…" entry — there is nothing to undo yet |
-| 1.2 | Look at the **status bar** (left end) and the **Dictionaries** pane title bar | **No** Undo button in either — there is nothing to undo |
+| 1.1 | Before doing anything, open the command palette and type `GemStone: Undo` | "Undo Last Change…" is there, showing **Ctrl+K U** beside it — that is how the shortcut gets learned |
+| 1.2 | Look at the **status bar** (left end), the **Methods** pane title bar, and an open method editor's title bar | The status-bar button is present but **dimmed**; the Methods pane and editor title icons are **absent** — those are contextual cues, the status bar is the fixed landmark |
 | 1.3 | Rename `total` → `sum` (Explorer → the method → Rename), apply the preview | A toast: `Renamed 'total' → 'sum' … NOT committed` **with an Undo button** |
 | 1.4 | Do **not** press it. Dismiss the toast (the ✕, or just let it fade) | — |
-| 1.5 | Open the command palette, type `GemStone: Undo` | "Undo Last Change…" is now there |
-| 1.6 | Look at the **status bar** | A **purple ↩ Undo** button has appeared at the left end — it should catch your eye against the neutral items |
-| 1.6b | Hover it | Tooltip reads **GemStone — Undo Rename 'total' → 'sum'**: it says which extension it belongs to *and* which refactoring it will undo |
-| 1.6c | Dictionaries pane title bar | The same action is there too, beside Commit and Abort, with the purple icon |
+| 1.5 | Press **Ctrl+K U** | The undo runs — no hunting for a button at all. (Undo it back, or re-apply, before continuing) |
+| 1.6 | Look at the **status bar** | The ↩ Undo button has gone from dimmed to **purple** — it should catch your eye against the neutral items |
+| 1.6b | Hover it | Tooltip reads **GemStone — Undo Rename 'total' → 'sum' (Ctrl+K U)**: it says which extension it belongs to, *which* refactoring it will undo, and the shortcut |
+| 1.6c | **Methods** pane title bar, and the title bar of any open method editor | The same action is in both. It is **not** on the Dictionaries pane — undo is not a dictionary operation |
 | 1.7 | Right-click a class, a method, an instance variable | **No** Undo item on any context menu — one button, not an entry on every row |
 
 **The point of 1.4–1.6:** a dismissed toast must not strand the undo. If the palette entry
@@ -166,8 +176,8 @@ or the menu item is missing here, that is a bug worth reporting.
 | 3.6 | Check `total`'s **category** in the Explorer | Back to `computing` — **not** `as yet unclassified` |
 | 3.6b | Where the Explorer is pointing | The **restored method is selected** in the Methods pane — you should not have to hunt for what came back |
 | 3.7 | Check `untouched` and `UndoDemo class>>make` | Untouched, both of them |
-| 3.8 | The status-bar button, the title-bar button, and the palette entry | All **gone** — the record was used up |
-| 3.9 | Apply another refactoring | The purple status-bar button **comes back**, with the new refactoring named in its tooltip |
+| 3.8 | The Methods-pane and editor title-bar buttons | **Gone** — the record was used up. The status-bar button stays, dimmed |
+| 3.9 | Apply another refactoring | The status-bar button goes **purple** again, with the new refactoring named in its tooltip |
 
 ## 4 — Keeping part of an undo
 
@@ -177,7 +187,7 @@ or the menu item is missing here, that is a bug worth reporting.
 | 4.2 | Invoke Undo, and **un-tick** the row badged **Delete** (`sum`) | Button count drops by one |
 | 4.3 | Press Undo | — |
 | 4.4 | Explorer | **Both** `total` and `sum` are present — you kept the new one and got the old one back |
-| 4.5 | The status-bar button | **Still** there: a partial undo is not used up |
+| 4.5 | The status-bar button | **Still purple**: a partial undo is not used up |
 | 4.6 | Invoke it again and undo the rest | `sum` goes; you are back to the fixture |
 
 ## 5 — Drift: editing after a refactoring
@@ -196,7 +206,7 @@ or the menu item is missing here, that is a bug worth reporting.
 | # | Step | Expect |
 |---|---|---|
 | 6.1 | Run **Add Instance Variable** with **Migrate instances** ticked, and apply | The usual success message, with **no Undo button** — a migration moved user data |
-| 6.2 | Status bar / title bar / palette | **No** Undo button for it |
+| 6.2 | Status bar / title bars | The status-bar button is **dimmed** and the title-bar icons are **absent** — nothing was recorded for it |
 | 6.3 | Rename `total` → `sum`, apply, then **without undoing** run an **Add Instance Variable with Migrate ticked** | Undo is offered **before** the second refactoring and **gone after** it — an irreversible apply clears a stale record rather than leaving one that no longer matches the stone |
 
 ## 6b — Reversing a rename (the not-a-rollback path)
@@ -225,7 +235,8 @@ or the menu item is missing here, that is a bug worth reporting.
 | # | Step | Expect |
 |---|---|---|
 | 7.1 | Rename `total` → `sum`, apply, and **do not** undo | Undo offered |
-| 7.2 | Log out and log back in to the same stone | Undo is **gone** — both the stone's record and the client's stack live for the session's lifetime only |
+| 7.2 | Log out and log back in to the same stone | Undo is **dimmed** again — both the stone's record and the client's stack live for the session's lifetime only |
+| 7.2b | Log out and stay logged out | The status-bar button **disappears** entirely: undo is per session, and there is none |
 | 7.3 | Rename again, apply, **commit**, then Undo | The undo runs and says `NOT committed` — undoing a committed refactoring needs **your** commit, exactly like applying one did |
 | 7.4 | Abort instead of committing at 7.3 | The undo's changes go with the abort, as any uncommitted work does |
 | 7.5 | With two sessions connected, apply a refactoring in one and switch to the other | Undo follows the **selected session**: offered in the one that applied it, not in the other |

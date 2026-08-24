@@ -11,6 +11,14 @@
  * label rather than a bare glyph, because a glyph with no owner is a mystery. The tooltip
  * names both GemStone and the specific thing that would be undone — which is exactly what
  * a contributed menu title cannot do, since those are static.
+ *
+ * It STAYS PUT while a session is connected, dimmed when there is nothing to undo, rather
+ * than appearing and vanishing with the stack. A control that is usually absent cannot be
+ * learned: you find it once, by accident, and then never again, because there is nowhere
+ * to look when it is not there (Eric, F5: "I couldn't find it again"). Dimmed still
+ * responds — clicking it gives the plain "there is nothing to undo" refusal, which tells
+ * the user what the button is for. It hides only when no session is selected, since undo
+ * is per session and there is nothing GemStone-ish to offer without one.
  */
 import * as vscode from 'vscode';
 import { ActiveSession } from '../sessionManager';
@@ -30,6 +38,7 @@ export function createUndoStatusBarItem(): vscode.StatusBarItem {
   // right side where the session indicator and perf counters already live.
   const item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   item.command = UNDO_COMMAND;
+  // The live colour; `refreshUndoUi` dims it when the stack is empty.
   item.color = new vscode.ThemeColor('charts.purple');
   statusItem = item;
   return item;
@@ -54,11 +63,14 @@ export function refreshUndoUi(session: ActiveSession | undefined): void {
     entry !== undefined,
   );
   if (!statusItem) return;
-  if (!entry) {
+  if (!session) {
     statusItem.hide();
     return;
   }
   statusItem.text = '$(discard) Undo';
-  statusItem.tooltip = `GemStone — Undo ${entry.label}`;
+  statusItem.color = new vscode.ThemeColor(entry ? 'charts.purple' : 'disabledForeground');
+  statusItem.tooltip = entry
+    ? `GemStone — Undo ${entry.label} (Ctrl+K U)`
+    : 'GemStone — nothing to undo yet (Ctrl+K U)';
   statusItem.show();
 }

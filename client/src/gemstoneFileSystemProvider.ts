@@ -14,7 +14,8 @@ import {
 } from './classDefinitionText';
 import { extractSelector } from './methodPattern';
 import { beginMethodEdit, MethodEditRecording, present } from './undo/recordMethodEdit';
-import { MethodSlot, slotLabel } from './undo/undoTypes';
+import { notifyUndoable } from './undo/undoableToast';
+import { MethodSlot, slotLabel, UndoEntry } from './undo/undoTypes';
 
 // A binary selector can contain '/', but a slash in a URI path segment (raw or
 // %2F-encoded) is collapsed by VS Code's path normalization, losing the
@@ -475,25 +476,26 @@ function undoSlotsForSave(
   }));
 }
 
-/** Record a completed save against the slot GemStone actually compiled into. Every other
- *  slot is left reading exactly as it did before, so the reversal has nothing to do there. */
+/** Record a completed save against the slot GemStone actually compiled into, and answer the
+ *  entry so the caller can put Undo on its toast. Every other slot is left reading exactly as
+ *  it did before, so the reversal has nothing to do there. */
 function recordSave(
   recording: MethodEditRecording,
   slots: MethodSlot[],
   compiledSelector: string,
   sourceCode: string,
   category: string,
-): void {
+): UndoEntry | undefined {
   const at = slots.findIndex((s) => s.selector === compiledSelector);
   if (at < 0) {
     logInfo(`[undo] not recording: compiled #${compiledSelector}, which was not snapshotted`);
-    return;
+    return undefined;
   }
   const after = slots.map((slot, i) =>
     i === at ? present(sourceCode, category) : recording.before[i],
   );
   const verb = recording.before[at].exists ? 'Save' : 'Add';
-  recording.commit(`${verb} ${slotLabel(slots[at])}`, after);
+  return recording.commit(`${verb} ${slotLabel(slots[at])}`, after);
 }
 
 // ── FileSystemProvider ────────────────────────────────────────
@@ -709,9 +711,9 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
       throw new BrowserQueryError(result);
     }
 
-    if (recording) {
-      recordSave(recording, slots, selector, sourceCode, parsedMethodUri.category);
-    }
+    const undoEntry = recording
+      ? recordSave(recording, slots, selector, sourceCode, parsedMethodUri.category)
+      : undefined;
 
     const recv = receiver(parsedMethodUri.className, parsedMethodUri.isMeta);
     if (
@@ -721,7 +723,9 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
         parsedMethodUri.dictIndex ?? parsedMethodUri.dictName,
       )
     ) {
-      vscode.window.showInformationMessage(`Compiled method ${recv}>>#${selector}`);
+      // The Undo button rides on THIS toast, which is the only undo affordance with no
+      // discovery cost -- it is where the user is already looking (#434).
+      notifyUndoable(`Compiled method ${recv}>>#${selector}`, undoEntry);
     } else {
       // A non-writable class compiles into the transient (session) method dict,
       // NOT the persistent one, so GemStone reports success but the change is

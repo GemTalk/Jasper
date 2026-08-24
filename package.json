@@ -2139,7 +2139,7 @@
         },
         {
           "command": "gemstone.undoLast",
-          "when": "view == gemstoneExplorerDicts && gemstone.undoAvailable",
+          "when": "view == gemstoneExplorerMethods && gemstone.undoAvailable",
           "group": "navigation@6"
         },
         {
@@ -2758,6 +2758,13 @@
           "when": "editorTextFocus && resourceLangId == gemstone-smalltalk",
           "group": "3_gemstoneBreakpoints@0"
         }
+      ],
+      "editor/title": [
+        {
+          "command": "gemstone.undoLast",
+          "when": "resourceScheme == gemstone && gemstone.undoAvailable",
+          "group": "navigation@1"
+        }
       ]
     },
     "debuggers": [
@@ -2872,6 +2879,12 @@
         "command": "gemstone.findMethodInClass",
         "key": "ctrl+k m",
         "mac": "cmd+k m",
+        "when": "gemstone.hasActiveSession"
+      },
+      {
+        "command": "gemstone.undoLast",
+        "key": "ctrl+k u",
+        "mac": "cmd+k u",
         "when": "gemstone.hasActiveSession"
       }
     ]
