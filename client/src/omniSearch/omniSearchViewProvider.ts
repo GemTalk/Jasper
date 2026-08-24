@@ -23,6 +23,7 @@
 import * as vscode from 'vscode';
 import { createOmniEngine, OmniEngine, OmniViewData } from './omniEngine';
 import { OmniPanelDeps } from './omniSearchPanel';
+import { revealTestForResult } from './omniActions';
 import {
   CommonInbound,
   configMessage,
@@ -239,6 +240,12 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
           // Open in the editor area above the panel; the docked view stays put (no beside/close).
           const result = engine.resultFor(m.id ?? -1);
           if (result) await this.deps!.activate(result, { beside: false, preserveFocus: false });
+          return;
+        }
+        case 'revealTest': {
+          // Shift+Enter: select the result in the Testing view (see omniSearchView.js).
+          const result = engine.resultFor(m.id ?? -1);
+          if (result) await revealTestForResult(result);
           return;
         }
         case 'preview': {

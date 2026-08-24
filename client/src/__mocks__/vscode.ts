@@ -78,7 +78,35 @@ export const TreeItemCollapsibleState = {
 // ── ThemeIcon mock ─────────────────────────────────────────
 
 export class ThemeIcon {
-  constructor(public readonly id: string) {}
+  constructor(
+    public readonly id: string,
+    // Real ThemeIcon takes an optional ThemeColor; kept here so a test can assert
+    // which colour a row was painted (pass vs. failed vs. stale).
+    public readonly color?: { id: string },
+  ) {}
+}
+
+// ── CancellationTokenSource mock ───────────────────────────
+
+export class CancellationTokenSource {
+  private listeners: Array<() => void> = [];
+
+  readonly token = {
+    isCancellationRequested: false,
+    onCancellationRequested: (listener: () => void) => {
+      this.listeners.push(listener);
+      return { dispose: () => {} };
+    },
+  };
+
+  cancel(): void {
+    this.token.isCancellationRequested = true;
+    for (const listener of this.listeners) listener();
+  }
+
+  dispose(): void {
+    this.listeners = [];
+  }
 }
 
 // ── EventEmitter mock ──────────────────────────────────────

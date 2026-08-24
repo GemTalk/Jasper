@@ -328,6 +328,10 @@ export async function executeFetchStringNb(
   code: string,
   progressTitle?: string,
   suppressNotification = false,
+  // Handed a `cancel` fn once polling starts — soft break on the first call, hard
+  // on the second. Lets a caller drive the break from its own UI (the Testing
+  // view's stop button, an Explorer row's ■) rather than only the ~2s toast.
+  onStart?: (cancel: () => void) => void,
 ): Promise<string> {
   const { result: inProgress } = session.gci.GciTsCallInProgress(session.handle);
   if (inProgress !== 0) {
@@ -357,7 +361,7 @@ export async function executeFetchStringNb(
       }
       return fetched.data;
     },
-    { title: progressTitle ?? `GemStone: ${label}…`, suppressNotification },
+    { title: progressTitle ?? `GemStone: ${label}…`, suppressNotification, onStart },
   );
 
   return data;

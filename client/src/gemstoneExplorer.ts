@@ -646,6 +646,79 @@ interface ExplorerViews {
 
 // ── Controller ───────────────────────────────────────────────────────────────
 
+/** The last-known outcome of one test class or test method, as the Explorer needs it. */
+export interface ExplorerTestResult {
+  outcome: 'running' | 'passed' | 'failed' | 'error';
+  /** Running results only: whether the run can be broken. False under the debugger,
+   *  which owns the suspended gem and ends it with its own Terminate. */
+  stoppable?: boolean;
+  /** The code changed since this ran, so it describes something no longer in the stone. */
+  stale?: boolean;
+}
+
+/**
+ * What the Explorer needs from the SUnit controller to show test affordances on
+ * its rows. Narrow on purpose — the Explorer neither runs tests nor knows how
+ * they run; it marks the rows that can be run and paints the last outcome.
+ */
+export interface ExplorerSunitHooks {
+  isTestClass(dictName: string, className: string): boolean;
+  /** True when a URI is the document a test item points at. Lets the Explorer leave its
+   *  panes alone for a Testing-view row click, which is an open it did not cause. */
+  isTestItemUri(uri: vscode.Uri): boolean;
+  resultFor(dictName: string, className: string, selector?: string): ExplorerTestResult | undefined;
+  onDidChangeResults: vscode.Event<void>;
+  /** Select and scroll to this class, or one of its test methods, in the Testing view.
+   *  False when there is nothing there to reveal. */
+  revealInTestExplorer(dictName: string, className: string, selector?: string): Promise<boolean>;
+}
+
+/**
+ * The row icon for an outcome. A stale result keeps its shape but is dimmed to a
+ * muted grey: what it says was true of code that has since been recompiled, so it
+ * should read as "was passing" rather than "is passing". Deliberately NOT the
+ * queued yellow — that colour already means "skipped" in the Testing view and
+ * most IDEs, so a stale pass in yellow reads as a test that never ran.
+ */
+function testResultIcon(result: ExplorerTestResult): vscode.ThemeIcon {
+  if (result.outcome === 'running') return new vscode.ThemeIcon('loading~spin');
+  const [icon, color] =
+    result.outcome === 'passed'
+      ? ['pass', 'testing.iconPassed']
+      : result.outcome === 'failed'
+        ? ['error', 'testing.iconFailed']
+        : ['warning', 'testing.iconErrored'];
+  return new vscode.ThemeIcon(
+    icon,
+    new vscode.ThemeColor(result.stale ? 'disabledForeground' : color),
+  );
+}
+
+/**
+ * The selector-shape half of "SUnit would run this": an instance-side unary
+ * selector beginning with 'test'. Matches GemStone's own `TestCase>>testSelectors`.
+ * The class-level check (a discovered TestCase subclass) is the caller's — see
+ * ExplorerController.isTestSelector and decorateTestRow, which share this so the
+ * rule lives in exactly one place.
+ */
+function isTestSelectorShape(isMeta: boolean, selector: string): boolean {
+  return !isMeta && selector.startsWith('test') && !selector.includes(':');
+}
+
+function testResultTooltip(result: ExplorerTestResult): string {
+  const said =
+    result.outcome === 'running'
+      ? 'Running…'
+      : result.outcome === 'passed'
+        ? 'Last run: passed'
+        : result.outcome === 'failed'
+          ? 'Last run: failed'
+          : 'Last run: error';
+  return result.stale && result.outcome !== 'running'
+    ? `${said} — before the code was recompiled`
+    : said;
+}
+
 export class ExplorerController {
   readonly state: ExplorerState = {};
   // className → category for the current dictionary; fetched once per dict.
@@ -728,6 +801,39 @@ export class ExplorerController {
   // letting the earlier open's event slip past the guard and re-reveal (scroll) the
   // Methods pane.
   private readonly selfOpenedUris = new Set<string>();
+  // URIs someone is about to open deliberately — GemStone Search through
+  // `gemstone.openDocument`, or Reveal in GemStone Explorer from a test row.
+  // VS Code gives no way to ask where an open came from, so a Testing-view row
+  // click is recognised by elimination: an open of a test item's URI that nobody
+  // claimed. Claiming the deliberate ones keeps them navigating as they always have.
+  private readonly attributedOpens = new Set<string>();
+
+  /** Claim the next open of `uri`, so syncToEditor treats it as a deliberate
+   *  navigation rather than a Testing-view row click. */
+  markAttributedOpen(uri: vscode.Uri): void {
+    this.attributedOpens.add(uri.toString());
+  }
+
+  /** Drop a claim that was never consumed — the open threw, kept focus, or the
+   *  document was already active, so no editor-change fired to spend it. Without
+   *  this the claim lingers and the next genuine Testing-view click on the same
+   *  URI is misread as a deliberate navigation. A no-op once syncToEditor has
+   *  already consumed the claim. */
+  clearAttributedOpen(uri: vscode.Uri): void {
+    this.attributedOpens.delete(uri.toString());
+  }
+
+  /**
+   * Navigate the panes to `uri`'s class/method on purpose — what Reveal in
+   * GemStone Explorer does from a Testing view row, where a plain click
+   * deliberately navigates nothing. Claims the open first, so the guard that
+   * ignores test-item documents lets this one through.
+   */
+  async revealDocument(uri: vscode.Uri): Promise<void> {
+    this.markAttributedOpen(uri);
+    await this.syncToEditor(uri);
+  }
+
   // Owns where our source editors land. Balances "open to the side" across only
   // our own groups, so we neither clump nor invade the System Browser's group.
   readonly placement = new SourceEditorPlacement();
@@ -750,7 +856,72 @@ export class ExplorerController {
     /** Called once per class removed by Remove Class, so views holding a cached class corpus (GemStone
      *  Search) can drop it. Per class, not per command: the delete takes the whole subtree. */
     private readonly onClassRemoved?: (sessionId: number, className: string) => void,
+    /** Test affordances on class/method rows. Absent in tests that don't exercise them,
+     *  and before the SUnit controller exists. */
+    private readonly sunit?: ExplorerSunitHooks,
   ) {}
+
+  /**
+   * True when SUnit would run this selector of the class the Methods pane is
+   * showing — i.e. the row should offer to run it.
+   *
+   * Combines the class check (a discovered TestCase subclass) with the selector
+   * shape rule in `isTestSelectorShape`. Decided from the selector rather than by
+   * asking the SUnit controller for the class's test methods, because those are
+   * listed lazily and this is answered while building rows, synchronously. A
+   * selector that slips through runs and reports that it found no such test.
+   */
+  isTestSelector(isMeta: boolean, selector: string): boolean {
+    const { dictName, className } = this.state;
+    if (dictName === undefined || className === undefined) return false;
+    if (!this.sunit?.isTestClass(dictName, className)) return false;
+    return isTestSelectorShape(isMeta, selector);
+  }
+
+  /**
+   * Give a rendered row its test affordances: a `.test` token on the context
+   * value — which is what puts the inline ▶ there and nowhere else — and an icon
+   * for the last-known outcome.
+   *
+   * One helper for all three panes so a class row in Classes, the same class in
+   * Hierarchy, and its methods all say the same thing about the same run. A row
+   * that has never been run keeps the icon it was built with; only a result
+   * replaces it.
+   *
+   * Pass `selector` for a method row; omit it for a class row.
+   */
+  decorateTestRow(
+    item: vscode.TreeItem,
+    dictName: string | undefined,
+    className: string,
+    selector?: string,
+    isMeta = false,
+  ): void {
+    if (dictName === undefined || !this.sunit?.isTestClass(dictName, className)) return;
+    // A test class's non-test methods (setUp, helpers) are not runnable rows.
+    // Same selector-shape rule isTestSelector uses — one home, so the copy under
+    // test is the copy that runs.
+    if (selector !== undefined && !isTestSelectorShape(isMeta, selector)) return;
+
+    item.contextValue = `${item.contextValue ?? ''}.test`;
+    const result = this.sunit.resultFor(dictName, className, selector);
+    if (!result) return;
+    // A running row swaps its ▶ for a ■ — see the `.running` when-clauses. The
+    // token goes last so the menus can anchor on `.test$` vs `.running$`. A test
+    // suspended in the debugger gets neither: there is no ▶ to offer mid-run, and
+    // nothing our ■ could break.
+    if (result.outcome === 'running' && result.stoppable) {
+      item.contextValue = `${item.contextValue}.running`;
+    } else if (result.outcome === 'running') {
+      item.contextValue = `${item.contextValue}.debugging`;
+    }
+    item.iconPath = testResultIcon(result);
+    const note = testResultTooltip(result);
+    item.tooltip =
+      typeof item.tooltip === 'string' && item.tooltip.length > 0
+        ? `${item.tooltip}\n${note}`
+        : note;
+  }
 
   session(): ActiveSession | undefined {
     return this.sessionManager.getSelectedSession();
@@ -1638,7 +1809,7 @@ export class ExplorerController {
       const e = this.hierChain[i];
       const isSelf = i === lastIdx;
       const hasChildren = !isSelf || this.hierSubs.length > 0;
-      return new HierarchyItem(
+      const item = new HierarchyItem(
         e.className,
         e.dictName,
         isSelf ? 'self' : 'ancestor',
@@ -1646,22 +1817,27 @@ export class ExplorerController {
         hasChildren,
         this.classVersion(e.className),
       );
+      // Each row carries its own dictionary — an ancestor often lives in another
+      // one — so the affordance and the outcome are for the right class.
+      this.decorateTestRow(item, e.dictName, e.className);
+      return item;
     };
     if (!element) return [chainItem(0)];
     if (element.role === 'subclass') return [];
     if (element.chainIndex < lastIdx) return [chainItem(element.chainIndex + 1)];
     // element is the current class → list its subclasses.
-    return this.hierSubs.map(
-      (s) =>
-        new HierarchyItem(
-          s.className,
-          s.dictName,
-          'subclass',
-          -1,
-          false,
-          this.classVersion(s.className),
-        ),
-    );
+    return this.hierSubs.map((s) => {
+      const item = new HierarchyItem(
+        s.className,
+        s.dictName,
+        'subclass',
+        -1,
+        false,
+        this.classVersion(s.className),
+      );
+      this.decorateTestRow(item, s.dictName, s.className);
+      return item;
+    });
   }
 
   // Select the current class's node in the Hierarchy pane so its selection stays
@@ -3312,16 +3488,23 @@ export class ExplorerController {
           // methodCategoryMatchesFilter answers false for them.
           this.methodCategoryMatchesFilter(info.category, filter),
       )
-      .map(
-        (info) =>
-          new MethodItem(
-            isMeta,
-            info,
-            undefined,
-            this.methodSourceUri(isMeta, info),
-            this.ivarAccessMark(isMeta, info.selector, filter),
-          ),
-      );
+      .map((info) => {
+        const item = new MethodItem(
+          isMeta,
+          info,
+          undefined,
+          this.methodSourceUri(isMeta, info),
+          this.ivarAccessMark(isMeta, info.selector, filter),
+        );
+        this.decorateTestRow(
+          item,
+          this.state.dictName,
+          this.state.className ?? '',
+          info.selector,
+          isMeta,
+        );
+        return item;
+      });
   }
 
   // Lazily load + cache the per-method instance-variable read/write map for the
@@ -4030,6 +4213,11 @@ export class ExplorerController {
     // delete() consumes just this URI's mark, leaving any other in-flight self-open
     // to still match its own event.
     if (this.selfOpenedUris.delete(uri.toString())) {
+      return;
+    }
+    // Nobody claimed this open and it lands on a test item's document: it is a
+    // click on a row in the Testing view, whose navigation is its own.
+    if (!this.attributedOpens.delete(uri.toString()) && this.sunit?.isTestItemUri(uri)) {
       return;
     }
     const session = this.session();
@@ -5237,17 +5425,16 @@ class ClassProvider extends RefreshableProvider<ClassNode | FilterChipItem> {
   getChildren(element?: ClassNode | FilterChipItem): (ClassNode | FilterChipItem)[] {
     if (this.ctl.state.dictName === undefined || element instanceof FilterChipItem) return [];
     if (!element) {
-      const rows = this.ctl
-        .classNames()
-        .map(
-          (n) =>
-            new ClassItem(
-              n,
-              this.ctl.classHasDefinedVars(n),
-              this.ctl.classVersion(n),
-              this.ctl.classHasComment(n),
-            ),
+      const rows = this.ctl.classNames().map((n) => {
+        const item = new ClassItem(
+          n,
+          this.ctl.classHasDefinedVars(n),
+          this.ctl.classVersion(n),
+          this.ctl.classHasComment(n),
         );
+        this.ctl.decorateTestRow(item, this.ctl.state.dictName, n);
+        return item;
+      });
       return withFilterChip(VIEW_CLASSES, this.ctl, rows);
     }
     // A class expands to an "instance" and/or "class" variable-side node (like the
@@ -5340,16 +5527,23 @@ class MethodProvider extends RefreshableProvider<MethodNode> {
             nameMatched ||
             this.ctl.methodMatchesFilter(element.isMeta, info.selector, filter),
         )
-        .map(
-          (info) =>
-            new MethodItem(
-              element.isMeta,
-              info,
-              element.category,
-              this.ctl.methodSourceUri(element.isMeta, info),
-              this.ctl.ivarAccessMark(element.isMeta, info.selector, filter),
-            ),
-        );
+        .map((info) => {
+          const item = new MethodItem(
+            element.isMeta,
+            info,
+            element.category,
+            this.ctl.methodSourceUri(element.isMeta, info),
+            this.ctl.ivarAccessMark(element.isMeta, info.selector, filter),
+          );
+          this.ctl.decorateTestRow(
+            item,
+            this.ctl.state.dictName,
+            this.ctl.state.className ?? '',
+            info.selector,
+            element.isMeta,
+          );
+          return item;
+        });
     }
     return [];
   }
@@ -5428,6 +5622,15 @@ export interface ExplorerHandle {
   onMethodCompiled(sessionId: number, className: string): void;
   onClassCompiled(sessionId: number, className: string, dictName?: string): void;
   onSessionAborted(sessionId: number): void;
+  /** Claim an about-to-happen open so it navigates the panes; see
+   *  ExplorerController.markAttributedOpen. */
+  markAttributedOpen(uri: vscode.Uri): void;
+  /** Drop a claim whose open never fired an editor-change; see
+   *  ExplorerController.clearAttributedOpen. */
+  clearAttributedOpen(uri: vscode.Uri): void;
+  /** Navigate the panes to `uri`'s class/method — the explicit Reveal action a
+   *  Testing-view row offers, since a plain click deliberately does not. */
+  revealDocument(uri: vscode.Uri): Promise<void>;
 }
 
 export function registerGemStoneExplorer(
@@ -5443,8 +5646,24 @@ export function registerGemStoneExplorer(
   // Called once per class that Remove Class actually deleted, so GemStone Search can drop it from its
   // cached corpus instead of showing (and offering to open) a class that no longer exists.
   onClassRemoved?: (sessionId: number, className: string) => void,
+  // Test affordances on class/method rows. Late-bound, because the SUnit controller is
+  // built after this one.
+  sunit?: ExplorerSunitHooks,
 ): ExplorerHandle {
-  const ctl = new ExplorerController(sessionManager, onSymbolListChanged, onClassRemoved);
+  const ctl = new ExplorerController(sessionManager, onSymbolListChanged, onClassRemoved, sunit);
+
+  // A run starting or finishing changes what these rows should say, so repaint the
+  // three panes that carry test affordances. Cheap — the providers rebuild rows from
+  // state already fetched, with no trip to the stone.
+  if (sunit) {
+    context.subscriptions.push(
+      sunit.onDidChangeResults(() => {
+        ctl.classProvider.refresh();
+        ctl.hierarchyProvider.refresh();
+        ctl.methodProvider.refresh();
+      }),
+    );
+  }
 
   // The Open Editors pane (last in the container) mirrors the open gemstone://
   // source editors; it is session-independent, so it registers on its own.
@@ -5564,6 +5783,51 @@ export function registerGemStoneExplorer(
     vscode.commands.registerCommand('gemstone.explorer.openMethodToSide', (node: MethodItem) => {
       if (node instanceof MethodItem) void ctl.openMethod(node, 'pin');
     }),
+    // The inline ▶ on a test method row. Runs through the same command the System
+    // Browser uses, so the result lands in the Testing view like every other run.
+    vscode.commands.registerCommand('gemstone.explorer.runTestMethod', (node?: MethodItem) => {
+      if (!(node instanceof MethodItem)) return;
+      const { dictName, className } = ctl.state;
+      if (dictName === undefined || className === undefined) return;
+      void vscode.commands.executeCommand('gemstone.runSunitMethods', dictName, className, [
+        node.info.selector,
+      ]);
+    }),
+    // The mirror of Reveal in GemStone Explorer: go from a row here to the same
+    // test in the Testing view. Offered on the rows that carry a `.test` token,
+    // so it is never on a row the Testing view has nothing for.
+    vscode.commands.registerCommand(
+      'gemstone.explorer.revealInTestingView',
+      async (node?: ClassItem | HierarchyItem | MethodItem) => {
+        if (!node || !sunit) return;
+        const dictName = node instanceof HierarchyItem ? node.dictName : ctl.state.dictName;
+        // A method row names its class through the pane's current selection; a class
+        // or hierarchy row names it directly.
+        const className = node instanceof MethodItem ? ctl.state.className : node.className;
+        const selector = node instanceof MethodItem ? node.info.selector : undefined;
+        if (dictName === undefined || className === undefined) return;
+        if (!(await sunit.revealInTestExplorer(dictName, className, selector))) {
+          void vscode.window.showInformationMessage(
+            `The Testing view has no test for ${className}${selector ? `>>${selector}` : ''}.`,
+          );
+        }
+      },
+    ),
+
+    // The inline ▶ on a test class row, in the Classes pane or the Hierarchy pane.
+    // A hierarchy row carries its own dictionary — an ancestor test class often
+    // lives in a different one than the class being browsed.
+    vscode.commands.registerCommand(
+      'gemstone.explorer.runTestClass',
+      (node?: ClassItem | HierarchyItem) => {
+        const dictName = node instanceof HierarchyItem ? node.dictName : ctl.state.dictName;
+        if (!node || dictName === undefined) return;
+        void vscode.commands.executeCommand('gemstone.runSunitClass', {
+          dictName,
+          className: node.className,
+        });
+      },
+    ),
     vscode.commands.registerCommand('gemstone.explorer.removeMethod', (node?: MethodItem) => {
       if (node instanceof MethodItem)
         void ctl.removeMethod(node).catch((e: unknown) => {
@@ -6034,5 +6298,8 @@ export function registerGemStoneExplorer(
     onClassCompiled: (sessionId, className, dictName) =>
       ctl.onExternalClassCompiled(sessionId, className, dictName),
     onSessionAborted: (sessionId) => ctl.onSessionAborted(sessionId),
+    markAttributedOpen: (uri) => ctl.markAttributedOpen(uri),
+    clearAttributedOpen: (uri) => ctl.clearAttributedOpen(uri),
+    revealDocument: (uri) => ctl.revealDocument(uri),
   };
 }

@@ -23,6 +23,10 @@ function makeSession(pollResults: { result: number; err?: unknown }[]): ActiveSe
     }),
     GciTsBreak: vi.fn(() => ({ result: 0, err: noErr })),
     GciTsSocket: vi.fn(() => ({ fd: 3, err: noErr })),
+    // 0 = the session is there and idle-ish; -1 would mean it has gone away, which
+    // the poll treats as "nobody is coming to answer this call".
+    GciTsCallInProgress: vi.fn(() => ({ result: 0, err: noErr })),
+    GciTsNbResult: vi.fn(() => ({ result: 0, err: noErr })),
   };
   return { id: 1, handle: { h: 1 }, gci } as unknown as ActiveSession;
 }
@@ -130,6 +134,10 @@ describe('runNbCall — cancellation', () => {
         () => ({ success: true, err: noErr as never }),
         () => 'unused',
       );
+      // The hard break is deferred now, so this rejects inside a timer tick — a whole
+      // turn before `expect(p).rejects` would attach a handler, which Node reports as
+      // an unhandled rejection. Claim it here; the assertions below still hold.
+      p.catch(() => {});
       // Advance past PROGRESS_THRESHOLD_MS (2000) so the progress block runs and
       // registers the cancellation handler.
       await vi.advanceTimersByTimeAsync(3000);
@@ -141,10 +149,12 @@ describe('runNbCall — cancellation', () => {
         expect.objectContaining({ message: expect.stringMatching(/break/i) }),
       );
 
-      cancelHandler!(); // second cancel → hard break + reject
+      cancelHandler!(); // second cancel → hard break, once the safety gap has passed
+      await vi.advanceTimersByTimeAsync(400);
       expect(session.gci.GciTsBreak).toHaveBeenCalledWith(session.handle, true);
       await expect(p).rejects.toBeInstanceOf(NbCancelledError);
 
+      await vi.advanceTimersByTimeAsync(3000); // let the drain finish
       vi.clearAllTimers();
     } finally {
       vi.useRealTimers();
@@ -169,16 +179,24 @@ describe('runNbCall — cancellation', () => {
           },
         },
       );
+      // The hard break is deferred now, so this rejects inside a timer tick — a whole
+      // turn before `expect(p).rejects` would attach a handler, which Node reports as
+      // an unhandled rejection. Claim it here; the assertions below still hold.
+      p.catch(() => {});
 
       expect(cancel).toBeTypeOf('function');
 
       cancel!(); // first → soft break
       expect(session.gci.GciTsBreak).toHaveBeenCalledWith(session.handle, false);
 
-      cancel!(); // second → hard break + reject
+      cancel!(); // second → hard break, sent once the safety gap has passed
+      await vi.advanceTimersByTimeAsync(400);
       expect(session.gci.GciTsBreak).toHaveBeenCalledWith(session.handle, true);
       await expect(p).rejects.toBeInstanceOf(NbCancelledError);
 
+      // Let the background drain finish; tearing the timers down mid-drain would
+      // leave the session marked as still draining for every later call.
+      await vi.advanceTimersByTimeAsync(3000);
       vi.clearAllTimers();
     } finally {
       vi.useRealTimers();
@@ -231,5 +249,117 @@ describe('runNbCall — notification suppression', () => {
       vi.useRealTimers();
       vi.mocked(vscode.window.withProgress).mockReset();
     }
+  });
+});
+
+describe('after a hard break', () => {
+  it('collects the abandoned result, so the session is usable again', async () => {
+    // A hard break stops the gem but does not end the GCI call: until the result
+    // is taken, the session reports a call in progress and refuses the next one —
+    // which reads as the NEXT run silently doing nothing.
+    vi.useFakeTimers();
+    try {
+      // Never ready on its own, so only the break can settle this call.
+      const session = makeSession([{ result: 0 }]);
+      const poll = session.gci.GciTsNbPoll as ReturnType<typeof vi.fn>;
+      poll.mockReturnValue({ result: 0, err: noErr });
+      let cancel: (() => void) | undefined;
+      const p = runNbCall(
+        session,
+        () => ({ success: true, err: noErr as never }),
+        () => 'unreachable',
+        {
+          suppressNotification: true,
+          onStart: (c) => {
+            cancel = c;
+          },
+        },
+      );
+      // The hard break is deferred now, so this rejects inside a timer tick — a whole
+      // turn before `expect(p).rejects` would attach a handler, which Node reports as
+      // an unhandled rejection. Claim it here; the assertions below still hold.
+      p.catch(() => {});
+
+      cancel!(); // soft
+      cancel!(); // hard — sent once the safety gap has passed
+      await vi.advanceTimersByTimeAsync(400);
+      await expect(p).rejects.toBeInstanceOf(NbCancelledError);
+      expect(session.gci.GciTsNbResult).not.toHaveBeenCalled();
+
+      // The drain polls in the background until the abandoned result is ready.
+      poll.mockReturnValue({ result: 1, err: noErr });
+      await vi.advanceTimersByTimeAsync(500);
+      expect(session.gci.GciTsNbResult).toHaveBeenCalled();
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('gives up draining a session that never answers', async () => {
+    // Better a bounded background poll than one that outlives the window.
+    vi.useFakeTimers();
+    try {
+      const session = makeSession([{ result: 0 }]);
+      (session.gci.GciTsNbPoll as ReturnType<typeof vi.fn>).mockReturnValue({
+        result: 0,
+        err: noErr,
+      });
+      let cancel: (() => void) | undefined;
+      const p = runNbCall(
+        session,
+        () => ({ success: true, err: noErr as never }),
+        () => 'unreachable',
+        {
+          suppressNotification: true,
+          onStart: (c) => {
+            cancel = c;
+          },
+        },
+      );
+      // The hard break is deferred now, so this rejects inside a timer tick — a whole
+      // turn before `expect(p).rejects` would attach a handler, which Node reports as
+      // an unhandled rejection. Claim it here; the assertions below still hold.
+      p.catch(() => {});
+      cancel!();
+      cancel!();
+      await vi.advanceTimersByTimeAsync(400);
+      await expect(p).rejects.toBeInstanceOf(NbCancelledError);
+
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      expect(session.gci.GciTsNbResult).not.toHaveBeenCalled();
+      const pollsAfterGivingUp = (session.gci.GciTsNbPoll as ReturnType<typeof vi.fn>).mock.calls
+        .length;
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect((session.gci.GciTsNbPoll as ReturnType<typeof vi.fn>).mock.calls.length).toBe(
+        pollsAfterGivingUp,
+      );
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('a session that goes away mid-call', () => {
+  it('settles instead of polling forever', async () => {
+    // A logout (or a lost connection) while a call is outstanding used to leave the
+    // poll reporting "not ready" for good: the progress notification sat there
+    // claiming work was in flight and the awaiting caller never heard back.
+    const session = makeSession([{ result: 0 }, { result: 0 }]);
+    (session.gci.GciTsCallInProgress as ReturnType<typeof vi.fn>).mockReturnValue({
+      result: -1,
+      err: { number: 4100, message: 'session not logged in' },
+    });
+
+    await expect(
+      runNbCall(
+        session,
+        () => ({ success: true, err: noErr as never }),
+        () => 'never',
+        { suppressNotification: true },
+      ),
+    ).rejects.toThrow(/session not logged in/);
   });
 });

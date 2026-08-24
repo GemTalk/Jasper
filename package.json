@@ -1197,6 +1197,40 @@
         "icon": "$(pin)"
       },
       {
+        "command": "gemstone.explorer.runTestMethod",
+        "title": "Run Test",
+        "category": "GemStone",
+        "icon": "$(run)"
+      },
+      {
+        "command": "gemstone.explorer.runTestClass",
+        "title": "Run Tests",
+        "category": "GemStone",
+        "icon": "$(run-all)"
+      },
+      {
+        "command": "gemstone.revealTestInExplorer",
+        "title": "Reveal in GemStone Explorer",
+        "category": "GemStone",
+        "icon": "$(list-tree)"
+      },
+      {
+        "command": "gemstone.clearTestResults",
+        "title": "Clear Test Results",
+        "category": "GemStone"
+      },
+      {
+        "command": "gemstone.explorer.stopTest",
+        "title": "Stop Test Run",
+        "category": "GemStone",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "gemstone.explorer.revealInTestingView",
+        "title": "Reveal in Testing View",
+        "category": "GemStone"
+      },
+      {
         "command": "gemstone.explorer.removeMethod",
         "title": "Remove Method",
         "category": "GemStone",
@@ -2051,7 +2085,43 @@
           "when": "gemstone.hasActiveSession"
         }
       ],
+      "testing/item/context": [
+        {
+          "command": "gemstone.explorer.stopTest",
+          "when": "gemstone.testRunning",
+          "group": "inline@0"
+        },
+        {
+          "command": "gemstone.revealTestInExplorer",
+          "group": "inline@1"
+        },
+        {
+          "command": "gemstone.explorer.stopTest",
+          "when": "gemstone.testRunning",
+          "group": "gemstone@0"
+        },
+        {
+          "command": "gemstone.revealTestInExplorer",
+          "group": "gemstone@1"
+        },
+        {
+          "command": "gemstone.clearTestResults",
+          "group": "gemstone@2"
+        }
+      ],
       "view/title": [
+        {
+          "command": "gemstone.clearTestResults",
+          "when": "view == gemstoneExplorerClasses"
+        },
+        {
+          "command": "gemstone.clearTestResults",
+          "when": "view == gemstoneExplorerMethods"
+        },
+        {
+          "command": "gemstone.clearTestResults",
+          "when": "view == gemstoneExplorerClassHierarchy"
+        },
         {
           "command": "gemstone.explorer.refresh",
           "when": "view == gemstoneExplorerDicts",
@@ -2260,6 +2330,71 @@
           "group": "inline@3"
         },
         {
+          "command": "gemstone.explorer.runTestMethod",
+          "when": "view == gemstoneExplorerMethods && viewItem =~ /\\.test$/",
+          "group": "inline@0"
+        },
+        {
+          "command": "gemstone.explorer.stopTest",
+          "when": "viewItem =~ /\\.running$/",
+          "group": "inline@0"
+        },
+        {
+          "command": "gemstone.explorer.runTestClass",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /\\.test$/",
+          "group": "inline@0"
+        },
+        {
+          "command": "gemstone.explorer.runTestClass",
+          "when": "view == gemstoneExplorerClassHierarchy && viewItem =~ /\\.test$/",
+          "group": "inline@0"
+        },
+        {
+          "command": "gemstone.explorer.runTestClass",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /\\.test$/",
+          "group": "1_browse@0"
+        },
+        {
+          "command": "gemstone.explorer.runTestClass",
+          "when": "view == gemstoneExplorerClassHierarchy && viewItem =~ /\\.test$/",
+          "group": "1_browse@0"
+        },
+        {
+          "command": "gemstone.explorer.revealInTestingView",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /\\.test/",
+          "group": "1_browse@1"
+        },
+        {
+          "command": "gemstone.explorer.revealInTestingView",
+          "when": "view == gemstoneExplorerClassHierarchy && viewItem =~ /\\.test/",
+          "group": "1_browse@1"
+        },
+        {
+          "command": "gemstone.explorer.revealInTestingView",
+          "when": "view == gemstoneExplorerMethods && viewItem =~ /\\.test/",
+          "group": "1_browse@1"
+        },
+        {
+          "command": "gemstone.clearTestResults",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /\\.test$/",
+          "group": "1_browse@2"
+        },
+        {
+          "command": "gemstone.clearTestResults",
+          "when": "view == gemstoneExplorerClassHierarchy && viewItem =~ /\\.test$/",
+          "group": "1_browse@2"
+        },
+        {
+          "command": "gemstone.clearTestResults",
+          "when": "view == gemstoneExplorerMethods && viewItem =~ /\\.test$/",
+          "group": "1_browse@2"
+        },
+        {
+          "command": "gemstone.explorer.runTestMethod",
+          "when": "view == gemstoneExplorerMethods && viewItem =~ /\\.test$/",
+          "group": "1_browse@0"
+        },
+        {
           "command": "gemstone.explorer.closeOpenEditor",
           "when": "view == gemstoneExplorerOpenEditors && viewItem == explorerOpenEditorItem",
           "group": "inline@0"
@@ -2286,7 +2421,7 @@
         },
         {
           "command": "gemstone.explorer.openDefinitionToSide",
-          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/",
           "group": "inline@1"
         },
         {
@@ -2351,12 +2486,12 @@
         },
         {
           "command": "gemstone.explorer.addInstVar",
-          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/ && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/ && gemstone.rbSupportAvailable",
           "group": "2_generate@2"
         },
         {
           "command": "gemstone.explorer.addClassVar",
-          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/",
           "group": "2_generate@3"
         },
         {
@@ -2431,82 +2566,82 @@
         },
         {
           "command": "gemstone.explorer.renameClass",
-          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/ && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/ && gemstone.rbSupportAvailable",
           "group": "inline@3"
         },
         {
           "command": "gemstone.explorer.classHistory",
-          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/ && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/ && gemstone.rbSupportAvailable",
           "group": "3_refactor@1"
         },
         {
           "command": "gemstone.explorer.insertSuperclass",
-          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/ && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/ && gemstone.rbSupportAvailable",
           "group": "3_refactor@2"
         },
         {
           "command": "gemstone.explorer.extractSuperclass",
-          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/ && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/ && gemstone.rbSupportAvailable",
           "group": "3_refactor@3"
         },
         {
           "command": "gemstone.explorer.splitClass",
-          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/ && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/ && gemstone.rbSupportAvailable",
           "group": "3_refactor@4"
         },
         {
           "command": "gemstone.explorer.openHierarchyDefinition",
-          "when": "view == gemstoneExplorerClassHierarchy && viewItem == explorerHierClass",
+          "when": "view == gemstoneExplorerClassHierarchy && viewItem =~ /^explorerHierClass(\\.test(\\.running|\\.debugging)?)?$/",
           "group": "inline@1"
         },
         {
           "command": "gemstone.explorer.openHierarchyComment",
-          "when": "view == gemstoneExplorerClassHierarchy && viewItem == explorerHierClass",
+          "when": "view == gemstoneExplorerClassHierarchy && viewItem =~ /^explorerHierClass(\\.test(\\.running|\\.debugging)?)?$/",
           "group": "inline@2"
         },
         {
           "command": "gemstone.explorer.renameClass",
-          "when": "view == gemstoneExplorerClassHierarchy && viewItem == explorerHierClass && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClassHierarchy && viewItem =~ /^explorerHierClass(\\.test(\\.running|\\.debugging)?)?$/ && gemstone.rbSupportAvailable",
           "group": "inline@3"
         },
         {
           "command": "gemstone.explorer.classHistory",
-          "when": "view == gemstoneExplorerClassHierarchy && viewItem == explorerHierClass && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClassHierarchy && viewItem =~ /^explorerHierClass(\\.test(\\.running|\\.debugging)?)?$/ && gemstone.rbSupportAvailable",
           "group": "3_refactor@1"
         },
         {
           "command": "gemstone.explorer.insertSuperclass",
-          "when": "view == gemstoneExplorerClassHierarchy && viewItem == explorerHierClass && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClassHierarchy && viewItem =~ /^explorerHierClass(\\.test(\\.running|\\.debugging)?)?$/ && gemstone.rbSupportAvailable",
           "group": "3_refactor@2"
         },
         {
           "command": "gemstone.explorer.extractSuperclass",
-          "when": "view == gemstoneExplorerClassHierarchy && viewItem == explorerHierClass && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClassHierarchy && viewItem =~ /^explorerHierClass(\\.test(\\.running|\\.debugging)?)?$/ && gemstone.rbSupportAvailable",
           "group": "3_refactor@3"
         },
         {
           "command": "gemstone.explorer.splitClass",
-          "when": "view == gemstoneExplorerClassHierarchy && viewItem == explorerHierClass && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClassHierarchy && viewItem =~ /^explorerHierClass(\\.test(\\.running|\\.debugging)?)?$/ && gemstone.rbSupportAvailable",
           "group": "3_refactor@4"
         },
         {
           "command": "gemstone.generateGrailStub",
-          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/",
           "group": "2_generate@1"
         },
         {
           "command": "gemstone.generateGrailStub",
-          "when": "view == gemstoneExplorerClassHierarchy && viewItem == explorerHierClass",
+          "when": "view == gemstoneExplorerClassHierarchy && viewItem =~ /^explorerHierClass(\\.test(\\.running|\\.debugging)?)?$/",
           "group": "2_generate@1"
         },
         {
           "command": "gemstone.explorer.removeClass",
-          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?$/",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/",
           "group": "inline@9"
         },
         {
           "command": "gemstone.explorer.removeClass",
-          "when": "view == gemstoneExplorerClassHierarchy && viewItem == explorerHierClass",
+          "when": "view == gemstoneExplorerClassHierarchy && viewItem =~ /^explorerHierClass(\\.test(\\.running|\\.debugging)?)?$/",
           "group": "inline@9"
         },
         {

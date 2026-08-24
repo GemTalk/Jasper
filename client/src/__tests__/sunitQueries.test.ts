@@ -63,6 +63,28 @@ describe('sunitQueries', () => {
       expect(results.map((r) => r.testCount)).toEqual([null, null, null, null]);
     });
 
+    it('parses the dictionary index so callers can build ?dict=N URIs', () => {
+      const session = createMockSession('UserGlobals\tMyTestCase\t7\t3\n');
+      expect(sunit.discoverTestClasses(session)[0].dictIndex).toBe(3);
+    });
+
+    it('leaves the dictionary index undefined when the stone sends no usable one', () => {
+      const session = createMockSession(
+        'A\tMissing\t1\t\n' + // empty index field
+          'B\tNonNumeric\t1\tabc\n' + // not a number
+          'C\tZero\t1\t0\n', // 0 — SymbolList indexes are 1-based
+      );
+      const results = sunit.discoverTestClasses(session);
+      expect(results.map((r) => r.dictIndex)).toEqual([undefined, undefined, undefined]);
+    });
+
+    it('reads the dictionary index from the symbol list position', () => {
+      const session = createMockSession('');
+      sunit.discoverTestClasses(session);
+      const code = (session.gci.executeAndFetchString as ReturnType<typeof vi.fn>).mock.calls[0][1];
+      expect(code).toContain('1 to: sl size do:');
+    });
+
     it('returns empty array when no test classes exist', () => {
       const session = createMockSession('');
       expect(sunit.discoverTestClasses(session)).toEqual([]);

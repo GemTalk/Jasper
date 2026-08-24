@@ -1403,19 +1403,28 @@ describe('buildMethodUri', () => {
     ).toThrow("Class name must not contain '/': My/Class");
   });
 
-  it('throws when category contains a slash', () => {
-    expect(() =>
-      buildMethodUri({
-        kind: 'method',
-        sessionId: 1,
-        dictName: 'Globals',
-        className: 'Array',
-        isMeta: false,
-        category: 'accessing/stuff',
-        selector: 'at',
-        environmentId: 0,
-      }),
-    ).toThrow("Method category name must not contain '/': accessing/stuff");
+  it('carries a slash-bearing category through the path and back', () => {
+    // `initialize/release` is a stock GemStone category. Rejecting it threw from
+    // anywhere a row for such a method was built, taking the Methods pane with it.
+    const uri = buildMethodUri({
+      kind: 'method',
+      sessionId: 1,
+      dictName: 'Globals',
+      className: 'Array',
+      isMeta: false,
+      category: 'initialize/release',
+      selector: 'at',
+      environmentId: 0,
+    });
+
+    // Escaped in the path, so the category stays one segment and the selector
+    // still starts at the segment after it.
+    expect(uri.path).not.toContain('initialize/release');
+    expect(parseUri(uri)).toMatchObject({
+      kind: 'method',
+      category: 'initialize/release',
+      selector: 'at',
+    });
   });
 
   it('does not throw for a raw binary selector containing a slash', () => {
@@ -1506,10 +1515,10 @@ describe('buildNewMethodUri', () => {
     );
   });
 
-  it('throws when category contains a slash', () => {
-    expect(() => buildNewMethodUri(1, 'Globals', 'Array', false, 'accessing/stuff', 0)).toThrow(
-      "Method category name must not contain '/': accessing/stuff",
-    );
+  it('carries a slash-bearing category through the path and back', () => {
+    expect(
+      parseUri(buildNewMethodUri(1, 'Globals', 'Array', false, 'initialize/release', 0)),
+    ).toMatchObject({ category: 'initialize/release' });
   });
 });
 
