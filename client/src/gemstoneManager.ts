@@ -1643,22 +1643,28 @@ const CSS = `
   --gm-line: var(--vscode-widget-border, rgba(128,128,128,.22));
 }
 * { box-sizing: border-box; }
+/* Anchor rem to the user's workbench font size, so every size below is expressed
+   relative to it and tracks that setting instead of freezing at a fixed pixel
+   size. The proportions (and the readability they give) are unchanged at the
+   default size; a larger workbench font scales the whole Manager up with it,
+   matching how the other Jasper webviews behave. */
+html { font-size: var(--vscode-font-size, 13px); }
 body {
   margin: 0;
   font-family: var(--vscode-font-family);
-  font-size: var(--vscode-font-size, 13px);
+  font-size: 1rem;
   color: var(--vscode-foreground, #ccc);
   background: var(--vscode-editor-background, #1e1e1e);
 }
 .content { padding: 16px 22px 56px; max-width: 1040px; }
 .mono { font-family: var(--vscode-editor-font-family, monospace); }
 .dim { color: var(--vscode-descriptionForeground, #9d9d9d); }
-.codicon { font-size: 16px; line-height: 1; }
+.codicon { font-size: 1.23rem; line-height: 1; }
 
 /* ── Buttons ──────────────────────────────────────────────────────────────── */
 .btn {
   display: inline-flex; align-items: center; gap: 5px;
-  padding: 3px 11px; font: inherit; font-size: 12px; line-height: 18px;
+  padding: 3px 11px; font: inherit; font-size: 0.92rem; line-height: 18px;
   border: 1px solid var(--vscode-button-border, transparent); border-radius: 4px;
   background: var(--vscode-button-secondaryBackground, rgba(128,128,128,.18));
   color: var(--vscode-button-secondaryForeground, inherit); cursor: pointer; white-space: nowrap;
@@ -1666,7 +1672,7 @@ body {
 .btn:hover { background: var(--vscode-button-secondaryHoverBackground, rgba(128,128,128,.28)); }
 .btn-primary { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
 .btn-primary:hover { background: var(--vscode-button-hoverBackground); }
-.btn .codicon { font-size: 14px; }
+.btn .codicon { font-size: 1.08rem; }
 .icon-btn {
   display: inline-flex; align-items: center; justify-content: center;
   width: 24px; height: 24px; padding: 0; border: none; border-radius: 4px;
@@ -1681,7 +1687,7 @@ body {
 /* ── Badges ───────────────────────────────────────────────────────────────── */
 .badge {
   display: inline-flex; align-items: center; padding: 0 6px; height: 16px;
-  font-size: 11px; border-radius: 8px; white-space: nowrap;
+  font-size: 0.85rem; border-radius: 8px; white-space: nowrap;
   background: var(--vscode-badge-background); color: var(--vscode-badge-foreground);
 }
 .badge-state { background: transparent; padding: 0; height: auto; font-weight: 600; letter-spacing: .02em; }
@@ -1697,13 +1703,13 @@ body {
   background: var(--vscode-sideBarSectionHeader-background, transparent); }
 .section > .section-head::-webkit-details-marker { display: none; }
 .section > .section-head:hover { background: var(--vscode-list-hoverBackground, rgba(128,128,128,.08)); }
-.section-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
-.section-desc { font-size: 12px; color: var(--vscode-descriptionForeground, #9d9d9d);
+.section-title { font-size: 0.92rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
+.section-desc { font-size: 0.92rem; color: var(--vscode-descriptionForeground, #9d9d9d);
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .section-head-actions { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; }
-.section-count { font-size: 11px; color: var(--vscode-descriptionForeground, #9d9d9d); font-variant-numeric: tabular-nums; }
+.section-count { font-size: 0.85rem; color: var(--vscode-descriptionForeground, #9d9d9d); font-variant-numeric: tabular-nums; }
 .section-body { padding: 14px 16px 18px; }
-.section-twist { flex: none; font-size: 16px; color: var(--vscode-icon-foreground, #9d9d9d);
+.section-twist { flex: none; font-size: 1.23rem; color: var(--vscode-icon-foreground, #9d9d9d);
   transition: transform .12s ease; }
 details[open] > .section-head > .section-twist,
 details[open] > .db-head > .section-twist,
@@ -1715,14 +1721,14 @@ details[open] > .file-root-head > .section-twist { transform: rotate(90deg); }
 .col-rest { display: flex; flex-direction: column; }
 
 /* ── State marks — tinted codicons ────────────────────────────────────────── */
-.mark { flex: none; font-size: 14px; }
+.mark { flex: none; font-size: 1.08rem; }
 .mark.ok { color: var(--gm-ok); }
 .mark.warn { color: var(--gm-warn); }
 .mark.off { color: var(--vscode-descriptionForeground, #777); opacity: .7; }
 
 /* ── Facts (label / value pairs) ──────────────────────────────────────────── */
 .facts { display: grid; grid-template-columns: max-content 1fr; gap: 7px 18px; margin: 0; align-items: baseline; }
-.facts dt { color: var(--vscode-descriptionForeground, #9d9d9d); font-size: 12px; }
+.facts dt { color: var(--vscode-descriptionForeground, #9d9d9d); font-size: 0.92rem; }
 .facts dd { margin: 0; display: flex; align-items: center; gap: 8px; min-width: 0; }
 .facts-action { justify-content: space-between; gap: 12px; }
 .facts-action .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1736,12 +1742,12 @@ details[open] > .file-root-head > .section-twist { transform: rotate(90deg); }
 .os-remedy-body { flex: 1 1 320px; min-width: 0; }
 .os-remedy-head { display: flex; align-items: center; gap: 8px; font-weight: 600; }
 .os-remedy-head .codicon { color: var(--gm-warn); }
-.os-remedy-copy { margin: 6px 0 0; font-size: 12.5px; line-height: 1.55; max-width: 68ch; }
+.os-remedy-copy { margin: 6px 0 0; font-size: 0.96rem; line-height: 1.55; max-width: 68ch; }
 
 /* ── Versions table ───────────────────────────────────────────────────────── */
-.versions-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.versions-table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
 .versions-table th {
-  text-align: left; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+  text-align: left; font-weight: 600; font-size: 0.85rem; text-transform: uppercase; letter-spacing: .04em;
   color: var(--vscode-descriptionForeground, #9d9d9d); padding: 0 10px 6px; border-bottom: 1px solid var(--gm-line);
 }
 .versions-table td { padding: 8px 10px; border-bottom: 1px solid color-mix(in srgb, var(--gm-line) 55%, transparent); vertical-align: middle; }
@@ -1759,23 +1765,23 @@ th.v-num { text-align: right; }
 .login-main {
   flex: 1 1 auto; min-width: 0; display: grid;
   grid-template-columns: 16px minmax(90px, max-content) 1fr; align-items: center; gap: 10px;
-  font: inherit; font-size: 12.5px; text-align: left;
+  font: inherit; font-size: 0.96rem; text-align: left;
   padding: 7px 8px; border: none; background: transparent; color: inherit; cursor: pointer;
 }
 .login-stone { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .login-current { flex: none; width: 16px; display: inline-flex; justify-content: center; }
-.login-current .codicon { font-size: 14px; color: var(--gm-ok); }
+.login-current .codicon { font-size: 1.08rem; color: var(--gm-ok); }
 .login-user { font-weight: 600; }
-.login-stone { font-family: var(--vscode-editor-font-family, monospace); font-size: 11px; opacity: .75; }
+.login-stone { font-family: var(--vscode-editor-font-family, monospace); font-size: 0.85rem; opacity: .75; }
 .login-status { flex: none; display: inline-flex; align-items: center; gap: 8px; }
 .login-acts { flex: none; display: inline-flex; align-items: center; gap: 1px; opacity: .45; transition: opacity .12s ease; }
 .login-row:hover .login-acts, .login-acts:focus-within { opacity: 1; }
 .login-act { width: 22px; height: 22px; }
-.login-act .codicon { font-size: 14px; }
+.login-act .codicon { font-size: 1.08rem; }
 .login-row-live { background: var(--vscode-list-inactiveSelectionBackground, rgba(128,128,128,.10)); }
 .login-row-current { background: var(--vscode-list-activeSelectionBackground, rgba(14,99,156,.35)); color: var(--vscode-list-activeSelectionForeground, inherit); }
 .login-row-idle .login-main { opacity: .7; }
-.connect-empty { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 12.5px; color: var(--vscode-descriptionForeground, #9d9d9d); }
+.connect-empty { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 0.96rem; color: var(--vscode-descriptionForeground, #9d9d9d); }
 
 /* ── Databases (native disclosure per row) ────────────────────────────────── */
 .db-item { border-radius: 4px; }
@@ -1786,9 +1792,9 @@ th.v-num { text-align: right; }
 .db-head::-webkit-details-marker { display: none; }
 .db-head:hover { background: var(--vscode-list-hoverBackground, rgba(128,128,128,.08)); }
 .db-name { font-weight: 600; flex: none; }
-.db-dir { flex: 1 1 auto; min-width: 0; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.db-version { flex: none; font-size: 11.5px; font-variant-numeric: tabular-nums; color: var(--vscode-descriptionForeground, #9d9d9d); }
-.db-state { flex: none; font-size: 11px; color: var(--vscode-descriptionForeground, #9d9d9d); white-space: nowrap; }
+.db-dir { flex: 1 1 auto; min-width: 0; font-size: 0.85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.db-version { flex: none; font-size: 0.88rem; font-variant-numeric: tabular-nums; color: var(--vscode-descriptionForeground, #9d9d9d); }
+.db-state { flex: none; font-size: 0.85rem; color: var(--vscode-descriptionForeground, #9d9d9d); white-space: nowrap; }
 .power { flex: none; }
 .power-start .codicon { color: var(--gm-ok); }
 .power-stop .codicon { color: var(--vscode-errorForeground, #f14c4c); }
@@ -1796,9 +1802,9 @@ th.v-num { text-align: right; }
 .db-toolbar { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; flex-wrap: wrap; }
 .db-toolbar-tools { display: inline-flex; align-items: center; gap: 2px; }
 .extent { display: inline-flex; align-items: center; gap: 6px; }
-.extent-label { font-size: 11px; color: var(--vscode-descriptionForeground, #9d9d9d); text-transform: uppercase; letter-spacing: .04em; }
+.extent-label { font-size: 0.85rem; color: var(--vscode-descriptionForeground, #9d9d9d); text-transform: uppercase; letter-spacing: .04em; }
 .extent-select {
-  font: inherit; font-size: 12px; padding: 2px 6px; border-radius: 4px;
+  font: inherit; font-size: 0.92rem; padding: 2px 6px; border-radius: 4px;
   border: 1px solid var(--vscode-dropdown-border, var(--gm-line));
   background: var(--vscode-dropdown-background); color: var(--vscode-dropdown-foreground); cursor: pointer;
 }
@@ -1813,15 +1819,15 @@ th.v-num { text-align: right; }
   display: flex; align-items: center; gap: 7px; padding: 4px 2px; border-radius: 4px; }
 .db-group-head::-webkit-details-marker { display: none; }
 .db-group-head:hover { background: var(--vscode-list-hoverBackground, rgba(128,128,128,.06)); }
-.db-group-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--vscode-descriptionForeground, #9d9d9d); }
-.db-group .section-twist { font-size: 14px; }
-.group-desc { font-size: 11px; color: var(--vscode-descriptionForeground, #9d9d9d); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.db-group-title { font-size: 0.85rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--vscode-descriptionForeground, #9d9d9d); }
+.db-group .section-twist { font-size: 1.08rem; }
+.group-desc { font-size: 0.85rem; color: var(--vscode-descriptionForeground, #9d9d9d); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .db-group-actions { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; }
 .db-group-body { padding: 2px 0 4px 20px; }
 .db-files { grid-column: 1 / -1; }
 .db-files .db-group-body { padding-left: 20px; }
 .db-footer { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 0; }
-.db-empty { font-size: 12px; color: var(--vscode-descriptionForeground, #9d9d9d); padding: 4px 2px; }
+.db-empty { font-size: 0.92rem; color: var(--vscode-descriptionForeground, #9d9d9d); padding: 4px 2px; }
 
 /* Rows shared by Logins and Processes. */
 .db-line { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 10px; padding: 5px 6px; margin: 0 -6px; border-radius: 4px; min-width: 0; }
@@ -1830,8 +1836,8 @@ th.v-num { text-align: right; }
 .db-line-name { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
 .db-login-user, .proc-name { font-weight: 600; }
 .db-line-actions { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; flex: none; }
-.db-line-meta { font-size: 11px; color: var(--vscode-descriptionForeground, #9d9d9d); }
-.svc-state { font-size: 11px; color: var(--vscode-descriptionForeground, #9d9d9d); }
+.db-line-meta { font-size: 0.85rem; color: var(--vscode-descriptionForeground, #9d9d9d); }
+.svc-state { font-size: 0.85rem; color: var(--vscode-descriptionForeground, #9d9d9d); }
 
 /* ── Files (tree: Logs / Config / Backups as roots) ───────────────────────── */
 .file-tree { display: flex; flex-direction: column; gap: 1px; }
@@ -1839,10 +1845,10 @@ th.v-num { text-align: right; }
   display: flex; align-items: center; gap: 7px; padding: 4px 4px; border-radius: 4px; }
 .file-root-head::-webkit-details-marker { display: none; }
 .file-root-head:hover { background: var(--vscode-list-hoverBackground, rgba(128,128,128,.06)); }
-.file-root .section-twist { font-size: 14px; }
+.file-root .section-twist { font-size: 1.08rem; }
 .file-root-icon { display: inline-flex; color: var(--vscode-icon-foreground, #9d9d9d); }
-.file-root-name { font-size: 12px; font-weight: 600; }
-.file-root-count { font-size: 11px; color: var(--vscode-descriptionForeground, #9d9d9d); font-variant-numeric: tabular-nums; }
+.file-root-name { font-size: 0.92rem; font-weight: 600; }
+.file-root-count { font-size: 0.85rem; color: var(--vscode-descriptionForeground, #9d9d9d); font-variant-numeric: tabular-nums; }
 .file-root-actions { margin-left: auto; display: inline-flex; align-items: center; opacity: 0; transition: opacity .12s ease; }
 .file-root-head:hover .file-root-actions, .file-root-actions:focus-within { opacity: 1; }
 .file-list { list-style: none; margin: 0; padding: 0 0 3px 27px; }
@@ -1852,16 +1858,16 @@ th.v-num { text-align: right; }
 .os-check-label { min-width: 150px; }
 .os-check-detail { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .os-check-action { display: flex; align-items: center; gap: 6px; }
-.os-check-note { font-size: 11px; color: var(--vscode-descriptionForeground, #9d9d9d); }
+.os-check-note { font-size: 0.85rem; color: var(--vscode-descriptionForeground, #9d9d9d); }
 /* A file row can carry its own action (restoring a backup), which sits beside
    the name rather than inside it — a button cannot nest in a button. */
 .file-line { display: flex; align-items: center; gap: 2px; }
 .file-line .file-row { flex: 1; min-width: 0; }
-.file-row { display: block; width: 100%; text-align: left; font: inherit; font-size: 12px;
+.file-row { display: block; width: 100%; text-align: left; font: inherit; font-size: 0.92rem;
   padding: 3px 6px; border: none; border-radius: 4px; background: transparent; color: inherit; cursor: pointer;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-row:hover { background: var(--vscode-list-hoverBackground, rgba(128,128,128,.14)); }
-.file-empty { list-style: none; font-size: 11px; color: var(--vscode-descriptionForeground, #9d9d9d); padding: 2px 6px 4px 27px; }
+.file-empty { list-style: none; font-size: 0.85rem; color: var(--vscode-descriptionForeground, #9d9d9d); padding: 2px 6px 4px 27px; }
 
 /* ── Getting-set-up header ────────────────────────────────────────────────── */
 .gm-head {
@@ -1870,7 +1876,7 @@ th.v-num { text-align: right; }
   border: 1px solid var(--gm-line);
   background: var(--vscode-sideBarSectionHeader-background, transparent);
 }
-.gm-head-text { display: flex; align-items: baseline; gap: 10px; flex: 1 1 240px; min-width: 0; font-size: 12.5px; }
+.gm-head-text { display: flex; align-items: baseline; gap: 10px; flex: 1 1 240px; min-width: 0; font-size: 0.96rem; }
 .gm-head-lead { font-weight: 600; }
 .gm-head-acts { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; }
 
@@ -1902,24 +1908,24 @@ th.v-num { text-align: right; }
   transform: rotate(45deg);
 }
 .gm-call-above .gm-call-arrow { top: auto; bottom: -6px; transform: rotate(225deg); }
-.gm-call-meta { display: flex; align-items: center; gap: 10px; font-size: 11px; }
+.gm-call-meta { display: flex; align-items: center; gap: 10px; font-size: 0.85rem; }
 .gm-call-step { color: var(--vscode-descriptionForeground, #9d9d9d); font-variant-numeric: tabular-nums; }
 .gm-call-mark { font-weight: 600; letter-spacing: .02em; }
 .gm-call-mark.is-done { color: var(--gm-ok); }
 .gm-call-mark.is-todo { color: var(--gm-warn); }
-.gm-call-title { margin: 5px 0 0; font-size: 14px; font-weight: 600; }
-.gm-call-body { margin: 6px 0 0; font-size: 12.5px; line-height: 1.55; }
+.gm-call-title { margin: 5px 0 0; font-size: 1.08rem; font-weight: 600; }
+.gm-call-body { margin: 6px 0 0; font-size: 0.96rem; line-height: 1.55; }
 /* What a user actually does here — including "nothing", which is the answer on a
    machine that is already configured and is worth saying rather than implying. */
 .gm-call-do {
-  margin: 9px 0 0; padding: 8px 10px; border-radius: 4px; font-size: 12.5px; line-height: 1.5;
+  margin: 9px 0 0; padding: 8px 10px; border-radius: 4px; font-size: 0.96rem; line-height: 1.5;
   background: color-mix(in srgb, var(--vscode-focusBorder, #007fd4) 12%, transparent);
 }
-.gm-call-hint { margin: 9px 0 0; font-size: 11.5px; color: var(--vscode-descriptionForeground, #9d9d9d); }
-.gm-call-list { margin: 7px 0 0; padding-left: 18px; font-size: 12.5px; line-height: 1.5; }
+.gm-call-hint { margin: 9px 0 0; font-size: 0.88rem; color: var(--vscode-descriptionForeground, #9d9d9d); }
+.gm-call-list { margin: 7px 0 0; padding-left: 18px; font-size: 0.96rem; line-height: 1.5; }
 .gm-call-list li { margin: 0 0 3px; }
 .gm-call-list li:last-child { margin-bottom: 0; }
-.gm-call-note { margin: 8px 0 0; font-size: 12px; line-height: 1.5; color: var(--vscode-descriptionForeground, #9d9d9d); }
+.gm-call-note { margin: 8px 0 0; font-size: 0.92rem; line-height: 1.5; color: var(--vscode-descriptionForeground, #9d9d9d); }
 .gm-call-acts { display: flex; align-items: center; gap: 8px; margin: 12px 0 0; flex-wrap: wrap; }
 .gm-call-acts [data-tour="end"] { margin-left: auto; }
 /* The action takes its own full-width row. Its label says what it will do, which
@@ -1932,14 +1938,14 @@ th.v-num { text-align: right; }
 .gm-call-do-btn[hidden] { display: none; }
 /* Said out loud, because an absent button is indistinguishable from a missing one. */
 .gm-call-settled {
-  margin: 9px 0 0; font-size: 12.5px; font-weight: 600; color: var(--gm-ok);
+  margin: 9px 0 0; font-size: 0.96rem; font-weight: 600; color: var(--gm-ok);
 }
 .gm-call-settled[hidden] { display: none; }
 /* What went wrong, where there is room to read it: a notification truncates a
    startstone error long before it has finished explaining itself. */
 .gm-call-error {
   margin: 9px 0 0; padding: 8px 10px; border-radius: 4px;
-  font-family: var(--vscode-editor-font-family, monospace); font-size: 11.5px; line-height: 1.5;
+  font-family: var(--vscode-editor-font-family, monospace); font-size: 0.88rem; line-height: 1.5;
   color: var(--vscode-inputValidation-errorForeground, inherit);
   background: var(--vscode-inputValidation-errorBackground, rgba(241, 76, 76, .12));
   border: 1px solid var(--vscode-inputValidation-errorBorder, var(--vscode-errorForeground, #f14c4c));
@@ -1951,7 +1957,7 @@ th.v-num { text-align: right; }
 /* ── Empty / note states ──────────────────────────────────────────────────── */
 .empty { text-align: center; color: var(--vscode-descriptionForeground, #9d9d9d); padding: 22px 12px; }
 .empty div { margin-top: 10px; }
-.note { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; color: var(--vscode-descriptionForeground, #9d9d9d); }
+.note { display: flex; align-items: flex-start; gap: 8px; font-size: 0.92rem; color: var(--vscode-descriptionForeground, #9d9d9d); }
 .note .codicon { color: var(--gm-warn); }
 .skeleton { color: var(--vscode-descriptionForeground, #9d9d9d); padding: 30px 12px; text-align: center; }
 
@@ -1975,16 +1981,16 @@ th.v-num { text-align: right; }
 .config-filter-clear:hover { opacity: 1; background: var(--vscode-toolbar-hoverBackground, rgba(128,128,128,.15)); }
 .config-filter-clear:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; opacity: 1; }
 .config-filter-clear[hidden] { display: none; }
-.config-legend { font-size: 11px; color: var(--vscode-descriptionForeground, #9d9d9d); display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.config-legend { font-size: 0.85rem; color: var(--vscode-descriptionForeground, #9d9d9d); display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .config-loading { color: var(--vscode-descriptionForeground, #9d9d9d); padding: 16px 4px; }
 .config-error {
-  margin: 0 0 10px; padding: 6px 10px; font-size: 12px; border-radius: 4px;
+  margin: 0 0 10px; padding: 6px 10px; font-size: 0.92rem; border-radius: 4px;
   background: color-mix(in srgb, var(--gm-warn) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--gm-warn) 40%, transparent);
 }
 /* The result of a set: a plain confirmation, or a warning that the stone
    accepted the value but did not actually apply it. */
-.config-notice { margin: 0 0 10px; padding: 6px 10px; font-size: 12px; border-radius: 4px; }
+.config-notice { margin: 0 0 10px; padding: 6px 10px; font-size: 0.92rem; border-radius: 4px; }
 .config-notice.ok {
   background: color-mix(in srgb, var(--gm-ok) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--gm-ok) 40%, transparent);
@@ -2002,26 +2008,26 @@ th.v-num { text-align: right; }
 .config-group-head::-webkit-details-marker { display: none; }
 .config-group-head:hover { background: var(--vscode-list-hoverBackground, rgba(128,128,128,.08)); }
 .config-group-head:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
-.config-group .section-twist { font-size: 14px; }
-.config-note { font-size: 11px; font-weight: 400; color: var(--vscode-descriptionForeground, #9d9d9d); }
+.config-group .section-twist { font-size: 1.08rem; }
+.config-note { font-size: 0.85rem; font-weight: 400; color: var(--vscode-descriptionForeground, #9d9d9d); }
 .config-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
 .config-table td { padding: 3px 8px; border-bottom: 1px solid var(--gm-line); vertical-align: top; }
-.config-key { white-space: nowrap; font-family: var(--vscode-editor-font-family, monospace); font-size: 12px; }
-.config-info { font: inherit; font-size: 12px; line-height: 1; background: none; border: 0; padding: 0; color: var(--vscode-descriptionForeground, #9d9d9d); cursor: pointer; margin-left: 5px; vertical-align: -1px; opacity: .6; }
+.config-key { white-space: nowrap; font-family: var(--vscode-editor-font-family, monospace); font-size: 0.92rem; }
+.config-info { font: inherit; font-size: 0.92rem; line-height: 1; background: none; border: 0; padding: 0; color: var(--vscode-descriptionForeground, #9d9d9d); cursor: pointer; margin-left: 5px; vertical-align: -1px; opacity: .6; }
 .config-item:hover .config-info, .config-info:hover { opacity: 1; }
 .config-info:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; opacity: 1; }
 /* The ⓘ tooltip pinned on screen after a click, so a long description can be
    read without holding the pointer still. Positioned in the viewport by script. */
 .config-info-pop {
   position: fixed; z-index: 40; max-width: 340px; white-space: pre-line;
-  padding: 8px 10px; font-size: 12px; line-height: 1.4;
+  padding: 8px 10px; font-size: 0.92rem; line-height: 1.4;
   background: var(--vscode-editorHoverWidget-background, var(--vscode-editorWidget-background));
   color: var(--vscode-editorHoverWidget-foreground, var(--vscode-foreground));
   border: 1px solid var(--vscode-editorHoverWidget-border, var(--gm-line));
   border-radius: 4px; box-shadow: 0 2px 8px rgba(0, 0, 0, .35);
 }
 .config-val { width: 100%; }
-.config-value { font-family: var(--vscode-editor-font-family, monospace); font-size: 12px; word-break: break-all; }
+.config-value { font-family: var(--vscode-editor-font-family, monospace); font-size: 0.92rem; word-break: break-all; }
 /* An editable value is a subtle button carrying a persistent pencil, so which
    rows can be changed is visible without hovering each one. */
 .config-value-btn {
@@ -2040,7 +2046,7 @@ th.v-num { text-align: right; }
   padding: 2px 6px; min-width: 120px;
   background: var(--vscode-input-background); color: var(--vscode-input-foreground);
   border: 1px solid var(--vscode-input-border, var(--gm-line)); border-radius: 4px;
-  font-family: var(--vscode-editor-font-family, monospace); font-size: 12px;
+  font-family: var(--vscode-editor-font-family, monospace); font-size: 0.92rem;
 }
 .config-input:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
 `;
