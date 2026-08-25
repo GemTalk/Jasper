@@ -24,7 +24,9 @@ This suite pins down:
   - the analysis pre-flight reports per-selector decline + a movable count;
   - building compiles nothing and commits nothing; apply relocates the method and
     removes it from the source, guarding the removal so a deselected/failed add never
-    strands the method in neither class; apply never commits; a token round-trip works.
+    strands the method in neither class; apply never commits; a token round-trip works;
+  - a method that will not COMPILE on the target is reported (naming the method) rather
+    than counted as moved.
 
 setUp builds throwaway classes in UserGlobals; tearDown removes them.
 "
@@ -322,6 +324,28 @@ GsMoveMethodRefactoringTest >> testApplyRelocatesMethodAndRemovesFromSource [
 	self assert: json includesSubstring: '"applied":2'.
 	self assert: (self targetFixture includesSelector: #pureCompute).
 	self deny: (self sourceFixture includesSelector: #pureCompute)
+]
+
+{ #category : 'tests - apply' }
+GsMoveMethodRefactoringTest >> testApplyReportsAMethodThatWillNotCompileOnTheTarget [
+	"compileMethod: answers its errors rather than raising, so an unchecked add counted a
+	 method that never landed on the target as applied. The source method survived here only
+	 because the paired remove independently checks that the target holds the selector -- the
+	 move still reported clean success while nothing had moved. Make the method un-compilable
+	 by removing a global it was compiled against: the failure must be reported, and the
+	 method must stay put on the source."
+	| json |
+	UserGlobals at: #GsMMGone put: 7.
+	self compile: 'usesGone ^GsMMGone' in: self sourceFixture.
+	UserGlobals removeKey: #GsMMGone.
+
+	json := (self move: #usesGone to: 'GsMMTarget') applyDeselected: #().
+
+	self deny: json includesSubstring: '"failed":[]'.
+	self assert: json includesSubstring: 'did not recompile'.
+	self assert: json includesSubstring: 'GsMMTarget>>usesGone'.
+	self assert: (self sourceFixture includesSelector: #usesGone).
+	self deny: (self targetFixture includesSelector: #usesGone)
 ]
 
 { #category : 'tests - apply' }

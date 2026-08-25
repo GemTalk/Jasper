@@ -37,6 +37,10 @@ export interface InstVarChange {
 export interface BrokenMethod {
   className: string;
   selector: string;
+  /** The compiler's text, on the apply result's `dropped` only. The preview's
+   *  `willNotRecompile` predicts the failure without attempting a compile, so it has no
+   *  reason to carry — and an older engine omits it there too. */
+  reason?: string;
 }
 
 /** Preview preconditions + the extra V1 payload. `decline` blocks Apply. */
@@ -89,6 +93,8 @@ function parseBroken(raw: unknown): BrokenMethod[] {
     .map((m) => ({
       className: typeof m.class === 'string' ? m.class : '?',
       selector: typeof m.selector === 'string' ? m.selector : '?',
+      // Absent for a predicted failure, and for an apply result from an older engine.
+      ...(typeof m.reason === 'string' && m.reason.length > 0 ? { reason: m.reason } : {}),
     }));
 }
 
