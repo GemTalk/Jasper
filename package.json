@@ -2958,6 +2958,8 @@
     "test:server:uninstall-plugin": "tsx client/bin/uninstall-server-plugin.mjs",
     "test:server": "npm test --workspace server",
     "test:client": "npm test --workspace client",
+    "//test:coverage": "Coverage for the client's default project. Pass a path prefix to scope the report: `npm run test:coverage -- 'src/undo/**'`.",
+    "test:coverage": "npm run test:coverage --workspace client --",
     "test:mcp": "npm test --workspace mcp-server",
     "//test:gci": "Runs only the on-demand 'gci' vitest project (client/vitest.config.ts); needs a live test stone (npm run test:server:start). `npm test` runs the 'default' project and excludes these.",
     "test:gci": "cd client && npx vitest run --project gci",
