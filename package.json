@@ -426,12 +426,12 @@
               "never"
             ],
             "enumDescriptions": [
-              "When a stone lacks the optional support, show one Install / Always / Never prompt on connect.",
-              "Install the optional support automatically on connect (uses the SystemUser default password; a notification explains if it must be entered).",
-              "Never offer or install the optional support."
+              "When a stone lacks the recommended support, show one Install / Not Now / Always / Never prompt on connect.",
+              "Install the recommended support automatically on connect (uses the SystemUser default password; a notification explains if it must be entered).",
+              "Never offer or install the recommended support."
             ],
             "default": "ask",
-            "markdownDescription": "What Jasper does when you connect to a stone missing the optional server-side support — the **Enhanced Inspector** (GemStone 3.7.5+) and the **refactoring engine** (all releases), installed together: `ask` shows one Install / Always / Never prompt, `always` installs silently, `never` does nothing. Installing needs a SystemUser login and commits the supporting classes to the database.\n\n▶ [Install GemStone support now](command:gemstone.installServerSupport)\n\n▶ [Uninstall GemStone support](command:gemstone.uninstallServerSupport) — removes both from the stone (does nothing if neither is installed; also needs a SystemUser login and commits the removal)"
+            "markdownDescription": "What Jasper does when you connect to a stone missing the recommended server-side support — the **Enhanced Inspector** (GemStone 3.7.5+) and the **refactoring engine** (all releases), installed together: `ask` shows one Install / Not Now / Always / Never prompt, `always` installs silently, `never` does nothing. Installing needs a SystemUser login and commits the supporting classes to the database.\n\n▶ [Install GemStone support now](command:gemstone.installServerSupport)\n\n▶ [Uninstall GemStone support](command:gemstone.uninstallServerSupport) — removes both from the stone (does nothing if neither is installed; also needs a SystemUser login and commits the removal)"
           }
         }
       },
@@ -777,8 +777,8 @@
           },
           {
             "id": "serverSupport",
-            "title": "Install optional server support",
-            "description": "Jasper can install two optional server-side supports: the Enhanced Inspector (rich object views, GemStone 3.7.5+) and the refactoring engine (rename instance variable, and more). On connect it offers to install whatever a stone is missing; the `gemstone.serverSupport.autoInstall` setting (ask / always / never) controls that.\n[Install GemStone Support…](command:gemstone.installServerSupport)\n\n[Uninstall GemStone Support…](command:gemstone.uninstallServerSupport) removes both from the stone (does nothing if neither is installed).",
+            "title": "Install recommended server support",
+            "description": "Jasper can install two recommended server-side supports: the Enhanced Inspector (rich object views, GemStone 3.7.5+) and the refactoring engine (rename instance variable, and more). On connect it offers to install whatever a stone is missing; the `gemstone.serverSupport.autoInstall` setting (ask / always / never) controls that.\n[Install GemStone Support…](command:gemstone.installServerSupport)\n\n[Uninstall GemStone Support…](command:gemstone.uninstallServerSupport) removes both from the stone (does nothing if neither is installed).",
             "media": {
               "markdown": "resources/walkthrough/enhancedInspector.md"
             },
