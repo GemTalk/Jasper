@@ -538,6 +538,30 @@ GsInlineMethodRefactoringTest >> testApplyKeepsTargetWhenRemovalDeselected [
 ]
 
 { #category : 'tests - apply' }
+GsInlineMethodRefactoringTest >> testApplyKeepsTheTargetWhenTheCallerWillNotRecompile [
+	"Inline stages the caller recompile and, when the inlined call was the target's last
+	 sender, a removal of the now-unused target. The apply loop catches per change and keeps
+	 going, so a caller that will not recompile does not stop the removal from running: the
+	 target method was destroyed while the caller still held its old body calling it. Make the
+	 caller un-compilable by removing a global it was compiled against -- the failure must be
+	 reported and the target must survive."
+	| json |
+	UserGlobals at: #GsIMGone put: 7.
+	self compile: 'gsimDoomed ^ count' in: self baseFixture.
+	self compile: 'useDoomed ^ self gsimDoomed + GsIMGone' in: self baseFixture.
+	UserGlobals removeKey: #GsIMGone.
+
+	json := (self inlineIn: self baseFixture selector: #useDoomed atSendOf: 'gsimDoomed')
+		applyDeselected: #().
+
+	self deny: json includesSubstring: '"failed":[]'.
+	self assert: json includesSubstring: 'did not recompile'.
+	"Nothing applied: the recompile failed and the removal is gated on it."
+	self assert: json includesSubstring: '"applied":0'.
+	self assert: (self baseFixture includesSelector: #gsimDoomed)
+]
+
+{ #category : 'tests - apply' }
 GsInlineMethodRefactoringTest >> testApplyDoesNotCommit [
 	| before |
 	before := System needsCommit.
