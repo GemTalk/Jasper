@@ -76,14 +76,20 @@ import { captureMethodSlots } from '../undo/queries/methodSlotQueries';
 import { captureClassSlots } from '../undo/queries/classSlotQueries';
 import { peekUndoEntry, resetUndoStacks } from '../undo/undoStack';
 
-// The two undo-capture mocks are shared by every suite in this file, and `clearAllMocks`
-// clears recorded CALLS without removing an implementation. Reset them per test so a
-// `mockReturnValue` set by the recording suites below cannot leak into the plain writeFile
-// ones and turn their toast into one carrying an Undo button — which only shows up under
-// some shuffled seeds.
+// `clearAllMocks` clears recorded CALLS without removing an implementation, so a
+// `mockReturnValue` set anywhere in this file stays in force for every test that runs after
+// it — and the file's order is SHUFFLED, so which tests those are changes per seed. Every
+// mock a suite below sets persistently is put back to its factory default here, per test.
+//
+// Not hypothetical, twice over: a leaked capture turned a plain writeFile toast into one
+// carrying an Undo button, and a leaked `compileMethod` made "shows success message after
+// compiling a method" assert `Array>>#at:` against a toast naming `Array>>#total`. Both
+// appear only under some seeds, which is the worst way to find out.
 beforeEach(() => {
   vi.mocked(captureMethodSlots).mockReset();
   vi.mocked(captureClassSlots).mockReset();
+  vi.mocked(queries.compileMethod).mockReturnValue('Compiled: Array >> at:');
+  vi.mocked(queries.compileClassDefinition).mockReset();
 });
 
 function makeSession(id = 1, gs_user = 'DataCurator') {
