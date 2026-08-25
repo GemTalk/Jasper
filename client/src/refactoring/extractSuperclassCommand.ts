@@ -29,6 +29,7 @@ import {
 import { showExtractSuperclassPanel } from './extractSuperclassPanel';
 import { ensureRbSupport, refuse } from './renameAtCursorShared';
 import { logInfo } from '../gciLog';
+import { notifyRefactoringApplied } from './refactoringAppliedToast';
 
 export interface ExtractSuperContext {
   session: ActiveSession;
@@ -288,8 +289,12 @@ async function runExtractSuperclass(
   } catch {
     /* best-effort: the reshape landed either way */
   }
-  void vscode.window.showInformationMessage(
+  // Through the shared notice: it is what puts the reversal on the undo stack and the Undo
+  // button on the toast. A bare toast left the reshape recorded in the stone but unreachable.
+  notifyRefactoringApplied(
+    session,
     `${heading} — applied ${result.applied} change(s). Existing instances keep their prior version; commit to persist.`,
+    'toast',
   );
   return { newClass: newName, applied: result.applied };
 }

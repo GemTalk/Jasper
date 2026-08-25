@@ -32,6 +32,7 @@ import { ActiveSession } from '../sessionManager';
 import { checkRefactoringUndoAvailable } from './refactoringUndoAvailability';
 import { pushUndoEntry } from '../undo/undoStack';
 import { UNDO_COMMAND } from '../undo/undoUi';
+import { logInfo } from '../gciLog';
 
 /** How to tell the user when there is nothing to undo: a transient status-bar
  *  message (the quiet default the in-editor refactorings use) or a toast (what the
@@ -52,10 +53,12 @@ export function notifyRefactoringApplied(
   void (async () => {
     const status = checkRefactoringUndoAvailable(session);
     if (!status.available || !session) {
+      logInfo(`[undoRefactoring] no undo on offer for "${message}" — plain notice`);
       if (plainNotice === 'toast') void vscode.window.showInformationMessage(message);
       else void vscode.window.setStatusBarMessage(message, 4000);
       return;
     }
+    logInfo(`[undoRefactoring] offering undo #${status.sequence} "${status.label}"`);
     // Pushing is all it takes: the stack's change listener is what makes the status-bar
     // button and the Explorer item appear, so no recording site updates the UI itself.
     pushUndoEntry({

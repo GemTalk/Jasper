@@ -2371,7 +2371,20 @@ export class ExplorerController {
     scope?: { kind: string; dictName?: string },
   ): void {
     try {
-      queries.recordReverseRename(session, kind, className, from, to, label, engine, scope);
+      const answer = queries.recordReverseRename(
+        session,
+        kind,
+        className,
+        from,
+        to,
+        label,
+        engine,
+        scope,
+      );
+      // Logged on the way THROUGH, not only on failure: "no Undo was offered" is a silent
+      // outcome, and the answer here ('ok' / 'unsupported') is the first place it can be
+      // told apart from a status probe that came back empty.
+      logInfo(`[undoRefactoring] recorded ${kind} reversal for ${className}: ${answer.trim()}`);
     } catch (e: unknown) {
       logInfo(
         `[undoRefactoring] could not record the reverse rename: ${

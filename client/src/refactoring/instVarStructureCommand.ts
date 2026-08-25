@@ -34,6 +34,7 @@ import {
   reloadMethodEditor,
 } from './renameAtCursorShared';
 import { logInfo } from '../gciLog';
+import { notifyRefactoringApplied } from './refactoringAppliedToast';
 
 export interface IvarStructureRequest {
   session: ActiveSession;
@@ -194,8 +195,6 @@ export async function runInstVarStructure(req: IvarStructureRequest): Promise<bo
       : '';
   // Not recorded when the apply MIGRATED instances or DELETED history: both commit, and both are
   // irreversible, so an undo offer would be a promise this cannot keep.
-  // Not recorded when the apply MIGRATED instances or DELETED history: both commit, and both are
-  // irreversible, so an undo offer would be a promise this cannot keep.
   if (result.committed) {
     discardCapture();
   } else {
@@ -205,8 +204,15 @@ export async function runInstVarStructure(req: IvarStructureRequest): Promise<bo
       /* best-effort: the reshape landed either way */
     }
   }
-  void vscode.window.showInformationMessage(
+  // Through the shared notice, not a bare toast: that is what puts the reversal on Jasper's
+  // undo stack and the Undo button on the toast. A plain `showInformationMessage` here left
+  // the reshape recorded in the STONE but unreachable from the status bar, Ctrl+K U or the
+  // toast -- recorded and unofferable. When nothing was recorded (the committed branch above)
+  // the shared notice falls back to exactly this plain toast.
+  notifyRefactoringApplied(
+    session,
     `${heading} — applied ${result.applied} change(s)${committedNote}${migrateNote}.`,
+    'toast',
   );
   return true;
 }
