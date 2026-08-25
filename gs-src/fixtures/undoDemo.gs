@@ -149,7 +149,13 @@ reset
 
    Worth having between sections: a manual pass MUTATES this fixture on purpose -- methods
    deleted, a class definition changed into an empty new version, a class renamed and left
-   renamed -- and the next section assumes the original shape."
+   renamed -- and the next section assumes the original shape.
+
+   ABORTS FIRST, deliberately. Without that, the commit below would also commit whatever
+   uncommitted edits the reviewer happens to be holding -- which is the opposite of a clean
+   slate, and would write a half-finished experiment into the stone for good. Aborting is
+   also what the reviewer wants between passes anyway."
+  System abortTransaction.
   self udRemoveMaterial.
   self install.
   System commitTransaction.
@@ -159,7 +165,11 @@ reset
 classmethod: UndoDemoFixture
 removeDemo
   "Take the whole fixture out, this class included, and commit -- so an abort cannot bring
-   it back. This is the end-of-review cleanup."
+   it back. This is the end-of-review cleanup.
+
+   Aborts first for the same reason `reset` does: the commit must carry the removal and
+   nothing else."
+  System abortTransaction.
   self udRemoveMaterial.
   UserGlobals removeKey: #UndoDemoFixture ifAbsent: [nil].
   System commitTransaction.

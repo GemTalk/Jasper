@@ -1,15 +1,48 @@
 # Manually test undo
 
 A hands-on pass over **Undo** ([#434]), for an F5 dev host against a live stone.
-Automated coverage already pins the refactoring engine ([GS SUnit] `GsRefactoringUndoTest`),
-the client model, stack and commands ([client .ts]), and the whole round trip
-([GCI integration] `refactoringUndo.integration.test.ts`) — so what is worth a human's
-time is the part tests cannot see: does the affordance turn up where you expect it,
-does the preview read correctly, and does the Explorer land somewhere sensible.
 
-Work through it in order; each section builds on the fixture from **Setup**.
+This is a PLAN, not a checklist: the passes are ordered by how likely they are to be wrong,
+each one says what it verifies and what a failure looks like, and the table below says where
+your time is actually worth spending. Automation already covers a great deal of this — 174
+unit tests plus 31 GCI integration tests that run against a bare stone — so the passes that
+matter most are the ones no test can reach.
 
 [#434]: https://github.com/GemTalk/Jasper/issues/434
+
+## Where your time is worth spending
+
+| What | Already proven by | Worth a human? |
+|---|---|---|
+| The doits: what a capture reads, what an apply does, escaping, failure reporting | `undo.integration.test.ts`, 31 tests over real GCI | **No** |
+| The reversal and drift rules, the stack, the recorders | `methodSlotPlan` / `classSlotPlan` / `undoStack` / `record*Edit` unit tests | **No** |
+| Toast, button and tooltip *wording* | `undoUi` / `undoableToast` unit tests | **No** |
+| **Abort clears the stack** | **nothing** — needs the extension host | **Yes — Pass D** |
+| **Logout clears the stack** | **nothing** — needs the extension host | **Yes — Pass D** |
+| Where the affordances actually SIT, and whether you can find them again | `package.json` contributions only | **Yes — Pass A** |
+| A modal actually blocking, and reading clearly | unit tests assert the arguments, not the rendering | **Yes — Pass C** |
+| Open editors reloading; the Explorer landing on what came back | unit tests against a mocked `vscode` | **Yes — Passes B, C** |
+| The keybinding firing for real | `keybindings.test.ts` asserts registration only | **Yes — Pass A** |
+
+If you only have twenty minutes, do **A** and **D**. Those are the two with no safety net.
+
+## How to run a pass
+
+Every pass is self-contained and starts from a clean fixture:
+
+1. Execute `UndoDemoFixture reset` — from a Jasper workspace is fine; `reset` is ordinary
+   Smalltalk, unlike the `.gs` file that installs it. It **aborts first**, so whatever the
+   previous pass left uncommitted is discarded rather than swept into the commit, and then
+   rebuilds and commits only the fixture.
+2. Refresh the Explorer, so the client is not holding a tree from before the reset.
+3. Work the steps in order. Each pass ends with what a **failure** looks like, so a wrong
+   result is recognisable rather than something you have to judge.
+
+Nothing you do during a pass is committed unless you commit it. The fixture itself IS
+committed, deliberately — see Setup.
+
+> If you are mid-experiment and do **not** want it thrown away, commit or finish first:
+> `reset` deliberately discards uncommitted work.
 
 ## What undo covers
 
@@ -134,48 +167,76 @@ stay reversible, most recent first. Both are per session: a reconnect starts emp
 6. When you are done, `UndoDemoFixture removeDemo` takes the whole thing out and commits, so
    an abort cannot bring it back.
 
-## 0 — Undoing an ordinary edit (no preview)
+## Pass A — can you find it? (the highest-risk part)
 
-Start here: this is the path that does not involve the refactoring engine at all.
+**Verifies** the five ways in, and that the status-bar button is *learnable* — it stays in
+one place instead of appearing and vanishing, which is what made it unfindable before.
 
-| # | Step | Expect |
-|---|---|---|
-| 0.0 | Connect, and before editing anything look at the **status bar** (left end) | A **dimmed ↩ Undo** button is already there, tooltip **GemStone — nothing to undo yet (Ctrl+K U)**. It does not come and go — that is the point: you can learn where it lives |
-| 0.0b | Click it while dimmed | A plain "there is nothing to undo" message — the button explains itself rather than being inert |
-| 0.1 | Open `UndoDemoAccount>>udTotal` in an editor, change the body to `^ 99`, **save** | Toast: `Compiled method UndoDemoAccount>>#udTotal` **with an Undo button** |
-| 0.2 | Look at the **status bar** | The same button, now **purple**, tooltip **GemStone — Undo: Save UndoDemoAccount>>#udTotal (Ctrl+K U)** — it names the edit, not just "undo" |
-| 0.2b | Look at the **editor title bar** and the **Methods** pane title | The ↩ icon is in both — beside the method you just saved, and above the list you just changed |
-| 0.3 | Press the toast's Undo (or the status-bar button, or **Ctrl+K U**) | **No panel.** The method reverts on the spot, the open editor reloads showing `^ 40 + 2` again, and a toast says `Undid Save UndoDemoAccount>>#udTotal — reverted UndoDemoAccount>>#udTotal. Compiled but NOT committed` |
-| 0.3b | The status-bar button now | Back to **dimmed** — still there, just nothing left to undo |
-| 0.4 | The **Methods** pane and **editor** title-bar icons | **Gone** — the entry was used up. The status-bar button stays, dimmed (0.3b) |
-| 0.5 | Create a **new** method on `UndoDemoAccount` (`udScratch ^ 1`) and save it | Tooltip now reads **GemStone — Undo: Add UndoDemoAccount>>#udScratch (Ctrl+K U)** |
-| 0.6 | Press Undo | `udScratch` is **removed** from the Explorer's method list |
-| 0.7 | Delete `udUntouched` from the Explorer (the 🗑 on the row), confirm | Toast `Removed UndoDemoAccount>>#udUntouched` **with an Undo button**; the status-bar tooltip reads **GemStone — Undo: Delete UndoDemoAccount>>#udUntouched (Ctrl+K U)** |
-| 0.8 | Press Undo | `udUntouched` is **back**, with its original source *and* its original category — not `as yet unclassified` |
-| 0.9 | Save `udTotal` three times with three different bodies, then press Undo three times | Each press walks back one save, newest first — it is a stack, not a single slot |
-| 0.10 | Save `udTotal`, then open it in a second editor, change it there and save, then Undo | A **modal** warning: the method changed since that save, and undoing discards the change. **Cancel** leaves everything alone and the Undo button stays |
-| 0.11 | Do 0.10 again and press **Undo Anyway** | It proceeds — drift is a warning, never a refusal |
-| 0.12 | Save a method, then **Abort** (Explorer → Abort), then look at the status bar | Undo is **dimmed** — an abort already rewound the stone, so every entry describes a state that no longer exists |
-| 0.13 | Save a method on a stone with **no refactoring engine installed** | Undo still works — a method edit needs no engine |
-
-## 0b — Reverting a class edit
-
-Note the word: **Revert**, not Undo, in every message this produces.
+**Reset first.** Uses `UndoDemoAccount>>udTotal`.
 
 | # | Step | Expect |
 |---|---|---|
-| 0b.0 | After any class action, look at the **status-bar button itself** | It reads **↩ Revert**, not ↩ Undo, and the toast's button says **Revert** too. Same button, same **Ctrl+K U** — the word changes because binding an earlier class version is not a rollback |
-| 0b.1 | Create a class `UndoDemoScratch` in `UserGlobals` from the Explorer's new-class editor and save | Toast `Class created: UndoDemoScratch` **with a Revert button**; status-bar tooltip **GemStone — Revert: Add class UndoDemoScratch (Ctrl+K U)** |
-| 0b.2 | Press Revert | `UndoDemoScratch` is gone from the Classes pane. No modal — nothing had been written on it |
-| 0b.3 | Open `UndoDemoAccount`'s **definition**, add an instance variable (`instVarNames: #('udBalance' 'udSpare' 'udExtra')`), save | Toast `Class definition updated for UndoDemoAccount` with a Revert button. **Note the Methods pane: it is now empty.** See "A sharp edge worth knowing" below |
-| 0b.4 | Press Revert | A toast: `Reverted Redefine class UndoDemoAccount — restored UndoDemoAccount to its earlier version. The class keeps its history.` The instance variable is gone **and every method is back** |
-| 0b.5 | Class History on `UndoDemoAccount` | **More** versions than before, not fewer — a revert binds an earlier version, it does not delete a later one |
-| 0b.6 | Repeat 0b.3, then write a new method on the redefined class (`udWrittenLater ^ 1`) and save it, then Revert | A **modal** first: reverting leaves 1 method behind, and it **names** `UndoDemoAccount>>#udWrittenLater`. Cancel and nothing happens |
-| 0b.7 | Do it again and press **Revert Anyway** | The class is back with its original methods; `udWrittenLater` is **not** there — it belongs to the version that is no longer bound, exactly as warned |
-| 0b.8 | Remove `UndoDemoAccount` from the Explorer (right-click → Remove), confirm | Toast `Removed class UndoDemoAccount` **with a Revert button** |
-| 0b.9 | Press Revert | The class is back — **the same version**, with its methods, its class-side methods and its history. No modal: nothing newer existed to leave behind |
-| 0b.10 | Remove `UndoDemoAccount`, which has `UndoDemoSavings` under it (the Explorer removes the whole subtree) | One entry, named `Remove 2 classes (UndoDemoAccount and its subclasses)`. One Revert puts the **whole subtree** back — putting half of it back is not a reversal of what you asked for |
-| 0b.11 | Save a definition, then **log out and back in**, then look at the status bar | Dimmed. The earlier version was held in the session, and the session is gone |
+| A.1 | Connect, and before editing anything look at the **left end of the status bar** | A **dimmed ↩ Undo** button is already there, tooltip **GemStone — nothing to undo yet (Ctrl+K U)** |
+| A.2 | Click it while dimmed | A plain "there is nothing to undo" message. The button explains itself rather than doing nothing |
+| A.3 | Open `UndoDemoAccount>>udTotal`, change the body to `^ 99`, **save** | Toast `Compiled method UndoDemoAccount>>#udTotal` **carrying an Undo button** |
+| A.4 | Without touching the toast, look at the status bar | The **same button, same place**, now **purple**. Tooltip: **GemStone — Undo: Save UndoDemoAccount>>#udTotal (Ctrl+K U)** — it names the edit and the shortcut |
+| A.5 | Look at the **Methods** pane title bar and the **editor** title bar | An ↩ icon in both. **Not** on the Dictionaries pane — undo is not a dictionary operation |
+| A.6 | Open the Command Palette, type `GemStone: Undo` | **Undo Last Change…**, with **Ctrl+K U** shown beside it |
+| A.7 | Press **Ctrl+K U** | The undo runs. This is the path that needs no hunting at all |
+| A.8 | Status bar again | Back to **dimmed**, still in the same place |
+| A.9 | Right-click a class, a method, an instance variable | **No** Undo item on any context menu — one button, not an entry on every row |
+
+**Fails if:** the status-bar button disappears when there is nothing to undo (that is the
+original bug); the tooltip says only "Undo" without naming the edit; `Ctrl+K U` does nothing;
+or the icon is still on the Dictionaries pane.
+
+## Pass B — undoing an ordinary method edit (no preview)
+
+**Verifies** the core new path: save / add / delete a method, reversed on the spot, with no
+panel. This is also the path that needs **no refactoring engine** — worth running once on a
+bare stone to see that for yourself.
+
+**Reset first.** Uses `udTotal`, `udUntouched`, and a new `udScratch`.
+
+| # | Step | Expect |
+|---|---|---|
+| B.1 | Save `udTotal` as `^ 99`, then press Undo | **No panel.** The open editor reloads showing `^ 40 + 2` again, and a toast reads `Undid Save UndoDemoAccount>>#udTotal — reverted UndoDemoAccount>>#udTotal. Compiled but NOT committed` |
+| B.2 | Add a new method `udScratch ^ 1` and save, then Undo | Tooltip said **Add**, not Save. `udScratch` disappears from the Methods pane |
+| B.3 | Delete `udUntouched` (🗑 on the row), confirm | Toast `Removed UndoDemoAccount>>#udUntouched` with an Undo button |
+| B.4 | Press Undo | It is **back**, with its original source *and* its original category `fixture` — **not** `as yet unclassified`. The Explorer selects it |
+| B.5 | Save `udTotal` three times with three different bodies, then Undo three times | Each press walks back one save, newest first. It is a stack, not a single slot |
+| B.6 | Edit `udTotal`'s **message pattern** to `udTotalled` and save, then Undo | `udTotal` comes back **and** `udTotalled` goes away. GemStone leaves both behind on such a save; undoing has to do both |
+| B.7 | Open `udPure` in two editors. Save from the first, then change and save from the second. Undo | A **modal**: the method changed since that save, and undoing discards the change. **Cancel** — nothing happens, and the Undo button stays |
+| B.8 | Repeat B.7 and press **Undo Anyway** | It proceeds. Drift is a warning, never a refusal |
+| B.9 | With an editor open on `udPure` **and dirty** (unsaved edits), undo something else | The dirty editor is **left alone** — an undo elsewhere must not discard your typing |
+
+**Fails if:** a preview panel opens for any of these; a restored method lands in `as yet
+unclassified`; the drift modal does not appear at B.7; or B.9 wipes unsaved text.
+
+## Pass C — reverting a class edit
+
+**Verifies** the class path, which is a **revert** and says so everywhere. GemStone
+re-versions a class on every shape change, so this binds the *earlier version* back — the
+history grows, and anything written on the newer version is left behind.
+
+**Reset first.** Uses `UndoDemoAccount` and `UndoDemoSavings`.
+
+| # | Step | Expect |
+|---|---|---|
+| C.1 | Create a class `UndoDemoScratch` in `UserGlobals` and save | Toast `Class created: UndoDemoScratch` with a **Revert** button — note the word. Status-bar button reads **↩ Revert** |
+| C.2 | Press Revert | The class is gone. **No modal** — nothing had been written on it |
+| C.3 | Open `UndoDemoAccount`'s **definition**, make it `instVarNames: #('udBalance' 'udSpare' 'udExtra')`, save | Toast `Class definition updated…` with a Revert button. **Look at the Methods pane: it is now empty.** That is GemStone, not Jasper — see "A sharp edge" below |
+| C.4 | Press Revert | `Reverted Redefine class UndoDemoAccount — restored … to its earlier version. The class keeps its history.` The instance variable is gone **and all six methods are back**, class-side `udMake` included |
+| C.5 | Class History on `UndoDemoAccount` | **More** versions than before, not fewer. A revert binds an earlier version; it does not delete a later one |
+| C.6 | Repeat C.3, then write `udWrittenLater ^ 1` on the emptied class and save. Now Revert | A **modal first**: reverting leaves 1 method behind, and it **names** `UndoDemoAccount>>#udWrittenLater`. Cancel — nothing happens |
+| C.7 | Do it again and press **Revert Anyway** | The original methods are back; `udWrittenLater` is **not**. It belongs to the version no longer bound, exactly as warned |
+| C.8 | Remove `UndoDemoAccount` from the Explorer (right-click → Remove), confirm — this takes `UndoDemoSavings` with it | Toast naming **2 classes**, with a Revert button |
+| C.9 | Press Revert | **Both** classes are back, same versions, with their methods and `UndoDemoSavings` still under `UndoDemoAccount`. No modal — nothing newer existed to leave behind |
+| C.10 | Save a definition change, then **log out and back in**, then look at the status bar | Dimmed. The earlier version was held in the session, and the session is gone |
+
+**Fails if:** any message says "Undo" rather than "Revert" for these; C.4 comes back without
+its methods; C.6 shows a count but no method name; C.9 restores only one of the two classes;
+or C.5 shows *fewer* versions (that would mean something is deleting history).
 
 ### A sharp edge worth knowing
 
@@ -188,22 +249,68 @@ quickest way back from it without aborting the whole transaction.
 Saving a definition you have **not** changed is a true no-op — GemStone answers the same
 class object — so no version is created, no methods are lost, and nothing is recorded.
 
-## 1 — The ways in
+## Pass D — session boundaries (nothing automated covers this)
+
+**Verifies** the two rules that live in `extension.ts` wiring and that no test can reach: an
+**abort** and a **logout** each clear the undo stack. Both matter because an entry that
+outlives its transaction describes a state the stone no longer has, and acting on it would
+put back source the abort already discarded.
+
+**Reset first.**
 
 | # | Step | Expect |
 |---|---|---|
-| 1.1 | Before doing anything, open the command palette and type `GemStone: Undo` | "Undo Last Change…" is there, showing **Ctrl+K U** beside it — that is how the shortcut gets learned |
-| 1.2 | Look at the **status bar** (left end), the **Methods** pane title bar, and an open method editor's title bar | The status-bar button is present but **dimmed**; the Methods pane and editor title icons are **absent** — those are contextual cues, the status bar is the fixed landmark |
-| 1.3 | Rename `udTotal` → `udSum` (Explorer → the method → Rename), apply the preview | A toast: `Renamed 'udTotal' → 'udSum' … NOT committed` **with an Undo button** |
-| 1.4 | Do **not** press it. Dismiss the toast (the ✕, or just let it fade) | — |
-| 1.5 | Press **Ctrl+K U** | The undo runs — no hunting for a button at all. (Undo it back, or re-apply, before continuing) |
-| 1.6 | Look at the **status bar** | The ↩ Undo button has gone from dimmed to **purple** — it should catch your eye against the neutral items |
-| 1.6b | Hover it | Tooltip reads **GemStone — Undo: Rename 'udTotal' → 'udSum' (Ctrl+K U)**: it says which extension it belongs to, *which* refactoring it will undo, and the shortcut |
-| 1.6c | **Methods** pane title bar, and the title bar of any open method editor | The same action is in both. It is **not** on the Dictionaries pane — undo is not a dictionary operation |
-| 1.7 | Right-click a class, a method, an instance variable | **No** Undo item on any context menu — one button, not an entry on every row |
+| D.1 | Save `udTotal` as `^ 99`. Confirm the status-bar button is purple | Something to undo |
+| D.2 | **Explorer → Abort** | The method is back at `^ 40 + 2` (the abort did that, not the undo) |
+| D.3 | Look at the status bar | **Dimmed.** The entry is gone, because the stone was rewound underneath it |
+| D.4 | Save `udTotal` again, then **log out** of the session | — |
+| D.5 | Status bar with no session | The button is **gone entirely** — undo is per session, and there is none |
+| D.6 | Log back in to the same stone | Button is back and **dimmed**. A new session starts with an empty stack |
+| D.7 | With **two** sessions connected, save a method in one and switch to the other | Undo follows the **selected session**: offered in the one that made the edit, dimmed in the other |
 
-**The point of 1.4–1.6:** a dismissed toast must not strand the undo. If the palette entry
-or the menu item is missing here, that is a bug worth reporting.
+**Fails if:** the button is still purple after D.2 or D.6 — that is an entry that would try to
+reverse against a transaction that no longer exists, and pressing it is how you would find
+out the hard way. This is the single most valuable pass in the document.
+
+## Pass E — one stack, two kinds
+
+**Verifies** that method edits and refactorings share one stack in the order they happened,
+and that the button names whichever is on top.
+
+**Reset first.** Needs the refactoring engine installed.
+
+| # | Step | Expect |
+|---|---|---|
+| E.1 | Save `udPure`, then rename `udTotal` → `udSum` (Explorer → the method → Rename) and apply | Post-apply toast with an Undo button |
+| E.2 | Status bar tooltip | Names the **rename**, not the save — most recent first |
+| E.3 | Undo once | The rename is reversed, through its **preview panel** (a refactoring keeps its preview) |
+| E.4 | Status bar tooltip now | Names the **save** of `udPure`. The stack carried on underneath |
+| E.5 | Undo again | The save reverses **with no panel**. Same button, two different behaviours, each appropriate to what it is reversing |
+| E.6 | Apply a refactoring, then apply a second one **without** undoing the first | Only the second is offered. The stone keeps one refactoring record, so the first is dropped rather than left as a dead offer |
+| E.7 | Redefine a class, then save a method, then look at the button | Reads **↩ Undo** (the method edit is on top). Undo it, and the button flips to **↩ Revert** for the class edit underneath |
+
+**Fails if:** two Undo buttons appear; the tooltip names the wrong entry; E.5 opens a panel;
+or E.7 does not change the verb.
+
+## Pass F — the refactoring walkthrough
+
+The original per-refactoring passes, unchanged. Run these when the change under
+review touches the engine rather than the stack.
+
+## 1 — A dismissed toast must not strand the undo
+
+Pass A covers where the affordances live. This covers the one thing it does not: that
+letting the post-refactoring toast go does not lose the undo with it.
+
+| # | Step | Expect |
+|---|---|---|
+| 1.1 | Rename `udTotal` → `udSum` (Explorer → the method → Rename), apply the preview | A toast: `Renamed 'udTotal' → 'udSum' … NOT committed` **with an Undo button** |
+| 1.2 | Do **not** press it. Dismiss the toast (the ✕, or just let it fade) | — |
+| 1.3 | Status bar | Purple, tooltip **GemStone — Undo: Rename 'udTotal' → 'udSum' (Ctrl+K U)** — naming the refactoring, which a static menu title never could |
+| 1.4 | Press **Ctrl+K U** | The undo runs. The dismissed toast cost nothing |
+
+**Fails if:** the undo is unreachable after 1.2. The record lives until it is used, and every
+other affordance must still reach it.
 
 ## 2 — The preview
 
@@ -285,30 +392,6 @@ or the menu item is missing here, that is a bug worth reporting.
 | 6b.14 | **Remove Instance Variable** `udBalance` (which `udBalance` accessor reads), apply, then Undo | The banner says the values and the dropped methods do **not** come back. After Undo the variable is declared again; the dropped accessor is **not** restored |
 | 6b.15 | Do an Add Instance Variable **with Migrate instances ticked**, apply, then check the menu | **No** Undo offer — a migration moved user data, so no reversal is promised |
 
-## 7 — Sessions and commits
-
-| # | Step | Expect |
-|---|---|---|
-| 7.1 | Rename `udTotal` → `udSum`, apply, and **do not** undo | Undo offered |
-| 7.2 | Log out and log back in to the same stone | Undo is **dimmed** again — both the stone's record and the client's stack live for the session's lifetime only |
-| 7.2b | Log out and stay logged out | The status-bar button **disappears** entirely: undo is per session, and there is none |
-| 7.3 | Rename again, apply, **commit**, then Undo | The undo runs and says `NOT committed` — undoing a committed refactoring needs **your** commit, exactly like applying one did |
-| 7.4 | Abort instead of committing at 7.3 | The undo's changes go with the abort, as any uncommitted work does |
-| 7.5 | With two sessions connected, apply a refactoring in one and switch to the other | Undo follows the **selected session**: offered in the one that applied it, not in the other |
-
-## 8 — Tidy up
-
-1. Abort the transaction (Explorer → Abort).
-2. Confirm `UndoDemoAccount` is gone from `UserGlobals`.
-
-## Reporting
-
-If something here does not behave as described, note **which numbered step**, what you saw
-instead, the stone version, and whether the refactoring engine was freshly installed. The
-GemStone GCI output channel (`View → Output → GemStone GCI`) carries a breadcrumb for every
-recording, invocation and refusal — `[undo]` for the stack and method edits, and
-`[undoRefactoring]` for the engine's side of it.
-
 ## 6c — Returning a reshape to its pre-refactoring state
 
 | # | Step | Expect |
@@ -324,3 +407,34 @@ recording, invocation and refusal — `[undo]` for the stack and method edits, a
 | 6c.9 | **Split Class**, apply, then Undo | Same shape: the source restored, the component class deleted |
 | 6c.10 | Class History on an affected class, after any 6c undo | More versions, not fewer — a revert adds one |
 | 6c.11 | Where the Explorer is pointing after any 6c undo | The reshaped **class is selected**, in the dictionary's full class list |
+## 7 — Sessions and commits
+
+| # | Step | Expect |
+|---|---|---|
+| 7.1 | Rename `udTotal` → `udSum`, apply, and **do not** undo | Undo offered |
+| 7.2 | Log out and log back in to the same stone | Undo is **dimmed** again — both the stone's record and the client's stack live for the session's lifetime only |
+| 7.2b | Log out and stay logged out | The status-bar button **disappears** entirely: undo is per session, and there is none |
+| 7.3 | Rename again, apply, **commit**, then Undo | The undo runs and says `NOT committed` — undoing a committed refactoring needs **your** commit, exactly like applying one did |
+| 7.4 | Abort instead of committing at 7.3 | The undo's changes go with the abort, as any uncommitted work does |
+| 7.5 | With two sessions connected, apply a refactoring in one and switch to the other | Undo follows the **selected session**: offered in the one that applied it, not in the other |
+
+## Tidy up
+
+1. **Explorer → Abort**, to drop anything you left uncommitted.
+2. `UndoDemoFixture removeDemo` — takes the whole fixture out and commits, so the abort in
+   step 1 cannot bring it back.
+3. Confirm `UndoDemoAccount`, `UndoDemoSavings`, `UndoDemoLedger` and `UndoDemoFixture` are
+   all gone from `UserGlobals`.
+
+Between passes, `UndoDemoFixture reset` is the one you want instead — it rebuilds the fixture
+without removing it.
+
+## Reporting
+
+If something here does not behave as described, note **which step** (they are labelled
+`A.1`, `C.6`, `6b.3` and so on for exactly this reason), what you saw instead, the stone
+version, and whether the refactoring engine was freshly installed. The
+GemStone GCI output channel (`View → Output → GemStone GCI`) carries a breadcrumb for every
+recording, invocation and refusal — `[undo]` for the stack and method edits, and
+`[undoRefactoring]` for the engine's side of it.
+
