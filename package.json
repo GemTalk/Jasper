@@ -2430,11 +2430,6 @@
           "group": "1_browse@0"
         },
         {
-          "command": "gemstone.explorer.closeOpenEditor",
-          "when": "view == gemstoneExplorerOpenEditors && viewItem == explorerOpenEditorItem",
-          "group": "inline@0"
-        },
-        {
           "command": "gemstone.explorer.implementorsOf",
           "when": "view == gemstoneExplorerMethods && viewItem =~ /^explorerMethod/",
           "group": "1_browse@1"
