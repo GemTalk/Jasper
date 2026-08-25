@@ -74,7 +74,13 @@ export async function findMethodInClass(sessionManager: SessionManager): Promise
   });
   if (!picked) return;
 
-  const result: queries.MethodSearchResult = { dictName, className, ...picked.method };
+  // The picker lists a class's own selectors, which this command reads from environment 0.
+  const result: queries.MethodSearchResult = {
+    dictName,
+    className,
+    ...picked.method,
+    environmentId: 0,
+  };
 
   if (!SystemBrowser.navigateTo(session.id, result)) {
     const uri = buildMethodUri({

@@ -114,6 +114,7 @@ describe('sourceProvider', () => {
       isMeta: false,
       selector: 'bar',
       category: 'accessing',
+      environmentId: 0,
     },
   ];
 
@@ -148,6 +149,7 @@ describe('literalsProvider', () => {
       isMeta: false,
       selector: 'bar',
       category: 'accessing',
+      environmentId: 0,
     },
   ];
 

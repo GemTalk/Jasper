@@ -24,7 +24,10 @@ import {
 import { InFlightGuard } from './inFlightGuard';
 import { LoginEditorPanel } from './loginEditorPanel';
 import { SessionManager, ActiveSession } from './sessionManager';
-import { maybeStartDatabaseAndRetry } from './autoStartDatabase';
+import { maybeStartDatabaseAndRetry, isAlreadyRunning } from './autoStartDatabase';
+import { describeExternalServers, reconcileExternalServers } from './externalServerReconcile';
+import { hasExternalServer } from './externalServerScan';
+import { confirmReconcileExternalServers } from './externalServerPrompt';
 import {
   getAutoStartMode,
   setAutoStartMode,
@@ -41,6 +44,7 @@ import {
 } from './enhancedInspector/enhancedInspectorPerfTracker';
 import { CodeExecutor } from './codeExecutor';
 import { SystemBrowser } from './systemBrowser';
+import { showMethodResults as showMethodResultsFor } from './methodResultsPicker';
 import { registerOmniSearch, OmniSearchRegistration } from './omniSearch/omniSearchCommand';
 import {
   startSeasideServer,
@@ -95,7 +99,6 @@ import {
   ClassDefinitionCompiledEvent,
   closeGemstoneTabsForSession,
   installStaleGemstoneTabReaper,
-  buildMethodUri,
   parseMethodUri,
   parseUri,
 } from './gemstoneFileSystemProvider';
@@ -126,6 +129,7 @@ import { showTranscript, getTranscriptChannel } from './transcriptChannel';
 import { getGciLog } from './gciLog';
 import { GemStoneCodeLensProvider } from './gemstoneCodeLensProvider';
 import * as queries from './browserQueries';
+import { dedupeMethodResults } from './queries/methodSearch';
 import { SysadminStorage } from './sysadminStorage';
 import { appendSysadmin, getSysadminChannel } from './sysadminChannel';
 import { VersionManager } from './versionManager';
@@ -1206,38 +1210,16 @@ export function activate(context: vscode.ExtensionContext) {
     });
   }
 
-  async function showMethodResults(
+  // Thin adapter over the shared picker (methodResultsPicker.ts), which the safe-delete
+  // confirmation shares: every caller here has the session, not just its id. Returns the
+  // picker's promise directly rather than awaiting it — these callers ignore whether
+  // anything was opened, and an async wrapper would add a tick for nothing.
+  function showMethodResults(
     session: { id: number },
     results: queries.MethodSearchResult[],
     title: string,
-  ): Promise<void> {
-    if (results.length === 0) {
-      vscode.window.showInformationMessage(`${title}: no results found.`);
-      return;
-    }
-
-    const items = results.map((r) => ({
-      label: `${r.className}${r.isMeta ? ' class' : ''} >> #${r.selector}`,
-      description: r.category,
-      detail: r.dictName,
-      result: r,
-    }));
-
-    const picked = await vscode.window.showQuickPick(items, {
-      placeHolder: `${results.length} method${results.length === 1 ? '' : 's'} found`,
-      matchOnDescription: true,
-      matchOnDetail: true,
-    });
-    if (!picked) return;
-
-    const r = picked.result;
-    // If a System Browser is open for this session, navigate it to the selected
-    // method (updates all 5 columns) and open the method editor from there.
-    // Otherwise fall back to opening the document directly.
-    if (!SystemBrowser.navigateTo(session.id, r)) {
-      const uri = buildMethodUri({ kind: 'method', sessionId: session.id, ...r, environmentId: 0 });
-      vscode.commands.executeCommand('gemstone.openDocument', uri);
-    }
+  ): Promise<boolean> {
+    return showMethodResultsFor(session.id, results, title);
   }
 
   // Commit / Abort a session, with the same confirmations and post-action
@@ -1683,6 +1665,14 @@ export function activate(context: vscode.ExtensionContext) {
                 await maybeStartDatabaseAndRetry(login, `Login failed: ${msg}`, {
                   getDatabases: () => sysadminStorage.getDatabases(),
                   refreshProcesses: () => processManager.refreshProcesses(),
+                  getExternalServers: (db) => processManager.getExternalServers(db),
+                  describeExternalServers: (db, finding) =>
+                    describeExternalServers(db, finding, sysadminStorage.getRootPath()),
+                  reconcile: {
+                    confirm: confirmReconcileExternalServers,
+                    stopExternal: (db, server) => processManager.stopExternalServer(db, server),
+                    killExternal: (server) => processManager.killHostServer(server),
+                  },
                   // Quiet: the connect's own progress notification and the
                   // spinner on the login row are the feedback here. Revealing
                   // the Admin panel mid-login would yank focus off the editor.
@@ -1906,6 +1896,7 @@ export function activate(context: vscode.ExtensionContext) {
         isMeta: false,
         selector: '',
         category: '',
+        environmentId: 0,
       });
     }),
 
@@ -2297,13 +2288,7 @@ export function activate(context: vscode.ExtensionContext) {
         for (let env = 0; env <= maxEnv; env++) {
           all.push(...queries.sendersOf(session, args.selector, env));
         }
-        const seen = new Set<string>();
-        const results = all.filter((r) => {
-          const key = `${r.className}|${r.isMeta}|${r.selector}`;
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        });
+        const results = dedupeMethodResults(all);
         await showMethodResults(session, results, `Senders of #${args.selector}`);
       },
     ),
@@ -2320,13 +2305,7 @@ export function activate(context: vscode.ExtensionContext) {
         for (let env = 0; env <= maxEnv; env++) {
           all.push(...queries.implementorsOf(session, args.selector, env));
         }
-        const seen = new Set<string>();
-        const results = all.filter((r) => {
-          const key = `${r.className}|${r.isMeta}|${r.selector}`;
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        });
+        const results = dedupeMethodResults(all);
         await showMethodResults(session, results, `Implementors of #${args.selector}`);
       },
     ),
@@ -2360,13 +2339,7 @@ export function activate(context: vscode.ExtensionContext) {
             ),
           );
         }
-        const seen = new Set<string>();
-        const results = all.filter((r) => {
-          const key = `${r.className}|${r.isMeta}|${r.selector}`;
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        });
+        const results = dedupeMethodResults(all);
         const side = args.isMeta ? ' class' : '';
         const title =
           args.direction === 'up'
@@ -2388,13 +2361,7 @@ export function activate(context: vscode.ExtensionContext) {
         for (let env = 0; env <= maxEnv; env++) {
           all.push(...queries.referencesToObject(session, args.objectName, env));
         }
-        const seen = new Set<string>();
-        const results = all.filter((r) => {
-          const key = `${r.className}|${r.isMeta}|${r.selector}`;
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        });
+        const results = dedupeMethodResults(all);
         await showMethodResults(session, results, `References to ${args.objectName}`);
       },
     ),
@@ -2474,16 +2441,7 @@ export function activate(context: vscode.ExtensionContext) {
             for (let env = 0; env <= maxEnv; env++) {
               all.push(...queries.sendersOf(session, selector, env));
             }
-            // Deduplicate by class+meta+selector
-            const seen = new Set<string>();
-            return Promise.resolve(
-              all.filter((r) => {
-                const key = `${r.className}|${r.isMeta}|${r.selector}`;
-                if (seen.has(key)) return false;
-                seen.add(key);
-                return true;
-              }),
-            );
+            return Promise.resolve(dedupeMethodResults(all));
           },
         );
       } catch (e: unknown) {
@@ -2517,15 +2475,7 @@ export function activate(context: vscode.ExtensionContext) {
             for (let env = 0; env <= maxEnv; env++) {
               all.push(...queries.implementorsOf(session, selector, env));
             }
-            const seen = new Set<string>();
-            return Promise.resolve(
-              all.filter((r) => {
-                const key = `${r.className}|${r.isMeta}|${r.selector}`;
-                if (seen.has(key)) return false;
-                seen.add(key);
-                return true;
-              }),
-            );
+            return Promise.resolve(dedupeMethodResults(all));
           },
         );
       } catch (e: unknown) {
@@ -3805,6 +3755,80 @@ export function activate(context: vscode.ExtensionContext) {
       }
       refreshAdminViews();
     }),
+
+    // Offered on a row the tree marks as "Running outside Jasper". The same
+    // reconcile the login path runs, reachable without waiting for a connect to
+    // fail — a user who has just seen the tree explain the state should be able
+    // to act on it there.
+    vscode.commands.registerCommand(
+      'gemstone.restartExternalServers',
+      async (node: DatabaseNode) => {
+        if (node?.kind !== 'stone' && node?.kind !== 'netldi') return;
+        const db = node.db;
+        // The row was rendered from the last refresh, and the user may have
+        // dealt with the server by hand since. Re-read before stopping
+        // anything, so the PIDs acted on are the ones alive now.
+        processManager.refreshProcesses();
+        const finding = processManager.getExternalServers(db);
+        if (!hasExternalServer(finding)) {
+          vscode.window.showInformationMessage(
+            `Nothing to reconcile: "${db.config.stoneName}" has no servers running outside Jasper's environment.`,
+          );
+          refreshAdminViews();
+          return;
+        }
+        const outcome = await reconcileExternalServers(
+          db,
+          finding,
+          describeExternalServers(db, finding, sysadminStorage.getRootPath()),
+          {
+            // No login is being retried here, so the dialog must not offer to
+            // connect — the row's action restarts and stops there.
+            confirm: (r) => confirmReconcileExternalServers(r, { connects: false }),
+            stopExternal: (d, server) => processManager.stopExternalServer(d, server),
+            killExternal: (server) => processManager.killHostServer(server),
+            report: () => {
+              /* no surrounding progress notification here; the Admin channel has the detail */
+            },
+            showError: (m) => vscode.window.showErrorMessage(m),
+          },
+        );
+        if (outcome.kind === 'stopped') {
+          // Restart under Jasper's environment, which is the whole point: both
+          // servers now land in Jasper's own locks directory.
+          if (await ensureStonePreconditions()) {
+            // Started independently, and an "already running" is not a failure:
+            // when only the netldi was external, the stone is still up under
+            // Jasper and startstone exits non-zero. Letting that abort the
+            // sequence would leave the one server that actually needed starting
+            // down, and tell the user the restart failed. Same rule the login
+            // recovery path uses.
+            const startFailure = async (
+              start: () => Promise<string>,
+            ): Promise<string | undefined> => {
+              try {
+                await start();
+                return undefined;
+              } catch (e) {
+                const msg = e instanceof Error ? e.message : String(e);
+                return isAlreadyRunning(msg) ? undefined : msg;
+              }
+            };
+            const failure =
+              (await startFailure(() => processManager.startStone(db))) ??
+              (await startFailure(() => processManager.startNetldi(db)));
+            if (failure) {
+              vscode.window.showErrorMessage(failure);
+            } else {
+              vscode.window.showInformationMessage(
+                `"${db.config.stoneName}" restarted under Jasper's environment.`,
+              );
+            }
+          }
+        }
+        refreshAdminViews();
+      },
+    ),
 
     vscode.commands.registerCommand('jasper.openMcpInspector', () => {
       const port = readMcpSetting<number>('httpPort', DEFAULT_MCP_HTTP_PORT);

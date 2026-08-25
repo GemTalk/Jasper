@@ -9,6 +9,10 @@
  * The caller resolves the new name (for an add) before calling in — this module just
  * previews and applies a fully-specified operation, and reports the outcome so the caller
  * can refresh/reveal.
+ *
+ * A remove the safe-delete guard has already cleared (nothing accesses the variable) can
+ * skip the panel entirely — see `autoApply` — because a preview of a change that breaks
+ * nothing is a question with only one answer.
  */
 import * as vscode from 'vscode';
 import { ActiveSession } from '../sessionManager';
@@ -38,6 +42,13 @@ export interface InstVarRefactorRequest {
    *  the engine IN THE SAME transaction as the reshape, so they commit or abort with it
    *  (not a separate fire-and-forget step). Also shown as a preview note. */
   accessorSpecs?: Accessor[];
+  /** Apply without opening the preview panel. The safe-delete path sets this once it has
+   *  established that no method accesses the variable: there is nothing for a preview to
+   *  show, and a panel would be a confirmation the guard just decided was unnecessary.
+   *  The engine still has the last word — if it reports methods that will not recompile,
+   *  the panel opens after all. On this path the caller reports the outcome (the Explorer
+   *  announces the deletion), so no completion message is shown from here. */
+  autoApply?: boolean;
 }
 
 export interface InstVarRefactorOutcome {
@@ -45,6 +56,11 @@ export interface InstVarRefactorOutcome {
   committed: boolean;
   /** Methods that could not recompile onto the new version and were dropped. */
   dropped: { className: string; selector: string }[];
+  /** True when `autoApply` was honoured and the preview panel never opened, so the caller
+   *  knows whether the change went through unattended. An autoApply request that the engine
+   *  sent to the panel after all comes back false — the user WAS asked, and a caller that
+   *  announces an unasked deletion must not announce that one. */
+  autoApplied: boolean;
 }
 
 function titleFor(req: InstVarRefactorRequest): string {
@@ -57,7 +73,7 @@ function titleFor(req: InstVarRefactorRequest): string {
 export async function runInstVarRefactor(
   req: InstVarRefactorRequest,
 ): Promise<InstVarRefactorOutcome | undefined> {
-  const { session, op, className, ivarName, dict, accessorSpecs } = req;
+  const { session, op, className, ivarName, dict, accessorSpecs, autoApply } = req;
   logInfo(`[instVar] ${op} ${ivarName} on ${className}`);
 
   const verb = op === 'add' ? 'Adding' : 'Removing';
@@ -122,6 +138,36 @@ export async function runInstVarRefactor(
     return undefined;
   }
 
+  // Nothing will break and the caller already decided not to ask: apply the staged change
+  // set as it stands (no deselections, and neither committing option), then release the
+  // token the panel would otherwise have cleaned up.
+  if (autoApply && start.outOfScope.willNotRecompile.length === 0) {
+    let result;
+    try {
+      result = parseApplyResult(
+        await queries.applyInstVar(session, token, [], [], false, false, accessorSpecs ?? []),
+      );
+    } catch (e: unknown) {
+      void vscode.window.showErrorMessage(
+        `${titleFor(req)} failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      safeClear();
+      return undefined;
+    }
+    safeClear();
+    const failure = result.error ?? result.failed[0]?.error;
+    if (failure !== undefined) {
+      void vscode.window.showErrorMessage(`${titleFor(req)} failed: ${failure}`);
+      return undefined;
+    }
+    return {
+      applied: result.applied,
+      committed: result.committed,
+      dropped: result.dropped,
+      autoApplied: true,
+    };
+  }
+
   const accessorNote =
     accessorSpecs && accessorSpecs.length > 0
       ? `Accessors added with this change: ${accessorSpecs.map((a) => a.selector).join(', ')}`
@@ -181,5 +227,10 @@ export async function runInstVarRefactor(
   const commitNote = result.committed ? ' Committed.' : '';
   void vscode.window.showInformationMessage(`${titleFor(req)}.${droppedNote}${commitNote}`);
 
-  return { applied: result.applied, committed: result.committed, dropped: result.dropped };
+  return {
+    applied: result.applied,
+    committed: result.committed,
+    dropped: result.dropped,
+    autoApplied: false,
+  };
 }

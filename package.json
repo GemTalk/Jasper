@@ -1508,13 +1508,19 @@
         "command": "gemstone.explorer.removeInstVar",
         "title": "Remove Instance Variable…",
         "category": "GemStone",
-        "icon": "$(remove)"
+        "icon": "$(trash)"
       },
       {
         "command": "gemstone.explorer.renameClassVariable",
         "title": "Rename Class Variable…",
         "category": "GemStone",
         "icon": "$(edit)"
+      },
+      {
+        "command": "gemstone.explorer.removeClassVar",
+        "title": "Remove Class Variable…",
+        "category": "GemStone",
+        "icon": "$(trash)"
       },
       {
         "command": "gemstone.explorer.moveUpInstVar",
@@ -1812,6 +1818,12 @@
         "title": "Stop NetLDI",
         "category": "GemStone Admin",
         "icon": "$(debug-stop)"
+      },
+      {
+        "command": "gemstone.restartExternalServers",
+        "title": "Restart Under Jasper's Environment",
+        "category": "GemStone Admin",
+        "icon": "$(debug-restart)"
       },
       {
         "command": "gemstone.openDbInFinder",
@@ -2460,12 +2472,12 @@
         },
         {
           "command": "gemstone.explorer.removeInstVar",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerIvar && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerIvar/ && gemstone.rbSupportAvailable",
           "group": "inline@4"
         },
         {
           "command": "gemstone.explorer.removeInstVar",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerIvar && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerIvar/ && gemstone.rbSupportAvailable",
           "group": "3_refactor@1"
         },
         {
@@ -2492,6 +2504,16 @@
           "command": "gemstone.explorer.renameClassVariable",
           "when": "view == gemstoneExplorerClasses && viewItem == explorerClassVar && gemstone.rbSupportAvailable",
           "group": "inline"
+        },
+        {
+          "command": "gemstone.explorer.removeClassVar",
+          "when": "view == gemstoneExplorerClasses && viewItem == explorerClassVar",
+          "group": "inline@2"
+        },
+        {
+          "command": "gemstone.explorer.removeClassVar",
+          "when": "view == gemstoneExplorerClasses && viewItem == explorerClassVar",
+          "group": "3_refactor@1"
         },
         {
           "command": "gemstone.explorer.addAccessors",
@@ -2825,6 +2847,16 @@
           "command": "gemstone.stopNetldi",
           "when": "view == gemstoneDatabases && viewItem == gemstoneDbNetldiRunning",
           "group": "inline@1"
+        },
+        {
+          "command": "gemstone.restartExternalServers",
+          "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDb(Stone|Netldi)External$/",
+          "group": "inline@1"
+        },
+        {
+          "command": "gemstone.restartExternalServers",
+          "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDb(Stone|Netldi)External$/",
+          "group": "navigation@1"
         },
         {
           "command": "gemstone.openDbInFinder",

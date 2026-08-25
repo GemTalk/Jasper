@@ -193,7 +193,11 @@ function sessionRow(session: ActiveSession): GemStoneSessionItem {
   return { activeSession: session };
 }
 function runningStoneRow(stoneName: string): DatabaseNode {
-  return { kind: 'stone', db: { config: { stoneName } }, running: true } as unknown as DatabaseNode;
+  return {
+    kind: 'stone',
+    db: { config: { stoneName } },
+    status: 'running',
+  } as unknown as DatabaseNode;
 }
 
 describe('resolveExtentBackupSession', () => {

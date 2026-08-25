@@ -10,8 +10,9 @@ import * as path from 'path';
 // availability latch drives the context key on connect / selection / (un)install,
 // so the menus follow the stone's actual state.
 //
-// Two Explorer commands are deliberately NOT engine-gated: deleting a method and
-// recategorizing a method are plain image operations that work without the engine.
+// Three Explorer commands are deliberately NOT engine-gated: deleting a method,
+// recategorizing a method, and removing a class variable are plain image operations
+// that work without the engine.
 
 interface MenuItem {
   command?: string;
@@ -48,6 +49,9 @@ const ENGINE_DEPENDENT = [
 const ENGINE_INDEPENDENT = [
   'gemstone.explorer.removeMethod',
   'gemstone.explorer.renameMethodCategory',
+  // Removing a class variable is a base-image operation (removeClassVarName:) that
+  // reshapes nothing — the mirror of Add Class Variable, which is ungated too.
+  'gemstone.explorer.removeClassVar',
 ] as const;
 
 describe('Explorer refactoring menu gating', () => {

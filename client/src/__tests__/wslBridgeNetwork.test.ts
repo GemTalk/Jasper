@@ -11,7 +11,7 @@ vi.mock('child_process', () => ({
 }));
 
 import * as fs from 'fs';
-import { exec, type ChildProcess } from 'child_process';
+import { exec, execSync, type ChildProcess } from 'child_process';
 import {
   parseWslConfigForMirrored,
   parseWslCoreVersion,
@@ -22,6 +22,7 @@ import {
   invalidateWslNetworkCache,
   getWslNetworkInfoCached,
   updateWslConfigMirrored,
+  wslExecSync,
 } from '../wslBridge';
 
 // ── Helpers ────────────────────────────────────────────────
@@ -403,5 +404,26 @@ describe('updateWslConfigMirrored', () => {
   it('is a no-op when networkingMode is already mirrored', () => {
     const input = '[wsl2]\nnetworkingMode=mirrored\n';
     expect(updateWslConfigMirrored(input)).toBe(input);
+  });
+});
+
+describe('wslExecSync', () => {
+  const realPlatform = process.platform;
+  afterEach(() => {
+    setPlatform(realPlatform);
+    vi.mocked(execSync).mockReset();
+  });
+
+  it('blanks BASH_ENV on Linux so a startup file cannot rewrite the environment', () => {
+    // Parity with wslSpawn: execSync runs through /bin/sh, which is bash on many
+    // distros, so a BASH_ENV file could `unset GEMSTONE` out from under gslist.
+    setPlatform('linux');
+    vi.mocked(execSync).mockReturnValue('ok');
+
+    wslExecSync('gslist -cvl', { GEMSTONE: '/gs/3.7.4' });
+
+    const options = vi.mocked(execSync).mock.calls[0][1] as { env?: Record<string, string> };
+    expect(options.env?.BASH_ENV).toBe('');
+    expect(options.env?.GEMSTONE).toBe('/gs/3.7.4');
   });
 });

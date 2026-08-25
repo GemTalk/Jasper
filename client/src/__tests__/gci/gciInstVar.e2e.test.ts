@@ -20,29 +20,9 @@ import { parseStartPreview, parseApplyResult } from '../../refactoring/instVarRe
  * On-demand GCI e2e for the COMMITTING paths of the add / remove instance-variable (V1)
  * refactoring, over the real GCI transport (`npm run test:gci`).
  *
- * WHY THIS IS STILL AN on-demand gci SUITE: every scenario the harness can host has moved to
- * the automatic integration suite, which runs in CI across the release matrix — see
- * `refactoring/__tests__/refactoringInstVar.integration.test.ts` (add, remove + selective
- * copy-forward, partial apply without abort, shadowed-temporary prediction, decline duplicate,
- * decline a name a subclass declares, plus the engine's GS SUnit suite). What remains here are the
- * scenarios on which the ENGINE commits — migrate instances, delete history, and (added for PR
- * #392 finding #10) an add-with-accessors that migrates, whose accessors must be committed
- * ATOMICALLY with the reshape so a later abort cannot strand them:
- * `GsInstVarRefactoring>>applyDeselected:options:migrate:deleteHistory:` calls
- * `commitStructuralThenMigrate:` once the structural apply has succeeded, whenever `migrate` or
- * `deleteHistory` is requested, because `migrateInstancesTo:` needs a clean transaction.
- * `useIntegrationTest` arms GemStone's commit guard on every session it hands out, so a commit
- * fails at the commit site with `TransactionError 2249`, with no opt-out. These can only move once
- * the harness grows an opt-in commit strategy for tests that genuinely need to commit. That is a
- * policy call about the harness's "never commit" invariant, not a technical blocker. Note the
- * discriminator is what the PRODUCTION code does, not what the test does: a test that merely needs
- * its own fixture belongs in the harness — the auto-abort rolls the fixture back, so it never
- * needs to commit.
- *
- * Guarded on the refactoring engine being installed (the queries reference the in-stone
- * `GsInstVarRefactoring`); the tests skip, with a reason, otherwise. Each test is self-cleaning
- * — it removes the committed class (and any persisted instance) and commits that removal in
- * `finally`, leaving no residue. All Smalltalk is ASCII-only for 3.6.x.
+ * Some scenarios were migrated to the integration test harness, which runs in CI
+ * over the release matrix. What remains here are tests which migrate instances because
+ * they require a real commit.
  */
 describe('instance-variable refactoring, committing paths (gci e2e)', () => {
   let gci: GciLibrary;
@@ -144,43 +124,6 @@ describe('instance-variable refactoring, committing paths (gci e2e)', () => {
     }
   });
 
-  it('deletes prior versions from the class history and commits when delete-history is requested', async (ctx) => {
-    if (!enginePresent) return ctx.skip('GsInstVarRefactoring is not installed on this stone');
-
-    const CLS = 'GciIvHist';
-    try {
-      q.compileClassDefinition(
-        session,
-        `Object subclass: '${CLS}' instVarNames: #(x) classVars: #() ` +
-          'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
-      );
-      exec("System commitTransaction. 'ok'"); // commit the original version so history bumps to 2
-
-      parseStartPreview(
-        await startInstVarPreview(
-          asyncExec,
-          'add',
-          CLS,
-          'z',
-          'gci-iv-history',
-          PREVIEW_PAGE_BYTES,
-          userIndex(),
-        ),
-      );
-      const result = parseApplyResult(
-        await applyInstVar(asyncExec, 'gci-iv-history', [], null, false, true),
-      );
-
-      expect(result.failed).toEqual([]);
-      expect(result.committed).toBe(true);
-      expect(hasIvar(CLS, 'z')).toBe(true);
-      // The prior version was pruned: only the current version remains in the history.
-      expect(exec(`${CLS} classHistory size printString`).trim()).toBe('1');
-    } finally {
-      exec(`UserGlobals removeKey: #${CLS} ifAbsent: []. System commitTransaction. 'ok'`);
-    }
-  });
-
   // Accessors requested with a COMMITTING add are compiled inside the same transaction as the
   // reshape, so they are committed with it and cannot be stranded. Pre-fix, accessor generation
   // ran AFTER the commit (a separate, uncommitted step), so a later abort silently dropped them
@@ -232,52 +175,6 @@ describe('instance-variable refactoring, committing paths (gci e2e)', () => {
     } finally {
       exec(
         `UserGlobals removeKey: #GciIvAccMigInst ifAbsent: []. ` +
-          `UserGlobals removeKey: #${CLS} ifAbsent: []. System commitTransaction. 'ok'`,
-      );
-    }
-  });
-
-  it('commits nothing when an accessor cannot compile, even with migrate requested', async (ctx) => {
-    if (!enginePresent) return ctx.skip('GsInstVarRefactoring is not installed on this stone');
-
-    const CLS = 'GciIvAccFail';
-    try {
-      q.compileClassDefinition(
-        session,
-        `Object subclass: '${CLS}' instVarNames: #(x) classVars: #() ` +
-          'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
-      );
-      exec(`UserGlobals at: #GciIvAccFailInst put: ${CLS} new. System commitTransaction. 'ok'`);
-
-      parseStartPreview(
-        await startInstVarPreview(
-          asyncExec,
-          'add',
-          CLS,
-          'y',
-          'gci-iv-acc-fail',
-          PREVIEW_PAGE_BYTES,
-          userIndex(),
-        ),
-      );
-      const result = parseApplyResult(
-        await applyInstVar(asyncExec, 'gci-iv-acc-fail', [], null, true, false, [
-          { selector: 'y', source: 'y\n\t^ )( will not compile' },
-        ]),
-      );
-
-      // The bad accessor lands in `failed`, which holds the commit back: nothing is committed, so
-      // an abort rolls the whole reshape back — the add and its accessors are all-or-nothing.
-      expect(result.failed.length).toBeGreaterThan(0);
-      expect(result.committed).toBe(false);
-
-      exec("System abortTransaction. 'ok'");
-
-      expect(hasIvar(CLS, 'y')).toBe(false); // structural add was never committed
-      expect(includesSelector(CLS, 'y')).toBe(false); // and the accessor never installed
-    } finally {
-      exec(
-        `UserGlobals removeKey: #GciIvAccFailInst ifAbsent: []. ` +
           `UserGlobals removeKey: #${CLS} ifAbsent: []. System commitTransaction. 'ok'`,
       );
     }
