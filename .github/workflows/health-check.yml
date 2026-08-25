@@ -156,10 +156,14 @@ jobs:
       SKIP_REPORT_PLUGIN_NAME: skips-${{ matrix.platform }}-${{ matrix.gemstone-version }}-${{ matrix.node-version || 'nvmrc' }}-plugin
       SKIP_REPORT_PLUGIN_PATH: ${{ github.workspace }}/test-results/skips-${{ matrix.platform }}-${{ matrix.gemstone-version }}-${{ matrix.node-version || 'nvmrc' }}-plugin.json
     strategy:
+      # Off while we're gathering per-version data on the GciTsNbPoll native
+      # crash repro (docs/explanation/gci-nb-poll-crash-repro.md) — a crash on
+      # one leg shouldn't hide how every other GemStone version behaves.
+      fail-fast: false
       matrix:
         platform: [ubuntu-latest, windows-latest]
         gemstone-version: ${{ fromJson(needs.prepare.outputs.versions) }}
-        node-version: ['']            # empty ⇒ dev jobs resolve Node from .nvmrc (node-version-file); floor include overrides
+        node-version: [''] # empty ⇒ dev jobs resolve Node from .nvmrc (node-version-file); floor include overrides
         # node-version's declared axis value is only '' (which falls back to
         # the .nvmrc Node version); '22.15.1' isn't one of the declared
         # values, so GitHub can't merge this into an existing combination —
@@ -169,7 +173,7 @@ jobs:
         include:
           - platform: ubuntu-latest # smoke test only cares about the Node floor, not the OS-specific WSL/GCI-DLL path
             gemstone-version: ${{ needs.prepare.outputs.oldest-version }}
-            node-version: '22.15.1'   # pin the floor for the smoke-test
+            node-version: '22.15.1' # pin the floor for the smoke-test
 
     steps:
       - name: Checkout code
@@ -283,49 +287,12 @@ jobs:
           GEMSTONE_VERSION: ${{ matrix.gemstone-version }}
         run: npm run test:server:start -- "$GEMSTONE_VERSION"
       - name: Run tests (without server plugin)
+        # Scoped to the GciTsNbPoll crash repro only, not the whole suite --
+        # see docs/explanation/gci-nb-poll-crash-repro.md.
+        working-directory: client
         env:
           VITEST_JSON_OUTPUT: ${{ env.SKIP_REPORT_BARE_PATH }}
-        run: npm test
-      - name: Relativize skip report paths (without server plugin)
-        env:
-          SKIP_REPORT_PATH: ${{ env.SKIP_REPORT_BARE_PATH }}
-        # windows-latest defaults to pwsh, which doesn't understand bash's
-        # $VAR syntax — force bash (present on both runner images) so this
-        # one shell script works unchanged on either platform.
-        shell: bash
-        run: node scripts/relativize-skip-report.mjs "$SKIP_REPORT_PATH" "$GITHUB_WORKSPACE"
-      - name: Upload skip report (without server plugin)
-        if: always()
-        # zizmor(unpinned-uses): actions must be pinned to a commit SHA,
-        # not a mutable tag like @v7
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: ${{ env.SKIP_REPORT_BARE_NAME }}
-          path: ${{ env.SKIP_REPORT_BARE_PATH }}
-          if-no-files-found: ignore
-      - name: Install server plugin
-        run: npm run test:server:install-plugin
-      - name: Run tests (with server plugin)
-        env:
-          VITEST_JSON_OUTPUT: ${{ env.SKIP_REPORT_PLUGIN_PATH }}
-        run: npm test
-      - name: Relativize skip report paths (with server plugin)
-        env:
-          SKIP_REPORT_PATH: ${{ env.SKIP_REPORT_PLUGIN_PATH }}
-        # windows-latest defaults to pwsh, which doesn't understand bash's
-        # $VAR syntax — force bash (present on both runner images) so this
-        # one shell script works unchanged on either platform.
-        shell: bash
-        run: node scripts/relativize-skip-report.mjs "$SKIP_REPORT_PATH" "$GITHUB_WORKSPACE"
-      - name: Upload skip report (with server plugin)
-        if: always()
-        # zizmor(unpinned-uses): actions must be pinned to a commit SHA,
-        # not a mutable tag like @v7
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: ${{ env.SKIP_REPORT_PLUGIN_NAME }}
-          path: ${{ env.SKIP_REPORT_PLUGIN_PATH }}
-          if-no-files-found: ignore
+        run: npx vitest run --project default src/gciLibrary/__tests__/gciNbPollAfterLogout.integration.test.ts
 
   package-check:
     name: Verify vsce packaging
