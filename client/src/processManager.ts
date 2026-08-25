@@ -116,13 +116,18 @@ export function parseGslist(output: string): GemStoneProcess[] {
   return processes;
 }
 
+/** Wrap a value in single quotes, escaping any single quotes it contains,
+ *  so it survives verbatim through a POSIX shell. */
+export function shellSingleQuote(v: string): string {
+  return `'${v.split("'").join(`'\\''`)}'`;
+}
+
 /** Shell `export` statements for an environment, single-quote escaped.
  *  Used both to seed a WSL terminal and to re-assert Jasper's values in a
  *  native one after the user's startup files have had their turn. */
 export function exportCommand(env: Record<string, string>): string {
-  const quote = (v: string): string => `'${v.split("'").join(`'\\''`)}'`;
   return Object.entries(env)
-    .map(([k, v]) => `export ${k}=${quote(v)}`)
+    .map(([k, v]) => `export ${k}=${shellSingleQuote(v)}`)
     .join('; ');
 }
 
@@ -859,8 +864,19 @@ export class ProcessManager {
       // `export GEMSTONE=…` in .bashrc silently wins — and this terminal is
       // supposed to be the one place a user can trust to have the database's
       // environment. Sending the exports afterwards makes Jasper's values
-      // authoritative without taking the user's shell customizations away.
-      terminal.sendText(exportCommand(env), true);
+      // authoritative.
+      //
+      // PATH is the exception: our value is a *complete* fixed string, so
+      // re-exporting it wholesale would discard whatever the user's startup
+      // files prepended (nvm, homebrew, pyenv, cargo…). We only need
+      // GemStone's bin to win, so assert it as a *prefix* and leave the rest
+      // of the user's PATH intact.
+      const { PATH, ...gsEnv } = env;
+      const gsBin = PATH.split(':')[0];
+      terminal.sendText(
+        `${exportCommand(gsEnv)}; export PATH=${shellSingleQuote(gsBin)}:"$PATH"`,
+        true,
+      );
     }
   }
 

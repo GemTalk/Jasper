@@ -49,6 +49,7 @@ function makeManager(overrides?: {
     ...overrides?.storage,
   } as unknown as SysadminStorage;
   const processManager = {
+    refreshProcesses: vi.fn(() => []),
     isServerAlive: vi.fn(() => false),
     getExternalServers: vi.fn(() => ({})),
     ...overrides?.processManager,
@@ -148,6 +149,26 @@ describe('DatabaseManager.replaceExtent', () => {
 
     const ok = await makeManager({ processManager: { isServerAlive } }).replaceExtent(makeDb());
 
+    expect(ok).toBe(false);
+    expect(wslImportFileSync).not.toHaveBeenCalled();
+  });
+
+  it('re-reads gslist before the guard, catching a stone started since the last refresh', async () => {
+    // A stone the user started by hand is invisible in the memoized verdict
+    // until we refresh. The guard has to refresh first, or it would replace the
+    // extent under a live database it never saw.
+    let refreshed = false;
+    const refreshProcesses = vi.fn(() => {
+      refreshed = true;
+      return [];
+    });
+    const isServerAlive = vi.fn(() => refreshed);
+
+    const ok = await makeManager({
+      processManager: { refreshProcesses, isServerAlive },
+    }).replaceExtent(makeDb());
+
+    expect(refreshProcesses).toHaveBeenCalled();
     expect(ok).toBe(false);
     expect(wslImportFileSync).not.toHaveBeenCalled();
   });

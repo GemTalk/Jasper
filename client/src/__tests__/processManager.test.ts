@@ -1652,6 +1652,24 @@ describe('ProcessManager', () => {
       expect(options.env?.GEMSTONE_SYS_CONF).toBe('/home/user/gemstone/db-1/conf');
       expect(options.env?.GEMSTONE_NRS_ALL).toContain('#netldi:gs64ldi');
     });
+
+    it('re-asserts GemStone bin as a PATH prefix so shell customizations survive', () => {
+      // The re-export after startup files run makes Jasper's vars authoritative,
+      // but PATH must be asserted as a *prefix* — re-exporting our fixed value
+      // wholesale would wipe whatever .bashrc prepended (nvm, homebrew, …).
+      setPlatform('darwin');
+      const manager = new ProcessManager(makeStorage('/gs/3.7.4'));
+
+      manager.openTerminal(makeDatabase());
+
+      const terminal = vi.mocked(vscode.window.createTerminal).mock.results[0].value;
+      const sent = vi.mocked(terminal.sendText).mock.calls[0][0] as string;
+      expect(sent).toContain(`export PATH='/gs/3.7.4/bin':"$PATH"`);
+      // Stone-specific vars are still re-asserted verbatim...
+      expect(sent).toContain('export GEMSTONE_SYS_CONF=');
+      // ...but the fixed system dirs are NOT re-exported over the user's PATH.
+      expect(sent).not.toContain('/usr/local/bin:/usr/bin:/bin');
+    });
   });
 
   describe('gem temp-object cache self-heal (via startNetldi)', () => {

@@ -497,6 +497,12 @@ export function wslSpawn(cmd: string, args: string[], env?: Record<string, strin
   if (process.platform === 'linux') {
     // --noprofile --norc for the same reason: the wrapper exists only to set
     // ulimit before exec, so it has no business running the user's rc files.
+    //
+    // cmd and args are passed as positional parameters to a *constant* -c
+    // script (`exec "$@"`), never interpolated into it, so there is no shell
+    // for them to inject into — and cmd is a Jasper-built binary path, not
+    // user input. CodeQL's js/shell-command-injection-from-environment alert
+    // here is a false positive.
     return spawn(
       '/bin/bash',
       ['--noprofile', '--norc', '-c', 'ulimit -n 1024; exec "$@"', '--', cmd, ...args],
@@ -515,9 +521,12 @@ export function wslExecSync(
   options?: { timeout?: number },
 ): string {
   if (!needsWsl()) {
+    // BASH_ENV: '' for the same reason wslSpawn blanks it — execSync runs
+    // through /bin/sh, which is bash on many distros, so a BASH_ENV startup
+    // file is free to `unset GEMSTONE` out from under gslist and friends.
     return execSync(cmd, {
       encoding: 'utf-8',
-      env: { ...process.env, ...env },
+      env: { ...process.env, ...env, BASH_ENV: '' },
       timeout: options?.timeout,
     });
   }

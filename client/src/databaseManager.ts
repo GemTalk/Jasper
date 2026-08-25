@@ -329,6 +329,13 @@ export class DatabaseManager {
 
   /** Delete a database directory after confirmation */
   async deleteDatabase(db: GemStoneDatabase): Promise<boolean> {
+    // Re-read before the guard: isServerAlive answers from the memoized
+    // per-refresh gslist verdict, and the user may have started a stone by
+    // hand since the tree last refreshed. Without this, the check could pass
+    // against a reading that predates the live database — the exact case
+    // isServerAlive was widened to catch (restartExternalServers re-reads for
+    // the same reason).
+    this.processManager.refreshProcesses();
     // isServerAlive, not isStoneRunning: a server started outside Jasper's
     // environment is absent from Jasper's gslist but has the extent open, and
     // deleting the directory under it would corrupt a running database.
@@ -355,8 +362,10 @@ export class DatabaseManager {
 
   /** Replace the extent and transaction logs with a fresh base extent */
   async replaceExtent(db: GemStoneDatabase): Promise<boolean> {
-    // See deleteDatabase: this has to refuse for a stone alive anywhere on the
-    // host, not just one Jasper's own gslist can see.
+    // See deleteDatabase: re-read first so the guard sees a stone the user
+    // started by hand since the last refresh, then refuse for a stone alive
+    // anywhere on the host, not just one Jasper's own gslist can see.
+    this.processManager.refreshProcesses();
     if (this.processManager.isServerAlive(db, 'stone')) {
       vscode.window.showErrorMessage(this.stillRunningMessage(db, 'stone', 'replacing the extent'));
       return false;
