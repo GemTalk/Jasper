@@ -1935,6 +1935,12 @@
         "icon": "$(debug-stop)"
       },
       {
+        "command": "gemstone.restartExternalServers",
+        "title": "Restart Under Jasper's Environment",
+        "category": "GemStone Admin",
+        "icon": "$(debug-restart)"
+      },
+      {
         "command": "gemstone.openDbInFinder",
         "title": "Reveal in Finder",
         "category": "GemStone Admin",
@@ -3037,6 +3043,16 @@
           "command": "gemstone.stopNetldi",
           "when": "view == gemstoneDatabases && viewItem == gemstoneDbNetldiRunning",
           "group": "inline@1"
+        },
+        {
+          "command": "gemstone.restartExternalServers",
+          "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDb(Stone|Netldi)External$/",
+          "group": "inline@1"
+        },
+        {
+          "command": "gemstone.restartExternalServers",
+          "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDb(Stone|Netldi)External$/",
+          "group": "navigation@1"
         },
         {
           "command": "gemstone.openDbInFinder",
