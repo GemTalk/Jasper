@@ -10,7 +10,11 @@ import { parseAnalysis, parseStartPreview, parseApplyResult } from '../instVarRe
 import type { ActiveSession } from '../../sessionManager';
 import { requireServerPluginFeature } from '../../__tests__/requireServerPluginFeature';
 import { pluginFeatures } from '../../serverPlugin/pluginFeatures';
-import { fileInEngineTestsExpr } from './support/refactoring';
+import {
+  fileInEngineTestsExpr,
+  userIndex as userIndexProbe,
+  hasIvar as hasIvarProbe,
+} from './support/refactoring';
 
 /**
  * Automatic GCI integration test for the add / remove instance-variable (V1) refactoring,
@@ -50,21 +54,12 @@ describe('add / remove instance variable (integration)', () => {
       '(System myUserProfile symbolList objectNamed: #GsInstVarRefactoring) notNil printString',
     ).trim() === 'true';
 
-  const userIndex = (): number =>
-    parseInt(
-      exec(
-        `| sl d | sl := System myUserProfile symbolList. ` +
-          `d := sl detect: [:x | x name = #'UserGlobals'] ifNone: [nil]. ` +
-          `(d ifNil: [0] ifNotNil: [sl indexOf: d]) printString`,
-      ),
-      10,
-    );
+  const userIndex = (): number => userIndexProbe(exec);
 
   const BASE = 'XIvItBase';
   const SUB = 'XIvItSub';
 
-  const hasIvar = (cls: string, name: string): boolean =>
-    exec(`(${cls} instVarNames includes: #${name}) printString`).trim() === 'true';
+  const hasIvar = (cls: string, name: string): boolean => hasIvarProbe(exec, cls, name);
   const includesSelector = (cls: string, sel: string): boolean =>
     exec(`(${cls} includesSelector: #${sel}) printString`).trim() === 'true';
 
@@ -186,6 +181,40 @@ r := (System myUserProfile symbolList objectNamed: #GsInstVarRefactoringTest) su
     // The accessor failure is surfaced (this is what holds the commit back), nothing was
     // committed, and the un-compilable accessor is not installed.
     expect(result.failed.length).toBeGreaterThan(0);
+    expect(result.committed).toBe(false);
+    expect(includesSelector(BASE, 'tally')).toBe(false);
+  });
+
+  it('commits nothing when an accessor cannot compile, even with migrate requested', async (ctx) => {
+    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+
+    defineFixture();
+
+    parseStartPreview(
+      await startInstVarPreview(
+        asyncExec,
+        'add',
+        BASE,
+        'tally',
+        'xivit-badacc-mig',
+        PREVIEW_PAGE_BYTES,
+        userIndex(),
+      ),
+    );
+    // migrate: true is requested but never reached — the accessor failure gates
+    // `commitStructuralThenMigrate:` before it runs, so this stays fully transient and needs
+    // no commit strategy, unlike the sibling `migrate: true` scenarios in `gci/gciInstVar.e2e.test.ts`.
+    const result = parseApplyResult(
+      await applyInstVar(asyncExec, 'xivit-badacc-mig', [], null, true, false, [
+        { selector: 'tally', source: 'tally\n\t^ )( not parseable' },
+      ]),
+    );
+
+    // Asserting the whole failure set, not just `committed`: the engine swallows a failed
+    // commit into `failures` and only sets `committed` after the commit returns, so
+    // `committed: false` cannot tell "never attempted" from "attempted and refused". The
+    // absence of a `commit` entry is what proves the accessor failure gated it
+    expect(result.failed.map((failure) => failure.id)).toEqual(['accessor:tally']);
     expect(result.committed).toBe(false);
     expect(includesSelector(BASE, 'tally')).toBe(false);
   });

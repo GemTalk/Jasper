@@ -54,11 +54,7 @@ function gciPerformFetchString(
 }
 
 function oopToInt(session: ActiveSession, oop: bigint): number {
-  const { value, err } = session.gci.GciTsOopToI64(session.handle, oop);
-  if (err.number !== 0) {
-    throw new Error(err.message || `GCI error ${err.number} in OopToI64`);
-  }
-  return Number(value);
+  return Number(session.gci.oopToInteger(session.handle, oop));
 }
 
 function intToOop(session: ActiveSession, n: number): bigint {

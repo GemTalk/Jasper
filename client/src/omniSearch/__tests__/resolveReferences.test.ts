@@ -52,7 +52,14 @@ const methodResult: OmniResult = {
 };
 
 function row(className: string): MethodSearchResult {
-  return { dictName: 'Globals', className, isMeta: false, selector: 'foo', category: 'accessing' };
+  return {
+    dictName: 'Globals',
+    className,
+    isMeta: false,
+    selector: 'foo',
+    category: 'accessing',
+    environmentId: 0,
+  };
 }
 
 beforeEach(() => {

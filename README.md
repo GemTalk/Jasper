@@ -196,7 +196,8 @@ Beyond browsing, the Explorer is where the code-changing operations live:
 
 - Filter any pane by name, with `*` as a wildcard, plus `reads:`/`writes:`/`accesses:` in the Methods pane to find the methods touching an instance variable
 - Group methods by category, or list them flat
-- Add, rename, and delete dictionaries, class categories, classes, methods, and instance variables; rename class variables
+- Add, rename, and delete dictionaries, class categories, classes, methods, instance variables, and class variables
+- Deleting first looks for what still references the target: nothing does, and it just goes (and says so); something does, and you are shown the methods before you decide
 - The refactorings — rename, extract/inline method and temporary, change signature, move/push up/push down method, instance-variable structure changes, extract superclass, split class — each previewed before it is applied
 - Browse senders, implementors, references, and the class hierarchy
 - Drag and drop methods between categories, and classes between dictionaries
