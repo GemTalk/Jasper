@@ -91,10 +91,12 @@ interface Refs {
   variables: HTMLElement;
   evalInput: HTMLInputElement;
   evalResult: HTMLElement;
+  evalToggle?: HTMLElement;
+  evalClear?: HTMLElement;
   evalbar?: HTMLElement;
+  frameEvalItem?: HTMLElement;
   main?: HTMLElement;
   splitter?: HTMLElement;
-  hsplitter?: HTMLElement;
   varMenu?: HTMLElement;
   varInspectItem?: HTMLElement;
   busyOverlay?: HTMLElement;
@@ -142,11 +144,14 @@ function setup(
     <div id="error"></div>
     <div id="dnuBar"></div>
     <div class="main"><ul id="stack"></ul><div id="variables"></div></div>
-    <input id="evalInput"><div id="evalResult"></div>
-    <div id="ctxmenu"><div id="copyFrameItem">Copy Frame</div><div id="browseFrameItem" style="display:none;">Browse</div><div id="homeFrameItem" style="display:none;">Go to home method</div><div id="frameImplItem" style="display:none;">Implement in receiver</div></div>
+    <div id="evalbar"><div id="evalToggle">Evaluate…</div><input id="evalInput"><button id="evalClear">✕</button><div id="evalResult"></div></div>
+    <div id="ctxmenu"><div id="copyFrameItem">Copy Frame</div><div id="browseFrameItem" style="display:none;">Browse</div><div id="homeFrameItem" style="display:none;">Go to home method</div><div id="frameImplItem" style="display:none;">Implement in receiver</div><div id="frameEvalItem">Evaluate in this frame</div></div>
     <div id="varctxmenu"><div id="varInspectItem">Inspect</div></div>
     <div id="busyOverlay" class="busy-overlay" style="display:none;"><div class="busy-box"><div class="busy-spinner"></div><button id="busyCancel" style="display:none;">Cancel</button></div></div>`;
   document.body.classList.remove('busy');
+  // The eval bar's open/closed state lives on <body>, so reset it too — tests
+  // run shuffled and one that closes the bar would otherwise leak into the next.
+  document.body.classList.remove('eval-collapsed');
   const refs: Refs = {
     list: document.getElementById('stack')!,
     menu: document.getElementById('ctxmenu')!,
@@ -167,6 +172,10 @@ function setup(
     variables: document.getElementById('variables')!,
     evalInput: document.getElementById('evalInput') as HTMLInputElement,
     evalResult: document.getElementById('evalResult')!,
+    evalToggle: document.getElementById('evalToggle')!,
+    evalClear: document.getElementById('evalClear')!,
+    evalbar: document.getElementById('evalbar')!,
+    frameEvalItem: document.getElementById('frameEvalItem')!,
     varMenu: document.getElementById('varctxmenu')!,
     varInspectItem: document.getElementById('varInspectItem')!,
     busyOverlay: document.getElementById('busyOverlay')!,
@@ -1188,6 +1197,120 @@ describe('DebuggerView.init — eval bar', () => {
   });
 });
 
+describe('DebuggerView.init — reporting the height the panel needs', () => {
+  it('measures itself and reports it after rendering the stack', () => {
+    // The host sizes the debugger column from THIS message and nothing else —
+    // the pair opens evenly split and is corrected once the panel says how much
+    // height it needs. If this stopped being sent the debugger would open 50/50
+    // forever, and every host-side test would still pass, because they all feed
+    // the message in by hand.
+    const frames: number[] = [];
+    const realRaf = window.requestAnimationFrame;
+    window.requestAnimationFrame = (cb: FrameRequestCallback) => {
+      frames.push(1);
+      cb(0);
+      return 0;
+    };
+    try {
+      const { vscode } = setup();
+      expect(vscode.postMessage).toHaveBeenCalledWith({
+        command: 'fit',
+        needed: document.body.scrollHeight,
+        viewport: window.innerHeight,
+      });
+      // Measured a frame later, so the layout has settled before it's read.
+      expect(frames.length).toBeGreaterThan(0);
+    } finally {
+      window.requestAnimationFrame = realRaf;
+    }
+  });
+});
+
+describe('DebuggerView.init — collapsible eval bar', () => {
+  it('opens on the header, closes on Escape, and reports each change', () => {
+    const { refs, vscode } = setup();
+    document.body.classList.add('eval-collapsed'); // the host renders it closed
+
+    refs.evalToggle!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(document.body.classList.contains('eval-collapsed')).toBe(false);
+    expect(document.activeElement).toBe(refs.evalInput);
+    // Remembered like the splitter positions, so it opens the way you left it.
+    expect(vscode.postMessage).toHaveBeenCalledWith({
+      command: 'saveLayout',
+      evalCollapsed: false,
+    });
+
+    refs.evalInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(document.body.classList.contains('eval-collapsed')).toBe(true);
+    expect(vscode.postMessage).toHaveBeenCalledWith({
+      command: 'saveLayout',
+      evalCollapsed: true,
+    });
+  });
+
+  it("opens ready to type from a frame's context menu", () => {
+    const { refs } = setup();
+    document.body.classList.add('eval-collapsed');
+
+    // The menu is a way IN, not a second place the feature lives.
+    refs.frameEvalItem!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(document.body.classList.contains('eval-collapsed')).toBe(false);
+    expect(document.activeElement).toBe(refs.evalInput);
+  });
+
+  it('shows the ✕ only once there is something to clear', () => {
+    const { refs } = setup();
+    expect(refs.evalbar!.classList.contains('has-text')).toBe(false);
+
+    refs.evalInput.value = 'self foo';
+    refs.evalInput.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(refs.evalbar!.classList.contains('has-text')).toBe(true);
+  });
+
+  it('clears the expression AND its answer', () => {
+    const { refs } = setup();
+    refs.evalInput.value = 'self foo';
+    refs.evalInput.dispatchEvent(new Event('input', { bubbles: true }));
+    window.dispatchEvent(
+      new MessageEvent('message', { data: { command: 'evalResult', value: '42' } }),
+    );
+    expect(refs.evalResult.textContent).toBe('42');
+
+    refs.evalClear!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+    expect(refs.evalInput.value).toBe('');
+    // An answer that outlives its expression reads as the answer to whatever
+    // you type next.
+    expect(refs.evalResult.textContent).toBe('');
+    expect(refs.evalbar!.classList.contains('has-text')).toBe(false);
+    expect(document.activeElement).toBe(refs.evalInput);
+  });
+
+  it('clears on Escape, and closes only once already empty', () => {
+    const { refs } = setup();
+    refs.evalInput.value = 'self foo';
+    refs.evalInput.dispatchEvent(new Event('input', { bubbles: true }));
+
+    refs.evalInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(refs.evalInput.value).toBe('');
+    expect(document.body.classList.contains('eval-collapsed')).toBe(false); // still open
+
+    refs.evalInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(document.body.classList.contains('eval-collapsed')).toBe(true);
+  });
+
+  it('still evaluates on Enter once open', () => {
+    const { refs, vscode } = setup();
+    refs.evalToggle!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    refs.evalInput.value = 'self foo';
+    refs.evalInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+
+    expect(vscode.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'evalInFrame', expr: 'self foo' }),
+    );
+  });
+});
+
 describe('DebuggerView.init — inbound variables / evalResult', () => {
   it('renders grouped variables pushed from the host', () => {
     const { refs } = setup();
@@ -1432,7 +1555,7 @@ describe('DebuggerView.init — resizable splitter', () => {
   // Build a panel DOM that includes the .main container + splitter, and a fake
   // vscode that records postMessage and round-trips getState/setState. jsdom
   // getBoundingClientRect returns zeros, so stub .main's rect to a real width.
-  function setupSplit(initialState?: { stackBasis?: string; evalHeight?: string }) {
+  function setupSplit(initialState?: { stackBasis?: string }) {
     document.body.innerHTML = `
       <div id="error"></div>
       <div class="main" id="main" style="--stack-basis: 60%;">
@@ -1440,8 +1563,7 @@ describe('DebuggerView.init — resizable splitter', () => {
         <div id="splitter"></div>
         <div id="variables"></div>
       </div>
-      <div id="hsplitter"></div>
-      <div id="evalbar" style="--eval-height: 7rem;">
+      <div id="evalbar">
         <input id="evalInput"><div id="evalResult"></div>
       </div>
       <div id="ctxmenu"><div id="copyFrameItem"></div></div>
@@ -1458,20 +1580,6 @@ describe('DebuggerView.init — resizable splitter', () => {
       y: 0,
       toJSON() {},
     });
-    const evalbar = document.getElementById('evalbar')!;
-    // jsdom rects are all-zero; give the eval bar a real height so the hsplitter
-    // baseline (the live eval-bar height at mousedown) is meaningful.
-    evalbar.getBoundingClientRect = () => ({
-      left: 0,
-      top: 100,
-      right: 200,
-      bottom: 200,
-      width: 200,
-      height: 100,
-      x: 0,
-      y: 100,
-      toJSON() {},
-    });
     const refs: Refs = {
       list: document.getElementById('stack')!,
       menu: document.getElementById('ctxmenu')!,
@@ -1482,10 +1590,8 @@ describe('DebuggerView.init — resizable splitter', () => {
       variables: document.getElementById('variables')!,
       evalInput: document.getElementById('evalInput') as HTMLInputElement,
       evalResult: document.getElementById('evalResult')!,
-      evalbar,
       main,
       splitter: document.getElementById('splitter')!,
-      hsplitter: document.getElementById('hsplitter')!,
     };
     let state: unknown = initialState;
     const vscode = {
@@ -1545,42 +1651,6 @@ describe('DebuggerView.init — resizable splitter', () => {
     expect(vscode.postMessage).not.toHaveBeenCalledWith(
       expect.objectContaining({ command: 'saveLayout' }),
     );
-  });
-
-  // Drag the horizontal splitter from y=50 to the given clientY. The eval bar's
-  // baseline height is the stubbed 100px; dragging UP (smaller clientY) grows it.
-  function hdrag(hsplitter: HTMLElement, toClientY: number) {
-    hsplitter.dispatchEvent(
-      new MouseEvent('mousedown', { bubbles: true, clientX: 10, clientY: 50 }),
-    );
-    window.dispatchEvent(new MouseEvent('mousemove', { clientX: 10, clientY: toClientY }));
-    window.dispatchEvent(new MouseEvent('mouseup', { clientX: 10, clientY: toClientY }));
-  }
-
-  it('restores a previously saved eval-height from webview state on init', () => {
-    const { refs } = setupSplit({ evalHeight: '12rem' });
-    expect(refs.evalbar!.style.getPropertyValue('--eval-height').trim()).toBe('12rem');
-  });
-
-  it('grows --eval-height when dragging the splitter up (baseline + (startY - y))', () => {
-    const { refs } = setupSplit();
-    // baseline 100 + (50 - 20) = 130px.
-    hdrag(refs.hsplitter!, 20);
-    expect(refs.evalbar!.style.getPropertyValue('--eval-height').trim()).toBe('130px');
-  });
-
-  it('clamps --eval-height to a 42px floor when dragging down past it', () => {
-    const { refs } = setupSplit();
-    // baseline 100 + (50 - 300) → below the floor.
-    hdrag(refs.hsplitter!, 300);
-    expect(refs.evalbar!.style.getPropertyValue('--eval-height').trim()).toBe('42px');
-  });
-
-  it('persists the eval-height on horizontal drag end via setState and saveLayout', () => {
-    const { refs, vscode } = setupSplit();
-    hdrag(refs.hsplitter!, 20); // → 130px
-    expect(vscode.setState).toHaveBeenCalledWith({ evalHeight: '130px' });
-    expect(vscode.postMessage).toHaveBeenCalledWith({ command: 'saveLayout', evalHeight: '130px' });
   });
 });
 

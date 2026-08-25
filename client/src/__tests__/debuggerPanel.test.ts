@@ -143,6 +143,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { uriFsPath } from './support/uri';
 import * as debug from '../debugQueries';
+import { EditorGroupLayout } from '../debuggerLayout';
 import * as queries from '../browserQueries';
 import {
   DebuggerPanel,
@@ -155,10 +156,6 @@ import {
   filterStack,
   isExceptionMachinery,
   RawFrame,
-  flattenLayoutLeaves,
-  sourceRatioFromLayout,
-  setSourceRatioInLayout,
-  EditorGroupLayout,
   formatDetailedStack,
   stackDumpFileName,
   stackDumpTimestamp,
@@ -183,14 +180,56 @@ const ERROR_MSG = 'a UndefinedObject does not understand #foo';
 // record. Snapshot the options it was created with here, at top level, so the
 // guard test (see "step-point highlight decoration") can still see them.
 // Identify it by its themed base `backgroundColor` (unique to this decoration).
-const stepPointDecorationOptions = vi
+const stepPointDecorationIndex = vi
   .mocked(vscode.window.createTextEditorDecorationType)
-  .mock.calls.map((c) => c[0])
-  .find(
-    (opts) =>
-      opts?.backgroundColor instanceof vscode.ThemeColor &&
-      opts.backgroundColor.id === 'editor.focusedStackFrameHighlightBackground',
+  .mock.calls.findIndex(
+    (c) =>
+      c[0]?.backgroundColor instanceof vscode.ThemeColor &&
+      c[0].backgroundColor.id === 'editor.focusedStackFrameHighlightBackground',
   );
+const stepPointDecorationOptions = vi.mocked(vscode.window.createTextEditorDecorationType).mock
+  .calls[stepPointDecorationIndex]?.[0];
+const stepPointDecorationHandle = vi.mocked(vscode.window.createTextEditorDecorationType).mock
+  .results[stepPointDecorationIndex]?.value;
+
+// The accent wash the companion source editor carries. Built at module import
+// like the step-point highlight above, so grab the HANDLE here — tests compare
+// it against what setDecorations was called with. Identified by the flat
+// translucent purple it uses (unique to this decoration).
+const sourceTintIndex = vi
+  .mocked(vscode.window.createTextEditorDecorationType)
+  .mock.calls.findIndex(
+    (c) =>
+      c[0]?.isWholeLine === true &&
+      typeof c[0].backgroundColor === 'string' &&
+      c[0].backgroundColor.includes('163, 113, 247'),
+  );
+const sourceTintOptions = vi.mocked(vscode.window.createTextEditorDecorationType).mock.calls[
+  sourceTintIndex
+]?.[0];
+const sourceTintDecoration = vi.mocked(vscode.window.createTextEditorDecorationType).mock.results[
+  sourceTintIndex
+]?.value;
+
+/**
+ * The ranges `type` was last applied to on `editor`. Several decorations land on
+ * the companion source editor (the accent wash, the step-point highlight, the
+ * inline-value overlay), so a test has to name the one it means rather than
+ * reach for whichever call happened to come first.
+ */
+function decorationRanges(
+  editor: { setDecorations: unknown },
+  type: unknown,
+): vscode.Range[] | undefined {
+  const calls = vi.mocked(editor.setDecorations as (...a: unknown[]) => void).mock.calls;
+  const call = calls.filter((c) => c[0] === type).at(-1);
+  return call?.[1] as vscode.Range[] | undefined;
+}
+
+/** The step-point highlight's ranges on `editor` (see stepPointDecorationHandle). */
+function stepPointRanges(editor: { setDecorations: unknown }): vscode.Range[] | undefined {
+  return decorationRanges(editor, stepPointDecorationHandle);
+}
 
 // Snapshot every debugQueries mock's factory implementation at module load —
 // BEFORE any test overrides one. Many tests install sticky mockImplementation/
@@ -494,8 +533,8 @@ describe('formatDetailedStack (#10)', () => {
         groups: [{ title: 'Instance variables', kind: 'instvars', vars: [] }],
       },
     ];
-    const out = formatDetailedStack('', empty, 'Jasper Debugger stack dump — For me');
-    expect(out.startsWith('Jasper Debugger stack dump — For me\n')).toBe(true);
+    const out = formatDetailedStack('', empty, 'GemStone Debugger stack dump — For me');
+    expect(out.startsWith('GemStone Debugger stack dump — For me\n')).toBe(true);
     expect(out).toContain('Instance variables:\n    (none)');
   });
 
@@ -574,16 +613,65 @@ describe('DebuggerPanel', () => {
     // tabGroups.all is a plain array on the mock, not a vi.fn — reset it so a
     // test that populates it doesn't leak into the next.
     (vscode.window.tabGroups.all as unknown as unknown[]).length = 0;
+    // Panels stay in the static registry until they're disposed, and most tests
+    // never close theirs. Clear it so a leftover panel can't hand its carved
+    // column pair to the next test's debugger (see liveDebuggerColumns).
+    (DebuggerPanel as unknown as { panels: Map<number, unknown> }).panels.clear();
     session = makeSession();
   });
 
-  it('opens beside the active editor group with the title "Jasper Debugger"', () => {
+  it('opens into a new column of its own with the title "GemStone Debugger"', () => {
+    (vscode.window.tabGroups.all as unknown as unknown[]).push(
+      { viewColumn: 1, tabs: [] },
+      { viewColumn: 2, tabs: [] },
+    );
     DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
 
     const call = vi.mocked(vscode.window.createWebviewPanel).mock.calls[0];
-    expect(call[1]).toBe('Jasper Debugger'); // tab title
-    expect(call[2]).toBe(vscode.ViewColumn.Beside); // to the right of the active group
+    expect(call[1]).toBe('GemStone Debugger'); // tab title
+    // An explicit column past the last one, NOT ViewColumn.Beside — Beside's
+    // direction is a user setting and it reuses an adjacent group.
+    expect(call[2]).toEqual({ viewColumn: 3, preserveFocus: false });
     expect(call[3]).toMatchObject({ enableScripts: true });
+  });
+
+  it("reuses the first debugger's column pair when a second halt opens", async () => {
+    (vscode.window.tabGroups.all as unknown as unknown[]).push({ viewColumn: 1, tabs: [] });
+    DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
+    await tick();
+    DebuggerPanel.create(session, 0x456n, 'a second halt');
+
+    const columns = vi
+      .mocked(vscode.window.createWebviewPanel)
+      .mock.calls.map((c) => (c[2] as { viewColumn: number }).viewColumn);
+    expect(columns).toEqual([2, 2]); // one column pair, not one per error
+    // …and the second panel carved nothing: only the first one reshaped the grid.
+    const carves = vi
+      .mocked(vscode.commands.executeCommand)
+      .mock.calls.filter((c) => c[0] === 'vscode.getEditorLayout');
+    expect(carves).toHaveLength(1);
+  });
+
+  it("follows the first debugger's panel when VS Code renumbers the columns", async () => {
+    // An emptied group collapsing is enough to shift every column number along.
+    // A second halt must land on the debugger's group as it is NOW — reusing the
+    // number the first panel recorded at open time puts it in the SOURCE group,
+    // stacking the panel and the source editor in one half of the column.
+    (vscode.window.tabGroups.all as unknown as unknown[]).push(
+      { viewColumn: 1, tabs: [] },
+      { viewColumn: 2, tabs: [] },
+    );
+    DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
+    await tick();
+    const first = lastPanel() as { viewColumn?: number };
+    expect(first.viewColumn).toBe(3);
+    first.viewColumn = 2; // a group ahead of it closed; everything shifted left
+
+    DebuggerPanel.create(session, 0x456n, 'a second halt');
+    const columns = vi
+      .mocked(vscode.window.createWebviewPanel)
+      .mock.calls.map((c) => (c[2] as { viewColumn: number }).viewColumn);
+    expect(columns).toEqual([3, 2]); // the second follows the panel, not the stale number
   });
 
   it('shows a dimmed "For <user> on <stone> @ <host>" subtitle from the login', () => {
@@ -685,9 +773,11 @@ describe('DebuggerPanel', () => {
       expect(html).toContain('>Call Stack<'); // pane title
       expect(html).toContain('>Variables<'); // pane title
       expect(html).toContain('id="splitter"'); // draggable column divider
-      expect(html).toContain('id="hsplitter"'); // draggable panes-vs-eval divider
       expect(html).toMatch(/--stack-basis:\s*60%/); // default split, injected from the saved static
-      expect(html).toMatch(/--eval-height:\s*4rem/); // default eval-bar height, injected from the saved static
+      // The eval bar is one row, expression beside answer, so there is nothing
+      // left to drag it against — no horizontal divider, no remembered height.
+      expect(html).not.toContain('id="hsplitter"');
+      expect(html).not.toContain('--eval-height');
     });
 
     it('renders the toolbar as DAP-style icon buttons (codicon SVGs), not text labels', () => {
@@ -721,7 +811,7 @@ describe('DebuggerPanel', () => {
 
       const text = vi.mocked(vscode.env.clipboard.writeText).mock.calls[0][0];
       // Header, error, then the short numbered stack ([1]..[5]) …
-      expect(text.startsWith('Jasper Debugger stack dump')).toBe(true);
+      expect(text.startsWith('GemStone Debugger stack dump')).toBe(true);
       expect(text).toContain('GemStone error: a UndefinedObject does not understand #foo');
       expect(text).toContain('[1] [] in JasperDebugDemo>>#finish  @2 line 12');
       expect(text).toContain('[5] JasperDebugDemo>>#accumulateFrom:to:  @2 line 12');
@@ -1101,19 +1191,43 @@ describe('DebuggerPanel', () => {
       expect(openUri.scheme).toBe('gemstone');
       expect(openUri.toString()).toContain('JasperDebugDemo');
 
-      // Docked below: focus the panel's group, then split a new group beneath it.
-      expect(panel.reveal).toHaveBeenCalled();
-      expect(vscode.commands.executeCommand).toHaveBeenCalledWith('workbench.action.newGroupBelow');
-      // …then shrink that 50/50 source group toward ~1/3 (item #2). Guards the
-      // resize from being silently dropped — exact ratio is tuned by step count.
-      expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
-        'workbench.action.decreaseViewHeight',
-      );
-
+      // Opened straight into the column below the panel — no focus change to
+      // race, and none of the relative step commands that made the arrangement
+      // depend on timing and window size.
       expect(vscode.window.showTextDocument).toHaveBeenCalledWith(
         expect.anything(),
-        expect.objectContaining({ preview: true, preserveFocus: true }),
+        expect.objectContaining({ viewColumn: 2, preview: true, preserveFocus: true }),
       );
+      expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith(
+        'workbench.action.newGroupBelow',
+      );
+      expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith(
+        'workbench.action.decreaseViewHeight',
+      );
+    });
+
+    it("washes the companion source editor in the debugger's accent", async () => {
+      const panel = openPanelWithStack();
+      vi.mocked(debug.getMethodUriInfo).mockReturnValueOnce(URI_INFO);
+      sendMessage(panel, { command: 'selectFrame', level: 3 });
+      await flush();
+
+      // The two halves of the column are one thing — a debugger and the source
+      // it stopped in, not a debugger and some editor that happens to sit below.
+      const editor = await shownEditor();
+      expect(sourceTintDecoration).toBeDefined();
+      const wash = decorationRanges(editor, sourceTintDecoration);
+      expect(wash).toBeDefined();
+      expect(wash![0].start.line).toBe(0);
+      // Same colour as the panel's own background, by construction — both are
+      // built from ACCENT_RGB at WASH_STRENGTH, so they can't drift apart.
+      expect(sourceTintOptions?.backgroundColor).toBe('rgba(163, 113, 247, 0.12)');
+      expect(lastPanel().webview.html).toContain('rgb(163, 113, 247) 12%');
+
+      // It comes off when the panel does: the source tab can outlive the panel,
+      // and a document still washed like a debugger's is a lie.
+      closePanel(panel);
+      expect(decorationRanges(editor, sourceTintDecoration)).toEqual([]);
     });
 
     it('highlights the step-point token, converting the 1-based source offset to 0-based', async () => {
@@ -1126,7 +1240,7 @@ describe('DebuggerPanel', () => {
       // step point 2 → getSourceOffsets()[1] === 8 (1-based) → positionAt(8 - 1) → (0, 7).
       // Regression guard for C1: dropping the "-1" would land the highlight at column 8.
       // No word range in the mock → a one-character marker, NOT the whole line.
-      const range = vi.mocked(editor.setDecorations).mock.calls[0][1][0] as vscode.Range;
+      const range = stepPointRanges(editor)![0];
       expect(range.start.line).toBe(0);
       expect(range.start.character).toBe(7); // 8 (1-based) - 1, NOT 8
       expect(range.end.character - range.start.character).toBe(1);
@@ -1183,7 +1297,7 @@ describe('DebuggerPanel', () => {
 
       const editor = await shownEditor();
       // step point 2 → getSourceOffsetsForMethod()[1] === 8 (1-based) → positionAt(7) → (0, 7).
-      const range = vi.mocked(editor.setDecorations).mock.calls[0][1][0] as vscode.Range;
+      const range = stepPointRanges(editor)![0];
       expect(range.start.line).toBe(0);
       expect(range.start.character).toBe(7);
       expect(editor.revealRange).toHaveBeenCalled();
@@ -1292,7 +1406,7 @@ describe('DebuggerPanel', () => {
         // Highlight uses the STOP frame (level 1 → sp 2 → col 7), NOT the
         // collapsed doit frame (level 3 → sp 5 → col 39).
         const editor = await shownEditor();
-        const range = vi.mocked(editor.setDecorations).mock.calls[0][1][0] as vscode.Range;
+        const range = stepPointRanges(editor)![0];
         expect(range.start.character).toBe(7);
         expect(editor.revealRange).toHaveBeenCalled();
       });
@@ -1307,7 +1421,7 @@ describe('DebuggerPanel', () => {
       await flush();
 
       const editor = await shownEditor();
-      expect(vi.mocked(editor.setDecorations).mock.calls[0][1]).toEqual([]);
+      expect(stepPointRanges(editor)).toEqual([]);
       expect(editor.revealRange).not.toHaveBeenCalled();
     });
 
@@ -1445,13 +1559,11 @@ describe('DebuggerPanel', () => {
       for (const close of inspectorCloses) expect(close).toHaveBeenCalledTimes(1);
     });
 
-    it('sizes the new source group via setEditorLayout to the saved/default ratio (#3)', async () => {
-      // getEditorLayout reports code(1) | debugger(2) / source(3). The source
-      // editor opens in column 3, so it maps to the 99-tall leaf.
-      const layout = {
-        orientation: 0,
-        groups: [{ size: 636 }, { size: 877, groups: [{ size: 749 }, { size: 99 }] }],
-      };
+    it('carves the panel/source pair in one setEditorLayout before any source opens', async () => {
+      // The grid right after the panel opened into a new group at the end: the
+      // user's editor column, then ours.
+      (vscode.window.tabGroups.all as unknown as unknown[]).push({ viewColumn: 1, tabs: [] });
+      const layout = { orientation: 0, groups: [{ size: 1200 }, { size: 400 }] };
       // Route getEditorLayout to our sample; everything else returns undefined.
       // mockImplementation persists past clearAllMocks, so restore it in finally.
       vi.mocked(vscode.commands.executeCommand).mockImplementation((cmd: string) =>
@@ -1459,23 +1571,44 @@ describe('DebuggerPanel', () => {
       );
       try {
         const panel = openPanelWithStack();
-        vi.mocked(vscode.window.showTextDocument).mockResolvedValueOnce(columnedEditor(3) as never);
+        await flush();
+        const applied = vi
+          .mocked(vscode.commands.executeCommand)
+          .mock.calls.find((c) => c[0] === 'vscode.setEditorLayout')?.[1] as EditorGroupLayout;
+
+        // One declared grid, applied before the source editor exists — not a
+        // resize of a group that was split into place first.
+        expect(applied).toBeDefined();
+        // The pair opens sizeless (evenly split): the column's height isn't
+        // knowable until it exists, so the panel's own measurement sizes it.
+        expect(applied.groups[1].groups).toEqual([{}, {}]);
+        expect(applied.groups[0].size).toBe(640); // the user's column, in pixels
+        expect(applied.groups[1].size).toBe(960); // the debugger's 60%
+
+        // The source then just opens into the group that carve created.
         vi.mocked(debug.getMethodUriInfo).mockReturnValueOnce(URI_INFO);
         sendMessage(panel, { command: 'selectFrame', level: 3 });
         await flush();
+        expect(vscode.window.showTextDocument).toHaveBeenLastCalledWith(
+          expect.anything(),
+          expect.objectContaining({ viewColumn: 3 }),
+        );
+      } finally {
+        vi.mocked(vscode.commands.executeCommand).mockReset();
+      }
+    });
 
-        // Used the precise layout API, not the imprecise step-based fallback.
-        expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
-          'vscode.setEditorLayout',
-          layout,
-        );
+    it('leaves the grid alone when it cannot be read', async () => {
+      // getEditorLayout unavailable (older VS Code) → no wholesale rewrite of a
+      // tree we could not inspect; the panel still has its own column.
+      vi.mocked(vscode.commands.executeCommand).mockRejectedValue(new Error('no such command'));
+      try {
+        openPanelWithStack();
+        await flush();
         expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith(
-          'workbench.action.decreaseViewHeight',
+          'vscode.setEditorLayout',
+          expect.anything(),
         );
-        // Source (col 3) resized to ~1/3 of its 848-tall column; sibling gets the rest.
-        const column = layout.groups[1].groups!;
-        expect(column[1].size).toBe(Math.round(848 * 0.33));
-        expect(column[0].size).toBe(848 - Math.round(848 * 0.33));
       } finally {
         vi.mocked(vscode.commands.executeCommand).mockReset();
       }
@@ -3749,8 +3882,11 @@ describe('DebuggerPanel', () => {
       // serves the template; the selector is parsed from the saved source).
       expect(uri.toString()).toContain('/UserGlobals/JasperDebugDemo/instance/');
       expect(uri.toString()).toContain('new-method');
-      // Docked BELOW the panel (not Beside) like the companion source.
-      expect(vscode.commands.executeCommand).toHaveBeenCalledWith('workbench.action.newGroupBelow');
+      // Opened in the companion source group below the panel, like frame source.
+      expect(vscode.window.showTextDocument).toHaveBeenLastCalledWith(
+        expect.anything(),
+        expect.objectContaining({ viewColumn: 2, preserveFocus: false }),
+      );
       // The generic template was replaced with the real signature + body stub.
       const editor = await vi.mocked(vscode.window.showTextDocument).mock.results.at(-1)!.value;
       expect(editor.edit).toHaveBeenCalled();
@@ -3923,7 +4059,10 @@ describe('DebuggerPanel', () => {
       // gemstone:// new-method URI targeting the RECEIVER's class + home dict.
       expect(uri.toString()).toContain('/Globals/SmallInteger/instance/');
       expect(uri.toString()).toContain('new-method');
-      expect(vscode.commands.executeCommand).toHaveBeenCalledWith('workbench.action.newGroupBelow');
+      expect(vscode.window.showTextDocument).toHaveBeenLastCalledWith(
+        expect.anything(),
+        expect.objectContaining({ viewColumn: 2, preserveFocus: false }),
+      );
       const editor = await vi.mocked(vscode.window.showTextDocument).mock.results.at(-1)!.value;
       expect(editor.edit).toHaveBeenCalled(); // generic template replaced with the #halt stub
       // Banner help (NOT a full init that would re-select the top frame + steal focus).
@@ -4496,24 +4635,302 @@ describe('DebuggerPanel', () => {
       sendMessage(lastPanel(), { command: 'saveLayout', stackBasis: '60%' });
     });
 
-    it('remembers a saved eval-bar height for the next panel', () => {
+    it('puts the answer beside the expression, on one row', () => {
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
-      sendMessage(lastPanel(), { command: 'saveLayout', evalHeight: '160px' });
+      const html = lastPanel().webview.html;
 
-      DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
-      expect(lastPanel().webview.html).toMatch(/--eval-height:\s*160px/);
-
-      // Restore the default so later tests see the standard 4rem height.
-      sendMessage(lastPanel(), { command: 'saveLayout', evalHeight: '4rem' });
+      // Quick calculations against the selected frame: half the row each. The
+      // answer used to sit UNDER the input in a resizable block, which made it
+      // the first thing squeezed out of sight on a short column.
+      expect(html).toMatch(/\.evalbar\s*\{[^}]*flex-direction:\s*row/);
+      expect(html).toMatch(/\.eval-input-wrap\s*\{[^}]*flex:\s*1 1 50%/);
+      expect(html).toMatch(/\.eval-result\s*\{[^}]*flex:\s*1 1 50%/);
+      // A ✕ inside the input's right edge clears it, like the list filters.
+      expect(html).toContain('id="evalClear"');
+      expect(html).toMatch(/\.evalbar\.has-text \.clear-btn\s*\{[^}]*visibility:\s*visible/);
+      // One line: a long printString scrolls sideways rather than growing the bar.
+      expect(html).toMatch(/\.eval-result\s*\{[^}]*white-space:\s*pre;/);
     });
 
-    it('widens the Beside split toward ~60% on create (item #2)', async () => {
+    it('opens with the eval bar ready to type, and remembers if you close it', () => {
+      // One row either way now, so there's no reason to make you open it first.
       DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
-      await tick(); // the widen runs in a fire-and-forget async IIFE
-      // Best-effort nudge; guards the resize from being silently dropped.
-      expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
-        'workbench.action.increaseViewWidth',
+      expect(lastPanel().webview.html).toContain('<body class="">');
+      expect(lastPanel().webview.html).toContain('id="evalToggle"');
+      expect(lastPanel().webview.html).toContain('Evaluate in this frame…');
+
+      sendMessage(lastPanel(), { command: 'saveLayout', evalCollapsed: true });
+      DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
+      expect(lastPanel().webview.html).toContain('<body class="eval-collapsed">');
+
+      sendMessage(lastPanel(), { command: 'saveLayout', evalCollapsed: false }); // restore
+    });
+
+    it('frames itself so the column never reads as a source editor', () => {
+      DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
+      const html = lastPanel().webview.html;
+
+      expect(html).toContain('<h1>GemStone Debugger</h1>');
+      // A webview tab and surface are otherwise identical to a source editor's,
+      // and this panel is a live suspended process. Border and background wash
+      // frame the whole surface, so it holds even when the column is squeezed.
+      expect(html).toMatch(/body\s*\{[^}]*border:\s*2px solid var\(--vscode-charts-purple/);
+      expect(html).toMatch(/body\s*\{[^}]*color-mix\(in srgb, rgb\(163, 113, 247\) 12%/);
+      // The wash is mixed INTO the editor's own background, so it sits right in
+      // any theme; the plain background before it is the no-color-mix fallback.
+      expect(html).toMatch(/background:\s*var\(--vscode-editor-background\);/);
+      // Title matches the border and the tab icon — one treatment, not three.
+      expect(html).toMatch(/h1\s*\{[^}]*--vscode-charts-purple/);
+      // …and the header stays compact so short columns still show stack frames.
+      expect(html).toMatch(/h1\s*\{[^}]*font-size:\s*1rem/);
+    });
+
+    it('gives the tab an icon once activation has supplied the extension path', () => {
+      const state: vscode.Memento = {
+        get: <T>(_k: string, d?: T) => d,
+        update: async () => {},
+        keys: () => [],
+      };
+      try {
+        DebuggerPanel.initSourceTabCleanup(state, '/opt/jasper');
+        DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
+        // A webview tab is indistinguishable from a source-editor tab without one.
+        expect(String(lastPanel().iconPath)).toContain(
+          '/opt/jasper/resources/gemstone-debugger.svg',
+        );
+      } finally {
+        DebuggerPanel.initSourceTabCleanup(state); // un-arm for the other tests
+      }
+    });
+
+    it('pushes the source pane down when the panel reports it needs more height', async () => {
+      // The panel measured itself at 300px in a 220px viewport; its group is 260
+      // (260 - 220 = 40px of tab bar), so it needs 340 of the column's 400.
+      // One editor group already open, so the panel opens into column 2 — the
+      // column the plan below also puts it in (the mock panel reports the column
+      // it was created in; the real one is moved there by the layout itself).
+      (vscode.window.tabGroups.all as unknown as unknown[]).push({ viewColumn: 1, tabs: [] });
+      const beforeCarve = { orientation: 0, groups: [{ size: 600 }, { size: 600 }] };
+      const carved = {
+        orientation: 0,
+        groups: [{ size: 240 }, { size: 360, groups: [{ size: 260 }, { size: 140 }] }],
+      };
+      vi.mocked(vscode.commands.executeCommand).mockImplementation((cmd: string) =>
+        Promise.resolve(cmd === 'vscode.getEditorLayout' ? beforeCarve : undefined),
       );
+      try {
+        DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
+        const panel = lastPanel();
+        await tick();
+        vi.mocked(vscode.commands.executeCommand).mockImplementation((cmd: string) =>
+          Promise.resolve(cmd === 'vscode.getEditorLayout' ? carved : undefined),
+        );
+        sendMessage(panel, { command: 'fit', needed: 300, viewport: 220 });
+        await tick();
+        await tick();
+
+        const applied = vi
+          .mocked(vscode.commands.executeCommand)
+          .mock.calls.filter((c) => c[0] === 'vscode.setEditorLayout')
+          .at(-1)?.[1] as EditorGroupLayout;
+        const pair = applied.groups[1].groups!;
+        expect(pair[0].size).toBeCloseTo(340, 5); // panel gets what it asked for
+        expect(pair[0].size! + pair[1].size!).toBeCloseTo(400, 5); // out of the column's 400
+      } finally {
+        vi.mocked(vscode.commands.executeCommand).mockReset();
+      }
+    });
+
+    it('leaves the divider alone when the panel already fits, and after the first fit', async () => {
+      // One editor group already open, so the panel opens into column 2 — the
+      // column the plan below also puts it in (the mock panel reports the column
+      // it was created in; the real one is moved there by the layout itself).
+      (vscode.window.tabGroups.all as unknown as unknown[]).push({ viewColumn: 1, tabs: [] });
+      const beforeCarve = { orientation: 0, groups: [{ size: 600 }, { size: 600 }] };
+      const roomy = {
+        orientation: 0,
+        groups: [{ size: 505 }, { size: 758, groups: [{ size: 470 }, { size: 232 }] }],
+      };
+      vi.mocked(vscode.commands.executeCommand).mockImplementation((cmd: string) =>
+        Promise.resolve(cmd === 'vscode.getEditorLayout' ? beforeCarve : undefined),
+      );
+      try {
+        DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
+        const panel = lastPanel();
+        await tick();
+        vi.mocked(vscode.commands.executeCommand).mockImplementation((cmd: string) =>
+          Promise.resolve(cmd === 'vscode.getEditorLayout' ? roomy : undefined),
+        );
+        const carves = vi
+          .mocked(vscode.commands.executeCommand)
+          .mock.calls.filter((c) => c[0] === 'vscode.setEditorLayout').length;
+
+        // 400 needed in a 430 viewport whose group is 470 (40px of tab bar) — the
+        // panel wants 440 and has 470, so nothing to do.
+        sendMessage(panel, { command: 'fit', needed: 400, viewport: 430 });
+        await tick();
+        await tick();
+        // A later render reports again (a bigger banner) — but the divider is the
+        // user's now, so it is ignored.
+        sendMessage(panel, { command: 'fit', needed: 900, viewport: 430 });
+        await tick();
+        await tick();
+
+        expect(
+          vi
+            .mocked(vscode.commands.executeCommand)
+            .mock.calls.filter((c) => c[0] === 'vscode.setEditorLayout').length,
+        ).toBe(carves);
+      } finally {
+        vi.mocked(vscode.commands.executeCommand).mockReset();
+      }
+    });
+
+    it('retires its own groups once they are empty, so the grid does not accumulate', async () => {
+      vi.useFakeTimers();
+      try {
+        (vscode.window.tabGroups.all as unknown as unknown[]).push({ viewColumn: 1, tabs: [] });
+        DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
+        const panel = lastPanel();
+        // The debugger's pair (2 and 3) is empty after it closes; the user's
+        // column still holds their editor.
+        const groups = vscode.window.tabGroups.all as unknown as {
+          viewColumn: number;
+          tabs: unknown[];
+        }[];
+        groups.length = 0;
+        groups.push(
+          { viewColumn: 1, tabs: [{}] },
+          { viewColumn: 2, tabs: [] },
+          { viewColumn: 3, tabs: [] },
+        );
+        closePanel(panel);
+        vi.runAllTimers(); // the sweep is deferred until VS Code has removed our tabs
+
+        // An empty group left behind shifts every column number along and makes
+        // the next debugger's group nest inside it instead of opening plainly.
+        const closed = vi
+          .mocked(vscode.window.tabGroups.close)
+          .mock.calls.map((c) => (c[0] as { viewColumn: number }).viewColumn);
+        expect(closed).toEqual([2, 3]);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('offers maximize as the way out of a column that is too small to work in', () => {
+      DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
+      sendMessage(lastPanel(), { command: 'maximizePanel' });
+
+      // VS Code clips a webview rather than adapting it, so the escape hatch is
+      // to take the whole editor area; the same toggle puts the grid back.
+      expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+        'workbench.action.toggleMaximizeEditorGroup',
+      );
+    });
+
+    it('degrades instead of clipping when the column gets small', () => {
+      DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
+      const html = lastPanel().webview.html;
+
+      // Nothing is ever cut off outright — the body scrolls as a last resort.
+      expect(html).toMatch(/body\s*\{[^}]*overflow:\s*auto/);
+      // Padding and margins go first…
+      expect(html).toMatch(/@media\s*\(max-height:\s*460px\)/);
+      // …then the labels, keeping the frames and the reason for the halt.
+      expect(html).toMatch(/@media\s*\(max-height:\s*340px\)/);
+      // A narrow column only stacks the panes when there's height to spare —
+      // stacking them on a short column would make the squeeze worse.
+      expect(html).toMatch(/@media\s*\(max-width:\s*340px\)\s*and\s*\(min-height:\s*420px\)/);
+    });
+
+    it('keeps the Call Stack readable when the column is squeezed short', () => {
+      DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
+      const html = lastPanel().webview.html;
+
+      // The panes hold a floor…
+      expect(html).toMatch(/\.main\s*\{[^}]*min-height:\s*5rem/);
+      // …because the chrome around them costs as little as it can: the eval bar
+      // is a single row, and a long error banner scrolls in place rather than
+      // pushing the panes off the bottom.
+      expect(html).toMatch(/\.evalbar\s*\{[^}]*flex:\s*0 0 auto/);
+      expect(html).toMatch(/^\s*\.error\s*\{[^}]*overflow-y:\s*auto/m);
+      // …but never below one line: a scrollable flex item shrinks to nothing
+      // otherwise, and the message saying why execution stopped just vanishes.
+      expect(html).toMatch(/^\s*\.error\s*\{[^}]*min-height:\s*1\.3em/m);
+    });
+
+    it('sizes the debugger column by declaring it, never by stepping it wider', async () => {
+      // One group already open, so the panel opens into column 2 — the column
+      // the reported grid below also has it in.
+      (vscode.window.tabGroups.all as unknown as unknown[]).push({ viewColumn: 1, tabs: [] });
+      const layout = { orientation: 0, groups: [{ size: 1200 }, { size: 400 }] };
+      vi.mocked(vscode.commands.executeCommand).mockImplementation((cmd: string) =>
+        Promise.resolve(cmd === 'vscode.getEditorLayout' ? layout : undefined),
+      );
+      try {
+        DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
+        await tick(); // the carve runs off the create call
+
+        const applied = vi
+          .mocked(vscode.commands.executeCommand)
+          .mock.calls.find((c) => c[0] === 'vscode.setEditorLayout')?.[1] as EditorGroupLayout;
+        const width = applied.groups.reduce((sum, g) => sum + g.size!, 0);
+        expect(applied.groups[1].size! / width).toBeCloseTo(0.6, 2); // ~60% of the window
+        // A step command means something different on every window size, which
+        // is why the layout used to vary with it.
+        expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith(
+          'workbench.action.increaseViewWidth',
+        );
+      } finally {
+        vi.mocked(vscode.commands.executeCommand).mockReset();
+      }
+    });
+
+    it('sizes the pair to the remembered divider ratio once the panel measures itself', async () => {
+      // The sampler (unchanged) records the user's drag of the panel↔source
+      // divider; the next debugger's fit pass applies it, in pixels, against a
+      // column height VS Code has actually measured.
+      const saved = DebuggerPanel as unknown as { savedSourceRatio: number | undefined };
+      const previous = saved.savedSourceRatio;
+      saved.savedSourceRatio = 0.5;
+      // One editor group already open, so the panel opens into column 2 — the
+      // column the plan below also puts it in (the mock panel reports the column
+      // it was created in; the real one is moved there by the layout itself).
+      (vscode.window.tabGroups.all as unknown as unknown[]).push({ viewColumn: 1, tabs: [] });
+      const beforeCarve = { orientation: 0, groups: [{ size: 600 }, { size: 600 }] };
+      const carved = {
+        orientation: 0,
+        // Opened evenly split by the carve — no, unevenly here, so the assertion
+        // proves the ratio was applied rather than already being in place.
+        groups: [{ size: 240 }, { size: 360, groups: [{ size: 500 }, { size: 200 }] }],
+      };
+      vi.mocked(vscode.commands.executeCommand).mockImplementation((cmd: string) =>
+        Promise.resolve(cmd === 'vscode.getEditorLayout' ? beforeCarve : undefined),
+      );
+      try {
+        DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
+        const panel = lastPanel();
+        await tick();
+        vi.mocked(vscode.commands.executeCommand).mockImplementation((cmd: string) =>
+          Promise.resolve(cmd === 'vscode.getEditorLayout' ? carved : undefined),
+        );
+        // Plenty of room: 200 needed in a 500 group, so the ratio wins outright.
+        sendMessage(panel, { command: 'fit', needed: 200, viewport: 500 });
+        await tick();
+        await tick();
+
+        const applied = vi
+          .mocked(vscode.commands.executeCommand)
+          .mock.calls.filter((c) => c[0] === 'vscode.setEditorLayout')
+          .at(-1)?.[1] as EditorGroupLayout;
+        const pair = applied.groups[1].groups!;
+        expect(pair[1].size).toBe(350); // the 50/50 they dragged to, in pixels
+        expect(pair[0].size).toBe(350);
+      } finally {
+        vi.mocked(vscode.commands.executeCommand).mockReset();
+        saved.savedSourceRatio = previous;
+      }
     });
   });
 });
@@ -4792,58 +5209,6 @@ describe('isExceptionMachinery', () => {
     expect(isExceptionMachinery(HALT_STACK[4])).toBe(false); // [] in finish
     expect(isExceptionMachinery(HALT_STACK[6])).toBe(false); // finish
     expect(isExceptionMachinery(HALT_STACK[5])).toBe(false); // Collection>>do:
-  });
-});
-
-describe('source-pane layout persistence (#3)', () => {
-  // A real `vscode.getEditorLayout` result Eric captured: code | (debugger / source).
-  // Leaf order = ViewColumn order, so code=1, debugger=2, source=3.
-  const sample = (): EditorGroupLayout => ({
-    orientation: 0,
-    groups: [{ size: 636 }, { size: 877, groups: [{ size: 749 }, { size: 99 }] }],
-  });
-
-  it('flattens leaves in ViewColumn order (depth-first, left-to-right)', () => {
-    const leaves = flattenLayoutLeaves(sample());
-    expect(leaves.map((l) => l.node.size)).toEqual([636, 749, 99]);
-  });
-
-  it('reads the source group ratio from its containing column', () => {
-    // Source is ViewColumn 3 → 99 of the 877-wide column's 848 (749+99).
-    expect(sourceRatioFromLayout(sample(), 3)).toBeCloseTo(99 / 848, 5);
-  });
-
-  it('returns undefined when the column is missing or unmeasurable', () => {
-    expect(sourceRatioFromLayout(sample(), 9)).toBeUndefined(); // column past the end
-    expect(sourceRatioFromLayout(undefined, 3)).toBeUndefined(); // no layout
-    expect(sourceRatioFromLayout(sample(), undefined)).toBeUndefined(); // no column
-  });
-
-  it('rewrites the source/sibling sizes to a ratio, preserving their sum and other groups', () => {
-    const layout = sample();
-    expect(setSourceRatioInLayout(layout, 3, 0.5)).toBe(true);
-    const column = layout.groups[1].groups!;
-    expect(column[1].size).toBe(424); // source: round(848 * 0.5)
-    expect(column[0].size).toBe(424); // sibling (debugger): the rest
-    expect(layout.groups[0].size).toBe(636); // code column untouched
-  });
-
-  it('clamps a degenerate ratio so a pane can never collapse', () => {
-    const layout = sample();
-    setSourceRatioInLayout(layout, 3, 0.99);
-    const column = layout.groups[1].groups!;
-    expect(column[1].size).toBe(Math.round(848 * 0.9)); // clamped to 0.9
-  });
-
-  it('refuses to rewrite when the source is not a clean two-way split', () => {
-    // A 3-way column isn't the pair we create (debugger / source), so leave it be.
-    const threeWay: EditorGroupLayout = {
-      orientation: 0,
-      groups: [{ size: 636 }, { size: 877, groups: [{ size: 300 }, { size: 300 }, { size: 200 }] }],
-    };
-    // Leaves: code=1, then 300=2, 300=3, 200=4 → source col 4's parent has 3 kids.
-    expect(setSourceRatioInLayout(threeWay, 4, 0.33)).toBe(false);
-    expect(threeWay.groups[1].groups!.map((g) => g.size)).toEqual([300, 300, 200]); // untouched
   });
 });
 

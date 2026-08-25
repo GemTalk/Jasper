@@ -193,6 +193,10 @@ function createMockPanel() {
   return {
     webview,
     title: '',
+    // The tab icon the debugger sets so its tab is distinguishable from a
+    // source-editor tab; undefined until a panel assigns one.
+    iconPath: undefined as Uri | undefined,
+    viewColumn: undefined as number | undefined,
     active: true,
     reveal: vi.fn(),
     dispose: vi.fn(),
@@ -248,9 +252,15 @@ export const QuickPickItemKind = {
 export const window = {
   activeTextEditor: undefined as unknown,
   activeNotebookEditor: undefined as unknown,
-  createWebviewPanel: vi.fn((_viewType: string, title: string) => {
+  createWebviewPanel: vi.fn((_viewType: string, title: string, showOptions?: unknown) => {
     const panel = createMockPanel();
     panel.title = title;
+    // Real panels report the column they were opened into, and callers rely on
+    // reading it back (columns renumber, so a stored number goes stale).
+    panel.viewColumn =
+      typeof showOptions === 'number'
+        ? showOptions
+        : ((showOptions as { viewColumn?: number } | undefined)?.viewColumn ?? 1);
     return panel;
   }),
   showTextDocument: vi.fn(async (_a: unknown, b?: unknown) => {

@@ -15,6 +15,15 @@ import { SystemBrowser } from './systemBrowser';
 import { logError, logInfo } from './gciLog';
 import { NbCancelledError, NbRunOptions } from './nbRunner';
 import { extensionPathFrom } from './extensionPath';
+import {
+  DEFAULT_SOURCE_RATIO,
+  EditorGroupLayout,
+  columnPaneSizes,
+  fitSourceRatio,
+  planDebuggerGrid,
+  setSourceRatioInLayout,
+  sourceRatioFromLayout,
+} from './debuggerLayout';
 
 // The webview's DOM behavior lives in a standalone file (like listFilter.js /
 // methodListView.js) so it gets IDE support and can be jsdom-tested in isolation
@@ -60,10 +69,14 @@ const TOOLBAR_ICONS: Record<string, string> = {
     '<svg viewBox="0 0 16 16" fill="currentColor"><path fill-rule="evenodd" clip-rule="evenodd" d="M4 4l1-1h5.414L14 6.586V14l-1 1H5l-1-1V4zm9 3l-3-3H5v10h8V7z"/><path d="M3 1L2 2v10l1 1V2h6.414l-1-1H3z"/></svg>',
   dumpStack:
     '<svg viewBox="0 0 16 16" fill="currentColor"><path fill-rule="evenodd" clip-rule="evenodd" d="M13.353 1.146l1.5 1.5L15 3v11.5l-.5.5h-13l-.5-.5v-13l.5-.5H13l.353.146zM2 2v12h12V3.207L12.793 2H12v5H4V2H2zm7 0v4h2V2H9z"/></svg>',
+  // Maximize / restore the debugger's editor group — the escape hatch for a
+  // column squeezed too small to work in. Four corners pushing outward.
+  maximize:
+    '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M2 2h5v1.5H3.5V7H2V2zm12 0v5h-1.5V3.5H9V2h5zM2 14V9h1.5v3.5H7V14H2zm12 0H9v-1.5h3.5V9H14v5z"/></svg>',
 };
 
 /**
- * Jasper Debugger — a roomy, Smalltalk-style debugger rendered as a VS Code
+ * GemStone Debugger — a roomy, Smalltalk-style debugger rendered as a VS Code
  * webview, offered *alongside* the existing DAP debugger. Whichever entry point
  * the user picks (DAP "Debug" vs. this "Enhanced Debug") owns the suspended
  * `gsProcess` for that error, so the two never coexist on the same process.
@@ -105,7 +118,9 @@ type DebuggerInbound =
   | { command: 'browseFrame'; level: number }
   | { command: 'implementSubclassResponsibility' }
   | { command: 'cancelOp' }
-  | { command: 'saveLayout'; stackBasis?: string; evalHeight?: string };
+  | { command: 'saveLayout'; stackBasis?: string; evalCollapsed?: boolean }
+  | { command: 'fit'; needed: number; viewport: number }
+  | { command: 'maximizePanel' };
 
 /**
  * What's needed to offer "Implement #<selector>" when the process is parked on a
@@ -637,6 +652,21 @@ export function stackDumpFileName(topLabel: string, d: Date): string {
   return `${stackDumpTimestamp(d)}_${token}.txt`;
 }
 
+/**
+ * The debugger's accent, and the strength of the wash made from it.
+ *
+ * Both halves of the debugger's column carry this wash — the panel as a CSS
+ * background, the companion source editor as a whole-line decoration — and they
+ * have to come out the SAME colour, so both are built from these two values
+ * rather than each picking their own. A literal purple, not the theme's
+ * `charts.purple`: the decoration can't read a theme variable, so using one in
+ * the panel would mean the two halves quietly diverge on any theme that defines
+ * a different purple. The border and title still use the theme colour, where
+ * being a shade off costs nothing.
+ */
+const ACCENT_RGB = '163, 113, 247';
+const WASH_STRENGTH = 0.12;
+
 /** Virtual-document scheme for read-only frame source (doits + non-symbol-list methods). */
 const READONLY_SOURCE_SCHEME = 'gemstone-debug';
 
@@ -775,100 +805,6 @@ export function filterStack(raws: RawFrame[]): RawFrame[] {
   return [...kept.slice(0, u + 1), kept[doitIdx]];
 }
 
-/**
- * Initial-layout nudges. VS Code's stable API can't set an exact editor-group
- * size, only step it via the relative `increase/decreaseView{Width,Height}`
- * commands, so these are best-effort approximations (tune the step counts here):
- *  - PANEL_WIDEN_STEPS: widen the Beside split from 50/50 toward ~60% for the
- *    debugger (its Call Stack + Variables sit side-by-side and want the room).
- *  - SOURCE_SHRINK_STEPS: shrink the companion source group from the 50/50
- *    `newGroupBelow` split toward ~1/3, leaving ~2/3 for the stack/variables.
- */
-const PANEL_WIDEN_STEPS = 2;
-const SOURCE_SHRINK_STEPS = 2;
-/** Source-group fraction of its column on first open when nothing's been saved (~1/3). */
-const DEFAULT_SOURCE_RATIO = 0.33;
-
-/**
- * VS Code editor-group layout, as returned by the `vscode.getEditorLayout`
- * command and accepted by `vscode.setEditorLayout`. A tree of groups; a leaf has
- * a `size`, a branch has nested `groups`. Sizes round-trip in pixels but are
- * treated as relative weights, so preserving their sum preserves the layout.
- */
-export interface EditorGroupNode {
-  size?: number;
-  groups?: EditorGroupNode[];
-}
-export interface EditorGroupLayout {
-  orientation?: number;
-  groups: EditorGroupNode[];
-}
-
-/**
- * Flatten a layout's leaf groups in depth-first, left-to-right order — the same
- * order VS Code assigns ViewColumns (1-based), so leaf N maps to ViewColumn N+1.
- * Each entry carries its parent branch so callers can find a leaf's siblings.
- */
-export function flattenLayoutLeaves(
-  layout: EditorGroupLayout,
-): { node: EditorGroupNode; parent: EditorGroupNode }[] {
-  const acc: { node: EditorGroupNode; parent: EditorGroupNode }[] = [];
-  const root: EditorGroupNode = { groups: layout.groups };
-  const walk = (node: EditorGroupNode, parent: EditorGroupNode): void => {
-    if (node.groups && node.groups.length) {
-      for (const child of node.groups) walk(child, node);
-    } else {
-      acc.push({ node, parent });
-    }
-  };
-  for (const g of layout.groups) walk(g, root);
-  return acc;
-}
-
-/**
- * The source group's fraction of its containing branch, or undefined if the
- * column can't be located / measured. `sourceColumn` is 1-based (a ViewColumn).
- */
-export function sourceRatioFromLayout(
-  layout: EditorGroupLayout | undefined,
-  sourceColumn: number | undefined,
-): number | undefined {
-  if (!layout || !sourceColumn) return undefined;
-  const leaves = flattenLayoutLeaves(layout);
-  const leaf = leaves[sourceColumn - 1];
-  if (!leaf || leaf.node.size == null || !leaf.parent.groups) return undefined;
-  const total = leaf.parent.groups.reduce((s, g) => s + (g.size ?? 0), 0);
-  if (total <= 0) return undefined;
-  return leaf.node.size / total;
-}
-
-/**
- * Set the source group to `ratio` of its containing branch, giving the rest to
- * its sibling (the debugger group). Mutates `layout` in place; returns false
- * (leaving it untouched) when the source isn't a clean two-way split we created
- * — so an unusual user layout falls back to the step-based resize. `ratio` is
- * clamped to a sane band so a degenerate save can't collapse a pane.
- */
-export function setSourceRatioInLayout(
-  layout: EditorGroupLayout | undefined,
-  sourceColumn: number | undefined,
-  ratio: number,
-): boolean {
-  if (!layout || !sourceColumn) return false;
-  const leaves = flattenLayoutLeaves(layout);
-  const leaf = leaves[sourceColumn - 1];
-  if (!leaf || !leaf.parent.groups || leaf.parent.groups.length !== 2) return false;
-  const total = leaf.parent.groups.reduce((s, g) => s + (g.size ?? 0), 0);
-  if (total <= 0) return false;
-  const clamped = Math.max(0.1, Math.min(0.9, ratio));
-  const sourceSize = Math.round(total * clamped);
-  const sibling = leaf.parent.groups.find((g) => g !== leaf.node);
-  if (!sibling) return false;
-  leaf.node.size = sourceSize;
-  sibling.size = total - sourceSize;
-  return true;
-}
-
 export class DebuggerPanel {
   private static panels = new Map<number, Set<DebuggerPanel>>();
   /**
@@ -884,6 +820,25 @@ export class DebuggerPanel {
    * vanishes — so the `light` override gives a stronger, more opaque fill plus a
    * solid dark-goldenrod border to clearly box the paused token.
    */
+  /**
+   * The purple wash the panel carries, extended to the companion source editor —
+   * the two halves of the column are one thing, and the source is as much a live
+   * artifact of the halt as the stack is.
+   *
+   * A decoration is the only per-editor surface an extension has: VS Code offers
+   * no scoped background colour (`workbench.colorCustomizations` would repaint
+   * EVERY editor). So this is a whole-line wash over the document's lines, which
+   * means the empty space below the last line stays plain — a limit of the
+   * mechanism, not a choice. Deliberately weak, and a flat translucent purple
+   * rather than a theme colour so it composites the same way over any theme: it
+   * has to sit under the step-point highlight and the inline-value overlay
+   * without muddying either.
+   */
+  private static readonly sourceTintDecoration = vscode.window.createTextEditorDecorationType({
+    isWholeLine: true,
+    backgroundColor: `rgba(${ACCENT_RGB}, ${WASH_STRENGTH})`,
+  });
+
   private static readonly stepPointDecoration = vscode.window.createTextEditorDecorationType({
     backgroundColor: new vscode.ThemeColor('editor.focusedStackFrameHighlightBackground'),
     border: '1px solid',
@@ -952,14 +907,15 @@ export class DebuggerPanel {
   private static savedInlineValuesPerLine = false;
 
   /**
-   * The eval bar's height (`--eval-height`); the hsplitter resizes it, trading
-   * space with the panes (which flex-fill the rest). Like `savedStackBasis`,
-   * remembered across panels for this window and persisted webview-side via
-   * getState/setState. Default 4rem — just the input plus a slim result strip;
-   * the old 7rem left a tall empty band below the input on first open. The
-   * hsplitter still grows it on demand (e.g. for a multi-line eval result).
+   * Whether the eval bar is collapsed to just its header. Remembered across
+   * panels for this window (and webview-side via getState/setState) like the
+   * stack/variables split.
+   *
+   * Starts OPEN: now that the bar is a single row either way — expression on the
+   * left, answer on the right — collapsing buys back one line, not the block it
+   * used to be, so there's no reason to make you open it before you can type.
    */
-  private static savedEvalHeight = '4rem';
+  private static savedEvalCollapsed = false;
 
   /**
    * The companion source group's fraction of its column, remembered across
@@ -967,8 +923,8 @@ export class DebuggerPanel {
    * divider sticks. Unlike the two webview splitters (which we own and can read
    * on drag-end), this is an editor-group split VS Code owns: there's no resize
    * event, so we sample it with `vscode.getEditorLayout` on a low-frequency timer
-   * while the panel is open and re-apply it with `vscode.setEditorLayout` on the
-   * next open. Undefined until first sampled → DEFAULT_SOURCE_RATIO is used.
+   * while the panel is open, and feed it to `carveDebuggerColumn` on the next
+   * open. Undefined until first sampled → planDebuggerGrid's ~1/3 default.
    */
   private static savedSourceRatio: number | undefined;
 
@@ -994,12 +950,32 @@ export class DebuggerPanel {
   private static readonly ORPHAN_SOURCE_KEY = 'jasper.debugger.orphanSourceUris';
 
   /**
+   * The extension's install directory, for the panel's tab icon. Set once at
+   * activation (`initSourceTabCleanup`); undefined in tests, where the panel
+   * simply opens without an icon.
+   */
+  private static extensionPath: string | undefined;
+
+  /**
+   * The tab icon: the gem with a pause bar, in VS Code's debugging orange. A
+   * webview tab otherwise looks exactly like a source-editor tab, which is the
+   * confusion this removes — the panel and its companion source sit in the same
+   * column, one above the other, and their tabs are a glance apart.
+   */
+  private static tabIcon(): vscode.Uri | undefined {
+    const root = DebuggerPanel.extensionPath;
+    if (!root) return undefined;
+    return vscode.Uri.file(path.join(root, 'resources', 'gemstone-debugger.svg'));
+  }
+
+  /**
    * Arm orphan-source-tab cleanup for this window: close any source tab a prior
    * session left open at window close, then re-arm a fresh (empty) set. Call once
    * from `activate()` with `context.workspaceState`.
    */
-  static initSourceTabCleanup(state: vscode.Memento): void {
+  static initSourceTabCleanup(state: vscode.Memento, extensionPath?: string): void {
     DebuggerPanel.orphanState = state;
+    DebuggerPanel.extensionPath = extensionPath;
     const orphans = state.get<string[]>(DebuggerPanel.ORPHAN_SOURCE_KEY, []);
     // Re-arm immediately; live panels re-populate as they open source editors.
     void state.update(DebuggerPanel.ORPHAN_SOURCE_KEY, undefined);
@@ -1072,8 +1048,46 @@ export class DebuggerPanel {
    * these to find the true stop frame (see `stopFrameLevel`).
    */
   private rawFrames: RawFrame[] = [];
-  /** Column the companion source editor lives in, reused across frame selects. */
+  /**
+   * Last known column of the companion source group — a fallback only. VS Code
+   * RENUMBERS ViewColumns positionally whenever groups come and go (an emptied
+   * group collapsing is enough), so a number captured at open time goes stale
+   * silently and then points at somebody else's group. Everything that needs a
+   * column asks `panelGroupColumn` / `sourceGroupColumn` for a live one instead.
+   */
   private sourceColumn: vscode.ViewColumn | undefined;
+
+  /**
+   * Where the debugger's two halves are RIGHT NOW.
+   *
+   * The panel knows its own column and keeps knowing it across renumbering, so
+   * it's the anchor. The source group is the pair's second leaf, which is always
+   * the column straight after the panel's — a live source editor confirms it
+   * when there is one.
+   */
+  private get panelGroupColumn(): vscode.ViewColumn | undefined {
+    return this.panel.viewColumn;
+  }
+  private get sourceGroupColumn(): vscode.ViewColumn | undefined {
+    const live = this.sourceEditor?.viewColumn;
+    if (live !== undefined) return live;
+    const panel = this.panel.viewColumn;
+    if (panel !== undefined) return panel + 1;
+    return this.sourceColumn;
+  }
+  /**
+   * Resolves once the panel/source column pair exists in the editor grid. Every
+   * source open awaits it, so the source editor always opens into a group that
+   * is already there at the right size — instead of splitting one on the fly and
+   * landing wherever the split happened to go.
+   */
+  private gridReady: Promise<void> = Promise.resolve();
+  /**
+   * True until the panel's first self-measurement has been acted on. The source
+   * pane is pushed down to fit the panel exactly once, as the debugger opens;
+   * every later render reports its size too, and is ignored (see fitPanelToContent).
+   */
+  private fitPending = true;
   /**
    * The most recent companion source editor. Its live `.viewColumn` is the
    * authoritative current column of the source group at dispose time — VS Code
@@ -1091,6 +1105,14 @@ export class DebuggerPanel {
   private openedInspectors = new Set<EnhancedInspector>();
   /** The editor currently carrying the step-point highlight, if any. */
   private decoratedEditor: vscode.TextEditor | undefined;
+  /**
+   * Every editor carrying the accent wash; all of them are cleared when the
+   * panel closes. A Set, not a single reference: the companion source editor and
+   * a new-method template editor are different editors, both washed, and either
+   * can outlive the panel — one of them would keep a debugger's colouring with
+   * no debugger behind it.
+   */
+  private tintedEditors = new Set<vscode.TextEditor>();
   /** Whether this panel's inline-value overlay (#5) is currently shown. */
   private inlineValuesEnabled = DebuggerPanel.savedInlineValuesEnabled;
   /** Inline-value mode: false = once at first use (default), true = every reference. */
@@ -1274,24 +1296,31 @@ export class DebuggerPanel {
     errorMessage: string,
     onComplete?: (resultOop: bigint) => void,
   ): void {
+    // Placement is decided here, once, rather than assembled from focus-dependent
+    // steps: open into a brand-new group at the END of the grid (an explicit
+    // column number — never ViewColumn.Beside, whose direction is the user's
+    // `workbench.editor.openSideBySideDirection` setting and which reuses an
+    // adjacent group), then reshape that group into the panel/source pair. A
+    // second halt joins the column the first one carved instead of growing the
+    // grid by an error.
+    const shared = DebuggerPanel.liveDebuggerColumns();
+    const panelColumn = shared?.panelColumn ?? vscode.window.tabGroups.all.length + 1;
     const panel = vscode.window.createWebviewPanel(
       'gemstoneEnhancedDebugger',
-      'Jasper Debugger',
-      vscode.ViewColumn.Beside,
+      'GemStone Debugger',
+      { viewColumn: panelColumn, preserveFocus: false },
       { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [] },
     );
-    // The Beside split is 50/50; nudge the (now-focused) debugger group wider
-    // toward ~60% — its stack/variables panes want more room than the code.
-    void (async () => {
-      try {
-        for (let i = 0; i < PANEL_WIDEN_STEPS; i++) {
-          await vscode.commands.executeCommand('workbench.action.increaseViewWidth');
-        }
-      } catch {
-        /* best-effort layout */
-      }
-    })();
+    const icon = DebuggerPanel.tabIcon();
+    if (icon) panel.iconPath = icon;
     const debugger_ = new DebuggerPanel(panel, session, gsProcess, errorMessage, onComplete);
+    debugger_.sourceColumn = shared?.sourceColumn ?? panelColumn + 1;
+    // The source group must exist (and be sized) before anything opens into it;
+    // the webview's `ready` arrives asynchronously, so every source open awaits
+    // this rather than racing it. A second halt joins the column the first one
+    // carved, so it neither carves nor re-fits.
+    debugger_.gridReady = shared ? Promise.resolve() : debugger_.carveDebuggerColumn();
+    if (shared) debugger_.fitPending = false;
     if (!DebuggerPanel.panels.has(session.id)) {
       DebuggerPanel.panels.set(session.id, new Set());
     }
@@ -1487,11 +1516,25 @@ export class DebuggerPanel {
         }
         return;
       }
+      case 'maximizePanel': {
+        // VS Code has no adaptive sizing for editor groups — it enforces a
+        // minimum and clips the rest — so when the column really is too small,
+        // the way out is to take the whole editor area for a moment. Toggling
+        // it back restores the previous grid, so this costs the user nothing.
+        // The click focused this webview's group, which is the one the command
+        // acts on, so there's no focus change to wait for here.
+        void vscode.commands.executeCommand('workbench.action.toggleMaximizeEditorGroup');
+        return;
+      }
+      case 'fit': {
+        void this.fitPanelToContent(msg.needed, msg.viewport);
+        return;
+      }
       case 'saveLayout': {
         // Remember the splits (stack-vs-variables width, eval-bar height) so the
         // next panel opens the same way. Each is sent only when it changed.
         if (msg.stackBasis != null) DebuggerPanel.savedStackBasis = msg.stackBasis;
-        if (msg.evalHeight != null) DebuggerPanel.savedEvalHeight = msg.evalHeight;
+        if (msg.evalCollapsed != null) DebuggerPanel.savedEvalCollapsed = msg.evalCollapsed;
         return;
       }
     }
@@ -1841,7 +1884,7 @@ export class DebuggerPanel {
     // One candidate → go straight in. Several → let the user pick where in the
     // chain to implement (receiver's class first; each marked override vs edit).
     logInfo(
-      `[Jasper Debugger] implement #${selector}: chain = ` +
+      `[GemStone Debugger] implement #${selector}: chain = ` +
         chain.map((c) => `${c.className}${c.implementsSelector ? '(impl)' : ''}`).join(' → '),
     );
     let targetIndex = 0;
@@ -1901,7 +1944,7 @@ export class DebuggerPanel {
       ? compiledUri
       : this.gemstoneMethodUri(target.dictName, target.className, target.isMeta, 'new-method');
     logInfo(
-      `[Jasper Debugger] implement #${selector} in ${target.className} ` +
+      `[GemStone Debugger] implement #${selector} in ${target.className} ` +
         `(${editingExisting ? 'edit existing' : 'new method'}); from ` +
         `${opts.contextLabel}${shadowedBy ? `; shadowed by ${shadowedBy}` : ''}` +
         `${reEnterSenderLevel !== undefined ? `; re-enter sender sv${reEnterSenderLevel}` : ''}`,
@@ -2025,26 +2068,16 @@ export class DebuggerPanel {
   }
 
   /**
-   * Open a new-method template editor in the companion source group docked BELOW
-   * the panel (the same place frame source opens — not Beside, which the user saw
-   * as "to the side"), focused so they can type, and replace the FS provider's
-   * generic template with `stub` (the real selector signature + a placeholder
-   * body). Mirrors showSourceEditor's docking so the first open splits a group
-   * beneath the panel; later opens reuse that group.
+   * Open a new-method template editor in the companion source group below the
+   * panel (the same group frame source opens in), focused so they can type, and
+   * replace the FS provider's generic template with `stub` (the real selector
+   * signature + a placeholder body). Shares showSourceEditor's column.
    */
   private async openTemplateEditor(uri: vscode.Uri, stub?: string): Promise<vscode.TextEditor> {
-    const firstOpen = this.sourceColumn === undefined;
-    if (firstOpen) {
-      try {
-        this.panel.reveal(this.panel.viewColumn, false); // focus the panel's group…
-        await vscode.commands.executeCommand('workbench.action.newGroupBelow'); // …split below it
-      } catch {
-        /* best-effort layout; fall back to the active group */
-      }
-    }
+    await this.gridReady;
     const doc = await vscode.workspace.openTextDocument(uri);
     const editor = await vscode.window.showTextDocument(doc, {
-      viewColumn: this.sourceColumn ?? vscode.ViewColumn.Active,
+      viewColumn: this.sourceGroupColumn ?? vscode.ViewColumn.Active,
       preview: false, // a real tab the user edits, not a throwaway preview
       preserveFocus: false, // focus the editor so the user can fill in the body
     });
@@ -2059,9 +2092,9 @@ export class DebuggerPanel {
       const end = editor.document.lineAt(lastLine).range.end;
       await editor.edit((b) => b.replace(new vscode.Range(new vscode.Position(0, 0), end), stub));
     }
+    this.tintSourceEditor(editor);
     this.shownSourceUris.add(uri.toString()); // closed with the panel
     DebuggerPanel.persistLiveSourceUris();
-    if (firstOpen) await this.applySourcePaneRatio();
     return editor;
   }
 
@@ -2268,7 +2301,7 @@ export class DebuggerPanel {
     const when =
       `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())} ` +
       `${pad2(now.getHours())}:${pad2(now.getMinutes())}:${pad2(now.getSeconds())}`;
-    const header = ['Jasper Debugger stack dump', subtitle, when].filter(Boolean).join(' — ');
+    const header = ['GemStone Debugger stack dump', subtitle, when].filter(Boolean).join(' — ');
     return formatDetailedStack(this.errorMessage, this.collectStackDetail(), header);
   }
 
@@ -3527,38 +3560,28 @@ export class DebuggerPanel {
 
   /**
    * Open `uri` in the companion source editor and return it. The editor lives in
-   * a dedicated group docked *below* the panel: the first time, we focus the
-   * panel and split a new group beneath it; later selections reuse that group
-   * (remembered as `sourceColumn`). Focus stays in the panel so clicking through
-   * frames stays fluid, and the doc opens as a reused preview tab (no pile-up).
+   * the group directly below the panel — `sourceColumn`, carved with the panel's
+   * column before either existed (see `carveDebuggerColumn`), so this only has
+   * to open into it. Focus stays in the panel so clicking through frames stays
+   * fluid, and the doc opens as a reused preview tab (no pile-up).
    */
   private async showSourceEditor(uri: vscode.Uri): Promise<vscode.TextEditor> {
-    const firstOpen = this.sourceColumn === undefined;
-    if (firstOpen) {
-      try {
-        this.panel.reveal(this.panel.viewColumn, false); // focus the panel's group…
-        await vscode.commands.executeCommand('workbench.action.newGroupBelow'); // …then split below it
-      } catch {
-        /* best-effort layout; fall back to the active group */
-      }
-    }
+    await this.gridReady;
     const doc = await vscode.workspace.openTextDocument(uri);
     const editor = await vscode.window.showTextDocument(doc, {
-      viewColumn: this.sourceColumn ?? vscode.ViewColumn.Active,
+      viewColumn: this.sourceGroupColumn ?? vscode.ViewColumn.Active,
       preview: true,
       preserveFocus: true,
     });
     this.shownSourceUris.add(uri.toString()); // closed with the panel (see dispose)
     DebuggerPanel.persistLiveSourceUris();
     DebuggerPanel.refreshSourceCodeLenses(); // surface the inline-values lens on this doc
+    this.tintSourceEditor(editor);
     this.sourceColumn = editor.viewColumn ?? this.sourceColumn;
     this.sourceEditor = editor; // live .viewColumn used at close time (see field doc)
-    // Size the brand-new source group: re-apply the user's remembered ratio (or
-    // the ~1/3 default). Only on first open — never override a mid-session drag.
-    if (firstOpen) {
-      await this.applySourcePaneRatio();
-      this.startLayoutSampler();
-    }
+    // Watch for a drag of the panel↔source divider so the next open reuses it.
+    // (No-op once running; the group was already sized when the column was carved.)
+    this.startLayoutSampler();
     // gemstone:// docs get their language from the FS provider; the read-only
     // executed-code scheme does not, so set it so the source is highlighted.
     if (doc.languageId !== 'gemstone-smalltalk') {
@@ -3567,38 +3590,118 @@ export class DebuggerPanel {
     return editor;
   }
 
+  /**
+   * Wash the companion source editor in the panel's accent, so the two halves of
+   * the debugger's column read as one thing rather than "a debugger, and some
+   * editor". Covers the document's lines; see sourceTintDecoration for why the
+   * space below the last line can't be reached.
+   */
+  private tintSourceEditor(editor: vscode.TextEditor): void {
+    const lastLine = Math.max(0, editor.document.lineCount - 1);
+    editor.setDecorations(DebuggerPanel.sourceTintDecoration, [
+      new vscode.Range(new vscode.Position(0, 0), new vscode.Position(lastLine, 0)),
+    ]);
+    this.tintedEditors.add(editor);
+  }
+
   /** The live column of the companion source group (survives ViewColumn renumbering). */
   private get liveSourceColumn(): number | undefined {
-    return this.sourceEditor?.viewColumn ?? this.sourceColumn;
+    return this.sourceGroupColumn;
   }
 
   /**
-   * Size the (just-created) source group to the remembered ratio, or the ~1/3
-   * default. Uses `vscode.setEditorLayout` for an exact split that preserves all
-   * other groups' sizes; falls back to the imprecise relative-resize command
-   * when the layout can't be read/mapped (older VS Code, or an unusual layout).
+   * Carve the debugger's column out of the current grid: the group the panel was
+   * just opened into becomes a pair — panel on top, source below — in ONE
+   * `vscode.setEditorLayout` call, sized to the remembered ratio (or the ~1/3
+   * default). The target is composed from the grid as it stands, never a
+   * wholesale replacement, so whatever else the user has open (a System Browser,
+   * an inspector) comes through unchanged.
+   *
+   * Best-effort: if the grid can't be read, or doesn't have the shape we just
+   * made, it's left exactly as it is. The panel is still in a column of its own,
+   * and the source editor opens into the column after it — VS Code creates that
+   * group on demand, just without our sizing.
+   *
+   * Nothing undoes this on close: the panel and the source tab are the only
+   * editors in the pair, so closing them leaves both groups empty and VS Code
+   * collapses empty groups, returning the grid to its previous shape. The
+   * remaining columns keep their proportions because `planDebuggerGrid` rescales
+   * them relative to each other rather than assigning fresh sizes.
    */
-  private async applySourcePaneRatio(): Promise<void> {
-    const ratio = DebuggerPanel.savedSourceRatio ?? DEFAULT_SOURCE_RATIO;
+  private async carveDebuggerColumn(): Promise<void> {
     try {
+      const current =
+        await vscode.commands.executeCommand<EditorGroupLayout>('vscode.getEditorLayout');
+      const plan = planDebuggerGrid(current, this.panelGroupColumn);
+      if (!plan) return;
+      await vscode.commands.executeCommand('vscode.setEditorLayout', plan.layout);
+      this.sourceColumn = plan.sourceColumn;
+    } catch {
+      /* best-effort layout — see the note above */
+    }
+  }
+
+  /**
+   * Size the debugger column's two halves, once, as the debugger opens: the
+   * remembered divider position, except where that would leave the panel too
+   * short to show what it is rendering — the message saying why execution
+   * stopped, the action bar under it, and the top of the Call Stack.
+   *
+   * The panel reports its own required height (`needed`) and its viewport
+   * (`viewport`) after the first render; the difference between the viewport and
+   * the group's height is the chrome VS Code puts around a webview (its tab bar),
+   * which is why the host can't compute this on its own — nor can it know how
+   * many rows the toolbar wrapped to or whether a "Create #selector" bar is up.
+   *
+   * Runs only while the debugger is opening (`fitPending`): after that the
+   * divider is the user's, and a re-render must never yank it back.
+   */
+  private async fitPanelToContent(needed: number, viewport: number): Promise<void> {
+    if (!this.fitPending) return;
+    this.fitPending = false;
+    try {
+      await this.gridReady;
       const layout =
         await vscode.commands.executeCommand<EditorGroupLayout>('vscode.getEditorLayout');
-      if (setSourceRatioInLayout(layout, this.liveSourceColumn, ratio)) {
-        await vscode.commands.executeCommand('vscode.setEditorLayout', layout);
-        return;
-      }
+      const sizes = columnPaneSizes(layout, this.sourceGroupColumn);
+      if (!sizes) return;
+      // Group height minus the webview's viewport = the tab bar and friends.
+      const chrome = Math.max(0, sizes.panel - viewport);
+      const wanted = needed + chrome;
+      // The pair opened evenly split (the carve can't know the column's height
+      // until it exists), so this is also where the remembered divider position
+      // is applied — in pixels, against a height VS Code has actually measured.
+      const asked = DebuggerPanel.savedSourceRatio ?? DEFAULT_SOURCE_RATIO;
+      const fitted = fitSourceRatio(sizes.total, asked, wanted);
+      if (Math.abs(fitted * sizes.total - sizes.source) < 1) return; // already there
+      if (!setSourceRatioInLayout(layout, this.sourceGroupColumn, fitted)) return;
+      await vscode.commands.executeCommand('vscode.setEditorLayout', layout);
     } catch {
-      /* fall through to the step-based resize */
+      /* best-effort: the panel is still usable, just not resized */
     }
-    // The new group is still focused (showTextDocument kept focus there), so the
-    // relative resize targets it. newGroupBelow split 50/50; shrink toward ~1/3.
-    try {
-      for (let i = 0; i < SOURCE_SHRINK_STEPS; i++) {
-        await vscode.commands.executeCommand('workbench.action.decreaseViewHeight');
+  }
+
+  /**
+   * The column pair a debugger already open in this window carved, if any, so a
+   * second halt shares it instead of carving another one (`panels` holds every
+   * live panel; two halts in one session can be open at once).
+   */
+  private static liveDebuggerColumns():
+    { panelColumn: vscode.ViewColumn; sourceColumn: vscode.ViewColumn } | undefined {
+    for (const set of DebuggerPanel.panels.values()) {
+      for (const dbg of set) {
+        // Read them off the open panel, never from what it recorded when it
+        // opened: columns renumber underneath us, and a stale pair sends the
+        // second debugger into the FIRST one's source group — the panel and the
+        // source editor stacked in one half of the column.
+        const panelColumn = dbg.panelGroupColumn;
+        const sourceColumn = dbg.sourceGroupColumn;
+        if (panelColumn !== undefined && sourceColumn !== undefined) {
+          return { panelColumn, sourceColumn };
+        }
       }
-    } catch {
-      /* best-effort */
     }
+    return undefined;
   }
 
   /**
@@ -3962,7 +4065,7 @@ export class DebuggerPanel {
     const nonce = crypto.randomBytes(16).toString('hex');
     const subtitle = escapeHtml(this.sessionSubtitle());
     const stackBasis = DebuggerPanel.savedStackBasis;
-    const evalHeight = DebuggerPanel.savedEvalHeight;
+    const evalCollapsed = DebuggerPanel.savedEvalCollapsed;
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -3978,13 +4081,33 @@ export class DebuggerPanel {
     body {
       font-family: var(--vscode-font-family);
       color: var(--vscode-foreground);
-      padding: 0.75rem 1rem;
+      padding: 0.7rem 0.9rem;
       box-sizing: border-box;
       height: 100vh;
       margin: 0;
       display: flex;
       flex-direction: column;
-      overflow: hidden;
+      /* This panel is a live, suspended process, not a document — and a webview
+         is otherwise indistinguishable from the source editor it sits above.
+         A border around the whole surface plus a wash of the accent colour says
+         so at any size, and unlike a header treatment it survives the column
+         being squeezed (a header is the first thing to scroll away). The wash is
+         mixed INTO the editor's own background, so it sits right in any theme;
+         the plain background below it is the fallback where color-mix isn't
+         available. The companion source editor is washed to exactly the same
+         colour — see ACCENT_RGB / WASH_STRENGTH, which both halves are built
+         from. */
+      border: 2px solid var(--vscode-charts-purple, #a371f7);
+      background: var(--vscode-editor-background);
+      background: color-mix(in srgb, rgb(${ACCENT_RGB}) ${WASH_STRENGTH * 100}%,
+                            var(--vscode-editor-background));
+      /* Scroll, never clip. VS Code enforces a minimum editor-group size and then
+         simply cuts off whatever a webview can't fit — so on a genuinely tiny
+         column (a tall bottom panel, a wide secondary side bar) content silently
+         disappears off the bottom. Everything below degrades gracefully first
+         (see the compact rules further down); this is the backstop that keeps
+         what's left reachable instead of gone. */
+      overflow: auto;
     }
     /* Suppress text selection / the default Cut-Copy-Paste affordances; the
        Copy button is the supported way to copy the stack. */
@@ -4019,8 +4142,14 @@ export class DebuggerPanel {
       font-size: 0.85rem;
     }
     .busy-cancel:hover { background: var(--vscode-button-hoverBackground, var(--vscode-button-background)); }
-    .titlebar { display: flex; align-items: baseline; gap: 0.6rem; margin: 0 0 0.25rem; flex-wrap: wrap; }
-    h1 { font-size: 1.3rem; margin: 0; }
+    .titlebar { display: flex; align-items: baseline; gap: 0.5rem; margin: 0 0 0.2rem; flex-wrap: wrap; }
+    /* Compact on purpose: every row the header gives back is a stack frame the
+       Call Stack can show when the column is short. Coloured to match the border
+       and the tab icon, so the three read as one treatment. */
+    h1 {
+      font-size: 1rem; margin: 0; font-weight: 600; letter-spacing: 0.01em;
+      color: var(--vscode-charts-purple, #a371f7);
+    }
     .subtitle { color: var(--vscode-descriptionForeground); font-size: 0.85rem; }
     /* The action cluster sits together at the right; the buttons no longer each
        grab margin-left:auto, which used to spread them apart. */
@@ -4057,10 +4186,17 @@ export class DebuggerPanel {
       font-family: var(--vscode-editor-font-family, monospace);
       white-space: pre-wrap;
       margin-bottom: 1rem;
+      /* A long message (a DNU with a big receiver printString, a save hint) must
+         not push the panes off the bottom of a short column: cap it and let it
+         scroll instead. The min-height is what keeps it from disappearing
+         altogether — a scrollable flex item will happily shrink to nothing, and
+         a debugger that doesn't say why it stopped is the whole bug. */
+      flex: 0 1 auto; min-height: 1.3em; max-height: 30vh; overflow-y: auto;
       /* Selectable so the error text can be copied (Ctrl/Cmd+C); the rest of the
          panel stays non-selectable to keep the custom copy menu the only path. */
       user-select: text; -webkit-user-select: text; cursor: text;
     }
+    .error:empty { display: none; }
     /* Transient status flash (e.g. Run to Cursor falling back to a plain Resume).
        Self-dismisses; sits above the error banner and never clobbers it. The
        show class fades it in (and is removed on a timer to fade it out). */
@@ -4134,8 +4270,14 @@ export class DebuggerPanel {
        --stack-basis is the stack pane's width; the splitter drag rewrites it and
        it's persisted (see debuggerView.js / the saveLayout message). */
     /* The panes row fills the leftover vertical space (flex:1) so the Call Stack /
-       Variables get as much room as the column allows. */
-    .main { display: flex; align-items: stretch; --stack-basis: 60%; flex: 1 1 auto; min-height: 0; }
+       Variables get as much room as the column allows.
+       The min-height is a FLOOR, not a formality: the panes are the point of the
+       panel, so when the column is squeezed (the user drags the source pane up)
+       everything else gives up its space first — see the error banner and the
+       eval bar below. Without it the panes are the only flex child that can
+       shrink, so they collapse to nothing and the stack becomes invisible with
+       no way to get it back from inside the panel. */
+    .main { display: flex; align-items: stretch; --stack-basis: 60%; flex: 1 1 auto; min-height: 5rem; }
     .pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
     .stack-pane { flex: 0 0 var(--stack-basis); }
     .vars-pane { flex: 1 1 0; }
@@ -4157,30 +4299,42 @@ export class DebuggerPanel {
       min-width: 0; flex: 1 1 0; min-height: 0; overflow: auto;
       font-family: var(--vscode-editor-font-family, monospace); font-size: 0.85rem;
     }
-    /* Horizontal divider between the panes and the eval bar: drag up to give the
-       eval bar more room (e.g. for a long result), drag down to give the panes
-       more room. Rewrites the --eval-height var (the eval bar's fixed height). */
-    .hsplitter {
-      flex: 0 0 auto; height: 9px; cursor: row-resize; position: relative; margin: 0.2rem 0;
-    }
-    .hsplitter::before {
-      content: ''; position: absolute; left: 0; right: 0; top: 4px; height: 1px;
-      background: var(--vscode-panel-border, transparent);
-    }
-    .hsplitter:hover::before, .hsplitter.dragging::before {
-      top: 3px; height: 3px; background: var(--vscode-focusBorder);
-    }
     /* Only when the column is genuinely tiny: stack the Variables pane under the
        Call Stack and hide the splitter (a horizontal drag is meaningless in a
-       vertical layout). A debugger webview usually lives in a Beside column a few
-       hundred px wide, so this threshold stays low — otherwise the side-by-side
-       layout would never apply and the panel would be needlessly tall. */
-    @media (max-width: 340px) {
+       vertical layout). The debugger's own column is a majority of the window
+       (see carveDebuggerColumn), so this threshold stays low — otherwise the
+       side-by-side layout would never apply and the panel would be needlessly
+       tall. */
+    @media (max-width: 340px) and (min-height: 420px) {
       .main { flex-direction: column; }
       .stack-pane, .vars-pane { flex: 1 1 0; }
       .splitter { display: none; }
       .vars-pane { margin-top: 0.6rem; }
     }
+    /* ── Compact modes ──────────────────────────────────────────────────────
+       The panel shares its column with the source editor, so its height is
+       whatever is left after the bottom panel, the side bars, and the source
+       pane have taken theirs — and that can be very little. Rather than let the
+       bottom fall off the edge, give back the padding, the margins, and finally
+       the labels, in that order: the stack frames and the reason for the halt
+       survive longest. Each step is reversible the moment the room comes back. */
+    @media (max-height: 460px) {
+      body { padding: 0.35rem 0.5rem; }
+      .toolbar { gap: 0.1rem; margin-bottom: 0.35rem; }
+      .toolbar button { padding: 0.1rem 0.3rem; }
+      .error { margin-bottom: 0.45rem; max-height: 6em; }
+      .dnu-bar { margin-bottom: 0.4rem; }
+    }
+    @media (max-height: 340px) {
+      /* Down to the essentials: the pane headings go (the two lists are obvious
+         side by side), and the eval bar keeps just its input. */
+      .pane-title { display: none; }
+      .splitter { margin-top: 0; }
+      .evalbar { flex: 0 1 auto; }
+      .subtitle { display: none; }
+    }
+    /* An empty result strip is dead space in every mode. */
+    .eval-result:empty { display: none; }
     /* Variable groups (Receiver / Instance variables / Arguments & Temps /
        stack temps). Titles toggle their body; the stack-temps group is collapsed. */
     .var-group { margin-bottom: 0.25rem; }
@@ -4240,34 +4394,73 @@ export class DebuggerPanel {
       flex: 0 0 auto; margin-left: auto; white-space: nowrap;
       font-size: 0.78em; color: var(--vscode-descriptionForeground); opacity: 0.75;
     }
-    /* Eval-in-frame bar: a fixed-height region at the bottom (the hsplitter
-       resizes it). The result area scrolls within it. */
+    /* Eval-in-frame bar: ONE line, always — the caret, the expression, and its
+       answer beside it. This is for quick calculations against the selected
+       frame, so a half-and-half split reads fine and costs the panes a single
+       row instead of a resizable block whose answer was the first thing to be
+       squeezed out of sight. (Anything worth more room than this wants Inspect,
+       not a bigger strip.) */
     .evalbar {
-      flex: 0 0 var(--eval-height, 4rem); min-height: 2.6rem; overflow: hidden;
-      display: flex; flex-direction: column;
+      flex: 0 0 auto; overflow: hidden;
+      display: flex; flex-direction: row; align-items: center; gap: 0.4rem;
     }
+    /* Collapsed: one line that says what it is, and nothing else. Evaluating is
+       occasional; a permanently open input and an empty result strip cost ~40px
+       of every halt, in a panel that is usually short of exactly that. Clicking
+       the row (or "Evaluate in this frame…" on a frame) opens it with the input
+       focused; Escape closes it again. The state is remembered like the two
+       splitter positions, so it opens the way you left it. */
+    .eval-head {
+      flex: 0 0 auto; display: flex; align-items: center; gap: 0.3rem;
+      cursor: pointer; user-select: none; padding: 0.1rem 0;
+      color: var(--vscode-descriptionForeground); font-size: 0.85rem;
+    }
+    .eval-head:hover { color: var(--vscode-foreground); }
+    .eval-caret { display: inline-block; transition: transform 0.1s ease-in-out; }
+    body:not(.eval-collapsed) .eval-caret { transform: rotate(90deg); }
+    body.eval-collapsed #evalInput,
+    body.eval-collapsed .eval-result { display: none; }
+    /* Open, the caret is the whole header — the input beside it says what it is. */
+    body:not(.eval-collapsed) .eval-head-label { display: none; }
+    /* The input and its clear button share the row's left half; the button sits
+       inside the input's right edge, appearing only once there's something to
+       clear — the same affordance the list filters use. */
+    .eval-input-wrap { position: relative; flex: 1 1 50%; min-width: 0; display: flex; }
+    .clear-btn {
+      position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+      visibility: hidden; background: none; border: none; padding: 0 2px;
+      cursor: pointer; line-height: 1; font-size: 12px;
+      color: var(--vscode-descriptionForeground);
+    }
+    .clear-btn:hover { color: var(--vscode-foreground); }
+    .evalbar.has-text .clear-btn { visibility: visible; }
     .evalbar input {
-      width: 100%; box-sizing: border-box; user-select: text; -webkit-user-select: text;
+      flex: 1 1 auto; min-width: 0; box-sizing: border-box; padding-right: 1.4rem;
+      user-select: text; -webkit-user-select: text;
       font-family: var(--vscode-editor-font-family, monospace);
       color: var(--vscode-input-foreground); background: var(--vscode-input-background);
       border: 1px solid var(--vscode-input-border, var(--vscode-panel-border, transparent));
-      padding: 0.3rem 0.5rem; border-radius: 2px; flex: 0 0 auto;
+      padding: 0.3rem 1.4rem 0.3rem 0.5rem; border-radius: 2px;
     }
+    /* The answer sits beside the expression, sharing the row half and half. It
+       stays on one line: long printStrings scroll sideways, and the full text is
+       on the element's tooltip (set when the result arrives). */
     .eval-result {
       font-family: var(--vscode-editor-font-family, monospace); font-size: 0.85rem;
-      white-space: pre-wrap; margin-top: 0.35rem; user-select: text; -webkit-user-select: text;
-      flex: 1 1 auto; min-height: 0; overflow: auto;
+      white-space: pre; user-select: text; -webkit-user-select: text;
+      flex: 1 1 50%; min-width: 0; overflow-x: auto; overflow-y: hidden;
     }
     .eval-result.error { color: var(--vscode-errorForeground); }
   </style>
 </head>
-<body>
+<body class="${evalCollapsed ? 'eval-collapsed' : ''}">
   <div class="titlebar">
-    <h1>Jasper Debugger</h1>
+    <h1>GemStone Debugger</h1>
     <span class="subtitle">${subtitle}</span>
     <span class="titlebar-actions">
       <button id="copyBtn" class="copy-btn" title="Copy Stack — copy the full stack (with each frame's variable values) to the clipboard" aria-label="Copy Stack">${TOOLBAR_ICONS.copyStack}</button>
       <button id="dumpBtn" class="copy-btn" title="Dump Stack — write the full stack to a file in ~/.jasper/stacks" aria-label="Dump Stack">${TOOLBAR_ICONS.dumpStack}</button>
+      <button id="maximizeBtn" class="copy-btn" title="Maximize / restore this editor group — give the debugger the whole editor area when the column is too small to work in" aria-label="Maximize or restore the editor group">${TOOLBAR_ICONS.maximize}</button>
     </span>
   </div>
   <!-- Dump-path confirmation gets its OWN row (so it never reflows the buttons),
@@ -4299,10 +4492,16 @@ export class DebuggerPanel {
       <div class="vars" id="variables"></div>
     </div>
   </div>
-  <div class="hsplitter" id="hsplitter" title="Drag to resize the panes vs the eval bar"></div>
-  <div class="evalbar" id="evalbar" style="--eval-height: ${evalHeight};">
-    <input id="evalInput" type="text" autocomplete="off" spellcheck="false"
-           placeholder="Evaluate in the selected frame — press Enter">
+  <div class="evalbar" id="evalbar">
+    <div class="eval-head" id="evalToggle" role="button" tabindex="0"
+         title="Evaluate an expression in the selected frame">
+      <span class="eval-caret" aria-hidden="true">›</span><span class="eval-head-label">Evaluate…</span>
+    </div>
+    <span class="eval-input-wrap">
+      <input id="evalInput" type="text" autocomplete="off" spellcheck="false"
+             placeholder="Evaluate in the selected frame — press Enter">
+      <button class="clear-btn" id="evalClear" tabindex="-1" title="Clear">✕</button>
+    </span>
     <div class="eval-result" id="evalResult"></div>
   </div>
   <div id="ctxmenu" class="ctx-menu" role="menu">
@@ -4310,6 +4509,7 @@ export class DebuggerPanel {
     <div class="ctx-item" id="browseFrameItem" role="menuitem" style="display:none;">Browse</div>
     <div class="ctx-item" id="homeFrameItem" role="menuitem" style="display:none;">Go to home method</div>
     <div class="ctx-item" id="frameImplItem" role="menuitem" style="display:none;">Implement in…</div>
+    <div class="ctx-item" id="frameEvalItem" role="menuitem">Evaluate in this frame…</div>
   </div>
   <div id="varctxmenu" class="ctx-menu" role="menu">
     <div class="ctx-item" id="varInspectItem" role="menuitem">Inspect</div>
@@ -4334,6 +4534,11 @@ export class DebuggerPanel {
       frameImplItem: document.getElementById('frameImplItem'),
       copyBtn: document.getElementById('copyBtn'),
       dumpBtn: document.getElementById('dumpBtn'),
+      evalToggle: document.getElementById('evalToggle'),
+      evalClear: document.getElementById('evalClear'),
+      evalbar: document.getElementById('evalbar'),
+      frameEvalItem: document.getElementById('frameEvalItem'),
+      maximizeBtn: document.getElementById('maximizeBtn'),
       saveNotice: document.getElementById('saveNotice'),
       savePath: document.getElementById('savePath'),
       copyPathBtn: document.getElementById('copyPathBtn'),
@@ -4345,10 +4550,8 @@ export class DebuggerPanel {
       variables: document.getElementById('variables'),
       evalInput: document.getElementById('evalInput'),
       evalResult: document.getElementById('evalResult'),
-      evalbar: document.getElementById('evalbar'),
       main: document.getElementById('main'),
       splitter: document.getElementById('splitter'),
-      hsplitter: document.getElementById('hsplitter'),
       varMenu: document.getElementById('varctxmenu'),
       varInspectItem: document.getElementById('varInspectItem'),
       busyOverlay: document.getElementById('busyOverlay'),
@@ -4362,6 +4565,9 @@ export class DebuggerPanel {
 
   private dispose(): void {
     this.disposed = true; // an in-flight Nb step/trim continuation must skip the dead panel
+    // Capture the pair's columns before the tabs start closing — once the panel
+    // is gone it can no longer report where it was.
+    const ourColumns = [this.panelGroupColumn, this.sourceGroupColumn];
     if (this.layoutSampler) {
       clearInterval(this.layoutSampler);
       this.layoutSampler = undefined;
@@ -4377,12 +4583,19 @@ export class DebuggerPanel {
     // Likewise drop the inline-value overlay from the (outliving) source editor.
     this.inlineDecoratedEditor?.setDecorations(DebuggerPanel.inlineValueDecoration, []);
     this.inlineDecoratedEditor = undefined;
+    // …and the accent wash: a source tab can outlive the panel (the user may
+    // have pinned it), and a document still tinted like a debugger's is a lie.
+    for (const editor of this.tintedEditors) {
+      editor.setDecorations(DebuggerPanel.sourceTintDecoration, []);
+    }
+    this.tintedEditors.clear();
     // The source pane is going away — drop its inline-values CodeLens too. (This
     // panel was already removed from `panels` above, so the lens won't re-appear.)
     DebuggerPanel.refreshSourceCodeLenses();
     // Close the companion source editor and any enhanced inspectors this debugger
     // opened — they're artifacts of this debugger and shouldn't outlive it.
     this.closeSourceEditors();
+    DebuggerPanel.closeEmptyGroups(ourColumns);
     // Drop this panel's source tabs from the persisted orphan set (it was already
     // removed from `panels` above, so the union now excludes it). A clean dispose
     // thus leaves nothing to reap; only a window-close-with-debugger-open does.
@@ -4401,6 +4614,31 @@ export class DebuggerPanel {
   }
 
   /**
+   * Close the debugger's own editor groups once they're empty.
+   *
+   * VS Code only retires a group by itself when its last *editor* closes, and
+   * the source group we carve is created empty — so a debugger that opens and
+   * closes can leave two empty groups behind. They are not merely untidy: every
+   * one of them shifts the ViewColumn numbers along, and the next debugger's
+   * group gets nested inside them rather than opening as a plain column, which
+   * is the shape that used to defeat the split entirely.
+   *
+   * Deferred a tick so VS Code has finished removing our tabs; only ever closes
+   * a group that is genuinely empty, so anything the user put there survives.
+   */
+  private static closeEmptyGroups(columns: (vscode.ViewColumn | undefined)[]): void {
+    const wanted = columns.filter((c): c is vscode.ViewColumn => c !== undefined);
+    if (wanted.length === 0) return;
+    setTimeout(() => {
+      for (const group of vscode.window.tabGroups.all) {
+        if (group.tabs.length === 0 && wanted.includes(group.viewColumn)) {
+          void vscode.window.tabGroups.close(group);
+        }
+      }
+    }, 0);
+  }
+
+  /**
    * Close the companion source tabs this panel opened. A `gemstone://` method is
    * closed ONLY in our own source column — never the user's own copy of the same
    * method open elsewhere (e.g. the System Browser). Our private read-only scheme
@@ -4414,7 +4652,7 @@ export class DebuggerPanel {
     // it (VS Code reassigns columns positionally when groups open/close — e.g. a
     // enhanced inspector opening Beside). The live source editor reports its CURRENT
     // column, so prefer that; fall back to the captured number.
-    const sourceColumn = this.sourceEditor?.viewColumn ?? this.sourceColumn;
+    const sourceColumn = this.sourceGroupColumn;
     for (const group of vscode.window.tabGroups.all) {
       const inOurColumn = sourceColumn !== undefined && group.viewColumn === sourceColumn;
       for (const tab of group.tabs) {
