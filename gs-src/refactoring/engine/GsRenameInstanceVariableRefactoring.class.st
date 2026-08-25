@@ -402,27 +402,22 @@ GsRenameInstanceVariableRefactoring >> copyMethodsFrom: old to: new deselected: 
 
 { #category : 'private - applying' }
 GsRenameInstanceVariableRefactoring >> copyMethod: sel from: srcCls to: dstCls meta: isMeta into: failures [
-	"Compile one method onto the new version, preserving its category -- without it the
-	 method silently lands in 'as yet unclassified'. A method that fails to compile is
-	 recorded rather than allowed to vanish unremarked."
-	| m src cat result label |
+	"Carry one method onto the new version -- an accessing method from its staged, rewritten
+	 source, every other method from its existing source. A method that will not recompile is
+	 recorded rather than allowed to vanish unremarked. Answers whether it compiled."
+	| m src |
 	m := srcCls compiledMethodAt: sel environmentId: 0 otherwise: nil.
-	m isNil ifTrue: [^self].
+	m isNil ifTrue: [^true].
 	src := isMeta
 		ifTrue: [m sourceString]
 		ifFalse: [(self newSourceFor: srcCls selector: sel) ifNil: [m sourceString]].
-	cat := (srcCls categoryOfSelector: sel environmentId: 0) ifNil: ['as yet unclassified'].
-	result := dstCls
-		compileMethod: src
-		dictionaries: System myUserProfile symbolList
-		category: cat asString.
-	"compileMethod: answers nil on success and a non-empty Array of error tuples on a
-	 compile failure. A failed method is not installed, so record it."
-	(result isNil or: [(result isKindOf: Array) and: [result isEmpty]]) ifFalse: [
-		label := isMeta
-			ifTrue: [dstCls thisClass name asString, ' class>>', sel asString]
-			ifFalse: [dstCls name asString, '>>', sel asString].
-		failures add: (Array with: label with: label with: 'did not recompile')]
+	^environment
+		copyMethod: sel
+		from: srcCls
+		to: dstCls
+		source: src
+		meta: isMeta
+		into: failures
 ]
 
 { #category : 'private - applying' }

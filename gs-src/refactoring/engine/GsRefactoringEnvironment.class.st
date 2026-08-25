@@ -332,24 +332,62 @@ GsRefactoringEnvironment >> instanceMethodsShadowing: anInstVarName inClass: aCl
 GsRefactoringEnvironment >> compile: source into: aBehavior category: aCategory [
 	"Compile one method onto aBehavior and RAISE when it does not compile.
 
+	 Raising puts the failure back onto the path every apply loop already guards with
+	 on: Error do:, so it is recorded in `failed` and reported like any other. Use this
+	 wherever a failed method should abort its own change and nothing more. Where a failure
+	 must NOT abort the surrounding work -- the copy-forward loops that carry a class's whole
+	 method dictionary onto a new version -- use copyMethod:from:to:source:meta:into: instead."
+	| text |
+	text := self compileFailureFor: source into: aBehavior category: aCategory.
+	text isNil ifTrue: [^self].
+	self error: 'did not recompile: ', text
+]
+
+{ #category : 'compiling' }
+GsRefactoringEnvironment >> compileFailureFor: source into: aBehavior category: aCategory [
+	"Compile one method onto aBehavior. Answer nil when it compiled, or readable error text
+	 when it did not.
+
 	 Behavior>>compileMethod:dictionaries:category: reports a compile failure in its RETURN
 	 VALUE -- nil (or an empty Array) on success, an Array of error tuples otherwise -- and
 	 does NOT signal. An unchecked send therefore reads as success while the method is never
-	 installed: the caller counts it as applied and the user is told nothing. Raising puts the
-	 failure back onto the path every apply loop already guards with on: Error do:, so it is
-	 recorded in `failed` and reported like any other."
+	 installed: the caller counts it as applied and the user is told nothing. Every compile in
+	 the engines goes through this one method, so no site can forget to look at the answer."
 	| result |
 	result := aBehavior
 		compileMethod: source
 		dictionaries: System myUserProfile symbolList
 		category: aCategory.
-	result isNil ifTrue: [^self].
+	result isNil ifTrue: [^nil].
 	"An unexpected shape is exactly when whoever debugs this most needs to see what came
 	 back, and compileErrorTextFrom: already falls back to a printString for it."
-	(result isKindOf: Array)
-		ifFalse: [^self error: 'did not recompile: ', (self compileErrorTextFrom: result)].
-	result isEmpty ifTrue: [^self].
-	self error: 'did not recompile: ', (self compileErrorTextFrom: result first)
+	(result isKindOf: Array) ifFalse: [^self compileErrorTextFrom: result].
+	result isEmpty ifTrue: [^nil].
+	^self compileErrorTextFrom: result first
+]
+
+{ #category : 'compiling' }
+GsRefactoringEnvironment >> copyMethod: sel from: srcCls to: dstCls source: source meta: isMeta into: failures [
+	"Compile `source` onto dstCls as sel, preserving sel's category on srcCls -- without that
+	 the method silently lands in 'as yet unclassified'.
+
+	 This is the copy-forward counterpart to compile:into:category:. A new class version starts
+	 with an empty method dictionary, so these loops are the only thing carrying a class's
+	 behaviour across, and they run inside a single per-class change: raising would abort an
+	 entire rename or split over one method that will not recompile. Record the method in
+	 `failures` and keep going instead, so the rest of the class still arrives and the user is
+	 still told which method did not.
+
+	 Answer whether the method compiled."
+	| cat text label |
+	cat := (srcCls categoryOfSelector: sel environmentId: 0) ifNil: ['as yet unclassified'].
+	text := self compileFailureFor: source into: dstCls category: cat asString.
+	text isNil ifTrue: [^true].
+	label := isMeta
+		ifTrue: [dstCls thisClass name asString, ' class>>', sel asString]
+		ifFalse: [dstCls name asString, '>>', sel asString].
+	failures add: (Array with: label with: label with: 'did not recompile: ', text).
+	^false
 ]
 
 { #category : 'private' }

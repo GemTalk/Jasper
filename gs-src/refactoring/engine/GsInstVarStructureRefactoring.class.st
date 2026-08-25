@@ -80,7 +80,8 @@ Class {
 		'changeSet',
 		'analysisDone',
 		'decline',
-		'oldToNew'
+		'oldToNew',
+		'copyFailures'
 	],
 	#category : 'Refactoring-Core'
 }
@@ -822,11 +823,15 @@ GsInstVarStructureRefactoring >> applyDeselected: deselectedIds [
 	self ensureAnalysis.
 	oldToNew := IdentityDictionary new.
 	failures := OrderedCollection new.
+	"The copy-forward loop runs deep inside a per-class change and must not raise (one
+	 method that will not recompile would abort the whole change), so it reports through
+	 this alias instead -- entries land in the same `failed` list as everything else."
+	copyFailures := failures.
 	applied := 0.
 	self changeSet changes do: [:change |
 		[self applyChange: change. applied := applied + 1]
 		on: Error do: [:e |
-			failures add: (Array with: change id with: change className with: e messageText)]].
+			failures add: (Array with: change id with: change failureLabel with: e messageText)]].
 	migrated := 0.
 	committed := false.
 	((migrateInstances or: [removeOldFromHistory]) and: [failures isEmpty]) ifTrue: [
@@ -923,9 +928,9 @@ GsInstVarStructureRefactoring >> applyMethodAdd: aChange [
 	cls := environment classNamed: aChange className.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
-	target
-		compileMethod: aChange newSource
-		dictionaries: System myUserProfile symbolList
+	environment
+		compile: aChange newSource
+		into: target
 		category: (aChange category ifNil: ['accessing'])
 ]
 
@@ -967,16 +972,41 @@ GsInstVarStructureRefactoring >> makeNewVersionOf: old superclass: sup instVarNa
 { #category : 'applying' }
 GsInstVarStructureRefactoring >> copyMethodsFrom: old to: new [
 	"Copy every method of old (both sides) verbatim onto new -- a new class version starts
-	 with an empty method dictionary, so this carries the behaviour forward. The V5 method
-	 rewrite is applied afterwards, as its own #methodRecompile, so it overwrites the verbatim
-	 copy. Accessors being MOVED OUT of old (V2/V3 moveAccessors) are NOT copied: on a push-down
-	 old no longer owns the ivar, so copying its `^ivar` accessor would compile an undeclared
-	 reference -- the accessor is instead added to the target class as its own #methodAdd."
+	 with an empty method dictionary, so this carries the behaviour forward. Two kinds of
+	 selector are deliberately NOT copied:
+
+	  - accessors being MOVED OUT of old (moveAccessors): on a push-down old no longer owns the
+	    ivar, so copying its `^ivar` accessor would compile an undeclared reference -- the
+	    accessor is instead added to the target class as its own #methodAdd;
+	  - methods this refactoring stages a #methodRecompile for: their rewritten source is what
+	    belongs on the new version, and it is installed by that change (see
+	    #rewriteSelectorsFor:)."
 	| skip |
 	skip := self accessorRemovalSelectorsFor: old name asString.
+	skip addAll: (self rewriteSelectorsFor: old name asString).
 	old selectors do: [:sel |
-		(skip includes: sel) ifFalse: [self copyMethod: sel from: old to: new]].
-	old class selectors do: [:sel | self copyMethod: sel from: old class to: new class]
+		(skip includes: sel) ifFalse: [self copyMethod: sel from: old to: new meta: false]].
+	old class selectors do: [:sel | self copyMethod: sel from: old class to: new class meta: true]
+]
+
+{ #category : 'private - accessors' }
+GsInstVarStructureRefactoring >> rewriteSelectorsFor: aClassName [
+	"The instance-side selectors this refactoring stages a #methodRecompile for on the named
+	 class, so #copyMethodsFrom:to: can skip carrying their OLD source onto the new version.
+
+	 Carrying it forward is not merely redundant, it FAILS: converting a method temporary into
+	 an instance variable leaves the old source declaring a temporary the new version now
+	 declares as an ivar, and the compiler refuses that shadowing declaration ('variable has
+	 already been declared'). Skipping is safe because the recompile always runs -- this
+	 refactoring is all-or-nothing, so deselection is ignored -- and a rewrite that genuinely
+	 fails is reported by the apply loop like any other change."
+	| set |
+	set := IdentitySet new.
+	self changeSet changes do: [:c |
+		(c kind == #methodRecompile
+			and: [c isMeta ~~ true and: [c className asString = aClassName]])
+				ifTrue: [set add: c selector asSymbol]].
+	^set
 ]
 
 { #category : 'private - accessors' }
@@ -991,15 +1021,21 @@ GsInstVarStructureRefactoring >> accessorRemovalSelectorsFor: aClassName [
 ]
 
 { #category : 'applying' }
-GsInstVarStructureRefactoring >> copyMethod: sel from: srcCls to: dstCls [
-	| m cat |
+GsInstVarStructureRefactoring >> copyMethod: sel from: srcCls to: dstCls meta: isMeta [
+	"Carry one method verbatim onto the new class version. A method that will not recompile
+	 is recorded in copyFailures rather than dropped in silence -- the new version starts with
+	 an empty method dictionary, so a dropped method is simply gone. Answers whether it
+	 compiled."
+	| m |
 	m := srcCls compiledMethodAt: sel environmentId: 0 otherwise: nil.
-	m isNil ifTrue: [^self].
-	cat := (srcCls categoryOfSelector: sel environmentId: 0) ifNil: ['as yet unclassified'].
-	dstCls
-		compileMethod: m sourceString
-		dictionaries: System myUserProfile symbolList
-		category: cat asString
+	m isNil ifTrue: [^true].
+	^environment
+		copyMethod: sel
+		from: srcCls
+		to: dstCls
+		source: m sourceString
+		meta: isMeta
+		into: copyFailures
 ]
 
 { #category : 'applying' }
@@ -1010,9 +1046,9 @@ GsInstVarStructureRefactoring >> applyMethodRecompile: aChange [
 	cls := environment classNamed: aChange className.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
-	target
-		compileMethod: aChange newSource
-		dictionaries: System myUserProfile symbolList
+	environment
+		compile: aChange newSource
+		into: target
 		category: (aChange category ifNil: ['as yet unclassified'])
 ]
 

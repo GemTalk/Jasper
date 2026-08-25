@@ -40,7 +40,8 @@ Class {
 		'analysisDone',
 		'decline',
 		'newClass',
-		'oldToNew'
+		'oldToNew',
+		'copyFailures'
 	],
 	#category : 'Refactoring-Core'
 }
@@ -614,11 +615,15 @@ GsSplitClassRefactoring >> applyDeselected: deselectedIds [
 	oldToNew := IdentityDictionary new.
 	newClass := nil.
 	failures := OrderedCollection new.
+	"The copy-forward loop runs deep inside a per-class change and must not raise (one
+	 method that will not recompile would abort the whole change), so it reports through
+	 this alias instead -- entries land in the same `failed` list as everything else."
+	copyFailures := failures.
 	applied := 0.
 	self changeSet changes do: [:change |
 		[self applyChange: change. applied := applied + 1]
 		on: Error do: [:e |
-			failures add: (Array with: change id with: change className with: e messageText)]].
+			failures add: (Array with: change id with: change failureLabel with: e messageText)]].
 	^'{"applied":', applied printString,
 	  ',"committed":false',
 	  ',"failed":[',
@@ -692,20 +697,26 @@ GsSplitClassRefactoring >> makeNewVersionOf: old superclass: sup instVarNames: i
 { #category : 'applying' }
 GsSplitClassRefactoring >> copyMethodsFrom: old to: new skipping: skipSelectors [
 	old selectors do: [:sel |
-		(skipSelectors includes: sel) ifFalse: [self copyMethod: sel from: old to: new]].
-	old class selectors do: [:sel | self copyMethod: sel from: old class to: new class]
+		(skipSelectors includes: sel) ifFalse: [self copyMethod: sel from: old to: new meta: false]].
+	old class selectors do: [:sel | self copyMethod: sel from: old class to: new class meta: true]
 ]
 
 { #category : 'applying' }
-GsSplitClassRefactoring >> copyMethod: sel from: srcCls to: dstCls [
-	| m cat |
+GsSplitClassRefactoring >> copyMethod: sel from: srcCls to: dstCls meta: isMeta [
+	"Carry one method verbatim onto the new class version. A method that will not recompile
+	 is recorded in copyFailures rather than dropped in silence -- the new version starts with
+	 an empty method dictionary, so a dropped method is simply gone. Answers whether it
+	 compiled."
+	| m |
 	m := srcCls compiledMethodAt: sel environmentId: 0 otherwise: nil.
-	m isNil ifTrue: [^self].
-	cat := (srcCls categoryOfSelector: sel environmentId: 0) ifNil: ['as yet unclassified'].
-	dstCls
-		compileMethod: m sourceString
-		dictionaries: System myUserProfile symbolList
-		category: cat asString
+	m isNil ifTrue: [^true].
+	^environment
+		copyMethod: sel
+		from: srcCls
+		to: dstCls
+		source: m sourceString
+		meta: isMeta
+		into: copyFailures
 ]
 
 { #category : 'applying' }
@@ -717,9 +728,9 @@ GsSplitClassRefactoring >> applyMethodAdd: aChange [
 		ifTrue: [newClass]
 		ifFalse: [environment classNamed: aChange className].
 	target isNil ifTrue: [^self error: 'Class not found: ', aChange className].
-	target
-		compileMethod: aChange newSource
-		dictionaries: System myUserProfile symbolList
+	environment
+		compile: aChange newSource
+		into: target
 		category: (aChange category ifNil: ['as yet unclassified'])
 ]
 

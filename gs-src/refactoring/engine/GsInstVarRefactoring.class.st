@@ -512,7 +512,7 @@ GsInstVarRefactoring >> applyDeselected: deselectedIds options: optsArray migrat
 		 applied.' over a stranded reshape."
 		[self applyChange: change]
 			on: Error do: [:e |
-				failures add: (Array with: change id with: change className with: e messageText)].
+				failures add: (Array with: change id with: change failureLabel with: e messageText)].
 		index := index + 1].
 	"Accessors ride the SAME transaction as the structural change: compile them now, before
 	 any commit. A compile error is recorded in `failures`, which holds the commit back -- so
@@ -677,19 +677,16 @@ GsInstVarRefactoring >> copyMethodsFrom: old to: new [
 
 { #category : 'applying' }
 GsInstVarRefactoring >> copyMethod: sel from: srcCls to: dstCls meta: isMeta [
-	| m cat result |
+	| m cat |
 	m := srcCls compiledMethodAt: sel environmentId: 0 otherwise: nil.
 	m isNil ifTrue: [^self].
 	cat := (srcCls categoryOfSelector: sel environmentId: 0) ifNil: ['as yet unclassified'].
-	result := dstCls
-		compileMethod: m sourceString
-		dictionaries: System myUserProfile symbolList
-		category: cat asString.
-	"compileMethod: answers nil on success and a non-empty Array of error tuples on a compile
-	 failure (e.g. a reference to the just-removed instance variable). A failed method is not
-	 installed, so record it as dropped rather than let it vanish silently."
-	(result isNil or: [(result isKindOf: Array) and: [result isEmpty]])
-		ifFalse: [dropped add: (Array
+	"A failed method is not installed (e.g. it references the just-removed instance variable),
+	 so record it as dropped rather than let it vanish silently. This reports through `dropped`
+	 rather than the shared copyMethod:...into: helper because a dropped method here is surfaced
+	 to the user as its own category, separate from the apply's `failed` list."
+	(environment compileFailureFor: m sourceString into: dstCls category: cat asString)
+		ifNotNil: [:text | dropped add: (Array
 			with: (isMeta ifTrue: [dstCls thisClass name asString, ' class'] ifFalse: [dstCls name asString])
 			with: sel asString)]
 ]
@@ -700,21 +697,16 @@ GsInstVarRefactoring >> compileAccessors: accessorPairs onFailures: failures [
 	 acted-on class (oldToNew maps the old defining class to its new version), in the current
 	 transaction so they share its commit. accessorPairs is an Array of #(selector source); a
 	 selector already present is skipped, so re-adding a variable whose accessors exist is a no-op.
-	 compileMethod: ANSWERS nil (or an empty Array) on success and a non-empty error Array on
-	 failure -- a failure is recorded in `failures`, which makes the caller skip the commit, so the
+	 A compile that fails is recorded in `failures`, which makes the caller skip the commit, so the
 	 accessors and the instance-variable change are committed together or not at all."
 	| target |
 	(accessorPairs isNil or: [accessorPairs isEmpty]) ifTrue: [^self].
 	target := oldToNew at: definingClass ifAbsent: [definingClass].
-	accessorPairs do: [:pair | | sel result |
+	accessorPairs do: [:pair | | sel |
 		sel := (pair at: 1) asString.
 		(target includesSelector: sel asSymbol) ifFalse: [
-			result := target
-				compileMethod: (pair at: 2) asString
-				dictionaries: System myUserProfile symbolList
-				category: 'accessing'.
-			(result isNil or: [(result isKindOf: Array) and: [result isEmpty]])
-				ifFalse: [failures add: (Array
+			(environment compileFailureFor: (pair at: 2) asString into: target category: 'accessing')
+				ifNotNil: [:text | failures add: (Array
 					with: 'accessor:', sel
 					with: target name asString
 					with: 'accessor ', sel, ' could not be compiled onto the new class version')]]]

@@ -164,7 +164,7 @@ removeallclassmethods GsExtractMethodRefactoring
 doit
 | cls |
 cls := Object subclass: 'GsExtractSuperclassRefactoring'
-  instVarNames: #('environment' 'anchorClass' 'newName' 'dictNameOrNil' 'siblingNames' 'hoistMethods' 'hoistInstVars' 'sharedParent' 'extractedClasses' 'newClass' 'changeSet' 'analysisDone' 'decline' 'oldToNew')
+  instVarNames: #('environment' 'anchorClass' 'newName' 'dictNameOrNil' 'siblingNames' 'hoistMethods' 'hoistInstVars' 'sharedParent' 'extractedClasses' 'newClass' 'changeSet' 'analysisDone' 'decline' 'oldToNew' 'copyFailures')
   classVars: #()
   classInstVars: #()
   poolDictionaries: #()
@@ -419,7 +419,7 @@ removeallclassmethods GsInstVarRefactoring
 doit
 | cls |
 cls := Object subclass: 'GsInstVarStructureRefactoring'
-  instVarNames: #('environment' 'operation' 'definingClass' 'varName' 'methodSelector' 'methodMeta' 'topClass' 'newIvarLists' 'methodRewrite' 'targetClasses' 'moveDirection' 'moveAccessors' 'accessorRemovals' 'accessorAdds' 'migrateInstances' 'removeOldFromHistory' 'changeSet' 'analysisDone' 'decline' 'oldToNew')
+  instVarNames: #('environment' 'operation' 'definingClass' 'varName' 'methodSelector' 'methodMeta' 'topClass' 'newIvarLists' 'methodRewrite' 'targetClasses' 'moveDirection' 'moveAccessors' 'accessorRemovals' 'accessorAdds' 'migrateInstances' 'removeOldFromHistory' 'changeSet' 'analysisDone' 'decline' 'oldToNew' 'copyFailures')
   classVars: #()
   classInstVars: #()
   poolDictionaries: #()
@@ -747,7 +747,7 @@ removeallclassmethods GsRefactoringJson
 doit
 | cls |
 cls := Object subclass: 'GsRenameClassRefactoring'
-  instVarNames: #('environment' 'definingClass' 'oldName' 'newName' 'oldNameSym' 'scopeKind' 'scopeDictName' 'changeSet' 'outOfScopeReferenceCount' 'skippedCount' 'skippedMethods' 'scopeClasses' 'subtreeClasses' 'oldToNew' 'shapeSource' 'copyMethods' 'recompileSubclasses' 'migrateInstances' 'removeOldFromHistory')
+  instVarNames: #('environment' 'definingClass' 'oldName' 'newName' 'oldNameSym' 'scopeKind' 'scopeDictName' 'changeSet' 'outOfScopeReferenceCount' 'skippedCount' 'skippedMethods' 'scopeClasses' 'subtreeClasses' 'oldToNew' 'shapeSource' 'copyMethods' 'recompileSubclasses' 'migrateInstances' 'removeOldFromHistory' 'copyFailures')
   classVars: #()
   classInstVars: #()
   poolDictionaries: #()
@@ -1017,7 +1017,7 @@ removeallclassmethods GsRenameTemporaryRefactoring
 doit
 | cls |
 cls := Object subclass: 'GsSplitClassRefactoring'
-  instVarNames: #('environment' 'sourceClass' 'newName' 'dictNameOrNil' 'extractIvars' 'componentIvarName' 'movableSelectors' 'changeSet' 'analysisDone' 'decline' 'newClass' 'oldToNew')
+  instVarNames: #('environment' 'sourceClass' 'newName' 'dictNameOrNil' 'extractIvars' 'componentIvarName' 'movableSelectors' 'changeSet' 'analysisDone' 'decline' 'newClass' 'oldToNew' 'copyFailures')
   classVars: #()
   classInstVars: #()
   poolDictionaries: #()
@@ -1550,9 +1550,9 @@ applyChange: aChange
 	cls := environment classNamed: aChange className.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
-	target
-		compileMethod: aChange newSource
-		dictionaries: System myUserProfile symbolList
+	environment
+		compile: aChange newSource
+		into: target
 		category: (aChange category ifNil: ['as yet unclassified']).
 	(aChange kind == #methodRename and: [aChange newSelector ~= aChange selector])
 		ifTrue: [target removeSelector: aChange selector asSymbol]
@@ -1571,7 +1571,7 @@ applyDeselected: deselectedIds
 		(ids includes: change id asSymbol) ifFalse: [
 			[self applyChange: change. applied := applied + 1]
 			on: Error do: [:e |
-				failures add: (Array with: change id with: change className with: e messageText)]]].
+				failures add: (Array with: change id with: change failureLabel with: e messageText)]]].
 	^'{"applied":', applied printString, ',"failed":[',
 	  ((failures collect: [:f |
 		'{"id":', (self jsonQuote: (f at: 1)),
@@ -2698,7 +2698,7 @@ applyDeselected: deselectedIds
 			ifTrue: [
 				[self applyChange: change. applied := applied + 1]
 				on: Error do: [:e |
-					failures add: (Array with: change id with: change className with: e messageText)]]].
+					failures add: (Array with: change id with: change failureLabel with: e messageText)]]].
 	^'{"applied":', applied printString,
 	  ',"failed":[',
 	  ((failures collect: [:f |
@@ -2726,9 +2726,9 @@ applyMethodCompile: aChange
 	cls := environment classNamed: aChange className.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
-	target
-		compileMethod: aChange newSource
-		dictionaries: System myUserProfile symbolList
+	environment
+		compile: aChange newSource
+		into: target
 		category: (aChange category ifNil: ['as yet unclassified'])
 %
 
@@ -3417,11 +3417,15 @@ applyDeselected: deselectedIds
 	oldToNew := IdentityDictionary new.
 	newClass := nil.
 	failures := OrderedCollection new.
+	"The copy-forward loop runs deep inside a per-class change and must not raise (one
+	 method that will not recompile would abort the whole change), so it reports through
+	 this alias instead -- entries land in the same `failed` list as everything else."
+	copyFailures := failures.
 	applied := 0.
 	self changeSet changes do: [:change |
 		[self applyChange: change. applied := applied + 1]
 		on: Error do: [:e |
-			failures add: (Array with: change id with: change className with: e messageText)]].
+			failures add: (Array with: change id with: change failureLabel with: e messageText)]].
 	^'{"applied":', applied printString,
 	  ',"committed":false',
 	  ',"failed":[',
@@ -3506,21 +3510,27 @@ copyMethodsFrom: old to: new skipping: skipSelectors
 	"Copy every method of old (both sides) onto new, EXCEPT the skipSelectors (instance-side
 	 hoisted methods that move to the new superclass instead)."
 	old selectors do: [:sel |
-		(skipSelectors includes: sel) ifFalse: [self copyMethod: sel from: old to: new]].
-	old class selectors do: [:sel | self copyMethod: sel from: old class to: new class]
+		(skipSelectors includes: sel) ifFalse: [self copyMethod: sel from: old to: new meta: false]].
+	old class selectors do: [:sel | self copyMethod: sel from: old class to: new class meta: true]
 %
 
 category: 'applying'
 method: GsExtractSuperclassRefactoring
-copyMethod: sel from: srcCls to: dstCls
-	| m cat |
+copyMethod: sel from: srcCls to: dstCls meta: isMeta
+	"Carry one method verbatim onto the new class version. A method that will not recompile
+	 is recorded in copyFailures rather than dropped in silence -- the new version starts with
+	 an empty method dictionary, so a dropped method is simply gone. Answers whether it
+	 compiled."
+	| m |
 	m := srcCls compiledMethodAt: sel environmentId: 0 otherwise: nil.
-	m isNil ifTrue: [^self].
-	cat := (srcCls categoryOfSelector: sel environmentId: 0) ifNil: ['as yet unclassified'].
-	dstCls
-		compileMethod: m sourceString
-		dictionaries: System myUserProfile symbolList
-		category: cat asString
+	m isNil ifTrue: [^true].
+	^environment
+		copyMethod: sel
+		from: srcCls
+		to: dstCls
+		source: m sourceString
+		meta: isMeta
+		into: copyFailures
 %
 
 category: 'applying'
@@ -3532,9 +3542,9 @@ applyMethodAdd: aChange
 		ifTrue: [newClass]
 		ifFalse: [environment classNamed: aChange className].
 	target isNil ifTrue: [^self error: 'Class not found: ', aChange className].
-	target
-		compileMethod: aChange newSource
-		dictionaries: System myUserProfile symbolList
+	environment
+		compile: aChange newSource
+		into: target
 		category: (aChange category ifNil: ['as yet unclassified'])
 %
 
@@ -4178,7 +4188,7 @@ applyDeselected: deselectedIds
 	self changeSet changes do: [:change |
 		[self applyChange: change. applied := applied + 1]
 		on: Error do: [:e |
-			failures add: (Array with: change id with: change className with: e messageText)]].
+			failures add: (Array with: change id with: change failureLabel with: e messageText)]].
 	^'{"applied":', applied printString,
 	  ',"failed":[',
 	  ((failures collect: [:f |
@@ -4204,9 +4214,9 @@ applyMethodRecompile: aChange
 	cls := environment classNamed: aChange className.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
-	target
-		compileMethod: aChange newSource
-		dictionaries: System myUserProfile symbolList
+	environment
+		compile: aChange newSource
+		into: target
 		category: (aChange category ifNil: ['as yet unclassified'])
 %
 
@@ -4862,7 +4872,7 @@ applyDeselected: deselectedIds
 			ifTrue: [
 				[self applyChange: change. applied := applied + 1]
 				on: Error do: [:e |
-					failures add: (Array with: change id with: change className with: e messageText)]]].
+					failures add: (Array with: change id with: change failureLabel with: e messageText)]]].
 	^'{"applied":', applied printString,
 	  ',"failed":[',
 	  ((failures collect: [:f |
@@ -4889,9 +4899,9 @@ applyMethodRecompile: aChange
 	cls := environment classNamed: aChange className.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
-	target
-		compileMethod: aChange newSource
-		dictionaries: System myUserProfile symbolList
+	environment
+		compile: aChange newSource
+		into: target
 		category: (aChange category ifNil: ['as yet unclassified'])
 %
 
@@ -5453,7 +5463,7 @@ applyDeselected: deselectedIds
 	self changeSet changes do: [:change |
 		[self applyChange: change. applied := applied + 1]
 		on: Error do: [:e |
-			failures add: (Array with: change id with: change className with: e messageText)]].
+			failures add: (Array with: change id with: change failureLabel with: e messageText)]].
 	^'{"applied":', applied printString,
 	  ',"failed":[',
 	  ((failures collect: [:f |
@@ -5479,9 +5489,9 @@ applyMethodRecompile: aChange
 	cls := environment classNamed: aChange className.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
-	target
-		compileMethod: aChange newSource
-		dictionaries: System myUserProfile symbolList
+	environment
+		compile: aChange newSource
+		into: target
 		category: (aChange category ifNil: ['as yet unclassified'])
 %
 
@@ -5982,7 +5992,7 @@ applyDeselected: deselectedIds options: optsArray migrate: aBool deleteHistory: 
 		 applied.' over a stranded reshape."
 		[self applyChange: change]
 			on: Error do: [:e |
-				failures add: (Array with: change id with: change className with: e messageText)].
+				failures add: (Array with: change id with: change failureLabel with: e messageText)].
 		index := index + 1].
 	"Accessors ride the SAME transaction as the structural change: compile them now, before
 	 any commit. A compile error is recorded in `failures`, which holds the commit back -- so
@@ -6156,19 +6166,16 @@ copyMethodsFrom: old to: new
 category: 'applying'
 method: GsInstVarRefactoring
 copyMethod: sel from: srcCls to: dstCls meta: isMeta
-	| m cat result |
+	| m cat |
 	m := srcCls compiledMethodAt: sel environmentId: 0 otherwise: nil.
 	m isNil ifTrue: [^self].
 	cat := (srcCls categoryOfSelector: sel environmentId: 0) ifNil: ['as yet unclassified'].
-	result := dstCls
-		compileMethod: m sourceString
-		dictionaries: System myUserProfile symbolList
-		category: cat asString.
-	"compileMethod: answers nil on success and a non-empty Array of error tuples on a compile
-	 failure (e.g. a reference to the just-removed instance variable). A failed method is not
-	 installed, so record it as dropped rather than let it vanish silently."
-	(result isNil or: [(result isKindOf: Array) and: [result isEmpty]])
-		ifFalse: [dropped add: (Array
+	"A failed method is not installed (e.g. it references the just-removed instance variable),
+	 so record it as dropped rather than let it vanish silently. This reports through `dropped`
+	 rather than the shared copyMethod:...into: helper because a dropped method here is surfaced
+	 to the user as its own category, separate from the apply's `failed` list."
+	(environment compileFailureFor: m sourceString into: dstCls category: cat asString)
+		ifNotNil: [:text | dropped add: (Array
 			with: (isMeta ifTrue: [dstCls thisClass name asString, ' class'] ifFalse: [dstCls name asString])
 			with: sel asString)]
 %
@@ -6180,21 +6187,16 @@ compileAccessors: accessorPairs onFailures: failures
 	 acted-on class (oldToNew maps the old defining class to its new version), in the current
 	 transaction so they share its commit. accessorPairs is an Array of #(selector source); a
 	 selector already present is skipped, so re-adding a variable whose accessors exist is a no-op.
-	 compileMethod: ANSWERS nil (or an empty Array) on success and a non-empty error Array on
-	 failure -- a failure is recorded in `failures`, which makes the caller skip the commit, so the
+	 A compile that fails is recorded in `failures`, which makes the caller skip the commit, so the
 	 accessors and the instance-variable change are committed together or not at all."
 	| target |
 	(accessorPairs isNil or: [accessorPairs isEmpty]) ifTrue: [^self].
 	target := oldToNew at: definingClass ifAbsent: [definingClass].
-	accessorPairs do: [:pair | | sel result |
+	accessorPairs do: [:pair | | sel |
 		sel := (pair at: 1) asString.
 		(target includesSelector: sel asSymbol) ifFalse: [
-			result := target
-				compileMethod: (pair at: 2) asString
-				dictionaries: System myUserProfile symbolList
-				category: 'accessing'.
-			(result isNil or: [(result isKindOf: Array) and: [result isEmpty]])
-				ifFalse: [failures add: (Array
+			(environment compileFailureFor: (pair at: 2) asString into: target category: 'accessing')
+				ifNotNil: [:text | failures add: (Array
 					with: 'accessor:', sel
 					with: target name asString
 					with: 'accessor ', sel, ' could not be compiled onto the new class version')]]]
@@ -6947,11 +6949,15 @@ applyDeselected: deselectedIds
 	self ensureAnalysis.
 	oldToNew := IdentityDictionary new.
 	failures := OrderedCollection new.
+	"The copy-forward loop runs deep inside a per-class change and must not raise (one
+	 method that will not recompile would abort the whole change), so it reports through
+	 this alias instead -- entries land in the same `failed` list as everything else."
+	copyFailures := failures.
 	applied := 0.
 	self changeSet changes do: [:change |
 		[self applyChange: change. applied := applied + 1]
 		on: Error do: [:e |
-			failures add: (Array with: change id with: change className with: e messageText)]].
+			failures add: (Array with: change id with: change failureLabel with: e messageText)]].
 	migrated := 0.
 	committed := false.
 	((migrateInstances or: [removeOldFromHistory]) and: [failures isEmpty]) ifTrue: [
@@ -7053,9 +7059,9 @@ applyMethodAdd: aChange
 	cls := environment classNamed: aChange className.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
-	target
-		compileMethod: aChange newSource
-		dictionaries: System myUserProfile symbolList
+	environment
+		compile: aChange newSource
+		into: target
 		category: (aChange category ifNil: ['accessing'])
 %
 
@@ -7100,16 +7106,42 @@ category: 'applying'
 method: GsInstVarStructureRefactoring
 copyMethodsFrom: old to: new
 	"Copy every method of old (both sides) verbatim onto new -- a new class version starts
-	 with an empty method dictionary, so this carries the behaviour forward. The V5 method
-	 rewrite is applied afterwards, as its own #methodRecompile, so it overwrites the verbatim
-	 copy. Accessors being MOVED OUT of old (V2/V3 moveAccessors) are NOT copied: on a push-down
-	 old no longer owns the ivar, so copying its `^ivar` accessor would compile an undeclared
-	 reference -- the accessor is instead added to the target class as its own #methodAdd."
+	 with an empty method dictionary, so this carries the behaviour forward. Two kinds of
+	 selector are deliberately NOT copied:
+
+	  - accessors being MOVED OUT of old (moveAccessors): on a push-down old no longer owns the
+	    ivar, so copying its `^ivar` accessor would compile an undeclared reference -- the
+	    accessor is instead added to the target class as its own #methodAdd;
+	  - methods this refactoring stages a #methodRecompile for: their rewritten source is what
+	    belongs on the new version, and it is installed by that change (see
+	    #rewriteSelectorsFor:)."
 	| skip |
 	skip := self accessorRemovalSelectorsFor: old name asString.
+	skip addAll: (self rewriteSelectorsFor: old name asString).
 	old selectors do: [:sel |
-		(skip includes: sel) ifFalse: [self copyMethod: sel from: old to: new]].
-	old class selectors do: [:sel | self copyMethod: sel from: old class to: new class]
+		(skip includes: sel) ifFalse: [self copyMethod: sel from: old to: new meta: false]].
+	old class selectors do: [:sel | self copyMethod: sel from: old class to: new class meta: true]
+%
+
+category: 'private - accessors'
+method: GsInstVarStructureRefactoring
+rewriteSelectorsFor: aClassName
+	"The instance-side selectors this refactoring stages a #methodRecompile for on the named
+	 class, so #copyMethodsFrom:to: can skip carrying their OLD source onto the new version.
+
+	 Carrying it forward is not merely redundant, it FAILS: converting a method temporary into
+	 an instance variable leaves the old source declaring a temporary the new version now
+	 declares as an ivar, and the compiler refuses that shadowing declaration ('variable has
+	 already been declared'). Skipping is safe because the recompile always runs -- this
+	 refactoring is all-or-nothing, so deselection is ignored -- and a rewrite that genuinely
+	 fails is reported by the apply loop like any other change."
+	| set |
+	set := IdentitySet new.
+	self changeSet changes do: [:c |
+		(c kind == #methodRecompile
+			and: [c isMeta ~~ true and: [c className asString = aClassName]])
+				ifTrue: [set add: c selector asSymbol]].
+	^set
 %
 
 category: 'private - accessors'
@@ -7126,15 +7158,21 @@ accessorRemovalSelectorsFor: aClassName
 
 category: 'applying'
 method: GsInstVarStructureRefactoring
-copyMethod: sel from: srcCls to: dstCls
-	| m cat |
+copyMethod: sel from: srcCls to: dstCls meta: isMeta
+	"Carry one method verbatim onto the new class version. A method that will not recompile
+	 is recorded in copyFailures rather than dropped in silence -- the new version starts with
+	 an empty method dictionary, so a dropped method is simply gone. Answers whether it
+	 compiled."
+	| m |
 	m := srcCls compiledMethodAt: sel environmentId: 0 otherwise: nil.
-	m isNil ifTrue: [^self].
-	cat := (srcCls categoryOfSelector: sel environmentId: 0) ifNil: ['as yet unclassified'].
-	dstCls
-		compileMethod: m sourceString
-		dictionaries: System myUserProfile symbolList
-		category: cat asString
+	m isNil ifTrue: [^true].
+	^environment
+		copyMethod: sel
+		from: srcCls
+		to: dstCls
+		source: m sourceString
+		meta: isMeta
+		into: copyFailures
 %
 
 category: 'applying'
@@ -7146,9 +7184,9 @@ applyMethodRecompile: aChange
 	cls := environment classNamed: aChange className.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
-	target
-		compileMethod: aChange newSource
-		dictionaries: System myUserProfile symbolList
+	environment
+		compile: aChange newSource
+		into: target
 		category: (aChange category ifNil: ['as yet unclassified'])
 %
 
@@ -7632,7 +7670,7 @@ applyDeselected: deselectedIds
 			ifFalse: [
 				[(self applyChange: change) ifTrue: [applied := applied + 1]]
 				on: Error do: [:e |
-					failures add: (Array with: change id with: change className with: e messageText)]]].
+					failures add: (Array with: change id with: change failureLabel with: e messageText)]]].
 	^'{"applied":', applied printString,
 	  ',"failed":[',
 	  ((failures collect: [:f |
@@ -7660,9 +7698,9 @@ applyMethodAdd: aChange
 	cls := environment classNamed: aChange className.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
-	target
-		compileMethod: aChange newSource
-		dictionaries: System myUserProfile symbolList
+	environment
+		compile: aChange newSource
+		into: target
 		category: (aChange category ifNil: ['as yet unclassified']).
 	^true
 %
@@ -8122,7 +8160,7 @@ applyDeselected: deselectedIds
 			ifFalse: [
 				[(self applyChange: change) ifTrue: [applied := applied + 1]]
 				on: Error do: [:e |
-					failures add: (Array with: change id with: change className with: e messageText)]]].
+					failures add: (Array with: change id with: change failureLabel with: e messageText)]]].
 	^'{"applied":', applied printString,
 	  ',"failed":[',
 	  ((failures collect: [:f |
@@ -8148,14 +8186,15 @@ applyMethodAdd: aChange
 	"Compile the pushed-down method onto a subclass/side. No commit. Records the selector
 	 as applied so the paired remove fires only when at least one add actually happened
 	 this run (so un-ticking every target is a genuine no-op, even when every subclass
-	 already understood the selector via its own override)."
+	 already understood the selector via its own override). The compile RAISES when it fails, so
+	 the record is only reached once the method is actually installed on the subclass."
 	| cls target |
 	cls := environment classNamed: aChange className.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
-	target
-		compileMethod: aChange newSource
-		dictionaries: System myUserProfile symbolList
+	environment
+		compile: aChange newSource
+		into: target
 		category: (aChange category ifNil: ['as yet unclassified']).
 	appliedAddSelectors add: aChange selector asSymbol.
 	^true
@@ -8660,7 +8699,7 @@ applyDeselected: deselectedIds
 			ifFalse: [
 				[(self applyChange: change) ifTrue: [applied := applied + 1]]
 				on: Error do: [:e |
-					failures add: (Array with: change id with: change className with: e messageText)]]].
+					failures add: (Array with: change id with: change failureLabel with: e messageText)]]].
 	^'{"applied":', applied printString,
 	  ',"failed":[',
 	  ((failures collect: [:f |
@@ -8686,14 +8725,16 @@ applyMethodAdd: aChange
 	"Compile the pushed-up method onto the superclass/side. No commit. Records the
 	 selector as applied so the paired remove knows the add actually happened (a plain
 	 includesSelector: check cannot tell an applied push from a pre-existing collision
-	 method, so a deselected OVERWRITE must not trigger the remove)."
+	 method, so a deselected OVERWRITE must not trigger the remove). The compile RAISES when it
+	 fails, so the record -- and with it the paired remove's authority to strip the source -- is
+	 only reached once the method is actually installed on the superclass."
 	| cls target |
 	cls := environment classNamed: aChange className.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
-	target
-		compileMethod: aChange newSource
-		dictionaries: System myUserProfile symbolList
+	environment
+		compile: aChange newSource
+		into: target
 		category: (aChange category ifNil: ['as yet unclassified']).
 	appliedAddSelectors add: aChange selector asSymbol.
 	^true
@@ -9630,24 +9671,64 @@ method: GsRefactoringEnvironment
 compile: source into: aBehavior category: aCategory
 	"Compile one method onto aBehavior and RAISE when it does not compile.
 
+	 Raising puts the failure back onto the path every apply loop already guards with
+	 on: Error do:, so it is recorded in `failed` and reported like any other. Use this
+	 wherever a failed method should abort its own change and nothing more. Where a failure
+	 must NOT abort the surrounding work -- the copy-forward loops that carry a class's whole
+	 method dictionary onto a new version -- use copyMethod:from:to:source:meta:into: instead."
+	| text |
+	text := self compileFailureFor: source into: aBehavior category: aCategory.
+	text isNil ifTrue: [^self].
+	self error: 'did not recompile: ', text
+%
+
+category: 'compiling'
+method: GsRefactoringEnvironment
+compileFailureFor: source into: aBehavior category: aCategory
+	"Compile one method onto aBehavior. Answer nil when it compiled, or readable error text
+	 when it did not.
+
 	 Behavior>>compileMethod:dictionaries:category: reports a compile failure in its RETURN
 	 VALUE -- nil (or an empty Array) on success, an Array of error tuples otherwise -- and
 	 does NOT signal. An unchecked send therefore reads as success while the method is never
-	 installed: the caller counts it as applied and the user is told nothing. Raising puts the
-	 failure back onto the path every apply loop already guards with on: Error do:, so it is
-	 recorded in `failed` and reported like any other."
+	 installed: the caller counts it as applied and the user is told nothing. Every compile in
+	 the engines goes through this one method, so no site can forget to look at the answer."
 	| result |
 	result := aBehavior
 		compileMethod: source
 		dictionaries: System myUserProfile symbolList
 		category: aCategory.
-	result isNil ifTrue: [^self].
+	result isNil ifTrue: [^nil].
 	"An unexpected shape is exactly when whoever debugs this most needs to see what came
 	 back, and compileErrorTextFrom: already falls back to a printString for it."
-	(result isKindOf: Array)
-		ifFalse: [^self error: 'did not recompile: ', (self compileErrorTextFrom: result)].
-	result isEmpty ifTrue: [^self].
-	self error: 'did not recompile: ', (self compileErrorTextFrom: result first)
+	(result isKindOf: Array) ifFalse: [^self compileErrorTextFrom: result].
+	result isEmpty ifTrue: [^nil].
+	^self compileErrorTextFrom: result first
+%
+
+category: 'compiling'
+method: GsRefactoringEnvironment
+copyMethod: sel from: srcCls to: dstCls source: source meta: isMeta into: failures
+	"Compile `source` onto dstCls as sel, preserving sel's category on srcCls -- without that
+	 the method silently lands in 'as yet unclassified'.
+
+	 This is the copy-forward counterpart to compile:into:category:. A new class version starts
+	 with an empty method dictionary, so these loops are the only thing carrying a class's
+	 behaviour across, and they run inside a single per-class change: raising would abort an
+	 entire rename or split over one method that will not recompile. Record the method in
+	 `failures` and keep going instead, so the rest of the class still arrives and the user is
+	 still told which method did not.
+
+	 Answer whether the method compiled."
+	| cat text label |
+	cat := (srcCls categoryOfSelector: sel environmentId: 0) ifNil: ['as yet unclassified'].
+	text := self compileFailureFor: source into: dstCls category: cat asString.
+	text isNil ifTrue: [^true].
+	label := isMeta
+		ifTrue: [dstCls thisClass name asString, ' class>>', sel asString]
+		ifFalse: [dstCls name asString, '>>', sel asString].
+	failures add: (Array with: label with: label with: 'did not recompile: ', text).
+	^false
 %
 
 category: 'private'
@@ -10193,6 +10274,10 @@ applyDeselected: deselectedIds
 	oldToNew := IdentityDictionary new.
 	applied := 0.
 	failures := OrderedCollection new.
+	"The copy-forward loop runs deep inside a per-class change and must not raise (one
+	 method that will not recompile would abort the whole change), so it reports through
+	 this alias instead -- entries land in the same `failed` list as everything else."
+	copyFailures := failures.
 	self changeSet changes do: [:change |
 		(change kind == #methodRecompile and: [ids includes: change id asSymbol])
 			ifFalse: [
@@ -10351,23 +10436,29 @@ copyMethodsFrom: old to: new
 	"Copy every method of `old` (both sides) onto `new`, rewriting old-name references
 	 to the new name. A new class version starts with an empty method dictionary, so
 	 this is what carries the behaviour forward."
-	old selectors do: [:sel | self copyMethod: sel from: old to: new].
-	old class selectors do: [:sel | self copyMethod: sel from: old class to: new class]
+	old selectors do: [:sel | self copyMethod: sel from: old to: new meta: false].
+	old class selectors do: [:sel | self copyMethod: sel from: old class to: new class meta: true]
 %
 
 category: 'applying'
 method: GsRenameClassRefactoring
-copyMethod: sel from: srcCls to: dstCls
-	| m src newSrc cat |
+copyMethod: sel from: srcCls to: dstCls meta: isMeta
+	"Carry one method onto the new class version, rewriting old-name references. A method
+	 that will not recompile is recorded in copyFailures rather than dropped in silence --
+	 the new version starts with an empty method dictionary, so a dropped method is simply
+	 gone from it. Answers whether it compiled."
+	| m src newSrc |
 	m := srcCls compiledMethodAt: sel environmentId: 0 otherwise: nil.
-	m isNil ifTrue: [^self].
+	m isNil ifTrue: [^true].
 	src := m sourceString.
 	newSrc := self rewriteReferencesInSource: src.
-	cat := (srcCls categoryOfSelector: sel environmentId: 0) ifNil: ['as yet unclassified'].
-	dstCls
-		compileMethod: (newSrc ifNil: [src])
-		dictionaries: System myUserProfile symbolList
-		category: cat asString
+	^environment
+		copyMethod: sel
+		from: srcCls
+		to: dstCls
+		source: (newSrc ifNil: [src])
+		meta: isMeta
+		into: copyFailures
 %
 
 category: 'applying'
@@ -11340,27 +11431,22 @@ copyMethodsFrom: old to: new deselected: deselected into: failures
 category: 'private - applying'
 method: GsRenameInstanceVariableRefactoring
 copyMethod: sel from: srcCls to: dstCls meta: isMeta into: failures
-	"Compile one method onto the new version, preserving its category -- without it the
-	 method silently lands in 'as yet unclassified'. A method that fails to compile is
-	 recorded rather than allowed to vanish unremarked."
-	| m src cat result label |
+	"Carry one method onto the new version -- an accessing method from its staged, rewritten
+	 source, every other method from its existing source. A method that will not recompile is
+	 recorded rather than allowed to vanish unremarked. Answers whether it compiled."
+	| m src |
 	m := srcCls compiledMethodAt: sel environmentId: 0 otherwise: nil.
-	m isNil ifTrue: [^self].
+	m isNil ifTrue: [^true].
 	src := isMeta
 		ifTrue: [m sourceString]
 		ifFalse: [(self newSourceFor: srcCls selector: sel) ifNil: [m sourceString]].
-	cat := (srcCls categoryOfSelector: sel environmentId: 0) ifNil: ['as yet unclassified'].
-	result := dstCls
-		compileMethod: src
-		dictionaries: System myUserProfile symbolList
-		category: cat asString.
-	"compileMethod: answers nil on success and a non-empty Array of error tuples on a
-	 compile failure. A failed method is not installed, so record it."
-	(result isNil or: [(result isKindOf: Array) and: [result isEmpty]]) ifFalse: [
-		label := isMeta
-			ifTrue: [dstCls thisClass name asString, ' class>>', sel asString]
-			ifFalse: [dstCls name asString, '>>', sel asString].
-		failures add: (Array with: label with: label with: 'did not recompile')]
+	^environment
+		copyMethod: sel
+		from: srcCls
+		to: dstCls
+		source: src
+		meta: isMeta
+		into: failures
 %
 
 category: 'private - applying'
@@ -12309,7 +12395,7 @@ applyDeselected: deselectedIds
 	self changeSet changes do: [:change |
 		[self applyChange: change. applied := applied + 1]
 		on: Error do: [:e |
-			failures add: (Array with: change id with: change className with: e messageText)]].
+			failures add: (Array with: change id with: change failureLabel with: e messageText)]].
 	^'{"applied":', applied printString,
 	  ',"failed":[',
 	  ((failures collect: [:f |
@@ -12335,9 +12421,9 @@ applyMethodRecompile: aChange
 	cls := environment classNamed: aChange className.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
-	target
-		compileMethod: aChange newSource
-		dictionaries: System myUserProfile symbolList
+	environment
+		compile: aChange newSource
+		into: target
 		category: (aChange category ifNil: ['as yet unclassified'])
 %
 
@@ -12999,11 +13085,15 @@ applyDeselected: deselectedIds
 	oldToNew := IdentityDictionary new.
 	newClass := nil.
 	failures := OrderedCollection new.
+	"The copy-forward loop runs deep inside a per-class change and must not raise (one
+	 method that will not recompile would abort the whole change), so it reports through
+	 this alias instead -- entries land in the same `failed` list as everything else."
+	copyFailures := failures.
 	applied := 0.
 	self changeSet changes do: [:change |
 		[self applyChange: change. applied := applied + 1]
 		on: Error do: [:e |
-			failures add: (Array with: change id with: change className with: e messageText)]].
+			failures add: (Array with: change id with: change failureLabel with: e messageText)]].
 	^'{"applied":', applied printString,
 	  ',"committed":false',
 	  ',"failed":[',
@@ -13082,21 +13172,27 @@ category: 'applying'
 method: GsSplitClassRefactoring
 copyMethodsFrom: old to: new skipping: skipSelectors
 	old selectors do: [:sel |
-		(skipSelectors includes: sel) ifFalse: [self copyMethod: sel from: old to: new]].
-	old class selectors do: [:sel | self copyMethod: sel from: old class to: new class]
+		(skipSelectors includes: sel) ifFalse: [self copyMethod: sel from: old to: new meta: false]].
+	old class selectors do: [:sel | self copyMethod: sel from: old class to: new class meta: true]
 %
 
 category: 'applying'
 method: GsSplitClassRefactoring
-copyMethod: sel from: srcCls to: dstCls
-	| m cat |
+copyMethod: sel from: srcCls to: dstCls meta: isMeta
+	"Carry one method verbatim onto the new class version. A method that will not recompile
+	 is recorded in copyFailures rather than dropped in silence -- the new version starts with
+	 an empty method dictionary, so a dropped method is simply gone. Answers whether it
+	 compiled."
+	| m |
 	m := srcCls compiledMethodAt: sel environmentId: 0 otherwise: nil.
-	m isNil ifTrue: [^self].
-	cat := (srcCls categoryOfSelector: sel environmentId: 0) ifNil: ['as yet unclassified'].
-	dstCls
-		compileMethod: m sourceString
-		dictionaries: System myUserProfile symbolList
-		category: cat asString
+	m isNil ifTrue: [^true].
+	^environment
+		copyMethod: sel
+		from: srcCls
+		to: dstCls
+		source: m sourceString
+		meta: isMeta
+		into: copyFailures
 %
 
 category: 'applying'
@@ -13109,9 +13205,9 @@ applyMethodAdd: aChange
 		ifTrue: [newClass]
 		ifFalse: [environment classNamed: aChange className].
 	target isNil ifTrue: [^self error: 'Class not found: ', aChange className].
-	target
-		compileMethod: aChange newSource
-		dictionaries: System myUserProfile symbolList
+	environment
+		compile: aChange newSource
+		into: target
 		category: (aChange category ifNil: ['as yet unclassified'])
 %
 
