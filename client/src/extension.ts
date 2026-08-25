@@ -41,6 +41,7 @@ import {
 } from './enhancedInspector/enhancedInspectorPerfTracker';
 import { CodeExecutor } from './codeExecutor';
 import { SystemBrowser } from './systemBrowser';
+import { showMethodResults as showMethodResultsFor } from './methodResultsPicker';
 import { registerOmniSearch, OmniSearchRegistration } from './omniSearch/omniSearchCommand';
 import {
   startSeasideServer,
@@ -95,7 +96,6 @@ import {
   ClassDefinitionCompiledEvent,
   closeGemstoneTabsForSession,
   installStaleGemstoneTabReaper,
-  buildMethodUri,
   parseMethodUri,
   parseUri,
 } from './gemstoneFileSystemProvider';
@@ -126,6 +126,7 @@ import { showTranscript, getTranscriptChannel } from './transcriptChannel';
 import { getGciLog } from './gciLog';
 import { GemStoneCodeLensProvider } from './gemstoneCodeLensProvider';
 import * as queries from './browserQueries';
+import { dedupeMethodResults } from './queries/methodSearch';
 import { SysadminStorage } from './sysadminStorage';
 import { appendSysadmin, getSysadminChannel } from './sysadminChannel';
 import { VersionManager } from './versionManager';
@@ -1206,38 +1207,16 @@ export function activate(context: vscode.ExtensionContext) {
     });
   }
 
-  async function showMethodResults(
+  // Thin adapter over the shared picker (methodResultsPicker.ts), which the safe-delete
+  // confirmation shares: every caller here has the session, not just its id. Returns the
+  // picker's promise directly rather than awaiting it — these callers ignore whether
+  // anything was opened, and an async wrapper would add a tick for nothing.
+  function showMethodResults(
     session: { id: number },
     results: queries.MethodSearchResult[],
     title: string,
-  ): Promise<void> {
-    if (results.length === 0) {
-      vscode.window.showInformationMessage(`${title}: no results found.`);
-      return;
-    }
-
-    const items = results.map((r) => ({
-      label: `${r.className}${r.isMeta ? ' class' : ''} >> #${r.selector}`,
-      description: r.category,
-      detail: r.dictName,
-      result: r,
-    }));
-
-    const picked = await vscode.window.showQuickPick(items, {
-      placeHolder: `${results.length} method${results.length === 1 ? '' : 's'} found`,
-      matchOnDescription: true,
-      matchOnDetail: true,
-    });
-    if (!picked) return;
-
-    const r = picked.result;
-    // If a System Browser is open for this session, navigate it to the selected
-    // method (updates all 5 columns) and open the method editor from there.
-    // Otherwise fall back to opening the document directly.
-    if (!SystemBrowser.navigateTo(session.id, r)) {
-      const uri = buildMethodUri({ kind: 'method', sessionId: session.id, ...r, environmentId: 0 });
-      vscode.commands.executeCommand('gemstone.openDocument', uri);
-    }
+  ): Promise<boolean> {
+    return showMethodResultsFor(session.id, results, title);
   }
 
   // Commit / Abort a session, with the same confirmations and post-action
@@ -1906,6 +1885,7 @@ export function activate(context: vscode.ExtensionContext) {
         isMeta: false,
         selector: '',
         category: '',
+        environmentId: 0,
       });
     }),
 
@@ -2297,13 +2277,7 @@ export function activate(context: vscode.ExtensionContext) {
         for (let env = 0; env <= maxEnv; env++) {
           all.push(...queries.sendersOf(session, args.selector, env));
         }
-        const seen = new Set<string>();
-        const results = all.filter((r) => {
-          const key = `${r.className}|${r.isMeta}|${r.selector}`;
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        });
+        const results = dedupeMethodResults(all);
         await showMethodResults(session, results, `Senders of #${args.selector}`);
       },
     ),
@@ -2320,13 +2294,7 @@ export function activate(context: vscode.ExtensionContext) {
         for (let env = 0; env <= maxEnv; env++) {
           all.push(...queries.implementorsOf(session, args.selector, env));
         }
-        const seen = new Set<string>();
-        const results = all.filter((r) => {
-          const key = `${r.className}|${r.isMeta}|${r.selector}`;
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        });
+        const results = dedupeMethodResults(all);
         await showMethodResults(session, results, `Implementors of #${args.selector}`);
       },
     ),
@@ -2360,13 +2328,7 @@ export function activate(context: vscode.ExtensionContext) {
             ),
           );
         }
-        const seen = new Set<string>();
-        const results = all.filter((r) => {
-          const key = `${r.className}|${r.isMeta}|${r.selector}`;
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        });
+        const results = dedupeMethodResults(all);
         const side = args.isMeta ? ' class' : '';
         const title =
           args.direction === 'up'
@@ -2388,13 +2350,7 @@ export function activate(context: vscode.ExtensionContext) {
         for (let env = 0; env <= maxEnv; env++) {
           all.push(...queries.referencesToObject(session, args.objectName, env));
         }
-        const seen = new Set<string>();
-        const results = all.filter((r) => {
-          const key = `${r.className}|${r.isMeta}|${r.selector}`;
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        });
+        const results = dedupeMethodResults(all);
         await showMethodResults(session, results, `References to ${args.objectName}`);
       },
     ),
@@ -2474,16 +2430,7 @@ export function activate(context: vscode.ExtensionContext) {
             for (let env = 0; env <= maxEnv; env++) {
               all.push(...queries.sendersOf(session, selector, env));
             }
-            // Deduplicate by class+meta+selector
-            const seen = new Set<string>();
-            return Promise.resolve(
-              all.filter((r) => {
-                const key = `${r.className}|${r.isMeta}|${r.selector}`;
-                if (seen.has(key)) return false;
-                seen.add(key);
-                return true;
-              }),
-            );
+            return Promise.resolve(dedupeMethodResults(all));
           },
         );
       } catch (e: unknown) {
@@ -2517,15 +2464,7 @@ export function activate(context: vscode.ExtensionContext) {
             for (let env = 0; env <= maxEnv; env++) {
               all.push(...queries.implementorsOf(session, selector, env));
             }
-            const seen = new Set<string>();
-            return Promise.resolve(
-              all.filter((r) => {
-                const key = `${r.className}|${r.isMeta}|${r.selector}`;
-                if (seen.has(key)) return false;
-                seen.add(key);
-                return true;
-              }),
-            );
+            return Promise.resolve(dedupeMethodResults(all));
           },
         );
       } catch (e: unknown) {

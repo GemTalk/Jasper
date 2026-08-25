@@ -118,6 +118,7 @@ function expectNavigatedTo(sessionId: number, dictName: string, className: strin
     isMeta: false,
     selector: 'foo',
     category: 'printing',
+    environmentId: 0,
   });
 }
 

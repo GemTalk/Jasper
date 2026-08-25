@@ -78,6 +78,7 @@ describe('GemStoneDefinitionProvider', () => {
           isMeta: false,
           selector: 'size',
           category: 'accessing',
+          environmentId: 0,
         },
       ]);
       const resolver: SelectorResolver = {
@@ -107,6 +108,7 @@ describe('GemStoneDefinitionProvider', () => {
           isMeta: false,
           selector: 'size',
           category: 'accessing',
+          environmentId: 0,
         },
         {
           dictName: 'Globals',
@@ -114,6 +116,7 @@ describe('GemStoneDefinitionProvider', () => {
           isMeta: false,
           selector: 'size',
           category: 'accessing',
+          environmentId: 0,
         },
       ]);
       const resolver: SelectorResolver = {
@@ -136,6 +139,7 @@ describe('GemStoneDefinitionProvider', () => {
           isMeta: true,
           selector: 'new',
           category: 'creation',
+          environmentId: 0,
         },
       ]);
       const resolver: SelectorResolver = {
