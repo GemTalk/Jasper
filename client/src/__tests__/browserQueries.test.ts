@@ -66,6 +66,7 @@ describe('browserQueries', () => {
         isMeta: false,
         selector: 'size',
         category: 'accessing',
+        environmentId: 0,
       });
       expect(results[1]).toEqual({
         dictName: 'UserGlobals',
@@ -73,6 +74,7 @@ describe('browserQueries', () => {
         isMeta: true,
         selector: 'printOn:',
         category: 'printing',
+        environmentId: 0,
       });
     });
 
@@ -105,6 +107,7 @@ describe('browserQueries', () => {
         isMeta: false,
         selector: 'size',
         category: 'accessing',
+        environmentId: 0,
       });
     });
 
@@ -276,6 +279,7 @@ describe('browserQueries', () => {
         isMeta: false,
         selector: 'subarray',
         category: 'accessing',
+        environmentId: 0,
       });
     });
   });

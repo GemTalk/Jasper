@@ -40,6 +40,8 @@ import {
   validateNewIvarName,
 } from './refactoring/renameInstVarPreview';
 import { showRenameInstVarPanel } from './refactoring/renameInstVarPanel';
+import { decideSafeDelete, announceSilentDelete, SafeDeleteTarget } from './refactoring/safeDelete';
+import { METHOD_SEARCH_RESULT_LIMIT, dedupeMethodResults } from './queries/methodSearch';
 import { formatRenameFailureLog, formatRenameFailureToast } from './refactoring/renameFailureLog';
 import { getGciLog, logWarning } from './gciLog';
 import { supportsServerUtf8FileIn } from './refactoring/refactoringInstall';
@@ -204,6 +206,14 @@ export async function openGemstoneDocument(
 // one controller that holds the cascade state, the current dictionary's
 // class→category listing, and the selected class's per-method metadata
 // (categories, override arrows, session-method flags).
+
+// The method environment the Methods pane acts in. The pane collapses a class's
+// selectors across every environment into ONE row per selector (see selectorsFor),
+// so a row carries no environment of its own, and both opening and removing a row
+// address environment 0. Named rather than written as a bare 0 so the places that
+// depend on that assumption can be found together — notably the safe-delete
+// self-send exclusion, which has to know WHICH method is going away.
+const EXPLORER_METHOD_ENVIRONMENT = 0;
 
 interface ExplorerState {
   dictName?: string;
@@ -655,6 +665,79 @@ export function shouldHintKeepMethodsOpen(
 
 // ── Controller ───────────────────────────────────────────────────────────────
 
+/** The last-known outcome of one test class or test method, as the Explorer needs it. */
+export interface ExplorerTestResult {
+  outcome: 'running' | 'passed' | 'failed' | 'error';
+  /** Running results only: whether the run can be broken. False under the debugger,
+   *  which owns the suspended gem and ends it with its own Terminate. */
+  stoppable?: boolean;
+  /** The code changed since this ran, so it describes something no longer in the stone. */
+  stale?: boolean;
+}
+
+/**
+ * What the Explorer needs from the SUnit controller to show test affordances on
+ * its rows. Narrow on purpose — the Explorer neither runs tests nor knows how
+ * they run; it marks the rows that can be run and paints the last outcome.
+ */
+export interface ExplorerSunitHooks {
+  isTestClass(dictName: string, className: string): boolean;
+  /** True when a URI is the document a test item points at. Lets the Explorer leave its
+   *  panes alone for a Testing-view row click, which is an open it did not cause. */
+  isTestItemUri(uri: vscode.Uri): boolean;
+  resultFor(dictName: string, className: string, selector?: string): ExplorerTestResult | undefined;
+  onDidChangeResults: vscode.Event<void>;
+  /** Select and scroll to this class, or one of its test methods, in the Testing view.
+   *  False when there is nothing there to reveal. */
+  revealInTestExplorer(dictName: string, className: string, selector?: string): Promise<boolean>;
+}
+
+/**
+ * The row icon for an outcome. A stale result keeps its shape but is dimmed to a
+ * muted grey: what it says was true of code that has since been recompiled, so it
+ * should read as "was passing" rather than "is passing". Deliberately NOT the
+ * queued yellow — that colour already means "skipped" in the Testing view and
+ * most IDEs, so a stale pass in yellow reads as a test that never ran.
+ */
+function testResultIcon(result: ExplorerTestResult): vscode.ThemeIcon {
+  if (result.outcome === 'running') return new vscode.ThemeIcon('loading~spin');
+  const [icon, color] =
+    result.outcome === 'passed'
+      ? ['pass', 'testing.iconPassed']
+      : result.outcome === 'failed'
+        ? ['error', 'testing.iconFailed']
+        : ['warning', 'testing.iconErrored'];
+  return new vscode.ThemeIcon(
+    icon,
+    new vscode.ThemeColor(result.stale ? 'disabledForeground' : color),
+  );
+}
+
+/**
+ * The selector-shape half of "SUnit would run this": an instance-side unary
+ * selector beginning with 'test'. Matches GemStone's own `TestCase>>testSelectors`.
+ * The class-level check (a discovered TestCase subclass) is the caller's — see
+ * ExplorerController.isTestSelector and decorateTestRow, which share this so the
+ * rule lives in exactly one place.
+ */
+function isTestSelectorShape(isMeta: boolean, selector: string): boolean {
+  return !isMeta && selector.startsWith('test') && !selector.includes(':');
+}
+
+function testResultTooltip(result: ExplorerTestResult): string {
+  const said =
+    result.outcome === 'running'
+      ? 'Running…'
+      : result.outcome === 'passed'
+        ? 'Last run: passed'
+        : result.outcome === 'failed'
+          ? 'Last run: failed'
+          : 'Last run: error';
+  return result.stale && result.outcome !== 'running'
+    ? `${said} — before the code was recompiled`
+    : said;
+}
+
 export class ExplorerController {
   readonly state: ExplorerState = {};
   // className → category for the current dictionary; fetched once per dict.
@@ -737,6 +820,39 @@ export class ExplorerController {
   // letting the earlier open's event slip past the guard and re-reveal (scroll) the
   // Methods pane.
   private readonly selfOpenedUris = new Set<string>();
+  // URIs someone is about to open deliberately — GemStone Search through
+  // `gemstone.openDocument`, or Reveal in GemStone Explorer from a test row.
+  // VS Code gives no way to ask where an open came from, so a Testing-view row
+  // click is recognised by elimination: an open of a test item's URI that nobody
+  // claimed. Claiming the deliberate ones keeps them navigating as they always have.
+  private readonly attributedOpens = new Set<string>();
+
+  /** Claim the next open of `uri`, so syncToEditor treats it as a deliberate
+   *  navigation rather than a Testing-view row click. */
+  markAttributedOpen(uri: vscode.Uri): void {
+    this.attributedOpens.add(uri.toString());
+  }
+
+  /** Drop a claim that was never consumed — the open threw, kept focus, or the
+   *  document was already active, so no editor-change fired to spend it. Without
+   *  this the claim lingers and the next genuine Testing-view click on the same
+   *  URI is misread as a deliberate navigation. A no-op once syncToEditor has
+   *  already consumed the claim. */
+  clearAttributedOpen(uri: vscode.Uri): void {
+    this.attributedOpens.delete(uri.toString());
+  }
+
+  /**
+   * Navigate the panes to `uri`'s class/method on purpose — what Reveal in
+   * GemStone Explorer does from a Testing view row, where a plain click
+   * deliberately navigates nothing. Claims the open first, so the guard that
+   * ignores test-item documents lets this one through.
+   */
+  async revealDocument(uri: vscode.Uri): Promise<void> {
+    this.markAttributedOpen(uri);
+    await this.syncToEditor(uri);
+  }
+
   // Owns where our source editors land. Balances "open to the side" across only
   // our own groups, so we neither clump nor invade the System Browser's group.
   readonly placement = new SourceEditorPlacement();
@@ -761,7 +877,72 @@ export class ExplorerController {
     private readonly onClassRemoved?: (sessionId: number, className: string) => void,
     /** Extension global storage, used only to fire the one-time "how to keep methods open" hint. */
     private readonly globalState?: vscode.Memento,
+    /** Test affordances on class/method rows. Absent in tests that don't exercise them,
+     *  and before the SUnit controller exists. */
+    private readonly sunit?: ExplorerSunitHooks,
   ) {}
+
+  /**
+   * True when SUnit would run this selector of the class the Methods pane is
+   * showing — i.e. the row should offer to run it.
+   *
+   * Combines the class check (a discovered TestCase subclass) with the selector
+   * shape rule in `isTestSelectorShape`. Decided from the selector rather than by
+   * asking the SUnit controller for the class's test methods, because those are
+   * listed lazily and this is answered while building rows, synchronously. A
+   * selector that slips through runs and reports that it found no such test.
+   */
+  isTestSelector(isMeta: boolean, selector: string): boolean {
+    const { dictName, className } = this.state;
+    if (dictName === undefined || className === undefined) return false;
+    if (!this.sunit?.isTestClass(dictName, className)) return false;
+    return isTestSelectorShape(isMeta, selector);
+  }
+
+  /**
+   * Give a rendered row its test affordances: a `.test` token on the context
+   * value — which is what puts the inline ▶ there and nowhere else — and an icon
+   * for the last-known outcome.
+   *
+   * One helper for all three panes so a class row in Classes, the same class in
+   * Hierarchy, and its methods all say the same thing about the same run. A row
+   * that has never been run keeps the icon it was built with; only a result
+   * replaces it.
+   *
+   * Pass `selector` for a method row; omit it for a class row.
+   */
+  decorateTestRow(
+    item: vscode.TreeItem,
+    dictName: string | undefined,
+    className: string,
+    selector?: string,
+    isMeta = false,
+  ): void {
+    if (dictName === undefined || !this.sunit?.isTestClass(dictName, className)) return;
+    // A test class's non-test methods (setUp, helpers) are not runnable rows.
+    // Same selector-shape rule isTestSelector uses — one home, so the copy under
+    // test is the copy that runs.
+    if (selector !== undefined && !isTestSelectorShape(isMeta, selector)) return;
+
+    item.contextValue = `${item.contextValue ?? ''}.test`;
+    const result = this.sunit.resultFor(dictName, className, selector);
+    if (!result) return;
+    // A running row swaps its ▶ for a ■ — see the `.running` when-clauses. The
+    // token goes last so the menus can anchor on `.test$` vs `.running$`. A test
+    // suspended in the debugger gets neither: there is no ▶ to offer mid-run, and
+    // nothing our ■ could break.
+    if (result.outcome === 'running' && result.stoppable) {
+      item.contextValue = `${item.contextValue}.running`;
+    } else if (result.outcome === 'running') {
+      item.contextValue = `${item.contextValue}.debugging`;
+    }
+    item.iconPath = testResultIcon(result);
+    const note = testResultTooltip(result);
+    item.tooltip =
+      typeof item.tooltip === 'string' && item.tooltip.length > 0
+        ? `${item.tooltip}\n${note}`
+        : note;
+  }
 
   session(): ActiveSession | undefined {
     return this.sessionManager.getSelectedSession();
@@ -1649,7 +1830,7 @@ export class ExplorerController {
       const e = this.hierChain[i];
       const isSelf = i === lastIdx;
       const hasChildren = !isSelf || this.hierSubs.length > 0;
-      return new HierarchyItem(
+      const item = new HierarchyItem(
         e.className,
         e.dictName,
         isSelf ? 'self' : 'ancestor',
@@ -1657,22 +1838,27 @@ export class ExplorerController {
         hasChildren,
         this.classVersion(e.className),
       );
+      // Each row carries its own dictionary — an ancestor often lives in another
+      // one — so the affordance and the outcome are for the right class.
+      this.decorateTestRow(item, e.dictName, e.className);
+      return item;
     };
     if (!element) return [chainItem(0)];
     if (element.role === 'subclass') return [];
     if (element.chainIndex < lastIdx) return [chainItem(element.chainIndex + 1)];
     // element is the current class → list its subclasses.
-    return this.hierSubs.map(
-      (s) =>
-        new HierarchyItem(
-          s.className,
-          s.dictName,
-          'subclass',
-          -1,
-          false,
-          this.classVersion(s.className),
-        ),
-    );
+    return this.hierSubs.map((s) => {
+      const item = new HierarchyItem(
+        s.className,
+        s.dictName,
+        'subclass',
+        -1,
+        false,
+        this.classVersion(s.className),
+      );
+      this.decorateTestRow(item, s.dictName, s.className);
+      return item;
+    });
   }
 
   // Select the current class's node in the Hierarchy pane so its selection stays
@@ -2164,19 +2350,128 @@ export class ExplorerController {
     return choice === undefined ? undefined : choice === YES;
   }
 
-  // "−" inline on an instance-variable row: remove it (with the will-not-recompile
-  // preview).
+  // 🗑 inline on an instance-variable row: remove it. Guarded like every other delete —
+  // a variable no method reads or writes goes straight through (no preview to show, since
+  // nothing can break) and is announced afterwards, while one that IS accessed raises a
+  // confirmation naming the accessors and then opens the will-not-recompile preview.
   async removeInstVar(item: IvarItem): Promise<void> {
     const session = this.session();
     if (!session) return;
+
+    const scan = await this.scanReferences(`Finding methods that use ${item.ivarName}…`, (env) =>
+      queries.methodsAccessingInstVar(
+        session,
+        item.className,
+        item.ivarName,
+        this.state.dictIndex,
+        env,
+      ),
+    );
+    const target: SafeDeleteTarget = {
+      kind: 'instance variable',
+      label: `${item.ivarName} from ${item.className}`,
+      references: scan.references,
+      scanFailed: scan.scanFailed,
+      truncated: scan.truncated,
+    };
+
+    const decision = await decideSafeDelete(session.id, target);
+    if (decision === 'cancelled') return;
+
     const outcome = await runInstVarRefactor({
       session,
       op: 'remove',
       className: item.className,
       ivarName: item.ivarName,
       dict: this.state.dictIndex,
+      autoApply: decision === 'silent',
     });
-    if (outcome) await this.refreshAfterClassReshape(item.className);
+    if (!outcome) return;
+    await this.refreshAfterClassReshape(item.className);
+    // Only when the panel really was skipped: the engine can send an autoApply request to
+    // the panel after all, and that removal was not unasked.
+    if (outcome.autoApplied) announceSilentDelete(target);
+  }
+
+  // 🗑 inline on a class-variable row: remove it. The mirror of addClassVarOnClass and
+  // just as lightweight — a class variable is not part of instance layout, so removing one
+  // reshapes nothing, needs no preview panel and no refactoring engine. Guarded the same
+  // way as every other delete: a variable no method references goes without a question and
+  // is announced, one that is referenced asks first. Nothing is committed.
+  async removeClassVar(item: ClassVarItem): Promise<void> {
+    const session = this.session();
+    if (!session) return;
+
+    const { className, classVarName } = item;
+
+    // Kernel/system classes can't be modified here, so a removal could only fail.
+    if (!queries.canClassBeWritten(session, className, this.state.dictIndex)) {
+      void vscode.window.showWarningMessage(`${className} cannot be modified in this repository.`);
+      return;
+    }
+
+    // Belt and braces, not a case the tree produces: class-variable rows are built from
+    // definedClassVarNames, which lists only what the class DECLARES, so no row can name a
+    // variable an ancestor owns. The real guard is server-side in deleteClassVariable, which
+    // also covers the query and MCP paths; this is here so that if a caller ever does hand
+    // over an inherited name, it is refused with a sentence rather than silently acting on
+    // the wrong class. Uses the memoized accessor — the same list the row was built from.
+    if (!this.definedClassVarNames(className).includes(classVarName)) {
+      void vscode.window.showWarningMessage(
+        `'${classVarName}' is not declared in ${className} — remove it from the class that declares it.`,
+      );
+      return;
+    }
+
+    const scan = await this.scanReferences(`Finding methods that use ${classVarName}…`, (env) =>
+      queries.methodsAccessingClassVar(session, className, classVarName, this.state.dictIndex, env),
+    );
+    const target: SafeDeleteTarget = {
+      kind: 'class variable',
+      label: `${classVarName} from ${className}`,
+      references: scan.references,
+      scanFailed: scan.scanFailed,
+      truncated: scan.truncated,
+      note: 'Methods that reference it keep their binding and will read a variable nothing declares.',
+    };
+
+    const decision = await decideSafeDelete(session.id, target);
+    if (decision === 'cancelled') return;
+
+    let result: string;
+    try {
+      result = queries.deleteClassVariable(session, className, classVarName, this.state.dictIndex);
+    } catch (e: unknown) {
+      void vscode.window.showErrorMessage(
+        `Remove class variable failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return;
+    }
+    if (result.trim() !== 'ok') {
+      void vscode.window.showErrorMessage(
+        `Couldn't remove the class variable '${classVarName}' from ${className} (${result.trim()}).`,
+      );
+      return;
+    }
+
+    // Removing a class variable does NOT reshape the class (no new version); this is just
+    // the general "class members changed" pane refresh, reused despite its name.
+    await this.refreshAfterClassReshape(className);
+    // The variable's row is gone, so land the selection on the class-variable side node —
+    // the parent row — falling back to the class itself when that side is now empty.
+    try {
+      await this.views?.klass.reveal(new VarSideItem(className, true), {
+        select: true,
+        focus: false,
+      });
+    } catch {
+      try {
+        await this.views?.klass.reveal(new ClassItem(className), { select: true, focus: false });
+      } catch {
+        /* best-effort — leave the class selected if neither row can be revealed */
+      }
+    }
+    if (decision === 'silent') announceSilentDelete(target);
   }
 
   // Move an instance variable up the hierarchy (▲) or down into subclasses (▼), from the ivar
@@ -3216,16 +3511,23 @@ export class ExplorerController {
           // methodCategoryMatchesFilter answers false for them.
           this.methodCategoryMatchesFilter(info.category, filter),
       )
-      .map(
-        (info) =>
-          new MethodItem(
-            isMeta,
-            info,
-            undefined,
-            this.methodSourceUri(isMeta, info),
-            this.ivarAccessMark(isMeta, info.selector, filter),
-          ),
-      );
+      .map((info) => {
+        const item = new MethodItem(
+          isMeta,
+          info,
+          undefined,
+          this.methodSourceUri(isMeta, info),
+          this.ivarAccessMark(isMeta, info.selector, filter),
+        );
+        this.decorateTestRow(
+          item,
+          this.state.dictName,
+          this.state.className ?? '',
+          info.selector,
+          isMeta,
+        );
+        return item;
+      });
   }
 
   // Lazily load + cache the per-method instance-variable read/write map for the
@@ -3430,6 +3732,30 @@ export class ExplorerController {
     }
   }
 
+  // The environments OTHER than 0 in which this class implements `selector` on this side.
+  //
+  // The Methods pane shows one row per selector however many environments implement it (see
+  // selectorsFor), and a removal takes the environment-0 method only. So when the answer here
+  // is non-empty the row the user clicked stands for more methods than the one about to go,
+  // and the dialog has to say so — otherwise "removed, nothing referenced it" reads as though
+  // the selector is gone from the class, when an implementation is still there.
+  //
+  // Read off envLines, which the method list is already built from, so this costs no query.
+  private otherEnvironmentsImplementing(isMeta: boolean, selector: string): number[] {
+    return [
+      ...new Set(
+        this.envLines
+          .filter(
+            (l) =>
+              l.isMeta === isMeta &&
+              l.envId !== EXPLORER_METHOD_ENVIRONMENT &&
+              l.selectors.includes(selector),
+          )
+          .map((l) => l.envId),
+      ),
+    ].sort((a, b) => a - b);
+  }
+
   // Selectors under a category (real or computed) with per-method metadata.
   selectorsFor(isMeta: boolean, category: string): SelectorInfo[] {
     const lines = this.envLines.filter((l) => l.isMeta === isMeta);
@@ -3487,7 +3813,7 @@ export class ExplorerController {
       isMeta,
       category: info.category,
       selector: escapeSelectorSlashes(info.selector),
-      environmentId: 0,
+      environmentId: EXPLORER_METHOD_ENVIRONMENT,
       dictIndex: this.state.dictIndex,
     });
   }
@@ -3510,7 +3836,7 @@ export class ExplorerController {
       isMeta: node.isMeta,
       category: node.info.category,
       selector: escapeSelectorSlashes(node.info.selector),
-      environmentId: 0,
+      environmentId: EXPLORER_METHOD_ENVIRONMENT,
       dictIndex: this.state.dictIndex,
     });
     // This open normally fires onDidChangeActiveTextEditor, so mark it — syncToEditor
@@ -3571,16 +3897,105 @@ export class ExplorerController {
     );
   }
 
-  // Remove a method from its class (the row's 🗑 button). Destructive, so it
-  // asks for a modal confirmation first; nothing is committed (the user commits
-  // explicitly, same as every other Explorer edit). After removal the class's
-  // method set changed, so re-cascade the method panes.
+  // Every environment the user has asked to see, so a scan covers the same ground the
+  // Senders / Implementors commands do.
+  private environmentsToScan(): number[] {
+    const envs: number[] = [];
+    for (let env = 0; env <= this.maxEnv(); env++) envs.push(env);
+    return envs;
+  }
+
+  // The nearest ancestor that also implements `selector`, or undefined. Answers the class a
+  // send would reach once this implementation is gone, which is what makes removing an
+  // override harmless. Best-effort: a failure here answers undefined, which only means the
+  // caller falls back to the full sender scan.
+  private superclassImplementorOf(
+    session: ActiveSession,
+    className: string,
+    selector: string,
+    isMeta: boolean,
+  ): string | undefined {
+    try {
+      const above = queries.hierarchyImplementorsOf(
+        session,
+        this.state.dictIndex ?? 1,
+        className,
+        selector,
+        isMeta,
+        'up',
+      );
+      return above[0]?.className;
+    } catch {
+      return undefined;
+    }
+  }
+
+  // Run a reference scan over every environment, or report why it could not answer. A scan
+  // that fails is NOT the same as a scan that found nothing: safe delete confirms in that
+  // case rather than deleting unasked, so the reason travels with the (empty) result.
+  //
+  // `truncated` says the SCAN came back full, and is the only honest source for that. It has
+  // to be observed here, on the raw per-environment rows, because it stops being visible
+  // afterwards: callers drop references that go away with the target (a self-send, a doomed
+  // subclass), so a capped scan of 500 can arrive at the dialog as 499 and no longer look
+  // capped, and deduping across environments can shrink it further. Re-deriving it downstream
+  // from the surviving count answers "no" for a list that really was cut off — precisely the
+  // overconfident number this guard exists to avoid. It is per environment because the cap is
+  // applied per query: one environment coming back full means rows were dropped, whatever the
+  // others returned, and several environments summing past the cap without any one of them
+  // reaching it means nothing was dropped at all.
+  //
+  // Shown under a progress notification because these are whole-image scans that block the
+  // extension host: without it, clicking a delete freezes the editor with no explanation for
+  // as long as the scan takes, where the old unguarded delete popped a modal instantly. The
+  // GCI call is synchronous so the notification cannot spin, but it does say what is
+  // happening and why the window is busy — the same treatment the Senders command gives the
+  // identical loop.
+  private async scanReferences(
+    title: string,
+    scan: (environmentId: number) => queries.MethodSearchResult[],
+  ): Promise<{
+    references: queries.MethodSearchResult[];
+    scanFailed?: string;
+    truncated: boolean;
+  }> {
+    return vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title,
+        cancellable: false,
+      },
+      () => {
+        try {
+          const perEnv = this.environmentsToScan().map((env) => scan(env));
+          const truncated = perEnv.some((rows) => rows.length >= METHOD_SEARCH_RESULT_LIMIT);
+          return Promise.resolve({
+            references: dedupeMethodResults(perEnv.flat()),
+            truncated,
+          });
+        } catch (e: unknown) {
+          return Promise.resolve({
+            references: [],
+            scanFailed: e instanceof Error ? e.message : String(e),
+            truncated: false,
+          });
+        }
+      },
+    );
+  }
+
+  // Remove a method from its class (the row's 🗑 button). Guarded by a sender scan: a
+  // selector nothing sends goes without a question and is announced afterwards, while one
+  // that still has senders raises a confirmation naming them (see safeDelete.ts). Nothing
+  // is committed either way (the user commits explicitly, same as every other Explorer
+  // edit). After removal the class's method set changed, so re-cascade the method panes.
   async removeMethod(node: MethodItem): Promise<void> {
     const session = this.session();
     if (!session || this.state.className === undefined) return;
 
     const className = this.state.className;
     const selector = node.info.selector;
+    const side = node.isMeta ? `${className} class` : className;
 
     // Kernel/system classes can't be modified in this repository, so a removal
     // there can only fail. Guard before prompting (mirrors createNewMethod's
@@ -3590,12 +4005,71 @@ export class ExplorerController {
       return;
     }
 
-    const confirmed = await vscode.window.showWarningMessage(
-      `Remove method #${selector} from ${node.isMeta ? `${className} class` : className}?`,
-      { modal: true },
-      'Remove',
-    );
-    if (confirmed !== 'Remove') return;
+    // An override is the common case, and for it the sender scan is both expensive and
+    // beside the point: if a superclass still implements the selector, every send that
+    // resolved here simply resolves there instead and nothing is left calling into a hole.
+    // Asking the hierarchy first is bounded by its depth, where the sender scan is a
+    // whole-image walk that, for an ordinary selector like #printOn:, would list hundreds
+    // of methods that were never going to break.
+    //
+    // The check is deliberately one-directional: finding an implementor above skips the
+    // scan, but failing to find one only means we fall through and ask, so a hierarchy
+    // probe that under-reports (it reads environment 0) costs a question, never a wrong
+    // silent delete.
+    const inheritedFrom = this.superclassImplementorOf(session, className, selector, node.isMeta);
+
+    const scan = inheritedFrom
+      ? { references: [] as queries.MethodSearchResult[], scanFailed: undefined, truncated: false }
+      : await this.scanReferences(`Finding senders of #${selector}…`, (env) =>
+          queries.sendersOf(session, selector, env),
+        );
+    const target: SafeDeleteTarget = {
+      kind: 'method',
+      label: `#${selector} from ${side}`,
+      // The method's own send of its own selector goes away with it, so a recursive method
+      // is not a method with a surviving sender.
+      //
+      // The environment is part of what makes it "its own" send. A class can implement the
+      // same selector on the same side in two environments, and those are two different
+      // methods: only the one being removed disappears. Matching on class/side/selector
+      // alone crossed off the OTHER environment's method as if it were this one's recursion,
+      // hiding a sender that really does survive — the under-report this guard exists to
+      // prevent. The pane removes the environment-0 method (see EXPLORER_METHOD_ENVIRONMENT),
+      // so that is the row, and only that row, which goes away with it.
+      references: scan.references.filter(
+        (r) =>
+          !(
+            r.className === className &&
+            r.isMeta === node.isMeta &&
+            r.selector === selector &&
+            r.environmentId === EXPLORER_METHOD_ENVIRONMENT
+          ),
+      ),
+      scanFailed: scan.scanFailed,
+      truncated: scan.truncated,
+      // Says what actually happens to the senders, rather than the untrue "nothing
+      // referenced it" the plain silent path would report.
+      silentNote: inheritedFrom
+        ? `senders now resolve to ${inheritedFrom} >> #${selector}`
+        : undefined,
+    };
+
+    // One row in the pane can stand for the same selector in several environments, and only
+    // the environment-0 one is removed. Say which are left, on the confirmation and on the
+    // notification alike — a removal that silently leaves an implementation standing is the
+    // kind of thing you find out about much later.
+    const alsoIn = this.otherEnvironmentsImplementing(node.isMeta, selector);
+    if (alsoIn.length > 0) {
+      const envList = alsoIn.map((e) => `environment ${e}`).join(', ');
+      const stays = `${side} also implements #${selector} in ${envList}; only the environment ${EXPLORER_METHOD_ENVIRONMENT} method is removed.`;
+      target.note = target.note ? `${target.note}\n\n${stays}` : stays;
+      target.silentNote = target.silentNote
+        ? `${target.silentNote}; ${side} still implements it in ${envList}`
+        : `${side} still implements it in ${envList}`;
+    }
+
+    const decision = await decideSafeDelete(session.id, target);
+    if (decision === 'cancelled') return;
 
     // deleteMethod reports failure two ways: a non-"Deleted:" status string
     // (class/selector not found) or a raised error (e.g. removeSelector: on an
@@ -3620,6 +4094,7 @@ export class ExplorerController {
       void vscode.window.showErrorMessage(`Remove method failed: ${result}`);
       return;
     }
+    if (decision === 'silent') announceSilentDelete(target);
     this.reloadCurrentClassMethods();
   }
 
@@ -3862,6 +4337,11 @@ export class ExplorerController {
     // delete() consumes just this URI's mark, leaving any other in-flight self-open
     // to still match its own event.
     if (this.selfOpenedUris.delete(uri.toString())) {
+      return;
+    }
+    // Nobody claimed this open and it lands on a test item's document: it is a
+    // click on a row in the Testing view, whose navigation is its own.
+    if (!this.attributedOpens.delete(uri.toString()) && this.sunit?.isTestItemUri(uri)) {
       return;
     }
     const session = this.session();
@@ -4195,7 +4675,9 @@ export class ExplorerController {
   // Classes-pane or Hierarchy-pane row; falls back to the selected class. The delete
   // is dict-scoped (a shadowed name deletes the one the user sees). If the class has
   // subclasses it's all-or-none: confirm removing the whole subtree, or cancel.
-  // Nothing is committed — the user commits the session.
+  // A leaf class nothing references goes without a confirmation and is announced instead
+  // (see safeDelete.ts); references from inside the doomed subtree don't count, since they
+  // go with it. Nothing is committed — the user commits the session.
   async removeClass(item?: ClassItem | HierarchyItem): Promise<void> {
     const session = this.session();
     if (!session) {
@@ -4241,7 +4723,9 @@ export class ExplorerController {
     // holds: if any member can't be located in a dictionary or can't be written, abort
     // deleting nothing rather than half-removing the subtree. The root is already
     // writable-checked above.
-    const targets: { className: string; dictIndex: number }[] = [{ className, dictIndex }];
+    const targets: { className: string; dictName: string; dictIndex: number }[] = [
+      { className, dictName, dictIndex },
+    ];
     const blockers: string[] = [];
     for (const d of descendants) {
       if (d.dictIndex <= 0) {
@@ -4249,7 +4733,7 @@ export class ExplorerController {
       } else if (!queries.canClassBeWritten(session, d.className, d.dictIndex)) {
         blockers.push(`${d.className} (not writable)`);
       } else {
-        targets.push({ className: d.className, dictIndex: d.dictIndex });
+        targets.push({ className: d.className, dictName: d.dictName, dictIndex: d.dictIndex });
       }
     }
     if (blockers.length > 0) {
@@ -4259,29 +4743,44 @@ export class ExplorerController {
       return;
     }
 
-    if (descendants.length > 0) {
-      const names = descendants.map((d) => d.className);
-      const preview =
-        names.slice(0, 8).join(', ') + (names.length > 8 ? `, …(+${names.length - 8} more)` : '');
-      const confirmed = await vscode.window.showWarningMessage(
-        `Remove ${className} and all ${names.length} of its subclass${names.length === 1 ? '' : 'es'}?`,
-        {
-          modal: true,
-          detail:
-            `Subclasses: ${preview}\n\n` +
-            'This removes the whole subtree — all or none. Nothing is committed until you commit the session.',
-        },
-        'Remove All',
-      );
-      if (confirmed !== 'Remove All') return;
-    } else {
-      const confirmed = await vscode.window.showWarningMessage(
-        `Remove class ${className} from ${dictName}?`,
-        { modal: true, detail: 'Nothing is committed until you commit the session.' },
-        'Remove',
-      );
-      if (confirmed !== 'Remove') return;
-    }
+    // A method that references the class from INSIDE the doomed subtree goes away with it
+    // (Doomed class >> new naming Doomed, a subclass's own method), so it is no reason to
+    // ask. What is left is the references that will still be there afterwards.
+    //
+    // A doomed class is identified by name AND home dictionary, never by name alone. The
+    // scan deliberately resolves its target through the dictionary by object identity so a
+    // same-named class elsewhere does not collide; excluding on the bare name puts that
+    // collision straight back, because an unrelated class that merely SHARES a name with
+    // something in the subtree would have its real, surviving reference thrown away — and
+    // the delete would then go through silently as "nothing references it". Over-matching
+    // here is the one failure this guard cannot afford, so the key carries the dictionary.
+    //
+    // The two sides derive a home dictionary by slightly different rules (the descendant
+    // walk takes the first dictionary binding the class object; a result row takes the
+    // first that binds it under its own name, skipping alias entries), so an aliased class
+    // can fail to match. That costs a confirmation that was not strictly needed, which is
+    // the direction to err in: asking too often is a nuisance, not a lost reference.
+    const doomedKey = (className: string, dictName: string) => `${className}|${dictName}`;
+    const doomed = new Set(targets.map((t) => doomedKey(t.className, t.dictName)));
+    const scan = await this.scanReferences(`Finding references to ${className}…`, (env) =>
+      queries.referencesToClassInDict(session, className, dictIndex, env),
+    );
+    const target: SafeDeleteTarget = {
+      kind: 'class',
+      label: `${className} from ${dictName}`,
+      references: scan.references.filter((r) => !doomed.has(doomedKey(r.className, r.dictName))),
+      scanFailed: scan.scanFailed,
+      truncated: scan.truncated,
+      // Subclasses always earn a confirmation: removing the subtree takes classes the user
+      // did not click on, whether or not anything outside references them.
+      blockers: descendants.map((d) => d.className),
+      blockerLead: `Subclass${descendants.length === 1 ? '' : 'es'} removed with it (all or none)`,
+      note: 'Nothing is committed until you commit the session.',
+      confirmLabel: descendants.length > 0 ? 'Remove All' : undefined,
+    };
+
+    const decision = await decideSafeDelete(session.id, target);
+    if (decision === 'cancelled') return;
 
     const failures: string[] = [];
     const removed: string[] = [];
@@ -4321,6 +4820,9 @@ export class ExplorerController {
 
     if (failures.length > 0) {
       void vscode.window.showErrorMessage(`Remove class had errors — ${failures.join('; ')}`);
+    } else if (decision === 'silent') {
+      // Nothing was asked, so the status bar alone is too quiet for a whole class going away.
+      announceSilentDelete(target);
     } else if (targets.length > 1) {
       const n = targets.length - 1;
       void vscode.window.setStatusBarMessage(
@@ -5065,17 +5567,16 @@ class ClassProvider extends RefreshableProvider<ClassNode | FilterChipItem> {
   getChildren(element?: ClassNode | FilterChipItem): (ClassNode | FilterChipItem)[] {
     if (this.ctl.state.dictName === undefined || element instanceof FilterChipItem) return [];
     if (!element) {
-      const rows = this.ctl
-        .classNames()
-        .map(
-          (n) =>
-            new ClassItem(
-              n,
-              this.ctl.classHasDefinedVars(n),
-              this.ctl.classVersion(n),
-              this.ctl.classHasComment(n),
-            ),
+      const rows = this.ctl.classNames().map((n) => {
+        const item = new ClassItem(
+          n,
+          this.ctl.classHasDefinedVars(n),
+          this.ctl.classVersion(n),
+          this.ctl.classHasComment(n),
         );
+        this.ctl.decorateTestRow(item, this.ctl.state.dictName, n);
+        return item;
+      });
       return withFilterChip(VIEW_CLASSES, this.ctl, rows);
     }
     // A class expands to an "instance" and/or "class" variable-side node (like the
@@ -5168,16 +5669,23 @@ class MethodProvider extends RefreshableProvider<MethodNode> {
             nameMatched ||
             this.ctl.methodMatchesFilter(element.isMeta, info.selector, filter),
         )
-        .map(
-          (info) =>
-            new MethodItem(
-              element.isMeta,
-              info,
-              element.category,
-              this.ctl.methodSourceUri(element.isMeta, info),
-              this.ctl.ivarAccessMark(element.isMeta, info.selector, filter),
-            ),
-        );
+        .map((info) => {
+          const item = new MethodItem(
+            element.isMeta,
+            info,
+            element.category,
+            this.ctl.methodSourceUri(element.isMeta, info),
+            this.ctl.ivarAccessMark(element.isMeta, info.selector, filter),
+          );
+          this.ctl.decorateTestRow(
+            item,
+            this.ctl.state.dictName,
+            this.ctl.state.className ?? '',
+            info.selector,
+            element.isMeta,
+          );
+          return item;
+        });
     }
     return [];
   }
@@ -5259,6 +5767,15 @@ export interface ExplorerHandle {
   /** Flash a green ✅ connection-success banner atop the Dictionaries view for a
    * few seconds (called after a successful login). */
   showConnectedBanner(stone: string): void;
+  /** Claim an about-to-happen open so it navigates the panes; see
+   *  ExplorerController.markAttributedOpen. */
+  markAttributedOpen(uri: vscode.Uri): void;
+  /** Drop a claim whose open never fired an editor-change; see
+   *  ExplorerController.clearAttributedOpen. */
+  clearAttributedOpen(uri: vscode.Uri): void;
+  /** Navigate the panes to `uri`'s class/method — the explicit Reveal action a
+   *  Testing-view row offers, since a plain click deliberately does not. */
+  revealDocument(uri: vscode.Uri): Promise<void>;
 }
 
 export function registerGemStoneExplorer(
@@ -5274,13 +5791,30 @@ export function registerGemStoneExplorer(
   // Called once per class that Remove Class actually deleted, so GemStone Search can drop it from its
   // cached corpus instead of showing (and offering to open) a class that no longer exists.
   onClassRemoved?: (sessionId: number, className: string) => void,
+  // Test affordances on class/method rows. Late-bound, because the SUnit controller is
+  // built after this one.
+  sunit?: ExplorerSunitHooks,
 ): ExplorerHandle {
   const ctl = new ExplorerController(
     sessionManager,
     onSymbolListChanged,
     onClassRemoved,
     context.globalState,
+    sunit,
   );
+
+  // A run starting or finishing changes what these rows should say, so repaint the
+  // three panes that carry test affordances. Cheap — the providers rebuild rows from
+  // state already fetched, with no trip to the stone.
+  if (sunit) {
+    context.subscriptions.push(
+      sunit.onDidChangeResults(() => {
+        ctl.classProvider.refresh();
+        ctl.hierarchyProvider.refresh();
+        ctl.methodProvider.refresh();
+      }),
+    );
+  }
 
   // A status-bar "Close All GemStone Editors" button, tallying the open
   // gemstone:// source editors; it is session-independent, so it registers on
@@ -5401,6 +5935,51 @@ export function registerGemStoneExplorer(
     vscode.commands.registerCommand('gemstone.explorer.openMethodToSide', (node: MethodItem) => {
       if (node instanceof MethodItem) void ctl.openMethod(node, 'pin');
     }),
+    // The inline ▶ on a test method row. Runs through the same command the System
+    // Browser uses, so the result lands in the Testing view like every other run.
+    vscode.commands.registerCommand('gemstone.explorer.runTestMethod', (node?: MethodItem) => {
+      if (!(node instanceof MethodItem)) return;
+      const { dictName, className } = ctl.state;
+      if (dictName === undefined || className === undefined) return;
+      void vscode.commands.executeCommand('gemstone.runSunitMethods', dictName, className, [
+        node.info.selector,
+      ]);
+    }),
+    // The mirror of Reveal in GemStone Explorer: go from a row here to the same
+    // test in the Testing view. Offered on the rows that carry a `.test` token,
+    // so it is never on a row the Testing view has nothing for.
+    vscode.commands.registerCommand(
+      'gemstone.explorer.revealInTestingView',
+      async (node?: ClassItem | HierarchyItem | MethodItem) => {
+        if (!node || !sunit) return;
+        const dictName = node instanceof HierarchyItem ? node.dictName : ctl.state.dictName;
+        // A method row names its class through the pane's current selection; a class
+        // or hierarchy row names it directly.
+        const className = node instanceof MethodItem ? ctl.state.className : node.className;
+        const selector = node instanceof MethodItem ? node.info.selector : undefined;
+        if (dictName === undefined || className === undefined) return;
+        if (!(await sunit.revealInTestExplorer(dictName, className, selector))) {
+          void vscode.window.showInformationMessage(
+            `The Testing view has no test for ${className}${selector ? `>>${selector}` : ''}.`,
+          );
+        }
+      },
+    ),
+
+    // The inline ▶ on a test class row, in the Classes pane or the Hierarchy pane.
+    // A hierarchy row carries its own dictionary — an ancestor test class often
+    // lives in a different one than the class being browsed.
+    vscode.commands.registerCommand(
+      'gemstone.explorer.runTestClass',
+      (node?: ClassItem | HierarchyItem) => {
+        const dictName = node instanceof HierarchyItem ? node.dictName : ctl.state.dictName;
+        if (!node || dictName === undefined) return;
+        void vscode.commands.executeCommand('gemstone.runSunitClass', {
+          dictName,
+          className: node.className,
+        });
+      },
+    ),
     vscode.commands.registerCommand('gemstone.explorer.removeMethod', (node?: MethodItem) => {
       if (node instanceof MethodItem)
         void ctl.removeMethod(node).catch((e: unknown) => {
@@ -5650,6 +6229,14 @@ export function registerGemStoneExplorer(
         if (item instanceof ClassVarItem) void ctl.renameClassVariable(item);
       },
     ),
+    // Remove a class variable (lightweight — no reshape/preview; see removeClassVar).
+    vscode.commands.registerCommand('gemstone.explorer.removeClassVar', (item?: ClassVarItem) => {
+      if (!(item instanceof ClassVarItem)) return;
+      void ctl.removeClassVar(item).catch((e: unknown) => {
+        const msg = e instanceof Error ? e.message : String(e);
+        void vscode.window.showErrorMessage(`Remove class variable failed: ${msg}`);
+      });
+    }),
     // Rename a method / selector across implementors and senders (pencil on the
     // method row).
     vscode.commands.registerCommand('gemstone.explorer.renameMethod', (item?: MethodItem) => {
@@ -5882,5 +6469,8 @@ export function registerGemStoneExplorer(
       ctl.onExternalClassCompiled(sessionId, className, dictName),
     onSessionAborted: (sessionId) => ctl.onSessionAborted(sessionId),
     showConnectedBanner,
+    markAttributedOpen: (uri) => ctl.markAttributedOpen(uri),
+    clearAttributedOpen: (uri) => ctl.clearAttributedOpen(uri),
+    revealDocument: (uri) => ctl.revealDocument(uri),
   };
 }

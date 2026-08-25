@@ -84,6 +84,7 @@ describe('GemStoneHoverProvider', () => {
           isMeta: false,
           selector: 'size',
           category: 'accessing',
+          environmentId: 0,
         },
         {
           dictName: 'Globals',
@@ -91,6 +92,7 @@ describe('GemStoneHoverProvider', () => {
           isMeta: false,
           selector: 'size',
           category: 'accessing',
+          environmentId: 0,
         },
       ]);
       mockSendersOf.mockReturnValue(Array.from({ length: 7 }, () => ({}) as never));
@@ -147,6 +149,7 @@ describe('GemStoneHoverProvider', () => {
           isMeta: false,
           selector: 'size',
           category: 'accessing',
+          environmentId: 0,
         },
       ]);
       const resolver: SelectorResolver = { getSelector: vi.fn(async () => 'size') };
@@ -165,6 +168,7 @@ describe('GemStoneHoverProvider', () => {
           isMeta: true,
           selector: 'new',
           category: 'creation',
+          environmentId: 0,
         },
       ]);
       const resolver: SelectorResolver = { getSelector: vi.fn(async () => 'new') };
@@ -182,6 +186,7 @@ describe('GemStoneHoverProvider', () => {
         isMeta: false,
         selector: 'size',
         category: 'accessing',
+        environmentId: 0,
       }));
       mockImplementorsOf.mockReturnValue(results);
       const resolver: SelectorResolver = { getSelector: vi.fn(async () => 'size') };
@@ -213,6 +218,7 @@ describe('GemStoneHoverProvider', () => {
           isMeta: false,
           selector: 'size',
           category: 'accessing',
+          environmentId: 0,
         },
       ]);
       const resolver: SelectorResolver = { getSelector: vi.fn(async () => 'size') };

@@ -55,12 +55,14 @@ What deliberately did **not** change:
 Documentation follows the same rule: the README leads with the Explorer, and the onboarding
 walkthrough and the "Welcome to GemStone Smalltalk" tutorial both point there.
 
-## Known gap
+## Closed gap: running SUnit tests
 
-**Running SUnit tests on a class is browser-only.** `gemstone.runSunitClass` and its siblings are
-dispatched from `systemBrowser.ts`; the Explorer has no equivalent action. It is the one place
-where "prefer the Explorer" costs a real feature, so a user who runs tests from a class still has
-a reason to open the browser. Tracked as [#427](https://github.com/GemTalk/Jasper/issues/427).
+Running tests used to be browser-only, and was the one place where "prefer the Explorer" cost a
+real feature. It no longer is. A test class row — in the Classes pane or the Hierarchy pane — and
+a test method row in the Methods pane each carry an inline ▶, and each shows the outcome of its
+last run. Both dispatch the same `gemstone.runSunitClass` / `gemstone.runSunitMethods` commands
+the System Browser uses, so a run started anywhere reports in the Testing view. See
+[#427](https://github.com/GemTalk/Jasper/issues/427).
 
 ## If you are about to add a feature
 

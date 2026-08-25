@@ -40,6 +40,7 @@ import {
 } from './refactoring/queries/getDefiningClassOfInstVar';
 import { getDefiningClassOfClassVar as sharedGetDefiningClassOfClassVar } from './refactoring/queries/getDefiningClassOfClassVar';
 import { addClassVariable as sharedAddClassVariable } from './refactoring/queries/addClassVariable';
+import { deleteClassVariable as sharedDeleteClassVariable } from './refactoring/queries/deleteClassVariable';
 import {
   addAccessors as sharedAddAccessors,
   Accessor,
@@ -217,10 +218,14 @@ import { gemNrsFor } from './loginTypes';
 import {
   hierarchyImplementorsOf as sharedHierarchyImplementorsOf,
   implementorsOf as sharedImplementorsOf,
+  referencesToClassInDict as sharedReferencesToClassInDict,
   referencesToObject as sharedReferencesToObject,
   searchMethodSource as sharedSearchMethodSource,
   sendersOf as sharedSendersOf,
+  MethodSearchResult,
 } from './queries/methodSearch';
+import { methodsAccessingInstVar as sharedMethodsAccessingInstVar } from './refactoring/queries/methodsAccessingInstVar';
+import { methodsAccessingClassVar as sharedMethodsAccessingClassVar } from './refactoring/queries/methodsAccessingClassVar';
 
 // Write-path shared queries.
 import { compileMethod as sharedCompileMethod } from './queries/compileMethod';
@@ -323,6 +328,10 @@ export async function executeFetchStringNb(
   code: string,
   progressTitle?: string,
   suppressNotification = false,
+  // Handed a `cancel` fn once polling starts — soft break on the first call, hard
+  // on the second. Lets a caller drive the break from its own UI (the Testing
+  // view's stop button, an Explorer row's ■) rather than only the ~2s toast.
+  onStart?: (cancel: () => void) => void,
 ): Promise<string> {
   const { result: inProgress } = session.gci.GciTsCallInProgress(session.handle);
   if (inProgress !== 0) {
@@ -352,7 +361,7 @@ export async function executeFetchStringNb(
       }
       return fetched.data;
     },
-    { title: progressTitle ?? `GemStone: ${label}…`, suppressNotification },
+    { title: progressTitle ?? `GemStone: ${label}…`, suppressNotification, onStart },
   );
 
   return data;
@@ -810,6 +819,20 @@ export function addClassVariable(
   dict?: number | string,
 ): string {
   return sharedAddClassVariable(defaultQueryExecutorUsing(session), className, classVarName, dict);
+}
+
+export function deleteClassVariable(
+  session: ActiveSession,
+  className: string,
+  classVarName: string,
+  dict?: number | string,
+): string {
+  return sharedDeleteClassVariable(
+    defaultQueryExecutorUsing(session),
+    className,
+    classVarName,
+    dict,
+  );
 }
 
 export function addAccessors(
@@ -1982,6 +2005,52 @@ export function referencesToObject(
   environmentId: number = 0,
 ) {
   return sharedReferencesToObject(defaultQueryExecutorUsing(session), objectName, environmentId);
+}
+
+export function referencesToClassInDict(
+  session: ActiveSession,
+  className: string,
+  dict?: number | string,
+  environmentId: number = 0,
+): MethodSearchResult[] {
+  return sharedReferencesToClassInDict(
+    defaultQueryExecutorUsing(session),
+    className,
+    dict,
+    environmentId,
+  );
+}
+
+export function methodsAccessingInstVar(
+  session: ActiveSession,
+  className: string,
+  ivarName: string,
+  dict?: number | string,
+  environmentId: number = 0,
+): MethodSearchResult[] {
+  return sharedMethodsAccessingInstVar(
+    defaultQueryExecutorUsing(session),
+    className,
+    ivarName,
+    dict,
+    environmentId,
+  );
+}
+
+export function methodsAccessingClassVar(
+  session: ActiveSession,
+  className: string,
+  classVarName: string,
+  dict?: number | string,
+  environmentId: number = 0,
+): MethodSearchResult[] {
+  return sharedMethodsAccessingClassVar(
+    defaultQueryExecutorUsing(session),
+    className,
+    classVarName,
+    dict,
+    environmentId,
+  );
 }
 
 // ── Write-path queries (mutations) ─────────────────────────────────────────

@@ -1100,13 +1100,15 @@
           break;
         case 'Enter': {
           // A plain Enter on a focused button is its own click (Load More, case, pin…) — leave it be.
-          if (onButton && !ev.altKey && !ev.ctrlKey && !ev.metaKey) break;
+          if (onButton && !ev.altKey && !ev.ctrlKey && !ev.metaKey && !ev.shiftKey) break;
           var id = activeRowId();
           if (id === null) break;
           ev.preventDefault();
           // Ctrl/Cmd+Enter opens beside (keeps the Spotter visible); Alt+Enter shows references (in
-          // the preview pane, or — flag off — as the classic list pivot).
+          // the preview pane, or — flag off — as the classic list pivot); Shift+Enter selects the
+          // result in the Testing view, for a test class or test method.
           if (ev.altKey) requestReferences(id);
+          else if (ev.shiftKey) post('revealTest', { id: id });
           else post('activate', { id: id, side: ev.ctrlKey || ev.metaKey });
           break;
         }

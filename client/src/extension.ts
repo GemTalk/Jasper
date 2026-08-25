@@ -41,6 +41,7 @@ import {
 } from './enhancedInspector/enhancedInspectorPerfTracker';
 import { CodeExecutor } from './codeExecutor';
 import { SystemBrowser } from './systemBrowser';
+import { showMethodResults as showMethodResultsFor } from './methodResultsPicker';
 import { registerOmniSearch, OmniSearchRegistration } from './omniSearch/omniSearchCommand';
 import {
   startSeasideServer,
@@ -96,7 +97,7 @@ import {
   ClassDefinitionCompiledEvent,
   closeGemstoneTabsForSession,
   installStaleGemstoneTabReaper,
-  buildMethodUri,
+  parseMethodUri,
   parseUri,
 } from './gemstoneFileSystemProvider';
 import { openWorkspace } from './workspace';
@@ -127,6 +128,7 @@ import { showTranscript, getTranscriptChannel } from './transcriptChannel';
 import { getGciLog } from './gciLog';
 import { GemStoneCodeLensProvider } from './gemstoneCodeLensProvider';
 import * as queries from './browserQueries';
+import { dedupeMethodResults } from './queries/methodSearch';
 import { SysadminStorage } from './sysadminStorage';
 import { appendSysadmin, getSysadminChannel } from './sysadminChannel';
 import { VersionManager } from './versionManager';
@@ -563,6 +565,13 @@ export function activate(context: vscode.ExtensionContext) {
   // Set when GemStone Search registers (below); the class-compile and commit/abort handlers call its
   // hooks so an open search re-primes/folds in changes instead of going stale.
   let omniSearch: OmniSearchRegistration | undefined;
+  // Set when the SUnit controller is built (below, after the Explorer). The Explorer
+  // asks it which classes are test classes and how each last ran, so its rows can
+  // offer to run them and show the outcome.
+  let sunitTests: SunitTestController | undefined;
+  // Relays the controller's result changes to the Explorer, which is registered first.
+  const sunitResultsChanged = new vscode.EventEmitter<void>();
+  context.subscriptions.push(sunitResultsChanged);
   // Create every output channel up front — not lazily on first use — so the
   // full set is discoverable in the Output view's channel dropdown from
   // activation. (The Class Sync channel is created just after ExportManager is
@@ -769,6 +778,17 @@ export function activate(context: vscode.ExtensionContext) {
     // A removed class has to leave GemStone Search's cached class corpus the same way, but one class at a
     // time — Remove Class takes the whole subtree with it.
     (sid, className) => omniSearch?.notifyClassRemoved(sid, className),
+    {
+      isTestClass: (dictName, className) => sunitTests?.isTestClass(dictName, className) ?? false,
+      isTestItemUri: (uri) => sunitTests?.isTestItemUri(uri) ?? false,
+      resultFor: (dictName, className, selector) =>
+        sunitTests?.resultFor(dictName, className, selector),
+      // The controller is built after this one, so subscribe through a forwarder
+      // rather than handing over an event that does not exist yet.
+      onDidChangeResults: (listener) => sunitResultsChanged.event(listener),
+      revealInTestExplorer: async (dictName, className, selector) =>
+        (await sunitTests?.revealInTestExplorer(dictName, className, selector)) ?? false,
+    },
   );
 
   // ── GemStone FileSystem Provider ─────────────────────────
@@ -944,19 +964,54 @@ export function activate(context: vscode.ExtensionContext) {
     }),
   );
 
+  // ── Code Execution ─────────────────────────────────────
+  // Constructed before the SUnit controller, which borrows its debug-enabled
+  // execution path to run a single test under the debugger.
+  const codeExecutor = new CodeExecutor(sessionManager);
+  context.subscriptions.push(codeExecutor);
+
   // ── SUnit Test Controller ────────────────────────────────
-  const sunitTestController = new SunitTestController(sessionManager);
-  context.subscriptions.push(sunitTestController);
+  // Assigned through `sunitTests` so the Explorer's late-bound predicate (declared
+  // at the top of activate) can reach it; the Explorer is registered before this.
+  const sunitTestController = (sunitTests = new SunitTestController(sessionManager, codeExecutor));
+  context.subscriptions.push(
+    sunitTestController,
+    sunitTestController.onDidChangeResults(() => sunitResultsChanged.fire()),
+  );
+
+  // Keep the pass/fail indicators honest. A compiled method or class definition
+  // means the outcome shown beside it predates the code now in the stone: the
+  // recompiled thing's own result is dropped, and everything still showing a
+  // result is marked stale (see SunitTestController.invalidateForMethod).
+  context.subscriptions.push(
+    gemstoneFs.onMethodCompiled((e) => {
+      const method = parseMethodUri(e.uri);
+      if (method) {
+        sunitTestController.invalidateForMethod(method.dictName, method.className, method.selector);
+      }
+    }),
+    gemstoneFs.onClassDefinitionCompiled((e) => {
+      // parts: ['', dictName, className, 'definition', …]
+      const parts = e.uri.path.split('/').map(decodeURIComponent);
+      if (parts.length >= 3) sunitTestController.invalidateForClass(parts[1], parts[2]);
+    }),
+  );
+
+  // A test class lists its methods lazily, but VS Code only draws a gutter run
+  // icon for a test item it already knows about. Someone who opens a test method
+  // from the Explorer never expands the Testing view's class row, so resolve on
+  // open instead of leaving them with no icon.
+  context.subscriptions.push(
+    vscode.window.onDidChangeActiveTextEditor((editor) => {
+      void sunitTestController.ensureTestsForDocument(editor?.document.uri);
+    }),
+  );
 
   // ── Jupyter Notebook Kernels (Grail Python + Smalltalk) ─
   const grailNotebookController = new GrailNotebookController(sessionManager);
   context.subscriptions.push(grailNotebookController);
   const smalltalkNotebookController = new SmalltalkNotebookController(sessionManager);
   context.subscriptions.push(smalltalkNotebookController);
-
-  // ── Code Execution ─────────────────────────────────────
-  const codeExecutor = new CodeExecutor(sessionManager);
-  context.subscriptions.push(codeExecutor);
 
   // ── Status Bar: Active Session ─────────────────────────
   const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
@@ -1216,38 +1271,16 @@ export function activate(context: vscode.ExtensionContext) {
     });
   }
 
-  async function showMethodResults(
+  // Thin adapter over the shared picker (methodResultsPicker.ts), which the safe-delete
+  // confirmation shares: every caller here has the session, not just its id. Returns the
+  // picker's promise directly rather than awaiting it — these callers ignore whether
+  // anything was opened, and an async wrapper would add a tick for nothing.
+  function showMethodResults(
     session: { id: number },
     results: queries.MethodSearchResult[],
     title: string,
-  ): Promise<void> {
-    if (results.length === 0) {
-      vscode.window.showInformationMessage(`${title}: no results found.`);
-      return;
-    }
-
-    const items = results.map((r) => ({
-      label: `${r.className}${r.isMeta ? ' class' : ''} >> #${r.selector}`,
-      description: r.category,
-      detail: r.dictName,
-      result: r,
-    }));
-
-    const picked = await vscode.window.showQuickPick(items, {
-      placeHolder: `${results.length} method${results.length === 1 ? '' : 's'} found`,
-      matchOnDescription: true,
-      matchOnDetail: true,
-    });
-    if (!picked) return;
-
-    const r = picked.result;
-    // If a System Browser is open for this session, navigate it to the selected
-    // method (updates all 5 columns) and open the method editor from there.
-    // Otherwise fall back to opening the document directly.
-    if (!SystemBrowser.navigateTo(session.id, r)) {
-      const uri = buildMethodUri({ kind: 'method', sessionId: session.id, ...r, environmentId: 0 });
-      vscode.commands.executeCommand('gemstone.openDocument', uri);
-    }
+  ): Promise<boolean> {
+    return showMethodResultsFor(session.id, results, title);
   }
 
   // Commit / Abort a session, with the same confirmations and post-action
@@ -1345,16 +1378,28 @@ export function activate(context: vscode.ExtensionContext) {
         uri: vscode.Uri,
         opts?: { viewColumn?: vscode.ViewColumn; preserveFocus?: boolean; preview?: boolean },
       ) => {
-        const doc = await vscode.workspace.openTextDocument(uri);
-        // `opts` is optional and back-compatible: existing callers pass only the uri and get the
-        // prior behavior (preview in the active group). GemStone Search's Spotter passes a column +
-        // preserveFocus so a result opens BESIDE the panel, and (when pinned) preview:false so it's
-        // a regular, persistent source editor rather than a throwaway preview tab.
-        await vscode.window.showTextDocument(doc, {
-          preview: opts?.preview ?? true,
-          viewColumn: opts?.viewColumn,
-          preserveFocus: opts?.preserveFocus,
-        });
+        // Claim the open: without this the Explorer reads an open of a test method's
+        // document as a Testing-view row click and leaves its panes where they were.
+        explorer.markAttributedOpen(uri);
+        try {
+          const doc = await vscode.workspace.openTextDocument(uri);
+          // `opts` is optional and back-compatible: existing callers pass only the uri and get the
+          // prior behavior (preview in the active group). GemStone Search's Spotter passes a column +
+          // preserveFocus so a result opens BESIDE the panel, and (when pinned) preview:false so it's
+          // a regular, persistent source editor rather than a throwaway preview tab.
+          await vscode.window.showTextDocument(doc, {
+            preview: opts?.preview ?? true,
+            viewColumn: opts?.viewColumn,
+            preserveFocus: opts?.preserveFocus,
+          });
+        } finally {
+          // A successful, focus-taking open fires an editor-change that syncToEditor
+          // consumes, making this a no-op. But if the open threw, kept focus
+          // (preserveFocus), or the document was already active, no change fires and
+          // the claim would linger — later hijacking a genuine Testing-view click on
+          // the same method. Drop any unconsumed claim here.
+          explorer.clearAttributedOpen(uri);
+        }
       },
     ),
 
@@ -1956,6 +2001,7 @@ export function activate(context: vscode.ExtensionContext) {
         isMeta: false,
         selector: '',
         category: '',
+        environmentId: 0,
       });
     }),
 
@@ -2242,6 +2288,52 @@ export function activate(context: vscode.ExtensionContext) {
       showTranscript();
     }),
 
+    // Offered on a row in the Testing view. A plain click there deliberately does
+    // not move the Explorer (the two navigations are independent), so this is how
+    // you ask for it.
+    vscode.commands.registerCommand(
+      'gemstone.revealTestInExplorer',
+      async (item?: { uri?: vscode.Uri }) => {
+        if (item?.uri) await explorer.revealDocument(item.uri);
+      },
+    ),
+
+    // Offered from menus rather than as a button, so it takes no room from the rows
+    // it is about. Two stores hold outcomes and both have to go: ours, which paints
+    // the Explorer rows, and VS Code's own run history, which paints the Testing
+    // view — clearing only ours leaves the tester still showing the old verdicts.
+    // Shift+Enter in GemStone Search, and anywhere else that knows a class/selector
+    // but not a test item. Says so when the Testing view has nothing for it, rather
+    // than appearing to do nothing.
+    vscode.commands.registerCommand(
+      'gemstone.revealTestInTestingView',
+      async (dictName: string, className: string, selector?: string) => {
+        if (!(await sunitTestController.revealInTestExplorer(dictName, className, selector))) {
+          void vscode.window.showInformationMessage(
+            `The Testing view has no test for ${className}${selector ? `>>${selector}` : ''}.`,
+          );
+        }
+      },
+    ),
+
+    // The ■ that replaces a row's ▶ while its test is running. Soft break first,
+    // hard break if pressed again — the same escalation the progress toast offers.
+    vscode.commands.registerCommand('gemstone.explorer.stopTest', () => {
+      if (!sunitTestController.cancelActiveRun()) {
+        void vscode.window.showInformationMessage('No GemStone test run to stop.');
+      }
+    }),
+
+    vscode.commands.registerCommand('gemstone.clearTestResults', async () => {
+      sunitTestController.clearResults();
+      try {
+        await vscode.commands.executeCommand('testing.clearTestResults');
+      } catch {
+        // A built-in command id we don't own. If a VS Code release renames it, the
+        // Explorer icons still clear rather than the whole command failing.
+      }
+    }),
+
     vscode.commands.registerCommand(
       'gemstone.runSunitClass',
       async (args: { dictName: string; className: string }) => {
@@ -2301,13 +2393,7 @@ export function activate(context: vscode.ExtensionContext) {
         for (let env = 0; env <= maxEnv; env++) {
           all.push(...queries.sendersOf(session, args.selector, env));
         }
-        const seen = new Set<string>();
-        const results = all.filter((r) => {
-          const key = `${r.className}|${r.isMeta}|${r.selector}`;
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        });
+        const results = dedupeMethodResults(all);
         await showMethodResults(session, results, `Senders of #${args.selector}`);
       },
     ),
@@ -2324,13 +2410,7 @@ export function activate(context: vscode.ExtensionContext) {
         for (let env = 0; env <= maxEnv; env++) {
           all.push(...queries.implementorsOf(session, args.selector, env));
         }
-        const seen = new Set<string>();
-        const results = all.filter((r) => {
-          const key = `${r.className}|${r.isMeta}|${r.selector}`;
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        });
+        const results = dedupeMethodResults(all);
         await showMethodResults(session, results, `Implementors of #${args.selector}`);
       },
     ),
@@ -2364,13 +2444,7 @@ export function activate(context: vscode.ExtensionContext) {
             ),
           );
         }
-        const seen = new Set<string>();
-        const results = all.filter((r) => {
-          const key = `${r.className}|${r.isMeta}|${r.selector}`;
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        });
+        const results = dedupeMethodResults(all);
         const side = args.isMeta ? ' class' : '';
         const title =
           args.direction === 'up'
@@ -2392,13 +2466,7 @@ export function activate(context: vscode.ExtensionContext) {
         for (let env = 0; env <= maxEnv; env++) {
           all.push(...queries.referencesToObject(session, args.objectName, env));
         }
-        const seen = new Set<string>();
-        const results = all.filter((r) => {
-          const key = `${r.className}|${r.isMeta}|${r.selector}`;
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        });
+        const results = dedupeMethodResults(all);
         await showMethodResults(session, results, `References to ${args.objectName}`);
       },
     ),
@@ -2478,16 +2546,7 @@ export function activate(context: vscode.ExtensionContext) {
             for (let env = 0; env <= maxEnv; env++) {
               all.push(...queries.sendersOf(session, selector, env));
             }
-            // Deduplicate by class+meta+selector
-            const seen = new Set<string>();
-            return Promise.resolve(
-              all.filter((r) => {
-                const key = `${r.className}|${r.isMeta}|${r.selector}`;
-                if (seen.has(key)) return false;
-                seen.add(key);
-                return true;
-              }),
-            );
+            return Promise.resolve(dedupeMethodResults(all));
           },
         );
       } catch (e: unknown) {
@@ -2521,15 +2580,7 @@ export function activate(context: vscode.ExtensionContext) {
             for (let env = 0; env <= maxEnv; env++) {
               all.push(...queries.implementorsOf(session, selector, env));
             }
-            const seen = new Set<string>();
-            return Promise.resolve(
-              all.filter((r) => {
-                const key = `${r.className}|${r.isMeta}|${r.selector}`;
-                if (seen.has(key)) return false;
-                seen.add(key);
-                return true;
-              }),
-            );
+            return Promise.resolve(dedupeMethodResults(all));
           },
         );
       } catch (e: unknown) {
