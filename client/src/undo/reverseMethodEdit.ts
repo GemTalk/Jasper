@@ -19,7 +19,7 @@ import { logInfo } from '../gciLog';
 import { applyMethodSlotOps, captureMethodSlots } from './queries/methodSlotQueries';
 import { describeOps, driftedSlots, planReversal } from './methodSlotPlan';
 import { MethodEditUndoEntry, slotLabel } from './undoTypes';
-import { refreshExplorer, reloadVisibleGemstoneEditors, revealMethod } from './afterUndo';
+import { refreshExplorer, refreshSearch, reloadGemstoneEditors, revealMethod } from './afterUndo';
 
 /** Whether the entry is finished with — true when it was reversed (or found already
  *  reversed), false when the user backed out or the reversal could not run at all, so
@@ -73,11 +73,12 @@ export async function reverseMethodEdit(
   const succeeded = results.filter((r) => r.error === null).map((r) => r.op);
 
   await refreshExplorer();
+  await refreshSearch(session.id);
   const landOn = succeeded.find((op) => op.kind === 'restore') ?? succeeded[0];
   if (landOn && landOn.kind !== 'remove') {
     await revealMethod(landOn.slot.className, landOn.slot.selector, landOn.slot.isMeta);
   }
-  await reloadVisibleGemstoneEditors();
+  await reloadGemstoneEditors();
 
   if (failures.length > 0) {
     const first = failures[0];

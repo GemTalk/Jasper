@@ -6,6 +6,7 @@ import {
   createUndoStatusBarItem,
   setUndoStatusBarItem,
   refreshUndoUi,
+  REVERT_AVAILABLE_CONTEXT_KEY,
   UNDO_AVAILABLE_CONTEXT_KEY,
   UNDO_COMMAND,
 } from '../undoUi';
@@ -178,18 +179,59 @@ describe('the undo status-bar button', () => {
     expect(item.show).not.toHaveBeenCalled();
   });
 
-  it('publishes the context key alongside, so the Explorer button tracks it', () => {
+  /** What `setContext` was last told about a key. */
+  const contextKey = (key: string): unknown => {
+    const calls = vi
+      .mocked(vscode.commands.executeCommand)
+      .mock.calls.filter((c) => c[0] === 'setContext' && c[1] === key);
+    return calls.length > 0 ? calls[calls.length - 1][2] : undefined;
+  };
+
+  const pushClassEdit = (): void => {
+    pushUndoEntry({
+      kind: 'classEdit',
+      sessionId: session.id,
+      label: 'Redefine class Account',
+      slots: [{ dict: 'UserGlobals', className: 'Account' }],
+      before: [{ bound: true, oop: '1', selectors: [] }],
+      after: [{ bound: true, oop: '2', selectors: [] }],
+      stashKeys: ['k1'],
+    });
+  };
+
+  it('offers the UNDO icon for a method edit, and not the revert one', () => {
+    // A contributed menu title is a fixed string, so the title-bar icons and the palette
+    // cannot name the change. The verb is the part they CAN follow: one command per verb,
+    // gated on these two booleans, so exactly one icon is ever showing.
     const item = fakeItem();
     setUndoStatusBarItem(item as never);
     recordSomething('x');
 
     refreshUndoUi(session);
 
-    expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
-      'setContext',
-      UNDO_AVAILABLE_CONTEXT_KEY,
-      true,
-    );
+    expect(contextKey(UNDO_AVAILABLE_CONTEXT_KEY)).toBe(true);
+    expect(contextKey(REVERT_AVAILABLE_CONTEXT_KEY)).toBe(false);
+  });
+
+  it('offers the REVERT icon for a class edit, so no affordance promises an undo', () => {
+    const item = fakeItem();
+    setUndoStatusBarItem(item as never);
+    pushClassEdit();
+
+    refreshUndoUi(session);
+
+    expect(contextKey(REVERT_AVAILABLE_CONTEXT_KEY)).toBe(true);
+    expect(contextKey(UNDO_AVAILABLE_CONTEXT_KEY)).toBe(false);
+  });
+
+  it('offers neither when there is nothing to reverse', () => {
+    const item = fakeItem();
+    setUndoStatusBarItem(item as never);
+
+    refreshUndoUi(session);
+
+    expect(contextKey(UNDO_AVAILABLE_CONTEXT_KEY)).toBe(false);
+    expect(contextKey(REVERT_AVAILABLE_CONTEXT_KEY)).toBe(false);
   });
 
   it('does not fall over when no status item has been created', () => {

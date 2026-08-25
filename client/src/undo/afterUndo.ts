@@ -4,18 +4,52 @@
  * Shared by every reverser — a method edit, a class edit, a refactoring — because the
  * problem is the same whichever it was: the stone has changed underneath whatever the user is looking at,
  * and a pane or editor still showing the pre-undo text is how an undo gets silently
- * re-done on the next save.
+ * re-done on the next save. The Explorer, the open editors and GemStone Search all cache
+ * what they show, so all three have to be told.
  */
 import * as vscode from 'vscode';
 
 /**
- * Reload every VISIBLE GemStone editor that has no unsaved edits, so an undone method
- * shows its restored source instead of the edited one.
+ * The command that tells the `gemstone://` file system provider its resources changed.
+ * Internal — deliberately not contributed in `package.json`.
+ */
+export const FS_CHANGED_COMMAND = 'gemstone.fs.notifyChanged';
+
+/** Announce that these `gemstone://` resources changed underneath VS Code. Best-effort —
+ *  the provider may not be registered. */
+async function announceGemstoneFilesChanged(uris: vscode.Uri[]): Promise<void> {
+  if (uris.length === 0) return;
+  try {
+    await vscode.commands.executeCommand(FS_CHANGED_COMMAND, uris);
+  } catch {
+    /* the file system provider may not be registered */
+  }
+}
+
+/**
+ * Put every open GemStone editor back in step with the stone after an undo.
  *
- * Dirty editors are left alone: reverting one would discard the user's typing, and an
+ * Two mechanisms, because they cover different editors:
+ *
+ *  - a CHANGE NOTIFICATION for every open clean `gemstone://` document. This is the same
+ *    signal a save already sends (`writeFile` fires it on the provider), and an undo
+ *    recompiles straight over GCI rather than through the provider — so without it VS Code
+ *    has no reason to believe the source it is showing is stale, and an undone method goes
+ *    on displaying the text the undo just discarded. It reaches tabs in every group and
+ *    tabs that are not on top, and it needs no focus.
+ *  - an explicit REVERT of the visible editors, which is the belt-and-braces that was here
+ *    first: it forces a re-read rather than relying on VS Code to act on the notification.
+ *
+ * Dirty editors are left out of both: reverting one would discard the user's typing, and an
  * undo of something else is not licence to do that. Focus is put back where it started.
  */
-export async function reloadVisibleGemstoneEditors(): Promise<void> {
+export async function reloadGemstoneEditors(): Promise<void> {
+  await announceGemstoneFilesChanged(
+    vscode.workspace.textDocuments
+      .filter((d) => d.uri.scheme === 'gemstone' && !d.isDirty)
+      .map((d) => d.uri),
+  );
+
   const active = vscode.window.activeTextEditor;
   const targets = vscode.window.visibleTextEditors.filter(
     (e) => e.document.uri.scheme === 'gemstone' && !e.document.isDirty,
@@ -34,6 +68,32 @@ export async function reloadVisibleGemstoneEditors(): Promise<void> {
     } catch {
       /* best-effort */
     }
+  }
+}
+
+/**
+ * The command that rebuilds GemStone Search's cached corpora. Internal — deliberately not
+ * contributed in `package.json`, since there is nothing for a user to invoke here.
+ */
+export const SEARCH_RESYNC_COMMAND = 'gemstone.omniSearch.resync';
+
+/**
+ * Put GemStone Search back in step with the stone.
+ *
+ * Search caches its class list rather than re-reading it per keystroke, and an undo binds
+ * and unbinds classes behind that cache. Without this, a class an undo removed keeps being
+ * offered as a hit, and opening it lands on `Class not found` — the search panel showing a
+ * class the Explorer no longer has.
+ *
+ * The same blunt resync a commit or an abort does: an undo can restore a class, remove one,
+ * restore a method or take one away, and folding each of those in per corpus would be a
+ * second, subtler copy of the reversal planner. Best-effort — search may not be registered.
+ */
+export async function refreshSearch(sessionId: number): Promise<void> {
+  try {
+    await vscode.commands.executeCommand(SEARCH_RESYNC_COMMAND, sessionId);
+  } catch {
+    /* GemStone Search may not be registered */
   }
 }
 

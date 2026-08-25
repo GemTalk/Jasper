@@ -29,7 +29,7 @@ import {
   planClassReversal,
 } from './classSlotPlan';
 import { ClassEditUndoEntry, classSlotLabel } from './undoTypes';
-import { refreshExplorer, reloadVisibleGemstoneEditors } from './afterUndo';
+import { refreshExplorer, refreshSearch, reloadGemstoneEditors } from './afterUndo';
 
 /** Whether the entry is finished with — true when it was reverted (or found already
  *  reverted), false when the user backed out or it could not run at all. */
@@ -86,6 +86,7 @@ export async function reverseClassEdit(
   const succeeded = results.filter((r) => r.error === null).map((r) => r.op);
 
   await refreshExplorer();
+  await refreshSearch(session.id);
   const landOn = succeeded.find((op) => op.kind === 'rebind');
   if (landOn) {
     try {
@@ -94,7 +95,7 @@ export async function reverseClassEdit(
       /* the Explorer may not be active */
     }
   }
-  await reloadVisibleGemstoneEditors();
+  await reloadGemstoneEditors();
 
   if (failures.length > 0) {
     const first = failures[0];

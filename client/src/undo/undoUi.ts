@@ -9,8 +9,13 @@
  * The button is PURPLE (`charts.purple`, a real theme colour, so it reads correctly in
  * light and dark) against a row of otherwise neutral status-bar items, and carries a text
  * label rather than a bare glyph, because a glyph with no owner is a mystery. The tooltip
- * names both GemStone and the specific thing that would be undone — which is exactly what
- * a contributed menu title cannot do, since those are static.
+ * names both GemStone and the specific thing that would be undone.
+ *
+ * The title-bar icons and the palette entry cannot name it: a contributed menu title is a
+ * fixed string in `package.json`, so nothing there can carry the entry's label. What they can
+ * do is choose between two contributed commands on a context key, which is what
+ * `UNDO_AVAILABLE_CONTEXT_KEY` / `REVERT_AVAILABLE_CONTEXT_KEY` are for — so every affordance
+ * agrees on the VERB even though only the status bar can name the change.
  *
  * The VERB follows the entry. A class edit is reversed by binding the earlier version
  * again, which is a revert and not a rollback, and every message that action produces says
@@ -34,8 +39,21 @@ import { UndoEntry } from './undoTypes';
 /** The command every Undo affordance runs. */
 export const UNDO_COMMAND = 'gemstone.undoLast';
 
-/** The context key the Explorer title-bar button and the palette entry gate on. */
+/**
+ * The two context keys the title-bar icons and the palette entries gate on: exactly one is
+ * true while there is something to reverse, and both are false when there is not.
+ *
+ * They exist because a CONTRIBUTED menu title is a fixed string in `package.json` — the icons
+ * and the palette cannot name the specific change the way the status-bar tooltip does. What
+ * they CAN do is pick between two contributed commands, so the VERB at least agrees with the
+ * status bar rather than promising an undo and handing the user a revert.
+ *
+ * Two BOOLEANS rather than one key holding the verb: a boolean is the plainest thing a `when`
+ * clause can test, it is how every other condition in this manifest is written, and it leaves
+ * no question about how a value is quoted or compared.
+ */
 export const UNDO_AVAILABLE_CONTEXT_KEY = 'gemstone.undoAvailable';
+export const REVERT_AVAILABLE_CONTEXT_KEY = 'gemstone.revertAvailable';
 
 let statusItem: vscode.StatusBarItem | undefined;
 
@@ -64,10 +82,12 @@ export function setUndoStatusBarItem(item: vscode.StatusBarItem | undefined): vo
  */
 export function refreshUndoUi(session: ActiveSession | undefined): void {
   const entry = peekUndoEntry(session?.id);
+  const verb = entry ? undoVerb(entry) : undefined;
+  void vscode.commands.executeCommand('setContext', UNDO_AVAILABLE_CONTEXT_KEY, verb === 'Undo');
   void vscode.commands.executeCommand(
     'setContext',
-    UNDO_AVAILABLE_CONTEXT_KEY,
-    entry !== undefined,
+    REVERT_AVAILABLE_CONTEXT_KEY,
+    verb === 'Revert',
   );
   if (!statusItem) return;
   if (!session) {

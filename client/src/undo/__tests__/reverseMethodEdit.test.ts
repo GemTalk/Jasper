@@ -8,13 +8,14 @@ vi.mock('../queries/methodSlotQueries', () => ({
 }));
 vi.mock('../afterUndo', () => ({
   refreshExplorer: vi.fn(),
-  reloadVisibleGemstoneEditors: vi.fn(),
+  refreshSearch: vi.fn(),
+  reloadGemstoneEditors: vi.fn(),
   revealMethod: vi.fn(),
 }));
 
 import * as vscode from 'vscode';
 import { applyMethodSlotOps, captureMethodSlots } from '../queries/methodSlotQueries';
-import { revealMethod } from '../afterUndo';
+import { refreshSearch, revealMethod } from '../afterUndo';
 import { reverseMethodEdit } from '../reverseMethodEdit';
 import { MethodEditUndoEntry, MethodSlotState } from '../undoTypes';
 import type { ActiveSession } from '../../sessionManager';
@@ -113,6 +114,16 @@ describe('reverseMethodEdit', () => {
     await reverseMethodEdit(session, entry([gone], [has('balance ^1')]));
 
     expect(revealMethod).not.toHaveBeenCalled();
+  });
+
+  it('resyncs GemStone Search, which caches what it searches', async () => {
+    // A method the undo took away, or put back, changes what a source or selector search
+    // should find. Search caches; it has to be told.
+    vi.mocked(captureMethodSlots).mockReturnValue([gone]);
+
+    await reverseMethodEdit(session, entry([has('balance ^1')], [gone]));
+
+    expect(refreshSearch).toHaveBeenCalledWith(session.id);
   });
 
   it('reports a failed reversal, and still uses the entry up', async () => {

@@ -31,7 +31,12 @@ import {
 import { showUndoRefactoringPanel } from './undoRefactoringPanel';
 import { ensureRbSupport, refuse } from './renameAtCursorShared';
 import { checkRefactoringUndoAvailable } from './refactoringUndoAvailability';
-import { refreshExplorer, reloadVisibleGemstoneEditors, revealMethod } from '../undo/afterUndo';
+import {
+  refreshExplorer,
+  refreshSearch,
+  reloadGemstoneEditors,
+  revealMethod,
+} from '../undo/afterUndo';
 import { logInfo } from '../gciLog';
 
 /**
@@ -150,8 +155,9 @@ export async function undoLastRefactoringCommand(sessions: SessionManager): Prom
   }
 
   await refreshExplorer();
+  await refreshSearch(session.id);
   await revealWhatCameBack(start);
-  await reloadVisibleGemstoneEditors();
+  await reloadGemstoneEditors();
 
   if (result.failed.length > 0) {
     const first = result.failed[0];

@@ -88,6 +88,7 @@ import { refreshEnhancedInspectorAvailable } from './enhancedInspector/enhancedI
 import { refreshRefactoringSupportAvailable } from './refactoring/refactoringAvailability';
 import { refreshUndoUi, createUndoStatusBarItem } from './undo/undoUi';
 import { undoLastCommand } from './undo/undoLastCommand';
+import { FS_CHANGED_COMMAND, SEARCH_RESYNC_COMMAND } from './undo/afterUndo';
 import { clearUndoStack, onUndoStackChanged } from './undo/undoStack';
 import { supportsEnhancedInspector } from './enhancedInspector/enhancedInspectorInstall';
 import { DebuggerPanel } from './debuggerPanel';
@@ -1027,7 +1028,7 @@ export function activate(context: vscode.ExtensionContext) {
   );
   updateRefactoringSupportContext();
 
-  // Drive `gemstone.undoAvailable` the same way. The undo stack is per session, so
+  // Drive `gemstone.undoAvailable` / `gemstone.revertAvailable` the same way. The undo stack is per session, so
   // switching sessions switches which undo (if any) is on offer.
   context.subscriptions.push(
     sessionManager.onDidChangeSelection(() => refreshUndoUi(sessionManager.getSelectedSession())),
@@ -1396,11 +1397,35 @@ export function activate(context: vscode.ExtensionContext) {
     }),
 
     // Undo the last thing done in this session -- a method edit or an applied refactoring
-    // (#434). Reached four ways: the purple status-bar button, the Undo button on the
-    // post-apply toast, this palette entry, and the Explorer title-bar button -- all of
-    // which land in the one dispatcher.
+    // (#434). Reached five ways: the purple status-bar button, the Undo button on the
+    // post-apply toast, the palette entry, the Explorer title-bar button and the one on an
+    // open method editor -- all of which land in the one dispatcher.
     vscode.commands.registerCommand('gemstone.undoLast', async () => {
       await undoLastCommand(sessionManager);
+    }),
+
+    // The same dispatcher under a second name, so the title-bar icon and the palette can say
+    // "Revert" for a class edit (#434). A contributed menu title is a fixed string, so the
+    // only way for those affordances to agree with the status bar on the VERB is to have one
+    // command per verb and gate them on `gemstone.undoVerb`. Nothing else differs: whichever
+    // is invoked reverses whatever is on top of the stack.
+    vscode.commands.registerCommand('gemstone.revertLast', async () => {
+      await undoLastCommand(sessionManager);
+    }),
+
+    // An undo binds and unbinds classes behind GemStone Search's cached corpora, so without
+    // this a class the undo removed goes on being offered as a hit and opening it lands on
+    // "Class not found" (#434). Internal -- not contributed in package.json -- and called by
+    // every reverser through `refreshSearch`.
+    vscode.commands.registerCommand(SEARCH_RESYNC_COMMAND, (sessionId: number) => {
+      omniSearch?.notifySessionSynced(sessionId);
+    }),
+
+    // An undo recompiles over GCI rather than through the file system provider, so VS Code is
+    // never told the resource changed and a clean editor keeps showing the discarded source
+    // (#434). Internal -- not contributed in package.json.
+    vscode.commands.registerCommand(FS_CHANGED_COMMAND, (uris: vscode.Uri[]) => {
+      gemstoneFs.notifyChanged(uris);
     }),
 
     vscode.commands.registerCommand(

@@ -8,12 +8,14 @@ vi.mock('../queries/classSlotQueries', () => ({
 }));
 vi.mock('../afterUndo', () => ({
   refreshExplorer: vi.fn(),
-  reloadVisibleGemstoneEditors: vi.fn(),
+  refreshSearch: vi.fn(),
+  reloadGemstoneEditors: vi.fn(),
   revealMethod: vi.fn(),
 }));
 
 import * as vscode from 'vscode';
 import { applyClassSlotOps, captureClassSlots } from '../queries/classSlotQueries';
+import { refreshSearch } from '../afterUndo';
 import { reverseClassEdit } from '../reverseClassEdit';
 import { ClassEditUndoEntry, ClassSlotState } from '../undoTypes';
 import type { ActiveSession } from '../../sessionManager';
@@ -71,6 +73,26 @@ describe('reverseClassEdit', () => {
       expect(notice).toContain('keeps its history');
       expect(notice).toContain('NOT committed');
     });
+  });
+
+  it('resyncs GemStone Search, which caches the class list', async () => {
+    // Unbinding a class the user just created leaves the search panel offering it as a hit;
+    // opening that hit lands on "Class not found". Search has to be told, same as the
+    // Explorer.
+    vi.mocked(captureClassSlots).mockReturnValue([bound('2')]);
+
+    await reverseClassEdit(session, entry([unbound], [bound('2')]));
+
+    expect(refreshSearch).toHaveBeenCalledWith(session.id);
+  });
+
+  it('leaves GemStone Search alone when the user backs out', async () => {
+    vi.mocked(captureClassSlots).mockReturnValue([bound('2', ['writtenLater'])]);
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(undefined);
+
+    await reverseClassEdit(session, entry([bound('1')], [bound('2')]));
+
+    expect(refreshSearch).not.toHaveBeenCalled();
   });
 
   it('names what would be left behind, and backs out if refused', async () => {

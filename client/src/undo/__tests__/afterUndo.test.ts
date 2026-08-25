@@ -2,7 +2,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 
 import * as vscode from 'vscode';
-import { refreshExplorer, reloadVisibleGemstoneEditors, revealMethod } from '../afterUndo';
+import {
+  FS_CHANGED_COMMAND,
+  refreshExplorer,
+  refreshSearch,
+  reloadGemstoneEditors,
+  revealMethod,
+  SEARCH_RESYNC_COMMAND,
+} from '../afterUndo';
 
 /**
  * Putting the IDE back in step (#434).
@@ -17,21 +24,30 @@ function editor(scheme: string, isDirty: boolean, id = scheme) {
   return { document: { uri: { scheme, toString: () => id }, isDirty } };
 }
 
+/** Open documents, as `vscode.workspace.textDocuments` reports them. */
+function openDocuments(...docs: { document: { uri: unknown; isDirty: boolean } }[]) {
+  Object.defineProperty(vscode.workspace, 'textDocuments', {
+    value: docs.map((e) => e.document),
+    writable: true,
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(vscode.window.showTextDocument).mockResolvedValue(undefined as never);
   vi.mocked(vscode.commands.executeCommand).mockResolvedValue(undefined);
   Object.defineProperty(vscode.window, 'activeTextEditor', { value: undefined, writable: true });
+  openDocuments();
 });
 
-describe('reloadVisibleGemstoneEditors', () => {
+describe('reloadGemstoneEditors', () => {
   it('reverts a clean GemStone editor so it shows the restored source', async () => {
     Object.defineProperty(vscode.window, 'visibleTextEditors', {
       value: [editor('gemstone', false)],
       writable: true,
     });
 
-    await reloadVisibleGemstoneEditors();
+    await reloadGemstoneEditors();
 
     expect(vscode.commands.executeCommand).toHaveBeenCalledWith('workbench.action.files.revert');
   });
@@ -43,7 +59,7 @@ describe('reloadVisibleGemstoneEditors', () => {
       writable: true,
     });
 
-    await reloadVisibleGemstoneEditors();
+    await reloadGemstoneEditors();
 
     expect(vscode.commands.executeCommand).not.toHaveBeenCalled();
   });
@@ -54,7 +70,7 @@ describe('reloadVisibleGemstoneEditors', () => {
       writable: true,
     });
 
-    await reloadVisibleGemstoneEditors();
+    await reloadGemstoneEditors();
 
     expect(vscode.commands.executeCommand).not.toHaveBeenCalled();
   });
@@ -76,7 +92,7 @@ describe('reloadVisibleGemstoneEditors', () => {
       return Promise.resolve(undefined);
     }) as never);
 
-    await reloadVisibleGemstoneEditors();
+    await reloadGemstoneEditors();
 
     expect(vscode.window.activeTextEditor).toBe(active);
   });
@@ -86,7 +102,7 @@ describe('reloadVisibleGemstoneEditors', () => {
     Object.defineProperty(vscode.window, 'visibleTextEditors', { value: [], writable: true });
     Object.defineProperty(vscode.window, 'activeTextEditor', { value: active, writable: true });
 
-    await reloadVisibleGemstoneEditors();
+    await reloadGemstoneEditors();
 
     expect(vscode.window.showTextDocument).not.toHaveBeenCalled();
   });
@@ -101,7 +117,7 @@ describe('reloadVisibleGemstoneEditors', () => {
       .mockRejectedValueOnce(new Error('gone'))
       .mockResolvedValue(undefined as never);
 
-    await expect(reloadVisibleGemstoneEditors()).resolves.toBeUndefined();
+    await expect(reloadGemstoneEditors()).resolves.toBeUndefined();
   });
 });
 
@@ -129,5 +145,84 @@ describe('refreshExplorer and revealMethod', () => {
   it('does not fail when the row is not in the rebuilt tree', async () => {
     vi.mocked(vscode.commands.executeCommand).mockRejectedValue(new Error('not found'));
     await expect(revealMethod('Account', 'balance', false)).resolves.toBeUndefined();
+  });
+});
+
+describe('refreshSearch', () => {
+  it('resyncs GemStone Search for the session the undo happened in', async () => {
+    // Search caches its class list, so a class an undo unbound stays on offer as a hit and
+    // opening it lands on "Class not found".
+    await refreshSearch(7);
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith(SEARCH_RESYNC_COMMAND, 7);
+  });
+
+  it('does not fail when GemStone Search is not registered', async () => {
+    vi.mocked(vscode.commands.executeCommand).mockRejectedValue(new Error('no such command'));
+    await expect(refreshSearch(1)).resolves.toBeUndefined();
+  });
+});
+
+describe('telling VS Code the source changed', () => {
+  /**
+   * An undo recompiles over GCI, never through the file system provider, so VS Code is never
+   * told the resource changed and a clean editor goes on showing the source the undo just
+   * discarded — which is how an undo gets silently re-saved. The notification is what a save
+   * already sends; it reaches tabs in other groups and tabs that are not on top, and needs no
+   * focus.
+   */
+  it('announces every open clean GemStone document', async () => {
+    const a = editor('gemstone', false, 'a');
+    const b = editor('gemstone', false, 'b');
+    openDocuments(a, b);
+
+    await reloadGemstoneEditors();
+
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith(FS_CHANGED_COMMAND, [
+      a.document.uri,
+      b.document.uri,
+    ]);
+  });
+
+  it('announces a document that is open but not visible', async () => {
+    // The reason this exists alongside the revert: a background tab is not a visible editor,
+    // so the revert never reaches it.
+    const background = editor('gemstone', false, 'background');
+    openDocuments(background);
+    Object.defineProperty(vscode.window, 'visibleTextEditors', { value: [], writable: true });
+
+    await reloadGemstoneEditors();
+
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith(FS_CHANGED_COMMAND, [
+      background.document.uri,
+    ]);
+  });
+
+  it('leaves a DIRTY document out', async () => {
+    openDocuments(editor('gemstone', true, 'dirty'));
+
+    await reloadGemstoneEditors();
+
+    expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith(
+      FS_CHANGED_COMMAND,
+      expect.anything(),
+    );
+  });
+
+  it('ignores documents that are not GemStone', async () => {
+    openDocuments(editor('file', false, 'onDisk'));
+
+    await reloadGemstoneEditors();
+
+    expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith(
+      FS_CHANGED_COMMAND,
+      expect.anything(),
+    );
+  });
+
+  it('does not fail when the provider is not registered', async () => {
+    openDocuments(editor('gemstone', false, 'a'));
+    vi.mocked(vscode.commands.executeCommand).mockRejectedValue(new Error('no such command'));
+
+    await expect(reloadGemstoneEditors()).resolves.toBeUndefined();
   });
 });
