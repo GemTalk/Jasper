@@ -4,19 +4,20 @@
  *
  * Its whole job is to take the top entry off the session's stack and hand it to the
  * reverser for its kind. This is the ONLY module in `undo/` that knows the refactoring
- * engine exists: the generic layer defines the stack and the method-edit reverser, and a
- * refactoring plugs in here as one more kind. Adding a further kind later means another
- * branch here and a reverser beside it — not a change to the stack, the UI, or any
- * recording site.
+ * engine exists: the generic layer defines the stack and the local reversers, and a
+ * refactoring plugs in here as one more kind. Adding a further kind means another branch
+ * here and a reverser beside it — not a change to the stack, the UI, or any recording site.
  *
- * The three kinds behave differently on purpose, and the difference is the point of the
- * design:
+ * The kinds behave differently on purpose, and the difference is the point of the design:
  *
  *  - a METHOD EDIT reverses immediately, because the user just made it and it is one
  *    method;
  *  - a CLASS EDIT reverses immediately too, but calls itself a REVERT and asks first when
  *    binding the earlier version would leave methods behind — GemStone re-versions a class
  *    rather than rolling it back, and the user has to know that before it happens;
+ *  - a CLASS COMMENT and a CLASS VARIABLE reverse immediately and stay UNDOs: neither
+ *    re-versions the class, so putting the earlier text back, or taking the declaration and
+ *    its accessors away again, is exact and leaves nothing behind;
  *  - a REFACTORING opens the preview panel it already has, because it can have rewritten
  *    dozens of methods across a hierarchy and undoing it wholesale, unseen, is not a
  *    decision to take on the user's behalf.
@@ -28,6 +29,8 @@ import { dropUndoEntry, peekUndoEntry, popUndoEntry } from './undoStack';
 import { refreshUndoUi } from './undoUi';
 import { reverseMethodEdit } from './reverseMethodEdit';
 import { reverseClassEdit } from './reverseClassEdit';
+import { reverseClassComment } from './reverseClassComment';
+import { reverseClassVarEdit } from './reverseClassVarEdit';
 import { checkRefactoringUndoAvailable } from '../refactoring/refactoringUndoAvailability';
 import { undoLastRefactoringCommand } from '../refactoring/undoRefactoringCommand';
 
@@ -68,6 +71,16 @@ export async function undoLastCommand(sessions: SessionManager): Promise<void> {
 
     if (entry.kind === 'classEdit') {
       if (await reverseClassEdit(session, entry)) popUndoEntry(session.id);
+      return;
+    }
+
+    if (entry.kind === 'classComment') {
+      if (await reverseClassComment(session, entry)) popUndoEntry(session.id);
+      return;
+    }
+
+    if (entry.kind === 'classVarEdit') {
+      if (await reverseClassVarEdit(session, entry)) popUndoEntry(session.id);
       return;
     }
 

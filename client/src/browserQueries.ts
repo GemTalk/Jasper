@@ -40,6 +40,7 @@ import {
 } from './refactoring/queries/getDefiningClassOfInstVar';
 import { getDefiningClassOfClassVar as sharedGetDefiningClassOfClassVar } from './refactoring/queries/getDefiningClassOfClassVar';
 import { addClassVariable as sharedAddClassVariable } from './refactoring/queries/addClassVariable';
+import { removeClassVariable as sharedRemoveClassVariable } from './refactoring/queries/removeClassVariable';
 import {
   addAccessors as sharedAddAccessors,
   Accessor,
@@ -823,6 +824,20 @@ export function addClassVariable(
   dict?: number | string,
 ): string {
   return sharedAddClassVariable(defaultQueryExecutorUsing(session), className, classVarName, dict);
+}
+
+export function removeClassVariable(
+  session: ActiveSession,
+  className: string,
+  classVarName: string,
+  dict?: number | string,
+): string {
+  return sharedRemoveClassVariable(
+    defaultQueryExecutorUsing(session),
+    className,
+    classVarName,
+    dict,
+  );
 }
 
 export function addAccessors(

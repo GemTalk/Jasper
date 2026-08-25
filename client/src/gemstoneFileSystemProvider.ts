@@ -16,6 +16,7 @@ import { extractSelector } from './methodPattern';
 import { beginMethodEdit, MethodEditRecording, present } from './undo/recordMethodEdit';
 import { notifyUndoable } from './undo/undoableToast';
 import { beginClassEdit } from './undo/recordClassEdit';
+import { beginClassCommentEdit } from './undo/recordClassComment';
 import { MethodSlot, slotLabel, UndoEntry } from './undo/undoTypes';
 
 // A binary selector can contain '/', but a slash in a URI path segment (raw or
@@ -658,14 +659,7 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
           this.compileClassDefinition(uri, parsed, source, session);
           break;
         case 'comment':
-          queries.setClassComment(
-            session,
-            parsed.className,
-            source,
-            parsed.dictIndex ?? parsed.dictName,
-          );
-          vscode.window.showInformationMessage(`Comment updated for ${parsed.className}`);
-          void this.exportManager?.syncClass(session, parsed.dictName, parsed.className);
+          this.saveClassComment(parsed, source, session);
           break;
         case 'new-class':
           this.compileClassDefinition(uri, parsed, source, session);
@@ -698,6 +692,28 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
       logInfo(`[FS] writeFile → unexpected error: ${e instanceof Error ? e.message : String(e)}`);
       throw e;
     }
+  }
+
+  private saveClassComment(parsed: ParsedCommentUri, source: string, session: ActiveSession): void {
+    const dictRef = parsed.dictIndex ?? parsed.dictName;
+    // Read the old comment BEFORE overwriting it — this is the one moment it still
+    // exists (#434).
+    const recording = beginClassCommentEdit(session, {
+      dict: dictRef,
+      className: parsed.className,
+    });
+
+    const result = queries.setClassComment(session, parsed.className, source, dictRef);
+    // setClassComment reports a class it cannot resolve by RETURNING a status string rather
+    // than throwing, so "Comment updated" used to appear over a save that wrote nothing —
+    // and an undo entry for it would offer to put back a comment nobody replaced.
+    if (!result.startsWith('Comment set:')) {
+      vscode.window.showWarningMessage(`Comment for ${parsed.className} was not saved: ${result}`);
+      return;
+    }
+
+    notifyUndoable(`Comment updated for ${parsed.className}`, recording?.commit(source));
+    void this.exportManager?.syncClass(session, parsed.dictName, parsed.className);
   }
 
   private compileMethod(

@@ -5,8 +5,9 @@
  * The stack is generic: an entry says WHAT was done and HOW to reverse it, and the
  * reversers are looked up by `kind`. Saving a method, adding one, and deleting one
  * are all the same shape — a set of METHOD SLOTS whose state before the action was
- * captured — so they share one kind and one reverser. A refactoring is the other
- * kind, and it is the only one that reaches into the refactoring engine.
+ * captured — so they share one kind and one reverser. Class bindings, a class's
+ * comment and a class variable each have a shape of their own, and a refactoring is
+ * the last kind — the only one that reaches into the refactoring engine.
  *
  * Nothing here imports vscode or a GCI session, so the planning rules in
  * `methodSlotPlan.ts` can be unit-tested as plain data.
@@ -152,7 +153,78 @@ export interface RefactoringUndoEntry extends UndoEntryBase {
   sequence: number;
 }
 
-export type UndoEntry = MethodEditUndoEntry | ClassEditUndoEntry | RefactoringUndoEntry;
+/**
+ * An edit to a class's COMMENT, reversed by writing the earlier text back.
+ *
+ * Its own kind rather than a class edit: `comment:` does not re-version the class, so there
+ * is no earlier version to bind and nothing is left behind — putting the old text back is an
+ * exact undo, and calling it a revert would overstate what happened.
+ */
+export interface ClassCommentUndoEntry extends UndoEntryBase {
+  kind: 'classComment';
+  slot: ClassSlot;
+  /** The comment as it read before the save — the target of the reversal. */
+  before: string;
+  /** The comment the save left, so a comment someone has edited since can be spotted. */
+  after: string;
+}
+
+/**
+ * One addressable class variable: a name declared on a class.
+ *
+ * `dict` is OPTIONAL here, unlike a class slot's. Nothing is bound or unbound — the
+ * dictionary only scopes the class lookup, exactly as it does for a method slot — so the
+ * reversal resolves the class the same way the add did, undefined included.
+ */
+export interface ClassVarSlot {
+  dict?: number | string;
+  className: string;
+  varName: string;
+}
+
+/** Whether the class DECLARES the variable itself. Inherited names do not count: a class
+ *  variable is removed from the class that declares it, which is the only class an undo of
+ *  "add class variable" would touch. */
+export interface ClassVarState {
+  defined: boolean;
+}
+
+/** The two things reversing a class-variable edit can ask for: declare the name again, or
+ *  take away a declaration that was not there before. */
+export type ClassVarOpKind = 'declare' | 'undeclare';
+
+/**
+ * Adding a class variable, together with the accessors the same command generated.
+ *
+ * Its own kind rather than a class edit, for the same reason as the comment:
+ * `addClassVarName:` adds a shared binding without touching instance layout, so no new class
+ * version appears and nothing has to be left behind — the reversal is an exact
+ * `removeClassVarName:`.
+ *
+ * The ACCESSORS travel with it because the Explorer generates them as part of the same
+ * action: the user did one thing, so one Undo puts all of it back. Removing the variable
+ * while its accessors remained would leave two methods reading a binding the class no longer
+ * declares — a reversal that is only half true.
+ */
+export interface ClassVarEditUndoEntry extends UndoEntryBase {
+  kind: 'classVarEdit';
+  slot: ClassVarSlot;
+  before: ClassVarState;
+  after: ClassVarState;
+  /** The accessor slots the same command compiled into, empty when none were asked for.
+   *  Reversed with the ordinary method-slot planner, so an accessor that already existed
+   *  (and was therefore skipped) is left alone. */
+  accessorSlots: MethodSlot[];
+  accessorBefore: MethodSlotState[];
+  accessorAfter: MethodSlotState[];
+}
+
+export type UndoEntry =
+  | MethodEditUndoEntry
+  | ClassEditUndoEntry
+  | ClassCommentUndoEntry
+  | ClassVarEditUndoEntry
+  | RefactoringUndoEntry;
 
 /** An entry as a recording site supplies it, before the stack assigns its id. Written as
  *  a union of Omits rather than `Omit<UndoEntry, 'id'>`, which would flatten the union
@@ -160,6 +232,8 @@ export type UndoEntry = MethodEditUndoEntry | ClassEditUndoEntry | RefactoringUn
 export type NewUndoEntry =
   | Omit<MethodEditUndoEntry, 'id'>
   | Omit<ClassEditUndoEntry, 'id'>
+  | Omit<ClassCommentUndoEntry, 'id'>
+  | Omit<ClassVarEditUndoEntry, 'id'>
   | Omit<RefactoringUndoEntry, 'id'>;
 
 /** How a slot reads in a message: `Account>>#balance`, `Account class>>#new`. */
@@ -171,4 +245,11 @@ export function slotLabel(slot: MethodSlot): string {
  *  not what the user calls it. */
 export function classSlotLabel(slot: ClassSlot): string {
   return slot.className;
+}
+
+/** How a class-variable slot reads in a message: `Registry in Account`. The class is named
+ *  because a class variable is visible to a whole subtree and the declaring class is the one
+ *  the reversal touches. */
+export function classVarSlotLabel(slot: ClassVarSlot): string {
+  return `${slot.varName} in ${slot.className}`;
 }

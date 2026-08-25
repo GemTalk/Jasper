@@ -4,9 +4,10 @@
  * One bounded stack per session, held in the extension rather than in the stone. That
  * placement is the design decision the rest of the undo work hangs off:
  *
- *  - a method or class edit can then be undone on ANY stone, with no server-side install —
- *    the reversal is plain `compileMethod:` / `removeSelector:`, or binding a class version
- *    back into its dictionary;
+ *  - a method edit, a class edit, a class comment and a class variable can then be undone on
+ *    ANY stone, with no server-side install — the reversal is plain `compileMethod:` /
+ *    `removeSelector:`, `comment:`, `addClassVarName:` / `removeClassVarName:`, or binding a
+ *    class version back into its dictionary;
  *  - a refactoring, whose reversal genuinely has to happen server-side, is just one
  *    KIND of entry pointing at the record the engine already keeps.
  *
@@ -14,8 +15,9 @@
  * the stack living inside the engine and everything else having to reach through it.
  *
  * Per session, because an entry describes work done in one session's transaction and
- * means nothing in another's. Bounded, because every method save now records one and an
- * unbounded stack would hold every source string of a long editing session alive.
+ * means nothing in another's. Bounded, because every method save and every comment save now
+ * records one, and an unbounded stack would hold every source string and every comment of a
+ * long editing session alive.
  *
  * The stack is process-local and deliberately not persisted: it is discarded on logout
  * (see `clearUndoStack`), matching the session-scoped record the refactoring engine keeps

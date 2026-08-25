@@ -1,11 +1,11 @@
 /**
  * Putting the IDE back in step after an undo (issue #434).
  *
- * Shared by every reverser — a method edit, a class edit, a refactoring — because the
- * problem is the same whichever it was: the stone has changed underneath whatever the user is looking at,
- * and a pane or editor still showing the pre-undo text is how an undo gets silently
- * re-done on the next save. The Explorer, the open editors and GemStone Search all cache
- * what they show, so all three have to be told.
+ * Shared by every reverser — a method edit, a class edit, a class comment, a class variable, a
+ * refactoring — because the problem is the same whichever it was: the stone has changed
+ * underneath whatever the user is looking at, and a pane or editor still showing the pre-undo
+ * text is how an undo gets silently re-done on the next save. The Explorer, the open editors
+ * and GemStone Search all cache what they show, so all three have to be told.
  */
 import * as vscode from 'vscode';
 

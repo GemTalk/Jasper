@@ -3,6 +3,8 @@ vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 vi.mock('../../gciLog', () => ({ logInfo: vi.fn() }));
 vi.mock('../reverseMethodEdit', () => ({ reverseMethodEdit: vi.fn() }));
 vi.mock('../reverseClassEdit', () => ({ reverseClassEdit: vi.fn() }));
+vi.mock('../reverseClassComment', () => ({ reverseClassComment: vi.fn() }));
+vi.mock('../reverseClassVarEdit', () => ({ reverseClassVarEdit: vi.fn() }));
 vi.mock('../undoUi', () => ({ refreshUndoUi: vi.fn() }));
 vi.mock('../../refactoring/refactoringUndoAvailability', () => ({
   checkRefactoringUndoAvailable: vi.fn(),
@@ -14,6 +16,8 @@ vi.mock('../../refactoring/undoRefactoringCommand', () => ({
 import * as vscode from 'vscode';
 import { reverseMethodEdit } from '../reverseMethodEdit';
 import { reverseClassEdit } from '../reverseClassEdit';
+import { reverseClassComment } from '../reverseClassComment';
+import { reverseClassVarEdit } from '../reverseClassVarEdit';
 import { checkRefactoringUndoAvailable } from '../../refactoring/refactoringUndoAvailability';
 import { undoLastRefactoringCommand } from '../../refactoring/undoRefactoringCommand';
 import { undoLastCommand } from '../undoLastCommand';
@@ -63,6 +67,27 @@ const methodEdit = (label: string): NewUndoEntry => ({
   after: [],
 });
 
+const classComment = (label: string): NewUndoEntry => ({
+  kind: 'classComment',
+  sessionId: session.id,
+  label,
+  slot: { dict: 7, className: 'Account' },
+  before: 'was',
+  after: 'is',
+});
+
+const classVarEdit = (label: string): NewUndoEntry => ({
+  kind: 'classVarEdit',
+  sessionId: session.id,
+  label,
+  slot: { dict: 7, className: 'Account', varName: 'Registry' },
+  before: { defined: false },
+  after: { defined: true },
+  accessorSlots: [],
+  accessorBefore: [],
+  accessorAfter: [],
+});
+
 beforeEach(() => {
   vi.clearAllMocks();
   resetUndoStacks();
@@ -106,6 +131,41 @@ describe('undoLastCommand', () => {
     await undoLastCommand(sessions);
 
     expect(undoStackDepth(session.id)).toBe(1);
+  });
+
+  it('hands a class comment to the comment reverser, and calls it an undo', async () => {
+    pushUndoEntry(classComment('Save comment for Account'));
+    vi.mocked(reverseClassComment).mockResolvedValue(true);
+
+    await undoLastCommand(sessions);
+
+    expect(reverseClassComment).toHaveBeenCalled();
+    expect(reverseClassEdit).not.toHaveBeenCalled();
+    expect(undoLastRefactoringCommand).not.toHaveBeenCalled();
+    expect(undoStackDepth(session.id)).toBe(0);
+  });
+
+  it('hands an added class variable to its own reverser', async () => {
+    pushUndoEntry(classVarEdit('Add class variable Registry to Account'));
+    vi.mocked(reverseClassVarEdit).mockResolvedValue(true);
+
+    await undoLastCommand(sessions);
+
+    expect(reverseClassVarEdit).toHaveBeenCalled();
+    expect(reverseClassEdit).not.toHaveBeenCalled();
+    expect(undoStackDepth(session.id)).toBe(0);
+  });
+
+  it('leaves a class comment and a class variable on the stack when they are declined', async () => {
+    pushUndoEntry(classComment('Save comment for Account'));
+    vi.mocked(reverseClassComment).mockResolvedValue(false);
+    await undoLastCommand(sessions);
+    expect(undoStackDepth(session.id)).toBe(1);
+
+    pushUndoEntry(classVarEdit('Add class variable Registry to Account'));
+    vi.mocked(reverseClassVarEdit).mockResolvedValue(false);
+    await undoLastCommand(sessions);
+    expect(undoStackDepth(session.id)).toBe(2);
   });
 
   it('leaves a method edit on the stack when the user backs out of it', async () => {

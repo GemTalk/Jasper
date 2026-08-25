@@ -6,14 +6,20 @@ import { GciLibrary } from '../../gciLibrary';
 import * as q from '../../browserQueries';
 import { applyMethodSlotOps, captureMethodSlots } from '../queries/methodSlotQueries';
 import { applyClassSlotOps, captureClassSlots, newStashKey } from '../queries/classSlotQueries';
+import {
+  applyClassVarOp,
+  captureClassVar,
+  methodsReferencingClassVar,
+} from '../queries/classVarQueries';
 import { planReversal, driftedSlots } from '../methodSlotPlan';
 import { planClassReversal, driftedClassSlots, discardedByReversal } from '../classSlotPlan';
+import { planClassVarReversal } from '../classVarPlan';
 import {
   decodeEscaped,
   SMALLTALK_ESCAPER,
   SMALLTALK_ESCAPER_TEMPS,
 } from '../queries/methodSlotCodec';
-import { MethodSlot, ClassSlot } from '../undoTypes';
+import { MethodSlot, ClassSlot, ClassVarSlot } from '../undoTypes';
 import type { ActiveSession } from '../../sessionManager';
 
 /**
@@ -73,6 +79,12 @@ describe('undo (integration)', () => {
   });
 
   const classSlot = (className = CLS): ClassSlot => ({ dict: DICT, className });
+
+  const varSlot = (varName: string, className = CLS): ClassVarSlot => ({
+    dict: DICT,
+    className,
+    varName,
+  });
 
   const boundVersion = (className = CLS): string | null =>
     captureClassSlots(exec, [classSlot(className)])[0].oop;
@@ -502,6 +514,169 @@ ws contents`;
         },
       ]);
       expect(result.error).toContain('no such dictionary');
+    });
+  });
+
+  // ── A class comment, recorded and reversed ─────────────────────────────
+
+  describe('a class comment, recorded and reversed', () => {
+    it('puts the earlier comment back', () => {
+      defineClass(CLS);
+      q.setClassComment(session(), CLS, 'the first comment', DICT);
+      const before = q.getClassComment(session(), CLS, DICT);
+
+      q.setClassComment(session(), CLS, 'a second comment', DICT);
+      expect(q.setClassComment(session(), CLS, before, DICT)).toContain('Comment set:');
+
+      expect(q.getClassComment(session(), CLS, DICT)).toBe(before);
+    });
+
+    it('empties a comment again on a class that had none', () => {
+      // GemStone stores the empty string rather than dropping the comment, so "no comment"
+      // and "empty comment" are the same state — which is what makes the reversal exact.
+      defineClass(CLS);
+      const before = q.getClassComment(session(), CLS, DICT);
+
+      q.setClassComment(session(), CLS, 'a first comment', DICT);
+      q.setClassComment(session(), CLS, before, DICT);
+
+      expect(q.getClassComment(session(), CLS, DICT)).toBe(before);
+    });
+
+    it('does not re-version the class, which is why it is an undo and not a revert', () => {
+      defineClass(CLS);
+      const version = boundVersion();
+      const history = exec(`${CLS} classHistory size printString`).trim();
+
+      q.setClassComment(session(), CLS, 'a comment', DICT);
+
+      expect(boundVersion()).toBe(version);
+      expect(exec(`${CLS} classHistory size printString`).trim()).toBe(history);
+    });
+
+    it('reports a class it cannot resolve rather than throwing', () => {
+      expect(q.setClassComment(session(), 'JfpNoSuchClassForComment', 'x', DICT)).toContain(
+        'Class not found',
+      );
+    });
+  });
+
+  // ── A class variable, recorded and reversed ────────────────────────────
+
+  describe('an added class variable, recorded and reversed', () => {
+    it('takes the declaration away again', () => {
+      defineClass(CLS);
+      const before = captureClassVar(exec, varSlot('Registry'));
+      expect(before.defined).toBe(false);
+
+      q.addClassVariable(session(), CLS, 'Registry', DICT);
+      const now = captureClassVar(exec, varSlot('Registry'));
+      expect(now.defined).toBe(true);
+
+      const op = planClassVarReversal(before, now);
+      expect(op).toBe('undeclare');
+      expect(applyClassVarOp(exec, varSlot('Registry'), op!)).toBeNull();
+      expect(captureClassVar(exec, varSlot('Registry')).defined).toBe(false);
+    });
+
+    it('does not re-version the class in either direction', () => {
+      // The whole reason this is an undo rather than a revert: a class variable is not part
+      // of instance layout, so neither adding nor removing one gives the class a new version.
+      defineClass(CLS);
+      const version = boundVersion();
+
+      q.addClassVariable(session(), CLS, 'Registry', DICT);
+      expect(boundVersion()).toBe(version);
+
+      applyClassVarOp(exec, varSlot('Registry'), 'undeclare');
+      expect(boundVersion()).toBe(version);
+    });
+
+    it('only removes a name the class DECLARES, never one it inherits', () => {
+      // Removing an inherited name would take the variable away from every other subclass.
+      defineClass(CLS);
+      defineClass(SUB, CLS, "'rate'");
+      q.addClassVariable(session(), CLS, 'Registry', DICT);
+
+      expect(applyClassVarOp(exec, varSlot('Registry', SUB), 'undeclare')).toBeNull();
+
+      expect(captureClassVar(exec, varSlot('Registry')).defined).toBe(true);
+      expect(q.getVisibleClassVarNames(session(), SUB, DICT)).toContain('Registry');
+    });
+
+    it('reads a name the class only inherits as NOT declared here', () => {
+      defineClass(CLS);
+      defineClass(SUB, CLS, "'rate'");
+      q.addClassVariable(session(), CLS, 'Registry', DICT);
+
+      expect(captureClassVar(exec, varSlot('Registry', SUB)).defined).toBe(false);
+    });
+
+    it('reports a class it cannot resolve', () => {
+      expect(applyClassVarOp(exec, varSlot('Registry', 'JfpNoSuchClassForVar'), 'undeclare')).toBe(
+        'JfpNoSuchClassForVar could not be resolved',
+      );
+    });
+
+    it('finds every method that references it — both sides, whole subtree', () => {
+      defineClass(CLS);
+      defineClass(SUB, CLS, "'rate'");
+      q.addClassVariable(session(), CLS, 'Registry', DICT);
+      compile(CLS, 'registry\n  ^ Registry', 'accessing', true); // class side, declaring class
+      compile(CLS, 'peek\n  ^ Registry', 'accessing'); // instance side, declaring class
+      compile(SUB, 'subPeek\n  ^ Registry'); // instance side, subclass
+      compile(CLS, 'unrelated\n  ^ 1', 'accessing'); // references nothing
+
+      const found = methodsReferencingClassVar(exec, varSlot('Registry'))
+        .map((m) => `${m.className}${m.isMeta ? ' class' : ''}>>#${m.selector}`)
+        .sort();
+
+      expect(found).toEqual([`${CLS} class>>#registry`, `${CLS}>>#peek`, `${SUB}>>#subPeek`]);
+    });
+
+    it('does not report a same-named GLOBAL, which is a different association', () => {
+      defineClass(CLS);
+      exec(`${DICT} at: #JfpUndoItStray put: 42. true printString`);
+      q.addClassVariable(session(), CLS, 'JfpUndoItStray2', DICT);
+      compile(CLS, 'usesGlobal\n  ^ JfpUndoItStray', 'accessing');
+
+      expect(methodsReferencingClassVar(exec, varSlot('JfpUndoItStray2'))).toEqual([]);
+    });
+
+    it('answers nothing for a class that declares no class variables at all', () => {
+      // `_classVars` itself answers nil there, which the scan has to survive.
+      defineClass(CLS);
+
+      expect(methodsReferencingClassVar(exec, varSlot('Registry'))).toEqual([]);
+    });
+
+    it('SEVERS a referencing method rather than removing it — it reads nil and will not recompile', () => {
+      // This is the fact the warning exists for, pinned so it cannot change underneath it.
+      defineClass(CLS);
+      q.addClassVariable(session(), CLS, 'Registry', DICT);
+      compile(CLS, 'peek\n  ^ Registry', 'accessing');
+      exec(`(${CLS} _classVars associationAt: #Registry) value: 99. true printString`);
+      expect(exec(`${CLS} new peek printString`).trim()).toBe('99');
+
+      applyClassVarOp(exec, varSlot('Registry'), 'undeclare');
+
+      expect(exec(`(${CLS} includesSelector: #peek) printString`).trim()).toBe('true');
+      expect(exec(`${CLS} new peek printString`).trim()).toBe('nil');
+      expect(
+        exec(
+          `[${CLS} compileMethod: 'peek\n  ^ Registry' dictionaries: System myUserProfile symbolList ` +
+            `category: 'accessing' environmentId: 0. 'compiled'] on: Error do: [:e | 'refused']`,
+        ).trim(),
+      ).toBe('refused');
+    });
+
+    it('declares the name again, for the reversal in the other direction', () => {
+      defineClass(CLS);
+      q.addClassVariable(session(), CLS, 'Registry', DICT);
+      applyClassVarOp(exec, varSlot('Registry'), 'undeclare');
+
+      expect(applyClassVarOp(exec, varSlot('Registry'), 'declare')).toBeNull();
+      expect(captureClassVar(exec, varSlot('Registry')).defined).toBe(true);
     });
   });
 });

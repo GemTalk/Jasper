@@ -7,8 +7,9 @@
  * keybinding — exists for the case where this one was missed or dismissed.
  *
  * Refactorings had this from the start (`refactoring/refactoringAppliedToast.ts`, which
- * additionally has to ask the stone whether anything was recorded). Method and class edits
- * know the answer already — `commit` hands back the entry, or nothing — so they come here.
+ * additionally has to ask the stone whether anything was recorded). Every other recorder —
+ * method edits, class edits, class comments, class variables — knows the answer already:
+ * `commit` hands back the entry, or nothing, so they all come here.
  *
  * The button runs the ordinary Undo, which reverses whatever is on TOP of the stack. If
  * the user has done something else in the meantime, that is what gets undone — the same

@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { beginMethodDeletion } from './undo/recordMethodEdit';
 import { notifyUndoable } from './undo/undoableToast';
 import { beginClassDeletion } from './undo/recordClassEdit';
+import { beginClassVarAdd } from './undo/recordClassVarEdit';
 import * as crypto from 'crypto';
 import { SessionManager, ActiveSession } from './sessionManager';
 import * as queries from './browserQueries';
@@ -2022,6 +2023,24 @@ export class ExplorerController {
     const wantAccessors = await this.askAddAccessors(name);
     if (wantAccessors === undefined) return;
 
+    // Snapshot BEFORE adding anything, and include the accessor slots the add is about to
+    // compile into: the user did one thing, so one Undo takes the variable AND its accessors
+    // away again (#434). Slots are captured even for accessors that turn out to be skipped —
+    // the planner reads their unchanged state and leaves them alone.
+    const accessorSpecs = wantAccessors ? accessorSpecsFor(name, 'classvar') : undefined;
+    const accessorSlots = (accessorSpecs?.accessors ?? []).map((a) => ({
+      dict: this.state.dictIndex,
+      className,
+      isMeta: accessorSpecs?.isMeta ?? true,
+      selector: a.selector,
+      environmentId: 0,
+    }));
+    const recording = beginClassVarAdd(
+      session,
+      { dict: this.state.dictIndex, className, varName: name },
+      accessorSlots,
+    );
+
     let addResult: string;
     try {
       addResult = queries.addClassVariable(session, className, name, this.state.dictIndex);
@@ -2062,6 +2081,13 @@ export class ExplorerController {
       }
     }
     if (wantAccessors) await this.generateAccessorsFor(className, name, 'classvar');
+
+    // Announced last, so the notice carrying Undo is the one left on screen when accessors
+    // were generated too.
+    notifyUndoable(
+      `Added class variable ${name} to ${className}`,
+      recording?.commit(`Add class variable ${name} to ${className}`),
+    );
   }
 
   // Generate accessors for an existing variable (the "Add Accessors" row action, and

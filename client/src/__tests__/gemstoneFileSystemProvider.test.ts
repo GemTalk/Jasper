@@ -20,7 +20,9 @@ vi.mock('../browserQueries', () => ({
   getClassComment: vi.fn(() => 'An ordered collection.'),
   compileMethod: vi.fn(() => 'Compiled: Array >> at:'),
   compileClassDefinition: vi.fn(),
-  setClassComment: vi.fn(),
+  // Answers what the real query answers on success — the provider now checks it, because
+  // setClassComment reports an unresolvable class by RETURNING a status string.
+  setClassComment: vi.fn(() => 'Comment set: Array'),
   canClassBeWritten: vi.fn(() => true),
   defaultQueryExecutorUsing: vi.fn(() => () => ''),
 }));
@@ -458,6 +460,18 @@ describe('GemStoneFileSystemProvider', () => {
         'Updated comment',
         9,
       );
+    });
+
+    it('reports a comment save the stone refused, instead of confirming it', () => {
+      vi.mocked(queries.setClassComment).mockReturnValueOnce('Class not found: Array');
+      const uri = Uri.parse('gemstone://1/Globals/Array/comment?dict=9');
+
+      provider.writeFile(uri, encode('Updated comment'), { create: false, overwrite: true });
+
+      expect(window.showWarningMessage).toHaveBeenCalledWith(
+        expect.stringContaining('was not saved: Class not found: Array'),
+      );
+      expect(window.showInformationMessage).not.toHaveBeenCalled();
     });
 
     it('compiles new-class on save', () => {

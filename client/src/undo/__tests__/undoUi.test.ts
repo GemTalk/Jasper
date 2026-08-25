@@ -84,6 +84,40 @@ describe('the undo status-bar button', () => {
     expect(item.tooltip).toBe('GemStone — Revert: Redefine class Account (Ctrl+K U)');
   });
 
+  it('calls a class comment and a class variable an UNDO, not a revert', () => {
+    // Neither re-versions the class, so nothing is left behind on an older version and there
+    // is nothing a "revert" would be warning about.
+    const item = fakeItem();
+    setUndoStatusBarItem(item as never);
+    pushUndoEntry({
+      kind: 'classComment',
+      sessionId: session.id,
+      label: 'Save comment for Account',
+      slot: { dict: 7, className: 'Account' },
+      before: 'was',
+      after: 'is',
+    });
+
+    refreshUndoUi(session);
+    expect(item.tooltip).toBe('GemStone — Undo: Save comment for Account (Ctrl+K U)');
+
+    pushUndoEntry({
+      kind: 'classVarEdit',
+      sessionId: session.id,
+      label: 'Add class variable Registry to Account',
+      slot: { dict: 7, className: 'Account', varName: 'Registry' },
+      before: { defined: false },
+      after: { defined: true },
+      accessorSlots: [],
+      accessorBefore: [],
+      accessorAfter: [],
+    });
+
+    refreshUndoUi(session);
+    expect(item.text).toContain('Undo');
+    expect(item.tooltip).toBe('GemStone — Undo: Add class variable Registry to Account (Ctrl+K U)');
+  });
+
   it('separates the verb from the label, so two verbs do not run together', () => {
     const item = fakeItem();
     setUndoStatusBarItem(item as never);
