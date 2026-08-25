@@ -25,6 +25,7 @@ import {
   parseStartPreview,
   parsePage,
   parseApplyResult,
+  BrokenMethod,
 } from './instVarRefactorPreview';
 import { showInstVarRefactorPanel } from './instVarRefactorPanel';
 import { ensureRbSupport, refuse } from './renameAtCursorShared';
@@ -66,6 +67,30 @@ export interface InstVarRefactorOutcome {
 function titleFor(req: InstVarRefactorRequest): string {
   if (req.op === 'add') return `Add ${req.ivarName} to ${req.className}`;
   return `Remove ${req.ivarName} from ${req.className}`;
+}
+
+/**
+ * List every method the reshape could not recompile onto the new class version, with the
+ * compiler's reason for each, in the durable "GemStone GCI" channel.
+ *
+ * A notification can only carry the count -- it truncates and then vanishes -- and the dropped
+ * list is what the user works through to restore them, so the detail goes where it survives.
+ * This is what the rename family already does with its recompile failures.
+ *
+ * Both apply paths report. The auto-apply path runs only when nothing was PREDICTED to fail,
+ * but a prediction is not a compile: the whole reason these results are checked at all is that
+ * a method can fail to recompile with nothing forecasting it. That case is the one most worth
+ * a durable record, since the auto-apply path shows no panel to surface it.
+ */
+function reportDropped(title: string, dropped: BrokenMethod[]): void {
+  if (dropped.length === 0) return;
+  logWarning(
+    `${title}: ${dropped.length} method(s) did not recompile onto the new class version ` +
+      'and were dropped:\n' +
+      dropped
+        .map((m) => `    \u2022 ${m.className}>>${m.selector}${m.reason ? `: ${m.reason}` : ''}`)
+        .join('\n'),
+  );
 }
 
 /** Preview + apply a fully-specified instance-variable operation. Answers the outcome
@@ -160,6 +185,7 @@ export async function runInstVarRefactor(
       void vscode.window.showErrorMessage(`${titleFor(req)} failed: ${failure}`);
       return undefined;
     }
+    reportDropped(titleFor(req), result.dropped);
     return {
       applied: result.applied,
       committed: result.committed,
@@ -207,19 +233,7 @@ export async function runInstVarRefactor(
   // cancelled, closed, or hit a failure the panel already reported — nothing more to say here.
   if (!result) return undefined;
 
-  // A notification can only carry the count -- it truncates and then vanishes -- so the
-  // methods themselves, and why each one failed, go to the durable "GemStone GCI" channel.
-  // The dropped list is what the user works through to restore them, the way the rename
-  // family already reports its recompile failures.
-  if (result.dropped.length > 0) {
-    logWarning(
-      `${titleFor(req)}: ${result.dropped.length} method(s) did not recompile onto the new ` +
-        'class version and were dropped:\n' +
-        result.dropped
-          .map((m) => `    \u2022 ${m.className}>>${m.selector}${m.reason ? `: ${m.reason}` : ''}`)
-          .join('\n'),
-    );
-  }
+  reportDropped(titleFor(req), result.dropped);
   const droppedNote =
     result.dropped.length > 0
       ? ` ${result.dropped.length} method${result.dropped.length === 1 ? '' : 's'} did not recompile and ${result.dropped.length === 1 ? 'was' : 'were'} dropped. See the GemStone GCI channel for the list.`
