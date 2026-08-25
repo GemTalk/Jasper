@@ -390,6 +390,26 @@ GsRefactoringEnvironment >> compileFailureFor: source into: aBehavior category: 
 ]
 
 { #category : 'compiling' }
+GsRefactoringEnvironment >> copyMethod: sel from: srcCls to: dstCls meta: isMeta into: failures [
+	"Carry one method VERBATIM onto the new class version -- the copy-forward every engine that
+	 re-versions a class does for the methods it is not rewriting. Answers whether it compiled;
+	 a selector srcCls does not implement is a no-op that answers true.
+
+	 The engines that rewrite a method's source before carrying it (class rename, instance-
+	 variable rename) send #copyMethod:from:to:source:meta:into: directly instead."
+	| m |
+	m := srcCls compiledMethodAt: sel environmentId: 0 otherwise: nil.
+	m isNil ifTrue: [^true].
+	^self
+		copyMethod: sel
+		from: srcCls
+		to: dstCls
+		source: m sourceString
+		meta: isMeta
+		into: failures
+]
+
+{ #category : 'compiling' }
 GsRefactoringEnvironment >> copyMethod: sel from: srcCls to: dstCls source: source meta: isMeta into: failures [
 	"Compile `source` onto dstCls as sel, preserving sel's category on srcCls -- without that
 	 the method silently lands in 'as yet unclassified'.

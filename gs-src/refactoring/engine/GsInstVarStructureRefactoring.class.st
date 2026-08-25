@@ -985,8 +985,8 @@ GsInstVarStructureRefactoring >> copyMethodsFrom: old to: new [
 	skip := self accessorRemovalSelectorsFor: old name asString.
 	skip addAll: (self rewriteSelectorsFor: old name asString).
 	old selectors do: [:sel |
-		(skip includes: sel) ifFalse: [self copyMethod: sel from: old to: new meta: false]].
-	old class selectors do: [:sel | self copyMethod: sel from: old class to: new class meta: true]
+		(skip includes: sel) ifFalse: [environment copyMethod: sel from: old to: new meta: false into: copyFailures]].
+	old class selectors do: [:sel | environment copyMethod: sel from: old class to: new class meta: true into: copyFailures]
 ]
 
 { #category : 'private - accessors' }
@@ -1020,23 +1020,6 @@ GsInstVarStructureRefactoring >> accessorRemovalSelectorsFor: aClassName [
 	^set
 ]
 
-{ #category : 'applying' }
-GsInstVarStructureRefactoring >> copyMethod: sel from: srcCls to: dstCls meta: isMeta [
-	"Carry one method verbatim onto the new class version. A method that will not recompile
-	 is recorded in copyFailures rather than dropped in silence -- the new version starts with
-	 an empty method dictionary, so a dropped method is simply gone. Answers whether it
-	 compiled."
-	| m |
-	m := srcCls compiledMethodAt: sel environmentId: 0 otherwise: nil.
-	m isNil ifTrue: [^true].
-	^environment
-		copyMethod: sel
-		from: srcCls
-		to: dstCls
-		source: m sourceString
-		meta: isMeta
-		into: copyFailures
-]
 
 { #category : 'applying' }
 GsInstVarStructureRefactoring >> applyMethodRecompile: aChange [

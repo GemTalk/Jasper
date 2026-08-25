@@ -3510,27 +3510,8 @@ copyMethodsFrom: old to: new skipping: skipSelectors
 	"Copy every method of old (both sides) onto new, EXCEPT the skipSelectors (instance-side
 	 hoisted methods that move to the new superclass instead)."
 	old selectors do: [:sel |
-		(skipSelectors includes: sel) ifFalse: [self copyMethod: sel from: old to: new meta: false]].
-	old class selectors do: [:sel | self copyMethod: sel from: old class to: new class meta: true]
-%
-
-category: 'applying'
-method: GsExtractSuperclassRefactoring
-copyMethod: sel from: srcCls to: dstCls meta: isMeta
-	"Carry one method verbatim onto the new class version. A method that will not recompile
-	 is recorded in copyFailures rather than dropped in silence -- the new version starts with
-	 an empty method dictionary, so a dropped method is simply gone. Answers whether it
-	 compiled."
-	| m |
-	m := srcCls compiledMethodAt: sel environmentId: 0 otherwise: nil.
-	m isNil ifTrue: [^true].
-	^environment
-		copyMethod: sel
-		from: srcCls
-		to: dstCls
-		source: m sourceString
-		meta: isMeta
-		into: copyFailures
+		(skipSelectors includes: sel) ifFalse: [environment copyMethod: sel from: old to: new meta: false into: copyFailures]].
+	old class selectors do: [:sel | environment copyMethod: sel from: old class to: new class meta: true into: copyFailures]
 %
 
 category: 'applying'
@@ -7119,8 +7100,8 @@ copyMethodsFrom: old to: new
 	skip := self accessorRemovalSelectorsFor: old name asString.
 	skip addAll: (self rewriteSelectorsFor: old name asString).
 	old selectors do: [:sel |
-		(skip includes: sel) ifFalse: [self copyMethod: sel from: old to: new meta: false]].
-	old class selectors do: [:sel | self copyMethod: sel from: old class to: new class meta: true]
+		(skip includes: sel) ifFalse: [environment copyMethod: sel from: old to: new meta: false into: copyFailures]].
+	old class selectors do: [:sel | environment copyMethod: sel from: old class to: new class meta: true into: copyFailures]
 %
 
 category: 'private - accessors'
@@ -7154,25 +7135,6 @@ accessorRemovalSelectorsFor: aClassName
 	accessorRemovals do: [:r |
 		(r at: 2) = aClassName ifTrue: [set add: (r at: 1)]].
 	^set
-%
-
-category: 'applying'
-method: GsInstVarStructureRefactoring
-copyMethod: sel from: srcCls to: dstCls meta: isMeta
-	"Carry one method verbatim onto the new class version. A method that will not recompile
-	 is recorded in copyFailures rather than dropped in silence -- the new version starts with
-	 an empty method dictionary, so a dropped method is simply gone. Answers whether it
-	 compiled."
-	| m |
-	m := srcCls compiledMethodAt: sel environmentId: 0 otherwise: nil.
-	m isNil ifTrue: [^true].
-	^environment
-		copyMethod: sel
-		from: srcCls
-		to: dstCls
-		source: m sourceString
-		meta: isMeta
-		into: copyFailures
 %
 
 category: 'applying'
@@ -9728,6 +9690,27 @@ compileFailureFor: source into: aBehavior category: aCategory
 	(result isKindOf: Array) ifFalse: [^self compileErrorTextFrom: result].
 	result isEmpty ifTrue: [^nil].
 	^self compileErrorTextFrom: result first
+%
+
+category: 'compiling'
+method: GsRefactoringEnvironment
+copyMethod: sel from: srcCls to: dstCls meta: isMeta into: failures
+	"Carry one method VERBATIM onto the new class version -- the copy-forward every engine that
+	 re-versions a class does for the methods it is not rewriting. Answers whether it compiled;
+	 a selector srcCls does not implement is a no-op that answers true.
+
+	 The engines that rewrite a method's source before carrying it (class rename, instance-
+	 variable rename) send #copyMethod:from:to:source:meta:into: directly instead."
+	| m |
+	m := srcCls compiledMethodAt: sel environmentId: 0 otherwise: nil.
+	m isNil ifTrue: [^true].
+	^self
+		copyMethod: sel
+		from: srcCls
+		to: dstCls
+		source: m sourceString
+		meta: isMeta
+		into: failures
 %
 
 category: 'compiling'
@@ -13196,27 +13179,8 @@ category: 'applying'
 method: GsSplitClassRefactoring
 copyMethodsFrom: old to: new skipping: skipSelectors
 	old selectors do: [:sel |
-		(skipSelectors includes: sel) ifFalse: [self copyMethod: sel from: old to: new meta: false]].
-	old class selectors do: [:sel | self copyMethod: sel from: old class to: new class meta: true]
-%
-
-category: 'applying'
-method: GsSplitClassRefactoring
-copyMethod: sel from: srcCls to: dstCls meta: isMeta
-	"Carry one method verbatim onto the new class version. A method that will not recompile
-	 is recorded in copyFailures rather than dropped in silence -- the new version starts with
-	 an empty method dictionary, so a dropped method is simply gone. Answers whether it
-	 compiled."
-	| m |
-	m := srcCls compiledMethodAt: sel environmentId: 0 otherwise: nil.
-	m isNil ifTrue: [^true].
-	^environment
-		copyMethod: sel
-		from: srcCls
-		to: dstCls
-		source: m sourceString
-		meta: isMeta
-		into: copyFailures
+		(skipSelectors includes: sel) ifFalse: [environment copyMethod: sel from: old to: new meta: false into: copyFailures]].
+	old class selectors do: [:sel | environment copyMethod: sel from: old class to: new class meta: true into: copyFailures]
 %
 
 category: 'applying'

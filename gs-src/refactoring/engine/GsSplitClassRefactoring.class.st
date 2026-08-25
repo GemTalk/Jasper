@@ -697,27 +697,10 @@ GsSplitClassRefactoring >> makeNewVersionOf: old superclass: sup instVarNames: i
 { #category : 'applying' }
 GsSplitClassRefactoring >> copyMethodsFrom: old to: new skipping: skipSelectors [
 	old selectors do: [:sel |
-		(skipSelectors includes: sel) ifFalse: [self copyMethod: sel from: old to: new meta: false]].
-	old class selectors do: [:sel | self copyMethod: sel from: old class to: new class meta: true]
+		(skipSelectors includes: sel) ifFalse: [environment copyMethod: sel from: old to: new meta: false into: copyFailures]].
+	old class selectors do: [:sel | environment copyMethod: sel from: old class to: new class meta: true into: copyFailures]
 ]
 
-{ #category : 'applying' }
-GsSplitClassRefactoring >> copyMethod: sel from: srcCls to: dstCls meta: isMeta [
-	"Carry one method verbatim onto the new class version. A method that will not recompile
-	 is recorded in copyFailures rather than dropped in silence -- the new version starts with
-	 an empty method dictionary, so a dropped method is simply gone. Answers whether it
-	 compiled."
-	| m |
-	m := srcCls compiledMethodAt: sel environmentId: 0 otherwise: nil.
-	m isNil ifTrue: [^true].
-	^environment
-		copyMethod: sel
-		from: srcCls
-		to: dstCls
-		source: m sourceString
-		meta: isMeta
-		into: copyFailures
-]
 
 { #category : 'applying' }
 GsSplitClassRefactoring >> applyMethodAdd: aChange [
