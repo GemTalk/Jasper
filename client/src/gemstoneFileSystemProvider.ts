@@ -522,6 +522,20 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
     return new vscode.Disposable(() => {});
   }
 
+  /**
+   * Announce that these resources changed underneath VS Code, so a clean editor showing one
+   * of them re-reads it.
+   *
+   * `writeFile` already fires this for a save. This is the entry point for a change made
+   * some OTHER way — an undo recompiles a method straight over GCI, never touching the
+   * provider, and an editor left showing the discarded source is how that undo gets silently
+   * re-saved (#434).
+   */
+  notifyChanged(uris: vscode.Uri[]): void {
+    if (uris.length === 0) return;
+    this._onDidChangeFile.fire(uris.map((uri) => ({ type: vscode.FileChangeType.Changed, uri })));
+  }
+
   stat(uri: vscode.Uri): vscode.FileStat {
     logInfo(`[FS] stat ${uri.toString()}`);
     const stat: vscode.FileStat = {
@@ -775,18 +789,24 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
     // on base stones). Strip the category line, compile the always-valid
     // definition, then apply the category via Class>>category:.
     const { source: defSource, category } = splitOutCategory(source);
-    // A new-class definition may name a dictionary other than the one selected in
-    // the explorer (the user can edit the `inDictionary:` line). The class is
-    // created wherever that line says, so every post-compile step — existence
-    // check, recategorize, sync, reopen — must target THAT dictionary, not the
-    // selected one (parsed.dictName), or they look the class up in the wrong place
-    // (LookupError / "Class not found").
-    const targetDictName: string =
-      parsed.kind === 'new-class'
-        ? (dictNameFromDefinition(defSource) ?? parsed.dictName)
-        : parsed.dictName;
+    // A definition may name a dictionary other than the one the tab was opened on — the
+    // user can edit the `inDictionary:` line, on an existing class's definition just as
+    // much as on a new-class template, and the compile simply executes the source. So the
+    // class lands wherever that line says, and every post-compile step — existence check,
+    // recategorize, writability, undo, sync, reopen — must target THAT dictionary, not the
+    // one in the URI, or they look the class up in the wrong place. Looking it up in the
+    // wrong place does not fail loudly: `canClassBeWritten` reads a class it cannot find as
+    // NOT writable, so a save that moved a class used to be reported as "recompiled
+    // transiently — NOT persisted" when it had in fact persisted perfectly well.
+    const definedDictName = dictNameFromDefinition(defSource);
+    const targetDictName: string = definedDictName ?? parsed.dictName;
+    // Prefer the URI's SymbolList index while the definition leaves the class where it was:
+    // an index is unambiguous where a name is not, since two dictionaries can share a name.
+    // Once the definition names a different dictionary, the name is all there is to go on.
     const dictRef: number | string =
-      parsed.kind === 'definition' ? (parsed.dictIndex ?? parsed.dictName) : targetDictName;
+      parsed.kind === 'definition' && targetDictName === parsed.dictName
+        ? (parsed.dictIndex ?? parsed.dictName)
+        : targetDictName;
 
     // A NEW-class save must not silently redefine an existing class in the target
     // dictionary. (Editing an existing class's definition is a deliberate
@@ -803,10 +823,16 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
 
     // Snapshot the class binding BEFORE compiling, and stash the version bound now: a
     // shape-changing save answers a NEW version, and the old one is the only way back (#434).
-    // A new-class save has no name until the definition is parsed -- which the guard above
-    // just did -- so both kinds can be recorded here.
+    //
+    // The name comes from the DEFINITION, never from the URI, for both kinds. A new-class
+    // URI carries only a placeholder; and a definition tab whose class name has been edited
+    // CREATES a class, leaving the one the tab was opened on untouched -- so watching
+    // parsed.className there would see no change, record nothing, and leave the creation
+    // unrevertible. parsed.className is only the fallback for a definition whose name cannot
+    // be parsed, which is a definition that will not compile anyway.
     const undoName =
-      parsed.kind === 'definition' ? parsed.className : classNameFromDefinition(defSource);
+      classNameFromDefinition(defSource) ??
+      (parsed.kind === 'definition' ? parsed.className : undefined);
     const recording = undoName
       ? beginClassEdit(session, [{ dict: dictRef, className: undoName }])
       : undefined;
@@ -838,16 +864,17 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
     // method) without persisting, yet GemStone reports success — warn instead
     // of a misleading "updated" toast. A new class that couldn't be written to
     // its target dictionary would have thrown above, so it's always a success.
-    if (
-      parsed.kind === 'definition' &&
-      !this.classIsWritable(session, className, parsed.dictIndex ?? parsed.dictName)
-    ) {
+    if (parsed.kind === 'definition' && !this.classIsWritable(session, className, dictRef)) {
       vscode.window.showWarningMessage(
         `${className} recompiled transiently — NOT persisted (the class is not writable). ` +
           `The change will be lost when the session ends.`,
       );
     } else {
-      const created = parsed.kind === 'new-class';
+      // Created or redefined is what the CAPTURE saw, not what the URI said: a definition
+      // tab whose class name was edited creates a class too, and calling that "definition
+      // updated" names the wrong thing. Only when nothing was captured does the URI kind
+      // have to answer for it.
+      const created = recording ? !recording.before[0]?.bound : parsed.kind === 'new-class';
       const message = created
         ? `Class created: ${className}`
         : `Class definition updated for ${className}`;
@@ -864,9 +891,13 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
 
     // Preserve the dictionary index (when the edited URI carried one) so the
     // reopened definition tab targets the same dictionary and matches the tab
-    // being replaced. For a new class, target the dictionary the definition named
-    // (targetDictName), which may differ from the selected one.
-    const dictIndex = parsed.kind === 'definition' ? parsed.dictIndex : undefined;
+    // being replaced. Dropped when the definition moved the class: the index still
+    // points at the dictionary the tab came from, and pairing it with the new
+    // dictionary's name would reopen the tab looking in the old one.
+    const dictIndex =
+      parsed.kind === 'definition' && targetDictName === parsed.dictName
+        ? parsed.dictIndex
+        : undefined;
     const definitionUri = buildClassDefinitionUri(
       parsed.sessionId,
       targetDictName,

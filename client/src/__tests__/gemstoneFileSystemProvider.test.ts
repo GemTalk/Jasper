@@ -45,6 +45,7 @@ vi.mock('../gciLog', async (orig) => ({
 
 import {
   Uri,
+  FileChangeType,
   FilePermission,
   window,
   languages,
@@ -61,6 +62,8 @@ import {
   closeGemstoneTabsForSession,
   installStaleGemstoneTabReaper,
   escapeSelectorSlashes,
+  unescapeSelectorSlashes,
+  tabInputUri,
   parseUri,
   parseMethodUri,
   listOpenGemstoneTabs,
@@ -622,6 +625,62 @@ describe('GemStoneFileSystemProvider', () => {
       );
       const firedUri: Uri = listener.mock.calls[0][0].uri;
       expect(firedUri.path).toBe('/UserGlobals/Fnoodle/definition/Fnoodle');
+    });
+
+    it('follows inDictionary: when a definition save moves the class to another dictionary', async () => {
+      // An existing class's definition can move the class: the compile just executes the
+      // source, `inDictionary:` and all. Looking the result up in the URI's dictionary finds
+      // nothing, and `canBeWritten` reads a class it cannot find as NOT writable — so a save
+      // that persisted perfectly well used to warn that it had not.
+      const uri = Uri.parse('gemstone://1/UserGlobals/Account/definition?dict=2');
+      const source = "Object subclass: 'Account2'\n  inDictionary: OtherDict\n  category: 'demo'";
+      vi.mocked(queries.compileClassDefinition).mockReturnValueOnce('Account2');
+      const listener = vi.fn();
+      provider.onClassDefinitionCompiled(listener);
+
+      provider.writeFile(uri, encode(source), { create: false, overwrite: true });
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(queries.canClassBeWritten).toHaveBeenCalledWith(
+        expect.anything(),
+        'Account2',
+        'OtherDict',
+      );
+      expect(window.showWarningMessage).not.toHaveBeenCalled();
+      expect(queries.recategorizeClass).toHaveBeenCalledWith(
+        expect.anything(),
+        'Account2',
+        'demo',
+        'OtherDict',
+      );
+      // The URI's SymbolList index still points at the dictionary the tab came from, so
+      // carrying it onto the new dictionary's name would reopen the tab looking in the old one.
+      const firedUri: Uri = listener.mock.calls[0][0].uri;
+      expect(firedUri.path).toBe('/OtherDict/Account2/definition/Account2');
+      expect(firedUri.query).toBe('');
+    });
+
+    it('keeps using the URI dictionary index when the definition leaves the class where it was', async () => {
+      // An index is unambiguous where a name is not — two dictionaries can share a name — so
+      // it stays in charge for every save that does not move the class.
+      const uri = Uri.parse('gemstone://1/UserGlobals/Account/definition?dict=2');
+      const source = "Object subclass: 'Account'\n  inDictionary: UserGlobals\n  category: 'demo'";
+      vi.mocked(queries.compileClassDefinition).mockReturnValueOnce('Account');
+      const listener = vi.fn();
+      provider.onClassDefinitionCompiled(listener);
+
+      provider.writeFile(uri, encode(source), { create: false, overwrite: true });
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(queries.canClassBeWritten).toHaveBeenCalledWith(expect.anything(), 'Account', 2);
+      expect(queries.recategorizeClass).toHaveBeenCalledWith(
+        expect.anything(),
+        'Account',
+        'demo',
+        2,
+      );
+      const firedUri: Uri = listener.mock.calls[0][0].uri;
+      expect(firedUri.query).toBe('dict=2');
     });
 
     it('refuses a new-class save that would overwrite an existing class in the dictionary', async () => {
@@ -1578,6 +1637,61 @@ describe('buildClassDefinitionUri', () => {
   });
 });
 
+describe('escapeSelectorSlashes / unescapeSelectorSlashes', () => {
+  /**
+   * A binary selector can contain `/`, and a slash in a URI path segment is collapsed by
+   * VS Code's path normalization even when percent-encoded — which silently loses part of the
+   * selector. These two are the round trip that keeps `//` addressable.
+   */
+  it('round-trips a selector containing slashes', () => {
+    for (const selector of ['/', '//', 'at:put:', '+', 'a/b/c', '']) {
+      expect(unescapeSelectorSlashes(escapeSelectorSlashes(selector))).toBe(selector);
+    }
+  });
+
+  it('leaves no raw slash for the path to collapse', () => {
+    expect(escapeSelectorSlashes('//')).not.toContain('/');
+  });
+
+  it('leaves a selector with no slash untouched', () => {
+    expect(escapeSelectorSlashes('at:put:')).toBe('at:put:');
+    expect(unescapeSelectorSlashes('at:put:')).toBe('at:put:');
+  });
+
+  it('turns a literal sentinel back into a slash — which is why the sentinel is what it is', () => {
+    // The encoding is not injective: unescape maps the sentinel to '/' whether it got there by
+    // escaping or was in the selector already. That is only safe because the sentinel is
+    // FRACTION SLASH, which no Smalltalk selector contains. Pinned so a future change to a
+    // more ordinary sentinel character has to confront the round trip it would break.
+    const sentinel = escapeSelectorSlashes('/');
+
+    expect(sentinel).toBe('⁄');
+    expect(unescapeSelectorSlashes(sentinel)).toBe('/');
+  });
+});
+
+describe('tabInputUri', () => {
+  it('answers the document uri of a text tab', () => {
+    const uri = Uri.parse('gemstone://1/UserGlobals/Account/definition');
+
+    expect(tabInputUri({ input: new TabInputText(uri) } as never)).toBe(uri);
+  });
+
+  it('answers the MODIFIED side of a diff tab, which is the editable one', () => {
+    const original = Uri.parse('gemstone://1/UserGlobals/Account/instance/accessing/x?base=1');
+    const modified = Uri.parse('gemstone://1/UserGlobals/Account/instance/accessing/x');
+
+    expect(tabInputUri({ input: new TabInputTextDiff(original, modified) } as never)).toBe(
+      modified,
+    );
+  });
+
+  it('answers undefined for a tab kind that has no editable document', () => {
+    expect(tabInputUri({ input: undefined } as never)).toBeUndefined();
+    expect(tabInputUri({ input: { webview: {} } } as never)).toBeUndefined();
+  });
+});
+
 describe('buildClassCommentUri', () => {
   it('places "comment" at path segment 3', () => {
     const uri = buildClassCommentUri(1, 'Globals', 'Array');
@@ -1939,6 +2053,43 @@ describe('listOpenGemstoneTabs', () => {
   });
 });
 
+describe('notifyChanged (#434)', () => {
+  /**
+   * An undo recompiles a method straight over GCI, so `writeFile` never runs and VS Code is
+   * never told the resource changed. Without this the editor keeps showing the source the
+   * undo discarded, and the next save writes it straight back.
+   */
+  let provider: GemStoneFileSystemProvider;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    provider = new GemStoneFileSystemProvider(makeSessionManager());
+  });
+
+  it('fires onDidChangeFile for every uri it is given', () => {
+    const listener = vi.fn();
+    provider.onDidChangeFile(listener);
+    const a = Uri.parse('gemstone://1/UserGlobals/Account/instance/accessing/balance');
+    const b = Uri.parse('gemstone://1/UserGlobals/Account/instance/accessing/total');
+
+    provider.notifyChanged([a, b]);
+
+    expect(listener).toHaveBeenCalledWith([
+      { type: FileChangeType.Changed, uri: a },
+      { type: FileChangeType.Changed, uri: b },
+    ]);
+  });
+
+  it('stays quiet when there is nothing to announce', () => {
+    const listener = vi.fn();
+    provider.onDidChangeFile(listener);
+
+    provider.notifyChanged([]);
+
+    expect(listener).not.toHaveBeenCalled();
+  });
+});
+
 describe('recording a save for undo (#434)', () => {
   /**
    * A save is snapshotted BEFORE it compiles, because that is the only moment the previous
@@ -2152,6 +2303,58 @@ describe('recording a class definition save for revert (#434)', () => {
     expect(entry).toMatchObject({ kind: 'classEdit', label: 'Add class Fresh' });
     // Nothing was bound, so nothing was stashed — a key resolving to nil would be a lie.
     expect(entry?.kind === 'classEdit' && entry.stashKeys).toEqual([null]);
+  });
+
+  it('records an Add when a definition save renames the class into a new one', () => {
+    // Editing the name in a class-definition editor does not rename anything — it compiles a
+    // definition for a class that does not exist yet, and the class the tab was opened on is
+    // left exactly as it was. Watching the tab's class would therefore see no change and
+    // record nothing, leaving the class the user just created unrevertible.
+    vi.mocked(captureClassSlots)
+      .mockReturnValueOnce([unboundState])
+      .mockReturnValueOnce([boundState('2')]);
+    vi.mocked(queries.compileClassDefinition).mockReturnValue('Renamed');
+
+    write(definitionUri, "Object subclass: 'Renamed'\n  instVarNames: #('a')\n  category: 'demo'");
+
+    // The slot watched is the class the DEFINITION names, not the URI's.
+    expect(vi.mocked(captureClassSlots).mock.calls[0][1]).toEqual([
+      { dict: 'UserGlobals', className: 'Renamed' },
+    ]);
+    expect(peekUndoEntry(session.id)).toMatchObject({
+      kind: 'classEdit',
+      label: 'Add class Renamed',
+    });
+  });
+
+  it('records the class in the dictionary the definition moved it to', () => {
+    vi.mocked(captureClassSlots)
+      .mockReturnValueOnce([unboundState])
+      .mockReturnValueOnce([boundState('2')]);
+    vi.mocked(queries.compileClassDefinition).mockReturnValue('Moved');
+
+    write(definitionUri, "Object subclass: 'Moved'\n  inDictionary: OtherDict\n  category: 'demo'");
+
+    // Watching UserGlobals would see nothing change there and record nothing at all.
+    expect(vi.mocked(captureClassSlots).mock.calls[0][1]).toEqual([
+      { dict: 'OtherDict', className: 'Moved' },
+    ]);
+    expect(peekUndoEntry(session.id)).toMatchObject({
+      kind: 'classEdit',
+      label: 'Add class Moved',
+      slots: [{ dict: 'OtherDict', className: 'Moved' }],
+    });
+  });
+
+  it('says a renamed-into-existence class was created, not updated', () => {
+    vi.mocked(captureClassSlots)
+      .mockReturnValueOnce([unboundState])
+      .mockReturnValueOnce([boundState('2')]);
+    vi.mocked(queries.compileClassDefinition).mockReturnValue('Renamed');
+
+    write(definitionUri, "Object subclass: 'Renamed'\n  instVarNames: #('a')\n  category: 'demo'");
+
+    expect(window.showInformationMessage).toHaveBeenCalledWith('Class created: Renamed', 'Revert');
   });
 
   it('saves normally when the capture fails — revert is never allowed to break a save', () => {
