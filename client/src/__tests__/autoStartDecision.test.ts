@@ -1,9 +1,7 @@
-import { describe, it, expect, vi } from 'vitest';
-// autoStartDecision now imports versionsMatch from processManager, which pulls
-// in vscode; mock it so these pure-logic cases still run headless.
-vi.mock('vscode', () => import('../__mocks__/vscode.js'));
+import { describe, it, expect } from 'vitest';
 import { inspectDatabaseProcesses, classifyStartNeed } from '../autoStartDecision';
 import { GemStoneDatabase, GemStoneProcess } from '../sysadminTypes';
+import { HostServerProcess } from '../externalServerScan';
 
 function makeDb(overrides: Partial<GemStoneDatabase['config']> = {}): GemStoneDatabase {
   return {
@@ -31,21 +29,30 @@ function proc(overrides: Partial<GemStoneProcess> = {}): GemStoneProcess {
   };
 }
 
+const hostStone: HostServerProcess = {
+  pid: 4242,
+  type: 'stone',
+  name: 'alpha',
+  version: '3.7.5',
+  dbPathHints: ['/root/db-1/conf/alpha.conf'],
+  command: '/gs/sys/stoned alpha',
+};
+
 const stoneUp = proc();
 const ldiUp = proc({ type: 'netldi', name: 'alpha_ldi' });
 
 describe('inspectDatabaseProcesses', () => {
   it('reports both down when nothing is running', () => {
     expect(inspectDatabaseProcesses(makeDb(), [])).toEqual({
-      stone: { running: false, responding: false },
-      netldi: { running: false, responding: false },
+      stone: { running: false, responding: false, external: false },
+      netldi: { running: false, responding: false, external: false },
     });
   });
 
   it('reports both up when both are running and responding', () => {
     expect(inspectDatabaseProcesses(makeDb(), [stoneUp, ldiUp])).toEqual({
-      stone: { running: true, responding: true },
-      netldi: { running: true, responding: true },
+      stone: { running: true, responding: true, external: false },
+      netldi: { running: true, responding: true, external: false },
     });
   });
 
@@ -55,6 +62,7 @@ describe('inspectDatabaseProcesses', () => {
     expect(inspectDatabaseProcesses(makeDb(), [wedged, ldiUp]).stone).toEqual({
       running: true,
       responding: false,
+      external: false,
     });
   });
 
@@ -74,6 +82,17 @@ describe('inspectDatabaseProcesses', () => {
     );
   });
 
+  it('marks a server the host scan found but gslist did not as external', () => {
+    // The case the whole detection exists for: alive on the host, invisible to
+    // Jasper's gslist, and so reported as Stopped before this.
+    const state = inspectDatabaseProcesses(makeDb(), [], {
+      stone: { process: hostStone, identity: 'confirmed' },
+    });
+
+    expect(state.stone).toEqual({ running: false, responding: false, external: true });
+    expect(state.netldi.external).toBe(false);
+  });
+
   it('does not confuse the stone and the netldi', () => {
     // A netldi named the same as the stone must not satisfy the stone check.
     const confusable = proc({ type: 'netldi', name: 'alpha' });
@@ -86,12 +105,17 @@ describe('inspectDatabaseProcesses', () => {
 
 describe('classifyStartNeed', () => {
   const both = {
-    stone: { running: true, responding: true },
-    netldi: { running: true, responding: true },
+    stone: { running: true, responding: true, external: false },
+    netldi: { running: true, responding: true, external: false },
   };
   const neither = {
-    stone: { running: false, responding: false },
-    netldi: { running: false, responding: false },
+    stone: { running: false, responding: false, external: false },
+    netldi: { running: false, responding: false, external: false },
+  };
+
+  const externalStone = {
+    stone: { running: false, responding: false, external: true },
+    netldi: { running: true, responding: true, external: false },
   };
 
   it('says nothing to do when both are up and healthy', () => {
@@ -128,7 +152,7 @@ describe('classifyStartNeed', () => {
     // lock tooling instead, so this must not be reported as "can start".
     expect(
       classifyStartNeed({
-        stone: { running: true, responding: false },
+        stone: { running: true, responding: false, external: false },
         netldi: both.netldi,
       }),
     ).toEqual({ kind: 'not-responding', what: 'stone' });
@@ -136,17 +160,43 @@ describe('classifyStartNeed', () => {
 
   it('reports an unresponsive netldi', () => {
     expect(
-      classifyStartNeed({ stone: both.stone, netldi: { running: true, responding: false } }),
+      classifyStartNeed({
+        stone: both.stone,
+        netldi: { running: true, responding: false, external: false },
+      }),
     ).toEqual({ kind: 'not-responding', what: 'netldi' });
   });
 
   it('prefers reporting the wedged stone when both are wedged', () => {
     expect(
       classifyStartNeed({
-        stone: { running: true, responding: false },
-        netldi: { running: true, responding: false },
+        stone: { running: true, responding: false, external: false },
+        netldi: { running: true, responding: false, external: false },
       }),
     ).toEqual({ kind: 'not-responding', what: 'stone' });
+  });
+
+  it('reports an external server instead of offering to start it', () => {
+    // startstone against a name a live process already holds collides with it
+    // rather than helping, so this must never come back as "can start".
+    expect(classifyStartNeed(externalStone)).toEqual({ kind: 'external' });
+  });
+
+  it('reports the external server even when the other side is also down', () => {
+    // A plain start of the down side would still leave the login unable to
+    // connect, so the mismatch is what the user needs to hear about first.
+    expect(classifyStartNeed({ stone: externalStone.stone, netldi: neither.netldi })).toEqual({
+      kind: 'external',
+    });
+  });
+
+  it('reports the mismatch when both sides were started outside Jasper', () => {
+    expect(
+      classifyStartNeed({
+        stone: { running: false, responding: false, external: true },
+        netldi: { running: false, responding: false, external: true },
+      }),
+    ).toEqual({ kind: 'external' });
   });
 
   it('offers to start a down side even when the other is wedged', () => {
@@ -155,8 +205,8 @@ describe('classifyStartNeed', () => {
     // not block bringing the stone back up.
     expect(
       classifyStartNeed({
-        stone: { running: false, responding: false },
-        netldi: { running: true, responding: false },
+        stone: { running: false, responding: false, external: false },
+        netldi: { running: true, responding: false, external: false },
       }),
     ).toEqual({ kind: 'can-start', startStone: true, startNetldi: false });
   });

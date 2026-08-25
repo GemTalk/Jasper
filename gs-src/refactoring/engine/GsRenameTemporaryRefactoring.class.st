@@ -468,7 +468,7 @@ GsRenameTemporaryRefactoring >> applyDeselected: deselectedIds [
 	self changeSet changes do: [:change |
 		[self applyChange: change. applied := applied + 1]
 		on: Error do: [:e |
-			failures add: (Array with: change id with: change className with: e messageText)]].
+			failures add: (Array with: change id with: change failureLabel with: e messageText)]].
 	^'{"applied":', applied printString,
 	  ',"failed":[',
 	  ((failures collect: [:f |
@@ -492,9 +492,9 @@ GsRenameTemporaryRefactoring >> applyMethodRecompile: aChange [
 	cls := environment classNamed: aChange className.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
-	target
-		compileMethod: aChange newSource
-		dictionaries: System myUserProfile symbolList
+	environment
+		compile: aChange newSource
+		into: target
 		category: (aChange category ifNil: ['as yet unclassified'])
 ]
 

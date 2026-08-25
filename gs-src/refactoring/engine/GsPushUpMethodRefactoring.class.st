@@ -483,7 +483,7 @@ GsPushUpMethodRefactoring >> applyDeselected: deselectedIds [
 			ifFalse: [
 				[(self applyChange: change) ifTrue: [applied := applied + 1]]
 				on: Error do: [:e |
-					failures add: (Array with: change id with: change className with: e messageText)]]].
+					failures add: (Array with: change id with: change failureLabel with: e messageText)]]].
 	^'{"applied":', applied printString,
 	  ',"failed":[',
 	  ((failures collect: [:f |
@@ -507,14 +507,16 @@ GsPushUpMethodRefactoring >> applyMethodAdd: aChange [
 	"Compile the pushed-up method onto the superclass/side. No commit. Records the
 	 selector as applied so the paired remove knows the add actually happened (a plain
 	 includesSelector: check cannot tell an applied push from a pre-existing collision
-	 method, so a deselected OVERWRITE must not trigger the remove)."
+	 method, so a deselected OVERWRITE must not trigger the remove). The compile RAISES when it
+	 fails, so the record -- and with it the paired remove's authority to strip the source -- is
+	 only reached once the method is actually installed on the superclass."
 	| cls target |
 	cls := environment classNamed: aChange className.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
-	target
-		compileMethod: aChange newSource
-		dictionaries: System myUserProfile symbolList
+	environment
+		compile: aChange newSource
+		into: target
 		category: (aChange category ifNil: ['as yet unclassified']).
 	appliedAddSelectors add: aChange selector asSymbol.
 	^true

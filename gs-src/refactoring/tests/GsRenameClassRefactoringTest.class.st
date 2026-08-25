@@ -18,7 +18,9 @@ Correctness of the rename-class refactoring:
   - the server-side apply creates the new class version (bumping the class
     history), copies methods forward, re-parents descendants, rewrites external
     references, and removes the old name -- all without committing;
-  - a new name already in use is reported as a collision precondition.
+  - a new name already in use is reported as a collision precondition;
+  - a method that will not recompile is reported (naming the method) rather than dropped
+    from the new class version in silence, and the rest of the class still arrives.
 
 setUp builds a throwaway hierarchy plus an unrelated referencing class in
 UserGlobals with fixture-unique names, and tearDown removes them (including the
@@ -192,6 +194,31 @@ GsRenameClassRefactoringTest >> testNewNameCollisionDetected [
 	ref := self renameTo: 'GsRCOther' scope: #wholeSystem.
 	self assert: ref newNameCollision notNil.
 	self assert: ref outOfScopeJsonString includesSubstring: 'already in use'
+]
+
+{ #category : 'tests' }
+GsRenameClassRefactoringTest >> testServerSideApplyReportsAMethodThatCannotBeCarriedOntoTheNewVersion [
+	"A new class version starts with an EMPTY method dictionary, so the copy-forward loop is
+	 the only thing carrying the class's behaviour across. compileMethod: answers its errors
+	 rather than raising, so an unchecked copy dropped a method that would not recompile from
+	 the new version and still reported a clean rename -- the method was simply gone. Make one
+	 method un-compilable by removing a global it was compiled against: the failure must be
+	 reported against the METHOD, and the rest of the class must still arrive."
+	| json renamed |
+	UserGlobals at: #GsRCCopyGone put: 7.
+	self compile: 'copyMe ^GsRCCopyGone' in: self baseFixture.
+	UserGlobals removeKey: #GsRCCopyGone.
+
+	json := (self renameTo: 'GsRCRenamed' scope: #wholeSystem) applyDeselected: #().
+
+	self deny: json includesSubstring: '"failed":[]'.
+	self assert: json includesSubstring: 'did not recompile'.
+	self assert: json includesSubstring: 'GsRCRenamed>>copyMe'.
+	"One bad method must not abort the rename: the new version exists and holds the rest."
+	renamed := UserGlobals at: #GsRCRenamed.
+	self assert: (renamed includesSelector: #foo).
+	self assert: (renamed includesSelector: #makeSelf).
+	self deny: (renamed includesSelector: #copyMe)
 ]
 
 { #category : 'tests' }
