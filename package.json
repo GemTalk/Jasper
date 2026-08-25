@@ -1545,7 +1545,13 @@
       },
       {
         "command": "gemstone.undoLast",
-        "title": "Undo Last Change…",
+        "title": "Undo Last Change… (the status bar names it)",
+        "category": "GemStone",
+        "icon": "resources/undo.svg"
+      },
+      {
+        "command": "gemstone.revertLast",
+        "title": "Revert Last Class Change… (the status bar names it)",
         "category": "GemStone",
         "icon": "resources/undo.svg"
       },
@@ -1854,6 +1860,10 @@
           "when": "gemstone.undoAvailable"
         },
         {
+          "command": "gemstone.revertLast",
+          "when": "gemstone.revertAvailable"
+        },
+        {
           "command": "gemstone.renameTemporary",
           "when": "false"
         },
@@ -2140,6 +2150,11 @@
         {
           "command": "gemstone.undoLast",
           "when": "view == gemstoneExplorerMethods && gemstone.undoAvailable",
+          "group": "navigation@6"
+        },
+        {
+          "command": "gemstone.revertLast",
+          "when": "view == gemstoneExplorerMethods && gemstone.revertAvailable",
           "group": "navigation@6"
         },
         {
@@ -2762,7 +2777,12 @@
       "editor/title": [
         {
           "command": "gemstone.undoLast",
-          "when": "resourceScheme == gemstone && gemstone.undoAvailable",
+          "when": "gemstone.undoAvailable",
+          "group": "navigation@1"
+        },
+        {
+          "command": "gemstone.revertLast",
+          "when": "gemstone.revertAvailable",
           "group": "navigation@1"
         }
       ]
@@ -2885,7 +2905,13 @@
         "command": "gemstone.undoLast",
         "key": "ctrl+k u",
         "mac": "cmd+k u",
-        "when": "gemstone.hasActiveSession"
+        "when": "gemstone.hasActiveSession && !gemstone.revertAvailable"
+      },
+      {
+        "command": "gemstone.revertLast",
+        "key": "ctrl+k u",
+        "mac": "cmd+k u",
+        "when": "gemstone.hasActiveSession && gemstone.revertAvailable"
       }
     ]
   },
