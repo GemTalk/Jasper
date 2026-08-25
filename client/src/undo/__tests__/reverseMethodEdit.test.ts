@@ -80,6 +80,24 @@ describe('reverseMethodEdit', () => {
     expect(vi.mocked(vscode.window.showWarningMessage).mock.calls[0][1]).toEqual({ modal: true });
   });
 
+  it('names every drifted method when there is more than one', async () => {
+    vi.mocked(captureMethodSlots).mockReturnValue([has('a ^9'), has('b ^9')]);
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(undefined);
+    const multi: MethodEditUndoEntry = {
+      ...entry([has('a ^1'), has('b ^1')], [has('a ^2'), has('b ^2')]),
+      slots: [
+        { className: 'Account', isMeta: false, selector: 'a', environmentId: 0 },
+        { className: 'Account', isMeta: false, selector: 'b', environmentId: 0 },
+      ],
+    };
+
+    await reverseMethodEdit(session, multi);
+
+    expect(vi.mocked(vscode.window.showWarningMessage).mock.calls[0][0]).toContain(
+      '2 methods (Account>>#a, Account>>#b)',
+    );
+  });
+
   it('goes ahead when the drift is accepted — drift is a warning, not a refusal', async () => {
     vi.mocked(captureMethodSlots).mockReturnValue([has('balance ^99')]);
     vi.mocked(vscode.window.showWarningMessage).mockResolvedValue('Undo Anyway' as never);
@@ -114,6 +132,22 @@ describe('reverseMethodEdit', () => {
     await reverseMethodEdit(session, entry([gone], [has('balance ^1')]));
 
     expect(revealMethod).not.toHaveBeenCalled();
+  });
+
+  it('keeps the entry when the reversal could not even run', async () => {
+    // A throw means nothing was attempted, unlike a reversal the stone refused per slot —
+    // which is reported and still uses the entry up, because the recorded "before" no
+    // longer describes anything.
+    vi.mocked(captureMethodSlots).mockReturnValue([gone]);
+    vi.mocked(applyMethodSlotOps).mockImplementation(() => {
+      throw new Error('session busy');
+    });
+
+    const spent = await reverseMethodEdit(session, entry([has('balance ^1')], [gone]));
+
+    expect(spent).toBe(false);
+    expect(vi.mocked(vscode.window.showErrorMessage).mock.calls[0][0]).toContain('session busy');
+    expect(refreshSearch).not.toHaveBeenCalled();
   });
 
   it('resyncs GemStone Search, which caches what it searches', async () => {

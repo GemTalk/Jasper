@@ -105,6 +105,13 @@ describe('parseClassCapture', () => {
   it('reads a truncated result as unbound rather than throwing', () => {
     expect(parseClassCapture('', 2).every((s) => !s.bound)).toBe(true);
   });
+
+  it('reads a line with no fields as bound with no version rather than undefined', () => {
+    // Only reachable from a stone that answered something malformed. An empty OOP compares
+    // unequal to every real one, so a reversal planned from it is a no-op rather than a
+    // rebind of the wrong version.
+    expect(parseClassCapture('1', 1)).toEqual([{ bound: true, oop: '', selectors: [] }]);
+  });
 });
 
 describe('parseClassApply', () => {

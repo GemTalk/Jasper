@@ -75,6 +75,21 @@ describe('reverseClassEdit', () => {
     });
   });
 
+  it('keeps the entry when the reversal could not even run', async () => {
+    // Distinct from a reversal the stone REFUSED (which is reported per class and uses the
+    // entry up): a throw here means nothing was attempted, so the entry must stay on offer.
+    vi.mocked(captureClassSlots).mockReturnValue([bound('2')]);
+    vi.mocked(applyClassSlotOps).mockImplementation(() => {
+      throw new Error('session busy');
+    });
+
+    const spent = await reverseClassEdit(session, entry([bound('1')], [bound('2')]));
+
+    expect(spent).toBe(false);
+    expect(vi.mocked(vscode.window.showErrorMessage).mock.calls[0][0]).toContain('session busy');
+    expect(refreshSearch).not.toHaveBeenCalled();
+  });
+
   it('resyncs GemStone Search, which caches the class list', async () => {
     // Unbinding a class the user just created leaves the search panel offering it as a hit;
     // opening that hit lands on "Class not found". Search has to be told, same as the
@@ -108,6 +123,41 @@ describe('reverseClassEdit', () => {
     expect((options as { modal: boolean; detail: string }).modal).toBe(true);
     // By name, not just a count -- the user cannot judge the cost from a number.
     expect((options as { detail: string }).detail).toContain('Account>>#writtenLater');
+  });
+
+  it('names every class when a whole subtree drifted, not just a count', () => {
+    vi.mocked(captureClassSlots).mockReturnValue([bound('9'), bound('9')]);
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(undefined);
+    const subtree: ClassEditUndoEntry = {
+      ...entry([bound('1'), bound('1')], [bound('2'), bound('2')]),
+      slots: [
+        { dict: 'UserGlobals', className: 'Account' },
+        { dict: 'UserGlobals', className: 'Savings' },
+      ],
+      stashKeys: ['k1', 'k2'],
+    };
+
+    return reverseClassEdit(session, subtree).then(() => {
+      const message = vi.mocked(vscode.window.showWarningMessage).mock.calls[0][0];
+      expect(message).toContain('2 classes (Account, Savings)');
+    });
+  });
+
+  it('caps the list of methods it would leave behind, and says how many it cut', async () => {
+    // The detail is a modal body, not a log: twenty selectors is a wall the user cannot read,
+    // and a bare count is not enough to judge the cost. Ten plus a remainder is the compromise.
+    const many = Array.from({ length: 12 }, (_, i) => `writtenLater${i}`);
+    vi.mocked(captureClassSlots).mockReturnValue([bound('2', many)]);
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(undefined);
+
+    await reverseClassEdit(session, entry([bound('1')], [bound('2')]));
+
+    const [message, options] = vi.mocked(vscode.window.showWarningMessage).mock.calls[0];
+    expect(message).toContain('12 methods');
+    const { detail } = options as { detail: string };
+    expect(detail).toContain('Account>>#writtenLater0');
+    expect(detail).toContain('…and 2 more');
+    expect(detail).not.toContain('writtenLater11');
   });
 
   it('goes ahead when the cost is accepted', async () => {

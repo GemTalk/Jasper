@@ -90,6 +90,43 @@ describe('the undo stack', () => {
     expect(peekUndoEntry(1)?.label).toBe('later');
   });
 
+  it('answers the depth, and 0 for a session that has never recorded anything', () => {
+    // The depth is what a caller checks before offering to walk several edits back; a
+    // session with no stack at all must read as empty rather than throw.
+    expect(undoStackDepth(1)).toBe(0);
+    expect(undoStackDepth(undefined)).toBe(0);
+
+    pushUndoEntry(methodEdit(1, 'a'));
+    pushUndoEntry(methodEdit(1, 'b'));
+
+    expect(undoStackDepth(1)).toBe(2);
+    expect(undoStackDepth(2)).toBe(0);
+    popUndoEntry(1);
+    expect(undoStackDepth(1)).toBe(1);
+  });
+
+  it('never counts past its own bound', () => {
+    for (let i = 0; i < MAX_UNDO_DEPTH + 5; i += 1) pushUndoEntry(methodEdit(1, `edit ${i}`));
+
+    expect(undoStackDepth(1)).toBe(MAX_UNDO_DEPTH);
+  });
+
+  it('shrugs off a drop for a session or an id it does not hold', () => {
+    // Both are ordinary: the stone can report a record gone for a session whose stack was
+    // already cleared, and the same entry can be dropped twice. Neither is a change, so
+    // neither may wake the listeners that redraw the UI.
+    const listener = vi.fn();
+    onUndoStackChanged(listener);
+    const entry = pushUndoEntry(methodEdit(1, 'only'));
+    listener.mockClear();
+
+    dropUndoEntry(99, entry.id);
+    dropUndoEntry(1, entry.id + 1000);
+
+    expect(peekUndoEntry(1)).toMatchObject({ label: 'only' });
+    expect(listener).not.toHaveBeenCalled();
+  });
+
   it('clears a whole session at once', () => {
     pushUndoEntry(methodEdit(1, 'a'));
     pushUndoEntry(methodEdit(2, 'b'));
@@ -115,6 +152,21 @@ describe('the undo stack', () => {
     clearUndoStack(1);
     expect(listener).toHaveBeenCalledTimes(6);
     expect(entry.id).not.toBe(second.id);
+  });
+
+  it('stops telling a listener once it is disposed', () => {
+    // The Explorer and the status bar subscribe for the life of the extension, but a test
+    // seam or a disposed view must be able to let go — a listener that keeps firing after
+    // its owner is gone is a leak that only shows up as a crash much later.
+    const listener = vi.fn();
+    const dispose = onUndoStackChanged(listener);
+    pushUndoEntry(methodEdit(1, 'a'));
+    expect(listener).toHaveBeenCalledTimes(1);
+
+    dispose();
+    pushUndoEntry(methodEdit(1, 'b'));
+
+    expect(listener).toHaveBeenCalledTimes(1);
   });
 
   it('survives a listener that throws — an edit must not fail because its UI did', () => {

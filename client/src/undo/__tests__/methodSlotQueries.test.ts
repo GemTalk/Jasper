@@ -105,6 +105,13 @@ describe('parseCapture', () => {
     expect(decodeEscaped('a\\\\b')).toBe('a\\b');
   });
 
+  it('passes through a backslash sequence the encoder never produces', () => {
+    // Decoding is the last step before source is compiled back into the image, so an
+    // unrecognised escape must not silently lose a character. `\q` is not one of the four
+    // the encoder emits; the backslash survives, and so does the q.
+    expect(decodeEscaped('a\\qb')).toBe('a\\qb');
+  });
+
   it('round-trips a character above the BMP', () => {
     expect(decodeEscaped('\\U0001F600')).toBe('\u{1F600}');
   });
@@ -120,6 +127,13 @@ describe('parseApply', () => {
     const results = parseApply('O\nE\tnot writable\n', ops);
     expect(results[0]).toEqual({ op: ops[0], error: null });
     expect(results[1].error).toBe('not writable');
+  });
+
+  it('reads a line with no fields as an empty method rather than undefined', () => {
+    // A '1' with nothing after it can only come from a stone that answered something
+    // malformed. Empty source and empty category are wrong but harmless; undefined would
+    // reach the compiler.
+    expect(parseCapture('1', 1)).toEqual([{ exists: true, source: '', category: '' }]);
   });
 
   it('reports a missing line rather than silently counting it as success', () => {

@@ -68,6 +68,30 @@ describe('undoLastRefactoringCommand', () => {
     vi.mocked(vscode.window.showInformationMessage).mockResolvedValue(undefined);
   });
 
+  it('wires the panel straight to the stone, carrying the preview token', async () => {
+    // The panel is UI-only: it hands back "fetch page N" and "undo, skipping these ids", and
+    // the command is what turns those into GCI calls against the token this preview opened.
+    // Mocked away in every other test here, so these two arrows had no coverage at all.
+    vi.mocked(queries.pageUndoRefactoringPreview).mockResolvedValue(
+      JSON.stringify({ changes: [], nextOffset: 9, done: true }),
+    );
+    vi.mocked(showUndoRefactoringPanel).mockImplementation(async (_start, handlers) => {
+      await handlers.loadPage(4);
+      return handlers.apply(['c1']);
+    });
+
+    await undoLastRefactoringCommand(sessionsWith(true));
+
+    // The token is the command's own, minted when it opened the preview -- not the one the
+    // stone echoed back. Paging or applying against any other token is a different session.
+    const opened = vi.mocked(queries.startUndoRefactoringPreview).mock.calls[0][1];
+    const [, token, offset, maxBytes] = vi.mocked(queries.pageUndoRefactoringPreview).mock.calls[0];
+    expect(token).toBe(opened);
+    expect(offset).toBe(4);
+    expect(maxBytes).toBeGreaterThan(0);
+    expect(queries.applyUndoRefactoring).toHaveBeenCalledWith(expect.anything(), opened, ['c1']);
+  });
+
   it('refuses without a session, before touching the stone', async () => {
     await undoLastRefactoringCommand(noSession());
     expect(vscode.window.showWarningMessage).toHaveBeenCalled();

@@ -93,6 +93,15 @@ describe('driftedClassSlots', () => {
   it('stays quiet when the version is exactly what the edit left', () => {
     expect(driftedClassSlots([slot], [bound('2')], [bound('2')])).toEqual([]);
   });
+
+  it('skips a slot the capture came up short on, and still judges the rest', () => {
+    // The state arrays come back from their own round trips, so a short one means the stone
+    // told us less than we asked for. That slot cannot be judged and is passed over — it is
+    // not evidence of drift — while the slots that WERE reported are still compared.
+    expect(driftedClassSlots([slot, other], [bound('2')], [bound('9')])).toEqual([slot]);
+    expect(driftedClassSlots([slot, other], [bound('2')], [bound('2')])).toEqual([]);
+    expect(driftedClassSlots([slot], [], [])).toEqual([]);
+  });
 });
 
 describe('discardedByReversal', () => {
@@ -121,5 +130,26 @@ describe('describeClassOps', () => {
       ['k1', null],
     );
     expect(describeClassOps(ops)).toBe('1 restored, 1 removed');
+  });
+
+  it('names a single restore for what it is — a rebind, not a rollback', () => {
+    const [op] = planClassReversal([slot], [bound('1')], [bound('2')], ['k1']);
+    expect(describeClassOps([op])).toBe('restored Account to its earlier version');
+  });
+
+  it('counts a subtree that was only removed', () => {
+    const ops = planClassReversal(
+      [slot, other],
+      [unbound, unbound],
+      [bound('8'), bound('9')],
+      [null, null],
+    );
+    expect(describeClassOps(ops)).toBe('2 removed');
+  });
+
+  it('says so plainly when the plan turned out empty', () => {
+    // Reached when the class is already back the way it was; the notice still has to read
+    // as a sentence.
+    expect(describeClassOps([])).toBe('nothing to change');
   });
 });

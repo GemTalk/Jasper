@@ -94,6 +94,15 @@ describe('driftedSlots', () => {
     expect(driftedSlots([slot('balance')], [has('balance ^2')], [has('balance ^2')])).toEqual([]);
   });
 
+  it('skips a slot the capture came up short on, and still judges the rest', () => {
+    // A short state array means the stone told us less than we asked for. That slot cannot
+    // be judged and is passed over — it is not evidence of drift — while the slots that WERE
+    // reported are still compared.
+    expect(driftedSlots([slot('a'), slot('b')], [has('a ^1')], [has('a ^2')])).toEqual([slot('a')]);
+    expect(driftedSlots([slot('a'), slot('b')], [has('a ^1')], [has('a ^1')])).toEqual([]);
+    expect(driftedSlots([slot('a')], [], [])).toEqual([]);
+  });
+
   it('stays quiet about a slot the edit left empty and which is still empty', () => {
     expect(driftedSlots([slot('balance')], [gone], [gone])).toEqual([]);
   });
@@ -112,5 +121,31 @@ describe('describeOps', () => {
       { kind: 'remove' as const, slot: slot('b'), source: null, category: null },
     ];
     expect(describeOps(ops)).toBe('1 restored, 1 removed');
+  });
+
+  it('names a single removal and a single revert distinctly', () => {
+    // Three verbs, because the three are not the same thing to a reader: one method came
+    // back, one went away, one has different source than it did a moment ago.
+    expect(
+      describeOps([{ kind: 'remove', slot: slot('balance'), source: null, category: null }]),
+    ).toBe('removed Account>>#balance');
+    expect(
+      describeOps([{ kind: 'recompile', slot: slot('balance'), source: 'x', category: 'c' }]),
+    ).toBe('reverted Account>>#balance');
+  });
+
+  it('counts all three kinds at once', () => {
+    const ops = [
+      { kind: 'restore' as const, slot: slot('a'), source: 'x', category: 'c' },
+      { kind: 'recompile' as const, slot: slot('b'), source: 'y', category: 'c' },
+      { kind: 'remove' as const, slot: slot('c'), source: null, category: null },
+    ];
+    expect(describeOps(ops)).toBe('1 restored, 1 reverted, 1 removed');
+  });
+
+  it('says so plainly when the plan turned out empty', () => {
+    // Reached when the method is already back the way it was; the notice still has to read
+    // as a sentence.
+    expect(describeOps([])).toBe('nothing to change');
   });
 });
