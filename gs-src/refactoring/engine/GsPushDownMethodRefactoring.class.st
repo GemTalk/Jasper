@@ -441,7 +441,7 @@ GsPushDownMethodRefactoring >> applyDeselected: deselectedIds [
 			ifFalse: [
 				[(self applyChange: change) ifTrue: [applied := applied + 1]]
 				on: Error do: [:e |
-					failures add: (Array with: change id with: change className with: e messageText)]]].
+					failures add: (Array with: change id with: change failureLabel with: e messageText)]]].
 	^'{"applied":', applied printString,
 	  ',"failed":[',
 	  ((failures collect: [:f |
@@ -465,14 +465,15 @@ GsPushDownMethodRefactoring >> applyMethodAdd: aChange [
 	"Compile the pushed-down method onto a subclass/side. No commit. Records the selector
 	 as applied so the paired remove fires only when at least one add actually happened
 	 this run (so un-ticking every target is a genuine no-op, even when every subclass
-	 already understood the selector via its own override)."
+	 already understood the selector via its own override). The compile RAISES when it fails, so
+	 the record is only reached once the method is actually installed on the subclass."
 	| cls target |
 	cls := environment classNamed: aChange className.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
-	target
-		compileMethod: aChange newSource
-		dictionaries: System myUserProfile symbolList
+	environment
+		compile: aChange newSource
+		into: target
 		category: (aChange category ifNil: ['as yet unclassified']).
 	appliedAddSelectors add: aChange selector asSymbol.
 	^true

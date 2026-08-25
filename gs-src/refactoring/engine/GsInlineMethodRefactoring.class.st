@@ -41,7 +41,8 @@ Class {
 		'targetReturnsValue',
 		'inlinedExpr',
 		'lastSender',
-		'declineString'
+		'declineString',
+		'callerRecompiled'
 	],
 	#category : 'Refactoring-Core'
 }
@@ -616,12 +617,13 @@ GsInlineMethodRefactoring >> applyDeselected: deselectedIds [
 	ids := (deselectedIds ifNil: [#()]) asArray.
 	failures := OrderedCollection new.
 	applied := 0.
+	callerRecompiled := false.
 	self changeSet changes doWithIndex: [:change :idx |
 		((idx = 1) or: [(ids includes: change id) not])
 			ifTrue: [
-				[self applyChange: change. applied := applied + 1]
+				[(self applyChange: change) ifTrue: [applied := applied + 1]]
 				on: Error do: [:e |
-					failures add: (Array with: change id with: change className with: e messageText)]]].
+					failures add: (Array with: change id with: change failureLabel with: e messageText)]]].
 	^'{"applied":', applied printString,
 	  ',"failed":[',
 	  ((failures collect: [:f |
@@ -646,20 +648,31 @@ GsInlineMethodRefactoring >> applyMethodRecompile: aChange [
 	cls := environment classNamed: aChange className.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
-	target
-		compileMethod: aChange newSource
-		dictionaries: System myUserProfile symbolList
-		category: (aChange category ifNil: ['as yet unclassified'])
+	environment
+		compile: aChange newSource
+		into: target
+		category: (aChange category ifNil: ['as yet unclassified']).
+	callerRecompiled := true.
+	^true
 ]
 
 { #category : 'applying' }
 GsInlineMethodRefactoring >> applyMethodRemove: aChange [
-	"Remove the now-unused target method. No commit."
+	"Remove the now-unused target method -- but ONLY once the caller recompile actually
+	 succeeded, so a caller that would not compile never leaves the target deleted with
+	 nothing inlined in its place.
+
+	 The apply loop catches per change and keeps going, so a failed recompile does not stop
+	 this one from running; without the guard the target method is destroyed while the caller
+	 still holds its old body calling it. The removal is opt-in in the UI, which limits how
+	 often that can happen, but not whether it loses the method when it does. No commit."
 	| cls target |
+	callerRecompiled ifFalse: [^false].
 	cls := environment classNamed: aChange className.
 	cls isNil ifTrue: [^self error: 'Class not found: ', aChange className].
 	target := aChange isMeta ifTrue: [cls class] ifFalse: [cls].
-	target removeSelector: aChange selector asSymbol
+	target removeSelector: aChange selector asSymbol.
+	^true
 ]
 
 { #category : 'serializing' }

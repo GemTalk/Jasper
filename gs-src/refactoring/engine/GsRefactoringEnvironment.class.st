@@ -85,7 +85,7 @@ GsRefactoringEnvironment >> addMethodsAccessing: anAssociation inBehavior: aBeha
 	 frame holds anAssociation by identity -- i.e. that reference the class variable
 	 bound to it. aBehavior is a class or a metaclass (for the class side)."
 	aBehavior selectors do: [:sel | | m |
-		m := aBehavior compiledMethodAt: sel environmentId: 0 otherwise: nil.
+		m := aBehavior compiledMethodAt: sel environmentId: self environmentId otherwise: nil.
 		(m notNil and: [m literals anySatisfy: [:e | e == anAssociation]])
 			ifTrue: [aCollection add: m]]
 ]
@@ -270,7 +270,7 @@ GsRefactoringEnvironment >> instanceMethodsAccessing: anInstVarName inClass: aCl
 	sym := anInstVarName asSymbol.
 	result := OrderedCollection new.
 	aClass selectors do: [:sel | | m |
-		m := aClass compiledMethodAt: sel environmentId: 0 otherwise: nil.
+		m := aClass compiledMethodAt: sel environmentId: self environmentId otherwise: nil.
 		(m notNil and: [m instVarsAccessed includes: sym])
 			ifTrue: [result add: sel]].
 	^result asSortedCollection asArray
@@ -315,7 +315,7 @@ GsRefactoringEnvironment >> instanceMethodsShadowing: anInstVarName inClass: aCl
 	name := anInstVarName asString.
 	result := OrderedCollection new.
 	aClass selectors do: [:sel | | m src tree |
-		m := aClass compiledMethodAt: sel environmentId: 0 otherwise: nil.
+		m := aClass compiledMethodAt: sel environmentId: self environmentId otherwise: nil.
 		m isNil ifFalse: [
 			src := m sourceString.
 			"Cheap pre-filter: a method can only DECLARE the name if the name appears in its source
@@ -332,24 +332,109 @@ GsRefactoringEnvironment >> instanceMethodsShadowing: anInstVarName inClass: aCl
 GsRefactoringEnvironment >> compile: source into: aBehavior category: aCategory [
 	"Compile one method onto aBehavior and RAISE when it does not compile.
 
+	 Raising puts the failure back onto the path every apply loop already guards with
+	 on: Error do:, so it is recorded in `failed` and reported like any other. Use this
+	 wherever a failed method should abort its own change and nothing more. Where a failure
+	 must NOT abort the surrounding work -- the copy-forward loops that carry a class's whole
+	 method dictionary onto a new version -- use copyMethod:from:to:source:meta:into: instead."
+	| text |
+	text := self compileFailureFor: source into: aBehavior category: aCategory.
+	text isNil ifTrue: [^self].
+	self error: 'did not recompile: ', text
+]
+
+{ #category : 'compiling' }
+GsRefactoringEnvironment >> environmentId [
+	"The GemStone method environment the engines compile into. Always 0 (the base Smalltalk
+	 image) today.
+
+	 This is a seam, not a setting. What will eventually go here is the environment the
+	 refactoring was STARTED in, carried down from the client: a method URI already knows its
+	 environment (`?env=N`), but that dimension is dropped before any engine query, so the
+	 engines have nowhere to read it from -- no instance variable, no field on
+	 GsRefactoringChange, nothing in the JSON protocol. Filling that in is real work, tracked
+	 in https://github.com/GemTalk/Jasper/issues/492 along with the compile-selector migration
+	 that has to happen first: compileMethod:dictionaries:category: takes no environment
+	 argument at all, so until we move off it there is nowhere to pass this.
+
+	 It exists now so that when both land there is ONE place to change rather than a sweep.
+	 This class's own compiledMethodAt:/categoryOfSelector: reads go through it, so it is a
+	 seam with senders rather than an unsent method whose comment nothing keeps honest. The
+	 ENGINES' environmentId: 0 sites are deliberately left alone until there is a real
+	 environment to read: routing them here would claim a configurability that does not exist
+	 yet, and they change in the same sweep that gives this one a value other than 0."
+	^0
+]
+
+{ #category : 'compiling' }
+GsRefactoringEnvironment >> compileFailureFor: source into: aBehavior category: aCategory [
+	"Compile one method onto aBehavior. Answer nil when it compiled, or readable error text
+	 when it did not.
+
 	 Behavior>>compileMethod:dictionaries:category: reports a compile failure in its RETURN
 	 VALUE -- nil (or an empty Array) on success, an Array of error tuples otherwise -- and
 	 does NOT signal. An unchecked send therefore reads as success while the method is never
-	 installed: the caller counts it as applied and the user is told nothing. Raising puts the
-	 failure back onto the path every apply loop already guards with on: Error do:, so it is
-	 recorded in `failed` and reported like any other."
+	 installed: the caller counts it as applied and the user is told nothing. Every compile in
+	 the engines goes through this one method, so no site can forget to look at the answer.
+
+	 The selector used here takes no environment argument -- it hardwires environment 0 -- so
+	 THIS method cannot honour #environmentId, even though the reads elsewhere in this class do.
+	 See that method."
 	| result |
 	result := aBehavior
 		compileMethod: source
 		dictionaries: System myUserProfile symbolList
 		category: aCategory.
-	result isNil ifTrue: [^self].
+	result isNil ifTrue: [^nil].
 	"An unexpected shape is exactly when whoever debugs this most needs to see what came
 	 back, and compileErrorTextFrom: already falls back to a printString for it."
-	(result isKindOf: Array)
-		ifFalse: [^self error: 'did not recompile: ', (self compileErrorTextFrom: result)].
-	result isEmpty ifTrue: [^self].
-	self error: 'did not recompile: ', (self compileErrorTextFrom: result first)
+	(result isKindOf: Array) ifFalse: [^self compileErrorTextFrom: result].
+	result isEmpty ifTrue: [^nil].
+	^self compileErrorTextFrom: result first
+]
+
+{ #category : 'compiling' }
+GsRefactoringEnvironment >> copyMethod: sel from: srcCls to: dstCls meta: isMeta into: failures [
+	"Carry one method VERBATIM onto the new class version -- the copy-forward every engine that
+	 re-versions a class does for the methods it is not rewriting. Answers whether it compiled;
+	 a selector srcCls does not implement is a no-op that answers true.
+
+	 The engines that rewrite a method's source before carrying it (class rename, instance-
+	 variable rename) send #copyMethod:from:to:source:meta:into: directly instead."
+	| m |
+	m := srcCls compiledMethodAt: sel environmentId: self environmentId otherwise: nil.
+	m isNil ifTrue: [^true].
+	^self
+		copyMethod: sel
+		from: srcCls
+		to: dstCls
+		source: m sourceString
+		meta: isMeta
+		into: failures
+]
+
+{ #category : 'compiling' }
+GsRefactoringEnvironment >> copyMethod: sel from: srcCls to: dstCls source: source meta: isMeta into: failures [
+	"Compile `source` onto dstCls as sel, preserving sel's category on srcCls -- without that
+	 the method silently lands in 'as yet unclassified'.
+
+	 This is the copy-forward counterpart to compile:into:category:. A new class version starts
+	 with an empty method dictionary, so these loops are the only thing carrying a class's
+	 behaviour across, and they run inside a single per-class change: raising would abort an
+	 entire rename or split over one method that will not recompile. Record the method in
+	 `failures` and keep going instead, so the rest of the class still arrives and the user is
+	 still told which method did not.
+
+	 Answer whether the method compiled."
+	| cat text label |
+	cat := (srcCls categoryOfSelector: sel environmentId: self environmentId) ifNil: ['as yet unclassified'].
+	text := self compileFailureFor: source into: dstCls category: cat asString.
+	text isNil ifTrue: [^true].
+	label := isMeta
+		ifTrue: [dstCls thisClass name asString, ' class>>', sel asString]
+		ifFalse: [dstCls name asString, '>>', sel asString].
+	failures add: (Array with: label with: label with: 'did not recompile: ', text).
+	^false
 ]
 
 { #category : 'private' }

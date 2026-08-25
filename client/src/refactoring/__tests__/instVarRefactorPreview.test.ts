@@ -113,6 +113,19 @@ describe('instance-variable refactor preview parsing', () => {
     expect(r.committed).toBe(true);
   });
 
+  it('carries the compiler reason on a dropped method, and copes without one', () => {
+    const r = parseApplyResult(
+      '{"applied":1,"failed":[],"dropped":[' +
+        '{"class":"Foo","selector":"combine","reason":"count is not defined"},' +
+        '{"class":"Foo class","selector":"build"}' +
+        '],"committed":false}',
+    );
+    expect(r.dropped[0].reason).toBe('count is not defined');
+    // An older engine omits the key entirely; the entry must still parse.
+    expect(r.dropped[1].reason).toBeUndefined();
+    expect(r.dropped[1].className).toBe('Foo class');
+  });
+
   it('parses an apply result with failures and no commit', () => {
     const r = parseApplyResult(
       '{"applied":0,"failed":[{"id":"1","label":"Foo","error":"boom"}],"dropped":[],"committed":false}',
