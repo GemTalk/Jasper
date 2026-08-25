@@ -30,3 +30,31 @@ const engineTestsPayloadPath = (): string =>
  */
 export const fileInEngineTestsExpr = (): string =>
   `GsFileIn fromServerPath: '${escapeString(toLocalGemPath(engineTestsPayloadPath()))}'.`;
+
+/**
+ * Small Smalltalk probes shared by the instance-variable and instance-variable-structure
+ * refactoring integration suites. Each takes the caller's `exec` so it works against any
+ * session without depending on a particular test file's fixtures.
+ */
+export type Exec = (code: string) => string;
+
+export const userIndex = (exec: Exec): number =>
+  parseInt(
+    exec(
+      `| sl d | sl := System myUserProfile symbolList. ` +
+        `d := sl detect: [:x | x name = #'UserGlobals'] ifNone: [nil]. ` +
+        `(d ifNil: [0] ifNotNil: [sl indexOf: d]) printString`,
+    ),
+    10,
+  );
+
+export const hasIvar = (exec: Exec, cls: string, name: string): boolean =>
+  exec(`(${cls} instVarNames includes: #${name}) printString`).trim() === 'true';
+
+export const ownIvars = (exec: Exec, cls: string): string =>
+  exec(`(${cls} instVarNames collect: [:e | e asString]) printString`);
+
+export const definesSelector = (exec: Exec, cls: string, selector: string): boolean =>
+  exec(
+    `(${cls} compiledMethodAt: #'${selector}' environmentId: 0 otherwise: nil) notNil printString`,
+  ).trim() === 'true';
