@@ -4040,6 +4040,9 @@ testApplyKeepsTheTargetWhenTheCallerWillNotRecompile
 
 	self deny: json includesSubstring: '"failed":[]'.
 	self assert: json includesSubstring: 'did not recompile'.
+	"The failure names the METHOD, not just its class -- the failure list is what the user
+	 opens to go fix what did not survive."
+	self assert: json includesSubstring: 'GsIMBase>>useDoomed'.
 	"Nothing applied: the recompile failed and the removal is gated on it."
 	self assert: json includesSubstring: '"applied":0'.
 	self assert: (self baseFixture includesSelector: #gsimDoomed)

@@ -85,7 +85,7 @@ GsRefactoringEnvironment >> addMethodsAccessing: anAssociation inBehavior: aBeha
 	 frame holds anAssociation by identity -- i.e. that reference the class variable
 	 bound to it. aBehavior is a class or a metaclass (for the class side)."
 	aBehavior selectors do: [:sel | | m |
-		m := aBehavior compiledMethodAt: sel environmentId: 0 otherwise: nil.
+		m := aBehavior compiledMethodAt: sel environmentId: self environmentId otherwise: nil.
 		(m notNil and: [m literals anySatisfy: [:e | e == anAssociation]])
 			ifTrue: [aCollection add: m]]
 ]
@@ -270,7 +270,7 @@ GsRefactoringEnvironment >> instanceMethodsAccessing: anInstVarName inClass: aCl
 	sym := anInstVarName asSymbol.
 	result := OrderedCollection new.
 	aClass selectors do: [:sel | | m |
-		m := aClass compiledMethodAt: sel environmentId: 0 otherwise: nil.
+		m := aClass compiledMethodAt: sel environmentId: self environmentId otherwise: nil.
 		(m notNil and: [m instVarsAccessed includes: sym])
 			ifTrue: [result add: sel]].
 	^result asSortedCollection asArray
@@ -315,7 +315,7 @@ GsRefactoringEnvironment >> instanceMethodsShadowing: anInstVarName inClass: aCl
 	name := anInstVarName asString.
 	result := OrderedCollection new.
 	aClass selectors do: [:sel | | m src tree |
-		m := aClass compiledMethodAt: sel environmentId: 0 otherwise: nil.
+		m := aClass compiledMethodAt: sel environmentId: self environmentId otherwise: nil.
 		m isNil ifFalse: [
 			src := m sourceString.
 			"Cheap pre-filter: a method can only DECLARE the name if the name appears in its source
@@ -357,9 +357,12 @@ GsRefactoringEnvironment >> environmentId [
 	 that has to happen first: compileMethod:dictionaries:category: takes no environment
 	 argument at all, so until we move off it there is nowhere to pass this.
 
-	 It exists now so that when both land there is ONE place to change rather than a sweep --
-	 the engines' other environmentId: 0 sites (the compiledMethodAt:/categoryOfSelector: reads)
-	 are deliberately left alone until there is a real environment to read."
+	 It exists now so that when both land there is ONE place to change rather than a sweep.
+	 This class's own compiledMethodAt:/categoryOfSelector: reads go through it, so it is a
+	 seam with senders rather than an unsent method whose comment nothing keeps honest. The
+	 ENGINES' environmentId: 0 sites are deliberately left alone until there is a real
+	 environment to read: routing them here would claim a configurability that does not exist
+	 yet, and they change in the same sweep that gives this one a value other than 0."
 	^0
 ]
 
@@ -374,8 +377,9 @@ GsRefactoringEnvironment >> compileFailureFor: source into: aBehavior category: 
 	 installed: the caller counts it as applied and the user is told nothing. Every compile in
 	 the engines goes through this one method, so no site can forget to look at the answer.
 
-	 The selector used here takes no environment argument -- it hardwires environment 0 -- which
-	 is why #environmentId has no sender yet. See that method."
+	 The selector used here takes no environment argument -- it hardwires environment 0 -- so
+	 THIS method cannot honour #environmentId, even though the reads elsewhere in this class do.
+	 See that method."
 	| result |
 	result := aBehavior
 		compileMethod: source
@@ -398,7 +402,7 @@ GsRefactoringEnvironment >> copyMethod: sel from: srcCls to: dstCls meta: isMeta
 	 The engines that rewrite a method's source before carrying it (class rename, instance-
 	 variable rename) send #copyMethod:from:to:source:meta:into: directly instead."
 	| m |
-	m := srcCls compiledMethodAt: sel environmentId: 0 otherwise: nil.
+	m := srcCls compiledMethodAt: sel environmentId: self environmentId otherwise: nil.
 	m isNil ifTrue: [^true].
 	^self
 		copyMethod: sel
@@ -423,7 +427,7 @@ GsRefactoringEnvironment >> copyMethod: sel from: srcCls to: dstCls source: sour
 
 	 Answer whether the method compiled."
 	| cat text label |
-	cat := (srcCls categoryOfSelector: sel environmentId: 0) ifNil: ['as yet unclassified'].
+	cat := (srcCls categoryOfSelector: sel environmentId: self environmentId) ifNil: ['as yet unclassified'].
 	text := self compileFailureFor: source into: dstCls category: cat asString.
 	text isNil ifTrue: [^true].
 	label := isMeta

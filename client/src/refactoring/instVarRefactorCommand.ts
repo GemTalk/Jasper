@@ -24,7 +24,7 @@ import {
 } from './instVarRefactorPreview';
 import { showInstVarRefactorPanel } from './instVarRefactorPanel';
 import { ensureRbSupport, refuse } from './renameAtCursorShared';
-import { logInfo } from '../gciLog';
+import { logInfo, logWarning } from '../gciLog';
 
 export interface InstVarRefactorRequest {
   session: ActiveSession;
@@ -161,9 +161,22 @@ export async function runInstVarRefactor(
   // cancelled, closed, or hit a failure the panel already reported — nothing more to say here.
   if (!result) return undefined;
 
+  // A notification can only carry the count -- it truncates and then vanishes -- so the
+  // methods themselves, and why each one failed, go to the durable "GemStone GCI" channel.
+  // The dropped list is what the user works through to restore them, the way the rename
+  // family already reports its recompile failures.
+  if (result.dropped.length > 0) {
+    logWarning(
+      `${titleFor(req)}: ${result.dropped.length} method(s) did not recompile onto the new ` +
+        'class version and were dropped:\n' +
+        result.dropped
+          .map((m) => `    \u2022 ${m.className}>>${m.selector}${m.reason ? `: ${m.reason}` : ''}`)
+          .join('\n'),
+    );
+  }
   const droppedNote =
     result.dropped.length > 0
-      ? ` ${result.dropped.length} method${result.dropped.length === 1 ? '' : 's'} did not recompile and ${result.dropped.length === 1 ? 'was' : 'were'} dropped.`
+      ? ` ${result.dropped.length} method${result.dropped.length === 1 ? '' : 's'} did not recompile and ${result.dropped.length === 1 ? 'was' : 'were'} dropped. See the GemStone GCI channel for the list.`
       : '';
   const commitNote = result.committed ? ' Committed.' : '';
   void vscode.window.showInformationMessage(`${titleFor(req)}.${droppedNote}${commitNote}`);

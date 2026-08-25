@@ -542,7 +542,8 @@ GsInstVarRefactoring >> applyDeselected: deselectedIds options: optsArray migrat
 	  '],"dropped":[',
 	  ((dropped collect: [:d |
 		'{"class":', (self jsonQuote: (d at: 1) asString),
-		',"selector":', (self jsonQuote: (d at: 2) asString), '}'])
+		',"selector":', (self jsonQuote: (d at: 2) asString),
+		',"reason":', (self jsonQuote: (d at: 3) asString), '}'])
 			inject: '' into: [:acc :s | acc isEmpty ifTrue: [s] ifFalse: [acc, ',', s]]),
 	  '],"committed":', (committed ifTrue: ['true'] ifFalse: ['false']),
 	  ',"partiallyApplied":', (partiallyApplied ifTrue: ['true'] ifFalse: ['false']), '}'
@@ -670,7 +671,8 @@ GsInstVarRefactoring >> makeNewVersionOf: old superclass: sup instVarNames: ivar
 GsInstVarRefactoring >> copyMethodsFrom: old to: new [
 	"Copy every method of old (both sides) verbatim onto new -- a new class version starts with an
 	 empty method dictionary. A method that references a removed instance variable will not
-	 compile; it is recorded as dropped (its class and selector) rather than silently vanishing."
+	 compile; it is recorded as dropped (its class, selector and the compiler's reason) rather
+	 than silently vanishing."
 	old selectors do: [:sel | self copyMethod: sel from: old to: new meta: false].
 	old class selectors do: [:sel | self copyMethod: sel from: old class to: new class meta: true]
 ]
@@ -684,11 +686,14 @@ GsInstVarRefactoring >> copyMethod: sel from: srcCls to: dstCls meta: isMeta [
 	"A failed method is not installed (e.g. it references the just-removed instance variable),
 	 so record it as dropped rather than let it vanish silently. This reports through `dropped`
 	 rather than the shared copyMethod:...into: helper because a dropped method here is surfaced
-	 to the user as its own category, separate from the apply's `failed` list."
+	 to the user as its own category, separate from the apply's `failed` list. The compiler's
+	 text rides along: the dropped list is what the user opens to go restore the method, and
+	 which variable it no longer resolves is the whole of what they need to know."
 	(environment compileFailureFor: m sourceString into: dstCls category: cat asString)
 		ifNotNil: [:text | dropped add: (Array
 			with: (isMeta ifTrue: [dstCls thisClass name asString, ' class'] ifFalse: [dstCls name asString])
-			with: sel asString)]
+			with: sel asString
+			with: text asString)]
 ]
 
 { #category : 'applying' }
@@ -709,7 +714,7 @@ GsInstVarRefactoring >> compileAccessors: accessorPairs onFailures: failures [
 				ifNotNil: [:text | failures add: (Array
 					with: 'accessor:', sel
 					with: target name asString
-					with: 'accessor ', sel, ' could not be compiled onto the new class version')]]]
+					with: 'accessor ', sel, ' could not be compiled onto the new class version: ', text)]]]
 ]
 
 { #category : 'applying' }

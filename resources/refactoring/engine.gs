@@ -6015,7 +6015,8 @@ applyDeselected: deselectedIds options: optsArray migrate: aBool deleteHistory: 
 	  '],"dropped":[',
 	  ((dropped collect: [:d |
 		'{"class":', (self jsonQuote: (d at: 1) asString),
-		',"selector":', (self jsonQuote: (d at: 2) asString), '}'])
+		',"selector":', (self jsonQuote: (d at: 2) asString),
+		',"reason":', (self jsonQuote: (d at: 3) asString), '}'])
 			inject: '' into: [:acc :s | acc isEmpty ifTrue: [s] ifFalse: [acc, ',', s]]),
 	  '],"committed":', (committed ifTrue: ['true'] ifFalse: ['false']),
 	  ',"partiallyApplied":', (partiallyApplied ifTrue: ['true'] ifFalse: ['false']), '}'
@@ -6151,7 +6152,8 @@ method: GsInstVarRefactoring
 copyMethodsFrom: old to: new
 	"Copy every method of old (both sides) verbatim onto new -- a new class version starts with an
 	 empty method dictionary. A method that references a removed instance variable will not
-	 compile; it is recorded as dropped (its class and selector) rather than silently vanishing."
+	 compile; it is recorded as dropped (its class, selector and the compiler's reason) rather
+	 than silently vanishing."
 	old selectors do: [:sel | self copyMethod: sel from: old to: new meta: false].
 	old class selectors do: [:sel | self copyMethod: sel from: old class to: new class meta: true]
 %
@@ -6166,11 +6168,14 @@ copyMethod: sel from: srcCls to: dstCls meta: isMeta
 	"A failed method is not installed (e.g. it references the just-removed instance variable),
 	 so record it as dropped rather than let it vanish silently. This reports through `dropped`
 	 rather than the shared copyMethod:...into: helper because a dropped method here is surfaced
-	 to the user as its own category, separate from the apply's `failed` list."
+	 to the user as its own category, separate from the apply's `failed` list. The compiler's
+	 text rides along: the dropped list is what the user opens to go restore the method, and
+	 which variable it no longer resolves is the whole of what they need to know."
 	(environment compileFailureFor: m sourceString into: dstCls category: cat asString)
 		ifNotNil: [:text | dropped add: (Array
 			with: (isMeta ifTrue: [dstCls thisClass name asString, ' class'] ifFalse: [dstCls name asString])
-			with: sel asString)]
+			with: sel asString
+			with: text asString)]
 %
 
 category: 'applying'
@@ -6192,7 +6197,7 @@ compileAccessors: accessorPairs onFailures: failures
 				ifNotNil: [:text | failures add: (Array
 					with: 'accessor:', sel
 					with: target name asString
-					with: 'accessor ', sel, ' could not be compiled onto the new class version')]]]
+					with: 'accessor ', sel, ' could not be compiled onto the new class version: ', text)]]]
 %
 
 category: 'applying'
@@ -9382,7 +9387,7 @@ addMethodsAccessing: anAssociation inBehavior: aBehavior to: aCollection
 	 frame holds anAssociation by identity -- i.e. that reference the class variable
 	 bound to it. aBehavior is a class or a metaclass (for the class side)."
 	aBehavior selectors do: [:sel | | m |
-		m := aBehavior compiledMethodAt: sel environmentId: 0 otherwise: nil.
+		m := aBehavior compiledMethodAt: sel environmentId: self environmentId otherwise: nil.
 		(m notNil and: [m literals anySatisfy: [:e | e == anAssociation]])
 			ifTrue: [aCollection add: m]]
 %
@@ -9580,7 +9585,7 @@ instanceMethodsAccessing: anInstVarName inClass: aClass
 	sym := anInstVarName asSymbol.
 	result := OrderedCollection new.
 	aClass selectors do: [:sel | | m |
-		m := aClass compiledMethodAt: sel environmentId: 0 otherwise: nil.
+		m := aClass compiledMethodAt: sel environmentId: self environmentId otherwise: nil.
 		(m notNil and: [m instVarsAccessed includes: sym])
 			ifTrue: [result add: sel]].
 	^result asSortedCollection asArray
@@ -9627,7 +9632,7 @@ instanceMethodsShadowing: anInstVarName inClass: aClass
 	name := anInstVarName asString.
 	result := OrderedCollection new.
 	aClass selectors do: [:sel | | m src tree |
-		m := aClass compiledMethodAt: sel environmentId: 0 otherwise: nil.
+		m := aClass compiledMethodAt: sel environmentId: self environmentId otherwise: nil.
 		m isNil ifFalse: [
 			src := m sourceString.
 			"Cheap pre-filter: a method can only DECLARE the name if the name appears in its source
@@ -9671,9 +9676,12 @@ environmentId
 	 that has to happen first: compileMethod:dictionaries:category: takes no environment
 	 argument at all, so until we move off it there is nowhere to pass this.
 
-	 It exists now so that when both land there is ONE place to change rather than a sweep --
-	 the engines' other environmentId: 0 sites (the compiledMethodAt:/categoryOfSelector: reads)
-	 are deliberately left alone until there is a real environment to read."
+	 It exists now so that when both land there is ONE place to change rather than a sweep.
+	 This class's own compiledMethodAt:/categoryOfSelector: reads go through it, so it is a
+	 seam with senders rather than an unsent method whose comment nothing keeps honest. The
+	 ENGINES' environmentId: 0 sites are deliberately left alone until there is a real
+	 environment to read: routing them here would claim a configurability that does not exist
+	 yet, and they change in the same sweep that gives this one a value other than 0."
 	^0
 %
 
@@ -9689,8 +9697,9 @@ compileFailureFor: source into: aBehavior category: aCategory
 	 installed: the caller counts it as applied and the user is told nothing. Every compile in
 	 the engines goes through this one method, so no site can forget to look at the answer.
 
-	 The selector used here takes no environment argument -- it hardwires environment 0 -- which
-	 is why #environmentId has no sender yet. See that method."
+	 The selector used here takes no environment argument -- it hardwires environment 0 -- so
+	 THIS method cannot honour #environmentId, even though the reads elsewhere in this class do.
+	 See that method."
 	| result |
 	result := aBehavior
 		compileMethod: source
@@ -9714,7 +9723,7 @@ copyMethod: sel from: srcCls to: dstCls meta: isMeta into: failures
 	 The engines that rewrite a method's source before carrying it (class rename, instance-
 	 variable rename) send #copyMethod:from:to:source:meta:into: directly instead."
 	| m |
-	m := srcCls compiledMethodAt: sel environmentId: 0 otherwise: nil.
+	m := srcCls compiledMethodAt: sel environmentId: self environmentId otherwise: nil.
 	m isNil ifTrue: [^true].
 	^self
 		copyMethod: sel
@@ -9740,7 +9749,7 @@ copyMethod: sel from: srcCls to: dstCls source: source meta: isMeta into: failur
 
 	 Answer whether the method compiled."
 	| cat text label |
-	cat := (srcCls categoryOfSelector: sel environmentId: 0) ifNil: ['as yet unclassified'].
+	cat := (srcCls categoryOfSelector: sel environmentId: self environmentId) ifNil: ['as yet unclassified'].
 	text := self compileFailureFor: source into: dstCls category: cat asString.
 	text isNil ifTrue: [^true].
 	label := isMeta

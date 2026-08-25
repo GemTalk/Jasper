@@ -44,12 +44,26 @@ const FUNNEL_METHOD = 'compileFailureFor: source into: aBehavior category: aCate
  * Smalltalk quoting: `"…"` is a comment and `'…'` a string literal; each doubles its own
  * delimiter to escape it. A comment can contain apostrophes and a string can contain double
  * quotes, so the two must be tracked together in one pass rather than stripped separately.
+ *
+ * `$x` is a character literal, so `$"` and `$'` are ordinary code rather than delimiters, and
+ * both are in the engine tree today — `$"` in the JSON escapers, `$'` in the class-definition
+ * builders. Consume the pair before either branch below: reading one as a delimiter inverts
+ * the polarity for the rest of the file, which would hide real sends from this test.
  */
 const stripComments = (source: string): string => {
   let out = '';
   let i = 0;
   while (i < source.length) {
     const ch = source[i];
+    if (ch === '$') {
+      // A character literal: copy `$` and whatever it quotes, so `$"` and `$'` cannot be
+      // mistaken for the start of a comment or a string.
+      out += ch;
+      i++;
+      out += source[i] ?? '';
+      i++;
+      continue;
+    }
     if (ch === "'") {
       // A string literal: copy it verbatim, including any doubled '' escapes.
       out += ch;
@@ -135,5 +149,10 @@ describe('refactoring engine compile funnel', () => {
     // The cases that make one-pass tracking necessary:
     expect(stripComments('a "don\'t" b')).toBe('a  b');
     expect(stripComments('a \'say "hi"\' b')).toBe('a \'say "hi"\' b');
+    // Character literals are code. Reading `$"` as a comment opener (or `$'` as a string
+    // opener) inverts the polarity for everything after it, so the scan above would go blind
+    // to real sends in the engines that carry them.
+    expect(stripComments('a $" b "c" d')).toBe('a $" b  d');
+    expect(stripComments('a $\' b "c" d')).toBe("a $' b  d");
   });
 });
