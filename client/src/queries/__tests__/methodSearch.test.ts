@@ -5,12 +5,46 @@ import {
   sendersOf,
   implementorsOf,
   referencesToObject,
+  referencesToClassInDict,
   literalSymbolReferences,
   stringLiteralReferences,
   hierarchyImplementorsOf,
+  dedupeMethodResults,
+  type MethodSearchResult,
 } from '../methodSearch';
 
 const row = 'Globals\tArray\t0\tsize\taccessing\n';
+
+describe('environment on a result row', () => {
+  it('reads the environment column when the scan reports one', () => {
+    const results = searchMethodSource(
+      vi.fn<QueryExecutor>(() => 'Globals\tArray\t0\tsize\taccessing\t3\n'),
+      'size',
+      true,
+    );
+
+    expect(results[0].environmentId).toBe(3);
+  });
+
+  it('falls back to environment 0 rather than dropping a row that has no column', () => {
+    const results = searchMethodSource(
+      vi.fn<QueryExecutor>(() => 'Globals\tArray\t0\tsize\taccessing\n'),
+      'size',
+      true,
+    );
+
+    expect(results).toHaveLength(1);
+    expect(results[0].environmentId).toBe(0);
+  });
+
+  it('serializes the environment it was asked for', () => {
+    const execute = vi.fn<QueryExecutor>(() => '');
+
+    sendersOf(execute, 'size', 2);
+
+    expect(execute.mock.calls[0][0]).toContain("nextPutAll: '2'");
+  });
+});
 
 describe('methodSearch shared parser', () => {
   it('parses tab-separated rows into MethodSearchResult', () => {
@@ -26,6 +60,7 @@ describe('methodSearch shared parser', () => {
         isMeta: false,
         selector: 'size',
         category: 'accessing',
+        environmentId: 0,
       },
     ]);
   });
@@ -93,6 +128,46 @@ describe('referencesToObject', () => {
     const code = execute.mock.calls[0][0];
     expect(code).toContain('referencesToObject:');
     expect(code).toContain("objectNamed: #'MyGlobal'");
+  });
+});
+
+describe('referencesToClassInDict', () => {
+  it('scopes the organizer to the environment, not just the serialization', () => {
+    // A bare `ClassOrganizer new` scans environment 0 whatever the caller asked for, so a
+    // class referenced only from another environment came back unreferenced — and safe
+    // delete would then report that nothing referenced it and delete without asking.
+    const execute = vi.fn<QueryExecutor>(() => '');
+
+    referencesToClassInDict(execute, 'Account', 3, 2);
+
+    const code = execute.mock.calls[0][0];
+    expect(code).toContain('ClassOrganizer new environmentId: 2; yourself');
+    expect(code).not.toMatch(/ClassOrganizer new referencesToObject:/);
+  });
+
+  it('reports the environment each row was found in', () => {
+    const execute = vi.fn<QueryExecutor>(() => 'Globals\tArray\t0\tsize\taccessing\t2\n');
+
+    expect(referencesToClassInDict(execute, 'Array', 1, 2)[0].environmentId).toBe(2);
+  });
+
+  it('resolves the class through its dictionary rather than by bare name', () => {
+    const execute = vi.fn<QueryExecutor>(() => '');
+
+    referencesToClassInDict(execute, 'Account', 3);
+
+    const code = execute.mock.calls[0][0];
+    expect(code).toContain('symbolList at: 3');
+    expect(code).toContain('referencesToObject:');
+    // A bare objectNamed: would answer the first binding of the name anywhere in the
+    // symbol list — the wrong class when the name is shadowed.
+    expect(code).not.toContain('objectNamed:');
+  });
+
+  it('reports nothing when the dictionary does not bind the class', () => {
+    const execute = vi.fn<QueryExecutor>(() => '');
+
+    expect(referencesToClassInDict(execute, 'Missing', 3)).toEqual([]);
   });
 });
 
@@ -207,7 +282,67 @@ describe('hierarchyImplementorsOf', () => {
         isMeta: false,
         selector: 'at:',
         category: 'accessing',
+        environmentId: 0,
       },
     ]);
+  });
+});
+
+// Every caller that sweeps environments runs one query per environment and folds the rounds
+// into one list, so the same method can come back more than once. What must NOT fold together
+// is two methods that merely look alike: a selector on both sides of a class, on two classes,
+// or in two environments is more than one method, and merging them under-reports the results
+// and leaves one of them unreachable from the list that is shown.
+describe('folding repeated scan results together', () => {
+  const found = (
+    className: string,
+    isMeta: boolean,
+    selector: string,
+    environmentId = 0,
+  ): MethodSearchResult => ({
+    dictName: 'UserGlobals',
+    className,
+    isMeta,
+    selector,
+    category: 'accessing',
+    environmentId,
+  });
+
+  it('keeps one entry for a method found more than once', () => {
+    const hit = found('Account', false, 'balance');
+
+    expect(dedupeMethodResults([hit, { ...hit }])).toEqual([hit]);
+  });
+
+  it('keeps the same selector on both sides of a class, which are different methods', () => {
+    const instance = found('Account', false, 'reset');
+    const classSide = found('Account', true, 'reset');
+
+    expect(dedupeMethodResults([instance, classSide])).toEqual([instance, classSide]);
+  });
+
+  it('keeps the same selector implemented by different classes', () => {
+    const account = found('Account', false, 'balance');
+    const savings = found('Savings', false, 'balance');
+
+    expect(dedupeMethodResults([account, savings])).toEqual([account, savings]);
+  });
+
+  it('lists a selector found in two environments once per environment', () => {
+    const env0 = found('Account', false, 'balance', 0);
+    const env1 = found('Account', false, 'balance', 1);
+
+    expect(dedupeMethodResults([env0, env1])).toEqual([env0, env1]);
+  });
+
+  it('keeps the first sighting, so the earliest environment wins', () => {
+    const first = found('Account', false, 'balance');
+    const later = { ...first, category: 'a different category' };
+
+    expect(dedupeMethodResults([first, later])).toEqual([first]);
+  });
+
+  it('answers nothing for nothing', () => {
+    expect(dedupeMethodResults([])).toEqual([]);
   });
 });

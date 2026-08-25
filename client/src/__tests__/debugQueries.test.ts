@@ -143,7 +143,7 @@ describe('debugQueries', () => {
         gci: {
           GciTsI64ToOop: vi.fn(() => ({ result: LEVEL_OOP, err: { ...noErr } })),
           GciTsPerform: vi.fn(() => ({ result: stepPointResultOop, err: { ...noErr } })),
-          GciTsOopToI64: vi.fn(() => ({ value: 2n, err: { ...noErr } })),
+          oopToInteger: vi.fn(() => 2n),
         } as unknown as ActiveSession['gci'],
       } as ActiveSession;
     }
@@ -164,7 +164,7 @@ describe('debugQueries', () => {
       const result = debug.getStepPoint(session, GS_PROCESS, 3);
 
       expect(result).toBeUndefined();
-      expect(session.gci.GciTsOopToI64).not.toHaveBeenCalled();
+      expect(session.gci.oopToInteger).not.toHaveBeenCalled();
     });
   });
 
@@ -602,7 +602,7 @@ describe('debugQueries', () => {
     function evalSession() {
       const gci = {
         GciTsI64ToOop: vi.fn(() => ({ result: 0xaan, err: { ...noErr } })),
-        GciTsOopToI64: vi.fn(() => ({ value: 5n, err: { ...noErr } })),
+        oopToInteger: vi.fn(() => 5n),
         GciTsNewString: vi.fn(() => ({ result: EXPR_STRING, err: { ...noErr } })),
         GciTsFetchSize: vi.fn(() => ({ result: 10n, err: { ...noErr } })),
         // getFrameInfo reads [10]=receiver (0-indexed 9); [9]=names (0-indexed 8) = nil → skip names.
@@ -677,7 +677,7 @@ describe('debugQueries', () => {
     function tempSession() {
       const gci = {
         GciTsI64ToOop: vi.fn(() => ({ result: 0xaan, err: { ...noErr } })),
-        GciTsOopToI64: vi.fn(() => ({ value: 5n, err: { ...noErr } })),
+        oopToInteger: vi.fn(() => 5n),
         GciTsNewString: vi.fn(() => ({ result: EXPR_STRING, err: { ...noErr } })),
         GciTsNewSymbol: vi.fn(() => ({ result: AMOUNT_SYMBOL, err: { ...noErr } })),
         resolveSymbol: vi.fn((_h: unknown, name: string) =>
@@ -784,7 +784,7 @@ describe('debugQueries', () => {
     function nbEvalSession() {
       const gci = {
         GciTsI64ToOop: vi.fn(() => ({ result: 0xaan, err: { ...noErr } })),
-        GciTsOopToI64: vi.fn(() => ({ value: 5n, err: { ...noErr } })),
+        oopToInteger: vi.fn(() => 5n),
         GciTsNewString: vi.fn(() => ({ result: EXPR_STRING, err: { ...noErr } })),
         GciTsFetchSize: vi.fn(() => ({ result: 10n, err: { ...noErr } })),
         GciTsFetchOops: vi.fn(() => ({
@@ -865,7 +865,7 @@ describe('debugQueries', () => {
       const AMOUNT_SYMBOL = 0xc1n;
       const gci = {
         GciTsI64ToOop: vi.fn(() => ({ result: 0xaan, err: { ...noErr } })),
-        GciTsOopToI64: vi.fn(() => ({ value: 5n, err: { ...noErr } })),
+        oopToInteger: vi.fn(() => 5n),
         GciTsNewString: vi.fn(() => ({ result: EXPR_STRING, err: { ...noErr } })),
         GciTsNewSymbol: vi.fn(() => ({ result: AMOUNT_SYMBOL, err: { ...noErr } })),
         resolveSymbol: vi.fn((_h: unknown, name: string) =>

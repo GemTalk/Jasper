@@ -44,14 +44,6 @@ export function parseFunctionName(raw: string): ParsedFunctionName | null {
   return { isMeta: false, selector: name.replace(/^#\s*/, '') };
 }
 
-/**
- * An implementor, together with the method-dictionary environment it was found
- * in. `MethodSearchResult` has no environment field, but the search runs once
- * per environment, so the caller has to remember which pass produced a hit —
- * without it the breakpoint would be set against the wrong environment.
- */
-export type Candidate = MethodSearchResult & { environmentId: number };
-
 /** How a name should be shown once it has been pinned to one class. */
 export function qualifiedName(target: MethodSearchResult): string {
   return `${target.className}${target.isMeta ? ' class' : ''}>>${target.selector}`;
@@ -137,7 +129,7 @@ export class FunctionBreakpointResolver {
       return;
     }
 
-    let candidates: Candidate[];
+    let candidates: MethodSearchResult[];
     try {
       candidates = this.findCandidates(session, parsed);
     } catch (e) {
@@ -218,13 +210,13 @@ export class FunctionBreakpointResolver {
    * developer who wrote `Account>>balance` does not want a list — while a bare
    * selector is looked up across the image.
    */
-  private findCandidates(session: ActiveSession, parsed: ParsedFunctionName): Candidate[] {
+  private findCandidates(session: ActiveSession, parsed: ParsedFunctionName): MethodSearchResult[] {
     // Sweep environments 0..maxEnvironment rather than searching the maximum
     // alone. `gemstone.maxEnvironment` is a ceiling, not a selection — querying
     // only that number skips environment 0, where practically every method
     // lives, so on a stone configured above 0 nothing would ever be found.
     const maxEnv = maxEnvironment();
-    const found: Candidate[] = [];
+    const found: MethodSearchResult[] = [];
     const seen = new Set<string>();
 
     for (let environmentId = 0; environmentId <= maxEnv; environmentId++) {
@@ -235,19 +227,27 @@ export class FunctionBreakpointResolver {
         if (parsed.className !== undefined) {
           if (m.className !== parsed.className || m.isMeta !== parsed.isMeta) continue;
         }
+        // Deliberately NOT `dedupeMethodResults`, which counts the environment as
+        // part of a method's identity because a reference list has to account for
+        // every method. This is a chooser, not a list: one class is one entry, and
+        // asking "which Account did you mean?" about the same class twice is no
+        // question at all. The lowest environment to implement it wins, and the row
+        // carries that environment on to where the breakpoint is set. The scan in
+        // __tests__/methodResultDedupe.manifest.test.ts allows this file for that
+        // reason — keep the two in step.
         const key = `${m.className}|${m.isMeta}|${m.selector}`;
         if (seen.has(key)) continue;
         seen.add(key);
-        found.push({ ...m, environmentId });
+        found.push(m);
       }
     }
     return found;
   }
 
   private async chooseClass(
-    candidates: Candidate[],
+    candidates: MethodSearchResult[],
     selector: string,
-  ): Promise<Candidate | undefined> {
+  ): Promise<MethodSearchResult | undefined> {
     const items = candidates
       .map((target) => ({
         label: `${target.className}${target.isMeta ? ' class' : ''}`,
@@ -272,7 +272,7 @@ export class FunctionBreakpointResolver {
    */
   private entryPosition(
     session: ActiveSession,
-    target: Candidate,
+    target: MethodSearchResult,
   ): { line: number; character: number; environmentId: number } | null {
     // The environment the method was actually found in — not the configured
     // ceiling, which is very likely a different one.

@@ -98,6 +98,7 @@ describe('qualifiedName', () => {
     isMeta: false,
     selector: 'balance',
     category: 'accessing',
+    environmentId: 0,
   };
 
   it('names the instance side plainly', () => {
@@ -125,6 +126,7 @@ describe('FunctionBreakpointResolver', () => {
     isMeta: false,
     selector: 'balance',
     category: 'accessing',
+    environmentId: 0,
   };
   const savings = { ...account, className: 'SavingsAccount' };
 
@@ -340,7 +342,9 @@ describe('FunctionBreakpointResolver', () => {
     // number skipped environment 0, where practically every method lives, so on
     // such a stone nothing was ever found.
     __setConfig('gemstone', 'maxEnvironment', 2);
-    mockImplementors.mockImplementation((_session, _selector, env) => (env === 0 ? [account] : []));
+    mockImplementors.mockImplementation((_session, _selector, env) =>
+      env === 0 ? [{ ...account, environmentId: env }] : [],
+    );
 
     await new FunctionBreakpointResolver(makeSessionManager()).handle([
       new FunctionBreakpoint('balance'),
@@ -353,7 +357,9 @@ describe('FunctionBreakpointResolver', () => {
 
   it('sets the breakpoint against the environment the method was found in', async () => {
     __setConfig('gemstone', 'maxEnvironment', 2);
-    mockImplementors.mockImplementation((_session, _selector, env) => (env === 1 ? [account] : []));
+    mockImplementors.mockImplementation((_session, _selector, env) =>
+      env === 1 ? [{ ...account, environmentId: env }] : [],
+    );
 
     await new FunctionBreakpointResolver(makeSessionManager()).handle([
       new FunctionBreakpoint('balance'),
@@ -369,13 +375,16 @@ describe('FunctionBreakpointResolver', () => {
 
   it('does not offer the same class twice when it appears in two environments', async () => {
     __setConfig('gemstone', 'maxEnvironment', 2);
-    mockImplementors.mockReturnValue([account]);
+    mockImplementors.mockImplementation((_session, _selector, env) => [
+      { ...account, environmentId: env ?? 0 },
+    ]);
 
     await new FunctionBreakpointResolver(makeSessionManager()).handle([
       new FunctionBreakpoint('balance'),
     ]);
 
-    // Three passes all report Account; one candidate means no needless picker.
+    // Three passes all report Account, each stamped with its own environment; one
+    // candidate means no needless picker.
     expect(vi.mocked(window.showQuickPick)).not.toHaveBeenCalled();
     expect(added()).toHaveBeenCalledTimes(1);
   });
