@@ -1,8 +1,8 @@
 ! gs-src/fixtures/undoDemo.gs
 !
-! Manual-review fixture for Undo (#434). Builds the classes and methods
-! docs/how-to/manually-test-undo.md walks through, so a review pass starts from a known
-! state instead of hand-building one in the Explorer.
+! Manual-review fixture for Undo (#434). Builds the classes and methods the manual review
+! plan walks through, so a review pass starts from a known state instead of hand-building one
+! in the Explorer. The plan itself is kept outside the repo -- ask Eric for the link.
 !
 ! A topaz file. It CANNOT be pasted into a Jasper editor and Executed -- `run ... %` and
 ! `method: ... %` are topaz commands, not Smalltalk. Load it with the topaz recipe in
