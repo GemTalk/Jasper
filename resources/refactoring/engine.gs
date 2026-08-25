@@ -9684,6 +9684,27 @@ compile: source into: aBehavior category: aCategory
 
 category: 'compiling'
 method: GsRefactoringEnvironment
+environmentId
+	"The GemStone method environment the engines compile into. Always 0 (the base Smalltalk
+	 image) today.
+
+	 This is a seam, not a setting. What will eventually go here is the environment the
+	 refactoring was STARTED in, carried down from the client: a method URI already knows its
+	 environment (`?env=N`), but that dimension is dropped before any engine query, so the
+	 engines have nowhere to read it from -- no instance variable, no field on
+	 GsRefactoringChange, nothing in the JSON protocol. Filling that in is real work, tracked
+	 in https://github.com/GemTalk/Jasper/issues/492 along with the compile-selector migration
+	 that has to happen first: compileMethod:dictionaries:category: takes no environment
+	 argument at all, so until we move off it there is nowhere to pass this.
+
+	 It exists now so that when both land there is ONE place to change rather than a sweep --
+	 the engines' other environmentId: 0 sites (the compiledMethodAt:/categoryOfSelector: reads)
+	 are deliberately left alone until there is a real environment to read."
+	^0
+%
+
+category: 'compiling'
+method: GsRefactoringEnvironment
 compileFailureFor: source into: aBehavior category: aCategory
 	"Compile one method onto aBehavior. Answer nil when it compiled, or readable error text
 	 when it did not.
@@ -9692,7 +9713,10 @@ compileFailureFor: source into: aBehavior category: aCategory
 	 VALUE -- nil (or an empty Array) on success, an Array of error tuples otherwise -- and
 	 does NOT signal. An unchecked send therefore reads as success while the method is never
 	 installed: the caller counts it as applied and the user is told nothing. Every compile in
-	 the engines goes through this one method, so no site can forget to look at the answer."
+	 the engines goes through this one method, so no site can forget to look at the answer.
+
+	 The selector used here takes no environment argument -- it hardwires environment 0 -- which
+	 is why #environmentId has no sender yet. See that method."
 	| result |
 	result := aBehavior
 		compileMethod: source
