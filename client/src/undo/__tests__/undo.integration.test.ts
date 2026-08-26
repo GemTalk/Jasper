@@ -704,6 +704,44 @@ ws contents`;
       );
     });
 
+    it('puts a MOVED method back in the category it came from', () => {
+      // A category move is recorded as an ordinary method edit, because a captured slot
+      // carries its category as well as its source -- so the ordinary reversal is all it
+      // needs, and it puts the category back along with the source.
+      defineClass(CLS);
+      compile(CLS, 'balance\n  ^ 1', 'accessing');
+      const slots = [slot('balance')];
+      const before = captureMethodSlots(exec, slots);
+      expect(before[0].category).toBe('accessing');
+
+      q.recategorizeMethod(session(), CLS, false, 'balance', 'computing', DICT);
+      expect(captureMethodSlots(exec, slots)[0].category).toBe('computing');
+
+      const ops = planReversal(slots, before, captureMethodSlots(exec, slots));
+      expect(ops.map((o) => o.kind)).toEqual(['recompile']);
+      expect(applyMethodSlotOps(exec, ops).every((r) => r.error === null)).toBe(true);
+
+      expect(captureMethodSlots(exec, slots)[0]).toEqual(before[0]);
+    });
+
+    it('leaves the category a move CREATED behind, empty, for its own entry to remove', () => {
+      // Undoing the move and undoing the create are two entries, in that order: the move
+      // first, because that is what the user did last.
+      defineClass(CLS);
+      compile(CLS, 'balance\n  ^ 1', 'accessing');
+      const slots = [slot('balance')];
+      const before = captureMethodSlots(exec, slots);
+
+      q.recategorizeMethod(session(), CLS, false, 'balance', 'brand-new', DICT);
+      applyMethodSlotOps(exec, planReversal(slots, before, captureMethodSlots(exec, slots)));
+
+      // The method is home; the category the move made is still there and now empty, which
+      // is exactly the state the create's own reversal can remove.
+      expect(captureMethodSlots(exec, slots)[0].category).toBe('accessing');
+      expect(q.getMethodCategories(session(), CLS, false, DICT)).toContain('brand-new');
+      expect(q.removeMethodCategory(session(), CLS, false, 'brand-new', DICT).trim()).toBe('ok');
+    });
+
     it('REFUSES a rename onto a category that already exists', () => {
       // This is what makes the reversal exact: a rename is one name becoming another, never
       // two categories merging. The reverser checks for the collision so the user gets a

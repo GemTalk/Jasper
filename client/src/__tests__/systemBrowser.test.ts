@@ -24,7 +24,10 @@ vi.mock('../browserQueries', () => ({
   renameCategory: vi.fn(),
   getMethodCategories: vi.fn(),
   referencesToObject: vi.fn(),
+  defaultQueryExecutorUsing: vi.fn(() => () => ''),
 }));
+// The undo recorder's method-slot capture — mocked so the flow records without a stone (#434).
+vi.mock('../undo/queries/methodSlotQueries', () => ({ captureMethodSlots: vi.fn() }));
 
 vi.mock('../globalsBrowser', () => ({
   GlobalsBrowser: {
@@ -83,6 +86,8 @@ import {
 } from '../systemBrowser';
 import { extractSelector } from '../methodPattern';
 import * as queries from '../browserQueries';
+import { captureMethodSlots } from '../undo/queries/methodSlotQueries';
+import { peekUndoEntry, resetUndoStacks } from '../undo/undoStack';
 import { GlobalsBrowser } from '../globalsBrowser';
 import { ClassBrowser } from '../classBrowser';
 import { CommentBrowser } from '../commentBrowser';
@@ -1769,6 +1774,35 @@ describe('SystemBrowser', () => {
           1,
         ),
       );
+    });
+
+    it('records the move, so the method can be put back in its old category (#434)', async () => {
+      // A method slot's captured state carries its CATEGORY as well as its source, so the
+      // ordinary method-edit reversal is all a category move needs.
+      resetUndoStacks();
+      vi.mocked(queries.getMethodCategories).mockReturnValue(['Accessing', 'Printing']);
+      vi.mocked(window.showQuickPick).mockResolvedValue('Printing');
+      let capture = 0;
+      vi.mocked(captureMethodSlots).mockImplementation((_e, slots) => {
+        capture += 1;
+        return slots.map(() => ({
+          exists: true,
+          source: 'name\n\t^1',
+          category: capture === 1 ? 'Accessing' : 'Printing',
+        }));
+      });
+
+      messageHandler({ command: 'ctxMoveToCategory' });
+
+      await vi.waitFor(() =>
+        expect(peekUndoEntry(session.id)).toMatchObject({
+          kind: 'methodEdit',
+          label: "Move Array>>#name to 'Printing'",
+        }),
+      );
+      const entry = peekUndoEntry(session.id);
+      expect(entry?.kind === 'methodEdit' && entry.before[0].category).toBe('Accessing');
+      expect(entry?.kind === 'methodEdit' && entry.after[0].category).toBe('Printing');
     });
 
     it('delegates run single test to command', () => {

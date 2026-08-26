@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
-import { beginMethodDeletion } from './undo/recordMethodEdit';
+import { beginMethodDeletion, beginMethodEdit, readMethodSlotState } from './undo/recordMethodEdit';
+import { slotLabel } from './undo/undoTypes';
 import { notifyUndoable } from './undo/undoableToast';
 import { beginClassDeletion } from './undo/recordClassEdit';
 import { extractSelector } from './methodPattern';
@@ -1818,6 +1819,17 @@ export class SystemBrowser {
     });
     if (!picked) return;
 
+    // Snapshot the slot before moving: its captured state carries the CATEGORY as well as
+    // the source, so the ordinary method-edit reversal puts the category back (#434).
+    const slot = {
+      dict: dictIndex,
+      className,
+      isMeta: this.state.isMeta,
+      selector,
+      environmentId: 0,
+    };
+    const recording = beginMethodEdit(this.session, [slot]);
+
     queries.recategorizeMethod(
       this.session,
       className,
@@ -1832,6 +1844,14 @@ export class SystemBrowser {
     if (this.state.selectedMethodCategory) {
       this.handleSelectMethodCategory(this.state.selectedMethodCategory);
     }
+
+    const after = recording ? readMethodSlotState(this.session, [slot]) : undefined;
+    notifyUndoable(
+      `Moved #${selector} to '${picked}'.`,
+      after && recording
+        ? recording.commit(`Move ${slotLabel(slot)} to '${picked}'`, after)
+        : undefined,
+    );
   }
 
   private handleSendersOf(): void {

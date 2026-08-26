@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { beginMethodDeletion, beginMethodEdit, readMethodSlotState } from './undo/recordMethodEdit';
+import { slotLabel } from './undo/undoTypes';
 import { notifyUndoable } from './undo/undoableToast';
 import {
   OverlayRenameOutcome,
@@ -4937,6 +4938,19 @@ export class ExplorerController {
     if (!session) return;
     const toMove = payloads.filter((p) => p.category !== category);
     if (toMove.length === 0) return;
+
+    // Snapshot the slots before moving: a method slot's captured state carries its CATEGORY
+    // as well as its source, so the ordinary method-edit reversal puts the category back
+    // (#434). One entry for the whole drop -- the user dragged once.
+    const slots = toMove.map((p) => ({
+      dict: p.dictIndex,
+      className: p.className,
+      isMeta: p.isMeta,
+      selector: p.selector,
+      environmentId: 0,
+    }));
+    const recording = beginMethodEdit(session, slots);
+
     try {
       for (const p of toMove) {
         queries.recategorizeMethod(
@@ -4955,11 +4969,17 @@ export class ExplorerController {
       return;
     }
     this.reloadIfCurrent(toMove[0].className, toMove[0].dictIndex);
-    void vscode.window.showInformationMessage(
+
+    const message =
       toMove.length === 1
         ? `Moved #${toMove[0].selector} to '${category}'.`
-        : `Moved ${toMove.length} methods to '${category}'.`,
-    );
+        : `Moved ${toMove.length} methods to '${category}'.`;
+    const label =
+      slots.length === 1
+        ? `Move ${slotLabel(slots[0])} to '${category}'`
+        : `Move ${slots.length} methods to '${category}'`;
+    const after = recording ? readMethodSlotState(session, slots) : undefined;
+    notifyUndoable(message, after && recording ? recording.commit(label, after) : undefined);
   }
 
   // Drop on a class → ask whether to MOVE (relocate, remove from source, with a
