@@ -1059,7 +1059,7 @@ export class SystemBrowser {
     openFile = true,
     skipClassBrowser = false,
   ): void {
-    const { dictName, className, isMeta, category, selector } = result;
+    const { dictName, className, isMeta, category, selector, environmentId } = result;
 
     // Find 1-based dict index
     const dictIndex = this.state.dictionaries.indexOf(dictName) + 1;
@@ -1092,6 +1092,22 @@ export class SystemBrowser {
     if (this.state.isMeta !== isMeta) {
       this.handleToggleSide(isMeta);
       this.panel.webview.postMessage({ command: 'setSide', isMeta });
+    }
+
+    // Update the method environment if changed. A result row carries the environment it was
+    // FOUND in, and a selector implemented in two environments is two different methods —
+    // so without this the browser kept whatever environment it happened to be showing and
+    // opened that one instead, which for a row found anywhere else is the wrong method or no
+    // method at all. This is the path taken whenever a browser is already open, i.e. the
+    // usual one; the direct-open fallback in methodResultsPicker has always used the row's
+    // environment, so the two now agree.
+    //
+    // Placed after the side switch because the environment switch re-derives the method
+    // categories for the current side, and before the category switch because those are the
+    // categories the category step then chooses from.
+    if (this.state.selectedEnvId !== environmentId) {
+      this.handleToggleEnvironment(environmentId);
+      this.panel.webview.postMessage({ command: 'setEnvironment', envId: environmentId });
     }
 
     // Update method category if changed
@@ -3109,6 +3125,12 @@ export class SystemBrowser {
             footer.appendChild(label);
           }
           footer.classList.remove('hidden');
+          break;
+        }
+        case 'setEnvironment': {
+          document.querySelectorAll('input[name="env"]').forEach((r) => {
+            r.checked = (r.value === String(msg.envId));
+          });
           break;
         }
         case 'setSide': {

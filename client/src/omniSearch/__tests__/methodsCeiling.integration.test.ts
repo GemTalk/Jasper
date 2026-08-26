@@ -2,7 +2,7 @@
 // matrix (3.6.2 and 3.7.5). Base-image reflection only — no server plugin — so it runs in both the
 // bare and plugin CI passes.
 //
-// Regression guard for Omni Search triage #14. Two halves, both previously untested:
+// Regression guard for GemStone Search triage #14. Two halves, both previously untested:
 //   1. the generated selector scan really is BOUNDED — `searchSelectors` short-circuits the instant it
 //      has `limit` matches, so a full slice genuinely means "there are more we never saw";
 //   2. `methodsProvider` turns that into the truncation signal the engine needs, so the footer stops

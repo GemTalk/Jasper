@@ -425,7 +425,9 @@ This suite pins down:
   - the analysis pre-flight reports per-selector decline + a movable count;
   - building compiles nothing and commits nothing; apply relocates the method and
     removes it from the source, guarding the removal so a deselected/failed add never
-    strands the method in neither class; apply never commits; a token round-trip works.
+    strands the method in neither class; apply never commits; a token round-trip works;
+  - a method that will not COMPILE on the target is reported (naming the method) rather
+    than counted as moved.
 
 setUp builds throwaway classes in UserGlobals; tearDown removes them.
 '.
@@ -518,7 +520,9 @@ This suite pins down:
     movable count;
   - building compiles nothing and commits nothing; apply relocates the method to the
     superclass and removes it from the source, guarding the removal so a deselected/failed
-    add never strands the method; apply never commits; a token round-trip works.
+    add never strands the method; apply never commits; a token round-trip works;
+  - a method that will not COMPILE on the superclass is reported (naming the method) and
+    left in place on the subclass, rather than stripped from both classes.
 
 setUp builds a throwaway superclass/subclass pair in UserGlobals; tearDown removes them.
 '.
@@ -710,7 +714,9 @@ Correctness of the rename-class refactoring:
   - the server-side apply creates the new class version (bumping the class
     history), copies methods forward, re-parents descendants, rewrites external
     references, and removes the old name -- all without committing;
-  - a new name already in use is reported as a collision precondition.
+  - a new name already in use is reported as a collision precondition;
+  - a method that will not recompile is reported (naming the method) rather than dropped
+    from the new class version in silence, and the rest of the class still arrives.
 
 setUp builds a throwaway hierarchy plus an unrelated referencing class in
 UserGlobals with fixture-unique names, and tearDown removes them (including the
@@ -4064,6 +4070,34 @@ testApplyKeepsTargetWhenRemovalDeselected
 
 category: 'tests - apply'
 method: GsInlineMethodRefactoringTest
+testApplyKeepsTheTargetWhenTheCallerWillNotRecompile
+	"Inline stages the caller recompile and, when the inlined call was the target's last
+	 sender, a removal of the now-unused target. The apply loop catches per change and keeps
+	 going, so a caller that will not recompile does not stop the removal from running: the
+	 target method was destroyed while the caller still held its old body calling it. Make the
+	 caller un-compilable by removing a global it was compiled against -- the failure must be
+	 reported and the target must survive."
+	| json |
+	UserGlobals at: #GsIMGone put: 7.
+	self compile: 'gsimDoomed ^ count' in: self baseFixture.
+	self compile: 'useDoomed ^ self gsimDoomed + GsIMGone' in: self baseFixture.
+	UserGlobals removeKey: #GsIMGone.
+
+	json := (self inlineIn: self baseFixture selector: #useDoomed atSendOf: 'gsimDoomed')
+		applyDeselected: #().
+
+	self deny: json includesSubstring: '"failed":[]'.
+	self assert: json includesSubstring: 'did not recompile'.
+	"The failure names the METHOD, not just its class -- the failure list is what the user
+	 opens to go fix what did not survive."
+	self assert: json includesSubstring: 'GsIMBase>>useDoomed'.
+	"Nothing applied: the recompile failed and the removal is gated on it."
+	self assert: json includesSubstring: '"applied":0'.
+	self assert: (self baseFixture includesSelector: #gsimDoomed)
+%
+
+category: 'tests - apply'
+method: GsInlineMethodRefactoringTest
 testApplyDoesNotCommit
 	| before |
 	before := System needsCommit.
@@ -6544,6 +6578,29 @@ testApplyRelocatesMethodAndRemovesFromSource
 
 category: 'tests - apply'
 method: GsMoveMethodRefactoringTest
+testApplyReportsAMethodThatWillNotCompileOnTheTarget
+	"compileMethod: answers its errors rather than raising, so an unchecked add counted a
+	 method that never landed on the target as applied. The source method survived here only
+	 because the paired remove independently checks that the target holds the selector -- the
+	 move still reported clean success while nothing had moved. Make the method un-compilable
+	 by removing a global it was compiled against: the failure must be reported, and the
+	 method must stay put on the source."
+	| json |
+	UserGlobals at: #GsMMGone put: 7.
+	self compile: 'usesGone ^GsMMGone' in: self sourceFixture.
+	UserGlobals removeKey: #GsMMGone.
+
+	json := (self move: #usesGone to: 'GsMMTarget') applyDeselected: #().
+
+	self deny: json includesSubstring: '"failed":[]'.
+	self assert: json includesSubstring: 'did not recompile'.
+	self assert: json includesSubstring: 'GsMMTarget>>usesGone'.
+	self assert: (self sourceFixture includesSelector: #usesGone).
+	self deny: (self targetFixture includesSelector: #usesGone)
+%
+
+category: 'tests - apply'
+method: GsMoveMethodRefactoringTest
 testApplyDoesNotCommit
 	| before |
 	before := System needsCommit.
@@ -7425,6 +7482,32 @@ testApplyRelocatesMethodAndRemovesFromSource
 	self assert: json includesSubstring: '"applied":2'.
 	self assert: (self superFixture includesSelector: #pureCompute).
 	self deny: (self subFixture includesSelector: #pureCompute)
+%
+
+category: 'tests - apply'
+method: GsPushUpMethodRefactoringTest
+testApplyKeepsTheSourceMethodWhenTheSuperclassCompileFails
+	"The apply compiles onto the superclass and THEN removes the source, guarding the removal
+	 on the applied-add set. compileMethod: answers its errors rather than raising, so an
+	 unchecked add recorded the selector as applied regardless -- a method that would not
+	 compile on the superclass was stripped from the subclass anyway, leaving it on NEITHER
+	 class while the apply reported success. Make the pushed method un-compilable by removing
+	 a global it was compiled against: the failure must be reported, and the subclass must
+	 still hold the method."
+	| json |
+	UserGlobals at: #GsPUGone put: 7.
+	self compile: 'usesGone ^GsPUGone' in: self subFixture.
+	UserGlobals removeKey: #GsPUGone.
+
+	json := (self push: #usesGone) applyDeselected: #().
+
+	self deny: json includesSubstring: '"failed":[]'.
+	self assert: json includesSubstring: 'did not recompile'.
+	"Name the METHOD, not the owning class -- the failure list is what the user opens to go fix."
+	self assert: json includesSubstring: 'GsPUSuper>>usesGone'.
+	"The whole point: the method survives on the subclass and never lands on the superclass."
+	self assert: (self subFixture includesSelector: #usesGone).
+	self deny: (self superFixture includesSelector: #usesGone)
 %
 
 category: 'tests - apply'
@@ -9622,6 +9705,32 @@ testNewNameCollisionDetected
 	ref := self renameTo: 'GsRCOther' scope: #wholeSystem.
 	self assert: ref newNameCollision notNil.
 	self assert: ref outOfScopeJsonString includesSubstring: 'already in use'
+%
+
+category: 'tests'
+method: GsRenameClassRefactoringTest
+testServerSideApplyReportsAMethodThatCannotBeCarriedOntoTheNewVersion
+	"A new class version starts with an EMPTY method dictionary, so the copy-forward loop is
+	 the only thing carrying the class's behaviour across. compileMethod: answers its errors
+	 rather than raising, so an unchecked copy dropped a method that would not recompile from
+	 the new version and still reported a clean rename -- the method was simply gone. Make one
+	 method un-compilable by removing a global it was compiled against: the failure must be
+	 reported against the METHOD, and the rest of the class must still arrive."
+	| json renamed |
+	UserGlobals at: #GsRCCopyGone put: 7.
+	self compile: 'copyMe ^GsRCCopyGone' in: self baseFixture.
+	UserGlobals removeKey: #GsRCCopyGone.
+
+	json := (self renameTo: 'GsRCRenamed' scope: #wholeSystem) applyDeselected: #().
+
+	self deny: json includesSubstring: '"failed":[]'.
+	self assert: json includesSubstring: 'did not recompile'.
+	self assert: json includesSubstring: 'GsRCRenamed>>copyMe'.
+	"One bad method must not abort the rename: the new version exists and holds the rest."
+	renamed := UserGlobals at: #GsRCRenamed.
+	self assert: (renamed includesSelector: #foo).
+	self assert: (renamed includesSelector: #makeSelf).
+	self deny: (renamed includesSelector: #copyMe)
 %
 
 category: 'tests'

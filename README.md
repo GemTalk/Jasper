@@ -90,8 +90,8 @@ The extension creates the full directory structure (`conf/`, `data/`, `log/`, `s
 
 Each database node expands to show:
 
-- **Stone** — running/stopped status with start/stop buttons
-- **NetLDI** — running/stopped status with port number and start/stop buttons
+- **Stone** — status with start/stop buttons
+- **NetLDI** — status with port number and start/stop buttons
 - **Logs** — expandable list of log files (click to open in editor)
 - **Config** — expandable list of configuration files (click to open in editor)
 
@@ -103,9 +103,31 @@ Inline buttons on each database provide:
 - **Replace Extent** — replace the stopped stone's extent with a fresh base extent (deletes old extent and transaction logs)
 - **Delete** — remove the database directory (requires stone and NetLDI to be stopped)
 
+#### Server status
+
+A stone or NetLDI row shows one of:
+
+- **Running** — Jasper can see it and a connect should succeed.
+- **Stopped** — nothing of it is running.
+- **Running — not responding** — `gslist` lists it but reports it unhealthy; it may be holding a stale lock (see the Processes view).
+- **Running — not connectable** (stone only) — the stone is healthy, but a login has to come in through its NetLDI and that NetLDI is not usable, so a connect will fail.
+- **Running outside Jasper** — the process is alive on this host but was started outside Jasper's environment. See below.
+
+Only plain **Running** means a connect is expected to work; the others say why it will not, rather than showing a healthy status that a failing login then contradicts.
+
+#### Servers started outside Jasper
+
+Jasper runs its own `gslist` against the root it manages, and GemStone servers register in the `locks/` directory of whatever `GEMSTONE_GLOBAL_DIR` they were started with. A stone or NetLDI started by hand — from a shell whose GemStone environment differs from Jasper's — therefore registers somewhere Jasper does not look, and `gslist` alone would report it as *Stopped* while the process is plainly alive.
+
+Jasper cross-checks the host process table against its own `gslist` and marks such a server **Running outside Jasper**, with its PID and registration directory in the row's tooltip. Connecting to that database — or the row's **Restart Under Jasper's Environment** action — offers to stop the external servers and start them again under Jasper's environment, so they land in the directory Jasper manages. The prompt warns that restarting the stone drops any uncommitted sessions, and offers **Connect as-is** if you would rather leave the running servers alone.
+
+Because two databases can use the same stone name, Jasper stops a server only when it can confirm from the paths that server was started with that it really is the managed database's. When it cannot, it says so and does not offer the restart. If a stop or kill fails, Jasper reports both names, the PIDs, the registration directory, and the `gslist` invocation that will show the servers where they actually are, so the situation can be finished by hand.
+
 ### Process List
 
 The **Processes** view shows all running GemStone processes (stones and NetLDIs) detected via `gslist`, including version, PID, and port information.
+
+This view *is* Jasper's `gslist` view, so a server started outside Jasper's environment does not appear here even while it is running — the Databases view is where that shows up, as **Running outside Jasper** (see [Servers started outside Jasper](#servers-started-outside-jasper) above).
 
 Stale processes — where `gslist` reports a `frozen`, `killed`, or `exe deleted` status — are rendered with a red icon and the status prefixed onto the description. A **Delete Stale Lock File** inline action lets you remove the orphaned `*.LCK` after Jasper confirms the recorded PID is either gone or has been reused by an unrelated process. (On macOS, `gslist -c` can't detect a recycled PID on its own, so this manual step is sometimes necessary; see [docs/mcp-server.md](docs/mcp-server.md#limitations) for context.)
 
@@ -174,7 +196,8 @@ Beyond browsing, the Explorer is where the code-changing operations live:
 
 - Filter any pane by name, with `*` as a wildcard, plus `reads:`/`writes:`/`accesses:` in the Methods pane to find the methods touching an instance variable
 - Group methods by category, or list them flat
-- Add, rename, and delete dictionaries, class categories, classes, methods, and instance variables; rename class variables
+- Add, rename, and delete dictionaries, class categories, classes, methods, instance variables, and class variables
+- Deleting first looks for what still references the target: nothing does, and it just goes (and says so); something does, and you are shown the methods before you decide
 - The refactorings — rename, extract/inline method and temporary, change signature, move/push up/push down method, instance-variable structure changes, extract superclass, split class — each previewed before it is applied
 - Browse senders, implementors, references, and the class hierarchy
 - Drag and drop methods between categories, and classes between dictionaries
@@ -242,8 +265,14 @@ The extension integrates with VS Code's native Test Explorer:
 
 - Auto-discovers all `TestCase` subclasses and their `test*` methods
 - Run individual tests or entire test classes
+- Debug a test, or a whole class, under the GemStone debugger — a debug run omits SUnit's exception handler, so a failing test suspends on a live stack instead of being recorded and discarded
 - Pass/fail/error results with failure messages
-- Test items link to method source
+- Stop a long-running test: the Testing view's stop button, the ■ that replaces a row's ▶ in the Explorer while it runs, or the Cancel on the progress notification. First press asks the gem to stop at a safe point; a second interrupts it
+- Test items link to method source, and a run/status icon appears in the editor gutter beside an open test class or test method
+- Run from the GemStone Explorer too: a ▶ on a test class row (Classes or Hierarchy pane) or a test method row (Methods pane), each showing the outcome of its last run
+- Clicking a row in the Testing view opens the code without moving the Explorer; **Reveal in GemStone Explorer** — the ⊟ on the row, or its context menu — navigates the panes when you want it
+- The reverse too: **Reveal in Testing View** on a test class or test method row in the Explorer selects it in the Testing view
+- **Clear Test Results** wipes the outcome icons — in the Explorer and in the Testing view both — when a run in progress is hard to see. Right-click a test row in either place, or use the `…` overflow on the Classes / Hierarchy / Methods pane headers, or the Command Palette
 
 ### Jupyter Notebooks (Smalltalk and Grail Python)
 

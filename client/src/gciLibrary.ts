@@ -1,6 +1,6 @@
 import koffi from 'koffi';
 import * as path from 'path';
-import { OOP_FALSE, OOP_ILLEGAL, OOP_NIL, OOP_TRUE } from './gciConstants';
+import { GCI_LOGIN_QUIET, OOP_FALSE, OOP_ILLEGAL, OOP_NIL, OOP_TRUE } from './gciConstants';
 import { GciLibraryError } from './gciLibraryError';
 import { escapeString } from './queries/util';
 
@@ -151,6 +151,15 @@ function toBigInt(value: number | bigint): bigint {
   return typeof value === 'bigint' ? value : BigInt(value);
 }
 
+// Forces GCI_LOGIN_QUIET on top of a caller's loginFlags. Jasper never wants
+// libgcits' ` gcits login:` / ` gcits logout:` banner on stdout, so every login
+// wrapper ORs the bit in rather than making all ~6 call sites remember it. This
+// is the one deliberate deviation from the raw wrappers' 1:1 contract; all
+// other caller-supplied bits pass through untouched.
+function quietedLoginFlags(loginFlags: number): number {
+  return loginFlags | GCI_LOGIN_QUIET;
+}
+
 // Rejects a Promise-returning (async) callback at the type level -- see
 // GciLibrary.executeAndRelease's doc comment for why that matters.
 type NotPromise<T> = T extends Promise<unknown> ? never : T;
@@ -163,11 +172,14 @@ type NotPromise<T> = T extends Promise<unknown> ? never : T;
  * - Raw `GciTsXxx` methods (e.g. `GciTsExecute`, `GciTsLogin`) are thin 1:1
  *   wrappers around the C functions of the same name — one per exported
  *   symbol, following the struct/pointer patterns already established below.
+ *   The one deliberate exception: the login wrappers force `GCI_LOGIN_QUIET`
+ *   into `loginFlags` — see the `quietedLoginFlags` helper above for why.
  * - The remaining methods (grouped into labeled sections further down: Session
  *   lifecycle, Code execution, Symbol resolution & Utf8 caching, Object
  *   lifecycle & PureExportSet, UserGlobals management, SessionTemps
- *   management, OOP predicates, Error handling helpers, Session reset, Paged
- *   string fetching) are an ergonomic layer on top: they call one or more
+ *   management, OOP predicates, Value decoding, Error handling helpers,
+ *   Session reset, Paged string fetching) are an ergonomic layer on top:
+ *   they call one or more
  *   `GciTsXxx` methods, throw {@link GciLibraryError} on failure instead of
  *   returning a `{success, err}`/`{result, err}` pair, and give the raw calls
  *   memorable names and typed parameters.
@@ -409,10 +421,11 @@ export class GciLibrary {
     this._GciTsNbLogout = this.lib.func(`int GciTsNbLogout(GciSessionPtr, _Out_ GciErrSType *)`);
     this._GciTsSessionIsRemote = this.lib.func(`int GciTsSessionIsRemote(GciSessionPtr)`);
     // Optional: not exported by some libraries (e.g. GemStone 4.0). Jasper's
-    // login path passes the password in the clear (GciTsLogin with loginFlags
-    // 0), so GciTsEncrypt is never called during connect — binding it eagerly
-    // would abort library load for a library that lacks it. Only the ergonomic
-    // GciTsEncrypt() wrapper (used by tests) would throw if it were absent.
+    // login path passes the password in the clear (GciTsLogin without
+    // GCI_LOGIN_PW_ENCRYPTED), so GciTsEncrypt is never called during connect —
+    // binding it eagerly would abort library load for a library that lacks it.
+    // Only the ergonomic GciTsEncrypt() wrapper (used by tests) would throw if
+    // it were absent.
     this._GciTsEncrypt = this.optionalFunc(
       'GciTsEncrypt',
       `char* GciTsEncrypt(const char *, _Out_ char *, size_t)`,
@@ -769,7 +782,7 @@ export class GciLibrary {
       gemServiceNrs,
       gemstoneUsername,
       gemstonePassword,
-      loginFlags,
+      quietedLoginFlags(loginFlags),
       haltOnErrNum,
       executedSessionInit,
       err,
@@ -804,7 +817,7 @@ export class GciLibrary {
       gemstoneUsername,
       gemstonePassword,
       netldiName,
-      loginFlags,
+      quietedLoginFlags(loginFlags),
       haltOnErrNum,
       executedSessionInit,
       err,
@@ -837,7 +850,7 @@ export class GciLibrary {
       gemServiceNrs,
       gemstoneUsername,
       gemstonePassword,
-      loginFlags,
+      quietedLoginFlags(loginFlags),
       haltOnErrNum,
       loginPollSocket,
     );
@@ -866,7 +879,7 @@ export class GciLibrary {
       gemstoneUsername,
       gemstonePassword,
       netldiName,
-      loginFlags,
+      quietedLoginFlags(loginFlags),
       haltOnErrNum,
       loginPollSocket,
     );
@@ -2069,9 +2082,10 @@ export class GciLibrary {
    * Logs into a GemStone stone and returns the resulting session.
    *
    * `HostUserId`/`HostPassword` are not exposed by this overload — the gem
-   * process runs as the netldi process's user. Login flags and
-   * `haltOnErrNum` are left at their defaults (see `GciTsLogin` in
-   * `gcits.hf` for what they control).
+   * process runs as the netldi process's user. Login flags are
+   * `GCI_LOGIN_QUIET` (forced by the `GciTsLogin` wrapper) and `haltOnErrNum`
+   * is left at its default (see `GciTsLogin` in `gcits.hf` for what they
+   * control).
    *
    * @param stoneNrs - The NRS of the stone to log into.
    * @param gemServiceNrs - The NRS of the gem service to use.
@@ -2272,6 +2286,25 @@ export class GciLibrary {
     callback: (oop: bigint) => NotPromise<T>,
   ): T {
     return this.releaseAfterUse(session, this.execute(session, code), callback);
+  }
+
+  /**
+   * Evaluates `code` and decodes its result as a signed 64-bit integer, via
+   * {@link oopToInteger}.
+   *
+   * @param session - The GemStone session to operate in.
+   * @param code - Smalltalk source to evaluate.
+   * @returns The evaluated result, decoded as a signed 64-bit integer.
+   * @throws {GciLibraryError} If the evaluated code signals an error, if the
+   *   result is not a SmallInteger or a LargeInteger within the range of a
+   *   signed 64-bit integer -- including the result being `nil`, a
+   *   non-integer object, or a LargeInteger beyond that range -- or if the
+   *   underlying GCI calls fail.
+   */
+  public executeAndFetchInteger(session: unknown, code: string): bigint {
+    return this.executeAndRelease(session, code, (resultOop) =>
+      this.oopToInteger(session, resultOop),
+    );
   }
 
   // ---------------------------------------------------------------------
@@ -2843,6 +2876,46 @@ export class GciLibrary {
   /** Returns whether `oop` is the OOP of GemStone's `true` singleton. */
   public isTrueOop(oop: bigint) {
     return OOP_TRUE === oop;
+  }
+
+  // ---------------------------------------------------------------------
+  // Value decoding
+  // ---------------------------------------------------------------------
+
+  /**
+   * Decodes `oop` as a signed 64-bit integer.
+   *
+   * Reads the value directly off the oop -- a SmallInteger's is encoded in
+   * its tag bits, and a LargeInteger's is fetched by the underlying GCI
+   * call -- rather than sending `printString` and parsing the result. See
+   * {@link executeAndFetchInteger} for the same decoding composed with
+   * `execute`.
+   *
+   * Limited to the signed 64-bit range because it goes through
+   * `GciTsOopToI64`, which only decodes that far -- not because `bigint`
+   * itself has a ceiling; it doesn't, and could hold a LargeInteger of any
+   * size. A LargeInteger beyond int64 could still be decoded exactly, just
+   * not through this call: a LargeInteger is a byte-indexable object (its
+   * digits), so `GciTsFetchBytes` (the same primitive
+   * {@link fetchUtf8String} pages strings with) could fetch and reassemble
+   * it -- at the cost of an extra round-trip and no `printString` involved.
+   * Nothing does that today; add it if a caller needs LargeIntegers past
+   * int64.
+   *
+   * @param session - The GemStone session to operate in.
+   * @param oop - The oop to decode.
+   * @returns The decoded value.
+   * @throws {GciLibraryError} If `oop` is not a SmallInteger or a
+   *   LargeInteger within the range of a signed 64-bit integer -- including
+   *   `oop` being `nil`, a non-integer object, or a LargeInteger beyond that
+   *   range.
+   */
+  public oopToInteger(session: unknown, oop: bigint): bigint {
+    const { success, value, err } = this.GciTsOopToI64(session, oop);
+
+    this.throwUnless(success, err);
+
+    return value;
   }
 
   // ---------------------------------------------------------------------

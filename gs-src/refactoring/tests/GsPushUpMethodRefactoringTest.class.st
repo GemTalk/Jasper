@@ -25,7 +25,9 @@ This suite pins down:
     movable count;
   - building compiles nothing and commits nothing; apply relocates the method to the
     superclass and removes it from the source, guarding the removal so a deselected/failed
-    add never strands the method; apply never commits; a token round-trip works.
+    add never strands the method; apply never commits; a token round-trip works;
+  - a method that will not COMPILE on the superclass is reported (naming the method) and
+    left in place on the subclass, rather than stripped from both classes.
 
 setUp builds a throwaway superclass/subclass pair in UserGlobals; tearDown removes them.
 "
@@ -411,6 +413,31 @@ GsPushUpMethodRefactoringTest >> testApplyRelocatesMethodAndRemovesFromSource [
 	self assert: json includesSubstring: '"applied":2'.
 	self assert: (self superFixture includesSelector: #pureCompute).
 	self deny: (self subFixture includesSelector: #pureCompute)
+]
+
+{ #category : 'tests - apply' }
+GsPushUpMethodRefactoringTest >> testApplyKeepsTheSourceMethodWhenTheSuperclassCompileFails [
+	"The apply compiles onto the superclass and THEN removes the source, guarding the removal
+	 on the applied-add set. compileMethod: answers its errors rather than raising, so an
+	 unchecked add recorded the selector as applied regardless -- a method that would not
+	 compile on the superclass was stripped from the subclass anyway, leaving it on NEITHER
+	 class while the apply reported success. Make the pushed method un-compilable by removing
+	 a global it was compiled against: the failure must be reported, and the subclass must
+	 still hold the method."
+	| json |
+	UserGlobals at: #GsPUGone put: 7.
+	self compile: 'usesGone ^GsPUGone' in: self subFixture.
+	UserGlobals removeKey: #GsPUGone.
+
+	json := (self push: #usesGone) applyDeselected: #().
+
+	self deny: json includesSubstring: '"failed":[]'.
+	self assert: json includesSubstring: 'did not recompile'.
+	"Name the METHOD, not the owning class -- the failure list is what the user opens to go fix."
+	self assert: json includesSubstring: 'GsPUSuper>>usesGone'.
+	"The whole point: the method survives on the subclass and never lands on the superclass."
+	self assert: (self subFixture includesSelector: #usesGone).
+	self deny: (self superFixture includesSelector: #usesGone)
 ]
 
 { #category : 'tests - apply' }

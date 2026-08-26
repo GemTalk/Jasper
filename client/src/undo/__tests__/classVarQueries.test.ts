@@ -3,11 +3,14 @@ vi.mock('../../refactoring/queries/getDefinedClassVarNames', () => ({
   getDefinedClassVarNames: vi.fn(),
 }));
 vi.mock('../../refactoring/queries/addClassVariable', () => ({ addClassVariable: vi.fn() }));
-vi.mock('../../refactoring/queries/removeClassVariable', () => ({ removeClassVariable: vi.fn() }));
+vi.mock('../../refactoring/queries/deleteClassVariable', () => ({ deleteClassVariable: vi.fn() }));
+vi.mock('../../refactoring/queries/methodsAccessingClassVar', () => ({
+  methodsAccessingClassVar: vi.fn(() => []),
+}));
 
 import { getDefinedClassVarNames } from '../../refactoring/queries/getDefinedClassVarNames';
 import { addClassVariable } from '../../refactoring/queries/addClassVariable';
-import { removeClassVariable } from '../../refactoring/queries/removeClassVariable';
+import { deleteClassVariable } from '../../refactoring/queries/deleteClassVariable';
 import { applyClassVarOp, captureClassVar } from '../queries/classVarQueries';
 
 /**
@@ -15,7 +18,7 @@ import { applyClassVarOp, captureClassVar } from '../queries/classVarQueries';
  *
  * The rules with teeth are the SENTINELS. These queries report trouble by returning a string
  * rather than raising, so a reversal that reads them wrongly reports success over a stone
- * that did nothing — and 'not-defined' on a removal is the state the reversal was aiming at,
+ * that did nothing — and 'not-declared' on a removal is the state the reversal was aiming at,
  * not a failure.
  */
 
@@ -39,44 +42,44 @@ describe('captureClassVar', () => {
 });
 
 describe('applyClassVarOp', () => {
-  it('declares through addClassVariable and undeclares through removeClassVariable', () => {
+  it('declares through addClassVariable and undeclares through deleteClassVariable', () => {
     vi.mocked(addClassVariable).mockReturnValue('ok');
-    vi.mocked(removeClassVariable).mockReturnValue('ok');
+    vi.mocked(deleteClassVariable).mockReturnValue('ok');
 
     expect(applyClassVarOp(exec, slot, 'declare')).toBeNull();
     expect(addClassVariable).toHaveBeenCalledWith(exec, 'Account', 'Registry', 7);
 
     expect(applyClassVarOp(exec, slot, 'undeclare')).toBeNull();
-    expect(removeClassVariable).toHaveBeenCalledWith(exec, 'Account', 'Registry', 7);
+    expect(deleteClassVariable).toHaveBeenCalledWith(exec, 'Account', 'Registry', 7);
   });
 
-  it("treats 'not-defined' on a removal as done, not as a failure", () => {
+  it("treats 'not-declared' on a removal as done, not as a failure", () => {
     // That IS the state the reversal was aiming at.
-    vi.mocked(removeClassVariable).mockReturnValue('not-defined');
+    vi.mocked(deleteClassVariable).mockReturnValue('not-declared');
 
     expect(applyClassVarOp(exec, slot, 'undeclare')).toBeNull();
   });
 
-  it("does NOT treat 'not-defined' as done when declaring", () => {
-    vi.mocked(addClassVariable).mockReturnValue('not-defined');
+  it("does NOT treat 'not-declared' as done when declaring", () => {
+    vi.mocked(addClassVariable).mockReturnValue('not-declared');
 
-    expect(applyClassVarOp(exec, slot, 'declare')).toBe('not-defined');
+    expect(applyClassVarOp(exec, slot, 'declare')).toBe('not-declared');
   });
 
   it('turns no-class into a sentence naming the class', () => {
-    vi.mocked(removeClassVariable).mockReturnValue('no-class');
+    vi.mocked(deleteClassVariable).mockReturnValue('no-class');
 
     expect(applyClassVarOp(exec, slot, 'undeclare')).toBe('Account could not be resolved');
   });
 
   it('reports an unexpected answer verbatim rather than reading it as success', () => {
-    vi.mocked(removeClassVariable).mockReturnValue('something else entirely');
+    vi.mocked(deleteClassVariable).mockReturnValue('something else entirely');
 
     expect(applyClassVarOp(exec, slot, 'undeclare')).toBe('something else entirely');
   });
 
   it('answers the reason instead of throwing past the caller', () => {
-    vi.mocked(removeClassVariable).mockImplementation(() => {
+    vi.mocked(deleteClassVariable).mockImplementation(() => {
       throw new Error('session busy');
     });
 

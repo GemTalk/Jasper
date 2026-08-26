@@ -184,8 +184,13 @@ function strandedMethods(
     );
     return [];
   }
-  const gone = new Set(removing.map((s) => `${s.className}|${s.isMeta}|${s.selector}`));
-  return referencing.filter((s) => !gone.has(`${s.className}|${s.isMeta}|${s.selector}`));
+  // The environment is part of a method's identity: the same selector in two environments is
+  // two different methods. Everything here is environment 0 by construction, but a key that
+  // leaves it out is one refactoring away from conflating them.
+  const key = (s: MethodSlot): string =>
+    `${s.className}|${s.isMeta}|${s.selector}|${s.environmentId}`;
+  const gone = new Set(removing.map(key));
+  return referencing.filter((s) => !gone.has(key(s)));
 }
 
 async function confirmStranded(

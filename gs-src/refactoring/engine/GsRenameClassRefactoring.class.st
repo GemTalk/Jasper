@@ -73,7 +73,8 @@ Class {
 		'copyMethods',
 		'recompileSubclasses',
 		'migrateInstances',
-		'removeOldFromHistory'
+		'removeOldFromHistory',
+		'copyFailures'
 	],
 	#category : 'Refactoring-Core'
 }
@@ -574,6 +575,10 @@ GsRenameClassRefactoring >> applyDeselected: deselectedIds [
 	oldToNew := IdentityDictionary new.
 	applied := 0.
 	failures := OrderedCollection new.
+	"The copy-forward loop runs deep inside a per-class change and must not raise (one
+	 method that will not recompile would abort the whole change), so it reports through
+	 this alias instead -- entries land in the same `failed` list as everything else."
+	copyFailures := failures.
 	self changeSet changes do: [:change |
 		(change kind == #methodRecompile and: [ids includes: change id asSymbol])
 			ifFalse: [
@@ -728,22 +733,28 @@ GsRenameClassRefactoring >> copyMethodsFrom: old to: new [
 	"Copy every method of `old` (both sides) onto `new`, rewriting old-name references
 	 to the new name. A new class version starts with an empty method dictionary, so
 	 this is what carries the behaviour forward."
-	old selectors do: [:sel | self copyMethod: sel from: old to: new].
-	old class selectors do: [:sel | self copyMethod: sel from: old class to: new class]
+	old selectors do: [:sel | self copyMethod: sel from: old to: new meta: false].
+	old class selectors do: [:sel | self copyMethod: sel from: old class to: new class meta: true]
 ]
 
 { #category : 'applying' }
-GsRenameClassRefactoring >> copyMethod: sel from: srcCls to: dstCls [
-	| m src newSrc cat |
+GsRenameClassRefactoring >> copyMethod: sel from: srcCls to: dstCls meta: isMeta [
+	"Carry one method onto the new class version, rewriting old-name references. A method
+	 that will not recompile is recorded in copyFailures rather than dropped in silence --
+	 the new version starts with an empty method dictionary, so a dropped method is simply
+	 gone from it. Answers whether it compiled."
+	| m src newSrc |
 	m := srcCls compiledMethodAt: sel environmentId: 0 otherwise: nil.
-	m isNil ifTrue: [^self].
+	m isNil ifTrue: [^true].
 	src := m sourceString.
 	newSrc := self rewriteReferencesInSource: src.
-	cat := (srcCls categoryOfSelector: sel environmentId: 0) ifNil: ['as yet unclassified'].
-	dstCls
-		compileMethod: (newSrc ifNil: [src])
-		dictionaries: System myUserProfile symbolList
-		category: cat asString
+	^environment
+		copyMethod: sel
+		from: srcCls
+		to: dstCls
+		source: (newSrc ifNil: [src])
+		meta: isMeta
+		into: copyFailures
 ]
 
 { #category : 'applying' }

@@ -1,5 +1,5 @@
 /**
- * Omni Search as a bottom-PANEL webview view (`ui: "panel"`), alongside Terminal / Output. Unlike the
+ * GemStone Search as a bottom-PANEL webview view (`ui: "panel"`), alongside Terminal / Output. Unlike the
  * editor-tab Spotter it's a docked tool: no pin, no auto-close, no open-beside — activating a result
  * just opens it in the editor area ABOVE the panel, and the search stays put below. It shares all the
  * chrome + engine plumbing with the tab host via `omniSearchShared.ts`.
@@ -23,6 +23,7 @@
 import * as vscode from 'vscode';
 import { createOmniEngine, OmniEngine, OmniViewData } from './omniEngine';
 import { OmniPanelDeps } from './omniSearchPanel';
+import { revealTestForResult } from './omniActions';
 import {
   CommonInbound,
   configMessage,
@@ -239,6 +240,12 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
           // Open in the editor area above the panel; the docked view stays put (no beside/close).
           const result = engine.resultFor(m.id ?? -1);
           if (result) await this.deps!.activate(result, { beside: false, preserveFocus: false });
+          return;
+        }
+        case 'revealTest': {
+          // Shift+Enter: select the result in the Testing view (see omniSearchView.js).
+          const result = engine.resultFor(m.id ?? -1);
+          if (result) await revealTestForResult(result);
           return;
         }
         case 'preview': {

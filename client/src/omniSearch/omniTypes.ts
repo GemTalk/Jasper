@@ -1,5 +1,5 @@
 /**
- * Shared types for Omni Search (issue #378).
+ * Shared types for GemStone Search (issue #378).
  *
  * Providers are written against these types and are injected with their data sources (a class-name
  * loader, a selector-search runner, a tab lister, …) rather than reaching for `vscode` or a stone
@@ -53,7 +53,7 @@ export const OMNI_CATEGORIES: readonly OmniCategory[] = [
   // Class categories are a whole-image scan to build; explicitOnly + lazy load keeps picker-open fast.
   {
     id: 'categories',
-    label: 'Categories',
+    label: 'Class Categories',
     icon: 'symbol-folder',
     explicitOnly: true,
     searchHint: 'Type a class-category name, e.g. Kernel-Objects',

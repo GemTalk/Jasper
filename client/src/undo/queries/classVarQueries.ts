@@ -16,10 +16,10 @@
  * plain kernel reflection, so it holds to the same promise as the rest of this layer.
  */
 import { QueryExecutor } from '../../queries/types';
-import { classLookupExpr, escapeString, splitLines } from '../../queries/util';
 import { getDefinedClassVarNames } from '../../refactoring/queries/getDefinedClassVarNames';
 import { addClassVariable } from '../../refactoring/queries/addClassVariable';
-import { removeClassVariable } from '../../refactoring/queries/removeClassVariable';
+import { deleteClassVariable } from '../../refactoring/queries/deleteClassVariable';
+import { methodsAccessingClassVar } from '../../refactoring/queries/methodsAccessingClassVar';
 import { ClassVarOpKind, ClassVarSlot, ClassVarState, MethodSlot } from '../undoTypes';
 
 /** Whether the class declares the variable right now. A class that will not resolve reads as
@@ -41,15 +41,15 @@ export function applyClassVarOp(
     answer =
       kind === 'declare'
         ? addClassVariable(execute, slot.className, slot.varName, slot.dict)
-        : removeClassVariable(execute, slot.className, slot.varName, slot.dict);
+        : deleteClassVariable(execute, slot.className, slot.varName, slot.dict);
   } catch (e: unknown) {
     return e instanceof Error ? e.message : String(e);
   }
   const result = answer.trim();
   if (result === 'ok') return null;
-  // 'not-defined' means the removal had nothing to do, which is the state the reversal was
+  // 'not-declared' means the removal had nothing to do, which is the state the reversal was
   // aiming at — not a failure. Every other sentinel is one.
-  if (result === 'not-defined' && kind === 'undeclare') return null;
+  if (result === 'not-declared' && kind === 'undeclare') return null;
   if (result === 'no-class') return `${slot.className} could not be resolved`;
   return result;
 }
@@ -57,55 +57,30 @@ export function applyClassVarOp(
 /**
  * Every method that would stop compiling if the class variable's declaration went away.
  *
- * Both SIDES and the whole SUBTREE, because that is the variable's actual visibility: a class
- * variable is shared with every subclass, and a class-side method reads it exactly as an
- * instance-side one does. Scanning only the declaring class's instance side would miss the
- * accessors — which live on the class side — and every subclass method that uses it.
+ * Delegates to the refactoring layer's `methodsAccessingClassVar`, which safe-delete already
+ * uses: both sides, the whole subtree, detection by literal-frame IDENTITY so a same-named
+ * global and a shadowing temporary are both excluded — and it walks UP to the class that
+ * DECLARES the name first, so a subclass row answers the same set as its ancestor's.
  *
- * Detection is by IDENTITY on the literal frame, the same test the engine's rename uses: a
- * method references the class variable iff its literals hold that exact association. A
- * same-named global is a different association and a shadowing temporary has no association
- * literal, so neither is reported.
+ * Answered as METHOD SLOTS, because that is what the reversal plans over: the undo has to
+ * discount the accessors it is removing itself, which is a slot-by-slot comparison. The
+ * dictionary comes from the slot rather than from the row, so the reversal resolves each
+ * class exactly as the recording did.
  *
- * Answers an empty list when the class will not resolve or does not declare the name — there
- * is nothing the removal could break in either case. `_classVars` itself answers NIL on a
- * class that declares none, which is why it is guarded rather than sent to directly.
+ * Environment 0 only, like the rest of this layer — see `beginMethodEdit` for why an edit in
+ * another environment records no undo at all.
  */
 export function methodsReferencingClassVar(
   execute: QueryExecutor,
   slot: ClassVarSlot,
 ): MethodSlot[] {
-  const name = escapeString(slot.varName);
-  const code = `| cls assoc ws classes |
-cls := ${classLookupExpr(slot.className, slot.dict)}.
-(cls isNil or: [cls isBehavior not]) ifTrue: [^ ''].
-assoc := cls _classVars
-  ifNil: [nil]
-  ifNotNil: [:cv | cv associationAt: #'${name}' ifAbsent: [nil]].
-assoc isNil ifTrue: [^ ''].
-ws := WriteStream on: String new.
-classes := OrderedCollection new.
-classes add: cls.
-classes addAll: cls allSubclasses.
-classes do: [:c |
-  #(false true) do: [:meta | | target |
-    target := meta ifTrue: [c class] ifFalse: [c].
-    target selectors do: [:sel | | m |
-      m := target compiledMethodAt: sel environmentId: 0 otherwise: nil.
-      (m notNil and: [m literals anySatisfy: [:each | each == assoc]])
-        ifTrue: [
-          ws nextPutAll: c name asString; tab.
-          ws nextPutAll: (meta ifTrue: ['1'] ifFalse: ['0']); tab.
-          ws nextPutAll: sel asString; lf]]]].
-ws contents`;
-  return parseReferences(execute(code), slot.dict);
-}
-
-/** Decode one reference scan. Exported for tests. */
-export function parseReferences(raw: string, dict?: number | string): MethodSlot[] {
-  return splitLines(raw).flatMap((line) => {
-    const [className, meta, selector] = line.split('\t');
-    if (!className || !selector) return [];
-    return [{ dict, className, isMeta: meta === '1', selector, environmentId: 0 }];
-  });
+  return methodsAccessingClassVar(execute, slot.className, slot.varName, slot.dict, 0).map(
+    (row) => ({
+      dict: slot.dict,
+      className: row.className,
+      isMeta: row.isMeta,
+      selector: row.selector,
+      environmentId: 0,
+    }),
+  );
 }

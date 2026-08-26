@@ -49,7 +49,9 @@ function makeManager(overrides?: {
     ...overrides?.storage,
   } as unknown as SysadminStorage;
   const processManager = {
-    isStoneRunning: vi.fn(() => false),
+    refreshProcesses: vi.fn(() => []),
+    isServerAlive: vi.fn(() => false),
+    getExternalServers: vi.fn(() => ({})),
     ...overrides?.processManager,
   } as unknown as ProcessManager;
   return new DatabaseManager(storage, processManager);
@@ -131,12 +133,43 @@ describe('DatabaseManager.replaceExtent', () => {
 
   it('refuses to replace while the stone is running', async () => {
     const ok = await makeManager({
-      processManager: { isStoneRunning: vi.fn(() => true) },
+      processManager: { isServerAlive: vi.fn(() => true) },
     }).replaceExtent(makeDb());
 
     expect(ok).toBe(false);
     expect(vscode.window.showErrorMessage).toHaveBeenCalled();
     expect(vscode.window.showQuickPick).not.toHaveBeenCalled();
+    expect(wslImportFileSync).not.toHaveBeenCalled();
+  });
+
+  it('refuses to replace under a stone that was started outside Jasper', async () => {
+    // Such a stone is absent from Jasper's own gslist but has the extent open,
+    // so replacing it would pull the files out from under a live database.
+    const isServerAlive = vi.fn((_db, type: 'stone' | 'netldi') => type === 'stone');
+
+    const ok = await makeManager({ processManager: { isServerAlive } }).replaceExtent(makeDb());
+
+    expect(ok).toBe(false);
+    expect(wslImportFileSync).not.toHaveBeenCalled();
+  });
+
+  it('re-reads gslist before the guard, catching a stone started since the last refresh', async () => {
+    // A stone the user started by hand is invisible in the memoized verdict
+    // until we refresh. The guard has to refresh first, or it would replace the
+    // extent under a live database it never saw.
+    let refreshed = false;
+    const refreshProcesses = vi.fn(() => {
+      refreshed = true;
+      return [];
+    });
+    const isServerAlive = vi.fn(() => refreshed);
+
+    const ok = await makeManager({
+      processManager: { refreshProcesses, isServerAlive },
+    }).replaceExtent(makeDb());
+
+    expect(refreshProcesses).toHaveBeenCalled();
+    expect(ok).toBe(false);
     expect(wslImportFileSync).not.toHaveBeenCalled();
   });
 

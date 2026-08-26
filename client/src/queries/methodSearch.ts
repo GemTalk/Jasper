@@ -1,5 +1,5 @@
 import { QueryExecutor } from './types';
-import { escapeString } from './util';
+import { classLookupExpr, escapeString } from './util';
 
 export interface MethodSearchResult {
   dictName: string;
@@ -7,12 +7,44 @@ export interface MethodSearchResult {
   isMeta: boolean;
   selector: string;
   category: string;
+  /** The method environment the row was FOUND in. A selector can be implemented in more
+   *  than one environment on the same class, and those are different methods — so this is
+   *  part of a row's identity (callers dedupe on it) and is what opens the right document.
+   *  Without it a row found in environment 1 opens the environment-0 method, or nothing. */
+  environmentId: number;
 }
 
 // Shared Smalltalk snippet: build classDict mapping classes to their first
 // dictionary name, then serialize an array of GsNMethods (bound as `methods`
-// before this snippet runs) as tab-separated lines.
-function methodSerialization(envId: number): string {
+// before this snippet runs) as tab-separated lines. Exported because the
+// safe-delete reference scans (refactoring/queries/) build the same rows from
+// their own scan, and must agree with these searches on what a method row is.
+/** The most rows any one scan returns. The cap is server-side, so a caller that gets exactly
+ *  this many cannot tell "there were exactly this many" from "there were thousands" — which
+ *  is why anything reporting a COUNT to the user has to hedge at the cap rather than state it
+ *  as fact. */
+export const METHOD_SEARCH_RESULT_LIMIT = 500;
+
+/** Drop the rows two scans both found. A method row is identified by class, side, selector
+ *  AND environment: the same selector implemented on the same class in two environments is
+ *  two different methods, so folding them together would under-report the results and leave
+ *  one of them unreachable from the list.
+ *
+ *  Lives here, with the row type, because every caller that sweeps environments needs it —
+ *  Senders, Implementors, hierarchy implementors, References, the method-source search and
+ *  the safe-delete scans all build one list out of one query per environment, and each of
+ *  them used to hand-roll the same fold on class/side/selector alone. */
+export function dedupeMethodResults(results: MethodSearchResult[]): MethodSearchResult[] {
+  const seen = new Set<string>();
+  return results.filter((r) => {
+    const key = `${r.className}|${r.isMeta}|${r.selector}|${r.environmentId}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+export function methodSerialization(envId: number): string {
   return `sl := System myUserProfile symbolList.
 classDict := IdentityDictionary new.
 sl do: [:dict |
@@ -24,7 +56,7 @@ sl do: [:dict |
     (v isBehavior and: [(classDict includesKey: v) not and: [k = v name asSymbol]])
       ifTrue: [classDict at: v put: dict name]]].
 stream := WriteStream on: Unicode7 new.
-limit := methods size min: 500.
+limit := methods size min: ${METHOD_SEARCH_RESULT_LIMIT}.
 1 to: limit do: [:i |
   | each cls baseClass |
   each := methods at: i.
@@ -35,23 +67,31 @@ limit := methods size min: 500.
     nextPutAll: baseClass name; tab;
     nextPutAll: (cls isMeta ifTrue: ['1'] ifFalse: ['0']); tab;
     nextPutAll: each selector; tab;
-    nextPutAll: ((cls categoryOfSelector: each selector environmentId: ${envId}) ifNil: ['']); lf.
+    nextPutAll: ((cls categoryOfSelector: each selector environmentId: ${envId}) ifNil: ['']); tab;
+    nextPutAll: '${envId}'; lf.
 ].
 stream contents`;
 }
 
-function parseMethodSearchResults(raw: string): MethodSearchResult[] {
+/** Read the tab-separated rows `methodSerialization` writes. Exported alongside it,
+ *  for the same reason. */
+export function parseMethodSearchResults(raw: string): MethodSearchResult[] {
   const results: MethodSearchResult[] = [];
   for (const line of raw.split('\n')) {
     if (line.length === 0) continue;
     const parts = line.split('\t');
     if (parts.length < 5) continue;
+    // The environment column is last and was added after the first four; tolerate its
+    // absence rather than dropping a row, since a row with no environment is still a
+    // usable result and environment 0 is what every pre-existing caller meant.
+    const environmentId = Number(parts[5]);
     results.push({
       dictName: parts[0],
       className: parts[1],
       isMeta: parts[2] === '1',
       selector: parts[3],
       category: parts[4],
+      environmentId: Number.isFinite(environmentId) ? environmentId : 0,
     });
   }
   return results;
@@ -129,6 +169,34 @@ ${methodSerialization(environmentId)}`;
   return parseMethodSearchResults(execute(code));
 }
 
+// Every method that references the class bound to `className` in `dict` — resolved by
+// OBJECT IDENTITY through the dictionary rather than by a bare name lookup, so a name
+// shadowed in another dictionary still answers the references to the class the caller
+// means. Compare referencesToObject, which takes the first binding of the name anywhere
+// in the symbol list. A dictionary that does not bind the name answers nothing.
+//
+// The environment goes on the ORGANIZER, not just on the serialization: a bare
+// `ClassOrganizer new` scans environment 0 whatever the caller asked for, so a class
+// referenced only from a method in another environment would come back unreferenced —
+// and a safe delete would then report that nothing referenced it. Verified on a live
+// stone: with the same method compiled into environments 0 and 1, the bare organizer
+// answers only the environment-0 one and `environmentId: 1` answers only the other.
+export function referencesToClassInDict(
+  execute: QueryExecutor,
+  className: string,
+  dict?: number | string,
+  environmentId: number = 0,
+): MethodSearchResult[] {
+  const code = `| cls methods stream limit classDict sl |
+cls := ${classLookupExpr(className, dict)}.
+cls isNil ifTrue: [^ ''].
+methods := ((ClassOrganizer new environmentId: ${environmentId}; yourself)
+  referencesToObject: cls) asArray.
+${methodSerialization(environmentId)}`;
+
+  return parseMethodSearchResults(execute(code));
+}
+
 export function referencesToObject(
   execute: QueryExecutor,
   objectName: string,
@@ -142,32 +210,13 @@ ${methodSerialization(environmentId)}`;
   return parseMethodSearchResults(execute(code));
 }
 
-// Methods that reference the VALUE of a user-typed, compilable literal expression — e.g. `#at:put:`,
-// `42`, `$a`, `#{Globals.Object}`. The expression is compiled and evaluated on the server (it is
-// intentionally raw, not escaped — it IS Smalltalk source), then `referencesToObject:` finds the
-// literal frame. Interned literals (symbols, SmallIntegers, characters, specials, globals) match;
-// a fresh String/Array literal is a distinct object each compile and so matches nothing. A
-// malformed expression makes `execute` raise a compile error, which the caller handles.
-export function referencesToLiteral(
-  execute: QueryExecutor,
-  literalExpr: string,
-  environmentId: number = 0,
-): MethodSearchResult[] {
-  const code = `| methods stream limit classDict sl lit |
-lit := ${literalExpr}.
-methods := (ClassOrganizer new referencesToObject: lit).
-${methodSerialization(environmentId)}`;
-
-  return parseMethodSearchResults(execute(code));
-}
-
 // Methods that use a symbol as a DATA literal, NOT as a message send. `referencesToLiteral:` finds
 // both — a selector send puts the symbol in the literal frame too — so it can't be used alone. The
 // obvious "subtract the senders" (`reject: [:m | (sendersOf: symLit) includes: m]`) is unsound:
 // `sendersOf:` under-reports for some selectors (notably `#not`, where it returns 0 while
 // referencesToLiteral returns hundreds), so on those stones NOTHING is subtracted and every method
 // that merely SENDS the selector leaks in as a bogus hit whose source never contains the symbol
-// (Omni Search triage #9). Instead we mirror the string-literal branch: a fast source-substring
+// (GemStone Search triage #9). Instead we mirror the string-literal branch: a fast source-substring
 // pre-filter (`substringSearch:` for the literal's textual form `#...`) intersected with the
 // literal-frame membership. A send like `x not` has source `not`, not `#not`, so it fails the
 // substring filter; a real literal `#not` passes both. `symbolExpr` is a raw, compilable `#...`

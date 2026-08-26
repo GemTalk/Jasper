@@ -8,6 +8,7 @@ vi.mock('../browserQueries', async (orig) => ({
   getClassesWithCategory: vi.fn(() => []),
   deleteClass: vi.fn(() => 'Deleted class: X'),
   defaultQueryExecutorUsing: vi.fn(() => () => ''),
+  referencesToClassInDict: vi.fn(() => []),
 }));
 // The revert recorder's one round trip, stubbed so the snapshot is data this test controls
 // rather than a live doit (#434).
@@ -16,13 +17,24 @@ vi.mock('../undo/queries/classSlotQueries', () => ({
   applyClassSlotOps: vi.fn(),
   newStashKey: vi.fn(() => 'k1'),
 }));
+vi.mock('../methodResultsPicker', () => ({
+  showMethodResults: vi.fn(),
+  describeMethodResult: (r: { className: string; isMeta: boolean; selector: string }) =>
+    `${r.className}${r.isMeta ? ' class' : ''} >> #${r.selector}`,
+}));
 
 import { window } from '../__mocks__/vscode';
 import { ExplorerController } from '../gemstoneExplorer';
-import { canClassBeWritten, getClassDescendantNames, deleteClass } from '../browserQueries';
+import {
+  canClassBeWritten,
+  getClassDescendantNames,
+  deleteClass,
+  referencesToClassInDict,
+} from '../browserQueries';
 import { captureClassSlots } from '../undo/queries/classSlotQueries';
 import { peekUndoEntry, resetUndoStacks } from '../undo/undoStack';
 import type { SessionManager, ActiveSession } from '../sessionManager';
+import type { MethodSearchResult } from '../queries/methodSearch';
 
 function makeController(onClassRemoved?: (sessionId: number, className: string) => void) {
   const session = { id: 1 } as ActiveSession;
@@ -35,10 +47,12 @@ function makeController(onClassRemoved?: (sessionId: number, className: string) 
 }
 
 const warn = window.showWarningMessage as ReturnType<typeof vi.fn>;
+const info = window.showInformationMessage as ReturnType<typeof vi.fn>;
 const error = window.showErrorMessage as ReturnType<typeof vi.fn>;
 const deleteClassMock = deleteClass as ReturnType<typeof vi.fn>;
 const descendantsMock = getClassDescendantNames as ReturnType<typeof vi.fn>;
 const writableMock = canClassBeWritten as ReturnType<typeof vi.fn>;
+const referencesMock = referencesToClassInDict as ReturnType<typeof vi.fn>;
 
 // A descendant now carries the dictionary that binds it (resolved by object identity
 // in the query layer), so removeClass never has to guess by name.
@@ -49,35 +63,158 @@ const descendant = (className: string, dictIndex: number, dictName = 'UserGlobal
   dictName,
 });
 
+const reference = (over: Partial<MethodSearchResult> = {}): MethodSearchResult => ({
+  dictName: 'UserGlobals',
+  className: 'Caller',
+  isMeta: false,
+  selector: 'buildsOne',
+  category: 'instance creation',
+  environmentId: 0,
+  ...over,
+});
+
 beforeEach(() => {
   vi.clearAllMocks();
   writableMock.mockReturnValue(true);
   deleteClassMock.mockReturnValue('Deleted class: X');
   descendantsMock.mockReturnValue([]);
+  referencesMock.mockReturnValue([]);
+  // clearAllMocks keeps implementations, so an undo capture stubbed by one describe would
+  // otherwise leak into another and put a button on a notice that test asserts is plain.
+  vi.mocked(captureClassSlots).mockReset();
 });
 
-describe('ExplorerController.removeClass', () => {
-  it('deletes a leaf class (no subclasses) dict-scoped after confirmation', async () => {
+describe('ExplorerController.removeClass — nothing references the class', () => {
+  it('deletes a leaf class dict-scoped without asking', async () => {
     const ctl = makeController();
-    warn.mockResolvedValueOnce('Remove');
 
     await ctl.removeClass();
 
+    expect(warn).not.toHaveBeenCalled();
     expect(deleteClassMock).toHaveBeenCalledTimes(1);
     expect(deleteClassMock).toHaveBeenCalledWith(expect.anything(), 1, 'Doomed');
     expect(ctl.state.className).toBeUndefined();
   });
 
-  it('does not delete anything when the confirmation is dismissed', async () => {
+  it('announces the removal so it is not silent', async () => {
+    // This describe stubs no capture, so there is no undo entry and the notice is plain; the
+    // button is asserted where a capture IS set up, in the revert describe below.
+    const ctl = makeController();
+
+    await ctl.removeClass();
+
+    expect(info).toHaveBeenCalledWith(expect.stringContaining('Removed class Doomed'));
+  });
+
+  it('does not count the class’s own methods as references to it', async () => {
+    // Doomed class >> new naming Doomed goes away with the class, so it is no reason to ask.
+    referencesMock.mockReturnValue([reference({ className: 'Doomed', isMeta: true })]);
+    const ctl = makeController();
+
+    await ctl.removeClass();
+
+    expect(warn).not.toHaveBeenCalled();
+    expect(deleteClassMock).toHaveBeenCalled();
+  });
+
+  it('does not count a doomed subclass’s methods as references either', async () => {
+    descendantsMock.mockReturnValue([descendant('Sub1', 1)]);
+    referencesMock.mockReturnValue([reference({ className: 'Sub1' })]);
+    const ctl = makeController();
+    warn.mockResolvedValueOnce('Remove All');
+
+    await ctl.removeClass();
+
+    expect(warn.mock.calls[0][1].detail).not.toContain('Sub1 >> #buildsOne');
+  });
+
+  // The scan resolves its target through the dictionary by object identity precisely so a
+  // same-named class elsewhere cannot collide. Excluding the doomed subtree by bare NAME put
+  // that collision back: an unrelated class that merely shares a name with a subclass had its
+  // real, surviving reference thrown away, and the delete went through as "nothing references
+  // it" — the silent wrong answer this guard exists to prevent.
+  it('still counts a reference from an unrelated class that shares a doomed subclass’s name', async () => {
+    // "Shadowed" in dict 3 is going away with Doomed. A DIFFERENT class, also called
+    // "Shadowed", lives in OtherDict and is not going anywhere — its reference survives.
+    descendantsMock.mockReturnValue([descendant('Shadowed', 3, 'MyDict')]);
+    referencesMock.mockReturnValue([
+      reference({ className: 'Shadowed', dictName: 'OtherDict', selector: 'stillUsesIt' }),
+    ]);
     const ctl = makeController();
     warn.mockResolvedValueOnce(undefined);
 
     await ctl.removeClass();
 
+    expect(warn).toHaveBeenCalled();
+    expect(warn.mock.calls[0][1].detail).toContain('Shadowed >> #stillUsesIt');
+    expect(deleteClassMock).not.toHaveBeenCalled();
+  });
+
+  // The other half of the same rule: the genuinely doomed one, matched on name AND dictionary,
+  // is still excluded — the fix must not turn every subclass reference back into a question.
+  it('does not count a reference from the doomed subclass in its own dictionary', async () => {
+    descendantsMock.mockReturnValue([descendant('Shadowed', 3, 'MyDict')]);
+    referencesMock.mockReturnValue([
+      reference({ className: 'Shadowed', dictName: 'MyDict', selector: 'goesAwayToo' }),
+    ]);
+    const ctl = makeController();
+    warn.mockResolvedValueOnce('Remove All');
+
+    await ctl.removeClass();
+
+    expect(warn.mock.calls[0][1].detail).not.toContain('#goesAwayToo');
+  });
+});
+
+describe('ExplorerController.removeClass — methods still reference the class', () => {
+  beforeEach(() => {
+    referencesMock.mockReturnValue([reference()]);
+  });
+
+  it('asks before deleting', async () => {
+    const ctl = makeController();
+    warn.mockResolvedValueOnce(undefined);
+
+    await ctl.removeClass();
+
+    expect(warn).toHaveBeenCalled();
     expect(deleteClassMock).not.toHaveBeenCalled();
     expect(ctl.state.className).toBe('Doomed');
   });
 
+  it('names the referencing methods in the confirmation', async () => {
+    const ctl = makeController();
+    warn.mockResolvedValueOnce(undefined);
+
+    await ctl.removeClass();
+
+    expect(warn.mock.calls[0][1].detail).toContain('Caller >> #buildsOne');
+  });
+
+  it('deletes when the user chooses to remove it anyway', async () => {
+    const ctl = makeController();
+    warn.mockResolvedValueOnce('Remove Anyway');
+
+    await ctl.removeClass();
+
+    expect(deleteClassMock).toHaveBeenCalledWith(expect.anything(), 1, 'Doomed');
+  });
+
+  it('asks rather than deleting unasked when the reference scan fails', async () => {
+    referencesMock.mockImplementation(() => {
+      throw new Error('a SecurityError occurred');
+    });
+    const ctl = makeController();
+    warn.mockResolvedValueOnce(undefined);
+
+    await ctl.removeClass();
+
+    expect(warn).toHaveBeenCalled();
+    expect(deleteClassMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('ExplorerController.removeClass — the class has subclasses', () => {
   it('removes the whole subtree, deleting each member in its OWN dictionary', async () => {
     const ctl = makeController();
     // Sub2 lives in a different dictionary (index 3) than the root (index 1).
@@ -90,6 +227,27 @@ describe('ExplorerController.removeClass', () => {
     expect(deleteClassMock).toHaveBeenCalledWith(expect.anything(), 1, 'Sub1');
     expect(deleteClassMock).toHaveBeenCalledWith(expect.anything(), 3, 'Sub2');
     expect(deleteClassMock).toHaveBeenCalledWith(expect.anything(), 1, 'Doomed');
+  });
+
+  it('always asks first, even when nothing references the subtree', async () => {
+    const ctl = makeController();
+    descendantsMock.mockReturnValue([descendant('Sub1', 1)]);
+    warn.mockResolvedValueOnce(undefined);
+
+    await ctl.removeClass();
+
+    expect(warn).toHaveBeenCalled();
+    expect(deleteClassMock).not.toHaveBeenCalled();
+  });
+
+  it('names the subclasses that go with it in the confirmation', async () => {
+    const ctl = makeController();
+    descendantsMock.mockReturnValue([descendant('Sub1', 1)]);
+    warn.mockResolvedValueOnce(undefined);
+
+    await ctl.removeClass();
+
+    expect(warn.mock.calls[0][1].detail).toContain('Sub1');
   });
 
   it('deletes a subclass in its own dictionary even when its name is shadowed elsewhere', async () => {
@@ -140,7 +298,9 @@ describe('ExplorerController.removeClass', () => {
 
     expect(deleteClassMock).not.toHaveBeenCalled();
   });
+});
 
+describe('ExplorerController.removeClass — guards', () => {
   it('refuses to remove a root class that cannot be written in this repository', async () => {
     const ctl = makeController();
     writableMock.mockReturnValue(false);
@@ -153,13 +313,12 @@ describe('ExplorerController.removeClass', () => {
 });
 
 // A removal is uncommitted, so nothing else announces it: without this hook a deleted class stayed
-// listed — and clickable — in an open Omni Search until the next commit/abort. Fired per class rather
-// than per command, because Remove Class takes the whole subtree. See PR #443 review (#428 Round 1).
+// listed — and clickable — in an open GemStone Search until the next commit/abort. Fired per class rather
+// than per command, because Remove Class takes the whole subtree.
 describe('ExplorerController.removeClass — telling cached corpora what went', () => {
   it('reports a removed leaf class with its session', async () => {
     const onClassRemoved = vi.fn();
     const ctl = makeController(onClassRemoved);
-    warn.mockResolvedValueOnce('Remove');
 
     await ctl.removeClass();
 
@@ -198,6 +357,7 @@ describe('ExplorerController.removeClass — telling cached corpora what went', 
   it('reports nothing when the confirmation is dismissed', async () => {
     const onClassRemoved = vi.fn();
     const ctl = makeController(onClassRemoved);
+    referencesMock.mockReturnValue([reference()]);
     warn.mockResolvedValueOnce(undefined);
 
     await ctl.removeClass();
@@ -267,11 +427,32 @@ describe('removeClass records a revert (#434)', () => {
     expect(entry?.label).toContain('2 classes');
   });
 
+  it('puts Revert on the silent-delete notice, rather than a second notice beside it', async () => {
+    // Safe delete's own sentence is the ONE notice for a deletion nothing referenced, so it is
+    // the one that carries the way back. "Revert" rather than "Undo" because a class edit binds
+    // an earlier version rather than rolling anything back.
+    vi.mocked(captureClassSlots)
+      .mockReturnValueOnce([bound('1')])
+      .mockReturnValueOnce([unbound]);
+    warn.mockResolvedValue('Remove');
+
+    await makeController().removeClass();
+
+    expect(window.showInformationMessage).toHaveBeenCalledWith(
+      expect.stringContaining('nothing referenced it'),
+      'Revert',
+    );
+  });
+
   it('records nothing when the removal was refused at the prompt', async () => {
+    // Safe delete only PROMPTS when something references the class; with nothing referencing
+    // it the removal goes through silently and there is no prompt to refuse.
+    referencesMock.mockReturnValue([reference({ className: 'Other', selector: 'usesIt' })]);
     warn.mockResolvedValue(undefined);
 
     await makeController().removeClass();
 
+    expect(deleteClassMock).not.toHaveBeenCalled();
     expect(captureClassSlots).not.toHaveBeenCalled();
     expect(peekUndoEntry(1)).toBeUndefined();
   });
@@ -286,5 +467,60 @@ describe('removeClass records a revert (#434)', () => {
     await expect(makeController().removeClass()).resolves.toBeUndefined();
     expect(deleteClassMock).toHaveBeenCalled();
     expect(peekUndoEntry(1)).toBeUndefined();
+  });
+});
+
+// The scan is capped per query, server-side, and the client cannot tell a full page from an
+// exact answer — so at the cap the count has to read as a floor. Each delete kind wires the cap
+// through from its own scan, so each needs its own test; removeClass matters most, because it is
+// the kind that also EXCLUDES rows (the doomed subtree) after the scan, and it is exactly that
+// exclusion which can take a capped count back under the cap and hide that it was cut off.
+describe('ExplorerController.removeClass — reporting a scan that came back full', () => {
+  const CAP = 500;
+  const fullPage = () =>
+    Array.from({ length: CAP }, (_, i) => reference({ className: `C${i}`, selector: 'usesIt' }));
+
+  it('states the count as a floor and says the list is incomplete', async () => {
+    referencesMock.mockReturnValue(fullPage());
+    warn.mockResolvedValueOnce(undefined);
+    const ctl = makeController();
+
+    await ctl.removeClass();
+
+    const detail = warn.mock.calls[0][1].detail as string;
+    expect(detail).toContain(`At least ${CAP} methods still reference it`);
+    expect(detail).toContain('not complete');
+  });
+
+  it('still hedges when excluding the doomed subtree took the count under the cap', async () => {
+    // A capped page of 500 whose last row belongs to a subclass going away with the target:
+    // the exclusion drops it to 499, which no longer looks capped, but the list WAS cut off.
+    descendantsMock.mockReturnValue([descendant('Sub1', 1)]);
+    referencesMock.mockReturnValue([
+      ...fullPage().slice(0, CAP - 1),
+      reference({ className: 'Sub1', selector: 'goesAwayToo' }),
+    ]);
+    warn.mockResolvedValueOnce(undefined);
+    const ctl = makeController();
+
+    await ctl.removeClass();
+
+    const detail = warn.mock.calls[0][1].detail as string;
+    expect(detail).toContain(`At least ${CAP - 1} methods still reference it`);
+    expect(detail).toContain('not complete');
+    expect(detail).not.toContain('#goesAwayToo');
+  });
+
+  it('states a short count plainly, with no hedge', async () => {
+    referencesMock.mockReturnValue([reference()]);
+    warn.mockResolvedValueOnce(undefined);
+    const ctl = makeController();
+
+    await ctl.removeClass();
+
+    const detail = warn.mock.calls[0][1].detail as string;
+    expect(detail).toContain('1 method still references it:');
+    expect(detail).not.toContain('At least');
+    expect(detail).not.toContain('not complete');
   });
 });

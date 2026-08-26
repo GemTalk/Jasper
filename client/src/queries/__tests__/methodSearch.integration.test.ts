@@ -2,7 +2,7 @@
 // stone, over the release matrix (3.6.2 and 3.7.5). Base-image reflection only — no server plugin —
 // so it runs in both the bare and plugin CI passes.
 //
-// Regression guard for Omni Search triage #9: searching the Literals scope for a *symbol* returned
+// Regression guard for GemStone Search triage #9: searching the Literals scope for a *symbol* returned
 // methods that only SEND the selector, never using it as a data literal — so their source doesn't
 // contain the symbol at all. The reproduction case is `#not`: `ClassOrganizer sendersOf: #not`
 // reports 0 senders while `referencesToLiteral: #not` reports hundreds (the selector still sits in

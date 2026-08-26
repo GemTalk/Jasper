@@ -137,7 +137,7 @@ export function parseUri(uri: vscode.Uri): ParsedUri {
       dictName: parts[1],
       className: parts[2],
       isMeta: parts[3] === 'class',
-      category: parts[4],
+      category: unescapeSelectorSlashes(parts[4]),
       environmentId,
       dictIndex,
     };
@@ -160,7 +160,7 @@ export function parseUri(uri: vscode.Uri): ParsedUri {
       dictName: parts[1],
       className: parts[2],
       isMeta: parts[3] === 'class',
-      category: parts[4],
+      category: unescapeSelectorSlashes(parts[4]),
       selector: labelled ? labelled[1] : rawSelector,
       environmentId,
       base,
@@ -280,7 +280,11 @@ export function buildClassCommentUri(
 export function buildMethodUri(parsedUri: ParsedMethodUri): vscode.Uri {
   assertIsValidUriPath('Dictionary name', parsedUri.dictName);
   assertIsValidUriPath('Class name', parsedUri.className);
-  assertIsValidUriPath('Method category name', parsedUri.category);
+  // A method category legitimately contains '/' — `initialize/release` is a stock
+  // GemStone one — so it rides in the path through the same slash sentinel the
+  // selector uses, rather than being rejected. Asserting instead threw from
+  // anywhere a row for such a method was built, which surfaced as a toast and
+  // took the whole Methods pane down with it.
   // The selector is NOT asserted slash-free: '/' and '//' are ordinary binary
   // selectors. Escape any slashes to the sentinel so they survive the path
   // (parseUri reverses it). Idempotent, so callers that pre-escape stay correct.
@@ -293,7 +297,7 @@ export function buildMethodUri(parsedUri: ParsedMethodUri): vscode.Uri {
   return vscode.Uri.from({
     scheme: 'gemstone',
     authority: String(parsedUri.sessionId),
-    path: `/${parsedUri.dictName}/${parsedUri.className}/${side}/${parsedUri.category}/${escapeSelectorSlashes(parsedUri.selector)}`,
+    path: `/${parsedUri.dictName}/${parsedUri.className}/${side}/${escapeSelectorSlashes(parsedUri.category)}/${escapeSelectorSlashes(parsedUri.selector)}`,
     query: params.join('&'),
   });
 }

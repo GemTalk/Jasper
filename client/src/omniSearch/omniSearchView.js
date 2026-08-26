@@ -1,5 +1,5 @@
 /**
- * Webview-side behavior for the Omni Search Phase-2 "Spotter" panel (omniSearchPanel.ts).
+ * Webview-side behavior for the GemStone Search Phase-2 "Spotter" panel (omniSearchPanel.ts).
  *
  * Like listFilter.js / methodListView.js / debuggerView.js, this is read at runtime via
  * fs.readFileSync and injected into the webview as a <script> tag — it is NOT compiled into the
@@ -54,6 +54,12 @@
     var activeIndex = -1;
     var inPivot = false;
     var previewTimer = null;
+    // Keystroke coalescing for the search field. `debounceMs` is pushed from the host config; 0 means
+    // search on every keystroke. Without this every character fanned out a full provider search — one
+    // set of stone round-trips per keypress — and the `debounceMs` setting documented in the manifest
+    // had no consumer at all once the Quick Pick (its only reader) was removed.
+    var queryTimer = null;
+    var debounceMs = 0;
     // When true, the references/senders gesture fills the preview pane with a sticky list (instead of
     // pivoting the left list). Pushed from the host config; false = the classic pivot.
     var referencesInPreview = false;
@@ -92,6 +98,37 @@
         }
       }
       vscode.postMessage(msg);
+    }
+
+    /** Drop a keystroke search that has not fired yet (a decisive gesture supersedes typing). */
+    function cancelPendingQuery() {
+      if (queryTimer) {
+        clearTimeout(queryTimer);
+        queryTimer = null;
+      }
+    }
+
+    /**
+     * Search for `value` after `debounceMs` of quiet, replacing any keystroke search still pending.
+     * `debounceMs` of 0 (including before the host's first config message arrives) searches at once, so
+     * the field is never unresponsive — it just is not coalesced yet.
+     *
+     * Marks the field busy at the moment it actually dispatches, NOT on each keystroke: during the quiet
+     * window before the timer fires there is no stone work in flight, so a high `debounceMs` must not
+     * leave the panel reading as busy with nothing happening. Busy means "a query is out to the host."
+     */
+    function sendQueryDebounced(value) {
+      cancelPendingQuery();
+      if (!debounceMs) {
+        setBusy(true);
+        post('query', { value: value });
+        return;
+      }
+      queryTimer = setTimeout(function () {
+        queryTimer = null;
+        setBusy(true);
+        post('query', { value: value });
+      }, debounceMs);
     }
 
     // ── Highlighting ────────────────────────────────────────────────
@@ -566,6 +603,8 @@
           if (typeof msg.previewPane === 'boolean') setPreviewEnabled(msg.previewPane);
           if (Array.isArray(msg.excludedFromAll)) excludedFromAll = msg.excludedFromAll.slice();
           if (typeof msg.matchMode === 'string') setMatchMode(msg.matchMode);
+          if (typeof msg.debounceMs === 'number' && msg.debounceMs >= 0)
+            debounceMs = msg.debounceMs;
           tabCategories = msg.categories || [];
           renderTabs(msg.categories, msg.scopeId);
           renderScopeFilter();
@@ -880,7 +919,7 @@
     }
 
     /**
-     * "Not searched here: Source · Literals · Categories — click one to search it", under the field
+     * "Not searched here: Source · Literals · Class Categories — click one to search it", under the field
      * while the All scope is active and something is typed.
      *
      * Those three scopes are `explicitOnly`, so `providersInScope` drops them under All — the search
@@ -891,6 +930,20 @@
      *
      * Deliberately silent when a heavy scope IS active — then its own placeholder hint applies and the
      * search really is running everything the user asked for.
+     *
+     * Also silent during a references pivot: the rows there are a fixed list of senders already fetched
+     * from the stone, not a search, so nothing is being "not searched". Worse, each scope name is a
+     * button that would start a fresh search and discard the pivot — so the hint would both mislead and
+     * invite an unwarned-for exit. (This mirrors the placeholder, which `resultsMessage` already blanks
+     * for a pivot via `placeholderFor(view.pivot ? null : …)`.)
+     *
+     * But it deliberately STAYS in the references-*preview* mode (`referencesInPreview` on, the default),
+     * where the left list is still the real All-scope search and only the right pane shows the refs — so
+     * `inPivot` is false. There the first reason above no longer applies (the rows genuinely are a search
+     * that skipped these scopes), so the warning is true and worth keeping. Clicking a scope does discard
+     * the sticky preview just as silently as it would drop a pivot, but that ephemeral preview is a
+     * smaller loss than suppressing an accurate "not searched here" warning on a live search — so only
+     * the full-list pivot suppresses the hint, not the preview.
      */
     function updateScopeHint() {
       if (!scopeHintEl) return;
@@ -898,9 +951,10 @@
       for (var i = 0; i < lastCategories.length; i++) {
         if (lastCategories[i].explicitOnly) heavy.push(lastCategories[i]);
       }
-      // Only under All (no scope), only with a term to search, and only if any heavy scope is enabled
-      // at all — a user who disabled them via `categories` is not missing anything.
-      var show = lastScopeId === null && inputEl.value.trim().length > 0 && heavy.length > 0;
+      // Only under All (no scope), never during a pivot, only with a term to search, and only if any
+      // heavy scope is enabled at all — a user who disabled them via `categories` is not missing anything.
+      var show =
+        !inPivot && lastScopeId === null && inputEl.value.trim().length > 0 && heavy.length > 0;
       if (!show) {
         scopeHintEl.textContent = '';
         scopeHintEl.style.display = 'none';
@@ -972,7 +1026,7 @@
       pinEl.setAttribute('aria-pressed', on ? 'true' : 'false');
       pinEl.title = on
         ? 'Pinned open — click to let it close on focus-out'
-        : 'Keep Omni Search open (pin to a tab)';
+        : 'Keep GemStone Search open (pin to a tab)';
     }
 
     function updateClearVisibility() {
@@ -981,7 +1035,6 @@
 
     // ── Input + keyboard ────────────────────────────────────────────
     inputEl.addEventListener('input', function () {
-      setBusy(true);
       scrollResetPending = true; // a new query starts the list at the top
       previewMode = 'source'; // typing dismisses a sticky references list
       updateClearVisibility();
@@ -989,7 +1042,7 @@
       // debounced reply would leave it a keystroke behind.
       updateScopeHint();
       rehighlightSourcePreview(); // clear/refresh the stale blue match marks now, not on the fetch
-      post('query', { value: inputEl.value });
+      sendQueryDebounced(inputEl.value);
     });
 
     // Bound to the whole document, NOT just the search field: in a WebviewView the field's focus is
@@ -1047,13 +1100,15 @@
           break;
         case 'Enter': {
           // A plain Enter on a focused button is its own click (Load More, case, pin…) — leave it be.
-          if (onButton && !ev.altKey && !ev.ctrlKey && !ev.metaKey) break;
+          if (onButton && !ev.altKey && !ev.ctrlKey && !ev.metaKey && !ev.shiftKey) break;
           var id = activeRowId();
           if (id === null) break;
           ev.preventDefault();
           // Ctrl/Cmd+Enter opens beside (keeps the Spotter visible); Alt+Enter shows references (in
-          // the preview pane, or — flag off — as the classic list pivot).
+          // the preview pane, or — flag off — as the classic list pivot); Shift+Enter selects the
+          // result in the Testing view, for a test class or test method.
           if (ev.altKey) requestReferences(id);
+          else if (ev.shiftKey) post('revealTest', { id: id });
           else post('activate', { id: id, side: ev.ctrlKey || ev.metaKey });
           break;
         }
@@ -1103,6 +1158,10 @@
         scrollResetPending = true;
         updateClearVisibility();
         updateScopeHint(); // nothing typed = nothing being skipped, so drop the hint at once
+        // Deliberately NOT debounced, and it cancels any pending keystroke search: clearing is a
+        // single decisive gesture, not typing, so making the user wait for a timer would feel broken —
+        // and a keystroke queued a moment earlier must not land after the clear and refill the list.
+        cancelPendingQuery();
         post('query', { value: '' });
         inputEl.focus();
       });

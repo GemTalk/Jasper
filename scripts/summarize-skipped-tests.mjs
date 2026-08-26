@@ -29,10 +29,14 @@ function collectTestStats(reportFiles) {
     const report = JSON.parse(readFileSync(reportFile, 'utf8'));
 
     for (const testResult of report.testResults ?? []) {
+      // relativePosixPath (added by relativize-skip-report.mjs, right after
+      // `vitest run`) is repo-relative and OS-independent, so the same test
+      // collapses onto one key regardless of which health-check matrix leg
+      // produced the report.
       for (const assertion of testResult.assertionResults ?? []) {
-        const key = `${testResult.name} ${assertion.fullName}`;
+        const key = `${testResult.relativePosixPath} ${assertion.fullName}`;
         const entry = stats.get(key) ?? {
-          file: testResult.name,
+          file: testResult.relativePosixPath,
           fullName: assertion.fullName,
           seen: 0,
           skipped: 0,

@@ -42,7 +42,7 @@ ws contents`;
 
 /**
  * The `ClassNameEntry` rows for a SINGLE class name — every dictionary that registers that name
- * under a class value. Used to fold a freshly compiled class into the Omni Search cache without
+ * under a class value. Used to fold a freshly compiled class into the GemStone Search cache without
  * re-enumerating the whole image (`getAllClassNames`). Looks the name up as an interned Symbol key
  * (`dict at: #'Name'`), which is O(dictionaries) and sidesteps the 3.6.x Unicode7 literal-compare
  * gotcha (see `util.ts`) — never a `= 'name'` against an image value.

@@ -9,6 +9,10 @@
  * The caller resolves the new name (for an add) before calling in — this module just
  * previews and applies a fully-specified operation, and reports the outcome so the caller
  * can refresh/reveal.
+ *
+ * A remove the safe-delete guard has already cleared (nothing accesses the variable) can
+ * skip the panel entirely — see `autoApply` — because a preview of a change that breaks
+ * nothing is a question with only one answer.
  */
 import * as vscode from 'vscode';
 import { ActiveSession } from '../sessionManager';
@@ -21,10 +25,11 @@ import {
   parseStartPreview,
   parsePage,
   parseApplyResult,
+  BrokenMethod,
 } from './instVarRefactorPreview';
 import { showInstVarRefactorPanel } from './instVarRefactorPanel';
 import { ensureRbSupport, refuse } from './renameAtCursorShared';
-import { logInfo } from '../gciLog';
+import { logInfo, logWarning } from '../gciLog';
 import { notifyRefactoringApplied } from './refactoringAppliedToast';
 
 export interface InstVarRefactorRequest {
@@ -39,6 +44,13 @@ export interface InstVarRefactorRequest {
    *  the engine IN THE SAME transaction as the reshape, so they commit or abort with it
    *  (not a separate fire-and-forget step). Also shown as a preview note. */
   accessorSpecs?: Accessor[];
+  /** Apply without opening the preview panel. The safe-delete path sets this once it has
+   *  established that no method accesses the variable: there is nothing for a preview to
+   *  show, and a panel would be a confirmation the guard just decided was unnecessary.
+   *  The engine still has the last word — if it reports methods that will not recompile,
+   *  the panel opens after all. On this path the caller reports the outcome (the Explorer
+   *  announces the deletion), so no completion message is shown from here. */
+  autoApply?: boolean;
 }
 
 export interface InstVarRefactorOutcome {
@@ -46,6 +58,11 @@ export interface InstVarRefactorOutcome {
   committed: boolean;
   /** Methods that could not recompile onto the new version and were dropped. */
   dropped: { className: string; selector: string }[];
+  /** True when `autoApply` was honoured and the preview panel never opened, so the caller
+   *  knows whether the change went through unattended. An autoApply request that the engine
+   *  sent to the panel after all comes back false — the user WAS asked, and a caller that
+   *  announces an unasked deletion must not announce that one. */
+  autoApplied: boolean;
 }
 
 function titleFor(req: InstVarRefactorRequest): string {
@@ -53,12 +70,36 @@ function titleFor(req: InstVarRefactorRequest): string {
   return `Remove ${req.ivarName} from ${req.className}`;
 }
 
+/**
+ * List every method the reshape could not recompile onto the new class version, with the
+ * compiler's reason for each, in the durable "GemStone GCI" channel.
+ *
+ * A notification can only carry the count -- it truncates and then vanishes -- and the dropped
+ * list is what the user works through to restore them, so the detail goes where it survives.
+ * This is what the rename family already does with its recompile failures.
+ *
+ * Both apply paths report. The auto-apply path runs only when nothing was PREDICTED to fail,
+ * but a prediction is not a compile: the whole reason these results are checked at all is that
+ * a method can fail to recompile with nothing forecasting it. That case is the one most worth
+ * a durable record, since the auto-apply path shows no panel to surface it.
+ */
+function reportDropped(title: string, dropped: BrokenMethod[]): void {
+  if (dropped.length === 0) return;
+  logWarning(
+    `${title}: ${dropped.length} method(s) did not recompile onto the new class version ` +
+      'and were dropped:\n' +
+      dropped
+        .map((m) => `    \u2022 ${m.className}>>${m.selector}${m.reason ? `: ${m.reason}` : ''}`)
+        .join('\n'),
+  );
+}
+
 /** Preview + apply a fully-specified instance-variable operation. Answers the outcome
  *  when applied, or undefined when cancelled/declined. Surfaces its own messages. */
 export async function runInstVarRefactor(
   req: InstVarRefactorRequest,
 ): Promise<InstVarRefactorOutcome | undefined> {
-  const { session, op, className, ivarName, dict, accessorSpecs } = req;
+  const { session, op, className, ivarName, dict, accessorSpecs, autoApply } = req;
   logInfo(`[instVar] ${op} ${ivarName} on ${className}`);
 
   const verb = op === 'add' ? 'Adding' : 'Removing';
@@ -123,6 +164,37 @@ export async function runInstVarRefactor(
     return undefined;
   }
 
+  // Nothing will break and the caller already decided not to ask: apply the staged change
+  // set as it stands (no deselections, and neither committing option), then release the
+  // token the panel would otherwise have cleaned up.
+  if (autoApply && start.outOfScope.willNotRecompile.length === 0) {
+    let result;
+    try {
+      result = parseApplyResult(
+        await queries.applyInstVar(session, token, [], [], false, false, accessorSpecs ?? []),
+      );
+    } catch (e: unknown) {
+      void vscode.window.showErrorMessage(
+        `${titleFor(req)} failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      safeClear();
+      return undefined;
+    }
+    safeClear();
+    const failure = result.error ?? result.failed[0]?.error;
+    if (failure !== undefined) {
+      void vscode.window.showErrorMessage(`${titleFor(req)} failed: ${failure}`);
+      return undefined;
+    }
+    reportDropped(titleFor(req), result.dropped);
+    return {
+      applied: result.applied,
+      committed: result.committed,
+      dropped: result.dropped,
+      autoApplied: true,
+    };
+  }
+
   const accessorNote =
     accessorSpecs && accessorSpecs.length > 0
       ? `Accessors added with this change: ${accessorSpecs.map((a) => a.selector).join(', ')}`
@@ -162,9 +234,10 @@ export async function runInstVarRefactor(
   // cancelled, closed, or hit a failure the panel already reported — nothing more to say here.
   if (!result) return undefined;
 
+  reportDropped(titleFor(req), result.dropped);
   const droppedNote =
     result.dropped.length > 0
-      ? ` ${result.dropped.length} method${result.dropped.length === 1 ? '' : 's'} did not recompile and ${result.dropped.length === 1 ? 'was' : 'were'} dropped.`
+      ? ` ${result.dropped.length} method${result.dropped.length === 1 ? '' : 's'} did not recompile and ${result.dropped.length === 1 ? 'was' : 'were'} dropped. See the GemStone GCI channel for the list.`
       : '';
   const commitNote = result.committed ? ' Committed.' : '';
 
@@ -194,5 +267,10 @@ export async function runInstVarRefactor(
   }
   notifyRefactoringApplied(session, `${titleFor(req)}.${droppedNote}${commitNote}`, 'toast');
 
-  return { applied: result.applied, committed: result.committed, dropped: result.dropped };
+  return {
+    applied: result.applied,
+    committed: result.committed,
+    dropped: result.dropped,
+    autoApplied: false,
+  };
 }
