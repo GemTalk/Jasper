@@ -28,6 +28,7 @@ vi.mock('../browserQueries', () => ({
 }));
 // The undo recorder's method-slot capture — mocked so the flow records without a stone (#434).
 vi.mock('../undo/queries/methodSlotQueries', () => ({ captureMethodSlots: vi.fn() }));
+vi.mock('../undo/queries/dictionaryQueries', () => ({ captureDictionary: vi.fn() }));
 
 vi.mock('../globalsBrowser', () => ({
   GlobalsBrowser: {
@@ -87,6 +88,7 @@ import {
 import { extractSelector } from '../methodPattern';
 import * as queries from '../browserQueries';
 import { captureMethodSlots } from '../undo/queries/methodSlotQueries';
+import { captureDictionary } from '../undo/queries/dictionaryQueries';
 import { peekUndoEntry, resetUndoStacks } from '../undo/undoStack';
 import { GlobalsBrowser } from '../globalsBrowser';
 import { ClassBrowser } from '../classBrowser';
@@ -1287,6 +1289,25 @@ describe('SystemBrowser', () => {
         command: 'loadDictionaries',
         items: ['UserGlobals', 'Globals', 'NewDict'],
       });
+    });
+
+    it('records the create, so a new dictionary can be taken back off the list (#434)', async () => {
+      resetUndoStacks();
+      vi.mocked(window.showInputBox).mockResolvedValue('NewDict');
+      vi.mocked(queries.getDictionaryNames).mockReturnValue(['UserGlobals', 'Globals', 'NewDict']);
+      vi.mocked(captureDictionary).mockReturnValue({ present: true, name: 'NewDict', index: 3 });
+
+      messageHandler({ command: 'ctxAddDictionary' });
+
+      await vi.waitFor(() =>
+        expect(peekUndoEntry(session.id)).toMatchObject({
+          kind: 'dictionaryEdit',
+          label: 'Create dictionary NewDict',
+          before: { present: false, name: 'NewDict' },
+          after: { present: true, name: 'NewDict', index: 3 },
+          stashKey: null,
+        }),
+      );
     });
 
     it('reconciles the mirror via a debounced refresh for the new dictionary', async () => {

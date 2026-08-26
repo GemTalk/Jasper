@@ -5,7 +5,11 @@ vi.mock('../../browserQueries', () => ({ defaultQueryExecutorUsing: vi.fn(() => 
 vi.mock('../queries/dictionaryQueries', () => ({ captureDictionary: vi.fn() }));
 
 import { captureDictionary } from '../queries/dictionaryQueries';
-import { beginDictionaryRemoval, beginDictionaryRename } from '../recordDictionaryEdit';
+import {
+  beginDictionaryRemoval,
+  beginDictionaryRename,
+  recordDictionaryAdd,
+} from '../recordDictionaryEdit';
 import { peekUndoEntry, resetUndoStacks, undoStackDepth } from '../undoStack';
 import { resetStashKeys } from '../queries/classSlotQueries';
 import type { ActiveSession } from '../../sessionManager';
@@ -88,5 +92,48 @@ describe('beginDictionaryRename', () => {
 
     expect(beginDictionaryRename(session, 'Reports')?.commit('Reports')).toBeUndefined();
     expect(undoStackDepth(session.id)).toBe(0);
+  });
+});
+
+describe('recordDictionaryAdd', () => {
+  it('records an absent `before`, which is what makes the reversal a removal', () => {
+    vi.mocked(captureDictionary).mockReturnValue({ present: true, name: 'Reports', index: 4 });
+
+    const entry = recordDictionaryAdd(session, 'Reports');
+
+    expect(entry).toMatchObject({
+      kind: 'dictionaryEdit',
+      label: 'Create dictionary Reports',
+      before: { present: false, name: 'Reports', index: 4 },
+      after: { present: true, name: 'Reports', index: 4 },
+      // No stash: nothing is being held for a later reversal.
+      stashKey: null,
+    });
+    expect(peekUndoEntry(session.id)).toBe(entry);
+  });
+
+  it('reads the position AFTER the fact, since that is the only time it is knowable', () => {
+    vi.mocked(captureDictionary).mockReturnValue({ present: true, name: 'Reports', index: 4 });
+
+    recordDictionaryAdd(session, 'Reports');
+
+    // No stash key is asked for, unlike a removal.
+    expect(captureDictionary).toHaveBeenCalledWith(expect.anything(), 'Reports', undefined);
+  });
+
+  it('records nothing when the dictionary is not on the symbol list', () => {
+    // A create that did not happen.
+    vi.mocked(captureDictionary).mockReturnValue({ present: false, name: 'Reports', index: 0 });
+
+    expect(recordDictionaryAdd(session, 'Reports')).toBeUndefined();
+    expect(undoStackDepth(session.id)).toBe(0);
+  });
+
+  it('records nothing — and does not throw — when the symbol list cannot be read', () => {
+    vi.mocked(captureDictionary).mockImplementation(() => {
+      throw new Error('session busy');
+    });
+
+    expect(recordDictionaryAdd(session, 'Reports')).toBeUndefined();
   });
 });

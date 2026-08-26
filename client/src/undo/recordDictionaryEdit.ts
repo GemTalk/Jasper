@@ -12,6 +12,12 @@
  *   ... rename it ...
  *   recording?.commit('Reporting');
  *
+ * Creating one is a single call rather than a handle — there is no "before" to capture when
+ * the dictionary does not exist yet:
+ *
+ *   ... add it ...
+ *   recordDictionaryAdd(session, 'Reports');
+ *
  * Best-effort, like every other recorder: a capture that fails answers `undefined` and the
  * command proceeds exactly as it did before undo existed.
  */
@@ -108,4 +114,31 @@ export function beginDictionaryRename(
       return entry;
     },
   };
+}
+
+/**
+ * Record a dictionary that has just been ADDED to the symbol list.
+ *
+ * Called after the fact, not around it: there is nothing to capture beforehand, and the
+ * position the new dictionary landed at is only knowable afterwards. Answers the stored
+ * entry, or undefined when the symbol list cannot be read or does not have it — a create
+ * that did not happen records nothing.
+ *
+ * No stash. Nothing is being held for a later reversal; the reversal simply takes the
+ * dictionary off the list again, and warns first if it has been filled since.
+ */
+export function recordDictionaryAdd(session: ActiveSession, name: string): UndoEntry | undefined {
+  const after = capture(session, name);
+  if (!after) return undefined;
+
+  const entry = pushUndoEntry({
+    kind: 'dictionaryEdit',
+    sessionId: session.id,
+    label: `Create dictionary ${name}`,
+    before: { present: false, name, index: after.index },
+    after,
+    stashKey: null,
+  });
+  logInfo(`[undo] recorded #${entry.id} "${entry.label}" (at ${after.index})`);
+  return entry;
 }

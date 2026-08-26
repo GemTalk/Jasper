@@ -278,6 +278,11 @@ export interface DictionaryState {
  * from the list but does not destroy it, so the very same object goes back with everything
  * it holds; SessionTemps is what keeps it reachable in the meantime, exactly as it does for
  * a removed class.
+ *
+ * CREATING one is the mirror: `before` is absent and the reversal takes it off the list
+ * again. It does not need a stash, because nothing is being kept for a later reversal — but
+ * it does warn first when the dictionary has since been filled, since unlisting it puts
+ * everything it holds out of reach.
  */
 export interface DictionaryUndoEntry extends UndoEntryBase {
   kind: 'dictionaryEdit';

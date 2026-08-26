@@ -3,6 +3,7 @@ import { beginMethodDeletion, beginMethodEdit, readMethodSlotState } from './und
 import { slotLabel } from './undo/undoTypes';
 import { notifyUndoable } from './undo/undoableToast';
 import { beginClassDeletion } from './undo/recordClassEdit';
+import { recordDictionaryAdd } from './undo/recordDictionaryEdit';
 import { extractSelector } from './methodPattern';
 import * as crypto from 'crypto';
 import * as path from 'path';
@@ -1355,6 +1356,9 @@ export class SystemBrowser {
     queries.addDictionary(this.session, name);
     this.dictEntryCache.clear();
     this.state.dictionaries = queries.getDictionaryNames(this.session);
+    // Recorded after the fact: there is nothing to capture before a dictionary exists, and
+    // the position it landed at is only knowable afterwards (#434).
+    notifyUndoable(`Added dictionary ${name}`, recordDictionaryAdd(this.session, name));
 
     // Reconcile the mirror (creates the new dir, updates state) via the manifest
     // diff rather than poking the filesystem directly.

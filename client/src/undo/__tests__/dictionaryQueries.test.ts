@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   captureDictionary,
+  dictionaryEntryCount,
   parseDictionaryCapture,
   reinsertDictionary,
 } from '../queries/dictionaryQueries';
@@ -113,5 +114,47 @@ describe('reinsertDictionary', () => {
     expect(reinsertDictionary(vi.fn().mockReturnValue('some failure'), 'k1', 2)).toBe(
       'some failure',
     );
+  });
+});
+
+describe('dictionaryEntryCount', () => {
+  it('discounts the self-referential entry, so a fresh dictionary reads as empty', () => {
+    // A SymbolDictionary holds its own name by identity (`#Name -> theDict`), so a
+    // genuinely empty one reports a size of ONE.
+    const exec = vi.fn().mockReturnValue('1');
+
+    dictionaryEntryCount(exec, 'Reports');
+
+    const code = exec.mock.calls[0][0] as string;
+    expect(code).toContain('keyAtValue: d');
+    expect(code).toContain('d size - selfEntry');
+  });
+
+  it('does not name a temporary `self`, which is a reserved word', () => {
+    const exec = vi.fn().mockReturnValue('0');
+
+    dictionaryEntryCount(exec, 'Reports');
+
+    expect(exec.mock.calls[0][0] as string).not.toMatch(/\|[^|]*\bself\b[^|]*\|/);
+  });
+
+  it('reads the count', () => {
+    expect(dictionaryEntryCount(vi.fn().mockReturnValue(' 3 \n'), 'Reports')).toBe(3);
+  });
+
+  it('reads a negative or unreadable answer as empty rather than warning about nonsense', () => {
+    expect(dictionaryEntryCount(vi.fn().mockReturnValue('nonsense'), 'Reports')).toBe(0);
+    expect(dictionaryEntryCount(vi.fn().mockReturnValue('-2'), 'Reports')).toBe(0);
+    expect(dictionaryEntryCount(vi.fn().mockReturnValue(''), 'Reports')).toBe(0);
+  });
+
+  it('compares dictionary names as SYMBOLS, and escapes them', () => {
+    const exec = vi.fn().mockReturnValue('0');
+
+    dictionaryEntryCount(exec, "Re'ports");
+
+    const code = exec.mock.calls[0][0] as string;
+    expect(code).toContain("each name == #'Re''ports'");
+    expect(code).not.toContain('asString =');
   });
 });

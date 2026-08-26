@@ -4,10 +4,12 @@ vi.mock('../../gciLog', () => ({ logInfo: vi.fn() }));
 vi.mock('../../browserQueries', () => ({
   defaultQueryExecutorUsing: () => () => '',
   renameDictionary: vi.fn(),
+  removeDictionary: vi.fn(),
 }));
 vi.mock('../queries/dictionaryQueries', () => ({
   captureDictionary: vi.fn(),
   reinsertDictionary: vi.fn(),
+  dictionaryEntryCount: vi.fn(),
 }));
 vi.mock('../afterUndo', () => ({
   refreshSymbolList: vi.fn(),
@@ -16,8 +18,12 @@ vi.mock('../afterUndo', () => ({
 }));
 
 import * as vscode from 'vscode';
-import { renameDictionary } from '../../browserQueries';
-import { captureDictionary, reinsertDictionary } from '../queries/dictionaryQueries';
+import { removeDictionary, renameDictionary } from '../../browserQueries';
+import {
+  captureDictionary,
+  dictionaryEntryCount,
+  reinsertDictionary,
+} from '../queries/dictionaryQueries';
 import { refreshSymbolList } from '../afterUndo';
 import { reverseDictionaryEdit } from '../reverseDictionaryEdit';
 import { DictionaryUndoEntry } from '../undoTypes';
@@ -59,6 +65,8 @@ beforeEach(() => {
   vi.mocked(captureDictionary).mockReturnValue({ present: false, name: 'Reports', index: 0 });
   vi.mocked(reinsertDictionary).mockReturnValue(null);
   vi.mocked(renameDictionary).mockReturnValue('ok');
+  vi.mocked(removeDictionary).mockReturnValue('Removed dictionary: Reports');
+  vi.mocked(dictionaryEntryCount).mockReturnValue(0);
 });
 
 describe('reverseDictionaryEdit', () => {
@@ -130,5 +138,120 @@ describe('reverseDictionaryEdit', () => {
 
     expect(await reverseDictionaryEdit(session, removal())).toBe(false);
     expect(reinsertDictionary).not.toHaveBeenCalled();
+  });
+
+  describe('a CREATED dictionary, reversed by taking it off the list', () => {
+    const created = (): DictionaryUndoEntry => ({
+      id: 3,
+      kind: 'dictionaryEdit',
+      sessionId: session.id,
+      label: 'Create dictionary Reports',
+      before: { present: false, name: 'Reports', index: 4 },
+      after: { present: true, name: 'Reports', index: 4 },
+      stashKey: null,
+    });
+
+    beforeEach(() => {
+      // It is on the list — that is the state the reversal acts on, the opposite of the
+      // other two directions.
+      vi.mocked(captureDictionary).mockReturnValue({ present: true, name: 'Reports', index: 4 });
+    });
+
+    it('unlists it, and asks nothing when it is still empty', async () => {
+      expect(await reverseDictionaryEdit(session, created())).toBe(true);
+
+      expect(removeDictionary).toHaveBeenCalledWith(session, 'Reports');
+      expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
+      expect(reinsertDictionary).not.toHaveBeenCalled();
+      expect(refreshSymbolList).toHaveBeenCalledWith(session.id);
+    });
+
+    it('does not count the self-referential entry as content', async () => {
+      // A freshly created dictionary reports a size of one: its own `#Name -> theDict`.
+      vi.mocked(dictionaryEntryCount).mockReturnValue(0);
+
+      await reverseDictionaryEdit(session, created());
+
+      expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
+    });
+
+    it('warns, with a count, when it has been filled since', async () => {
+      vi.mocked(dictionaryEntryCount).mockReturnValue(3);
+      vi.mocked(vscode.window.showWarningMessage).mockResolvedValue('Undo Anyway' as never);
+
+      expect(await reverseDictionaryEdit(session, created())).toBe(true);
+
+      expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+        expect.stringContaining('holds 3 entries now'),
+        expect.objectContaining({ modal: true, detail: expect.stringContaining('out of reach') }),
+        'Undo Anyway',
+      );
+      expect(removeDictionary).toHaveBeenCalled();
+    });
+
+    it('reads a single entry as singular', async () => {
+      vi.mocked(dictionaryEntryCount).mockReturnValue(1);
+      vi.mocked(vscode.window.showWarningMessage).mockResolvedValue('Undo Anyway' as never);
+
+      await reverseDictionaryEdit(session, created());
+
+      expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+        expect.stringContaining('holds 1 entry now'),
+        expect.anything(),
+        'Undo Anyway',
+      );
+    });
+
+    it('keeps the entry on offer when the warning is declined', async () => {
+      vi.mocked(dictionaryEntryCount).mockReturnValue(2);
+      vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(undefined);
+
+      expect(await reverseDictionaryEdit(session, created())).toBe(false);
+      expect(removeDictionary).not.toHaveBeenCalled();
+    });
+
+    it('undoes without the warning when the count cannot be read', async () => {
+      // A count that cannot be read must not block the undo.
+      vi.mocked(dictionaryEntryCount).mockImplementation(() => {
+        throw new Error('session busy');
+      });
+
+      expect(await reverseDictionaryEdit(session, created())).toBe(true);
+      expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
+      expect(removeDictionary).toHaveBeenCalled();
+    });
+
+    it('does nothing when it is already off the symbol list', async () => {
+      vi.mocked(captureDictionary).mockReturnValue({ present: false, name: 'Reports', index: 0 });
+
+      expect(await reverseDictionaryEdit(session, created())).toBe(true);
+      expect(removeDictionary).not.toHaveBeenCalled();
+    });
+
+    it('reports a removal the stone answered with a status string', async () => {
+      vi.mocked(removeDictionary).mockReturnValue('Dictionary not found');
+
+      expect(await reverseDictionaryEdit(session, created())).toBe(false);
+      expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+        expect.stringContaining('Dictionary not found'),
+      );
+    });
+
+    it('keeps the entry on offer when the removal raises', async () => {
+      vi.mocked(removeDictionary).mockImplementation(() => {
+        throw new Error('session busy');
+      });
+
+      expect(await reverseDictionaryEdit(session, created())).toBe(false);
+    });
+
+    it('keeps the entry on offer when the symbol list cannot be read', async () => {
+      vi.mocked(captureDictionary).mockImplementation(() => {
+        throw new Error('session busy');
+      });
+
+      expect(await reverseDictionaryEdit(session, created())).toBe(false);
+      expect(removeDictionary).not.toHaveBeenCalled();
+    });
   });
 });

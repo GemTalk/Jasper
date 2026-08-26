@@ -11,7 +11,11 @@ import {
 import { beginClassDeletion, beginClassEdit } from './undo/recordClassEdit';
 import { beginClassVarAdd } from './undo/recordClassVarEdit';
 import { beginMethodCategoryAdd, beginMethodCategoryRename } from './undo/recordMethodCategoryEdit';
-import { beginDictionaryRemoval, beginDictionaryRename } from './undo/recordDictionaryEdit';
+import {
+  beginDictionaryRemoval,
+  beginDictionaryRename,
+  recordDictionaryAdd,
+} from './undo/recordDictionaryEdit';
 import * as crypto from 'crypto';
 import { SessionManager, ActiveSession } from './sessionManager';
 import * as queries from './browserQueries';
@@ -4087,6 +4091,9 @@ export class ExplorerController {
     queries.addDictionary(session, name);
     this.dictProvider.refresh();
     this.onSymbolListChanged?.(session.id);
+    // Recorded after the fact: there is nothing to capture before a dictionary exists, and
+    // the position it landed at is only knowable afterwards (#434).
+    notifyUndoable(`Added dictionary ${name}`, recordDictionaryAdd(session, name));
     // Select the new dictionary so its (empty) categories/classes cascade, and
     // highlight its row.
     const names = queries.getDictionaryNames(session);

@@ -6,7 +6,11 @@ import { GciLibrary } from '../../gciLibrary';
 import * as q from '../../browserQueries';
 import { applyMethodSlotOps, captureMethodSlots } from '../queries/methodSlotQueries';
 import { applyClassSlotOps, captureClassSlots, newStashKey } from '../queries/classSlotQueries';
-import { captureDictionary, reinsertDictionary } from '../queries/dictionaryQueries';
+import {
+  captureDictionary,
+  dictionaryEntryCount,
+  reinsertDictionary,
+} from '../queries/dictionaryQueries';
 import {
   applyClassVarOp,
   captureClassVar,
@@ -843,6 +847,40 @@ ws contents`;
 
     it('reports a stash this session no longer holds', () => {
       expect(reinsertDictionary(exec, 'JfpNoSuchStashAtAll', 2)).toContain('no longer holds');
+    });
+
+    it('counts a FRESH dictionary as empty, self-referential entry and all', () => {
+      // A SymbolDictionary holds its own name by identity (`#Name -> theDict`), so a
+      // genuinely empty one reports a size of ONE. Counting that would tell the user their
+      // new dictionary holds something.
+      makeDictionaryAt(2);
+
+      expect(dictionaryEntryCount(exec, DICT_NAME)).toBe(0);
+    });
+
+    it('counts what has been filed into it since', () => {
+      makeDictionaryAt(2);
+      exec(`(System myUserProfile symbolList at: 2) at: #JfpUndoItThing put: 42. 'ok'`);
+
+      expect(dictionaryEntryCount(exec, DICT_NAME)).toBe(1);
+    });
+
+    it('counts a dictionary that is not on the symbol list as empty', () => {
+      expect(dictionaryEntryCount(exec, 'JfpNoSuchDictionaryAtAll')).toBe(0);
+    });
+
+    it('takes a created dictionary back off the list, without destroying what it held', () => {
+      // Undoing a create unlists rather than deletes -- the names simply stop resolving,
+      // which is what the warning says.
+      makeDictionaryAt(2);
+      exec(`(System myUserProfile symbolList at: 2) at: #JfpUndoItThing put: 42. 'ok'`);
+
+      expect(q.removeDictionary(session(), DICT_NAME)).toContain('Removed dictionary:');
+
+      expect(captureDictionary(exec, DICT_NAME).present).toBe(false);
+      expect(exec(`(System myUserProfile objectNamed: #JfpUndoItThing) printString`).trim()).toBe(
+        'nil',
+      );
     });
 
     it('renames a dictionary back by its NEW name', () => {

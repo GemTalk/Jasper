@@ -82,3 +82,25 @@ pos := ${Math.max(1, Math.trunc(index) || 1)} min: sl size + 1.
   const answer = execute(code).trim();
   return answer === 'ok' ? null : answer;
 }
+
+/**
+ * How many entries the dictionary holds, NOT counting the self-referential one.
+ *
+ * A SymbolDictionary has no name slot: its name is an entry it holds by identity
+ * (`#Name -> theDict`), so a freshly created, genuinely empty dictionary reports a size of
+ * ONE. Counting that as content would tell the user their new dictionary holds something.
+ *
+ * Answers 0 for a dictionary that is not on the symbol list — there is nothing to warn about
+ * in either case.
+ */
+export function dictionaryEntryCount(execute: QueryExecutor, name: string): number {
+  // `selfEntry`, not `self`: `self` is a reserved word and cannot be a temporary.
+  const code = `| sl d selfEntry |
+sl := System myUserProfile symbolList.
+d := sl detect: [:each | each name == #'${escapeString(name)}'] ifNone: [nil].
+d isNil ifTrue: [^ '0'].
+selfEntry := (d keyAtValue: d ifAbsent: [nil]) isNil ifTrue: [0] ifFalse: [1].
+(d size - selfEntry) printString`;
+  const answer = Number(execute(code).trim());
+  return Number.isFinite(answer) && answer > 0 ? answer : 0;
+}
