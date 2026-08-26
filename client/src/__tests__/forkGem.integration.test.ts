@@ -7,7 +7,7 @@ import { useIntegrationTest } from './useIntegrationTest';
 import { GciLibrary } from '../gciLibrary';
 import * as browserQueries from '../browserQueries';
 import type { ActiveSession } from '../sessionManager';
-// eslint-disable-next-line no-restricted-imports -- forking is this file's subject, so it is the one integration test allowed to spawn a gem the harness never armed; the forked gems here only sleep, and write nothing
+// eslint-disable-next-line @typescript-eslint/no-restricted-imports -- forking is this file's subject, so it is the one integration test allowed to spawn a gem the harness never armed; the forked gems here only sleep, and write nothing
 import { canForkGem, forkGemRunning } from '../queries/forkGem';
 
 /**

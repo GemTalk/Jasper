@@ -269,10 +269,25 @@ export default tseslint.config(
           selector: "MemberExpression[property.name='VITE_GEMSTONE_PASSWORD']",
           message: LOGIN_CREDENTIALS,
         },
+        {
+          // The import ban below only sees the module specifier, so a call
+          // that reaches the fork query through a re-export slips past it.
+          // Keyed on a call through a receiver: the direct-import form stays
+          // the import rule's job, and the fork query's own unit test (bare
+          // calls on a mocked executor, no stone) is left alone.
+          selector: 'CallExpression[callee.property.name=/^(canForkGem|forkGemRunning)$/]',
+          message: FORKED_GEM,
+        },
       ],
-      'no-restricted-imports': [
+      // The typescript-eslint drop-in, for `allowTypeImports`: naming a type
+      // from the fork query forks nothing.
+      '@typescript-eslint/no-restricted-imports': [
         'error',
-        { patterns: [{ group: ['**/queries/forkGem'], message: FORKED_GEM }] },
+        {
+          patterns: [
+            { group: ['**/queries/forkGem'], message: FORKED_GEM, allowTypeImports: true },
+          ],
+        },
       ],
     },
   },
