@@ -452,6 +452,22 @@ export function checkRefactoringSupportAvailable(session: ActiveSession): boolea
   }
 }
 
+// GsMethodHistory is a newer addition to the refactoring engine, so a stone whose
+// engine was installed earlier can report refactoring support available yet lack
+// it. Method history probes for the class specifically, so it can offer to update
+// the engine rather than fail with an undefined-symbol CompileError.
+export function checkMethodHistoryAvailable(session: ActiveSession): boolean {
+  try {
+    const result = executeFetchString(
+      session,
+      "(System myUserProfile symbolList objectNamed: 'GsMethodHistory') notNil printString",
+    );
+    return result.trim() === 'true';
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Tri-state probe of whether the session's transaction holds uncommitted changes
  * that an abort or logout would discard: `true` = pending work, `false` = clean,

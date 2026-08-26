@@ -2992,6 +2992,27 @@ export class ExplorerController {
     return this.session()?.rbSupportAvailable === true;
   }
 
+  // Method history needs the GsMethodHistory engine class specifically, which a
+  // stone whose refactoring engine was installed before this feature will lack even
+  // though general RB support probes as available. Offer to update the engine (a
+  // reinstall re-files it, adding the class) and re-check. Returns true when it is
+  // (now) present.
+  private async ensureMethodHistorySupport(): Promise<boolean> {
+    const session = this.session();
+    if (!session) return false;
+    if (queries.checkMethodHistoryAvailable(session)) return true;
+    const UPDATE = 'Update GemStone Support…';
+    const choice = await vscode.window.showInformationMessage(
+      "Method history needs an updated GemStone refactoring engine — this stone's engine " +
+        'predates it. Update server support to enable it.',
+      UPDATE,
+    );
+    if (choice !== UPDATE) return false;
+    await vscode.commands.executeCommand('gemstone.installServerSupport');
+    const refreshed = this.session();
+    return refreshed ? queries.checkMethodHistoryAvailable(refreshed) : false;
+  }
+
   // Validate a proposed rename target: the name's format AND that it isn't already
   // bound to another global in the stone. Runs as the rename input's live validator
   // (showRenameClassEditor), so catching a collision here surfaces it inline while the
@@ -3440,6 +3461,7 @@ export class ExplorerController {
     const selector = node.info.selector;
     const isMeta = node.isMeta;
     if (!(await this.ensureRbSupport('Viewing method history'))) return;
+    if (!(await this.ensureMethodHistorySupport())) return;
 
     const label = `${className}${isMeta ? ' class' : ''}>>${selector}`;
     const dict = this.state.dictIndex ?? this.state.dictName;

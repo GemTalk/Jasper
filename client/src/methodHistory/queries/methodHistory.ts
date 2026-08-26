@@ -1,6 +1,24 @@
 import { QueryExecutor } from '../../queries/types';
 import { escapeString } from '../../queries/util';
 
+// The message returned (as a JSON error envelope) when this stone's refactoring
+// engine predates GsMethodHistory. Kept apostrophe-free so it needs no Smalltalk
+// escaping, and double-quote-free so it is valid inside the JSON envelope.
+const ENGINE_MISSING =
+  'Method history is not installed in this stone. Update GemStone server support to enable it.';
+
+// GsMethodHistory is resolved through the symbol list rather than named as a
+// bareword: a stone whose refactoring engine predates it would otherwise fail to
+// COMPILE the query (undefined symbol), turning a graceful "not installed" into a
+// raw CompileError. When absent we answer the error envelope the client surfaces.
+function withEngine(body: string): string {
+  return `| h |
+h := System myUserProfile symbolList objectNamed: #GsMethodHistory.
+h isNil
+  ifTrue: ['{"error":"${ENGINE_MISSING}"}']
+  ifFalse: [${body}]`;
+}
+
 // The per-method source history for one method, as the raw JSON the GsMethodHistory
 // engine returns (parsed by ../methodHistoryModel.ts). One object per recorded
 // version, newest first, each carrying the version index, timeStamp, userId,
@@ -13,9 +31,11 @@ export function getMethodHistory(
   isMeta: boolean,
 ): string {
   return execute(
-    `GsMethodHistory forClassNamed: '${escapeString(className)}' selector: '${escapeString(
-      selector,
-    )}' meta: ${isMeta ? 'true' : 'false'}`,
+    withEngine(
+      `h forClassNamed: '${escapeString(className)}' selector: '${escapeString(
+        selector,
+      )}' meta: ${isMeta ? 'true' : 'false'}`,
+    ),
   );
 }
 
@@ -28,8 +48,10 @@ export function removeMethodHistory(
   isMeta: boolean,
 ): string {
   return execute(
-    `GsMethodHistory removeHistoryForClassNamed: '${escapeString(className)}' selector: '${escapeString(
-      selector,
-    )}' meta: ${isMeta ? 'true' : 'false'}`,
+    withEngine(
+      `h removeHistoryForClassNamed: '${escapeString(className)}' selector: '${escapeString(
+        selector,
+      )}' meta: ${isMeta ? 'true' : 'false'}`,
+    ),
   );
 }
