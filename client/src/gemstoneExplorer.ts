@@ -10,6 +10,7 @@ import {
 } from './undo/afterUndo';
 import { beginClassDeletion, beginClassEdit } from './undo/recordClassEdit';
 import { beginClassVarAdd } from './undo/recordClassVarEdit';
+import { beginClassCategoryEdit } from './undo/recordClassCategoryEdit';
 import { beginMethodCategoryAdd, beginMethodCategoryRename } from './undo/recordMethodCategoryEdit';
 import {
   beginDictionaryRemoval,
@@ -4803,6 +4804,12 @@ export class ExplorerController {
     // nothing matches (MED-3). Remember what the client *believed* was there so a
     // zero count can be flagged as a likely stale view instead of silent success.
     const clientExpectedClasses = this.classCategoryEntries.some((e) => inSubtree(e.category));
+    // Snapshot what every class in this dictionary is filed under, and diff after (#434). Per
+    // CLASS rather than per category name: this rename moves a whole dash-segmented subtree,
+    // MERGES into a category that already exists, and skips any class it cannot write -- so
+    // only the diff knows which classes actually moved, and only their own former labels put
+    // them back without dragging along the ones that were already there.
+    const recording = beginClassCategoryEdit(session, dictIndex);
     let result: string;
     try {
       result = queries.renameClassCategory(session, dictIndex, oldPath, newPath);
@@ -4865,11 +4872,11 @@ export class ExplorerController {
     } catch {
       /* ignore */
     }
+    // Recorded either way; the notice carries Undo only where there was one to show. A warned
+    // rename already has the user's attention on a warning, so it is not given a second notice.
+    const undoEntry = recording?.commit(`Rename class category ${oldPath} to ${newPath}`);
     if (!warned) {
-      void vscode.window.setStatusBarMessage(
-        `Renamed class category ${oldPath} → ${newPath}`,
-        4000,
-      );
+      notifyUndoable(`Renamed class category ${oldPath} → ${newPath}`, undoEntry);
     }
   }
 

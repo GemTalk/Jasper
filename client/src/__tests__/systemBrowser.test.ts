@@ -23,12 +23,17 @@ vi.mock('../browserQueries', () => ({
   removeDictionary: vi.fn(),
   renameCategory: vi.fn(),
   getMethodCategories: vi.fn(),
+  getClassesWithCategory: vi.fn(),
   referencesToObject: vi.fn(),
   defaultQueryExecutorUsing: vi.fn(() => () => ''),
 }));
 // The undo recorder's method-slot capture — mocked so the flow records without a stone (#434).
 vi.mock('../undo/queries/methodSlotQueries', () => ({ captureMethodSlots: vi.fn() }));
 vi.mock('../undo/queries/dictionaryQueries', () => ({ captureDictionary: vi.fn() }));
+vi.mock('../undo/queries/classSlotQueries', () => ({
+  captureClassSlots: vi.fn(),
+  newStashKey: vi.fn(() => 'k1'),
+}));
 
 vi.mock('../globalsBrowser', () => ({
   GlobalsBrowser: {
@@ -89,6 +94,7 @@ import { extractSelector } from '../methodPattern';
 import * as queries from '../browserQueries';
 import { captureMethodSlots } from '../undo/queries/methodSlotQueries';
 import { captureDictionary } from '../undo/queries/dictionaryQueries';
+import { captureClassSlots } from '../undo/queries/classSlotQueries';
 import { peekUndoEntry, resetUndoStacks } from '../undo/undoStack';
 import { GlobalsBrowser } from '../globalsBrowser';
 import { ClassBrowser } from '../classBrowser';
@@ -1523,6 +1529,56 @@ describe('SystemBrowser', () => {
 
       await vi.waitFor(() =>
         expect(queries.moveClass).toHaveBeenCalledWith(session, 1, 2, 'Array'),
+      );
+    });
+
+    it('records the move between dictionaries as a class edit over both names (#434)', async () => {
+      // `moveClass` REBINDS the same class object, so the reversal rebinds the name it left and
+      // unbinds the name it arrived under.
+      resetUndoStacks();
+      vi.mocked(window.showQuickPick).mockResolvedValue({ label: 'Globals', index: 2 });
+      let capture = 0;
+      vi.mocked(captureClassSlots).mockImplementation((_e, slots) => {
+        capture += 1;
+        return slots.map((slot) =>
+          capture === 1
+            ? slot.dict === 1
+              ? { bound: true, oop: '100', selectors: [] }
+              : { bound: false, oop: null, selectors: [] }
+            : slot.dict === 1
+              ? { bound: false, oop: null, selectors: [] }
+              : { bound: true, oop: '100', selectors: [] },
+        );
+      });
+
+      messageHandler({ command: 'ctxMoveClass' });
+
+      await vi.waitFor(() =>
+        expect(peekUndoEntry(session.id)).toMatchObject({
+          kind: 'classEdit',
+          label: 'Move class Array to Globals',
+        }),
+      );
+      const entry = peekUndoEntry(session.id);
+      expect(entry?.kind === 'classEdit' && entry.slots.map((sl) => sl.dict)).toEqual([1, 2]);
+    });
+
+    it('records a move to another class category, per class (#434)', async () => {
+      resetUndoStacks();
+      vi.mocked(window.showQuickPick).mockResolvedValue('Printing');
+      vi.mocked(queries.recategorizeClass).mockReturnValue('Recategorized: Array');
+      vi.mocked(queries.getClassesWithCategory)
+        .mockReturnValueOnce([{ className: 'Array', category: 'Collections', hasComment: false }])
+        .mockReturnValueOnce([{ className: 'Array', category: 'Printing', hasComment: false }]);
+
+      messageHandler({ command: 'ctxMoveClassToCategory' });
+
+      await vi.waitFor(() =>
+        expect(peekUndoEntry(session.id)).toMatchObject({
+          kind: 'classCategoryEdit',
+          label: 'Move class Array to category Printing',
+          changes: [{ className: 'Array', before: 'Collections', after: 'Printing' }],
+        }),
       );
     });
 

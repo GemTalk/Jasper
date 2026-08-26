@@ -148,6 +148,23 @@ describe('the undo status-bar button', () => {
     expect(item.tooltip).toBe('GemStone — Undo: Remove dictionary Reports (Ctrl+K U)');
   });
 
+  it('calls a class-category change an UNDO — a category is a label, not a version', () => {
+    const item = fakeItem();
+    setUndoStatusBarItem(item as never);
+    pushUndoEntry({
+      kind: 'classCategoryEdit',
+      sessionId: session.id,
+      label: 'Rename class category Old to New',
+      dict: 3,
+      changes: [{ className: 'A', before: 'Old', after: 'New' }],
+    });
+
+    refreshUndoUi(session);
+
+    expect(item.text).toContain('Undo');
+    expect(item.tooltip).toBe('GemStone — Undo: Rename class category Old to New (Ctrl+K U)');
+  });
+
   it('separates the verb from the label, so two verbs do not run together', () => {
     const item = fakeItem();
     setUndoStatusBarItem(item as never);

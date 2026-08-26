@@ -7,6 +7,7 @@ vi.mock('../reverseClassComment', () => ({ reverseClassComment: vi.fn() }));
 vi.mock('../reverseClassVarEdit', () => ({ reverseClassVarEdit: vi.fn() }));
 vi.mock('../reverseMethodCategoryEdit', () => ({ reverseMethodCategoryEdit: vi.fn() }));
 vi.mock('../reverseDictionaryEdit', () => ({ reverseDictionaryEdit: vi.fn() }));
+vi.mock('../reverseClassCategoryEdit', () => ({ reverseClassCategoryEdit: vi.fn() }));
 vi.mock('../undoUi', () => ({ refreshUndoUi: vi.fn() }));
 vi.mock('../../refactoring/refactoringUndoAvailability', () => ({
   checkRefactoringUndoAvailable: vi.fn(),
@@ -22,6 +23,7 @@ import { reverseClassComment } from '../reverseClassComment';
 import { reverseClassVarEdit } from '../reverseClassVarEdit';
 import { reverseMethodCategoryEdit } from '../reverseMethodCategoryEdit';
 import { reverseDictionaryEdit } from '../reverseDictionaryEdit';
+import { reverseClassCategoryEdit } from '../reverseClassCategoryEdit';
 import { checkRefactoringUndoAvailable } from '../../refactoring/refactoringUndoAvailability';
 import { undoLastRefactoringCommand } from '../../refactoring/undoRefactoringCommand';
 import { undoLastCommand } from '../undoLastCommand';
@@ -99,6 +101,14 @@ const methodCategoryEdit = (label: string): NewUndoEntry => ({
   slot: { dict: 7, className: 'Account', isMeta: false },
   before: 'accessing',
   after: 'reading',
+});
+
+const classCategoryEdit = (label: string): NewUndoEntry => ({
+  kind: 'classCategoryEdit',
+  sessionId: session.id,
+  label,
+  dict: 3,
+  changes: [{ className: 'A', before: 'Old', after: 'New' }],
 });
 
 const dictionaryEdit = (label: string): NewUndoEntry => ({
@@ -230,6 +240,26 @@ describe('undoLastCommand', () => {
     vi.mocked(reverseDictionaryEdit).mockResolvedValue(false);
     await undoLastCommand(sessions);
     expect(undoStackDepth(session.id)).toBe(2);
+  });
+
+  it('hands a class-category change to its own reverser', async () => {
+    pushUndoEntry(classCategoryEdit('Rename class category Old to New'));
+    vi.mocked(reverseClassCategoryEdit).mockResolvedValue(true);
+
+    await undoLastCommand(sessions);
+
+    expect(reverseClassCategoryEdit).toHaveBeenCalled();
+    expect(undoLastRefactoringCommand).not.toHaveBeenCalled();
+    expect(undoStackDepth(session.id)).toBe(0);
+  });
+
+  it('leaves a class-category change on the stack when it refuses', async () => {
+    pushUndoEntry(classCategoryEdit('Rename class category Old to New'));
+    vi.mocked(reverseClassCategoryEdit).mockResolvedValue(false);
+
+    await undoLastCommand(sessions);
+
+    expect(undoStackDepth(session.id)).toBe(1);
   });
 
   it('hands a refactoring to the engine reverser, which keeps its preview', async () => {

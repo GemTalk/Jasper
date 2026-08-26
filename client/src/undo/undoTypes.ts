@@ -6,8 +6,8 @@
  * reversers are looked up by `kind`. Saving a method, adding one, and deleting one
  * are all the same shape — a set of METHOD SLOTS whose state before the action was
  * captured — so they share one kind and one reverser. Class bindings, a class's
- * comment, a class variable, a method category and a symbol-list dictionary each have
- * a shape of their own, and a refactoring is the last kind — the only one that reaches
+ * comment, a class variable, a method category, a class category and a symbol-list
+ * dictionary each have a shape of their own, and a refactoring is the last kind — the only one that reaches
  * into the refactoring engine.
  *
  * Nothing here imports vscode or a GCI session, so the planning rules in
@@ -293,12 +293,41 @@ export interface DictionaryUndoEntry extends UndoEntryBase {
   stashKey: string | null;
 }
 
+/** One class whose CATEGORY changed, and what it was called before. Categories are labels on
+ *  classes, not bindings, so a category "rename" is really a reassignment of every class that
+ *  carried the old label. */
+export interface ClassCategoryChange {
+  className: string;
+  before: string;
+  after: string;
+}
+
+/**
+ * A change to what CATEGORY classes are filed under — renaming a class category, or moving one
+ * class into another.
+ *
+ * Recorded per CLASS rather than as a pair of category names, and that is the whole point.
+ * `renameClassCategory` reassigns every class carrying the old label, including the
+ * dash-segmented subtree beneath it, and renaming onto a category that already exists MERGES
+ * into it — categories are labels, so a merge is well defined and lossy to reverse. Putting
+ * back a name would drag the classes that were already there along with it. Putting back each
+ * class's own former label is exact, whether the rename merged, moved a subtree, or skipped a
+ * class it could not write.
+ */
+export interface ClassCategoryUndoEntry extends UndoEntryBase {
+  kind: 'classCategoryEdit';
+  /** 1-based SymbolList index or name — the dictionary the classes were read from. */
+  dict: number | string;
+  changes: ClassCategoryChange[];
+}
+
 export type UndoEntry =
   | MethodEditUndoEntry
   | ClassEditUndoEntry
   | ClassCommentUndoEntry
   | ClassVarEditUndoEntry
   | MethodCategoryUndoEntry
+  | ClassCategoryUndoEntry
   | DictionaryUndoEntry
   | RefactoringUndoEntry;
 
@@ -311,6 +340,7 @@ export type NewUndoEntry =
   | Omit<ClassCommentUndoEntry, 'id'>
   | Omit<ClassVarEditUndoEntry, 'id'>
   | Omit<MethodCategoryUndoEntry, 'id'>
+  | Omit<ClassCategoryUndoEntry, 'id'>
   | Omit<DictionaryUndoEntry, 'id'>
   | Omit<RefactoringUndoEntry, 'id'>;
 

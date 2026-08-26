@@ -2,8 +2,9 @@ import * as vscode from 'vscode';
 import { beginMethodDeletion, beginMethodEdit, readMethodSlotState } from './undo/recordMethodEdit';
 import { slotLabel } from './undo/undoTypes';
 import { notifyUndoable } from './undo/undoableToast';
-import { beginClassDeletion } from './undo/recordClassEdit';
+import { beginClassDeletion, beginClassEdit } from './undo/recordClassEdit';
 import { recordDictionaryAdd } from './undo/recordDictionaryEdit';
+import { beginClassCategoryEdit } from './undo/recordClassCategoryEdit';
 import { extractSelector } from './methodPattern';
 import * as crypto from 'crypto';
 import * as path from 'path';
@@ -1578,6 +1579,15 @@ export class SystemBrowser {
     });
     if (!picked) return;
 
+    // Moving a class between dictionaries REBINDS the same class object -- `removeKey:` from
+    // one, `at:put:` into the other -- so it is an ordinary class edit over two slots: the name
+    // it left and the name it arrived under. The reversal rebinds the first and unbinds the
+    // second (#434).
+    const recording = beginClassEdit(this.session, [
+      { dict: srcIndex, className },
+      { dict: picked.index, className },
+    ]);
+
     queries.moveClass(this.session, srcIndex, picked.index, className);
     this.exportManager.removeClassFile(
       this.session,
@@ -1595,7 +1605,10 @@ export class SystemBrowser {
     this.clearDimming();
 
     this.handleSelectCategory(this.state.selectedCategory || ALL_CLASSES_CATEGORY);
-    vscode.window.showInformationMessage(`Moved ${className} to ${picked.label}.`);
+    notifyUndoable(
+      `Moved ${className} to ${picked.label}.`,
+      recording?.commit(`Move class ${className} to ${picked.label}`),
+    );
   }
 
   // Write `aSelectedClass fileOutClass` to a user-chosen path, mirroring Jade's
@@ -1963,6 +1976,10 @@ export class SystemBrowser {
     });
     if (!picked) return;
 
+    // Recorded per CLASS, the same shape a class-category rename uses: what matters is the
+    // label this class carried, not the name of a category (#434).
+    const recording = beginClassCategoryEdit(this.session, dictIndex);
+
     queries.recategorizeClass(this.session, className, picked, dictIndex);
     void this.exportManager.syncClass(
       this.session,
@@ -1973,7 +1990,10 @@ export class SystemBrowser {
     // the categories column and class list.
     this.dictEntryCache.delete(dictIndex);
     this.rebuildClassCategories();
-    vscode.window.showInformationMessage(`Moved ${className} to category '${picked}'.`);
+    notifyUndoable(
+      `Moved ${className} to category '${picked}'.`,
+      recording?.commit(`Move class ${className} to category ${picked}`),
+    );
   }
 
   // Copy the selected method's source into another class, preserving its category.

@@ -18,8 +18,9 @@
  *  - a CLASS COMMENT and a CLASS VARIABLE reverse immediately and stay UNDOs: neither
  *    re-versions the class, so putting the earlier text back, or taking the declaration and
  *    its accessors away again, is exact and leaves nothing behind;
- *  - a METHOD CATEGORY is renamed back, and a DICTIONARY is renamed back or put back at its
- *    old position on the symbol list — both exact, and both UNDOs for the same reason;
+ *  - a METHOD CATEGORY is renamed back, a CLASS CATEGORY is put back one class at a time, and a
+ *    DICTIONARY is renamed back or put back at its old position on the symbol list — all exact,
+ *    and all UNDOs for the same reason;
  *  - a REFACTORING opens the preview panel it already has, because it can have rewritten
  *    dozens of methods across a hierarchy and undoing it wholesale, unseen, is not a
  *    decision to take on the user's behalf.
@@ -35,6 +36,7 @@ import { reverseClassComment } from './reverseClassComment';
 import { reverseClassVarEdit } from './reverseClassVarEdit';
 import { reverseMethodCategoryEdit } from './reverseMethodCategoryEdit';
 import { reverseDictionaryEdit } from './reverseDictionaryEdit';
+import { reverseClassCategoryEdit } from './reverseClassCategoryEdit';
 import { checkRefactoringUndoAvailable } from '../refactoring/refactoringUndoAvailability';
 import { undoLastRefactoringCommand } from '../refactoring/undoRefactoringCommand';
 
@@ -95,6 +97,11 @@ export async function undoLastCommand(sessions: SessionManager): Promise<void> {
 
     if (entry.kind === 'dictionaryEdit') {
       if (await reverseDictionaryEdit(session, entry)) popUndoEntry(session.id);
+      return;
+    }
+
+    if (entry.kind === 'classCategoryEdit') {
+      if (await reverseClassCategoryEdit(session, entry)) popUndoEntry(session.id);
       return;
     }
 
