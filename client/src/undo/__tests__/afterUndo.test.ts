@@ -6,9 +6,15 @@ import {
   FS_CHANGED_COMMAND,
   refreshExplorer,
   refreshSearch,
+  refreshSymbolList,
   reloadGemstoneEditors,
+  REMOVE_OVERLAY_CATEGORY_COMMAND,
+  removeOverlayCategory,
+  RENAME_OVERLAY_CATEGORY_COMMAND,
+  renameOverlayCategory,
   revealMethod,
   SEARCH_RESYNC_COMMAND,
+  SYMBOL_LIST_CHANGED_COMMAND,
 } from '../afterUndo';
 
 /**
@@ -224,5 +230,66 @@ describe('telling VS Code the source changed', () => {
     vi.mocked(vscode.commands.executeCommand).mockRejectedValue(new Error('no such command'));
 
     await expect(reloadGemstoneEditors()).resolves.toBeUndefined();
+  });
+});
+
+describe('refreshSymbolList', () => {
+  it('asks the Explorer to rebuild from the symbol list up', async () => {
+    // A pane refresh is not enough: every dictionary below the change has shifted index, and
+    // the Explorer caches those indices as the key to everything it shows.
+    await refreshSymbolList(7);
+
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith(SYMBOL_LIST_CHANGED_COMMAND, 7);
+  });
+
+  it('survives the Explorer not being registered', async () => {
+    vi.mocked(vscode.commands.executeCommand).mockRejectedValue(new Error('no such command'));
+
+    await expect(refreshSymbolList(7)).resolves.toBeUndefined();
+  });
+});
+
+describe('the overlay-category bridges', () => {
+  const slot = { className: 'Account', isMeta: false, dict: 7 };
+
+  it('passes a rename through to the Explorer and answers what it made of it', async () => {
+    vi.mocked(vscode.commands.executeCommand).mockResolvedValue('ok');
+
+    await expect(renameOverlayCategory(slot, 'reading', 'accessing')).resolves.toBe('ok');
+
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+      RENAME_OVERLAY_CATEGORY_COMMAND,
+      slot,
+      'reading',
+      'accessing',
+    );
+  });
+
+  it('passes a removal through the same way', async () => {
+    vi.mocked(vscode.commands.executeCommand).mockResolvedValue('ok');
+
+    await expect(removeOverlayCategory(slot, 'tests')).resolves.toBe('ok');
+
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+      REMOVE_OVERLAY_CATEGORY_COMMAND,
+      slot,
+      'tests',
+    );
+  });
+
+  it('reads a missing Explorer as not-listed rather than throwing at the undo', async () => {
+    // The overlay is the only place such a category exists, so an Explorer that is not there
+    // is indistinguishable from one that has discarded it — and neither is a failure.
+    vi.mocked(vscode.commands.executeCommand).mockRejectedValue(new Error('no such command'));
+
+    await expect(renameOverlayCategory(slot, 'a', 'b')).resolves.toBe('not-listed');
+    await expect(removeOverlayCategory(slot, 'a')).resolves.toBe('not-listed');
+  });
+
+  it('reads an answerless command as not-listed too', async () => {
+    vi.mocked(vscode.commands.executeCommand).mockResolvedValue(undefined);
+
+    await expect(renameOverlayCategory(slot, 'a', 'b')).resolves.toBe('not-listed');
+    await expect(removeOverlayCategory(slot, 'a')).resolves.toBe('not-listed');
   });
 });

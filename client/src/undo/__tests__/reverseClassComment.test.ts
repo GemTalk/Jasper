@@ -107,6 +107,19 @@ describe('reverseClassComment', () => {
     expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
   });
 
+  it('keeps the entry on offer when the write itself raises', async () => {
+    vi.mocked(getClassComment).mockReturnValue('the new comment');
+    vi.mocked(setClassComment).mockImplementation(() => {
+      throw new Error('session busy');
+    });
+
+    expect(await reverseClassComment(session, entry())).toBe(false);
+
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining('session busy'),
+    );
+  });
+
   it('keeps the entry on offer when the current comment cannot be read', async () => {
     vi.mocked(getClassComment).mockImplementation(() => {
       throw new Error('session busy');

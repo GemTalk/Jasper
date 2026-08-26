@@ -6,7 +6,13 @@ vi.mock('../queries/methodSlotQueries', () => ({ captureMethodSlots: vi.fn() }))
 
 import { defaultQueryExecutorUsing } from '../../browserQueries';
 import { captureMethodSlots } from '../queries/methodSlotQueries';
-import { ABSENT, beginMethodDeletion, beginMethodEdit, present } from '../recordMethodEdit';
+import {
+  ABSENT,
+  beginMethodDeletion,
+  beginMethodEdit,
+  present,
+  readMethodSlotState,
+} from '../recordMethodEdit';
 import { peekUndoEntry, resetUndoStacks, undoStackDepth } from '../undoStack';
 import { MethodSlot } from '../undoTypes';
 import type { ActiveSession } from '../../sessionManager';
@@ -150,5 +156,39 @@ describe('beginMethodDeletion', () => {
     const recording = beginMethodDeletion(session, { ...slot('make'), isMeta: true });
 
     expect(recording?.commit()).toMatchObject({ label: 'Delete Account class>>#make' });
+  });
+});
+
+describe('readMethodSlotState', () => {
+  const slot: MethodSlot = {
+    dict: 'UserGlobals',
+    className: 'Account',
+    isMeta: false,
+    selector: 'balance',
+    environmentId: 0,
+  };
+
+  it('reads back what an edit left, for a caller that cannot say', () => {
+    // Add Accessors SKIPS any selector the class already implements, so only the stone knows
+    // which of the pair are new.
+    const states = [present('balance\n\t^1', 'accessing')];
+    vi.mocked(captureMethodSlots).mockReturnValue(states);
+
+    expect(readMethodSlotState(session, [slot])).toBe(states);
+  });
+
+  it('answers undefined rather than a guess when the read fails', () => {
+    vi.mocked(captureMethodSlots).mockImplementation(() => {
+      throw new Error('session busy');
+    });
+
+    expect(readMethodSlotState(session, [slot])).toBeUndefined();
+  });
+
+  it('answers undefined when the read does not pair up with the slots', () => {
+    // Every reversal rule is written against the pairing being exact.
+    vi.mocked(captureMethodSlots).mockReturnValue([]);
+
+    expect(readMethodSlotState(session, [slot])).toBeUndefined();
   });
 });

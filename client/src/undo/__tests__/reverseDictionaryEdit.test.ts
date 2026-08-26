@@ -112,6 +112,17 @@ describe('reverseDictionaryEdit', () => {
     );
   });
 
+  it('keeps the entry on offer when the rename itself raises', async () => {
+    vi.mocked(renameDictionary).mockImplementation(() => {
+      throw new Error('session busy');
+    });
+
+    expect(await reverseDictionaryEdit(session, rename())).toBe(false);
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining('session busy'),
+    );
+  });
+
   it('keeps the entry on offer when the symbol list cannot be read', async () => {
     vi.mocked(captureDictionary).mockImplementation(() => {
       throw new Error('session busy');

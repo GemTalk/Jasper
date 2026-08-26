@@ -64,6 +64,15 @@ describe('beginClassCommentEdit', () => {
     expect(undoStackDepth(session.id)).toBe(0);
   });
 
+  it('records nothing when the read answers something that is not text', () => {
+    // An entry whose `before` defaulted to the empty string would offer to WIPE the user's
+    // earlier comment rather than restore it.
+    vi.mocked(getClassComment).mockReturnValue(undefined as unknown as string);
+
+    expect(beginClassCommentEdit(session, slot)).toBeUndefined();
+    expect(undoStackDepth(session.id)).toBe(0);
+  });
+
   it('records the first comment on a class that had none', () => {
     vi.mocked(getClassComment).mockReturnValue('');
 

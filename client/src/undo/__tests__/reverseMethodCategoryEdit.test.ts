@@ -248,6 +248,18 @@ describe('reverseMethodCategoryEdit', () => {
       );
     });
 
+    it('keeps the entry on offer when the removal itself raises', async () => {
+      vi.mocked(getMethodCategories).mockReturnValue(['reading']);
+      vi.mocked(removeMethodCategory).mockImplementation(() => {
+        throw new Error('session busy');
+      });
+
+      expect(await reverseMethodCategoryEdit(session, created())).toBe(false);
+      expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+        expect.stringContaining('session busy'),
+      );
+    });
+
     it('reports a removal the stone refused for another reason', async () => {
       vi.mocked(getMethodCategories).mockReturnValue(['reading']);
       vi.mocked(removeMethodCategory).mockReturnValue('not-found');
