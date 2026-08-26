@@ -6,22 +6,21 @@ import { GciLibrary } from '../../gciLibrary';
 import * as q from '../../browserQueries';
 import type { ActiveSession } from '../../sessionManager';
 import { testActiveSession } from '../../__tests__/testActiveSession';
-import { requireServerPluginFeature } from '../../__tests__/requireServerPluginFeature';
-import { pluginFeatures } from '../../serverPlugin/pluginFeatures';
-import { fileInEngineTestsExpr } from '../../refactoring/__tests__/support/refactoring';
+import { installMethodHistory } from '../methodHistoryServer';
+import { parseMethodHistory } from '../methodHistoryModel';
 
 /**
- * Automatic GCI integration test for the per-method history engine
- * (GsMethodHistory). Files in the built GS SUnit payload and runs the
- * GsMethodHistoryTest suite in-stone in a single call — comprehensive engine
- * coverage that is robust on 3.6.x (a file-in compiles in-image, not one GCI
- * compile per method).
+ * Automatic GCI integration test for per-method history, over the real GCI
+ * transport. This deliberately does NOT gate on the refactoring engine — method
+ * history stands on its own: the JasperMethodHistory helper is installed via
+ * SessionTemps (installMethodHistory) with no plugin, so the whole flow must work
+ * on a BARE stone. It exercises the real capture path (queries.compileMethod
+ * brackets each compile with the helper) and the read path (queries.getMethodHistory).
  *
- * Gated on the refactoring engine being present (a bare stone skips the body but
- * stays green), since GsMethodHistory ships in that engine. Fully transient: the
- * useIntegrationTest harness aborts each test, so the filed-in test classes and
- * anything they record are rolled back and nothing is committed. All emitted
- * Smalltalk is ASCII-only for the 3.6.x matrix.
+ * Fully transient: the helper class lives in SessionTemps and the store writes are
+ * uncommitted, and the useIntegrationTest harness aborts each test, so the fixture
+ * class, the recorded history, and the helper all vanish — nothing is committed.
+ * All emitted Smalltalk is ASCII-only for the 3.6.x matrix.
  */
 describe('method history (integration)', () => {
   let gci: GciLibrary;
@@ -34,18 +33,77 @@ describe('method history (integration)', () => {
   const session = (): ActiveSession => testActiveSession(gci, handle);
   const exec = (code: string): string => q.executeFetchString(session(), code);
 
-  it('runs the method-history GS SUnit suite in-stone with zero failures', (ctx) => {
-    requireServerPluginFeature(pluginFeatures.refactoring, ctx, session());
+  const CLS = 'JMHItFixture';
+  const defineClass = (): void => {
+    q.compileClassDefinition(
+      session(),
+      `Object subclass: '${CLS}' instVarNames: #() classVars: #() ` +
+        'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
+    );
+  };
 
-    // File in the test classes (in-image compile — robust), then run the suite and
-    // report its test count and its failure+error count.
-    const code = `| r |
-${fileInEngineTestsExpr()}
-r := (System myUserProfile symbolList objectNamed: #GsMethodHistoryTest) suite run.
-r runCount printString, ' ', (r failures size + r errors size) printString`;
+  it('installs its helper without the refactoring engine', () => {
+    expect(installMethodHistory(session())).toBe(true);
+    // A second install is idempotent (already-installed short-circuit), not an error.
+    expect(installMethodHistory(session())).toBe(true);
+  });
 
-    const [runCount, failed] = exec(code).trim().split(' ');
-    expect(Number(runCount)).toBeGreaterThanOrEqual(10);
-    expect(failed).toBe('0');
+  it('records a timestamped version on each Jasper compile, newest first', () => {
+    installMethodHistory(session());
+    defineClass();
+
+    q.compileMethod(session(), CLS, false, 'accessing', 'answer\n\t^ 1');
+    q.compileMethod(session(), CLS, false, 'accessing', 'answer\n\t^ 2');
+    const versions = parseMethodHistory(q.getMethodHistory(session(), CLS, 'answer', false));
+
+    expect(versions.length).toBeGreaterThanOrEqual(2);
+    expect(versions[0].isCurrent).toBe(true);
+    expect(versions[0].source).toContain('^ 2');
+    expect(versions[0].timeStamp).not.toBe('');
+    expect(versions[0].userId).not.toBe('');
+  });
+
+  it('seeds the pre-existing source as the first version when a method is first edited', () => {
+    installMethodHistory(session());
+    defineClass();
+    // Compile the original WITHOUT the capture path (direct kernel compile), so it
+    // stands in for a method that predates any Jasper edit.
+    exec(
+      `(System myUserProfile symbolList objectNamed: #'${CLS}') ` +
+        "compileMethod: 'answer\n\t^ 1' dictionaries: System myUserProfile symbolList " +
+        "category: 'accessing' environmentId: 0. true printString",
+    );
+
+    q.compileMethod(session(), CLS, false, 'accessing', 'answer\n\t^ 2');
+    const versions = parseMethodHistory(q.getMethodHistory(session(), CLS, 'answer', false));
+
+    const sources = versions.map((v) => v.source);
+    expect(sources.some((s) => s.includes('^ 1'))).toBe(true);
+    expect(sources.some((s) => s.includes('^ 2'))).toBe(true);
+    expect(versions[0].source).toContain('^ 2');
+  });
+
+  it('does not record an identical recompile twice', () => {
+    installMethodHistory(session());
+    defineClass();
+
+    q.compileMethod(session(), CLS, false, 'accessing', 'answer\n\t^ 1');
+    q.compileMethod(session(), CLS, false, 'accessing', 'answer\n\t^ 1');
+    const versions = parseMethodHistory(q.getMethodHistory(session(), CLS, 'answer', false));
+
+    expect(versions.filter((v) => !v.notInHistory)).toHaveLength(1);
+  });
+
+  it('forgets a method’s history on request', () => {
+    installMethodHistory(session());
+    defineClass();
+    q.compileMethod(session(), CLS, false, 'accessing', 'answer\n\t^ 1');
+    q.compileMethod(session(), CLS, false, 'accessing', 'answer\n\t^ 2');
+
+    q.removeMethodHistory(session(), CLS, 'answer', false);
+    const versions = parseMethodHistory(q.getMethodHistory(session(), CLS, 'answer', false));
+
+    // Only the synthetic current version (the installed method) remains.
+    expect(versions.every((v) => v.notInHistory)).toBe(true);
   });
 });

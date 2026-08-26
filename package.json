@@ -2567,7 +2567,7 @@
         },
         {
           "command": "gemstone.explorer.methodHistory",
-          "when": "view == gemstoneExplorerMethods && viewItem =~ /explorerMethod/ && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerMethods && viewItem =~ /explorerMethod/",
           "group": "3_refactor@4"
         },
         {

@@ -9,13 +9,13 @@ import { classLookupExpr, escapeString } from './util';
 // Not committed automatically. Returns a short confirmation on success.
 // `dict` is optional; when given, disambiguates shadowed class names.
 //
-// Method history: when the refactoring engine is loaded, GsMethodHistory brackets
-// the compile — it seeds the method's history with the about-to-be-replaced source
-// the first time a method is edited, then records the newly-compiled source as a
-// timestamped version (see gs-src/refactoring/engine/GsMethodHistory.class.st).
-// Both calls are guarded server-side and skipped entirely when the engine is
-// absent (`objectNamed: #GsMethodHistory` is nil), so this stays a no-op on a base
-// stone and never changes the compile's success/error contract or return string.
+// Method history: the JasperMethodHistory helper (installed at login via
+// SessionTemps — see methodHistory/methodHistoryServer.ts, no plugin required)
+// brackets the compile: it seeds the method's history with the about-to-be-replaced
+// source the first time a method is edited, then records the newly-compiled source
+// as a timestamped version. Both calls are guarded and skipped when the helper is
+// absent (a session where its install did not run), so this stays a no-op there and
+// never changes the compile's success/error contract or return string.
 export function compileMethod(
   execute: QueryExecutor,
   className: string,
@@ -33,7 +33,7 @@ base := ${classLookupExpr(className, dict)}.
 base ifNil: [^ 'Class not found: ${esc}'].
 base isBehavior ifFalse: [^ 'Not a class: ${esc}'].
 target := ${isMeta ? 'base class' : 'base'}.
-hist := System myUserProfile symbolList objectNamed: #GsMethodHistory.
+hist := SessionTemps current at: #JasperMethodHistory otherwise: nil.
 hist ifNotNil: [:h | h beforeCompileIn: target source: '${src}' environmentId: ${environmentId}].
 result := target
   compileMethod: '${src}'

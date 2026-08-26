@@ -1,6 +1,6 @@
 /**
- * Pure parser for the per-method history JSON the GsMethodHistory engine returns
- * (see gs-src/refactoring/engine/GsMethodHistory.class.st). Kept free of any
+ * Pure parser for the per-method history JSON the JasperMethodHistory helper
+ * returns (see methodHistory/methodHistoryServer.ts). Kept free of any
  * `vscode` dependency so it unit-tests directly.
  *
  * One entry per recorded version, NEWEST first. Each carries the version's 1-based
