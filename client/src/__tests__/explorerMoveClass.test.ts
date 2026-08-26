@@ -81,6 +81,10 @@ beforeEach(() => {
   vi.mocked(queries.recategorizeClass).mockReturnValue('Recategorized: Account');
   vi.mocked(queries.canClassBeWritten).mockReturnValue(true);
   vi.mocked(queries.getDictionaryNames).mockReturnValue(['UserGlobals', 'Reports', 'Globals']);
+  // mockReset, not clearAllMocks: clearing keeps IMPLEMENTATIONS, so the throwing stub in the
+  // "read fails" test below would leak into a shuffled neighbour and fail it with 'session busy'.
+  vi.mocked(queries.getClassesWithCategory).mockReset();
+  vi.mocked(queries.getClassesWithCategory).mockReturnValue([]);
   vi.mocked(captureClassSlots).mockReset();
 });
 
@@ -342,5 +346,67 @@ describe('ExplorerController.moveClassToCategory', () => {
     expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
       expect.stringContaining('no class categories'),
     );
+  });
+});
+
+describe('ExplorerController.classCategoriesChanged — putting the pane back after an undo', () => {
+  it('follows the named class to whatever it is filed under now', async () => {
+    const { ctl, categoryReveal } = makeController();
+    ctl.state.classCategory = 'Printing'; // where the forward move had left the filter
+    vi.mocked(queries.getClassesWithCategory).mockReturnValue([entry('Account', 'Banking')]);
+
+    await ctl.classCategoriesChanged('Account');
+
+    expect(ctl.state.classCategory).toBe('Banking');
+    expect(categoryReveal).toHaveBeenCalledWith(
+      expect.objectContaining({ fullPath: 'Banking' }),
+      expect.objectContaining({ select: true }),
+    );
+  });
+
+  it('clears a filter that no longer holds the selected class when no class is named', async () => {
+    // A rename that refiled many classes: following one would be arbitrary, but leaving the pane
+    // filtered to a category the selected class has left would hide it.
+    const { ctl } = makeController();
+    ctl.state.classCategory = 'Printing';
+    vi.mocked(queries.getClassesWithCategory).mockReturnValue([entry('Account', 'Banking')]);
+
+    await ctl.classCategoriesChanged();
+
+    expect(ctl.state.classCategory).toBeUndefined();
+  });
+
+  it('keeps a filter the selected class is still inside', async () => {
+    const { ctl } = makeController();
+    ctl.state.classCategory = 'Banking';
+    vi.mocked(queries.getClassesWithCategory).mockReturnValue([entry('Account', 'Banking')]);
+
+    await ctl.classCategoriesChanged();
+
+    expect(ctl.state.classCategory).toBe('Banking');
+  });
+
+  it('keeps stale entries rather than blanking the pane when the read fails', async () => {
+    const { ctl } = makeController();
+    const before = [entry('Account', 'Banking')];
+    (ctl as unknown as { classCategoryEntries: unknown[] }).classCategoryEntries = before;
+    vi.mocked(queries.getClassesWithCategory).mockImplementation(() => {
+      throw new Error('session busy');
+    });
+
+    await ctl.classCategoriesChanged('Account');
+
+    expect((ctl as unknown as { classCategoryEntries: unknown[] }).classCategoryEntries).toBe(
+      before,
+    );
+  });
+
+  it('does nothing without a selected dictionary', async () => {
+    const { ctl } = makeController();
+    ctl.state.dictIndex = undefined;
+
+    await ctl.classCategoriesChanged('Account');
+
+    expect(queries.getClassesWithCategory).not.toHaveBeenCalled();
   });
 });

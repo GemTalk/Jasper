@@ -186,6 +186,32 @@ export async function removeOverlayCategory(
   }
 }
 
+/**
+ * The command that tells the Explorer its CLASS CATEGORIES changed. Internal — deliberately not
+ * contributed in `package.json`.
+ */
+export const CLASS_CATEGORIES_CHANGED_COMMAND = 'gemstone.explorer.classCategoriesChanged';
+
+/**
+ * Put the Class Categories pane back in step after an undo refiled classes.
+ *
+ * A plain refresh is not enough, and the reason is the forward action: moving a class to a
+ * category SELECTS that category, so after undoing the move the pane is still filtered to a
+ * category the class has just left — the class is back where it belongs and invisible. Passing
+ * the class lets the Explorer follow it to whatever it is filed under now; passing nothing
+ * (a rename that refiled many classes, where following one would be arbitrary) just clears a
+ * filter that no longer holds the selected class.
+ *
+ * Best-effort — the Explorer may not be active.
+ */
+export async function refreshClassCategories(className?: string): Promise<void> {
+  try {
+    await vscode.commands.executeCommand(CLASS_CATEGORIES_CHANGED_COMMAND, className);
+  } catch {
+    /* the Explorer may not be active */
+  }
+}
+
 /** Rebuild the Explorer's panes. Best-effort — the Explorer may not be active. */
 export async function refreshExplorer(): Promise<void> {
   try {

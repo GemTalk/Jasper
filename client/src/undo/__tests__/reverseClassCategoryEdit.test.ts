@@ -9,10 +9,12 @@ vi.mock('../afterUndo', () => ({
   refreshExplorer: vi.fn(),
   refreshSearch: vi.fn(),
   reloadGemstoneEditors: vi.fn(),
+  refreshClassCategories: vi.fn(),
 }));
 
 import * as vscode from 'vscode';
 import { getClassesWithCategory, recategorizeClass } from '../../browserQueries';
+import { refreshClassCategories } from '../afterUndo';
 import { reverseClassCategoryEdit } from '../reverseClassCategoryEdit';
 import { ClassCategoryUndoEntry } from '../undoTypes';
 import type { ActiveSession } from '../../sessionManager';
@@ -148,5 +150,29 @@ describe('reverseClassCategoryEdit', () => {
 
     expect(await reverseClassCategoryEdit(session, entry())).toBe(false);
     expect(recategorizeClass).not.toHaveBeenCalled();
+  });
+
+  it('follows the single class back, since the forward move SELECTED where it went', async () => {
+    // Without this the pane is still filtered to the category the class just left, and the class
+    // comes back invisible.
+    vi.mocked(getClassesWithCategory).mockReturnValue(entries({ A: 'New' }));
+
+    await reverseClassCategoryEdit(session, entry());
+
+    expect(refreshClassCategories).toHaveBeenCalledWith('A');
+  });
+
+  it('follows nothing when many classes moved — there is no one class to follow', async () => {
+    vi.mocked(getClassesWithCategory).mockReturnValue(entries({ A: 'New', B: 'New' }));
+
+    await reverseClassCategoryEdit(
+      session,
+      entry([
+        { className: 'A', before: 'Old', after: 'New' },
+        { className: 'B', before: 'Old', after: 'New' },
+      ]),
+    );
+
+    expect(refreshClassCategories).toHaveBeenCalledWith(undefined);
   });
 });

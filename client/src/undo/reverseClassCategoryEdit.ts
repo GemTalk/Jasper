@@ -17,7 +17,12 @@ import { ActiveSession } from '../sessionManager';
 import { getClassesWithCategory, recategorizeClass } from '../browserQueries';
 import { logInfo } from '../gciLog';
 import { ClassCategoryChange, ClassCategoryUndoEntry } from './undoTypes';
-import { refreshExplorer, refreshSearch, reloadGemstoneEditors } from './afterUndo';
+import {
+  refreshClassCategories,
+  refreshExplorer,
+  refreshSearch,
+  reloadGemstoneEditors,
+} from './afterUndo';
 
 /** Whether the entry is finished with — true when it was undone (or found already undone),
  *  false when the user backed out or it could not run at all. */
@@ -72,6 +77,10 @@ export async function reverseClassCategoryEdit(
   }
 
   await refreshExplorer();
+  // Follow the class when exactly one moved -- the forward action SELECTED the category it went
+  // to, so the pane is still filtered there and the class would come back invisible. With many
+  // classes there is no one class to follow, so this just drops a filter that no longer holds.
+  await refreshClassCategories(todo.length === 1 ? todo[0].className : undefined);
   await refreshSearch(session.id);
   await reloadGemstoneEditors();
 

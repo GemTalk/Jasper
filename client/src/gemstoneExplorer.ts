@@ -3,6 +3,7 @@ import { beginMethodDeletion, beginMethodEdit, readMethodSlotState } from './und
 import { slotLabel } from './undo/undoTypes';
 import { notifyUndoable } from './undo/undoableToast';
 import {
+  CLASS_CATEGORIES_CHANGED_COMMAND,
   OverlayRenameOutcome,
   REMOVE_OVERLAY_CATEGORY_COMMAND,
   RENAME_OVERLAY_CATEGORY_COMMAND,
@@ -4910,6 +4911,50 @@ export class ExplorerController {
   }
 
   /**
+   * Put the Class Categories pane back in step after something refiled classes — an undo, in
+   * practice. The undo path calls this through an internal command (#434).
+   *
+   * Refetching alone is not enough: moving a class to a category SELECTS that category, so after
+   * undoing the move the pane is still filtered to one the class has just left, and the class
+   * comes back invisible. With a class named, follow it to whatever it is filed under now; with
+   * none — a rename that refiled many, where following one would be arbitrary — just drop a
+   * filter that no longer holds the selected class.
+   */
+  async classCategoriesChanged(className?: string): Promise<void> {
+    const session = this.session();
+    const dictIndex = this.state.dictIndex;
+    if (!session || dictIndex === undefined) return;
+    try {
+      this.classCategoryEntries = queries.getClassesWithCategory(session, dictIndex);
+    } catch {
+      // Keep stale entries rather than blanking the pane out from under the user.
+      return;
+    }
+
+    const follow = className ?? this.state.className;
+    const category = follow === undefined ? undefined : this.categoryOfClass(follow);
+    if (className !== undefined && category !== undefined) {
+      const segment = category.split('-').pop() ?? category;
+      const catItem = new ClassCategoryItem(segment, category, false);
+      this.selectClassCategory(catItem);
+      try {
+        await this.views?.category.reveal(catItem, { select: true, expand: true });
+      } catch {
+        /* a row that is not in the rebuilt tree just leaves the pane as it is */
+      }
+    } else if (
+      this.state.classCategory !== undefined &&
+      !(category !== undefined && categoryContains(this.state.classCategory, category))
+    ) {
+      // The selected filter no longer holds the selected class, so it would hide it.
+      this.state.classCategory = undefined;
+    }
+    this.categoryProvider.refresh();
+    this.classProvider.refresh();
+    this.syncTitles();
+  }
+
+  /**
    * Move a class to another dictionary. Rebinds the same class object -- `removeKey:` from one
    * dictionary, `at:put:` into the other -- so nothing is re-versioned and no method moves; only
    * which dictionary resolves the name changes. Recorded as an ordinary class edit over both
@@ -6920,6 +6965,10 @@ export function registerGemStoneExplorer(
     // Move a class to another dictionary, or file it under another class category. Offered on
     // both the Classes and Hierarchy panes, since either is a reasonable place to be looking at
     // the class you want to move.
+    // An undo refiled classes; the pane needs more than a refresh (see classCategoriesChanged).
+    vscode.commands.registerCommand(CLASS_CATEGORIES_CHANGED_COMMAND, (className?: unknown) =>
+      ctl.classCategoriesChanged(typeof className === 'string' ? className : undefined),
+    ),
     vscode.commands.registerCommand('gemstone.explorer.moveClassToDictionary', (item?: unknown) => {
       void ctl
         .moveClassToDictionary(
