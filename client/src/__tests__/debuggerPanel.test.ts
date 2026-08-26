@@ -729,6 +729,47 @@ describe('DebuggerPanel', () => {
     expect(columns).toEqual([3, 2]); // the second follows the panel, not the stale number
   });
 
+  it('sweeps the columns it occupies NOW when a renumber moved it before it closed', async () => {
+    // The remembered column is what teardown works from (a disposed panel won't
+    // answer), and a halt that never selected a frame reads nothing off the panel
+    // to refresh it — the view-state listener is the only thing that does. VS
+    // Code does fire it for a pure renumber: it recomputes every webview's view
+    // state when a group is added, removed or moved, and the panel raises the
+    // event on any position it computes differently. Without that refresh the
+    // sweep works from the open-time number and gets BOTH columns wrong: the
+    // debugger's own group survives (the accumulation the sweep exists to
+    // prevent) and a stranger's group one past it is closed in its place.
+    (vscode.window.tabGroups.all as unknown as unknown[]).push(
+      { viewColumn: 1, tabs: [] },
+      { viewColumn: 2, tabs: [] },
+    );
+    DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
+    await tick();
+    const panel = lastPanel();
+    expect(panel.viewColumn).toBe(3);
+
+    panel.__moveTo(2); // a group ahead of it closed; everything shifted left
+
+    const groups = vscode.window.tabGroups.all as unknown as {
+      viewColumn: number;
+      tabs: unknown[];
+    }[];
+    groups.length = 0;
+    groups.push(
+      { viewColumn: 1, tabs: [] },
+      { viewColumn: 2, tabs: [] }, // the debugger's panel group, where it is now
+      { viewColumn: 3, tabs: [] }, // its source group
+      { viewColumn: 4, tabs: [] }, // a user's own empty group — must survive
+    );
+    closePanel(panel);
+    await tick();
+
+    const swept = vi
+      .mocked(vscode.window.tabGroups.close)
+      .mock.calls.map((c) => (c[0] as { viewColumn?: number }).viewColumn);
+    expect(swept).toEqual([2, 3]);
+  });
+
   it('shows a dimmed "For <user> on <stone> @ <host>" subtitle from the login', () => {
     DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
     const html = lastPanel().webview.html;
@@ -1581,6 +1622,104 @@ describe('DebuggerPanel', () => {
         await tick();
         expect(sweeps().map((c) => (c[0] as { viewColumn: number }).viewColumn)).toContain(9);
       } finally {
+        vi.mocked(vscode.window.tabGroups.close).mockReset();
+      }
+    });
+
+    // Group closes are the ones passed a group (a viewColumn), not a tab.
+    const groupCloses = () =>
+      vi
+        .mocked(vscode.window.tabGroups.close)
+        .mock.calls.filter((c) => (c[0] as { viewColumn?: number }).viewColumn !== undefined)
+        .map((c) => (c[0] as { viewColumn: number }).viewColumn);
+
+    it('still sweeps the groups that emptied when a tab close rejects', async () => {
+      // `tabGroups.close()` rejects outright for a tab that went away between our
+      // scan and the close ("Tab close: Invalid tab not found!"). Abandoning the
+      // sweep on that would strand every group that DID empty — and the sweep is
+      // fire-and-forget from a dispose handler, so an unhandled rejection is all
+      // anyone would ever see of it.
+      const unhandled: unknown[] = [];
+      const onUnhandled = (reason: unknown): void => void unhandled.push(reason);
+      process.on('unhandledRejection', onUnhandled);
+      const panel = openPanelWithStack();
+      vi.mocked(vscode.window.showTextDocument).mockResolvedValueOnce(columnedEditor(9) as never);
+      vi.mocked(debug.getMethodUriInfo).mockReturnValueOnce(URI_INFO);
+      sendMessage(panel, { command: 'selectFrame', level: 3 });
+      await flush();
+
+      const uri = (
+        vi.mocked(vscode.workspace.openTextDocument).mock.calls[0][0] as vscode.Uri
+      ).toString();
+      const sourceTab = { label: 'source', input: new vscode.TabInputText(vscode.Uri.parse(uri)) };
+      const groups = vscode.window.tabGroups.all as unknown as {
+        viewColumn: number;
+        tabs: unknown[];
+      }[];
+      groups.length = 0;
+      groups.push({ viewColumn: 1, tabs: [] }, { viewColumn: 9, tabs: [sourceTab] });
+      vi.mocked(vscode.window.tabGroups.close).mockImplementation(((arg: {
+        viewColumn?: number;
+      }) =>
+        arg.viewColumn === undefined
+          ? Promise.reject(new Error('Tab close: Invalid tab not found!'))
+          : Promise.resolve(true)) as never);
+      try {
+        closePanel(panel);
+        await tick();
+        await tick();
+
+        // The panel's own group (column 1) is empty and gets retired regardless;
+        // column 9 still holds the tab whose close failed, so it is left alone.
+        expect(groupCloses()).toEqual([1]);
+        expect(unhandled).toEqual([]);
+      } finally {
+        process.off('unhandledRejection', onUnhandled);
+        vi.mocked(vscode.window.tabGroups.close).mockReset();
+      }
+    });
+
+    it("retires its own empty group without waiting out a dirty tab's save prompt", async () => {
+      // A DIRTY tab's close resolves only once the user answers the save/discard/
+      // cancel dialog, so it stays pending for as long as the dialog stands. The
+      // panel's group is empty and has nothing to save; it must not be held
+      // hostage by that. The source group still holds the unsaved tab, so it is
+      // not empty and is correctly left until the close actually lands.
+      const panel = openPanelWithStack();
+      vi.mocked(vscode.window.showTextDocument).mockResolvedValueOnce(columnedEditor(9) as never);
+      vi.mocked(debug.getMethodUriInfo).mockReturnValueOnce(URI_INFO);
+      sendMessage(panel, { command: 'selectFrame', level: 3 });
+      await flush();
+
+      const uri = (
+        vi.mocked(vscode.workspace.openTextDocument).mock.calls[0][0] as vscode.Uri
+      ).toString();
+      const dirtyTab = { label: 'source', input: new vscode.TabInputText(vscode.Uri.parse(uri)) };
+      const groups = vscode.window.tabGroups.all as unknown as {
+        viewColumn: number;
+        tabs: unknown[];
+      }[];
+      groups.length = 0;
+      groups.push({ viewColumn: 1, tabs: [] }, { viewColumn: 9, tabs: [dirtyTab] });
+      let answerPrompt!: () => void;
+      const prompt = new Promise<void>((resolve) => (answerPrompt = resolve));
+      vi.mocked(vscode.window.tabGroups.close).mockImplementation((() => prompt) as never);
+      vi.useFakeTimers();
+      try {
+        closePanel(panel);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(groupCloses()).toEqual([]); // still inside the deadline
+
+        await vi.advanceTimersByTimeAsync(2000);
+        expect(groupCloses()).toEqual([1]); // the empty panel group, on its own
+
+        groups.length = 0;
+        groups.push({ viewColumn: 9, tabs: [] }); // discarded; the tab is gone
+        answerPrompt();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(groupCloses()).toEqual([1, 9]); // …and the source group follows
+      } finally {
+        vi.useRealTimers();
         vi.mocked(vscode.window.tabGroups.close).mockReset();
       }
     });

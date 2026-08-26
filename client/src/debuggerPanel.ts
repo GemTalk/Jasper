@@ -671,6 +671,15 @@ const WASH_STRENGTH = 0.12;
 const READONLY_SOURCE_SCHEME = 'gemstone-debug';
 
 /**
+ * How long the empty-group sweep waits on the debugger's tab closes before
+ * retiring whatever is already empty. Not a guess at when the closes land (it
+ * waits on them; see closeEmptyGroups) — a ceiling on how long ONE tab's modal
+ * save prompt can hold the rest of the teardown, since an unanswered dialog
+ * never resolves.
+ */
+const EMPTY_GROUP_SWEEP_DEADLINE_MS = 2000;
+
+/**
  * A fully-resolved stack frame, before display filtering and renumbering.
  * Carries the classification bits the stack filter needs (which `FrameSummary`,
  * the wire/display shape, deliberately omits).
@@ -1373,7 +1382,12 @@ export class DebuggerPanel {
     this.panel.webview.html = this.getHtml();
     this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
     // A panel that moves column updates the remembered value while it still can
-    // answer, so teardown never has to ask a disposed panel where it was.
+    // answer, so teardown never has to ask a disposed panel where it was. This
+    // covers a PURE renumber (a group closing elsewhere shifting the numbers
+    // along), not just a focus change: VS Code recomputes every webview's view
+    // state on onDidAddGroup / onDidRemoveGroup / onDidMoveGroup, and the panel
+    // fires this event whenever the position it computes differs — which for a
+    // renumber is exactly what changed.
     this.panel.onDidChangeViewState(
       () => {
         if (!this.disposed)
@@ -4655,7 +4669,10 @@ export class DebuggerPanel {
     DebuggerPanel.refreshSourceCodeLenses();
     // Close the companion source editor and any enhanced inspectors this debugger
     // opened — they're artifacts of this debugger and shouldn't outlive it.
-    void DebuggerPanel.closeEmptyGroups(ourColumns, this.closeSourceEditors());
+    void DebuggerPanel.closeEmptyGroups(ourColumns, this.closeSourceEditors()).catch(() => {
+      // Fire-and-forget from an event listener: a sweep that fails is untidy,
+      // never fatal, and must not surface as an unhandled rejection.
+    });
     // Drop this panel's source tabs from the persisted orphan set (it was already
     // removed from `panels` above, so the union now excludes it). A clean dispose
     // thus leaves nothing to reap; only a window-close-with-debugger-open does.
@@ -4683,13 +4700,23 @@ export class DebuggerPanel {
    * group gets nested inside them rather than opening as a plain column, which
    * is the shape that used to defeat the split entirely.
    *
-   * Waits on the tab closes themselves rather than a timer. A group is only
+   * Waits on the tab closes themselves rather than guessing at them with a
+   * timer. A group is only
    * empty once its tabs have actually gone, and "next macrotask" is a guess
    * about that, not a guarantee: sweep too early and the debugger's own group
    * still looks occupied (so it survives, which is the accumulation this exists
    * to prevent), or a user's group is transiently empty mid-renumber and gets
    * closed instead. Only ever closes a group that is genuinely empty, so
    * anything the user put there survives either way.
+   *
+   * That wait is bounded, because one tab can hold the whole sweep hostage:
+   * `tabGroups.close()` resolves only once the editor is really gone, and a
+   * DIRTY tab puts a modal save/discard/cancel prompt in front of that, pending
+   * for as long as the user leaves the dialog standing. The panel's own group is
+   * empty and has nothing to save, so it shouldn't wait on somebody else's
+   * prompt. After the deadline we sweep what is empty NOW and then sweep again
+   * when the closes finally land — the emptiness check is what keeps both passes
+   * safe, so an early one simply finds nothing to do.
    */
   private static async closeEmptyGroups(
     columns: (vscode.ViewColumn | undefined)[],
@@ -4697,11 +4724,32 @@ export class DebuggerPanel {
   ): Promise<void> {
     const wanted = columns.filter((c): c is vscode.ViewColumn => c !== undefined);
     if (wanted.length === 0) return;
-    await tabsClosed;
-    for (const group of vscode.window.tabGroups.all) {
-      if (group.tabs.length === 0 && wanted.includes(group.viewColumn)) {
-        void vscode.window.tabGroups.close(group);
+    const sweep = (): void => {
+      for (const group of vscode.window.tabGroups.all) {
+        if (group.tabs.length === 0 && wanted.includes(group.viewColumn)) {
+          void Promise.resolve(vscode.window.tabGroups.close(group)).catch(() => {});
+        }
       }
+    };
+    // A rejected close is no reason to abandon the groups that DID close: VS
+    // Code throws outright for a tab that vanished from under us between our
+    // scan and the close ("Tab close: Invalid tab not found!").
+    const settled = tabsClosed.then(
+      () => true,
+      () => true,
+    );
+    let deadline: ReturnType<typeof setTimeout>;
+    const raced = await Promise.race([
+      settled,
+      new Promise<false>((resolve) => {
+        deadline = setTimeout(() => resolve(false), EMPTY_GROUP_SWEEP_DEADLINE_MS);
+      }),
+    ]);
+    clearTimeout(deadline!); // the usual case: the closes won, so drop the timer
+    sweep();
+    if (!raced) {
+      await settled;
+      sweep();
     }
   }
 
