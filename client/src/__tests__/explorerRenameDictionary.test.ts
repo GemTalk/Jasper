@@ -2,7 +2,12 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 // The controller pulls in browserQueries; stub only what renameDictionary touches.
-vi.mock('../browserQueries', () => ({ renameDictionary: vi.fn() }));
+vi.mock('../browserQueries', () => ({
+  renameDictionary: vi.fn(),
+  defaultQueryExecutorUsing: vi.fn(() => () => ''),
+}));
+// The undo recorder's symbol-list read — mocked so the flow records without a stone (#434).
+vi.mock('../undo/queries/dictionaryQueries', () => ({ captureDictionary: vi.fn() }));
 // Keep the real filesystem-provider exports, but make the two the tab sweep uses
 // (listOpenGemstoneTabs + parseUri) overridable so the sweep can be driven with
 // synthetic tabs. They default to the real implementations, so other tests are
@@ -18,6 +23,8 @@ vi.mock('../gemstoneFileSystemProvider', async (importActual) => {
 
 import * as vscode from 'vscode';
 import * as queries from '../browserQueries';
+import { captureDictionary } from '../undo/queries/dictionaryQueries';
+import { peekUndoEntry, resetUndoStacks, undoStackDepth } from '../undo/undoStack';
 import { listOpenGemstoneTabs, parseUri } from '../gemstoneFileSystemProvider';
 import { ExplorerController } from '../gemstoneExplorer';
 import type { SessionManager, ActiveSession } from '../sessionManager';
@@ -48,6 +55,8 @@ function makeController(session: ActiveSession | undefined) {
 describe('ExplorerController.renameDictionary', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetUndoStacks();
+    vi.mocked(captureDictionary).mockReturnValue({ present: true, name: 'MyDict', index: 3 });
   });
 
   it('does nothing when there is no selected session', async () => {
@@ -122,11 +131,44 @@ describe('ExplorerController.renameDictionary', () => {
     expect(refresh).toHaveBeenCalledTimes(1);
     // No longer resets the selection via selectDict (LOW-5).
     expect(selectDict).not.toHaveBeenCalled();
-    expect(vscode.window.setStatusBarMessage).toHaveBeenCalledWith(
+    // A notice rather than a status-bar message, because this one carries Undo (#434).
+    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
       expect.stringContaining('NewDict'),
-      expect.any(Number),
+      'Undo',
     );
     expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
+  });
+
+  it('records the rename, so undo renames it back', async () => {
+    const { ctl } = makeController({ id: 1 } as ActiveSession);
+    vi.mocked(vscode.window.showInputBox).mockResolvedValue('NewDict');
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValue('Rename' as never);
+    vi.mocked(queries.renameDictionary).mockReturnValue('ok');
+
+    await ctl.renameDictionary(NODE);
+
+    expect(peekUndoEntry(1)).toMatchObject({
+      kind: 'dictionaryEdit',
+      label: 'Rename dictionary MyDict to NewDict',
+      before: { present: true, name: 'MyDict' },
+      after: { present: true, name: 'NewDict' },
+      // No stash: the dictionary never left the symbol list, so the reversal finds it by
+      // its new name.
+      stashKey: null,
+    });
+  });
+
+  it('records nothing when the stone refused the rename', async () => {
+    const { ctl } = makeController({ id: 1 } as ActiveSession);
+    vi.mocked(vscode.window.showInputBox).mockResolvedValue('Globals');
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValue('Rename' as never);
+    vi.mocked(queries.renameDictionary).mockReturnValue(
+      'Cannot rename a system dictionary (Globals, Published, or UserGlobals)',
+    );
+
+    await ctl.renameDictionary(NODE);
+
+    expect(undoStackDepth(1)).toBe(0);
   });
 
   it('retains the class/method selection when renaming the currently-selected dictionary (LOW-5)', async () => {

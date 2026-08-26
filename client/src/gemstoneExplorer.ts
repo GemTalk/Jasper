@@ -1,8 +1,11 @@
 import * as vscode from 'vscode';
-import { beginMethodDeletion } from './undo/recordMethodEdit';
+import { beginMethodDeletion, beginMethodEdit, readMethodSlotState } from './undo/recordMethodEdit';
 import { notifyUndoable } from './undo/undoableToast';
-import { beginClassDeletion } from './undo/recordClassEdit';
+import { SYMBOL_LIST_CHANGED_COMMAND } from './undo/afterUndo';
+import { beginClassDeletion, beginClassEdit } from './undo/recordClassEdit';
 import { beginClassVarAdd } from './undo/recordClassVarEdit';
+import { beginMethodCategoryRename } from './undo/recordMethodCategoryEdit';
+import { beginDictionaryRemoval, beginDictionaryRename } from './undo/recordDictionaryEdit';
 import * as crypto from 'crypto';
 import { SessionManager, ActiveSession } from './sessionManager';
 import * as queries from './browserQueries';
@@ -2080,7 +2083,7 @@ export class ExplorerController {
         /* best-effort — leave the class selected if neither row can be revealed */
       }
     }
-    if (wantAccessors) await this.generateAccessorsFor(className, name, 'classvar');
+    if (wantAccessors) await this.generateAccessorsFor(className, name, 'classvar', false);
 
     // Announced last, so the notice carrying Undo is the one left on screen when accessors
     // were generated too.
@@ -2093,14 +2096,29 @@ export class ExplorerController {
   // Generate accessors for an existing variable (the "Add Accessors" row action, and
   // the follow-up when adding a variable). Skips any accessor already implemented, so
   // it never clobbers a hand-written one, and reports what it did.
+  //
+  // `undoable` is false when this runs as the follow-up to Add Class Variable: that flow
+  // records ONE entry covering the variable and its accessors, and a second entry for the
+  // accessors alone would make the user press Undo twice for one action (#434).
   async generateAccessorsFor(
     className: string,
     varName: string,
     kind: 'ivar' | 'classvar',
+    undoable = true,
   ): Promise<void> {
     const session = this.session();
     if (!session) return;
     const { isMeta, accessors } = accessorSpecsFor(varName, kind);
+    // Snapshot the accessor slots BEFORE compiling: an accessor that already exists is
+    // skipped by the add, and its unchanged state is what tells the undo to leave it alone.
+    const slots = accessors.map((a) => ({
+      dict: this.state.dictIndex,
+      className,
+      isMeta,
+      selector: a.selector,
+      environmentId: 0,
+    }));
+    const recording = undoable ? beginMethodEdit(session, slots) : undefined;
     let result;
     try {
       result = queries.addAccessors(session, className, isMeta, accessors, this.state.dictIndex);
@@ -2133,12 +2151,21 @@ export class ExplorerController {
     const where = isMeta ? 'class-side ' : '';
     if (result.created === 0) {
       void vscode.window.showInformationMessage(`${varName}: ${where}accessors already existed.`);
-    } else {
-      const skipNote = result.skipped > 0 ? ` (${result.skipped} already existed)` : '';
-      void vscode.window.showInformationMessage(
-        `Added ${result.created} ${where}accessor${result.created === 1 ? '' : 's'} for ${varName}${skipNote}.`,
-      );
+      return;
     }
+    const skipNote = result.skipped > 0 ? ` (${result.skipped} already existed)` : '';
+    const message =
+      `Added ${result.created} ${where}accessor${result.created === 1 ? '' : 's'} ` +
+      `for ${varName}${skipNote}.`;
+    // Re-read what the add actually left rather than assume it compiled all of them: it
+    // skips any selector the class already implements, and only the stone knows which.
+    const after = recording ? readMethodSlotState(session, slots) : undefined;
+    notifyUndoable(
+      message,
+      after && recording
+        ? recording.commit(`Add ${where}accessors for ${varName} in ${className}`, after)
+        : undefined,
+    );
   }
 
   // Ask, up front, whether to also generate accessors. Answers true/false, or
@@ -3204,7 +3231,27 @@ export class ExplorerController {
     let currentName = className;
     showClassHistoryPanel(className, versions, {
       restore: async (index) => {
+        // A restore binds a NEW version under the class name, so it is an ordinary class
+        // edit and reverts the same way -- by binding back the version that is bound now
+        // (#434). Restoring across a rename also renames the class, which unbinds one name
+        // and binds another, so BOTH names are recorded: the reversal rebinds the first and
+        // unbinds the second. The target version's own name is what history reports for it.
+        const dictRef = this.state.dictIndex ?? this.state.dictName;
+        const restoredName = versions.find((v) => v.index === index)?.name;
+        const names = [
+          currentName,
+          ...(restoredName && restoredName !== currentName ? [restoredName] : []),
+        ];
+        const recording =
+          dictRef !== undefined
+            ? beginClassEdit(
+                session,
+                names.map((className) => ({ dict: dictRef, className })),
+              )
+            : undefined;
+
         const result = parseRevertResult(queries.revertClassToVersion(session, currentName, index));
+        const previousName = currentName;
         if (result.reverted && result.name) currentName = result.name;
         const refreshed = result.reverted
           ? parseClassHistory(queries.getClassHistory(session, currentName))
@@ -3212,6 +3259,12 @@ export class ExplorerController {
         // The class was reshaped/renamed (a new version) — re-cascade so the
         // Explorer's Classes + Hierarchy panes show the restored name and version.
         if (result.reverted) await this.refreshAfterClassReshape(currentName);
+        if (result.reverted) {
+          notifyUndoable(
+            `Restored ${previousName} to version ${index}`,
+            recording?.commit(`Restore ${previousName} to version ${index}`),
+          );
+        }
         return { result, versions: refreshed };
       },
       remove: async (index) => {
@@ -4057,6 +4110,10 @@ export class ExplorerController {
       'Remove',
     );
     if (confirmed !== 'Remove') return;
+    // Stash the dictionary and its POSITION before unlisting it: `symbolList remove:` does
+    // not destroy it, so the same object can go back with every class it holds -- but only
+    // while something still references it, and only at its old index (#434).
+    const recording = beginDictionaryRemoval(session, node.dictName);
     try {
       queries.removeDictionary(session, node.dictIndex);
     } catch (e: unknown) {
@@ -4069,7 +4126,7 @@ export class ExplorerController {
     // auto-select a default dictionary.
     this.reset();
     this.onSymbolListChanged?.(session.id);
-    void vscode.window.setStatusBarMessage(`Removed dictionary ${node.dictName}`, 4000);
+    notifyUndoable(`Removed dictionary ${node.dictName}`, recording?.commit());
   }
 
   // Rename a dictionary on the symbol list. A SymbolDictionary's name is a
@@ -4112,6 +4169,8 @@ export class ExplorerController {
     );
     if (confirmed !== 'Rename') return;
 
+    const recording = beginDictionaryRename(session, oldName);
+
     let result: string;
     try {
       result = queries.renameDictionary(session, node.dictIndex, newName);
@@ -4145,7 +4204,7 @@ export class ExplorerController {
       /* ignore */
     }
     this.onSymbolListChanged?.(session.id);
-    void vscode.window.setStatusBarMessage(`Renamed dictionary ${oldName} → ${newName}`, 4000);
+    notifyUndoable(`Renamed dictionary ${oldName} → ${newName}`, recording?.commit(newName));
   }
 
   // Rename a class category within the selected dictionary. Every class filed
@@ -4552,6 +4611,16 @@ export class ExplorerController {
     const hasServerMethods = this.envLines.some(
       (l) => l.isMeta === item.isMeta && l.category === oldCategory,
     );
+    // Only a category the SERVER knows about is undoable: an overlay-only rename of a
+    // still-empty category is a client-side bookkeeping move with nothing on the stone to
+    // put back (#434).
+    const recording = hasServerMethods
+      ? beginMethodCategoryRename(
+          session,
+          { dict: dictIndex, className, isMeta: item.isMeta },
+          oldCategory,
+        )
+      : undefined;
     if (hasServerMethods) {
       try {
         queries.renameCategory(
@@ -4594,6 +4663,13 @@ export class ExplorerController {
         focus: true,
       })
       .then(undefined, () => {});
+
+    if (recording) {
+      notifyUndoable(
+        `Renamed category '${oldCategory}' to '${newCategory}'`,
+        recording.commit(newCategory),
+      );
+    }
   }
 
   // New Method, invoked from a category row → files into THAT category (including
@@ -5481,6 +5557,14 @@ export function registerGemStoneExplorer(
       'gemstone.explorer.refresh',
       () => void ctl.refreshRetainingSelection(),
     ),
+    // An undo put a dictionary back on the symbol list, or renamed one back. Internal, and
+    // deliberately not contributed in package.json: a pane refresh is not enough, because
+    // the Dictionaries pane IS the symbol list and every index below the change has moved,
+    // so this is the same full rebuild the forward commands do (#434).
+    vscode.commands.registerCommand(SYMBOL_LIST_CHANGED_COMMAND, (sessionId?: number) => {
+      ctl.reset();
+      if (typeof sessionId === 'number') onSymbolListChanged?.(sessionId);
+    }),
     // Per-pane filter buttons: open a live filter input (prefix match, '*'
     // wildcard) that filters the pane in place — works regardless of where
     // focus currently sits (e.g. the editor).

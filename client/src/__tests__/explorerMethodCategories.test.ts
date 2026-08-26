@@ -10,6 +10,7 @@ vi.mock('../browserQueries', () => ({
 
 import * as vscode from 'vscode';
 import * as queries from '../browserQueries';
+import { peekUndoEntry, resetUndoStacks, undoStackDepth } from '../undo/undoStack';
 import { ExplorerController, MethodCategoryItem, MethodItem } from '../gemstoneExplorer';
 import { ALL_METHODS_CATEGORY } from '../systemBrowser';
 import type { SessionManager, ActiveSession } from '../sessionManager';
@@ -147,6 +148,35 @@ describe('ExplorerController.renameMethodCategory', () => {
     await ctl.renameMethodCategory(new MethodCategoryItem(false, 'accessing', false));
 
     expect(queries.renameCategory).not.toHaveBeenCalled();
+  });
+
+  it('records a server rename, so it can be renamed back (#434)', async () => {
+    resetUndoStacks();
+    const { ctl } = makeController();
+    setEnvLines(ctl, [envLine(false, 'accessing', ['bar'])]);
+    showInputBox.mockResolvedValue('renamed-accessing');
+
+    await ctl.renameMethodCategory(new MethodCategoryItem(false, 'accessing', false));
+
+    expect(peekUndoEntry(1)).toMatchObject({
+      kind: 'methodCategoryEdit',
+      before: 'accessing',
+      after: 'renamed-accessing',
+      slot: { className: 'M4Demo', isMeta: false, dict: 3 },
+    });
+  });
+
+  it('records nothing for a still-empty category, which is a client-side move only', async () => {
+    // There is nothing on the stone to put back — the category exists only in the overlay.
+    resetUndoStacks();
+    const { ctl } = makeController();
+    showInputBox.mockResolvedValueOnce('class method category');
+    await ctl.newMethodCategory(true);
+    showInputBox.mockResolvedValueOnce('renamed category');
+
+    await ctl.renameMethodCategory(new MethodCategoryItem(true, 'class method category', false));
+
+    expect(undoStackDepth(1)).toBe(0);
   });
 });
 

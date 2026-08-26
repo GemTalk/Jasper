@@ -4,10 +4,11 @@
  * One bounded stack per session, held in the extension rather than in the stone. That
  * placement is the design decision the rest of the undo work hangs off:
  *
- *  - a method edit, a class edit, a class comment and a class variable can then be undone on
- *    ANY stone, with no server-side install — the reversal is plain `compileMethod:` /
- *    `removeSelector:`, `comment:`, `addClassVarName:` / `removeClassVarName:`, or binding a
- *    class version back into its dictionary;
+ *  - a method edit, a class edit, a class comment, a class variable, a method category and a
+ *    symbol-list dictionary can then be undone on ANY stone, with no server-side install —
+ *    the reversal is plain `compileMethod:` / `removeSelector:`, `comment:`,
+ *    `addClassVarName:` / `removeClassVarName:`, `renameCategory:to:`,
+ *    `insertDictionary:at:`, or binding a class version back into its dictionary;
  *  - a refactoring, whose reversal genuinely has to happen server-side, is just one
  *    KIND of entry pointing at the record the engine already keeps.
  *

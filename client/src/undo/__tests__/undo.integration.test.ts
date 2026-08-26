@@ -6,6 +6,7 @@ import { GciLibrary } from '../../gciLibrary';
 import * as q from '../../browserQueries';
 import { applyMethodSlotOps, captureMethodSlots } from '../queries/methodSlotQueries';
 import { applyClassSlotOps, captureClassSlots, newStashKey } from '../queries/classSlotQueries';
+import { captureDictionary, reinsertDictionary } from '../queries/dictionaryQueries';
 import {
   applyClassVarOp,
   captureClassVar,
@@ -677,6 +678,148 @@ ws contents`;
 
       expect(applyClassVarOp(exec, varSlot('Registry'), 'declare')).toBeNull();
       expect(captureClassVar(exec, varSlot('Registry')).defined).toBe(true);
+    });
+  });
+
+  // ── A method category, renamed and renamed back ────────────────────────
+
+  describe('a method-category rename, recorded and reversed', () => {
+    it('renames back, carrying the same methods', () => {
+      defineClass(CLS);
+      compile(CLS, 'balance\n  ^ 1', 'accessing');
+      compile(CLS, 'total\n  ^ 2', 'accessing');
+
+      q.renameCategory(session(), CLS, false, 'accessing', 'reading', DICT);
+      expect(q.getMethodCategories(session(), CLS, false, DICT)).toContain('reading');
+
+      q.renameCategory(session(), CLS, false, 'reading', 'accessing', DICT);
+
+      expect(q.getMethodCategories(session(), CLS, false, DICT)).toContain('accessing');
+      expect(q.getMethodCategories(session(), CLS, false, DICT)).not.toContain('reading');
+      expect(
+        exec(`(${CLS} categoryOfSelector: #balance environmentId: 0) printString`).trim(),
+      ).toBe("#'accessing'");
+      expect(exec(`(${CLS} categoryOfSelector: #total environmentId: 0) printString`).trim()).toBe(
+        "#'accessing'",
+      );
+    });
+
+    it('REFUSES a rename onto a category that already exists', () => {
+      // This is what makes the reversal exact: a rename is one name becoming another, never
+      // two categories merging. The reverser checks for the collision so the user gets a
+      // sentence rather than error 2032.
+      defineClass(CLS);
+      compile(CLS, 'balance\n  ^ 1', 'accessing');
+      compile(CLS, 'total\n  ^ 2', 'reading');
+
+      expect(
+        exec(
+          `[${CLS} renameCategory: 'accessing' to: 'reading'. 'ok'] on: Error do: [:e | 'refused']`,
+        ).trim(),
+      ).toBe('refused');
+    });
+
+    it('does not recompile the methods it moves', () => {
+      // Which is why this is a rename rather than N method edits.
+      defineClass(CLS);
+      compile(CLS, 'balance\n  ^ 1', 'accessing');
+      const before = exec(`(${CLS} compiledMethodAt: #balance environmentId: 0) asOop printString`);
+
+      q.renameCategory(session(), CLS, false, 'accessing', 'reading', DICT);
+
+      expect(exec(`(${CLS} compiledMethodAt: #balance environmentId: 0) asOop printString`)).toBe(
+        before,
+      );
+    });
+  });
+
+  // ── A dictionary, removed and put back ─────────────────────────────────
+
+  describe('a symbol-list change, recorded and reversed', () => {
+    const DICT_NAME = 'JfpUndoItDict';
+    const KEY = 'JfpUndoItDictStash';
+
+    const makeDictionaryAt = (position: number): void => {
+      exec(
+        `| d | d := SymbolDictionary new. d name: #'${DICT_NAME}'. ` +
+          `System myUserProfile insertDictionary: d at: ${position}. 'ok'`,
+      );
+    };
+
+    it('reads a dictionary POSITION, and pins the dictionary when asked', () => {
+      makeDictionaryAt(2);
+
+      const state = captureDictionary(exec, DICT_NAME, KEY);
+
+      expect(state).toEqual({ present: true, name: DICT_NAME, index: 2 });
+      expect(
+        exec(`(SessionTemps current at: #'${KEY}' ifAbsent: [nil]) isNil printString`).trim(),
+      ).toBe('false');
+    });
+
+    it('reads an absent dictionary as absent rather than raising', () => {
+      expect(captureDictionary(exec, 'JfpNoSuchDictionaryAtAll')).toEqual({
+        present: false,
+        name: 'JfpNoSuchDictionaryAtAll',
+        index: 0,
+      });
+    });
+
+    it('puts a removed dictionary back at its old position, with what it held', () => {
+      makeDictionaryAt(2);
+      exec(`(System myUserProfile symbolList at: 2) at: #JfpUndoItMarker put: 42. 'ok'`);
+      captureDictionary(exec, DICT_NAME, KEY);
+      exec(`| sl | sl := System myUserProfile symbolList. sl remove: (sl at: 2). 'ok'`);
+      expect(captureDictionary(exec, DICT_NAME).present).toBe(false);
+
+      expect(reinsertDictionary(exec, KEY, 2)).toBeNull();
+
+      expect(captureDictionary(exec, DICT_NAME)).toEqual({
+        present: true,
+        name: DICT_NAME,
+        index: 2,
+      });
+      expect(
+        exec(`((System myUserProfile symbolList at: 2) at: #JfpUndoItMarker) printString`).trim(),
+      ).toBe('42');
+    });
+
+    it('refuses rather than listing the same dictionary twice', () => {
+      // `insertDictionary:at:` happily allows it, which would leave the symbol list holding
+      // the dictionary in two places.
+      makeDictionaryAt(2);
+      captureDictionary(exec, DICT_NAME, KEY);
+
+      expect(reinsertDictionary(exec, KEY, 2)).toContain('already on the symbol list');
+    });
+
+    it('clamps a position past the end of a list that has since got shorter', () => {
+      // `insertDictionary:at:` raises an OffsetError rather than appending.
+      makeDictionaryAt(2);
+      captureDictionary(exec, DICT_NAME, KEY);
+      exec(`| sl | sl := System myUserProfile symbolList. sl remove: (sl at: 2). 'ok'`);
+
+      expect(reinsertDictionary(exec, KEY, 99)).toBeNull();
+      expect(captureDictionary(exec, DICT_NAME).present).toBe(true);
+    });
+
+    it('reports a stash this session no longer holds', () => {
+      expect(reinsertDictionary(exec, 'JfpNoSuchStashAtAll', 2)).toContain('no longer holds');
+    });
+
+    it('renames a dictionary back by its NEW name', () => {
+      makeDictionaryAt(2);
+      expect(q.renameDictionary(session(), DICT_NAME, 'JfpUndoItRenamed')).toBe('ok');
+      expect(captureDictionary(exec, DICT_NAME).present).toBe(false);
+
+      expect(q.renameDictionary(session(), 'JfpUndoItRenamed', DICT_NAME)).toBe('ok');
+
+      // Back under its old name, and at the position it never left.
+      expect(captureDictionary(exec, DICT_NAME)).toEqual({
+        present: true,
+        name: DICT_NAME,
+        index: 2,
+      });
     });
   });
 });

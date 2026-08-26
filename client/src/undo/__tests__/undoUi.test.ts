@@ -118,6 +118,36 @@ describe('the undo status-bar button', () => {
     expect(item.tooltip).toBe('GemStone — Undo: Add class variable Registry to Account (Ctrl+K U)');
   });
 
+  it('calls a category rename and a symbol-list change an UNDO too', () => {
+    // Nothing here is versioned, so nothing is left behind and there is no revert to warn of.
+    const item = fakeItem();
+    setUndoStatusBarItem(item as never);
+    pushUndoEntry({
+      kind: 'methodCategoryEdit',
+      sessionId: session.id,
+      label: "Rename category 'accessing' to 'reading' in Account",
+      slot: { dict: 7, className: 'Account', isMeta: false },
+      before: 'accessing',
+      after: 'reading',
+    });
+
+    refreshUndoUi(session);
+    expect(item.text).toContain('Undo');
+    expect(item.tooltip).toContain("Undo: Rename category 'accessing' to 'reading' in Account");
+
+    pushUndoEntry({
+      kind: 'dictionaryEdit',
+      sessionId: session.id,
+      label: 'Remove dictionary Reports',
+      before: { present: true, name: 'Reports', index: 2 },
+      after: { present: false, name: 'Reports', index: 2 },
+      stashKey: 'k1',
+    });
+
+    refreshUndoUi(session);
+    expect(item.tooltip).toBe('GemStone — Undo: Remove dictionary Reports (Ctrl+K U)');
+  });
+
   it('separates the verb from the label, so two verbs do not run together', () => {
     const item = fakeItem();
     setUndoStatusBarItem(item as never);

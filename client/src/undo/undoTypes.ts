@@ -6,8 +6,9 @@
  * reversers are looked up by `kind`. Saving a method, adding one, and deleting one
  * are all the same shape — a set of METHOD SLOTS whose state before the action was
  * captured — so they share one kind and one reverser. Class bindings, a class's
- * comment and a class variable each have a shape of their own, and a refactoring is
- * the last kind — the only one that reaches into the refactoring engine.
+ * comment, a class variable, a method category and a symbol-list dictionary each have
+ * a shape of their own, and a refactoring is the last kind — the only one that reaches
+ * into the refactoring engine.
  *
  * Nothing here imports vscode or a GCI session, so the planning rules in
  * `methodSlotPlan.ts` can be unit-tested as plain data.
@@ -219,11 +220,68 @@ export interface ClassVarEditUndoEntry extends UndoEntryBase {
   accessorAfter: MethodSlotState[];
 }
 
+/** One addressable method CATEGORY owner: one side of one class. The category names
+ *  themselves live on the entry, since a rename is only ever from one to another. */
+export interface MethodCategorySlot {
+  dict?: number | string;
+  className: string;
+  isMeta: boolean;
+}
+
+/**
+ * A renamed method category, reversed by renaming it back.
+ *
+ * Its own kind rather than a set of method edits: `renameCategory:to:` moves every method in
+ * the category in one message and recompiles none of them, so reversing it as N recompiles
+ * would churn N compiled methods to achieve the same end. GemStone REFUSES a rename onto a
+ * category that already exists, which is what makes the reversal exact — a rename is always
+ * one name becoming another, never two categories merging.
+ */
+export interface MethodCategoryUndoEntry extends UndoEntryBase {
+  kind: 'methodCategoryEdit';
+  slot: MethodCategorySlot;
+  /** The name the category had before — the target of the reversal. */
+  before: string;
+  /** The name the rename gave it, so a category renamed again since can be spotted. */
+  after: string;
+}
+
+/** Where a dictionary stood on the session's symbol list, and what it was called.
+ *  `index` is its 1-based position, which is what putting a removed one BACK needs:
+ *  appending it would silently reorder name resolution for every class it holds. */
+export interface DictionaryState {
+  present: boolean;
+  name: string;
+  index: number;
+}
+
+/**
+ * A dictionary renamed on, or removed from, the session's symbol list.
+ *
+ * One kind for both, because the reversal reads the same question either way — put the
+ * symbol list back the way it was — and the two differ only in which field changed.
+ *
+ * A REMOVAL is the case that needs `stashKey`. `symbolList remove:` drops the dictionary
+ * from the list but does not destroy it, so the very same object goes back with everything
+ * it holds; SessionTemps is what keeps it reachable in the meantime, exactly as it does for
+ * a removed class.
+ */
+export interface DictionaryUndoEntry extends UndoEntryBase {
+  kind: 'dictionaryEdit';
+  before: DictionaryState;
+  after: DictionaryState;
+  /** SessionTemps key holding the dictionary itself. Null for a rename, where the
+   *  dictionary never left the list and is found by its current name. */
+  stashKey: string | null;
+}
+
 export type UndoEntry =
   | MethodEditUndoEntry
   | ClassEditUndoEntry
   | ClassCommentUndoEntry
   | ClassVarEditUndoEntry
+  | MethodCategoryUndoEntry
+  | DictionaryUndoEntry
   | RefactoringUndoEntry;
 
 /** An entry as a recording site supplies it, before the stack assigns its id. Written as
@@ -234,6 +292,8 @@ export type NewUndoEntry =
   | Omit<ClassEditUndoEntry, 'id'>
   | Omit<ClassCommentUndoEntry, 'id'>
   | Omit<ClassVarEditUndoEntry, 'id'>
+  | Omit<MethodCategoryUndoEntry, 'id'>
+  | Omit<DictionaryUndoEntry, 'id'>
   | Omit<RefactoringUndoEntry, 'id'>;
 
 /** How a slot reads in a message: `Account>>#balance`, `Account class>>#new`. */
@@ -252,4 +312,9 @@ export function classSlotLabel(slot: ClassSlot): string {
  *  the reversal touches. */
 export function classVarSlotLabel(slot: ClassVarSlot): string {
   return `${slot.varName} in ${slot.className}`;
+}
+
+/** How a method-category slot reads in a message: `Account class`, `Account`. */
+export function methodCategorySlotLabel(slot: MethodCategorySlot): string {
+  return `${slot.className}${slot.isMeta ? ' class' : ''}`;
 }

@@ -114,6 +114,28 @@ function describe(e: unknown): string {
 }
 
 /**
+ * Read what `slots` hold now, for a caller that cannot say what its edit left.
+ *
+ * Most recording sites know the `after` state already — they compiled one method and have its
+ * source in hand — and pass it to `commit` free. Add Accessors does not: it SKIPS any selector
+ * the class already implements, so only the stone knows which of the pair are new. Answers
+ * `undefined` when the read fails, which the caller turns into "not undoable" rather than a
+ * guess.
+ */
+export function readMethodSlotState(
+  session: ActiveSession,
+  slots: MethodSlot[],
+): MethodSlotState[] | undefined {
+  try {
+    const states = captureMethodSlots(defaultQueryExecutorUsing(session), slots);
+    return states.length === slots.length ? states : undefined;
+  } catch (e: unknown) {
+    logInfo(`[undo] could not read what the edit left: ${describe(e)}`);
+    return undefined;
+  }
+}
+
+/**
  * The delete-a-method shape of the same thing, since every deletion records the identical
  * entry: one slot, gone.
  *

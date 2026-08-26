@@ -2,10 +2,12 @@
  * Putting the IDE back in step after an undo (issue #434).
  *
  * Shared by every reverser — a method edit, a class edit, a class comment, a class variable, a
- * refactoring — because the problem is the same whichever it was: the stone has changed
- * underneath whatever the user is looking at, and a pane or editor still showing the pre-undo
- * text is how an undo gets silently re-done on the next save. The Explorer, the open editors
- * and GemStone Search all cache what they show, so all three have to be told.
+ * method category, a symbol-list dictionary, a refactoring — because the problem is the same
+ * whichever it was: the stone has changed underneath whatever the user is looking at, and a
+ * pane or editor still showing the pre-undo text is how an undo gets silently re-done on the
+ * next save. The Explorer, the open editors and GemStone Search all cache what they show, so
+ * all three have to be told. A change to the SYMBOL LIST needs more than a pane refresh —
+ * see `refreshSymbolList`.
  */
 import * as vscode from 'vscode';
 
@@ -94,6 +96,27 @@ export async function refreshSearch(sessionId: number): Promise<void> {
     await vscode.commands.executeCommand(SEARCH_RESYNC_COMMAND, sessionId);
   } catch {
     /* GemStone Search may not be registered */
+  }
+}
+
+/**
+ * The command that tells the Explorer its SYMBOL LIST changed — a dictionary put back, or
+ * renamed back. Internal — deliberately not contributed in `package.json`.
+ */
+export const SYMBOL_LIST_CHANGED_COMMAND = 'gemstone.explorer.symbolListChanged';
+
+/**
+ * Rebuild the Explorer from the symbol list up, and tell everything else that watches it.
+ *
+ * A pane refresh is not enough here: the Dictionaries pane IS the symbol list, every
+ * dictionary below the changed one has shifted index, and the Explorer caches those indices
+ * as the key to everything it shows. Best-effort — the Explorer may not be active.
+ */
+export async function refreshSymbolList(sessionId: number): Promise<void> {
+  try {
+    await vscode.commands.executeCommand(SYMBOL_LIST_CHANGED_COMMAND, sessionId);
+  } catch {
+    /* the Explorer may not be active */
   }
 }
 

@@ -5,6 +5,8 @@ vi.mock('../reverseMethodEdit', () => ({ reverseMethodEdit: vi.fn() }));
 vi.mock('../reverseClassEdit', () => ({ reverseClassEdit: vi.fn() }));
 vi.mock('../reverseClassComment', () => ({ reverseClassComment: vi.fn() }));
 vi.mock('../reverseClassVarEdit', () => ({ reverseClassVarEdit: vi.fn() }));
+vi.mock('../reverseMethodCategoryEdit', () => ({ reverseMethodCategoryEdit: vi.fn() }));
+vi.mock('../reverseDictionaryEdit', () => ({ reverseDictionaryEdit: vi.fn() }));
 vi.mock('../undoUi', () => ({ refreshUndoUi: vi.fn() }));
 vi.mock('../../refactoring/refactoringUndoAvailability', () => ({
   checkRefactoringUndoAvailable: vi.fn(),
@@ -18,6 +20,8 @@ import { reverseMethodEdit } from '../reverseMethodEdit';
 import { reverseClassEdit } from '../reverseClassEdit';
 import { reverseClassComment } from '../reverseClassComment';
 import { reverseClassVarEdit } from '../reverseClassVarEdit';
+import { reverseMethodCategoryEdit } from '../reverseMethodCategoryEdit';
+import { reverseDictionaryEdit } from '../reverseDictionaryEdit';
 import { checkRefactoringUndoAvailable } from '../../refactoring/refactoringUndoAvailability';
 import { undoLastRefactoringCommand } from '../../refactoring/undoRefactoringCommand';
 import { undoLastCommand } from '../undoLastCommand';
@@ -86,6 +90,24 @@ const classVarEdit = (label: string): NewUndoEntry => ({
   accessorSlots: [],
   accessorBefore: [],
   accessorAfter: [],
+});
+
+const methodCategoryEdit = (label: string): NewUndoEntry => ({
+  kind: 'methodCategoryEdit',
+  sessionId: session.id,
+  label,
+  slot: { dict: 7, className: 'Account', isMeta: false },
+  before: 'accessing',
+  after: 'reading',
+});
+
+const dictionaryEdit = (label: string): NewUndoEntry => ({
+  kind: 'dictionaryEdit',
+  sessionId: session.id,
+  label,
+  before: { present: true, name: 'Reports', index: 2 },
+  after: { present: false, name: 'Reports', index: 2 },
+  stashKey: 'k1',
 });
 
 beforeEach(() => {
@@ -175,6 +197,39 @@ describe('undoLastCommand', () => {
     await undoLastCommand(sessions);
 
     expect(undoStackDepth(session.id)).toBe(1);
+  });
+
+  it('hands a method-category rename to its own reverser', async () => {
+    pushUndoEntry(methodCategoryEdit("Rename category 'accessing' to 'reading' in Account"));
+    vi.mocked(reverseMethodCategoryEdit).mockResolvedValue(true);
+
+    await undoLastCommand(sessions);
+
+    expect(reverseMethodCategoryEdit).toHaveBeenCalled();
+    expect(undoLastRefactoringCommand).not.toHaveBeenCalled();
+    expect(undoStackDepth(session.id)).toBe(0);
+  });
+
+  it('hands a symbol-list change to its own reverser', async () => {
+    pushUndoEntry(dictionaryEdit('Remove dictionary Reports'));
+    vi.mocked(reverseDictionaryEdit).mockResolvedValue(true);
+
+    await undoLastCommand(sessions);
+
+    expect(reverseDictionaryEdit).toHaveBeenCalled();
+    expect(undoStackDepth(session.id)).toBe(0);
+  });
+
+  it('leaves a category rename and a symbol-list change on the stack when they refuse', async () => {
+    pushUndoEntry(methodCategoryEdit('Rename category'));
+    vi.mocked(reverseMethodCategoryEdit).mockResolvedValue(false);
+    await undoLastCommand(sessions);
+    expect(undoStackDepth(session.id)).toBe(1);
+
+    pushUndoEntry(dictionaryEdit('Remove dictionary Reports'));
+    vi.mocked(reverseDictionaryEdit).mockResolvedValue(false);
+    await undoLastCommand(sessions);
+    expect(undoStackDepth(session.id)).toBe(2);
   });
 
   it('hands a refactoring to the engine reverser, which keeps its preview', async () => {

@@ -1,0 +1,46 @@
+/**
+ * The one call the rename-a-method-category command makes to become undoable (issue #434).
+ *
+ * The plainest recorder here: the state that matters is two names, and the caller knows both
+ * before it starts, so there is nothing to capture and no round trip to make.
+ *
+ *   const recording = beginMethodCategoryRename(session, slot, oldCategory);
+ *   ... rename the category ...
+ *   recording?.commit(newCategory);   // only once it landed
+ *
+ * A rename that would change nothing records nothing, and — as everywhere else — `commit` is
+ * called only after the rename has actually succeeded.
+ */
+import { ActiveSession } from '../sessionManager';
+import { logInfo } from '../gciLog';
+import { pushUndoEntry } from './undoStack';
+import { MethodCategorySlot, methodCategorySlotLabel, UndoEntry } from './undoTypes';
+
+export interface MethodCategoryRecording {
+  commit(after: string): UndoEntry | undefined;
+}
+
+export function beginMethodCategoryRename(
+  session: ActiveSession,
+  slot: MethodCategorySlot,
+  before: string,
+): MethodCategoryRecording {
+  return {
+    commit(after: string): UndoEntry | undefined {
+      if (after === before) {
+        logInfo(`[undo] not recording the category rename on ${slot.className}: same name`);
+        return undefined;
+      }
+      const entry = pushUndoEntry({
+        kind: 'methodCategoryEdit',
+        sessionId: session.id,
+        label: `Rename category '${before}' to '${after}' in ${methodCategorySlotLabel(slot)}`,
+        slot,
+        before,
+        after,
+      });
+      logInfo(`[undo] recorded #${entry.id} "${entry.label}"`);
+      return entry;
+    },
+  };
+}
