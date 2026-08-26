@@ -5,7 +5,7 @@
  * imports renderRenamePanelHtml from here.
  */
 import { RenameChange, changeLabel, isStructuralChange } from './renameInstVarPreview';
-import { lineDiff, DiffLine } from './lineDiff';
+import { lineDiff, DiffLine } from '../lineDiff';
 
 function escapeHtml(s: string): string {
   return s

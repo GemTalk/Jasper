@@ -31,6 +31,17 @@ export interface MethodHistoryPanelHandlers {
   diff: (index: number) => void | Promise<void>;
 }
 
+/** Re-render an open panel's version list in place (used when the method is
+ *  recompiled elsewhere — e.g. the editor is saved — so the panel picks up the new
+ *  current version). The webview preserves which rows are expanded and the scroll
+ *  position, so the diff being viewed is not lost. */
+export function refreshMethodHistoryPanel(
+  panel: vscode.WebviewPanel,
+  versions: MethodVersion[],
+): void {
+  void panel.webview.postMessage({ command: 'refresh', html: renderVersionRows(versions) });
+}
+
 /** Open the history viewer for a method. Returns the panel. */
 export function showMethodHistoryPanel(
   methodLabel: string,

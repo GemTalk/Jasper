@@ -13,7 +13,7 @@
  * via renderVersionRows.
  */
 import { MethodVersion, currentVersion } from './methodHistoryModel';
-import { lineDiff } from '../refactoring/lineDiff';
+import { lineDiff } from '../lineDiff';
 
 function escapeHtml(s: string): string {
   return s

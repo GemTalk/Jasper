@@ -153,4 +153,26 @@ describe('method history viewer behaviour', () => {
 
     expect(document.querySelectorAll('li.version')).toHaveLength(1);
   });
+
+  it('keeps an expanded version open across a refresh, so the diff is not lost', () => {
+    const { handle } = mount();
+    const oldRow = document.querySelector('li.version[data-index="1"]')!;
+    (oldRow.querySelector('.version-head') as HTMLElement).click();
+    expect(oldRow.querySelector('.detail')?.classList.contains('hidden')).toBe(false);
+
+    // A new version is compiled elsewhere: the list re-renders with a new current
+    // on top, but the row the user was viewing (index 1) stays expanded.
+    const withNewCurrent: MethodVersion[] = [
+      { ...versions[0], index: 3, isCurrent: true, source: 'bar\n  ^ 3' },
+      { ...versions[0], index: 2, isCurrent: false, source: 'bar\n  ^ 2' },
+      { ...versions[1], index: 1, isCurrent: false },
+    ];
+    handle.handleMessage({ command: 'refresh', html: renderVersionRows(withNewCurrent) });
+
+    const reRenderedOld = document.querySelector('li.version[data-index="1"]')!;
+    expect(reRenderedOld.querySelector('.detail')?.classList.contains('hidden')).toBe(false);
+    // The newly-added current version comes in collapsed.
+    const newCurrent = document.querySelector('li.version[data-index="3"]')!;
+    expect(newCurrent.querySelector('.detail')?.classList.contains('hidden')).toBe(true);
+  });
 });

@@ -104,7 +104,10 @@ import {
 } from './refactoring/classHistoryModel';
 import { showClassHistoryPanel } from './refactoring/classHistoryPanel';
 import { parseMethodHistory, MethodVersion } from './methodHistory/methodHistoryModel';
-import { showMethodHistoryPanel } from './methodHistory/methodHistoryPanel';
+import {
+  showMethodHistoryPanel,
+  refreshMethodHistoryPanel,
+} from './methodHistory/methodHistoryPanel';
 import { openMethodVersionDiff } from './methodHistory/methodHistoryDiff';
 import { installMethodHistory } from './methodHistory/methodHistoryServer';
 import { moveMethod } from './refactoring/moveMethodCommand';
@@ -618,6 +621,15 @@ async function confirmDroppedMethods(labels: string[]): Promise<boolean> {
     DELETE,
   );
   return choice === DELETE;
+}
+
+// One open method-history viewer, tracked so a compile elsewhere can refresh it.
+interface MethodHistoryPanelEntry {
+  sessionId: number;
+  className: string;
+  selector: string;
+  isMeta: boolean;
+  refresh: () => void;
 }
 
 type MethodCommandArg = MethodItem | { selector: string; isMeta: boolean } | undefined;
@@ -3432,8 +3444,8 @@ export class ExplorerController {
 
   // Show one method's recorded source history (context menu on a method row). The
   // history is captured in-stone as methods are edited in Jasper (the
-  // JasperMethodHistory helper, installed at login independent of the refactoring
-  // engine); this only reads and, on restore, recompiles a chosen version.
+  // JasperMethodHistory helper, installed at login; no server plugin required);
+  // this only reads and, on restore, recompiles a chosen version.
   async methodHistory(node: MethodItem): Promise<void> {
     const session = this.session();
     if (!session) return;
@@ -3441,9 +3453,9 @@ export class ExplorerController {
     if (className === undefined) return;
     const selector = node.info.selector;
     const isMeta = node.isMeta;
-    // Method history is independent of the refactoring engine — its helper is
-    // installed at login (SessionTemps, no plugin). Ensure it once more here in
-    // case that login install was skipped or failed; it is idempotent and cheap.
+    // The method-history helper is installed at login (SessionTemps, no plugin).
+    // Ensure it once more here in case that login install was skipped or failed;
+    // it is idempotent and cheap.
     installMethodHistory(session);
 
     const label = `${className}${isMeta ? ' class' : ''}>>${selector}`;
@@ -3474,7 +3486,7 @@ export class ExplorerController {
     };
     const currentSource = (): string => current.find((v) => v.isCurrent)?.source ?? '';
 
-    showMethodHistoryPanel(label, versions, {
+    const panel = showMethodHistoryPanel(label, versions, {
       restore: async (index) => {
         const v = sourceOf(index);
         if (!v) return { versions: current, error: `version [${index}] is no longer available` };
@@ -3507,6 +3519,45 @@ export class ExplorerController {
         await openMethodVersionDiff(label, `[${index}]`, v.source, currentSource());
       },
     });
+
+    // Keep the panel live: when this method is recompiled elsewhere (the editor is
+    // saved, the debugger commits an edit), re-fetch and re-render so the new
+    // current version appears — the webview preserves the diff being viewed. The
+    // entry is removed when the panel is closed.
+    const entry: MethodHistoryPanelEntry = {
+      sessionId: session.id,
+      className,
+      selector,
+      isMeta,
+      refresh: () => {
+        try {
+          current = parseMethodHistory(
+            queries.getMethodHistory(session, className, selector, isMeta),
+          );
+          refreshMethodHistoryPanel(panel, current);
+        } catch {
+          /* a closed/again-busy session just leaves the panel as-is */
+        }
+      },
+    };
+    this.methodHistoryPanels.push(entry);
+    panel.onDidDispose(() => {
+      this.methodHistoryPanels = this.methodHistoryPanels.filter((e) => e !== entry);
+    });
+  }
+
+  // Open method-history panels, so a compile elsewhere can refresh the matching
+  // one(s). Keyed by method identity; entries are removed on panel close.
+  private methodHistoryPanels: MethodHistoryPanelEntry[] = [];
+
+  // Refresh any open method-history panel for a just-(re)compiled method. Matched
+  // by session + class only (the compile event does not carry the selector); an
+  // unrelated method's panel simply re-fetches identical data, and the webview
+  // refresh is idempotent, so over-refreshing is harmless.
+  private refreshOpenMethodHistoryPanels(sessionId: number, className: string): void {
+    for (const entry of this.methodHistoryPanels) {
+      if (entry.sessionId === sessionId && entry.className === className) entry.refresh();
+    }
   }
 
   // Method categories for one side, with the computed SESSION row on top,
@@ -5469,6 +5520,10 @@ export class ExplorerController {
   // / class appears in the panels without a manual refresh.
 
   onExternalMethodCompiled(sessionId: number, className: string): void {
+    // Refresh any open method-history viewer for this method first — independent of
+    // what the explorer currently has selected (the panel outlives the selection).
+    this.refreshOpenMethodHistoryPanels(sessionId, className);
+
     const session = this.session();
     if (
       !session ||

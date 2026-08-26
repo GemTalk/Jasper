@@ -8,10 +8,10 @@ import { escapeString } from '../../queries/util';
 const HELPER_MISSING = 'Method history support is not available in this session.';
 
 // The JasperMethodHistory helper is installed at login and held in SessionTemps
-// (see methodHistory/methodHistoryServer.ts) — NOT in the symbol list, and NOT
-// tied to the refactoring engine — so it is resolved from SessionTemps rather than
-// named as a bareword (which would fail to COMPILE when absent). When missing we
-// answer the error envelope the client surfaces.
+// (see methodHistory/methodHistoryServer.ts) — NOT in the symbol list, and needs
+// no plugin — so it is resolved from SessionTemps rather than named as a bareword
+// (which would fail to COMPILE when absent). When missing we answer the error
+// envelope the client surfaces.
 function withHelper(body: string): string {
   return `| h |
 h := SessionTemps current at: #JasperMethodHistory otherwise: nil.

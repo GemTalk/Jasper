@@ -11,7 +11,7 @@
  * Kept free of any `vscode` dependency so it unit-tests directly.
  */
 import { ExtractChange, ExtractOutOfScope, extractChangeLabel } from './extractMethodPreview';
-import { lineDiff, DiffLine } from './lineDiff';
+import { lineDiff, DiffLine } from '../lineDiff';
 
 function escapeHtml(s: string): string {
   return s

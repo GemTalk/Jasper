@@ -64,8 +64,41 @@
     const handleMessage = function (msg) {
       if (!msg) return;
       if (msg.command === 'refresh' && list && typeof msg.html === 'string') {
+        // Preserve what the user is looking at across a refresh (e.g. a new version
+        // compiled in the editor): remember which version rows are expanded, by
+        // their stable data-index, and the scroll position, then restore them after
+        // re-rendering — so the diff on screen is not lost, only updated.
+        const expanded = {};
+        Array.prototype.slice.call(list.querySelectorAll('li.version')).forEach(function (li) {
+          const detail = li.querySelector('.detail');
+          if (detail && !detail.classList.contains('hidden')) {
+            expanded[li.getAttribute('data-index')] = true;
+          }
+        });
+        const view = doc.defaultView;
+        const scrollY = view && typeof view.scrollY === 'number' ? view.scrollY : 0;
+
         list.innerHTML = msg.html;
         wireRows();
+
+        Array.prototype.slice.call(list.querySelectorAll('li.version')).forEach(function (li) {
+          if (!expanded[li.getAttribute('data-index')]) return;
+          const detail = li.querySelector('.detail');
+          const btn = li.querySelector('.toggle');
+          if (detail) detail.classList.remove('hidden');
+          if (btn) {
+            btn.textContent = '▾';
+            btn.setAttribute('aria-expanded', 'true');
+          }
+        });
+        if (view && typeof view.scrollTo === 'function') {
+          try {
+            view.scrollTo(0, scrollY);
+          } catch (_e) {
+            /* scrollTo is unavailable in some hosts (e.g. jsdom) — the restored
+               expansion is what matters; a scroll reset is acceptable. */
+          }
+        }
       }
     };
     if (typeof doc.defaultView !== 'undefined' && doc.defaultView) {

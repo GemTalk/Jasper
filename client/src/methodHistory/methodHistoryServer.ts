@@ -5,10 +5,10 @@ import { logError, logInfo } from '../gciLog';
  * Server-side per-method history helper, installed the way the Jade-style
  * Transcript sink is (see transcriptSink.ts): at login a small class
  * (`JasperMethodHistory`) is compiled into the session and stashed in
- * `SessionTemps`, so it needs NO plugin, NO SystemUser, and works on a bare
- * stone. It deliberately does NOT live in the refactoring engine — method history
- * stands on its own, storing versions in a plain Dictionary in the user's
- * UserGlobals (the way Jadeite for Pharo keeps `RowanMethodHistory`).
+ * `SessionTemps`, so it needs NO plugin and NO SystemUser, and works on a bare
+ * stone. Method history stands entirely on its own, storing versions in a plain
+ * Dictionary in the user's UserGlobals (the way Jadeite for Pharo keeps
+ * `RowanMethodHistory`).
  *
  * The class itself is transient (defined in a throwaway SymbolDictionary, held
  * only via SessionTemps — recreated each login, never committed). Its STORE is
@@ -22,7 +22,8 @@ import { logError, logInfo } from '../gciLog';
  * time a method is edited (so the original survives), and `afterCompileIn:…`
  * records the newly-compiled source, stamped with the time and userId. The
  * selector is parsed with the BASE-kernel compiler (compile into throwaway
- * dictionaries) — no RBParser, so no dependency on the refactoring engine.
+ * dictionaries), so it needs no parser add-on and depends on nothing but the
+ * base image.
  */
 
 // Each entry is one class-side method's full Smalltalk source (pattern + body).
@@ -124,12 +125,12 @@ const CLASS_METHODS: string[] = [
    side and 'Foo class' for the class side, so the key encodes the side too."
   ^aBehavior name asString, '>>', aSelector asString`,
 
-  // --- selector parsing (base kernel; no RBParser) ----------------------------
+  // --- selector parsing (base-kernel compiler; no parser add-on) --------------
   `selectorFrom: source
   "The selector of the method source, parsed by compiling it into THROWAWAY
-   dictionaries with the base-kernel compiler (no RBParser, so no dependency on the
-   refactoring engine). nil if the source will not parse -- the real compile then
-   fails with the proper error, or the original is seeded on the next clean edit."
+   dictionaries with the base-kernel compiler (so it needs no parser add-on). nil if
+   the source will not parse -- the real compile then fails with the proper error,
+   or the original is seeded on the next clean edit."
   ^[ | meth |
      meth := UndefinedObject
        compileMethod: source
@@ -189,7 +190,7 @@ const CLASS_METHODS: string[] = [
   "anInteger as a two-digit, zero-padded decimal string (e.g. 7 -> '07')."
   ^(anInteger < 10 ifTrue: ['0'] ifFalse: ['']), anInteger printString`,
 
-  // --- JSON string escaping (inlined; no GsRefactoringJson) --------------------
+  // --- JSON string escaping (inlined; base kernel only) --------------------
   `hex2: anInteger
   | digits |
   digits := '0123456789abcdef'.

@@ -11,10 +11,10 @@ import { parseMethodHistory } from '../methodHistoryModel';
 
 /**
  * Automatic GCI integration test for per-method history, over the real GCI
- * transport. This deliberately does NOT gate on the refactoring engine — method
+ * transport. This deliberately does NOT require any server plugin — method
  * history stands on its own: the JasperMethodHistory helper is installed via
- * SessionTemps (installMethodHistory) with no plugin, so the whole flow must work
- * on a BARE stone. It exercises the real capture path (queries.compileMethod
+ * SessionTemps (installMethodHistory), so the whole flow must work on a BARE
+ * stone. It exercises the real capture path (queries.compileMethod
  * brackets each compile with the helper) and the read path (queries.getMethodHistory).
  *
  * Fully transient: the helper class lives in SessionTemps and the store writes are
@@ -42,7 +42,7 @@ describe('method history (integration)', () => {
     );
   };
 
-  it('installs its helper without the refactoring engine', () => {
+  it('installs its helper on a bare stone', () => {
     expect(installMethodHistory(session())).toBe(true);
     // A second install is idempotent (already-installed short-circuit), not an error.
     expect(installMethodHistory(session())).toBe(true);

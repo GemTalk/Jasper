@@ -19,7 +19,7 @@ import {
   OutOfScopeCounts,
   SkippedMethod,
 } from './renameMethodPreview';
-import { lineDiff, DiffLine } from './lineDiff';
+import { lineDiff, DiffLine } from '../lineDiff';
 
 function escapeHtml(s: string): string {
   return s
