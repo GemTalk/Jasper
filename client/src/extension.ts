@@ -107,6 +107,7 @@ import { openTutorialNotebook } from './tutorialNotebook';
 import { GemStoneDebugSession } from './gemstoneDebugSession';
 import { InspectorTreeProvider, InspectorNode } from './inspectorTreeProvider';
 import { registerGemStoneExplorer } from './gemstoneExplorer';
+import { registerMethodHistoryDiff } from './methodHistory/methodHistoryDiff';
 import { renameTemporaryCommand } from './refactoring/renameTemporaryCommand';
 import { convertTempToInstVarCommand } from './refactoring/instVarStructureCommand';
 import { extractMethodCommand } from './refactoring/extractMethodCommand';
@@ -800,6 +801,11 @@ export function activate(context: vscode.ExtensionContext) {
       isCaseSensitive: true,
     }),
   );
+
+  // ── Method-history side-by-side diff provider ───────────
+  // Serves the read-only virtual documents behind "Diff ⇄ current" in the method
+  // history viewer.
+  registerMethodHistoryDiff(context);
 
   // ── Workspace Symbol Provider (Cmd+T class search) ──────
   const symbolProvider = new GemStoneWorkspaceSymbolProvider(sessionManager);

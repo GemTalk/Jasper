@@ -76,6 +76,7 @@ client/src/**
 !client/src/refactoring/renameMethodPanelView.js
 !client/src/refactoring/renameClassEditorView.js
 !client/src/refactoring/classHistoryPanelView.js
+!client/src/methodHistory/methodHistoryPanelView.js
 !client/src/refactoring/changeSignatureEditorView.js
 !client/src/refactoring/instVarRefactorPanelView.js
 !client/src/omniSearch/omniSearchView.js

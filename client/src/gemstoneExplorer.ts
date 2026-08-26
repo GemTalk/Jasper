@@ -103,6 +103,9 @@ import {
   parseRemoveResult,
 } from './refactoring/classHistoryModel';
 import { showClassHistoryPanel } from './refactoring/classHistoryPanel';
+import { parseMethodHistory, MethodVersion } from './methodHistory/methodHistoryModel';
+import { showMethodHistoryPanel } from './methodHistory/methodHistoryPanel';
+import { openMethodVersionDiff } from './methodHistory/methodHistoryDiff';
 import { moveMethod } from './refactoring/moveMethodCommand';
 
 const VIEW_DICTS = 'gemstoneExplorerDicts';
@@ -3426,6 +3429,81 @@ export class ExplorerController {
     });
   }
 
+  // Show one method's recorded source history (context menu on a method row). The
+  // history is captured in-stone as methods are edited in Jasper (see
+  // GsMethodHistory); this only reads and, on restore, recompiles a chosen version.
+  async methodHistory(node: MethodItem): Promise<void> {
+    const session = this.session();
+    if (!session) return;
+    const className = this.state.className;
+    if (className === undefined) return;
+    const selector = node.info.selector;
+    const isMeta = node.isMeta;
+    if (!(await this.ensureRbSupport('Viewing method history'))) return;
+
+    const label = `${className}${isMeta ? ' class' : ''}>>${selector}`;
+    const dict = this.state.dictIndex ?? this.state.dictName;
+
+    let versions: MethodVersion[];
+    try {
+      versions = parseMethodHistory(queries.getMethodHistory(session, className, selector, isMeta));
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      void vscode.window.showErrorMessage(`Method history failed: ${msg}`);
+      return;
+    }
+    if (versions.length === 0) {
+      void vscode.window.showInformationMessage(
+        `No recorded history for ${label} yet. History is captured in this stone as you edit ` +
+          'methods in Jasper.',
+      );
+      return;
+    }
+
+    // The latest list drives index→source lookup for restore/diff; a restore
+    // appends a new version, so refresh this on every restore.
+    let current = versions;
+    const sourceOf = (index: number): { source: string; category: string } | undefined => {
+      const v = current.find((x) => x.index === index);
+      return v ? { source: v.source, category: v.category } : undefined;
+    };
+    const currentSource = (): string => current.find((v) => v.isCurrent)?.source ?? '';
+
+    showMethodHistoryPanel(label, versions, {
+      restore: async (index) => {
+        const v = sourceOf(index);
+        if (!v) return { versions: current, error: `version [${index}] is no longer available` };
+        try {
+          // Recompiling routes through the ordinary compile path, which records
+          // this as a new (current) version — so the restore is itself undoable.
+          queries.compileMethod(
+            session,
+            className,
+            isMeta,
+            v.category,
+            v.source,
+            EXPLORER_METHOD_ENVIRONMENT,
+            dict,
+          );
+        } catch (e: unknown) {
+          return { versions: current, error: e instanceof Error ? e.message : String(e) };
+        }
+        current = parseMethodHistory(
+          queries.getMethodHistory(session, className, selector, isMeta),
+        );
+        // The installed method changed — re-render the Methods pane so its
+        // session-method indicators reflect the recompiled source.
+        this.methodProvider.refresh();
+        return { versions: current };
+      },
+      diff: async (index) => {
+        const v = sourceOf(index);
+        if (!v) return;
+        await openMethodVersionDiff(label, `[${index}]`, v.source, currentSource());
+      },
+    });
+  }
+
   // Method categories for one side, with the computed SESSION row on top,
   // plus any just-created (still empty) categories from the + button.
   methodCategories(isMeta: boolean, filter?: string): MethodCategoryItem[] {
@@ -6286,6 +6364,14 @@ export function registerGemStoneExplorer(
         });
       },
     ),
+    // Show one method's recorded source history (context menu on a method row).
+    vscode.commands.registerCommand('gemstone.explorer.methodHistory', (node?: MethodItem) => {
+      if (!(node instanceof MethodItem)) return;
+      void ctl.methodHistory(node).catch((e: unknown) => {
+        const msg = e instanceof Error ? e.message : String(e);
+        void vscode.window.showErrorMessage(`Method history failed: ${msg}`);
+      });
+    }),
     // Insert an empty superclass above a class (context menu on a class row or hierarchy node).
     vscode.commands.registerCommand(
       'gemstone.explorer.insertSuperclass',

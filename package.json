@@ -1647,6 +1647,12 @@
         "icon": "$(history)"
       },
       {
+        "command": "gemstone.explorer.methodHistory",
+        "title": "Method History…",
+        "category": "GemStone",
+        "icon": "$(history)"
+      },
+      {
         "command": "gemstone.explorer.insertSuperclass",
         "title": "Insert Superclass…",
         "category": "GemStone",
@@ -1996,6 +2002,10 @@
         },
         {
           "command": "gemstone.explorer.classHistory",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.methodHistory",
           "when": "false"
         },
         {
@@ -2554,6 +2564,11 @@
           "command": "gemstone.explorer.changeSignature",
           "when": "view == gemstoneExplorerMethods && viewItem =~ /explorerMethod/ && gemstone.rbSupportAvailable",
           "group": "3_refactor@3"
+        },
+        {
+          "command": "gemstone.explorer.methodHistory",
+          "when": "view == gemstoneExplorerMethods && viewItem =~ /explorerMethod/ && gemstone.rbSupportAvailable",
+          "group": "3_refactor@4"
         },
         {
           "command": "gemstone.explorer.pushUpMethod",

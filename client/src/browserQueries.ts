@@ -188,6 +188,10 @@ import {
   revertClassToVersion as sharedRevertClassToVersion,
   removeClassVersion as sharedRemoveClassVersion,
 } from './refactoring/queries/classHistory';
+import {
+  getMethodHistory as sharedGetMethodHistory,
+  removeMethodHistory as sharedRemoveMethodHistory,
+} from './methodHistory/queries/methodHistory';
 import { globalNameInUse as sharedGlobalNameInUse } from './refactoring/queries/globalNameInUse';
 import { isKernelClass as sharedIsKernelClass } from './refactoring/queries/isKernelClass';
 import {
@@ -1893,6 +1897,27 @@ export function revertClassToVersion(
   index: number,
 ): string {
   return sharedRevertClassToVersion(defaultQueryExecutorUsing(session), className, index);
+}
+
+// Per-method source history (in-stone, per-user, this-stone-only, read-only) and
+// forgetting a method's recorded history. Restoring a version is not a query here:
+// it is just a recompile through the ordinary compile path (which records it).
+export function getMethodHistory(
+  session: ActiveSession,
+  className: string,
+  selector: string,
+  isMeta: boolean,
+): string {
+  return sharedGetMethodHistory(defaultQueryExecutorUsing(session), className, selector, isMeta);
+}
+
+export function removeMethodHistory(
+  session: ActiveSession,
+  className: string,
+  selector: string,
+  isMeta: boolean,
+): string {
+  return sharedRemoveMethodHistory(defaultQueryExecutorUsing(session), className, selector, isMeta);
 }
 
 export function globalNameInUse(session: ActiveSession, name: string): boolean {
