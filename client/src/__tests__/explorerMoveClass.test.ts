@@ -46,8 +46,20 @@ function makeController(session: ActiveSession | null = { id: 1 } as ActiveSessi
   ctl.state.dictIndex = 1;
   vi.spyOn(ctl.categoryProvider, 'refresh').mockImplementation(() => {});
   vi.spyOn(ctl.classProvider, 'refresh').mockImplementation(() => {});
+  vi.spyOn(ctl.methodProvider, 'refresh').mockImplementation(() => {});
+  const categoryReveal = vi.fn().mockResolvedValue(undefined);
+  ctl.setViews({
+    dict: { reveal: vi.fn().mockResolvedValue(undefined) },
+    category: { reveal: categoryReveal },
+    klass: { reveal: vi.fn().mockResolvedValue(undefined) },
+    hierarchy: { reveal: vi.fn().mockResolvedValue(undefined) },
+    method: { reveal: vi.fn().mockResolvedValue(undefined) },
+  } as never);
   // revealClass is the pane cascade; stubbed so these tests assert WHAT the move reveals rather
-  // than re-exercising the whole refresh path (covered by its own tests).
+  // than re-exercising the whole refresh path (covered by its own tests). The stub keeps the one
+  // side effect the callers depend on: revealClass REFETCHES the dictionary's class categories,
+  // and the category selection that follows a move reads them to decide whether the class is
+  // still in view.
   const reveal = vi
     .spyOn(
       ctl as unknown as {
@@ -55,8 +67,11 @@ function makeController(session: ActiveSession | null = { id: 1 } as ActiveSessi
       },
       'revealClass',
     )
-    .mockResolvedValue();
-  return { ctl, reveal };
+    .mockImplementation(async (_d: string, i: number) => {
+      (ctl as unknown as { classCategoryEntries: unknown[] }).classCategoryEntries =
+        queries.getClassesWithCategory({} as ActiveSession, i);
+    });
+  return { ctl, reveal, categoryReveal };
 }
 
 beforeEach(() => {
@@ -233,6 +248,60 @@ describe('ExplorerController.moveClassToCategory', () => {
     await ctl.moveClassToCategory();
 
     expect(reveal).toHaveBeenCalledWith('UserGlobals', 1, 'Account');
+  });
+
+  it('SELECTS the category the user named, which revealClass alone does not', async () => {
+    // revealClass deliberately leaves a class's own category unpinned; this is not an
+    // incidental reveal, so the category the user chose is the one to highlight.
+    const { ctl, categoryReveal } = makeController();
+    (ctl as unknown as { classCategoryEntries: unknown[] }).classCategoryEntries = [
+      entry('Account', 'Banking'),
+    ];
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValue('Printing' as never);
+    vi.mocked(queries.getClassesWithCategory)
+      .mockReturnValueOnce([entry('Account', 'Banking')])
+      .mockReturnValue([entry('Account', 'Printing')]);
+
+    await ctl.moveClassToCategory();
+
+    expect(ctl.state.classCategory).toBe('Printing');
+    expect(categoryReveal).toHaveBeenCalledWith(
+      expect.objectContaining({ fullPath: 'Printing' }),
+      expect.objectContaining({ select: true }),
+    );
+  });
+
+  it('keeps the class selected, since it is inside the category being selected', async () => {
+    const { ctl } = makeController();
+    (ctl as unknown as { classCategoryEntries: unknown[] }).classCategoryEntries = [
+      entry('Account', 'Banking'),
+    ];
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValue('Printing' as never);
+    vi.mocked(queries.getClassesWithCategory)
+      .mockReturnValueOnce([entry('Account', 'Banking')])
+      .mockReturnValue([entry('Account', 'Printing')]);
+
+    await ctl.moveClassToCategory();
+
+    expect(ctl.state.className).toBe('Account');
+  });
+
+  it('selects the LAST segment of a dash-segmented category path', async () => {
+    const { ctl, categoryReveal } = makeController();
+    (ctl as unknown as { classCategoryEntries: unknown[] }).classCategoryEntries = [
+      entry('Account', 'Banking'),
+    ];
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValue('Reports-Monthly' as never);
+    vi.mocked(queries.getClassesWithCategory)
+      .mockReturnValueOnce([entry('Account', 'Banking')])
+      .mockReturnValue([entry('Account', 'Reports-Monthly')]);
+
+    await ctl.moveClassToCategory();
+
+    expect(categoryReveal).toHaveBeenCalledWith(
+      expect.objectContaining({ segment: 'Monthly', fullPath: 'Reports-Monthly' }),
+      expect.anything(),
+    );
   });
 
   it('offers a still-empty category from the + button — filing a class is what makes it real', async () => {

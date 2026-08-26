@@ -5027,8 +5027,24 @@ export class ExplorerController {
     // The class is still in this dictionary but under a different label, so the Class Categories
     // pane has a new row (or has lost one) and the Classes pane may be filtered to the category
     // the class just left. Revealing it refetches the categories and drops a filter that would
-    // now hide it, while keeping a deliberate filter the class is still inside.
+    // now hide it.
     await this.revealClass(dictName, dictIndex, className);
+
+    // Then select the category the user just named. `revealClass` deliberately does NOT pin the
+    // pane to a revealed class's own category -- doing that after a rename made the rest of the
+    // dictionary look like it had vanished -- but this is not an incidental reveal: the user
+    // chose this category by name, so highlighting it is the answer to what they asked for. The
+    // class stays selected, since it is inside the category being selected.
+    const segment = picked.split('-').pop() ?? picked;
+    const catItem = new ClassCategoryItem(segment, picked, false);
+    this.selectClassCategory(catItem);
+    this.categoryProvider.refresh();
+    try {
+      await this.views?.category.reveal(catItem, { select: true, expand: true });
+    } catch {
+      /* a category row that is not in the rebuilt tree just leaves the pane as it is */
+    }
+
     notifyUndoable(
       `Filed ${className} under '${picked}'`,
       recording?.commit(`Move class ${className} to category ${picked}`),
