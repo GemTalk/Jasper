@@ -41,9 +41,10 @@ const banChain = (matcher, message, negatedMessage) =>
 // rules below catch it at lint time instead.
 //
 // Building a session outside the harness takes three things: a library
-// instance, a login call, and credentials. Each is banned separately, so
-// working around one selector (by renaming the receiver, say) still trips
-// another. Committing is deliberately *not* banned -- the harness already
+// instance, a login call, and credentials. Each is banned separately, and none
+// of the selectors keys on a receiver's name, so renaming or re-routing the
+// receiver does not shake any of them off -- and working around one still
+// trips another. Committing is deliberately *not* banned -- the harness already
 // refuses it, in the stone, with a message naming itself.
 const OWN_GCI_LIBRARY =
   'Prefer the loaded library on the test context (`testContext.gciLibrary`). A second GciLibrary instance is the first half of a session the harness never armed.';
@@ -252,21 +253,34 @@ export default tseslint.config(
           message: RAW_GCI_LOGIN,
         },
         {
-          // Keyed on the receiver, not the bare name: `login` is also the
-          // harness's own re-login on the test context, and `testContext.login`
-          // / `testContext.login()` / a destructured `login()` are all
-          // legitimate. Only a `login` sent to the GciLibrary itself is the
-          // escape hatch.
-          selector:
-            "CallExpression[callee.object.name=/^gci(Library)?$/][callee.property.name='login']",
+          // Keyed on the method and its arity, not the receiver's name: a
+          // receiver-name selector only reads `callee.object.name`, which does
+          // not exist on a `MemberExpression` receiver, so it would miss
+          // `testContext.gciLibrary.login(...)` -- the most natural spelling
+          // inside a `useIntegrationTest` callback -- along with every receiver
+          // not spelled `gci`/`gciLibrary`. Arity is what actually identifies
+          // it: `GciLibrary.login` takes exactly four arguments, while the
+          // logins a test may legitimately call take other counts. Both member and bare
+          // call forms, so pulling `login` out of the library into a local
+          // first does not slip past.
+          selector: "CallExpression[callee.property.name='login'][arguments.length=4]",
           message: GCI_LIBRARY_LOGIN,
         },
         {
-          // The sharpest of the four and the hardest to work around: there is
-          // no login without a password, whatever the receiver is called. The
+          selector: "CallExpression[callee.name='login'][arguments.length=4]",
+          message: GCI_LIBRARY_LOGIN,
+        },
+        {
+          // The password by its env-var name, for a test that reads the
+          // environment directly instead of going through the helper. The
           // other VITE_GEMSTONE_* values stay allowed -- tests read the gem NRS
           // and library path for reasons that have nothing to do with logging in.
           selector: "MemberExpression[property.name='VITE_GEMSTONE_PASSWORD']",
+          message: LOGIN_CREDENTIALS,
+        },
+        {
+          // The password by its other two names. Property-name selectors, so the receiver is irrelevant.
+          selector: 'MemberExpression[property.name=/^(gsPassword|GS_PASSWORD)$/]',
           message: LOGIN_CREDENTIALS,
         },
         {
