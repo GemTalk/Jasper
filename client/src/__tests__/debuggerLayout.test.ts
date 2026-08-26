@@ -128,6 +128,35 @@ describe('planDebuggerGrid', () => {
     expect(plan.layout.groups[0].size).toBeUndefined();
   });
 
+  it('never hands a sibling a negative size, however the rounding falls', () => {
+    // Rounding each sibling's share independently and dumping the accumulated
+    // error on the last one gives [1,1,1,1,3,-1] here: it sums to 6, so a check
+    // on the total sees nothing wrong, and a negative group size reaches
+    // setEditorLayout. Largest-remainder allocation can't produce one.
+    const sizes = (plan: EditorGroupLayout): number[] => plan.groups.map((g) => g.size!);
+    const plan = planDebuggerGrid(
+      { orientation: HORIZONTAL, groups: [1, 1, 1, 1, 1, 1].map((size) => ({ size })) },
+      5,
+    )!;
+    expect(sizes(plan.layout).every((v) => v >= 0)).toBe(true);
+    expect(weightOf(plan.layout.groups)).toBe(6); // still adds up exactly
+
+    // Same guarantee across a spread of shapes, including the ones where the
+    // debugger's column is first, last, and in the middle.
+    for (const count of [2, 3, 5, 8]) {
+      for (let panel = 1; panel <= count; panel++) {
+        const grid = {
+          orientation: HORIZONTAL,
+          groups: Array.from({ length: count }, (_, i) => ({ size: 1 + ((i * 37) % 200) })),
+        };
+        const total = weightOf(grid.groups);
+        const p = planDebuggerGrid(grid, panel)!;
+        expect(sizes(p.layout).every((v) => v >= 0)).toBe(true);
+        expect(weightOf(p.layout.groups)).toBe(total);
+      }
+    }
+  });
+
   it("leaves the caller's layout untouched (planning is pure)", () => {
     const current = afterPanelOpened();
     const before = JSON.stringify(current);

@@ -1058,20 +1058,38 @@ export class DebuggerPanel {
   private sourceColumn: vscode.ViewColumn | undefined;
 
   /**
+   * The panel's column as last reported while it was alive.
+   *
+   * A disposed WebviewPanel doesn't answer questions about itself — VS Code's
+   * `viewColumn` getter throws `Webview is disposed` from the moment dispose()
+   * sets its flag, which is BEFORE onDidDispose fires. So anything running
+   * during or after teardown (dispose itself, and the next debugger reading this
+   * panel out of the registry) has to work from a remembered value.
+   */
+  private cachedPanelColumn: vscode.ViewColumn | undefined;
+
+  /**
    * Where the debugger's two halves are RIGHT NOW.
    *
    * The panel knows its own column and keeps knowing it across renumbering, so
-   * it's the anchor. The source group is the pair's second leaf, which is always
-   * the column straight after the panel's — a live source editor confirms it
-   * when there is one.
+   * it's the anchor — until it's disposed, after which the last value it gave us
+   * is all there is. The source group is the pair's second leaf, which is always
+   * the column straight after the panel's; a live source editor confirms it when
+   * there is one.
    */
   private get panelGroupColumn(): vscode.ViewColumn | undefined {
-    return this.panel.viewColumn;
+    if (!this.disposed) {
+      const live = this.panel.viewColumn;
+      if (live !== undefined) this.cachedPanelColumn = live;
+    }
+    return this.cachedPanelColumn;
   }
   private get sourceGroupColumn(): vscode.ViewColumn | undefined {
     const live = this.sourceEditor?.viewColumn;
     if (live !== undefined) return live;
-    const panel = this.panel.viewColumn;
+    // Through the getter, never `this.panel` directly: this is read during
+    // teardown, when the panel throws rather than answering.
+    const panel = this.panelGroupColumn;
     if (panel !== undefined) return panel + 1;
     return this.sourceColumn;
   }
@@ -1303,7 +1321,7 @@ export class DebuggerPanel {
     // adjacent group), then reshape that group into the panel/source pair. A
     // second halt joins the column the first one carved instead of growing the
     // grid by an error.
-    const shared = DebuggerPanel.liveDebuggerColumns();
+    const shared = DebuggerPanel.liveDebuggerColumns(session.id);
     const panelColumn = shared?.panelColumn ?? vscode.window.tabGroups.all.length + 1;
     const panel = vscode.window.createWebviewPanel(
       'gemstoneEnhancedDebugger',
@@ -1314,12 +1332,15 @@ export class DebuggerPanel {
     const icon = DebuggerPanel.tabIcon();
     if (icon) panel.iconPath = icon;
     const debugger_ = new DebuggerPanel(panel, session, gsProcess, errorMessage, onComplete);
+    // Seed the remembered column from the one we asked for, so teardown has an
+    // answer even for a panel that closed before anything read it off the panel.
+    debugger_.cachedPanelColumn = panelColumn;
     debugger_.sourceColumn = shared?.sourceColumn ?? panelColumn + 1;
     // The source group must exist (and be sized) before anything opens into it;
     // the webview's `ready` arrives asynchronously, so every source open awaits
     // this rather than racing it. A second halt joins the column the first one
     // carved, so it neither carves nor re-fits.
-    debugger_.gridReady = shared ? Promise.resolve() : debugger_.carveDebuggerColumn();
+    debugger_.gridReady = shared ? shared.gridReady : debugger_.carveDebuggerColumn();
     if (shared) debugger_.fitPending = false;
     if (!DebuggerPanel.panels.has(session.id)) {
       DebuggerPanel.panels.set(session.id, new Set());
@@ -1351,6 +1372,16 @@ export class DebuggerPanel {
     this.sessionId = session.id;
     this.panel.webview.html = this.getHtml();
     this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
+    // A panel that moves column updates the remembered value while it still can
+    // answer, so teardown never has to ask a disposed panel where it was.
+    this.panel.onDidChangeViewState(
+      () => {
+        if (!this.disposed)
+          this.cachedPanelColumn = this.panel.viewColumn ?? this.cachedPanelColumn;
+      },
+      null,
+      this.disposables,
+    );
     this.panel.webview.onDidReceiveMessage(
       (msg: DebuggerInbound) => this.handleMessage(msg),
       null,
@@ -3604,9 +3635,22 @@ export class DebuggerPanel {
     this.tintedEditors.add(editor);
   }
 
-  /** The live column of the companion source group (survives ViewColumn renumbering). */
-  private get liveSourceColumn(): number | undefined {
-    return this.sourceGroupColumn;
+  /**
+   * The debugger's two columns — but only while the source really is the leaf
+   * immediately after the panel's own.
+   *
+   * Everything that RESIZES goes through this. The pair is identified by column
+   * arithmetic (see locatePair), which is sound as long as the two panes are the
+   * ones the carve made adjacent. If the carve declined an unfamiliar grid, or
+   * the source ended up somewhere else entirely, that arithmetic would name some
+   * pre-existing group of the user's as "the panel" and resize it. Requiring
+   * adjacency to our own column is what makes that impossible.
+   */
+  private get ourPairColumns(): { panelColumn: number; sourceColumn: number } | undefined {
+    const panelColumn = this.panelGroupColumn;
+    const sourceColumn = this.sourceGroupColumn;
+    if (panelColumn === undefined || sourceColumn !== panelColumn + 1) return undefined;
+    return { panelColumn, sourceColumn };
   }
 
   /**
@@ -3663,7 +3707,9 @@ export class DebuggerPanel {
       await this.gridReady;
       const layout =
         await vscode.commands.executeCommand<EditorGroupLayout>('vscode.getEditorLayout');
-      const sizes = columnPaneSizes(layout, this.sourceGroupColumn);
+      const pair = this.ourPairColumns;
+      if (!pair) return;
+      const sizes = columnPaneSizes(layout, pair.sourceColumn);
       if (!sizes) return;
       // Group height minus the webview's viewport = the tab bar and friends.
       const chrome = Math.max(0, sizes.panel - viewport);
@@ -3674,7 +3720,7 @@ export class DebuggerPanel {
       const asked = DebuggerPanel.savedSourceRatio ?? DEFAULT_SOURCE_RATIO;
       const fitted = fitSourceRatio(sizes.total, asked, wanted);
       if (Math.abs(fitted * sizes.total - sizes.source) < 1) return; // already there
-      if (!setSourceRatioInLayout(layout, this.sourceGroupColumn, fitted)) return;
+      if (!setSourceRatioInLayout(layout, pair.sourceColumn, fitted)) return;
       await vscode.commands.executeCommand('vscode.setEditorLayout', layout);
     } catch {
       /* best-effort: the panel is still usable, just not resized */
@@ -3686,19 +3732,28 @@ export class DebuggerPanel {
    * second halt shares it instead of carving another one (`panels` holds every
    * live panel; two halts in one session can be open at once).
    */
-  private static liveDebuggerColumns():
-    { panelColumn: vscode.ViewColumn; sourceColumn: vscode.ViewColumn } | undefined {
-    for (const set of DebuggerPanel.panels.values()) {
-      for (const dbg of set) {
-        // Read them off the open panel, never from what it recorded when it
-        // opened: columns renumber underneath us, and a stale pair sends the
-        // second debugger into the FIRST one's source group — the panel and the
-        // source editor stacked in one half of the column.
-        const panelColumn = dbg.panelGroupColumn;
-        const sourceColumn = dbg.sourceGroupColumn;
-        if (panelColumn !== undefined && sourceColumn !== undefined) {
-          return { panelColumn, sourceColumn };
-        }
+  private static liveDebuggerColumns(
+    sessionId: number,
+  ):
+    | { panelColumn: vscode.ViewColumn; sourceColumn: vscode.ViewColumn; gridReady: Promise<void> }
+    | undefined {
+    // This session's panels only. Two sessions are two stones' worth of work,
+    // and sharing a column across them would also let one debugger's teardown
+    // close the other's tabs. (Only one session is supported today; this keeps
+    // the answer right for when that changes.)
+    for (const dbg of DebuggerPanel.panels.get(sessionId) ?? []) {
+      if (dbg.disposed) continue; // a panel on its way out has no column to lend
+      // Read them off the open panel, never from what it recorded when it
+      // opened: columns renumber underneath us, and a stale pair sends the
+      // second debugger into the FIRST one's source group — the panel and the
+      // source editor stacked in one half of the column.
+      const panelColumn = dbg.panelGroupColumn;
+      const sourceColumn = dbg.sourceGroupColumn;
+      if (panelColumn !== undefined && sourceColumn !== undefined) {
+        // Its carve, too: the column pair exists only once that has finished,
+        // and a second halt arriving mid-carve must wait for the same thing the
+        // first one is waiting for rather than assume the split is already there.
+        return { panelColumn, sourceColumn, gridReady: dbg.gridReady };
       }
     }
     return undefined;
@@ -3717,11 +3772,12 @@ export class DebuggerPanel {
   }
 
   private async captureSourceRatio(): Promise<void> {
-    if (this.disposed || this.liveSourceColumn === undefined) return;
+    const pair = this.ourPairColumns;
+    if (this.disposed || !pair) return;
     try {
       const layout =
         await vscode.commands.executeCommand<EditorGroupLayout>('vscode.getEditorLayout');
-      const ratio = sourceRatioFromLayout(layout, this.liveSourceColumn);
+      const ratio = sourceRatioFromLayout(layout, pair.sourceColumn);
       if (ratio !== undefined) DebuggerPanel.savedSourceRatio = ratio;
     } catch {
       /* best-effort sampling */
@@ -4565,14 +4621,19 @@ export class DebuggerPanel {
 
   private dispose(): void {
     this.disposed = true; // an in-flight Nb step/trim continuation must skip the dead panel
-    // Capture the pair's columns before the tabs start closing — once the panel
-    // is gone it can no longer report where it was.
+    // Leave the registry FIRST. This method runs as an event listener, so
+    // anything it throws is swallowed by VS Code and the rest of it is skipped —
+    // and a panel left in `panels` after that is not merely leaked state: the
+    // next halt reads it while deciding where to open, and fails there instead.
+    // Whatever else goes wrong below, it goes wrong for this panel alone.
+    DebuggerPanel.panels.get(this.sessionId)?.delete(this);
+    // Capture the pair's columns before the tabs start closing — the panel is
+    // already disposed, so this is the remembered value, not a live read.
     const ourColumns = [this.panelGroupColumn, this.sourceGroupColumn];
     if (this.layoutSampler) {
       clearInterval(this.layoutSampler);
       this.layoutSampler = undefined;
     }
-    DebuggerPanel.panels.get(this.sessionId)?.delete(this);
     // Release any pinned revert originals so closing the debugger never leaks the
     // session's export set.
     this.clearUndoState();
@@ -4594,8 +4655,7 @@ export class DebuggerPanel {
     DebuggerPanel.refreshSourceCodeLenses();
     // Close the companion source editor and any enhanced inspectors this debugger
     // opened — they're artifacts of this debugger and shouldn't outlive it.
-    this.closeSourceEditors();
-    DebuggerPanel.closeEmptyGroups(ourColumns);
+    void DebuggerPanel.closeEmptyGroups(ourColumns, this.closeSourceEditors());
     // Drop this panel's source tabs from the persisted orphan set (it was already
     // removed from `panels` above, so the union now excludes it). A clean dispose
     // thus leaves nothing to reap; only a window-close-with-debugger-open does.
@@ -4623,19 +4683,26 @@ export class DebuggerPanel {
    * group gets nested inside them rather than opening as a plain column, which
    * is the shape that used to defeat the split entirely.
    *
-   * Deferred a tick so VS Code has finished removing our tabs; only ever closes
-   * a group that is genuinely empty, so anything the user put there survives.
+   * Waits on the tab closes themselves rather than a timer. A group is only
+   * empty once its tabs have actually gone, and "next macrotask" is a guess
+   * about that, not a guarantee: sweep too early and the debugger's own group
+   * still looks occupied (so it survives, which is the accumulation this exists
+   * to prevent), or a user's group is transiently empty mid-renumber and gets
+   * closed instead. Only ever closes a group that is genuinely empty, so
+   * anything the user put there survives either way.
    */
-  private static closeEmptyGroups(columns: (vscode.ViewColumn | undefined)[]): void {
+  private static async closeEmptyGroups(
+    columns: (vscode.ViewColumn | undefined)[],
+    tabsClosed: Promise<unknown>,
+  ): Promise<void> {
     const wanted = columns.filter((c): c is vscode.ViewColumn => c !== undefined);
     if (wanted.length === 0) return;
-    setTimeout(() => {
-      for (const group of vscode.window.tabGroups.all) {
-        if (group.tabs.length === 0 && wanted.includes(group.viewColumn)) {
-          void vscode.window.tabGroups.close(group);
-        }
+    await tabsClosed;
+    for (const group of vscode.window.tabGroups.all) {
+      if (group.tabs.length === 0 && wanted.includes(group.viewColumn)) {
+        void vscode.window.tabGroups.close(group);
       }
-    }, 0);
+    }
   }
 
   /**
@@ -4646,8 +4713,11 @@ export class DebuggerPanel {
    * source column is unknown we therefore close only the read-only tabs (closing
    * a shared `gemstone://` everywhere would be the very bug the guard prevents).
    */
-  private closeSourceEditors(): void {
-    if (this.shownSourceUris.size === 0 && this.dnuMethodUris.size === 0) return;
+  private closeSourceEditors(): Promise<unknown> {
+    if (this.shownSourceUris.size === 0 && this.dnuMethodUris.size === 0) {
+      return Promise.resolve();
+    }
+    const closing: Thenable<unknown>[] = [];
     // The source group's ViewColumn can have been renumbered since we captured
     // it (VS Code reassigns columns positionally when groups open/close — e.g. a
     // enhanced inspector opening Beside). The live source editor reports its CURRENT
@@ -4662,17 +4732,18 @@ export class DebuggerPanel {
         // it's safe to close in ANY column (the FS provider may have swapped the
         // template tab to the compiled method, and possibly into another column).
         if (this.dnuMethodUris.has(uriStr)) {
-          void vscode.window.tabGroups.close(tab);
+          closing.push(vscode.window.tabGroups.close(tab));
           continue;
         }
         if (!this.shownSourceUris.has(uriStr)) continue;
         if (inOurColumn || tab.input.uri.scheme === READONLY_SOURCE_SCHEME) {
-          void vscode.window.tabGroups.close(tab);
+          closing.push(vscode.window.tabGroups.close(tab));
         }
       }
     }
     this.shownSourceUris.clear();
     this.dnuMethodUris.clear();
     this.sourceEditor = undefined;
+    return Promise.all(closing);
   }
 }

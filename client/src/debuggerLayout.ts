@@ -166,24 +166,44 @@ function locateLeaf(
  * combined size and the rest keep their proportions. No-op (false) unless every
  * sibling is measured — sizes that don't add up are licence for VS Code to
  * redistribute them itself.
+ *
+ * Shares are allocated by largest remainder: floor each proportional share, then
+ * hand the leftover pixels to whoever was rounded down hardest. Rounding each
+ * share independently and dumping the accumulated error on the last sibling is
+ * the obvious alternative, and it can hand that sibling a NEGATIVE size — six
+ * columns of 1px, target index 4, share 0.5 gives [1,1,1,1,3,-1], which sums
+ * correctly and so passes any check on the total before reaching
+ * `setEditorLayout`, where a negative group size means nothing good.
  */
 function rebalance(siblings: EditorGroupNode[], index: number, share: number): boolean {
   if (siblings.length < 2) return false;
   const sizes = siblings.map((g) => g.size ?? 0);
   const total = sizes.reduce((a, b) => a + b, 0);
   if (!(total > 0) || sizes.some((v) => v <= 0)) return false;
+
   const ours = Math.round(total * share);
   const others = total - ours;
   const otherTotal = total - sizes[index];
-  let left = others;
-  siblings.forEach((g, i) => {
-    if (i === index) return;
-    const isLast =
-      i === siblings.length - 1 || (index === siblings.length - 1 && i === siblings.length - 2);
-    g.size = isLast ? left : Math.round((sizes[i] / otherTotal) * others);
-    left -= g.size;
-  });
-  siblings[index].size = ours;
+  // Floor every share, remembering how much each was shortchanged.
+  const shares = sizes.map((size, i) =>
+    i === index ? ours : Math.floor((size / otherTotal) * others),
+  );
+  const remainders = sizes.map((size, i) =>
+    i === index ? -1 : (size / otherTotal) * others - shares[i],
+  );
+  let leftover = others - shares.reduce((sum, v, i) => (i === index ? sum : sum + v), 0);
+  // Hand out the leftover pixels, largest shortfall first. There are fewer of
+  // them than siblings, so nobody gets two and nobody can go negative.
+  const order = remainders
+    .map((remainder, i) => ({ remainder, i }))
+    .filter(({ i }) => i !== index)
+    .sort((a, b) => b.remainder - a.remainder);
+  for (const { i } of order) {
+    if (leftover <= 0) break;
+    shares[i] += 1;
+    leftover -= 1;
+  }
+  siblings.forEach((g, i) => (g.size = shares[i]));
   return true;
 }
 

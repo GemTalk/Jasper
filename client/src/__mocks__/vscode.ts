@@ -190,18 +190,51 @@ function createMockWebview() {
 
 function createMockPanel() {
   const webview = createMockWebview();
+  const disposeHandlers: (() => void)[] = [];
+  const viewStateHandlers: (() => void)[] = [];
+  let isDisposed = false;
+  let column: number | undefined;
   return {
     webview,
     title: '',
     // The tab icon the debugger sets so its tab is distinguishable from a
     // source-editor tab; undefined until a panel assigns one.
     iconPath: undefined as Uri | undefined,
-    viewColumn: undefined as number | undefined,
+    /**
+     * Faithful to the real thing, because the difference hides bugs: VS Code's
+     * `WebviewPanel.viewColumn` getter THROWS once the panel is disposed
+     * (`assertNotDisposed`), and `dispose()` sets that flag BEFORE firing
+     * `onDidDispose`. So a dispose handler that reads `viewColumn` gets an
+     * exception, and everything after that line in the handler is skipped.
+     * A plain field here made that whole class of bug invisible to the suite.
+     */
+    get viewColumn(): number | undefined {
+      if (isDisposed) throw new Error('Webview is disposed');
+      return column;
+    },
+    set viewColumn(value: number | undefined) {
+      column = value;
+    },
     active: true,
     reveal: vi.fn(),
-    dispose: vi.fn(),
-    onDidDispose: vi.fn((_handler: unknown) => ({ dispose: () => {} })),
-    onDidChangeViewState: vi.fn((_handler: unknown) => ({ dispose: () => {} })),
+    dispose: vi.fn(() => {
+      if (isDisposed) return;
+      isDisposed = true;
+      for (const handler of [...disposeHandlers]) handler();
+    }),
+    onDidDispose: vi.fn((handler: () => void) => {
+      disposeHandlers.push(handler);
+      return { dispose: () => {} };
+    }),
+    onDidChangeViewState: vi.fn((handler: () => void) => {
+      viewStateHandlers.push(handler);
+      return { dispose: () => {} };
+    }),
+    /** Test hook: move the panel to another column, as VS Code would. */
+    __moveTo(target: number) {
+      column = target;
+      for (const handler of [...viewStateHandlers]) handler();
+    },
   };
 }
 

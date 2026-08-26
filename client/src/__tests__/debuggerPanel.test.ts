@@ -256,9 +256,9 @@ function restoreDebugDefaults(): void {
   }
 }
 
-function makeSession(): ActiveSession {
+function makeSession(id = 1): ActiveSession {
   return {
-    id: 1,
+    id,
     handle: { h: 1 },
     login: {
       label: 'Test',
@@ -289,9 +289,14 @@ function sendReady(panel: ReturnType<typeof lastPanel>) {
 }
 
 /** Simulate the user closing the panel window. */
+/**
+ * Close a panel the way VS Code does — through `dispose()`, which marks it
+ * disposed and THEN fires onDidDispose. Calling the handler directly would skip
+ * the marking, and with it every bug that only shows up once the panel refuses
+ * to answer questions about itself.
+ */
 function closePanel(panel: ReturnType<typeof lastPanel>) {
-  const handler = panel.onDidDispose.mock.calls[0][0];
-  handler();
+  panel.dispose();
 }
 
 /** The `init` payload the panel posts back to the webview after `ready`. */
@@ -328,6 +333,10 @@ function lastPosted(panel: ReturnType<typeof lastPanel>, command: string) {
  * is enough.
  */
 const tick = (): Promise<void> => new Promise<void>((resolve) => setTimeout(resolve, 0));
+/** Drain a few macrotasks — enough for a chain of awaits to settle. */
+const flushMicrotasks = async (): Promise<void> => {
+  for (let i = 0; i < 5; i++) await tick();
+};
 
 describe('formatFrameLabel', () => {
   it('names a plain frame `Class>>#selector` when receiver matches the defining class', () => {
@@ -650,6 +659,52 @@ describe('DebuggerPanel', () => {
       .mocked(vscode.commands.executeCommand)
       .mock.calls.filter((c) => c[0] === 'vscode.getEditorLayout');
     expect(carves).toHaveLength(1);
+  });
+
+  it("waits for the first debugger's carve before opening a second halt's source", async () => {
+    // The column pair exists only once the carve has finished. A second halt
+    // arriving mid-carve must wait for the same thing the first one is waiting
+    // for, or it opens a source editor into a group VS Code has not split yet.
+    (vscode.window.tabGroups.all as unknown as unknown[]).push({ viewColumn: 1, tabs: [] });
+    let releaseLayout!: (v: unknown) => void;
+    const layoutRead = new Promise((resolve) => (releaseLayout = resolve));
+    vi.mocked(vscode.commands.executeCommand).mockImplementation((cmd: string) =>
+      cmd === 'vscode.getEditorLayout' ? layoutRead : Promise.resolve(undefined),
+    );
+    try {
+      DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG); // its carve is now in flight
+      await tick();
+      DebuggerPanel.create(session, 0x456n, 'a second halt');
+      const second = lastPanel();
+      sendReady(second);
+      sendMessage(second, { command: 'selectFrame', level: 3 });
+      await flushMicrotasks();
+
+      // Nothing opened: the second panel is waiting on the first one's carve.
+      expect(vscode.window.showTextDocument).not.toHaveBeenCalled();
+
+      releaseLayout({ orientation: 0, groups: [{ size: 600 }, { size: 600 }] });
+      await flushMicrotasks();
+      expect(vscode.window.showTextDocument).toHaveBeenCalled();
+    } finally {
+      vi.mocked(vscode.commands.executeCommand).mockReset();
+    }
+  });
+
+  it("keeps a second session out of this session's column pair", async () => {
+    // Two sessions are two stones' worth of work; sharing a column would also
+    // let one debugger's teardown close the other's tabs.
+    (vscode.window.tabGroups.all as unknown as unknown[]).push({ viewColumn: 1, tabs: [] });
+    DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
+    await tick();
+    DebuggerPanel.create(makeSession(2), GS_PROCESS, 'a halt on another stone');
+
+    // A second halt in the SAME session joins the open pair and carves nothing;
+    // another session gets its own column, so it reads the grid to carve one.
+    const carves = vi
+      .mocked(vscode.commands.executeCommand)
+      .mock.calls.filter((c) => c[0] === 'vscode.getEditorLayout');
+    expect(carves).toHaveLength(2); // one per session, not one shared
   });
 
   it("follows the first debugger's panel when VS Code renumbers the columns", async () => {
@@ -1483,6 +1538,51 @@ describe('DebuggerPanel', () => {
 
       expect(vi.mocked(vscode.window.tabGroups.close)).toHaveBeenCalledTimes(1);
       expect(vi.mocked(vscode.window.tabGroups.close)).toHaveBeenCalledWith(sourceTab);
+    });
+
+    it('sweeps the emptied group only after the tabs have actually closed', async () => {
+      // "Next macrotask" was a guess about when the closes had landed. Sweeping
+      // early either spares the debugger's own group (the accumulation the sweep
+      // exists to prevent) or catches a user's group mid-renumber.
+      let releaseClose!: () => void;
+      const closing = new Promise<void>((resolve) => (releaseClose = resolve));
+      const panel = openPanelWithStack();
+      vi.mocked(vscode.window.showTextDocument).mockResolvedValueOnce(columnedEditor(9) as never);
+      vi.mocked(debug.getMethodUriInfo).mockReturnValueOnce(URI_INFO);
+      sendMessage(panel, { command: 'selectFrame', level: 3 });
+      await flush();
+
+      const uri = (
+        vi.mocked(vscode.workspace.openTextDocument).mock.calls[0][0] as vscode.Uri
+      ).toString();
+      const sourceTab = { label: 'source', input: new vscode.TabInputText(vscode.Uri.parse(uri)) };
+      const groups = vscode.window.tabGroups.all as unknown as {
+        viewColumn: number;
+        tabs: unknown[];
+      }[];
+      groups.push({ viewColumn: 9, tabs: [sourceTab] });
+      vi.mocked(vscode.window.tabGroups.close).mockImplementation((() => closing) as never);
+      // Group closes are the ones passed a group (a viewColumn), not a tab.
+      const sweeps = () =>
+        vi
+          .mocked(vscode.window.tabGroups.close)
+          .mock.calls.filter((c) => (c[0] as { viewColumn?: number }).viewColumn !== undefined);
+      try {
+        closePanel(panel);
+        await tick();
+        await tick();
+        expect(vi.mocked(vscode.window.tabGroups.close)).toHaveBeenCalledWith(sourceTab);
+        expect(sweeps()).toHaveLength(0); // the tab close is still in flight
+
+        groups.length = 0;
+        groups.push({ viewColumn: 9, tabs: [] }); // now it is really gone
+        releaseClose();
+        await tick();
+        await tick();
+        expect(sweeps().map((c) => (c[0] as { viewColumn: number }).viewColumn)).toContain(9);
+      } finally {
+        vi.mocked(vscode.window.tabGroups.close).mockReset();
+      }
     });
 
     it('closes nothing when the debugger never opened a source editor', () => {
@@ -4741,6 +4841,54 @@ describe('DebuggerPanel', () => {
       }
     });
 
+    it("refuses to resize a pair that is not the debugger's own", async () => {
+      // The pair is identified by column arithmetic — the leaf before the
+      // source's. Sound while those two really are the panes the carve made
+      // adjacent; if the carve declined an unfamiliar grid and the source landed
+      // elsewhere, the same arithmetic names one of the USER's groups as "the
+      // panel" and resizes it. Adjacency to our own column is what rules it out.
+      (vscode.window.tabGroups.all as unknown as unknown[]).push({ viewColumn: 1, tabs: [] });
+      const beforeCarve = { orientation: 0, groups: [{ size: 600 }, { size: 600 }] };
+      const strangersGrid = {
+        orientation: 0,
+        groups: [{ size: 240 }, { size: 360, groups: [{ size: 100 }, { size: 300 }] }],
+      };
+      vi.mocked(vscode.commands.executeCommand).mockImplementation((cmd: string) =>
+        Promise.resolve(cmd === 'vscode.getEditorLayout' ? beforeCarve : undefined),
+      );
+      try {
+        DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
+        const panel = lastPanel();
+        await tick();
+        // The source editor ended up in column 7 — nowhere near the panel's 2.
+        (panel as { viewColumn?: number }).viewColumn = 2;
+        const dbg = [
+          ...((DebuggerPanel as unknown as { panels: Map<number, Set<unknown>> }).panels.get(
+            session.id,
+          ) ?? []),
+        ][0] as { sourceEditor?: { viewColumn: number } };
+        dbg.sourceEditor = { viewColumn: 7 };
+
+        vi.mocked(vscode.commands.executeCommand).mockImplementation((cmd: string) =>
+          Promise.resolve(cmd === 'vscode.getEditorLayout' ? strangersGrid : undefined),
+        );
+        const before = vi
+          .mocked(vscode.commands.executeCommand)
+          .mock.calls.filter((c) => c[0] === 'vscode.setEditorLayout').length;
+        sendMessage(panel, { command: 'fit', needed: 900, viewport: 100 });
+        await tick();
+        await tick();
+
+        expect(
+          vi
+            .mocked(vscode.commands.executeCommand)
+            .mock.calls.filter((c) => c[0] === 'vscode.setEditorLayout').length,
+        ).toBe(before); // nothing resized
+      } finally {
+        vi.mocked(vscode.commands.executeCommand).mockReset();
+      }
+    });
+
     it('leaves the divider alone when the panel already fits, and after the first fit', async () => {
       // One editor group already open, so the panel opens into column 2 — the
       // column the plan below also puts it in (the mock panel reports the column
@@ -4786,36 +4934,67 @@ describe('DebuggerPanel', () => {
       }
     });
 
-    it('retires its own groups once they are empty, so the grid does not accumulate', async () => {
-      vi.useFakeTimers();
-      try {
-        (vscode.window.tabGroups.all as unknown as unknown[]).push({ viewColumn: 1, tabs: [] });
-        DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
-        const panel = lastPanel();
-        // The debugger's pair (2 and 3) is empty after it closes; the user's
-        // column still holds their editor.
-        const groups = vscode.window.tabGroups.all as unknown as {
-          viewColumn: number;
-          tabs: unknown[];
-        }[];
-        groups.length = 0;
-        groups.push(
-          { viewColumn: 1, tabs: [{}] },
-          { viewColumn: 2, tabs: [] },
-          { viewColumn: 3, tabs: [] },
-        );
-        closePanel(panel);
-        vi.runAllTimers(); // the sweep is deferred until VS Code has removed our tabs
+    it('closes cleanly, and lets the NEXT halt open', async () => {
+      // VS Code marks a panel disposed before firing onDidDispose, and its
+      // `viewColumn` getter throws from then on. A dispose() that asks the panel
+      // where it is therefore dies on its first line — and silently, because the
+      // throw happens inside an event listener. Everything after it is skipped:
+      // the sampler keeps running, the companion source tab stays open, and the
+      // panel is never removed from the static registry. The next halt then
+      // reads that stale panel and throws BEFORE creating its webview, so the
+      // debugger simply never opens again until the window is reloaded.
+      (vscode.window.tabGroups.all as unknown as unknown[]).push({ viewColumn: 1, tabs: [] });
+      DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
+      const panel = lastPanel();
+      sendReady(panel);
+      await tick();
 
-        // An empty group left behind shifts every column number along and makes
-        // the next debugger's group nest inside it instead of opening plainly.
-        const closed = vi
-          .mocked(vscode.window.tabGroups.close)
-          .mock.calls.map((c) => (c[0] as { viewColumn: number }).viewColumn);
-        expect(closed).toEqual([2, 3]);
-      } finally {
-        vi.useRealTimers();
-      }
+      expect(() => closePanel(panel)).not.toThrow();
+
+      // dispose() ran to the end: the registry is empty…
+      const panels = (DebuggerPanel as unknown as { panels: Map<number, Set<unknown>> }).panels;
+      expect(panels.get(session.id)?.size ?? 0).toBe(0);
+      // …and the suspended process was released, which is the LAST thing dispose
+      // does, so reaching it means the whole method ran. (The companion source
+      // tab closing is the other visible symptom; the source-pane tests above
+      // cover it, and they now close panels through real dispose() semantics.)
+      expect(debug.clearStack).toHaveBeenCalled();
+
+      // And the next halt opens.
+      DebuggerPanel.create(session, 0x456n, 'a second halt');
+      expect(vi.mocked(vscode.window.createWebviewPanel).mock.calls).toHaveLength(2);
+    });
+
+    it('retires its own groups once they are empty, so the grid does not accumulate', async () => {
+      (vscode.window.tabGroups.all as unknown as unknown[]).push({ viewColumn: 1, tabs: [] });
+      DebuggerPanel.create(session, GS_PROCESS, ERROR_MSG);
+      const panel = lastPanel();
+      sendReady(panel);
+      await tick();
+
+      // The debugger's pair (2 and 3) is empty after its tabs close; the user's
+      // column still holds their editor.
+      const groups = vscode.window.tabGroups.all as unknown as {
+        viewColumn: number;
+        tabs: unknown[];
+      }[];
+      groups.length = 0;
+      groups.push(
+        { viewColumn: 1, tabs: [{}] },
+        { viewColumn: 2, tabs: [] },
+        { viewColumn: 3, tabs: [] },
+      );
+      closePanel(panel);
+      await tick(); // the sweep waits on the tab closes, not on a timer
+      await tick();
+
+      // An empty group left behind shifts every column number along and makes
+      // the next debugger's group nest inside it instead of opening plainly.
+      const closed = vi
+        .mocked(vscode.window.tabGroups.close)
+        .mock.calls.map((c) => (c[0] as { viewColumn?: number }).viewColumn)
+        .filter((c) => c !== undefined);
+      expect(closed).toEqual([2, 3]);
     });
 
     it('offers maximize as the way out of a column that is too small to work in', () => {
