@@ -207,6 +207,14 @@ export function parseMethodUri(uri: vscode.Uri): MethodUriRef | null {
   };
 }
 
+// True when `uri` is the source editor of a compiled method — the gate for the
+// in-editor Method History action (title bar / context menu / palette). False for
+// no editor, a non-gemstone document, or a class-definition / comment / new-*
+// template editor. Extracted as a pure predicate so the gating is unit-testable.
+export function isMethodEditorUri(uri: vscode.Uri | undefined): boolean {
+  return !!uri && uri.scheme === 'gemstone' && parseMethodUri(uri) !== null;
+}
+
 export function buildNewMethodUri(
   sessionId: number,
   dictName: string,

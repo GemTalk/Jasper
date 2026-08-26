@@ -101,6 +101,7 @@ import {
   installStaleGemstoneTabReaper,
   parseMethodUri,
   parseUri,
+  isMethodEditorUri,
 } from './gemstoneFileSystemProvider';
 import { openWorkspace } from './workspace';
 import { openTutorialNotebook } from './tutorialNotebook';
@@ -1019,9 +1020,11 @@ export function activate(context: vscode.ExtensionContext) {
   // edited without hunting for the row in the Explorer. The context key gates the
   // menus to method editors only (not class-definition/comment/workspace editors).
   const updateMethodEditorContext = (editor?: vscode.TextEditor): void => {
-    const uri = editor?.document.uri;
-    const isMethod = !!uri && uri.scheme === 'gemstone' && !!parseMethodUri(uri);
-    void vscode.commands.executeCommand('setContext', 'gemstone.methodEditorActive', isMethod);
+    void vscode.commands.executeCommand(
+      'setContext',
+      'gemstone.methodEditorActive',
+      isMethodEditorUri(editor?.document.uri),
+    );
   };
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor(updateMethodEditorContext),

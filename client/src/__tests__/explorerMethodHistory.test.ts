@@ -34,6 +34,7 @@ import {
   showMethodHistoryPanel,
   refreshMethodHistoryPanel,
 } from '../methodHistory/methodHistoryPanel';
+import { Uri, window } from '../__mocks__/vscode';
 import type { SessionManager, ActiveSession } from '../sessionManager';
 
 const SESSION = { id: 1 } as ActiveSession;
@@ -117,5 +118,27 @@ describe('live refresh of an open method-history panel', () => {
     ctl.onExternalMethodCompiled(2, 'Array');
 
     expect(refreshMethodHistoryPanel).not.toHaveBeenCalled();
+  });
+});
+
+describe('opening method history from an editor URI', () => {
+  it('opens history for the method the gemstone editor URI names', async () => {
+    const ctl = makeController();
+
+    await ctl.openMethodHistoryForUri(
+      Uri.parse('gemstone://1/UserGlobals/Array/instance/accessing/at%3A'),
+    );
+
+    expect(showMethodHistoryPanel).toHaveBeenCalledTimes(1);
+  });
+
+  it('does nothing but note it when the editor is not a method (e.g. a class definition)', async () => {
+    const ctl = makeController();
+    const info = window.showInformationMessage as ReturnType<typeof vi.fn>;
+
+    await ctl.openMethodHistoryForUri(Uri.parse('gemstone://1/UserGlobals/Array/definition'));
+
+    expect(showMethodHistoryPanel).not.toHaveBeenCalled();
+    expect(info).toHaveBeenCalled();
   });
 });

@@ -50,6 +50,7 @@ import {
   escapeSelectorSlashes,
   parseUri,
   parseMethodUri,
+  isMethodEditorUri,
   listOpenGemstoneTabs,
 } from '../gemstoneFileSystemProvider';
 import { SessionManager } from '../sessionManager';
@@ -1199,6 +1200,27 @@ describe('parseMethodUri', () => {
 
   it('rejects a non-gemstone URI', () => {
     expect(parseMethodUri(Uri.parse('file:///tmp/x.st'))).toBeNull();
+  });
+});
+
+describe('isMethodEditorUri', () => {
+  it('is true for a method source editor', () => {
+    expect(
+      isMethodEditorUri(Uri.parse('gemstone://1/Globals/Array/instance/accessing/at%3A')),
+    ).toBe(true);
+  });
+
+  it('is false for a class-definition, comment, or new-method editor', () => {
+    expect(isMethodEditorUri(Uri.parse('gemstone://1/Globals/Array/definition'))).toBe(false);
+    expect(isMethodEditorUri(Uri.parse('gemstone://1/Globals/Array/comment'))).toBe(false);
+    expect(
+      isMethodEditorUri(Uri.parse('gemstone://1/Globals/Array/instance/accessing/new-method')),
+    ).toBe(false);
+  });
+
+  it('is false for a non-gemstone document and for no editor', () => {
+    expect(isMethodEditorUri(Uri.parse('file:///tmp/x.st'))).toBe(false);
+    expect(isMethodEditorUri(undefined)).toBe(false);
   });
 });
 

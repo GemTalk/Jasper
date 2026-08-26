@@ -3578,6 +3578,29 @@ export class ExplorerController {
     });
   }
 
+  // Open the method-history viewer for the method a gemstone:// editor URI names —
+  // the in-editor entry point (title-bar button / context menu / palette). Resolves
+  // the method's own session by id (falling back to the selected one). A non-method
+  // URI gets a gentle note rather than silently doing nothing.
+  async openMethodHistoryForUri(uri: vscode.Uri): Promise<void> {
+    const parsed = parseUri(uri);
+    if (parsed.kind !== 'method') {
+      void vscode.window.showInformationMessage(
+        'Method History is available while editing a method.',
+      );
+      return;
+    }
+    const session = this.sessionManager.getSession(parsed.sessionId) ?? this.session();
+    if (!session) return;
+    await this.openMethodHistory(
+      session,
+      parsed.className,
+      parsed.selector,
+      parsed.isMeta,
+      parsed.dictIndex ?? parsed.dictName,
+    );
+  }
+
   // Open method-history panels, so a compile elsewhere can refresh the matching
   // one(s). Keyed by method identity; entries are removed on panel close.
   private methodHistoryPanels: MethodHistoryPanelEntry[] = [];
@@ -6579,24 +6602,6 @@ export function registerGemStoneExplorer(
     markAttributedOpen: (uri) => ctl.markAttributedOpen(uri),
     clearAttributedOpen: (uri) => ctl.clearAttributedOpen(uri),
     revealDocument: (uri) => ctl.revealDocument(uri),
-    openMethodHistoryForUri: async (uri) => {
-      const parsed = parseUri(uri);
-      if (parsed.kind !== 'method') {
-        void vscode.window.showInformationMessage(
-          'Method History is available while editing a method.',
-        );
-        return;
-      }
-      const session =
-        sessionManager.getSession(parsed.sessionId) ?? sessionManager.getSelectedSession();
-      if (!session) return;
-      await ctl.openMethodHistory(
-        session,
-        parsed.className,
-        parsed.selector,
-        parsed.isMeta,
-        parsed.dictIndex ?? parsed.dictName,
-      );
-    },
+    openMethodHistoryForUri: (uri) => ctl.openMethodHistoryForUri(uri),
   };
 }
