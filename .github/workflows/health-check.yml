@@ -2,7 +2,7 @@ name: Health Check
 
 on:
   push:
-    branches: [main, '*/wip/*']
+    branches: [main, '*/wip/**']
   pull_request:
   merge_group:
 
