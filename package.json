@@ -3100,14 +3100,14 @@
     "@vitest/eslint-plugin": "^1.6.24",
     "@vscode/test-electron": "^2.5.2",
     "@vscode/vsce": "^3.7.1",
-    "esbuild": "^0.28.1",
+    "esbuild": "^0.28.2",
     "eslint": "^10.0.0",
     "eslint-config-flat-gitignore": "^2.3.0",
     "eslint-config-prettier": "^10.1.8",
     "globals": "^16.0.0",
     "lefthook": "^2.1.10",
     "lockfile-lint": "^5.0.0",
-    "ovsx": "^0.10.5",
+    "ovsx": "^1.1.1",
     "playwright-bdd": "^9.2.0",
     "prettier": "^3.9.5",
     "tsx": "^4.23.1",
@@ -3118,7 +3118,7 @@
   },
   "dependencies": {
     "@vscode/debugadapter": "^1.68.0",
-    "koffi": "^2.15.1"
+    "koffi": "^3.1.5"
   },
   "overrides": {
     "fast-uri": "^3.1.5",
