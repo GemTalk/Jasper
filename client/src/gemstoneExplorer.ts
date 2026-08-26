@@ -1,7 +1,11 @@
 import * as vscode from 'vscode';
 import { beginMethodDeletion, beginMethodEdit, readMethodSlotState } from './undo/recordMethodEdit';
 import { notifyUndoable } from './undo/undoableToast';
-import { SYMBOL_LIST_CHANGED_COMMAND } from './undo/afterUndo';
+import {
+  OverlayRenameOutcome,
+  RENAME_OVERLAY_CATEGORY_COMMAND,
+  SYMBOL_LIST_CHANGED_COMMAND,
+} from './undo/afterUndo';
 import { beginClassDeletion, beginClassEdit } from './undo/recordClassEdit';
 import { beginClassVarAdd } from './undo/recordClassVarEdit';
 import { beginMethodCategoryRename } from './undo/recordMethodCategoryEdit';
@@ -4587,6 +4591,9 @@ export class ExplorerController {
   // (mirroring the System Browser; not committed automatically), while an empty one is
   // renamed purely in the overlay -- calling the server would raise
   // classErrMethCatNotFound.
+  //
+  // Both are recorded for Undo, and neither says which it was: to the user it is one action
+  // (#434). See renameOverlayMethodCategory for the reversal of the overlay half.
   async renameMethodCategory(item: MethodCategoryItem): Promise<void> {
     const session = this.session();
     if (!session || item.computed) return;
@@ -4612,16 +4619,15 @@ export class ExplorerController {
     const hasServerMethods = this.envLines.some(
       (l) => l.isMeta === item.isMeta && l.category === oldCategory,
     );
-    // Only a category the SERVER knows about is undoable: an overlay-only rename of a
-    // still-empty category is a client-side bookkeeping move with nothing on the stone to
-    // put back (#434).
-    const recording = hasServerMethods
-      ? beginMethodCategoryRename(
-          session,
-          { dict: dictIndex, className, isMeta: item.isMeta },
-          oldCategory,
-        )
-      : undefined;
+    // Recorded either way (#434). A still-empty category is renamed in the overlay rather
+    // than on the stone, but the user renamed something and it stayed renamed -- which side
+    // of the wire that happened on is Jasper's business, not theirs, so it gets the same
+    // Undo. `reverseMethodCategoryEdit` works out which rename to run from the live state.
+    const recording = beginMethodCategoryRename(
+      session,
+      { dict: dictIndex, className, isMeta: item.isMeta },
+      oldCategory,
+    );
     if (hasServerMethods) {
       try {
         queries.renameCategory(
@@ -4665,12 +4671,49 @@ export class ExplorerController {
       })
       .then(undefined, () => {});
 
-    if (recording) {
-      notifyUndoable(
-        `Renamed category '${oldCategory}' to '${newCategory}'`,
-        recording.commit(newCategory),
-      );
+    notifyUndoable(
+      `Renamed category '${oldCategory}' to '${newCategory}'`,
+      recording.commit(newCategory),
+    );
+  }
+
+  /**
+   * Rename a still-empty method category back, in the overlay that is the only place it
+   * exists. The undo path calls this through an internal command (#434).
+   *
+   * Answers what happened rather than a bare boolean, so the undo can tell "the pane has
+   * moved on" from "that name is taken" and say which. The overlay is discarded whenever the
+   * browsed class changes, so an entry can easily outlive the category it describes; that is
+   * `not-listed`, not a failure.
+   */
+  renameOverlayMethodCategory(
+    slot: { className: string; isMeta: boolean; dict?: number | string },
+    from: string,
+    to: string,
+  ): OverlayRenameOutcome {
+    // The overlay belongs to the class the pane is showing; anything else is a different
+    // (empty) set that happens to share names.
+    if (this.state.className !== slot.className || this.state.dictIndex !== slot.dict) {
+      return 'not-listed';
     }
+    const freshSet = this.newMethodCategories[slot.isMeta ? 'meta' : 'instance'];
+    if (!freshSet.has(from)) return 'not-listed';
+    // A name taken by another fresh category, or by a real one, is a collision either way:
+    // the pane would show two rows with one name.
+    const real = this.envLines.filter((l) => l.isMeta === slot.isMeta).map((l) => l.category);
+    if (freshSet.has(to) || real.includes(to)) return 'collision';
+
+    freshSet.delete(from);
+    freshSet.add(to);
+    if (this.state.selectedIsMeta === slot.isMeta && this.state.selectedMethodCategory === from) {
+      this.state.selectedMethodCategory = to;
+    }
+    this.methodProvider.refresh();
+    this.syncTitles();
+    this.views?.method
+      .reveal(new MethodCategoryItem(slot.isMeta, to, false), { select: true, focus: false })
+      .then(undefined, () => {});
+    return 'ok';
   }
 
   // New Method, invoked from a category row → files into THAT category (including
@@ -5572,6 +5615,17 @@ export function registerGemStoneExplorer(
       ctl.reset();
       if (typeof sessionId === 'number') onSymbolListChanged?.(sessionId);
     }),
+    // An undo is renaming a still-empty method category back. Internal, and deliberately not
+    // contributed in package.json: the overlay is the only place such a category exists, so
+    // this is the one reversal that has to be asked of the view rather than the stone (#434).
+    vscode.commands.registerCommand(
+      RENAME_OVERLAY_CATEGORY_COMMAND,
+      (
+        slot: { className: string; isMeta: boolean; dict?: number | string },
+        from: string,
+        to: string,
+      ): OverlayRenameOutcome => ctl.renameOverlayMethodCategory(slot, from, to),
+    ),
     // Per-pane filter buttons: open a live filter input (prefix match, '*'
     // wildcard) that filters the pane in place — works regardless of where
     // focus currently sits (e.g. the editor).

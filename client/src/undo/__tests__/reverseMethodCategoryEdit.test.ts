@@ -9,10 +9,12 @@ vi.mock('../afterUndo', () => ({
   refreshExplorer: vi.fn(),
   refreshSearch: vi.fn(),
   reloadGemstoneEditors: vi.fn(),
+  renameOverlayCategory: vi.fn(),
 }));
 
 import * as vscode from 'vscode';
 import { getMethodCategories, renameCategory } from '../../browserQueries';
+import { renameOverlayCategory } from '../afterUndo';
 import { reverseMethodCategoryEdit } from '../reverseMethodCategoryEdit';
 import { MethodCategoryUndoEntry } from '../undoTypes';
 import type { ActiveSession } from '../../sessionManager';
@@ -43,6 +45,7 @@ function entry(): MethodCategoryUndoEntry {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(renameCategory).mockReturnValue('ok');
+  vi.mocked(renameOverlayCategory).mockResolvedValue('ok');
 });
 
 describe('reverseMethodCategoryEdit', () => {
@@ -64,8 +67,11 @@ describe('reverseMethodCategoryEdit', () => {
     );
   });
 
-  it('does nothing when the category is already back the way it was', async () => {
+  it('does nothing on the stone when the category is already back the way it was', async () => {
+    // 'reading' is gone and 'accessing' is there: nothing on the stone to rename. The overlay
+    // is asked, finds nothing listed, and the entry is spent.
     vi.mocked(getMethodCategories).mockReturnValue(['accessing', 'printing']);
+    vi.mocked(renameOverlayCategory).mockResolvedValue('not-listed');
 
     expect(await reverseMethodCategoryEdit(session, entry())).toBe(true);
     expect(renameCategory).not.toHaveBeenCalled();
@@ -84,10 +90,11 @@ describe('reverseMethodCategoryEdit', () => {
     );
   });
 
-  it('refuses when the renamed category is gone entirely', async () => {
+  it('never renames on the stone when the target has no server existence', async () => {
     vi.mocked(getMethodCategories).mockReturnValue(['printing']);
 
-    expect(await reverseMethodCategoryEdit(session, entry())).toBe(false);
+    await reverseMethodCategoryEdit(session, entry());
+
     expect(renameCategory).not.toHaveBeenCalled();
   });
 
@@ -110,5 +117,61 @@ describe('reverseMethodCategoryEdit', () => {
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
       expect.stringContaining('classErrMethCatExists'),
     );
+  });
+
+  describe('a still-empty category, which lives only in the Explorer overlay', () => {
+    // The stone does not have the renamed category, so this is a "+"-button one and the
+    // overlay is the only place the rename happened.
+    beforeEach(() => {
+      vi.mocked(getMethodCategories).mockReturnValue(['printing']);
+    });
+
+    it('renames it back in the overlay, and says nothing reached the stone', async () => {
+      expect(await reverseMethodCategoryEdit(session, entry())).toBe(true);
+
+      expect(renameOverlayCategory).toHaveBeenCalledWith(
+        { dict: 7, className: 'Account', isMeta: false },
+        'reading',
+        'accessing',
+      );
+      expect(renameCategory).not.toHaveBeenCalled();
+      expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+        expect.stringContaining('nothing has reached the stone'),
+      );
+    });
+
+    it('refuses and names the collision when the old name is taken again', async () => {
+      vi.mocked(renameOverlayCategory).mockResolvedValue('collision');
+
+      expect(await reverseMethodCategoryEdit(session, entry())).toBe(false);
+
+      expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+        expect.stringContaining("a category called 'accessing' again"),
+      );
+    });
+
+    it('spends the entry, with a reason, when the category is no longer listed', async () => {
+      // The overlay is discarded whenever the browsed class changes, so the entry now
+      // describes something that is nowhere. Leaving it on offer over nothing is worse.
+      vi.mocked(renameOverlayCategory).mockResolvedValue('not-listed');
+
+      expect(await reverseMethodCategoryEdit(session, entry())).toBe(true);
+
+      expect(vscode.window.setStatusBarMessage).toHaveBeenCalledWith(
+        expect.stringContaining('no longer listed'),
+        expect.any(Number),
+      );
+    });
+
+    it('reverses on the STONE once a method has been filed into it', async () => {
+      // A fresh category becomes real the moment something lands in it, and the reversal has
+      // to follow — which is why the entry carries no overlay flag to go stale.
+      vi.mocked(getMethodCategories).mockReturnValue(['reading', 'printing']);
+
+      expect(await reverseMethodCategoryEdit(session, entry())).toBe(true);
+
+      expect(renameCategory).toHaveBeenCalled();
+      expect(renameOverlayCategory).not.toHaveBeenCalled();
+    });
   });
 });

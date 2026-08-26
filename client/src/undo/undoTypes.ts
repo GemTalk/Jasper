@@ -236,6 +236,13 @@ export interface MethodCategorySlot {
  * would churn N compiled methods to achieve the same end. GemStone REFUSES a rename onto a
  * category that already exists, which is what makes the reversal exact — a rename is always
  * one name becoming another, never two categories merging.
+ *
+ * A STILL-EMPTY category is recorded too, even though Jasper has not put it on the stone yet
+ * (the "+" button leaves the stone alone until something is filed there). The user renamed
+ * something and it stayed renamed; which side of the wire that happened on is Jasper's
+ * business, not theirs. The reverser works out which rename to run from the LIVE state rather
+ * than from a flag on the entry, because a category can become real between the two — filing
+ * a method into it is all it takes.
  */
 export interface MethodCategoryUndoEntry extends UndoEntryBase {
   kind: 'methodCategoryEdit';

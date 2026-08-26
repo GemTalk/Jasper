@@ -10,7 +10,7 @@ vi.mock('../browserQueries', () => ({
 
 import * as vscode from 'vscode';
 import * as queries from '../browserQueries';
-import { peekUndoEntry, resetUndoStacks, undoStackDepth } from '../undo/undoStack';
+import { peekUndoEntry, resetUndoStacks } from '../undo/undoStack';
 import { ExplorerController, MethodCategoryItem, MethodItem } from '../gemstoneExplorer';
 import { ALL_METHODS_CATEGORY } from '../systemBrowser';
 import type { SessionManager, ActiveSession } from '../sessionManager';
@@ -166,8 +166,9 @@ describe('ExplorerController.renameMethodCategory', () => {
     });
   });
 
-  it('records nothing for a still-empty category, which is a client-side move only', async () => {
-    // There is nothing on the stone to put back — the category exists only in the overlay.
+  it('records a still-empty category too, so the rename LOOKS undoable like any other', async () => {
+    // It exists only in the overlay, but the user renamed something and it stayed renamed;
+    // which side of the wire that happened on is not theirs to keep track of.
     resetUndoStacks();
     const { ctl } = makeController();
     showInputBox.mockResolvedValueOnce('class method category');
@@ -176,7 +177,75 @@ describe('ExplorerController.renameMethodCategory', () => {
 
     await ctl.renameMethodCategory(new MethodCategoryItem(true, 'class method category', false));
 
-    expect(undoStackDepth(1)).toBe(0);
+    expect(queries.renameCategory).not.toHaveBeenCalled();
+    expect(peekUndoEntry(1)).toMatchObject({
+      kind: 'methodCategoryEdit',
+      before: 'class method category',
+      after: 'renamed category',
+      slot: { className: 'M4Demo', isMeta: true },
+    });
+  });
+});
+
+describe('ExplorerController.renameOverlayMethodCategory', () => {
+  const slot = (isMeta = true) => ({ className: 'M4Demo', isMeta, dict: 3 });
+
+  it('renames a still-empty category back in the overlay', async () => {
+    const { ctl } = makeController();
+    showInputBox.mockResolvedValueOnce('fresh');
+    await ctl.newMethodCategory(true);
+
+    expect(ctl.renameOverlayMethodCategory(slot(), 'fresh', 'fresher')).toBe('ok');
+
+    const names = ctl.methodCategories(true).map((c) => c.category);
+    expect(names).toContain('fresher');
+    expect(names).not.toContain('fresh');
+  });
+
+  it('answers not-listed when the pane has moved to another class', async () => {
+    // The overlay is discarded whenever the browsed class changes, so an entry easily
+    // outlives the category it describes. That is not a failure.
+    const { ctl } = makeController();
+    showInputBox.mockResolvedValueOnce('fresh');
+    await ctl.newMethodCategory(true);
+
+    expect(
+      ctl.renameOverlayMethodCategory({ ...slot(), className: 'SomeOtherClass' }, 'fresh', 'x'),
+    ).toBe('not-listed');
+  });
+
+  it('answers not-listed for a category the overlay never had', () => {
+    const { ctl } = makeController();
+
+    expect(ctl.renameOverlayMethodCategory(slot(), 'never-existed', 'x')).toBe('not-listed');
+  });
+
+  it('answers collision when another fresh category has taken the name', async () => {
+    const { ctl } = makeController();
+    showInputBox.mockResolvedValueOnce('fresh');
+    await ctl.newMethodCategory(true);
+    showInputBox.mockResolvedValueOnce('taken');
+    await ctl.newMethodCategory(true);
+
+    expect(ctl.renameOverlayMethodCategory(slot(), 'fresh', 'taken')).toBe('collision');
+  });
+
+  it('answers collision when a REAL category has taken the name', async () => {
+    // Two rows with one name is the same problem whichever side it came from.
+    const { ctl } = makeController();
+    setEnvLines(ctl, [envLine(true, 'real-one', ['make'])]);
+    showInputBox.mockResolvedValueOnce('fresh');
+    await ctl.newMethodCategory(true);
+
+    expect(ctl.renameOverlayMethodCategory(slot(), 'fresh', 'real-one')).toBe('collision');
+  });
+
+  it('keeps the two sides apart', async () => {
+    const { ctl } = makeController();
+    showInputBox.mockResolvedValueOnce('fresh');
+    await ctl.newMethodCategory(true); // class side
+
+    expect(ctl.renameOverlayMethodCategory(slot(false), 'fresh', 'x')).toBe('not-listed');
   });
 });
 

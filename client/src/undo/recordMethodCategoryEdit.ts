@@ -10,6 +10,12 @@
  *
  * A rename that would change nothing records nothing, and — as everywhere else — `commit` is
  * called only after the rename has actually succeeded.
+ *
+ * A STILL-EMPTY category is recorded on the same terms as a real one. Jasper has not put it
+ * on the stone yet, but the user renamed something and it stayed renamed; which side of the
+ * wire that happened on is not theirs to keep track of. The reverser decides which rename to
+ * run from the live state, so an entry recorded over an empty category still does the right
+ * thing once a method has been filed into it.
  */
 import { ActiveSession } from '../sessionManager';
 import { logInfo } from '../gciLog';

@@ -120,6 +120,43 @@ export async function refreshSymbolList(sessionId: number): Promise<void> {
   }
 }
 
+/**
+ * The command that asks the Explorer to rename a still-empty method category back in its own
+ * overlay. Internal — deliberately not contributed in `package.json`.
+ */
+export const RENAME_OVERLAY_CATEGORY_COMMAND = 'gemstone.explorer.renameOverlayMethodCategory';
+
+/** What the Explorer made of an overlay rename: it worked, the category is not listed any
+ *  more (the overlay is discarded whenever the browsed class changes), or the name being
+ *  restored is taken. */
+export type OverlayRenameOutcome = 'ok' | 'not-listed' | 'collision';
+
+/**
+ * Rename a still-empty category back, in the pane that is the only place it exists.
+ *
+ * A category the "+" button made has no server existence until something is filed there, so
+ * there is no doit to run — the Explorer's own overlay IS the state, and this is the one
+ * reversal that has to be asked of the view rather than the stone. Answers 'not-listed' when
+ * the Explorer is gone, showing another class, or has since discarded the overlay.
+ */
+export async function renameOverlayCategory(
+  slot: { className: string; isMeta: boolean; dict?: number | string },
+  from: string,
+  to: string,
+): Promise<OverlayRenameOutcome> {
+  try {
+    const outcome = await vscode.commands.executeCommand<OverlayRenameOutcome>(
+      RENAME_OVERLAY_CATEGORY_COMMAND,
+      slot,
+      from,
+      to,
+    );
+    return outcome ?? 'not-listed';
+  } catch {
+    return 'not-listed';
+  }
+}
+
 /** Rebuild the Explorer's panes. Best-effort — the Explorer may not be active. */
 export async function refreshExplorer(): Promise<void> {
   try {
