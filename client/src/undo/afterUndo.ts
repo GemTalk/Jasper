@@ -126,10 +126,16 @@ export async function refreshSymbolList(sessionId: number): Promise<void> {
  */
 export const RENAME_OVERLAY_CATEGORY_COMMAND = 'gemstone.explorer.renameOverlayMethodCategory';
 
-/** What the Explorer made of an overlay rename: it worked, the category is not listed any
+/** What the Explorer made of an overlay change: it worked, the category is not listed any
  *  more (the overlay is discarded whenever the browsed class changes), or the name being
  *  restored is taken. */
 export type OverlayRenameOutcome = 'ok' | 'not-listed' | 'collision';
+
+/**
+ * The command that asks the Explorer to take a still-empty method category out of its own
+ * overlay. Internal — deliberately not contributed in `package.json`.
+ */
+export const REMOVE_OVERLAY_CATEGORY_COMMAND = 'gemstone.explorer.removeOverlayMethodCategory';
 
 /**
  * Rename a still-empty category back, in the pane that is the only place it exists.
@@ -150,6 +156,29 @@ export async function renameOverlayCategory(
       slot,
       from,
       to,
+    );
+    return outcome ?? 'not-listed';
+  } catch {
+    return 'not-listed';
+  }
+}
+
+/**
+ * Take a still-empty category out of the overlay — the reversal of creating one.
+ *
+ * Nothing reaches the stone: a category the "+" button made has no server existence until
+ * something is filed there, so the Explorer's own overlay IS the state. Answers 'not-listed'
+ * when the Explorer is gone, showing another class, or has since discarded the overlay.
+ */
+export async function removeOverlayCategory(
+  slot: { className: string; isMeta: boolean; dict?: number | string },
+  name: string,
+): Promise<OverlayRenameOutcome> {
+  try {
+    const outcome = await vscode.commands.executeCommand<OverlayRenameOutcome>(
+      REMOVE_OVERLAY_CATEGORY_COMMAND,
+      slot,
+      name,
     );
     return outcome ?? 'not-listed';
   } catch {

@@ -50,3 +50,35 @@ export function beginMethodCategoryRename(
     },
   };
 }
+
+/**
+ * The create-a-category shape of the same thing: `before` is null, so the reversal takes it
+ * away rather than renaming it.
+ *
+ *   const recording = beginMethodCategoryAdd(session, slot);
+ *   ... add the category ...
+ *   recording.commit('tests');
+ *
+ * Recorded even though the "+" button leaves the stone untouched — the row appears in the
+ * pane and stays there, so it has to be as undoable as anything else that appears and stays.
+ */
+export function beginMethodCategoryAdd(
+  session: ActiveSession,
+  slot: MethodCategorySlot,
+): MethodCategoryRecording {
+  return {
+    commit(after: string): UndoEntry | undefined {
+      if (after.length === 0) return undefined;
+      const entry = pushUndoEntry({
+        kind: 'methodCategoryEdit',
+        sessionId: session.id,
+        label: `Create category '${after}' in ${methodCategorySlotLabel(slot)}`,
+        slot,
+        before: null,
+        after,
+      });
+      logInfo(`[undo] recorded #${entry.id} "${entry.label}"`);
+      return entry;
+    },
+  };
+}

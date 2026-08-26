@@ -237,19 +237,25 @@ export interface MethodCategorySlot {
  * category that already exists, which is what makes the reversal exact — a rename is always
  * one name becoming another, never two categories merging.
  *
+ * CREATING one is the same kind with `before: null` — the reversal takes it away rather than
+ * renaming it. Only ever when it is still EMPTY: GemStone's `removeCategory:` takes the
+ * methods in a category with it, so a create whose category has since been filled refuses and
+ * says so.
+ *
  * A STILL-EMPTY category is recorded too, even though Jasper has not put it on the stone yet
- * (the "+" button leaves the stone alone until something is filed there). The user renamed
- * something and it stayed renamed; which side of the wire that happened on is Jasper's
- * business, not theirs. The reverser works out which rename to run from the LIVE state rather
- * than from a flag on the entry, because a category can become real between the two — filing
- * a method into it is all it takes.
+ * (the "+" button leaves the stone alone until something is filed there). The user did
+ * something and it stayed done; which side of the wire that happened on is Jasper's business,
+ * not theirs. The reverser works out which reversal to run from the LIVE state rather than
+ * from a flag on the entry, because a category can become real between the two — filing a
+ * method into it is all it takes.
  */
 export interface MethodCategoryUndoEntry extends UndoEntryBase {
   kind: 'methodCategoryEdit';
   slot: MethodCategorySlot;
-  /** The name the category had before — the target of the reversal. */
-  before: string;
-  /** The name the rename gave it, so a category renamed again since can be spotted. */
+  /** The name the category had before — the target of the reversal. NULL when it did not
+   *  exist at all, which is how creating one is recorded: the reversal takes it away. */
+  before: string | null;
+  /** The name the action left it under, so a category renamed again since can be spotted. */
   after: string;
 }
 

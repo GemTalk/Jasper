@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 vi.mock('../../gciLog', () => ({ logInfo: vi.fn() }));
 
-import { beginMethodCategoryRename } from '../recordMethodCategoryEdit';
+import { beginMethodCategoryAdd, beginMethodCategoryRename } from '../recordMethodCategoryEdit';
 import { peekUndoEntry, resetUndoStacks, undoStackDepth } from '../undoStack';
 import type { ActiveSession } from '../../sessionManager';
 
@@ -51,6 +51,31 @@ describe('beginMethodCategoryRename', () => {
     expect(
       beginMethodCategoryRename(session, slot, 'accessing').commit('accessing'),
     ).toBeUndefined();
+    expect(undoStackDepth(session.id)).toBe(0);
+  });
+});
+
+describe('beginMethodCategoryAdd', () => {
+  it('records a create as a null `before`, which is what makes the reversal a removal', () => {
+    const entry = beginMethodCategoryAdd(session, slot).commit('tests');
+
+    expect(entry).toMatchObject({
+      kind: 'methodCategoryEdit',
+      label: "Create category 'tests' in Account",
+      before: null,
+      after: 'tests',
+    });
+    expect(peekUndoEntry(session.id)).toBe(entry);
+  });
+
+  it('names the class side in the label, like the rename does', () => {
+    const entry = beginMethodCategoryAdd(session, { ...slot, isMeta: true }).commit('creating');
+
+    expect(entry?.label).toBe("Create category 'creating' in Account class");
+  });
+
+  it('records nothing for an empty name', () => {
+    expect(beginMethodCategoryAdd(session, slot).commit('')).toBeUndefined();
     expect(undoStackDepth(session.id)).toBe(0);
   });
 });

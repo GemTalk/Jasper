@@ -3,12 +3,13 @@ import { beginMethodDeletion, beginMethodEdit, readMethodSlotState } from './und
 import { notifyUndoable } from './undo/undoableToast';
 import {
   OverlayRenameOutcome,
+  REMOVE_OVERLAY_CATEGORY_COMMAND,
   RENAME_OVERLAY_CATEGORY_COMMAND,
   SYMBOL_LIST_CHANGED_COMMAND,
 } from './undo/afterUndo';
 import { beginClassDeletion, beginClassEdit } from './undo/recordClassEdit';
 import { beginClassVarAdd } from './undo/recordClassVarEdit';
-import { beginMethodCategoryRename } from './undo/recordMethodCategoryEdit';
+import { beginMethodCategoryAdd, beginMethodCategoryRename } from './undo/recordMethodCategoryEdit';
 import { beginDictionaryRemoval, beginDictionaryRename } from './undo/recordDictionaryEdit';
 import * as crypto from 'crypto';
 import { SessionManager, ActiveSession } from './sessionManager';
@@ -4555,7 +4556,8 @@ export class ExplorerController {
 
   // Add a (still-empty) method category to the given side. The instance and
   // class "+" buttons pass their side explicitly, so it never depends on the
-  // last-touched selection.
+  // last-touched selection. Recorded for Undo, which takes the row back out again --
+  // see removeOverlayMethodCategory (#434).
   async newMethodCategory(isMeta: boolean): Promise<void> {
     if (this.state.className === undefined) {
       void vscode.window.showWarningMessage('Select a class first.');
@@ -4568,6 +4570,7 @@ export class ExplorerController {
       })
     )?.trim();
     if (!name) return;
+    const session = this.session();
     this.newMethodCategories[isMeta ? 'meta' : 'instance'].add(name);
     this.recordMethodContext(isMeta, name);
     this.methodProvider.refresh();
@@ -4581,6 +4584,18 @@ export class ExplorerController {
         expand: true,
       })
       .then(undefined, () => {});
+
+    // The row appears in the pane and stays there, so it has to be as undoable as anything
+    // else that appears and stays -- even though nothing has reached the stone yet (#434).
+    if (session === undefined) return;
+    notifyUndoable(
+      `Created category '${name}'`,
+      beginMethodCategoryAdd(session, {
+        dict: this.state.dictIndex,
+        className: this.state.className,
+        isMeta,
+      }).commit(name),
+    );
   }
 
   // Rename a real (non-computed) method category via the row's pencil. Jasper puts a
@@ -4713,6 +4728,35 @@ export class ExplorerController {
     this.views?.method
       .reveal(new MethodCategoryItem(slot.isMeta, to, false), { select: true, focus: false })
       .then(undefined, () => {});
+    return 'ok';
+  }
+
+  /**
+   * Take a still-empty method category back out of the overlay — the reversal of creating
+   * one. The undo path calls this through an internal command (#434).
+   *
+   * Only ever reaches a category that is STILL empty: one the stone has by now is removed
+   * server-side instead, and only when it holds nothing, since GemStone's `removeCategory:`
+   * takes the methods in a category with it.
+   */
+  removeOverlayMethodCategory(
+    slot: { className: string; isMeta: boolean; dict?: number | string },
+    name: string,
+  ): OverlayRenameOutcome {
+    if (this.state.className !== slot.className || this.state.dictIndex !== slot.dict) {
+      return 'not-listed';
+    }
+    const freshSet = this.newMethodCategories[slot.isMeta ? 'meta' : 'instance'];
+    if (!freshSet.has(name)) return 'not-listed';
+
+    freshSet.delete(name);
+    // The pane is about to stop listing it, so a selection pointing at it would name a row
+    // that is not there.
+    if (this.state.selectedIsMeta === slot.isMeta && this.state.selectedMethodCategory === name) {
+      this.state.selectedMethodCategory = undefined;
+    }
+    this.methodProvider.refresh();
+    this.syncTitles();
     return 'ok';
   }
 
@@ -5625,6 +5669,15 @@ export function registerGemStoneExplorer(
         from: string,
         to: string,
       ): OverlayRenameOutcome => ctl.renameOverlayMethodCategory(slot, from, to),
+    ),
+    // An undo is taking a still-empty method category back out of the overlay. Internal, for
+    // the same reason as the rename above (#434).
+    vscode.commands.registerCommand(
+      REMOVE_OVERLAY_CATEGORY_COMMAND,
+      (
+        slot: { className: string; isMeta: boolean; dict?: number | string },
+        name: string,
+      ): OverlayRenameOutcome => ctl.removeOverlayMethodCategory(slot, name),
     ),
     // Per-pane filter buttons: open a live filter input (prefix match, '*'
     // wildcard) that filters the pane in place — works regardless of where

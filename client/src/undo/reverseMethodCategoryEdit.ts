@@ -8,6 +8,11 @@
  * merging. It is also the one thing that can stop the undo: if the old name has since been
  * taken, the reversal refuses and NAMES the collision rather than clobbering it.
  *
+ * CREATING a category (`before: null`) is reversed by taking it away, and only ever while it
+ * is still EMPTY. GemStone's `removeCategory:` takes the methods in a category with it rather
+ * than refusing, so a category that has been filled since is a refusal with a count, never an
+ * attempt.
+ *
  * A STILL-EMPTY category is reversed in the Explorer's own overlay instead, because that is
  * the only place it exists — the "+" button leaves the stone alone until something is filed
  * there. To the user the two are the same act and get the same button; the difference is
@@ -19,13 +24,14 @@
  */
 import * as vscode from 'vscode';
 import { ActiveSession } from '../sessionManager';
-import { getMethodCategories, renameCategory } from '../browserQueries';
+import { getMethodCategories, removeMethodCategory, renameCategory } from '../browserQueries';
 import { logInfo } from '../gciLog';
 import { MethodCategoryUndoEntry, methodCategorySlotLabel } from './undoTypes';
 import {
   refreshExplorer,
   refreshSearch,
   reloadGemstoneEditors,
+  removeOverlayCategory,
   renameOverlayCategory,
 } from './afterUndo';
 
@@ -54,14 +60,16 @@ export async function reverseMethodCategoryEdit(
     return false;
   }
 
-  // The stone does not have the renamed category, so this is a still-empty one and the
-  // Explorer's overlay is the only place the rename happened.
+  // The stone does not have the category, so this is a still-empty one and the Explorer's
+  // overlay is the only place the action happened.
   if (!categories.includes(entry.after)) {
     return reverseInOverlay(entry, categories, where);
   }
 
-  // From here the category is real. Check BEFORE asking anything: one already back the way
-  // it was costs no modal.
+  // From here the category is real.
+  if (entry.before === null) return removeReal(session, entry, where);
+
+  // Check BEFORE asking anything: one already back the way it was costs no modal.
   if (categories.includes(entry.before)) {
     // Renaming onto it would be refused by the stone anyway; say which name is in the way.
     void vscode.window.showErrorMessage(
@@ -100,7 +108,62 @@ export async function reverseMethodCategoryEdit(
 }
 
 /**
- * The still-empty case: rename it back where it lives, in the Explorer's overlay.
+ * Undoing a CREATE on a category the stone now has: take it away, but only if it is empty.
+ *
+ * `removeMethodCategory` does the check and the removal in one doit, so nothing can file a
+ * method into it in between — and it refuses rather than removing a category with methods,
+ * because `removeCategory:` would take them with it.
+ */
+async function removeReal(
+  session: ActiveSession,
+  entry: MethodCategoryUndoEntry,
+  where: string,
+): Promise<boolean> {
+  let answer: string;
+  try {
+    answer = removeMethodCategory(
+      session,
+      entry.slot.className,
+      entry.slot.isMeta,
+      entry.after,
+      entry.slot.dict,
+    );
+  } catch (e: unknown) {
+    void vscode.window.showErrorMessage(
+      `Undo of ${entry.label} failed: ${e instanceof Error ? e.message : String(e)}`,
+    );
+    return false;
+  }
+
+  const held = /^holds:(\d+)$/.exec(answer.trim());
+  if (held) {
+    const n = Number(held[1]);
+    void vscode.window.showErrorMessage(
+      `Cannot undo ${entry.label}: '${entry.after}' now holds ${n} method${n === 1 ? '' : 's'}, ` +
+        'and removing a category in GemStone removes the methods in it. Move them elsewhere first.',
+    );
+    return false;
+  }
+  if (answer.trim() !== 'ok') {
+    void vscode.window.showErrorMessage(`Undo of ${entry.label} failed: ${answer}`);
+    return false;
+  }
+  logInfo(`[undo] #${entry.id} removed the empty category '${entry.after}' from ${where}`);
+
+  await refreshExplorer();
+  await refreshSearch(session.id);
+  await reloadGemstoneEditors();
+
+  void vscode.window.showInformationMessage(
+    `Undid ${entry.label} — '${entry.after}' is gone again. It was empty, so no method moved. ` +
+      'Changed but NOT committed — commit when ready.',
+  );
+  return true;
+}
+
+/**
+ * The still-empty case: rename it back, or take it away, where it lives — in the Explorer's
+ * overlay.
  *
  * Nothing reaches the stone, so there is nothing to commit and nothing to refresh beyond the
  * pane the Explorer redraws itself.
@@ -110,16 +173,19 @@ async function reverseInOverlay(
   serverCategories: string[],
   where: string,
 ): Promise<boolean> {
-  // Already back the way it was — by this undo before, or by the user's own hand.
-  const outcome = await renameOverlayCategory(entry.slot, entry.after, entry.before);
+  const outcome =
+    entry.before === null
+      ? await removeOverlayCategory(entry.slot, entry.after)
+      : await renameOverlayCategory(entry.slot, entry.after, entry.before);
 
   if (outcome === 'ok') {
-    logInfo(
-      `[undo] #${entry.id} renamed '${entry.after}' back to '${entry.before}' in the overlay`,
-    );
+    logInfo(`[undo] #${entry.id} reversed '${entry.after}' in the overlay`);
     void vscode.window.showInformationMessage(
-      `Undid ${entry.label} — the category is called '${entry.before}' again. It is still ` +
-        'empty, so nothing has reached the stone.',
+      entry.before === null
+        ? `Undid ${entry.label} — '${entry.after}' is gone again. It was still empty, so ` +
+            'nothing had reached the stone.'
+        : `Undid ${entry.label} — the category is called '${entry.before}' again. It is still ` +
+            'empty, so nothing has reached the stone.',
     );
     return true;
   }
@@ -136,11 +202,11 @@ async function reverseInOverlay(
   // discarded whenever the browsed class changes — so this entry now describes something that
   // is not anywhere. Spend it rather than leave it on offer over nothing; the message says
   // why, and the next Undo reaches whatever is under it.
-  const alsoGone = !serverCategories.includes(entry.before);
+  const alreadyBack = entry.before !== null && serverCategories.includes(entry.before);
   void vscode.window.setStatusBarMessage(
-    alsoGone
-      ? `Nothing to undo for ${entry.label} — that category was still empty and is no longer listed.`
-      : `Nothing to undo for ${entry.label} — the category is already called '${entry.before}'.`,
+    alreadyBack
+      ? `Nothing to undo for ${entry.label} — the category is already called '${entry.before}'.`
+      : `Nothing to undo for ${entry.label} — that category was still empty and is no longer listed.`,
     5000,
   );
   return true;

@@ -187,6 +187,86 @@ describe('ExplorerController.renameMethodCategory', () => {
   });
 });
 
+describe('ExplorerController.newMethodCategory — undo', () => {
+  it('records the create, so a new category looks as undoable as anything else', async () => {
+    resetUndoStacks();
+    const { ctl } = makeController();
+    showInputBox.mockResolvedValueOnce('  tests  ');
+
+    await ctl.newMethodCategory(true);
+
+    expect(peekUndoEntry(1)).toMatchObject({
+      kind: 'methodCategoryEdit',
+      label: "Create category 'tests' in M4Demo class",
+      // null `before` is what makes the reversal a removal rather than a rename.
+      before: null,
+      after: 'tests',
+      slot: { className: 'M4Demo', isMeta: true, dict: 3 },
+    });
+  });
+
+  it('records nothing when the prompt is cancelled or empty', async () => {
+    resetUndoStacks();
+    const { ctl } = makeController();
+    showInputBox.mockResolvedValueOnce(undefined);
+    await ctl.newMethodCategory(true);
+    showInputBox.mockResolvedValueOnce('   ');
+    await ctl.newMethodCategory(true);
+
+    expect(peekUndoEntry(1)).toBeUndefined();
+  });
+});
+
+describe('ExplorerController.removeOverlayMethodCategory', () => {
+  const slot = (isMeta = true) => ({ className: 'M4Demo', isMeta, dict: 3 });
+
+  it('takes a still-empty category back out of the overlay', async () => {
+    const { ctl } = makeController();
+    showInputBox.mockResolvedValueOnce('fresh');
+    await ctl.newMethodCategory(true);
+
+    expect(ctl.removeOverlayMethodCategory(slot(), 'fresh')).toBe('ok');
+
+    expect(ctl.methodCategories(true).map((c) => c.category)).not.toContain('fresh');
+  });
+
+  it('clears a selection that pointed at the row it just removed', async () => {
+    const { ctl } = makeController();
+    showInputBox.mockResolvedValueOnce('fresh');
+    await ctl.newMethodCategory(true);
+    ctl.state.selectedIsMeta = true;
+    ctl.state.selectedMethodCategory = 'fresh';
+
+    ctl.removeOverlayMethodCategory(slot(), 'fresh');
+
+    expect(ctl.state.selectedMethodCategory).toBeUndefined();
+  });
+
+  it('answers not-listed when the pane has moved to another class', async () => {
+    const { ctl } = makeController();
+    showInputBox.mockResolvedValueOnce('fresh');
+    await ctl.newMethodCategory(true);
+
+    expect(
+      ctl.removeOverlayMethodCategory({ ...slot(), className: 'SomeOtherClass' }, 'fresh'),
+    ).toBe('not-listed');
+  });
+
+  it('answers not-listed for a category the overlay never had', () => {
+    const { ctl } = makeController();
+
+    expect(ctl.removeOverlayMethodCategory(slot(), 'never-existed')).toBe('not-listed');
+  });
+
+  it('keeps the two sides apart', async () => {
+    const { ctl } = makeController();
+    showInputBox.mockResolvedValueOnce('fresh');
+    await ctl.newMethodCategory(true); // class side
+
+    expect(ctl.removeOverlayMethodCategory(slot(false), 'fresh')).toBe('not-listed');
+  });
+});
+
 describe('ExplorerController.renameOverlayMethodCategory', () => {
   const slot = (isMeta = true) => ({ className: 'M4Demo', isMeta, dict: 3 });
 

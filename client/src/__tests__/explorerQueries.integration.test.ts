@@ -347,6 +347,58 @@ describe('explorer queries (integration)', () => {
     });
   });
 
+  describe('removeMethodCategory', () => {
+    it('removes an empty category', () => {
+      defineWidget();
+      // Emptied by moving its one method away — the category itself survives that.
+      q.recategorizeMethod(session(), WIDGET, false, 'bar', 'elsewhere');
+      expect(q.getMethodCategories(session(), WIDGET, false)).toContain('accessing');
+
+      expect(q.removeMethodCategory(session(), WIDGET, false, 'accessing').trim()).toBe('ok');
+
+      expect(q.getMethodCategories(session(), WIDGET, false)).not.toContain('accessing');
+    });
+
+    it('REFUSES a category that holds methods, and leaves them alone', () => {
+      // The fact the guard exists for: GemStone's `removeCategory:` does not refuse a
+      // category with methods in it, it deletes them along with the category. Pinned here so
+      // it cannot change underneath the undo that relies on being told first.
+      defineWidget();
+
+      expect(q.removeMethodCategory(session(), WIDGET, false, 'accessing').trim()).toBe('holds:1');
+
+      expect(q.getMethodCategories(session(), WIDGET, false)).toContain('accessing');
+      expect(selectorsIn(WIDGET, false, 'accessing')).toContain('bar');
+    });
+
+    it('bare removeCategory: really does take the methods with it', () => {
+      // The unguarded behaviour, stated outright so the guard above reads as necessary
+      // rather than defensive.
+      defineWidget();
+
+      exec(`(UserGlobals at: #'${WIDGET}') removeCategory: 'accessing'. 'ok'`);
+
+      expect(
+        exec(`((UserGlobals at: #'${WIDGET}') includesSelector: #bar) printString`).trim(),
+      ).toBe('false');
+    });
+
+    it('answers not-found rather than raising on a category the class does not have', () => {
+      defineWidget();
+
+      expect(q.removeMethodCategory(session(), WIDGET, false, 'no-such-category').trim()).toBe(
+        'not-found',
+      );
+    });
+
+    it('keeps the two sides apart', () => {
+      defineWidget();
+
+      expect(q.removeMethodCategory(session(), WIDGET, true, 'accessing').trim()).toBe('not-found');
+      expect(q.getMethodCategories(session(), WIDGET, false)).toContain('accessing');
+    });
+  });
+
   describe('renameCategory', () => {
     it('renames a method category, carrying its methods along', () => {
       defineWidget();

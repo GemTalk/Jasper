@@ -4,17 +4,19 @@ vi.mock('../../gciLog', () => ({ logInfo: vi.fn() }));
 vi.mock('../../browserQueries', () => ({
   getMethodCategories: vi.fn(),
   renameCategory: vi.fn(),
+  removeMethodCategory: vi.fn(),
 }));
 vi.mock('../afterUndo', () => ({
   refreshExplorer: vi.fn(),
   refreshSearch: vi.fn(),
   reloadGemstoneEditors: vi.fn(),
   renameOverlayCategory: vi.fn(),
+  removeOverlayCategory: vi.fn(),
 }));
 
 import * as vscode from 'vscode';
-import { getMethodCategories, renameCategory } from '../../browserQueries';
-import { renameOverlayCategory } from '../afterUndo';
+import { getMethodCategories, removeMethodCategory, renameCategory } from '../../browserQueries';
+import { removeOverlayCategory, renameOverlayCategory } from '../afterUndo';
 import { reverseMethodCategoryEdit } from '../reverseMethodCategoryEdit';
 import { MethodCategoryUndoEntry } from '../undoTypes';
 import type { ActiveSession } from '../../sessionManager';
@@ -46,6 +48,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(renameCategory).mockReturnValue('ok');
   vi.mocked(renameOverlayCategory).mockResolvedValue('ok');
+  vi.mocked(removeOverlayCategory).mockResolvedValue('ok');
+  vi.mocked(removeMethodCategory).mockReturnValue('ok');
 });
 
 describe('reverseMethodCategoryEdit', () => {
@@ -172,6 +176,86 @@ describe('reverseMethodCategoryEdit', () => {
 
       expect(renameCategory).toHaveBeenCalled();
       expect(renameOverlayCategory).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('a CREATED category, reversed by taking it away', () => {
+    const created = (): MethodCategoryUndoEntry => ({
+      ...entry(),
+      label: "Create category 'reading' in Account",
+      before: null,
+    });
+
+    it('removes it from the stone once it is real, and says nothing moved', async () => {
+      vi.mocked(getMethodCategories).mockReturnValue(['reading', 'printing']);
+
+      expect(await reverseMethodCategoryEdit(session, created())).toBe(true);
+
+      expect(removeMethodCategory).toHaveBeenCalledWith(session, 'Account', false, 'reading', 7);
+      expect(renameCategory).not.toHaveBeenCalled();
+      expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+        expect.stringContaining('no method moved'),
+      );
+    });
+
+    it('REFUSES when the category has been filled since, and names the count', async () => {
+      // `removeCategory:` takes the methods in a category with it rather than refusing, so
+      // attempting it here would silently delete them.
+      vi.mocked(getMethodCategories).mockReturnValue(['reading']);
+      vi.mocked(removeMethodCategory).mockReturnValue('holds:3');
+
+      expect(await reverseMethodCategoryEdit(session, created())).toBe(false);
+
+      expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+        expect.stringContaining('now holds 3 methods'),
+      );
+      expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
+    });
+
+    it('reads one held method as singular', async () => {
+      vi.mocked(getMethodCategories).mockReturnValue(['reading']);
+      vi.mocked(removeMethodCategory).mockReturnValue('holds:1');
+
+      await reverseMethodCategoryEdit(session, created());
+
+      expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+        expect.stringContaining('now holds 1 method,'),
+      );
+    });
+
+    it('takes it out of the overlay while it is still empty', async () => {
+      vi.mocked(getMethodCategories).mockReturnValue(['printing']);
+
+      expect(await reverseMethodCategoryEdit(session, created())).toBe(true);
+
+      expect(removeOverlayCategory).toHaveBeenCalledWith(
+        { dict: 7, className: 'Account', isMeta: false },
+        'reading',
+      );
+      expect(removeMethodCategory).not.toHaveBeenCalled();
+      expect(renameOverlayCategory).not.toHaveBeenCalled();
+    });
+
+    it('spends the entry when the overlay no longer lists it', async () => {
+      vi.mocked(getMethodCategories).mockReturnValue(['printing']);
+      vi.mocked(removeOverlayCategory).mockResolvedValue('not-listed');
+
+      expect(await reverseMethodCategoryEdit(session, created())).toBe(true);
+
+      expect(vscode.window.setStatusBarMessage).toHaveBeenCalledWith(
+        expect.stringContaining('no longer listed'),
+        expect.any(Number),
+      );
+    });
+
+    it('reports a removal the stone refused for another reason', async () => {
+      vi.mocked(getMethodCategories).mockReturnValue(['reading']);
+      vi.mocked(removeMethodCategory).mockReturnValue('not-found');
+
+      expect(await reverseMethodCategoryEdit(session, created())).toBe(false);
+      expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+        expect.stringContaining('not-found'),
+      );
     });
   });
 });
