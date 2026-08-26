@@ -19,8 +19,16 @@
     "node": ">=22.15.1"
   },
   "devEngines": {
-    "packageManager": { "name": "npm", "version": ">=11.16.0", "onFail": "error" },
-    "runtime": { "name": "node", "version": ">=22.15.1", "onFail": "error" }
+    "packageManager": {
+      "name": "npm",
+      "version": ">=11.16.0",
+      "onFail": "error"
+    },
+    "runtime": {
+      "name": "node",
+      "version": ">=22.15.1",
+      "onFail": "error"
+    }
   },
   "icon": "resources/gemstone-icon.png",
   "categories": [
@@ -137,7 +145,10 @@
         "properties": {
           "gemstone.omniSearch.ui": {
             "type": "string",
-            "enum": ["spotter", "panel"],
+            "enum": [
+              "spotter",
+              "panel"
+            ],
             "enumDescriptions": [
               "Editor-tab Spotter: a webview in an editor tab with labeled scope tabs, a source-preview pane, own match highlighting, and an always-on case indicator.",
               "Bottom-panel view (default): the same webview docked in the panel strip (next to Terminal/Output). Stays out of the way; results open in the editor area above it."
@@ -147,7 +158,11 @@
           },
           "gemstone.omniSearch.matchMode": {
             "type": "string",
-            "enum": ["fuzzy", "substring", "prefix"],
+            "enum": [
+              "fuzzy",
+              "substring",
+              "prefix"
+            ],
             "enumDescriptions": [
               "Subsequence match: the typed characters appear in order (the Quick-Open feel).",
               "The typed text appears as a contiguous run.",
@@ -237,7 +252,12 @@
             "type": "array",
             "items": {
               "type": "string",
-              "enum": ["classes", "methods", "dictionaries", "globals"]
+              "enum": [
+                "classes",
+                "methods",
+                "dictionaries",
+                "globals"
+              ]
             },
             "default": [],
             "markdownDescription": "Scopes to leave out of the **All** search while keeping their own tab, so you can still search them on purpose. Useful for **methods**, which queries the stone on every keystroke. This is different from `#gemstone.omniSearch.categories#`, which removes a scope altogether (no tab, no search). Source, Literals and Class Categories are always outside All and so cannot be listed here. This is the value the panel **starts** with; the **Scopes** button in the panel changes it for the current session without changing this setting."
@@ -1659,6 +1679,16 @@
         "icon": "$(history)"
       },
       {
+        "command": "gemstone.explorer.moveClassToDictionary",
+        "title": "Move to Dictionary…",
+        "category": "GemStone"
+      },
+      {
+        "command": "gemstone.explorer.moveClassToCategory",
+        "title": "Move to Category…",
+        "category": "GemStone"
+      },
+      {
         "command": "gemstone.explorer.insertSuperclass",
         "title": "Insert Superclass…",
         "category": "GemStone",
@@ -2906,6 +2936,26 @@
         {
           "command": "gemstone.deleteDatabase",
           "when": "view == gemstoneDatabases && viewItem == gemstoneDb"
+        },
+        {
+          "command": "gemstone.explorer.moveClassToCategory",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/",
+          "group": "4_organize@1"
+        },
+        {
+          "command": "gemstone.explorer.moveClassToCategory",
+          "when": "view == gemstoneExplorerClassHierarchy && viewItem =~ /^explorerHierClass(\\.test(\\.running|\\.debugging)?)?$/",
+          "group": "4_organize@1"
+        },
+        {
+          "command": "gemstone.explorer.moveClassToDictionary",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/",
+          "group": "4_organize@2"
+        },
+        {
+          "command": "gemstone.explorer.moveClassToDictionary",
+          "when": "view == gemstoneExplorerClassHierarchy && viewItem =~ /^explorerHierClass(\\.test(\\.running|\\.debugging)?)?$/",
+          "group": "4_organize@2"
         }
       ],
       "editor/context": [

@@ -4880,6 +4880,154 @@ export class ExplorerController {
     }
   }
 
+  /** The class a class-level command should act on: an explicit row, else the selection.
+   *  Answers undefined (having said so) when there is nothing to act on. */
+  private targetClass(
+    item?: ClassItem | HierarchyItem,
+  ): { className: string; dictName: string; dictIndex: number } | undefined {
+    let className: string | undefined;
+    let dictName: string | undefined;
+    let dictIndex: number | undefined;
+    if (item instanceof ClassItem) {
+      className = item.className;
+      dictName = this.state.dictName;
+      dictIndex = this.state.dictIndex;
+    } else if (item instanceof HierarchyItem) {
+      className = item.className;
+      const resolved = this.resolveClassDict(item.className, item.dictName);
+      dictName = resolved?.dictName;
+      dictIndex = resolved?.dictIndex;
+    } else if (this.state.className !== undefined) {
+      className = this.state.className;
+      dictName = this.state.dictName;
+      dictIndex = this.state.dictIndex;
+    }
+    if (className === undefined || dictName === undefined || dictIndex === undefined) {
+      void vscode.window.showWarningMessage('Select a class first.');
+      return undefined;
+    }
+    return { className, dictName, dictIndex };
+  }
+
+  /**
+   * Move a class to another dictionary. Rebinds the same class object -- `removeKey:` from one
+   * dictionary, `at:put:` into the other -- so nothing is re-versioned and no method moves; only
+   * which dictionary resolves the name changes. Recorded as an ordinary class edit over both
+   * names, so Undo puts it back (#434). Nothing is committed.
+   */
+  async moveClassToDictionary(item?: ClassItem | HierarchyItem): Promise<void> {
+    const session = this.session();
+    if (!session) return;
+    const target = this.targetClass(item);
+    if (!target) return;
+    const { className, dictIndex } = target;
+
+    if (!queries.canClassBeWritten(session, className, dictIndex)) {
+      void vscode.window.showWarningMessage(
+        `${className} is not writable in this repository — it cannot be moved.`,
+      );
+      return;
+    }
+
+    const choices = queries
+      .getDictionaryNames(session)
+      .map((name, i) => ({ label: name, index: i + 1 }))
+      .filter((c) => c.index !== dictIndex);
+    if (choices.length === 0) {
+      void vscode.window.showWarningMessage('There is no other dictionary on the symbol list.');
+      return;
+    }
+    const picked = await vscode.window.showQuickPick(choices, {
+      title: 'Move Class to Dictionary',
+      placeHolder: `Move ${className} to which dictionary?`,
+    });
+    if (!picked) return;
+
+    // Snapshot both names before the move: the one it leaves and the one it arrives under.
+    const recording = beginClassEdit(session, [
+      { dict: dictIndex, className },
+      { dict: picked.index, className },
+    ]);
+
+    let result: string;
+    try {
+      result = queries.moveClass(session, dictIndex, picked.index, className);
+    } catch (e: unknown) {
+      void vscode.window.showErrorMessage(
+        `Move class failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return;
+    }
+    // moveClass reports a class it cannot find by RETURNING a status string rather than raising.
+    if (!result.startsWith('Moved class:')) {
+      void vscode.window.showErrorMessage(`Move class failed: ${result}`);
+      return;
+    }
+
+    // The class left the dictionary the panes are showing, so rebuild rather than refresh.
+    await this.refreshRetainingSelection();
+    this.onSymbolListChanged?.(session.id);
+    notifyUndoable(
+      `Moved ${className} to ${picked.label}`,
+      recording?.commit(`Move class ${className} to ${picked.label}`),
+    );
+  }
+
+  /**
+   * File a class under a different class category. A category is a LABEL on the class
+   * (`Class>>category:`), so nothing is recompiled and no binding moves. Recorded per class,
+   * sharing the shape a class-category rename uses (#434). Nothing is committed.
+   */
+  async moveClassToCategory(item?: ClassItem | HierarchyItem): Promise<void> {
+    const session = this.session();
+    if (!session) return;
+    const target = this.targetClass(item);
+    if (!target) return;
+    const { className, dictIndex } = target;
+
+    // The dictionary's real categories, plus any still-empty one the "+" button made — filing a
+    // class into one of those is exactly what makes it real.
+    const real = this.classCategoryEntries.map((e) => e.category).filter((c) => c.length > 0);
+    const choices = [...new Set([...real, ...this.newClassCategories])].sort((a, b) =>
+      a.localeCompare(b),
+    );
+    if (choices.length === 0) {
+      void vscode.window.showWarningMessage('This dictionary has no class categories yet.');
+      return;
+    }
+    const picked = await vscode.window.showQuickPick(choices, {
+      title: 'Move Class to Category',
+      placeHolder: `File ${className} under which category?`,
+    });
+    if (!picked) return;
+
+    const recording = beginClassCategoryEdit(session, dictIndex);
+
+    let result: string;
+    try {
+      result = queries.recategorizeClass(session, className, picked, dictIndex);
+    } catch (e: unknown) {
+      void vscode.window.showErrorMessage(
+        `Move to category failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return;
+    }
+    // recategorizeClass reports a class it cannot resolve or write by RETURNING a status string.
+    if (!result.startsWith('Recategorized:')) {
+      void vscode.window.showErrorMessage(`Move to category failed: ${result}`);
+      return;
+    }
+
+    this.classCategoryEntries = queries.getClassesWithCategory(session, dictIndex);
+    this.categoryProvider.refresh();
+    this.classProvider.refresh();
+    this.syncTitles();
+    notifyUndoable(
+      `Filed ${className} under '${picked}'`,
+      recording?.commit(`Move class ${className} to category ${picked}`),
+    );
+  }
+
   // Remove a class from its dictionary. `item` comes from the inline trash on a
   // Classes-pane or Hierarchy-pane row; falls back to the selected class. The delete
   // is dict-scoped (a shadowed name deletes the one the user sees). If the class has
@@ -6746,6 +6894,31 @@ export function registerGemStoneExplorer(
         });
       },
     ),
+    // Move a class to another dictionary, or file it under another class category. Offered on
+    // both the Classes and Hierarchy panes, since either is a reasonable place to be looking at
+    // the class you want to move.
+    vscode.commands.registerCommand('gemstone.explorer.moveClassToDictionary', (item?: unknown) => {
+      void ctl
+        .moveClassToDictionary(
+          item instanceof ClassItem || item instanceof HierarchyItem ? item : undefined,
+        )
+        .catch((e: unknown) => {
+          void vscode.window.showErrorMessage(
+            `Move class failed: ${e instanceof Error ? e.message : String(e)}`,
+          );
+        });
+    }),
+    vscode.commands.registerCommand('gemstone.explorer.moveClassToCategory', (item?: unknown) => {
+      void ctl
+        .moveClassToCategory(
+          item instanceof ClassItem || item instanceof HierarchyItem ? item : undefined,
+        )
+        .catch((e: unknown) => {
+          void vscode.window.showErrorMessage(
+            `Move to category failed: ${e instanceof Error ? e.message : String(e)}`,
+          );
+        });
+    }),
     vscode.commands.registerCommand('gemstone.explorer.removeDictionary', (node?: unknown) => {
       if (node instanceof DictItem) void ctl.removeDictionary(node);
     }),
