@@ -320,6 +320,21 @@ describe('explorer queries (integration)', () => {
       expect(q.recategorizeMethod(session(), WIDGET, false, 'bar', 'relocated').trim()).toBe('ok');
     });
 
+    it('moves back into a category a RENAME emptied out of existence', () => {
+      // The exact sequence that failed in the Explorer: rename `accessing` away, which
+      // takes its methods AND the category itself with it, then create a fresh `accessing`
+      // with the "+" button (client overlay only) and drag a method into it. The target
+      // category has a familiar name but no server existence at all.
+      defineWidget();
+      q.renameCategory(session(), WIDGET, false, 'accessing', 'accessing-renamed');
+      expect(q.getMethodCategories(session(), WIDGET, false)).not.toContain('accessing');
+
+      q.recategorizeMethod(session(), WIDGET, false, 'bar', 'accessing');
+
+      expect(selectorsIn(WIDGET, false, 'accessing')).toContain('bar');
+      expect(selectorsIn(WIDGET, false, 'accessing-renamed')).not.toContain('bar');
+    });
+
     it('creates the category on the CLASS side when that is the side being moved', () => {
       defineWidget();
       q.compileMethod(session(), WIDGET, true, 'instance creation', 'make ^self new');
