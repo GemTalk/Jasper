@@ -30,6 +30,26 @@ describe('compileMethod', () => {
     expect(code).toContain('environmentId: 0');
   });
 
+  it('brackets the compile with the method-history helper, resolved from SessionTemps', () => {
+    const execute = vi.fn<QueryExecutor>(() => 'Compiled: Array >> foo');
+    compileMethod(execute, 'Array', false, 'accessing', 'foo\n  ^ 42');
+    const code = execute.mock.calls[0][0];
+    // The helper lives in SessionTemps (installed at login, no plugin) — resolving
+    // it there, not as a bareword, keeps the compile valid when it is absent, and
+    // brackets the compile so the version is seeded and recorded.
+    expect(code).toContain('SessionTemps current at: #JasperMethodHistory');
+    expect(code).toContain('beforeCompileIn:');
+    expect(code).toContain('afterCompileIn:');
+  });
+
+  it('leaves the capture out of nothing — the helper is a no-op guard, not required', () => {
+    const execute = vi.fn<QueryExecutor>(() => 'Compiled: Array >> foo');
+    compileMethod(execute, 'Array', false, 'accessing', 'foo\n  ^ 42');
+    const code = execute.mock.calls[0][0];
+    // Guarded with ifNotNil: so a session without the helper still compiles normally.
+    expect(code).toContain('ifNotNil:');
+  });
+
   it("uses target = 'base class' for class-side compiles", () => {
     const execute = vi.fn<QueryExecutor>(() => '');
     compileMethod(execute, 'Array', true, 'creation', 'new\n  ^ super new');
