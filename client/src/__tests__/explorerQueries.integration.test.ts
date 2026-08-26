@@ -298,6 +298,38 @@ describe('explorer queries (integration)', () => {
       expect(selectorsIn(WIDGET, false, 'relocated')).toContain('bar');
       expect(selectorsIn(WIDGET, false, 'accessing')).not.toContain('bar');
     });
+
+    it('CREATES a category the class does not have yet, rather than refusing', () => {
+      // The Explorer's "+ new category" leaves the stone untouched until something is
+      // filed there, so dropping a method on one of those rows targets a category that
+      // does not exist yet: bare `moveMethod:toCategory:` answers classErrMethCatNotFound.
+      defineWidget();
+      expect(q.getMethodCategories(session(), WIDGET, false)).not.toContain('fresh-category');
+
+      q.recategorizeMethod(session(), WIDGET, false, 'bar', 'fresh-category');
+
+      expect(selectorsIn(WIDGET, false, 'fresh-category')).toContain('bar');
+      expect(selectorsIn(WIDGET, false, 'accessing')).not.toContain('bar');
+    });
+
+    it('does not fall over on a category that IS already there', () => {
+      // `addCategory:` raises classErrMethCatExists on one that exists, so it is guarded.
+      defineWidget();
+      q.compileMethod(session(), WIDGET, false, 'relocated', 'baz ^0');
+
+      expect(q.recategorizeMethod(session(), WIDGET, false, 'bar', 'relocated').trim()).toBe('ok');
+    });
+
+    it('creates the category on the CLASS side when that is the side being moved', () => {
+      defineWidget();
+      q.compileMethod(session(), WIDGET, true, 'instance creation', 'make ^self new');
+
+      q.recategorizeMethod(session(), WIDGET, true, 'make', 'building');
+
+      expect(selectorsIn(WIDGET, true, 'building')).toContain('make');
+      // The instance side is left alone — the two sides have separate category lists.
+      expect(q.getMethodCategories(session(), WIDGET, false)).not.toContain('building');
+    });
   });
 
   describe('renameCategory', () => {
@@ -310,8 +342,9 @@ describe('explorer queries (integration)', () => {
       expect(selectorsIn(WIDGET, false, 'accessing')).toEqual([]);
     });
 
-    // The Explorer's "+ new category" is client-only until a method lands, because
-    // an empty category has no server existence. Renaming one server-side raises —
+    // The Explorer's "+ new category" leaves the stone untouched until a method lands
+    // there — deliberately, so a category you created and abandoned costs the stone
+    // nothing. `renameCategory:to:` therefore raises on one the class does not have,
     // which is exactly why the controller renames still-empty categories locally.
     it('raises when renaming a category the class does not have', () => {
       defineWidget();

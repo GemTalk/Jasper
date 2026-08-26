@@ -4579,13 +4579,14 @@ export class ExplorerController {
       .then(undefined, () => {});
   }
 
-  // Rename a real (non-computed) method category via the row's pencil. A category
-  // exists on the server only once a method is filed into it; a still-empty one
-  // lives solely in the client-side "fresh" overlay (`_unifiedCategorys:`, which
-  // drives this pane, never lists an empty category). So a populated category is
-  // renamed server-side via the base `renameCategory:to:` protocol (mirroring the
-  // System Browser; not committed automatically), while an empty one is renamed
-  // purely in the overlay — calling the server would raise classErrMethCatNotFound.
+  // Rename a real (non-computed) method category via the row's pencil. Jasper puts a
+  // category on the server only once a method is filed into it -- by a compile or by a
+  // drop -- so a still-empty one lives solely in the client-side "fresh" overlay
+  // (`_unifiedCategorys:`, which drives this pane, never lists an empty category). So a
+  // populated category is renamed server-side via the base `renameCategory:to:` protocol
+  // (mirroring the System Browser; not committed automatically), while an empty one is
+  // renamed purely in the overlay -- calling the server would raise
+  // classErrMethCatNotFound.
   async renameMethodCategory(item: MethodCategoryItem): Promise<void> {
     const session = this.session();
     if (!session || item.computed) return;
@@ -4674,7 +4675,8 @@ export class ExplorerController {
 
   // New Method, invoked from a category row → files into THAT category (including
   // a still-empty one, which the compile then creates on the server, so overlay
-  // categories become real once they hold a method). With no argument (palette)
+  // categories become real once they hold a method — a drop does the same, see
+  // dragMoveToCategory). With no argument (palette)
   // it infers side/category from the current Methods-pane selection.
   async newMethod(target?: MethodCategoryItem): Promise<void> {
     if (target instanceof MethodCategoryItem) {
@@ -4838,6 +4840,11 @@ export class ExplorerController {
   }
 
   // Drop on a method category → recategorize each dragged method there.
+  //
+  // The target can be a still-empty category from the "+" button, which lives only in the
+  // client overlay: `recategorizeMethod` creates it on the stone when it is missing, so a
+  // drop makes an overlay category real exactly as compiling a method into it does. Without
+  // that, the move answered classErrMethCatNotFound over a row the pane was showing.
   async dragMoveToCategory(payloads: MethodDragPayload[], category: string): Promise<void> {
     const session = this.session();
     if (!session) return;
