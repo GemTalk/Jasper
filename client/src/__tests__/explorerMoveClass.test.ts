@@ -46,11 +46,17 @@ function makeController(session: ActiveSession | null = { id: 1 } as ActiveSessi
   ctl.state.dictIndex = 1;
   vi.spyOn(ctl.categoryProvider, 'refresh').mockImplementation(() => {});
   vi.spyOn(ctl.classProvider, 'refresh').mockImplementation(() => {});
-  vi.spyOn(
-    ctl as unknown as { refreshRetainingSelection: () => Promise<void> },
-    'refreshRetainingSelection',
-  ).mockResolvedValue();
-  return ctl;
+  // revealClass is the pane cascade; stubbed so these tests assert WHAT the move reveals rather
+  // than re-exercising the whole refresh path (covered by its own tests).
+  const reveal = vi
+    .spyOn(
+      ctl as unknown as {
+        revealClass: (d: string, i: number, c: string) => Promise<void>;
+      },
+      'revealClass',
+    )
+    .mockResolvedValue();
+  return { ctl, reveal };
 }
 
 beforeEach(() => {
@@ -65,7 +71,7 @@ beforeEach(() => {
 
 describe('ExplorerController.moveClassToDictionary', () => {
   it('offers every dictionary EXCEPT the one the class is already in', async () => {
-    const ctl = makeController();
+    const { ctl } = makeController();
     vi.mocked(vscode.window.showQuickPick).mockResolvedValue(undefined);
 
     await ctl.moveClassToDictionary();
@@ -77,7 +83,7 @@ describe('ExplorerController.moveClassToDictionary', () => {
   });
 
   it('moves the class and records both names, so undo can put it back', async () => {
-    const ctl = makeController();
+    const { ctl } = makeController();
     vi.mocked(vscode.window.showQuickPick).mockResolvedValue({
       label: 'Reports',
       index: 2,
@@ -108,8 +114,44 @@ describe('ExplorerController.moveClassToDictionary', () => {
     expect(recorded?.kind === 'classEdit' && recorded.slots.map((s) => s.dict)).toEqual([1, 2]);
   });
 
+  it('follows the class to its new dictionary rather than leaving the panes behind', async () => {
+    const { ctl, reveal } = makeController();
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValue({
+      label: 'Reports',
+      index: 2,
+    } as never);
+
+    await ctl.moveClassToDictionary();
+
+    expect(reveal).toHaveBeenCalledWith('Reports', 2, 'Account');
+  });
+
+  it('drops the stale corpus entry for the dictionary the class left', async () => {
+    // Anything caching classes by dictionary now has a row that will not open.
+    const onClassRemoved = vi.fn();
+    const sessionManager = {
+      getSelectedSession: () => ({ id: 1 }) as ActiveSession,
+    } as unknown as SessionManager;
+    const ctl = new ExplorerController(sessionManager, undefined, onClassRemoved);
+    ctl.state.className = 'Account';
+    ctl.state.dictName = 'UserGlobals';
+    ctl.state.dictIndex = 1;
+    vi.spyOn(
+      ctl as unknown as { revealClass: () => Promise<void> },
+      'revealClass',
+    ).mockResolvedValue();
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValue({
+      label: 'Reports',
+      index: 2,
+    } as never);
+
+    await ctl.moveClassToDictionary();
+
+    expect(onClassRemoved).toHaveBeenCalledWith(1, 'Account');
+  });
+
   it('refuses a class the repository will not let you write', async () => {
-    const ctl = makeController();
+    const { ctl } = makeController();
     vi.mocked(queries.canClassBeWritten).mockReturnValue(false);
 
     await ctl.moveClassToDictionary();
@@ -119,7 +161,7 @@ describe('ExplorerController.moveClassToDictionary', () => {
   });
 
   it('records nothing when the stone answered with a status string', async () => {
-    const ctl = makeController();
+    const { ctl } = makeController();
     vi.mocked(vscode.window.showQuickPick).mockResolvedValue({
       label: 'Reports',
       index: 2,
@@ -135,7 +177,7 @@ describe('ExplorerController.moveClassToDictionary', () => {
   });
 
   it('says so when there is nowhere else to move it', async () => {
-    const ctl = makeController();
+    const { ctl } = makeController();
     vi.mocked(queries.getDictionaryNames).mockReturnValue(['UserGlobals']);
 
     await ctl.moveClassToDictionary();
@@ -146,7 +188,7 @@ describe('ExplorerController.moveClassToDictionary', () => {
   });
 
   it('does nothing without a selected session', async () => {
-    const ctl = makeController(null);
+    const { ctl } = makeController(null);
 
     await ctl.moveClassToDictionary();
 
@@ -156,7 +198,7 @@ describe('ExplorerController.moveClassToDictionary', () => {
 
 describe('ExplorerController.moveClassToCategory', () => {
   it('files the class under the chosen category and records it per class', async () => {
-    const ctl = makeController();
+    const { ctl } = makeController();
     (ctl as unknown as { classCategoryEntries: unknown[] }).classCategoryEntries = [
       entry('Account', 'Banking'),
       entry('Other', 'Printing'),
@@ -181,8 +223,20 @@ describe('ExplorerController.moveClassToCategory', () => {
     });
   });
 
+  it('re-cascades the panes, so the new category shows and a stale filter is dropped', async () => {
+    const { ctl, reveal } = makeController();
+    (ctl as unknown as { classCategoryEntries: unknown[] }).classCategoryEntries = [
+      entry('Account', 'Banking'),
+    ];
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValue('Printing' as never);
+
+    await ctl.moveClassToCategory();
+
+    expect(reveal).toHaveBeenCalledWith('UserGlobals', 1, 'Account');
+  });
+
   it('offers a still-empty category from the + button — filing a class is what makes it real', async () => {
-    const ctl = makeController();
+    const { ctl } = makeController();
     (ctl as unknown as { classCategoryEntries: unknown[] }).classCategoryEntries = [
       entry('Account', 'Banking'),
     ];
@@ -195,7 +249,7 @@ describe('ExplorerController.moveClassToCategory', () => {
   });
 
   it('records nothing when the stone answered with a status string', async () => {
-    const ctl = makeController();
+    const { ctl } = makeController();
     (ctl as unknown as { classCategoryEntries: unknown[] }).classCategoryEntries = [
       entry('Account', 'Banking'),
     ];
@@ -211,7 +265,7 @@ describe('ExplorerController.moveClassToCategory', () => {
   });
 
   it('says so when the dictionary has no categories yet', async () => {
-    const ctl = makeController();
+    const { ctl } = makeController();
     (ctl as unknown as { classCategoryEntries: unknown[] }).classCategoryEntries = [];
 
     await ctl.moveClassToCategory();

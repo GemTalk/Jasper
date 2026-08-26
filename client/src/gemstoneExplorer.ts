@@ -4964,9 +4964,15 @@ export class ExplorerController {
       return;
     }
 
-    // The class left the dictionary the panes are showing, so rebuild rather than refresh.
-    await this.refreshRetainingSelection();
-    this.onSymbolListChanged?.(session.id);
+    // Follow the class: it is no longer in the dictionary the panes are showing, so revealing it
+    // in its new one switches the Dictionaries pane, refetches that dictionary's class categories
+    // and class list, and re-cascades the Hierarchy and Methods panes. Leaving the panes where
+    // they were would show a dictionary that no longer holds the class the user is looking at.
+    await this.revealClass(picked.label, picked.index, className);
+    // Anything caching a class corpus keys it by dictionary, so its entry for the OLD dictionary
+    // now points somewhere the class will not resolve. Dropping it beats keeping a row that
+    // fails to open; the class comes back under its new dictionary on the next resync.
+    this.onClassRemoved?.(session.id, className);
     notifyUndoable(
       `Moved ${className} to ${picked.label}`,
       recording?.commit(`Move class ${className} to ${picked.label}`),
@@ -4983,7 +4989,7 @@ export class ExplorerController {
     if (!session) return;
     const target = this.targetClass(item);
     if (!target) return;
-    const { className, dictIndex } = target;
+    const { className, dictName, dictIndex } = target;
 
     // The dictionary's real categories, plus any still-empty one the "+" button made — filing a
     // class into one of those is exactly what makes it real.
@@ -5018,10 +5024,11 @@ export class ExplorerController {
       return;
     }
 
-    this.classCategoryEntries = queries.getClassesWithCategory(session, dictIndex);
-    this.categoryProvider.refresh();
-    this.classProvider.refresh();
-    this.syncTitles();
+    // The class is still in this dictionary but under a different label, so the Class Categories
+    // pane has a new row (or has lost one) and the Classes pane may be filtered to the category
+    // the class just left. Revealing it refetches the categories and drops a filter that would
+    // now hide it, while keeping a deliberate filter the class is still inside.
+    await this.revealClass(dictName, dictIndex, className);
     notifyUndoable(
       `Filed ${className} under '${picked}'`,
       recording?.commit(`Move class ${className} to category ${picked}`),
