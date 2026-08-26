@@ -40,7 +40,7 @@ const CLASS_METHODS: string[] = [
    method (nothing installed) simply gets no seed -- its first version is recorded
    post-compile."
   [ | selector store key old |
-    selector := self selectorFrom: source.
+    selector := self selectorFrom: source in: aBehavior environmentId: envId.
     selector isNil ifTrue: [^self].
     store := self store.
     key := self keyFor: aBehavior selector: selector.
@@ -126,19 +126,22 @@ const CLASS_METHODS: string[] = [
   ^aBehavior name asString, '>>', aSelector asString`,
 
   // --- selector parsing (base-kernel compiler; no parser add-on) --------------
-  `selectorFrom: source
+  `selectorFrom: source in: aBehavior environmentId: envId
   "The selector of the method source, parsed by compiling it into THROWAWAY
-   dictionaries with the base-kernel compiler (so it needs no parser add-on). nil if
-   the source will not parse -- the real compile then fails with the proper error,
-   or the original is seeded on the next clean edit."
+   dictionaries with the base-kernel compiler (so it needs no parser add-on). The
+   compile is done IN aBehavior's context, not UndefinedObject's, so a method that
+   references instance variables (or class vars) parses -- compiling it against
+   UndefinedObject would raise on those and drop the seed of the original. nil if
+   the source will not parse (undefined globals); the real compile then fails with
+   the proper error, or the original is seeded on the next clean edit."
   ^[ | meth |
-     meth := UndefinedObject
+     meth := aBehavior
        compileMethod: source
        dictionaries: System myUserProfile symbolList
        category: #'__jasperMethodHistory__'
        intoMethodDict: GsMethodDictionary new
        intoCategories: GsMethodDictionary new
-       environmentId: 0.
+       environmentId: envId.
      (meth isKindOf: GsNMethod) ifTrue: [meth selector] ifFalse: [nil]
    ] on: CompileError, CompileWarning do: [:ex | ex return: nil]`,
 

@@ -34,10 +34,12 @@ describe('method history (integration)', () => {
   const exec = (code: string): string => q.executeFetchString(session(), code);
 
   const CLS = 'JMHItFixture';
+  // The fixture carries an instance variable so tests can exercise methods that
+  // reference it — the case that must parse in the class's own context when seeding.
   const defineClass = (): void => {
     q.compileClassDefinition(
       session(),
-      `Object subclass: '${CLS}' instVarNames: #() classVars: #() ` +
+      `Object subclass: '${CLS}' instVarNames: #(count) classVars: #() ` +
         'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
     );
   };
@@ -67,20 +69,23 @@ describe('method history (integration)', () => {
     installMethodHistory(session());
     defineClass();
     // Compile the original WITHOUT the capture path (direct kernel compile), so it
-    // stands in for a method that predates any Jasper edit.
+    // stands in for a method that predates any Jasper edit. It references the
+    // instance variable `count` — the seed's selector-parse must resolve that in the
+    // class's own context, or the original would be silently dropped on first edit.
     exec(
       `(System myUserProfile symbolList objectNamed: #'${CLS}') ` +
-        "compileMethod: 'answer\n\t^ 1' dictionaries: System myUserProfile symbolList " +
+        "compileMethod: 'answer\n\t^ count' dictionaries: System myUserProfile symbolList " +
         "category: 'accessing' environmentId: 0. true printString",
     );
 
-    q.compileMethod(session(), CLS, false, 'accessing', 'answer\n\t^ 2');
+    q.compileMethod(session(), CLS, false, 'accessing', 'answer\n\t^ count + 1');
     const versions = parseMethodHistory(q.getMethodHistory(session(), CLS, 'answer', false));
 
     const sources = versions.map((v) => v.source);
-    expect(sources.some((s) => s.includes('^ 1'))).toBe(true);
-    expect(sources.some((s) => s.includes('^ 2'))).toBe(true);
-    expect(versions[0].source).toContain('^ 2');
+    // The seeded original (^ count) AND the edit (^ count + 1) are both present.
+    expect(sources.some((s) => s.includes('^ count') && !s.includes('+ 1'))).toBe(true);
+    expect(sources.some((s) => s.includes('^ count + 1'))).toBe(true);
+    expect(versions[0].source).toContain('^ count + 1');
   });
 
   it('does not record an identical recompile twice', () => {

@@ -29,6 +29,7 @@ describe('editor/context menu', () => {
       'gemstone.runInNewGem',
       'gemstone.sendersOf',
       'gemstone.implementorsOf',
+      'gemstone.methodHistoryFromEditor',
       'gemstone.toggleSelectorBreakpoint',
     ]);
   });
@@ -81,6 +82,12 @@ describe('editor/context menu', () => {
   it('shows "Toggle Selector Breakpoint" in gemstone documents', () => {
     expect(getMenuItem('gemstone.toggleSelectorBreakpoint')?.when).toBe(
       `editorTextFocus && resourceLangId == gemstone-smalltalk`,
+    );
+  });
+
+  it('shows "Method History…" only when a method editor is active', () => {
+    expect(getMenuItem('gemstone.methodHistoryFromEditor')?.when).toBe(
+      'gemstone.methodEditorActive',
     );
   });
 });

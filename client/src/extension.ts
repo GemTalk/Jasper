@@ -1014,6 +1014,29 @@ export function activate(context: vscode.ExtensionContext) {
     }),
   );
 
+  // In-editor entry to Method History: a title-bar button + context-menu item on a
+  // gemstone method editor, so the history is reachable from the source being
+  // edited without hunting for the row in the Explorer. The context key gates the
+  // menus to method editors only (not class-definition/comment/workspace editors).
+  const updateMethodEditorContext = (editor?: vscode.TextEditor): void => {
+    const uri = editor?.document.uri;
+    const isMethod = !!uri && uri.scheme === 'gemstone' && !!parseMethodUri(uri);
+    void vscode.commands.executeCommand('setContext', 'gemstone.methodEditorActive', isMethod);
+  };
+  context.subscriptions.push(
+    vscode.window.onDidChangeActiveTextEditor(updateMethodEditorContext),
+    vscode.commands.registerCommand('gemstone.methodHistoryFromEditor', () => {
+      const uri = vscode.window.activeTextEditor?.document.uri;
+      if (!uri) return;
+      void explorer.openMethodHistoryForUri(uri).catch((e: unknown) => {
+        void vscode.window.showErrorMessage(
+          `Method history failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      });
+    }),
+  );
+  updateMethodEditorContext(vscode.window.activeTextEditor);
+
   // ── Jupyter Notebook Kernels (Grail Python + Smalltalk) ─
   const grailNotebookController = new GrailNotebookController(sessionManager);
   context.subscriptions.push(grailNotebookController);

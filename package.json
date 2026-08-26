@@ -1653,6 +1653,12 @@
         "icon": "$(history)"
       },
       {
+        "command": "gemstone.methodHistoryFromEditor",
+        "title": "Method History…",
+        "category": "GemStone",
+        "icon": "$(history)"
+      },
+      {
         "command": "gemstone.explorer.insertSuperclass",
         "title": "Insert Superclass…",
         "category": "GemStone",
@@ -2007,6 +2013,10 @@
         {
           "command": "gemstone.explorer.methodHistory",
           "when": "false"
+        },
+        {
+          "command": "gemstone.methodHistoryFromEditor",
+          "when": "gemstone.methodEditorActive"
         },
         {
           "command": "gemstone.explorer.insertSuperclass",
@@ -2893,6 +2903,13 @@
           "when": "view == gemstoneDatabases && viewItem == gemstoneDb"
         }
       ],
+      "editor/title": [
+        {
+          "command": "gemstone.methodHistoryFromEditor",
+          "when": "gemstone.methodEditorActive",
+          "group": "navigation@0"
+        }
+      ],
       "editor/context": [
         {
           "command": "gemstone.displayIt",
@@ -2928,6 +2945,11 @@
           "command": "gemstone.implementorsOf",
           "when": "editorTextFocus && resourceLangId == gemstone-smalltalk",
           "group": "2_navigation@1"
+        },
+        {
+          "command": "gemstone.methodHistoryFromEditor",
+          "when": "gemstone.methodEditorActive",
+          "group": "2_navigation@2"
         },
         {
           "command": "gemstone.toggleSelectorBreakpoint",

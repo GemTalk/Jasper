@@ -623,12 +623,14 @@ async function confirmDroppedMethods(labels: string[]): Promise<boolean> {
   return choice === DELETE;
 }
 
-// One open method-history viewer, tracked so a compile elsewhere can refresh it.
+// One open method-history viewer, tracked so a compile elsewhere can refresh it and
+// so a repeat request reveals the existing tab instead of opening a duplicate.
 interface MethodHistoryPanelEntry {
   sessionId: number;
   className: string;
   selector: string;
   isMeta: boolean;
+  panel: vscode.WebviewPanel;
   refresh: () => void;
 }
 
@@ -3451,15 +3453,44 @@ export class ExplorerController {
     if (!session) return;
     const className = this.state.className;
     if (className === undefined) return;
-    const selector = node.info.selector;
-    const isMeta = node.isMeta;
+    await this.openMethodHistory(
+      session,
+      className,
+      node.info.selector,
+      node.isMeta,
+      this.state.dictIndex ?? this.state.dictName,
+    );
+  }
+
+  // Open (or reveal) the method-history viewer for one method. Shared by the
+  // Explorer method-row command and the in-editor entry point.
+  async openMethodHistory(
+    session: ActiveSession,
+    className: string,
+    selector: string,
+    isMeta: boolean,
+    dict: number | string | undefined,
+  ): Promise<void> {
+    // One tab per method: if a viewer for this exact method is already open, reveal
+    // it instead of opening a duplicate.
+    const already = this.methodHistoryPanels.find(
+      (e) =>
+        e.sessionId === session.id &&
+        e.className === className &&
+        e.selector === selector &&
+        e.isMeta === isMeta,
+    );
+    if (already) {
+      already.panel.reveal();
+      return;
+    }
+
     // The method-history helper is installed at login (SessionTemps, no plugin).
     // Ensure it once more here in case that login install was skipped or failed;
     // it is idempotent and cheap.
     installMethodHistory(session);
 
     const label = `${className}${isMeta ? ' class' : ''}>>${selector}`;
-    const dict = this.state.dictIndex ?? this.state.dictName;
 
     let versions: MethodVersion[];
     try {
@@ -3529,6 +3560,7 @@ export class ExplorerController {
       className,
       selector,
       isMeta,
+      panel,
       refresh: () => {
         try {
           current = parseMethodHistory(
@@ -5866,6 +5898,9 @@ export interface ExplorerHandle {
   /** Navigate the panes to `uri`'s class/method — the explicit Reveal action a
    *  Testing-view row offers, since a plain click deliberately does not. */
   revealDocument(uri: vscode.Uri): Promise<void>;
+  /** Open the method-history viewer for the method a gemstone:// editor URI names
+   *  — the in-editor entry point, so the user need not find the row in the tree. */
+  openMethodHistoryForUri(uri: vscode.Uri): Promise<void>;
 }
 
 export function registerGemStoneExplorer(
@@ -6544,5 +6579,24 @@ export function registerGemStoneExplorer(
     markAttributedOpen: (uri) => ctl.markAttributedOpen(uri),
     clearAttributedOpen: (uri) => ctl.clearAttributedOpen(uri),
     revealDocument: (uri) => ctl.revealDocument(uri),
+    openMethodHistoryForUri: async (uri) => {
+      const parsed = parseUri(uri);
+      if (parsed.kind !== 'method') {
+        void vscode.window.showInformationMessage(
+          'Method History is available while editing a method.',
+        );
+        return;
+      }
+      const session =
+        sessionManager.getSession(parsed.sessionId) ?? sessionManager.getSelectedSession();
+      if (!session) return;
+      await ctl.openMethodHistory(
+        session,
+        parsed.className,
+        parsed.selector,
+        parsed.isMeta,
+        parsed.dictIndex ?? parsed.dictName,
+      );
+    },
   };
 }
