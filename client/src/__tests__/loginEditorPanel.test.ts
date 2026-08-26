@@ -49,7 +49,7 @@ describe('LoginEditorPanel', () => {
     storage = new LoginStorage();
     treeProvider = new LoginTreeProvider(storage);
     secrets = makeSecrets();
-    secretsArg = secrets as unknown as vscode.SecretStorage;
+    secretsArg = secrets;
     // Reset the static currentPanel between tests
     (LoginEditorPanel as unknown as { currentPanel: unknown }).currentPanel = undefined;
     vi.clearAllMocks();
