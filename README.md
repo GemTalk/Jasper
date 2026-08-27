@@ -151,7 +151,7 @@ Each login is a row in the tree; click **Login** to start a session, which appea
 **Login rows** offer Edit, Duplicate, Delete, and Login. A login **cannot be edited or deleted while it has an active session** — log out first. **Session rows** (the children) offer:
 
 - **Commit** / **Abort** — transaction control
-- **Ping** — confirm the session is still active and responsive
+- **Session Configuration** (gear) — open this session's stone and gem configuration in its own editor tab, where the runtime-settable values can be changed and **Ping** now lives
 - **Logout** — disconnect
 - **Export** and **Make Active Session** (context menu)
 
