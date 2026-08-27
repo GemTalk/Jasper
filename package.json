@@ -890,7 +890,7 @@
       },
       {
         "command": "gemstone.showConfiguration",
-        "title": "Settings",
+        "title": "Session Configuration",
         "category": "GemStone",
         "icon": "$(settings-gear)"
       },

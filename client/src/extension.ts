@@ -1832,10 +1832,10 @@ export function activate(context: vscode.ExtensionContext) {
       openWorkspaceForSession(sessionManager, item),
     ),
 
-    // Open the standalone Configuration panel for a session. Reached from a
-    // session row (runtime settings are session-scoped); it also accepts a
-    // connected login's row, and with no row it falls back to the selected
-    // session, so the command palette works too.
+    // Open the standalone Session Configuration panel for a session. Reached from a
+    // session row (configuration is session-scoped); it also accepts a connected
+    // login's row, and with no row it falls back to the selected session, so the
+    // command palette works too.
     vscode.commands.registerCommand(
       'gemstone.showConfiguration',
       (item?: GemStoneSessionItem | GemStoneLoginItem) => {

@@ -1,4 +1,4 @@
-// Webview-side script for the standalone Settings panel (configurationPanel.ts).
+// Webview-side script for the standalone Session Configuration panel (configurationPanel.ts).
 // Plain JS that runs in the webview DOM (not bundled). Renders the configuration
 // the host reads from the session, and dispatches every action back to the host
 // as a postMessage. Exposes a single global `GemstoneConfig` so it can be
@@ -208,9 +208,9 @@
     </details>`;
   }
 
-  // The panel body: the stone and gem settings of the session. Values load on
-  // demand — the header carries a Ping result, Ping, and Refresh, and opening the
-  // panel asks the host to read them (init posts `ready`).
+  // The panel body: the stone and gem configuration of the session. Values load
+  // on demand — the header carries a Ping result, Ping, and Refresh, and opening
+  // the panel asks the host to read them (init posts `ready`).
   function renderBody() {
     const label = (lastConfig && lastConfig.label) || meta.label || 'this session';
     const version = (lastConfig && lastConfig.version) || meta.version || '';
@@ -224,7 +224,7 @@
       <button type="button" class="icon-btn" data-action="loadConfiguration" title="Reload settings from the session" aria-label="Refresh">${icon('refresh')}</button>
     </span>`;
     const head = `<header class="config-panel-head">
-      <span class="config-panel-title">Settings</span>
+      <span class="config-panel-title">Session Configuration</span>
       <span class="config-panel-sub dim">${esc(label)}${version ? ` · ${esc(version)}` : ''}</span>
       ${actions}
     </header>`;
@@ -235,17 +235,17 @@
         <div><button type="button" class="btn" data-action="loadConfiguration">${icon('refresh')}<span>Try again</span></button></div>`;
     } else if (!lastConfig) {
       body = configLoading
-        ? `<div class="config-loading">Reading settings…</div>`
-        : `<div class="empty">Settings for ${esc(label)}.
-             <div><button type="button" class="btn" data-action="loadConfiguration">${icon('refresh')}<span>Load settings</span></button></div></div>`;
+        ? `<div class="config-loading">Reading configuration…</div>`
+        : `<div class="empty">Configuration for ${esc(label)}.
+             <div><button type="button" class="btn" data-action="loadConfiguration">${icon('refresh')}<span>Load configuration</span></button></div></div>`;
     } else {
       const errLine = configError ? `<div class="config-error">${esc(configError)}</div>` : '';
       body = `<div class="config-toolbar">
           <div class="config-filter-wrap">
-            <input type="text" class="config-filter" data-config-filter placeholder="Filter settings…" value="${esc(configFilter)}" aria-label="Filter settings" />
+            <input type="text" class="config-filter" data-config-filter placeholder="Filter parameters…" value="${esc(configFilter)}" aria-label="Filter configuration parameters" />
             <button type="button" class="config-filter-clear" data-config-filter-clear title="Clear filter" aria-label="Clear filter"${configFilter ? '' : ' hidden'}>${icon('close')}</button>
           </div>
-          <span class="config-legend">${badge('Editable', 'editable')} you can change it in this session · ${badge('Read-only', 'readonly')} can't be changed here (set in the config file, or needs SystemUser) · click a value with ${icon('edit')} to change it</span>
+          <span class="config-legend">${badge('Editable', 'editable')} click a value with ${icon('edit')} to change it in this session · ${badge('Read-only', 'readonly')} can't be changed here (set in the config file, or needs SystemUser)</span>
         </div>
         ${errLine}
         ${configTable('Stone', 'stone', lastConfig.stoneParams)}
@@ -323,12 +323,13 @@
     setNotice = null;
   }
 
-  // Hide the parameter rows whose key does not contain the filter text. Done in
-  // place so typing never triggers a full re-render (which would drop focus).
+  // A case-insensitive prefix match on the parameter name: typing "Gem" shows the
+  // Gem* parameters, not every key that merely contains "gem" (e.g. StnGemTimeout).
+  // Done in place so typing never triggers a full re-render (which would drop focus).
   function applyConfigFilter() {
     const needle = configFilter.trim().toLowerCase();
     els.root.querySelectorAll('tr.config-item').forEach((row) => {
-      const match = !needle || row.dataset.configKey.includes(needle);
+      const match = !needle || row.dataset.configKey.startsWith(needle);
       row.style.display = match ? '' : 'none';
     });
   }

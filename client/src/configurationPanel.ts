@@ -1,7 +1,9 @@
-// Settings panel — a standalone editor-tab webview that shows one logged-in
+// Session Configuration panel — a standalone editor-tab webview that shows one logged-in
 // session's stone and gem configuration and lets an editable value be changed.
 // It is also where a session's live maintenance happens (Ping). Opened from the
 // session's row in the Logins view (see the gemstone.showConfiguration command).
+// One panel per session, so two sessions' configuration can be compared side by
+// side; a panel closes itself when its session logs out.
 //
 // The stone and gem configuration reports are read from the session over its
 // GCI, and an editable value is written back through that same session. The read
@@ -104,10 +106,11 @@ type Inbound =
 
 export class ConfigurationPanel {
   static readonly viewType = 'gemstoneConfiguration';
-  private static current: ConfigurationPanel | undefined;
+  // One panel per session, so several sessions' configuration can be open at once
+  // (to compare two, say). Keyed by session id.
+  private static panels = new Map<number, ConfigurationPanel>();
 
   private readonly disposables: vscode.Disposable[] = [];
-  private sessionId: number;
   // Parsed system.conf descriptions, one map per version — the file does not
   // change under a running stone, so it is read and parsed once per version and
   // kept (an unreadable file caches as an empty map, so a remote stone whose
@@ -115,21 +118,22 @@ export class ConfigurationPanel {
   private configDescCache = new Map<string, Map<string, string>>();
 
   /**
-   * Open the configuration panel for a session, revealing (and re-targeting) the
-   * existing panel if one is already open. One panel at a time: reopening it for
-   * a different session points it at that session and reloads.
+   * Open the configuration panel for a session, revealing the session's existing
+   * panel if it already has one. Each session gets its own panel, so two can be
+   * open at once.
    */
   static show(deps: ConfigurationPanelDeps, sessionId: number): void {
-    const session = deps.sessionManager.getSession(sessionId);
-    const title = session ? `Settings — ${loginLabel(session.login)}` : 'Settings';
-    if (ConfigurationPanel.current) {
-      const existing = ConfigurationPanel.current;
-      existing.sessionId = sessionId;
-      existing.panel.title = title;
+    // Already open for this session — just reveal it, so a second session keeps
+    // its own panel rather than replacing this one.
+    const existing = ConfigurationPanel.panels.get(sessionId);
+    if (existing) {
       existing.panel.reveal(undefined, false);
-      existing.loadConfiguration();
       return;
     }
+    const session = deps.sessionManager.getSession(sessionId);
+    const title = session
+      ? `Session Configuration — ${loginLabel(session.login)}`
+      : 'Session Configuration';
     const panel = vscode.window.createWebviewPanel(
       ConfigurationPanel.viewType,
       title,
@@ -141,20 +145,19 @@ export class ConfigurationPanel {
         localResourceRoots: [],
       },
     );
-    ConfigurationPanel.current = new ConfigurationPanel(panel, deps, sessionId);
+    ConfigurationPanel.panels.set(sessionId, new ConfigurationPanel(panel, deps, sessionId));
   }
 
-  /** Close the panel if one is open; a no-op otherwise. */
+  /** Close every open Session Configuration panel; a no-op when none are open. */
   static close(): void {
-    ConfigurationPanel.current?.dispose();
+    for (const panel of [...ConfigurationPanel.panels.values()]) panel.dispose();
   }
 
   private constructor(
     private readonly panel: vscode.WebviewPanel,
     private readonly deps: ConfigurationPanelDeps,
-    sessionId: number,
+    private readonly sessionId: number,
   ) {
-    this.sessionId = sessionId;
     this.panel.webview.html = this.getHtml();
     this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
     this.panel.webview.onDidReceiveMessage(
@@ -162,16 +165,11 @@ export class ConfigurationPanel {
       null,
       this.disposables,
     );
-    // The panel describes one session; when it logs out, the values on screen no
-    // longer describe anything reachable — say so rather than leave stale rows
-    // whose next edit would fail with a raw GCI error.
+    // This panel describes one session; when it logs out, its values describe
+    // nothing reachable — close the panel rather than leave a dead tab behind.
     this.deps.sessionManager.onDidRemoveSession(
       (id) => {
-        if (id === this.sessionId) {
-          this.configurationError(
-            'This session has logged out. Log in and reopen Settings to see current values.',
-          );
-        }
+        if (id === this.sessionId) this.dispose();
       },
       null,
       this.disposables,
@@ -198,7 +196,7 @@ export class ConfigurationPanel {
 
   /**
    * Check the session is alive and responsive, reporting the result as a notice
-   * in the panel rather than a transient toast — the Settings page is where a
+   * in the panel rather than a transient toast — the Session Configuration page is where a
    * session's live maintenance happens. A ping is not a settings change, so it
    * leaves the values on screen untouched.
    */
@@ -287,7 +285,7 @@ export class ConfigurationPanel {
         this.setResult(scope, key, 'warn', result.message ?? `Could not set ${key}.`);
         return;
       }
-      appendSysadmin(`Settings: set ${scope} configuration ${key} = ${value}`);
+      appendSysadmin(`Configuration: set ${scope} configuration ${key} = ${value}`);
 
       const config = this.readConfiguration(session);
       void this.panel.webview.postMessage({ command: 'configuration', config });
@@ -314,12 +312,12 @@ export class ConfigurationPanel {
 
   /** The outcome of a set, shown by the panel beside the row it belongs to. */
   private setResult(scope: ConfigScope, key: string, tone: 'ok' | 'warn', message: string): void {
-    if (tone === 'warn') appendSysadmin(`Settings: ${message}`);
+    if (tone === 'warn') appendSysadmin(`Configuration: ${message}`);
     void this.panel.webview.postMessage({ command: 'setResult', scope, key, tone, message });
   }
 
   private configurationError(message: string): void {
-    appendSysadmin(`Settings: ${message}`);
+    appendSysadmin(`Configuration: ${message}`);
     void this.panel.webview.postMessage({ command: 'configurationError', message });
   }
 
@@ -368,8 +366,8 @@ export class ConfigurationPanel {
   }
 
   private dispose(): void {
-    if (ConfigurationPanel.current === this) {
-      ConfigurationPanel.current = undefined;
+    if (ConfigurationPanel.panels.get(this.sessionId) === this) {
+      ConfigurationPanel.panels.delete(this.sessionId);
     }
     this.panel.dispose();
     while (this.disposables.length) {
@@ -393,7 +391,7 @@ export class ConfigurationPanel {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';">
-  <title>Settings</title>
+  <title>Session Configuration</title>
   <style>${CSS}</style>
 </head>
 <body>

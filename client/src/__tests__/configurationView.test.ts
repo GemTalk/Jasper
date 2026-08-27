@@ -78,9 +78,9 @@ afterEach(() => {
 describe('opening the panel', () => {
   it('shows the working state and the session label until values arrive', () => {
     const { root } = open();
-    expect(root.textContent).toContain('Reading settings…');
+    expect(root.textContent).toContain('Reading configuration…');
     expect(root.textContent).toContain('DataCurator on jasper');
-    expect(root.querySelector('.config-panel-title')?.textContent).toBe('Settings');
+    expect(root.querySelector('.config-panel-title')?.textContent).toBe('Session Configuration');
   });
 
   it('re-reads when Refresh is clicked', () => {
@@ -410,19 +410,29 @@ describe('set results', () => {
 });
 
 describe('filtering', () => {
-  it('hides the rows whose key does not match', () => {
+  const visibleKeys = (root: HTMLElement) =>
+    [...root.querySelectorAll('tr.config-item')]
+      .filter((r) => (r as HTMLElement).style.display !== 'none')
+      .map((r) => r.querySelector('.config-key')?.textContent?.trim());
+  const typeFilter = (root: HTMLElement, text: string) => {
+    const box = root.querySelector<HTMLInputElement>('[data-config-filter]')!;
+    box.value = text;
+    box.dispatchEvent(new Event('input', { bubbles: true }));
+  };
+
+  it('matches keys by case-insensitive prefix', () => {
     const { root } = open();
     sendMessage({ command: 'configuration', config: configPayload() });
+    typeFilter(root, 'STN'); // upper-case still matches
+    expect(visibleKeys(root)).toEqual(['StnGemTimeout']);
+  });
 
-    const filter = root.querySelector<HTMLInputElement>('[data-config-filter]')!;
-    filter.value = 'stn';
-    filter.dispatchEvent(new Event('input', { bubbles: true }));
-
-    const visible = [...root.querySelectorAll('tr.config-item')].filter(
-      (r) => (r as HTMLElement).style.display !== 'none',
-    );
-    const keys = visible.map((r) => r.querySelector('.config-key')?.textContent?.trim());
-    expect(keys).toEqual(['StnGemTimeout']);
+  it('is a prefix match, not a substring: "Gem" shows Gem* keys, not StnGemTimeout', () => {
+    const { root } = open();
+    sendMessage({ command: 'configuration', config: configPayload() });
+    typeFilter(root, 'Gem');
+    // StnGemTimeout contains "Gem" but does not start with it, so it is hidden.
+    expect(visibleKeys(root)).toEqual(['GemConvertArrayBuilder']);
   });
 
   it('keeps the filter text, filtered rows, and box focus across a redraw', () => {
