@@ -2,22 +2,22 @@
 
 The beginning of a home for the layer that wraps the GCI C library (`libgcits`, loaded
 through koffi). It is meant to absorb that logic progressively, over several PRs. Today it
-is intentionally incomplete: it holds tests and nothing else, and the module it is named
-after still lives one level up, at `client/src/gciLibrary.ts`.
+is intentionally incomplete.
 
 Do not read the current arrangement as the target layout. It is not settled, and each PR
 moves another slice.
 
 ## What is here, and why only this
 
-`__tests__/` holds integration tests for the **raw bindings** only — the wrappers that are
+`__tests__/` mostly holds integration tests for the **raw bindings** — the wrappers that are
 1:1 with a GCI C entry point (`GciTs*`, plus the session-free `Gci*` host utilities), with one
 deliberate exception: the login wrappers force `GCI_LOGIN_QUIET` into `loginFlags` — see
-`quietedLoginFlags` in `client/src/gciLibrary.ts`.
+`quietedLoginFlags` in `client/src/gciLibrary.ts`. It also now holds unit tests for this
+folder's own production modules, such as `headerDeclarations.test.ts`.
 
-The narrow scope is deliberate. Raw-binding tests can move without touching the wrapper
-code, which keeps this first step reviewable. The ergonomic layer on top of the bindings,
-and its tests, have not moved.
+The narrow scope of the raw-binding tests is deliberate. They can move without touching the
+wrapper code, which keeps this first step reviewable. The ergonomic layer on top of the
+bindings, and its tests, have not moved.
 
 ## A resolution trap to know about
 
