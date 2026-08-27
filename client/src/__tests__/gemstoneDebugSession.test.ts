@@ -674,6 +674,86 @@ describe('GemStoneDebugSession', () => {
       expect(body.breakpoints).toHaveLength(0);
     });
 
+    /**
+     * A breakpoint the manager refused on a real method — a GCI failure while
+     * arming, or an editor with unsaved edits. The manager produces the reason;
+     * this is the only thing that carries it out to the developer, so without a
+     * test here the reasons could stop arriving and nothing would fail.
+     */
+    function managerReturning(results: unknown[]): BreakpointManager {
+      return {
+        setBreakpointsForSource: vi.fn(() => results),
+      } as unknown as BreakpointManager;
+    }
+
+    const attached = (manager: BreakpointManager) => {
+      const { session } = createTestSession(manager);
+      callRequest(session, 'attachRequest', makeResponse('attach'), {
+        sessionId: 1,
+        gsProcess: '12345',
+      });
+      return session;
+    };
+
+    const METHOD_PATH = 'gemstone://1/Globals/Array/instance/accessing/at%3A';
+
+    it("relays the manager's refusal reason for a method the developer pointed at", () => {
+      const session = attached(
+        managerReturning([
+          {
+            stepPoint: 0,
+            actualLine: 2,
+            verified: false,
+            message: 'Could not set the breakpoint at step point 2: GCI error 2010',
+          },
+        ]),
+      );
+
+      const response = makeResponse('setBreakpoints');
+      callRequest(session, 'setBreakpointsRequest', response, {
+        source: { path: METHOD_PATH },
+        breakpoints: [{ line: 2 }],
+      });
+
+      const body = response.body as {
+        breakpoints: { verified: boolean; reason?: string; message?: string; line: number }[];
+      };
+      expect(body.breakpoints[0]).toMatchObject({ verified: false, reason: 'failed', line: 2 });
+      expect(body.breakpoints[0].message).toContain('GCI error 2010');
+    });
+
+    it('says nothing extra for a breakpoint that was accepted', () => {
+      // `reason: 'failed'` is only for a refusal. An ordinary verified
+      // breakpoint must not carry one, or every breakpoint would look refused.
+      const session = attached(managerReturning([{ stepPoint: 1, actualLine: 1, verified: true }]));
+
+      const response = makeResponse('setBreakpoints');
+      callRequest(session, 'setBreakpointsRequest', response, {
+        source: { path: METHOD_PATH },
+        breakpoints: [{ line: 1 }],
+      });
+
+      const body = response.body as { breakpoints: Record<string, unknown>[] };
+      expect(body.breakpoints[0]).toMatchObject({ verified: true, line: 1 });
+      expect(body.breakpoints[0]).not.toHaveProperty('reason');
+      expect(body.breakpoints[0]).not.toHaveProperty('message');
+    });
+
+    it('forwards the column of an inline breakpoint, so it aims at the right step point', () => {
+      const manager = managerReturning([{ stepPoint: 3, actualLine: 2, verified: true }]);
+      const session = attached(manager);
+
+      const response = makeResponse('setBreakpoints');
+      callRequest(session, 'setBreakpointsRequest', response, {
+        source: { path: METHOD_PATH },
+        breakpoints: [{ line: 2, column: 14 }],
+      });
+
+      const forwarded = vi.mocked(manager.setBreakpointsForSource).mock.calls[0];
+      expect(forwarded[2]).toEqual([2]);
+      expect(forwarded[3]).toEqual([14]);
+    });
+
     // A frame with no gemstone:// path is an ad-hoc execution ('Executed Code')
     // or a method whose class is not in the symbol list. Neither is a saved,
     // compiled method the developer can point at, so the request is refused with

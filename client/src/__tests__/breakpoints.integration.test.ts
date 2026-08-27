@@ -95,6 +95,95 @@ describe('GemStone breakpoint semantics (integration)', () => {
     fixture();
   });
 
+  /**
+   * The one-round-trip step point query, against a real stone.
+   *
+   * `getStepPointBundle` replaced three proven queries — `getMethodSource`,
+   * `getSourceOffsets` and `getStepPointSelectorRanges` — with a single doit that
+   * frames all three answers into one reply. Every other test in the suite mocks
+   * it away, so nothing else would notice a syntax error in that doit, a
+   * `WriteStream` method missing on an older boundary, or a difference in what
+   * `sourceString` / `_sourceOffsets` return between releases. It is the hot path
+   * for hover and inlay hints: if it fails, step point numbers stop entirely.
+   *
+   * So these compare the bundle's three parts against the three queries it
+   * replaced, on whichever stone is running.
+   */
+  describe('the one-round-trip step point bundle', () => {
+    const FRAMING_SELECTOR = 'vsCodeBundleFramingFixture';
+
+    /**
+     * A method whose source is hostile to the reply's framing: a tab-indented
+     * line, blank lines, a comma-separated string that looks like the offsets
+     * header, and a tab inside a string literal that looks like a selector row.
+     * The format is line-framed and length-counted precisely so source text
+     * cannot be mistaken for a header — this is what proves it.
+     */
+    const framingFixture = (): void => {
+      queries.compileMethod(
+        session(),
+        TEST_CLASS,
+        false,
+        'test-vscode-extension',
+        `${FRAMING_SELECTOR}\n\t"tab-indented comment"\n\n  | a b |\n  a := '1,2,3'.\n  b := '4\t5\t6'.\n\n  ^ a size + b size`,
+      );
+      expect(queries.getAllSelectors(session(), TEST_CLASS)).toContain(FRAMING_SELECTOR);
+    };
+
+    it('answers exactly what the three separate queries answer', () => {
+      const bundle = queries.getStepPointBundle(session(), TEST_CLASS, false, TEST_SELECTOR);
+
+      expect(bundle.source).toBe(
+        queries.getMethodSource(session(), TEST_CLASS, false, TEST_SELECTOR),
+      );
+      expect(bundle.offsets).toEqual(
+        queries.getSourceOffsets(session(), TEST_CLASS, false, TEST_SELECTOR),
+      );
+      expect(bundle.selectors).toEqual(
+        queries.getStepPointSelectorRanges(session(), TEST_CLASS, false, TEST_SELECTOR),
+      );
+    });
+
+    it('answers a usable bundle at all, not an empty one', () => {
+      // A doit that fails to parse, or a stone that answers something
+      // unexpected, would parse into empty parts rather than throw — so equality
+      // with the other queries is not enough on its own.
+      const bundle = queries.getStepPointBundle(session(), TEST_CLASS, false, TEST_SELECTOR);
+
+      expect(bundle.source).toContain(TEST_SELECTOR);
+      expect(bundle.offsets.length).toBeGreaterThan(2);
+      expect(Math.min(...bundle.offsets)).toBeGreaterThanOrEqual(1);
+      // `printString` starts on an identifier, so it must come back as a
+      // selector range; the offsets it reports must land on that text.
+      const printString = bundle.selectors.find((r) => r.selectorText === 'printString');
+      expect(printString).toBeDefined();
+      expect(
+        bundle.source.slice(
+          printString!.selectorOffset,
+          printString!.selectorOffset + printString!.selectorLength,
+        ),
+      ).toBe('printString');
+    });
+
+    it('carries source containing tabs, blank lines and header-shaped text verbatim', () => {
+      framingFixture();
+
+      const bundle = queries.getStepPointBundle(session(), TEST_CLASS, false, FRAMING_SELECTOR);
+      const source = queries.getMethodSource(session(), TEST_CLASS, false, FRAMING_SELECTOR);
+
+      expect(bundle.source).toBe(source);
+      expect(bundle.source).toContain('\t"tab-indented comment"');
+      expect(bundle.source).toContain("'1,2,3'");
+      expect(bundle.source).toContain('\n\n');
+      expect(bundle.offsets).toEqual(
+        queries.getSourceOffsets(session(), TEST_CLASS, false, FRAMING_SELECTOR),
+      );
+      expect(bundle.selectors).toEqual(
+        queries.getStepPointSelectorRanges(session(), TEST_CLASS, false, FRAMING_SELECTOR),
+      );
+    });
+  });
+
   it('the fixture method has step points to break at', () => {
     const offsets = queries.getSourceOffsets(session(), TEST_CLASS, false, TEST_SELECTOR);
     expect(offsets.length).toBeGreaterThan(2);

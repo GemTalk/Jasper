@@ -829,6 +829,12 @@ export class BreakpointManager {
   invalidateForUri(uri: vscode.Uri): void {
     this.stepPoints.invalidate(uri);
     this.applied.delete(uri.toString());
+    // Saving is the ordinary way out of a dirty editor, and it arrives here
+    // rather than through `thawIfClean` — VS Code fires no text-document change
+    // for a save. Without this the URI would stay held for the life of the
+    // window, and a later unrelated clean edit would re-apply a method nobody
+    // asked about.
+    this.frozen.delete(uri.toString());
 
     // Removing these re-enters onBreakpointsChanged with none left for the
     // method, which clears the gem's breaks and refreshes the view.
@@ -855,6 +861,10 @@ export class BreakpointManager {
 
     for (const key of [...this.applied.keys()]) {
       if (key.startsWith(prefix)) this.applied.delete(key);
+    }
+    // Held methods go with the gem too: nothing is left to catch up to.
+    for (const key of [...this.frozen]) {
+      if (key.startsWith(prefix)) this.frozen.delete(key);
     }
     this.stepPoints.invalidateSession(sessionId);
     for (const editor of vscode.window.visibleTextEditors) {

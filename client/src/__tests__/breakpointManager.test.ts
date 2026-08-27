@@ -375,6 +375,30 @@ describe('BreakpointManager', () => {
       expect(vi.mocked(debug.removeBreakpoints)).toHaveBeenCalledWith([stray]);
     });
 
+    it('takes one back with nobody logged in, since it is wrong either way', () => {
+      // The refusal deliberately runs BEFORE any session lookup: a breakpoint in
+      // a workspace is wrong whether or not a session is live, and a
+      // logged-out developer is the one most likely to click that gutter. With
+      // the lookup first, this breakpoint would sit there arming nothing and
+      // saying nothing.
+      const stray = bpOn('untitled:Workspace');
+      workspace.textDocuments = [
+        { uri: Uri.parse('untitled:Workspace'), languageId: 'gemstone-smalltalk' },
+      ];
+      debug.breakpoints = [stray];
+
+      const manager = makeManager(false); // no session, and none logged in
+      const context = { subscriptions: [] as unknown[] } as unknown as vscodeApi.ExtensionContext;
+      manager.register(context);
+      const calls = vi.mocked(debug.onDidChangeBreakpoints).mock.calls;
+      calls[calls.length - 1][0]({ added: [stray], removed: [], changed: [] });
+
+      expect(vi.mocked(debug.removeBreakpoints)).toHaveBeenCalledWith([stray]);
+      expect(vi.mocked(window.showWarningMessage)).toHaveBeenCalledWith(
+        expect.stringContaining('compiled GemStone method'),
+      );
+    });
+
     it("never touches another extension's breakpoints", () => {
       // The guard that matters most. `onDidChangeBreakpoints` reports every
       // extension's breakpoints, so a rule of "not a gemstone:// URI" would take
@@ -524,6 +548,52 @@ describe('BreakpointManager', () => {
       fireDocumentChanged(CLEAN_DOC);
 
       expect(mockSetBreakAtStepPoint).toHaveBeenCalled();
+    });
+
+    it('stops holding a method once it is saved, so a later edit cannot re-apply it', () => {
+      // Saving is the ordinary way out of a dirty editor, and it never reaches
+      // `thawIfClean` — VS Code fires no text-document change for a save, only
+      // the recompile that arrives as `invalidateForUri`. A method left held
+      // would be re-applied by the next unrelated clean edit, which nobody asked
+      // for, and would stay held for the life of the window.
+      workspace.textDocuments = [DIRTY_DOC];
+      const held = bpAt(1);
+      debug.breakpoints = [held];
+      const manager = fire({ added: [held] });
+      expect(mockSetBreakAtStepPoint).not.toHaveBeenCalled();
+
+      // The save: the recompile drops the method's breakpoints.
+      manager.invalidateForUri(Uri.parse(METHOD_URI));
+      mockSetBreakAtStepPoint.mockClear();
+      mockClearAllBreaks.mockClear();
+
+      // A later clean change to the same document — an edit that leaves no
+      // unsaved state, e.g. an undo back to the saved text.
+      workspace.textDocuments = [CLEAN_DOC];
+      debug.breakpoints = [];
+      fireDocumentChanged(CLEAN_DOC);
+
+      expect(mockClearAllBreaks).not.toHaveBeenCalled();
+      expect(mockSetBreakAtStepPoint).not.toHaveBeenCalled();
+    });
+
+    it('stops holding a method when its session logs out', () => {
+      workspace.textDocuments = [DIRTY_DOC];
+      const held = bpAt(1);
+      debug.breakpoints = [held];
+      const manager = fire({ added: [held] });
+
+      manager.clearAllForSession(1);
+      mockSetBreakAtStepPoint.mockClear();
+      mockClearAllBreaks.mockClear();
+
+      // Nothing is left to catch up to — the gem is gone.
+      workspace.textDocuments = [CLEAN_DOC];
+      debug.breakpoints = [];
+      fireDocumentChanged(CLEAN_DOC);
+
+      expect(mockClearAllBreaks).not.toHaveBeenCalled();
+      expect(mockSetBreakAtStepPoint).not.toHaveBeenCalled();
     });
 
     it('ignores a document change that leaves the editor still dirty', () => {

@@ -172,6 +172,8 @@ The only difference is cardinality: a login may now have several session childre
 
 > **Note:** In multiple-session mode, an open workspace/editor stays bound to the session that opened it even after you switch the active session, so the active session, the Explorer, and an open editor can point at different sessions at once. If you use a custom `gemstone.exportPath`, include the `{session}` variable so concurrent sessions don't overwrite each other's exported files.
 
+> **Breakpoints follow the editor, not the active session.** Because an editor stays bound to the session that opened it, a breakpoint set in that editor is armed in that session's gem — so it stops the code you are looking at rather than the session that happens to be selected. **Enable All**, **Disable All** and **Remove All Breakpoints** go the other way and sweep *every* logged-in session, because VS Code keeps a single breakpoint list for the whole window. See [Breakpoints](#breakpoints).
+
 ### Code Execution
 
 With an active session, execute Smalltalk code from any editor:
@@ -296,9 +298,20 @@ the thing it was set in goes away:
   **Enable/Disable Breakpoint at Cursor**. A disabled breakpoint stays set in the
   gem so re-arming it is instant; its token marker turns grey and faded, matching
   the grey the gutter dot goes
+- **A breakpoint belongs to the session its method came from.** A method editor
+  stays bound to the session that opened it, so a breakpoint set in it is armed
+  in *that* session's gem — not in whichever session happens to be active. With
+  one session live there is no difference; with several, this is what makes the
+  breakpoint stop the code you were looking at. A row in the **GemStone
+  Breakpoints** view can likewise only act on a method from the session the view
+  is reading
 - **All at once** — **Enable All**, **Disable All** and **Remove All
-  Breakpoints** act on every GemStone breakpoint, including any set outside
-  Jasper by topaz or a `halt` left in the code
+  Breakpoints** act on every GemStone breakpoint in **every logged-in session**,
+  including any set outside Jasper by topaz or a `halt` left in the code. VS Code
+  keeps one breakpoint list for the window, so "all" means all of it: sweeping
+  only the active session would leave rows reading *disabled* over breakpoints
+  that still stop execution. If one session's gem refuses, the others are still
+  swept and the message names the one that failed
 - **Clear All Breakpoints in Method** drops every breakpoint in the method you
   are in
 - **Not honoured: conditions, hit counts and log messages.** VS Code's *Edit
