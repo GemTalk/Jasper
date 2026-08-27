@@ -1,22 +1,44 @@
-import { describe, it, expect, vi, type Mock } from 'vitest';
-
-// Only `readdirSync` is faked, and only where a test asks for it: the real
-// `vendor/gci-headers/` tree still backs every other assertion in this file.
-vi.mock('fs', async () => {
-  const actual = await vi.importActual<typeof import('fs')>('fs');
-  return { ...actual, readdirSync: vi.fn(actual.readdirSync) };
-});
-
+import { describe, it, expect, afterAll } from 'vitest';
 import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { parseDeclarations, vendoredRevisions, declaredFunctions } from '../headerDeclarations';
 
-/** One `readdirSync` result, for the next call only. */
-function nextDirectoryListing(entries: { name: string; isDirectory: boolean }[]): void {
-  // Cast past the overloads of `readdirSync`: the mock only ever stands in for
-  // the `withFileTypes: true` one, which is the only call the module makes.
-  (fs.readdirSync as unknown as Mock).mockReturnValueOnce(
-    entries.map(({ name, isDirectory }) => ({ name, isDirectory: () => isDirectory })),
-  );
+/**
+ * A throwaway headers root laid out as `vendoredRevisions` expects. Real
+ * directories rather than a faked `readdirSync`: the mock had to be primed
+ * per-call, which left a queued value to leak into whichever shuffled test ran
+ * next, and it stubbed out the very readdir-and-filter behavior under test.
+ */
+const temporaryRoots: string[] = [];
+
+function headersRootContaining(entries: { name: string; isDirectory: boolean }[]): string {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gci-headers-'));
+  temporaryRoots.push(root);
+  for (const { name, isDirectory } of entries) {
+    const entryPath = path.join(root, name);
+    if (isDirectory) fs.mkdirSync(entryPath);
+    else fs.writeFileSync(entryPath, '');
+  }
+  return root;
+}
+
+afterAll(() => {
+  for (const root of temporaryRoots) fs.rmSync(root, { recursive: true, force: true });
+});
+
+/**
+ * The message of the error a call throws. Assertions about several parts of one
+ * message read against a single failure this way, rather than re-running the
+ * parse once per `toThrow` pattern.
+ */
+function messageFrom(run: () => unknown): string {
+  try {
+    run();
+  } catch (error) {
+    return (error as Error).message;
+  }
+  throw new Error('expected the call to throw, but it returned normally');
 }
 
 /**
@@ -54,14 +76,16 @@ describe('parseDeclarations (inline fixtures)', () => {
     expect(declared.get('GciTsNbLoginFinished')).toEqual({ unixOnly: true });
   });
 
-  it('does not mark a declaration inside an unrelated #if as unixOnly', () => {
+  it('throws for a declaration behind a platform condition it cannot classify', () => {
+    // `FLG_MSWIN32` is a real vendor flag this parser has no rule for: silently
+    // recording `unixOnly: false` here would claim the declaration is available
+    // everywhere, when it may only be available on Windows.
     const source = `
       #if defined(FLG_MSWIN32)
       EXTERN_GCI_DEC(int) GciTsWindowsOnlyThing(GciSession sess) GCI_WEAK;
       #endif
     `;
-    const declared = parseDeclarations(source, 'fixture');
-    expect(declared.get('GciTsWindowsOnlyThing')).toEqual({ unixOnly: false });
+    expect(() => parseDeclarations(source, 'fixture')).toThrow(/FLG_MSWIN32/);
   });
 
   it('tracks FLG_UNIX two #if frames deep', () => {
@@ -128,7 +152,7 @@ describe('parseDeclarations (inline fixtures)', () => {
 
   it('does not treat the #else of an unrelated #if as UNIX-only', () => {
     const source = `
-      #if defined(FLG_SOMETHING_ELSE)
+      #if defined(SOME_UNRELATED_FLAG)
       EXTERN_GCI_DEC(int) GciTsThen(GciSession sess) GCI_WEAK;
       #else
       EXTERN_GCI_DEC(int) GciTsOtherwise(GciSession sess) GCI_WEAK;
@@ -154,18 +178,82 @@ describe('parseDeclarations (inline fixtures)', () => {
 
   it('tracks FLG_UNIX arriving on an #elif, and leaving on the next one', () => {
     const source = `
-      #if defined(FLG_SOMETHING_ELSE)
+      #if defined(SOME_UNRELATED_FLAG)
       EXTERN_GCI_DEC(int) GciTsFirstBranch(GciSession sess) GCI_WEAK;
       #elif defined(FLG_UNIX)
       EXTERN_GCI_DEC(int) GciTsUnixElif(GciSession sess) GCI_WEAK;
-      #elif defined(FLG_MSWIN32)
-      EXTERN_GCI_DEC(int) GciTsWindowsElif(GciSession sess) GCI_WEAK;
+      #elif defined(SOME_OTHER_UNRELATED_FLAG)
+      EXTERN_GCI_DEC(int) GciTsLeavesElif(GciSession sess) GCI_WEAK;
       #endif
     `;
     const declared = parseDeclarations(source, 'fixture');
     expect(declared.get('GciTsFirstBranch')).toEqual({ unixOnly: false });
     expect(declared.get('GciTsUnixElif')).toEqual({ unixOnly: true });
-    expect(declared.get('GciTsWindowsElif')).toEqual({ unixOnly: false });
+    expect(declared.get('GciTsLeavesElif')).toEqual({ unixOnly: false });
+  });
+
+  it('reads the #elif of #if !defined(FLG_UNIX) as UNIX-only', () => {
+    // Reaching the #elif means the #if was false, and the #if being false *is*
+    // FLG_UNIX being defined — so the #elif branch is UNIX-only regardless of
+    // what its own condition says.
+    const source = `
+      #if !defined(FLG_UNIX)
+      EXTERN_GCI_DEC(int) GciTsNonUnixBranch(GciSession sess) GCI_WEAK;
+      #elif defined(FLG_SOLARIS)
+      EXTERN_GCI_DEC(int) GciTsSolarisBranch(GciSession sess) GCI_WEAK;
+      #endif
+    `;
+    const declared = parseDeclarations(source, 'fixture');
+    expect(declared.get('GciTsNonUnixBranch')).toEqual({ unixOnly: false });
+    expect(declared.get('GciTsSolarisBranch')).toEqual({ unixOnly: true });
+  });
+
+  it('carries the FLG_UNIX constraint of an early branch past an #elif to the #else', () => {
+    const source = `
+      #if !defined(FLG_UNIX)
+      EXTERN_GCI_DEC(int) GciTsNonUnix(GciSession sess) GCI_WEAK;
+      #elif defined(FLG_SOLARIS)
+      EXTERN_GCI_DEC(int) GciTsSolaris(GciSession sess) GCI_WEAK;
+      #else
+      EXTERN_GCI_DEC(int) GciTsRemainder(GciSession sess) GCI_WEAK;
+      #endif
+    `;
+    const declared = parseDeclarations(source, 'fixture');
+    expect(declared.get('GciTsRemainder')).toEqual({ unixOnly: true });
+  });
+
+  it('leaves the #else after an #elif alone when no branch excluded FLG_UNIX', () => {
+    const source = `
+      #if defined(SOME_UNRELATED_FLAG)
+      EXTERN_GCI_DEC(int) GciTsFirst(GciSession sess) GCI_WEAK;
+      #elif defined(FLG_UNIX)
+      EXTERN_GCI_DEC(int) GciTsUnix(GciSession sess) GCI_WEAK;
+      #else
+      EXTERN_GCI_DEC(int) GciTsNeither(GciSession sess) GCI_WEAK;
+      #endif
+    `;
+    const declared = parseDeclarations(source, 'fixture');
+    expect(declared.get('GciTsFirst')).toEqual({ unixOnly: false });
+    expect(declared.get('GciTsUnix')).toEqual({ unixOnly: true });
+    expect(declared.get('GciTsNeither')).toEqual({ unixOnly: false });
+  });
+
+  it('keeps an #elif chain nested inside a FLG_UNIX frame UNIX-only throughout', () => {
+    const source = `
+      #if defined(FLG_UNIX)
+      #if defined(FLG_SOLARIS)
+      EXTERN_GCI_DEC(int) GciTsUnixSolaris(GciSession sess) GCI_WEAK;
+      #elif defined(FLG_LINUX)
+      EXTERN_GCI_DEC(int) GciTsUnixLinux(GciSession sess) GCI_WEAK;
+      #else
+      EXTERN_GCI_DEC(int) GciTsUnixOther(GciSession sess) GCI_WEAK;
+      #endif
+      #endif
+    `;
+    const declared = parseDeclarations(source, 'fixture');
+    expect(declared.get('GciTsUnixSolaris')).toEqual({ unixOnly: true });
+    expect(declared.get('GciTsUnixLinux')).toEqual({ unixOnly: true });
+    expect(declared.get('GciTsUnixOther')).toEqual({ unixOnly: true });
   });
 
   it('reads #if !defined(FLG_UNIX) as the non-UNIX branch, and its #else as UNIX', () => {
@@ -194,6 +282,19 @@ describe('parseDeclarations (inline fixtures)', () => {
     expect(declared.get('GciTsGuardedIn')).toEqual({ unixOnly: true });
   });
 
+  it('carries the constraint of an #ifndef FLG_UNIX through to a later #elif', () => {
+    const source = `
+      #ifndef FLG_UNIX
+      EXTERN_GCI_DEC(int) GciTsNoUnix(GciSession sess) GCI_WEAK;
+      #elif defined(FLG_SOLARIS)
+      EXTERN_GCI_DEC(int) GciTsSolarisOnUnix(GciSession sess) GCI_WEAK;
+      #endif
+    `;
+    const declared = parseDeclarations(source, 'fixture');
+    expect(declared.get('GciTsNoUnix')).toEqual({ unixOnly: false });
+    expect(declared.get('GciTsSolarisOnUnix')).toEqual({ unixOnly: true });
+  });
+
   it('keeps a declaration whose argument list branches on the platform', () => {
     const source = `
       EXTERN_GCI_DEC(int) GciTsSplitArgs(
@@ -209,6 +310,24 @@ describe('parseDeclarations (inline fixtures)', () => {
     expect([...declared.keys()]).toEqual(['GciTsSplitArgs', 'GciTsAfterSplit']);
     // The declaration is not itself UNIX-only just because one argument is.
     expect(declared.get('GciTsSplitArgs')).toEqual({ unixOnly: false });
+  });
+
+  it('keeps a UNIX-only declaration UNIX-only when its argument list branches', () => {
+    // The snapshot is taken where the declaration starts, so the #else inside
+    // its argument list must not walk the classification back to non-UNIX.
+    const source = `
+      #if defined(FLG_UNIX)
+      EXTERN_GCI_DEC(int) GciTsUnixSplitArgs(
+      #if defined(FLG_SOLARIS)
+        int fd
+      #else
+        int handle
+      #endif
+      ) GCI_WEAK;
+      #endif
+    `;
+    const declared = parseDeclarations(source, 'fixture');
+    expect(declared.get('GciTsUnixSplitArgs')).toEqual({ unixOnly: true });
   });
 
   it('leaves the frame stack balanced across a declaration that opens and closes one', () => {
@@ -260,6 +379,85 @@ describe('parseDeclarations (inline fixtures)', () => {
     expect([...declared.keys()]).toEqual(['GciTsStillHere']);
   });
 
+  it('ignores a declaration retired behind #if 0', () => {
+    const source = `
+      #if 0
+      EXTERN_GCI_DEC(int) GciTsRetiredByIfZero(GciSession sess) GCI_WEAK;
+      #endif
+      EXTERN_GCI_DEC(int) GciTsStillBound(GciSession sess) GCI_WEAK;
+    `;
+    const declared = parseDeclarations(source, 'fixture');
+    expect([...declared.keys()]).toEqual(['GciTsStillBound']);
+  });
+
+  it('keeps the #else of #if 0 and drops the #else of #if 1', () => {
+    const source = `
+      #if 0
+      EXTERN_GCI_DEC(int) GciTsDeadThen(GciSession sess) GCI_WEAK;
+      #else
+      EXTERN_GCI_DEC(int) GciTsLiveElse(GciSession sess) GCI_WEAK;
+      #endif
+      #if 1
+      EXTERN_GCI_DEC(int) GciTsLiveThen(GciSession sess) GCI_WEAK;
+      #else
+      EXTERN_GCI_DEC(int) GciTsDeadElse(GciSession sess) GCI_WEAK;
+      #endif
+    `;
+    const declared = parseDeclarations(source, 'fixture');
+    expect([...declared.keys()]).toEqual(['GciTsLiveElse', 'GciTsLiveThen']);
+  });
+
+  it('reads the #elif of #if 0 as live, because falling past #if 0 is possible', () => {
+    const source = `
+      #if 0
+      EXTERN_GCI_DEC(int) GciTsDeadFirst(GciSession sess) GCI_WEAK;
+      #elif defined(SOME_UNRELATED_FLAG)
+      EXTERN_GCI_DEC(int) GciTsReachableElif(GciSession sess) GCI_WEAK;
+      #endif
+    `;
+    const declared = parseDeclarations(source, 'fixture');
+    expect([...declared.keys()]).toEqual(['GciTsReachableElif']);
+  });
+
+  it('reads every branch after #if 1 as unreachable', () => {
+    const source = `
+      #if 1
+      EXTERN_GCI_DEC(int) GciTsTaken(GciSession sess) GCI_WEAK;
+      #elif defined(FLG_MSWIN32)
+      EXTERN_GCI_DEC(int) GciTsUnreachableElif(GciSession sess) GCI_WEAK;
+      #else
+      EXTERN_GCI_DEC(int) GciTsUnreachableElse(GciSession sess) GCI_WEAK;
+      #endif
+    `;
+    const declared = parseDeclarations(source, 'fixture');
+    expect([...declared.keys()]).toEqual(['GciTsTaken']);
+  });
+
+  it('keeps a #if 0 region dead inside a live FLG_UNIX frame', () => {
+    const source = `
+      #if defined(FLG_UNIX)
+      #if 0
+      EXTERN_GCI_DEC(int) GciTsDeadInsideUnix(GciSession sess) GCI_WEAK;
+      #endif
+      EXTERN_GCI_DEC(int) GciTsLiveInsideUnix(GciSession sess) GCI_WEAK;
+      #endif
+    `;
+    const declared = parseDeclarations(source, 'fixture');
+    expect([...declared.keys()]).toEqual(['GciTsLiveInsideUnix']);
+    expect(declared.get('GciTsLiveInsideUnix')).toEqual({ unixOnly: true });
+  });
+
+  it('does not report a half-retired declaration behind #if 0 as truncated', () => {
+    const source = `
+      #if 0
+      EXTERN_GCI_DEC(int) GciTsHalfRetired(GciSession sess,
+      #endif
+      EXTERN_GCI_DEC(int) GciTsIntact(GciSession sess) GCI_WEAK;
+    `;
+    const declared = parseDeclarations(source, 'fixture');
+    expect([...declared.keys()]).toEqual(['GciTsIntact']);
+  });
+
   it('does not claim a declaration is UNIX-only when FLG_UNIX is only one arm of the condition', () => {
     const source = `
       #if defined(FLG_UNIX) || defined(FLG_MSWIN32)
@@ -272,33 +470,70 @@ describe('parseDeclarations (inline fixtures)', () => {
   it('rejects a compound condition rather than reading its #else as UNIX-only', () => {
     const source = `
       #if defined(FLG_SOLARIS) && !defined(FLG_UNIX)
-      EXTERN_GCI_DEC(int) GciTsThen(GciSession sess) GCI_WEAK;
+      EXTERN_GCI_DEC(int) GciTsCompoundThen(GciSession sess) GCI_WEAK;
       #else
-      EXTERN_GCI_DEC(int) GciTsOtherwise(GciSession sess) GCI_WEAK;
+      EXTERN_GCI_DEC(int) GciTsCompoundOtherwise(GciSession sess) GCI_WEAK;
       #endif
     `;
     expect(() => parseDeclarations(source, 'fixture')).toThrow(/FLG_UNIX/);
   });
 
+  it('names the file and line of a FLG_UNIX condition it cannot classify', () => {
+    // Empty unclassifiable regions (like the real, harmless FLG_MSWIN32 block in
+    // gcits.hf) do not throw on their own — only a declaration landing inside one
+    // does, so this fixture needs one to exercise the error.
+    const source =
+      `#ifndef GCITS_HF\n#if defined(FLG_UNIX) || defined(FLG_MSWIN32)\n` +
+      `EXTERN_GCI_DEC(int) GciTsAmbiguous(GciSession sess) GCI_WEAK;\n#endif\n#endif\n`;
+    const message = messageFrom(() => parseDeclarations(source, '3.7.5/gcits.hf'));
+    expect(message).toMatch(/in 3\.7\.5\/gcits\.hf at line 2/);
+    expect(message).toMatch(/defined\(FLG_UNIX\) \|\| defined\(FLG_MSWIN32\)/);
+  });
+
   it('rejects a compound FLG_UNIX condition arriving on an #elif', () => {
     const source = `
-      #if defined(FLG_SOMETHING_ELSE)
-      EXTERN_GCI_DEC(int) GciTsFirst(GciSession sess) GCI_WEAK;
+      #if defined(SOME_UNRELATED_FLAG)
+      EXTERN_GCI_DEC(int) GciTsCompoundElifFirst(GciSession sess) GCI_WEAK;
       #elif defined(FLG_UNIX) && defined(FLG_DEBUG)
-      EXTERN_GCI_DEC(int) GciTsSecond(GciSession sess) GCI_WEAK;
+      EXTERN_GCI_DEC(int) GciTsCompoundElifSecond(GciSession sess) GCI_WEAK;
       #endif
     `;
     expect(() => parseDeclarations(source, 'fixture')).toThrow(/FLG_UNIX/);
   });
 
   it('does not treat FLG_UNIX_SOMETHING as FLG_UNIX', () => {
+    // A lookalike must not be silently read as the literal FLG_UNIX token —
+    // it should be flagged as its own unrecognized platform flag instead.
     const source = `
       #if defined(FLG_UNIX_SPECIAL)
       EXTERN_GCI_DEC(int) GciTsLookalike(GciSession sess) GCI_WEAK;
       #endif
     `;
+    const message = messageFrom(() => parseDeclarations(source, 'fixture'));
+    expect(message).toMatch(/FLG_UNIX_SPECIAL/);
+  });
+
+  it('reads #if defined FLG_UNIX without parentheses', () => {
+    const source = `
+      #if defined FLG_UNIX
+      EXTERN_GCI_DEC(int) GciTsBareDefined(GciSession sess) GCI_WEAK;
+      #endif
+    `;
     const declared = parseDeclarations(source, 'fixture');
-    expect(declared.get('GciTsLookalike')).toEqual({ unixOnly: false });
+    expect(declared.get('GciTsBareDefined')).toEqual({ unixOnly: true });
+  });
+
+  it('reads #if !defined FLG_UNIX without parentheses, and its #else as UNIX', () => {
+    const source = `
+      #if !defined FLG_UNIX
+      EXTERN_GCI_DEC(int) GciTsBareNotDefined(GciSession sess) GCI_WEAK;
+      #else
+      EXTERN_GCI_DEC(int) GciTsBareElse(GciSession sess) GCI_WEAK;
+      #endif
+    `;
+    const declared = parseDeclarations(source, 'fixture');
+    expect(declared.get('GciTsBareNotDefined')).toEqual({ unixOnly: false });
+    expect(declared.get('GciTsBareElse')).toEqual({ unixOnly: true });
   });
 
   it('does not lose a declaration to a comment marker inside a string literal', () => {
@@ -319,6 +554,35 @@ describe('parseDeclarations (inline fixtures)', () => {
     `;
     const declared = parseDeclarations(source, 'fixture');
     expect([...declared.keys()]).toEqual(['GciTsAfterUrl']);
+  });
+
+  it('parses a file with CRLF line endings', () => {
+    // Works today only because every directive is matched against a trimmed
+    // line. The headers are a third-party drop, so one CRLF-normalized vendor
+    // release should fail here rather than in a binding-coverage test.
+    const source = [
+      '#if defined(FLG_UNIX)',
+      'EXTERN_GCI_DEC(int) GciTsCrlfUnix(GciSession sess) GCI_WEAK;',
+      '#else',
+      'EXTERN_GCI_DEC(int) GciTsCrlfOther(',
+      '  GciSession sess',
+      ') GCI_WEAK;',
+      '#endif',
+    ].join('\r\n');
+
+    const declared = parseDeclarations(source, 'fixture');
+    expect(declared.get('GciTsCrlfUnix')).toEqual({ unixOnly: true });
+    expect(declared.get('GciTsCrlfOther')).toEqual({ unixOnly: false });
+  });
+
+  it('reads a FLG_UNIX condition however it is spaced', () => {
+    const source = `
+      #if defined ( FLG_UNIX )
+      EXTERN_GCI_DEC(int) GciTsSpacedCondition(GciSession sess) GCI_WEAK;
+      #endif
+    `;
+    const declared = parseDeclarations(source, 'fixture');
+    expect(declared.get('GciTsSpacedCondition')).toEqual({ unixOnly: true });
   });
 
   it('throws on an #if that is never closed', () => {
@@ -361,8 +625,9 @@ describe('parseDeclarations (inline fixtures)', () => {
       EXTERN_GCI_DEC(int) GciTsTwice(GciSession sess, int mode) GCI_WEAK;
       #endif
     `;
-    expect(() => parseDeclarations(source, 'fixture')).toThrow(/GciTsTwice/);
-    expect(() => parseDeclarations(source, 'fixture')).toThrow(/declared more than once/);
+    const message = messageFrom(() => parseDeclarations(source, 'fixture'));
+    expect(message).toMatch(/GciTsTwice/);
+    expect(message).toMatch(/declared more than once/);
   });
 
   it('throws when a declaration cannot be parsed (truncated file)', () => {
@@ -372,8 +637,16 @@ describe('parseDeclarations (inline fixtures)', () => {
 
   it('throws, quoting the text, on a complete statement it cannot parse', () => {
     const source = `EXTERN_GCI_DEC_EXTRA(int) GciTsUnexpectedMacro(GciSession sess) GCI_WEAK;`;
-    expect(() => parseDeclarations(source, 'fixture')).toThrow(/could not parse/);
-    expect(() => parseDeclarations(source, 'fixture')).toThrow(/GciTsUnexpectedMacro/);
+    const message = messageFrom(() => parseDeclarations(source, 'fixture'));
+    expect(message).toMatch(/could not parse/);
+    expect(message).toMatch(/GciTsUnexpectedMacro/);
+  });
+
+  it('points at the return type when a parenthesised one defeats the declaration pattern', () => {
+    const source = `EXTERN_GCI_DEC(void (*)(int)) GciTsCallback(int code) GCI_WEAK;`;
+    const message = messageFrom(() => parseDeclarations(source, 'fixture'));
+    expect(message).toMatch(/could not parse/);
+    expect(message).toMatch(/return type/);
   });
 
   it('throws rather than silently keeping one of two declarations sharing a line', () => {
@@ -393,9 +666,10 @@ describe('parseDeclarations (inline fixtures)', () => {
   });
 });
 
-describe('parseDeclarations (real vendor/gci-headers snapshot)', () => {
-  // An inventory tripwire, not a sort test: these ten names happen to sort the
-  // same lexicographically, so ordering is covered separately below.
+describe('vendoredRevisions', () => {
+  // An inventory tripwire against the real tree, not a sort test: these ten
+  // names happen to sort the same lexicographically, so ordering is covered
+  // separately below.
   it('finds exactly the 10 vendored revisions', () => {
     expect(vendoredRevisions()).toEqual([
       '3.6.2',
@@ -412,23 +686,26 @@ describe('parseDeclarations (real vendor/gci-headers snapshot)', () => {
   });
 
   it('orders revisions numerically, not lexicographically', () => {
-    // A vendored 3.10.x would sort before 3.7.x as a string. Faked rather than
-    // vendored, because adding a header tree just to test ordering is too costly.
+    // A vendored 3.10.x would sort before 3.7.x as a string. A fixture tree
+    // rather than a vendored one, because adding ten thousand lines of headers
+    // just to test ordering is too costly.
     const names = ['3.7.5', '3.10.0', '3.9.1', '3.7.4.1'];
-    nextDirectoryListing(names.map((name) => ({ name, isDirectory: true })));
+    const root = headersRootContaining(names.map((name) => ({ name, isDirectory: true })));
 
-    expect(vendoredRevisions()).toEqual(['3.7.4.1', '3.7.5', '3.9.1', '3.10.0']);
+    expect(vendoredRevisions(root)).toEqual(['3.7.4.1', '3.7.5', '3.9.1', '3.10.0']);
   });
 
   it('ignores plain files sitting next to the revision directories', () => {
-    nextDirectoryListing([
+    const root = headersRootContaining([
       { name: '3.7.5', isDirectory: true },
       { name: 'README.md', isDirectory: false },
     ]);
 
-    expect(vendoredRevisions()).toEqual(['3.7.5']);
+    expect(vendoredRevisions(root)).toEqual(['3.7.5']);
   });
+});
 
+describe('parseDeclarations (real vendor/gci-headers snapshot)', () => {
   // Every revision, not just the endpoints: the parser's preprocessor handling
   // applies to all ten files, so a change that shifts one of the middle ones
   // should fail here rather than hide between 3.6.2 and 3.7.5.
@@ -480,5 +757,13 @@ describe('parseDeclarations (real vendor/gci-headers snapshot)', () => {
       .sort();
 
     expect(unixOnly).toEqual(expected);
+  });
+});
+
+describe('declaredFunctions', () => {
+  it('names the missing revision, and the revisions that are vendored, when there is no header', () => {
+    const message = messageFrom(() => declaredFunctions('9.9.9'));
+    expect(message).toMatch(/9\.9\.9/);
+    expect(message).toContain('3.7.5');
   });
 });
