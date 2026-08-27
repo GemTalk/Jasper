@@ -53,8 +53,7 @@ export default tseslint.config(
     // finds the nearest tsconfig per file rather than needing an explicit list.
     // Enabling type-aware rules individually rather than the full
     // `recommendedTypeChecked` set, which surfaces ~2k pre-existing findings
-    // across the codebase that need separate triage (see
-    // playground/research/jasper-eslint-type-aware-rules.md for the full breakdown).
+    // across the codebase that need separate triage
     files: ['**/*.ts'],
     languageOptions: {
       parserOptions: {

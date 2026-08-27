@@ -24,7 +24,10 @@ import {
 import { InFlightGuard } from './inFlightGuard';
 import { LoginEditorPanel } from './loginEditorPanel';
 import { SessionManager, ActiveSession } from './sessionManager';
-import { maybeStartDatabaseAndRetry } from './autoStartDatabase';
+import { maybeStartDatabaseAndRetry, isAlreadyRunning } from './autoStartDatabase';
+import { describeExternalServers, reconcileExternalServers } from './externalServerReconcile';
+import { hasExternalServer } from './externalServerScan';
+import { confirmReconcileExternalServers } from './externalServerPrompt';
 import {
   getAutoStartMode,
   setAutoStartMode,
@@ -590,7 +593,7 @@ export function activate(context: vscode.ExtensionContext) {
   // Reap any companion debugger source tab a prior session left open when its
   // window was closed with the Enhanced Debugger still up (it restores orphaned
   // and broken — no session to resolve gemstone://). See DebuggerPanel.
-  DebuggerPanel.initSourceTabCleanup(context.workspaceState);
+  DebuggerPanel.initSourceTabCleanup(context.workspaceState, context.extensionPath);
 
   // Inline-value overlay (#5): a source-pane CodeLens toggles it. The lens is
   // emitted only for source docs a live debugger is showing; the command it fires
@@ -1764,6 +1767,14 @@ export function activate(context: vscode.ExtensionContext) {
                 await maybeStartDatabaseAndRetry(login, `Login failed: ${msg}`, {
                   getDatabases: () => sysadminStorage.getDatabases(),
                   refreshProcesses: () => processManager.refreshProcesses(),
+                  getExternalServers: (db) => processManager.getExternalServers(db),
+                  describeExternalServers: (db, finding) =>
+                    describeExternalServers(db, finding, sysadminStorage.getRootPath()),
+                  reconcile: {
+                    confirm: confirmReconcileExternalServers,
+                    stopExternal: (db, server) => processManager.stopExternalServer(db, server),
+                    killExternal: (server) => processManager.killHostServer(server),
+                  },
                   // Quiet: the connect's own progress notification and the
                   // spinner on the login row are the feedback here. Revealing
                   // the Admin panel mid-login would yank focus off the editor.
@@ -3860,6 +3871,80 @@ export function activate(context: vscode.ExtensionContext) {
       }
       refreshAdminViews();
     }),
+
+    // Offered on a row the tree marks as "Running outside Jasper". The same
+    // reconcile the login path runs, reachable without waiting for a connect to
+    // fail — a user who has just seen the tree explain the state should be able
+    // to act on it there.
+    vscode.commands.registerCommand(
+      'gemstone.restartExternalServers',
+      async (node: DatabaseNode) => {
+        if (node?.kind !== 'stone' && node?.kind !== 'netldi') return;
+        const db = node.db;
+        // The row was rendered from the last refresh, and the user may have
+        // dealt with the server by hand since. Re-read before stopping
+        // anything, so the PIDs acted on are the ones alive now.
+        processManager.refreshProcesses();
+        const finding = processManager.getExternalServers(db);
+        if (!hasExternalServer(finding)) {
+          vscode.window.showInformationMessage(
+            `Nothing to reconcile: "${db.config.stoneName}" has no servers running outside Jasper's environment.`,
+          );
+          refreshAdminViews();
+          return;
+        }
+        const outcome = await reconcileExternalServers(
+          db,
+          finding,
+          describeExternalServers(db, finding, sysadminStorage.getRootPath()),
+          {
+            // No login is being retried here, so the dialog must not offer to
+            // connect — the row's action restarts and stops there.
+            confirm: (r) => confirmReconcileExternalServers(r, { connects: false }),
+            stopExternal: (d, server) => processManager.stopExternalServer(d, server),
+            killExternal: (server) => processManager.killHostServer(server),
+            report: () => {
+              /* no surrounding progress notification here; the Admin channel has the detail */
+            },
+            showError: (m) => vscode.window.showErrorMessage(m),
+          },
+        );
+        if (outcome.kind === 'stopped') {
+          // Restart under Jasper's environment, which is the whole point: both
+          // servers now land in Jasper's own locks directory.
+          if (await ensureStonePreconditions()) {
+            // Started independently, and an "already running" is not a failure:
+            // when only the netldi was external, the stone is still up under
+            // Jasper and startstone exits non-zero. Letting that abort the
+            // sequence would leave the one server that actually needed starting
+            // down, and tell the user the restart failed. Same rule the login
+            // recovery path uses.
+            const startFailure = async (
+              start: () => Promise<string>,
+            ): Promise<string | undefined> => {
+              try {
+                await start();
+                return undefined;
+              } catch (e) {
+                const msg = e instanceof Error ? e.message : String(e);
+                return isAlreadyRunning(msg) ? undefined : msg;
+              }
+            };
+            const failure =
+              (await startFailure(() => processManager.startStone(db))) ??
+              (await startFailure(() => processManager.startNetldi(db)));
+            if (failure) {
+              vscode.window.showErrorMessage(failure);
+            } else {
+              vscode.window.showInformationMessage(
+                `"${db.config.stoneName}" restarted under Jasper's environment.`,
+              );
+            }
+          }
+        }
+        refreshAdminViews();
+      },
+    ),
 
     vscode.commands.registerCommand('jasper.openMcpInspector', () => {
       const port = readMcpSetting<number>('httpPort', DEFAULT_MCP_HTTP_PORT);
