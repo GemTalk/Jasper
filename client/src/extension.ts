@@ -595,7 +595,7 @@ export function activate(context: vscode.ExtensionContext) {
   // Reap any companion debugger source tab a prior session left open when its
   // window was closed with the Enhanced Debugger still up (it restores orphaned
   // and broken — no session to resolve gemstone://). See DebuggerPanel.
-  DebuggerPanel.initSourceTabCleanup(context.workspaceState);
+  DebuggerPanel.initSourceTabCleanup(context.workspaceState, context.extensionPath);
 
   // Inline-value overlay (#5): a source-pane CodeLens toggles it. The lens is
   // emitted only for source docs a live debugger is showing; the command it fires
