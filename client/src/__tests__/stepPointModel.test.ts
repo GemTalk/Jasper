@@ -247,7 +247,12 @@ describe('StepPointModel', () => {
     };
 
     it('names the unsaved buffer, the case a developer can actually fix', () => {
-      expect(problemFor(makeDocument(METHOD_URI, true))).toContain('Save the method first');
+      const problem = problemFor(makeDocument(METHOD_URI, true));
+      expect(problem).toContain('unsaved edits');
+      // Both ways back to a compiled method, since saving a half-finished edit
+      // is not always what the developer wants.
+      expect(problem).toContain('Save the method');
+      expect(problem).toContain('Revert File');
     });
 
     it('says breakpoints need GemStone method source for another scheme', () => {

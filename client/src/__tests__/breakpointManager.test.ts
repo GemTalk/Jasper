@@ -16,17 +16,13 @@ import {
   Uri,
   debug,
   window,
+  workspace,
   Location,
   Position,
   SourceBreakpoint,
   FunctionBreakpoint,
 } from '../__mocks__/vscode';
-import {
-  BreakpointManager,
-  buildLineOffsets,
-  mapLineToStepPoint,
-  mapOffsetToStepPoint,
-} from '../breakpointManager';
+import { BreakpointManager, buildLineOffsets, mapOffsetToStepPoint } from '../breakpointManager';
 import { SessionManager } from '../sessionManager';
 import { StepPointModel, buildLineStarts } from '../stepPointModel';
 import {
@@ -97,71 +93,8 @@ describe('buildLineOffsets', () => {
   });
 });
 
-describe('mapLineToStepPoint', () => {
-  // Source:
-  // Line 1: "at: index"          (offset 0-9)
-  // Line 2: "  ^ self basicAt: index"  (offset 10-33)
-  const lineOffsets = [0, 0, 10, 34]; // dummy, line1, line2, (end)
-  // Step points: step 1 at offset 0, step 2 at offset 14
-  const sourceOffsets = [0, 14];
-
-  it('maps line 1 to step point 1', () => {
-    const result = mapLineToStepPoint(1, lineOffsets, sourceOffsets);
-    expect(result).toEqual({ stepPoint: 1, actualLine: 1 });
-  });
-
-  it('maps line 2 to step point 2', () => {
-    const result = mapLineToStepPoint(2, lineOffsets, sourceOffsets);
-    expect(result).toEqual({ stepPoint: 2, actualLine: 2 });
-  });
-
-  it('adjusts to nearest following step point when no step on target line', () => {
-    // Source with 4 lines, step points on lines 1 and 3
-    const lo = [0, 0, 10, 20, 30];
-    const so = [0, 22]; // step 1 at line 1, step 2 at line 3
-
-    const result = mapLineToStepPoint(2, lo, so);
-    // Line 2 has no step point, nearest after is step 2 at offset 22 → line 3
-    expect(result).toEqual({ stepPoint: 2, actualLine: 3 });
-  });
-
-  it('returns null for empty sourceOffsets', () => {
-    const result = mapLineToStepPoint(1, [0, 0], []);
-    expect(result).toBeNull();
-  });
-
-  it('returns null for invalid line number', () => {
-    const result = mapLineToStepPoint(0, [0, 0], [0]);
-    expect(result).toBeNull();
-  });
-
-  it('returns null for line beyond source', () => {
-    const result = mapLineToStepPoint(5, [0, 0, 10], [0]);
-    expect(result).toBeNull();
-  });
-
-  it('handles unsorted source offsets', () => {
-    // Step points not in source order (blocks can cause this)
-    const lo = [0, 0, 10, 20, 30];
-    const so = [25, 5, 15]; // step 1 at offset 25 (line 3), step 2 at 5 (line 1), step 3 at 15 (line 2)
-
-    const result = mapLineToStepPoint(2, lo, so);
-    // Line 2 (offset 10-19), step 3 at offset 15 is on line 2
-    expect(result).toEqual({ stepPoint: 3, actualLine: 2 });
-  });
-
-  it('picks earliest step point when multiple on same line', () => {
-    const lo = [0, 0, 20];
-    const so = [10, 5, 15]; // step 1 at 10, step 2 at 5, step 3 at 15 — all on line 1
-
-    const result = mapLineToStepPoint(1, lo, so);
-    // Step 2 has smallest offset (5) on line 1
-    expect(result).toEqual({ stepPoint: 2, actualLine: 1 });
-  });
-});
-
-// Column-aware mapping for "Run to Cursor" (#2): unlike mapLineToStepPoint, the
-// cursor's column chooses among several step points on the same line.
+// Column-aware mapping for "Run to Cursor": the cursor's column chooses among
+// several step points on the same line, rather than taking the leftmost one.
 describe('mapOffsetToStepPoint', () => {
   // `x := a asInteger` — 1-based source offsets: sp1@1 (x), sp2@6 (a), sp3@8 (asInteger).
   const so = [1, 6, 8];
@@ -202,6 +135,9 @@ describe('BreakpointManager', () => {
     mockDisableBreakAtStepPoint.mockReset();
     mockClearAllBreaks.mockReset();
     debug.breakpoints = [];
+    // Shared mock state: a dirty document left behind by one test makes the next
+    // one's breakpoints be refused, which reads as an unrelated regression.
+    workspace.textDocuments = [];
     vi.mocked(debug.addBreakpoints).mockClear();
     vi.mocked(debug.removeBreakpoints).mockClear();
   });
@@ -414,6 +350,166 @@ describe('BreakpointManager', () => {
 
       manager.applyToUri(session(), uri, []);
       expect(manager.appliedFor(uri)).toHaveLength(0);
+    });
+  });
+
+  // Eric's rule: a breakpoint can only be set in an editor whose text is the
+  // compiled method's. While it has unsaved edits nothing new is accepted, and —
+  // just as important — nothing already armed is disturbed, so reverting the
+  // editor leaves the original breakpoints exactly where they were.
+  describe('an editor with unsaved edits', () => {
+    const DIRTY_DOC = { uri: Uri.parse(METHOD_URI), isDirty: true };
+    const CLEAN_DOC = { uri: Uri.parse(METHOD_URI), isDirty: false };
+
+    /** Drive the manager the way VS Code does, through the change event. */
+    function fire(event: {
+      added?: unknown[];
+      removed?: unknown[];
+      changed?: unknown[];
+    }): BreakpointManager {
+      const manager = makeManager();
+      const context = {
+        subscriptions: [] as unknown[],
+      } as unknown as import('vscode').ExtensionContext;
+      manager.register(context);
+      const calls = vi.mocked(debug.onDidChangeBreakpoints).mock.calls;
+      calls[calls.length - 1][0]({
+        added: event.added ?? [],
+        removed: event.removed ?? [],
+        changed: event.changed ?? [],
+      });
+      return manager;
+    }
+
+    /**
+     * The most recent `onDidChangeTextDocument` listener the manager registered.
+     * The mock declares no parameters, so the listener has to be recovered as a
+     * callable rather than through its (empty) argument tuple.
+     */
+    function fireDocumentChanged(document: unknown): void {
+      const calls = vi.mocked(workspace.onDidChangeTextDocument).mock.calls as unknown as ((e: {
+        document: unknown;
+      }) => void)[][];
+      calls[calls.length - 1][0]({ document });
+    }
+
+    const bpAt = (line: number) =>
+      new SourceBreakpoint(new Location(Uri.parse(METHOD_URI), new Position(line, 0)));
+
+    beforeEach(() => {
+      vi.mocked(debug.onDidChangeBreakpoints).mockClear();
+      vi.mocked(workspace.onDidChangeTextDocument).mockClear();
+      vi.mocked(window.showWarningMessage).mockClear();
+      mockGetMethodSource.mockReturnValue('at: index\n^ self basicAt: index');
+      mockGetSourceOffsets.mockReturnValue([1, 13]);
+    });
+
+    it('refuses a breakpoint added while the editor is dirty, and says why', () => {
+      workspace.textDocuments = [DIRTY_DOC];
+      const added = bpAt(1);
+      debug.breakpoints = [added];
+
+      fire({ added: [added] });
+
+      // Taken back out, so no red dot is left arming nothing.
+      expect(vi.mocked(debug.removeBreakpoints)).toHaveBeenCalledWith([added]);
+      expect(vi.mocked(window.showWarningMessage)).toHaveBeenCalledWith(
+        expect.stringContaining('unsaved edits'),
+      );
+      // Both ways back to a compiled method are named.
+      const said = vi.mocked(window.showWarningMessage).mock.calls[0][0] as string;
+      expect(said).toContain('Save the method');
+      expect(said).toContain('Revert File');
+    });
+
+    it('leaves the breakpoints already armed alone while the editor is dirty', () => {
+      // The heart of the rule. `applyToUri` is an absolute model — it clears the
+      // method and re-arms VS Code's whole list by position — and VS Code shifts
+      // those positions as the buffer is edited. Running it now would move
+      // breakpoints the developer never touched, so it must not run at all.
+      workspace.textDocuments = [DIRTY_DOC];
+      const existing = bpAt(1);
+      const added = bpAt(0);
+      debug.breakpoints = [existing, added];
+
+      fire({ added: [added] });
+
+      expect(mockClearAllBreaks).not.toHaveBeenCalled();
+      expect(mockSetBreakAtStepPoint).not.toHaveBeenCalled();
+    });
+
+    it('does not touch the gem when a breakpoint is removed while the editor is dirty', () => {
+      workspace.textDocuments = [DIRTY_DOC];
+      const removed = bpAt(1);
+      debug.breakpoints = [];
+
+      fire({ removed: [removed] });
+
+      expect(mockClearAllBreaks).not.toHaveBeenCalled();
+      // Nothing was added, so there is nothing to take back out and nothing to say.
+      expect(vi.mocked(window.showWarningMessage)).not.toHaveBeenCalled();
+    });
+
+    it('applies normally once the editor is clean again', () => {
+      // Reverting the editor is the ordinary way out, and this is where the gem
+      // catches up with anything the list did during the hold.
+      workspace.textDocuments = [DIRTY_DOC];
+      const existing = bpAt(1);
+      debug.breakpoints = [existing];
+      fire({ added: [existing] });
+      expect(mockSetBreakAtStepPoint).not.toHaveBeenCalled();
+
+      workspace.textDocuments = [CLEAN_DOC];
+      debug.breakpoints = [existing];
+      fireDocumentChanged(CLEAN_DOC);
+
+      expect(mockSetBreakAtStepPoint).toHaveBeenCalled();
+    });
+
+    it('ignores a document change that leaves the editor still dirty', () => {
+      workspace.textDocuments = [DIRTY_DOC];
+      debug.breakpoints = [bpAt(1)];
+      fire({ added: [bpAt(1)] });
+
+      fireDocumentChanged(DIRTY_DOC);
+
+      expect(mockSetBreakAtStepPoint).not.toHaveBeenCalled();
+    });
+
+    it('reports the gem as it stands, without arming, on the debug adapter path', () => {
+      // A live debug session re-sends the whole list for a source. Anything
+      // already armed stays verified; a new one is refused with the reason.
+      workspace.textDocuments = [CLEAN_DOC];
+      const manager = makeManager();
+      manager.applyToUri(session(), Uri.parse(METHOD_URI), [{ line: 1, enabled: true }]);
+      mockClearAllBreaks.mockClear();
+      mockSetBreakAtStepPoint.mockClear();
+
+      workspace.textDocuments = [DIRTY_DOC];
+      const results = manager.setBreakpointsForSource(
+        session(),
+        Uri.parse(METHOD_URI),
+        [1, 2],
+        [undefined, undefined],
+      );
+
+      expect(mockClearAllBreaks).not.toHaveBeenCalled();
+      expect(mockSetBreakAtStepPoint).not.toHaveBeenCalled();
+      expect(results[0].verified).toBe(true);
+      expect(results[0].message).toBeUndefined();
+      expect(results[1].verified).toBe(false);
+      expect(results[1].message).toContain('unsaved edits');
+    });
+
+    it('applies normally when the editor has no unsaved edits', () => {
+      workspace.textDocuments = [CLEAN_DOC];
+      const added = bpAt(1);
+      debug.breakpoints = [added];
+
+      fire({ added: [added] });
+
+      expect(mockSetBreakAtStepPoint).toHaveBeenCalled();
+      expect(vi.mocked(window.showWarningMessage)).not.toHaveBeenCalled();
     });
   });
 
@@ -791,7 +887,7 @@ describe('BreakpointManager', () => {
       makeManager().toggleAtCursor(makeEditor('m\n^1', 2, true));
 
       expect(vi.mocked(debug.addBreakpoints)).not.toHaveBeenCalled();
-      expect(warn()).toHaveBeenCalledWith(expect.stringContaining('Save the method first'));
+      expect(warn()).toHaveBeenCalledWith(expect.stringContaining('unsaved edits'));
     });
 
     it('says why nothing happened when the method has no step points', () => {

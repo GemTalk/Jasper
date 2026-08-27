@@ -81,7 +81,11 @@ export class StepPointModel {
       // Step point offsets come from the compiled method, so they describe the
       // saved source, not what is on screen. Acting on them now would put the
       // breakpoint somewhere the developer didn't point at.
-      return { problem: 'Save the method first — step points come from the compiled method.' };
+      return {
+        problem:
+          'This method has unsaved edits — step points come from the compiled method, ' +
+          'not the text on screen. Save the method, or run "File: Revert File", and try again.',
+      };
     }
 
     const method = parseMethodUri(document.uri);

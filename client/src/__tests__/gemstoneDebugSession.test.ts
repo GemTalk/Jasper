@@ -667,8 +667,11 @@ describe('GemStoneDebugSession', () => {
       expect(body.breakpoints).toHaveLength(0);
     });
 
-    it('sets breakpoints via sourceReference path', () => {
-      // getMethodSource returns two-line method, getMethodInfo provides class/selector
+    // A frame with no gemstone:// path is an ad-hoc execution ('Executed Code')
+    // or a method whose class is not in the symbol list. Neither is a saved,
+    // compiled method the developer can point at, so the request is refused with
+    // a reason rather than reported as a verified breakpoint that never fires.
+    it('refuses a breakpoint on a frame that has no method source of its own', () => {
       vi.mocked(debugQueries.getMethodSource).mockReturnValue('at: index\n  ^ self basicAt: index');
       vi.mocked(debugQueries.getMethodInfo).mockReturnValue({
         className: 'Array',
@@ -689,69 +692,42 @@ describe('GemStoneDebugSession', () => {
         breakpoints: [{ line: 1 }, { line: 2 }],
       });
 
-      const body = response.body as { breakpoints: Array<{ verified: boolean; line: number }> };
+      const body = response.body as {
+        breakpoints: Array<{ verified: boolean; line: number; reason?: string; message?: string }>;
+      };
       expect(body.breakpoints).toHaveLength(2);
-      expect(body.breakpoints[0].verified).toBe(true);
-      expect(body.breakpoints[0].line).toBe(1);
-      expect(body.breakpoints[1].verified).toBe(true);
-      expect(body.breakpoints[1].line).toBe(2);
+      for (const bp of body.breakpoints) {
+        expect(bp.verified).toBe(false);
+        expect(bp.reason).toBe('failed');
+        expect(bp.message).toMatch(/compiled method/i);
+      }
+      // The marker stays where the developer put it, so the refusal is legible.
+      expect(body.breakpoints.map((bp) => bp.line)).toEqual([1, 2]);
 
-      expect(browserQueries.clearAllBreaks).toHaveBeenCalledTimes(1);
-      expect(browserQueries.setBreakAtStepPoint).toHaveBeenCalledTimes(2);
+      // Nothing is armed in the gem, and nothing already armed is cleared.
+      expect(browserQueries.clearAllBreaks).not.toHaveBeenCalled();
+      expect(browserQueries.setBreakAtStepPoint).not.toHaveBeenCalled();
     });
 
-    it('returns unverified when setBreakAtStepPoint fails via sourceReference', () => {
-      vi.mocked(debugQueries.getMethodSource).mockReturnValue('foo\n  ^ 1');
-      vi.mocked(debugQueries.getMethodInfo).mockReturnValue({
-        className: 'Foo',
-        selector: 'foo',
-      });
-      vi.mocked(browserQueries.setBreakAtStepPoint).mockImplementation(() => {
-        throw new Error('GCI error');
-      });
-
+    it('refuses rather than answering nothing when the sourceReference is unknown', () => {
       const { session } = createTestSession();
       callRequest(session, 'attachRequest', makeResponse('attach'), {
         sessionId: 1,
         gsProcess: '12345',
       });
-      callRequest(session, 'stackTraceRequest', makeResponse('stackTrace'), { threadId: 1 });
 
       const response = makeResponse('setBreakpoints');
       callRequest(session, 'setBreakpointsRequest', response, {
-        source: { sourceReference: 1 },
+        source: { sourceReference: 999 },
         breakpoints: [{ line: 1 }],
       });
 
-      const body = response.body as { breakpoints: Array<{ verified: boolean }> };
+      // One answer per request: a silent empty list leaves VS Code showing a
+      // solid marker as though the breakpoint had been accepted.
+      const body = response.body as { breakpoints: Array<{ verified: boolean; reason?: string }> };
       expect(body.breakpoints).toHaveLength(1);
       expect(body.breakpoints[0].verified).toBe(false);
-    });
-
-    it('returns unverified for all lines when getMethodSource throws via sourceReference', () => {
-      const { session } = createTestSession();
-      callRequest(session, 'attachRequest', makeResponse('attach'), {
-        sessionId: 1,
-        gsProcess: '12345',
-      });
-      // stackTraceRequest populates sourceRefMap (doesn't call getMethodSource)
-      callRequest(session, 'stackTraceRequest', makeResponse('stackTrace'), { threadId: 1 });
-
-      // Now make getMethodSource throw for setBreakpointsRequest
-      vi.mocked(debugQueries.getMethodSource).mockImplementation(() => {
-        throw new Error('source not available');
-      });
-
-      const response = makeResponse('setBreakpoints');
-      callRequest(session, 'setBreakpointsRequest', response, {
-        source: { sourceReference: 1 },
-        breakpoints: [{ line: 1 }, { line: 2 }],
-      });
-
-      const body = response.body as { breakpoints: Array<{ verified: boolean }> };
-      expect(body.breakpoints).toHaveLength(2);
-      expect(body.breakpoints[0].verified).toBe(false);
-      expect(body.breakpoints[1].verified).toBe(false);
+      expect(body.breakpoints[0].reason).toBe('failed');
     });
 
     it('delegates to breakpointManager for gemstone:// path', () => {
@@ -779,41 +755,6 @@ describe('GemStoneDebugSession', () => {
       expect(body.breakpoints[0]).toMatchObject({ verified: true, line: 1 });
       expect(body.breakpoints[1]).toMatchObject({ verified: true, line: 3 });
       expect(mockBPManager.setBreakpointsForSource).toHaveBeenCalledTimes(1);
-    });
-
-    it('handles class-side methods via sourceReference', () => {
-      vi.mocked(debugQueries.getMethodSource).mockReturnValue('new\n  ^ super new');
-      vi.mocked(debugQueries.getMethodInfo).mockReturnValue({
-        className: 'Array class',
-        selector: 'new',
-      });
-      vi.mocked(browserQueries.getSourceOffsets).mockReturnValue([0, 6]);
-
-      const { session } = createTestSession();
-      callRequest(session, 'attachRequest', makeResponse('attach'), {
-        sessionId: 1,
-        gsProcess: '12345',
-      });
-      callRequest(session, 'stackTraceRequest', makeResponse('stackTrace'), { threadId: 1 });
-
-      const response = makeResponse('setBreakpoints');
-      callRequest(session, 'setBreakpointsRequest', response, {
-        source: { sourceReference: 1 },
-        breakpoints: [{ line: 1 }],
-      });
-
-      expect(browserQueries.getSourceOffsets).toHaveBeenCalledWith(
-        expect.anything(),
-        'Array',
-        true,
-        'new',
-      );
-      expect(browserQueries.clearAllBreaks).toHaveBeenCalledWith(
-        expect.anything(),
-        'Array',
-        true,
-        'new',
-      );
     });
   });
 });

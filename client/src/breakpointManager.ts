@@ -16,6 +16,8 @@ export interface VerifiedBreakpoint {
   stepPoint: number;
   actualLine: number;
   verified: boolean;
+  /** Why an unverified breakpoint was refused, for the debug adapter to relay. */
+  message?: string;
 }
 
 /** A breakpoint as it now stands in the gem, for one method. */
@@ -86,6 +88,10 @@ const disabledDecoration = vscode.window.createTextEditorDecorationType({
  * breakpoint or Jasper's toggle-at-cursor carries the exact column and picks the
  * step point nearest it. See `resolveStepPoint`.
  *
+ * A breakpoint can only be set where the editor's text *is* the compiled
+ * method's, so a method with unsaved edits takes no new ones and has the ones it
+ * has held exactly as they are until it is clean again (`holdWhileDirty`).
+ *
  * A *disabled* breakpoint is applied as set-then-disabled rather than left off
  * the stone, so stepping past it is instant to re-arm and the breakpoint
  * manager view can show it. `disableBreakAtStepPoint:` is a no-op on a step
@@ -94,6 +100,12 @@ const disabledDecoration = vscode.window.createTextEditorDecorationType({
 export class BreakpointManager {
   /** What we last applied, per method URI — drives decorations and re-application. */
   private applied = new Map<string, AppliedBreakpoint[]>();
+
+  /**
+   * Method URIs held still because their editor has unsaved edits, so the gem
+   * can catch up once it is clean again. See `holdWhileDirty`.
+   */
+  private frozen = new Set<string>();
 
   private _onDidApply = new vscode.EventEmitter<void>();
   /** Fires after breakpoints are pushed to the gem, so views can refresh. */
@@ -117,6 +129,7 @@ export class BreakpointManager {
     context.subscriptions.push(
       this._onDidApply,
       vscode.debug.onDidChangeBreakpoints((e) => this.onBreakpointsChanged(e)),
+      vscode.workspace.onDidChangeTextDocument((e) => this.thawIfClean(e.document)),
       vscode.window.onDidChangeActiveTextEditor((editor) => {
         if (editor) this.refreshDecorations(editor);
       }),
@@ -136,6 +149,10 @@ export class BreakpointManager {
    * `requests` carries the raw line/column pairs. When omitted, they are read
    * from `vscode.debug.breakpoints` — the absolute model: whatever is in VS
    * Code's list right now is exactly what the method ends up with.
+   *
+   * Callers are responsible for not running this while the method's editor has
+   * unsaved edits, when a position in VS Code's list and an offset in the
+   * compiled method no longer describe the same code — see `holdWhileDirty`.
    */
   applyToUri(
     session: ActiveSession,
@@ -256,6 +273,12 @@ export class BreakpointManager {
     lines: number[],
     columns?: (number | undefined)[],
   ): VerifiedBreakpoint[] {
+    // Held still while the editor has unsaved edits — see `holdWhileDirty`.
+    // Report what the gem already holds instead of arming anything: a
+    // breakpoint set before the edits is still armed and still verified, and a
+    // new one is refused with the reason.
+    if (isDirty(uri)) return this.frozenResults(uri, lines, columns);
+
     return this.applyToUri(
       session,
       uri,
@@ -266,6 +289,90 @@ export class BreakpointManager {
         enabled: true,
       })),
     );
+  }
+
+  /**
+   * Hold a method's breakpoints still while its editor has unsaved edits, and
+   * refuse any new one.
+   *
+   * `applyToUri` is an absolute model: clear the method, then re-arm everything
+   * in VS Code's list by resolving each position against the *compiled* method's
+   * step point offsets. VS Code moves its own breakpoints as the buffer is
+   * edited, so the moment the text and the compiled method disagree, re-applying
+   * would resolve every breakpoint on the method — including ones the developer
+   * never touched — against offsets that no longer describe it, and silently
+   * move them. Nothing is pushed to the gem until the editor is clean again, so
+   * what was already armed stays exactly as it was and is still there after a
+   * revert.
+   *
+   * A breakpoint just *added* is a different matter: leaving it in the list
+   * would show a red dot arming nothing, so it is taken back out and the reason
+   * given. `Shift+F9` refuses the same edit for the same reason, one step
+   * earlier (`StepPointModel.explain`).
+   */
+  private holdWhileDirty(uri: vscode.Uri, added: readonly vscode.Breakpoint[]): void {
+    this.frozen.add(uri.toString());
+
+    const uriStr = uri.toString();
+    const rejected = added.filter(
+      (bp) => bp instanceof vscode.SourceBreakpoint && bp.location.uri.toString() === uriStr,
+    );
+    if (rejected.length === 0) return;
+
+    vscode.debug.removeBreakpoints(rejected);
+    vscode.window.showWarningMessage(DIRTY_REFUSAL);
+  }
+
+  /**
+   * The gem's state for a method being held still, phrased as breakpoint
+   * results — verified for what is actually armed, refused for anything else.
+   */
+  private frozenResults(
+    uri: vscode.Uri,
+    lines: number[],
+    columns?: (number | undefined)[],
+  ): VerifiedBreakpoint[] {
+    this.frozen.add(uri.toString());
+
+    const method = parseMethodUri(uri);
+    const session = this.sessionManager.getSelectedSession();
+    const applied = this.applied.get(uri.toString()) ?? [];
+    const info = method && session ? this.stepPoints.fetch(session, uri, method) : null;
+
+    return lines.map((line, i) => {
+      const column = columns?.[i];
+      // DAP columns are 1-based; our resolver takes a 0-based character.
+      const character = column === undefined ? undefined : Math.max(column - 1, 0);
+      const resolved = info ? resolveStepPoint(info, line, character) : null;
+      const armed = resolved !== null && applied.some((a) => a.stepPoint === resolved.stepPoint);
+      return {
+        stepPoint: resolved?.stepPoint ?? 0,
+        actualLine: resolved?.line ?? line,
+        verified: armed,
+        message: armed ? undefined : DIRTY_REFUSAL,
+      };
+    });
+  }
+
+  /**
+   * Let the gem catch up once a held method's editor is clean again.
+   *
+   * Reverting (`File: Revert File`) is the ordinary way out, and usually there
+   * is nothing to do — the text is the compiled method's again, and so are VS
+   * Code's breakpoint positions, so re-applying arms exactly what was already
+   * armed. It matters when the list moved during the hold: a breakpoint disabled
+   * or removed while the editor was dirty was deliberately left alone in the
+   * gem, and this is where the gem catches up with it. Saving takes the other
+   * route entirely — the recompile drops the method's breakpoints
+   * (`invalidateForUri`).
+   */
+  private thawIfClean(document: vscode.TextDocument): void {
+    const uriStr = document.uri.toString();
+    if (!this.frozen.has(uriStr) || document.isDirty) return;
+    this.frozen.delete(uriStr);
+
+    const session = this.sessionManager.getSelectedSession();
+    if (session) this.applyToUri(session, document.uri);
   }
 
   /**
@@ -708,7 +815,12 @@ export class BreakpointManager {
       }
     }
     for (const uriStr of affected) {
-      this.applyToUri(session, vscode.Uri.parse(uriStr));
+      const uri = vscode.Uri.parse(uriStr);
+      if (isDirty(uri)) {
+        this.holdWhileDirty(uri, event.added);
+        continue;
+      }
+      this.applyToUri(session, uri);
     }
   }
 
@@ -802,6 +914,24 @@ function positionOf(document: vscode.TextDocument, offset: number): vscode.Posit
   return document.positionAt(offset);
 }
 
+/**
+ * Why a breakpoint is refused, and cleared, while the method's editor has
+ * unsaved edits. Names both ways out: the edits can be compiled, or dropped.
+ */
+const DIRTY_REFUSAL =
+  'This method has unsaved edits, so its breakpoints are held as they are — ' +
+  'step points come from the compiled method, not the text on screen. ' +
+  'Save the method, or run "File: Revert File", and set the breakpoint then.';
+
+/**
+ * Whether `uri` is open with unsaved edits. A breakpoint is placed by position,
+ * and only the compiled method's positions mean anything to the gem.
+ */
+function isDirty(uri: vscode.Uri): boolean {
+  const uriStr = uri.toString();
+  return vscode.workspace.textDocuments.some((d) => d.uri.toString() === uriStr && d.isDirty);
+}
+
 function message(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
@@ -864,62 +994,4 @@ export function mapOffsetToStepPoint(
     }
   }
   return bestAfter;
-}
-
-/**
- * Map a source line number (1-based) to a step point.
- * Returns the step point number and the actual line it maps to,
- * or null if no valid step point can be found.
- */
-export function mapLineToStepPoint(
-  targetLine: number,
-  lineOffsets: number[],
-  sourceOffsets: number[],
-): { stepPoint: number; actualLine: number } | null {
-  if (sourceOffsets.length === 0) return null;
-  if (targetLine < 1 || targetLine >= lineOffsets.length) return null;
-
-  const targetStart = lineOffsets[targetLine];
-  const targetEnd = targetLine + 1 < lineOffsets.length ? lineOffsets[targetLine + 1] : Infinity;
-
-  // Find step points on the target line
-  let bestOnLine: { stepPoint: number; offset: number } | null = null;
-  for (let i = 0; i < sourceOffsets.length; i++) {
-    const offset = sourceOffsets[i];
-    if (offset >= targetStart && offset < targetEnd) {
-      if (!bestOnLine || offset < bestOnLine.offset) {
-        bestOnLine = { stepPoint: i + 1, offset }; // step points are 1-based
-      }
-    }
-  }
-
-  if (bestOnLine) {
-    return { stepPoint: bestOnLine.stepPoint, actualLine: targetLine };
-  }
-
-  // No step point on target line — find nearest step point after targetStart
-  let bestAfter: { stepPoint: number; offset: number } | null = null;
-  for (let i = 0; i < sourceOffsets.length; i++) {
-    const offset = sourceOffsets[i];
-    if (offset >= targetStart) {
-      if (!bestAfter || offset < bestAfter.offset) {
-        bestAfter = { stepPoint: i + 1, offset };
-      }
-    }
-  }
-
-  if (bestAfter) {
-    // Find the line number for this offset
-    let actualLine = 1;
-    for (let l = 1; l < lineOffsets.length; l++) {
-      if (lineOffsets[l] <= bestAfter.offset) {
-        actualLine = l;
-      } else {
-        break;
-      }
-    }
-    return { stepPoint: bestAfter.stepPoint, actualLine };
-  }
-
-  return null;
 }

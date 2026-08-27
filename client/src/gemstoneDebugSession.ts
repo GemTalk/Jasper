@@ -15,11 +15,14 @@ import type * as vscode from 'vscode';
 import { SessionManager, ActiveSession } from './sessionManager';
 import { OOP_NIL } from './gciConstants';
 import * as debug from './debugQueries';
-import { BreakpointManager, buildLineOffsets, mapLineToStepPoint } from './breakpointManager';
-import * as queries from './browserQueries';
+import { BreakpointManager } from './breakpointManager';
 import { logInfo, logError } from './gciLog';
 
 const THREAD_ID = 1;
+/** Why a breakpoint on a frame with no method source of its own is refused. */
+const UNBREAKABLE_SOURCE =
+  'Breakpoints can only be set in the source of a compiled method. ' +
+  'Ad-hoc executed code cannot be broken at — set the breakpoint in the method instead.';
 const MAX_PRINT_STRING = 1024;
 
 // Variable reference kinds
@@ -189,6 +192,11 @@ export class GemStoneDebugSession extends DebugSession {
               verified: results[i].verified,
               line: results[i].actualLine,
               id: i + 1,
+              // Set when the manager refused rather than merely failed to
+              // resolve — the developer can act on the reason.
+              ...(results[i].message
+                ? { reason: 'failed' as const, message: results[i].message }
+                : {}),
             });
           }
           response.body = { breakpoints };
@@ -200,60 +208,26 @@ export class GemStoneDebugSession extends DebugSession {
       }
     }
 
-    // Try source reference → method OOP
+    // No gemstone:// path means the frame is not a saved, compiled method the
+    // developer can point at: either an ad-hoc execution ('Executed Code') or a
+    // method whose class is not bound in the symbol list. Neither has anything
+    // durable to arm — a doit's compiled method is gone once the execution ends,
+    // so a breakpoint here could never be hit again. Refuse it out loud rather
+    // than report a verified breakpoint that silently never fires.
+    //
+    // VS Code will not usually offer the gutter here anyway (the source comes
+    // back over `sourceRequest` with no path, so the document opens as plain
+    // text, and `contributes.breakpoints` covers gemstone-smalltalk only), but
+    // `debug.allowBreakpointsEverywhere` reopens the door.
     if (args.source.sourceReference && args.source.sourceReference > 0) {
-      const methodOop = this.sourceRefMap.get(args.source.sourceReference);
-      if (methodOop) {
-        try {
-          const source = debug.getMethodSource(this.session, methodOop);
-          const lineOffsets = buildLineOffsets(source);
-
-          // Get method info to resolve the class/selector
-          const methodInfo = debug.getMethodInfo(this.session, methodOop);
-          const isMeta = methodInfo.className.endsWith(' class');
-          const className = isMeta
-            ? methodInfo.className.replace(/ class$/, '')
-            : methodInfo.className;
-
-          const sourceOffsets = queries.getSourceOffsets(
-            this.session,
-            className,
-            isMeta,
-            methodInfo.selector,
-          );
-
-          // Clear existing breakpoints on this method
-          try {
-            queries.clearAllBreaks(this.session, className, isMeta, methodInfo.selector);
-          } catch {
-            /* ignore */
-          }
-
-          for (let i = 0; i < requestedLines.length; i++) {
-            const result = mapLineToStepPoint(requestedLines[i], lineOffsets, sourceOffsets);
-            if (result) {
-              try {
-                queries.setBreakAtStepPoint(
-                  this.session,
-                  className,
-                  isMeta,
-                  methodInfo.selector,
-                  result.stepPoint,
-                );
-                breakpoints.push({ verified: true, line: result.actualLine, id: i + 1 });
-              } catch {
-                breakpoints.push({ verified: false, line: requestedLines[i], id: i + 1 });
-              }
-            } else {
-              breakpoints.push({ verified: false, line: requestedLines[i], id: i + 1 });
-            }
-          }
-        } catch (e) {
-          logError(this.session.id, `setBreakpoints sourceRef error: ${e}`);
-          for (let i = 0; i < requestedLines.length; i++) {
-            breakpoints.push({ verified: false, line: requestedLines[i], id: i + 1 });
-          }
-        }
+      for (let i = 0; i < requestedLines.length; i++) {
+        breakpoints.push({
+          verified: false,
+          reason: 'failed',
+          line: requestedLines[i],
+          id: i + 1,
+          message: UNBREAKABLE_SOURCE,
+        });
       }
     }
 

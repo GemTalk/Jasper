@@ -271,6 +271,21 @@ the thing it was set in goes away:
   after an edit the same step point may be a different expression — so the
   breakpoint is dropped rather than quietly moved somewhere you didn't put it.
 
+- **Only where a compiled method's source is.** A breakpoint names a step point
+  in a method that lives in the gem, so a `gemstone://` method editor with no
+  unsaved edits is the only place one can be set. An **Executed Code** (doit)
+  frame cannot take one — its method exists for that single execution and is
+  gone afterwards, so the breakpoint could never be hit again — and neither can
+  a frame whose class is not in the symbol list. VS Code usually will not offer
+  the gutter there at all; where it does, the breakpoint is refused and greyed,
+  with the reason on hover
+- **Unsaved edits hold a method's breakpoints as they are.** Step point numbers
+  come from the compiled method, and VS Code moves its breakpoints as you type,
+  so while an editor is dirty the two describe different code. No new breakpoint
+  is accepted — it is taken back out of the list, with a message naming the two
+  ways on: save the method, or **File: Revert File** to drop the edits. What is
+  already set is left alone rather than re-applied against positions that have
+  moved, so it is still there, on the same step points, once the editor is clean
 - **Line breakpoints** — click the editor gutter in a `gemstone://` method. A
   gutter click means "this line", and lands on the leftmost step point on it
 - **Step-point breakpoints** — a Smalltalk line usually holds several step
