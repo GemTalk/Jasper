@@ -36,11 +36,14 @@ describe('session row inline button order', () => {
   it('leads with the most-used safe actions and trails with Logout, without the rare backup actions', () => {
     const order = inlineOrderFor('viewItem == gemstoneSession');
 
+    // Settings opens the session's live-maintenance page (settings are
+    // session-scoped, and Ping now lives inside it) — placed just before the
+    // session-ending Logout, which stays last.
     expect(order).toEqual([
       'gemstone.sessionOpenWorkspace',
       'gemstone.sessionCommit',
       'gemstone.sessionAbort',
-      'gemstone.sessionPing',
+      'gemstone.showConfiguration',
       'gemstone.sessionLogout',
     ]);
   });

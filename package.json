@@ -889,6 +889,12 @@
         "icon": "$(notebook)"
       },
       {
+        "command": "gemstone.showConfiguration",
+        "title": "Settings",
+        "category": "GemStone",
+        "icon": "$(settings-gear)"
+      },
+      {
         "command": "gemstone.openTutorial",
         "title": "Open Tutorial Notebook",
         "category": "GemStone",
@@ -2730,7 +2736,7 @@
           "group": "inline@3"
         },
         {
-          "command": "gemstone.sessionPing",
+          "command": "gemstone.showConfiguration",
           "when": "view == gemstoneLogins && viewItem == gemstoneSession",
           "group": "inline@4"
         },
