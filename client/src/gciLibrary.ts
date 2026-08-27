@@ -2307,6 +2307,70 @@ export class GciLibrary {
     );
   }
 
+  /**
+   * Evaluates `code` via the non-blocking GCI entry point and fetches its
+   * result oop.
+   *
+   * `code` runs as an anonymous method: `self` is `nil`, names resolve
+   * against the user's symbol list (UserGlobals, Globals, and Published),
+   * and it runs in environment 0, GemStone's default environment. The
+   * result OOP is retained in the session's PureExportSet; the caller is
+   * responsible for releasing it when no longer needed.
+   *
+   * Stub: does not yet poll for readiness, so it still blocks the event
+   * loop while GemStone runs.
+   *
+   * @param session - The GemStone session to operate in.
+   * @param code - Smalltalk source to evaluate.
+   * @returns The OOP of the result object.
+   * @throws {GciLibraryError} If execution fails to start, the evaluated
+   *   code signals an error, or the underlying GCI call fails.
+   */
+  public async executeAndFetchOop(session: unknown, code: string): Promise<bigint> {
+    this.executeNb(session, code);
+
+    return this.fetchNbResult(session);
+  }
+
+  /**
+   * Starts `code` running on `session` via the non-blocking GCI entry
+   * point, without waiting for it to finish.
+   *
+   * @param session - The GemStone session to operate in.
+   * @param code - Smalltalk source to evaluate.
+   * @throws {GciLibraryError} If the underlying GCI call fails to start.
+   */
+  private executeNb(session: unknown, code: string) {
+    const { success, err } = this.GciTsNbExecute(
+      session,
+      code,
+      this.utf8ClassOop(session),
+      OOP_ILLEGAL,
+      this.nilOop(),
+      0,
+      0,
+    );
+
+    this.throwUnless(success, err);
+  }
+
+  /**
+   * Blocks until `session`'s in-flight non-blocking GCI call finishes,
+   * and returns its result oop.
+   *
+   * @param session - The GemStone session to operate in.
+   * @returns The OOP of the result object.
+   * @throws {GciLibraryError} If the evaluated code signals an error, or
+   *   if the underlying GCI call fails.
+   */
+  private fetchNbResult(session: unknown) {
+    const { result, err } = this.GciTsNbResult(session);
+
+    this.throwOnIllegalOop(result, err);
+
+    return result;
+  }
+
   // ---------------------------------------------------------------------
   // Message sending
   // ---------------------------------------------------------------------
