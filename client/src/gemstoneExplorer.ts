@@ -797,6 +797,9 @@ export class ExplorerController {
   // The pane whose filter input is currently open (so its header shows the
   // live "Filter: …" label while typing, even if a method is already selected).
   private filteringView?: string;
+  // The open filter input, if any, and the way to close it as ACCEPTED. Set by
+  // beginFilter, used by commitFilterInput when a row click ends the filtering.
+  private openFilterBox?: { commit: () => void };
   // Freshly-created (via the + button) class categories that have no class yet,
   // so they still appear in the Class Categories pane. Cleared on dict change.
   private readonly newClassCategories = new Set<string>();
@@ -1050,21 +1053,42 @@ export class ExplorerController {
   // apart. On cancel we restore the filter captured when the box opened, which is the
   // previously accepted filter when the user was editing an existing one (the box is seeded
   // from it) rather than simply clearing.
+  //
+  // A click away from the box is neither: `ignoreFocusOut` keeps the box open through it, and
+  // the click's own handler commits the box instead (commitFilterInput) — see the note there.
   beginFilter(viewId: string): void {
+    // A box already open (another pane's funnel, say) no longer closes itself when focus moves
+    // here, so put it away first — and as an accept, since opening a second filter box is not a
+    // way of saying the first one was a mistake. Doing it here rather than leaving it to VS
+    // Code (which hides a displaced input box) keeps the order deterministic: the old box's
+    // onDidHide has finished before this one records itself as the open box.
+    this.commitFilterInput();
     const box = vscode.window.createInputBox();
     const filterBeforeEdit = this.filters.get(viewId);
     // What this box last wrote, so the cancel path can tell its own edit from someone else's.
     let lastAppliedByBox = filterBeforeEdit;
     let accepted = false;
     box.title = 'Filter';
+    // Keep the box open when focus leaves it. VS Code otherwise hides it on any click
+    // elsewhere, and hiding is the cancel path: the pre-edit filter goes back, the pane
+    // re-expands to the full list — under the pointer, before the click that dismissed the box
+    // resolves — and the click lands on whichever row has moved into that spot. Clicking a
+    // result is exactly what a filter is for, so the box must survive the click. With focus-out
+    // ignored, the box closes only on Escape (cancel), Enter (accept), or commitFilterInput
+    // (accept), so a dismissal is no longer ambiguous between the three.
+    box.ignoreFocusOut = true;
     box.placeholder = 'starts with… (use * as a wildcard)';
     // Set an explicit prompt. Left unset, VS Code fills the prompt line with its own
     // "press Enter to confirm / Escape to cancel" hint, which tells the user nothing
     // filters until Enter — but this box filters on every keystroke
     // (onDidChangeValue -> setFilterState). The live behaviour is the one worth
-    // keeping, so correct the message instead (#387 item 5). Escape still cancels and
-    // restores the previous filter, which is why it stays in the text.
-    box.prompt = 'Filters as you type — Escape to cancel';
+    // keeping, so correct the message instead. Escape still cancels and restores the
+    // previous filter, which is why it stays in the text. The box now also survives
+    // the click on a result and keeps the filter (see ignoreFocusOut above), so the
+    // prompt says so — deliberately without naming Enter, which would put back the
+    // very "nothing happens until you confirm" reading the explicit prompt exists to
+    // displace (there is a test on that; Enter does still accept and close the box).
+    box.prompt = 'Filters as you type — click a result to keep it, Escape to cancel';
     box.value = filterBeforeEdit ?? '';
     this.filteringView = viewId;
     this.syncTitles();
@@ -1072,18 +1096,23 @@ export class ExplorerController {
       lastAppliedByBox = value.trim() || undefined;
       this.setFilterState(viewId, lastAppliedByBox);
     });
-    box.onDidAccept(() => {
+    const accept = () => {
       accepted = true;
       box.hide();
-    });
+    };
+    box.onDidAccept(accept);
+    const entry = { commit: accept };
+    this.openFilterBox = entry;
     box.onDidHide(() => {
       // Undo ONLY this box's own edit, and only when there is something to undo.
       //
-      // Restoring unconditionally was wrong: selecting a class clears the Methods filter
-      // (`selectClass` -> `clearFilters(VIEW_METHODS)`), and that same click is what dismisses an
-      // open filter box — so the restore could re-apply a filter the user typed for the PREVIOUS
-      // class onto the newly selected one. If the live value is no longer what this box set,
-      // someone else owns it now; leave it alone.
+      // Restoring unconditionally was wrong: plenty of things clear a pane's filter while the
+      // box is open — selecting a class clears the Methods filter (`selectClass` ->
+      // `clearFilters(VIEW_METHODS)`), as do the clear-filter command and a session change — and
+      // an unconditional restore would put the abandoned text back on top of whatever they left.
+      // If the live value is no longer what this box set, someone else owns it now; leave it
+      // alone. (A row click reaches here already accepted, via commitFilterInput, so it never
+      // restores; this guards the paths that don't go through a click.)
       //
       // The second guard keeps the common "open the box and press Escape without typing" case a
       // no-op rather than a needless refresh() + syncTitles() + refreshIvarHighlights() round.
@@ -1095,10 +1124,24 @@ export class ExplorerController {
         this.setFilterState(viewId, filterBeforeEdit);
       }
       this.filteringView = undefined;
+      // Deregister this box only. beginFilter commits an open box before creating the next, so
+      // there is normally just one — but the check costs nothing and means a hide delivered
+      // late (after another box has opened) can't leave that newer box with no way to commit.
+      if (this.openFilterBox === entry) this.openFilterBox = undefined;
       this.syncTitles();
       box.dispose();
     });
     box.show();
+  }
+
+  // Close an open filter input, keeping what was typed. Clicking a row in a pane is a USE of
+  // the filter, not a cancellation of it, so the pane's selection handlers call this: the box
+  // no longer closes itself on focus-out (see beginFilter), and left open it would hang over
+  // the panes until Escape — which would then undo a filter the user had already acted on.
+  // beginFilter calls it too, to put away a box left open over another pane. A no-op when no
+  // box is open, which is every path but a click (or a second funnel) during filtering.
+  commitFilterInput(): void {
+    this.openFilterBox?.commit();
   }
 
   // From an instance-variable row's context menu: filter the Methods pane to the
@@ -5757,6 +5800,38 @@ class ClassDropController implements vscode.TreeDragAndDropController<ClassNode>
 
 // ── Registration ──────────────────────────────────────────────────────────────
 
+// A pane, as far as committing a filter edit is concerned. Structural rather than
+// vscode.TreeView<T> because the five panes are TreeViews of five different node types
+// and this cares about none of them — and so a test can drive it with a plain fake.
+interface SelectableView {
+  onDidChangeSelection(listener: (e: { selection: readonly unknown[] }) => void): unknown;
+}
+
+// Selecting a row in any pane commits an open filter input instead of cancelling it: the box
+// stays open through the click (beginFilter sets ignoreFocusOut, so the pane can't re-expand
+// under the pointer and hand the click to a different row), and this is what then puts it away
+// with the filter intact. Exported so the wiring — every pane, not just the filtered one — can
+// be tested; a selection in an unfiltered pane matters too, since e.g. picking a class clears
+// the Methods filter and a box left open over it would be editing something that's gone.
+export function commitFilterOnRowSelection(
+  ctl: Pick<ExplorerController, 'commitFilterInput'>,
+  ...views: SelectableView[]
+): void {
+  for (const view of views) {
+    view.onDidChangeSelection((e) => {
+      const node = e.selection[0];
+      // Two selections are not the click this is about. An EMPTY one isn't a click at all —
+      // typing in the box can narrow the selected row out of the pane, and that must not close
+      // the box mid-word. And the filter row's click is the one that OPENS the box (its command
+      // is the pane's filter command), so committing on it would race the very edit it asked
+      // for — whether VS Code fires the selection before or after the row's command is its
+      // business, not ours; skipping the row settles it either way.
+      if (node === undefined || node instanceof FilterChipItem) return;
+      ctl.commitFilterInput();
+    });
+  }
+}
+
 // Handle returned to the extension so it can forward file-system compile events
 // (method / class Save) and session lifecycle events (abort) to the controller
 // for a live panel refresh.
@@ -5864,6 +5939,11 @@ export function registerGemStoneExplorer(
     hierarchy: hierarchyView,
     method: methodView,
   });
+
+  // Clicking a row anywhere in the Explorer ends an open filter edit, keeping the filter (see
+  // ExplorerController.commitFilterInput). Registered ahead of the per-pane handlers below,
+  // though the order doesn't change the outcome — committing never restores anything.
+  commitFilterOnRowSelection(ctl, dictView, categoryView, classView, hierarchyView, methodView);
 
   dictView.onDidChangeSelection((e) => {
     const node = e.selection[0];

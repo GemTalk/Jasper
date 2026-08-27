@@ -173,9 +173,10 @@ describe('Explorer filter input: accept vs cancel', () => {
   });
 
   // Regression for the review finding: the restore used to write the pre-edit value back
-  // unconditionally. Selecting a class clears the Methods filter (`selectClass` ->
-  // `clearFilters(VIEW_METHODS)`), and that same click dismisses an open box — so an
-  // unconditional restore re-applied the PREVIOUS class's filter onto the newly selected one.
+  // unconditionally, so it could overwrite a filter someone else had set or cleared while the
+  // box was open — the clear-filter command, a session change, or `selectClass`, which clears
+  // the Methods filter. (A class click now commits the box rather than cancelling it — see
+  // explorerFilterClickAway.test.ts — so the guard is what covers the paths that aren't clicks.)
   it('does not resurrect its filter when something else changed the pane meanwhile', async () => {
     const ctl = makeController();
 
