@@ -2,16 +2,18 @@
 // matrix (3.6.2 and 3.7.5). Base-image reflection only — no server plugin — so it runs in both the
 // bare and plugin CI passes.
 //
-// Regression guard for GemStone Search triage #14. Two halves, both previously untested:
-//   1. the generated selector scan really is BOUNDED — `searchSelectors` short-circuits the instant it
-//      has `limit` matches, so a full slice genuinely means "there are more we never saw";
+// Two halves, both previously untested:
+//   1. the generated selector scan really is BOUNDED — `searchSelectors` hands back at most `limit`
+//      rows, so a full slice genuinely means "there are more we never saw";
 //   2. `methodsProvider` turns that into the truncation signal the engine needs, so the footer stops
 //      presenting a cut-off slice as an exact total.
 //
 // The unit tests cover the clamp arithmetic with fakes; this one proves the same thing end-to-end
-// against real GemStone reflection, where the short-circuit actually happens. It uses a fixture class
-// with a unique selector substring and a deliberately tiny cap, so the assertions are exact numbers
-// rather than "the base image probably has more than 200 of these".
+// against real GemStone reflection, where the cut-off actually happens. It uses a fixture class with a
+// unique selector substring and a deliberately tiny cap, so the assertions are exact numbers rather
+// than "the base image probably has more than 200 of these".
+//
+// Which rows survive the cut-off is a separate question, covered by methodsRelevance.integration.
 import { describe, it, expect, vi } from 'vitest';
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 
@@ -35,9 +37,9 @@ describe('methods fetch ceiling (integration)', () => {
 
   const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
 
-  const CLS = 'Issue14CeilingDemo';
+  const CLS = 'SelectorScanCeilingDemo';
   /** Unique enough that only the fixture's own methods can match — keeps the counts exact. */
-  const TERM = 'iss14ceil';
+  const TERM = 'scanceil';
   const FIXTURE_METHODS = 6;
 
   // A transient fixture (rolled back by the harness's abort): FIXTURE_METHODS methods whose selectors
@@ -59,7 +61,7 @@ describe('methods fetch ceiling (integration)', () => {
     defineFixture();
     const exec = defaultQueryExecutorUsing(session());
 
-    // Asking for fewer than the fixture holds must come back exactly full — the short-circuit.
+    // Asking for fewer than the fixture holds must come back exactly full — the cut-off.
     const bounded = searchSelectors(exec, TERM, { limit: 4, ignoreCase: true });
     expect(bounded).toHaveLength(4);
 

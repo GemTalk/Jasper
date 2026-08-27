@@ -12,8 +12,10 @@
  * The cached engine also captures the `gemstone.omniSearch` settings that were live when it was built,
  * so the command layer calls `onConfigChanged()` (from an `onDidChangeConfiguration` listener) to drop
  * the engine when those settings change — otherwise a settings edit made while the panel is open would
- * be silently ignored until the session changed or the window reloaded. (Rebinding on a live SESSION
- * switch — the `sessionMode: "multiple"` case — is deferred to #437.)
+ * be silently ignored until the session changed or the window reloaded. Switching the SELECTED session
+ * calls `onSessionSelectionChanged()` for the same reason, and additionally wipes the webview: the
+ * engine is rebuilt lazily either way, but until it is, everything on screen — query, results, pivot,
+ * preview — belongs to a session the user has left (issue #517).
  *
  * Both catch-ups are gated on the view being VISIBLE, because the engine outlives a hidden panel and
  * reloading its corpora costs image-wide synchronous GCI executes. A hidden panel therefore only notes
@@ -90,6 +92,58 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
     this.builtForSession = undefined;
     this.syncPending = false; // the replacement engine primes from scratch
     if (this.view?.visible) void this.ensureEngine();
+  }
+
+  /** The user made a different session active (`SessionManager.onDidChangeSelection`). The engine is
+   *  bound to a session, so it has to go — but unlike a config change this also invalidates everything
+   *  the webview is showing: the results, the query that produced them, any references pivot and the
+   *  previewed source were all read out of the session just left. Leaving them on screen is worse than
+   *  showing nothing, because the rows still look live and activating one opens a document against the
+   *  session that is now current. So the webview is reset as well as the engine.
+   *
+   *  Logging out of the last session lands here too (there is no context to resolve): the panel resets
+   *  and, when visible, says to log in — rather than keeping the departed session's results.
+   *
+   *  A no-op when the selection lands back on the session we already built for — re-priming three
+   *  image-wide GCI executes to arrive where we already are is exactly what `builtForSession` exists to
+   *  avoid. */
+  async onSessionSelectionChanged(): Promise<void> {
+    const ctx = await this.resolveContext();
+    if (this.engine && this.builtForSession !== ctx?.sessionId) {
+      this.engine = undefined;
+      this.deps = undefined;
+      this.builtForSession = undefined;
+      this.syncPending = false; // a replacement engine primes from scratch
+      this.post({ command: 'reset' });
+    }
+    // Hidden: the next reveal or webview message builds the engine for the now-current session.
+    if (this.view?.visible) await this.ensureEngine();
+  }
+
+  /** The user asked for a refresh (the panel's ⟳ button / `gemstone.search.refresh`): reload every
+   *  cached corpus from the stone and re-run the current search.
+   *
+   *  This is the only way to pick up work done by EXECUTING code — a class created or removed from a
+   *  workspace, a method compiled by evaluating `compileMethod:`, a new global. Those changes announce
+   *  nothing the panel can listen for, so short of a commit or abort (which do trigger a resync) the
+   *  cached corpora stay stale, and the staleness window has no upper bound. An explicit refresh closes
+   *  it on demand (issue #517).
+   *
+   *  Unlike `onSessionSynced` this is NOT gated on visibility or deferred: the user asked for it now.
+   *  It clears any pending hidden sync, since a full resync is strictly more than that sync owed. */
+  async refresh(): Promise<void> {
+    // Never instantiated: there is nothing on screen to refresh, and building an engine here would pay
+    // three image-wide GCI executes for a panel the user has not opened (the `gemstone.search.refresh`
+    // command reaches both hosts, so this fires even when the Spotter is the chosen UI).
+    if (!this.view) return;
+    if (!(await this.ensureEngine())) return;
+    this.syncPending = false;
+    this.post({ command: 'busy', on: true });
+    const view = await this.engine!.resync(this.deps?.onError);
+    // No view means a pivot is showing (the reference rows are not a search, so there is nothing to
+    // re-run). The corpora were still rebuilt, so the refresh did happen — just drop the spinner.
+    if (view) this.postView(view);
+    else this.post({ command: 'busy', on: false });
   }
 
   /** A class was compiled locally in `sessionId`: fold it into the live engine's cache (a cheap
@@ -225,6 +279,12 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
         return;
       }
       if (!this.engine && !(await this.ensureEngine())) return;
+      // Handled BEFORE the deferred-sync flush: a refresh already rebuilds every corpus, so letting the
+      // flush run first would pay for two full re-primes back to back.
+      if (m.command === 'refresh') {
+        await this.refresh();
+        return;
+      }
       // Searching stale corpora would show deleted classes / miss new ones: pay the deferred rebuild.
       await this.flushPendingSync();
       const engine = this.engine!;

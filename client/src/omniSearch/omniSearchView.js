@@ -42,6 +42,7 @@
     var scopeFilterMenuEl = doc.getElementById('scopeFilterMenu');
     var matchModeEl = doc.getElementById('matchMode');
     var refIndicatorEl = doc.getElementById('refindicator');
+    var refreshEl = doc.getElementById('refresh');
     // The last category list + active scope pushed from the host. The host owns scope; we just reflect
     // what it sent. Kept so the scope hint can name the scopes an All-scope search leaves out (see
     // updateScopeHint) and so Tab / Shift+Tab can cycle scopes from the field.
@@ -634,6 +635,9 @@
         case 'busy':
           setBusy(!!msg.on);
           break;
+        case 'reset':
+          resetView();
+          break;
         case 'preview':
           // Ignore a stale preview for a row that's no longer active, or one that arrives while the
           // pane is showing a sticky references list (referencesInPreview mode).
@@ -904,6 +908,42 @@
       highlightOccurrences(pre, source, inputEl.value.trim(), caseSensitive);
     }
 
+    /**
+     * Wipe the panel back to an empty search: no query, no results, no references list, no preview, no
+     * error banner, scope back to All.
+     *
+     * Sent by the host as `reset` when the session under the search changes, or the last session logs
+     * out. Everything on screen was read out of the session just left, and a stale row still LOOKS
+     * live — activating one would open a document against the session that is now current — so an empty
+     * panel is the honest state until the new session's engine has primed (issue #517).
+     */
+    function resetView() {
+      cancelPendingQuery();
+      if (previewTimer) {
+        clearTimeout(previewTimer);
+        previewTimer = null;
+      }
+      inputEl.value = '';
+      updateClearVisibility();
+      setError('');
+      setBreadcrumb('', '');
+      refHighlightTerm = '';
+      scrollResetPending = true;
+      // Scope belongs to the engine, and the replacement engine starts at All — so reflect that rather
+      // than leaving the departed session's tab lit.
+      renderTabs(lastCategories, null);
+      // Clears the list, the preview, the footer and the references chip in one pass.
+      renderResults({
+        rows: [],
+        shownCount: 0,
+        hasMore: false,
+        exact: false,
+        truncations: [],
+        pivot: false,
+      });
+      setBusy(false);
+    }
+
     function setBusy(on) {
       if (on) doc.body.classList.add('busy');
       else doc.body.classList.remove('busy');
@@ -1172,6 +1212,18 @@
       post('toggleCase');
       inputEl.focus();
     });
+
+    if (refreshEl) {
+      // An explicit reload of the cached corpora (classes / dictionaries / globals) plus a re-run of
+      // whatever is in the field. Deliberately keeps the query: you press this BECAUSE you want the
+      // same search answered against the current state of the image. The host clears the busy flag by
+      // sending the fresh results (or, mid-pivot, a bare `busy: false`).
+      refreshEl.addEventListener('click', function () {
+        setBusy(true);
+        post('refresh');
+        inputEl.focus();
+      });
+    }
 
     if (previewToggleEl) {
       previewToggleEl.addEventListener('click', function () {

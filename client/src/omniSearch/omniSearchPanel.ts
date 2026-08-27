@@ -56,12 +56,14 @@ type OmniInbound =
   | { command: 'openReference'; refId: number }
   | { command: 'back' }
   | { command: 'preview'; id: number }
+  | { command: 'refresh' }
   | { command: 'close' };
 
 export class OmniSearchPanel {
   private static current: OmniSearchPanel | undefined;
   private readonly panel: vscode.WebviewPanel;
-  private readonly engine: ReturnType<typeof createOmniEngine>;
+  // Not readonly: `rebindTo` replaces it when the Spotter is pointed at a different session.
+  private engine: ReturnType<typeof createOmniEngine>;
   private disposables: vscode.Disposable[] = [];
   // Dialog vs. pinned. Unpinned (default) makes the Spotter behave like the Phase-1 QuickPick: it
   // closes on focus-out and on picking a result. Pinned keeps it open and switches activation to
@@ -73,22 +75,20 @@ export class OmniSearchPanel {
   private hasBeenActive = false;
 
   /** Open (or reveal) the Spotter. Only one exists at a time. A second invocation for the SAME
-   *  session just refocuses it; one for a DIFFERENT session replaces it, because a Spotter is bound
-   *  to its session (see below) and can't be re-pointed in place. */
+   *  session just refocuses it; one for a DIFFERENT session re-points it at that session's deps. */
   static show(deps: OmniPanelDeps): void {
     const existing = OmniSearchPanel.current;
     if (existing) {
-      if (existing.deps.sessionId === deps.sessionId) {
-        // Same session: bring the open Spotter forward and refocus its field.
-        existing.panel.reveal(existing.panel.viewColumn);
-        existing.panel.webview.postMessage({ command: 'focusInput' });
-        return;
+      if (existing.deps.sessionId !== deps.sessionId) {
+        // Different session: the open Spotter's engine — and the providers, activation and preview
+        // inside it — came from the OLD session's `deps`, so a bare reveal would keep searching and
+        // opening against the previous session with no sign anything is wrong (the reported
+        // two-session bug). Re-point it, which also clears the old session's results off the screen.
+        existing.rebindTo(deps);
       }
-      // Different session: the open Spotter's engine (and its providers, activation and preview) was
-      // built once from the OLD session's `deps` in the constructor and can't be re-pointed here, so a
-      // bare reveal would keep searching and opening against the previous session with no sign
-      // anything is wrong. Replace it with a Spotter bound to the new session's deps.
-      existing.dispose();
+      existing.panel.reveal(existing.panel.viewColumn);
+      existing.panel.webview.postMessage({ command: 'focusInput' });
+      return;
     }
     const panel = vscode.window.createWebviewPanel(
       'gemstoneOmniSearch',
@@ -115,6 +115,39 @@ export class OmniSearchPanel {
     const panel = OmniSearchPanel.current;
     if (!panel || panel.deps.sessionId !== sessionId) return;
     void panel.engine.resync(panel.deps.onError).then((view) => view && panel.postView(view));
+  }
+
+  /** The user made a different session active. An open Spotter is bound to ONE session — its
+   *  providers, activation and preview all close over it — so it has to be re-pointed at the new one,
+   *  and everything on screen (results, query, pivot, preview) has to go with it: those rows were read
+   *  out of the session just left, yet activating one would open a document against the session that is
+   *  now current (issue #517).
+   *
+   *  `resolveDeps` is a thunk so nothing is built when no Spotter is open. It answering null means
+   *  there is nothing left to search (the last session logged out): the Spotter stays open — it is an
+   *  editor tab the user put there — but resets and says so, rather than showing a departed session's
+   *  results. */
+  static onSessionSelectionChanged(resolveDeps: () => OmniPanelDeps | null): void {
+    const panel = OmniSearchPanel.current;
+    if (!panel) return; // nothing open — don't build providers for a Spotter that isn't there
+    const deps = resolveDeps();
+    if (!deps) {
+      panel.reset();
+      panel.panel.webview.postMessage({
+        command: 'error',
+        message: 'Log in to a GemStone session to search.',
+      });
+      return;
+    }
+    if (panel.deps.sessionId === deps.sessionId) return;
+    panel.rebindTo(deps);
+  }
+
+  /** The user asked for a refresh (⟳ in the panel / `gemstone.search.refresh`): rebuild every cached
+   *  corpus from the stone and re-run the current search, so code created or removed by EXECUTING it
+   *  (a workspace doit, a `compileMethod:`) is picked up without waiting for a commit or abort. */
+  static refresh(): void {
+    void OmniSearchPanel.current?.refresh();
   }
 
   private constructor(
@@ -169,6 +202,32 @@ export class OmniSearchPanel {
     if (nowPinned === this.pinned) return;
     this.pinned = nowPinned;
     this.panel.webview.postMessage({ command: 'pinned', pinned: this.pinned });
+  }
+
+  /** Point this Spotter at another session: a new engine over the new deps, a cleared webview, and a
+   *  fresh prime. Everything else about the panel — the tab, its pin, the loaded HTML and the message
+   *  wiring — is session-independent and stays, so the user keeps the tab they opened. */
+  private rebindTo(deps: OmniPanelDeps): void {
+    this.deps = deps;
+    this.engine = createOmniEngine(deps);
+    this.reset();
+    this.panel.webview.postMessage(configMessage(deps.config, this.pinned));
+    void this.engine.prime(deps.onError);
+  }
+
+  /** Clear the webview back to an empty search (no query, no results, no pivot, no preview). */
+  private reset(): void {
+    this.panel.webview.postMessage({ command: 'reset' });
+  }
+
+  /** Reload every cached corpus and re-run the current term. See the static `refresh` for why. */
+  private async refresh(): Promise<void> {
+    this.panel.webview.postMessage({ command: 'busy', on: true });
+    const view = await this.engine.resync(this.deps.onError);
+    // No view means a pivot is showing — its rows are a fixed list, not a search, so there is nothing
+    // to re-run. The corpora were still rebuilt; just drop the spinner.
+    if (view) this.postView(view);
+    else this.panel.webview.postMessage({ command: 'busy', on: false });
   }
 
   /** Send a fresh view to the webview, decorated with the current chrome state. */
@@ -280,6 +339,9 @@ export class OmniSearchPanel {
           await this.deps.activate(result, { beside: true, preserveFocus: true });
           return;
         }
+        case 'refresh':
+          await this.refresh();
+          return;
         case 'close':
           this.panel.dispose();
           return;

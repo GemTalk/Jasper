@@ -20,7 +20,7 @@ import {
   REVEAL_DEADLINE_MS,
 } from '../omniSearchViewProvider';
 
-function fakeContext(): OmniViewContext {
+function fakeContext(sessionId = 1): OmniViewContext {
   const config = {
     matchMode: 'fuzzy',
     caseSensitive: false,
@@ -31,7 +31,7 @@ function fakeContext(): OmniViewContext {
     referencesInPreview: false,
   };
   // The engine is mocked, so only `config` is read here; cast past the unused `OmniPanelDeps` members.
-  return { deps: { config, onError: vi.fn() }, sessionId: 1 } as unknown as OmniViewContext;
+  return { deps: { config, onError: vi.fn() }, sessionId } as unknown as OmniViewContext;
 }
 
 function fakeView(visible: boolean) {
@@ -269,5 +269,142 @@ describe('GemStone Search docked panel — reporting whether a reveal landed', (
     provider.resolveWebviewView(fakeView(false).view as never); // the workbench catches up
 
     await expect(landed).resolves.toBe(true);
+  });
+});
+
+describe('GemStone Search docked panel — switching the active session', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  /** Open the panel on session 1, with a resolver whose session id we can move afterwards. */
+  async function openWithSwitchableSession(visible: boolean) {
+    let sessionId = 1;
+    const provider = new OmniSearchViewProvider(vi.fn(async () => fakeContext(sessionId)));
+    const { view, on } = fakeView(visible);
+    provider.resolveWebviewView(view as never);
+    await on.message({ command: 'ready' });
+    expect(createOmniEngine).toHaveBeenCalledTimes(1);
+    return { provider, view, on, select: (id: number) => (sessionId = id) };
+  }
+
+  it('wipes the webview and rebinds the engine when another session is made active', async () => {
+    const { provider, view, select } = await openWithSwitchableSession(true);
+    select(2);
+
+    await provider.onSessionSelectionChanged();
+
+    // The rows on screen came out of session 1 — leaving them up would show stale results that still
+    // look live, and activating one would open a document against session 2.
+    expect(view.webview.postMessage).toHaveBeenCalledWith({ command: 'reset' });
+    expect(createOmniEngine).toHaveBeenCalledTimes(2);
+  });
+
+  it('does nothing when the selection lands back on the session it is already built for', async () => {
+    const { provider, view, select } = await openWithSwitchableSession(true);
+    select(1); // same session — e.g. re-selecting it in the Sessions tree
+    view.webview.postMessage.mockClear();
+
+    await provider.onSessionSelectionChanged();
+
+    // Re-priming would cost three image-wide GCI executes to arrive where we already are.
+    expect(createOmniEngine).toHaveBeenCalledTimes(1);
+    expect(view.webview.postMessage).not.toHaveBeenCalledWith({ command: 'reset' });
+  });
+
+  it('wipes a HIDDEN panel too, and leaves the rebuild for the next reveal', async () => {
+    const { provider, view, on, select } = await openWithSwitchableSession(false);
+    select(2);
+
+    await provider.onSessionSelectionChanged();
+
+    // The wipe is not deferred: unlike a stale corpus, stale ROWS are visible the instant the panel is
+    // revealed, and the reveal cannot un-show them retroactively.
+    expect(view.webview.postMessage).toHaveBeenCalledWith({ command: 'reset' });
+    expect(createOmniEngine).toHaveBeenCalledTimes(1); // the costly part still waits
+    await on.message({ command: 'ready' });
+    expect(createOmniEngine).toHaveBeenCalledTimes(2);
+  });
+
+  it('resets and asks for a login when the last session logs out', async () => {
+    let ctx: OmniViewContext | null = fakeContext(1);
+    const provider = new OmniSearchViewProvider(vi.fn(async () => ctx));
+    const { view, on } = fakeView(true);
+    provider.resolveWebviewView(view as never);
+    await on.message({ command: 'ready' });
+    ctx = null;
+
+    await provider.onSessionSelectionChanged();
+
+    expect(view.webview.postMessage).toHaveBeenCalledWith({ command: 'reset' });
+    expect(view.webview.postMessage).toHaveBeenCalledWith({
+      command: 'error',
+      message: 'Log in to a GemStone session to search.',
+    });
+  });
+});
+
+describe('GemStone Search docked panel — the refresh button', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  async function open(visible = true) {
+    const provider = new OmniSearchViewProvider(vi.fn(async () => fakeContext()));
+    const { view, on } = fakeView(visible);
+    provider.resolveWebviewView(view as never);
+    void on.message({ command: 'ready' });
+    // The handler is fire-and-forget (`void this.onMessage(m)`), so wait for the engine it builds AND
+    // let the rest of the handler drain — otherwise its own `flushPendingSync` lands mid-test and looks
+    // like the code under test resyncing.
+    await vi.waitFor(() => expect(createOmniEngine).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // The LAST engine built, not `results[0]`: `vi.clearAllMocks()` does not empty `mock.results`, so an
+    // earlier test's engine can still be sitting at index 0.
+    const results = vi.mocked(createOmniEngine).mock.results;
+    return { provider, view, on, engine: results[results.length - 1].value };
+  }
+
+  it('reloads every cached corpus, so code created by executing it is picked up', async () => {
+    const { provider, engine } = await open();
+
+    await provider.refresh();
+
+    expect(engine.resync).toHaveBeenCalled();
+  });
+
+  it('drops the busy indicator when the resync has no view to redraw (mid-pivot)', async () => {
+    const { view, on, engine } = await open();
+    engine.resync.mockResolvedValueOnce(null);
+
+    // The provider's message handler is registered as `void this.onMessage(m)`, so the webview message
+    // is fire-and-forget — hence waitFor rather than a bare await, here and below.
+    void on.message({ command: 'refresh' });
+
+    await vi.waitFor(() => expect(engine.resync).toHaveBeenCalled());
+    await vi.waitFor(() =>
+      expect(view.webview.postMessage).toHaveBeenCalledWith({ command: 'busy', on: false }),
+    );
+  });
+
+  it('resyncs ONCE when a hidden sync was also outstanding', async () => {
+    const { provider, on, engine } = await open(false);
+    await provider.onSessionSynced(1); // deferred: the panel is hidden
+    expect(engine.resync).not.toHaveBeenCalled();
+
+    void on.message({ command: 'refresh' });
+
+    // Both want the same rebuild; paying for it twice is two image-wide walks for one click.
+    await vi.waitFor(() => expect(engine.resync).toHaveBeenCalledTimes(1));
+    expect(engine.resync).toHaveBeenCalledTimes(1);
+  });
+
+  it('builds nothing when the view has never been instantiated', async () => {
+    // `gemstone.search.refresh` reaches both hosts, so it fires even when the Spotter is the chosen UI
+    // and this view was never resolved. Priming an engine there would cost three image-wide executes
+    // for a panel nobody opened.
+    const resolveContext = vi.fn(async () => fakeContext());
+    const provider = new OmniSearchViewProvider(resolveContext);
+
+    await provider.refresh();
+
+    expect(resolveContext).not.toHaveBeenCalled();
+    expect(createOmniEngine).not.toHaveBeenCalled();
   });
 });
