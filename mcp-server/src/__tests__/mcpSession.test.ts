@@ -80,6 +80,7 @@ describe('McpSession', () => {
         false,
         config.gemNrs,
         config.gsUser,
+        // eslint-disable-next-line no-restricted-syntax -- asserting the password reaches the login is this test's whole point; `mockGci` is a `vi.fn()` mock, so no session and no stone are involved
         config.gsPassword,
         0,
         0,
@@ -97,6 +98,7 @@ describe('McpSession', () => {
         false,
         config.gemNrs,
         config.gsUser,
+        // eslint-disable-next-line no-restricted-syntax -- asserting the password reaches the login is this test's whole point; `mockGci` is a `vi.fn()` mock, so no session and no stone are involved
         config.gsPassword,
         0,
         0,

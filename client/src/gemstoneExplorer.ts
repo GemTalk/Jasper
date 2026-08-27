@@ -45,7 +45,7 @@ import {
 } from './explorerMethodFilter';
 import { DoubleClickDetector } from './explorerDoubleClick';
 import { categoryChildNodes, categoryParentPath, categoryMatches } from './explorerCategories';
-import { registerExplorerOpenEditors } from './explorerOpenEditors';
+import { registerOpenEditorsStatusBar } from './openEditorsStatusBar';
 import { SourceEditorPlacement } from './sourceEditorPlacement';
 import { generateAndSaveGrailStub } from './grailStubGenerator';
 import {
@@ -225,8 +225,8 @@ export async function openGemstoneDocument(
 // A set of interconnected navigation panes that cascade left-to-right:
 //   Dictionaries → Class Categories → Classes → Methods (side ▸ category ▸ sel)
 // Selecting a method opens its source in an editor; the ↗ inline action (or
-// right-click ▸ Open to the Side) opens it in a balanced editor group. The
-// Open Editors pane mirrors the currently-open source editors.
+// right-click ▸ Open to the Side) opens it in a balanced editor group. A
+// status-bar button tallies the open source editors and closes them all at once.
 //
 // The panes live in their own `gemstoneExplorer` sidebar container. All four share
 // one controller that holds the cascade state, the current dictionary's
@@ -472,7 +472,9 @@ export class MethodItem extends vscode.TreeItem {
     const arg = encodeURIComponent(JSON.stringify([{ selector: info.selector, isMeta }]));
     const cmd = (id: string) => `command:gemstone.explorer.${id}?${arg}`;
 
-    const lines = ['Click to open · $(pin) pins it to the side'];
+    const lines = [
+      'Single-click previews (one reusable tab) · double-click or $(pin) keeps it open',
+    ];
     lines.push(`[Implementors](${cmd('implementorsOf')}) · [Senders](${cmd('sendersOf')})`);
     if (info.overrideBits & 1) {
       lines.push(
@@ -672,6 +674,19 @@ interface ExplorerViews {
   klass: vscode.TreeView<ClassNode | FilterChipItem>;
   hierarchy: vscode.TreeView<HierarchyItem>;
   method: vscode.TreeView<MethodNode>;
+}
+
+// Whether to fire the one-time "how to keep methods open" hint. It fires the first
+// time a single-click preview REPLACES a different previously previewed method —
+// the moment the reused preview tab makes a first method appear to be lost. Not on
+// the very first open (nothing has been replaced yet), not when re-opening the same
+// method, and never once it has been shown.
+export function shouldHintKeepMethodsOpen(
+  prevKey: string | undefined,
+  key: string,
+  alreadyShown: boolean,
+): boolean {
+  return !alreadyShown && prevKey !== undefined && prevKey !== key;
 }
 
 // ── Controller ───────────────────────────────────────────────────────────────
@@ -886,6 +901,8 @@ export class ExplorerController {
     /** Called once per class removed by Remove Class, so views holding a cached class corpus (GemStone
      *  Search) can drop it. Per class, not per command: the delete takes the whole subtree. */
     private readonly onClassRemoved?: (sessionId: number, className: string) => void,
+    /** Extension global storage, used only to fire the one-time "how to keep methods open" hint. */
+    private readonly globalState?: vscode.Memento,
     /** Test affordances on class/method rows. Absent in tests that don't exercise them,
      *  and before the SUnit controller exists. */
     private readonly sunit?: ExplorerSunitHooks,
@@ -4037,9 +4054,37 @@ export class ExplorerController {
     // permanent one (focus stays in the tree so type-to-filter / arrow-nav keep
     // working); the 📌 action pins a real tab so methods can be compared.
     await openGemstoneDocument(doc, mode, this.placement);
+    // The first time a single click is about to REPLACE a previously previewed
+    // method (the exact moment a first-time user watches their method disappear),
+    // explain once how to keep methods open.
+    if (mode === 'preview') this.maybeHintKeepMethodsOpen(`${node.isMeta}:${node.info.selector}`);
     // Under an active ivar filter, highlight the filtered ivar in the just-opened
     // source (it may not be the active editor, so refresh all visible editors).
     this.refreshIvarHighlights();
+  }
+
+  // The key (`isMeta:selector`) of the last method opened as a preview, so we can
+  // detect when a new single click is about to replace it.
+  private lastPreviewedKey?: string;
+  private static readonly KEEP_METHODS_HINT_KEY = 'gemstone.explorer.keepMethodsOpenHintShown';
+
+  // A first-time user single-clicks a method, then single-clicks another and the
+  // first vanishes — the preview tab is reused, and it isn't obvious the method is
+  // still reachable or how to keep both open (issue #468). Fire a one-time toast at
+  // exactly that moment: the second, different preview open. It names both gestures
+  // that keep a method open (double-click, or the Keep Method Open button).
+  private maybeHintKeepMethodsOpen(key: string): void {
+    const prev = this.lastPreviewedKey;
+    this.lastPreviewedKey = key;
+    if (!this.globalState) return;
+    const alreadyShown = !!this.globalState.get<boolean>(ExplorerController.KEEP_METHODS_HINT_KEY);
+    if (!shouldHintKeepMethodsOpen(prev, key, alreadyShown)) return;
+    void this.globalState.update(ExplorerController.KEEP_METHODS_HINT_KEY, true);
+    void vscode.window.showInformationMessage(
+      'Methods open in a single reusable preview tab, so clicking another method replaces the last. ' +
+        'Double-click a method — or use its 📌 Keep Method Open button — to keep it open while you browse others.',
+      'Got it',
+    );
   }
 
   // Every environment the user has asked to see, so a scan covers the same ground the
@@ -6326,6 +6371,9 @@ export interface ExplorerHandle {
   onMethodCompiled(sessionId: number, className: string): void;
   onClassCompiled(sessionId: number, className: string, dictName?: string): void;
   onSessionAborted(sessionId: number): void;
+  /** Flash a green ✅ connection-success banner atop the Dictionaries view for a
+   * few seconds (called after a successful login). */
+  showConnectedBanner(stone: string): void;
   /** Claim an about-to-happen open so it navigates the panes; see
    *  ExplorerController.markAttributedOpen. */
   markAttributedOpen(uri: vscode.Uri): void;
@@ -6354,7 +6402,13 @@ export function registerGemStoneExplorer(
   // built after this one.
   sunit?: ExplorerSunitHooks,
 ): ExplorerHandle {
-  const ctl = new ExplorerController(sessionManager, onSymbolListChanged, onClassRemoved, sunit);
+  const ctl = new ExplorerController(
+    sessionManager,
+    onSymbolListChanged,
+    onClassRemoved,
+    context.globalState,
+    sunit,
+  );
 
   // A run starting or finishing changes what these rows should say, so repaint the
   // three panes that carry test affordances. Cheap — the providers rebuild rows from
@@ -6369,9 +6423,10 @@ export function registerGemStoneExplorer(
     );
   }
 
-  // The Open Editors pane (last in the container) mirrors the open gemstone://
-  // source editors; it is session-independent, so it registers on its own.
-  registerExplorerOpenEditors(context);
+  // A status-bar "Close All GemStone Editors" button, tallying the open
+  // gemstone:// source editors; it is session-independent, so it registers on
+  // its own.
+  registerOpenEditorsStatusBar(context);
 
   // Gate the downstream panes (and swap the Dictionaries welcome) on whether a
   // session is available to browse.
@@ -7062,11 +7117,30 @@ export function registerGemStoneExplorer(
     ivarHighlightDecoration,
   );
 
+  // A green connection-success banner at the top of the Dictionaries view, shown
+  // briefly after a login. The ✅ emoji renders green in every theme (including
+  // High Contrast), and TreeView.message sits above the tree without stealing space
+  // or focus — unlike a status-bar color (which can't be green) or a webview panel
+  // (which is far too large for a transient flash).
+  const CONNECTED_BANNER_MS = 5000;
+  let connectedBannerTimer: ReturnType<typeof setTimeout> | undefined;
+  function showConnectedBanner(stone: string): void {
+    if (connectedBannerTimer) clearTimeout(connectedBannerTimer);
+    const message = `✅ Connected to ${stone}`;
+    dictView.message = message;
+    connectedBannerTimer = setTimeout(() => {
+      connectedBannerTimer = undefined;
+      // Only clear our own banner — a newer message (or another connect) wins.
+      if (dictView.message === message) dictView.message = undefined;
+    }, CONNECTED_BANNER_MS);
+  }
+
   return {
     onMethodCompiled: (sessionId, className) => ctl.onExternalMethodCompiled(sessionId, className),
     onClassCompiled: (sessionId, className, dictName) =>
       ctl.onExternalClassCompiled(sessionId, className, dictName),
     onSessionAborted: (sessionId) => ctl.onSessionAborted(sessionId),
+    showConnectedBanner,
     markAttributedOpen: (uri) => ctl.markAttributedOpen(uri),
     clearAttributedOpen: (uri) => ctl.clearAttributedOpen(uri),
     revealDocument: (uri) => ctl.revealDocument(uri),
