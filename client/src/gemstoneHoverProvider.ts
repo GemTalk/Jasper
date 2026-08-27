@@ -56,7 +56,15 @@ export class GemStoneHoverProvider implements vscode.HoverProvider {
 
     if (selector) {
       const env = vscode.workspace.getConfiguration('gemstone').get<number>('maxEnvironment', 0);
-      const results = queries.implementorsOf(session, selector, env);
+      // A thrown query (busy session, browser/RB plugin absent) must not reject
+      // the whole hover — that silently shows nothing. Degrade to no implementors,
+      // mirroring the sendersOf guard below.
+      let results: ReturnType<typeof queries.implementorsOf>;
+      try {
+        results = queries.implementorsOf(session, selector, env);
+      } catch {
+        results = [];
+      }
 
       // Senders count (cached — sendersOf is costly and a hover fires easily).
       const sKey = `${selector}|${session.id}|${env}`;
