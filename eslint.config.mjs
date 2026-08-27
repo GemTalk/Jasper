@@ -244,6 +244,23 @@ export default tseslint.config(
       'no-restricted-syntax': [
         'error',
         { selector: "NewExpression[callee.name='GciLibrary']", message: OWN_GCI_LIBRARY },
+        // `callee.name` reads a bare identifier only, so a namespace import
+        // (`new gciLib.GciLibrary(...)`) walks past it. The three selectors
+        // here close the aliasing routes at their narrowest point -- the
+        // namespaced construction, the renaming import itself, and the
+        // assignment to a local -- rather than banning the import outright,
+        // which would also hit the many tests that name `GciLibrary` purely as
+        // a type annotation and the few that use its statics.
+        { selector: "NewExpression[callee.property.name='GciLibrary']", message: OWN_GCI_LIBRARY },
+        {
+          selector: "ImportSpecifier[imported.name='GciLibrary'][local.name!='GciLibrary']",
+          message: OWN_GCI_LIBRARY,
+        },
+        {
+          selector:
+            "VariableDeclarator:matches([init.name='GciLibrary'], [init.property.name='GciLibrary'])",
+          message: OWN_GCI_LIBRARY,
+        },
         {
           // Shaped as a call, not a bare member access: `vi.fn()`-mocked
           // libraries are *named* in assertions all over the unit tests
