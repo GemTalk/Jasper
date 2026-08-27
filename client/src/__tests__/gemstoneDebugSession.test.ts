@@ -324,12 +324,19 @@ describe('GemStoneDebugSession', () => {
       expect(body.content).toContain('_primitiveDivide');
     });
 
-    it('returns mimeType registered for gemstone-smalltalk language', () => {
+    it('withholds the mime type, so no breakpoint gutter is offered here', () => {
+      // package.json registers 'text/x-gemstone-smalltalk' as the mime type of
+      // the gemstone-smalltalk language, and `contributes.breakpoints` names
+      // that language — so returning it resolved this read-only frame source to
+      // a language VS Code will offer the breakpoint gutter for, on a frame that
+      // cannot hold a breakpoint. The cost is syntax highlighting in this view,
+      // which the debugger panel's own source pane provides.
       const response = makeResponse('source');
       callRequest(session, 'sourceRequest', response, { sourceReference: 1 });
 
-      const body = response.body as { mimeType?: string };
-      expect(body.mimeType).toBe('text/x-gemstone-smalltalk');
+      const body = response.body as { content: string; mimeType?: string };
+      expect(body.mimeType).toBeUndefined();
+      expect(body.content).toContain('_primitiveDivide');
     });
 
     it('returns placeholder for unknown sourceReference', () => {

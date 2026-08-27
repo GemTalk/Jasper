@@ -271,14 +271,14 @@ the thing it was set in goes away:
   after an edit the same step point may be a different expression — so the
   breakpoint is dropped rather than quietly moved somewhere you didn't put it.
 
-- **Only where a compiled method's source is.** A breakpoint names a step point
-  in a method that lives in the gem, so a `gemstone://` method editor with no
-  unsaved edits is the only place one can be set. An **Executed Code** (doit)
-  frame cannot take one — its method exists for that single execution and is
-  gone afterwards, so the breakpoint could never be hit again — and neither can
-  a frame whose class is not in the symbol list. VS Code usually will not offer
-  the gutter there at all; where it does, the breakpoint is refused and greyed,
-  with the reason on hover
+- **Only in a method editor.** A breakpoint names a step point in a method that
+  lives in the gem, so a `gemstone://` method editor with no unsaved edits is
+  the only place one can be set. Not a workspace, not a `.gst` file, and not an
+  **Executed Code** (doit) frame in the call stack — a doit's method is compiled
+  for that one execution and gone afterwards, so a breakpoint on it could never
+  be hit again. VS Code offers its gutter per *language*, which is the same for
+  all four, so a breakpoint set in the wrong one is taken back out with a message
+  saying where it belongs
 - **Unsaved edits hold a method's breakpoints as they are.** Step point numbers
   come from the compiled method, and VS Code moves its breakpoints as you type,
   so while an editor is dirty the two describe different code. No new breakpoint

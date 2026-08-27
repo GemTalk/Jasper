@@ -353,6 +353,94 @@ describe('BreakpointManager', () => {
     });
   });
 
+  // VS Code offers the breakpoint gutter wherever the gemstone-smalltalk language
+  // is — a workspace and a .gst file as well as a gemstone:// method editor —
+  // because `contributes.breakpoints` names a language and cannot be narrowed by
+  // URI scheme. Only the method editor can carry a breakpoint.
+  describe('a breakpoint set outside a method editor', () => {
+    function fireAdded(added: unknown[]): void {
+      const manager = makeManager();
+      const context = {
+        subscriptions: [] as unknown[],
+      } as unknown as import('vscode').ExtensionContext;
+      manager.register(context);
+      const calls = vi.mocked(debug.onDidChangeBreakpoints).mock.calls;
+      calls[calls.length - 1][0]({ added, removed: [], changed: [] });
+    }
+
+    const bpOn = (uri: string) =>
+      new SourceBreakpoint(new Location(Uri.parse(uri), new Position(0, 0)));
+
+    beforeEach(() => {
+      vi.mocked(debug.onDidChangeBreakpoints).mockClear();
+      vi.mocked(window.showWarningMessage).mockClear();
+      mockGetMethodSource.mockReturnValue('at: index\n^ self basicAt: index');
+      mockGetSourceOffsets.mockReturnValue([1, 13]);
+    });
+
+    it('takes back a breakpoint set in a workspace, and says where it belongs', () => {
+      const stray = bpOn('untitled:Workspace');
+      workspace.textDocuments = [
+        { uri: Uri.parse('untitled:Workspace'), languageId: 'gemstone-smalltalk' },
+      ];
+      debug.breakpoints = [stray];
+
+      fireAdded([stray]);
+
+      expect(vi.mocked(debug.removeBreakpoints)).toHaveBeenCalledWith([stray]);
+      expect(vi.mocked(window.showWarningMessage)).toHaveBeenCalledWith(
+        expect.stringContaining('compiled GemStone method'),
+      );
+    });
+
+    it('takes back one on a .gst file that is not open, as a restore brings back', () => {
+      const stray = bpOn('file:///tmp/scratch.gst');
+      workspace.textDocuments = [];
+      debug.breakpoints = [stray];
+
+      fireAdded([stray]);
+
+      expect(vi.mocked(debug.removeBreakpoints)).toHaveBeenCalledWith([stray]);
+    });
+
+    it("never touches another extension's breakpoints", () => {
+      // The guard that matters most. `onDidChangeBreakpoints` reports every
+      // extension's breakpoints, so a rule of "not a gemstone:// URI" would take
+      // a Python file's breakpoint out of the developer's Breakpoints panel.
+      const foreign = bpOn('file:///tmp/app.py');
+      workspace.textDocuments = [{ uri: Uri.parse('file:///tmp/app.py'), languageId: 'python' }];
+      debug.breakpoints = [foreign];
+
+      fireAdded([foreign]);
+
+      expect(vi.mocked(debug.removeBreakpoints)).not.toHaveBeenCalled();
+      expect(vi.mocked(window.showWarningMessage)).not.toHaveBeenCalled();
+    });
+
+    it('leaves an unopened file of no interest alone', () => {
+      const foreign = bpOn('file:///tmp/app.py');
+      workspace.textDocuments = [];
+      debug.breakpoints = [foreign];
+
+      fireAdded([foreign]);
+
+      expect(vi.mocked(debug.removeBreakpoints)).not.toHaveBeenCalled();
+    });
+
+    it('leaves a real method editor alone', () => {
+      const real = bpOn(METHOD_URI);
+      workspace.textDocuments = [
+        { uri: Uri.parse(METHOD_URI), languageId: 'gemstone-smalltalk', isDirty: false },
+      ];
+      debug.breakpoints = [real];
+
+      fireAdded([real]);
+
+      expect(vi.mocked(debug.removeBreakpoints)).not.toHaveBeenCalled();
+      expect(mockSetBreakAtStepPoint).toHaveBeenCalled();
+    });
+  });
+
   // Eric's rule: a breakpoint can only be set in an editor whose text is the
   // compiled method's. While it has unsaved edits nothing new is accepted, and —
   // just as important — nothing already armed is disturbed, so reverting the
