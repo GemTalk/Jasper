@@ -7,7 +7,7 @@ import * as debug from './debugQueries';
 import * as queries from './browserQueries';
 import { drainTranscript } from './transcriptSink';
 import { appendTranscriptOutput } from './transcriptChannel';
-import { buildLineOffsets, mapOffsetToStepPoint } from './breakpointManager';
+import { buildLineStarts, stepPointAtOffset, StepPointInfo } from './stepPointModel';
 import { EnhancedInspector } from './enhancedInspector/enhancedInspector';
 import { InspectorTreeProvider } from './inspectorTreeProvider';
 import { routeInspect } from './inspectRouter';
@@ -2804,23 +2804,27 @@ export class DebuggerPanel {
 
     // Source is always shown 1:1 — doits run the user's raw code (no wrapper
     // glue), so displayed and stored coordinates coincide.
-    const dispLineOffsets = buildLineOffsets(rawSource);
+    //
+    // Resolved through the shared step point resolver, the one home for "which
+    // step point is this position", so Run to Cursor here and a breakpoint set
+    // in an editor cannot disagree about which token step point 7 is. The
+    // stone's offsets are 1-based and everything in that model is 0-based.
+    const info: StepPointInfo = {
+      source: rawSource,
+      offsets: offsets.map((o) => o - 1),
+      selectors: [], // only used for underlining, which Run to Cursor never does
+      lineStarts: buildLineStarts(rawSource),
+    };
+    const dispLineOffsets = info.lineStarts;
     const pos = editor.selection.active;
     const dispLineStart = dispLineOffsets[pos.line + 1];
     if (dispLineStart === undefined) return undefined; // cursor past the source (stale editor)
     const cursorOffset = dispLineStart + pos.character;
 
-    // Column-aware map needs the cursor's line bounds in STORED coords.
-    const storedLineOffsets = dispLineOffsets;
-    let storedLine = 1;
-    for (let l = 1; l < storedLineOffsets.length; l++) {
-      if (storedLineOffsets[l] <= cursorOffset) storedLine = l;
-      else break;
-    }
-    const lineStart = storedLineOffsets[storedLine];
-    const lineEnd = storedLineOffsets[storedLine + 1] ?? rawSource.length; // end exclusive
-    const mapped = mapOffsetToStepPoint(cursorOffset, offsets, lineStart, lineEnd);
-    if (!mapped) return undefined;
+    const resolved = stepPointAtOffset(info, cursorOffset);
+    if (!resolved) return undefined;
+    // Back to the stone's 1-based position the rest of this method works in.
+    const mapped = { stepPoint: resolved.stepPoint, offset: resolved.offset + 1 };
 
     if (!home.uriInfo) {
       // Doit / non-symbol-list: break by the method's OOP (no class>>selector).

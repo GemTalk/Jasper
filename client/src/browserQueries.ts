@@ -198,6 +198,7 @@ import { getAllSelectors as sharedGetAllSelectors } from './queries/getAllSelect
 import { getMethodList as sharedGetMethodList } from './queries/getMethodList';
 import { getSourceOffsets as sharedGetSourceOffsets } from './queries/getSourceOffsets';
 import { getStepPointSelectorRanges as sharedGetStepPointSelectorRanges } from './queries/getStepPointSelectorRanges';
+import { getStepPointBundle as sharedGetStepPointBundle } from './queries/getStepPointBundle';
 import { listRowanProjects as sharedListRowanProjects } from './queries/rowan/listRowanProjects';
 import { getGemCacheKB as sharedGetGemCacheKB } from './queries/rowan/getGemCacheKB';
 import { exportRowanProject as sharedExportRowanProject } from './queries/rowan/exportRowanProject';
@@ -270,6 +271,7 @@ export type { DescendantClass } from './refactoring/queries/getClassDescendantNa
 export type { MoveArgs } from './refactoring/queries/previewInstVarStructure';
 export type { MethodEntry } from './queries/getMethodList';
 export type { StepPointSelectorInfo } from './queries/getStepPointSelectorRanges';
+export type { StepPointBundle } from './queries/getStepPointBundle';
 export type { GemStoneBreakpoint } from './queries/getAllBreakpoints';
 export type { MethodSearchResult } from './queries/methodSearch';
 export type { RowanProject, RowanProjectList } from './queries/rowan/listRowanProjects';
@@ -1946,6 +1948,24 @@ export function getSourceOffsets(
   dict?: number | string,
 ): number[] {
   return sharedGetSourceOffsets(
+    defaultQueryExecutorUsing(session),
+    className,
+    isMeta,
+    selector,
+    environmentId,
+    dict,
+  );
+}
+
+export function getStepPointBundle(
+  session: ActiveSession,
+  className: string,
+  isMeta: boolean,
+  selector: string,
+  environmentId: number = 0,
+  dict?: number | string,
+) {
+  return sharedGetStepPointBundle(
     defaultQueryExecutorUsing(session),
     className,
     isMeta,

@@ -189,6 +189,60 @@ describe('expandKeywordParts', () => {
     expect(expanded).toHaveLength(1);
   });
 
+  // A separator only ends the keyword message when it is at the top level. Inside
+  // parentheses or a block it belongs to an inner expression, and the scan has to
+  // carry on past it or the rest of the keyword is never found — leaving that part
+  // of the send with no step point to hover, number, or aim a breakpoint at.
+  it('keeps scanning past a cascade inside parentheses', () => {
+    const source = 'self foo: (s add: 1; yourself) bar: 2.';
+    const infos: StepPointSelectorInfo[] = [
+      {
+        stepPoint: 1,
+        selectorOffset: source.indexOf('foo:'),
+        selectorLength: 4,
+        selectorText: 'foo:',
+      },
+    ];
+    const expanded = expandKeywordParts(source, infos);
+    expect(expanded).toHaveLength(2);
+    expect(expanded[1]).toEqual({
+      stepPoint: 1,
+      selectorOffset: source.indexOf('bar:'),
+      selectorLength: 4,
+      selectorText: 'bar:',
+    });
+  });
+
+  it('keeps scanning past a period inside a block argument', () => {
+    const source = 'self foo: [ a bar. c baz ] qux: 2.';
+    const infos: StepPointSelectorInfo[] = [
+      {
+        stepPoint: 1,
+        selectorOffset: source.indexOf('foo:'),
+        selectorLength: 4,
+        selectorText: 'foo:',
+      },
+    ];
+    const expanded = expandKeywordParts(source, infos);
+    expect(expanded).toHaveLength(2);
+    expect(expanded[1].selectorText).toBe('qux:');
+    expect(expanded[1].selectorOffset).toBe(source.indexOf('qux:'));
+  });
+
+  it('keeps scanning past a cascade inside a block argument', () => {
+    const source = 'coll do: [:e | e foo; bar ] separatedBy: 2.';
+    const infos: StepPointSelectorInfo[] = [
+      {
+        stepPoint: 1,
+        selectorOffset: source.indexOf('do:'),
+        selectorLength: 3,
+        selectorText: 'do:',
+      },
+    ];
+    const expanded = expandKeywordParts(source, infos);
+    expect(expanded.map((e) => e.selectorText)).toEqual(['do:', 'separatedBy:']);
+  });
+
   it('does not expand unary messages (no colon)', () => {
     const source = 'self size printString';
     const infos: StepPointSelectorInfo[] = [

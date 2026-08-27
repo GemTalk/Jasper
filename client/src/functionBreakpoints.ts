@@ -4,6 +4,7 @@ import { buildMethodUri } from './gemstoneFileSystemProvider';
 import * as queries from './browserQueries';
 import { MethodSearchResult } from './browserQueries';
 import { buildLineStarts, lineOfOffset } from './stepPointModel';
+import { describeMethodResult } from './methodResultsPicker';
 import { logInfo } from './gciLog';
 
 /** A method name typed into the Breakpoints panel, taken apart. */
@@ -42,11 +43,6 @@ export function parseFunctionName(raw: string): ParsedFunctionName | null {
   // the patterns above failed on — a malformed class half, most likely.
   if (name.includes('>>')) return null;
   return { isMeta: false, selector: name.replace(/^#\s*/, '') };
-}
-
-/** How a name should be shown once it has been pinned to one class. */
-export function qualifiedName(target: MethodSearchResult): string {
-  return `${target.className}${target.isMeta ? ' class' : ''}>>${target.selector}`;
 }
 
 /**
@@ -139,7 +135,7 @@ export class FunctionBreakpointResolver {
 
     logInfo(
       `[breakpoints] "${bp.functionName}" parsed as ${describe(parsed)}; ` +
-        `${candidates.length} candidate(s): ${candidates.map(qualifiedName).join(', ') || 'none'}`,
+        `${candidates.length} candidate(s): ${candidates.map(describeMethodResult).join(', ') || 'none'}`,
     );
 
     if (candidates.length === 0) {
@@ -147,8 +143,26 @@ export class FunctionBreakpointResolver {
       return;
     }
 
-    const target =
-      candidates.length === 1 ? candidates[0] : await this.chooseClass(candidates, parsed.selector);
+    let target: MethodSearchResult | undefined;
+    if (candidates.length === 1) {
+      target = candidates[0];
+    } else {
+      target = await this.chooseClass(candidates, parsed.selector);
+
+      // The picker is the only place this method waits, and VS Code's breakpoint
+      // list is free to change while it does. A developer who deletes the row
+      // instead of answering has said what they want, so going on to add a
+      // located breakpoint would put back the thing they just removed. Checked
+      // only on this path because the single-candidate one never yields, so the
+      // list cannot have moved under it. `inFlight` does not cover this — it
+      // stops the same *name* being resolved twice, not the breakpoint
+      // disappearing mid-await.
+      if (!vscode.debug.breakpoints.includes(bp)) {
+        logInfo(`[breakpoints] "${bp.functionName}" was removed while the picker was open`);
+        return;
+      }
+    }
+
     if (!target) {
       // The developer dismissed the picker. Drop the breakpoint rather than
       // leave an unresolved one sitting in the panel looking live.
@@ -158,7 +172,7 @@ export class FunctionBreakpointResolver {
 
     const entry = this.entryPosition(session, target);
     if (!entry) {
-      this.reject(bp, `${qualifiedName(target)} has no step points to break at.`);
+      this.reject(bp, `${describeMethodResult(target)} has no step points to break at.`);
       return;
     }
 
@@ -187,7 +201,7 @@ export class FunctionBreakpointResolver {
     });
 
     logInfo(
-      `[breakpoints] ${qualifiedName(target)} entry is line ${entry.line} col ${entry.character}; ` +
+      `[breakpoints] ${describeMethodResult(target)} entry is line ${entry.line} col ${entry.character}; ` +
         `converting to ${uri.toString()}`,
     );
 

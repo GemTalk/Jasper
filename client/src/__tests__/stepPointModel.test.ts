@@ -2,11 +2,24 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
-vi.mock('../browserQueries', () => ({
-  getMethodSource: vi.fn(() => ''),
-  getSourceOffsets: vi.fn(() => []),
-  getStepPointSelectorRanges: vi.fn(() => []),
-}));
+// `StepPointModel.fetch` asks for all three in one query now. The bundle mock
+// delegates to the three separate mocks so every test keeps setting up its
+// method the same way, one fact at a time.
+vi.mock('../browserQueries', () => {
+  const getMethodSource = vi.fn(() => '');
+  const getSourceOffsets = vi.fn((): number[] => []);
+  const getStepPointSelectorRanges = vi.fn((): unknown[] => []);
+  return {
+    getMethodSource,
+    getSourceOffsets,
+    getStepPointSelectorRanges,
+    getStepPointBundle: vi.fn((...args: unknown[]) => ({
+      source: (getMethodSource as (...a: unknown[]) => string)(...args),
+      offsets: (getSourceOffsets as (...a: unknown[]) => number[])(...args),
+      selectors: (getStepPointSelectorRanges as (...a: unknown[]) => unknown[])(...args),
+    })),
+  };
+});
 
 import { Uri } from '../__mocks__/vscode';
 import {

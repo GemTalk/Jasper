@@ -10,8 +10,19 @@ import { MethodSearchResult } from './queries/methodSearch';
 import { SystemBrowser } from './systemBrowser';
 import { buildMethodUri } from './gemstoneFileSystemProvider';
 
-/** How a found method reads in a list or a sentence: `Account class >> #reset`. */
-export function describeMethodResult(result: MethodSearchResult): string {
+/**
+ * How a method reads in a list or a sentence: `Account class >> #reset`.
+ *
+ * Takes only the three parts of the name so it serves anything that names a
+ * method — a search result, a method URI's coordinates, a breakpoint's — rather
+ * than each caller growing its own copy of the format and drifting apart from
+ * this one.
+ */
+export function describeMethodResult(result: {
+  className: string;
+  isMeta: boolean;
+  selector: string;
+}): string {
   return `${result.className}${result.isMeta ? ' class' : ''} >> #${result.selector}`;
 }
 

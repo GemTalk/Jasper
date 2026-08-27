@@ -2,11 +2,24 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
-vi.mock('../browserQueries', () => ({
-  getMethodSource: vi.fn(() => ''),
-  getSourceOffsets: vi.fn(() => []),
-  getStepPointSelectorRanges: vi.fn(() => []),
-}));
+// `StepPointModel.fetch` asks for all three in one query now. The bundle mock
+// delegates to the three separate mocks so every test keeps setting up its
+// method the same way, one fact at a time.
+vi.mock('../browserQueries', () => {
+  const getMethodSource = vi.fn(() => '');
+  const getSourceOffsets = vi.fn((): number[] => []);
+  const getStepPointSelectorRanges = vi.fn((): unknown[] => []);
+  return {
+    getMethodSource,
+    getSourceOffsets,
+    getStepPointSelectorRanges,
+    getStepPointBundle: vi.fn((...args: unknown[]) => ({
+      source: (getMethodSource as (...a: unknown[]) => string)(...args),
+      offsets: (getSourceOffsets as (...a: unknown[]) => number[])(...args),
+      selectors: (getStepPointSelectorRanges as (...a: unknown[]) => unknown[])(...args),
+    })),
+  };
+});
 
 import type * as vscode from 'vscode';
 import { Uri, Position, Range, debug, __setConfig, __resetConfig } from '../__mocks__/vscode';
@@ -144,6 +157,29 @@ describe('StepPointHintsProvider', () => {
       throw new Error('gone');
     });
     expect(makeProvider('always').provideInlayHints(makeDocument(), WHOLE)).toBeUndefined();
+  });
+
+  // Writing a setting is slow enough that a second call lands mid-await — a
+  // double-click on the editor-title icon, or a held keybinding.
+  describe('toggle', () => {
+    it('flips back when invoked twice before the settings write lands', async () => {
+      const provider = makeProvider('always');
+      expect(provider.visible()).toBe(true);
+
+      // Both started before either await resolves, which is the race.
+      await Promise.all([provider.toggle(), provider.toggle()]);
+
+      // Two toggles from 'always' is 'always' again. Reading the flag only after
+      // the write meant both calls saw 'always', both computed 'off', and the
+      // pair collapsed into one net change.
+      expect(provider.visible()).toBe(true);
+    });
+
+    it('flips once for a single invocation', async () => {
+      const provider = makeProvider('always');
+      await provider.toggle();
+      expect(provider.visible()).toBe(false);
+    });
   });
 
   describe('visible', () => {

@@ -124,25 +124,13 @@ export class StepPointModel {
     const cached = this.cache.get(key);
     if (cached) return cached;
 
-    let source: string;
-    let rawOffsets: number[];
-    let rawSelectors: StepPointSelectorInfo[];
+    // One round trip, not three. This runs synchronously on the extension host
+    // from `provideInlayHints` and `provideHover`, so each extra GCI call is
+    // host time the editor is not drawing in — and the stone computes the source
+    // and the offsets anyway in order to answer the selector ranges.
+    let bundle: queries.StepPointBundle;
     try {
-      source = queries.getMethodSource(
-        session,
-        method.className,
-        method.isMeta,
-        method.selector,
-        method.environmentId,
-      );
-      rawOffsets = queries.getSourceOffsets(
-        session,
-        method.className,
-        method.isMeta,
-        method.selector,
-        method.environmentId,
-      );
-      rawSelectors = queries.getStepPointSelectorRanges(
+      bundle = queries.getStepPointBundle(
         session,
         method.className,
         method.isMeta,
@@ -159,11 +147,11 @@ export class StepPointModel {
 
     this.lastError = undefined;
     const info: StepPointInfo = {
-      source,
+      source: bundle.source,
       // _sourceOffsets is 1-based; every consumer here works in 0-based offsets.
-      offsets: rawOffsets.map((o) => o - 1),
-      selectors: expandKeywordParts(source, rawSelectors),
-      lineStarts: buildLineStarts(source),
+      offsets: bundle.offsets.map((o) => o - 1),
+      selectors: expandKeywordParts(bundle.source, bundle.selectors),
+      lineStarts: buildLineStarts(bundle.source),
     };
     this.cache.set(key, info);
     return info;

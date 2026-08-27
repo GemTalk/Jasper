@@ -16,11 +16,7 @@ import {
   __setConfig,
   __resetConfig,
 } from '../__mocks__/vscode';
-import {
-  FunctionBreakpointResolver,
-  parseFunctionName,
-  qualifiedName,
-} from '../functionBreakpoints';
+import { FunctionBreakpointResolver, parseFunctionName } from '../functionBreakpoints';
 import { SessionManager } from '../sessionManager';
 import { implementorsOf, getSourceOffsets, getMethodSource } from '../browserQueries';
 
@@ -88,25 +84,6 @@ describe('parseFunctionName', () => {
     // string as a selector would look up something that cannot exist.
     expect(parseFunctionName('123>>balance')).toBeNull();
     expect(parseFunctionName('>>balance')).toBeNull();
-  });
-});
-
-describe('qualifiedName', () => {
-  const target = {
-    dictName: 'Globals',
-    className: 'Account',
-    isMeta: false,
-    selector: 'balance',
-    category: 'accessing',
-    environmentId: 0,
-  };
-
-  it('names the instance side plainly', () => {
-    expect(qualifiedName(target)).toBe('Account>>balance');
-  });
-
-  it('names the class side the way Smalltalk writes it', () => {
-    expect(qualifiedName({ ...target, isMeta: true, selector: 'new' })).toBe('Account class>>new');
   });
 });
 
@@ -179,10 +156,12 @@ describe('FunctionBreakpointResolver', () => {
   it('asks which class when several implement the selector', async () => {
     mockImplementors.mockReturnValue([savings, account]);
     vi.mocked(window.showQuickPick).mockResolvedValue({ target: savings });
+    const bp = new FunctionBreakpoint('balance');
+    // The resolver only ever sees breakpoints VS Code holds — the event fires
+    // *because* they are in the list — and it now checks they survived the picker.
+    debug.breakpoints = [bp];
 
-    await new FunctionBreakpointResolver(makeSessionManager()).handle([
-      new FunctionBreakpoint('balance'),
-    ]);
+    await new FunctionBreakpointResolver(makeSessionManager()).handle([bp]);
 
     const items = vi.mocked(window.showQuickPick).mock.calls[0][0] as { label: string }[];
     // Sorted, so the list doesn't reorder between invocations.
@@ -194,6 +173,7 @@ describe('FunctionBreakpointResolver', () => {
     mockImplementors.mockReturnValue([savings, account]);
     vi.mocked(window.showQuickPick).mockResolvedValue(undefined);
     const bp = new FunctionBreakpoint('balance');
+    debug.breakpoints = [bp];
 
     await new FunctionBreakpointResolver(makeSessionManager()).handle([bp]);
 
@@ -201,6 +181,33 @@ describe('FunctionBreakpointResolver', () => {
     expect(removed()).toHaveBeenCalledWith([bp]);
     expect(added()).not.toHaveBeenCalled();
     expect(warn()).toHaveBeenCalledWith(expect.stringContaining('No class chosen'));
+  });
+
+  it('does not resurrect a breakpoint deleted while the class picker was open', async () => {
+    // The picker is the only point where this waits, so it is the only window in
+    // which the developer can delete the row out from under it. Answering the
+    // picker afterwards must not put back what they just removed.
+    mockImplementors.mockReturnValue([savings, account]);
+    const bp = new FunctionBreakpoint('balance');
+    debug.breakpoints = [bp];
+
+    let release: (v: unknown) => void = () => {};
+    vi.mocked(window.showQuickPick).mockReturnValue(
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+    );
+
+    const pending = new FunctionBreakpointResolver(makeSessionManager()).handle([bp]);
+    debug.breakpoints = []; // the developer deletes the row
+    release({ target: savings }); // ...and only then picks a class
+    await pending;
+
+    expect(added()).not.toHaveBeenCalled();
+    // Nothing to take back out, and nothing to complain about — they got what
+    // they asked for.
+    expect(removed()).not.toHaveBeenCalled();
+    expect(warn()).not.toHaveBeenCalled();
   });
 
   it('takes a qualified name at its word without prompting', async () => {
@@ -416,8 +423,11 @@ describe('FunctionBreakpointResolver', () => {
     );
 
     const resolver = new FunctionBreakpointResolver(makeSessionManager());
-    const first = resolver.handle([new FunctionBreakpoint('balance')]);
-    const second = resolver.handle([new FunctionBreakpoint('balance')]);
+    const one = new FunctionBreakpoint('balance');
+    const two = new FunctionBreakpoint('balance');
+    debug.breakpoints = [one, two];
+    const first = resolver.handle([one]);
+    const second = resolver.handle([two]);
 
     release({ target: account });
     await Promise.all([first, second]);

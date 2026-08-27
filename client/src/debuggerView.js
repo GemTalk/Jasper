@@ -478,9 +478,11 @@
       setActiveEditor: setActiveVarEditor,
     };
 
-    // Enable "Run to Cursor" only when the selected frame is breakable (an editable
-    // method we can set a step-point break in). A doit / "Executed Code" frame has
-    // no such method, so the button is disabled there (host also guards).
+    // Enable "Run to Cursor" only when the selected frame is breakable — one whose
+    // home method the host resolved, so it has somewhere to set a step-point
+    // break. A doit / "Executed Code" frame IS breakable: it has an anonymous
+    // home method, and the host breaks in it by method OOP rather than by
+    // class>>selector. Only an unresolvable `<frame N>` disables the button.
     function updateRunToCursor(level) {
       if (!runToCursorBtn) return;
       const frame = currentStack.find(function (f) {

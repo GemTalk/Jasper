@@ -1,4 +1,5 @@
 import { QueryExecutor } from './types';
+import { symbolListIndexOfClassExpr } from './util';
 
 /** One method breakpoint as the gem currently holds it. */
 export interface GemStoneBreakpoint {
@@ -50,20 +51,18 @@ export interface GemStoneBreakpoint {
  *
  * Dictionary and category come back too, so a caller can open the method in an
  * editor without a second round trip per breakpoint. The dictionary is matched
- * by class *identity*, not by name, so a class name shadowed in two
- * dictionaries resolves to the one actually holding this class.
+ * by class *identity* through the shared `symbolListIndexOfClassExpr`, not by
+ * name, so a class name shadowed in two dictionaries resolves to the one
+ * actually holding this class.
  */
 export function getAllBreakpoints(execute: QueryExecutor): GemStoneBreakpoint[] {
   const code = `| ws sl dictOf isCurrent |
 ws := WriteStream on: String new.
 sl := System myUserProfile symbolList.
-dictOf := [:aCls | | base found |
+dictOf := [:aCls | | base idx |
   base := aCls isMeta ifTrue: [aCls thisClass] ifFalse: [aCls].
-  found := ''.
-  1 to: sl size do: [:i |
-    (found isEmpty and: [((sl at: i) at: base name asSymbol ifAbsent: [nil]) == base])
-      ifTrue: [found := ((sl at: i) name ifNil: ['']) asString]].
-  found].
+  idx := ${symbolListIndexOfClassExpr('base')}.
+  idx = 0 ifTrue: [''] ifFalse: [((sl at: idx) name ifNil: ['']) asString]].
 "Is this GsNMethod still the one installed for its class and selector? A
  recompile leaves the old method object holding its breakpoints, and the gem
  goes on reporting them."

@@ -64,16 +64,25 @@ export class StepPointHintsProvider implements vscode.InlayHintsProvider {
     );
   }
 
-  /** Flip the numbers on or off, and remember it in the user's settings. */
+  /**
+   * Flip the numbers on or off, and remember it in the user's settings.
+   *
+   * `display` is claimed *before* the settings write, not after. Writing a
+   * setting is slow enough that a double-click on the editor-title icon, or a
+   * held keybinding, gets a second call in while the first is still awaiting —
+   * and if the flag were still the old value then, both calls would compute the
+   * same `next` and two toggles would collapse into one net change. Claiming it
+   * up front makes the second call read the first one's answer and flip back,
+   * which is what the developer asked for. The configuration listener still
+   * redraws when the write lands; this only decides what the *next* call sees.
+   */
   async toggle(): Promise<void> {
     const next: StepPointDisplay = this.visible() ? 'off' : 'always';
+    this.display = next;
+    this.refresh();
     await vscode.workspace
       .getConfiguration('gemstone')
       .update('stepPoints.display', next, vscode.ConfigurationTarget.Global);
-    // The configuration listener redraws; setting it here keeps `visible()`
-    // honest if the update event is slow to arrive.
-    this.display = next;
-    this.refresh();
   }
 
   /** Whether numbers are showing at this moment. */

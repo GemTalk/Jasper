@@ -4,6 +4,8 @@ import { parseMethodUri } from './gemstoneFileSystemProvider';
 import * as queries from './browserQueries';
 import { GemStoneBreakpoint } from './browserQueries';
 import { FunctionBreakpointResolver } from './functionBreakpoints';
+import { messageOf } from './serverPlugin/installHelpers';
+import { describeMethodResult } from './methodResultsPicker';
 import {
   StepPointModel,
   StepPointInfo,
@@ -142,6 +144,27 @@ export class BreakpointManager {
   // ── Applying ─────────────────────────────────────────────
 
   /**
+   * The live session a `gemstone://` URI belongs to — the gem that actually
+   * holds this method — or undefined when no such session is logged in.
+   *
+   * Not `getSelectedSession()`. A method editor stays bound to the session it
+   * was opened from while the developer switches the active one (see "Single vs.
+   * multiple sessions" in the README), so with more than one session live the
+   * selected session is routinely *not* the one holding the method on screen.
+   * Applying a breakpoint against it would clear and arm step points in the
+   * wrong stone: the method on screen would never stop, and a method the
+   * developer never touched in the other session would.
+   *
+   * The URI's session id is the authority, the same rule `pruneOrphans` and
+   * `clearAllForSession` already use.
+   */
+  private sessionForUri(uri: vscode.Uri): ActiveSession | undefined {
+    const method = parseMethodUri(uri);
+    if (!method) return undefined;
+    return this.sessionManager.getSessions().find((s) => s.id === method.sessionId);
+  }
+
+  /**
    * Push every VS Code breakpoint on `uri` to the gem, replacing whatever the
    * method had. Returns one verified result per requested line, in order, for
    * the debug adapter's `setBreakpoints` response.
@@ -195,7 +218,25 @@ export class BreakpointManager {
 
     const info = this.stepPoints.fetch(session, uri, method);
     if (!info) {
-      return wanted.map((r) => ({ stepPoint: 0, actualLine: r.line, verified: false }));
+      // `clearAllBreaks` above has already emptied the method, so anything this
+      // manager still remembers for it is a lie: left in place it keeps drawing
+      // token markers, hover text and breakpoint-view rows for breaks that exist
+      // in no gem. Drop the record and let the views redraw — the same thing the
+      // "nothing wanted" path does — rather than returning early and leaving the
+      // developer looking at markers for breakpoints that are gone.
+      const reason =
+        `The breakpoints in ${describeMethodResult(method)} were cleared: its step points ` +
+        `could not be read. Reopen the method to set them again.`;
+      this.applied.delete(uri.toString());
+      this.refreshEditorsFor(uri);
+      this._onDidApply.fire();
+      vscode.window.showWarningMessage(reason);
+      return wanted.map((r) => ({
+        stepPoint: 0,
+        actualLine: r.line,
+        verified: false,
+        message: reason,
+      }));
     }
 
     const results: VerifiedBreakpoint[] = [];
@@ -226,6 +267,24 @@ export class BreakpointManager {
     }
 
     const applied: AppliedBreakpoint[] = [];
+    const failures: string[] = [];
+
+    /**
+     * Refuse one step point, out loud. The marker going hollow is not enough on
+     * its own: an unverified marker looks exactly like a breakpoint on a line
+     * with no step point, so the reason has to be both said to the developer and
+     * carried back in the result for the debug adapter to relay.
+     */
+    const refuse = (stepPoint: number, reason: string): void => {
+      failures.push(reason);
+      for (const r of results) {
+        if (r.stepPoint === stepPoint) {
+          r.verified = false;
+          r.message = reason;
+        }
+      }
+    };
+
     for (const bp of byStepPoint.values()) {
       try {
         queries.setBreakAtStepPoint(
@@ -236,8 +295,37 @@ export class BreakpointManager {
           bp.stepPoint,
           method.environmentId,
         );
-        if (!bp.enabled) {
-          queries.disableBreakAtStepPoint(
+      } catch (e) {
+        refuse(
+          bp.stepPoint,
+          `Could not set the breakpoint at step point ${bp.stepPoint} in ` +
+            `${describeMethodResult(method)}: ${messageOf(e)}`,
+        );
+        continue;
+      }
+
+      if (bp.enabled) {
+        applied.push(bp);
+        continue;
+      }
+
+      // A disabled breakpoint is applied as set-then-disabled, so a failure here
+      // leaves the step point ARMED while the developer asked for it off. A
+      // marker reading "disabled" over a break that still stops execution is the
+      // worst state this code can produce, so take the break back out.
+      try {
+        queries.disableBreakAtStepPoint(
+          session,
+          method.className,
+          method.isMeta,
+          method.selector,
+          bp.stepPoint,
+          method.environmentId,
+        );
+      } catch (e) {
+        let stillArmed = ' It is still armed in the gem and will stop execution.';
+        try {
+          queries.clearBreakAtStepPoint(
             session,
             method.className,
             method.isMeta,
@@ -245,14 +333,26 @@ export class BreakpointManager {
             bp.stepPoint,
             method.environmentId,
           );
+          stillArmed = '';
+        } catch {
+          /* Both calls failed; the message says the break is still armed. */
         }
-        applied.push(bp);
-      } catch {
-        // Mark every result that resolved to this step point unverified.
-        for (const r of results) {
-          if (r.stepPoint === bp.stepPoint) r.verified = false;
-        }
+        refuse(
+          bp.stepPoint,
+          `Could not disable the breakpoint at step point ${bp.stepPoint} in ` +
+            `${describeMethodResult(method)}: ${messageOf(e)}.${stillArmed}`,
+        );
+        continue;
       }
+      applied.push(bp);
+    }
+
+    if (failures.length > 0) {
+      vscode.window.showErrorMessage(
+        failures.length === 1
+          ? failures[0]
+          : `${failures.length} breakpoints could not be applied. ${failures.join(' ')}`,
+      );
     }
 
     if (applied.length > 0) this.applied.set(uri.toString(), applied);
@@ -355,7 +455,7 @@ export class BreakpointManager {
     this.frozen.add(uri.toString());
 
     const method = parseMethodUri(uri);
-    const session = this.sessionManager.getSelectedSession();
+    const session = this.sessionForUri(uri);
     const applied = this.applied.get(uri.toString()) ?? [];
     const info = method && session ? this.stepPoints.fetch(session, uri, method) : null;
 
@@ -391,7 +491,7 @@ export class BreakpointManager {
     if (!this.frozen.has(uriStr) || document.isDirty) return;
     this.frozen.delete(uriStr);
 
-    const session = this.sessionManager.getSelectedSession();
+    const session = this.sessionForUri(document.uri);
     if (session) this.applyToUri(session, document.uri);
   }
 
@@ -576,16 +676,17 @@ export class BreakpointManager {
     const mine = gemstoneBreakpoints().filter((bp) => bp.enabled !== enabled);
     if (mine.length > 0) replaceEnabled(mine, enabled);
 
-    const session = this.sessionManager.getSelectedSession();
-    if (!session) return;
-    try {
-      if (enabled) queries.enableAllBreakpoints(session);
-      else queries.disableAllBreakpoints(session);
-    } catch (e) {
+    // Every live session's gem, not just the selected one. The rows just flipped
+    // are one list spanning all of them, so sweeping a single gem would leave
+    // another session's breaks armed behind rows that read "disabled" — the
+    // gutter would say one thing and execution would do another.
+    const failures = this.sweepEveryGem((session) =>
+      enabled ? queries.enableAllBreakpoints(session) : queries.disableAllBreakpoints(session),
+    );
+    if (failures.length > 0) {
       vscode.window.showErrorMessage(
-        `Could not ${enabled ? 'enable' : 'disable'} breakpoints: ${message(e)}`,
+        `Could not ${enabled ? 'enable' : 'disable'} breakpoints in ${failures.join('; ')}`,
       );
-      return;
     }
     this._onDidApply.fire();
   }
@@ -595,18 +696,37 @@ export class BreakpointManager {
     const mine = gemstoneBreakpoints();
     if (mine.length > 0) vscode.debug.removeBreakpoints(mine);
 
-    const session = this.sessionManager.getSelectedSession();
-    if (session) {
-      try {
-        queries.removeAllBreakpoints(session);
-      } catch (e) {
-        vscode.window.showErrorMessage(`Could not remove breakpoints: ${message(e)}`);
-        return;
-      }
+    // Every live gem, for the same reason as `setAllEnabled`: the rows removed
+    // above span all of them, and a gem left un-swept would keep stopping
+    // execution at a breakpoint with no marker left anywhere to explain it.
+    const failures = this.sweepEveryGem((session) => queries.removeAllBreakpoints(session));
+    if (failures.length > 0) {
+      vscode.window.showErrorMessage(`Could not remove breakpoints in ${failures.join('; ')}`);
     }
     this.applied.clear();
     for (const editor of vscode.window.visibleTextEditors) this.refreshDecorations(editor);
     this._onDidApply.fire();
+  }
+
+  /**
+   * Run a gem-wide breakpoint operation on every live session, and answer the
+   * ones that failed, already phrased for a message.
+   *
+   * One failing session does not stop the others: with several sessions live,
+   * abandoning the sweep half way would leave the remaining gems armed behind
+   * rows that say otherwise, which is the very state the caller is trying to
+   * avoid.
+   */
+  private sweepEveryGem(operation: (session: ActiveSession) => void): string[] {
+    const failures: string[] = [];
+    for (const session of this.sessionManager.getSessions()) {
+      try {
+        operation(session);
+      } catch (e) {
+        failures.push(`session ${session.id}: ${messageOf(e)}`);
+      }
+    }
+    return failures;
   }
 
   // ── Acting on what the gem reports ───────────────────────
@@ -648,8 +768,16 @@ export class BreakpointManager {
   private ownedBreakpoint(bp: GemStoneBreakpoint): vscode.SourceBreakpoint | undefined {
     const session = this.sessionManager.getSelectedSession();
     if (!session) return undefined;
+    // The rows this is matching against were read out of the selected session's
+    // gem, so only a method from that session can be behind one. Without this,
+    // two sessions holding the same class and selector at the same step point
+    // would collide, and toggling a row here would flip a breakpoint belonging
+    // to a method opened from the other session — the same prefix rule
+    // `pruneOrphans` and `clearAllForSession` apply.
+    const prefix = `gemstone://${session.id}/`;
 
     for (const [uriStr, applied] of this.applied) {
+      if (!uriStr.startsWith(prefix)) continue;
       if (!applied.some((a) => a.stepPoint === bp.stepPoint)) continue;
       const uri = vscode.Uri.parse(uriStr);
       const method = parseMethodUri(uri);
@@ -678,7 +806,7 @@ export class BreakpointManager {
     try {
       queries.breakpointByOop(session, bp.methodOop, op, bp.stepPoint);
     } catch (e) {
-      vscode.window.showErrorMessage(`Breakpoint operation failed: ${message(e)}`);
+      vscode.window.showErrorMessage(`Breakpoint operation failed: ${messageOf(e)}`);
       return;
     }
     this._onDidApply.fire();
@@ -830,9 +958,6 @@ export class BreakpointManager {
     // gutter as a solid red dot arming nothing and saying nothing.
     this.refuseOutsideMethodSource(event.added);
 
-    const session = this.sessionManager.getSelectedSession();
-    if (!session) return;
-
     const affected = new Set<string>();
     for (const bp of [...event.added, ...event.removed, ...event.changed]) {
       if (bp instanceof vscode.SourceBreakpoint && bp.location.uri.scheme === 'gemstone') {
@@ -841,6 +966,11 @@ export class BreakpointManager {
     }
     for (const uriStr of affected) {
       const uri = vscode.Uri.parse(uriStr);
+      // Each method goes to its OWN session's gem, not to whichever session is
+      // selected — see `sessionForUri`. A URI with no live session behind it is
+      // left alone: `pruneOrphans` above has already taken its row out.
+      const session = this.sessionForUri(uri);
+      if (!session) continue;
       if (isDirty(uri)) {
         this.holdWhileDirty(uri, event.added);
         continue;
@@ -993,68 +1123,4 @@ function inviteWeCannotHonour(uri: vscode.Uri): boolean {
 function isDirty(uri: vscode.Uri): boolean {
   const uriStr = uri.toString();
   return vscode.workspace.textDocuments.some((d) => d.uri.toString() === uriStr && d.isDirty);
-}
-
-function message(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
-}
-
-/**
- * Build a table of character offsets for the start of each line (1-based).
- * lineOffsets[1] = 0 (first line starts at offset 0)
- * lineOffsets[2] = position after first newline
- * etc.
- */
-export function buildLineOffsets(source: string): number[] {
-  const offsets: number[] = [0]; // dummy at index 0
-  offsets.push(0); // line 1 starts at offset 0
-
-  for (let i = 0; i < source.length; i++) {
-    if (source[i] === '\n') {
-      offsets.push(i + 1);
-    }
-  }
-  return offsets;
-}
-
-/**
- * Map a precise 0-based cursor offset to a step point — column-aware, for "Run to
- * Cursor". Prefers the step point on the cursor's OWN line that is nearest the
- * cursor column, so a cursor on `asInteger` in `x := (...) asInteger` breaks at
- * `asInteger` (not the leftmost `:=` store), and a cursor inside a one-line block
- * (`self do: [:e | body ]`) breaks INSIDE the block (not at the `do:` send). When
- * the cursor's line has no step point, falls back to the nearest step point at or
- * after the cursor (run forward). Returns null when nothing is at/after it.
- *
- * `sourceOffsets` are GemStone 1-based source positions; `lineStart`/`lineEnd` are
- * the 0-based char offsets bounding the cursor's line (end exclusive).
- */
-export function mapOffsetToStepPoint(
-  cursorOffset: number,
-  sourceOffsets: number[],
-  lineStart: number,
-  lineEnd: number,
-): { stepPoint: number; offset: number } | null {
-  // 1) Nearest step point on the cursor's own line (by column distance).
-  let bestOnLine: { stepPoint: number; offset: number; dist: number } | null = null;
-  for (let i = 0; i < sourceOffsets.length; i++) {
-    const off0 = sourceOffsets[i] - 1; // 1-based source position → 0-based char offset
-    if (off0 >= lineStart && off0 < lineEnd) {
-      const dist = Math.abs(off0 - cursorOffset);
-      if (bestOnLine === null || dist < bestOnLine.dist) {
-        bestOnLine = { stepPoint: i + 1, offset: sourceOffsets[i], dist };
-      }
-    }
-  }
-  if (bestOnLine) return { stepPoint: bestOnLine.stepPoint, offset: bestOnLine.offset };
-
-  // 2) No step point on this line — run forward to the nearest one after the cursor.
-  let bestAfter: { stepPoint: number; offset: number } | null = null;
-  for (let i = 0; i < sourceOffsets.length; i++) {
-    const off0 = sourceOffsets[i] - 1;
-    if (off0 >= cursorOffset && (bestAfter === null || sourceOffsets[i] < bestAfter.offset)) {
-      bestAfter = { stepPoint: i + 1, offset: sourceOffsets[i] };
-    }
-  }
-  return bestAfter;
 }

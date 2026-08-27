@@ -2,15 +2,33 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
-vi.mock('../browserQueries', () => ({
-  getMethodSource: vi.fn(() => ''),
-  getSourceOffsets: vi.fn(() => []),
-  getStepPointSelectorRanges: vi.fn(() => []),
-  setBreakAtStepPoint: vi.fn(),
-  clearBreakAtStepPoint: vi.fn(),
-  disableBreakAtStepPoint: vi.fn(),
-  clearAllBreaks: vi.fn(),
-}));
+vi.mock('../browserQueries', () => {
+  // The step point model reads source, offsets and selector ranges in ONE round
+  // trip. These three stay as the knobs the tests turn, with the bundle built
+  // from them, so a test still says "this method's source is X" and the args it
+  // asserts on still arrive.
+  const getMethodSource = vi.fn((..._args: unknown[]) => '');
+  const getSourceOffsets = vi.fn((..._args: unknown[]) => [] as number[]);
+  const getStepPointSelectorRanges = vi.fn((..._args: unknown[]) => [] as unknown[]);
+  return {
+    getMethodSource,
+    getSourceOffsets,
+    getStepPointSelectorRanges,
+    getStepPointBundle: vi.fn((...args: unknown[]) => ({
+      source: getMethodSource(...args),
+      offsets: getSourceOffsets(...args),
+      selectors: getStepPointSelectorRanges(...args),
+    })),
+    setBreakAtStepPoint: vi.fn(),
+    clearBreakAtStepPoint: vi.fn(),
+    disableBreakAtStepPoint: vi.fn(),
+    clearAllBreaks: vi.fn(),
+    enableAllBreakpoints: vi.fn(),
+    disableAllBreakpoints: vi.fn(),
+    removeAllBreakpoints: vi.fn(),
+    breakpointByOop: vi.fn(),
+  };
+});
 
 import {
   Uri,
@@ -22,7 +40,8 @@ import {
   SourceBreakpoint,
   FunctionBreakpoint,
 } from '../__mocks__/vscode';
-import { BreakpointManager, buildLineOffsets, mapOffsetToStepPoint } from '../breakpointManager';
+import type * as vscodeApi from 'vscode';
+import { BreakpointManager } from '../breakpointManager';
 import { SessionManager } from '../sessionManager';
 import { StepPointModel, buildLineStarts } from '../stepPointModel';
 import {
@@ -30,7 +49,13 @@ import {
   getSourceOffsets,
   setBreakAtStepPoint,
   disableBreakAtStepPoint,
+  clearBreakAtStepPoint,
   clearAllBreaks,
+  getStepPointBundle,
+  enableAllBreakpoints,
+  disableAllBreakpoints,
+  removeAllBreakpoints,
+  breakpointByOop,
 } from '../browserQueries';
 
 const mockGetMethodSource = vi.mocked(getMethodSource);
@@ -38,6 +63,11 @@ const mockGetSourceOffsets = vi.mocked(getSourceOffsets);
 const mockSetBreakAtStepPoint = vi.mocked(setBreakAtStepPoint);
 const mockClearAllBreaks = vi.mocked(clearAllBreaks);
 const mockDisableBreakAtStepPoint = vi.mocked(disableBreakAtStepPoint);
+const mockClearBreakAtStepPoint = vi.mocked(clearBreakAtStepPoint);
+const mockEnableAll = vi.mocked(enableAllBreakpoints);
+const mockDisableAll = vi.mocked(disableAllBreakpoints);
+const mockRemoveAll = vi.mocked(removeAllBreakpoints);
+const mockByOop = vi.mocked(breakpointByOop);
 
 const METHOD_URI = 'gemstone://1/Globals/Array/instance/accessing/at%3A';
 
@@ -68,64 +98,6 @@ function makeSessionManager(hasSession: boolean) {
     onDidChangeSelection: vi.fn(() => ({ dispose: () => {} })),
   } as unknown as SessionManager;
 }
-
-describe('buildLineOffsets', () => {
-  it('returns offsets for a single-line source', () => {
-    const offsets = buildLineOffsets('hello');
-    // offsets[0] = 0 (dummy), offsets[1] = 0 (line 1 starts at 0)
-    expect(offsets[1]).toBe(0);
-    expect(offsets.length).toBe(2);
-  });
-
-  it('returns offsets for multi-line source', () => {
-    const offsets = buildLineOffsets('abc\ndef\nghi');
-    // Line 1: offset 0, Line 2: offset 4, Line 3: offset 8
-    expect(offsets[1]).toBe(0);
-    expect(offsets[2]).toBe(4);
-    expect(offsets[3]).toBe(8);
-    expect(offsets.length).toBe(4);
-  });
-
-  it('handles empty source', () => {
-    const offsets = buildLineOffsets('');
-    expect(offsets[1]).toBe(0);
-    expect(offsets.length).toBe(2);
-  });
-});
-
-// Column-aware mapping for "Run to Cursor": the cursor's column chooses among
-// several step points on the same line, rather than taking the leftmost one.
-describe('mapOffsetToStepPoint', () => {
-  // `x := a asInteger` — 1-based source offsets: sp1@1 (x), sp2@6 (a), sp3@8 (asInteger).
-  const so = [1, 6, 8];
-  const lineStart = 0;
-  const lineEnd = 16; // whole single line
-
-  it('picks the step point nearest the cursor column, not the leftmost on the line', () => {
-    // Cursor on `asInteger` (offset 7) → sp3, NOT the leftmost sp1 (the := store).
-    expect(mapOffsetToStepPoint(7, so, lineStart, lineEnd)).toEqual({ stepPoint: 3, offset: 8 });
-  });
-
-  it('picks the leftmost when the cursor is at the start of the line', () => {
-    expect(mapOffsetToStepPoint(0, so, lineStart, lineEnd)).toEqual({ stepPoint: 1, offset: 1 });
-  });
-
-  it('breaks inside a one-line block when the cursor is in the block body', () => {
-    // `self do: [:e | body ]` style: sp1@5 (self), sp2@10 (do:), sp3@20 (body).
-    const blk = [5, 10, 20];
-    // Cursor at offset 19 (on `body`) → sp3, not the do:/self sends.
-    expect(mapOffsetToStepPoint(19, blk, 0, 30)).toEqual({ stepPoint: 3, offset: 20 });
-  });
-
-  it('falls back to the nearest step point AFTER the cursor when its line has none', () => {
-    // Cursor on a blank line [10, 20) with no step point → nearest after (offset 25).
-    expect(mapOffsetToStepPoint(12, [5, 25, 40], 10, 20)).toEqual({ stepPoint: 2, offset: 25 });
-  });
-
-  it('returns null when the cursor is past every step point', () => {
-    expect(mapOffsetToStepPoint(100, [5, 10], 90, 110)).toBeNull();
-  });
-});
 
 describe('BreakpointManager', () => {
   beforeEach(() => {
@@ -1030,6 +1002,279 @@ describe('BreakpointManager', () => {
       expect(vi.mocked(debug.removeBreakpoints)).toHaveBeenCalledWith([gemstoneBp]);
       // The file breakpoint survives — "all GemStone breakpoints" is not "all breakpoints".
       expect(debug.breakpoints).toEqual([fileBp]);
+    });
+  });
+
+  // A method editor stays bound to the session it was opened from while the
+  // developer switches the active session (README: "Single vs. multiple
+  // sessions"), so with `gemstone.sessionMode: multiple` the selected session is
+  // routinely NOT the one holding the method on screen.
+  describe('with a second session live and the other one selected', () => {
+    const SESSION_ONE = {
+      id: 1,
+      gci: {},
+      handle: 'gem-one',
+      login: { label: 'One' },
+      stoneVersion: '3.7.2',
+    };
+    const SESSION_TWO = {
+      id: 2,
+      gci: {},
+      handle: 'gem-two',
+      login: { label: 'Two' },
+      stoneVersion: '3.7.2',
+    };
+    /** Both sessions live, session TWO selected; the method URI names session one. */
+    function twoSessions() {
+      return {
+        getSelectedSession: vi.fn(() => SESSION_TWO),
+        getSessions: vi.fn(() => [SESSION_ONE, SESSION_TWO]),
+        onDidChangeSelection: vi.fn(() => ({ dispose: () => {} })),
+      } as unknown as SessionManager;
+    }
+    function managerOverTwo(sessionManager = twoSessions()) {
+      const manager = new BreakpointManager(sessionManager, new StepPointModel(sessionManager));
+      manager.register({ subscriptions: [] as unknown[] } as unknown as vscodeApi.ExtensionContext);
+      return manager;
+    }
+    function fire(event: Partial<{ added: unknown[]; removed: unknown[]; changed: unknown[] }>) {
+      const calls = vi.mocked(debug.onDidChangeBreakpoints).mock.calls;
+      calls[calls.length - 1][0]({ added: [], removed: [], changed: [], ...event });
+    }
+    const handlesSetIn = () => mockSetBreakAtStepPoint.mock.calls.map((c) => c[0].handle);
+
+    beforeEach(() => {
+      vi.mocked(debug.onDidChangeBreakpoints).mockClear();
+      mockSetBreakAtStepPoint.mockClear();
+      mockClearAllBreaks.mockClear();
+      mockByOop.mockClear();
+      vi.mocked(debug.addBreakpoints).mockClear();
+      mockGetMethodSource.mockReturnValue('at: index\n^ self basicAt: index');
+      mockGetSourceOffsets.mockReturnValue([1, 13]);
+      workspace.textDocuments = [
+        { uri: Uri.parse(METHOD_URI), languageId: 'gemstone-smalltalk', isDirty: false },
+      ];
+    });
+
+    it('arms a breakpoint in the gem the method was opened from, not the selected one', () => {
+      const bp = new SourceBreakpoint(new Location(Uri.parse(METHOD_URI), new Position(1, 0)));
+      debug.breakpoints = [bp];
+
+      managerOverTwo();
+      fire({ added: [bp] });
+
+      // Armed in session one — the method on screen belongs to its gem.
+      expect(handlesSetIn()).toEqual(['gem-one']);
+    });
+
+    it("does not clear the selected session's breakpoints on the same method", () => {
+      const bp = new SourceBreakpoint(new Location(Uri.parse(METHOD_URI), new Position(1, 0)));
+      debug.breakpoints = [bp];
+
+      managerOverTwo();
+      fire({ added: [bp] });
+
+      // `applyToUri` clears the method before re-arming it. Aimed at the wrong
+      // gem, that clear would take out breakpoints the other session had set.
+      expect(mockClearAllBreaks.mock.calls.map((c) => c[0].handle)).toEqual(['gem-one']);
+    });
+
+    it('leaves a breakpoint whose session has logged out alone', () => {
+      const dead = new SourceBreakpoint(
+        new Location(
+          Uri.parse('gemstone://9/Globals/Array/instance/accessing/at%3A'),
+          new Position(1, 0),
+        ),
+      );
+      debug.breakpoints = [dead];
+      workspace.textDocuments = [
+        { uri: dead.location.uri, languageId: 'gemstone-smalltalk', isDirty: false },
+      ];
+
+      managerOverTwo();
+      fire({ changed: [dead] });
+
+      // No gem gets it: pruning removes the row, and pushing it at whichever
+      // session happens to be selected would arm a stone nobody asked about.
+      expect(mockSetBreakAtStepPoint).not.toHaveBeenCalled();
+    });
+
+    it('does not mistake another session\u2019s method for the row the gem reported', () => {
+      // The breakpoint view reads its rows out of the SELECTED session's gem, so
+      // a row can only ever be about that session's method. Two sessions holding
+      // the same class, selector and step point must not collide.
+      const manager = managerOverTwo();
+      // Session one's own VS Code breakpoint, the one that must NOT be flipped.
+      const theirs = new SourceBreakpoint(new Location(Uri.parse(METHOD_URI), new Position(0, 0)));
+      debug.breakpoints = [theirs];
+      manager.applyToUri(SESSION_ONE as never, Uri.parse(METHOD_URI), [{ line: 1, enabled: true }]);
+      vi.mocked(debug.addBreakpoints).mockClear();
+
+      manager.setEnabledForStoneBreakpoint(
+        {
+          breakNumber: 1,
+          className: 'Array',
+          isMeta: false,
+          selector: 'at:',
+          stepPoint: 1,
+          disabled: false,
+          environmentId: 0,
+          methodOop: '1234',
+          dictName: 'Globals',
+          category: 'accessing',
+        },
+        false,
+      );
+
+      // Session one's VS Code breakpoint is not touched; the row is flipped in
+      // the selected gem by OOP instead.
+      expect(vi.mocked(debug.addBreakpoints)).not.toHaveBeenCalled();
+      expect(mockByOop).toHaveBeenCalled();
+    });
+
+    it('sweeps every live gem when all breakpoints are disabled', () => {
+      mockDisableAll.mockClear();
+      debug.breakpoints = [
+        new SourceBreakpoint(new Location(Uri.parse(METHOD_URI), new Position(1, 0))),
+      ];
+
+      managerOverTwo().setAllEnabled(false);
+
+      // "All" spans one breakpoint list across every session, so a gem left
+      // un-swept keeps stopping execution behind a row that reads "disabled".
+      expect(mockDisableAll.mock.calls.map((c) => c[0].handle)).toEqual(['gem-one', 'gem-two']);
+    });
+
+    it('sweeps every live gem when all breakpoints are enabled again', () => {
+      mockEnableAll.mockClear();
+      debug.breakpoints = [
+        new SourceBreakpoint(new Location(Uri.parse(METHOD_URI), new Position(1, 0)), false),
+      ];
+
+      managerOverTwo().setAllEnabled(true);
+
+      expect(mockEnableAll.mock.calls.map((c) => c[0].handle)).toEqual(['gem-one', 'gem-two']);
+    });
+
+    it('sweeps every live gem when all breakpoints are removed', () => {
+      mockRemoveAll.mockClear();
+      debug.breakpoints = [
+        new SourceBreakpoint(new Location(Uri.parse(METHOD_URI), new Position(1, 0))),
+      ];
+
+      managerOverTwo().removeAll();
+
+      expect(mockRemoveAll.mock.calls.map((c) => c[0].handle)).toEqual(['gem-one', 'gem-two']);
+    });
+
+    it('keeps sweeping the other gems when one fails, and says which failed', () => {
+      mockRemoveAll.mockClear();
+      mockRemoveAll.mockImplementationOnce(() => {
+        throw new Error('gem is busy');
+      });
+      debug.breakpoints = [
+        new SourceBreakpoint(new Location(Uri.parse(METHOD_URI), new Position(1, 0))),
+      ];
+
+      managerOverTwo().removeAll();
+
+      expect(mockRemoveAll).toHaveBeenCalledTimes(2);
+      expect(vi.mocked(window.showErrorMessage)).toHaveBeenCalledWith(
+        expect.stringContaining('gem is busy'),
+      );
+    });
+  });
+
+  describe('when the gem refuses a breakpoint', () => {
+    beforeEach(() => {
+      mockSetBreakAtStepPoint.mockReset();
+      mockDisableBreakAtStepPoint.mockReset();
+      mockClearBreakAtStepPoint.mockReset();
+      vi.mocked(window.showErrorMessage).mockClear();
+      vi.mocked(window.showWarningMessage).mockClear();
+      mockGetMethodSource.mockReturnValue('at: index\n^ self basicAt: index');
+      mockGetSourceOffsets.mockReturnValue([1, 13]);
+    });
+
+    it('says so out loud, and carries the reason back for the debug adapter', () => {
+      // An unverified marker on its own is unreadable: it looks exactly like a
+      // breakpoint on a line with no step point.
+      mockSetBreakAtStepPoint.mockImplementation(() => {
+        throw new Error('GCI error 2010');
+      });
+
+      const results = makeManager().applyToUri(session(), Uri.parse(METHOD_URI), [
+        { line: 1, enabled: true },
+      ]);
+
+      expect(results[0].verified).toBe(false);
+      expect(results[0].message).toContain('GCI error 2010');
+      expect(vi.mocked(window.showErrorMessage)).toHaveBeenCalledWith(
+        expect.stringContaining('GCI error 2010'),
+      );
+    });
+
+    it('takes the break back out when it armed but could not be disabled', () => {
+      // A disabled breakpoint is applied as set-then-disable. If the disable
+      // fails, the step point is armed while the marker says it is off — the
+      // worst state available, so the break is removed instead.
+      mockDisableBreakAtStepPoint.mockImplementation(() => {
+        throw new Error('GCI error 2010');
+      });
+
+      const results = makeManager().applyToUri(session(), Uri.parse(METHOD_URI), [
+        { line: 1, enabled: false },
+      ]);
+
+      expect(mockClearBreakAtStepPoint).toHaveBeenCalled();
+      expect(results[0].verified).toBe(false);
+      expect(vi.mocked(window.showErrorMessage)).toHaveBeenCalledWith(
+        expect.stringContaining('GCI error 2010'),
+      );
+    });
+
+    it('says the step point is still armed when it cannot be taken back out either', () => {
+      mockDisableBreakAtStepPoint.mockImplementation(() => {
+        throw new Error('disable failed');
+      });
+      mockClearBreakAtStepPoint.mockImplementation(() => {
+        throw new Error('clear failed too');
+      });
+
+      makeManager().applyToUri(session(), Uri.parse(METHOD_URI), [{ line: 1, enabled: false }]);
+
+      expect(vi.mocked(window.showErrorMessage)).toHaveBeenCalledWith(
+        expect.stringContaining('still armed'),
+      );
+    });
+
+    it('forgets the method when its step points cannot be read, since they were just cleared', () => {
+      // `applyToUri` clears the method first. If the step points then cannot be
+      // read, the record left behind would draw markers, hover text and view
+      // rows for breakpoints that exist in no gem.
+      const sessionManager = makeSessionManager(true);
+      const model = new StepPointModel(sessionManager);
+      const manager = new BreakpointManager(sessionManager, model);
+      const uri = Uri.parse(METHOD_URI);
+      manager.applyToUri(session(), uri, [{ line: 1, enabled: true }]);
+      expect(manager.appliedFor(uri)).toHaveLength(1);
+
+      let fired = 0;
+      manager.onDidApply(() => fired++);
+      // Step points are cached per method; the cache is dropped when the
+      // selected session changes, so the next apply goes back to the stone —
+      // which is where a method that has since been removed fails.
+      model.clear();
+      vi.mocked(getStepPointBundle).mockImplementationOnce(() => {
+        throw new Error('method not found');
+      });
+
+      const results = manager.applyToUri(session(), uri, [{ line: 1, enabled: true }]);
+
+      expect(manager.appliedFor(uri)).toHaveLength(0);
+      expect(fired).toBeGreaterThan(0);
+      expect(results[0].verified).toBe(false);
+      expect(vi.mocked(window.showWarningMessage)).toHaveBeenCalled();
     });
   });
 });
