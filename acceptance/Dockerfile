@@ -8,7 +8,7 @@
 # The base image ships Node, the Playwright browsers, their shared libraries,
 # and Xvfb. We add the extra libraries VS Code's Electron needs beyond Chromium,
 # plus the toolchain to build this repo's native node modules (koffi, keytar).
-FROM mcr.microsoft.com/playwright:v1.61.1-noble
+FROM mcr.microsoft.com/playwright:v1.62.1-noble
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       libsecret-1-0 \
@@ -32,8 +32,13 @@ COPY package.json package-lock.json .npmrc ./
 COPY client/package.json ./client/
 COPY server/package.json ./server/
 COPY mcp-server/package.json ./mcp-server/
-# The base image's bundled npm (11.13.0) is below the repo's devEngines floor
-# (>=11.16.0), so npm ci itself would fail with EBADDEVENGINES.
+# Pin npm rather than trusting whatever the base image happens to bundle: that
+# moves with each Playwright release, and it has already sat on both sides of
+# the repo's devEngines floor (>=11.16.0). v1.61.1-noble shipped npm 11.13.0,
+# below the floor, so `npm ci` failed outright with EBADDEVENGINES; v1.62.1-noble
+# ships 11.16.0, which only just clears it. An exact pin keeps this layer's
+# toolchain identical across base-image bumps instead of riding that drift.
+# Bump it deliberately, together with the same pin in health-check.yml.
 RUN npm install -g npm@11.17.0 && npm ci
 
 # Install GemStone/S 64 Bit for the in-container stone. This layer depends only

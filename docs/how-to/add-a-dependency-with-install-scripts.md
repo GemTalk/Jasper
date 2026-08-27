@@ -34,4 +34,4 @@ Approvals are version-pinned (`allow-scripts-pin=true`), so a Dependabot PR that
 2. `npm rebuild`.
 3. Commit the updated `package.json` on the branch and push.
 
-Packages that receive this treatment regularly are grouped into Dependabot's `install-scripts` group (see [docs/reference/supply-chain-controls.md](../reference/supply-chain-controls.md)) so they arrive together, in one recognizable PR per cycle.
+A bump of an approved package arrives in the ordinary `dev-dependencies` or `prod-dependencies` group PR, and fails that PR's install until it's re-approved.
