@@ -4,7 +4,9 @@ const mocks = vi.hoisted(() => {
   const config: Record<string, unknown> = {};
   return {
     config,
-    showInformationMessage: vi.fn<(...a: unknown[]) => Promise<string | undefined>>(() =>
+    // Resolves a MessageItem (the modal's chosen button) or a string/undefined
+    // (toasts, dismissal), so the return type is intentionally wide.
+    showInformationMessage: vi.fn<(...a: unknown[]) => Promise<unknown>>(() =>
       Promise.resolve(undefined),
     ),
     showWarningMessage: vi.fn<(...a: unknown[]) => Promise<string | undefined>>(() =>
@@ -79,14 +81,21 @@ function baseSession(overrides: Partial<ActiveSession> = {}): ActiveSession {
 const getSelectedSession = vi.fn<() => ActiveSession | undefined>();
 const sessionManager = { getSelectedSession } as unknown as SessionManager;
 
-function answer(button: string | undefined) {
-  mocks.showInformationMessage.mockResolvedValue(button);
+// The offer now passes MessageItem objects (so it can set isCloseAffordance on
+// "Not Now"), and compares the resolved choice by identity — so resolve the actual
+// item the modal was shown with, matched by title, not a bare string.
+function answer(title: string | undefined) {
+  mocks.showInformationMessage.mockImplementation((...args: unknown[]) => {
+    const items = args.slice(2) as Array<{ title: string }>;
+    const match = title === undefined ? undefined : items.find((i) => i.title === title);
+    return Promise.resolve(match);
+  });
 }
 
-/** Button labels the modal was shown with (its variadic items). */
+/** Button labels the modal was shown with (the titles of its variadic items). */
 function shownButtons(): string[] {
   const call = mocks.showInformationMessage.mock.calls[0];
-  return call ? (call.slice(2) as string[]) : [];
+  return call ? (call.slice(2) as Array<{ title: string }>).map((i) => i.title) : [];
 }
 
 beforeEach(() => {
@@ -160,12 +169,27 @@ describe('maybeOfferServerSupport', () => {
     expect(mocks.executeCommand).toHaveBeenCalledWith('gemstone.explorer.refresh');
   });
 
-  it('offers one modal with Install, Always, and Never', async () => {
+  it('offers one modal with Install, Not Now, Always, and Never', async () => {
     answer('Install');
 
     await maybeOfferServerSupport(baseSession(), sessionManager, EXTENSION_PATH);
 
-    expect(shownButtons()).toEqual(['Install', 'Always', 'Never']);
+    expect(shownButtons()).toEqual(['Install', 'Not Now', 'Always', 'Never']);
+  });
+
+  it('marks "Not Now" as the modal close affordance so Escape declines without touching the setting', async () => {
+    answer('Not Now');
+
+    await maybeOfferServerSupport(baseSession(), sessionManager, EXTENSION_PATH);
+
+    const items = mocks.showInformationMessage.mock.calls[0].slice(2) as Array<{
+      title: string;
+      isCloseAffordance?: boolean;
+    }>;
+    expect(items.find((i) => i.title === 'Not Now')?.isCloseAffordance).toBe(true);
+    expect(mocks.installEI).not.toHaveBeenCalled();
+    expect(mocks.installRB).not.toHaveBeenCalled();
+    expect(mocks.update).not.toHaveBeenCalled();
   });
 
   it('installs both interactively when the user clicks Install, leaving the setting unchanged', async () => {

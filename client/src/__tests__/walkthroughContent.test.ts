@@ -93,11 +93,12 @@ describe('Getting Started walkthrough content', () => {
     expect(databasesWelcome?.contents).toContain('command:gemstone.createDatabase');
   });
 
-  // The walkthrough auto-opens on activation (startup), not on connecting or on
-  // revealing a view — so the Reset command's title must describe the real
-  // trigger rather than the stale "on Next Connect".
-  it('describes the reset command by its real trigger (startup)', () => {
-    expect(resetCommand?.title.toLowerCase()).toContain('startup');
-    expect(resetCommand?.title.toLowerCase()).not.toContain('connect');
+  // Reset re-arms two first-run surfaces: the walkthrough (auto-opens on startup)
+  // and the Start Here status-bar button (shows on connect). The title names both
+  // so the user knows what comes back, rather than describing a single trigger.
+  it('names both surfaces the reset command restores', () => {
+    const title = resetCommand?.title.toLowerCase();
+    expect(title).toContain('walkthrough');
+    expect(title).toContain('start here');
   });
 });

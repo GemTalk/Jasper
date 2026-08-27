@@ -59,7 +59,10 @@ describe('OmniSearchPanel.show', () => {
     // to session 1 — so all three assertions below pin the fix.
     const depsB = deps(2);
     OmniSearchPanel.show(depsB);
-    expect(panelA.dispose).toHaveBeenCalledTimes(1);
+    // Called, not called-once: dispose() is the panel's own onDidDispose handler
+    // and also calls panel.dispose(), so disposing re-enters it once and stops on
+    // the panel's internal already-disposed guard. The second call is a no-op.
+    expect(panelA.dispose).toHaveBeenCalled();
     expect(created).toHaveBeenCalledTimes(2);
     expect(engine).toHaveBeenLastCalledWith(depsB);
   });
