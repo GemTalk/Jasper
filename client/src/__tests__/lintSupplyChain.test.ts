@@ -23,10 +23,10 @@ import { withTemporaryFolderDo } from './support/file';
 // __dirname is client/src/__tests__, so the repo root is three levels up.
 const SCRIPT = path.resolve(__dirname, '..', '..', '..', 'scripts', 'lint-supply-chain.mjs');
 
-// The .npmrc contents that satisfy every assertion in CONFIG_ASSERTIONS, so a case that is
+// An example .npmrc that satisfies every assertion in CONFIG_ASSERTIONS, so a case that is
 // about the lockfile or allowScripts isn't also failing on config noise. `allow-scripts` is
 // absent on purpose — the script requires it unset.
-const COMPLIANT_NPMRC = [
+const EXAMPLE_NPMRC = [
   'strict-allow-scripts=true',
   'allow-git=none',
   'allow-remote=none',
@@ -34,12 +34,41 @@ const COMPLIANT_NPMRC = [
   '',
 ].join('\n');
 
+// The type-floor half of an example compliant repo: an `engines` pair, the two `@types`
+// ranges pinned as tildes on those floors, and lockfile entries resolving there. Every case gets these by
+// default so a case about config, the lockfile, or allowScripts isn't also failing on type-floor
+// noise; the type-floor cases override one piece at a time.
+//
+// The version numbers are deliberately unlike this repo's real floors: what the check asserts is
+// that the four values agree with each other, not what any of them happens to be.
+const EXAMPLE_COMPLIANT_ENGINES = { vscode: '^3.7.0', node: '>=9.4.2' };
+const EXAMPLE_COMPLIANT_ROOT_TYPES = { '@types/node': '~9.4' };
+const EXAMPLE_COMPLIANT_CLIENT_TYPES = { '@types/vscode': '~3.7.0' };
+const EXAMPLE_COMPLIANT_TYPE_PACKAGES = {
+  'node_modules/@types/node': entry('@types/node', '9.4.11'),
+  'client/node_modules/@types/vscode': entry('@types/vscode', '3.7.0'),
+};
+
 interface Fixture {
   npmrc?: string;
   packageJson?: Record<string, unknown>;
+  clientPackageJson?: Record<string, unknown>;
   lockfile?: Record<string, unknown>;
+  typePackages?: Record<string, unknown>;
   // Extra environment for the child, e.g. an npm_config_* override.
   env?: Record<string, string>;
+}
+
+function typePackagesFor(overrides: Record<string, unknown>) {
+  const packages: Record<string, unknown> = { ...EXAMPLE_COMPLIANT_TYPE_PACKAGES, ...overrides };
+
+  for (const [key, value] of Object.entries(packages)) {
+    if (value === null) {
+      delete packages[key];
+    }
+  }
+
+  return packages;
 }
 
 // Runs the script against a synthetic repo. The child's environment is scrubbed of every
@@ -48,15 +77,44 @@ interface Fixture {
 // User- and global-level npm config are likewise redirected at empty files (two distinct
 // paths — npm refuses to load one file at two levels), so a developer's ~/.npmrc can neither
 // rescue nor break a case.
-function runLint({ npmrc = COMPLIANT_NPMRC, packageJson = {}, lockfile = {}, env = {} }: Fixture) {
+function runLint({
+  npmrc = EXAMPLE_NPMRC,
+  packageJson = {},
+  clientPackageJson = {},
+  lockfile = {},
+  typePackages = {},
+  env = {},
+}: Fixture) {
   return withTemporaryFolderDo((dir) => {
     fs.writeFileSync(
       path.join(dir, 'package.json'),
-      JSON.stringify({ name: 'fixture', version: '0.0.0', ...packageJson }),
+      JSON.stringify({
+        name: 'fixture',
+        version: '0.0.0',
+        engines: EXAMPLE_COMPLIANT_ENGINES,
+        devDependencies: EXAMPLE_COMPLIANT_ROOT_TYPES,
+        ...packageJson,
+      }),
+    );
+    fs.mkdirSync(path.join(dir, 'client'));
+    fs.writeFileSync(
+      path.join(dir, 'client', 'package.json'),
+      JSON.stringify({
+        name: 'fixture-client',
+        version: '0.0.0',
+        devDependencies: EXAMPLE_COMPLIANT_CLIENT_TYPES,
+        ...clientPackageJson,
+      }),
     );
     fs.writeFileSync(
       path.join(dir, 'package-lock.json'),
-      JSON.stringify({ packages: {}, ...lockfile }),
+      JSON.stringify({
+        ...lockfile,
+        packages: {
+          ...typePackagesFor(typePackages),
+          ...((lockfile.packages as Record<string, unknown> | undefined) ?? {}),
+        },
+      }),
     );
     fs.writeFileSync(path.join(dir, '.npmrc'), npmrc);
     fs.writeFileSync(path.join(dir, 'user.npmrc'), '');
@@ -93,6 +151,62 @@ function entry(name: string, version: string, resolvedVersion: string = version)
   };
 }
 
+// The three values checkTypeFloorPinned compares for one `@types` package. Omitting a field
+// expresses its absence, which is a scenario in its own right: no `engines` floor to compare
+// against, no declared range, no lockfile entry.
+interface TypeFloorSpec {
+  // The `engines` value the range is supposed to track (`engines.vscode` / `engines.node`).
+  enginesFloor?: string;
+  // The range declared for the `@types` package in its own manifest — client/package.json for
+  // `@types/vscode`, the root package.json for `@types/node`.
+  manifestRange?: string;
+  // The version package-lock.json resolves that package to.
+  lockfileVersion?: string;
+  // `@types/vscode` only: put the lockfile entry at the root key instead of under client/.
+  hoisted?: boolean;
+}
+
+// Builds the type-floor half of a fixture — the manifests and lockfile entries — without running
+// anything, so a case states all six values inline and then hands the result to runLint. What the
+// check asserts is that the values agree with each other, and that is what the call site shows:
+// the passing case has both triples in step, and every failing case is exactly one value out of it.
+function typeFloorFixture({
+  vscode,
+  node,
+}: {
+  vscode: TypeFloorSpec;
+  node: TypeFloorSpec;
+}): Fixture {
+  const vscodeLockKey = vscode.hoisted
+    ? 'node_modules/@types/vscode'
+    : 'client/node_modules/@types/vscode';
+
+  return {
+    packageJson: {
+      engines: {
+        ...(vscode.enginesFloor === undefined ? {} : { vscode: vscode.enginesFloor }),
+        ...(node.enginesFloor === undefined ? {} : { node: node.enginesFloor }),
+      },
+      devDependencies:
+        node.manifestRange === undefined ? {} : { '@types/node': node.manifestRange },
+    },
+    clientPackageJson: {
+      devDependencies:
+        vscode.manifestRange === undefined ? {} : { '@types/vscode': vscode.manifestRange },
+    },
+    // Both `@types/vscode` keys start deleted so the entry lands only where this case puts it.
+    typePackages: {
+      'client/node_modules/@types/vscode': null,
+      'node_modules/@types/vscode': null,
+      'node_modules/@types/node':
+        node.lockfileVersion === undefined ? null : entry('@types/node', node.lockfileVersion),
+      ...(vscode.lockfileVersion === undefined
+        ? {}
+        : { [vscodeLockKey]: entry('@types/vscode', vscode.lockfileVersion) }),
+    },
+  };
+}
+
 describe('lint-supply-chain: npm config assertions', () => {
   it('passes when every install-script control is in effect', () => {
     const { status, stdout } = runLint({});
@@ -107,7 +221,7 @@ describe('lint-supply-chain: npm config assertions', () => {
 
   it('fails when a control is turned off', () => {
     const { status, stderr } = runLint({
-      npmrc: COMPLIANT_NPMRC.replace('strict-allow-scripts=true', 'strict-allow-scripts=false'),
+      npmrc: EXAMPLE_NPMRC.replace('strict-allow-scripts=true', 'strict-allow-scripts=false'),
     });
 
     expect(status).toBe(1);
@@ -119,7 +233,7 @@ describe('lint-supply-chain: npm config assertions', () => {
   // .npmrc would report everything is fine.
   it('catches an env-var override of a compliant .npmrc', () => {
     const { status, stderr } = runLint({
-      npmrc: COMPLIANT_NPMRC,
+      npmrc: EXAMPLE_NPMRC,
       env: { npm_config_strict_allow_scripts: 'false' },
     });
 
@@ -132,7 +246,7 @@ describe('lint-supply-chain: npm config assertions', () => {
   // inert) .npmrc allowlist turns live the moment allowScripts is emptied.
   it("catches allow-scripts set with npm's key[]= array syntax, and explains why it must go", () => {
     const { status, stderr } = runLint({
-      npmrc: `${COMPLIANT_NPMRC}allow-scripts[]=some-package\n`,
+      npmrc: `${EXAMPLE_NPMRC}allow-scripts[]=some-package\n`,
     });
 
     expect(status).toBe(1);
@@ -147,7 +261,7 @@ describe('lint-supply-chain: npm config assertions', () => {
 // anything that isn't a number at all, which is how an absent cooldown shows up — must fail.
 describe('lint-supply-chain: min-release-age floor', () => {
   function minReleaseAge(value: string | null) {
-    const npmrc = COMPLIANT_NPMRC.replace(
+    const npmrc = EXAMPLE_NPMRC.replace(
       'min-release-age=7\n',
       value === null ? '' : `min-release-age=${value}\n`,
     );
@@ -361,11 +475,139 @@ describe('lint-supply-chain: allowScripts pinning', () => {
   });
 });
 
+describe('lint-supply-chain: @types floor pinning', () => {
+  it('passes when both type ranges are tildes on the engines floors and resolve there', () => {
+    const { status, stdout } = runLint(
+      typeFloorFixture({
+        vscode: { enginesFloor: '^3.7.0', manifestRange: '~3.7.0', lockfileVersion: '3.7.0' },
+        node: { enginesFloor: '>=9.4.2', manifestRange: '~9.4', lockfileVersion: '9.4.11' },
+      }),
+    );
+
+    expect(status).toBe(0);
+    expect(stdout).toContain('✓ every @types range is a tilde on its engines floor');
+  });
+
+  // The re-widening case: a merge resolution or a "why is this pinned?" cleanup puts the caret
+  // back, and the lockfile is then free to resolve above the floor on the next regeneration.
+  it('fails when a type range is widened back to a caret', () => {
+    const { status, stderr } = runLint(
+      typeFloorFixture({
+        vscode: { enginesFloor: '^3.7.0', manifestRange: '^3.7.0', lockfileVersion: '3.7.0' },
+        node: { enginesFloor: '>=9.4.2', manifestRange: '~9.4', lockfileVersion: '9.4.11' },
+      }),
+    );
+
+    expect(status).toBe(1);
+    expect(stderr).toContain(
+      "✗ client/package.json's @types/vscode is '^3.7.0' — expected a tilde on engines.vscode's floor (~3.7)",
+    );
+  });
+
+  // The partial floor raise: engines moves, the coordinated @types bump is forgotten. Left
+  // alone this is benign-looking, since the types merely lag — but the same omission in the
+  // other direction is what shipped APIs the runtime floor lacks.
+  it('fails when the vscode floor moves without the matching type bump', () => {
+    const { status, stderr } = runLint(
+      typeFloorFixture({
+        vscode: { enginesFloor: '^3.9.0', manifestRange: '~3.7.0', lockfileVersion: '3.7.0' },
+        node: { enginesFloor: '>=9.4.2', manifestRange: '~9.4', lockfileVersion: '9.4.11' },
+      }),
+    );
+
+    expect(status).toBe(1);
+    expect(stderr).toContain(
+      "✗ client/package.json's @types/vscode is '~3.7.0' — expected a tilde on engines.vscode's floor (~3.9)",
+    );
+  });
+
+  it('fails when the node floor moves without the matching type bump', () => {
+    const { status, stderr } = runLint(
+      typeFloorFixture({
+        vscode: { enginesFloor: '^3.7.0', manifestRange: '~3.7.0', lockfileVersion: '3.7.0' },
+        node: { enginesFloor: '>=11.2.0', manifestRange: '~9.4', lockfileVersion: '9.4.11' },
+      }),
+    );
+
+    expect(status).toBe(1);
+    expect(stderr).toContain(
+      "✗ package.json's @types/node is '~9.4' — expected a tilde on engines.node's floor (~11.2)",
+    );
+  });
+
+  // The declared range and the installed version are independent: the lockfile is what tsc
+  // actually compiles against, so a correct range with a stale or hand-edited entry still
+  // type-checks against the wrong API surface.
+  it('fails when the range is right but the lockfile resolves off the floor', () => {
+    const { status, stderr } = runLint(
+      typeFloorFixture({
+        vscode: { enginesFloor: '^3.7.0', manifestRange: '~3.7.0', lockfileVersion: '4.2.0' },
+        node: { enginesFloor: '>=9.4.2', manifestRange: '~9.4', lockfileVersion: '9.4.11' },
+      }),
+    );
+
+    expect(status).toBe(1);
+    expect(stderr).toContain(
+      "✗ @types/vscode resolves to '4.2.0' in the lockfile — expected 3.7.x",
+    );
+  });
+
+  it('fails when the lockfile has no entry for a type package at all', () => {
+    const { status, stderr } = runLint(
+      typeFloorFixture({
+        vscode: { enginesFloor: '^3.7.0', manifestRange: '~3.7.0', lockfileVersion: '3.7.0' },
+        node: { enginesFloor: '>=9.4.2', manifestRange: '~9.4' },
+      }),
+    );
+
+    expect(status).toBe(1);
+    expect(stderr).toContain('✗ @types/node resolves to unset in the lockfile — expected 9.4.x');
+  });
+
+  // npm keeps @types/vscode under client/node_modules today because only that workspace
+  // declares it, but a future install could hoist it to the root — which must not read as a
+  // missing entry.
+  it('accepts a type package hoisted to the root node_modules', () => {
+    const { status, stdout } = runLint(
+      typeFloorFixture({
+        vscode: {
+          enginesFloor: '^3.7.0',
+          manifestRange: '~3.7.0',
+          lockfileVersion: '3.7.0',
+          hoisted: true,
+        },
+        node: { enginesFloor: '>=9.4.2', manifestRange: '~9.4', lockfileVersion: '9.4.11' },
+      }),
+    );
+
+    expect(status).toBe(0);
+    expect(stdout).toContain('✓ every @types range is a tilde on its engines floor');
+  });
+
+  // No floor at all is strictly worse than a drifted one: the range is then unconstrained by
+  // anything, so this has to fail rather than vacuously pass for want of something to compare.
+  it('fails when engines declares no floor to compare against', () => {
+    const { status, stderr } = runLint(
+      typeFloorFixture({
+        vscode: { manifestRange: '~3.7.0', lockfileVersion: '3.7.0' },
+        node: { manifestRange: '~9.4', lockfileVersion: '9.4.11' },
+      }),
+    );
+
+    expect(status).toBe(1);
+    expect(stderr).toContain(
+      '✗ engines.vscode is missing or unparseable — nothing pins @types/vscode',
+    );
+    expect(stderr).toContain('✗ engines.node is missing or unparseable — nothing pins @types/node');
+  });
+});
+
 describe('lint-supply-chain: exit status', () => {
   it('reports every failing check in one run, not just the first', () => {
     const { status, stderr } = runLint({
-      npmrc: COMPLIANT_NPMRC.replace('allow-git=none', 'allow-git=all'),
+      npmrc: EXAMPLE_NPMRC.replace('allow-git=none', 'allow-git=all'),
       packageJson: { allowScripts: { esbuild: true } },
+      clientPackageJson: { devDependencies: { '@types/vscode': '^3.7.0' } },
       lockfile: {
         packages: {
           'node_modules/mime': entry('mime', '1.6.0', '2.0.0'),
@@ -377,5 +619,6 @@ describe('lint-supply-chain: exit status', () => {
     expect(stderr).toContain("✗ npm config 'allow-git' is 'all', expected 'none'");
     expect(stderr).toContain('✗ node_modules/mime: version');
     expect(stderr).toContain("✗ allowScripts['esbuild'] allows every version");
+    expect(stderr).toContain("✗ client/package.json's @types/vscode is '^3.7.0'");
   });
 });

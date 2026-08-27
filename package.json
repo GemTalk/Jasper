@@ -3138,7 +3138,7 @@
     "@eslint-community/eslint-plugin-eslint-comments": "^4.7.2",
     "@eslint/js": "^9.19.0",
     "@playwright/test": "^1.62.1",
-    "@types/node": "^22.15",
+    "@types/node": "~22.15",
     "@vitest/eslint-plugin": "^1.6.27",
     "@vscode/test-electron": "^3.1.0",
     "@vscode/vsce": "^3.7.1",

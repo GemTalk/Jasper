@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type * as vscode from 'vscode';
 
 import {
   KEYCHAIN_SERVICE,
@@ -67,7 +66,7 @@ describe('loginCredentials', () => {
 
   describe('setLoginPassword', () => {
     it('stores under a key namespaced by KEYCHAIN_SERVICE and the account identifier', async () => {
-      await setLoginPassword(secrets as unknown as vscode.SecretStorage, makeLogin());
+      await setLoginPassword(secrets, makeLogin());
 
       expect(secrets.store).toHaveBeenCalledWith(
         'jasper-gemstone-login:DataCurator@localhost/gs64stone',
@@ -79,7 +78,7 @@ describe('loginCredentials', () => {
   describe('getLoginPassword', () => {
     it('returns the stored password from SecretStorage', async () => {
       secrets.get.mockResolvedValueOnce('stored-pw');
-      const pw = await getLoginPassword(secrets as unknown as vscode.SecretStorage, makeLogin());
+      const pw = await getLoginPassword(secrets, makeLogin());
 
       expect(secrets.get).toHaveBeenCalledWith(
         'jasper-gemstone-login:DataCurator@localhost/gs64stone',
@@ -89,20 +88,20 @@ describe('loginCredentials', () => {
 
     it('returns undefined when no password is stored', async () => {
       secrets.get.mockResolvedValueOnce(undefined);
-      const pw = await getLoginPassword(secrets as unknown as vscode.SecretStorage, makeLogin());
+      const pw = await getLoginPassword(secrets, makeLogin());
       expect(pw).toBeUndefined();
     });
 
     it('returns undefined when SecretStorage throws', async () => {
       secrets.get.mockRejectedValueOnce(new Error('SecretStorage unavailable'));
-      const pw = await getLoginPassword(secrets as unknown as vscode.SecretStorage, makeLogin());
+      const pw = await getLoginPassword(secrets, makeLogin());
       expect(pw).toBeUndefined();
     });
   });
 
   describe('deleteLoginPassword', () => {
     it('delegates to SecretStorage.delete and returns true on success', async () => {
-      const ok = await deleteLoginPassword(secrets as unknown as vscode.SecretStorage, makeLogin());
+      const ok = await deleteLoginPassword(secrets, makeLogin());
 
       expect(secrets.delete).toHaveBeenCalledWith(
         'jasper-gemstone-login:DataCurator@localhost/gs64stone',
@@ -112,7 +111,7 @@ describe('loginCredentials', () => {
 
     it('returns false when SecretStorage throws', async () => {
       secrets.delete.mockRejectedValueOnce(new Error('no entry'));
-      const ok = await deleteLoginPassword(secrets as unknown as vscode.SecretStorage, makeLogin());
+      const ok = await deleteLoginPassword(secrets, makeLogin());
       expect(ok).toBe(false);
     });
   });

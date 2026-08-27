@@ -15,6 +15,10 @@ Look up the VS Code → Electron → Node mapping at [github.com/ewanharris/vsco
 
 `tsconfig.base.json`'s `target` and `lib` values are sourced from [github.com/tsconfig/bases](https://github.com/tsconfig/bases)' preset for the Node version matching the floor (e.g. its `node22` preset for Node `22`). We can't `extends` that package directly, though: its presets assume ESM (`"module": "node16"`/`"nodenext"`), while this project compiles to `"module": "commonjs"` — so the matching preset's `target`/`lib` fields are copied in by hand instead of pulled in via `extends`.
 
+Both `@types` ranges are deliberately pinned tight rather than left on a caret, and both use the same shape for the same reason.
+
+Both are DefinitelyTyped releases, so in both cases the patch digit is DT's own revision counter rather than the upstream project's — a single minor can pick up several corrections that all describe the same API surface. Both therefore take a **tilde** on the floor's minor: `~1.101.0` for `@types/vscode` (mirroring `engines.vscode`) and `~22.15` for `@types/node`. Same API surface as the floor, best-known description of it.
+
 The `typescript` devDependency range is a separate, compiler-version concern rather than a Node-runtime one — it just needs to stay new enough to recognize whatever `tsconfig.base.json`'s `lib` array declares. Check the [TypeScript release notes](https://www.typescriptlang.org/docs/handbook/release-notes/) for the minimum version that ships each `lib` entry whenever `lib` changes.
 
 ## How to raise it
@@ -27,8 +31,8 @@ The `typescript` devDependency range is a separate, compiler-version concern rat
 2. Update all of these together — they encode the same runtime floor and are a **coordinated set, not independent knobs**. A partial bump lets the type checker or bundler assume APIs that don't exist on the shipped runtime floor:
    - `engines.vscode` and `engines.node` (root `package.json`)
    - `devEngines.runtime` (root `package.json`) — mirrors `engines.node`; a partial bump desyncs it. `devEngines.packageManager`, alongside it, pins the *npm* floor instead — a separate, dev-toolchain-only concern that this document does not govern, but with an invariant this list still has to protect: that floor must stay ≤ the npm bundled by `.nvmrc`'s Node, or every setup path (contributor and CI alike) needs an explicit `npm i -g` step. Bumping `.nvmrc` down (or the `devEngines.packageManager` floor up) can break that silently — and if it holds, re-pin the global `npm install -g npm@…` calls in the CI floor job and `acceptance/Dockerfile` to whatever npm the new `.nvmrc` bundles
-   - root `@types/node`
-   - `client/package.json`'s `@types/vscode`
+   - root `@types/node` — keep it a **tilde** on the floor's Node minor (e.g. `~22.15`), never a caret; see above for why the shape matters
+   - `client/package.json`'s `@types/vscode` — keep it a **tilde** on `engines.vscode`'s minor (e.g. `~1.101.0`), never a caret; see above
    - `tsconfig.base.json`'s `target` and `lib` (copy the values from the matching Node-version preset in [tsconfig/bases](https://github.com/tsconfig/bases) — see above for why we copy rather than `extends`)
    - `esbuild.mjs`'s `target` (the `client` and `server` build calls)
    - the floor `node-version` in the `health-check.yml` CI `include` job (the *dev* jobs read `.nvmrc` automatically and don't need a separate edit)
