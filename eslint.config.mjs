@@ -54,6 +54,9 @@ const GCI_LIBRARY_LOGIN =
   'Prefer the session on the test context (`testContext.session`), or `withTransientSession(...)` for a second one. `GciLibrary.login` returns a session the harness never armed with the commit guard.';
 const LOGIN_CREDENTIALS =
   'Prefer letting `useIntegrationTest` read the connection environment. A test reaching for the password is assembling its own login, and that session is not armed with the commit guard.';
+// Every name the connection helpers give the password. Shared by the two
+// selectors below, which differ only in the syntax they read it with.
+const PASSWORD_NAMES = '/^(VITE_GEMSTONE_PASSWORD|gsPassword|GS_PASSWORD)$/';
 const FORKED_GEM =
   'Prefer running the expression on the test context session. A forked gem runs in a session of its own that the harness never armed, and it outlives the test.';
 
@@ -271,16 +274,27 @@ export default tseslint.config(
           message: GCI_LIBRARY_LOGIN,
         },
         {
-          // The password by its env-var name, for a test that reads the
-          // environment directly instead of going through the helper. The
-          // other VITE_GEMSTONE_* values stay allowed -- tests read the gem NRS
-          // and library path for reasons that have nothing to do with logging in.
-          selector: "MemberExpression[property.name='VITE_GEMSTONE_PASSWORD']",
+          // The password read off something, for a test that goes to the
+          // environment (or a config object) instead of through the helper. A
+          // property selector, so the receiver is irrelevant -- but a `.name`
+          // one alone matches only a *non-computed* access: in
+          // `process.env['VITE_GEMSTONE_PASSWORD']` the property is a
+          // `Literal`, which carries `.value` and no `.name`, so both are
+          // matched. The other VITE_GEMSTONE_* values stay allowed -- tests
+          // read the gem NRS and library path for reasons that have nothing to
+          // do with logging in.
+          selector: `MemberExpression:matches([property.name=${PASSWORD_NAMES}], [property.value=${PASSWORD_NAMES}])`,
           message: LOGIN_CREDENTIALS,
         },
         {
-          // The password by its other two names. Property-name selectors, so the receiver is irrelevant.
-          selector: 'MemberExpression[property.name=/^(gsPassword|GS_PASSWORD)$/]',
+          // `const { VITE_GEMSTONE_PASSWORD } = process.env` is not a
+          // `MemberExpression` at all, and destructuring the environment is
+          // ordinary enough in test setup to be the next thing reached for once
+          // the selector above stops the direct read. Anchored on
+          // `ObjectPattern` so it only reads the binding side: the mock-env
+          // object literal in testConnection.test.ts is an `ObjectExpression`
+          // and stays legal.
+          selector: `ObjectPattern > Property:matches([key.name=${PASSWORD_NAMES}], [key.value=${PASSWORD_NAMES}])`,
           message: LOGIN_CREDENTIALS,
         },
         {
