@@ -1,5 +1,5 @@
 /**
- * Webview-side behavior for the Jasper Debugger panel (debuggerPanel.ts).
+ * Webview-side behavior for the GemStone Debugger panel (debuggerPanel.ts).
  *
  * Like listFilter.js / methodListView.js, this is read at runtime via
  * fs.readFileSync and injected into the webview as a <script> tag — it is NOT
@@ -319,6 +319,7 @@
       frameImplItem,
       copyBtn,
       dumpBtn,
+      maximizeBtn,
       saveNotice,
       savePath,
       copyPathBtn,
@@ -330,10 +331,12 @@
       variables,
       evalInput,
       evalResult,
+      evalToggle,
+      evalClear,
+      evalbar,
+      frameEvalItem,
       main,
       splitter,
-      hsplitter,
-      evalbar,
       varMenu,
       varInspectItem,
       busyOverlay,
@@ -412,6 +415,30 @@
       });
     }
     // Single send path: starts the busy span for server-bound requests, then posts.
+    /**
+     * Tell the host how tall this panel needs its editor group to be, so it can
+     * push the companion source pane down far enough that nothing here is cut
+     * off — the message saying why execution stopped above all.
+     *
+     * Measured, not estimated: the host can't know how many rows the toolbar
+     * wrapped to, whether a "Create #selector" bar is showing, or how many lines
+     * the error ran to. `scrollHeight` is the height at which nothing overflows,
+     * with the panes already at their CSS floor; `innerHeight` lets the host work
+     * out how much of the group its tab bar takes. Sent after each init render
+     * (the banner and the action bar can change with it), and the host acts on it
+     * only while the panel is opening.
+     */
+    function reportFit() {
+      // Next frame: the layout has to settle before the heights mean anything.
+      requestAnimationFrame(function () {
+        post({
+          command: 'fit',
+          needed: document.body.scrollHeight,
+          viewport: window.innerHeight,
+        });
+      });
+    }
+
     function post(msg) {
       if (msg && SERVER_BOUND[msg.command]) beginBusy();
       vscode.postMessage(msg);
@@ -641,6 +668,17 @@
       });
     }
 
+    // Maximize / restore the debugger's editor group. VS Code clips a webview
+    // that doesn't fit rather than adapting it, so when the column is genuinely
+    // too small this hands the debugger the whole editor area; clicking again
+    // puts the grid back exactly as it was.
+    if (maximizeBtn) {
+      maximizeBtn.addEventListener('click', () => {
+        post({ command: 'maximizePanel' });
+        flashIcon(maximizeBtn);
+      });
+    }
+
     // Clicking the dumped path opens that file in an editor — on demand, so a tab
     // appears only when the user asks for it.
     if (savePath) {
@@ -680,11 +718,85 @@
     }
 
     // Eval-in-frame: Enter evaluates the expression in the selected frame.
+    // Escape clears what you typed, or closes the bar when it's already empty —
+    // the same two-stage Escape the list filters use.
     if (evalInput) {
       evalInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+          if (evalInput.value) clearEval();
+          else setEvalCollapsed(true);
+          return;
+        }
         if (e.key !== 'Enter') return;
         const expr = evalInput.value.trim();
         if (expr) post({ command: 'evalInFrame', level: selectedLevel, expr });
+      });
+      // The ✕ shows only when there's something to clear.
+      evalInput.addEventListener('input', showClearWhenTyped);
+    }
+
+    /** Show the clear button once the expression box has anything in it. */
+    function showClearWhenTyped() {
+      if (evalbar && evalInput) evalbar.classList.toggle('has-text', evalInput.value.length > 0);
+    }
+
+    /** Empty the expression AND its answer — a result outlives the expression it
+     *  came from otherwise, which reads as the answer to whatever you type next. */
+    function clearEval() {
+      if (evalInput) {
+        evalInput.value = '';
+        evalInput.focus();
+      }
+      if (evalResult) {
+        evalResult.textContent = '';
+        evalResult.title = '';
+        evalResult.classList.remove('error');
+      }
+      showClearWhenTyped();
+    }
+
+    if (evalClear) {
+      evalClear.addEventListener('click', (e) => {
+        e.preventDefault();
+        clearEval();
+      });
+    }
+
+    // Collapsed, the eval bar is a single line saying what it is; open, it is the
+    // input plus its result. Evaluating is occasional and the panel is usually
+    // short of height, so it starts closed and remembers how you left it — like
+    // the two splitter positions.
+    function setEvalCollapsed(collapsed, focusInput) {
+      document.body.classList.toggle('eval-collapsed', collapsed);
+      if (!collapsed && focusInput && evalInput) evalInput.focus();
+      if (vscode.setState) {
+        const state = (vscode.getState ? vscode.getState() : null) || {};
+        state.evalCollapsed = collapsed;
+        vscode.setState(state);
+      }
+      post({ command: 'saveLayout', evalCollapsed: collapsed });
+    }
+
+    if (evalToggle) {
+      const toggle = () =>
+        setEvalCollapsed(!document.body.classList.contains('eval-collapsed'), true);
+      evalToggle.addEventListener('click', toggle);
+      evalToggle.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          toggle();
+        }
+      });
+    }
+
+    // "Evaluate in this frame…" on a frame's context menu: select that frame and
+    // open the bar ready to type, so the menu is a way IN rather than a separate
+    // place the feature lives.
+    if (frameEvalItem) {
+      frameEvalItem.addEventListener('click', (e) => {
+        e.stopPropagation();
+        hideMenu(menu);
+        setEvalCollapsed(false, true);
       });
     }
 
@@ -696,8 +808,8 @@
       // Restore a previously saved ratio when reopening a reloaded webview.
       const saved = vscode.getState ? vscode.getState() : null;
       if (saved && saved.stackBasis) main.style.setProperty('--stack-basis', saved.stackBasis);
-      if (saved && saved.evalHeight && evalbar)
-        evalbar.style.setProperty('--eval-height', saved.evalHeight);
+      if (saved && saved.evalCollapsed != null)
+        document.body.classList.toggle('eval-collapsed', saved.evalCollapsed);
 
       // The basis at mousedown, so endDrag can tell a real drag from a bare click.
       let startBasis = null;
@@ -731,44 +843,6 @@
         e.preventDefault();
         window.addEventListener('mousemove', onMove);
         window.addEventListener('mouseup', endDrag);
-      });
-    }
-
-    // Horizontal splitter: dragging rewrites `--eval-height` (the eval bar's
-    // height). The panes flex-fill the rest, so dragging DOWN shrinks the eval bar
-    // and grows the panes (more stack frames); dragging UP grows the eval bar.
-    // Baseline is the live eval-bar height at mousedown (so the drag tracks 1:1).
-    // Persisted like the column splitter.
-    if (hsplitter && evalbar) {
-      let startY = 0;
-      let startHeight = 0;
-      function onHMove(e) {
-        // The splitter sits above the eval bar, so moving it down (clientY up)
-        // makes the eval bar smaller — hence startY - e.clientY.
-        let h = startHeight + (startY - e.clientY);
-        h = Math.max(42, Math.min(window.innerHeight * 0.75, h));
-        evalbar.style.setProperty('--eval-height', Math.round(h) + 'px');
-      }
-      function endHDrag() {
-        window.removeEventListener('mousemove', onHMove);
-        window.removeEventListener('mouseup', endHDrag);
-        hsplitter.classList.remove('dragging');
-        const height = evalbar.style.getPropertyValue('--eval-height').trim();
-        if (!height) return;
-        if (vscode.setState) {
-          const state = (vscode.getState ? vscode.getState() : null) || {};
-          state.evalHeight = height;
-          vscode.setState(state);
-        }
-        post({ command: 'saveLayout', evalHeight: height });
-      }
-      hsplitter.addEventListener('mousedown', (e) => {
-        startY = e.clientY;
-        startHeight = evalbar.getBoundingClientRect().height;
-        hsplitter.classList.add('dragging');
-        e.preventDefault();
-        window.addEventListener('mousemove', onHMove);
-        window.addEventListener('mouseup', endHDrag);
       });
     }
 
@@ -831,6 +905,7 @@
         renderStack(list, msg.stack);
         // Default-select the top frame so the debugger opens focused on a frame.
         if (msg.stack && msg.stack.length > 0) select(msg.stack[0].level);
+        reportFit();
       } else if (msg.command === 'variables') {
         if (variables) renderVariables(variables, msg.groups, varHandlers);
       } else if (msg.command === 'setVariableResult') {
@@ -849,7 +924,11 @@
         if (dnuBar) dnuBar.innerHTML = '';
       } else if (msg.command === 'evalResult') {
         if (evalResult) {
-          evalResult.textContent = msg.value != null ? msg.value : '';
+          const value = msg.value != null ? msg.value : '';
+          evalResult.textContent = value;
+          // The answer shares one row with the expression, so a long printString
+          // scrolls sideways — the tooltip is how you read the whole of it.
+          evalResult.title = value;
           evalResult.classList.toggle('error', !!msg.isError);
         }
       } else if (msg.command === 'savedNotice') {
