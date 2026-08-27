@@ -57,6 +57,10 @@ const LOGIN_CREDENTIALS =
 // Every name the connection helpers give the password. Shared by the two
 // selectors below, which differ only in the syntax they read it with.
 const PASSWORD_NAMES = '/^(VITE_GEMSTONE_PASSWORD|gsPassword|GS_PASSWORD)$/';
+// Every raw login wrapper on `GciLibrary`, including the non-blocking
+// completion call: a test holding a socket from a non-blocking start finishes
+// its login through `GciTsNbLoginFinished`, and that session is unarmed too.
+const RAW_LOGIN_NAMES = '/^GciTsN?b?Login(_|Finished)?$/';
 const FORKED_GEM =
   'Prefer running the expression on the test context session. A forked gem runs in a session of its own that the harness never armed, and it outlives the test.';
 
@@ -266,10 +270,11 @@ export default tseslint.config(
           // libraries are *named* in assertions all over the unit tests
           // (`expect(gci.GciTsLogin).not.toHaveBeenCalled()`), and flagging
           // those would flag the tests that prove a path does not log in. A
-          // call is the thing that acquires a session. Pulling the wrapper into
-          // a local first would slip past this selector, but not past the
-          // `new GciLibrary` and password bans either side of it.
-          selector: 'CallExpression[callee.property.name=/^GciTsN?b?Login_?$/]',
+          // call is the thing that acquires a session. Matched by `.name` and
+          // `.value` both, as the password selectors below are: in
+          // `gci['GciTsLogin'](...)` the property is a `Literal`, which carries
+          // `.value` and no `.name`.
+          selector: `CallExpression:matches([callee.property.name=${RAW_LOGIN_NAMES}], [callee.property.value=${RAW_LOGIN_NAMES}])`,
           message: RAW_GCI_LOGIN,
         },
         {
