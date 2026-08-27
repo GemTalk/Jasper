@@ -24,9 +24,9 @@ If you already have a GemStone server running on another machine (or locally), y
 
 1. Install the extension from the VS Code Marketplace or Open VSX (links above).
 2. Open the **GemStone** sidebar (gem icon in the activity bar).
-3. Click the **+** button in the **Logins** section to create a new login.
-4. Fill in the connection details: GemStone version, host, stone name, NetLDI, and credentials.
-5. Click **Login** to connect.
+3. In **Logins & Sessions**, click **Add a Login** to open the login editor.
+4. Fill in the connection details, top to bottom: GemStone version, gem host, stone name, NetLDI (service name or port), and your GemStone user/password. **Host User** and **Host Password** are optional — supply them only when the remote NetLDI requires host authentication; leave them blank for a local stone or a guest-mode NetLDI. (Stuck? Click **Help me login** in the login editor for per-field guidance.)
+5. Click **Save**, then click the saved login to connect. A "Connecting…" notification reports success or failure, and the status bar (bottom right) shows the active session — or turns red, click-to-explain, if the connection fails.
 
 The first time you log in with a given GemStone version, Jasper needs the native GCI library (`libgcits`) for that version:
 
@@ -190,9 +190,9 @@ Long-running expressions show a progress notification with soft-break and hard-b
 
 ### GemStone Explorer
 
-The **GemStone Explorer** is the primary way to browse and edit code, and the view to reach for first. It lives in its own activity-bar container as a set of linked panes — **Dictionaries**, **Class Categories**, **Classes**, **Hierarchy**, and **Methods** — plus **Open Editors** for what you have open.
+The **GemStone Explorer** is the primary way to browse and edit code, and the view to reach for first. It lives in its own activity-bar container as a set of linked panes — **Dictionaries**, **Class Categories**, **Classes**, **Hierarchy**, and **Methods**. Your open editors appear as ordinary editor tabs; a status-bar button tallies them and closes them all at once (**GemStone: Close All GemStone Editors**).
 
-Selecting down the panes narrows what the next one shows. Click a method to open its source; **Cmd+S** (Ctrl+S) compiles it back to GemStone. Class definitions and comments are editable the same way.
+Selecting down the panes narrows what the next one shows. Click a method to open its source; **Cmd+S** (Ctrl+S) compiles it back to GemStone. Class definitions and comments are editable the same way. A single click previews a method in one reusable tab, so clicking another replaces it — double-click a method (or use **Keep Method Open**) to keep it open while you browse others.
 
 Beyond browsing, the Explorer is where the code-changing operations live:
 
