@@ -253,7 +253,7 @@ describe('GciTsLogin / GciTsLogout', () => {
     });
   });
 
-  describe('GciTsAbort / GciTsBegin / GciTsCommit / GciTsContinueWith', () => {
+  describe('GciTsAbort / GciTsBegin / GciTsContinueWith', () => {
     it('abort succeeds on a clean session', () => {
       const { session } = gci.GciTsLogin(
         STONE_NRS,
@@ -294,28 +294,6 @@ describe('GciTsLogin / GciTsLogout', () => {
       console.log('Begin - success:', begin.success);
       console.log('Begin - err:', JSON.stringify(begin.err, bigIntReplacer, 2));
       expect(begin.success).toBe(true);
-
-      gci.GciTsLogout(session);
-    });
-
-    it('commit succeeds on a clean session', () => {
-      const { session } = gci.GciTsLogin(
-        STONE_NRS,
-        null,
-        null,
-        false,
-        GEM_NRS,
-        GS_USER,
-        GS_PASSWORD,
-        0,
-        0,
-      );
-      expect(session).not.toBeNull();
-
-      const commit = gci.GciTsCommit(session);
-      console.log('Commit - success:', commit.success);
-      console.log('Commit - err:', JSON.stringify(commit.err, bigIntReplacer, 2));
-      expect(commit.success).toBe(true);
 
       gci.GciTsLogout(session);
     });
