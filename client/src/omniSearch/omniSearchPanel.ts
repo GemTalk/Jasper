@@ -223,9 +223,10 @@ export class OmniSearchPanel {
   /** Reload every cached corpus and re-run the current term. See the static `refresh` for why. */
   private async refresh(): Promise<void> {
     this.panel.webview.postMessage({ command: 'busy', on: true });
-    const view = await this.engine.resync(this.deps.onError);
-    // No view means a pivot is showing — its rows are a fixed list, not a search, so there is nothing
-    // to re-run. The corpora were still rebuilt; just drop the spinner.
+    // `refresh`, not `resync`: an open references list is as stale as the corpora, so it is re-fetched
+    // rather than left alone the way a commit leaves it.
+    const view = await this.engine.refresh(this.deps.onError);
+    // No view means a newer call superseded this one; it will draw its own. Just drop the spinner.
     if (view) this.postView(view);
     else this.panel.webview.postMessage({ command: 'busy', on: false });
   }

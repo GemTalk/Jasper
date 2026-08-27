@@ -1217,7 +1217,7 @@
       // An explicit reload of the cached corpora (classes / dictionaries / globals) plus a re-run of
       // whatever is in the field. Deliberately keeps the query: you press this BECAUSE you want the
       // same search answered against the current state of the image. The host clears the busy flag by
-      // sending the fresh results (or, mid-pivot, a bare `busy: false`).
+      // sending the fresh results — or, if a newer call superseded this one, a bare `busy: false`.
       refreshEl.addEventListener('click', function () {
         setBusy(true);
         post('refresh');

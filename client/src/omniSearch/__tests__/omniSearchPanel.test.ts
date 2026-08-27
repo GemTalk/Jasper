@@ -26,6 +26,7 @@ vi.mock('../omniEngine', () => ({
   createOmniEngine: vi.fn(() => ({
     prime: vi.fn(async () => {}),
     resync: vi.fn(async () => null),
+    refresh: vi.fn(async () => null),
   })),
 }));
 

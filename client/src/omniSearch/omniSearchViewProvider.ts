@@ -63,6 +63,12 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
   // reloaded them yet (see onSessionSynced). Cleared by flushPendingSync, and whenever the engine is
   // dropped or rebuilt — a fresh engine primes its corpora, so there is nothing left to catch up on.
   private syncPending = false;
+  // A newly resolved webview starts with none of the chrome state — no scope tabs, no case flag, no
+  // debounce. `ensureEngine` pushes the config when it BUILDS an engine, which covers the first open
+  // but not a reopen: collapsing the panel disposes the view, and the engine that outlives it still
+  // matches the session, so ensureEngine short-circuits and the fresh webview is never told anything.
+  // This flag makes the `ready` handler responsible for the push when the engine did not do it.
+  private webviewNeedsConfig = false;
   // Fires when the workbench has actually instantiated the view. `focus()` waits on this rather than
   // inspecting `this.view`, which only reports whether the view has EVER been built (it is set once in
   // `resolveWebviewView` and never cleared) and so cannot tell a landed reveal from a lost one.
@@ -72,6 +78,7 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
 
   resolveWebviewView(view: vscode.WebviewView): void {
     this.view = view;
+    this.webviewNeedsConfig = true; // brand-new webview, whether this is the first open or a reopen
     view.webview.options = { enableScripts: true, localResourceRoots: [] };
     view.webview.html = renderOmniHtml({ showPin: false });
     view.webview.onDidReceiveMessage((m: PanelInbound) => void this.onMessage(m));
@@ -130,7 +137,9 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
    *  it on demand (issue #517).
    *
    *  Unlike `onSessionSynced` this is NOT gated on visibility or deferred: the user asked for it now.
-   *  It clears any pending hidden sync, since a full resync is strictly more than that sync owed. */
+   *  It clears any pending hidden sync, since a full reload is strictly more than that sync owed. And it
+   *  calls the engine's `refresh` rather than its `resync`, which is what makes it re-fetch an open
+   *  references list instead of leaving it stale (see the engine). */
   async refresh(): Promise<void> {
     // Never instantiated: there is nothing on screen to refresh, and building an engine here would pay
     // three image-wide GCI executes for a panel the user has not opened (the `gemstone.search.refresh`
@@ -139,9 +148,10 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
     if (!(await this.ensureEngine())) return;
     this.syncPending = false;
     this.post({ command: 'busy', on: true });
-    const view = await this.engine!.resync(this.deps?.onError);
-    // No view means a pivot is showing (the reference rows are not a search, so there is nothing to
-    // re-run). The corpora were still rebuilt, so the refresh did happen — just drop the spinner.
+    // `refresh`, not `resync`: a references list is exactly as stale as the corpora, so an explicit
+    // refresh re-fetches it rather than leaving it alone the way a commit does.
+    const view = await this.engine!.refresh(this.deps?.onError);
+    // No view means a newer call superseded this one; it will draw its own. Just drop the spinner.
     if (view) this.postView(view);
     else this.post({ command: 'busy', on: false });
   }
@@ -251,6 +261,7 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
     this.syncPending = false; // a brand-new engine primes below, so there is no stale corpus to catch up
     this.post({ command: 'error', message: '' }); // clear any prior "log in" notice
     this.post(configMessage(ctx.deps.config, false));
+    this.webviewNeedsConfig = false; // just pushed it
     await this.engine.prime(ctx.deps.onError);
     return true;
   }
@@ -274,6 +285,13 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
     try {
       if (m.command === 'ready') {
         await this.ensureEngine();
+        // A reopen reaches here with an engine that ensureEngine had no reason to rebuild, so the
+        // config it would have pushed never went out. Push it now, or the fresh webview runs with an
+        // empty tab row and a zero debounce until the first search happens to refill them.
+        if (this.webviewNeedsConfig && this.deps) {
+          this.webviewNeedsConfig = false;
+          this.post(configMessage(this.deps.config, false));
+        }
         await this.flushPendingSync();
         this.deliverFocus(); // a focus() that raced the webview load lands the cursor now
         return;

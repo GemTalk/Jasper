@@ -88,6 +88,14 @@ Global "search anything browsable" for the GemStone IDE — the Jasper answer to
      like the sync hooks are — the user asked for it now — and it clears any deferred sync rather than
      paying for both. The control lives in the webview chrome (so both surfaces have it) AND in the
      view's title bar (so it is discoverable where VS Code users look for a refresh).
+
+     It is a SEPARATE engine call from `resync`, not the same one wired to a button, and the difference
+     is the pivot. `resync` deliberately leaves a references list alone — a commit is not a request to
+     disturb what you are reading — but that made the ⟳ look like a dead button for anyone who happened
+     to have one open: the corpora reloaded silently and the stale senders stayed on screen. So
+     `refresh` re-asks the stone who references the row the pivot was taken from (keeping whatever
+     filter is typed into it), and if that row is gone — its method or class deleted — it leaves the
+     pivot rather than keep showing senders of nothing.
    - _Methods_: the selector space is too large to preload, so this provider queries the stone
      **per search term** (debounced, min query length `methodMinQueryLength`), reusing the
      `searchSelectors` machinery. That scan is **bounded and ranked**: it walks every selector of every

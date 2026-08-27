@@ -8,6 +8,7 @@ vi.mock('../omniEngine', () => ({
     prime: vi.fn(async () => {}),
     applyChange: vi.fn(async () => null),
     resync: vi.fn(async () => null),
+    refresh: vi.fn(async () => null),
     search: vi.fn(async () => null),
     state: () => ({ scopeId: null, caseSensitive: false }),
   })),
@@ -366,24 +367,26 @@ describe('GemStone Search docked panel — the refresh button', () => {
 
     await provider.refresh();
 
-    expect(engine.resync).toHaveBeenCalled();
+    // `refresh`, not `resync`: the two differ over an open references list — see the engine tests.
+    expect(engine.refresh).toHaveBeenCalled();
+    expect(engine.resync).not.toHaveBeenCalled();
   });
 
-  it('drops the busy indicator when the resync has no view to redraw (mid-pivot)', async () => {
+  it('drops the busy indicator when a newer call superseded the refresh', async () => {
     const { view, on, engine } = await open();
-    engine.resync.mockResolvedValueOnce(null);
+    engine.refresh.mockResolvedValueOnce(null);
 
     // The provider's message handler is registered as `void this.onMessage(m)`, so the webview message
     // is fire-and-forget — hence waitFor rather than a bare await, here and below.
     void on.message({ command: 'refresh' });
 
-    await vi.waitFor(() => expect(engine.resync).toHaveBeenCalled());
+    await vi.waitFor(() => expect(engine.refresh).toHaveBeenCalled());
     await vi.waitFor(() =>
       expect(view.webview.postMessage).toHaveBeenCalledWith({ command: 'busy', on: false }),
     );
   });
 
-  it('resyncs ONCE when a hidden sync was also outstanding', async () => {
+  it('reloads ONCE when a hidden sync was also outstanding', async () => {
     const { provider, on, engine } = await open(false);
     await provider.onSessionSynced(1); // deferred: the panel is hidden
     expect(engine.resync).not.toHaveBeenCalled();
@@ -391,8 +394,8 @@ describe('GemStone Search docked panel — the refresh button', () => {
     void on.message({ command: 'refresh' });
 
     // Both want the same rebuild; paying for it twice is two image-wide walks for one click.
-    await vi.waitFor(() => expect(engine.resync).toHaveBeenCalledTimes(1));
-    expect(engine.resync).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(engine.refresh).toHaveBeenCalledTimes(1));
+    expect(engine.resync).not.toHaveBeenCalled();
   });
 
   it('builds nothing when the view has never been instantiated', async () => {
@@ -406,5 +409,35 @@ describe('GemStone Search docked panel — the refresh button', () => {
 
     expect(resolveContext).not.toHaveBeenCalled();
     expect(createOmniEngine).not.toHaveBeenCalled();
+  });
+});
+
+describe('GemStone Search docked panel — reopening the view', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('re-sends the config to the fresh webview a reopen creates', async () => {
+    // Collapsing the panel disposes the view; reopening it hands us a brand-new webview with an empty
+    // tab row, no case flag and a zero debounce. The engine that outlives it still matches the session,
+    // so `ensureEngine` has nothing to rebuild — and therefore used to push nothing, leaving the fresh
+    // webview to limp until the first search happened to refill its chrome.
+    const provider = new OmniSearchViewProvider(vi.fn(async () => fakeContext()));
+    const first = fakeView(true);
+    provider.resolveWebviewView(first.view as never);
+    void first.on.message({ command: 'ready' });
+    await vi.waitFor(() => expect(createOmniEngine).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const reopened = fakeView(true);
+    provider.resolveWebviewView(reopened.view as never);
+    void reopened.on.message({ command: 'ready' });
+
+    await vi.waitFor(() =>
+      expect(
+        reopened.view.webview.postMessage.mock.calls.some(
+          (c) => (c[0] as { command?: string }).command === 'config',
+        ),
+      ).toBe(true),
+    );
+    expect(createOmniEngine).toHaveBeenCalledTimes(1); // and without paying for a rebuild
   });
 });
