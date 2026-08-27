@@ -67,6 +67,20 @@ describe('GciLibrary', () => {
     expect(callback).toThrowInstanceOf(GciLibraryError, expectedMessage);
   }
 
+  /**
+   * Asserts that `promise` rejects with a {@link GciLibraryError} with
+   * `expectedMessage`.
+   *
+   * @param promise - The promise expected to reject.
+   * @param expectedMessage - The expected error message.
+   */
+  async function expectToBeRejectedWithGciLibraryError(
+    promise: Promise<unknown>,
+    expectedMessage: string,
+  ) {
+    await expect(promise).rejects.toThrowInstanceOf(GciLibraryError, expectedMessage);
+  }
+
   /** Asserts that the session's PureExportSet stays unchanged across `callback`. */
   function expectPureExportSetToStayUnchanged(callback: () => unknown) {
     expectPureExportSetToGainOnlyOopsProvidedBy(true, () => {
@@ -208,6 +222,53 @@ describe('GciLibrary', () => {
       expectToThrowExpectedGciLibraryError((signalExpectedErrorExpression) => {
         gciLibrary.execute(session, signalExpectedErrorExpression);
       });
+    });
+  });
+
+  describe('evaluating expressions asynchronously', () => {
+    it('returns the result of evaluating an expression', async () => {
+      const resultOop = await gciLibrary.executeAndFetchOop(session, `true`);
+
+      expectOopToBeTrue(resultOop);
+    });
+
+    it('uses nil as the receiver for evaluated code', async () => {
+      const resultOop = await gciLibrary.executeAndFetchOop(session, `self`);
+
+      expectOopToBeNil(resultOop);
+    });
+
+    it('has UserGlobals, Globals, and Published on the symbol list', async () => {
+      // Assert those three standard dictionaries are all on the symbol list, rather
+      // than that they are the *only* ones: an optional payload (e.g. the refactoring
+      // engine's shared GsRefactoring dictionary) may add more without changing that
+      // the standard three resolve.
+      const resultOop = await gciLibrary.executeAndFetchOop(
+        session,
+        `({UserGlobals. Globals. Published} asSet - System myUserProfile symbolList asSet) isEmpty`,
+      );
+
+      expectOopToBeTrue(resultOop);
+    });
+
+    it('executes code in the default environment', async () => {
+      const resultOop = await gciLibrary.executeAndFetchOop(
+        session,
+        `
+                "Object class does not understand #'new' outside environment 0, so this
+                would fail if execute runs code in a non-default environment."
+                Object new.
+                true`,
+      );
+
+      expectOopToBeTrue(resultOop);
+    });
+
+    it('throws when the expression signals an error', async () => {
+      await expectToBeRejectedWithGciLibraryError(
+        gciLibrary.executeAndFetchOop(session, `self error: 'oops'`),
+        'a UserDefinedError occurred (error 2318), reason:halt, oops',
+      );
     });
   });
 
