@@ -20,7 +20,7 @@ import * as q from '../../browserQueries';
 import type { ActiveSession } from '../../sessionManager';
 import { runTestMethod } from '../runTestMethod';
 import { runTestClass } from '../runTestClass';
-import { runFailingTests } from '../runFailingTests';
+import { runFailingTests, MAX_RUN_CLASSES } from '../runFailingTests';
 import { describeTestFailure } from '../describeTestFailure';
 import { discoverAllTestClasses } from './discoverAllTestClasses';
 import {
@@ -30,6 +30,7 @@ import {
   SUNIT_PROBE_FAILING_SELECTOR,
   SUNIT_PROBE_ERRORING_SELECTOR,
 } from './sunitProbeFixture';
+import { installRunLimitProbeClasses } from './runLimitProbeFixture';
 
 describe('SUnit queries (integration)', () => {
   let gci: GciLibrary;
@@ -162,13 +163,34 @@ describe('SUnit queries (integration)', () => {
       expect(abstract).toEqual([]);
     });
 
-    // The blocking-call guard (MAX_RUN_CLASSES) is NOT covered here. Asserting
-    // it end-to-end means branching on the live image's size, and the
-    // within-cap branch runs every discovered suite in one un-interruptible GCI
-    // call — too slow for CI on some stones, and unkillable by a vitest
-    // timeout. It's parked in the on-demand gci project
-    // (src/__tests__/gci/querySunitRunLimit.smoke.test.ts) pending a redesign
-    // that trips the guard deterministically; see that file's header.
+    // The blocking-call guard (MAX_RUN_CLASSES). Both directions are asserted with
+    // a fixture sized on purpose, so the same assertion runs on every matrix cell.
+    it('refuses a discover-all selection over the cap, without running any suite', () => {
+      installRunLimitProbeClasses(exec, MAX_RUN_CLASSES + 1);
+
+      // Whatever the stone already held, the selection is now over the cap.
+      expect(discoverAllTestClasses(exec).length).toBeGreaterThan(MAX_RUN_CLASSES);
+      expect(() => runFailingTests(exec)).toThrow(/too many to run[\s\S]*Narrow the run/);
+    });
+
+    it('runs an at-cap selection and reports its failures', () => {
+      const names = installRunLimitProbeClasses(exec, MAX_RUN_CLASSES);
+
+      const results = runFailingTests(exec, names);
+
+      // One `testFails` row per probe class; `testPasses` is filtered out.
+      expect(results).toHaveLength(MAX_RUN_CLASSES);
+      expect(results.every((r) => r.selector === 'testFails')).toBe(true);
+    });
+
+    // The explicit-classNames path counts what it was handed, before any class is
+    // looked at — deliberately relying on it NOT deduping, which is what makes an
+    // oversized explicit list refuse rather than quietly shrink.
+    it('counts the explicit-classNames selection before running anything', () => {
+      const names = Array.from({ length: MAX_RUN_CLASSES + 1 }, () => SUNIT_PROBE_TEST_CLASS);
+
+      expect(() => runFailingTests(exec, names)).toThrow(/too many to run/);
+    });
   });
 
   describe('describeTestFailure', () => {
