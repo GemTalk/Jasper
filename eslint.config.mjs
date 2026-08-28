@@ -208,7 +208,12 @@ export default tseslint.config(
       ],
       'vitest/require-local-test-context-for-concurrent-snapshots': 'error',
       'vitest/valid-describe-callback': 'error',
-      'vitest/valid-expect': 'error',
+      // Default caps expect() at exactly 1 argument, which also blocks Chai's
+      // legitimate expect(actual, message) form (vitest's own type defs. keep
+      // it: `<T>(actual: T, message?: string) => Assertion<T>`). Raise the
+      // ceiling to 2 so a descriptive failure message stays available; a 0-
+      // or 3+-arg call is still a real mistake and still flagged.
+      'vitest/valid-expect': ['error', { maxArgs: 2 }],
       'vitest/valid-expect-in-promise': 'error',
       'vitest/valid-title': 'error',
     },
