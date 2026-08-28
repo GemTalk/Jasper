@@ -272,6 +272,21 @@ describe('GciLibrary', () => {
     });
   });
 
+  describe('identifying the socket for a session', () => {
+    it('returns the file descriptor of the session socket', () => {
+      expect(gciLibrary.socketFor(session)).toBeGreaterThanOrEqual(0);
+    });
+
+    it('throws when the session socket cannot be identified', () => {
+      testContext.logout();
+
+      expectToThrowGciLibraryError(
+        () => gciLibrary.socketFor(session),
+        'argument is not a valid GciSession pointer',
+      );
+    });
+  });
+
   describe('evaluating expressions for effect only, discarding the result', () => {
     it('evaluates an expression', () => {
       const key = gciLibrary.nextKey();
