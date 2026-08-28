@@ -2368,6 +2368,23 @@ export class GciLibrary {
     return result;
   }
 
+  /**
+   * Returns the file descriptor of `session`'s socket, so a caller can
+   * poll it (e.g. via `poll`/`select`) for readiness instead of blocking
+   * while waiting on a non-blocking GCI call.
+   *
+   * @param session - The GemStone session to operate in.
+   * @returns The session's socket file descriptor.
+   * @throws {GciLibraryError} If the underlying GCI call fails.
+   */
+  public socketFor(session: unknown) {
+    const { fd, err } = this.GciTsSocket(session);
+
+    this.throwUnless(fd >= 0, err);
+
+    return fd;
+  }
+
   // ---------------------------------------------------------------------
   // Message sending
   // ---------------------------------------------------------------------
