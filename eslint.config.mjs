@@ -238,7 +238,7 @@ export default tseslint.config(
     // The other two are the unit tests *of* the login bindings, and they are
     // exempt as whole files because naming those bindings is the whole point of
     // each: `gciLoginQuiet` calls all four raw wrappers to assert the quiet bit
-    // reaches the native layer, and `gciOptionalFunctions` calls the ones an
+    // reaches the native layer, and `missingGciFunctions` calls the ones an
     // older library lacks to assert each throws. Both mock `koffi`, so a call
     // reaches a `vi.fn()` and never a stone -- there is no session to arm, and
     // so nothing for this rule to protect. Matched by basename rather than
@@ -247,7 +247,7 @@ export default tseslint.config(
     ignores: [
       'client/src/__tests__/gci/**',
       '**/gciLoginQuiet.test.ts',
-      '**/gciOptionalFunctions.test.ts',
+      '**/missingGciFunctions.test.ts',
     ],
     rules: {
       'no-restricted-syntax': [
