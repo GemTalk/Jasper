@@ -1,9 +1,15 @@
 import koffi from 'koffi';
 import * as path from 'path';
+import { setTimeout as sleep } from 'timers/promises';
 import { GCI_LOGIN_QUIET, OOP_FALSE, OOP_ILLEGAL, OOP_NIL, OOP_TRUE } from './gciConstants';
 import { GciLibraryError } from './gciLibraryError';
-import { escapeString } from './queries/util';
+import { NativeSocketLibrary } from './nativeSocketLibrary';
 import { NotPromise } from './types';
+import { escapeString } from './queries/util';
+
+// How often to check a pending non-blocking call's socket for readiness.
+// Short enough that a fast call still returns promptly, without busy-spinning.
+const NB_RESULT_POLL_INTERVAL_MS = 15;
 
 // OopType is uint64_t in C; koffi maps this to BigInt in JS
 const OopType = 'uint64';
@@ -345,7 +351,22 @@ export class GciLibrary {
     return this._GciTsNbLogin !== null && this._GciTsNbLoginFinished !== null;
   }
 
-  constructor(libraryPath: string) {
+  /**
+   * @param libraryPath - Path to the platform-native GCI shared library to load.
+   * @param nativeSocketLibrary - Polls a session's socket for non-blocking-call
+   *   readiness (see {@link socketFor}). Native OS `poll`/`WSAPoll` is used
+   *   instead of a Node `net.Socket` because the fd belongs to `libgcits`,
+   *   which does its own blocking `recv` on it: adopting the fd into a
+   *   `net.Socket` unconditionally sets it non-blocking via libuv (breaking
+   *   that `recv`), and any Node-level readiness signal works by actually
+   *   reading data into Node's own buffer, stealing bytes `libgcits`'s `recv`
+   *   is waiting for. A native `poll` call only asks the kernel whether a
+   *   read would block, without reading anything or changing the fd's mode.
+   */
+  constructor(
+    libraryPath: string,
+    private nativeSocketLibrary: NativeSocketLibrary = NativeSocketLibrary.forCurrentPlatform(),
+  ) {
     if (process.platform === 'linux') {
       // libgcits has an undefined reference to HostCreateThread, which is
       // defined in libnetldi. On Linux, dlopen uses RTLD_LOCAL by default,
@@ -2314,8 +2335,7 @@ export class GciLibrary {
    * result OOP is retained in the session's PureExportSet; the caller is
    * responsible for releasing it when no longer needed.
    *
-   * Stub: does not yet poll for readiness, so it still blocks the event
-   * loop while GemStone runs.
+   * Does not block the event loop while GemStone evaluates `code`.
    *
    * @param session - The GemStone session to operate in.
    * @param code - Smalltalk source to evaluate.
@@ -2325,6 +2345,8 @@ export class GciLibrary {
    */
   public async executeAndFetchOop(session: unknown, code: string): Promise<bigint> {
     this.executeNb(session, code);
+
+    await this.waitForNbResult(session);
 
     return this.fetchNbResult(session);
   }
@@ -2352,6 +2374,49 @@ export class GciLibrary {
   }
 
   /**
+   * Blocks (without blocking the event loop) until `session`'s in-flight
+   * non-blocking GCI call is ready to fetch, polling its socket for
+   * readiness rather than waiting on GemStone directly.
+   *
+   * @param session - The GemStone session to operate in.
+   * @throws {GciLibraryError} If checking the socket's readiness fails.
+   */
+  private async waitForNbResult(session: unknown) {
+    while (!this.isNbResultReady(session)) {
+      await this.waitBeforeNextNbResultCheck();
+    }
+  }
+
+  /**
+   * Whether `session`'s in-flight non-blocking GCI call has a result ready
+   * to fetch.
+   *
+   * @param session - The GemStone session to operate in.
+   * @returns `true` if the call is ready to fetch, `false` otherwise.
+   */
+  private isNbResultReady(session: unknown) {
+    try {
+      return this.isSocketReadable(session);
+    } catch (error) {
+      console.warn(
+        `Polling for the result's readiness failed, so the event loop will block until GemStone finishes; the result itself is unaffected: ${error}`,
+      );
+      return true;
+    }
+  }
+
+  private isSocketReadable(session: unknown) {
+    const fd = this.socketFor(session);
+
+    return this.nativeSocketLibrary.isReadable(fd);
+  }
+
+  /** Waits `NB_RESULT_POLL_INTERVAL_MS` before the next readiness check. */
+  private async waitBeforeNextNbResultCheck() {
+    await sleep(NB_RESULT_POLL_INTERVAL_MS);
+  }
+
+  /**
    * Blocks until `session`'s in-flight non-blocking GCI call finishes,
    * and returns its result oop.
    *
@@ -2360,7 +2425,7 @@ export class GciLibrary {
    * @throws {GciLibraryError} If the evaluated code signals an error, or
    *   if the underlying GCI call fails.
    */
-  private fetchNbResult(session: unknown) {
+  public fetchNbResult(session: unknown) {
     const { result, err } = this.GciTsNbResult(session);
 
     this.throwOnIllegalOop(result, err);
@@ -2371,7 +2436,9 @@ export class GciLibrary {
   /**
    * Returns the file descriptor of `session`'s socket, so a caller can
    * poll it (e.g. via `poll`/`select`) for readiness instead of blocking
-   * while waiting on a non-blocking GCI call.
+   * while waiting on a non-blocking GCI call. The fd belongs to `libgcits`,
+   * not Node, so it must be checked with {@link NativeSocketLibrary} rather
+   * than wrapped in a `net.Socket`; see that class's doc comment for why.
    *
    * @param session - The GemStone session to operate in.
    * @returns The session's socket file descriptor.
@@ -2428,8 +2495,8 @@ export class GciLibrary {
    * past its own return (e.g. by returning it, or by capturing it in
    * something that outlives the call): the oop is released the instant
    * `callback` returns, so any use of it afterwards operates on an already
-   * released oop. Async callbacks are rejected at the type level for this
-   * reason; there is no equivalent check for an oop returned directly.
+   * released oop. Only the synchronous part of that contract is enforced;
+   * an oop returned directly is not caught.
    *
    * @param session - The GemStone session to operate in.
    * @param receiverOop - The oop of the message's receiver.

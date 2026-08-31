@@ -1,8 +1,10 @@
 import { GciLibrary } from '../gciLibrary';
 import { afterAll, afterEach, beforeAll, beforeEach, expect } from 'vitest';
+import { NativeSocketLibrary } from '../nativeSocketLibrary';
 
 /** The live GCI state handed to a `useIntegrationTest` callback on every login. */
 export type GciTestContext = {
+  nativeSocketLibrary: NativeSocketLibrary;
   gciLibrary: GciLibrary;
   session: unknown;
   login: (options?: LoginOptions) => void;
@@ -87,6 +89,7 @@ export function useIntegrationTest(
   callback: UseIntegrationTestCallback,
   options?: UseIntegrationTestOptions,
 ) {
+  let nativeSocketLibrary: NativeSocketLibrary;
   let gciLibrary: GciLibrary;
   let session: unknown;
   let originalGemstoneGlobalDir: string | undefined;
@@ -119,7 +122,8 @@ export function useIntegrationTest(
     configureGemstoneGlobalDir();
 
     handleIntegrationTestSetupErrorDuring(() => {
-      gciLibrary = new GciLibrary(process.env.VITE_GEMSTONE_GCI_LIBRARY_PATH!);
+      nativeSocketLibrary = NativeSocketLibrary.forCurrentPlatform();
+      gciLibrary = new GciLibrary(process.env.VITE_GEMSTONE_GCI_LIBRARY_PATH!, nativeSocketLibrary);
       login();
     });
   });
@@ -221,6 +225,7 @@ export function useIntegrationTest(
     if (testTransactionIsOpen) openTestTransaction();
 
     callback({
+      nativeSocketLibrary,
       gciLibrary,
       session,
       login,

@@ -6,7 +6,7 @@ import {
   expectUtf8OopToBeCached,
   expectUtf8OopToResolveViaSymbolLookup,
 } from './support/utf8OopCache';
-
+import { expectEventLoopToRemainResponsiveDuring } from './support/timers';
 describe('GciLibrary', () => {
   let gciLibrary: GciLibrary;
   let session: unknown;
@@ -269,6 +269,38 @@ describe('GciLibrary', () => {
         gciLibrary.executeAndFetchOop(session, `self error: 'oops'`),
         'a UserDefinedError occurred (error 2318), reason:halt, oops',
       );
+    });
+
+    it('does not block the event loop while GemStone evaluates the code', async () => {
+      await expectEventLoopToRemainResponsiveDuring(100, 800, () =>
+        gciLibrary.executeAndFetchOop(session, `(Delay forSeconds: 1) wait. true`),
+      );
+    });
+
+    it('does not allow to execute a new operation while another is in progress', async () => {
+      const firstOperation = gciLibrary.executeAndFetchOop(
+        session,
+        `(Delay forSeconds: 1) wait. true`,
+      );
+
+      await expectToBeRejectedWithGciLibraryError(
+        gciLibrary.executeAndFetchOop(session, `true`),
+        'session has a GciTsNb operation in progress',
+      );
+      await firstOperation;
+    });
+
+    /** Makes the next readiness check on the session's socket throw. */
+    function simulateNativeLibraryError() {
+      vi.spyOn(testContext.nativeSocketLibrary, 'isReadable').mockThrowOnce('oops');
+    }
+
+    it('returns the result when polling for it fails', async () => {
+      simulateNativeLibraryError();
+
+      const result = await gciLibrary.executeAndFetchOop(session, `true`);
+
+      expectOopToBeTrue(result);
     });
   });
 
