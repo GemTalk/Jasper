@@ -1,12 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
+import { GCI_OPTIONAL_FUNCTIONS } from '../gciLibrary/optionalFunctions';
 
 /**
  * Build-time gate for GemStone 3.6.2 compatibility.
  *
- * Some GCI functions were added after 3.6.2 (see the gcits.hf diff of 3.6.2 vs
- * 3.7.5). gciLibrary.ts binds those through `optionalFunc(...)`, which tolerates
+ * Some GCI functions were added after 3.6.2 — `addedIn` in
+ * `gciLibrary/optionalFunctions.ts` records the earliest GemStone release
+ * that exports each one, machine-verified against `vendor/gci-headers/`.
+ * gciLibrary.ts binds those through `optionalFunc(...)`, which tolerates
  * their absence so Jasper still loads and logs in against 3.6.2 — but calling
  * one on a 3.6.2 server throws "<name> is not available in this GCI library".
  *
@@ -18,18 +21,18 @@ import * as path from 'path';
  */
 
 const repoRoot = path.resolve(__dirname, '..', '..', '..');
-const gciLibrarySource = fs.readFileSync(
-  path.join(repoRoot, 'client', 'src', 'gciLibrary.ts'),
-  'utf-8',
-);
 
-/** Source of truth: every function bound via optionalFunc() is version-gated. */
+/**
+ * Source of truth: every optional binding with an `addedIn` floor is absent
+ * from 3.6.2. `absentOn`/`removedIn`-only entries (e.g. `GciTsNbLogin`,
+ * `GciTsEncrypt`) ship in 3.6.2 and are gated on platform/removal, not on
+ * this 3.6.2 floor, so they're excluded here.
+ */
 function gatedFunctions(): string[] {
-  const names = new Set<string>();
-  const re = /optionalFunc\(\s*'([^']+)'/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(gciLibrarySource)) !== null) names.add(m[1]);
-  return [...names].sort();
+  return Object.entries(GCI_OPTIONAL_FUNCTIONS)
+    .filter(([, reason]) => 'addedIn' in reason)
+    .map(([name]) => name)
+    .sort();
 }
 
 /**
@@ -39,16 +42,17 @@ function gatedFunctions(): string[] {
  * decision, and any path using it will throw on a 3.6.2 server.
  */
 const ALLOWED_POST_362: string[] = [
-  // codeExecutor.ts polls with GciTsNbPoll, which doesn't exist before 3.7 —
-  // but the call is guarded by gci.isAvailable('GciTsNbPoll') with a
-  // GciTsSocket + native poll fallback (pollNbResultReady / socketPoll.ts), so
-  // code execution works on 3.6.2 too. Allowlisted because the symbol is still
+  // codeExecutor.ts polls with GciTsNbPoll, added in GemStone 3.7.0 — but the
+  // call is guarded by gci.isAvailable('GciTsNbPoll') with a GciTsSocket +
+  // native poll fallback (pollNbResultReady / socketPoll.ts), so code
+  // execution works on 3.6.2 too. Allowlisted because the symbol is still
   // referenced (on the 3.7+ branch).
   'GciTsNbPoll',
 
   // NOTE: the debugger's named/indexed instVar fetch (debugQueries.ts) used to
-  // require GciTsFetchNamedOops / GciTsFetchVaryingOops, but now uses absolute
-  // GciTsFetchOops (present in 3.6.2), so those are no longer allowlisted.
+  // require GciTsFetchNamedOops (added in 3.7.1) / GciTsFetchVaryingOops
+  // (added in 3.7.1), but now uses absolute GciTsFetchOops (present in
+  // 3.6.2), so those are no longer allowlisted.
 ];
 
 /** Production source roots to scan (tests/mocks and the bindings file excluded). */
@@ -87,12 +91,6 @@ function gatedUsages(gated: string[]): Record<string, string[]> {
 }
 
 describe('GemStone 3.6.2 compatibility gate', () => {
-  it('derives a non-empty set of version-gated functions from gciLibrary.ts', () => {
-    // Guards against the regex silently breaking (which would disable the gate).
-    expect(gatedFunctions().length).toBeGreaterThanOrEqual(16);
-    expect(gatedFunctions()).toContain('GciTsLogin_');
-  });
-
   it('keeps the allowlist a subset of the gated functions (no stale entries)', () => {
     const gated = gatedFunctions();
     const stale = ALLOWED_POST_362.filter((name) => !gated.includes(name));
