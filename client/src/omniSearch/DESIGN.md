@@ -222,7 +222,9 @@ Global "search anything browsable" for the GemStone IDE — the Jasper answer to
    `show()` for a different session takes the same path, which removed its old dispose-and-recreate
    branch. Logging out of the last session is the same event with nothing to bind to: both hosts reset
    and say "Log in to a GemStone session to search" instead of leaving the departed session's rows up —
-   and both DROP THE ENGINE as well. Clearing the screen alone would leave the departed session's primed
+   and both DROP THE ENGINE as well. (The docked panel is always still there to see this; an UNPINNED
+   Spotter has already disposed itself on focus-out by the time you reach the logout, so only a pinned
+   one takes this path.) Clearing the screen alone would leave the departed session's primed
    corpora (and an `activate` closed over its GCI handle) one keystroke away: the docked host's
    `ensureEngine` gate already refused to answer without one, and the Spotter now refuses the same way,
    showing the notice instead of searching. A later login rebinds both.

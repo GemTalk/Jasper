@@ -128,9 +128,11 @@ export class OmniSearchPanel {
    *  now current (issue #517).
    *
    *  `resolveDeps` is a thunk so nothing is built when no Spotter is open. It answering null means
-   *  there is nothing left to search (the last session logged out): the Spotter stays open — it is an
-   *  editor tab the user put there — but is cleared right down to its engine, rather than showing a
-   *  departed session's results. */
+   *  there is nothing left to search (the last session logged out). Reaching that branch at all means a
+   *  PINNED Spotter: an unpinned one is a dialog that disposes on focus-out, so clicking away to log out
+   *  closes it first and `current` is already undefined. A pinned tab is one the user asked to keep, so
+   *  it stays — but it is cleared right down to its engine, rather than showing a departed session's
+   *  results. */
   static onSessionSelectionChanged(resolveDeps: () => OmniPanelDeps | null): void {
     const panel = OmniSearchPanel.current;
     if (!panel) return; // nothing open — don't build providers for a Spotter that isn't there
@@ -223,10 +225,11 @@ export class OmniSearchPanel {
     this.panel.webview.postMessage({ command: 'reset' });
   }
 
-  /** The last session went away. Wiping the screen is not enough: the engine still holds that session's
-   *  primed corpora, and `deps.activate` still closes over its GCI handle, so anything the user typed
-   *  next would answer with rows out of a session that is gone and open documents against it — the very
-   *  failure this hook exists to prevent, just reached through a logout instead of a switch. So the
+  /** The last session went away, with a pinned Spotter still on screen (see onSessionSelectionChanged
+   *  for why it must be pinned to get here). Wiping the screen is not enough: the engine still holds that
+   *  session's primed corpora, and `deps.activate` still closes over its GCI handle, so anything the user
+   *  typed next would answer with rows out of a session that is gone and open documents against it — the
+   *  very failure this hook exists to prevent, just reached through a logout instead of a switch. So the
    *  engine goes too, and `onMessage` shows the notice until a login rebinds us. */
   private clearSession(): void {
     this.engine = undefined;

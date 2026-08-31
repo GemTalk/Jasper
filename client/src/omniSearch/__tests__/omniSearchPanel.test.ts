@@ -131,8 +131,9 @@ describe('OmniSearchPanel session binding', () => {
 
     OmniSearchPanel.onSessionSelectionChanged(() => null);
 
-    // The tab stays (the user put it there) but is wiped and says so, rather than showing the departed
-    // session's rows.
+    // Only a PINNED Spotter gets here — an unpinned one disposes on focus-out, so clicking away to log
+    // out closes it first. A pinned tab is one the user asked to keep, so it stays, but it is wiped and
+    // says so rather than showing the departed session's rows.
     expect(p.webview.postMessage).toHaveBeenCalledWith({ command: 'reset' });
     expect(p.webview.postMessage).toHaveBeenCalledWith({
       command: 'error',
