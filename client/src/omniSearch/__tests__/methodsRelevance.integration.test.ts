@@ -26,6 +26,13 @@ import { OMNI_DEFAULTS } from '../omniConfig';
 import { NEVER_CANCELLED, OmniConfig, OmniResult } from '../omniTypes';
 import type { ActiveSession } from '../../sessionManager';
 
+// How far down the first page `Array>>at:` is allowed to sit. Nothing in the image fixes the exact
+// index — the ranking only promises that `at:` implementors come first, and how many there are (31 on a
+// 3.6.2 base image) and how their class names sort are both image facts we do not want to pin. So the
+// bound is a readability claim, not a measurement: half of `maxResultsPerCategory` is "near the top of
+// the page you are looking at", which is what the bug took away and what the fix has to give back.
+const NEAR_TOP_OF_PAGE = OMNI_DEFAULTS.maxResultsPerCategory / 2;
+
 describe('methods search relevance (integration)', () => {
   let gci: GciLibrary;
   let handle: unknown;
@@ -47,8 +54,12 @@ describe('methods search relevance (integration)', () => {
     expect(rows).toHaveLength(limit);
     // Yet the exact implementors are what came back, `Array>>at:` among them.
     expect(rows.some((r) => r.className === 'Array' && r.selector === 'at:')).toBe(true);
-    // And they lead: everything before the first non-exact row is an `at:` implementor.
+    // And they LEAD: everything before the first non-exact row is an `at:` implementor. Assert the
+    // index was found first — `findIndex` answering -1 would turn the `slice` below into `slice(0, -1)`
+    // and pass vacuously — and then that the exact tier is more than a single row, since one leading hit
+    // would also be true of a scan that merely stumbled on `at:` early.
     const firstInexact = rows.findIndex((r) => r.selector !== 'at:');
+    expect(firstInexact).not.toBe(-1);
     expect(firstInexact).toBeGreaterThan(1);
     expect(rows.slice(0, firstInexact).every((r) => r.selector === 'at:')).toBe(true);
   });
@@ -63,8 +74,9 @@ describe('methods search relevance (integration)', () => {
 
     // The reported bug, in one assertion.
     expect(labels).toContain('Array>>at:');
-    // The rows are ranked, so the exact hits fill the top of the page, not just appear somewhere in it.
-    expect(labels.indexOf('Array>>at:')).toBeLessThan(10);
+    // The rows are ranked, so the exact hits fill the top of the page rather than merely appearing
+    // somewhere in it — see NEAR_TOP_OF_PAGE for why the bound is a readability claim, not a measurement.
+    expect(labels.indexOf('Array>>at:')).toBeLessThan(NEAR_TOP_OF_PAGE);
     expect(labels[0].endsWith('>>at:')).toBe(true);
   });
 

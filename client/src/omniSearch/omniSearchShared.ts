@@ -32,6 +32,10 @@ export const REFERENCES_KEY_HINT_HTML = IS_MAC
  */
 export const OMNI_OPEN_KEY_HINT = IS_MAC ? '⌘⇧A' : 'Ctrl+Shift+A';
 
+/** Shown in both hosts when there is no session to search — on first open before any login, and after
+ *  the last session logs out. Shared so the two hosts cannot drift into saying it differently. */
+export const NO_SESSION_MESSAGE = 'Log in to a GemStone session to search.';
+
 /** Scope-name lookup for the placeholder. */
 const SCOPE_LABEL: Record<string, string> = {
   all: 'everything',

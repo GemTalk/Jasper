@@ -35,6 +35,12 @@ function fakeContext(sessionId = 1): OmniViewContext {
   return { deps: { config, onError: vi.fn() }, sessionId } as unknown as OmniViewContext;
 }
 
+/** The provider registers its webview callback as `void this.onMessage(m)`, so awaiting a message
+ *  returns the moment the handler suspends, not when it finishes. Yield a macrotask to let it run to
+ *  the end — otherwise an in-flight `ready` handler picks up work the test has not posted yet, or the
+ *  assertion runs before the handler's last `postMessage`. */
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
 function fakeView(visible: boolean) {
   const on = { message: (_m: unknown) => Promise.resolve(), visibility: () => {} };
   const view = {
@@ -161,11 +167,6 @@ describe('GemStone Search docked panel — reacting to image changes', () => {
 // add/remove/rename — paid that cost with nothing on screen. See the PR #443 review.
 describe('GemStone Search docked panel — a session sync while hidden', () => {
   beforeEach(() => vi.clearAllMocks());
-
-  // The provider's webview callback is `void this.onMessage(m)`, so awaiting `on.message(...)` returns
-  // the moment the handler suspends, not when it finishes. Yield a macrotask to let it run to the end —
-  // otherwise an in-flight `ready` handler picks up a sync this test hasn't posted yet.
-  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
   async function openThenHide() {
     const provider = new OmniSearchViewProvider(vi.fn(async () => fakeContext()));
@@ -355,7 +356,7 @@ describe('GemStone Search docked panel — the refresh button', () => {
     // let the rest of the handler drain — otherwise its own `flushPendingSync` lands mid-test and looks
     // like the code under test resyncing.
     await vi.waitFor(() => expect(createOmniEngine).toHaveBeenCalled());
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await settle();
     // The LAST engine built, not `results[0]`: `vi.clearAllMocks()` does not empty `mock.results`, so an
     // earlier test's engine can still be sitting at index 0.
     const results = vi.mocked(createOmniEngine).mock.results;
@@ -410,6 +411,50 @@ describe('GemStone Search docked panel — the refresh button', () => {
     expect(resolveContext).not.toHaveBeenCalled();
     expect(createOmniEngine).not.toHaveBeenCalled();
   });
+
+  it('defers the command to the next reveal when the panel is collapsed', async () => {
+    // Collapsing the panel disposes the view, so reloading now would pay three image-wide executes to
+    // post results to a webview nobody is looking at — the same bargain every other catch-up path here
+    // makes. But the request must not be silently dropped, or the panel the user reopens is the stale
+    // one they just asked to refresh.
+    const { provider, view, on, engine } = await open(true);
+    view.visible = false;
+
+    await provider.refresh();
+    expect(engine.refresh).not.toHaveBeenCalled();
+
+    view.visible = true;
+    on.visibility();
+
+    await vi.waitFor(() => expect(engine.refresh).toHaveBeenCalledTimes(1));
+    expect(engine.resync).not.toHaveBeenCalled(); // the refresh subsumes any deferred sync
+  });
+
+  it('still reloads on the webview button while the view reports itself hidden', async () => {
+    // A message from the webview is proof enough that someone is looking, so the ⟳ inside the chrome
+    // skips the visibility gate the palette command honours.
+    const { on, engine } = await open(false);
+
+    void on.message({ command: 'refresh' });
+
+    await vi.waitFor(() => expect(engine.refresh).toHaveBeenCalledTimes(1));
+  });
+
+  it('takes the spinner off when the reload throws', async () => {
+    // The palette command and the title-bar button call `refresh()` as a bare `void`, so a rejection —
+    // resolving senders of a common selector against a busy session, say — used to go unhandled and
+    // leave the panel faded for good.
+    const { provider, view, engine } = await open();
+    engine.refresh.mockRejectedValueOnce(new Error('session busy'));
+
+    await provider.refresh();
+
+    expect(view.webview.postMessage).toHaveBeenCalledWith({
+      command: 'error',
+      message: 'session busy',
+    });
+    expect(view.webview.postMessage).toHaveBeenCalledWith({ command: 'busy', on: false });
+  });
 });
 
 describe('GemStone Search docked panel — reopening the view', () => {
@@ -425,7 +470,7 @@ describe('GemStone Search docked panel — reopening the view', () => {
     provider.resolveWebviewView(first.view as never);
     void first.on.message({ command: 'ready' });
     await vi.waitFor(() => expect(createOmniEngine).toHaveBeenCalled());
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await settle();
 
     const reopened = fakeView(true);
     provider.resolveWebviewView(reopened.view as never);

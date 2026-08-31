@@ -77,17 +77,20 @@ Global "search anything browsable" for the GemStone IDE — the Jasper answer to
      | A class removed (Explorer → Remove Class) | `notifyClassRemoved` → `applyChange`, fired **once per class** because the delete takes the subtree | re-fetch per name; the lookup comes back empty and the entry drops |
      | Dictionary add / remove / rename | `onSymbolListChanged` → `notifySessionSynced` | full `resync` |
      | Commit / abort / file-in | `notifySessionSynced` | full `resync`, deferred while hidden |
-     | The user presses ⟳ / runs `gemstone.search.refresh` | `refresh` | full `resync`, never deferred |
+     | The user presses ⟳ / runs `gemstone.search.refresh` | `refresh` | full reload + the references list; deferred only while the docked panel is collapsed |
 
      Everything else — a global created by evaluating code, a class or method compiled by a workspace
      doit, a class removed by another session — announces nothing this panel can listen for, so short of
      a commit or abort it is not picked up at all. That staleness window is by design but it has no
      upper bound, which is why the **⟳ refresh** exists: it is the user's way to close it on demand,
      without inventing a polling scheme or making every doit fire a corpus reload
-     ([#517](https://github.com/GemTalk/Jasper/issues/517)). It is deliberately NOT gated on visibility
-     like the sync hooks are — the user asked for it now — and it clears any deferred sync rather than
-     paying for both. The control lives in the webview chrome (so both surfaces have it) AND in the
-     view's title bar (so it is discoverable where VS Code users look for a refresh).
+     ([#517](https://github.com/GemTalk/Jasper/issues/517)). It clears any deferred sync rather than
+     paying for both. Pressing ⟳ in the chrome is never deferred — the click proves someone is looking —
+     but running the command while the docked panel is COLLAPSED is: its view is disposed, so the reload
+     would pay three image-wide executes to post results to nobody. That request is remembered
+     (`refreshPending`) and paid on the next reveal, so the panel you come back to is the fresh one you
+     asked for. The control lives in the webview chrome (so both surfaces have it) AND in the view's
+     title bar (so it is discoverable where VS Code users look for a refresh).
 
      It is a SEPARATE engine call from `resync`, not the same one wired to a button, and the difference
      is the pivot. `resync` deliberately leaves a references list alone — a commit is not a request to
@@ -218,7 +221,11 @@ Global "search anything browsable" for the GemStone IDE — the Jasper answer to
    put there (possibly pinned), and the tab, its pin and its loaded HTML are all session-independent.
    `show()` for a different session takes the same path, which removed its old dispose-and-recreate
    branch. Logging out of the last session is the same event with nothing to bind to: both hosts reset
-   and say "Log in to a GemStone session to search" instead of leaving the departed session's rows up.
+   and say "Log in to a GemStone session to search" instead of leaving the departed session's rows up —
+   and both DROP THE ENGINE as well. Clearing the screen alone would leave the departed session's primed
+   corpora (and an `activate` closed over its GCI handle) one keystroke away: the docked host's
+   `ensureEngine` gate already refused to answer without one, and the Spotter now refuses the same way,
+   showing the notice instead of searching. A later login rebinds both.
 
 ## Module map (`client/src/omniSearch/`)
 
