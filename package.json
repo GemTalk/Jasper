@@ -267,6 +267,17 @@
       {
         "title": "GemStone",
         "properties": {
+          "gemstone.stepPoints.display": {
+            "type": "string",
+            "enum": ["off", "debugging", "always"],
+            "enumDescriptions": [
+              "Never number step points.",
+              "Number step points while a debug session is running (default) \u2014 they are what you want when reasoning about where execution is, and clutter the rest of the time.",
+              "Always number step points in GemStone method source."
+            ],
+            "default": "debugging",
+            "markdownDescription": "When to number step points in GemStone method source, drawn as inlay hints. Each number is clickable and toggles a breakpoint at that step point. Whatever this is set to, hovering a step point always reports its number, and `#gemstone.breakpoints.toggleStepPoints#` flips the numbers on or off. Use the editor's own `#editor.inlayHints.enabled#` to restyle or suppress inlay hints everywhere."
+          },
           "gemstone.gciLibraries": {
             "type": "object",
             "default": {},
@@ -619,6 +630,12 @@
           "type": "tree",
           "icon": "$(remote-explorer)",
           "visibility": "collapsed"
+        },
+        {
+          "id": "gemstoneBreakpoints",
+          "name": "Breakpoints",
+          "icon": "$(debug-breakpoint)",
+          "type": "tree"
         },
         {
           "id": "gemstoneInspector",
@@ -1196,10 +1213,108 @@
         "icon": "$(arrow-right)"
       },
       {
-        "command": "gemstone.toggleSelectorBreakpoint",
-        "title": "Toggle Selector Breakpoint",
+        "command": "gemstone.breakpoints.toggleAtCursor",
+        "title": "Toggle Breakpoint at Cursor",
         "category": "GemStone",
         "icon": "$(debug-breakpoint)"
+      },
+      {
+        "command": "gemstone.breakpoints.enableAtCursor",
+        "title": "Enable Breakpoint at Cursor",
+        "category": "GemStone",
+        "icon": "$(debug-breakpoint)"
+      },
+      {
+        "command": "gemstone.breakpoints.disableAtCursor",
+        "title": "Disable Breakpoint at Cursor",
+        "category": "GemStone",
+        "icon": "$(debug-breakpoint-disabled)"
+      },
+      {
+        "command": "gemstone.breakpoints.clearMethod",
+        "title": "Clear All Breakpoints in Method",
+        "category": "GemStone",
+        "icon": "$(debug-breakpoint-unsupported)"
+      },
+      {
+        "command": "gemstone.breakpoints.enableAll",
+        "title": "Enable All Breakpoints",
+        "category": "GemStone",
+        "icon": "$(debug-breakpoint)"
+      },
+      {
+        "command": "gemstone.breakpoints.disableAll",
+        "title": "Disable All Breakpoints",
+        "category": "GemStone",
+        "icon": "$(debug-breakpoint-disabled)"
+      },
+      {
+        "command": "gemstone.breakpoints.removeAll",
+        "title": "Remove All Breakpoints",
+        "category": "GemStone",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "gemstone.breakpoints.refresh",
+        "title": "Refresh Breakpoints",
+        "category": "GemStone",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "gemstone.breakpoints.toggleStepPoints",
+        "title": "Toggle Step Point Numbers",
+        "category": "GemStone",
+        "icon": "$(symbol-numeric)"
+      },
+      {
+        "command": "gemstone.breakpoints.reveal",
+        "title": "Reveal Breakpoint in Source",
+        "category": "GemStone",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "gemstone.breakpoints.remove",
+        "title": "Remove Breakpoint",
+        "category": "GemStone",
+        "icon": "$(close)"
+      },
+      {
+        "command": "gemstone.breakpoints.enable",
+        "title": "Enable Breakpoint",
+        "category": "GemStone",
+        "icon": "$(debug-breakpoint)"
+      },
+      {
+        "command": "gemstone.breakpoints.disable",
+        "title": "Disable Breakpoint",
+        "category": "GemStone",
+        "icon": "$(debug-breakpoint-disabled)"
+      },
+      {
+        "command": "gemstone.breakpoints.clearClass",
+        "title": "Clear Breakpoints in Class",
+        "category": "GemStone",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "gemstone.breakpoints.toggleAtStepPoint",
+        "title": "Toggle Breakpoint at Step Point",
+        "category": "GemStone"
+      },
+      {
+        "command": "gemstone.breakpoints.enableAtStepPoint",
+        "title": "Enable Breakpoint at Step Point",
+        "category": "GemStone"
+      },
+      {
+        "command": "gemstone.breakpoints.disableAtStepPoint",
+        "title": "Disable Breakpoint at Step Point",
+        "category": "GemStone"
+      },
+      {
+        "command": "gemstone.breakpoints.clearAtStepPoint",
+        "title": "Clear Breakpoint at Step Point",
+        "category": "GemStone"
       },
       {
         "command": "gemstone.refreshVersions",
@@ -1941,6 +2056,42 @@
     "menus": {
       "commandPalette": [
         {
+          "command": "gemstone.breakpoints.toggleAtStepPoint",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.breakpoints.enableAtStepPoint",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.breakpoints.disableAtStepPoint",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.breakpoints.clearAtStepPoint",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.breakpoints.reveal",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.breakpoints.remove",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.breakpoints.enable",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.breakpoints.disable",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.breakpoints.clearClass",
+          "when": "false"
+        },
+        {
           "command": "gemstone.explorer.classClicked",
           "when": "false"
         },
@@ -2168,6 +2319,26 @@
           "group": "navigation@0"
         },
         {
+          "command": "gemstone.breakpoints.enableAll",
+          "when": "view == gemstoneBreakpoints",
+          "group": "navigation@0"
+        },
+        {
+          "command": "gemstone.breakpoints.disableAll",
+          "when": "view == gemstoneBreakpoints",
+          "group": "navigation@1"
+        },
+        {
+          "command": "gemstone.breakpoints.removeAll",
+          "when": "view == gemstoneBreakpoints",
+          "group": "navigation@2"
+        },
+        {
+          "command": "gemstone.breakpoints.refresh",
+          "when": "view == gemstoneBreakpoints",
+          "group": "navigation@3"
+        },
+        {
           "command": "gemstone.clearTestResults",
           "when": "view == gemstoneExplorerClasses"
         },
@@ -2351,6 +2522,31 @@
         }
       ],
       "view/item/context": [
+        {
+          "command": "gemstone.breakpoints.reveal",
+          "when": "view == gemstoneBreakpoints && viewItem == gemstoneBreakpoint",
+          "group": "inline@0"
+        },
+        {
+          "command": "gemstone.breakpoints.remove",
+          "when": "view == gemstoneBreakpoints && viewItem =~ /^gemstoneBreakpoint(Doit)?$/",
+          "group": "inline@1"
+        },
+        {
+          "command": "gemstone.breakpoints.enable",
+          "when": "view == gemstoneBreakpoints && viewItem =~ /^gemstoneBreakpoint(Doit)?$/",
+          "group": "1_state@0"
+        },
+        {
+          "command": "gemstone.breakpoints.disable",
+          "when": "view == gemstoneBreakpoints && viewItem =~ /^gemstoneBreakpoint(Doit)?$/",
+          "group": "1_state@1"
+        },
+        {
+          "command": "gemstone.breakpoints.clearClass",
+          "when": "view == gemstoneBreakpoints && viewItem == gemstoneBreakpointClass",
+          "group": "inline@0"
+        },
         {
           "command": "gemstone.explorer.renameClassCategory",
           "when": "view == gemstoneExplorerCategories && viewItem == explorerCategory",
@@ -2919,6 +3115,13 @@
           "when": "view == gemstoneDatabases && viewItem == gemstoneDb"
         }
       ],
+      "editor/title": [
+        {
+          "command": "gemstone.breakpoints.toggleStepPoints",
+          "when": "resourceScheme == gemstone && resourceLangId == gemstone-smalltalk",
+          "group": "navigation@0"
+        }
+      ],
       "editor/context": [
         {
           "command": "gemstone.displayIt",
@@ -2956,9 +3159,29 @@
           "group": "2_navigation@1"
         },
         {
-          "command": "gemstone.toggleSelectorBreakpoint",
+          "command": "gemstone.breakpoints.toggleAtCursor",
           "when": "editorTextFocus && resourceLangId == gemstone-smalltalk",
           "group": "3_gemstoneBreakpoints@0"
+        },
+        {
+          "command": "gemstone.breakpoints.enableAtCursor",
+          "when": "editorTextFocus && resourceLangId == gemstone-smalltalk",
+          "group": "3_gemstoneBreakpoints@1"
+        },
+        {
+          "command": "gemstone.breakpoints.disableAtCursor",
+          "when": "editorTextFocus && resourceLangId == gemstone-smalltalk",
+          "group": "3_gemstoneBreakpoints@2"
+        },
+        {
+          "command": "gemstone.breakpoints.clearMethod",
+          "when": "editorTextFocus && resourceLangId == gemstone-smalltalk",
+          "group": "3_gemstoneBreakpoints@3"
+        },
+        {
+          "command": "gemstone.breakpoints.toggleStepPoints",
+          "when": "editorTextFocus && resourceLangId == gemstone-smalltalk",
+          "group": "3_gemstoneBreakpoints@4"
         }
       ],
       "editor/title": [
@@ -3013,6 +3236,11 @@
       }
     ],
     "keybindings": [
+      {
+        "command": "gemstone.breakpoints.toggleAtCursor",
+        "key": "shift+f9",
+        "when": "editorTextFocus && resourceScheme == gemstone && gemstone.hasActiveSession"
+      },
       {
         "command": "gemstone.explorer.openSelectedMethodToSide",
         "key": "ctrl+enter",
