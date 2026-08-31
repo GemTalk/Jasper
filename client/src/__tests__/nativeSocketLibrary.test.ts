@@ -2,7 +2,8 @@ import { closeSync, openSync } from 'fs';
 import { connect, createServer, Socket } from 'net';
 import { describe, expect, it, afterEach } from 'vitest';
 import { NativeSocketLibrary } from '../nativeSocketLibrary';
-import { onSupportedPosixDescribe, onSupportedWindowsDescribe } from './platformGates';
+// BISECT: onSupportedWindowsDescribe temporarily unused, see below.
+import { onSupportedPosixDescribe } from './platformGates';
 import { changeProcessPlatformDuring } from './support/process';
 import {
   openRawReadableSocket,
@@ -188,7 +189,10 @@ describe('Native socket library', () => {
     // Node's `net.Socket` entirely (its `.fd`/`_handle.fd` is documented to
     // return -1 on Windows), so this drives `ws2_32.dll`'s own
     // `socket`/`connect` directly. See `support/rawWindowsSocket.ts`.
-    onSupportedWindowsDescribe('using a real socket and the real native WSAPoll call', () => {
+    // BISECT: temporarily forced to skip, to check whether this block is
+    // the cause of CI's "Worker exited unexpectedly" crash on
+    // windows-latest. Revert this line once the bisection run lands.
+    describe.skip('using a real socket and the real native WSAPoll call', () => {
       // No case here for a genuine WSAPoll() syscall failure (the fake
       // library's "throws an error when the poll call fails" above):
       // `isReadable` always polls with a 0ms timeout, so there's no
