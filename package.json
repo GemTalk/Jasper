@@ -236,7 +236,7 @@
             "default": 200,
             "minimum": 20,
             "maximum": 20000,
-            "markdownDescription": "How many matches the **Methods** search collects from the stone before it stops looking.\n\nThat search walks every selector of every class in your symbol list, so it gives up early to keep searching-as-you-type fast. This is a limit on the *results*, not just on the time: when a search stops here, no amount of **Load more** or **Load all** can reach the matches beyond it — the footer says `Methods scan capped at 200` when that happens.\n\nRaise it to cast a wider net on broad terms (`add`, `at:`), at the cost of a slower search on every keystroke. Narrowing your search term is usually faster than raising this."
+            "markdownDescription": "How many matching methods the **Methods** search brings back from the stone.\n\nThat search walks every selector of every class in your symbol list and keeps the best matches — an exact selector first, then ones starting with your term, then ones merely containing it — so what this limit cuts off is the least relevant tail. It is a limit on the *results*: when a search is cut off here, no amount of **Load more** or **Load all** can reach the matches beyond it — the footer says `Methods scan capped at 200` when that happens.\n\nRaise it to cast a wider net on broad terms (`add`, `at:`), at the cost of a bigger fetch on every keystroke. Narrowing your search term is usually faster than raising this."
           },
           "gemstone.omniSearch.referencesInPreview": {
             "type": "boolean",
@@ -1193,6 +1193,12 @@
         "title": "GemStone Search…",
         "category": "GemStone",
         "icon": "$(search-fuzzy)"
+      },
+      {
+        "command": "gemstone.search.refresh",
+        "title": "Refresh GemStone Search",
+        "category": "GemStone",
+        "icon": "$(refresh)"
       },
       {
         "command": "gemstone.findMethodInClass",
@@ -2313,6 +2319,11 @@
         }
       ],
       "view/title": [
+        {
+          "command": "gemstone.search.refresh",
+          "when": "view == gemstoneOmniSearchView",
+          "group": "navigation@0"
+        },
         {
           "command": "gemstone.breakpoints.enableAll",
           "when": "view == gemstoneBreakpoints",

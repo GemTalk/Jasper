@@ -32,6 +32,10 @@ export const REFERENCES_KEY_HINT_HTML = IS_MAC
  */
 export const OMNI_OPEN_KEY_HINT = IS_MAC ? '⌘⇧A' : 'Ctrl+Shift+A';
 
+/** Shown in both hosts when there is no session to search — on first open before any login, and after
+ *  the last session logs out. Shared so the two hosts cannot drift into saying it differently. */
+export const NO_SESSION_MESSAGE = 'Log in to a GemStone session to search.';
+
 /** Scope-name lookup for the placeholder. */
 const SCOPE_LABEL: Record<string, string> = {
   all: 'everything',
@@ -514,7 +518,7 @@ export function renderOmniHtml(opts: { showPin: boolean }): string {
     /* Two controls over what a search COSTS: the preview-pane toggle and the All-scope filter.
        Kept in their own block (and shaped to match the case chip rather than editing its rule) so
        this stays an additive hunk. No backticks anywhere in here - this is a template literal. */
-    #previewToggle, #scopeFilter, #matchMode {
+    #previewToggle, #scopeFilter, #matchMode, #refresh {
       flex: 0 0 auto;
       padding: 5px 9px;
       border: 1px solid var(--vscode-input-border, transparent);
@@ -531,6 +535,11 @@ export function renderOmniHtml(opts: { showPin: boolean }): string {
       border-color: var(--vscode-button-background);
       opacity: 1;
     }
+    /* An action, not a mode: it has no on/off state, and while the reload is out to the stone the whole
+       body carries .busy, which fades it with the rest of the chrome. No backticks in here -- this
+       stylesheet lives inside a template literal. */
+    #refresh { font-size: 1.05em; line-height: 1; }
+    #refresh:hover { color: var(--vscode-foreground); opacity: 1; }
     /* The algorithm chip always shows its CURRENT value as text, so it needs no on/off state. */
     #matchMode {
       background: var(--vscode-button-background);
@@ -591,6 +600,7 @@ export function renderOmniHtml(opts: { showPin: boolean }): string {
         <input id="query" type="text" autocomplete="off" spellcheck="false" placeholder="Search…" aria-label="GemStone Search">
         <button id="clear" title="Clear search" aria-label="Clear search" style="display:none">×</button>
       </div>
+      <button id="refresh" title="Reload classes, methods and globals from the stone -- picks up code created or removed by executing it" aria-label="Refresh from the stone">&#10227;</button>
       <button id="case" title="Case sensitivity" aria-pressed="false">Aa</button>
       <button id="previewToggle" title="Show the source preview" aria-label="Show the source preview" aria-pressed="true">&#9707;</button>
       <span id="scopeFilterWrap">
