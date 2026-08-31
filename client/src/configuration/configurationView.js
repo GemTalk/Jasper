@@ -249,7 +249,7 @@
         </div>
         ${errLine}
         ${configTable('Stone', 'stone', lastConfig.stoneParams)}
-        ${configTable('Session (Gem)', 'gem', lastConfig.gemParams)}`;
+        ${configTable('Gem', 'gem', lastConfig.gemParams)}`;
     }
     return head + body;
   }
@@ -323,13 +323,18 @@
     setNotice = null;
   }
 
-  // A case-insensitive prefix match on the parameter name: typing "Gem" shows the
-  // Gem* parameters, not every key that merely contains "gem" (e.g. StnGemTimeout).
-  // Done in place so typing never triggers a full re-render (which would drop focus).
+  // A case-insensitive substring match on the parameter name. The report runs to
+  // ~160 stone parameters, and the word someone reaches for to narrow it is
+  // usually in the middle of the name — "cache", "sessions", "timeout" — none of
+  // which a prefix match would find (StnGemTimeout does not start with "timeout",
+  // SHR_PAGE_CACHE_SIZE_KB does not start with "cache"). Matching anywhere in the
+  // key means the obvious word works, at the cost of "Gem" also keeping
+  // StnGemTimeout on screen. Done in place so typing never triggers a full
+  // re-render (which would drop focus).
   function applyConfigFilter() {
     const needle = configFilter.trim().toLowerCase();
     els.root.querySelectorAll('tr.config-item').forEach((row) => {
-      const match = !needle || row.dataset.configKey.startsWith(needle);
+      const match = !needle || row.dataset.configKey.includes(needle);
       row.style.display = match ? '' : 'none';
     });
   }

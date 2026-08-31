@@ -189,6 +189,28 @@ describe('configValueLiteral', () => {
     expect(() => configValueLiteral('integer', '+5')).toThrow(ConfigValueError);
     expect(() => configValueLiteral('integer', '')).toThrow(ConfigValueError);
   });
+
+  // A string value is the only user-typed text spliced into emitted Smalltalk,
+  // so it is where the module's ASCII-only rule has to actually be enforced.
+  it('rejects a non-ASCII character in a string value', () => {
+    expect(() => configValueLiteral('string', '/tmp/caf\u00e9')).toThrow(ConfigValueError);
+    // The character someone pastes without noticing: a typographic quote.
+    expect(() => configValueLiteral('string', '\u201chello\u201d')).toThrow(ConfigValueError);
+    expect(() => configValueLiteral('string', '25\u00b0')).toThrow(ConfigValueError);
+  });
+  it('says what is wrong with a non-ASCII value rather than failing on the stone', () => {
+    expect(() => configValueLiteral('string', '\u201cx\u201d')).toThrow(/ASCII/);
+  });
+  it('rejects control characters that would split the emitted doit', () => {
+    expect(() => configValueLiteral('string', 'a\nb')).toThrow(ConfigValueError);
+    expect(() => configValueLiteral('string', 'a\tb')).toThrow(ConfigValueError);
+  });
+  it('accepts the printable ASCII a path or an argument list is made of', () => {
+    expect(configValueLiteral('string', '/opt/gemstone/data -q ~x#1')).toBe(
+      "'/opt/gemstone/data -q ~x#1'",
+    );
+    expect(configValueLiteral('string', '')).toBe("''");
+  });
 });
 
 describe('buildSetConfigCode', () => {
@@ -210,6 +232,13 @@ describe('buildSetConfigCode', () => {
   });
   it('refuses a key that does not start with a letter', () => {
     expect(() => buildSetConfigCode('gem', '9Bad', 'integer', '1')).toThrow(ConfigValueError);
+  });
+  it('refuses to build a doit carrying a non-ASCII string value', () => {
+    // The guard has to hold here too, not just in configValueLiteral: this is
+    // the function that hands finished Smalltalk to the gem.
+    expect(() => buildSetConfigCode('gem', 'GemName', 'string', 'caf\u00e9')).toThrow(
+      ConfigValueError,
+    );
   });
 });
 

@@ -12,7 +12,7 @@ import { LoginStorage } from './loginStorage';
 import { getLoginPassword, deleteLoginPassword } from './loginCredentials';
 import { runStopStone } from './stopStoneManager';
 import { LoginTreeProvider, GemStoneLoginItem, GemStoneSessionItem } from './loginTreeProvider';
-import { ConfigurationPanel } from './configurationPanel';
+import { showConfigurationCommand } from './configuration/showConfigurationCommand';
 import {
   DEFAULT_GS_PW,
   GemStoneLogin,
@@ -1948,30 +1948,14 @@ export function activate(context: vscode.ExtensionContext) {
       openWorkspaceForSession(sessionManager, item),
     ),
 
-    // Open the standalone Session Configuration panel for a session. Reached from a
-    // session row (configuration is session-scoped); it also accepts a connected
-    // login's row, and with no row it falls back to the selected session, so the
+    // Open the standalone Session Configuration panel for a session. Registered on
+    // session rows, because configuration is session-scoped and only a session row
+    // names one session; with no row it falls back to the selected session, so the
     // command palette works too.
     vscode.commands.registerCommand(
-      'gemstone.showConfiguration',
-      (item?: GemStoneSessionItem | GemStoneLoginItem) => {
-        let session: ActiveSession | undefined;
-        if (item instanceof GemStoneSessionItem) {
-          session = item.activeSession;
-        } else if (item instanceof GemStoneLoginItem) {
-          const label = loginLabel(item.login);
-          session = sessionManager.getSessions().find((s) => loginLabel(s.login) === label);
-        } else {
-          session = sessionManager.getSelectedSession();
-        }
-        if (!session) {
-          vscode.window.showInformationMessage(
-            'Log in to a GemStone session to view its configuration.',
-          );
-          return;
-        }
-        ConfigurationPanel.show({ sessionManager, storage: sysadminStorage }, session.id);
-      },
+      'gemstone.showSessionConfiguration',
+      (item?: GemStoneSessionItem) =>
+        showConfigurationCommand({ sessionManager, sysadminStorage }, item),
     ),
 
     vscode.commands.registerCommand('gemstone.rowanFindClassPackage', async () => {

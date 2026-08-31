@@ -923,7 +923,7 @@
         "icon": "$(notebook)"
       },
       {
-        "command": "gemstone.showConfiguration",
+        "command": "gemstone.showSessionConfiguration",
         "title": "Session Configuration",
         "category": "GemStone",
         "icon": "$(settings-gear)"
@@ -2766,7 +2766,7 @@
           "group": "inline@3"
         },
         {
-          "command": "gemstone.showConfiguration",
+          "command": "gemstone.showSessionConfiguration",
           "when": "view == gemstoneLogins && viewItem == gemstoneSession",
           "group": "inline@4"
         },

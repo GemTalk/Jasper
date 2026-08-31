@@ -1,7 +1,7 @@
 // Session Configuration panel — a standalone editor-tab webview that shows one logged-in
 // session's stone and gem configuration and lets an editable value be changed.
 // It is also where a session's live maintenance happens (Ping). Opened from the
-// session's row in the Logins view (see the gemstone.showConfiguration command).
+// session's row in the Logins view (see the gemstone.showSessionConfiguration command).
 // One panel per session, so two sessions' configuration can be compared side by
 // side; a panel closes itself when its session logs out.
 //
@@ -13,8 +13,8 @@
 // was changed. A load failure (a busy or logged-out session) is a
 // `configurationError` shown at the top instead.
 //
-// Follows the webview conventions established in debuggerPanel.ts /
-// gemstoneManagerView.js: createWebviewPanel with a strict CSP, all styles inline
+// Follows the webview conventions established in debuggerPanel.ts:
+// createWebviewPanel with a strict CSP, all styles inline
 // in the host HTML, all behavior in a companion configurationView.js read at
 // module load and injected as a nonce'd <script>. It takes a dependency bag
 // rather than importing extension.ts, to avoid a circular import.
@@ -24,12 +24,12 @@ import * as crypto from 'crypto';
 import * as path from 'path';
 import * as fs from 'fs';
 
-import { SysadminStorage } from './sysadminStorage';
-import { SessionManager, ActiveSession } from './sessionManager';
-import { loginLabel } from './loginTypes';
-import { readWebviewScript } from './webviewAssets';
-import { appendSysadmin } from './sysadminChannel';
-import { defaultQueryExecutorUsing } from './browserQueries';
+import { SysadminStorage } from '../sysadminStorage';
+import { SessionManager, ActiveSession } from '../sessionManager';
+import { loginLabel } from '../loginTypes';
+import { readWebviewScript } from '../webviewAssets';
+import { appendSysadmin } from '../sysadminChannel';
+import { defaultQueryExecutorUsing } from '../browserQueries';
 import {
   stoneConfiguration,
   gemConfiguration,
@@ -43,7 +43,7 @@ import {
 } from './queries/configurationReport';
 import { parseConfigDescriptions, descriptionFor } from './gemstoneConfigDescriptions';
 
-const configurationViewJs = readWebviewScript('configurationView.js');
+const configurationViewJs = readWebviewScript('configurationView.js', 'configuration');
 
 /** What the panel needs to read and write a session's configuration. */
 export interface ConfigurationPanelDeps {
@@ -146,11 +146,6 @@ export class ConfigurationPanel {
       },
     );
     ConfigurationPanel.panels.set(sessionId, new ConfigurationPanel(panel, deps, sessionId));
-  }
-
-  /** Close every open Session Configuration panel; a no-op when none are open. */
-  static close(): void {
-    for (const panel of [...ConfigurationPanel.panels.values()]) panel.dispose();
   }
 
   private constructor(
@@ -285,7 +280,7 @@ export class ConfigurationPanel {
         this.setResult(scope, key, 'warn', result.message ?? `Could not set ${key}.`);
         return;
       }
-      appendSysadmin(`Configuration: set ${scope} configuration ${key} = ${value}`);
+      appendSysadmin(`Session Configuration: set ${scope} configuration ${key} = ${value}`);
 
       const config = this.readConfiguration(session);
       void this.panel.webview.postMessage({ command: 'configuration', config });
@@ -312,12 +307,12 @@ export class ConfigurationPanel {
 
   /** The outcome of a set, shown by the panel beside the row it belongs to. */
   private setResult(scope: ConfigScope, key: string, tone: 'ok' | 'warn', message: string): void {
-    if (tone === 'warn') appendSysadmin(`Configuration: ${message}`);
+    if (tone === 'warn') appendSysadmin(`Session Configuration: ${message}`);
     void this.panel.webview.postMessage({ command: 'setResult', scope, key, tone, message });
   }
 
   private configurationError(message: string): void {
-    appendSysadmin(`Configuration: ${message}`);
+    appendSysadmin(`Session Configuration: ${message}`);
     void this.panel.webview.postMessage({ command: 'configurationError', message });
   }
 

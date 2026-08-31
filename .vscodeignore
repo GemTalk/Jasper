@@ -69,7 +69,7 @@ client/src/**
 !client/src/listFilter.js
 !client/src/methodListView.js
 !client/src/debuggerView.js
-!client/src/configurationView.js
+!client/src/configuration/configurationView.js
 !client/src/browserColumnResize.js
 !client/src/enhancedInspector/enhancedInspectorColumns.js
 !client/src/refactoring/renameInstVarPanelView.js

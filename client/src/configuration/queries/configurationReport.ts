@@ -1,8 +1,8 @@
 // Query layer for the stone and gem CONFIGURATION reports — the values behind
 // `System stoneConfigurationReport` and `System gemConfigurationReport`, which
 // each answer a SymbolDictionary of configuration parameter name -> current
-// value. The GemStone Manager renders these so an admin can see what a live
-// session is actually running with, and change the runtime-settable ones.
+// value. The Session Configuration panel renders these so an admin can see what
+// a live session is actually running with, and change the runtime-settable ones.
 //
 // Two naming conventions appear as keys in the same report, and they mean
 // different things:
@@ -20,8 +20,12 @@
 // the authority — {@link setConfiguration} surfaces its exact verdict.
 //
 // All emitted Smalltalk is ASCII-only (the 3.6.x ComStrmSetCursor bug) and
-// evaluates to a verbatim String, matching the other query modules.
-import { QueryExecutor } from './types';
+// evaluates to a verbatim String, matching the other query modules. Every part
+// that could carry a user's characters is gated to hold that: the key against
+// KEY_SHAPE, a boolean or integer against its own regex, and a string value
+// against printable ASCII (see {@link configValueLiteral}), which reports a bad
+// character as a message in the panel instead of letting 3.6.x fail obscurely.
+import { QueryExecutor } from '../../queries/types';
 
 /** Which report a parameter came from — decides which setter applies. */
 export type ConfigScope = 'stone' | 'gem';
@@ -190,6 +194,13 @@ export function sessionIsSystemUser(execute: QueryExecutor): boolean {
 // take before it goes anywhere near the gem.
 const KEY_SHAPE = /^[A-Za-z][A-Za-z0-9_]*$/;
 
+// The printable ASCII range (space through `~`). A string value is the only
+// thing a user types that reaches the gem verbatim, so it is checked against
+// this before it is turned into a literal — see the module header's ASCII-only
+// rule. Tab and newline are excluded along with everything above 0x7e: a
+// configuration value has no use for them, and they would split the doit.
+const ASCII_PRINTABLE = /^[\x20-\x7e]*$/;
+
 export class ConfigValueError extends Error {}
 
 /**
@@ -211,6 +222,18 @@ export function configValueLiteral(type: ConfigValueType, value: string): string
       return v;
     }
     case 'string':
+      // The one place a user's own characters are spliced into emitted Smalltalk,
+      // so it is also the one place the module's ASCII-only rule has to be
+      // enforced rather than assumed: on 3.6.x a non-ASCII character in a doit
+      // trips the ComStrmSetCursor bug, and the failure that comes back says
+      // nothing about what was typed. Refusing here turns a smart quote pasted
+      // into a path or an argument list into a message the panel can show.
+      if (!ASCII_PRINTABLE.test(value)) {
+        throw new ConfigValueError(
+          'Only plain ASCII characters can be sent to the stone. Remove the accented or ' +
+            'typographic characters (a smart quote pasted from a document is the usual cause).',
+        );
+      }
       // Double every quote — the one escape a Smalltalk string literal needs.
       return `'${value.replace(/'/g, "''")}'`;
     default:

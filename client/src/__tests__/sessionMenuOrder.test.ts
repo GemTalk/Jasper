@@ -43,7 +43,7 @@ describe('session row inline button order', () => {
       'gemstone.sessionOpenWorkspace',
       'gemstone.sessionCommit',
       'gemstone.sessionAbort',
-      'gemstone.showConfiguration',
+      'gemstone.showSessionConfiguration',
       'gemstone.sessionLogout',
     ]);
   });

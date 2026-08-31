@@ -220,6 +220,11 @@ describe('rendering the configuration', () => {
     );
     expect(stone).not.toBeNull();
     expect(gem).not.toBeNull();
+    // The panel is titled "Session Configuration", so the halves are named for
+    // what they are — "Session" here would mean something narrower one line
+    // below where it already means the whole panel.
+    expect(stone!.querySelector('.config-group-title')?.textContent).toBe('Stone');
+    expect(gem!.querySelector('.config-group-title')?.textContent).toBe('Gem');
 
     stone!.open = false;
     stone!.dispatchEvent(new Event('toggle'));
@@ -420,19 +425,32 @@ describe('filtering', () => {
     box.dispatchEvent(new Event('input', { bubbles: true }));
   };
 
-  it('matches keys by case-insensitive prefix', () => {
+  it('matches keys case-insensitively', () => {
     const { root } = open();
     sendMessage({ command: 'configuration', config: configPayload() });
     typeFilter(root, 'STN'); // upper-case still matches
     expect(visibleKeys(root)).toEqual(['StnGemTimeout']);
   });
 
-  it('is a prefix match, not a substring: "Gem" shows Gem* keys, not StnGemTimeout', () => {
+  it('matches anywhere in the key, so a word from the middle of a name finds it', () => {
+    const { root } = open();
+    sendMessage({ command: 'configuration', config: configPayload() });
+    // "timeout" is the end of StnGemTimeout, and "cache" the middle of
+    // SHR_PAGE_CACHE_SIZE_KB — the words someone actually types to narrow the
+    // report, and the case a prefix match would find nothing for.
+    typeFilter(root, 'timeout');
+    expect(visibleKeys(root)).toEqual(['StnGemTimeout']);
+    typeFilter(root, 'cache');
+    expect(visibleKeys(root)).toEqual(['SHR_PAGE_CACHE_SIZE_KB']);
+  });
+
+  it('keeps every key containing the text, including one that only contains it', () => {
     const { root } = open();
     sendMessage({ command: 'configuration', config: configPayload() });
     typeFilter(root, 'Gem');
-    // StnGemTimeout contains "Gem" but does not start with it, so it is hidden.
-    expect(visibleKeys(root)).toEqual(['GemConvertArrayBuilder']);
+    // StnGemTimeout carries "Gem" in the middle, so a substring filter keeps it
+    // alongside the Gem* parameter.
+    expect(visibleKeys(root)).toEqual(['StnGemTimeout', 'GemConvertArrayBuilder']);
   });
 
   it('keeps the filter text, filtered rows, and box focus across a redraw', () => {
