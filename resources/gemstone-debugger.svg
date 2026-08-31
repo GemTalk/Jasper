@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <!-- GemStone Debugger tab icon: the gem silhouette with a pause bar across it,
+       drawn in GemStone purple (matching the panel's own accent) so the tab reads
+       as the debugger at a glance and never as a source-editor tab. Single
+       colour — tab icons don't follow the theme, and this one carries in both
+       light and dark. -->
+  <g fill="none" stroke="#a371f7" stroke-width="1.7" stroke-linejoin="round" stroke-linecap="round">
+    <!-- gem: crown facets over a pointed pavilion -->
+    <path d="M6 3.6 h12 l3.2 4.6 L12 20.4 L2.8 8.2 Z"/>
+    <path d="M2.8 8.2 h18.4"/>
+    <path d="M9 3.6 L7.2 8.2 L12 20.4 L16.8 8.2 L15 3.6"/>
+  </g>
+  <!-- pause bars: "execution is stopped here" -->
+  <g fill="#a371f7">
+    <rect x="10.1" y="9.9" width="1.4" height="4.6" rx="0.5"/>
+    <rect x="12.5" y="9.9" width="1.4" height="4.6" rx="0.5"/>
+  </g>
+</svg>

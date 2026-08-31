@@ -30,7 +30,11 @@ describe('editor/context menu', () => {
       'gemstone.sendersOf',
       'gemstone.implementorsOf',
       'gemstone.methodHistoryFromEditor',
-      'gemstone.toggleSelectorBreakpoint',
+      'gemstone.breakpoints.toggleAtCursor',
+      'gemstone.breakpoints.enableAtCursor',
+      'gemstone.breakpoints.disableAtCursor',
+      'gemstone.breakpoints.clearMethod',
+      'gemstone.breakpoints.toggleStepPoints',
     ]);
   });
 
@@ -79,9 +83,19 @@ describe('editor/context menu', () => {
     );
   });
 
-  it('shows "Toggle Selector Breakpoint" in gemstone documents', () => {
-    expect(getMenuItem('gemstone.toggleSelectorBreakpoint')?.when).toBe(
-      `editorTextFocus && resourceLangId == gemstone-smalltalk`,
+  it('shows the breakpoint actions in gemstone documents', () => {
+    const commands = [
+      'gemstone.breakpoints.toggleAtCursor',
+      'gemstone.breakpoints.enableAtCursor',
+      'gemstone.breakpoints.disableAtCursor',
+      'gemstone.breakpoints.clearMethod',
+      'gemstone.breakpoints.toggleStepPoints',
+    ];
+    // Compared as a map so a mismatch names the offending command itself.
+    expect(Object.fromEntries(commands.map((c) => [c, getMenuItem(c)?.when]))).toEqual(
+      Object.fromEntries(
+        commands.map((c) => [c, `editorTextFocus && resourceLangId == gemstone-smalltalk`]),
+      ),
     );
   });
 

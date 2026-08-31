@@ -30,12 +30,16 @@ describe('folding scan results is done in exactly one place', () => {
       return entry.isFile() && entry.name.endsWith('.ts') ? [full] : [];
     });
 
-  // GemStone Search folds the same selector across environments into ONE row on purpose,
-  // keeping the lowest-environment copy and carrying its environment into the open action so
-  // it still opens where it was found. That is a search palette showing one row per thing you
-  // can go to, not a reference list that has to account for every method — a different
-  // contract from the commands below, deliberate, and explained at the call site.
-  const DELIBERATE_SINGLE_ROW_PER_SELECTOR = ['omniSearch/omniSearchCommand.ts'];
+  // These fold the same selector across environments into ONE row on purpose, keeping the
+  // lowest-environment copy and carrying its environment into the action so it still acts
+  // where it was found. Both are a chooser showing one row per thing you can go to — GemStone
+  // Search's palette, and the class picker a named breakpoint raises — not a reference list
+  // that has to account for every method. A different contract from the commands below,
+  // deliberate, and explained at each call site.
+  const DELIBERATE_SINGLE_ROW_PER_SELECTOR = [
+    'omniSearch/omniSearchCommand.ts',
+    'functionBreakpoints.ts',
+  ];
 
   it('has no dedup key that leaves the environment out', () => {
     // The shape the hand-rolled copies used: a template key over the row's class, side and

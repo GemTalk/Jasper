@@ -8,11 +8,11 @@
   },
   "devDependencies": {
     "@types/jsdom": "^28.0.3",
-    "@types/vscode": "^1.101.0",
+    "@types/vscode": "~1.101.0",
     "css.escape": "^1.5.1",
     "dotenv": "^17.4.2",
     "jsdom": "^27.4.0",
-    "vitest": "^4.0.18",
+    "vitest": "^4.1.11",
     "vscode-uri": "^3.1.0"
   },
   "scripts": {

@@ -2,7 +2,7 @@
   "name": "gemstone-ide",
   "displayName": "Jasper: A GemStone Smalltalk IDE",
   "description": "GemStone/S IDE for Visual Studio Code",
-  "version": "1.8.13",
+  "version": "1.8.14",
   "publisher": "gemtalksystems",
   "license": "MIT",
   "author": "James Foster",
@@ -19,8 +19,16 @@
     "node": ">=22.15.1"
   },
   "devEngines": {
-    "packageManager": { "name": "npm", "version": ">=11.16.0", "onFail": "error" },
-    "runtime": { "name": "node", "version": ">=22.15.1", "onFail": "error" }
+    "packageManager": {
+      "name": "npm",
+      "version": ">=11.16.0",
+      "onFail": "error"
+    },
+    "runtime": {
+      "name": "node",
+      "version": ">=22.15.1",
+      "onFail": "error"
+    }
   },
   "icon": "resources/gemstone-icon.png",
   "categories": [
@@ -137,7 +145,10 @@
         "properties": {
           "gemstone.omniSearch.ui": {
             "type": "string",
-            "enum": ["spotter", "panel"],
+            "enum": [
+              "spotter",
+              "panel"
+            ],
             "enumDescriptions": [
               "Editor-tab Spotter: a webview in an editor tab with labeled scope tabs, a source-preview pane, own match highlighting, and an always-on case indicator.",
               "Bottom-panel view (default): the same webview docked in the panel strip (next to Terminal/Output). Stays out of the way; results open in the editor area above it."
@@ -147,7 +158,11 @@
           },
           "gemstone.omniSearch.matchMode": {
             "type": "string",
-            "enum": ["fuzzy", "substring", "prefix"],
+            "enum": [
+              "fuzzy",
+              "substring",
+              "prefix"
+            ],
             "enumDescriptions": [
               "Subsequence match: the typed characters appear in order (the Quick-Open feel).",
               "The typed text appears as a contiguous run.",
@@ -237,7 +252,12 @@
             "type": "array",
             "items": {
               "type": "string",
-              "enum": ["classes", "methods", "dictionaries", "globals"]
+              "enum": [
+                "classes",
+                "methods",
+                "dictionaries",
+                "globals"
+              ]
             },
             "default": [],
             "markdownDescription": "Scopes to leave out of the **All** search while keeping their own tab, so you can still search them on purpose. Useful for **methods**, which queries the stone on every keystroke. This is different from `#gemstone.omniSearch.categories#`, which removes a scope altogether (no tab, no search). Source, Literals and Class Categories are always outside All and so cannot be listed here. This is the value the panel **starts** with; the **Scopes** button in the panel changes it for the current session without changing this setting."
@@ -247,6 +267,17 @@
       {
         "title": "GemStone",
         "properties": {
+          "gemstone.stepPoints.display": {
+            "type": "string",
+            "enum": ["off", "debugging", "always"],
+            "enumDescriptions": [
+              "Never number step points.",
+              "Number step points while a debug session is running (default) \u2014 they are what you want when reasoning about where execution is, and clutter the rest of the time.",
+              "Always number step points in GemStone method source."
+            ],
+            "default": "debugging",
+            "markdownDescription": "When to number step points in GemStone method source, drawn as inlay hints. Each number is clickable and toggles a breakpoint at that step point. Whatever this is set to, hovering a step point always reports its number, and `#gemstone.breakpoints.toggleStepPoints#` flips the numbers on or off. Use the editor's own `#editor.inlayHints.enabled#` to restyle or suppress inlay hints everywhere."
+          },
           "gemstone.gciLibraries": {
             "type": "object",
             "default": {},
@@ -406,12 +437,12 @@
               "never"
             ],
             "enumDescriptions": [
-              "When a stone lacks the optional support, show one Install / Always / Never prompt on connect.",
-              "Install the optional support automatically on connect (uses the SystemUser default password; a notification explains if it must be entered).",
-              "Never offer or install the optional support."
+              "When a stone lacks the recommended support, show one Install / Not Now / Always / Never prompt on connect.",
+              "Install the recommended support automatically on connect (uses the SystemUser default password; a notification explains if it must be entered).",
+              "Never offer or install the recommended support."
             ],
             "default": "ask",
-            "markdownDescription": "What Jasper does when you connect to a stone missing the optional server-side support — the **Enhanced Inspector** (GemStone 3.7.5+) and the **refactoring engine** (all releases), installed together: `ask` shows one Install / Always / Never prompt, `always` installs silently, `never` does nothing. Installing needs a SystemUser login and commits the supporting classes to the database.\n\n▶ [Install GemStone support now](command:gemstone.installServerSupport)\n\n▶ [Uninstall GemStone support](command:gemstone.uninstallServerSupport) — removes both from the stone (does nothing if neither is installed; also needs a SystemUser login and commits the removal)"
+            "markdownDescription": "What Jasper does when you connect to a stone missing the recommended server-side support — the **Enhanced Inspector** (GemStone 3.7.5+) and the **refactoring engine** (all releases), installed together: `ask` shows one Install / Not Now / Always / Never prompt, `always` installs silently, `never` does nothing. Installing needs a SystemUser login and commits the supporting classes to the database.\n\n▶ [Install GemStone support now](command:gemstone.installServerSupport)\n\n▶ [Uninstall GemStone support](command:gemstone.uninstallServerSupport) — removes both from the stone (does nothing if neither is installed; also needs a SystemUser login and commits the removal)"
           }
         }
       },
@@ -513,14 +544,6 @@
       ],
       "gemstoneExplorer": [
         {
-          "id": "gemstoneExplorerOpenEditors",
-          "name": "Open Editors",
-          "type": "tree",
-          "icon": "$(go-to-file)",
-          "when": "gemstone.explorerActive && gemstone.explorerHasOpenEditors",
-          "size": 1
-        },
-        {
           "id": "gemstoneExplorerDicts",
           "name": "Dictionaries",
           "type": "tree",
@@ -607,6 +630,12 @@
           "type": "tree",
           "icon": "$(remote-explorer)",
           "visibility": "collapsed"
+        },
+        {
+          "id": "gemstoneBreakpoints",
+          "name": "Breakpoints",
+          "icon": "$(debug-breakpoint)",
+          "type": "tree"
         },
         {
           "id": "gemstoneInspector",
@@ -742,9 +771,31 @@
             ]
           },
           {
+            "id": "browseClasses",
+            "title": "Browse classes",
+            "description": "Open the GemStone Explorer and click a class — its methods appear in the Methods pane below. Or jump straight to any class by name.\n[Find Class…](command:gemstone.findClass)",
+            "media": {
+              "markdown": "resources/walkthrough/browseClasses.md"
+            },
+            "completionEvents": [
+              "onCommand:gemstone.findClass"
+            ]
+          },
+          {
+            "id": "search",
+            "title": "Search your code",
+            "description": "One box searches across classes, methods, and method source — the fastest way to find something when you don't know where it lives.\n[GemStone Search…](command:gemstone.search)",
+            "media": {
+              "markdown": "resources/walkthrough/search.md"
+            },
+            "completionEvents": [
+              "onCommand:gemstone.search"
+            ]
+          },
+          {
             "id": "serverSupport",
-            "title": "Install optional server support",
-            "description": "Jasper can install two optional server-side supports: the Enhanced Inspector (rich object views, GemStone 3.7.5+) and the refactoring engine (rename instance variable, and more). On connect it offers to install whatever a stone is missing; the `gemstone.serverSupport.autoInstall` setting (ask / always / never) controls that.\n[Install GemStone Support…](command:gemstone.installServerSupport)\n\n[Uninstall GemStone Support…](command:gemstone.uninstallServerSupport) removes both from the stone (does nothing if neither is installed).",
+            "title": "Install recommended server support",
+            "description": "Jasper can install two recommended server-side supports: the Enhanced Inspector (rich object views, GemStone 3.7.5+) and the refactoring engine (rename instance variable, and more). On connect it offers to install whatever a stone is missing; the `gemstone.serverSupport.autoInstall` setting (ask / always / never) controls that.\n[Install GemStone Support…](command:gemstone.installServerSupport)\n\n[Uninstall GemStone Support…](command:gemstone.uninstallServerSupport) removes both from the stone (does nothing if neither is installed).",
             "media": {
               "markdown": "resources/walkthrough/enhancedInspector.md"
             },
@@ -916,8 +967,13 @@
         "icon": "$(mortar-board)"
       },
       {
+        "command": "gemstone.startHere",
+        "title": "Start Here",
+        "category": "GemStone"
+      },
+      {
         "command": "gemstone.resetGettingStarted",
-        "title": "Reset Getting Started (Show Walkthrough on Next Startup)",
+        "title": "Reset Getting Started (Walkthrough + Start Here Button)",
         "category": "GemStone"
       },
       {
@@ -1139,10 +1195,120 @@
         "icon": "$(search)"
       },
       {
-        "command": "gemstone.toggleSelectorBreakpoint",
-        "title": "Toggle Selector Breakpoint",
+        "command": "gemstone.navigateBack",
+        "title": "GemStone Go Back",
+        "category": "GemStone",
+        "icon": "$(arrow-left)"
+      },
+      {
+        "command": "gemstone.navigateForward",
+        "title": "GemStone Go Forward",
+        "category": "GemStone",
+        "icon": "$(arrow-right)"
+      },
+      {
+        "command": "gemstone.breakpoints.toggleAtCursor",
+        "title": "Toggle Breakpoint at Cursor",
         "category": "GemStone",
         "icon": "$(debug-breakpoint)"
+      },
+      {
+        "command": "gemstone.breakpoints.enableAtCursor",
+        "title": "Enable Breakpoint at Cursor",
+        "category": "GemStone",
+        "icon": "$(debug-breakpoint)"
+      },
+      {
+        "command": "gemstone.breakpoints.disableAtCursor",
+        "title": "Disable Breakpoint at Cursor",
+        "category": "GemStone",
+        "icon": "$(debug-breakpoint-disabled)"
+      },
+      {
+        "command": "gemstone.breakpoints.clearMethod",
+        "title": "Clear All Breakpoints in Method",
+        "category": "GemStone",
+        "icon": "$(debug-breakpoint-unsupported)"
+      },
+      {
+        "command": "gemstone.breakpoints.enableAll",
+        "title": "Enable All Breakpoints",
+        "category": "GemStone",
+        "icon": "$(debug-breakpoint)"
+      },
+      {
+        "command": "gemstone.breakpoints.disableAll",
+        "title": "Disable All Breakpoints",
+        "category": "GemStone",
+        "icon": "$(debug-breakpoint-disabled)"
+      },
+      {
+        "command": "gemstone.breakpoints.removeAll",
+        "title": "Remove All Breakpoints",
+        "category": "GemStone",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "gemstone.breakpoints.refresh",
+        "title": "Refresh Breakpoints",
+        "category": "GemStone",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "gemstone.breakpoints.toggleStepPoints",
+        "title": "Toggle Step Point Numbers",
+        "category": "GemStone",
+        "icon": "$(symbol-numeric)"
+      },
+      {
+        "command": "gemstone.breakpoints.reveal",
+        "title": "Reveal Breakpoint in Source",
+        "category": "GemStone",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "gemstone.breakpoints.remove",
+        "title": "Remove Breakpoint",
+        "category": "GemStone",
+        "icon": "$(close)"
+      },
+      {
+        "command": "gemstone.breakpoints.enable",
+        "title": "Enable Breakpoint",
+        "category": "GemStone",
+        "icon": "$(debug-breakpoint)"
+      },
+      {
+        "command": "gemstone.breakpoints.disable",
+        "title": "Disable Breakpoint",
+        "category": "GemStone",
+        "icon": "$(debug-breakpoint-disabled)"
+      },
+      {
+        "command": "gemstone.breakpoints.clearClass",
+        "title": "Clear Breakpoints in Class",
+        "category": "GemStone",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "gemstone.breakpoints.toggleAtStepPoint",
+        "title": "Toggle Breakpoint at Step Point",
+        "category": "GemStone"
+      },
+      {
+        "command": "gemstone.breakpoints.enableAtStepPoint",
+        "title": "Enable Breakpoint at Step Point",
+        "category": "GemStone"
+      },
+      {
+        "command": "gemstone.breakpoints.disableAtStepPoint",
+        "title": "Disable Breakpoint at Step Point",
+        "category": "GemStone"
+      },
+      {
+        "command": "gemstone.breakpoints.clearAtStepPoint",
+        "title": "Clear Breakpoint at Step Point",
+        "category": "GemStone"
       },
       {
         "command": "gemstone.refreshVersions",
@@ -1169,17 +1335,6 @@
         "icon": "$(discard)"
       },
       {
-        "command": "gemstone.explorer.revealOpenEditor",
-        "title": "Reveal Open Editor",
-        "category": "GemStone"
-      },
-      {
-        "command": "gemstone.explorer.closeOpenEditor",
-        "title": "Close Editor",
-        "category": "GemStone",
-        "icon": "$(close)"
-      },
-      {
         "command": "gemstone.explorer.closeAllOpenEditors",
         "title": "Close All GemStone Editors",
         "category": "GemStone",
@@ -1187,12 +1342,12 @@
       },
       {
         "command": "gemstone.explorer.openSelectedMethodToSide",
-        "title": "Pin Method",
+        "title": "Keep Method Open (Pin)",
         "category": "GemStone"
       },
       {
         "command": "gemstone.explorer.openMethodToSide",
-        "title": "Pin Method",
+        "title": "Keep Method Open (Pin)",
         "category": "GemStone",
         "icon": "$(pin)"
       },
@@ -1907,7 +2062,51 @@
     "menus": {
       "commandPalette": [
         {
+          "command": "gemstone.breakpoints.toggleAtStepPoint",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.breakpoints.enableAtStepPoint",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.breakpoints.disableAtStepPoint",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.breakpoints.clearAtStepPoint",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.breakpoints.reveal",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.breakpoints.remove",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.breakpoints.enable",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.breakpoints.disable",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.breakpoints.clearClass",
+          "when": "false"
+        },
+        {
           "command": "gemstone.explorer.classClicked",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.navigateBack",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.navigateForward",
           "when": "false"
         },
         {
@@ -2031,14 +2230,6 @@
           "when": "false"
         },
         {
-          "command": "gemstone.explorer.revealOpenEditor",
-          "when": "false"
-        },
-        {
-          "command": "gemstone.explorer.closeOpenEditor",
-          "when": "false"
-        },
-        {
           "command": "gemstone.explorer.openSelectedMethodToSide",
           "when": "false"
         },
@@ -2137,6 +2328,26 @@
       ],
       "view/title": [
         {
+          "command": "gemstone.breakpoints.enableAll",
+          "when": "view == gemstoneBreakpoints",
+          "group": "navigation@0"
+        },
+        {
+          "command": "gemstone.breakpoints.disableAll",
+          "when": "view == gemstoneBreakpoints",
+          "group": "navigation@1"
+        },
+        {
+          "command": "gemstone.breakpoints.removeAll",
+          "when": "view == gemstoneBreakpoints",
+          "group": "navigation@2"
+        },
+        {
+          "command": "gemstone.breakpoints.refresh",
+          "when": "view == gemstoneBreakpoints",
+          "group": "navigation@3"
+        },
+        {
           "command": "gemstone.clearTestResults",
           "when": "view == gemstoneExplorerClasses"
         },
@@ -2162,11 +2373,6 @@
           "command": "gemstone.explorer.abort",
           "when": "view == gemstoneExplorerDicts",
           "group": "navigation@5"
-        },
-        {
-          "command": "gemstone.explorer.closeAllOpenEditors",
-          "when": "view == gemstoneExplorerOpenEditors",
-          "group": "navigation"
         },
         {
           "command": "gemstoneExplorerDicts.filter",
@@ -2326,6 +2532,31 @@
       ],
       "view/item/context": [
         {
+          "command": "gemstone.breakpoints.reveal",
+          "when": "view == gemstoneBreakpoints && viewItem == gemstoneBreakpoint",
+          "group": "inline@0"
+        },
+        {
+          "command": "gemstone.breakpoints.remove",
+          "when": "view == gemstoneBreakpoints && viewItem =~ /^gemstoneBreakpoint(Doit)?$/",
+          "group": "inline@1"
+        },
+        {
+          "command": "gemstone.breakpoints.enable",
+          "when": "view == gemstoneBreakpoints && viewItem =~ /^gemstoneBreakpoint(Doit)?$/",
+          "group": "1_state@0"
+        },
+        {
+          "command": "gemstone.breakpoints.disable",
+          "when": "view == gemstoneBreakpoints && viewItem =~ /^gemstoneBreakpoint(Doit)?$/",
+          "group": "1_state@1"
+        },
+        {
+          "command": "gemstone.breakpoints.clearClass",
+          "when": "view == gemstoneBreakpoints && viewItem == gemstoneBreakpointClass",
+          "group": "inline@0"
+        },
+        {
           "command": "gemstone.explorer.renameClassCategory",
           "when": "view == gemstoneExplorerCategories && viewItem == explorerCategory",
           "group": "inline@0"
@@ -2419,11 +2650,6 @@
           "command": "gemstone.explorer.runTestMethod",
           "when": "view == gemstoneExplorerMethods && viewItem =~ /\\.test$/",
           "group": "1_browse@0"
-        },
-        {
-          "command": "gemstone.explorer.closeOpenEditor",
-          "when": "view == gemstoneExplorerOpenEditors && viewItem == explorerOpenEditorItem",
-          "group": "inline@0"
         },
         {
           "command": "gemstone.explorer.implementorsOf",
@@ -2905,8 +3131,8 @@
       ],
       "editor/title": [
         {
-          "command": "gemstone.methodHistoryFromEditor",
-          "when": "gemstone.methodEditorActive",
+          "command": "gemstone.breakpoints.toggleStepPoints",
+          "when": "resourceScheme == gemstone && resourceLangId == gemstone-smalltalk",
           "group": "navigation@0"
         }
       ],
@@ -2952,9 +3178,46 @@
           "group": "2_navigation@2"
         },
         {
-          "command": "gemstone.toggleSelectorBreakpoint",
+          "command": "gemstone.breakpoints.toggleAtCursor",
           "when": "editorTextFocus && resourceLangId == gemstone-smalltalk",
           "group": "3_gemstoneBreakpoints@0"
+        },
+        {
+          "command": "gemstone.breakpoints.enableAtCursor",
+          "when": "editorTextFocus && resourceLangId == gemstone-smalltalk",
+          "group": "3_gemstoneBreakpoints@1"
+        },
+        {
+          "command": "gemstone.breakpoints.disableAtCursor",
+          "when": "editorTextFocus && resourceLangId == gemstone-smalltalk",
+          "group": "3_gemstoneBreakpoints@2"
+        },
+        {
+          "command": "gemstone.breakpoints.clearMethod",
+          "when": "editorTextFocus && resourceLangId == gemstone-smalltalk",
+          "group": "3_gemstoneBreakpoints@3"
+        },
+        {
+          "command": "gemstone.breakpoints.toggleStepPoints",
+          "when": "editorTextFocus && resourceLangId == gemstone-smalltalk",
+          "group": "3_gemstoneBreakpoints@4"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "gemstone.methodHistoryFromEditor",
+          "when": "gemstone.methodEditorActive",
+          "group": "navigation@0"
+        },
+        {
+          "command": "gemstone.navigateBack",
+          "when": "resourceScheme == gemstone",
+          "group": "navigation@1"
+        },
+        {
+          "command": "gemstone.navigateForward",
+          "when": "resourceScheme == gemstone",
+          "group": "navigation@2"
         }
       ]
     },
@@ -2997,6 +3260,11 @@
       }
     ],
     "keybindings": [
+      {
+        "command": "gemstone.breakpoints.toggleAtCursor",
+        "key": "shift+f9",
+        "when": "editorTextFocus && resourceScheme == gemstone && gemstone.hasActiveSession"
+      },
       {
         "command": "gemstone.explorer.openSelectedMethodToSide",
         "key": "ctrl+enter",
@@ -3132,24 +3400,24 @@
   "devDependencies": {
     "@eslint-community/eslint-plugin-eslint-comments": "^4.7.2",
     "@eslint/js": "^9.19.0",
-    "@playwright/test": "^1.61.1",
-    "@types/node": "^22.15",
-    "@vitest/eslint-plugin": "^1.6.24",
-    "@vscode/test-electron": "^2.5.2",
+    "@playwright/test": "^1.62.1",
+    "@types/node": "~22.15",
+    "@vitest/eslint-plugin": "^1.6.27",
+    "@vscode/test-electron": "^3.1.0",
     "@vscode/vsce": "^3.7.1",
-    "esbuild": "^0.28.1",
-    "eslint": "^10.0.0",
+    "esbuild": "^0.28.2",
+    "eslint": "^10.8.1",
     "eslint-config-flat-gitignore": "^2.3.0",
     "eslint-config-prettier": "^10.1.8",
-    "globals": "^16.0.0",
+    "globals": "^17.11.0",
     "lefthook": "^2.1.10",
-    "lockfile-lint": "^5.0.0",
+    "lockfile-lint": "^5.0.1",
     "ovsx": "^0.10.5",
     "playwright-bdd": "^9.2.0",
-    "prettier": "^3.9.5",
-    "tsx": "^4.23.1",
+    "prettier": "^3.9.6",
+    "tsx": "^4.23.12",
     "typescript": "^5.7.2",
-    "typescript-eslint": "^8.20.0",
+    "typescript-eslint": "^8.67.0",
     "vscode-oniguruma": "^2.0.1",
     "vscode-textmate": "^9.3.2"
   },
@@ -3162,11 +3430,11 @@
     "js-yaml": "^4.3.1"
   },
   "allowScripts": {
-    "esbuild@0.28.1": true,
     "koffi@2.16.2": true,
     "@vscode/vsce-sign@2.0.9": true,
     "lefthook@2.1.10": true,
     "keytar@7.9.0": true,
-    "fsevents": false
+    "fsevents": false,
+    "esbuild@0.28.2": true
   }
 }

@@ -48,13 +48,14 @@ Without the override the error reads like a normal `ETARGET`/`notarget` ("No mat
 
 ## CI-only checks
 
-Three additional checks run in the `lint` job (not `.npmrc` settings, so not enforced on a developer's local install):
+Four additional checks run in the `lint` job (not `.npmrc` settings, so not enforced on a developer's local install):
 
 | Check | Command | What it catches |
 |---|---|---|
 | `lockfile-lint` | `npm run lint:lockfile` | Bad `resolved` host, non-HTTPS URL, missing `integrity`, or a `resolved` URL whose path names a different package than the lockfile entry's own key (`--validate-package-names` — the dependency-confusion/substitution case: an entry claiming to be `mime` but actually resolving to some other package's tarball). See [lockfile-lint's docs](https://github.com/lirantal/lockfile-lint) for flag semantics |
 | `npm audit signatures` | `npm audit signatures` | Missing or invalid registry signatures/attestations across the full tree, checked against the lockfile's declared `version` for each entry — see npm's [`audit signatures` docs](https://docs.npmjs.com/cli/v11/commands/npm-audit#signatures). |
 | Version-vs-`resolved` drift | `npm run lint:supply-chain` | A lockfile entry whose `version` field disagrees with the version embedded in its `resolved` tarball filename. Neither of the above checks reliably catches this: `lockfile-lint` never looks at `version` at all, and `npm audit signatures` only fails *incidentally*, when the falsely-claimed version happens not to exist in the registry. This check is the only one that looks at whether an entry describes the artifact it points at, regardless of whether a phantom version happens to exist. |
+| `@types` floor pinning | `npm run lint:supply-chain` | An `@types/vscode` or `@types/node` range that no longer matches the runtime floor it is supposed to mirror, or a lockfile that resolves one above it — so the type checker accepts APIs the shipped floor doesn't have. Both must be a tilde on the minor of the matching `engines` value (see [raising the version floor](../how-to/raising-the-version-floor.md), where the two ranges are part of a ~7-edit coordinated set). Nothing else notices: the ranges are hand-maintained, and a partial floor raise or a re-widened caret produces no Dependabot PR and no other CI signal. |
 
 ## Known gaps
 

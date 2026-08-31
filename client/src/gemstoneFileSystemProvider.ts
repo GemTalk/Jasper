@@ -165,6 +165,95 @@ export function parseUri(uri: vscode.Uri): ParsedUri {
   throw vscode.FileSystemError.FileNotFound(uri);
 }
 
+// ── Directory URIs (native editor breadcrumb drill-down) ──────
+// The breadcrumb over an open gemstone:// method treats each ancestor path
+// segment as a folder. VS Code fills a crumb's dropdown by calling readDirectory
+// on the matching URI, so classifying these partial paths as directories — and
+// listing their children from the stone — turns the otherwise inert breadcrumb
+// into a live class-browser drill-down:
+//   /                                 → dictionaries
+//   /{dict}                           → classes in the dictionary
+//   /{dict}/{Class}                   → instance / class (+ the class definition)
+//   /{dict}/{Class}/{side}            → method categories on that side
+//   /{dict}/{Class}/{side}/{category} → selectors (each opens the method)
+// Two native limits are inherent, not bugs: picking a crumb entry opens it in the
+// current editor group (VS Code's breadcrumb can't be redirected to a pinned side
+// tab), and the child URI VS Code builds drops the ?dict/?env query, so navigation
+// resolves by dictionary name at the base environment.
+type DirLevel =
+  | { kind: 'root'; sessionId: number }
+  | { kind: 'dict'; sessionId: number; dictName: string; dictIndex?: number }
+  | { kind: 'class'; sessionId: number; dictName: string; className: string; dictIndex?: number }
+  | {
+      kind: 'side';
+      sessionId: number;
+      dictName: string;
+      className: string;
+      isMeta: boolean;
+      dictIndex?: number;
+    }
+  | {
+      kind: 'category';
+      sessionId: number;
+      dictName: string;
+      className: string;
+      isMeta: boolean;
+      category: string;
+      dictIndex?: number;
+    };
+
+// The two method-side segments — the only 4th/5th path segments that mark a
+// browsable folder. Everything else at that depth (definition/comment/new-method)
+// is a real file that parseUri owns.
+const SIDE_SEGMENTS = ['instance', 'class'];
+
+// Classify a gemstone:// URI as a browsable directory level, or null when it is a
+// real file (method/definition/comment/new-*) or another scheme. Pure path
+// shape — no stone round-trip — so stat stays cheap on every breadcrumb render.
+export function parseDirUri(uri: vscode.Uri): DirLevel | null {
+  if (uri.scheme !== 'gemstone') return null;
+  const sessionId = parseInt(uri.authority, 10);
+  if (Number.isNaN(sessionId)) return null;
+  const parts = uri.path.split('/').map(decodeURIComponent);
+  // parts[0] is '' (leading /). A bare authority or a lone '/' is the root.
+  const dictMatch = uri.query?.match(/(?:^|&)dict=(\d+)(?:&|$)/);
+  const dictIndex = dictMatch ? parseInt(dictMatch[1], 10) : undefined;
+
+  if (parts.length <= 1 || (parts.length === 2 && parts[1] === '')) {
+    return { kind: 'root', sessionId };
+  }
+  if (parts.length === 2) {
+    return { kind: 'dict', sessionId, dictName: parts[1], dictIndex };
+  }
+  if (parts.length === 3) {
+    if (parts[2] === 'new-class') return null; // a file, not a folder
+    return { kind: 'class', sessionId, dictName: parts[1], className: parts[2], dictIndex };
+  }
+  if (parts.length === 4 && SIDE_SEGMENTS.includes(parts[3])) {
+    return {
+      kind: 'side',
+      sessionId,
+      dictName: parts[1],
+      className: parts[2],
+      isMeta: parts[3] === 'class',
+      dictIndex,
+    };
+  }
+  if (parts.length === 5 && SIDE_SEGMENTS.includes(parts[3])) {
+    return {
+      kind: 'category',
+      sessionId,
+      dictName: parts[1],
+      className: parts[2],
+      isMeta: parts[3] === 'class',
+      category: parts[4],
+      dictIndex,
+    };
+  }
+  // definition/comment (4 or 5 segments), method/new-method (6+) — real files.
+  return null;
+}
+
 // A saved method's coordinates, recovered from its gemstone:// source URI.
 export interface MethodUriRef {
   sessionId: number;
@@ -477,6 +566,17 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
 
   stat(uri: vscode.Uri): vscode.FileStat {
     logInfo(`[FS] stat ${uri.toString()}`);
+    // An intermediate segment of a method URI is a browsable folder (the native
+    // breadcrumb drill-down); classify by shape only — no stone round-trip.
+    if (parseDirUri(uri)) {
+      return {
+        type: vscode.FileType.Directory,
+        ctime: 0,
+        mtime: 0,
+        size: 0,
+        permissions: vscode.FilePermission.Readonly,
+      };
+    }
     const stat: vscode.FileStat = {
       type: vscode.FileType.File,
       ctime: 0,
@@ -501,7 +601,50 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
     return stat;
   }
 
-  readDirectory(): [string, vscode.FileType][] {
+  // List a directory level's children for the native editor breadcrumb (see
+  // parseDirUri). Runs stone queries lazily — only when a crumb dropdown is
+  // opened — and degrades to an empty list on any query error so a hiccup yields
+  // an empty dropdown rather than a broken breadcrumb.
+  readDirectory(uri: vscode.Uri): [string, vscode.FileType][] {
+    const dir = parseDirUri(uri);
+    if (!dir) return [];
+    // Resolve the session directly (not getSession, which reaps stale tabs) —
+    // browsing a breadcrumb must never close editors as a side effect.
+    const session = this.sessionManager.getSessions().find((s) => s.id === dir.sessionId);
+    if (!session) return [];
+    const { File, Directory } = vscode.FileType;
+    try {
+      switch (dir.kind) {
+        case 'root':
+          return queries
+            .getDictionaryNames(session)
+            .map((n): [string, vscode.FileType] => [n, Directory]);
+        case 'dict':
+          return queries
+            .getClassNames(session, dir.dictIndex ?? dir.dictName)
+            .map((n): [string, vscode.FileType] => [n, Directory]);
+        case 'class':
+          return [
+            ['instance', Directory],
+            ['class', Directory],
+            ['definition', File],
+          ];
+        case 'side':
+          return queries
+            .getMethodCategories(session, dir.className, dir.isMeta, dir.dictIndex ?? dir.dictName)
+            .map((c): [string, vscode.FileType] => [c, Directory]);
+        case 'category':
+          return queries
+            .getMethodList(session, dir.className)
+            .filter((m) => m.isMeta === dir.isMeta && m.category === dir.category)
+            .map((m): [string, vscode.FileType] => [escapeSelectorSlashes(m.selector), File]);
+      }
+    } catch (e) {
+      logInfo(
+        `[FS] readDirectory ${uri.toString()} → ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return [];
+    }
     return [];
   }
 

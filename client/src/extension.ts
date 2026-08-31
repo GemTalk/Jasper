@@ -93,6 +93,7 @@ import { refreshRefactoringSupportAvailable } from './refactoring/refactoringAva
 import { supportsEnhancedInspector } from './enhancedInspector/enhancedInspectorInstall';
 import { DebuggerPanel } from './debuggerPanel';
 import { InlineValuesCodeLensProvider } from './inlineValuesCodeLens';
+import { GemstoneNavigationHistory } from './gemstoneNavigationHistory';
 import {
   GemStoneFileSystemProvider,
   MethodCompiledEvent,
@@ -104,6 +105,7 @@ import {
   isMethodEditorUri,
 } from './gemstoneFileSystemProvider';
 import { openWorkspace } from './workspace';
+import { registerStartHere, StartHereStatusBar, resetStartHere } from './startHere';
 import { openTutorialNotebook } from './tutorialNotebook';
 import { GemStoneDebugSession } from './gemstoneDebugSession';
 import { InspectorTreeProvider, InspectorNode } from './inspectorTreeProvider';
@@ -121,7 +123,10 @@ import { GemStoneDefinitionProvider } from './gemstoneDefinitionProvider';
 import { GemStoneHoverProvider } from './gemstoneHoverProvider';
 import { GemStoneCompletionProvider } from './gemstoneCompletionProvider';
 import { BreakpointManager } from './breakpointManager';
-import { SelectorBreakpointManager } from './selectorBreakpointManager';
+import { StepPointModel } from './stepPointModel';
+import { StepPointHintsProvider } from './stepPointHints';
+import { StepPointHoverProvider } from './stepPointHover';
+import { BreakpointTreeProvider, BreakpointNode, revealBreakpoint } from './breakpointTreeProvider';
 import { SunitTestController } from './sunitTestController';
 import { GrailNotebookController } from './grailNotebookController';
 import { SmalltalkNotebookController } from './smalltalkNotebookController';
@@ -593,7 +598,7 @@ export function activate(context: vscode.ExtensionContext) {
   // Reap any companion debugger source tab a prior session left open when its
   // window was closed with the Enhanced Debugger still up (it restores orphaned
   // and broken — no session to resolve gemstone://). See DebuggerPanel.
-  DebuggerPanel.initSourceTabCleanup(context.workspaceState);
+  DebuggerPanel.initSourceTabCleanup(context.workspaceState, context.extensionPath);
 
   // Inline-value overlay (#5): a source-pane CodeLens toggles it. The lens is
   // emitted only for source docs a live debugger is showing; the command it fires
@@ -900,11 +905,31 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   // ── Breakpoints + Debugger ───────────────────────────────
-  const breakpointManager = new BreakpointManager(sessionManager);
+  const stepPointModel = new StepPointModel(sessionManager);
+  const breakpointManager = new BreakpointManager(sessionManager, stepPointModel);
   breakpointManager.register(context);
 
-  const selectorBreakpointManager = new SelectorBreakpointManager(sessionManager);
-  selectorBreakpointManager.register(context);
+  const stepPointHints = new StepPointHintsProvider(stepPointModel);
+  stepPointHints.register(context);
+
+  // A GemStone breakpoint lives in the gem, so it dies with the session. VS Code
+  // persists its breakpoint list across restarts regardless, so anything it just
+  // restored belongs to a gem that no longer exists — drop it rather than show a
+  // marker that cannot stop execution.
+  breakpointManager.pruneOrphans();
+
+  const breakpointTree = new BreakpointTreeProvider(sessionManager, breakpointManager);
+  breakpointTree.register(context);
+
+  context.subscriptions.push(
+    vscode.languages.registerHoverProvider(
+      [{ scheme: 'gemstone' }],
+      new StepPointHoverProvider(stepPointModel, breakpointManager),
+    ),
+    // Step point offsets come from the stone, so they only line up with a saved
+    // buffer — redraw the numbers once an edit is saved or reverted.
+    vscode.workspace.onDidSaveTextDocument(() => stepPointHints.refresh()),
+  );
 
   // Re-apply breakpoints and refresh browser method list after method recompilation
   context.subscriptions.push(
@@ -912,7 +937,7 @@ export function activate(context: vscode.ExtensionContext) {
       for (const event of events) {
         if (event.type === vscode.FileChangeType.Changed) {
           breakpointManager.invalidateForUri(event.uri);
-          selectorBreakpointManager.invalidateForUri(event.uri);
+          stepPointHints.refresh();
 
           const uri = event.uri;
           if (uri.scheme === 'gemstone') {
@@ -1068,6 +1093,68 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(sessionManager.onDidChangeSelection(() => updateStatusBar()));
   updateStatusBar();
+
+  // ── Status Bar: Connect Feedback (left) ────────────────
+  // A dedicated left-aligned item carries the connecting/failed states — that is
+  // where the user's eyes already are during a connect. It is separate from the
+  // right-hand Active Session item, which stays the calm persistent state.
+  //   • connecting: a spinner while the attempt (which may start the stone) runs.
+  //   • success: the spinner is cleared, the GemStone Explorer is revealed, and a
+  //     green ✅ banner flashes at the top of it for a few seconds (see the
+  //     explorer's showConnectedBanner). The status bar cannot render green, and a
+  //     webview flash was far too large — the banner is unobtrusive and theme-safe.
+  //   • failure: the item turns red and becomes a click-through to the failure
+  //     reason, since the toast that first reported it may already be gone. It
+  //     persists until the next attempt.
+  const connectStatusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+  context.subscriptions.push(connectStatusItem);
+  let lastLoginError: string | undefined;
+
+  // A "Start Here" status-bar button pointing a new user at the basics (browse a
+  // class, search, open a workspace, take the tour). Shown on connect below; stays
+  // until the user hides it from its own menu (issue #468, item 10).
+  const startHereStatusBar = new StartHereStatusBar(context);
+  context.subscriptions.push(
+    ...startHereStatusBar.register(),
+    // When the last session goes away, hide the button until the next connect.
+    sessionManager.onDidRemoveSession(() => {
+      if (sessionManager.getSessions().length === 0) startHereStatusBar.hideForDisconnection();
+    }),
+  );
+
+  function showConnecting(stone: string): void {
+    lastLoginError = undefined;
+    connectStatusItem.color = undefined;
+    connectStatusItem.backgroundColor = undefined;
+    connectStatusItem.command = undefined;
+    connectStatusItem.text = `$(sync~spin) GemStone: connecting to ${stone}…`;
+    connectStatusItem.tooltip = undefined;
+    connectStatusItem.show();
+  }
+
+  function flashConnected(stone: string): void {
+    lastLoginError = undefined;
+    connectStatusItem.hide();
+    void vscode.commands.executeCommand('workbench.view.extension.gemstoneExplorer');
+    explorer.showConnectedBanner(stone);
+    startHereStatusBar.showForConnection();
+  }
+
+  function showLoginError(message: string): void {
+    lastLoginError = message;
+    connectStatusItem.color = undefined;
+    connectStatusItem.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
+    connectStatusItem.command = 'gemstone.showLastLoginError';
+    connectStatusItem.text = '$(error) GemStone: login failed';
+    connectStatusItem.tooltip = 'Click to see why the connection failed';
+    connectStatusItem.show();
+  }
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('gemstone.showLastLoginError', () => {
+      void vscode.window.showErrorMessage(lastLoginError ?? 'No recent GemStone login error.');
+    }),
+  );
 
   // Drive the `gemstone.enhancedInspectorSupported` context key off the selected
   // session's version, so the "Install Enhanced Inspector Support" command is
@@ -1320,6 +1407,27 @@ export function activate(context: vscode.ExtensionContext) {
     }
   };
 
+  // Back/Forward history for gemstone:// editors (drives the title-bar arrows).
+  // Reopens as a preview so it reuses the single method tab, matching the flow it
+  // retraces; returns false when the URI can't be shown so its entry is pruned.
+  const gsHistory = new GemstoneNavigationHistory(async (uri) => {
+    try {
+      const doc = await vscode.workspace.openTextDocument(uri);
+      await vscode.window.showTextDocument(doc, { preview: true });
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  if (vscode.window.activeTextEditor) {
+    gsHistory.record(vscode.window.activeTextEditor.document.uri);
+  }
+  context.subscriptions.push(
+    vscode.window.onDidChangeActiveTextEditor((editor) => {
+      if (editor) gsHistory.record(editor.document.uri);
+    }),
+  );
+
   // ── Commands ───────────────────────────────────────────
   context.subscriptions.push(
     vscode.commands.registerCommand(
@@ -1352,6 +1460,15 @@ export function activate(context: vscode.ExtensionContext) {
         }
       },
     ),
+
+    // Thin wrappers so editor-history Back/Forward can appear as title-bar icon
+    // buttons on gemstone:// editors (a menu entry needs an icon our own command
+    // supplies). They walk gsHistory — our own view history — rather than VS
+    // Code's built-in Go Back/Forward, because a method opened in the reusable
+    // preview tab isn't recorded by the built-in history (that only tracks
+    // pinned/distinct tabs), so a first-time user couldn't get back.
+    vscode.commands.registerCommand('gemstone.navigateBack', () => gsHistory.back()),
+    vscode.commands.registerCommand('gemstone.navigateForward', () => gsHistory.forward()),
 
     vscode.commands.registerCommand('gemstone.addLogin', () => {
       // eslint-disable-next-line @typescript-eslint/no-floating-promises -- FIXME: unhandled floating promise; needs investigation to decide await vs. void vs. .catch before this rule is enabled repo-wide
@@ -1411,6 +1528,8 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('gemstone.openWorkspace', async () => {
       await openWorkspace();
     }),
+
+    registerStartHere(),
 
     vscode.commands.registerCommand('gemstone.openTutorial', async () => {
       await openTutorialNotebook();
@@ -1473,9 +1592,13 @@ export function activate(context: vscode.ExtensionContext) {
 
     vscode.commands.registerCommand('gemstone.resetGettingStarted', async () => {
       await context.globalState.update(GETTING_STARTED_SEEN_KEY, undefined);
+      // Also un-retire the "Start Here" status-bar button, so one reset restores
+      // every first-run onboarding surface.
+      await resetStartHere(context);
       const openNow = 'Open Walkthrough Now';
       const choice = await vscode.window.showInformationMessage(
-        'Getting Started reset — the walkthrough will open automatically the next time VS Code starts.',
+        'Getting Started reset — the walkthrough will open automatically the next time VS Code starts, ' +
+          'and the "Start Here" button will show again on your next connect.',
         openNow,
       );
       if (choice === openNow) {
@@ -1665,13 +1788,14 @@ export function activate(context: vscode.ExtensionContext) {
         // it back to `string | undefined` inside the async closure below.
         const resolvedGciPath = gciPath;
         treeProvider.setConnecting(item.login, true);
-        const connectingStatus = vscode.window.createStatusBarItem(
-          vscode.StatusBarAlignment.Left,
-          0,
-        );
-        connectingStatus.text = `$(sync~spin) GemStone: connecting to ${login.stone}…`;
-        connectingStatus.show();
+        // Drive the left-hand connect-status item through this attempt. showConnecting
+        // also clears any leftover red "login failed" state from a prior attempt.
+        showConnecting(login.stone);
 
+        // Captured across the recovery flow so the failure feedback (toast + red
+        // status bar) can report the reason even when the retry path swallowed the
+        // original throw.
+        let failureMessage: string | undefined;
         let session: ActiveSession | undefined;
         try {
           session = await vscode.window.withProgress(
@@ -1693,6 +1817,7 @@ export function activate(context: vscode.ExtensionContext) {
                 // the case, offers to start it, and reports the outcome —
                 // including re-showing this error untouched when it cannot help.
                 const msg = e instanceof Error ? e.message : String(e);
+                failureMessage = `Login failed: ${msg}`;
                 let recovered: ActiveSession | undefined;
                 await maybeStartDatabaseAndRetry(login, `Login failed: ${msg}`, {
                   getDatabases: () => sysadminStorage.getDatabases(),
@@ -1715,7 +1840,10 @@ export function activate(context: vscode.ExtensionContext) {
                     await setAutoStartMode(mode);
                   },
                   confirm: confirmStartDatabase,
-                  showError: (m) => vscode.window.showErrorMessage(m),
+                  showError: (m) => {
+                    failureMessage = m;
+                    vscode.window.showErrorMessage(m);
+                  },
                   report: (m) => progress.report({ message: m }),
                   retryLogin: async () => {
                     recovered = await sessionManager.loginAsync(login, resolvedGciPath);
@@ -1732,16 +1860,23 @@ export function activate(context: vscode.ExtensionContext) {
           // that rejects shows only "command failed", with nothing about which
           // login or why.
           const msg = e instanceof Error ? e.message : String(e);
-          vscode.window.showErrorMessage(`Login failed: ${msg}`);
+          failureMessage = `Login failed: ${msg}`;
+          vscode.window.showErrorMessage(failureMessage);
+          showLoginError(failureMessage);
           return;
         } finally {
           treeProvider.setConnecting(item.login, false);
-          connectingStatus.dispose();
+          // The connect-status item is not cleared here: the outcome code below
+          // (flashConnected / showLoginError) sets its final connected/failed state.
         }
 
         // Undefined when the login failed and the recovery flow could not (or
-        // was not allowed to) rescue it. It has already reported why.
-        if (!session) return;
+        // was not allowed to) rescue it. It has already shown a toast; mirror that
+        // in the status bar so the reason survives after the toast dismisses.
+        if (!session) {
+          showLoginError(failureMessage ?? 'Login failed');
+          return;
+        }
 
         refreshEnhancedInspectorAvailable(session);
         refreshRefactoringSupportAvailable(session);
@@ -1750,6 +1885,7 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showInformationMessage(
           `Connected to ${login.stone} (${session.stoneVersion}) on ${login.gem_host} as ${login.gs_user}`,
         );
+        flashConnected(login.stone);
         // eslint-disable-next-line @typescript-eslint/no-floating-promises -- FIXME: unhandled floating promise; needs investigation to decide await vs. void vs. .catch before this rule is enabled repo-wide
         exportManager.exportSession(session, true);
         // We no longer auto-open a workspace on every connect (it left a dirty,
@@ -1758,6 +1894,9 @@ export function activate(context: vscode.ExtensionContext) {
         // maybeOpenGettingStarted), so its "how to connect" step arrives before the
         // user connects rather than after. The workspace stays available via the
         // gemstone.openWorkspace command and the Logins & Sessions welcome view.
+
+        // The "Start Here" status-bar button (shown from flashConnected above) points
+        // a new user at the basics; see StartHereStatusBar (issue #468, item 10).
 
         // Offer the optional server-side supports this stone lacks (Enhanced
         // Inspector + refactoring engine) as one bundle, per
@@ -2077,7 +2216,7 @@ export function activate(context: vscode.ExtensionContext) {
         treeProvider.refresh();
         inspectorProvider.removeSessionItems(session.id);
         breakpointManager.clearAllForSession(session.id);
-        selectorBreakpointManager.clearAllForSession(session.id);
+        stepPointHints.refresh();
         vscode.window.showInformationMessage(`Session ${session.id}: Logged out.`);
       },
     ),
@@ -2586,10 +2725,92 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.commands.executeCommand('gemstone.openDocument', uri);
     }),
 
-    vscode.commands.registerCommand('gemstone.toggleSelectorBreakpoint', () => {
+    vscode.commands.registerCommand('gemstone.breakpoints.toggleAtCursor', () => {
       const editor = vscode.window.activeTextEditor;
-      if (!editor) return;
-      selectorBreakpointManager.toggleBreakpointAtCursor(editor);
+      if (editor) breakpointManager.toggleAtCursor(editor);
+    }),
+
+    vscode.commands.registerCommand('gemstone.breakpoints.enableAtCursor', () => {
+      const editor = vscode.window.activeTextEditor;
+      if (editor) breakpointManager.setEnabledAtCursor(editor, true);
+    }),
+
+    vscode.commands.registerCommand('gemstone.breakpoints.disableAtCursor', () => {
+      const editor = vscode.window.activeTextEditor;
+      if (editor) breakpointManager.setEnabledAtCursor(editor, false);
+    }),
+
+    vscode.commands.registerCommand('gemstone.breakpoints.clearMethod', () => {
+      const editor = vscode.window.activeTextEditor;
+      if (editor) breakpointManager.clearMethodBreakpoints(editor);
+    }),
+
+    // The step-point commands take their target from the click that fired them —
+    // an inlay hint number or a hover link — rather than from the caret, so they
+    // act on the step point the developer actually pointed at.
+    vscode.commands.registerCommand(
+      'gemstone.breakpoints.toggleAtStepPoint',
+      (arg: { uri: string; stepPoint: number }) =>
+        breakpointManager.toggleAtStepPoint(vscode.Uri.parse(arg.uri), arg.stepPoint),
+    ),
+
+    vscode.commands.registerCommand(
+      'gemstone.breakpoints.enableAtStepPoint',
+      (arg: { uri: string; stepPoint: number }) =>
+        breakpointManager.setEnabledAtStepPoint(vscode.Uri.parse(arg.uri), arg.stepPoint, true),
+    ),
+
+    vscode.commands.registerCommand(
+      'gemstone.breakpoints.disableAtStepPoint',
+      (arg: { uri: string; stepPoint: number }) =>
+        breakpointManager.setEnabledAtStepPoint(vscode.Uri.parse(arg.uri), arg.stepPoint, false),
+    ),
+
+    vscode.commands.registerCommand(
+      'gemstone.breakpoints.clearAtStepPoint',
+      (arg: { uri: string; stepPoint: number }) =>
+        breakpointManager.clearAtStepPoint(vscode.Uri.parse(arg.uri), arg.stepPoint),
+    ),
+
+    vscode.commands.registerCommand('gemstone.breakpoints.enableAll', () =>
+      breakpointManager.setAllEnabled(true),
+    ),
+
+    vscode.commands.registerCommand('gemstone.breakpoints.disableAll', () =>
+      breakpointManager.setAllEnabled(false),
+    ),
+
+    vscode.commands.registerCommand('gemstone.breakpoints.removeAll', () =>
+      breakpointManager.removeAll(),
+    ),
+
+    vscode.commands.registerCommand('gemstone.breakpoints.refresh', () => breakpointTree.refresh()),
+
+    vscode.commands.registerCommand('gemstone.breakpoints.toggleStepPoints', () =>
+      stepPointHints.toggle(),
+    ),
+
+    vscode.commands.registerCommand('gemstone.breakpoints.reveal', (node?: BreakpointNode) =>
+      revealBreakpoint(sessionManager, node),
+    ),
+
+    vscode.commands.registerCommand('gemstone.breakpoints.remove', (node?: BreakpointNode) => {
+      if (node?.kind === 'breakpoint') breakpointManager.removeStoneBreakpoint(node.bp);
+    }),
+
+    vscode.commands.registerCommand('gemstone.breakpoints.enable', (node?: BreakpointNode) => {
+      if (node?.kind === 'breakpoint')
+        breakpointManager.setEnabledForStoneBreakpoint(node.bp, true);
+    }),
+
+    vscode.commands.registerCommand('gemstone.breakpoints.disable', (node?: BreakpointNode) => {
+      if (node?.kind === 'breakpoint')
+        breakpointManager.setEnabledForStoneBreakpoint(node.bp, false);
+    }),
+
+    vscode.commands.registerCommand('gemstone.breakpoints.clearClass', (node?: BreakpointNode) => {
+      if (node?.kind !== 'class') return;
+      for (const bp of node.breakpoints) breakpointManager.removeStoneBreakpoint(bp);
     }),
 
     vscode.commands.registerCommand('gemstone.findClass', async () => {
