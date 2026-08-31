@@ -77,7 +77,9 @@ function connectRawSocket(port: number): number {
 
   const status = connect(handle, address, 16) as number;
   if (status === SOCKET_ERROR) {
-    throw new Error(`connect() failed (WSAGetLastError ${WSAGetLastError()})`);
+    const error = WSAGetLastError();
+    ws2().closesocket(handle);
+    throw new Error(`connect() failed (WSAGetLastError ${error})`);
   }
 
   return Number(handle);
