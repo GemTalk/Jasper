@@ -172,6 +172,8 @@ The only difference is cardinality: a login may now have several session childre
 
 > **Note:** In multiple-session mode, an open workspace/editor stays bound to the session that opened it even after you switch the active session, so the active session, the Explorer, and an open editor can point at different sessions at once. If you use a custom `gemstone.exportPath`, include the `{session}` variable so concurrent sessions don't overwrite each other's exported files.
 
+> **Breakpoints follow the editor, not the active session.** Because an editor stays bound to the session that opened it, a breakpoint set in that editor is armed in that session's gem — so it stops the code you are looking at rather than the session that happens to be selected. **Enable All**, **Disable All** and **Remove All Breakpoints** go the other way and sweep *every* logged-in session, because VS Code keeps a single breakpoint list for the whole window. See [Breakpoints](#breakpoints).
+
 ### Code Execution
 
 With an active session, execute Smalltalk code from any editor:
@@ -256,8 +258,101 @@ When code execution hits an error, a **Debug** button opens the VS Code debugger
 
 ### Breakpoints
 
-- **Line breakpoints** — click the editor gutter in a `gemstone://` method to set/clear breakpoints mapped to GemStone step points
-- **Selector breakpoints** — right-click a selector and choose **Toggle Selector Breakpoint** to break whenever that selector is sent; breakpointed selectors are highlighted with a red border
+Breakpoints live in VS Code's own breakpoint list, so the familiar gutter,
+checkbox and Enable/Disable/Remove All controls all drive GemStone. Each one is
+applied to the session as a step-point break.
+
+**A GemStone breakpoint is tied to the compiled method it was set in.** It lives
+in the gem, not the repository — no `commit` persists it — so it goes away when
+the thing it was set in goes away:
+
+- **logging out** clears it, from VS Code's list as well as the gem, so no marker
+  is left for something that no longer exists. Unlike a breakpoint on a file, it
+  does not come back when you reopen the window;
+- **recompiling the method** clears it too. The recompile replaces the method, and
+  after an edit the same step point may be a different expression — so the
+  breakpoint is dropped rather than quietly moved somewhere you didn't put it.
+
+- **Only in a method editor.** A breakpoint names a step point in a method that
+  lives in the gem, so a `gemstone://` method editor with no unsaved edits is
+  the only place one can be set. Not a workspace, not a `.gst` file, and not an
+  **Executed Code** (doit) frame in the call stack — a doit's method is compiled
+  for that one execution and gone afterwards, so a breakpoint on it could never
+  be hit again. VS Code offers its gutter per *language*, which is the same for
+  all four, so a breakpoint set in the wrong one is taken back out with a message
+  saying where it belongs
+- **Unsaved edits hold a method's breakpoints as they are.** Step point numbers
+  come from the compiled method, and VS Code moves its breakpoints as you type,
+  so while an editor is dirty the two describe different code. No new breakpoint
+  is accepted — it is taken back out of the list, with a message naming the two
+  ways on: save the method, or **File: Revert File** to drop the edits. What is
+  already set is left alone rather than re-applied against positions that have
+  moved, so it is still there, on the same step points, once the editor is clean
+- **Line breakpoints** — click the editor gutter in a `gemstone://` method. A
+  gutter click means "this line", and lands on the leftmost step point on it
+- **Step-point breakpoints** — a Smalltalk line usually holds several step
+  points. **Toggle Breakpoint at Cursor** (`Shift+F9`) breaks at the step point
+  under the caret, not the first one on the line, and the token that will
+  actually break is outlined
+- **Enable / disable** — per breakpoint from the Breakpoints view checkbox or
+  **Enable/Disable Breakpoint at Cursor**. A disabled breakpoint stays set in the
+  gem so re-arming it is instant; its token marker turns grey and faded, matching
+  the grey the gutter dot goes
+- **A breakpoint belongs to the session its method came from.** A method editor
+  stays bound to the session that opened it, so a breakpoint set in it is armed
+  in *that* session's gem — not in whichever session happens to be active. With
+  one session live there is no difference; with several, this is what makes the
+  breakpoint stop the code you were looking at. A row in the **GemStone
+  Breakpoints** view can likewise only act on a method from the session the view
+  is reading
+- **All at once** — **Enable All**, **Disable All** and **Remove All
+  Breakpoints** act on every GemStone breakpoint in **every logged-in session**,
+  including any set outside Jasper by topaz or a `halt` left in the code. VS Code
+  keeps one breakpoint list for the window, so "all" means all of it: sweeping
+  only the active session would leave rows reading *disabled* over breakpoints
+  that still stop execution. If one session's gem refuses, the others are still
+  swept and the message names the one that failed
+- **Clear All Breakpoints in Method** drops every breakpoint in the method you
+  are in
+- **Not honoured: conditions, hit counts and log messages.** VS Code's *Edit
+  Breakpoint* accepts all three; GemStone breakpoints stop every time the step
+  point is reached, so Jasper warns when you set one rather than quietly ignoring
+  it. Conditional breakpoints are tracked under
+  [#277](https://github.com/GemTalk/Jasper/issues/277)
+- **Avoid VS Code's own "Deactivate Breakpoints"** button (the filled-dot icon in
+  the Breakpoints panel header). It greys the breakpoints out in the panel, but
+  the VS Code API exposes no way for an extension to observe that state — so
+  Jasper never hears about it and GemStone keeps stopping on them. Use
+  **Disable All Breakpoints** instead, which disarms them in the gem
+- **Break on entry by name** — the `+` button in VS Code's Breakpoints panel
+  takes a method name instead of a location. Type a selector (`balance`) and
+  Jasper finds the implementors, asking which class you meant when there is more
+  than one; or qualify it yourself (`Account>>balance`, `Account class>>new`).
+  The name is then replaced by an ordinary breakpoint on the method's first step
+  point, so it gets a real location, a red dot, and everything else breakpoints
+  do — handy for stopping in a method without going to find it first
+
+#### Step points
+
+- **Numbered inline** — step point numbers are drawn as inlay hints, and each is
+  clickable to toggle a breakpoint there. `gemstone.stepPoints.display` controls
+  when: `debugging` (the default — visible while a debug session runs, out of the
+  way otherwise), `always`, or `off`. **Toggle Step Point Numbers** flips them
+  without leaving the editor — it's the `123` button in the editor title bar, and
+  on the right-click menu
+- **On hover** — hovering a step point always reports its number and breakpoint
+  state, with links to set, clear, enable or disable it, whatever the numbering
+  is set to
+- Numbers are suppressed while a buffer has unsaved edits, since the stone's
+  offsets no longer line up with what you are looking at
+
+#### Breakpoint manager
+
+The **Breakpoints** view in the GemStone sidebar lists what the current session's
+gem actually holds, grouped by class and method with the step point each
+breakpoint resolved to. It shows breakpoints Jasper never set, which are
+otherwise invisible until execution stops on one. Rows carry an enable checkbox;
+clicking one opens the method with the caret on the step point.
 
 ### SUnit Test Runner
 

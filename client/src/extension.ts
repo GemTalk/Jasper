@@ -122,7 +122,10 @@ import { GemStoneDefinitionProvider } from './gemstoneDefinitionProvider';
 import { GemStoneHoverProvider } from './gemstoneHoverProvider';
 import { GemStoneCompletionProvider } from './gemstoneCompletionProvider';
 import { BreakpointManager } from './breakpointManager';
-import { SelectorBreakpointManager } from './selectorBreakpointManager';
+import { StepPointModel } from './stepPointModel';
+import { StepPointHintsProvider } from './stepPointHints';
+import { StepPointHoverProvider } from './stepPointHover';
+import { BreakpointTreeProvider, BreakpointNode, revealBreakpoint } from './breakpointTreeProvider';
 import { SunitTestController } from './sunitTestController';
 import { GrailNotebookController } from './grailNotebookController';
 import { SmalltalkNotebookController } from './smalltalkNotebookController';
@@ -896,11 +899,31 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   // ── Breakpoints + Debugger ───────────────────────────────
-  const breakpointManager = new BreakpointManager(sessionManager);
+  const stepPointModel = new StepPointModel(sessionManager);
+  const breakpointManager = new BreakpointManager(sessionManager, stepPointModel);
   breakpointManager.register(context);
 
-  const selectorBreakpointManager = new SelectorBreakpointManager(sessionManager);
-  selectorBreakpointManager.register(context);
+  const stepPointHints = new StepPointHintsProvider(stepPointModel);
+  stepPointHints.register(context);
+
+  // A GemStone breakpoint lives in the gem, so it dies with the session. VS Code
+  // persists its breakpoint list across restarts regardless, so anything it just
+  // restored belongs to a gem that no longer exists — drop it rather than show a
+  // marker that cannot stop execution.
+  breakpointManager.pruneOrphans();
+
+  const breakpointTree = new BreakpointTreeProvider(sessionManager, breakpointManager);
+  breakpointTree.register(context);
+
+  context.subscriptions.push(
+    vscode.languages.registerHoverProvider(
+      [{ scheme: 'gemstone' }],
+      new StepPointHoverProvider(stepPointModel, breakpointManager),
+    ),
+    // Step point offsets come from the stone, so they only line up with a saved
+    // buffer — redraw the numbers once an edit is saved or reverted.
+    vscode.workspace.onDidSaveTextDocument(() => stepPointHints.refresh()),
+  );
 
   // Re-apply breakpoints and refresh browser method list after method recompilation
   context.subscriptions.push(
@@ -908,7 +931,7 @@ export function activate(context: vscode.ExtensionContext) {
       for (const event of events) {
         if (event.type === vscode.FileChangeType.Changed) {
           breakpointManager.invalidateForUri(event.uri);
-          selectorBreakpointManager.invalidateForUri(event.uri);
+          stepPointHints.refresh();
 
           const uri = event.uri;
           if (uri.scheme === 'gemstone') {
@@ -2172,7 +2195,7 @@ export function activate(context: vscode.ExtensionContext) {
         treeProvider.refresh();
         inspectorProvider.removeSessionItems(session.id);
         breakpointManager.clearAllForSession(session.id);
-        selectorBreakpointManager.clearAllForSession(session.id);
+        stepPointHints.refresh();
         vscode.window.showInformationMessage(`Session ${session.id}: Logged out.`);
       },
     ),
@@ -2681,10 +2704,92 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.commands.executeCommand('gemstone.openDocument', uri);
     }),
 
-    vscode.commands.registerCommand('gemstone.toggleSelectorBreakpoint', () => {
+    vscode.commands.registerCommand('gemstone.breakpoints.toggleAtCursor', () => {
       const editor = vscode.window.activeTextEditor;
-      if (!editor) return;
-      selectorBreakpointManager.toggleBreakpointAtCursor(editor);
+      if (editor) breakpointManager.toggleAtCursor(editor);
+    }),
+
+    vscode.commands.registerCommand('gemstone.breakpoints.enableAtCursor', () => {
+      const editor = vscode.window.activeTextEditor;
+      if (editor) breakpointManager.setEnabledAtCursor(editor, true);
+    }),
+
+    vscode.commands.registerCommand('gemstone.breakpoints.disableAtCursor', () => {
+      const editor = vscode.window.activeTextEditor;
+      if (editor) breakpointManager.setEnabledAtCursor(editor, false);
+    }),
+
+    vscode.commands.registerCommand('gemstone.breakpoints.clearMethod', () => {
+      const editor = vscode.window.activeTextEditor;
+      if (editor) breakpointManager.clearMethodBreakpoints(editor);
+    }),
+
+    // The step-point commands take their target from the click that fired them —
+    // an inlay hint number or a hover link — rather than from the caret, so they
+    // act on the step point the developer actually pointed at.
+    vscode.commands.registerCommand(
+      'gemstone.breakpoints.toggleAtStepPoint',
+      (arg: { uri: string; stepPoint: number }) =>
+        breakpointManager.toggleAtStepPoint(vscode.Uri.parse(arg.uri), arg.stepPoint),
+    ),
+
+    vscode.commands.registerCommand(
+      'gemstone.breakpoints.enableAtStepPoint',
+      (arg: { uri: string; stepPoint: number }) =>
+        breakpointManager.setEnabledAtStepPoint(vscode.Uri.parse(arg.uri), arg.stepPoint, true),
+    ),
+
+    vscode.commands.registerCommand(
+      'gemstone.breakpoints.disableAtStepPoint',
+      (arg: { uri: string; stepPoint: number }) =>
+        breakpointManager.setEnabledAtStepPoint(vscode.Uri.parse(arg.uri), arg.stepPoint, false),
+    ),
+
+    vscode.commands.registerCommand(
+      'gemstone.breakpoints.clearAtStepPoint',
+      (arg: { uri: string; stepPoint: number }) =>
+        breakpointManager.clearAtStepPoint(vscode.Uri.parse(arg.uri), arg.stepPoint),
+    ),
+
+    vscode.commands.registerCommand('gemstone.breakpoints.enableAll', () =>
+      breakpointManager.setAllEnabled(true),
+    ),
+
+    vscode.commands.registerCommand('gemstone.breakpoints.disableAll', () =>
+      breakpointManager.setAllEnabled(false),
+    ),
+
+    vscode.commands.registerCommand('gemstone.breakpoints.removeAll', () =>
+      breakpointManager.removeAll(),
+    ),
+
+    vscode.commands.registerCommand('gemstone.breakpoints.refresh', () => breakpointTree.refresh()),
+
+    vscode.commands.registerCommand('gemstone.breakpoints.toggleStepPoints', () =>
+      stepPointHints.toggle(),
+    ),
+
+    vscode.commands.registerCommand('gemstone.breakpoints.reveal', (node?: BreakpointNode) =>
+      revealBreakpoint(sessionManager, node),
+    ),
+
+    vscode.commands.registerCommand('gemstone.breakpoints.remove', (node?: BreakpointNode) => {
+      if (node?.kind === 'breakpoint') breakpointManager.removeStoneBreakpoint(node.bp);
+    }),
+
+    vscode.commands.registerCommand('gemstone.breakpoints.enable', (node?: BreakpointNode) => {
+      if (node?.kind === 'breakpoint')
+        breakpointManager.setEnabledForStoneBreakpoint(node.bp, true);
+    }),
+
+    vscode.commands.registerCommand('gemstone.breakpoints.disable', (node?: BreakpointNode) => {
+      if (node?.kind === 'breakpoint')
+        breakpointManager.setEnabledForStoneBreakpoint(node.bp, false);
+    }),
+
+    vscode.commands.registerCommand('gemstone.breakpoints.clearClass', (node?: BreakpointNode) => {
+      if (node?.kind !== 'class') return;
+      for (const bp of node.breakpoints) breakpointManager.removeStoneBreakpoint(bp);
     }),
 
     vscode.commands.registerCommand('gemstone.findClass', async () => {
