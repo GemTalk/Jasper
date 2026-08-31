@@ -3,17 +3,18 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
-vi.mock('../browserQueries', () => ({}));
+vi.mock('../browserQueries', () => ({
+  getDictionaryNames: vi.fn(() => ['UserGlobals', 'Globals']),
+}));
 
 import * as vscode from '../__mocks__/vscode';
-import { __setConfig, __resetConfig } from '../__mocks__/vscode';
+import { __resetConfig } from '../__mocks__/vscode';
 import {
   ExplorerController,
   FilterChipItem,
   commitFilterOnRowSelection,
 } from '../gemstoneExplorer';
 import type { SessionManager, ActiveSession } from '../sessionManager';
-import type { EnvCategoryLine } from '../browserQueries';
 
 /**
  * Clicking a row in a filtered pane must select the row that was under the pointer (issue #518).
@@ -25,9 +26,13 @@ import type { EnvCategoryLine } from '../browserQueries';
  * flag, so these drive the real mechanism), and the pane's selection handler commits it instead.
  *
  * The companion contract — Enter keeps, Escape restores — lives in explorerFilterCancel.test.ts.
+ *
+ * The pane under test is Dictionaries, one of the three still opening the input box. The
+ * Methods pane no longer has one: its button opens VS Code's find box, which cannot lose a
+ * filter to a click because the box lives in the pane (explorerMethodsFindBox.test.ts).
  */
 
-const METHODS = 'gemstoneExplorerMethods';
+const DICTS = 'gemstoneExplorerDicts';
 const CLASSES = 'gemstoneExplorerClasses';
 
 function makeController(): ExplorerController {
@@ -37,9 +42,6 @@ function makeController(): ExplorerController {
   ctl.state.dictName = 'UserGlobals';
   ctl.state.className = 'Demo';
   ctl.state.dictIndex = 1;
-  (ctl as unknown as { envLines: EnvCategoryLine[] }).envLines = [
-    { isMeta: false, envId: 0, category: 'accessing', selectors: ['at:', 'size'] },
-  ];
   return ctl;
 }
 
@@ -59,44 +61,41 @@ function lastInputBox(): MockInputBox {
 beforeEach(() => {
   vi.clearAllMocks();
   __resetConfig();
-  // Flat (ungrouped) view, so the provider's top level is the selectors themselves rather
-  // than the category nodes.
-  __setConfig('gemstone', 'explorer.groupMethodsByCategory', false);
 });
 
 describe('Explorer filter input: clicking a filtered row', () => {
-  /** The selector rows the Methods pane is currently showing (minus the filter chip). */
-  const selectors = (ctl: ExplorerController): (string | undefined)[] =>
-    (ctl.methodProvider.getChildren() as { label?: string }[])
+  /** The rows the Dictionaries pane is currently showing (minus the filter chip). */
+  const rows = (ctl: ExplorerController): (string | undefined)[] =>
+    (ctl.dictProvider.getChildren() as { label?: string }[])
       .filter((r) => !(r instanceof FilterChipItem))
       .map((r) => r.label);
 
   it('leaves the filtered rows in place when focus goes elsewhere', () => {
     const ctl = makeController();
 
-    ctl.beginFilter(METHODS);
+    ctl.beginFilter(DICTS);
     const box = lastInputBox();
-    box.__type('si');
-    expect(selectors(ctl)).toEqual(['size']);
+    box.__type('Glo');
+    expect(rows(ctl)).toEqual(['Globals']);
 
-    box.__clickAway(); // the mouse-down on `size`, before the click resolves
+    box.__clickAway(); // the mouse-down on `Globals`, before the click resolves
 
-    // The bug: this used to be back to ['at:', 'size'], so the click landed on `at:`.
-    expect(selectors(ctl)).toEqual(['size']);
-    expect(ctl.getFilter(METHODS)).toBe('si');
+    // The bug: this used to be back to the full list, so the click landed on `UserGlobals`.
+    expect(rows(ctl)).toEqual(['Globals']);
+    expect(ctl.getFilter(DICTS)).toBe('Glo');
   });
 
   it('keeps the filter and closes the box when a row is selected', () => {
     const ctl = makeController();
 
-    ctl.beginFilter(METHODS);
+    ctl.beginFilter(DICTS);
     const box = lastInputBox();
-    box.__type('si');
+    box.__type('Glo');
 
     box.__clickAway();
     ctl.commitFilterInput(); // what the pane's selection handler does
 
-    expect(ctl.getFilter(METHODS)).toBe('si');
+    expect(ctl.getFilter(DICTS)).toBe('Glo');
     expect(box.hide).toHaveBeenCalled();
   });
 
@@ -105,21 +104,21 @@ describe('Explorer filter input: clicking a filtered row', () => {
   it('does not undo the filter when the box is escaped after being committed', () => {
     const ctl = makeController();
 
-    ctl.beginFilter(METHODS);
+    ctl.beginFilter(DICTS);
     const box = lastInputBox();
-    box.__type('si');
+    box.__type('Glo');
     ctl.commitFilterInput();
 
     box.__hide(); // Escape, after the box has already gone
 
-    expect(ctl.getFilter(METHODS)).toBe('si');
+    expect(ctl.getFilter(DICTS)).toBe('Glo');
   });
 
   it('does nothing when no filter box is open', () => {
     const ctl = makeController();
 
     expect(() => ctl.commitFilterInput()).not.toThrow();
-    expect(ctl.getFilter(METHODS)).toBeUndefined();
+    expect(ctl.getFilter(DICTS)).toBeUndefined();
   });
 
   // Escape reaches the box only while it is open, so cancelling still has to work after a
@@ -127,18 +126,18 @@ describe('Explorer filter input: clicking a filtered row', () => {
   it('still restores the pre-edit filter when the box is escaped after a click away', async () => {
     const ctl = makeController();
 
-    ctl.beginFilter(METHODS);
+    ctl.beginFilter(DICTS);
     const first = lastInputBox();
-    first.__type('si');
+    first.__type('Glo');
     await first.__accept();
 
-    ctl.beginFilter(METHODS);
+    ctl.beginFilter(DICTS);
     const second = lastInputBox();
-    second.__type('at');
+    second.__type('Us');
     second.__clickAway();
     second.__hide(); // Escape
 
-    expect(ctl.getFilter(METHODS)).toBe('si');
+    expect(ctl.getFilter(DICTS)).toBe('Glo');
   });
 
   // A box open over another pane no longer gets out of the way by itself, so opening a second
@@ -151,15 +150,15 @@ describe('Explorer filter input: clicking a filtered row', () => {
     const classes = lastInputBox();
     classes.__type('De');
 
-    ctl.beginFilter(METHODS);
-    const methods = lastInputBox();
-    methods.__type('si');
+    ctl.beginFilter(DICTS);
+    const dicts = lastInputBox();
+    dicts.__type('Glo');
     ctl.commitFilterInput();
 
     expect(classes.hide).toHaveBeenCalled();
     expect(ctl.getFilter(CLASSES)).toBe('De');
-    expect(methods.hide).toHaveBeenCalled();
-    expect(ctl.getFilter(METHODS)).toBe('si');
+    expect(dicts.hide).toHaveBeenCalled();
+    expect(ctl.getFilter(DICTS)).toBe('Glo');
   });
 });
 
@@ -204,13 +203,14 @@ describe('commitFilterOnRowSelection', () => {
 
   // Clicking the "Filter:" row is how you edit an active filter — it runs the pane's filter
   // command. Committing on it would close the box that click just asked for (or, depending on
-  // which of the two VS Code runs first, the one still open from before).
+  // which of the two VS Code runs first, the one still open from before). The Methods pane's
+  // chip runs that pane's button too — which now opens VS Code's find box, not ours.
   it('leaves the box alone when the row selected is the filter row itself', () => {
     const ctl = { commitFilterInput: vi.fn() };
     const pane = fakePane();
 
     commitFilterOnRowSelection(ctl, pane);
-    pane.select(new FilterChipItem(METHODS, 'si'));
+    pane.select(new FilterChipItem(DICTS, 'Glo'));
 
     expect(ctl.commitFilterInput).not.toHaveBeenCalled();
   });

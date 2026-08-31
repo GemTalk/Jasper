@@ -292,7 +292,7 @@ class ClassItem extends vscode.TreeItem {
     // (id, click argument, ivar sub-tree) always uses the raw class name.
     this.id = `k:${className}`;
     // `.commented` gates the comment button to classes that actually have one
-    // (#387 item 11). Every other class action matches BOTH forms — see the
+    // (#387). Every other class action matches BOTH forms — see the
     // `explorerClass(\.commented)?` clauses in package.json — so the suffix only
     // ever adds a button, never removes one. Anchored there rather than a bare
     // `^explorerClass` prefix, which would also swallow `explorerClassVar`.
@@ -353,7 +353,7 @@ class VarSideItem extends vscode.TreeItem {
     public readonly className: string,
     public readonly isMeta: boolean,
   ) {
-    // A side node exists only when that side has variables (#387 item 12), so it is
+    // A side node exists only when that side has variables (#387), so it is
     // always expandable and never needs an empty/grayed rendering.
     super(
       isMeta ? 'class variables' : 'instance variables',
@@ -380,7 +380,7 @@ export class MethodCategoryItem extends vscode.TreeItem {
     public readonly category: string,
     public readonly computed: boolean,
     // Open the node up front. Categories do this while a filter is active, so matches
-    // show without expanding every folder by hand. (Before #387 item 10 the ALL METHODS
+    // show without expanding every folder by hand. (Before #387 the ALL METHODS
     // row also forced itself open as the landing view; that row is gone, so nothing is
     // expanded by default any more and the real categories start at the top.)
     forceExpanded = false,
@@ -488,13 +488,13 @@ export class MethodItem extends vscode.TreeItem {
 
 // A "filter chip" root row shown while a pane's filter is active: a funnel icon,
 // the label "Filter:", and the pattern in grey description text — visually
-// distinct from method/selector rows. Clicking it re-opens the filter editor;
-// its inline ✕ clears the filter. Carries the owning view id so one clear
-// command serves every pane.
+// distinct from method/selector rows. Clicking it re-runs the pane's filter
+// button; its inline ✕ clears the filter. Carries the owning view id so one
+// clear command serves every pane.
 //
 // The label keeps its colon: seeing the pattern is easy, but NOTICING that a
 // filter is on at all is the hard part, and "Filter: foo*" reads as a statement
-// about the pane where a bare "Filter foo*" reads like a button (#387 item 4).
+// about the pane where a bare "Filter foo*" reads like a button (#387).
 export class FilterChipItem extends vscode.TreeItem {
   constructor(
     public readonly viewId: string,
@@ -505,7 +505,14 @@ export class FilterChipItem extends vscode.TreeItem {
     this.description = pattern;
     this.iconPath = new vscode.ThemeIcon('filter-filled');
     this.contextValue = 'explorerFilterChip';
-    this.tooltip = `Active filter: ${pattern} — click to edit, ✕ to clear`;
+    // The Methods pane has no filter editor to re-open — its button opens VS Code's own
+    // find box, which narrows the rows this filter has already selected rather than editing
+    // the filter itself. A Methods filter therefore comes from an instance-variable row's
+    // context menu, and ✕ (or re-running that menu item) is how it changes.
+    this.tooltip =
+      viewId === VIEW_METHODS
+        ? `Active filter: ${pattern} — click to search within it, ✕ to clear`
+        : `Active filter: ${pattern} — click to edit, ✕ to clear`;
     this.command = { command: `${viewId}.filter`, title: '' };
   }
 }
@@ -1044,8 +1051,32 @@ export class ExplorerController {
     for (const id of viewIds) this.setFilterState(id, undefined);
   }
 
+  // Narrow the Methods pane with VS Code's own find box — the one that opens inside the
+  // tree, at its top right, with the toggles for filtering (hiding non-matching rows)
+  // rather than highlighting. It is a better fit than our quick-input box for the reason
+  // that box kept going wrong: a floating input has to guess what a click somewhere else
+  // means, while the built-in box lives in the pane, keeps the narrowing while you click a
+  // result, and leaves VS Code — not us — mapping a clicked row back to its element.
+  //
+  // There is no API for it: `list.find` acts on whichever list was focused last, so focus
+  // the pane first and let the command find it. Nothing about the widget is readable from
+  // here afterwards — its query, its mode, whether it is even open — which is why the
+  // reads:/writes:/accesses: filters stay on our own state (see setFilterState): they are
+  // seeded from an instance-variable row's menu, and no built-in text search could run the
+  // GemStone query behind them. The two compose: ours picks the rows, VS Code's box then
+  // searches within them.
+  async openPaneFindWidget(viewId: string): Promise<void> {
+    // A box left open over another pane would sit on top of the widget we are about to open.
+    this.commitFilterInput();
+    await vscode.commands.executeCommand(`${viewId}.focus`);
+    await vscode.commands.executeCommand('list.find');
+  }
+
   // Open a live filter input for a pane: prefix match, '*' wildcard. Typing
   // filters the pane immediately; an empty value clears the filter.
+  //
+  // The Methods pane is the exception: its button opens VS Code's find box instead
+  // (openPaneFindWidget). The other three panes are still to follow (#523).
   //
   // Because filtering is live, every keystroke has already changed the pane by the time the
   // box closes — so cancelling has to be undone explicitly. VS Code fires onDidHide for BOTH
@@ -1057,6 +1088,10 @@ export class ExplorerController {
   // A click away from the box is neither: `ignoreFocusOut` keeps the box open through it, and
   // the click's own handler commits the box instead (commitFilterInput) — see the note there.
   beginFilter(viewId: string): void {
+    if (viewId === VIEW_METHODS) {
+      void this.openPaneFindWidget(viewId);
+      return;
+    }
     // A box already open (another pane's funnel, say) no longer closes itself when focus moves
     // here, so put it away first — and as an accept, since opening a second filter box is not a
     // way of saying the first one was a mistake. Doing it here rather than leaving it to VS
@@ -1669,7 +1704,7 @@ export class ExplorerController {
   // or Classes-pane toolbar. Opens to the side so the comment sits alongside
   // whatever the developer is reading, and as a PREVIEW tab rather than a pinned
   // one: reading a comment is usually a peek, and a preview tab is reused by the
-  // next one and dismissed with a single click instead of two (#387 item 11).
+  // next one and dismissed with a single click instead of two (#387).
   // Double-clicking the tab still promotes it to a permanent one. `item` comes
   // from the inline button; falls back to the selected class for the toolbar /
   // palette.
@@ -2065,7 +2100,7 @@ export class ExplorerController {
   }
 
   // Whether a class carries a real comment — drives whether the row offers the
-  // comment button at all (#387 item 11), so the button never promises a document
+  // comment button at all (#387), so the button never promises a document
   // that turns out to be GemStone's synthesised "No class-specific documentation
   // for …" placeholder. Answered from the set derived from the class list already
   // fetched for this dictionary, so asking costs no extra query and no scan. A class
@@ -3502,7 +3537,7 @@ export class ExplorerController {
     // With a filter set and categories visible, keep the category structure but
     // drop categories with no matching selector, and expand what remains so the
     // matches are visible without hand-expanding each folder.
-    // A category survives the filter when its OWN name matches (#387 item 7) or when
+    // A category survives the filter when its OWN name matches (#387) or when
     // any selector inside it matches. Name-matching first: it is a cached-parse
     // lookup plus a string compare (parseFilter re-parses only when the raw filter
     // string changes), where the selector scan can pull in the ivar-access map.
@@ -3515,7 +3550,7 @@ export class ExplorerController {
     const expanded = filter !== undefined;
     if (filter !== undefined) combined = combined.filter(hasMatch);
     const items: MethodCategoryItem[] = [];
-    // No ALL METHODS pseudo-category row (#387 item 10). It duplicated what the real
+    // No ALL METHODS pseudo-category row (#387). It duplicated what the real
     // categories already show — for an uncategorized class it listed exactly what "as
     // yet unclassified" lists — and being first AND expanded by default it pushed the
     // real categories below the fold, so switching classes meant scrolling before any
@@ -3547,7 +3582,7 @@ export class ExplorerController {
         (info) =>
           filter === undefined ||
           this.methodMatchesFilter(isMeta, info.selector, filter) ||
-          // A category-name match keeps that category's methods here too (#387 item 7).
+          // A category-name match keeps that category's methods here too (#387).
           // Without this, filtering 'accessing' listed the category in grouped mode and
           // then emptied the pane the moment the user turned grouping off, even though
           // the filter had not changed. Ivar-token filters are excluded for free --
@@ -3610,7 +3645,7 @@ export class ExplorerController {
     return matchesMethodFilter(filter, selector, access);
   }
 
-  // Whether a method CATEGORY's own name passes the active filter (#387 item 7).
+  // Whether a method CATEGORY's own name passes the active filter (#387).
   // The browser offers category quick-filters, so typing 'acc' in the Methods pane
   // should surface the 'accessing' category, not just selectors starting with 'acc'.
   //
@@ -5699,7 +5734,7 @@ class MethodProvider extends RefreshableProvider<MethodNode> {
     if (element instanceof MethodCategoryItem) {
       const filter = this.ctl.getFilter(VIEW_METHODS);
       // When the CATEGORY NAME is what matched the filter, show everything inside it
-      // (#387 item 7). Filtering the selectors too would render the category the user
+      // (#387). Filtering the selectors too would render the category the user
       // just searched for as an empty folder, since its methods generally do not start
       // with their category's name.
       const nameMatched =
@@ -5993,9 +6028,10 @@ export function registerGemStoneExplorer(
       'gemstone.explorer.refresh',
       () => void ctl.refreshRetainingSelection(),
     ),
-    // Per-pane filter buttons: open a live filter input (prefix match, '*'
-    // wildcard) that filters the pane in place — works regardless of where
-    // focus currently sits (e.g. the editor).
+    // Per-pane filter buttons. Dictionaries, Class Categories and Classes open a live
+    // filter input (prefix match, '*' wildcard) that filters the pane in place, from
+    // wherever focus currently sits (e.g. the editor); Methods opens VS Code's own find
+    // box inside the pane. Both go through beginFilter, which picks the pane's entry point.
     ...EXPLORER_VIEWS.map((viewId) =>
       vscode.commands.registerCommand(`${viewId}.filter`, () => ctl.beginFilter(viewId)),
     ),
@@ -6248,7 +6284,7 @@ export function registerGemStoneExplorer(
     }),
     // The single "Rename…" entry: figure out what the cursor is on (selector,
     // temporary, instance variable, or class variable) and dispatch to the specific
-    // rename below. Consolidates the four rename actions (#328 item 2).
+    // rename below. Consolidates the four rename actions (#328).
     vscode.commands.registerCommand('gemstone.rename', (position?: unknown) => {
       void renameAtCursorCommand(
         sessionManager,
