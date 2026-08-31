@@ -17,6 +17,15 @@ import {
   wslReaddirSync,
 } from './wslFs';
 
+/** `20260831-153000` — sorts chronologically as text, and is safe in a filename. */
+export function timestampForFileName(when: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return (
+    `${when.getFullYear()}${pad(when.getMonth() + 1)}${pad(when.getDate())}` +
+    `-${pad(when.getHours())}${pad(when.getMinutes())}${pad(when.getSeconds())}`
+  );
+}
+
 export class DatabaseManager {
   constructor(
     private storage: SysadminStorage,
@@ -75,12 +84,11 @@ export class DatabaseManager {
     let effectiveParentDir: string | undefined;
     let allowNfsExtents = false;
 
-    if (this.storage.getDatabases().length === 0) {
-      const rootPath = this.storage.getRootPath();
-      const checkPath = needsWsl() ? this.storage.getWslRootPath() : rootPath;
-      const fsType = this.detectFilesystem(checkPath);
-      appendSysadmin(`NFS check: path=${checkPath}, fsType=${fsType ?? '(not detected)'}`);
-      if (fsType && /^nfs/i.test(fsType)) {
+    const nfsRisk = this.nfsRiskForNextDatabase();
+    {
+      const rootPath = nfsRisk?.rootPath ?? '';
+      const fsType = nfsRisk?.fsType ?? '';
+      if (nfsRisk) {
         const choice = await vscode.window.showWarningMessage(
           `GemStone root path is on NFS — database will not start by default`,
           {
@@ -308,6 +316,83 @@ export class DatabaseManager {
    * the server is being reported at all. So that case names the process, says
    * where it is registered, and points at the action that does work.
    */
+  /**
+   * Where offline extent copies live: their own directory inside the database's
+   * backups folder.
+   *
+   * Deliberately NOT alongside the logical backups. Both are `.dbf` files, and
+   * the two are restored in completely different ways — a logical backup through
+   * a running stone, an extent copy by putting the file back in place with the
+   * stone down. Mixing them in one list means offering the wrong restore on the
+   * wrong file, which either fails after a full stop/start cycle or destroys a
+   * database.
+   */
+  static extentBackupDir(dbPath: string): string {
+    return path.join(dbPath, 'backups', 'extents');
+  }
+
+  /**
+   * Copy a stopped database's extents into its backups folder.
+   *
+   * This is the backup Jasper did not have: the other two (logical, and the
+   * online extent snapshot) both run through a live session, so neither can be
+   * taken of a database that is simply sitting there stopped — which is exactly
+   * when copying extents is safe and cheap.
+   *
+   * The stone MUST be down. Copying a live extent without suspending checkpoints
+   * yields a file that looks like a backup and is not one, so this refuses
+   * rather than producing something misleading; the online path exists for a
+   * running stone.
+   *
+   * Answers the directory written to, or undefined if nothing was.
+   */
+  async offlineExtentBackup(db: GemStoneDatabase): Promise<string | undefined> {
+    // Re-read first, then refuse for a stone alive anywhere on the host — not
+    // just one Jasper's own gslist knows about. Same guard, and same reasoning,
+    // as deleting a database or replacing its extent.
+    this.processManager.refreshProcesses();
+    if (this.processManager.isServerAlive(db, 'stone')) {
+      vscode.window.showErrorMessage(
+        this.stillRunningMessage(db, 'stone', 'backing up its extents'),
+      );
+      return undefined;
+    }
+
+    const dataDir = path.join(db.path, 'data');
+    const extents = wslReaddirSync(dataDir).filter((f) => f.toLowerCase().endsWith('.dbf'));
+    if (extents.length === 0) {
+      vscode.window.showErrorMessage(`No extent files found in ${dataDir}.`);
+      return undefined;
+    }
+
+    const destDir = DatabaseManager.extentBackupDir(db.path);
+    // recursive: the `backups` parent does not exist until something makes it —
+    // a database is created without one.
+    wslMkdirSync(destDir, { recursive: true });
+    // Stamped rather than overwritten: a backup that silently replaces the last
+    // one is one mistake away from being no backup at all.
+    const stamp = timestampForFileName(new Date());
+    return vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: `Backing up extents for ${db.config.stoneName}...`,
+      },
+      async () => {
+        for (const extent of extents) {
+          const base = extent.replace(/\.dbf$/i, '');
+          wslCopyFileSync(path.join(dataDir, extent), path.join(destDir, `${base}-${stamp}.dbf`));
+        }
+        appendSysadmin(
+          `Offline extent backup for ${db.config.stoneName}: ${extents.length} file(s) → ${destDir}`,
+        );
+        vscode.window.showInformationMessage(
+          `Backed up ${extents.length === 1 ? 'the extent' : `${extents.length} extents`} for "${db.config.stoneName}".`,
+        );
+        return destDir;
+      },
+    );
+  }
+
   private stillRunningMessage(
     db: GemStoneDatabase,
     type: 'stone' | 'netldi',
@@ -473,6 +558,26 @@ export class DatabaseManager {
         }
       },
     );
+  }
+
+  /**
+   * The NFS risk a database created right now would run into, or undefined when
+   * there is none to report.
+   *
+   * Only the *first* database is checked. After that the user has already
+   * answered the question for this root path, and re-asking every time is what
+   * made the original flow tiresome. Both the Quick Pick flow and the panel's
+   * form ask here rather than each testing the rule, so they cannot disagree
+   * about when the warning is due.
+   */
+  nfsRiskForNextDatabase(): { rootPath: string; fsType: string } | undefined {
+    if (this.storage.getDatabases().length > 0) return undefined;
+    const rootPath = this.storage.getRootPath();
+    const checkPath = needsWsl() ? this.storage.getWslRootPath() : rootPath;
+    const fsType = this.detectFilesystem(checkPath);
+    appendSysadmin(`NFS check: path=${checkPath}, fsType=${fsType ?? '(not detected)'}`);
+    if (!fsType || !/^nfs/i.test(fsType)) return undefined;
+    return { rootPath, fsType };
   }
 
   private detectFilesystem(linuxPath: string): string | undefined {

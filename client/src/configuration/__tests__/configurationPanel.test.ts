@@ -552,34 +552,6 @@ describe('setting a value', () => {
 
 // ── Ping ────────────────────────────────────────────────────────────────────
 
-describe('ping', () => {
-  it('reports a responsive session as a notice, leaving the values alone', () => {
-    const h = harness([makeSession(1)]);
-    const panel = open(h, 1);
-    const before = posted(panel, 'configuration').length;
-
-    sendMessage(panel, { command: 'ping' });
-
-    expect(lastPosted<{ tone: string; message: string }>(panel, 'pingResult')).toMatchObject({
-      tone: 'ok',
-    });
-    expect(h.ping).toHaveBeenCalledWith(1);
-    expect(posted(panel, 'configuration')).toHaveLength(before);
-  });
-
-  it('reports a session that did not answer, with the error', () => {
-    const h = harness([makeSession(1)]);
-    h.ping.mockReturnValue({ success: false, err: { number: 4100, message: 'session is busy' } });
-    const panel = open(h, 1);
-
-    sendMessage(panel, { command: 'ping' });
-
-    const result = lastPosted<{ tone: string; message: string }>(panel, 'pingResult');
-    expect(result!.tone).toBe('warn');
-    expect(result!.message).toContain('session is busy');
-  });
-});
-
 describe('copy', () => {
   it('puts the requested text on the clipboard', () => {
     const h = harness([makeSession(1)]);

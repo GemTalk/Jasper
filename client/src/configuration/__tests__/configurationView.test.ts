@@ -88,52 +88,6 @@ describe('opening the panel', () => {
     root.querySelector<HTMLButtonElement>('[data-action="loadConfiguration"]')!.click();
     expect(host.postMessage).toHaveBeenCalledWith({ command: 'loadConfiguration' });
   });
-
-  it('pings the session from the page (Ping is session maintenance, not a setting)', () => {
-    const { root, host } = open();
-    root.querySelector<HTMLButtonElement>('[data-action="ping"]')!.click();
-    expect(host.postMessage).toHaveBeenCalledWith({ command: 'ping' });
-  });
-
-  it('shows a positive ping result beside the button, and auto-clears it after 5s', () => {
-    vi.useFakeTimers();
-    try {
-      const { root } = open();
-      sendMessage({ command: 'pingResult', tone: 'ok', message: 'Session 1 is active.' });
-
-      const notice = root.querySelector('.config-panel-actions .ping-result.ok');
-      expect(notice).not.toBeNull();
-      expect(notice!.textContent).toContain('active');
-      // A success carries no Dismiss — it clears itself.
-      expect(notice!.querySelector('[data-action="dismissPing"]')).toBeNull();
-
-      vi.advanceTimersByTime(5000);
-      expect(root.querySelector('.ping-result')).toBeNull();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('keeps a failed ping up with Dismiss (and Copy), and does not auto-clear it', () => {
-    vi.useFakeTimers();
-    try {
-      const { root } = open();
-      sendMessage({ command: 'pingResult', tone: 'warn', message: 'Session 1 did not respond.' });
-
-      const notice = root.querySelector('.ping-result.warn');
-      expect(notice).not.toBeNull();
-      expect(notice!.querySelector('[data-action="dismissPing"]')).not.toBeNull();
-      expect(notice!.querySelector('[data-action="copyNotice"]')).not.toBeNull();
-
-      vi.advanceTimersByTime(10000);
-      expect(root.querySelector('.ping-result.warn')).not.toBeNull();
-
-      root.querySelector<HTMLButtonElement>('[data-action="dismissPing"]')!.click();
-      expect(root.querySelector('.ping-result')).toBeNull();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
 });
 
 describe('rendering the configuration', () => {

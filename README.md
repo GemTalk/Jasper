@@ -40,13 +40,13 @@ To install, manage, and run a GemStone server locally:
 1. Install the extension from the VS Code Marketplace or Open VSX (links above).
 2. Open the **GemStone** sidebar (gem icon in the activity bar).
 3. Check the **OS Configuration** section: on macOS/Linux run the shared-memory setup if it warns; on Windows+WSL Jasper also surfaces WSL networking and services-file configuration here.
-4. Use the **Versions** section to download and extract a GemStone release.
-5. Use the **Databases** section to create a new database.
+4. Click **Manage Databases & Versions** in the **Databases** section title bar to open the panel, and install a GemStone release from its Versions list.
+5. Click **New Database** in the same title bar and fill in the form.
 6. Start the stone and NetLDI from the database tree.
 7. Click **Create Login** on the database to generate a login configuration.
 8. Click **Login** to connect and start developing.
 
-Alternatively, run **Quick Setup** (button in the Versions view) to do all of the above in one step.
+Alternatively, run **Quick Setup** (offered in the Databases section when you have no database yet) to do all of the above in one step.
 
 ## Windows usage
 
@@ -151,9 +151,11 @@ Each login is a row in the tree; click **Login** to start a session, which appea
 **Login rows** offer Edit, Duplicate, Delete, and Login. A login **cannot be edited or deleted while it has an active session** — log out first. **Session rows** (the children) offer:
 
 - **Commit** / **Abort** — transaction control
-- **Session Configuration** (gear) — open this session's stone and gem configuration in its own editor tab, where the runtime-settable values can be changed and **Ping** now lives
+- **Session Configuration** (gear) — open this session's stone and gem configuration in its own editor tab, where the runtime-settable values can be changed
 - **Logout** — disconnect
 - **Export** and **Make Active Session** (context menu)
+
+**Open Workspace** is in this view's title bar rather than on a session row: a workspace runs against the *active* session (as Display It and Inspect It do), so it is not something you do "to" one session in particular. **Ping** lives on a session row in the **Databases & Versions** panel, which has the room to show its answer beside the row that asked.
 
 The active session (used for code execution) is highlighted, and the status bar shows which session is active.
 

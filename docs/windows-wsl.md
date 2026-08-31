@@ -12,7 +12,7 @@ Connect to a GemStone server running on a remote host (or in a VM). No WSL insta
 
 You can also download client libraries ahead of time using the **Install Windows Client** button in the **Versions** view.
 
-Without WSL, the Versions view remains available (it hosts the Install Windows Client action), and the Databases and Processes sections stay visible but show a message explaining that server management requires WSL2, since it needs a Linux environment.
+Without WSL, the Databases & Versions panel remains usable (its Versions list hosts the Install Windows Client action), and the Databases and Processes sections stay visible but show a message explaining that server management requires WSL2, since it needs a Linux environment.
 
 ## Windows with WSL — Full server management
 
