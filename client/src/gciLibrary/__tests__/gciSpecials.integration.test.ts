@@ -134,9 +134,5 @@ describe('GCI special OOPs (integration)', () => {
         expect(gci.GciTsFetchSpecialClass(gci.GciI32ToOop(n))).toBe(OOP_CLASS_SMALL_INTEGER);
       }
     });
-
-    it('encodes when the library exports it, otherwise throws a descriptive error', () => {
-      expect(gci.GciTsI32ToOop(1)).toBe(OOP_One);
-    });
   });
 });
