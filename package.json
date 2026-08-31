@@ -1569,6 +1569,18 @@
         "icon": "$(edit)"
       },
       {
+        "command": "gemstone.explorer.removeMethodCategory",
+        "title": "Remove Method Category",
+        "category": "GemStone",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "gemstone.explorer.addVariable",
+        "title": "Add Variable…",
+        "category": "GemStone",
+        "icon": "$(add)"
+      },
+      {
         "command": "gemstone.explorer.newMethod",
         "title": "New Method",
         "category": "GemStone",
@@ -2099,6 +2111,14 @@
         },
         {
           "command": "gemstone.explorer.classClicked",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.removeMethodCategory",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.addVariable",
           "when": "false"
         },
         {
@@ -2734,6 +2754,11 @@
           "group": "inline"
         },
         {
+          "command": "gemstone.explorer.addVariable",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/",
+          "group": "inline@4"
+        },
+        {
           "command": "gemstone.explorer.addInstVar",
           "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/ && gemstone.rbSupportAvailable",
           "group": "2_generate@2"
@@ -2782,6 +2807,16 @@
           "command": "gemstone.explorer.newMethod",
           "when": "view == gemstoneExplorerMethods && viewItem == explorerProtocol",
           "group": "inline@2"
+        },
+        {
+          "command": "gemstone.explorer.removeMethodCategory",
+          "when": "view == gemstoneExplorerMethods && viewItem == explorerProtocol",
+          "group": "inline@3"
+        },
+        {
+          "command": "gemstone.explorer.removeMethodCategory",
+          "when": "view == gemstoneExplorerMethods && viewItem == explorerProtocol",
+          "group": "2_category@1"
         },
         {
           "command": "gemstone.explorer.moveMethodToClass",

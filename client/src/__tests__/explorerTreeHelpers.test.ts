@@ -15,30 +15,37 @@ describe('variable-side grouping under a class', () => {
     expect(sides[1].names).toEqual(['Rate']);
   });
 
-  // #387 item 12. The convention is OMIT an empty section, not render it grayed:
-  // a header for a definitively-empty section reads as something to open, and
-  // opening it is the only way to find out there was nothing there.
-  it('omits the class side entirely when there are no class variables', () => {
+  // The inline "+" that adds a variable is hosted on the side row, so omitting the
+  // empty side took away the only visible way to add the first class variable to a
+  // class that has instance variables, or vice versa (#499).
+  it('still shows the class side when there are no class variables', () => {
     const sides = variableSides(['count'], []);
 
-    expect(sides.map((s) => s.isMeta)).toEqual([false]);
+    expect(sides.map((s) => s.isMeta)).toEqual([false, true]);
     expect(sides[0].names).toEqual(['count']);
+    expect(sides[1].names).toEqual([]);
   });
 
-  it('omits the instance side entirely when there are no instance variables', () => {
+  it('still shows the instance side when there are no instance variables', () => {
     const sides = variableSides([], ['Rate', 'Minimum']);
 
-    expect(sides.map((s) => s.isMeta)).toEqual([true]);
-    expect(sides[0].names).toEqual(['Rate', 'Minimum']);
+    expect(sides.map((s) => s.isMeta)).toEqual([false, true]);
+    expect(sides[0].names).toEqual([]);
+    expect(sides[1].names).toEqual(['Rate', 'Minimum']);
   });
 
+  // A row can only carry children by declaring a collapsible state, and any
+  // collapsible state draws the expansion chevron — so rows here would give a
+  // variable-less class a chevron advertising variables it does not have. That class
+  // reaches both adds from the "+" on the class row instead.
   it('shows nothing when a class defines neither kind', () => {
-    expect(variableSides([], [])).toHaveLength(0);
+    expect(variableSides([], [])).toEqual([]);
   });
 
-  it('never returns a side with nothing in it', () => {
-    // The invariant the whole convention rests on: no caller has to handle — or
-    // render — an empty side, whichever combination it is given.
+  it('shows either both sides or neither, never just one', () => {
+    // What keeps the rows in step with the class row's chevron: the chevron is gated
+    // on the class having variables of either kind, so a class that gets one must
+    // have rows behind it, and a class that gets none must have no rows at all.
     const combos: [string[], string[]][] = [
       [[], []],
       [['a'], []],
@@ -46,7 +53,9 @@ describe('variable-side grouping under a class', () => {
       [['a'], ['B']],
     ];
     for (const [ivars, cvars] of combos) {
-      for (const side of variableSides(ivars, cvars)) expect(side.names.length).toBeGreaterThan(0);
+      const sides = variableSides(ivars, cvars);
+      const hasAny = ivars.length + cvars.length > 0;
+      expect(sides.map((s) => s.isMeta)).toEqual(hasAny ? [false, true] : []);
     }
   });
 });

@@ -237,6 +237,7 @@ import { recategorizeMethod as sharedRecategorizeMethod } from './queries/recate
 import { recategorizeClass as sharedRecategorizeClass } from './queries/recategorizeClass';
 import { copyMethodToClass as sharedCopyMethodToClass } from './queries/copyMethodToClass';
 import { renameCategory as sharedRenameCategory } from './queries/renameCategory';
+import { removeCategory as sharedRemoveCategory } from './queries/removeCategory';
 import { deleteClass as sharedDeleteClass } from './queries/deleteClass';
 import { moveClass as sharedMoveClass } from './queries/moveClass';
 import { addDictionary as sharedAddDictionary } from './queries/addDictionary';
@@ -2190,6 +2191,22 @@ export function renameCategory(
     isMeta,
     oldCategory,
     newCategory,
+    dict,
+  );
+}
+
+export function removeCategory(
+  session: ActiveSession,
+  className: string,
+  isMeta: boolean,
+  category: string,
+  dict?: number | string,
+): string {
+  return sharedRemoveCategory(
+    defaultQueryExecutorUsing(session),
+    className,
+    isMeta,
+    category,
     dict,
   );
 }

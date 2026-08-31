@@ -9,6 +9,7 @@ import { recategorizeMethod } from '../recategorizeMethod';
 import { recategorizeClass } from '../recategorizeClass';
 import { copyMethodToClass } from '../copyMethodToClass';
 import { renameCategory } from '../renameCategory';
+import { removeCategory, parseRemoveCategoryResult } from '../removeCategory';
 import { deleteClass } from '../deleteClass';
 import { moveClass } from '../moveClass';
 import { addDictionary } from '../addDictionary';
@@ -144,6 +145,93 @@ describe('renameCategory', () => {
     renameCategory(execute, 'Array', false, 'old', 'new');
     const code = execute.mock.calls[0][0];
     expect(code).toContain("renameCategory: 'old' to: 'new'");
+  });
+});
+
+describe('removeCategory', () => {
+  it('removes the category only once it is known to be empty', () => {
+    const execute = vi.fn<QueryExecutor>(() => 'ok');
+    removeCategory(execute, 'Array', false, 'accessing');
+    const code = execute.mock.calls[0][0];
+    // GemStone's removeCategory: takes every method in the category with it, so the
+    // emptiness test has to sit in the SAME doit as the removal — a check on the
+    // client can be overtaken by a method filed in from elsewhere.
+    expect(code).toContain("(recv includesCategory: 'accessing')");
+    expect(code).toContain("selectorsIn: 'accessing'");
+    expect(code).toContain("removeCategory: 'accessing'");
+    // The removal must sit in the EMPTY branch; swapping the arms would delete the
+    // methods the refusal exists to protect.
+    expect(code).toMatch(/sels isEmpty\s*\n\s*ifTrue: \[\s*\n\s*recv removeCategory:/);
+    expect(code).toMatch(/ifFalse: \['has-methods:', sels size printString\]/);
+  });
+
+  it('addresses the metaclass for the class side', () => {
+    const execute = vi.fn<QueryExecutor>(() => 'ok');
+    removeCategory(execute, 'Array', true, 'printing', 1);
+    const code = execute.mock.calls[0][0];
+    expect(code).toContain('symbolList at: 1');
+    expect(code).toContain(' class.');
+  });
+
+  it('escapes a quote in the category name', () => {
+    const execute = vi.fn<QueryExecutor>(() => 'ok');
+    removeCategory(execute, 'Array', false, "it's odd");
+    expect(execute.mock.calls[0][0]).toContain("includesCategory: 'it''s odd'");
+  });
+
+  it('reports the removal only once the category is actually gone', () => {
+    // removeCategory: runs a write-privilege check that answers nil rather than
+    // raising if it ever declines quietly, so having SENT it is not evidence.
+    const execute = vi.fn<QueryExecutor>(() => 'ok');
+    removeCategory(execute, 'Array', false, 'accessing');
+    const code = execute.mock.calls[0][0];
+    expect(code).toContain(
+      "(recv includesCategory: 'accessing') ifTrue: ['not-removed'] ifFalse: ['ok']",
+    );
+  });
+
+  it('answers no-class rather than raising when the class does not resolve', () => {
+    const execute = vi.fn<QueryExecutor>(() => 'no-class');
+    removeCategory(execute, 'Array', false, 'accessing', 1);
+    expect(execute.mock.calls[0][0]).toContain("recv isNil\n  ifTrue: ['no-class']");
+  });
+
+  it('reads the removal sentinels', () => {
+    expect(parseRemoveCategoryResult('ok')).toEqual({ removed: true });
+    expect(parseRemoveCategoryResult(' ok\n')).toEqual({ removed: true });
+    expect(parseRemoveCategoryResult('no-category')).toEqual({
+      removed: false,
+      reason: 'no-category',
+    });
+    expect(parseRemoveCategoryResult('has-methods:3')).toEqual({
+      removed: false,
+      reason: 'has-methods',
+      methodCount: 3,
+    });
+  });
+
+  it('reads the class-missing and kept-anyway sentinels', () => {
+    expect(parseRemoveCategoryResult('no-class')).toEqual({
+      removed: false,
+      reason: 'no-class',
+    });
+    expect(parseRemoveCategoryResult('not-removed')).toEqual({
+      removed: false,
+      reason: 'not-removed',
+    });
+  });
+
+  it('treats an answer it does not recognize as a failure, not a success', () => {
+    // Anything else means the doit did not reach its 'ok' — reporting a removal that
+    // did not happen would leave the pane claiming a category is gone.
+    expect(parseRemoveCategoryResult('a GsProcess')).toEqual({
+      removed: false,
+      reason: 'not-removed',
+    });
+    expect(parseRemoveCategoryResult('has-methods:')).toEqual({
+      removed: false,
+      reason: 'not-removed',
+    });
   });
 });
 

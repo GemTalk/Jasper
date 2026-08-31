@@ -310,15 +310,78 @@ describe('explorer queries (integration)', () => {
       expect(selectorsIn(WIDGET, false, 'accessing')).toEqual([]);
     });
 
-    // The Explorer's "+ new category" is client-only until a method lands, because
-    // an empty category has no server existence. Renaming one server-side raises —
-    // which is exactly why the controller renames still-empty categories locally.
+    // The Explorer's "+ new category" is client-only until a method lands: a
+    // never-populated category was never created on the server, so renaming one
+    // there raises — which is why the controller renames those locally. (A category
+    // that HELD methods and was emptied is different: the server keeps it. See the
+    // removeCategory tests below.)
     it('raises when renaming a category the class does not have', () => {
       defineWidget();
 
       expect(() =>
         q.renameCategory(session(), WIDGET, false, 'no-such-category', 'whatever'),
       ).toThrow();
+    });
+  });
+
+  describe('removeCategory', () => {
+    // The leftover this action exists to clear: GemStone keeps a category listed
+    // after its last method moves out, so it lingers in the Methods pane.
+    const emptyAccessing = (): void => {
+      defineWidget();
+      q.compileMethod(session(), WIDGET, false, 'relocated', 'other ^1');
+      q.recategorizeMethod(session(), WIDGET, false, 'bar', 'relocated');
+    };
+
+    it('leaves an emptied category listed until it is removed', () => {
+      emptyAccessing();
+
+      expect(selectorsIn(WIDGET, false, 'accessing')).toEqual([]);
+      expect(q.getMethodCategories(session(), WIDGET, false, userIndex())).toContain('accessing');
+    });
+
+    it('removes the emptied category and nothing else', () => {
+      emptyAccessing();
+
+      expect(q.removeCategory(session(), WIDGET, false, 'accessing', userIndex()).trim()).toBe(
+        'ok',
+      );
+      const categories = q.getMethodCategories(session(), WIDGET, false, userIndex());
+      expect(categories).not.toContain('accessing');
+      expect(categories).toContain('relocated');
+      expect(selectorsIn(WIDGET, false, 'relocated')).toContain('bar');
+    });
+
+    it('refuses a category that still holds methods, and keeps them', () => {
+      defineWidget();
+
+      expect(q.removeCategory(session(), WIDGET, false, 'accessing', userIndex()).trim()).toBe(
+        'has-methods:1',
+      );
+      // The refusal is the point: GemStone's removeCategory: would have taken the
+      // method with it.
+      expect(selectorsIn(WIDGET, false, 'accessing')).toContain('bar');
+    });
+
+    it('removes a class-side category', () => {
+      defineWidget();
+      q.compileMethod(session(), WIDGET, true, 'other', 'zip ^1');
+      q.recategorizeMethod(session(), WIDGET, true, 'make', 'other');
+
+      expect(
+        q.removeCategory(session(), WIDGET, true, 'instance creation', userIndex()).trim(),
+      ).toBe('ok');
+      expect(q.getMethodCategories(session(), WIDGET, true, userIndex())).not.toContain(
+        'instance creation',
+      );
+    });
+
+    it('answers no-category for a category the class does not have', () => {
+      defineWidget();
+
+      expect(
+        q.removeCategory(session(), WIDGET, false, 'no-such-category', userIndex()).trim(),
+      ).toBe('no-category');
     });
   });
 

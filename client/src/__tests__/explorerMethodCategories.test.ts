@@ -4,6 +4,7 @@ vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 // The controller pulls in browserQueries; stub only what these flows touch.
 vi.mock('../browserQueries', () => ({
   renameCategory: vi.fn(),
+  removeCategory: vi.fn(() => 'ok'),
   canClassBeWritten: vi.fn(() => true),
   getClassEnvironments: vi.fn(() => []),
 }));
@@ -57,6 +58,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(queries.canClassBeWritten).mockReturnValue(true);
   vi.mocked(queries.getClassEnvironments).mockReturnValue([]);
+  vi.mocked(queries.removeCategory).mockReturnValue('ok');
 });
 
 describe('ExplorerController.newMethodCategory', () => {
@@ -217,5 +219,177 @@ describe('ExplorerController — selecting a freshly created method', () => {
     ctl.onExternalMethodCompiled(1, 'M4Demo');
 
     expect(methodView.reveal).not.toHaveBeenCalled();
+  });
+});
+
+describe('ExplorerController.removeMethodCategory', () => {
+  const warning = () => vi.mocked(vscode.window.showWarningMessage);
+
+  it('removes an emptied server-side category', async () => {
+    const { ctl } = makeController();
+    // A category the server still lists after its last method moved out — the
+    // leftover this action exists to clear.
+    setEnvLines(ctl, [envLine(false, 'accessing', []), envLine(false, 'printing', ['printOn:'])]);
+
+    await ctl.removeMethodCategory(new MethodCategoryItem(false, 'accessing', false));
+
+    expect(queries.removeCategory).toHaveBeenCalledWith(
+      expect.anything(),
+      'M4Demo',
+      false,
+      'accessing',
+      3,
+    );
+  });
+
+  it('addresses the class side when the row is a class-side category', async () => {
+    const { ctl } = makeController();
+    setEnvLines(ctl, [envLine(true, 'instance creation', [])]);
+
+    await ctl.removeMethodCategory(new MethodCategoryItem(true, 'instance creation', false));
+
+    expect(queries.removeCategory).toHaveBeenCalledWith(
+      expect.anything(),
+      'M4Demo',
+      true,
+      'instance creation',
+      3,
+    );
+  });
+
+  it('refuses a category that still holds methods, naming the count', async () => {
+    const { ctl } = makeController();
+    setEnvLines(ctl, [envLine(false, 'accessing', ['bar', 'baz', 'zork'])]);
+
+    await ctl.removeMethodCategory(new MethodCategoryItem(false, 'accessing', false));
+
+    // GemStone's removeCategory: would delete all three methods with it.
+    expect(queries.removeCategory).not.toHaveBeenCalled();
+    expect(warning()).toHaveBeenCalledWith(expect.stringContaining('3 methods'));
+  });
+
+  it('counts methods filed in a non-zero environment too', async () => {
+    const { ctl } = makeController();
+    setEnvLines(ctl, [
+      envLine(false, 'accessing', []),
+      { isMeta: false, envId: 1, category: 'accessing', selectors: ['toolMethod'] },
+    ]);
+
+    await ctl.removeMethodCategory(new MethodCategoryItem(false, 'accessing', false));
+
+    expect(queries.removeCategory).not.toHaveBeenCalled();
+    expect(warning()).toHaveBeenCalledWith(expect.stringContaining('1 method'));
+  });
+
+  it("does not count the other side's same-named category", async () => {
+    const { ctl } = makeController();
+    setEnvLines(ctl, [envLine(false, 'accessing', []), envLine(true, 'accessing', ['default'])]);
+
+    await ctl.removeMethodCategory(new MethodCategoryItem(false, 'accessing', false));
+
+    expect(queries.removeCategory).toHaveBeenCalled();
+  });
+
+  it('removes a still-empty just-created category from the overlay, with no server call', async () => {
+    const { ctl } = makeController();
+    showInputBox.mockResolvedValueOnce('scratch');
+    await ctl.newMethodCategory(false);
+
+    await ctl.removeMethodCategory(new MethodCategoryItem(false, 'scratch', false));
+
+    // It was never on the server, so asking would only answer 'no-category'.
+    expect(queries.removeCategory).not.toHaveBeenCalled();
+    expect(ctl.methodCategories(false).map((c) => c.category)).not.toContain('scratch');
+  });
+
+  it('leaves a computed row (ALL METHODS) alone', async () => {
+    const { ctl } = makeController();
+
+    await ctl.removeMethodCategory(new MethodCategoryItem(false, ALL_METHODS_CATEGORY, true));
+
+    expect(queries.removeCategory).not.toHaveBeenCalled();
+    expect(warning()).not.toHaveBeenCalled();
+  });
+
+  it('reports the server refusing when a method arrived after the click', async () => {
+    const { ctl } = makeController();
+    setEnvLines(ctl, [envLine(false, 'accessing', [])]);
+    vi.mocked(queries.removeCategory).mockReturnValue('has-methods:2');
+
+    await ctl.removeMethodCategory(new MethodCategoryItem(false, 'accessing', false));
+
+    expect(warning()).toHaveBeenCalledWith(expect.stringContaining('2 methods'));
+  });
+
+  it('reports GemStone keeping the category instead of claiming a removal', async () => {
+    const { ctl } = makeController();
+    setEnvLines(ctl, [envLine(false, 'accessing', [])]);
+    vi.mocked(queries.removeCategory).mockReturnValue('not-removed');
+
+    await ctl.removeMethodCategory(new MethodCategoryItem(false, 'accessing', false));
+
+    expect(warning()).toHaveBeenCalledWith(
+      expect.stringContaining("kept the method category 'accessing'"),
+    );
+  });
+
+  it('reports a class that no longer resolves', async () => {
+    const { ctl } = makeController();
+    setEnvLines(ctl, [envLine(false, 'accessing', [])]);
+    vi.mocked(queries.removeCategory).mockReturnValue('no-class');
+
+    await ctl.removeMethodCategory(new MethodCategoryItem(false, 'accessing', false));
+
+    expect(warning()).toHaveBeenCalledWith(expect.stringContaining("Couldn't resolve M4Demo"));
+  });
+
+  it('reports a category that is already gone', async () => {
+    const { ctl } = makeController();
+    setEnvLines(ctl, [envLine(false, 'accessing', [])]);
+    vi.mocked(queries.removeCategory).mockReturnValue('no-category');
+
+    await ctl.removeMethodCategory(new MethodCategoryItem(false, 'accessing', false));
+
+    expect(warning()).toHaveBeenCalledWith(
+      expect.stringContaining("no longer has a method category 'accessing'"),
+    );
+  });
+
+  it('surfaces a failed removal as an error and keeps the selection', async () => {
+    const { ctl } = makeController();
+    setEnvLines(ctl, [envLine(false, 'accessing', [])]);
+    ctl.state.selectedIsMeta = false;
+    ctl.state.selectedMethodCategory = 'accessing';
+    vi.mocked(queries.removeCategory).mockImplementation(() => {
+      throw new Error('GemStone said no');
+    });
+
+    await ctl.removeMethodCategory(new MethodCategoryItem(false, 'accessing', false));
+
+    expect(vi.mocked(vscode.window.showErrorMessage)).toHaveBeenCalledWith(
+      expect.stringContaining('GemStone said no'),
+    );
+    expect(ctl.state.selectedMethodCategory).toBe('accessing');
+  });
+
+  it('drops the recorded selection when the removed category was the selected one', async () => {
+    const { ctl } = makeController();
+    setEnvLines(ctl, [envLine(false, 'accessing', [])]);
+    ctl.state.selectedIsMeta = false;
+    ctl.state.selectedMethodCategory = 'accessing';
+
+    await ctl.removeMethodCategory(new MethodCategoryItem(false, 'accessing', false));
+
+    expect(ctl.state.selectedMethodCategory).toBeUndefined();
+  });
+
+  it('does nothing without a selected class', async () => {
+    const { ctl } = makeController();
+    ctl.state.className = undefined;
+
+    await ctl.removeMethodCategory(new MethodCategoryItem(false, 'accessing', false));
+
+    expect(queries.removeCategory).not.toHaveBeenCalled();
+    expect(warning()).toHaveBeenCalledWith('Select a class first.');
   });
 });
