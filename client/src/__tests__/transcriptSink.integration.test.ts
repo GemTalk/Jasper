@@ -1,214 +1,182 @@
 // End-to-end tests for the Jade-style Transcript sink against a live stone:
-// install at "login", kernel `Transcript` writes reaching the sink, buffered
-// drains, and live forwarding (error 2336 → settleNbResult → ContinueWith).
-import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest';
+// real class compilation, kernel `Transcript` writes reaching the sink,
+// buffered drains, and live forwarding (2336 -> settleNbResult -> ContinueWith).
+// Mocked-boundary coverage of the same module is in transcriptSink.test.ts;
+// only what needs a real gem belongs here.
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
-// transcriptSink logs through gciLog, which needs the vscode module — absent
-// in the gci project. Console logging keeps failures diagnosable here.
-vi.mock('../../gciLog', () => ({
-  logInfo: vi.fn((...args: unknown[]) => console.log(...args)),
+vi.mock('vscode', () => import('../__mocks__/vscode.js'));
+
+// An install failure is routed to gciLog, whose output channel here is the
+// vscode mock's discarding `appendLine`. Console logging keeps failures
+// diagnosable -- the install runs in `beforeEach` for every test below.
+vi.mock('../gciLog', async (orig) => ({
+  ...(await orig()),
   logError: vi.fn((...args: unknown[]) => console.error(...args)),
 }));
 
-import { GciLibrary } from '../../gciLibrary';
-import type { ActiveSession } from '../../sessionManager';
+import { useIntegrationTest } from './useIntegrationTest';
+import { testActiveSession } from './testActiveSession';
+import { GciLibrary } from '../gciLibrary';
+import type { ActiveSession } from '../sessionManager';
 import {
   installTranscriptSink,
   setTranscriptLive,
   drainTranscript,
   settleNbResult,
-} from '../../transcriptSink';
-import { GCI_LIBRARY_PATH, STONE_NRS, GEM_NRS, GS_USER, GS_PASSWORD } from './gciTestConfig';
-import { OOP_CLASS_STRING } from '../../gciConstants';
+} from '../transcriptSink';
+import { runNbCall } from '../nbRunner';
+import { OOP_CLASS_STRING, OOP_ILLEGAL, OOP_NIL } from '../gciConstants';
 
-const OOP_ILLEGAL = 0x01n;
-const OOP_NIL = 0x14n;
+describe('transcript sink (integration)', () => {
+  let gci: GciLibrary;
+  let handle: unknown;
 
-describe('transcript sink (live stone)', () => {
-  const gci = new GciLibrary(GCI_LIBRARY_PATH);
-  let session: ActiveSession;
-
-  beforeAll(() => {
-    const login = gci.GciTsLogin(STONE_NRS, null, null, false, GEM_NRS, GS_USER, GS_PASSWORD, 0, 0);
-    expect(login.session).not.toBeNull();
-    session = {
-      id: 99,
-      gci,
-      handle: login.session,
-      login: { label: 'gci-test' },
-      stoneVersion: '',
-    } as unknown as ActiveSession;
-    // Tests run in a shuffled order and share this session — the sink must
-    // exist before any of them, exactly as it would after a real login.
-    expect(installTranscriptSink(session)).toBe(true);
+  useIntegrationTest((testContext) => {
+    gci = testContext.gciLibrary;
+    handle = testContext.session;
   });
 
+  /**
+   * A real `ActiveSession` around the live `gci`/`handle`, rebuilt per call --
+   * so it always carries the current handle, and a real `login`/`stoneVersion`
+   * for any version-gated path the sink reaches.
+   */
+  const session = (): ActiveSession => testActiveSession(gci, handle);
+  const exec = (code: string): string => gci.executeAndFetchString(handle, code);
+
+  /**
+   * The UTF-8 contents of `oop`, failing rather than silently handing back a
+   * partial answer. A string too long for the buffer comes back truncated with
+   * no error at all, so completeness is checked separately: `requiredSize`
+   * counts the terminator, so a complete result fits in `BUFFER_BYTES`.
+   */
+  const fetchString = (oop: bigint): string => {
+    const BUFFER_BYTES = 256;
+    const { requiredSize, data, err } = gci.GciTsFetchUtf8(handle, oop, BUFFER_BYTES);
+    expect(err.number).toBe(0);
+    expect(requiredSize).toBeLessThanOrEqual(BigInt(BUFFER_BYTES));
+    return data;
+  };
+
+  // The harness clears SessionTemps after every test, and the sink is
+  // registered only there -- so it is installed per test, exactly as
+  // sessionManager does per login, rather than once for the file.
   beforeEach(() => {
-    // Tests share the session's sink: start each one buffered and empty so a
-    // predecessor's leftovers can't bleed into its assertions.
-    setTranscriptLive(session, false);
-    drainTranscript(session);
+    expect(installTranscriptSink(session())).toBe(true);
   });
 
-  afterAll(() => {
-    if (session) gci.GciTsLogout(session.handle);
-    gci.close();
+  // Counterpart to installing per test: the harness's teardown doits run on the
+  // blocking execute path before it clears SessionTemps, and a live forwarder
+  // send there has no continuable context (see transcriptSink.ts's module doc).
+  afterEach(() => {
+    setTranscriptLive(session(), false);
   });
 
-  function execute(code: string): { data: string; err: { number: number; message: string } } {
-    const { data, err } = gci.GciTsExecuteFetchBytes(
-      session.handle,
-      code,
-      -1,
-      OOP_CLASS_STRING,
-      OOP_ILLEGAL,
-      OOP_NIL,
-      4096,
+  /**
+   * Run `code` the way Execute It does: started non-blocking and settled
+   * through the shared nb poll loop, with transcript forwarder sends (2336)
+   * displayed as they arrive. The progress notification is suppressed --
+   * there is no user here to offer a Cancel to.
+   */
+  function executeLive(code: string, onTranscript: (text: string) => void) {
+    return runNbCall(
+      session(),
+      () => gci.GciTsNbExecute(handle, code, OOP_CLASS_STRING, OOP_ILLEGAL, OOP_NIL, 0, 0),
+      () => settleNbResult(session(), onTranscript),
+      { suppressNotification: true },
     );
-    return { data, err };
   }
 
-  async function pollUntilReady(): Promise<void> {
-    for (let i = 0; i < 400; i++) {
-      const { result } = gci.GciTsNbPoll(session.handle, 25);
-      if (result === 1) return;
-      await new Promise((r) => setTimeout(r, 5));
-    }
-    throw new Error('nb call never became ready');
-  }
+  it('reinstalling into a session that already has a sink keeps the buffered output', () => {
+    exec("Transcript nextPutAll: 'kept across reinstall'. 'ok'");
 
-  it('reinstalling within the same session is a harmless no-op', () => {
-    expect(installTranscriptSink(session)).toBe(true);
+    expect(installTranscriptSink(session())).toBe(true);
+
+    expect(drainTranscript(session())).toContain('kept across reinstall');
   });
 
   it('captures kernel Transcript writes and drains them in buffered mode', () => {
-    const { err } = execute("Transcript nextPutAll: 'buffered hello'; tab: 1. 'ok'");
-    expect(err.number).toBe(0);
+    const result = exec("Transcript nextPutAll: 'buffered hello'; tab: 1. 'ok'");
 
-    const drained = drainTranscript(session);
-
-    expect(drained).toContain('buffered hello');
-    // A second drain finds nothing — the buffer was cleared.
-    expect(drainTranscript(session)).toBe('');
+    expect(result).toBe('ok');
+    expect(drainTranscript(session())).toContain('buffered hello');
+    expect(drainTranscript(session())).toBe('');
   });
 
   it('suppresses the gem-log echo: show:/flush do not error against the sink', () => {
     // show: routes through nextPutAll: + endEntry (contents/reset + gciLogServer).
-    const { err } = execute("Transcript show: 'shown'; flush. 'ok'");
+    // exec() throws on a server-side error, so "does not error" is implicit here.
+    const result = exec("Transcript show: 'shown'; flush. 'ok'");
 
-    expect(err.number).toBe(0);
-    // show: printStrings its argument (kernel behavior), so quotes included.
-    expect(drainTranscript(session)).toContain("'shown'");
+    expect(result).toBe('ok');
+    expect(drainTranscript(session())).toContain("'shown'");
   });
 
   it('round-trips non-ASCII transcript output through the UTF-8 drain', () => {
-    const { err } = execute(
-      "Transcript nextPutAll: 'caf', (Character codePoint: 233) asString. 'ok'",
-    );
-    expect(err.number).toBe(0);
+    // Emitted Smalltalk must stay ASCII for the 3.6.x compiler -- the
+    // non-ASCII character is built at runtime via codePoint:, never literal.
+    exec("Transcript nextPutAll: 'caf', (Character codePoint: 233) asString. 'ok'");
 
-    expect(drainTranscript(session)).toContain('café');
+    expect(drainTranscript(session())).toContain('café');
   });
 
   it('switching to live mode returns any buffered residue', () => {
-    const { err } = execute("Transcript nextPutAll: 'residue'. 'ok'");
-    expect(err.number).toBe(0);
+    exec("Transcript nextPutAll: 'residue'. 'ok'");
 
-    const residue = setTranscriptLive(session, true);
+    const residue = setTranscriptLive(session(), true);
 
     expect(residue).toContain('residue');
-    setTranscriptLive(session, false);
   });
 
   it('streams writes mid-execution in live mode and settles to the real result', async () => {
-    setTranscriptLive(session, true);
-    try {
-      const start = gci.GciTsNbExecute(
-        session.handle,
-        "Transcript nextPutAll: 'first'. Transcript nextPutAll: 'second'. 6 * 7",
-        OOP_CLASS_STRING,
-        OOP_ILLEGAL,
-        OOP_NIL,
-        0,
-        0,
-      );
-      expect(start.success).toBe(true);
-      await pollUntilReady();
+    setTranscriptLive(session(), true);
+    const chunks: string[] = [];
 
-      const chunks: string[] = [];
-      const { result, err } = await settleNbResult(session, (text) => chunks.push(text));
+    const { result, err } = await executeLive(
+      "Transcript nextPutAll: 'first'. Transcript nextPutAll: 'second'. 6 * 7",
+      (text) => chunks.push(text),
+    );
 
-      expect(err.number).toBe(0);
-      expect(chunks).toEqual(['first', 'second']);
-      const { value } = gci.GciTsOopToI64(session.handle, result);
-      expect(value).toBe(42n);
-    } finally {
-      setTranscriptLive(session, false);
-    }
+    expect(err.number).toBe(0);
+    expect(chunks).toEqual(['first', 'second']);
+    expect(gci.oopToInteger(handle, result)).toBe(42n);
   });
 
   it('live forwarding bypasses user exception handlers', async () => {
-    setTranscriptLive(session, true);
-    try {
-      const start = gci.GciTsNbExecute(
-        session.handle,
-        "[Transcript nextPutAll: 'inside handler'. 'no error'] on: AbstractException do: [:e | 'trapped']",
-        OOP_CLASS_STRING,
-        OOP_ILLEGAL,
-        OOP_NIL,
-        0,
-        0,
-      );
-      expect(start.success).toBe(true);
-      await pollUntilReady();
+    setTranscriptLive(session(), true);
+    const chunks: string[] = [];
 
-      const chunks: string[] = [];
-      const { result, err } = await settleNbResult(session, (text) => chunks.push(text));
-
-      expect(err.number).toBe(0);
-      expect(chunks).toEqual(['inside handler']);
-      // The handler did NOT fire — the block completed normally.
-      const { data } = gci.GciTsFetchUtf8(session.handle, result, 256);
-      expect(data).toBe('no error');
-    } finally {
-      setTranscriptLive(session, false);
-    }
-  });
-
-  it('passes real errors through the settle loop untouched', async () => {
-    setTranscriptLive(session, true);
-    try {
-      const start = gci.GciTsNbExecute(
-        session.handle,
-        "Transcript nextPutAll: 'before boom'. nil foo",
-        OOP_CLASS_STRING,
-        OOP_ILLEGAL,
-        OOP_NIL,
-        0,
-        0,
-      );
-      expect(start.success).toBe(true);
-      await pollUntilReady();
-
-      const chunks: string[] = [];
-      const { err } = await settleNbResult(session, (text) => chunks.push(text));
-
-      expect(chunks).toEqual(['before boom']);
-      expect(err.number).not.toBe(0);
-      expect(err.message).toContain('foo');
-      // Release the suspended process so later tests start clean.
-      if (err.context && err.context !== OOP_NIL) {
-        gci.GciTsClearStack(session.handle, err.context);
-      }
-    } finally {
-      setTranscriptLive(session, false);
-    }
-  });
-
-  it('the session remains healthy after live-mode use', () => {
-    const { data, err } = execute('(3 + 4) printString');
+    const { result, err } = await executeLive(
+      "[Transcript nextPutAll: 'inside handler'. 'no error'] on: AbstractException do: [:e | 'trapped']",
+      (text) => chunks.push(text),
+    );
 
     expect(err.number).toBe(0);
-    expect(data).toBe('7');
+    expect(chunks).toEqual(['inside handler']);
+    // The handler did NOT fire -- the block completed normally.
+    expect(fetchString(result)).toBe('no error');
+  });
+
+  it('passes real errors through the settle loop and leaves the session usable', async () => {
+    setTranscriptLive(session(), true);
+    const chunks: string[] = [];
+
+    const { err } = await executeLive("Transcript nextPutAll: 'before boom'. nil foo", (text) =>
+      chunks.push(text),
+    );
+
+    expect(chunks).toEqual(['before boom']);
+    expect(err.number).not.toBe(0);
+    expect(err.message).toContain('foo');
+    // koffi hands a uint64 back as a number whenever it fits, so the oop is
+    // normalized before being compared against the bigint OOP constants --
+    // production paths (codeExecutor.fetchResultOop) do the same, and without
+    // it the nil guard never matches.
+    const context = BigInt(err.context);
+    if (context !== OOP_NIL && context !== 0n) {
+      gci.GciTsClearStack(handle, context);
+    }
+    expect(gci.executeAndFetchInteger(handle, '3 + 4')).toBe(7n);
   });
 });
