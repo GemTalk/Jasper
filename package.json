@@ -3144,11 +3144,11 @@
     "@eslint-community/eslint-plugin-eslint-comments": "^4.7.2",
     "@eslint/js": "^9.19.0",
     "@playwright/test": "^1.62.1",
-    "@types/node": "^22.15",
+    "@types/node": "~22.15",
     "@vitest/eslint-plugin": "^1.6.27",
     "@vscode/test-electron": "^3.1.0",
     "@vscode/vsce": "^3.7.1",
-    "esbuild": "^0.28.1",
+    "esbuild": "^0.28.2",
     "eslint": "^10.8.1",
     "eslint-config-flat-gitignore": "^2.3.0",
     "eslint-config-prettier": "^10.1.8",
@@ -3173,11 +3173,11 @@
     "js-yaml": "^4.3.1"
   },
   "allowScripts": {
-    "esbuild@0.28.1": true,
     "koffi@2.16.2": true,
     "@vscode/vsce-sign@2.0.9": true,
     "lefthook@2.1.10": true,
     "keytar@7.9.0": true,
-    "fsevents": false
+    "fsevents": false,
+    "esbuild@0.28.2": true
   }
 }

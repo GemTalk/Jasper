@@ -23,6 +23,10 @@
 // version-pinned (see checkAllowScriptsPinned below) — an unpinned allow
 // entry trusts every future version of a package forever.
 //
+// Last, checks that the `@types` packages stay pinned to the declared runtime
+// floor (see checkTypeFloorPinned below) — a range that resolves above
+// `engines.vscode`/`engines.node` lets tsc accept APIs the shipped floor lacks.
+//
 //   node scripts/lint-supply-chain.mjs
 
 import { execSync } from 'node:child_process';
@@ -226,12 +230,89 @@ function checkAllowScriptsPinned() {
   return failed;
 }
 
+// The two `@types` packages describe the API surface tsc checks against, so a range that
+// resolves above the runtime floor lets the compiler accept APIs the shipped floor does not
+// have — silently, with no Dependabot PR and nothing else in CI to notice. That is not
+// hypothetical: `@types/vscode` had drifted to 1.120.0 against an `engines.vscode` of ^1.101.0.
+// The floor itself is a coordinated set of ~7 edits (see
+// docs/how-to/raising-the-version-floor.md), so the two failure modes this guards are a
+// re-widened range and a partial floor raise that moves `engines` but misses a `@types` bump.
+//
+// Both are DefinitelyTyped releases, whose patch digit is DT's own revision counter rather
+// than the upstream project's — a single minor picks up several corrections all describing the
+// same API surface. So the assertion is on the *minor*, not the exact version: the declared
+// range must be a tilde on the floor's minor, and the installed version must still sit on it.
+// `@types/vscode` is a client-workspace dependency and npm keeps it under `client/node_modules`
+// today, but a future hoist would move it to the root key, so both are accepted.
+const TYPE_FLOORS = [
+  {
+    types: '@types/vscode',
+    manifest: 'client/package.json',
+    engine: 'vscode',
+    lockKeys: ['client/node_modules/@types/vscode', 'node_modules/@types/vscode'],
+  },
+  {
+    types: '@types/node',
+    manifest: 'package.json',
+    engine: 'node',
+    lockKeys: ['node_modules/@types/node'],
+  },
+];
+
+// Reads the leading `major.minor` out of anything version-shaped, so the same helper handles a
+// range operator (`~22.15`, `^1.101.0`, `>=22.15.1`) and a bare lockfile version alike. The
+// operator is checked separately — see checkTypeFloorPinned — because the shape matters on the
+// declared side but is meaningless on the resolved side.
+function minorOf(version) {
+  const match = /(\d+)\.(\d+)/.exec(version ?? '');
+  return match === null ? null : `${match[1]}.${match[2]}`;
+}
+
+function checkTypeFloorPinned() {
+  const engines = JSON.parse(readFileSync('package.json', 'utf8')).engines ?? {};
+  const lockfile = JSON.parse(readFileSync('package-lock.json', 'utf8'));
+  let failed = false;
+
+  for (const { types, manifest, engine, lockKeys } of TYPE_FLOORS) {
+    const floor = minorOf(engines[engine]);
+    const declared = JSON.parse(readFileSync(manifest, 'utf8')).devDependencies?.[types] ?? '';
+    const installedKey = lockKeys.find((key) => lockfile.packages?.[key] !== undefined);
+    const installed = lockfile.packages?.[installedKey]?.version;
+
+    if (floor === null) {
+      // Without a floor there is nothing to compare against, and the range is unconstrained by
+      // anything at all — a strictly worse state than the drift this check exists to catch.
+      console.error(`✗ engines.${engine} is missing or unparseable — nothing pins ${types}`);
+      failed = true;
+    } else if (!declared.startsWith('~') || minorOf(declared) !== floor) {
+      console.error(
+        `✗ ${manifest}'s ${types} is ${describe(declared)} — expected a tilde on engines.${engine}'s floor (~${floor})`,
+      );
+      failed = true;
+    } else if (minorOf(installed) !== floor) {
+      // The range can be right while the lockfile is not: a hand-edited or stale entry resolves
+      // off-floor, and it is the resolved version tsc actually compiles against.
+      console.error(
+        `✗ ${types} resolves to ${describe(installed ?? '')} in the lockfile — expected ${floor}.x`,
+      );
+      failed = true;
+    }
+  }
+
+  if (!failed) {
+    console.log('✓ every @types range is a tilde on its engines floor, and resolves there');
+  }
+
+  return failed;
+}
+
 function main() {
   const configFailed = checkConfig();
   const driftFailed = checkLockfileDrift();
   const allowScriptsFailed = checkAllowScriptsPinned();
+  const typeFloorFailed = checkTypeFloorPinned();
 
-  if (configFailed || driftFailed || allowScriptsFailed) {
+  if (configFailed || driftFailed || allowScriptsFailed || typeFloorFailed) {
     process.exit(1);
   }
 }
