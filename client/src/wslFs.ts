@@ -258,46 +258,12 @@ export function wslChmodSync(p: string, mode: number | string): void {
   wslExecSync(`chmod ${modeStr} ${shellQuote(windowsPathToWsl(p))}`);
 }
 /**
- * The plain files directly inside `p`, sorted, with directories left out.
- *
- * Callers that want this list have to have it in one round trip: a readdir
- * followed by a wslIsFile per entry costs one `wsl.exe` spawn per file, which
- * a directory of stone logs turns into seconds of a frozen extension host.
- * `ls -A1p` marks directories with a trailing `/`, and readdir's Dirent answers
- * the same question natively, so neither side needs a stat per name.
- */
-export function wslListFilesSync(p: string): string[] {
-  if (!shouldRoute(p)) {
-    try {
-      return fs
-        .readdirSync(p, { withFileTypes: true })
-        .filter((e) => e.isFile())
-        .map((e) => e.name)
-        .sort();
-    } catch {
-      return [];
-    }
-  }
-  try {
-    const out = wslExecSync(`ls -A1p -- ${shellQuote(windowsPathToWsl(p))}`);
-    return out
-      .split('\n')
-      .map((s) => s.trim())
-      .filter((s) => s && !s.endsWith('/'))
-      .sort();
-  } catch {
-    return [];
-  }
-}
-
-/**
  * The files directly in a directory, each with when it was last written.
  *
- * `wslListFilesSync` answers names only, which is enough to open a file but not
- * to say which of forty log files is the one from this morning. Reported in
- * epoch milliseconds so the caller can order and format them however it likes.
- * A directory that cannot be read answers an empty list, as the name-only
- * listing does — an unreadable log folder is not worth an error.
+ * Names alone are enough to open a file but not to say which of forty log files
+ * is the one from this morning. Reported in epoch milliseconds so the caller can
+ * order and format them however it likes. A directory that cannot be read
+ * answers an empty list — an unreadable log folder is not worth an error.
  */
 export function wslStatFilesSync(p: string): { name: string; modifiedMs: number }[] {
   if (!shouldRoute(p)) {

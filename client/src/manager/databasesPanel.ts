@@ -26,9 +26,9 @@ import * as crypto from 'crypto';
 import * as path from 'path';
 
 import { SysadminStorage } from '../sysadminStorage';
-import { DatabaseManager } from '../databaseManager';
-import { VersionManager, CatalogEntry } from '../versionManager';
-import { ProcessManager, versionsMatch } from '../processManager';
+import { DatabaseManager } from './databaseManager';
+import { VersionManager, CatalogEntry } from './versionManager';
+import { ProcessManager, versionsMatch } from './processManager';
 import {
   needsWsl,
   getWslInfoAsync,
@@ -146,7 +146,7 @@ interface DatabaseRow {
   external: ExternalProc[];
   /** When the stone started, epoch ms — for "running 12 minutes". */
   startedAtMs?: number;
-  /** The database's own files, mirroring what the sidebar tree lists. */
+  /** The database's own log and conf files, newest first. */
   logFiles: FileEntry[];
   confFiles: FileEntry[];
   /** Logical backups — restored through a running stone. */
@@ -316,11 +316,16 @@ export class DatabasesPanel {
   private openOnCreateForm = false;
   private rebuilding = false;
   private rebuildAgain = false;
+  /**
+   * Stamps every state pass, so a slow one that has been overtaken is dropped
+   * rather than posted. `rebuild` serialises itself, but both it and `postState`
+   * build asynchronously and post at the end, so without this the loser of a
+   * race repaints the panel with rows built before the winner's action —
+   * leaving it stale until something else redraws. Shared by both, because a
+   * pass from either can be the late one.
+   */
+  private stateSeq = 0;
   private staleWhileHidden = false;
-  // Parsed system.conf descriptions, one map per version — the file does not
-  // change under a running stone, so it is read and parsed once per version and
-  // kept (an unreadable file caches as an empty map, so a remote stone whose
-  // product tree is not on this machine is not re-probed on every load).
 
   /**
    * Publishes whether a panel is open, so the Dictionaries title bar can offer
@@ -336,15 +341,12 @@ export class DatabasesPanel {
   }
 
   /**
-   * Open the manager, revealing the existing panel if one is already open.
+   * Open the panel, or bring the open one forward.
    *
    * `preserveFocus` is for the times the panel opens because the environment
    * said so rather than because the user asked — at startup with nothing
    * connected, or when the last session goes away. Taking focus there would pull
    * the user out of whatever editor they were in.
-   */
-  /**
-   * Open the panel, or bring the open one forward.
    *
    * `startCreating` is how the sidebar's New Database button lands straight in
    * the form. It is posted rather than passed into the first render because the
@@ -506,7 +508,9 @@ export class DatabasesPanel {
       // rebuildAgain and is drained by this loop, so exactly one more pass runs.
       do {
         this.rebuildAgain = false;
+        const seq = ++this.stateSeq;
         const state = await this.buildState('remote');
+        if (seq !== this.stateSeq) continue;
         this.panel.webview.postMessage({ command: 'state', state });
       } while (this.rebuildAgain);
     } finally {
@@ -551,9 +555,6 @@ export class DatabasesPanel {
         // panel caches is dropped here, so the button means what it says.
         this.catalog = undefined;
         this.catalogFetch = undefined;
-        // Drop the per-version system.conf descriptions too, so a version whose
-        // product tree was not present at first read (an as-yet-uninstalled
-        // version) picks up its tooltips once it is installed and refreshed.
         // The WSL answers are cached, and the OS checklist reads them — so a
         // refresh has to forget them, or a machine stays "WSL not reachable"
         // after the user has made it reachable.
@@ -568,16 +569,16 @@ export class DatabasesPanel {
       // Versions — reuse the existing commands, passing a synthetic VersionItem
       // ({ version }) since those handlers only read `item.version`.
       case 'extractVersion':
-        await this.runVersionCommand('gemstone.extractVersion', msg.version);
+        await this.versionCommand('gemstone.extractVersion', msg.version);
         return;
       case 'deleteDownload':
-        await this.runVersionCommand('gemstone.deleteDownload', msg.version);
+        await this.versionCommand('gemstone.deleteDownload', msg.version);
         return;
       case 'uninstallVersion':
         await this.uninstallVersion(msg.version);
         return;
       case 'unregisterLocalVersion':
-        await this.runVersionCommand('gemstone.unregisterLocalVersion', msg.version);
+        await this.versionCommand('gemstone.unregisterLocalVersion', msg.version);
         return;
       case 'openVersionTerminal':
         await this.versionCommand('gemstone.openVersionTerminal', msg.version);
@@ -598,7 +599,7 @@ export class DatabasesPanel {
         await this.processCommand('gemstone.deleteStaleLock', msg.dirName, msg.name);
         return;
       case 'openVersionFolder':
-        await this.runVersionCommand('gemstone.openVersionFolder', msg.version);
+        await this.versionCommand('gemstone.openVersionFolder', msg.version);
         return;
       case 'installNewVersion':
         await this.installNewVersion();
@@ -732,7 +733,11 @@ export class DatabasesPanel {
     }
   }
 
-  /** Run one of the allowed session commands against a live session. */
+  /**
+   * Start whichever of a database's servers is not already up. Both are checked
+   * first, so starting a database whose NetLDI is already running does not try
+   * to start it a second time.
+   */
   private async bringUp(db: GemStoneDatabase): Promise<void> {
     const cfg = db.config;
     if (!this.deps.processManager.isStoneRunning(cfg.stoneName, cfg.version)) {
@@ -861,13 +866,6 @@ export class DatabasesPanel {
     await this.postState();
   }
 
-  private async runVersionCommand(command: string, version: string): Promise<void> {
-    const v = this.lastVersions.find((x) => x.version === version);
-    if (!v) return;
-    await vscode.commands.executeCommand(command, { version: v });
-    await this.postState();
-  }
-
   /**
    * Run a version command on the release with this number. They take a tree item
    * and read only its `version`, so that is what the panel hands them.
@@ -917,7 +915,6 @@ export class DatabasesPanel {
     await this.postState();
   }
 
-  /** Files in a database subfolder, sorted by name — as the sidebar tree lists them. */
   /**
    * A database's files, newest first. Log and backup directories accumulate, and
    * the file anyone is looking for is nearly always the most recent one — an
@@ -930,7 +927,7 @@ export class DatabasesPanel {
   }
 
   /** Backups are the .dbf files at the top of backups/, newest first (the names
-   *  carry a sortable timestamp) — the same rule the sidebar tree applies. */
+   *  carry a sortable timestamp). */
   private listBackups(dbPath: string): FileEntry[] {
     // Already newest-first from listFiles; nothing to reverse.
     return this.listFiles(path.join(dbPath, 'backups')).filter((f) =>
@@ -1031,6 +1028,13 @@ export class DatabasesPanel {
     });
   }
 
+  /**
+   * Run one of the allowed session commands against a live session.
+   *
+   * The command name arrives from the webview, so it is checked against the
+   * allow-list rather than passed to `executeCommand` as given — otherwise
+   * anything reachable by name could be run with a live session attached.
+   */
   private async sessionCommand(command: string, sessionId: number): Promise<void> {
     if (!DatabasesPanel.SESSION_COMMANDS.has(command)) return;
     const session = this.deps.sessionManager.getSession(sessionId);
@@ -1176,11 +1180,14 @@ export class DatabasesPanel {
     const db = this.lastDatabases.find((d) => d.dirName === dirName);
     if (!db) return;
     // Whitelisted rather than joined blindly: `folder` arrives from the webview.
+    // An off-list value means the view and the host have drifted, so nothing is
+    // opened — a button that does nothing is a far louder bug report than one
+    // that quietly opens a different folder and looks like it worked.
     const ALLOWED = ['conf', 'backups', 'backups/extents', 'log'];
-    const sub = ALLOWED.includes(folder) ? folder : 'log';
+    if (!ALLOWED.includes(folder)) return;
     await vscode.commands.executeCommand(
       'revealFileInOS',
-      vscode.Uri.file(path.join(db.path, sub)),
+      vscode.Uri.file(path.join(db.path, folder)),
     );
   }
 
@@ -1194,11 +1201,14 @@ export class DatabasesPanel {
    * nothing but its available-versions rows.
    */
   private async postState(): Promise<void> {
+    const seq = ++this.stateSeq;
     this.panel.webview.postMessage({ command: 'loading' });
     const state = await this.buildState('local');
+    if (seq !== this.stateSeq) return;
     this.panel.webview.postMessage({ command: 'state', state });
 
     const versions = await this.buildVersions('remote');
+    if (seq !== this.stateSeq) return;
     this.panel.webview.postMessage({ command: 'state', state: { ...state, versions } });
   }
 
@@ -1282,9 +1292,11 @@ export class DatabasesPanel {
   }
 
   /**
-   * The selected session, without touching the GCI. This rides along with every
-   * state so the Configuration section can appear the instant a session is
-   * selected; the values it shows are fetched separately, on demand.
+   * One row per stored login, each carrying the sessions opened from it.
+   *
+   * Only a localhost login is paired to a database this machine made: a remote
+   * login that happens to share a stone name must not inherit the local
+   * database's directory, its database-scoped actions or its running state.
    */
   private buildLoginTargets(databases: DatabaseRow[]): LoginTarget[] {
     const open = this.deps.sessionManager.getSessions();

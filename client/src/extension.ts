@@ -17,7 +17,6 @@ import {
   DEFAULT_GS_PW,
   GemStoneLogin,
   buildDataCuratorLogin,
-  dataCuratorLoginToCreate,
   loginLabel,
   loginTargetKey,
   sameLoginTarget,
@@ -138,17 +137,17 @@ import * as queries from './browserQueries';
 import { dedupeMethodResults } from './queries/methodSearch';
 import { SysadminStorage } from './sysadminStorage';
 import { appendSysadmin, getSysadminChannel } from './sysadminChannel';
-import { VersionManager } from './versionManager';
-import { VersionTarget } from './sysadminTypes';
+import { VersionManager } from './manager/versionManager';
+import { VersionTarget, ProcessTarget } from './sysadminTypes';
 import { DatabasesPanel } from './manager/databasesPanel';
-import { DatabaseManager } from './databaseManager';
-import { DatabaseTreeProvider, DatabaseNode } from './databaseTreeProvider';
+import { DatabaseManager } from './manager/databaseManager';
+import { DatabaseTreeProvider, DatabaseNode } from './manager/databaseTreeProvider';
 import { runLogicalBackup } from './backupManager';
-import { runOnlineExtentBackup, resolveExtentBackupSession } from './extentBackupManager';
+import { runOnlineExtentBackup, resolveExtentBackupSession } from './manager/extentBackupManager';
 import { runLogicalRestore, RestoreSession } from './restoreManager';
 import { hasFileControlPrivilege, serverBackupFilePaths } from './queries/backup';
 import { backupFolderInServer } from './queries/extentBackup';
-import { ProcessManager } from './processManager';
+import { ProcessManager } from './manager/processManager';
 import { openMcpInspector } from './openMcpInspector';
 import { McpSocketServer, writeClaudeDesktopMcpConfig } from './mcpSocketServer';
 import { writeClaudeCodeUserMcpConfig } from './claudeCodeUserMcpConfig';
@@ -157,7 +156,7 @@ import { McpServerTreeProvider } from './mcpServerTreeProvider';
 import { DEFAULT_MCP_HTTP_PORT, McpHttpServer } from './mcpHttpServer';
 import { readMcpSetting } from './mcpSettings';
 import { ensureSelfSignedCert, trustCertCommand } from './tlsCert';
-import { ProcessTreeProvider, ProcessItem } from './processTreeProvider';
+import { ProcessWatcher } from './manager/processWatcher';
 import { OsConfigTreeProvider } from './sharedMemoryTreeProvider';
 import { ensureStonePreconditions } from './stonePreconditions';
 import { isLocalHost } from './databaseForLogin';
@@ -310,14 +309,6 @@ export async function handleClassDefinitionCompiled(event: ClassDefinitionCompil
     await closeTextEditorOn(event.previousUri);
   }
 }
-
-/**
- * Open a scratch Workspace targeting a specific session (the inline action on a
- * session in the Sessions view). The Workspace is a session-agnostic buffer that
- * runs against the *selected* session, so select the clicked session first —
- * otherwise, with several sessions open, Execute It would target whichever
- * session happened to already be active.
- */
 
 // Getting Started onboarding. The walkthrough auto-opens once per machine the
 // first time the extension activates; this globalState key records that it has
@@ -3180,7 +3171,7 @@ export function activate(context: vscode.ExtensionContext) {
   // provider stays because it is more than a tree: refreshing it re-reads gslist
   // and re-probes the WSL network address, and its change event is what tells the
   // panel to redraw.
-  const processProvider = new ProcessTreeProvider(processManager);
+  const processWatcher = new ProcessWatcher(processManager);
 
   // Rowan: tracked repositories (registry persists in globalState — stones are
   // disposable, the registry isn't) + package-manager operations.
@@ -3630,7 +3621,7 @@ export function activate(context: vscode.ExtensionContext) {
   function refreshAdminViews() {
     processManager.refreshProcesses();
     databaseProvider.refresh();
-    processProvider.refresh();
+    processWatcher.refresh();
   }
 
   // Composed here so the panel module never imports a tree provider: it only
@@ -3647,7 +3638,7 @@ export function activate(context: vscode.ExtensionContext) {
       sessionManager,
       onAdminChange: [
         databaseProvider.onDidChangeTreeData,
-        processProvider.onDidChangeTreeData,
+        processWatcher.onDidChange,
         treeProvider.onDidChangeTreeData,
         onVersionsChanged.event,
       ],
@@ -3682,6 +3673,11 @@ export function activate(context: vscode.ExtensionContext) {
       refreshVersions();
     }),
 
+    // The version commands below are registered but deliberately NOT declared in
+    // `contributes.commands`, so they stay out of the Command Palette. Each one
+    // reads `item.version` from the row it was invoked on, and the Versions rows
+    // now live in the Databases & Versions panel — typed into the palette they
+    // arrive with no argument and throw. The panel invokes them by name.
     vscode.commands.registerCommand('gemstone.downloadVersion', async (item: VersionTarget) => {
       const version = item.version;
       await vscode.window.withProgress(
@@ -3877,25 +3873,6 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('gemstone.newDatabase', () =>
       DatabasesPanel.show(databasesPanelDeps(), false, true),
     ),
-
-    // The four-Quick-Pick flow, kept registered and still working from the
-    // Command Palette. Nothing in the UI points at it any more — the panel's
-    // form is the way in — but it is what quickSetup and the walkthrough call,
-    // so it stays until they move too.
-    vscode.commands.registerCommand('gemstone.createDatabase', async () => {
-      const db = await databaseManager.createDatabase();
-      if (db) {
-        // Auto-create the stone's DataCurator login (unless one already targets
-        // it) so it can be connected to — and cleanly stopped — right away.
-        const newLogin = dataCuratorLoginToCreate(storage.getLogins(), db.config);
-        if (newLogin) {
-          await storage.saveLogin(newLogin);
-          treeProvider.refresh();
-        }
-        refreshAdminViews();
-        vscode.window.showInformationMessage(`Database "${db.dirName}" created.`);
-      }
-    }),
 
     vscode.commands.registerCommand('gemstone.deleteDatabase', async (node: DatabaseNode) => {
       if (node?.kind !== 'database') return;
@@ -4140,10 +4117,10 @@ export function activate(context: vscode.ExtensionContext) {
     }),
 
     vscode.commands.registerCommand('gemstone.refreshProcesses', () => {
-      processProvider.refresh();
+      processWatcher.refresh();
     }),
 
-    vscode.commands.registerCommand('gemstone.deleteStaleLock', async (item: ProcessItem) => {
+    vscode.commands.registerCommand('gemstone.deleteStaleLock', async (item: ProcessTarget) => {
       if (!item || item.process.responding) return;
       const report = processManager.inspectStaleLock(item.process);
       if (!report.safe) {
@@ -4158,7 +4135,7 @@ export function activate(context: vscode.ExtensionContext) {
       if (confirm !== 'Delete Lock') return;
       if (processManager.deleteStaleLock(report.lockPath)) {
         vscode.window.showInformationMessage(`Removed stale lock for ${item.process.name}.`);
-        processProvider.refresh();
+        processWatcher.refresh();
       } else {
         vscode.window.showErrorMessage(
           `Failed to remove ${report.lockPath}. Check filesystem permissions.`,
@@ -4166,7 +4143,7 @@ export function activate(context: vscode.ExtensionContext) {
       }
     }),
 
-    vscode.commands.registerCommand('gemstone.copyNetldiHost', async (item: ProcessItem) => {
+    vscode.commands.registerCommand('gemstone.copyNetldiHost', async (item: ProcessTarget) => {
       // Only NetLDI items surface this command (package.json menu filter),
       // but guard anyway since commands can be invoked programmatically.
       if (!item || item.process.type !== 'netldi') return;

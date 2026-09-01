@@ -19,7 +19,7 @@ import { execSync } from 'child_process';
 import type * as vscode from 'vscode';
 import { __setConfig, __resetConfig } from '../__mocks__/vscode';
 import { SysadminStorage } from '../sysadminStorage';
-import { VersionManager } from '../versionManager';
+import { VersionManager } from '../manager/versionManager';
 import { GemStoneVersion } from '../sysadminTypes';
 
 /** VersionManager's private download helpers, exposed as a narrow surface for spying. */

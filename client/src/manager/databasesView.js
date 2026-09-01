@@ -531,7 +531,7 @@
       ) +
       btn('logoutSession', 'Log out', null, 'btn-secondary', {
         session: session.id,
-        title: `Log out session ${esc(String(session.id))}`,
+        title: `Log out session ${session.id}`,
       })
     );
   }
@@ -565,7 +565,7 @@
                   iconOnly: true,
                 })}${btn('connectLogin', 'Log in', null, 'btn-secondary', {
                   login: l.label,
-                  title: `Log in to ${esc(db.stoneName)} as ${esc(l.user)}`,
+                  title: `Log in to ${db.stoneName} as ${l.user}`,
                 })}</span>
               </div>`;
             // Sessions belong to the login they were opened from, so they are
@@ -638,7 +638,7 @@
             dir: db.dirName,
             name: proc.name,
             iconOnly: true,
-            title: `Remove the stale lock file for ${esc(proc.name)}`,
+            title: `Remove the stale lock file for ${proc.name}`,
           })
         : '') +
       (!isStone && windowsHost && proc

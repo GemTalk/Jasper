@@ -1,6 +1,6 @@
 import { GemStoneLogin } from './loginTypes';
 import { GemStoneDatabase } from './sysadminTypes';
-import { versionsMatch } from './processManager';
+import { versionsMatch } from './manager/processManager';
 
 /**
  * True when a host name means this machine. `::1` counts: it is the IPv6

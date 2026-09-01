@@ -1804,70 +1804,10 @@
         "icon": "$(split-horizontal)"
       },
       {
-        "command": "gemstone.downloadVersion",
-        "title": "Download",
-        "category": "GemStone Admin",
-        "icon": "$(cloud-download)"
-      },
-      {
-        "command": "gemstone.deleteDownload",
-        "title": "Delete Download",
-        "category": "GemStone Admin",
-        "icon": "$(trash)"
-      },
-      {
-        "command": "gemstone.extractVersion",
-        "title": "Extract",
-        "category": "GemStone Admin",
-        "icon": "$(package)"
-      },
-      {
-        "command": "gemstone.deleteExtracted",
-        "title": "Delete Extracted Version",
-        "category": "GemStone Admin",
-        "icon": "$(trash)"
-      },
-      {
         "command": "gemstone.registerLocalVersion",
         "title": "Register Local Version…",
         "category": "GemStone Admin",
         "icon": "$(add)"
-      },
-      {
-        "command": "gemstone.unregisterLocalVersion",
-        "title": "Unregister Local Version",
-        "category": "GemStone Admin",
-        "icon": "$(trash)"
-      },
-      {
-        "command": "gemstone.openVersionFolder",
-        "title": "Show in Finder",
-        "category": "GemStone Admin",
-        "icon": "$(folder-opened)"
-      },
-      {
-        "command": "gemstone.openVersionTerminal",
-        "title": "Open Terminal",
-        "category": "GemStone Admin",
-        "icon": "$(terminal)"
-      },
-      {
-        "command": "gemstone.downloadWindowsClient",
-        "title": "Install Windows Client",
-        "category": "GemStone Admin",
-        "icon": "$(desktop-download)"
-      },
-      {
-        "command": "gemstone.openWindowsClientFolder",
-        "title": "Open Windows Client Folder",
-        "category": "GemStone Admin",
-        "icon": "$(folder-opened)"
-      },
-      {
-        "command": "gemstone.deleteWindowsClientExtracted",
-        "title": "Delete Windows Client",
-        "category": "GemStone Admin",
-        "icon": "$(trash)"
       },
       {
         "command": "gemstone.quickSetup",
@@ -1926,12 +1866,6 @@
         "command": "gemstone.newDatabase",
         "title": "New Database...",
         "category": "GemStone",
-        "icon": "$(add)"
-      },
-      {
-        "command": "gemstone.createDatabase",
-        "title": "Create Database",
-        "category": "GemStone Admin",
         "icon": "$(add)"
       },
       {

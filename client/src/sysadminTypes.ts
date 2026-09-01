@@ -26,6 +26,15 @@ export interface VersionTarget {
   version: GemStoneVersion;
 }
 
+/**
+ * What a command that acts on one running server is invoked with. The Databases
+ * & Versions panel hands over the live record it last read, rather than the row
+ * it drew from it.
+ */
+export interface ProcessTarget {
+  process: GemStoneProcess;
+}
+
 export interface GemStoneVersion {
   /** e.g. "3.7.4.3" */
   version: string;

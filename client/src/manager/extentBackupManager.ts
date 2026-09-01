@@ -13,10 +13,10 @@
 // invoking it for a Jasper-managed database.
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { QueryExecutor } from './queries/types';
-import * as extentBackup from './queries/extentBackup';
-import type { ActiveSession } from './sessionManager';
-import type { GemStoneSessionItem } from './loginTreeProvider';
+import { QueryExecutor } from '../queries/types';
+import * as extentBackup from '../queries/extentBackup';
+import type { ActiveSession } from '../sessionManager';
+import type { GemStoneSessionItem } from '../loginTreeProvider';
 import type { DatabaseNode } from './databaseTreeProvider';
 
 export interface ExtentBackupDeps {

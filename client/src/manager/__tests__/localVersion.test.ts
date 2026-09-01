@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { onSupportedPosixIt } from './platformGates';
+import { onSupportedPosixIt } from '../../__tests__/platformGates';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 
-vi.mock('vscode', () => import('../__mocks__/vscode.js'));
-vi.mock('../sysadminChannel', () => ({ appendSysadmin: vi.fn(), showSysadmin: vi.fn() }));
-vi.mock('../wslBridge', () => ({
+vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
+vi.mock('../../sysadminChannel', () => ({ appendSysadmin: vi.fn(), showSysadmin: vi.fn() }));
+vi.mock('../../wslBridge', () => ({
   isWindows: () => false,
   needsWsl: () => false,
   getWslInfo: () => ({ available: false }),
@@ -15,11 +15,11 @@ vi.mock('../wslBridge', () => ({
   wslExecSync: vi.fn(),
 }));
 
-import { __setConfig, __resetConfig } from '../__mocks__/vscode';
-import { SysadminStorage } from '../sysadminStorage';
+import { __setConfig, __resetConfig } from '../../__mocks__/vscode';
+import { SysadminStorage } from '../../sysadminStorage';
 import { VersionManager } from '../versionManager';
 import { timestampForFileName } from '../databaseManager';
-import { GemStoneVersion } from '../sysadminTypes';
+import { GemStoneVersion } from '../../sysadminTypes';
 
 /** VersionManager's private `fetchUrl`, exposed as a narrow surface for spying. */
 type FetchUrlHost = { fetchUrl(url: string): Promise<string> };

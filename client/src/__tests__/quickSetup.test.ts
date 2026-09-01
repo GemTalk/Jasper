@@ -10,9 +10,9 @@ import { exec } from 'child_process';
 import { runQuickSetup, QuickSetupDeps } from '../quickSetup';
 import { GemStoneVersion } from '../sysadminTypes';
 import { SysadminStorage } from '../sysadminStorage';
-import { VersionManager } from '../versionManager';
-import { DatabaseManager } from '../databaseManager';
-import { ProcessManager } from '../processManager';
+import { VersionManager } from '../manager/versionManager';
+import { DatabaseManager } from '../manager/databaseManager';
+import { ProcessManager } from '../manager/processManager';
 import { LoginStorage } from '../loginStorage';
 
 // ── Helpers ────────────────────────────────────────────────

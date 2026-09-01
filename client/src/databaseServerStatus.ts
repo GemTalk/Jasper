@@ -1,5 +1,5 @@
 import { GemStoneDatabase, GemStoneProcess } from './sysadminTypes';
-import { versionsMatch } from './versionMatch';
+import { versionsMatch } from './manager/versionMatch';
 import { ExternalServerFinding } from './externalServerScan';
 
 /** Whether one of a database's two processes is up, and whether it is usable.

@@ -16,7 +16,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { DatabaseManager } from '../../databaseManager';
+import { DatabaseManager } from '../databaseManager';
 import { DatabasesPanel } from '../databasesPanel';
 import type { GemStoneVersion } from '../../sysadminTypes';
 
@@ -385,7 +385,6 @@ describe("opening one of a database's folders", () => {
     ['conf', 'conf'],
     ['backups', 'backups'],
     ['backups/extents', 'backups/extents'],
-    ['../../etc', 'log'],
   ])('opens %s as %s', async (asked, expected) => {
     databases = [
       {
@@ -413,6 +412,32 @@ describe("opening one of a database's folders", () => {
     expect(String((call?.[1] as { fsPath?: string })?.fsPath)).toBe(
       path.join('/root/db-1', expected),
     );
+  });
+
+  // An off-list folder means the view and the host have drifted. Opening some
+  // other folder makes a broken button look like it worked; opening nothing
+  // makes it obvious.
+  it('opens nothing at all when the folder is not on the list', async () => {
+    databases = [
+      {
+        dirName: 'db-1',
+        path: '/root/db-1',
+        config: {
+          version: '3.7.6',
+          stoneName: 'gs64stone',
+          ldiName: 'gs64ldi',
+          baseExtent: 'extent0.dbf',
+        },
+      },
+    ];
+    await openPanel();
+    vi.mocked(vscode.commands.executeCommand).mockClear();
+
+    await sendMessage({ command: 'openDbSubfolder', dirName: 'db-1', folder: '../../etc' });
+
+    expect(
+      vi.mocked(vscode.commands.executeCommand).mock.calls.filter((c) => c[0] === 'revealFileInOS'),
+    ).toHaveLength(0);
   });
 });
 
@@ -575,5 +600,74 @@ describe('Install and Remove are inverses', () => {
     await sendMessage({ command: 'uninstallVersion', version: '3.7.6' });
 
     expect(deleteDownload).not.toHaveBeenCalled();
+  });
+});
+
+describe('overlapping state passes', () => {
+  /** A database row, distinguishable by its directory name. */
+  function db(dirName: string) {
+    return {
+      dirName,
+      path: `/root/${dirName}`,
+      config: {
+        version: '3.7.6',
+        stoneName: 'gs64stone',
+        ldiName: 'gs64ldi',
+        baseExtent: 'extent0.dbf',
+      },
+    };
+  }
+
+  function lastPostedState(): { databases: { dirName: string }[] } | undefined {
+    const posted = vi.mocked(lastPanel().webview.postMessage).mock.calls;
+    for (let i = posted.length - 1; i >= 0; i -= 1) {
+      const m = posted[i][0] as { command?: string; state?: { databases: { dirName: string }[] } };
+      if (m?.command === 'state') return m.state;
+    }
+    return undefined;
+  }
+
+  /**
+   * A pass that has been overtaken must not repaint the panel.
+   *
+   * Each pass renders from disk, then again once the download catalog answers.
+   * Two actions in quick succession leave two passes in flight, and the network
+   * decides which finishes last — so the older pass could post rows built
+   * before the newer action happened, leaving the panel stale until something
+   * else redrew it. Held catalog answers here are the real shape of that race,
+   * not a contrived delay.
+   */
+  it('ignores a pass the user has already overtaken', async () => {
+    const answerCatalog: ((v: GemStoneVersion[]) => void)[] = [];
+    const deps = makeDeps();
+    (
+      deps as unknown as { versionManager: { fetchCatalog: () => Promise<GemStoneVersion[]> } }
+    ).versionManager.fetchCatalog = () =>
+      new Promise<GemStoneVersion[]>((resolve) => answerCatalog.push(resolve));
+    const drain = async () => {
+      for (let i = 0; i < 20; i += 1) await new Promise((resolve) => setImmediate(resolve));
+    };
+
+    onDisk = [];
+    databases = [db('db-before')];
+    DatabasesPanel.show(deps);
+    await sendMessage({ command: 'ready' });
+    // Let the opening pass finish, so only the two passes under test are left.
+    answerCatalog.shift()?.([]);
+    await drain();
+
+    // The first action's pass stalls on the catalog...
+    await sendMessage({ command: 'refresh' });
+    // ...and the user acts again, against a database list that has since changed.
+    databases = [db('db-after')];
+    await sendMessage({ command: 'refresh' });
+
+    // The second pass answers first, the first pass last — the losing order.
+    answerCatalog.pop()?.([]);
+    await drain();
+    answerCatalog.pop()?.([]);
+    await drain();
+
+    expect(lastPostedState()?.databases.map((d) => d.dirName)).toEqual(['db-after']);
   });
 });

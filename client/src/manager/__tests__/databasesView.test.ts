@@ -1095,3 +1095,47 @@ describe('hover explanations', () => {
     expect(document.querySelector('.gm-tip')).not.toBeNull();
   });
 });
+
+describe('names with an ampersand in them', () => {
+  // The button helper escapes the explanation it is handed, so a caller that
+  // escapes first has it escaped twice and a stone called "A&B" explains itself
+  // as "A&amp;B" — read out loud by a screen reader exactly as it is written.
+  it('reads a stone name back as it was typed', () => {
+    mount(
+      state({
+        databases: [
+          database({
+            stoneName: 'A&B',
+            logins: [
+              {
+                label: 'DataCurator on A&B',
+                user: 'Q&A',
+                stone: 'A&B',
+                host: 'localhost',
+                sessions: [],
+              },
+            ],
+          }),
+        ],
+      }),
+    );
+
+    const login = root.querySelector('[data-action="connectLogin"]');
+    expect(login?.getAttribute('data-tip')).toBe('Log in to A&B as Q&A');
+  });
+
+  it('reads a process name back as it was typed', () => {
+    mount(
+      state({
+        databases: [
+          database({
+            processes: [{ name: 'A&B', type: 'stone', pid: 111, status: 'OK', responding: false }],
+          }),
+        ],
+      }),
+    );
+
+    const remove = root.querySelector('[data-action="deleteStaleLock"]');
+    expect(remove?.getAttribute('data-tip')).toBe('Remove the stale lock file for A&B');
+  });
+});
