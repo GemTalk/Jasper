@@ -2695,7 +2695,7 @@
         },
         {
           "command": "gemstone.explorer.openComment",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass.commented",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.novars)?\\.commented(\\.test(\\.running|\\.debugging)?)?$/",
           "group": "inline@2"
         },
         {
