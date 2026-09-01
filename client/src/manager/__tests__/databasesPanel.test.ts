@@ -11,6 +11,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 vi.mock('../../sysadminChannel', () => ({ appendSysadmin: vi.fn() }));
+// Windows takes a branch Linux does not: Refresh re-probes WSL before rebuilding,
+// and on a real Windows runner that shells out to wsl.exe and takes seconds — long
+// enough that a test driving two refreshes measures the probe rather than the panel.
+// Held to "no WSL here" so every platform exercises the same path.
+vi.mock('../../wslBridge', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../wslBridge')>()),
+  needsWsl: () => false,
+}));
 
 import * as fs from 'fs';
 import * as os from 'os';
