@@ -196,7 +196,7 @@ Beyond browsing, the Explorer is where the code-changing operations live:
 
 - Filter the Dictionaries, Class Categories and Classes panes by name, with `*` as a wildcard; the Methods pane's Filter button opens VS Code's own find box inside the pane, whose toggle hides the rows that don't match, and an instance variable's context menu filters the pane to the methods that read, write or reference it
 - Group methods by category, or list them flat
-- Add, rename, and delete dictionaries, class categories, classes, methods, instance variables, and class variables
+- Add, rename, and delete dictionaries, class categories, classes, method categories, methods, instance variables, and class variables
 - Deleting first looks for what still references the target: nothing does, and it just goes (and says so); something does, and you are shown the methods before you decide
 - The refactorings — rename, extract/inline method and temporary, change signature, move/push up/push down method, instance-variable structure changes, extract superclass, split class — each previewed before it is applied
 - Browse senders, implementors, references, and the class hierarchy
