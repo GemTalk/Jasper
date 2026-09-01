@@ -31,9 +31,10 @@ export function installRunLimitProbeClasses(exec: QueryExecutor, count: number):
   const names = runLimitProbeClassNames(count);
   exec(`[| c |
 #(${names.map((n) => `'${n}'`).join(' ')}) do: [:name |
-  c := TestCase subclass: name
-    instVarNames: #() classVars: #() classInstVars: #() poolDictionaries: #()
-    inDictionary: UserGlobals.
+  c := UserGlobals at: name asSymbol ifAbsent: [
+    TestCase subclass: name
+      instVarNames: #() classVars: #() classInstVars: #() poolDictionaries: #()
+      inDictionary: UserGlobals].
   c compileMethod: 'testPasses  self assert: true'
     dictionaries: System myUserProfile symbolList category: 'tests'.
   c compileMethod: 'testFails  self assert: 1 = 2'
