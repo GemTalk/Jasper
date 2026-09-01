@@ -70,10 +70,10 @@ describe('Explorer filter input: clicking a filtered row', () => {
       .filter((r) => !(r instanceof FilterChipItem))
       .map((r) => r.label);
 
-  it('leaves the filtered rows in place when focus goes elsewhere', () => {
+  it('leaves the filtered rows in place when focus goes elsewhere', async () => {
     const ctl = makeController();
 
-    ctl.beginFilter(DICTS);
+    await ctl.beginFilter(DICTS);
     const box = lastInputBox();
     box.__type('Glo');
     expect(rows(ctl)).toEqual(['Globals']);
@@ -85,10 +85,10 @@ describe('Explorer filter input: clicking a filtered row', () => {
     expect(ctl.getFilter(DICTS)).toBe('Glo');
   });
 
-  it('keeps the filter and closes the box when a row is selected', () => {
+  it('keeps the filter and closes the box when a row is selected', async () => {
     const ctl = makeController();
 
-    ctl.beginFilter(DICTS);
+    await ctl.beginFilter(DICTS);
     const box = lastInputBox();
     box.__type('Glo');
 
@@ -101,10 +101,10 @@ describe('Explorer filter input: clicking a filtered row', () => {
 
   // A committed box is done with: a later Escape belongs to whatever has focus now, and must
   // not reach back and undo the filter the user clicked a result in.
-  it('does not undo the filter when the box is escaped after being committed', () => {
+  it('does not undo the filter when the box is escaped after being committed', async () => {
     const ctl = makeController();
 
-    ctl.beginFilter(DICTS);
+    await ctl.beginFilter(DICTS);
     const box = lastInputBox();
     box.__type('Glo');
     ctl.commitFilterInput();
@@ -126,12 +126,12 @@ describe('Explorer filter input: clicking a filtered row', () => {
   it('still restores the pre-edit filter when the box is escaped after a click away', async () => {
     const ctl = makeController();
 
-    ctl.beginFilter(DICTS);
+    await ctl.beginFilter(DICTS);
     const first = lastInputBox();
     first.__type('Glo');
     await first.__accept();
 
-    ctl.beginFilter(DICTS);
+    await ctl.beginFilter(DICTS);
     const second = lastInputBox();
     second.__type('Us');
     second.__clickAway();
@@ -143,14 +143,14 @@ describe('Explorer filter input: clicking a filtered row', () => {
   // A box open over another pane no longer gets out of the way by itself, so opening a second
   // one has to put the first away — as an accept, since asking to filter a second pane says
   // nothing about the first — and the newest box has to be the one a later commit closes.
-  it('commits the open box when another pane starts filtering', () => {
+  it('commits the open box when another pane starts filtering', async () => {
     const ctl = makeController();
 
-    ctl.beginFilter(CLASSES);
+    await ctl.beginFilter(CLASSES);
     const classes = lastInputBox();
     classes.__type('De');
 
-    ctl.beginFilter(DICTS);
+    await ctl.beginFilter(DICTS);
     const dicts = lastInputBox();
     dicts.__type('Glo');
     ctl.commitFilterInput();

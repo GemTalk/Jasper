@@ -121,10 +121,10 @@ describe('An active filter announces itself', () => {
 // brings its own wording (explorerMethodsFindBox.test.ts). The box under test is the one the
 // other three panes still open.
 describe('The filter box does not claim Enter is required', () => {
-  it('sets an explicit prompt describing live filtering, replacing VS Code’s Enter hint', () => {
+  it('sets an explicit prompt describing live filtering, replacing VS Code’s Enter hint', async () => {
     const ctl = makeController();
 
-    ctl.beginFilter('gemstoneExplorerClasses');
+    await ctl.beginFilter('gemstoneExplorerClasses');
     const box = lastInputBox();
 
     // Left unset, VS Code fills the prompt line with its own "press Enter to confirm"
@@ -137,10 +137,10 @@ describe('The filter box does not claim Enter is required', () => {
     expect(box.prompt).toMatch(/escape/i);
   });
 
-  it('leaves the live-filtering behaviour the prompt now describes intact', () => {
+  it('leaves the live-filtering behaviour the prompt now describes intact', async () => {
     const ctl = makeController();
 
-    ctl.beginFilter('gemstoneExplorerClasses');
+    await ctl.beginFilter('gemstoneExplorerClasses');
     lastInputBox().__type('Ar');
 
     // Typing alone filtered the pane — no Enter needed, which is what the prompt claims.

@@ -58,16 +58,26 @@ describe("Methods pane: VS Code's find box", () => {
   it('opens the find box from the pane filter button instead of a filter input', async () => {
     const ctl = makeController();
 
-    ctl.beginFilter(METHODS);
+    await ctl.beginFilter(METHODS);
 
-    await vi.waitFor(() => expect(commandsRun()).toContain('list.find'));
+    expect(commandsRun()).toContain('list.find');
     expect(vscode.window.createInputBox).not.toHaveBeenCalled();
   });
 
-  it('still opens the filter input for a pane that has not moved over yet', () => {
+  // The Filter button's command handler returns this promise, so VS Code reports a failing
+  // focus/find command. Swallowed, the button would look like it simply did nothing — the
+  // hardest kind of breakage to notice if a command id changes underneath us.
+  it('lets a failing focus/find command out, rather than failing silently', async () => {
+    const ctl = makeController();
+    vi.mocked(vscode.commands.executeCommand).mockRejectedValueOnce(new Error('no such command'));
+
+    await expect(ctl.beginFilter(METHODS)).rejects.toThrow('no such command');
+  });
+
+  it('still opens the filter input for a pane that has not moved over yet', async () => {
     const ctl = makeController();
 
-    ctl.beginFilter(DICTS);
+    await ctl.beginFilter(DICTS);
 
     expect(vscode.window.createInputBox).toHaveBeenCalled();
     expect(commandsRun()).not.toContain('list.find');
@@ -80,7 +90,7 @@ describe("Methods pane: VS Code's find box", () => {
   it('puts away a filter input left open over another pane, keeping its filter', async () => {
     const ctl = makeController();
 
-    ctl.beginFilter(DICTS);
+    await ctl.beginFilter(DICTS);
     const box = vi.mocked(vscode.window.createInputBox).mock.results.at(-1)!.value as {
       hide: ReturnType<typeof vi.fn>;
       __type: (text: string) => void;
@@ -127,6 +137,8 @@ describe('Methods pane filter button', () => {
     ) as { contributes: { commands: { command: string }[] } };
 
     expect(pkg.contributes.commands.map((c) => c.command)).toContain(`${METHODS}.filter`);
+    // Returned, not dropped: the handler's promise is how a failing focus/find command
+    // gets reported (see beginFilter).
     expect(src).toContain('registerCommand(`${viewId}.filter`, () => ctl.beginFilter(viewId))');
   });
 });

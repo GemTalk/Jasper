@@ -1087,10 +1087,15 @@ export class ExplorerController {
   //
   // A click away from the box is neither: `ignoreFocusOut` keeps the box open through it, and
   // the click's own handler commits the box instead (commitFilterInput) — see the note there.
-  beginFilter(viewId: string): void {
+  //
+  // Async only for the Methods pane's two commands: the returned promise goes back to VS Code
+  // from the command handler, so a `${viewId}.focus` or `list.find` that fails (a command id
+  // changed underneath us, the pane not registered yet) is reported instead of leaving the
+  // Filter button looking like it did nothing. The other panes' work is all synchronous and the
+  // promise they return is already resolved.
+  async beginFilter(viewId: string): Promise<void> {
     if (viewId === VIEW_METHODS) {
-      void this.openPaneFindWidget(viewId);
-      return;
+      return this.openPaneFindWidget(viewId);
     }
     // A box already open (another pane's funnel, say) no longer closes itself when focus moves
     // here, so put it away first — and as an accept, since opening a second filter box is not a
@@ -6032,6 +6037,8 @@ export function registerGemStoneExplorer(
     // filter input (prefix match, '*' wildcard) that filters the pane in place, from
     // wherever focus currently sits (e.g. the editor); Methods opens VS Code's own find
     // box inside the pane. Both go through beginFilter, which picks the pane's entry point.
+    // Its promise is returned rather than dropped, so a failure inside the Methods pane's
+    // focus/find commands surfaces as a failed command instead of a button that does nothing.
     ...EXPLORER_VIEWS.map((viewId) =>
       vscode.commands.registerCommand(`${viewId}.filter`, () => ctl.beginFilter(viewId)),
     ),

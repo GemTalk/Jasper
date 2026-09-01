@@ -64,10 +64,10 @@ beforeEach(() => {
 });
 
 describe('Explorer filter input: accept vs cancel', () => {
-  it('filters the pane live as the user types', () => {
+  it('filters the pane live as the user types', async () => {
     const ctl = makeController();
 
-    ctl.beginFilter(DICTS);
+    await ctl.beginFilter(DICTS);
     lastInputBox().__type('Us');
 
     // The premise of the other tests: typing alone has already applied the filter.
@@ -77,7 +77,7 @@ describe('Explorer filter input: accept vs cancel', () => {
   it('keeps the typed filter when the user presses Enter', async () => {
     const ctl = makeController();
 
-    ctl.beginFilter(DICTS);
+    await ctl.beginFilter(DICTS);
     const box = lastInputBox();
     box.__type('Us');
     await box.__accept();
@@ -86,10 +86,10 @@ describe('Explorer filter input: accept vs cancel', () => {
   });
 
   // The bug: Escape is offered as cancel, but only dismissed the box.
-  it('discards the typed filter when the user presses Escape', () => {
+  it('discards the typed filter when the user presses Escape', async () => {
     const ctl = makeController();
 
-    ctl.beginFilter(DICTS);
+    await ctl.beginFilter(DICTS);
     const box = lastInputBox();
     box.__type('Us');
     box.__hide(); // Escape
@@ -103,13 +103,13 @@ describe('Explorer filter input: accept vs cancel', () => {
   it('restores the previously accepted filter when an edit is cancelled', async () => {
     const ctl = makeController();
 
-    ctl.beginFilter(DICTS);
+    await ctl.beginFilter(DICTS);
     const first = lastInputBox();
     first.__type('Glo');
     await first.__accept();
     expect(currentFilter(ctl, DICTS)).toBe('Glo');
 
-    ctl.beginFilter(DICTS);
+    await ctl.beginFilter(DICTS);
     const second = lastInputBox();
     expect(second.value).toBe('Glo'); // seeded with the accepted filter
     second.__type('Us');
@@ -122,10 +122,10 @@ describe('Explorer filter input: accept vs cancel', () => {
   // filter cleared, so the bug happens to give the right answer here. It earns its place as a
   // guard on the FIX rather than the bug: a version that restored "the last non-empty value
   // typed" instead of the pre-edit value would fail it.
-  it('cancels back to no filter even when the user emptied the box first', () => {
+  it('cancels back to no filter even when the user emptied the box first', async () => {
     const ctl = makeController();
 
-    ctl.beginFilter(DICTS);
+    await ctl.beginFilter(DICTS);
     const box = lastInputBox();
     box.__type('Us');
     box.__type(''); // clearing applies "no filter"…
@@ -137,12 +137,12 @@ describe('Explorer filter input: accept vs cancel', () => {
   it('cancels only the pane being edited', async () => {
     const ctl = makeController();
 
-    ctl.beginFilter(CLASSES);
+    await ctl.beginFilter(CLASSES);
     const classes = lastInputBox();
     classes.__type('Dem');
     await classes.__accept();
 
-    ctl.beginFilter(DICTS);
+    await ctl.beginFilter(DICTS);
     const dicts = lastInputBox();
     dicts.__type('Us');
     dicts.__hide(); // Escape on Dictionaries
@@ -153,13 +153,13 @@ describe('Explorer filter input: accept vs cancel', () => {
 
   // Assert on the ROWS the provider actually returns, not just the filter map — the map entry is
   // the mechanism, the rendered rows are the behaviour the user sees.
-  it('puts the unfiltered rows back on the pane when the user presses Escape', () => {
+  it('puts the unfiltered rows back on the pane when the user presses Escape', async () => {
     const ctl = makeController();
     const rows = () => (ctl.dictProvider.getChildren() as { label?: string }[]).map((r) => r.label);
     const before = rows();
     expect(before).toEqual(expect.arrayContaining(['UserGlobals', 'Globals']));
 
-    ctl.beginFilter(DICTS);
+    await ctl.beginFilter(DICTS);
     const box = lastInputBox();
     box.__type('Glo');
     // The pane really did narrow, so the restore below is proving something.
@@ -178,13 +178,13 @@ describe('Explorer filter input: accept vs cancel', () => {
   it('does not resurrect its filter when something else changed the pane meanwhile', async () => {
     const ctl = makeController();
 
-    ctl.beginFilter(DICTS);
+    await ctl.beginFilter(DICTS);
     const first = lastInputBox();
     first.__type('Glo');
     await first.__accept();
     expect(currentFilter(ctl, DICTS)).toBe('Glo');
 
-    ctl.beginFilter(DICTS);
+    await ctl.beginFilter(DICTS);
     const second = lastInputBox();
     second.__type('Us');
 
@@ -198,7 +198,7 @@ describe('Explorer filter input: accept vs cancel', () => {
   });
 
   // The other half of the guard: cancelling without typing should not churn the pane.
-  it('does not touch the filter when the box is dismissed without an edit', () => {
+  it('does not touch the filter when the box is dismissed without an edit', async () => {
     const ctl = makeController();
     const refreshed: string[] = [];
     const original = ctl.dictProvider.refresh.bind(ctl.dictProvider);
@@ -207,7 +207,7 @@ describe('Explorer filter input: accept vs cancel', () => {
       original();
     });
 
-    ctl.beginFilter(DICTS);
+    await ctl.beginFilter(DICTS);
     lastInputBox().__hide(); // Escape, nothing typed
 
     expect(currentFilter(ctl, DICTS)).toBeUndefined();
