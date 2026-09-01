@@ -202,7 +202,7 @@ Beyond browsing, the Explorer is where the code-changing operations live:
 - Deleting first looks for what still references the target: nothing does, and it just goes (and says so); something does, and you are shown the methods before you decide
 - The refactorings — rename, extract/inline method and temporary, change signature, move/push up/push down method, instance-variable structure changes, extract superclass, split class — each previewed before it is applied
 - Browse senders, implementors, references, and the class hierarchy
-- Drag and drop methods between categories, and classes between dictionaries
+- Drag and drop methods between categories, classes onto a class category to refile them, and classes between dictionaries
 
 ### System Browser
 

@@ -156,7 +156,7 @@ describe('ExplorerController — New Method target category', () => {
     return arg.path;
   };
 
-  it('files a new instance method into the default category', async () => {
+  it('files a new instance method into the default category when nothing is selected', async () => {
     const { ctl } = makeController();
 
     await ctl.newInstanceMethod();
@@ -164,7 +164,7 @@ describe('ExplorerController — New Method target category', () => {
     expect(openedUriPath()).toBe('/UserGlobals/M4Demo/instance/as yet unclassified/new-method');
   });
 
-  it('files a new class method on the class side, in the default category', async () => {
+  it('files a new class method on the class side, in the default category when nothing is selected', async () => {
     const { ctl } = makeController();
 
     await ctl.newClassMethod();
@@ -178,6 +178,33 @@ describe('ExplorerController — New Method target category', () => {
     await ctl.newMethod(new MethodCategoryItem(false, 'accessing', false));
 
     expect(openedUriPath()).toBe('/UserGlobals/M4Demo/instance/accessing/new-method');
+  });
+
+  it('files a new instance method into the selected instance-side category', async () => {
+    const { ctl } = makeController();
+    ctl.recordMethodContext(false, 'accessing');
+
+    await ctl.newInstanceMethod();
+
+    expect(openedUriPath()).toBe('/UserGlobals/M4Demo/instance/accessing/new-method');
+  });
+
+  it('files a new class method into the selected class-side category', async () => {
+    const { ctl } = makeController();
+    ctl.recordMethodContext(true, 'instance creation');
+
+    await ctl.newClassMethod();
+
+    expect(openedUriPath()).toBe('/UserGlobals/M4Demo/class/instance creation/new-method');
+  });
+
+  it('ignores a selected category on the other side — categories are per-side', async () => {
+    const { ctl } = makeController();
+    ctl.recordMethodContext(false, 'accessing');
+
+    await ctl.newClassMethod();
+
+    expect(openedUriPath()).toBe('/UserGlobals/M4Demo/class/as yet unclassified/new-method');
   });
 
   it('uses the default category when New Method comes from the ALL METHODS row', async () => {

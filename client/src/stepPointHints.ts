@@ -1,6 +1,10 @@
 import * as vscode from 'vscode';
 import { StepPointModel } from './stepPointModel';
 
+/** The command that flips the numbers on and off — the hover's way out of the numbered view, and
+ *  the same one the editor context menu and the command palette invoke. */
+const TOGGLE_COMMAND = 'gemstone.breakpoints.toggleStepPoints';
+
 /** When the numbers are drawn. */
 export type StepPointDisplay = 'off' | 'debugging' | 'always';
 
@@ -94,6 +98,31 @@ export class StepPointHintsProvider implements vscode.InlayHintsProvider {
     this._onDidChangeInlayHints.fire();
   }
 
+  /**
+   * What a step point number says when you hover it: which step point it is, that
+   * clicking toggles a breakpoint there, and — the part that was missing — a way
+   * back OUT of the numbered view.
+   *
+   * The way off does exist elsewhere (Toggle Step Point Numbers in the editor's
+   * right-click menu, the command palette, the `gemstone.stepPoints.display`
+   * setting), but it sits far down a long menu and there is no keybinding, so a
+   * developer who switched the numbers on can struggle to switch them off again.
+   * The hover is where they are already looking. A plain click is spoken for by
+   * the breakpoint toggle, so the hide action is a link in the tooltip rather
+   * than a second gesture on the number itself.
+   *
+   * `isTrusted` is what makes a `command:` link fire at all, and it is scoped to
+   * the single command this tooltip offers rather than granted wholesale.
+   */
+  private hintTooltip(stepPoint: number, total: number): vscode.MarkdownString {
+    const tooltip = new vscode.MarkdownString(
+      `Step point **${stepPoint}** of ${total} — click to toggle a breakpoint here.` +
+        `\n\n[Hide step point numbers](command:${TOGGLE_COMMAND} "Stop numbering step points")`,
+    );
+    tooltip.isTrusted = { enabledCommands: [TOGGLE_COMMAND] };
+    return tooltip;
+  }
+
   provideInlayHints(
     document: vscode.TextDocument,
     range: vscode.Range,
@@ -113,9 +142,7 @@ export class StepPointHintsProvider implements vscode.InlayHintsProvider {
 
       const stepPoint = i + 1;
       const part = new vscode.InlayHintLabelPart(String(stepPoint));
-      part.tooltip = new vscode.MarkdownString(
-        `Step point **${stepPoint}** of ${info.offsets.length} — click to toggle a breakpoint here.`,
-      );
+      part.tooltip = this.hintTooltip(stepPoint, info.offsets.length);
       part.command = {
         title: `Toggle breakpoint at step point ${stepPoint}`,
         command: 'gemstone.breakpoints.toggleAtStepPoint',

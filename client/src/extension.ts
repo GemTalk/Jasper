@@ -796,6 +796,11 @@ export function activate(context: vscode.ExtensionContext) {
       revealInTestExplorer: async (dictName, className, selector) =>
         (await sunitTests?.revealInTestExplorer(dictName, className, selector)) ?? false,
     },
+    // A class the Explorer refiles into another class category has a new category line in
+    // its definition source, so an editor open on that definition is stale — and saving it
+    // would file the class back. The file system is built just below, so this forwards
+    // rather than handing over an object that does not exist yet.
+    (uri) => gemstoneFs.notifyChanged(uri),
   );
 
   // ── GemStone FileSystem Provider ─────────────────────────

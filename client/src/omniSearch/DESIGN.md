@@ -287,6 +287,14 @@ Behaviour decisions (Eric's review of the first webview cut):
 - **Flat, globally relevance-ranked results — no category grouping.** Typing "foo" should surface the
   closest "foo" first regardless of kind, so `buildView` ranks every result together by match score.
   Each row wears a small **category tag** (Class / Method / Global / …) so you still see what it is.
+- **Ties break by kind.** Below the prefix and first-letter-case rules, method rows (Methods / Source /
+  Literals) order by class A→Z, then instance side before class side, then selector; everything else
+  orders by the matcher's shorter-then-alphabetical label order. Method rows need their own key
+  because Source and Literals hits match a method BODY, so every one of them scores 0 and there is no
+  label match left to rank on — without it they came back in the stone's traversal order
+  ([#532](https://github.com/GemTalk/Jasper/issues/532)). One key per kind, never a conditional
+  override of the other: a comparator that only reorders SOME pairs is not transitive, and a cyclic
+  comparator makes `Array.prototype.sort` return anything it likes.
 - **Scroll resets to the top** on a fresh query / clear / scope / case change, but NOT on Load-more.
 - **The result cap resets** to the base `maxResultsPerCategory` on a genuine term change (and on clear),
   so a raised "Load all" cap never silently persists into the next search.
