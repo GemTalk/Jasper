@@ -414,12 +414,15 @@ export const window = {
   // Controllable low-level InputBox, same shape and lifecycle rules as
   // createQuickPick above. Fire the registered handlers from a test with
   // `__type(text)` (a keystroke — sets `value` and fires onDidChangeValue),
-  // `__accept()` (Enter) and `__hide()` (Escape). Grab the created instance with
+  // `__accept()` (Enter), `__hide()` (Escape) and `__clickAway()` (focus moves
+  // to something else in the window). Grab the created instance with
   // `vi.mocked(vscode.window.createInputBox).mock.results.at(-1).value`.
   //
   // The Enter/Escape distinction is the point: real VS Code fires onDidHide for
   // BOTH, and onDidAccept only for Enter — so a caller that wants to tell an
-  // accepted edit from an abandoned one has to track that itself.
+  // accepted edit from an abandoned one has to track that itself. Losing focus
+  // hides the box too — a third way to reach the same onDidHide — unless the box
+  // sets `ignoreFocusOut`, which is what `__clickAway()` honours.
   createInputBox: vi.fn(() => {
     let onChange: ((value: string) => void) | undefined;
     let onAccept: (() => void | Promise<void>) | undefined;
@@ -462,6 +465,9 @@ export const window = {
         await onAccept?.();
       },
       __hide: () => fireHide(),
+      __clickAway: () => {
+        if (!box.ignoreFocusOut) fireHide();
+      },
     };
     return box;
   }),
