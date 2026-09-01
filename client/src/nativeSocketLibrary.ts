@@ -1,16 +1,11 @@
 import koffi, { KoffiFunction } from 'koffi';
+import type { NativeWindowsSocketLibrary } from './nativeWindowsSocketLibrary';
 
 // Registered once at module scope, rather than per instance: koffi's struct
 // registry is process-wide, and re-declaring an already-registered name
-// throws — which a second `NativeWindowsSocketLibrary`/`NativePOSIXSocketLibrary`
-// instance (e.g. after `NativeSocketLibrary.reset()`, as tests do) would hit
-// if these lived inside the constructor.
-koffi.struct('WS2_WsaPollFd', {
-  fd: 'uint64',
-  events: 'int16',
-  revents: 'int16',
-});
-
+// throws — which a second `NativePOSIXSocketLibrary` instance (e.g. after
+// `NativeSocketLibrary.reset()`, as tests do) would hit if it lived inside
+// the constructor.
 koffi.struct('libc_PollFd', {
   fd: 'int',
   events: 'int16',
@@ -63,7 +58,7 @@ export abstract class NativeSocketLibrary {
   private static createForCurrentPlatform() {
     switch (process.platform) {
       case 'win32':
-        return new NativeWindowsSocketLibrary();
+        return this.forWindows();
       case 'darwin':
         return NativePOSIXSocketLibrary.forDarwin();
       case 'linux':
@@ -71,6 +66,22 @@ export abstract class NativeSocketLibrary {
       default:
         throw new Error(`Unsupported platform: ${process.platform}`);
     }
+  }
+
+  /**
+   * Loaded lazily rather than via a static import: `NativeWindowsSocketLibrary`
+   * extends this class, so a static import here would race its module's own
+   * `extends` clause against this class not being defined yet.
+   *
+   * @returns The `NativeWindowsSocketLibrary` constructor.
+   */
+  public static forWindows(): NativeWindowsSocketLibrary {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports -- lazy require breaks a circular dependency with NativeWindowsSocketLibrary, which extends this class
+    const module = require('./nativeWindowsSocketLibrary') as {
+      NativeWindowsSocketLibrary: new () => NativeWindowsSocketLibrary;
+    };
+
+    return new module.NativeWindowsSocketLibrary();
   }
 
   /**
@@ -114,54 +125,6 @@ export abstract class NativeSocketLibrary {
    *   failed.
    */
   protected abstract pollReadable(fd: number, timeoutMs: number): number;
-}
-
-class NativeWindowsSocketLibrary extends NativeSocketLibrary {
-  private readonly POLLRDNORM = 0x0100;
-
-  private readonly WSAPoll: KoffiFunction;
-
-  /** @throws {Error} If the native polling primitive can't be loaded on this machine. */
-  constructor() {
-    super();
-    this.WSAPoll = this.initializeWSAPollFunction();
-  }
-
-  /**
-   * Loads the native primitive `pollReadable` polls through.
-   *
-   * @returns A callable bound to that primitive.
-   * @throws {Error} If it can't be loaded on this machine.
-   */
-  private initializeWSAPollFunction() {
-    const ws2 = koffi.load('ws2_32.dll');
-
-    return ws2.func(
-      'int __stdcall WSAPoll(_Inout_ WS2_WsaPollFd *fdArray, unsigned long fds, int timeout)',
-    );
-  }
-
-  public pollReadable(fd: number, timeoutMs: number): number {
-    // `pollFd` must stay in a variable, not an inline literal: koffi writes
-    // WSAPoll's output back into this same object, and we need to read the
-    // resulting `revents` below.
-    const pollFd = { fd: BigInt(fd), events: this.POLLRDNORM, revents: 0 };
-    const status = this.WSAPoll(pollFd, 1, timeoutMs);
-
-    // A negative status means WSAPoll itself failed; 0 means it timed out
-    // with nothing to report. Neither leaves a meaningful revents to check.
-    if (status <= 0) {
-      return status;
-    }
-
-    // WSAPoll counts the fd as having an event (status > 0) for POLLERR/
-    // POLLHUP/POLLNVAL too, not just POLLRDNORM, so a positive status alone
-    // doesn't mean the socket is readable. Only report readable when
-    // POLLRDNORM is actually set; otherwise treat it as a failed check, so
-    // the caller falls back to the authoritative result instead of acting on
-    // a dead or errored socket.
-    return pollFd.revents & this.POLLRDNORM ? status : -1;
-  }
 }
 
 class NativePOSIXSocketLibrary extends NativeSocketLibrary {
