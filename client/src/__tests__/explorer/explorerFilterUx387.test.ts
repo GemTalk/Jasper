@@ -27,11 +27,11 @@ function lastInputBox(): MockInputBox {
   return vi.mocked(vscode.window.createInputBox).mock.results.at(-1)!.value;
 }
 
-// Issue #387, the filter/wording cluster. Items 1/2/3/8 are package.json metadata and
-// are asserted in explorerFilterUx387.manifest.test.ts; these cover the behaviour:
-// item 4 (the chip announces itself), item 5 (the prompt tells the truth about live
-// filtering), item 7 (method CATEGORIES are filterable, not just selectors) and item 10
-// (the ALL METHODS pseudo-category row is gone without any method becoming unreachable).
+// The Explorer filter's wording and behaviour, from #387. The icon and title choices live
+// only in package.json and are asserted in explorerFilterUx387.manifest.test.ts; these cover
+// the behaviour: the chip announces an active filter, the prompt tells the truth about live
+// filtering, method CATEGORIES are filterable and not just selectors, and the ALL METHODS
+// pseudo-category row is gone without any method becoming unreachable.
 
 function makeViews() {
   const pane = () => ({
@@ -66,7 +66,7 @@ const envLine = (isMeta: boolean, category: string, selectors: string[]): EnvCat
 });
 
 // 'accessing' holds selectors that do NOT begin with "accessing", which is the whole
-// point of item 7: filtering by category name cannot fall out of selector matching.
+// point: filtering by category name cannot fall out of selector matching.
 function seedTwoCategories(ctl: ExplorerController): void {
   setEnvLines(ctl, [
     envLine(false, 'accessing', ['name', 'name:', 'size']),
@@ -95,7 +95,7 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe('#387 item 4 — an active filter announces itself', () => {
+describe('An active filter announces itself', () => {
   it('labels the chip "Filter:" so the row reads as a statement, not a button', () => {
     const chip = new FilterChipItem('gemstoneExplorerMethods', 'pr*');
 
@@ -103,7 +103,7 @@ describe('#387 item 4 — an active filter announces itself', () => {
     expect(chip.description).toBe('pr*');
   });
 
-  it('keeps the funnel icon, matching the funnel on the filter control (item 3)', () => {
+  it('keeps the funnel icon, matching the funnel on the filter control', () => {
     const chip = new FilterChipItem('gemstoneExplorerClasses', 'Ar*');
 
     expect((chip.iconPath as { id: string }).id).toBe('filter-filled');
@@ -117,11 +117,14 @@ describe('#387 item 4 — an active filter announces itself', () => {
   });
 });
 
-describe('#387 item 5 — the filter box does not claim Enter is required', () => {
-  it('sets an explicit prompt describing live filtering, replacing VS Code’s Enter hint', () => {
+// The pane here is Classes: the Methods pane's button opens VS Code's own find box now, which
+// brings its own wording (explorerMethodsFindBox.test.ts). The box under test is the one the
+// other three panes still open.
+describe('The filter box does not claim Enter is required', () => {
+  it('sets an explicit prompt describing live filtering, replacing VS Code’s Enter hint', async () => {
     const ctl = makeController();
 
-    ctl.beginFilter('gemstoneExplorerMethods');
+    await ctl.beginFilter('gemstoneExplorerClasses');
     const box = lastInputBox();
 
     // Left unset, VS Code fills the prompt line with its own "press Enter to confirm"
@@ -134,19 +137,18 @@ describe('#387 item 5 — the filter box does not claim Enter is required', () =
     expect(box.prompt).toMatch(/escape/i);
   });
 
-  it('leaves the live-filtering behaviour the prompt now describes intact', () => {
+  it('leaves the live-filtering behaviour the prompt now describes intact', async () => {
     const ctl = makeController();
-    seedTwoCategories(ctl);
 
-    ctl.beginFilter('gemstoneExplorerMethods');
-    lastInputBox().__type('print');
+    await ctl.beginFilter('gemstoneExplorerClasses');
+    lastInputBox().__type('Ar');
 
     // Typing alone filtered the pane — no Enter needed, which is what the prompt claims.
-    expect(ctl.getFilter('gemstoneExplorerMethods')).toBe('print');
+    expect(ctl.getFilter('gemstoneExplorerClasses')).toBe('Ar');
   });
 });
 
-describe('#387 item 7 — method categories are filterable', () => {
+describe('Method categories are filterable', () => {
   it('keeps a category whose NAME matches, even when no selector inside it does', () => {
     const ctl = makeController();
     seedTwoCategories(ctl);
@@ -219,7 +221,7 @@ describe('#387 item 7 — method categories are filterable', () => {
   });
 });
 
-describe('#387 item 7 — the flat view honours the same filter', () => {
+describe('The flat view honours the same filter', () => {
   it('keeps a category-name match when grouping is off, so toggling does not empty the pane', () => {
     const ctl = makeController();
     seedTwoCategories(ctl);
@@ -248,7 +250,7 @@ describe('#387 item 7 — the flat view honours the same filter', () => {
   });
 });
 
-describe('#387 item 10 — the ALL METHODS pseudo-category is gone', () => {
+describe('The ALL METHODS pseudo-category is gone', () => {
   it('does not render it, filtered or not', () => {
     const ctl = makeController();
     seedTwoCategories(ctl);

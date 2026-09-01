@@ -305,8 +305,11 @@ export class ClassItem extends vscode.TreeItem {
     //
     // `.novars` gates the class row's "+": that button exists for the class that has
     // no variable-side rows to host one, so on a class that already has them it would
-    // be a third "+" on screen doing what those rows' own two already do. `.commented`
-    // gates the comment button to classes that actually have a comment.
+    // be a third "+" on screen doing what those rows' own two already do.
+    // `.commented` gates the comment button to classes that actually have a comment
+    // (#387). Its clause must match `.novars` too — it was an exact `==` test, so
+    // adding a second suffix silently took the button off a commented class with no
+    // variables.
     this.contextValue = `explorerClass${hasVars ? '' : '.novars'}${hasComment ? '.commented' : ''}`;
     this.iconPath = new vscode.ThemeIcon('symbol-class');
     // Fires on every click (selection still drives navigation separately); the
@@ -399,7 +402,7 @@ export class MethodCategoryItem extends vscode.TreeItem {
     public readonly category: string,
     public readonly computed: boolean,
     // Open the node up front. Categories do this while a filter is active, so matches
-    // show without expanding every folder by hand. (Before #387 item 10 the ALL METHODS
+    // show without expanding every folder by hand. (Before #387 the ALL METHODS
     // row also forced itself open as the landing view; that row is gone, so nothing is
     // expanded by default any more and the real categories start at the top.)
     forceExpanded = false,
@@ -507,13 +510,13 @@ export class MethodItem extends vscode.TreeItem {
 
 // A "filter chip" root row shown while a pane's filter is active: a funnel icon,
 // the label "Filter:", and the pattern in grey description text — visually
-// distinct from method/selector rows. Clicking it re-opens the filter editor;
-// its inline ✕ clears the filter. Carries the owning view id so one clear
-// command serves every pane.
+// distinct from method/selector rows. Clicking it re-runs the pane's filter
+// button; its inline ✕ clears the filter. Carries the owning view id so one
+// clear command serves every pane.
 //
 // The label keeps its colon: seeing the pattern is easy, but NOTICING that a
 // filter is on at all is the hard part, and "Filter: foo*" reads as a statement
-// about the pane where a bare "Filter foo*" reads like a button (#387 item 4).
+// about the pane where a bare "Filter foo*" reads like a button (#387).
 export class FilterChipItem extends vscode.TreeItem {
   constructor(
     public readonly viewId: string,
@@ -524,7 +527,14 @@ export class FilterChipItem extends vscode.TreeItem {
     this.description = pattern;
     this.iconPath = new vscode.ThemeIcon('filter-filled');
     this.contextValue = 'explorerFilterChip';
-    this.tooltip = `Active filter: ${pattern} — click to edit, ✕ to clear`;
+    // The Methods pane has no filter editor to re-open — its button opens VS Code's own
+    // find box, which narrows the rows this filter has already selected rather than editing
+    // the filter itself. A Methods filter therefore comes from an instance-variable row's
+    // context menu, and ✕ (or re-running that menu item) is how it changes.
+    this.tooltip =
+      viewId === VIEW_METHODS
+        ? `Active filter: ${pattern} — click to search within it, ✕ to clear`
+        : `Active filter: ${pattern} — click to edit, ✕ to clear`;
     this.command = { command: `${viewId}.filter`, title: '' };
   }
 }
@@ -855,6 +865,9 @@ export class ExplorerController {
   // The pane whose filter input is currently open (so its header shows the
   // live "Filter: …" label while typing, even if a method is already selected).
   private filteringView?: string;
+  // The open filter input, if any, and the way to close it as ACCEPTED. Set by
+  // beginFilter, used by commitFilterInput when a row click ends the filtering.
+  private openFilterBox?: { commit: () => void };
   // Freshly-created (via the + button) class categories that have no class yet,
   // so they still appear in the Class Categories pane. Cleared on dict change.
   private readonly newClassCategories = new Set<string>();
@@ -1099,8 +1112,32 @@ export class ExplorerController {
     for (const id of viewIds) this.setFilterState(id, undefined);
   }
 
+  // Narrow the Methods pane with VS Code's own find box — the one that opens inside the
+  // tree, at its top right, with the toggles for filtering (hiding non-matching rows)
+  // rather than highlighting. It is a better fit than our quick-input box for the reason
+  // that box kept going wrong: a floating input has to guess what a click somewhere else
+  // means, while the built-in box lives in the pane, keeps the narrowing while you click a
+  // result, and leaves VS Code — not us — mapping a clicked row back to its element.
+  //
+  // There is no API for it: `list.find` acts on whichever list was focused last, so focus
+  // the pane first and let the command find it. Nothing about the widget is readable from
+  // here afterwards — its query, its mode, whether it is even open — which is why the
+  // reads:/writes:/accesses: filters stay on our own state (see setFilterState): they are
+  // seeded from an instance-variable row's menu, and no built-in text search could run the
+  // GemStone query behind them. The two compose: ours picks the rows, VS Code's box then
+  // searches within them.
+  async openPaneFindWidget(viewId: string): Promise<void> {
+    // A box left open over another pane would sit on top of the widget we are about to open.
+    this.commitFilterInput();
+    await vscode.commands.executeCommand(`${viewId}.focus`);
+    await vscode.commands.executeCommand('list.find');
+  }
+
   // Open a live filter input for a pane: prefix match, '*' wildcard. Typing
   // filters the pane immediately; an empty value clears the filter.
+  //
+  // The Methods pane is the exception: its button opens VS Code's find box instead
+  // (openPaneFindWidget). The other three panes are still to follow (#523).
   //
   // Because filtering is live, every keystroke has already changed the pane by the time the
   // box closes — so cancelling has to be undone explicitly. VS Code fires onDidHide for BOTH
@@ -1108,21 +1145,51 @@ export class ExplorerController {
   // apart. On cancel we restore the filter captured when the box opened, which is the
   // previously accepted filter when the user was editing an existing one (the box is seeded
   // from it) rather than simply clearing.
-  beginFilter(viewId: string): void {
+  //
+  // A click away from the box is neither: `ignoreFocusOut` keeps the box open through it, and
+  // the click's own handler commits the box instead (commitFilterInput) — see the note there.
+  //
+  // Async only for the Methods pane's two commands: the returned promise goes back to VS Code
+  // from the command handler, so a `${viewId}.focus` or `list.find` that fails (a command id
+  // changed underneath us, the pane not registered yet) is reported instead of leaving the
+  // Filter button looking like it did nothing. The other panes' work is all synchronous and the
+  // promise they return is already resolved.
+  async beginFilter(viewId: string): Promise<void> {
+    if (viewId === VIEW_METHODS) {
+      return this.openPaneFindWidget(viewId);
+    }
+    // A box already open (another pane's funnel, say) no longer closes itself when focus moves
+    // here, so put it away first — and as an accept, since opening a second filter box is not a
+    // way of saying the first one was a mistake. Doing it here rather than leaving it to VS
+    // Code (which hides a displaced input box) keeps the order deterministic: the old box's
+    // onDidHide has finished before this one records itself as the open box.
+    this.commitFilterInput();
     const box = vscode.window.createInputBox();
     const filterBeforeEdit = this.filters.get(viewId);
     // What this box last wrote, so the cancel path can tell its own edit from someone else's.
     let lastAppliedByBox = filterBeforeEdit;
     let accepted = false;
     box.title = 'Filter';
+    // Keep the box open when focus leaves it. VS Code otherwise hides it on any click
+    // elsewhere, and hiding is the cancel path: the pre-edit filter goes back, the pane
+    // re-expands to the full list — under the pointer, before the click that dismissed the box
+    // resolves — and the click lands on whichever row has moved into that spot. Clicking a
+    // result is exactly what a filter is for, so the box must survive the click. With focus-out
+    // ignored, the box closes only on Escape (cancel), Enter (accept), or commitFilterInput
+    // (accept), so a dismissal is no longer ambiguous between the three.
+    box.ignoreFocusOut = true;
     box.placeholder = 'starts with… (use * as a wildcard)';
     // Set an explicit prompt. Left unset, VS Code fills the prompt line with its own
     // "press Enter to confirm / Escape to cancel" hint, which tells the user nothing
     // filters until Enter — but this box filters on every keystroke
     // (onDidChangeValue -> setFilterState). The live behaviour is the one worth
-    // keeping, so correct the message instead (#387 item 5). Escape still cancels and
-    // restores the previous filter, which is why it stays in the text.
-    box.prompt = 'Filters as you type — Escape to cancel';
+    // keeping, so correct the message instead. Escape still cancels and restores the
+    // previous filter, which is why it stays in the text. The box now also survives
+    // the click on a result and keeps the filter (see ignoreFocusOut above), so the
+    // prompt says so — deliberately without naming Enter, which would put back the
+    // very "nothing happens until you confirm" reading the explicit prompt exists to
+    // displace (there is a test on that; Enter does still accept and close the box).
+    box.prompt = 'Filters as you type — click a result to keep it, Escape to cancel';
     box.value = filterBeforeEdit ?? '';
     this.filteringView = viewId;
     this.syncTitles();
@@ -1130,18 +1197,23 @@ export class ExplorerController {
       lastAppliedByBox = value.trim() || undefined;
       this.setFilterState(viewId, lastAppliedByBox);
     });
-    box.onDidAccept(() => {
+    const accept = () => {
       accepted = true;
       box.hide();
-    });
+    };
+    box.onDidAccept(accept);
+    const entry = { commit: accept };
+    this.openFilterBox = entry;
     box.onDidHide(() => {
       // Undo ONLY this box's own edit, and only when there is something to undo.
       //
-      // Restoring unconditionally was wrong: selecting a class clears the Methods filter
-      // (`selectClass` -> `clearFilters(VIEW_METHODS)`), and that same click is what dismisses an
-      // open filter box — so the restore could re-apply a filter the user typed for the PREVIOUS
-      // class onto the newly selected one. If the live value is no longer what this box set,
-      // someone else owns it now; leave it alone.
+      // Restoring unconditionally was wrong: plenty of things clear a pane's filter while the
+      // box is open — selecting a class clears the Methods filter (`selectClass` ->
+      // `clearFilters(VIEW_METHODS)`), as do the clear-filter command and a session change — and
+      // an unconditional restore would put the abandoned text back on top of whatever they left.
+      // If the live value is no longer what this box set, someone else owns it now; leave it
+      // alone. (A row click reaches here already accepted, via commitFilterInput, so it never
+      // restores; this guards the paths that don't go through a click.)
       //
       // The second guard keeps the common "open the box and press Escape without typing" case a
       // no-op rather than a needless refresh() + syncTitles() + refreshIvarHighlights() round.
@@ -1153,10 +1225,24 @@ export class ExplorerController {
         this.setFilterState(viewId, filterBeforeEdit);
       }
       this.filteringView = undefined;
+      // Deregister this box only. beginFilter commits an open box before creating the next, so
+      // there is normally just one — but the check costs nothing and means a hide delivered
+      // late (after another box has opened) can't leave that newer box with no way to commit.
+      if (this.openFilterBox === entry) this.openFilterBox = undefined;
       this.syncTitles();
       box.dispose();
     });
     box.show();
+  }
+
+  // Close an open filter input, keeping what was typed. Clicking a row in a pane is a USE of
+  // the filter, not a cancellation of it, so the pane's selection handlers call this: the box
+  // no longer closes itself on focus-out (see beginFilter), and left open it would hang over
+  // the panes until Escape — which would then undo a filter the user had already acted on.
+  // beginFilter calls it too, to put away a box left open over another pane. A no-op when no
+  // box is open, which is every path but a click (or a second funnel) during filtering.
+  commitFilterInput(): void {
+    this.openFilterBox?.commit();
   }
 
   // From an instance-variable row's context menu: filter the Methods pane to the
@@ -1240,7 +1326,14 @@ export class ExplorerController {
     const item = new DictItem(names[i], i + 1);
     this.selectDict(item);
     const views = this.views;
-    if (views) views.dict.reveal(item, { select: true }).then(undefined, () => {});
+    // Reveal only when the pane is already on screen. `TreeView.reveal` makes
+    // VS Code *show* the view it belongs to, which drags the whole GemStone
+    // Explorer container to the front — so logging in from the Databases section
+    // (or anywhere else) yanked the sidebar away from what the user was doing.
+    // Selecting the dictionary above is what populates the panes; the reveal only
+    // scrolls the row into sight, which is worth nothing to someone not looking
+    // at it.
+    if (views?.dict.visible) views.dict.reveal(item, { select: true }).then(undefined, () => {});
   }
 
   // Re-fetch everything for the CURRENT selection WITHOUT clearing it — the
@@ -1684,7 +1777,7 @@ export class ExplorerController {
   // or Classes-pane toolbar. Opens to the side so the comment sits alongside
   // whatever the developer is reading, and as a PREVIEW tab rather than a pinned
   // one: reading a comment is usually a peek, and a preview tab is reused by the
-  // next one and dismissed with a single click instead of two (#387 item 11).
+  // next one and dismissed with a single click instead of two (#387).
   // Double-clicking the tab still promotes it to a permanent one. `item` comes
   // from the inline button; falls back to the selected class for the toolbar /
   // palette.
@@ -2081,7 +2174,7 @@ export class ExplorerController {
   }
 
   // Whether a class carries a real comment — drives whether the row offers the
-  // comment button at all (#387 item 11), so the button never promises a document
+  // comment button at all (#387), so the button never promises a document
   // that turns out to be GemStone's synthesised "No class-specific documentation
   // for …" placeholder. Answered from the set derived from the class list already
   // fetched for this dictionary, so asking costs no extra query and no scan. A class
@@ -3566,7 +3659,7 @@ export class ExplorerController {
     // With a filter set and categories visible, keep the category structure but
     // drop categories with no matching selector, and expand what remains so the
     // matches are visible without hand-expanding each folder.
-    // A category survives the filter when its OWN name matches (#387 item 7) or when
+    // A category survives the filter when its OWN name matches (#387) or when
     // any selector inside it matches. Name-matching first: it is a cached-parse
     // lookup plus a string compare (parseFilter re-parses only when the raw filter
     // string changes), where the selector scan can pull in the ivar-access map.
@@ -3579,7 +3672,7 @@ export class ExplorerController {
     const expanded = filter !== undefined;
     if (filter !== undefined) combined = combined.filter(hasMatch);
     const items: MethodCategoryItem[] = [];
-    // No ALL METHODS pseudo-category row (#387 item 10). It duplicated what the real
+    // No ALL METHODS pseudo-category row (#387). It duplicated what the real
     // categories already show — for an uncategorized class it listed exactly what "as
     // yet unclassified" lists — and being first AND expanded by default it pushed the
     // real categories below the fold, so switching classes meant scrolling before any
@@ -3611,7 +3704,7 @@ export class ExplorerController {
         (info) =>
           filter === undefined ||
           this.methodMatchesFilter(isMeta, info.selector, filter) ||
-          // A category-name match keeps that category's methods here too (#387 item 7).
+          // A category-name match keeps that category's methods here too (#387).
           // Without this, filtering 'accessing' listed the category in grouped mode and
           // then emptied the pane the moment the user turned grouping off, even though
           // the filter had not changed. Ivar-token filters are excluded for free --
@@ -3674,7 +3767,7 @@ export class ExplorerController {
     return matchesMethodFilter(filter, selector, access);
   }
 
-  // Whether a method CATEGORY's own name passes the active filter (#387 item 7).
+  // Whether a method CATEGORY's own name passes the active filter (#387).
   // The browser offers category quick-filters, so typing 'acc' in the Methods pane
   // should surface the 'accessing' category, not just selectors starting with 'acc'.
   //
@@ -5856,7 +5949,7 @@ class MethodProvider extends RefreshableProvider<MethodNode> {
     if (element instanceof MethodCategoryItem) {
       const filter = this.ctl.getFilter(VIEW_METHODS);
       // When the CATEGORY NAME is what matched the filter, show everything inside it
-      // (#387 item 7). Filtering the selectors too would render the category the user
+      // (#387). Filtering the selectors too would render the category the user
       // just searched for as an empty folder, since its methods generally do not start
       // with their category's name.
       const nameMatched =
@@ -5956,6 +6049,38 @@ class ClassDropController implements vscode.TreeDragAndDropController<ClassNode>
 }
 
 // ── Registration ──────────────────────────────────────────────────────────────
+
+// A pane, as far as committing a filter edit is concerned. Structural rather than
+// vscode.TreeView<T> because the five panes are TreeViews of five different node types
+// and this cares about none of them — and so a test can drive it with a plain fake.
+interface SelectableView {
+  onDidChangeSelection(listener: (e: { selection: readonly unknown[] }) => void): unknown;
+}
+
+// Selecting a row in any pane commits an open filter input instead of cancelling it: the box
+// stays open through the click (beginFilter sets ignoreFocusOut, so the pane can't re-expand
+// under the pointer and hand the click to a different row), and this is what then puts it away
+// with the filter intact. Exported so the wiring — every pane, not just the filtered one — can
+// be tested; a selection in an unfiltered pane matters too, since e.g. picking a class clears
+// the Methods filter and a box left open over it would be editing something that's gone.
+export function commitFilterOnRowSelection(
+  ctl: Pick<ExplorerController, 'commitFilterInput'>,
+  ...views: SelectableView[]
+): void {
+  for (const view of views) {
+    view.onDidChangeSelection((e) => {
+      const node = e.selection[0];
+      // Two selections are not the click this is about. An EMPTY one isn't a click at all —
+      // typing in the box can narrow the selected row out of the pane, and that must not close
+      // the box mid-word. And the filter row's click is the one that OPENS the box (its command
+      // is the pane's filter command), so committing on it would race the very edit it asked
+      // for — whether VS Code fires the selection before or after the row's command is its
+      // business, not ours; skipping the row settles it either way.
+      if (node === undefined || node instanceof FilterChipItem) return;
+      ctl.commitFilterInput();
+    });
+  }
+}
 
 // Handle returned to the extension so it can forward file-system compile events
 // (method / class Save) and session lifecycle events (abort) to the controller
@@ -6065,6 +6190,11 @@ export function registerGemStoneExplorer(
     method: methodView,
   });
 
+  // Clicking a row anywhere in the Explorer ends an open filter edit, keeping the filter (see
+  // ExplorerController.commitFilterInput). Registered ahead of the per-pane handlers below,
+  // though the order doesn't change the outcome — committing never restores anything.
+  commitFilterOnRowSelection(ctl, dictView, categoryView, classView, hierarchyView, methodView);
+
   dictView.onDidChangeSelection((e) => {
     const node = e.selection[0];
     if (node instanceof DictItem) ctl.selectDict(node);
@@ -6113,9 +6243,12 @@ export function registerGemStoneExplorer(
       'gemstone.explorer.refresh',
       () => void ctl.refreshRetainingSelection(),
     ),
-    // Per-pane filter buttons: open a live filter input (prefix match, '*'
-    // wildcard) that filters the pane in place — works regardless of where
-    // focus currently sits (e.g. the editor).
+    // Per-pane filter buttons. Dictionaries, Class Categories and Classes open a live
+    // filter input (prefix match, '*' wildcard) that filters the pane in place, from
+    // wherever focus currently sits (e.g. the editor); Methods opens VS Code's own find
+    // box inside the pane. Both go through beginFilter, which picks the pane's entry point.
+    // Its promise is returned rather than dropped, so a failure inside the Methods pane's
+    // focus/find commands surfaces as a failed command instead of a button that does nothing.
     ...EXPLORER_VIEWS.map((viewId) =>
       vscode.commands.registerCommand(`${viewId}.filter`, () => ctl.beginFilter(viewId)),
     ),
@@ -6378,7 +6511,7 @@ export function registerGemStoneExplorer(
     }),
     // The single "Rename…" entry: figure out what the cursor is on (selector,
     // temporary, instance variable, or class variable) and dispatch to the specific
-    // rename below. Consolidates the four rename actions (#328 item 2).
+    // rename below. Consolidates the four rename actions (#328).
     vscode.commands.registerCommand('gemstone.rename', (position?: unknown) => {
       void renameAtCursorCommand(
         sessionManager,

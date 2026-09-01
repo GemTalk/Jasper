@@ -24,15 +24,13 @@
   let configLoading = false;
   const configEditing = new Set();
   let configFilter = '';
-  // The result of a Ping (shown in the header, beside the button) and of a Set
+  // The result of a Set
   // (shown inline, right under the row that was changed, so it is visible without
   // scrolling back to the top). Each is { tone: 'ok' | 'warn', message }, and a
   // set result also carries { scope, key } so it can be placed by its row.
   // Success is transient — it clears itself after a few seconds; a warning or a
   // failure stays until dismissed, with Copy so the stone's words can be kept.
-  let pingNotice = null;
   let setNotice = null;
-  let pingTimer;
   let setTimer;
   // How long a positive result stays before clearing itself.
   const OK_NOTICE_MS = 5000;
@@ -82,7 +80,7 @@
 
   // The body of a result banner: an icon, the message, and — for anything that is
   // not a plain success — Copy (keeps the stone's exact words) and Dismiss. A
-  // success carries no buttons; it clears itself (see setPingNotice/setSetNotice).
+  // success carries no buttons; it clears itself (see setSetNotice).
   function noticeInner(notice, dismissAction) {
     const glyph = notice.tone === 'ok' ? icon('pass') : icon('warning');
     const actions =
@@ -209,18 +207,12 @@
   }
 
   // The panel body: the stone and gem configuration of the session. Values load
-  // on demand — the header carries a Ping result, Ping, and Refresh, and opening
-  // the panel asks the host to read them (init posts `ready`).
+  // on demand — the header carries Refresh, and opening the panel asks the host
+  // to read them (init posts `ready`).
   function renderBody() {
     const label = (lastConfig && lastConfig.label) || meta.label || 'this session';
     const version = (lastConfig && lastConfig.version) || meta.version || '';
-    // The ping result sits to the LEFT of the Ping button.
-    const pingHtml = pingNotice
-      ? `<span class="ping-result ${pingNotice.tone === 'warn' ? 'warn' : 'ok'}" role="status">${noticeInner(pingNotice, 'dismissPing')}</span>`
-      : '';
     const actions = `<span class="config-panel-actions">
-      ${pingHtml}
-      <button type="button" class="btn" data-action="ping" title="Check that the session is alive and responsive">${icon('pulse')}<span>Ping</span></button>
       <button type="button" class="icon-btn" data-action="loadConfiguration" title="Reload settings from the session" aria-label="Refresh">${icon('refresh')}</button>
     </span>`;
     const head = `<header class="config-panel-head">
@@ -293,18 +285,7 @@
   }
 
   // A positive result clears itself after a few seconds; a warning stays until
-  // dismissed. Both start by cancelling any timer already running for that slot.
-  function setPingNotice(tone, message) {
-    clearTimeout(pingTimer);
-    pingNotice = { tone, message };
-    if (tone === 'ok') {
-      pingTimer = setTimeout(() => {
-        pingNotice = null;
-        render();
-      }, OK_NOTICE_MS);
-    }
-    render();
-  }
+  // dismissed. Starts by cancelling any timer already running for that slot.
   function setSetNotice(tone, message, scope, key) {
     clearTimeout(setTimer);
     setNotice = { tone, message, scope, key };
@@ -317,9 +298,7 @@
     render();
   }
   function clearNotices() {
-    clearTimeout(pingTimer);
     clearTimeout(setTimer);
-    pingNotice = null;
     setNotice = null;
   }
 
@@ -383,14 +362,6 @@
         return true;
       case 'loadConfiguration':
         requestConfiguration(true);
-        return true;
-      case 'ping':
-        post({ command: 'ping' });
-        return true;
-      case 'dismissPing':
-        clearTimeout(pingTimer);
-        pingNotice = null;
-        render();
         return true;
       case 'dismissSet':
         clearTimeout(setTimer);
@@ -594,8 +565,6 @@
       clearNotices();
       configEditing.clear();
       render();
-    } else if (msg.command === 'pingResult') {
-      setPingNotice(msg.tone === 'warn' ? 'warn' : 'ok', String(msg.message || ''));
     } else if (msg.command === 'setResult') {
       setSetNotice(
         msg.tone === 'warn' ? 'warn' : 'ok',

@@ -3,14 +3,14 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as nodePath from 'path';
 
-vi.mock('vscode', () => import('../__mocks__/vscode.js'));
+vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 vi.mock('child_process');
-vi.mock('../sysadminChannel', () => ({ appendSysadmin: vi.fn(), showSysadmin: vi.fn() }));
-vi.mock('../wslBridge', async () => {
+vi.mock('../../sysadminChannel', () => ({ appendSysadmin: vi.fn(), showSysadmin: vi.fn() }));
+vi.mock('../../wslBridge', async () => {
   // Keep wslSpawn / windowsPathToWsl real so the existing startStone tests
   // continue to drive the child_process mock; only override wslExecSync and
   // needsWsl, which the new stale-lock tests need to control.
-  const actual = await vi.importActual<typeof import('../wslBridge')>('../wslBridge');
+  const actual = await vi.importActual<typeof import('../../wslBridge')>('../../wslBridge');
   return {
     ...actual,
     needsWsl: vi.fn(() => false),
@@ -27,11 +27,11 @@ import {
   versionsMatch,
   exportCommand,
 } from '../processManager';
-import { GemStoneDatabase, GemStoneProcess } from '../sysadminTypes';
-import { DEFAULT_GS_PW } from '../loginTypes';
-import { appendSysadmin, showSysadmin } from '../sysadminChannel';
-import * as wslBridge from '../wslBridge';
-import { SysadminStorage } from '../sysadminStorage';
+import { GemStoneDatabase, GemStoneProcess } from '../../sysadminTypes';
+import { DEFAULT_GS_PW } from '../../loginTypes';
+import { appendSysadmin, showSysadmin } from '../../sysadminChannel';
+import * as wslBridge from '../../wslBridge';
+import { SysadminStorage } from '../../sysadminStorage';
 
 // ── Helpers ────────────────────────────────────────────────
 

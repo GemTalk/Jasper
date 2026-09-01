@@ -1,19 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as path from 'path';
 
-vi.mock('vscode', () => import('../__mocks__/vscode.js'));
+vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 
 import * as vscode from 'vscode';
-import { QueryExecutor } from '../queries/types';
+import { QueryExecutor } from '../../queries/types';
 import {
   runOnlineExtentBackup,
   resolveExtentBackupSession,
   ExtentBackupDeps,
 } from '../extentBackupManager';
-import type { ActiveSession } from '../sessionManager';
-import type { GemStoneSessionItem } from '../loginTreeProvider';
+import type { ActiveSession } from '../../sessionManager';
+import type { GemStoneSessionItem } from '../../loginTreeProvider';
 import type { DatabaseNode } from '../databaseTreeProvider';
-import { uriFsPath } from './support/uri';
+import { uriFsPath } from '../../__tests__/support/uri';
 
 // A fake GCI executor that answers each bracketing call by matching the emitted
 // Smalltalk. Override any response to drive a failure path.

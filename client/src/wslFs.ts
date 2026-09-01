@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+import * as path from 'path';
 import { spawnSync } from 'child_process';
 import { needsWsl, windowsPathToWsl, wslExecSync } from './wslBridge';
 
@@ -255,4 +256,55 @@ export function wslChmodSync(p: string, mode: number | string): void {
   }
   const modeStr = typeof mode === 'number' ? mode.toString(8) : mode;
   wslExecSync(`chmod ${modeStr} ${shellQuote(windowsPathToWsl(p))}`);
+}
+/**
+ * The files directly in a directory, each with when it was last written.
+ *
+ * Names alone are enough to open a file but not to say which of forty log files
+ * is the one from this morning. Reported in epoch milliseconds so the caller can
+ * order and format them however it likes. A directory that cannot be read
+ * answers an empty list — an unreadable log folder is not worth an error.
+ */
+export function wslStatFilesSync(p: string): { name: string; modifiedMs: number }[] {
+  if (!shouldRoute(p)) {
+    try {
+      return fs
+        .readdirSync(p, { withFileTypes: true })
+        .filter((e) => e.isFile())
+        .map((e) => {
+          try {
+            return { name: e.name, modifiedMs: fs.statSync(path.join(p, e.name)).mtimeMs };
+          } catch {
+            // Vanished between the listing and the stat, or unreadable: it is
+            // still a file worth showing, just without a time.
+            return { name: e.name, modifiedMs: 0 };
+          }
+        });
+    } catch {
+      return [];
+    }
+  }
+  try {
+    // `find -printf` rather than `ls`, whose columns move with locale and file
+    // age. %T@ is the epoch seconds with a fractional part; the tab keeps names
+    // containing spaces intact.
+    const out = wslExecSync(
+      `find ${shellQuote(windowsPathToWsl(p))} -maxdepth 1 -type f -printf '%T@\t%f\n'`,
+    );
+    return out
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const tab = line.indexOf('\t');
+        if (tab < 0) return { name: line, modifiedMs: 0 };
+        const seconds = Number(line.slice(0, tab));
+        return {
+          name: line.slice(tab + 1),
+          modifiedMs: Number.isFinite(seconds) ? Math.round(seconds * 1000) : 0,
+        };
+      });
+  } catch {
+    return [];
+  }
 }
