@@ -2,11 +2,23 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { mockKoffiModule } from '../../__mocks__/koffi';
 import { GCI_OPTIONAL_FUNCTIONS, GciOptionalFunctionName } from '../optionalFunctions';
 
-// Windows client DLLs, and libraries older than a given binding's addedIn
-// floor, don't export these — see optionalFunctions.ts for why each one.
+/**
+ * Proves the `optionalFunc` contract from the library's own side: when *every*
+ * optional symbol fails to bind, `GciLibrary` still constructs, each missing
+ * binding throws a named error at its call site rather than crashing, and
+ * `isAvailable` reports the absence so callers can fall back.
+ *
+ * A synthetic worst case, not a faithful Windows DLL — a real one is missing
+ * only the five `FLG_UNIX` symbols.
+ * Background: `docs/explanation/gci-version-compatibility.md`.
+ */
+
+/** Every optional binding, straight from the registry; the mock refuses all of them. */
 const OPTIONAL_FUNCTIONS = Object.keys(GCI_OPTIONAL_FUNCTIONS) as GciOptionalFunctionName[];
 
-// Mock koffi before importing GciLibrary
+// koffi has to be mocked before GciLibrary is imported, hence the deliberate
+// mid-file import below. `lib.func` throws for any signature naming an optional
+// symbol, which is how koffi itself reports a symbol the library doesn't export.
 vi.mock('koffi', () => {
   const stubFn = vi.fn();
   return mockKoffiModule((signature: string) => {
@@ -21,13 +33,10 @@ vi.mock('koffi', () => {
 
 import { GciLibrary } from '../../gciLibrary';
 
-// ── GciLibrary optional function bindings ────────────────
-
-describe('GciLibrary with Windows client DLL (missing optional functions)', () => {
+describe('GciLibrary against a library exporting no optional functions', () => {
   let gci: GciLibrary;
 
   beforeEach(() => {
-    // Constructor should succeed even though every optional function is missing
     gci = new GciLibrary('C:\\fake\\libgcits-3.7.5-64.dll');
   });
 
@@ -35,8 +44,8 @@ describe('GciLibrary with Windows client DLL (missing optional functions)', () =
     expect(gci).toBeDefined();
   });
 
-  // A Record makes this exhaustive: adding an entry to GCI_OPTIONAL_FUNCTIONS
-  // without adding its invocation here is a compile error.
+  // Exhaustive by construction: a new GCI_OPTIONAL_FUNCTIONS entry with no
+  // invocation here is a compile error, not a silently unasserted symbol.
   const invoke: Record<GciOptionalFunctionName, () => unknown> = {
     GciTsNbPoll: () => gci.GciTsNbPoll(null, 0),
     GciTsDebugConnectToGem: () => gci.GciTsDebugConnectToGem(12345),
@@ -64,9 +73,9 @@ describe('GciLibrary with Windows client DLL (missing optional functions)', () =
     expect(invoke[name]).toThrow(`${name} is not available in this GCI library`);
   });
 
-  // The one fix this whole test file exists to verify: on a real Windows
-  // client DLL, GciTsNbLogin is absent, so isAvailable must say so and the
-  // non-blocking login path must know to fall back.
+  // Regression guard for a real bug: GciTsNbLogin was once bound by a bare
+  // try/catch that never recorded it as missing, so isAvailable answered `true`
+  // on Windows and the non-blocking login path never fell back.
   it('reports GciTsNbLogin as unavailable', () => {
     expect(gci.isAvailable('GciTsNbLogin')).toBe(false);
   });
