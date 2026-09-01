@@ -30,7 +30,7 @@ import {
   SUNIT_PROBE_FAILING_SELECTOR,
   SUNIT_PROBE_ERRORING_SELECTOR,
 } from './sunitProbeFixture';
-import { installRunLimitProbeClasses } from './runLimitProbeFixture';
+import { anyRunLimitProbeSuiteRan, installRunLimitProbeClasses } from './runLimitProbeFixture';
 
 describe('SUnit queries (integration)', () => {
   let gci: GciLibrary;
@@ -171,6 +171,10 @@ describe('SUnit queries (integration)', () => {
       // Whatever the stone already held, the selection is now over the cap.
       expect(discoverAllTestClasses(exec).length).toBeGreaterThan(MAX_RUN_CLASSES);
       expect(() => runFailingTests(exec)).toThrow(/too many to run[\s\S]*Narrow the run/);
+
+      // The title's real claim: the refusal happened before the run loop, so
+      // the marker global a probe's `testPasses` would have written is absent.
+      expect(anyRunLimitProbeSuiteRan(gci, handle)).toBe(false);
     });
 
     it('runs an at-cap selection and reports its failures', () => {
