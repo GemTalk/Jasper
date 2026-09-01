@@ -1,8 +1,9 @@
 /**
  * Methods provider: the selector space is too large to preload, so this queries the stone per
  * search term (the controller debounces, and we skip terms shorter than `methodMinQueryLength` to
- * avoid hammering the stone). The server pre-filters by selector substring; we re-rank client-side
- * with the configured matcher for a consistent order.
+ * avoid hammering the stone). The server pre-filters by selector substring and returns its rows
+ * best-tier-first (exact selector, then prefix, then substring elsewhere — see `searchSelectors`); we
+ * re-rank client-side with the configured matcher for a consistent order.
  *
  * The row label is `Class>>selector` (or `Class class>>selector` for the class side); the match is
  * computed against the selector and the highlight ranges are shifted into label coordinates.
@@ -26,7 +27,8 @@ export type SelectorSearchRunner = (
 ) => SelectorSearchResult[];
 
 /** Over-fetch factor: request this many × the displayed cap from the server, so ranking has a
- *  wider pool to pick the best matches from (see search()). */
+ *  wider pool to pick the best matches from — a tie-break by class name (below) can only be A→Z over
+ *  the rows it was given (see search()). */
 export const SERVER_OVERFETCH = 4;
 function labelFor(r: SelectorSearchResult): string {
   return `${r.className}${r.isMeta ? ' class' : ''}>>${r.selector}`;
@@ -47,21 +49,22 @@ export function createMethodsProvider(
       const term = query.trim();
       if (term.length < cfg.methodMinQueryLength) return [];
 
-      // Fetch a WIDER server slice than we display, then rank + cap client-side. The server scan is
-      // substring-match in symbol-list order (not by relevance), so a high-quality selector match
-      // could sit past a tight cutoff and never reach us; over-fetching lets the ranking surface it.
+      // Fetch a WIDER server slice than we display, then rank + cap client-side: the slice is what the
+      // A→Z tie-break at the bottom gets to order, so a tight one would show the first few classes the
+      // scan reached rather than the first few alphabetically.
       // The `gemstone.omniSearch.maxServerScan` setting bounds the server slice, and so the scan cost,
       // regardless of maxResultsPerCategory. `readOmniConfig` has already clamped it into 20–20 000, so
-      // it is read straight. It bounds the RESULTS as well as the cost: `searchSelectors` short-circuits
-      // the instant it has that many matches, so a broad term can never return more no matter how far
-      // the display cap is raised — "Load all" included. `search` therefore reports truncation to the
-      // engine, which would otherwise present a cut-off count as an exact total, with nothing on screen
-      // saying the scan gave up.
+      // it is read straight. It bounds the RESULTS as well as the cost: `searchSelectors` yields at most
+      // that many rows, so a broad term can never return more no matter how far the display cap is
+      // raised — "Load all" included. `search` therefore reports truncation to the engine, which would
+      // otherwise present a cut-off count as an exact total, with nothing on screen saying the scan
+      // stopped short. What the cut-off can no longer do is hide the BEST matches: the server orders
+      // its rows by match tier, so what a full slice drops is the least relevant tail (issue #517).
       const ceiling = cfg.maxServerScan;
       const serverLimit = Math.min(cfg.maxResultsPerCategory * SERVER_OVERFETCH, ceiling);
       const rows = runSearch(term, serverLimit, !cfg.caseSensitive);
-      // A FULL slice means the scan short-circuited, so the image almost certainly holds matches we
-      // never saw: the count is a floor, not a total. Judged on the RAW row count, before the re-filter
+      // A FULL slice means the scan had rows it could not hand back, so the image almost certainly
+      // holds matches we never saw: the count is a floor, not a total. Judged on the RAW row count, before the re-filter
       // below — that drops rows and would mask the fact that we stopped early. When the image happens
       // to hold exactly `serverLimit` matches this over-reports by claiming "more exist"; telling the
       // two apart would cost another fetch, so we stay conservative.

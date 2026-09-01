@@ -1265,7 +1265,14 @@ export class ExplorerController {
     const item = new DictItem(names[i], i + 1);
     this.selectDict(item);
     const views = this.views;
-    if (views) views.dict.reveal(item, { select: true }).then(undefined, () => {});
+    // Reveal only when the pane is already on screen. `TreeView.reveal` makes
+    // VS Code *show* the view it belongs to, which drags the whole GemStone
+    // Explorer container to the front — so logging in from the Databases section
+    // (or anywhere else) yanked the sidebar away from what the user was doing.
+    // Selecting the dictionary above is what populates the panes; the reveal only
+    // scrolls the row into sight, which is worth nothing to someone not looking
+    // at it.
+    if (views?.dict.visible) views.dict.reveal(item, { select: true }).then(undefined, () => {});
   }
 
   // Re-fetch everything for the CURRENT selection WITHOUT clearing it — the

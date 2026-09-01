@@ -1,11 +1,11 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { SysadminStorage } from './sysadminStorage';
+import { SysadminStorage } from '../sysadminStorage';
 import { ProcessManager, versionsMatch } from './processManager';
-import { GemStoneDatabase } from './sysadminTypes';
-import { wslExistsSync, wslReaddirSync, wslIsFile } from './wslFs';
-import { ServerStatus, databaseStatus, inspectDatabaseProcesses } from './databaseServerStatus';
-import { ExternalServer, ExternalServerFinding } from './externalServerScan';
+import { GemStoneDatabase } from '../sysadminTypes';
+import { wslExistsSync, wslReaddirSync, wslIsFile } from '../wslFs';
+import { ServerStatus, databaseStatus, inspectDatabaseProcesses } from '../databaseServerStatus';
+import { ExternalServer, ExternalServerFinding } from '../externalServerScan';
 
 export type DatabaseNode =
   | { kind: 'database'; db: GemStoneDatabase }

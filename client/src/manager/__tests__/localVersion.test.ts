@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { onSupportedPosixIt } from './platformGates';
+import { onSupportedPosixIt } from '../../__tests__/platformGates';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 
-vi.mock('vscode', () => import('../__mocks__/vscode.js'));
-vi.mock('../sysadminChannel', () => ({ appendSysadmin: vi.fn(), showSysadmin: vi.fn() }));
-vi.mock('../wslBridge', () => ({
+vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
+vi.mock('../../sysadminChannel', () => ({ appendSysadmin: vi.fn(), showSysadmin: vi.fn() }));
+vi.mock('../../wslBridge', () => ({
   isWindows: () => false,
   needsWsl: () => false,
   getWslInfo: () => ({ available: false }),
@@ -15,12 +15,11 @@ vi.mock('../wslBridge', () => ({
   wslExecSync: vi.fn(),
 }));
 
-import type * as vscode from 'vscode';
-import { __setConfig, __resetConfig } from '../__mocks__/vscode';
-import { SysadminStorage } from '../sysadminStorage';
+import { __setConfig, __resetConfig } from '../../__mocks__/vscode';
+import { SysadminStorage } from '../../sysadminStorage';
 import { VersionManager } from '../versionManager';
-import { VersionItem } from '../versionTreeProvider';
-import { GemStoneVersion } from '../sysadminTypes';
+import { timestampForFileName } from '../databaseManager';
+import { GemStoneVersion } from '../../sysadminTypes';
 
 /** VersionManager's private `fetchUrl`, exposed as a narrow surface for spying. */
 type FetchUrlHost = { fetchUrl(url: string): Promise<string> };
@@ -161,107 +160,86 @@ describe('VersionManager.deleteExtracted', () => {
 
 // ── VersionTreeProvider (local version display) ─────────────
 
-describe('VersionItem (local version)', () => {
-  it('shows folder icon and "(local)" description for local versions', () => {
-    const version: GemStoneVersion = {
+describe('VersionManager.deleteDownload', () => {
+  // A registered local build, or a product tree found already extracted, carries
+  // no archive name. Joining an empty name onto the root path names the root
+  // directory itself — so without a guard this asks to unlink the folder every
+  // GemStone install on the machine lives in. Run against a real directory,
+  // because what matters is that the directory is still there afterwards.
+  it('leaves the root directory alone for a version that was never downloaded', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jasper-nodl-'));
+    const manager = new VersionManager({
+      getRootPath: () => root,
+      getWslRootPath: () => root,
+    } as unknown as SysadminStorage);
+
+    await manager.deleteDownload({
       version: '3.7.6',
       fileName: '',
       url: '',
       size: 0,
-      date: '2026-03-24',
+      date: '',
       downloaded: false,
       extracted: true,
       local: true,
-      buildDescription: 'private build (branch 3.7.6)',
-    };
+    });
 
-    const item = new VersionItem(version);
-
-    expect(item.contextValue).toBe('gemstoneVersionLocal');
-    expect(item.description).toContain('(local)');
-    expect(item.description).toContain('2026-03-24');
-    expect((item.iconPath as vscode.ThemeIcon).id).toBe('check');
-    expect(item.tooltip).toContain('local build');
-    expect(item.tooltip).toContain('private build (branch 3.7.6)');
+    expect(fs.existsSync(root)).toBe(true);
+    fs.rmSync(root, { recursive: true, force: true });
   });
 
-  it('shows standard icons for non-local versions', () => {
-    const version: GemStoneVersion = {
-      version: '3.7.4',
-      fileName: 'GemStone64Bit3.7.4-arm64.Darwin.dmg',
-      url: 'https://example.com/file.dmg',
-      size: 100_000_000,
-      date: '24-Mar-2026',
-      downloaded: false,
-      extracted: false,
-    };
+  it('deletes the archive when there is one', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jasper-dl-'));
+    const archive = 'GemStone64Bit3.7.6-x86_64.Linux.tar.gz';
+    fs.writeFileSync(path.join(root, archive), 'not really a tarball');
+    const manager = new VersionManager({
+      getRootPath: () => root,
+      getWslRootPath: () => root,
+    } as unknown as SysadminStorage);
 
-    const item = new VersionItem(version);
-
-    expect(item.contextValue).toBe('gemstoneVersion');
-    expect((item.iconPath as vscode.ThemeIcon).id).toBe('cloud');
-    expect(item.description).toContain('100 MB');
-  });
-
-  it('shows check icon for extracted non-local versions', () => {
-    const version: GemStoneVersion = {
-      version: '3.7.4',
-      fileName: 'file.dmg',
+    await manager.deleteDownload({
+      version: '3.7.6',
+      fileName: archive,
       url: '',
-      size: 50_000_000,
-      date: '24-Mar-2026',
+      size: 0,
+      date: '',
       downloaded: true,
-      extracted: true,
-    };
-
-    const item = new VersionItem(version);
-
-    expect(item.contextValue).toBe('gemstoneVersionServerDownloadedServerExtracted');
-    expect((item.iconPath as vscode.ThemeIcon).id).toBe('check');
-  });
-
-  it('marks a bundled version in description, contextValue, and tooltip', () => {
-    const version: GemStoneVersion = {
-      version: '3.7.5',
-      fileName: 'GemStone64BitClient3.7.5-x86.Windows_NT.zip',
-      url: '',
-      size: 0,
-      date: '24-Mar-2026',
-      downloaded: false,
       extracted: false,
-      bundled: true,
-    };
+    });
 
-    const item = new VersionItem(version);
-
-    // The Bundled suffix drops the row out of the download command's anchored
-    // `when` regex, so no download is offered.
-    expect(item.contextValue).toBe('gemstoneVersionBundled');
-    expect(item.description).toContain('bundled');
-    expect(item.tooltip).toContain('bundled');
-  });
-
-  it('renders a hand-placed product directory as extracted and ready to use', () => {
-    const version: GemStoneVersion = {
-      version: '4.0.0',
-      fileName: '',
-      url: '',
-      size: 0,
-      date: '2026-07-01',
-      downloaded: false,
-      extracted: true,
-      buildDescription: 'private 4.0 build',
-    };
-
-    const item = new VersionItem(version);
-
-    // ServerExtracted context is what offers Create Database / Delete Extracted.
-    expect(item.contextValue).toBe('gemstoneVersionServerExtracted');
-    expect((item.iconPath as vscode.ThemeIcon).id).toBe('check');
+    expect(fs.existsSync(path.join(root, archive))).toBe(false);
+    fs.rmSync(root, { recursive: true, force: true });
   });
 });
 
-// ── VersionManager.fetchAvailableVersions (local inclusion) ──
+describe('VersionManager: a downloaded archive the catalogue does not list', () => {
+  // Every downloaded archive lands here when the download site is unreachable —
+  // the catalogue is empty, so the loop that normally produces a "downloaded"
+  // row never runs. Such rows used to carry no file name at all, which broke
+  // both actions on exactly the row the loop exists to preserve: Install
+  // resolved to the root directory, and Remove read the empty name as "never
+  // downloaded" and silently did nothing.
+  onSupportedPosixIt('names the archive, so Install and Remove can reach it', async () => {
+    const storage = new SysadminStorage();
+    const manager = new VersionManager(storage);
+
+    const suffix = storage.getPlatformSuffix();
+    const ext = storage.getDownloadExtension();
+    const archive = `GemStone64Bit3.7.6${suffix}.${ext}`;
+    fs.writeFileSync(path.join(tmpDir, archive), 'not really an archive');
+
+    // Offline: the catalogue answers nothing.
+    vi.spyOn(manager as unknown as FetchUrlHost, 'fetchUrl').mockResolvedValue('');
+
+    const versions = await manager.fetchAvailableVersions();
+    const row = versions.find((v) => v.version === '3.7.6');
+
+    expect(row).toBeDefined();
+    expect(row!.downloaded).toBe(true);
+    expect(row!.extracted).toBe(false);
+    expect(row!.fileName).toBe(archive);
+  });
+});
 
 describe('VersionManager.fetchAvailableVersions', () => {
   onSupportedPosixIt('includes local symlinked versions in the list', async () => {
@@ -516,5 +494,17 @@ describe('GCI library auto-detection', () => {
     expect(gsPath).toBeDefined();
     const candidate = path.join(gsPath!, 'lib', `libgcits-3.7.4-64.${libExt}`);
     expect(fs.existsSync(candidate)).toBe(false);
+  });
+});
+
+describe('timestampForFileName', () => {
+  // Sorts chronologically as plain text, so a directory listing is in order
+  // without anyone having to parse the names.
+  it('reads as a sortable stamp', () => {
+    expect(timestampForFileName(new Date(2026, 7, 31, 15, 30, 5))).toBe('20260831-153005');
+  });
+
+  it('pads every field, so the widths never move', () => {
+    expect(timestampForFileName(new Date(2026, 0, 2, 3, 4, 5))).toBe('20260102-030405');
   });
 });

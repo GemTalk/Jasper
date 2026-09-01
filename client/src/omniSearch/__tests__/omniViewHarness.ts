@@ -18,8 +18,10 @@ import { renderOmniHtml } from '../omniSearchShared';
 /** Every method the webview's `wire()` returns that these tests reach into. */
 export interface WiredOmniView {
   renderResults: (view: unknown) => void;
+  renderTabs: (categories: unknown, scopeId: string | null) => void;
   onMessage: (event: { data: unknown }) => void;
   setActive: (i: number, scroll?: boolean) => void;
+  rowCount: () => number;
   previewEnabled: () => boolean;
   scopeMenuOpen: () => boolean;
   excludedFromAll: () => string[];
