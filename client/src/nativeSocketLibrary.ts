@@ -1,5 +1,6 @@
 import koffi, { KoffiFunction } from 'koffi';
-import type { NativeWindowsSocketLibrary } from './nativeWindowsSocketLibrary';
+import { NativeSocketLibraryBase } from './nativeSocketLibraryBase';
+import { NativeWindowsSocketLibrary } from './nativeWindowsSocketLibrary';
 
 // Registered once at module scope, rather than per instance: koffi's struct
 // registry is process-wide, and re-declaring an already-registered name
@@ -13,24 +14,10 @@ koffi.struct('libc_PollFd', {
 });
 
 /**
- * Checks whether a socket is readable via the OS's native `poll`/`WSAPoll`
- * primitive, for sockets owned by a native library rather than by Node
- * (e.g. `GciLibrary.socketFor`'s fd, which `libgcits` itself reads from).
- *
- * A native poll is required for such a socket because Node's own socket
- * APIs can't check readiness without disturbing the fd: constructing a
- * `net.Socket` from an existing fd unconditionally puts it into
- * non-blocking mode via libuv, regardless of the options passed, which
- * breaks a native library's own blocking reads on that same fd; and any
- * Node-level readiness signal (even a paused `'readable'` listener) works
- * by actually reading data into Node's internal buffer, stealing bytes the
- * native library's own read is waiting for. There is no Node API that
- * peeks at readiness without reading. A native `poll`/`WSAPoll` call only
- * asks the kernel whether a read would block, without reading anything or
- * changing the fd's blocking mode, leaving the fd exactly as its owner
- * left it.
+ * Picks and holds the shared {@link NativeSocketLibraryBase} instance for
+ * the current OS. See that class for why a native poll is needed at all.
  */
-export abstract class NativeSocketLibrary {
+export abstract class NativeSocketLibrary extends NativeSocketLibraryBase {
   private static instance?: NativeSocketLibrary;
 
   /**
@@ -69,62 +56,11 @@ export abstract class NativeSocketLibrary {
   }
 
   /**
-   * Loaded lazily rather than via a static import: `NativeWindowsSocketLibrary`
-   * extends this class, so a static import here would race its module's own
-   * `extends` clause against this class not being defined yet.
-   *
-   * @returns The `NativeWindowsSocketLibrary` constructor.
+   * @returns A new `NativeWindowsSocketLibrary` instance.
    */
   public static forWindows(): NativeWindowsSocketLibrary {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports -- lazy require breaks a circular dependency with NativeWindowsSocketLibrary, which extends this class
-    const module = require('./nativeWindowsSocketLibrary') as {
-      NativeWindowsSocketLibrary: new () => NativeWindowsSocketLibrary;
-    };
-
-    return new module.NativeWindowsSocketLibrary();
+    return new NativeWindowsSocketLibrary();
   }
-
-  /**
-   * Reports whether the given socket currently has data ready to read,
-   * without waiting.
-   *
-   * @param fd - OS-level file descriptor for an open socket.
-   * @returns `true` if the socket is currently readable, `false` otherwise.
-   * @throws {Error} If the readiness check itself fails.
-   */
-  public isReadable(fd: number): boolean {
-    const status = this.pollReadable(fd, 0);
-
-    if (status < 0) {
-      throw new Error(this.checkingReadableStatusFailedErrorMessage(fd, status));
-    }
-
-    return status > 0;
-  }
-
-  /**
-   * Builds the message reported when checking a socket's readiness fails.
-   *
-   * @param fd - OS-level file descriptor the check was performed on.
-   * @param status - The failing status code the readiness check produced.
-   * @returns The error message text.
-   */
-  public checkingReadableStatusFailedErrorMessage(fd: number, status: number) {
-    return `Checking whether socket ${fd} is readable failed (native poll returned ${status}).`;
-  }
-
-  /**
-   * Polls the given socket for read-readiness, waiting up to `timeoutMs`
-   * milliseconds.
-   *
-   * @param fd - OS-level file descriptor for an open socket.
-   * @param timeoutMs - how long to wait for data before giving up, in
-   *   milliseconds; 0 polls without waiting.
-   * @returns A positive value if the socket is readable, 0 if the timeout
-   *   elapsed with nothing ready, or a negative value if the check itself
-   *   failed.
-   */
-  protected abstract pollReadable(fd: number, timeoutMs: number): number;
 }
 
 class NativePOSIXSocketLibrary extends NativeSocketLibrary {

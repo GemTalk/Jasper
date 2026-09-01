@@ -1,5 +1,5 @@
 import koffi, { KoffiFunction } from 'koffi';
-import { NativeSocketLibrary } from './nativeSocketLibrary';
+import { NativeSocketLibraryBase } from './nativeSocketLibraryBase';
 
 // Registered once at module scope, rather than per instance: koffi's struct
 // registry is process-wide, and re-declaring an already-registered name
@@ -36,7 +36,7 @@ const SOCKET_ERROR = -1;
  * raw `socket`/`connect`/`closesocket` calls test fixtures use to obtain a
  * genuine, `WSAPoll`-able handle (see {@link connectRawSocket}).
  */
-export class NativeWindowsSocketLibrary extends NativeSocketLibrary {
+export class NativeWindowsSocketLibrary extends NativeSocketLibraryBase {
   private readonly POLLRDNORM = 0x0100;
 
   private readonly WSAPoll: KoffiFunction;
