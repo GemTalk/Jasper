@@ -94,7 +94,6 @@ import { refreshRefactoringSupportAvailable } from './refactoring/refactoringAva
 import { supportsEnhancedInspector } from './enhancedInspector/enhancedInspectorInstall';
 import { DebuggerPanel } from './debuggerPanel';
 import { InlineValuesCodeLensProvider } from './inlineValuesCodeLens';
-import { GemstoneNavigationHistory } from './gemstoneNavigationHistory';
 import {
   GemStoneFileSystemProvider,
   MethodCompiledEvent,
@@ -1376,27 +1375,6 @@ export function activate(context: vscode.ExtensionContext) {
     }
   };
 
-  // Back/Forward history for gemstone:// editors (drives the title-bar arrows).
-  // Reopens as a preview so it reuses the single method tab, matching the flow it
-  // retraces; returns false when the URI can't be shown so its entry is pruned.
-  const gsHistory = new GemstoneNavigationHistory(async (uri) => {
-    try {
-      const doc = await vscode.workspace.openTextDocument(uri);
-      await vscode.window.showTextDocument(doc, { preview: true });
-      return true;
-    } catch {
-      return false;
-    }
-  });
-  if (vscode.window.activeTextEditor) {
-    gsHistory.record(vscode.window.activeTextEditor.document.uri);
-  }
-  context.subscriptions.push(
-    vscode.window.onDidChangeActiveTextEditor((editor) => {
-      if (editor) gsHistory.record(editor.document.uri);
-    }),
-  );
-
   // ── Commands ───────────────────────────────────────────
   context.subscriptions.push(
     vscode.commands.registerCommand(
@@ -1429,15 +1407,6 @@ export function activate(context: vscode.ExtensionContext) {
         }
       },
     ),
-
-    // Thin wrappers so editor-history Back/Forward can appear as title-bar icon
-    // buttons on gemstone:// editors (a menu entry needs an icon our own command
-    // supplies). They walk gsHistory — our own view history — rather than VS
-    // Code's built-in Go Back/Forward, because a method opened in the reusable
-    // preview tab isn't recorded by the built-in history (that only tracks
-    // pinned/distinct tabs), so a first-time user couldn't get back.
-    vscode.commands.registerCommand('gemstone.navigateBack', () => gsHistory.back()),
-    vscode.commands.registerCommand('gemstone.navigateForward', () => gsHistory.forward()),
 
     vscode.commands.registerCommand('gemstone.addLogin', () => {
       // eslint-disable-next-line @typescript-eslint/no-floating-promises -- FIXME: unhandled floating promise; needs investigation to decide await vs. void vs. .catch before this rule is enabled repo-wide

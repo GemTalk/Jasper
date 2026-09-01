@@ -190,7 +190,7 @@ Long-running expressions show a progress notification with soft-break and hard-b
 
 ### GemStone Explorer
 
-The **GemStone Explorer** is the primary way to browse and edit code, and the view to reach for first. It lives in its own activity-bar container as a set of linked panes — **Dictionaries**, **Class Categories**, **Classes**, **Hierarchy**, and **Methods**. Your open editors appear as ordinary editor tabs; a status-bar button tallies them and closes them all at once (**GemStone: Close All GemStone Editors**).
+The **GemStone Explorer** is the primary way to browse and edit code, and the view to reach for first. It lives in its own activity-bar container as a set of linked panes — **Actions & Navigation**, **Dictionaries**, **Class Categories**, **Classes**, **Hierarchy**, and **Methods**. **Actions & Navigation** sits at the top: a row of the controls you reach for while developing — **Go Back**, **Go Forward**, **Recent Locations**, **Refresh**, **Commit**, **Abort**, a full-locations/selectors-only toggle for the list, and **Open Workspace** — over the trail of everywhere you have been. Your open editors appear as ordinary editor tabs; a status-bar button tallies them and closes them all at once (**GemStone: Close All GemStone Editors**).
 
 Selecting down the panes narrows what the next one shows. Click a method to open its source; **Cmd+S** (Ctrl+S) compiles it back to GemStone. Class definitions and comments are editable the same way. A single click previews a method in one reusable tab, so clicking another replaces it — double-click a method (or use **Keep Method Open**) to keep it open while you browse others.
 
@@ -202,6 +202,8 @@ Beyond browsing, the Explorer is where the code-changing operations live:
 - Deleting first looks for what still references the target: nothing does, and it just goes (and says so); something does, and you are shown the methods before you decide
 - The refactorings — rename, extract/inline method and temporary, change signature, move/push up/push down method, instance-variable structure changes, extract superclass, split class — each previewed before it is applied
 - Browse senders, implementors, references, and the class hierarchy
+- Retrace your steps: **Go Back** / **Go Forward** (`Ctrl+Alt+-` / `Ctrl+Shift+-`) walk everywhere the Explorer has taken you; the trail is listed in the Actions & Navigation pane, newest first, and click any entry to jump straight to it (**Recent Locations…** shows the same trail as a quick pick)
+- Working inside one class makes every trail row read `TheClass>>…`; the pane's list toggle drops the class from each label, leaving the selectors, and moves the class to the dimmed column beside them (`gemstone.explorer.navigationSelectorsOnly`)
 - Drag and drop methods between categories, and classes between dictionaries
 
 ### System Browser

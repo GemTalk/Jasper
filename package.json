@@ -292,7 +292,12 @@
             "minimum": 0,
             "description": "Maximum method dictionary environment to show when listing methods (0 = standard Smalltalk only, 2 = show environments 0–2). Applies wherever methods are listed — the GemStone Explorer, the System Browser, and hover, CodeLens, and Go to Definition."
           },
-          "gemstone.explorer.groupMethodsByCategory": {
+          "gemstone.explorer.navigationSelectorsOnly": {
+          "type": "boolean",
+          "default": false,
+          "description": "List the GemStone Explorer's navigation trail by selector alone, dropping the class from each method's label — the class moves to the dimmed column beside it. Useful while working inside one class, where the repeated class name crowds out the part that differs. Toggle quickly from the Actions & Navigation pane's button row."
+        },
+        "gemstone.explorer.groupMethodsByCategory": {
             "type": "boolean",
             "default": true,
             "description": "Group methods in the GemStone Explorer's Methods pane under their categories. Turn off to list a class's methods flat, without the category level. Toggle quickly from the Methods pane title bar."
@@ -543,6 +548,14 @@
         }
       ],
       "gemstoneExplorer": [
+        {
+          "id": "gemstoneExplorerNavigation",
+          "name": "Actions & Navigation",
+          "type": "webview",
+          "icon": "$(history)",
+          "when": "gemstone.explorerActive",
+          "size": 1
+        },
         {
           "id": "gemstoneExplorerDicts",
           "name": "Dictionaries",
@@ -1208,15 +1221,35 @@
       },
       {
         "command": "gemstone.navigateBack",
-        "title": "GemStone Go Back",
+        "title": "Go Back",
         "category": "GemStone",
-        "icon": "$(arrow-left)"
+        "icon": "$(arrow-left)",
+        "enablement": "gemstone.canNavigateBack"
       },
       {
         "command": "gemstone.navigateForward",
-        "title": "GemStone Go Forward",
+        "title": "Go Forward",
         "category": "GemStone",
-        "icon": "$(arrow-right)"
+        "icon": "$(arrow-right)",
+        "enablement": "gemstone.canNavigateForward"
+      },
+      {
+        "command": "gemstone.explorer.showHistory",
+        "title": "Recent Locations…",
+        "category": "GemStone",
+        "icon": "$(history)"
+      },
+      {
+        "command": "gemstone.explorer.showNavigationSelectorsOnly",
+        "title": "Show Only Selectors in the Navigation Trail",
+        "category": "GemStone",
+        "icon": "$(list-flat)"
+      },
+      {
+        "command": "gemstone.explorer.showNavigationFullLocations",
+        "title": "Show Full Locations in the Navigation Trail",
+        "category": "GemStone",
+        "icon": "$(list-tree)"
       },
       {
         "command": "gemstone.breakpoints.toggleAtCursor",
@@ -2103,11 +2136,23 @@
         },
         {
           "command": "gemstone.navigateBack",
-          "when": "false"
+          "when": "gemstone.hasActiveSession"
         },
         {
           "command": "gemstone.navigateForward",
-          "when": "false"
+          "when": "gemstone.hasActiveSession"
+        },
+        {
+          "command": "gemstone.explorer.showHistory",
+          "when": "gemstone.hasActiveSession"
+        },
+        {
+          "command": "gemstone.explorer.showNavigationSelectorsOnly",
+          "when": "gemstone.hasActiveSession"
+        },
+        {
+          "command": "gemstone.explorer.showNavigationFullLocations",
+          "when": "gemstone.hasActiveSession"
         },
         {
           "command": "gemstone.renameTemporary",
@@ -2127,11 +2172,11 @@
         },
         {
           "command": "gemstone.explorer.commit",
-          "when": "false"
+          "when": "gemstone.hasActiveSession"
         },
         {
           "command": "gemstone.explorer.abort",
-          "when": "false"
+          "when": "gemstone.hasActiveSession"
         },
         {
           "command": "gemstone.explorer.removeDictionary",
@@ -2355,21 +2400,6 @@
         {
           "command": "gemstone.clearTestResults",
           "when": "view == gemstoneExplorerClassHierarchy"
-        },
-        {
-          "command": "gemstone.explorer.refresh",
-          "when": "view == gemstoneExplorerDicts",
-          "group": "navigation@3"
-        },
-        {
-          "command": "gemstone.explorer.commit",
-          "when": "view == gemstoneExplorerDicts",
-          "group": "navigation@4"
-        },
-        {
-          "command": "gemstone.explorer.abort",
-          "when": "view == gemstoneExplorerDicts",
-          "group": "navigation@5"
         },
         {
           "command": "gemstoneExplorerDicts.filter",
@@ -3321,6 +3351,18 @@
         "key": "ctrl+k m",
         "mac": "cmd+k m",
         "when": "gemstone.hasActiveSession"
+      },
+      {
+        "command": "gemstone.navigateBack",
+        "key": "ctrl+alt+-",
+        "mac": "ctrl+-",
+        "when": "gemstone.hasActiveSession && (resourceScheme == gemstone || focusedView =~ /^gemstoneExplorer/)"
+      },
+      {
+        "command": "gemstone.navigateForward",
+        "key": "ctrl+shift+-",
+        "mac": "ctrl+shift+-",
+        "when": "gemstone.hasActiveSession && (resourceScheme == gemstone || focusedView =~ /^gemstoneExplorer/)"
       }
     ]
   },

@@ -1,0 +1,400 @@
+import * as vscode from 'vscode';
+import * as crypto from 'crypto';
+import { TrailLabelMode } from './explorerNavigationHistory';
+
+/**
+ * The GemStone Explorer's Actions & Navigation pane: a row of the controls you
+ * reach for while developing, over the trail of everywhere the Explorer has taken
+ * you. Named for both halves, because Refresh, Commit and Abort are not
+ * navigation — and a pane title that covered only one half would imply the other
+ * half's buttons act on the thing it names.
+ *
+ * It is a WEBVIEW rather than a tree with title-bar actions, and that is the whole
+ * point of it. VS Code renders a view's title actions only while the pane is
+ * EXPANDED and hovered or focused — the stylesheet gates every rule that shows
+ * them on `.expanded`, and `workbench.view.alwaysShowHeaderActions` only relaxes
+ * the hover half — so a collapsed pane can never show a button. An expanded pane,
+ * meanwhile, has a 120px minimum body (only built-in views override it), so the
+ * pane costs ~148px whatever it holds. Given that floor is unavoidable, the pane
+ * spends it: a always-on button row, and under it the trail, so the height buys
+ * something instead of standing empty.
+ *
+ * The buttons are plain commands, so each one also works from the Command Palette
+ * and from any keybinding; nothing here is the only way to reach a function.
+ */
+export const NAVIGATION_VIEW_ID = 'gemstoneExplorerNavigation';
+
+interface ToolbarButton {
+  /** The command the button runs. Also its `data-cmd` handle in the DOM. */
+  command: string;
+  /** Tooltip and accessible name. */
+  label: string;
+  /** The 16×16 glyph, as inline SVG markup. */
+  glyph: string;
+  /** Starts a new group, drawn with a separator before it. */
+  startsGroup?: boolean;
+  /** Greyed out until the extension says otherwise (Back/Forward at the ends). */
+  gated?: boolean;
+  /** Only drawn while the trail is in this label mode — the two halves of the
+   *  full/selectors toggle, which occupy one slot between them. */
+  mode?: TrailLabelMode;
+}
+
+/**
+ * Glyphs are inlined SVG — the same bargain the debugger toolbar and the Session
+ * Configuration panel strike: no webfont to fetch, no extra `localResourceRoots`,
+ * and nothing loaded from outside the page, so the strict CSP holds.
+ * `fill="currentColor"` lets each button's colour drive its glyph.
+ *
+ * `check`, `discard` and `refresh` are the exact VS Code codicon paths (copied
+ * from the Session Configuration panel, which already carries them); CHEVRON is
+ * the codicon chevron-right, mirrored in place for Back and given a shaft so the
+ * pair reads as arrows, matching the `$(arrow-left)`/`$(arrow-right)` the same two
+ * commands wear in the editor title bar and the Command Palette.
+ */
+const CHEVRON =
+  'M6.14601 3.14579C5.95101 3.34079 5.95101 3.65779 6.14601 3.85279L10.292 7.99879L6.14601 12.1448C5.95101 12.3398 5.95101 12.6568 6.14601 12.8518C6.34101 13.0468 6.65801 13.0468 6.85301 12.8518L11.353 8.35179C11.548 8.15679 11.548 7.83979 11.353 7.64478L6.85301 3.14479C6.65801 2.94979 6.34101 2.95079 6.14601 3.14579Z';
+
+const BUTTONS: ToolbarButton[] = [
+  {
+    command: 'gemstone.navigateBack',
+    label: 'Go Back',
+    gated: true,
+    glyph: `<g transform="translate(16,0) scale(-1,1)"><path d="${CHEVRON}"/></g><path d="M6 7.5h7.3v1H6z"/>`,
+  },
+  {
+    command: 'gemstone.navigateForward',
+    label: 'Go Forward',
+    gated: true,
+    glyph: `<path d="${CHEVRON}"/><path d="M2.7 7.5H10v1H2.7z"/>`,
+  },
+  {
+    command: 'gemstone.explorer.showHistory',
+    label: 'Recent Locations…',
+    // A clock: a ring (outer and inner circles wound in opposite directions, so
+    // the nonzero fill rule leaves the middle open) with two hands.
+    glyph:
+      '<path d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13zm0 1.3a5.2 5.2 0 1 1 0 10.4 5.2 5.2 0 0 1 0-10.4z"/>' +
+      '<path d="M7.45 4.3h1.1v3.95l2.85 1.68-.56 1.03-3.39-2z"/>',
+  },
+  {
+    command: 'gemstone.explorer.refresh',
+    label: 'Refresh GemStone Explorer',
+    startsGroup: true,
+    glyph:
+      '<path d="M3 8C3 5.23858 5.23858 3 8 3C9.63527 3 11.0878 3.78495 12.0005 5H10C9.72386 5 9.5 5.22386 9.5 5.5C9.5 5.77614 9.72386 6 10 6H12.8904C12.8973 6.00014 12.9041 6.00014 12.911 6H13C13.2761 6 13.5 5.77614 13.5 5.5V2.5C13.5 2.22386 13.2761 2 13 2C12.7239 2 12.5 2.22386 12.5 2.5V4.03138C11.4009 2.78613 9.79253 2 8 2C4.68629 2 2 4.68629 2 8C2 11.3137 4.68629 14 8 14C11.1301 14 13.6999 11.6035 13.9756 8.54488C14.0003 8.26985 13.7975 8.0268 13.5225 8.00202C13.2474 7.97723 13.0044 8.1801 12.9796 8.45512C12.75 11.003 10.6079 13 8 13C5.23858 13 3 10.7614 3 8Z"/>',
+  },
+  {
+    command: 'gemstone.explorer.commit',
+    label: 'Commit',
+    glyph:
+      '<path d="M13.6572 3.13573C13.8583 2.9465 14.175 2.95614 14.3643 3.15722C14.5535 3.35831 14.5438 3.675 14.3428 3.86425L5.84277 11.8642C5.64597 12.0494 5.33756 12.0446 5.14648 11.8535L1.64648 8.35351C1.45121 8.15824 1.45121 7.84174 1.64648 7.64647C1.84174 7.45121 2.15825 7.45121 2.35351 7.64647L5.50976 10.8027L13.6572 3.13573Z"/>',
+  },
+  {
+    command: 'gemstone.explorer.abort',
+    label: 'Abort',
+    glyph:
+      '<path d="M3.00098 2.5C3.00098 2.22386 3.22483 2 3.50098 2C3.77712 2 4.00098 2.22386 4.00098 2.5V6.34262L7.17202 3.17157C8.73412 1.60948 11.2668 1.60948 12.8289 3.17157C14.391 4.73367 14.391 7.26633 12.8289 8.82843L7.80375 13.8536C7.60849 14.0488 7.2919 14.0488 7.09664 13.8536C6.90138 13.6583 6.90138 13.3417 7.09664 13.1464L12.1218 8.12132C13.2933 6.94975 13.2933 5.05025 12.1218 3.87868C10.9502 2.70711 9.0507 2.70711 7.87913 3.87868L4.75781 7H8.50098C8.77712 7 9.00098 7.22386 9.00098 7.5C9.00098 7.77614 8.77712 8 8.50098 8H3.60098C3.26961 8 3.00098 7.73137 3.00098 7.4V2.5Z"/>',
+  },
+  {
+    command: 'gemstone.explorer.showNavigationSelectorsOnly',
+    label: 'Show Only Selectors in the Trail',
+    startsGroup: true,
+    // codicon list-flat — the same glyph the Methods pane's ungroup toggle wears,
+    // for the same idea: drop a level and list the leaves.
+    glyph: '<path d="M2 3.5h12v1H2zm0 3.5h12v1H2zm0 3.5h12v1H2zm0 3.5h12v-1H2z"/>',
+    mode: 'full',
+  },
+  {
+    command: 'gemstone.explorer.showNavigationFullLocations',
+    label: 'Show Full Locations in the Trail',
+    startsGroup: true,
+    // codicon list-tree — rows indented under a parent, i.e. the class restored.
+    glyph: '<path d="M2 3h1v10H2zm2 .5h10v1H4zm2 3.5h8v1H6zm0 3.5h8v1H6zm-2 3.5h10v-1H4z"/>',
+    mode: 'selectors',
+  },
+  {
+    command: 'gemstone.sessionOpenWorkspace',
+    label: 'Open Workspace',
+    // A sheet with a few lines of text: the scratch buffer you type expressions
+    // into. Frame drawn as a ring so it reads as an outline, not a solid block.
+    glyph:
+      '<path d="M1.5 2h13l.5.5v11l-.5.5h-13l-.5-.5v-11zm.5 11h12V3H2z"/>' +
+      '<path d="M3.6 5.2h8.8v1H3.6zm0 2.6h8.8v1H3.6zm0 2.6h5.6v1H3.6z"/>',
+  },
+];
+
+/** What the webview posts back: a button press, a click on a trail row, or the
+ *  one-shot `ready` that says it can receive state. */
+export type ViewMessage =
+  { kind: 'ready' } | { kind: 'run'; command: string } | { kind: 'goto'; index: number };
+
+/**
+ * Read a raw webview message as one of the three things this view is allowed to
+ * say. Answers undefined for anything else.
+ *
+ * This is the trust boundary, and it is deliberately a whitelist: a webview can
+ * post any object at all, so dispatching a `command` string straight into
+ * `executeCommand` would hand the page the entire workbench command registry, and
+ * taking `index` on faith would index off the end of the chain.
+ */
+export function parseViewMessage(message: unknown, landingCount: number): ViewMessage | undefined {
+  if (typeof message !== 'object' || message === null) return undefined;
+  const { kind, command, index } = message as {
+    kind?: unknown;
+    command?: unknown;
+    index?: unknown;
+  };
+  if (kind === 'ready') return { kind: 'ready' };
+  if (kind === 'run') {
+    return typeof command === 'string' && BUTTONS.some((b) => b.command === command)
+      ? { kind: 'run', command }
+      : undefined;
+  }
+  if (kind === 'goto') {
+    return typeof index === 'number' &&
+      Number.isInteger(index) &&
+      index >= 0 &&
+      index < landingCount
+      ? { kind: 'goto', index }
+      : undefined;
+  }
+  return undefined;
+}
+
+/** One row of the trail, as the pane draws it. */
+export interface TrailRow {
+  /** Position in the history chain — what a click jumps to. */
+  index: number;
+  /** `Array class>>new`, `Globals · Collections`, … */
+  label: string;
+  /** The context the label leaves out — the dictionary, or the class when the
+   *  label has been shortened to a bare selector. Shown dimmed after the label. */
+  context: string;
+  /** The landing currently being shown. */
+  current: boolean;
+}
+
+/** Everything the pane draws, pushed as one message so the row and the trail can
+ *  never disagree about where the cursor is. */
+export interface NavigationViewState {
+  back: boolean;
+  forward: boolean;
+  /** Which of the two label-mode buttons the row shows, and how the labels read. */
+  mode: TrailLabelMode;
+  /** Newest last; the pane draws them newest first. */
+  trail: TrailRow[];
+}
+
+/** Every command this pane's button row can offer, in the order it draws them —
+ *  including both halves of the label-mode toggle, only one of which is on screen
+ *  at a time. Exported so a test can check the row against the manifest rather
+ *  than a hand-copied list. */
+export function toolbarCommands(): string[] {
+  return BUTTONS.map((b) => b.command);
+}
+
+function renderButton(button: ToolbarButton): string {
+  // Both halves of the label-mode toggle are in the markup; the script shows the
+  // one matching the current mode. The marker goes on that button's separator too,
+  // so the row keeps exactly one divider there either way. Only a moded element
+  // carries the attribute — the hiding rule keys on its mere presence, so an
+  // unmoded separator must not carry an empty one.
+  const mode = button.mode ? ` data-mode="${button.mode}"` : '';
+  const separator = button.startsGroup ? `<span class="sep"${mode}></span>` : '';
+  const disabled = button.gated ? ' disabled' : '';
+  return (
+    `${separator}<button type="button" data-cmd="${button.command}"${mode} title="${button.label}" ` +
+    `aria-label="${button.label}"${disabled}>` +
+    `<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">${button.glyph}</svg>` +
+    `</button>`
+  );
+}
+
+export function renderNavigationViewHtml(nonce = crypto.randomBytes(16).toString('hex')): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';">
+  <title>GemStone Explorer Navigation</title>
+  <style>
+    html, body { height: 100%; }
+    body {
+      margin: 0; padding: 0;
+      display: flex; flex-direction: column;
+      font-family: var(--vscode-font-family);
+      font-size: var(--vscode-font-size);
+      color: var(--vscode-foreground);
+      background: transparent;
+    }
+    /* The button row is fixed at the top; only the trail under it scrolls, so the
+       controls stay put however long the trail gets. */
+    .toolbar {
+      flex: 0 0 auto;
+      display: flex; align-items: center; gap: 2px; flex-wrap: wrap;
+      padding: 1px 4px 2px;
+    }
+    .toolbar button {
+      display: flex; align-items: center; justify-content: center;
+      width: 22px; height: 22px; padding: 0;
+      color: var(--vscode-icon-foreground, var(--vscode-foreground));
+      background: transparent; border: none; border-radius: 4px; cursor: pointer;
+    }
+    .toolbar button svg { width: 16px; height: 16px; display: block; pointer-events: none; }
+    .toolbar button:hover:not(:disabled) {
+      background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
+    }
+    .toolbar button:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+    /* At the ends of the chain Back/Forward dim rather than disappear, so the row
+       never changes width under the pointer. */
+    .toolbar button:disabled { opacity: 0.4; cursor: default; }
+    .sep {
+      width: 1px; height: 16px; margin: 0 3px;
+      background: var(--vscode-panel-border, var(--vscode-editorWidget-border, transparent));
+    }
+    /* Only the half of the label-mode toggle matching the current mode is shown.
+       Scoped to direct children: the row itself carries a data-mode (the script
+       writes the current mode there), and an unscoped rule would hide the row. */
+    .toolbar > [data-mode] { display: none; }
+    .toolbar[data-mode='full'] > button[data-mode='full'],
+    .toolbar[data-mode='selectors'] > button[data-mode='selectors'] { display: flex; }
+    .toolbar[data-mode='full'] > span.sep[data-mode='full'],
+    .toolbar[data-mode='selectors'] > span.sep[data-mode='selectors'] { display: block; }
+    .trail { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; }
+    .row {
+      display: flex; align-items: baseline; gap: 6px; width: 100%;
+      padding: 1px 6px 1px 8px; border: none; border-left: 2px solid transparent;
+      background: transparent; color: inherit; cursor: pointer;
+      font: inherit; text-align: left; line-height: 20px;
+    }
+    .row:hover { background: var(--vscode-list-hoverBackground); }
+    .row:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+    .row .label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .row .dict { flex: 0 0 auto; font-size: 0.9em; color: var(--vscode-descriptionForeground); }
+    /* Where you are now: an accent bar and the dictionary slot saying so, rather
+       than a selection highlight, which would read as "clicking here does nothing". */
+    .row.current { border-left-color: var(--vscode-focusBorder); font-weight: 600; }
+    .empty {
+      padding: 3px 8px; line-height: 20px;
+      color: var(--vscode-descriptionForeground); font-style: italic;
+    }
+  </style>
+</head>
+<body>
+  <div class="toolbar" role="toolbar" aria-label="GemStone Explorer actions">
+    ${BUTTONS.map(renderButton).join('\n    ')}
+  </div>
+  <div class="trail" id="trail" role="list" aria-label="Recent locations"></div>
+  <script nonce="${nonce}">
+    const vscode = acquireVsCodeApi();
+
+    document.querySelector('.toolbar').addEventListener('click', (e) => {
+      const button = e.target.closest('button');
+      if (!button || button.disabled) return;
+      vscode.postMessage({ kind: 'run', command: button.dataset.cmd });
+    });
+
+    document.getElementById('trail').addEventListener('click', (e) => {
+      const row = e.target.closest('.row');
+      if (!row) return;
+      vscode.postMessage({ kind: 'goto', index: Number(row.dataset.index) });
+    });
+
+    function setEnabled(cmd, on) {
+      const button = document.querySelector('[data-cmd="' + cmd + '"]');
+      if (button) button.disabled = !on;
+    }
+
+    // Rows are built with textContent, never innerHTML: the labels are class and
+    // selector names read out of the stone, and a stone is not a place to trust
+    // markup from.
+    function drawTrail(trail) {
+      const host = document.getElementById('trail');
+      host.textContent = '';
+      if (trail.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'empty';
+        empty.textContent = 'Places you visit are listed here.';
+        host.append(empty);
+        return;
+      }
+      for (const entry of trail.slice().reverse()) {
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.className = entry.current ? 'row current' : 'row';
+        row.dataset.index = String(entry.index);
+        row.setAttribute('role', 'listitem');
+        row.title = entry.current
+          ? entry.label + ' — where you are now'
+          : 'Go to ' + entry.label + ' in ' + entry.context;
+        const label = document.createElement('span');
+        label.className = 'label';
+        label.textContent = entry.label;
+        const dict = document.createElement('span');
+        dict.className = 'dict';
+        dict.textContent = entry.current ? 'current' : entry.context;
+        row.append(label, dict);
+        host.append(row);
+      }
+    }
+
+    window.addEventListener('message', (e) => {
+      const state = e.data;
+      if (!state || state.kind !== 'state') return;
+      setEnabled('gemstone.navigateBack', state.back);
+      setEnabled('gemstone.navigateForward', state.forward);
+      document.querySelector('.toolbar').dataset.mode = state.mode;
+      drawTrail(state.trail);
+    });
+
+    // Suppress the native Cut/Copy/Paste menu: this pane is a row of buttons over
+    // a list of places, so an editing menu on right-click offers nothing that
+    // applies. Matches how the debugger webview handles its own right-clicks.
+    window.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+    });
+
+    vscode.postMessage({ kind: 'ready' });
+  </script>
+</body>
+</html>`;
+}
+
+/**
+ * Hosts the Actions & Navigation pane. A collapsed or hidden pane is disposed by the
+ * workbench and re-resolved when it comes back, so the state is re-pushed on every
+ * resolve — a rebuilt webview knows nothing about the chain it is drawing.
+ */
+export class NavigationViewProvider implements vscode.WebviewViewProvider {
+  private view: vscode.WebviewView | undefined;
+  private state: NavigationViewState = { back: false, forward: false, mode: 'full', trail: [] };
+
+  /** Jump to a trail row the user clicked. Wired up at registration. */
+  constructor(private readonly goToIndex: (index: number) => void) {}
+
+  resolveWebviewView(view: vscode.WebviewView): void {
+    this.view = view;
+    view.webview.options = { enableScripts: true, localResourceRoots: [] };
+    view.webview.html = renderNavigationViewHtml();
+    view.webview.onDidReceiveMessage((raw: unknown) => {
+      const message = parseViewMessage(raw, this.state.trail.length);
+      if (!message) return;
+      if (message.kind === 'ready') this.push();
+      else if (message.kind === 'run') void vscode.commands.executeCommand(message.command);
+      else this.goToIndex(message.index);
+    });
+    this.push();
+  }
+
+  /** Redraw for a moved chain or cursor. */
+  setState(state: NavigationViewState): void {
+    this.state = state;
+    this.push();
+  }
+
+  private push(): void {
+    void this.view?.webview.postMessage({ kind: 'state', ...this.state });
+  }
+}

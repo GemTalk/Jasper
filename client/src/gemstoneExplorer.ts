@@ -25,6 +25,14 @@ import {
   MethodFilter,
 } from './explorerMethodFilter';
 import { DoubleClickDetector } from './explorerDoubleClick';
+import {
+  ExplorerLanding,
+  ExplorerNavigationHistory,
+  TrailLabelMode,
+  landingContext,
+  landingLabel,
+} from './explorerNavigationHistory';
+import { NAVIGATION_VIEW_ID, NavigationViewProvider } from './explorerNavigationView';
 import { categoryChildNodes, categoryParentPath, categoryMatches } from './explorerCategories';
 import { registerOpenEditorsStatusBar } from './openEditorsStatusBar';
 import { SourceEditorPlacement } from './sourceEditorPlacement';
@@ -857,6 +865,16 @@ export class ExplorerController {
   // our own groups, so we neither clump nor invade the System Browser's group.
   readonly placement = new SourceEditorPlacement();
 
+  // Go Back / Go Forward over the places the panes have landed. Kept on the
+  // controller (not per view) because a landing spans every pane at once.
+  readonly history = new ExplorerNavigationHistory({
+    go: (landing) => this.goToLanding(landing),
+    onChange: () => this.syncNavigationState(),
+  });
+  // The Actions & Navigation pane — the always-visible button row over the trail. Set once
+  // at registration; absent in tests that don't build it.
+  private navigation?: NavigationViewProvider;
+
   readonly dictProvider = new DictProvider(this);
   readonly categoryProvider = new CategoryProvider(this);
   readonly classProvider = new ClassProvider(this);
@@ -1346,6 +1364,7 @@ export class ExplorerController {
     this.hierarchyProvider.refresh();
     this.methodProvider.refresh();
     this.syncTitles();
+    this.recordLanding();
   }
 
   selectClassCategory(item: ClassCategoryItem): void {
@@ -1370,6 +1389,7 @@ export class ExplorerController {
     this.hierarchyProvider.refresh();
     this.methodProvider.refresh();
     this.syncTitles();
+    this.recordLanding();
   }
 
   // The class-category of a class as the classes pane currently knows it, or
@@ -1584,6 +1604,7 @@ export class ExplorerController {
     this.hierarchyProvider.refresh();
     if (revealHierarchy) void this.revealHierarchySelf();
     this.syncTitles();
+    this.recordLanding();
     // NOTE: a plain class click no longer auto-opens the definition editor —
     // that cluttered the editor area with a definition tab per class browsed.
     // Use the inline "Open Definition" button (gemstone.explorer.openDefinition).
@@ -3710,6 +3731,7 @@ export class ExplorerController {
     // stays a plain (non-scrolling) select so it can't yank focus off whatever the user is doing.
     const takesFocus = opts.focusEditorAfter === true;
     const side = isMeta ? 'class' : 'instance';
+    this.recordLanding({ selector: info.selector, isMeta });
     try {
       await this.views?.method.reveal(item, { select: true, focus: takesFocus, expand: true });
     } catch (e) {
@@ -3825,6 +3847,7 @@ export class ExplorerController {
     }
     this.state.selectedSelector = node.info.selector;
     this.syncTitles();
+    this.recordLanding({ selector: node.info.selector, isMeta: node.isMeta });
     // Carry the 1-based dictionary index so the method's class is resolved in the
     // right dictionary (some dictionaries — e.g. Python — hold classes whose
     // lookup is ambiguous by bare name). Slash-bearing selectors are escaped.
@@ -4233,6 +4256,200 @@ export class ExplorerController {
     }
   }
 
+  // ── Go Back / Go Forward ────────────────────────────────────────────────────
+
+  // Repaint the Actions & Navigation pane and re-gate the Back/Forward buttons whenever the
+  // chain or the cursor moves. Also called once at registration to seed both.
+  syncNavigationState(): void {
+    const current = this.history.currentIndex();
+    const mode = this.trailLabelMode();
+    this.navigation?.setState({
+      back: this.history.canGoBack(),
+      forward: this.history.canGoForward(),
+      mode,
+      trail: this.history.entries().map((landing, index) => ({
+        index,
+        label: landingLabel(landing, mode),
+        context: landingContext(landing, mode),
+        current: index === current,
+      })),
+    });
+    void vscode.commands.executeCommand(
+      'setContext',
+      'gemstone.canNavigateBack',
+      this.history.canGoBack(),
+    );
+    void vscode.commands.executeCommand(
+      'setContext',
+      'gemstone.canNavigateForward',
+      this.history.canGoForward(),
+    );
+  }
+
+  /**
+   * How the trail names its rows. Persisted as a setting rather than session
+   * state, so a preference about how a list reads survives a reload — and can be
+   * found in Settings, not only on the button.
+   */
+  trailLabelMode(): TrailLabelMode {
+    return vscode.workspace
+      .getConfiguration('gemstone')
+      .get<boolean>('explorer.navigationSelectorsOnly', false)
+      ? 'selectors'
+      : 'full';
+  }
+
+  /** Write the label-mode setting; the config listener redraws the pane. */
+  async setTrailLabelMode(mode: TrailLabelMode): Promise<void> {
+    await vscode.workspace
+      .getConfiguration('gemstone')
+      .update(
+        'explorer.navigationSelectorsOnly',
+        mode === 'selectors',
+        vscode.ConfigurationTarget.Global,
+      );
+  }
+
+  setNavigationView(view: NavigationViewProvider): void {
+    this.navigation = view;
+    this.syncNavigationState();
+  }
+
+  /**
+   * The whole chain as a quick pick, newest first — the same trail the Navigation
+   * pane draws, reachable without the mouse and without the pane being visible.
+   * Mirrors VS Code's own Go to Recent Location.
+   */
+  async showHistory(): Promise<void> {
+    const entries = this.history.entries();
+    if (entries.length === 0) {
+      void vscode.window.showInformationMessage(
+        'No GemStone Explorer locations visited yet in this session.',
+      );
+      return;
+    }
+    const current = this.history.currentIndex();
+    const items = entries
+      .map((landing, index) => ({
+        label: landingLabel(landing),
+        description: index === current ? `${landing.dictName} — current` : landing.dictName,
+        index,
+      }))
+      .reverse();
+    const picked = await vscode.window.showQuickPick(items, {
+      placeHolder: 'Recent locations in the GemStone Explorer',
+    });
+    if (picked) await this.history.goToIndex(picked.index);
+  }
+
+  /**
+   * Note where the panes have just landed, so Go Back can return here.
+   *
+   * The coordinate is read off `state`; the method half is passed in, because the
+   * reveal/open paths know the selector before `state` does (and `state` only ever
+   * holds the last method *opened*, not the row revealed). Repeats, and the coarser
+   * intermediate landings of a cascade, are dropped by the history itself.
+   */
+  private recordLanding(method?: { selector: string; isMeta: boolean }): void {
+    const session = this.session();
+    const { dictName, dictIndex, classCategory, className } = this.state;
+    if (!session || dictName === undefined || dictIndex === undefined) return;
+    this.history.record({
+      sessionId: session.id,
+      dictName,
+      dictIndex,
+      classCategory,
+      className,
+      selector: method?.selector,
+      isMeta: method?.isMeta,
+    });
+  }
+
+  /**
+   * Put the panes back on a recorded landing, recomputing it against the live
+   * stone rather than trusting the coordinate: the dictionary is re-resolved by
+   * name (a commit elsewhere can shift every index) and the class and selector
+   * have to still be there.
+   *
+   * Answers false when the landing no longer resolves, which drops it from the
+   * chain so a second press tries the one before it. A landing whose class is
+   * still there but whose method is gone still moves the panes to that class —
+   * better than refusing to move at all — and then reports the method missing.
+   */
+  private async goToLanding(landing: ExplorerLanding): Promise<boolean> {
+    const session = this.session();
+    if (!session || session.id !== landing.sessionId) {
+      // Deliberately does NOT reconnect or switch sessions behind the user's back.
+      void vscode.window.showInformationMessage(
+        `Skipping ${landingLabel(landing)} — it was visited in a GemStone session that is no longer selected.`,
+      );
+      return false;
+    }
+    let dictIndex: number;
+    try {
+      dictIndex = queries.getDictionaryNames(session).indexOf(landing.dictName) + 1;
+    } catch {
+      return false;
+    }
+    if (dictIndex <= 0) {
+      void vscode.window.showWarningMessage(
+        `Skipping ${landingLabel(landing)} — dictionary ${landing.dictName} is no longer in the symbol list.`,
+      );
+      return false;
+    }
+
+    if (landing.className === undefined) {
+      this.selectDict(new DictItem(landing.dictName, dictIndex));
+      try {
+        await this.views?.dict.reveal(new DictItem(landing.dictName, dictIndex), { select: true });
+      } catch {
+        /* highlight only — the panes are already correct from state */
+      }
+      if (landing.classCategory !== undefined) {
+        const path = landing.classCategory;
+        const segment = path.split('-').pop() ?? path;
+        const item = new ClassCategoryItem(segment, path, false);
+        this.selectClassCategory(item);
+        try {
+          await this.views?.category.reveal(item, { select: true, expand: true });
+        } catch {
+          /* highlight only */
+        }
+      }
+      return true;
+    }
+
+    const revealMethod =
+      landing.selector !== undefined
+        ? { selector: landing.selector, isMeta: landing.isMeta === true }
+        : undefined;
+    await this.revealClass(landing.dictName, dictIndex, landing.className, { revealMethod });
+    // revealClass leaves state untouched when its queries fail (it warns itself).
+    if (this.state.className !== landing.className) return false;
+    if (!revealMethod) return true;
+
+    const info = this.selectorsFor(revealMethod.isMeta, ALL_METHODS_CATEGORY).find(
+      (i) => i.selector === revealMethod.selector,
+    );
+    if (!info) {
+      void vscode.window.showWarningMessage(
+        `${landing.className} no longer implements ${revealMethod.isMeta ? 'class method ' : ''}${revealMethod.selector}.`,
+      );
+      return false;
+    }
+    // revealClass has already selected the row; reopen the source too, since a
+    // method landing is a method the user was reading.
+    await this.openMethod(
+      new MethodItem(
+        revealMethod.isMeta,
+        info,
+        this.groupMethodsByCategory() ? info.category : undefined,
+        this.methodSourceUri(revealMethod.isMeta, info),
+      ),
+    );
+    return true;
+  }
+
   // Set the cascade state to a specific class and reveal it across the panes.
   // Never opens the class-definition editor — that's an explicit action now (the
   // class-row button / menu). `opts.revealMethod` reveals+selects a method row.
@@ -4284,6 +4501,9 @@ export class ExplorerController {
     this.methodProvider.refresh();
     void this.revealHierarchySelf();
     this.syncTitles();
+    // Record the class landing now; when a method is being revealed too, its own
+    // record (in revealMethodRow) refines this entry rather than adding a second.
+    this.recordLanding();
 
     // reveal() rejects if the element isn't (yet) in the tree; the panes are
     // already correct from state, so treat reveal purely as a highlight nicety.
@@ -5837,6 +6057,8 @@ export function registerGemStoneExplorer(
   // Seed the instance/class side context key (defaults to instance).
   ctl.syncMethodSide();
 
+  const navigationView = new NavigationViewProvider((index) => void ctl.history.goToIndex(index));
+  ctl.setNavigationView(navigationView);
   const dictView = vscode.window.createTreeView('gemstoneExplorerDicts', {
     treeDataProvider: ctl.dictProvider,
   });
@@ -5864,6 +6086,8 @@ export function registerGemStoneExplorer(
     hierarchy: hierarchyView,
     method: methodView,
   });
+  // Seed the Back/Forward enablement keys.
+  ctl.syncNavigationState();
 
   dictView.onDidChangeSelection((e) => {
     const node = e.selection[0];
@@ -5898,6 +6122,7 @@ export function registerGemStoneExplorer(
   });
 
   context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(NAVIGATION_VIEW_ID, navigationView),
     dictView,
     categoryView,
     classView,
@@ -5913,6 +6138,29 @@ export function registerGemStoneExplorer(
       'gemstone.explorer.refresh',
       () => void ctl.refreshRetainingSelection(),
     ),
+    // Go Back / Go Forward over the Explorer's landings — the Actions & Navigation pane's
+    // arrows, the gemstone:// editor title bar's, the palette, and the keybinding
+    // all walk this one chain.
+    vscode.commands.registerCommand('gemstone.navigateBack', () => ctl.history.back()),
+    vscode.commands.registerCommand('gemstone.navigateForward', () => ctl.history.forward()),
+    vscode.commands.registerCommand('gemstone.explorer.showHistory', () => ctl.showHistory()),
+    // Navigation-pane label toggle. Walking around one class makes every row read
+    // `TheClass>>…`, and in a sidebar-width pane the repeated class name crowds out
+    // the selector, which is the only part that differs. Both write the persistent
+    // setting; the config listener below redraws the pane.
+    vscode.commands.registerCommand(
+      'gemstone.explorer.showNavigationSelectorsOnly',
+      () => void ctl.setTrailLabelMode('selectors'),
+    ),
+    vscode.commands.registerCommand(
+      'gemstone.explorer.showNavigationFullLocations',
+      () => void ctl.setTrailLabelMode('full'),
+    ),
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration('gemstone.explorer.navigationSelectorsOnly')) {
+        ctl.syncNavigationState();
+      }
+    }),
     // Per-pane filter buttons: open a live filter input (prefix match, '*'
     // wildcard) that filters the pane in place — works regardless of where
     // focus currently sits (e.g. the editor).
