@@ -35,7 +35,8 @@ function runLimitProbeClassNames(count: number): string[] {
  */
 export function installRunLimitProbeClasses(exec: QueryExecutor, count: number): string[] {
   const names = runLimitProbeClassNames(count);
-  exec(`[| c |
+  exec(`[| c sl |
+sl := System myUserProfile symbolList.
 UserGlobals removeKey: ${PROBE_RAN_MARKER_KEY} ifAbsent: [nil].
 #(${names.map((n) => `'${n}'`).join(' ')}) do: [:name |
   c := UserGlobals at: name asSymbol ifAbsent: [
@@ -43,9 +44,9 @@ UserGlobals removeKey: ${PROBE_RAN_MARKER_KEY} ifAbsent: [nil].
       instVarNames: #() classVars: #() classInstVars: #() poolDictionaries: #()
       inDictionary: UserGlobals].
   c compileMethod: 'testPasses  UserGlobals at: ${PROBE_RAN_MARKER_KEY} put: true. self assert: true'
-    dictionaries: System myUserProfile symbolList category: 'tests'.
+    dictionaries: sl category: 'tests'.
   c compileMethod: 'testFails  self assert: 1 = 2'
-    dictionaries: System myUserProfile symbolList category: 'tests'].
+    dictionaries: sl category: 'tests'].
 'ok'] value`);
   return names;
 }
