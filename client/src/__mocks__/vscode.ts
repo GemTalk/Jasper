@@ -1,5 +1,10 @@
 import { vi } from 'vitest';
-import { URI as Uri } from 'vscode-uri';
+import { URI as Uri, Utils as UriUtils } from 'vscode-uri';
+
+// Real `vscode.Uri` carries a static `joinPath`; `vscode-uri` puts the same
+// function on `Utils` instead. Bridged here so a panel that builds its webview's
+// localResourceRoots can be constructed under test at all.
+(Uri as unknown as { joinPath: typeof UriUtils.joinPath }).joinPath = UriUtils.joinPath;
 
 export { Uri };
 
@@ -191,6 +196,12 @@ function createMockWebview() {
     html: '',
     postMessage: vi.fn(),
     onDidReceiveMessage: vi.fn((_handler: unknown) => ({ dispose: () => {} })),
+    // A panel that ships its own assets (a font, an image) rewrites their paths
+    // through this before writing its HTML. The real one returns a
+    // `vscode-webview://` URL; the identity here is enough for a test asserting
+    // on behaviour rather than on the exact scheme.
+    asWebviewUri: vi.fn((uri: Uri) => uri),
+    cspSource: 'vscode-webview:',
   };
 }
 

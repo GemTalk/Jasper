@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import * as path from 'path';
 
-vi.mock('vscode', () => import('../__mocks__/vscode.js'));
-vi.mock('../wslFs');
-vi.mock('../sysadminChannel');
+vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
+vi.mock('../../wslFs');
+vi.mock('../../sysadminChannel');
 
 import * as vscode from 'vscode';
 import {
@@ -14,12 +14,12 @@ import {
   wslUnlinkSync,
   wslChmodSync,
   wslWriteFileSync,
-} from '../wslFs';
+} from '../../wslFs';
 import { DatabaseManager } from '../databaseManager';
-import { GemStoneDatabase } from '../sysadminTypes';
-import { SysadminStorage } from '../sysadminStorage';
+import { GemStoneDatabase } from '../../sysadminTypes';
+import { SysadminStorage } from '../../sysadminStorage';
 import { ProcessManager } from '../processManager';
-import { uriFsPath } from './support/uri';
+import { uriFsPath } from '../../__tests__/support/uri';
 
 // ── Helpers ────────────────────────────────────────────────
 

@@ -1,6 +1,6 @@
 // Session Configuration panel — a standalone editor-tab webview that shows one logged-in
 // session's stone and gem configuration and lets an editable value be changed.
-// It is also where a session's live maintenance happens (Ping). Opened from the
+// Opened from the
 // session's row in the Logins view (see the gemstone.showSessionConfiguration command).
 // One panel per session, so two sessions' configuration can be compared side by
 // side; a panel closes itself when its session logs out.
@@ -47,7 +47,7 @@ const configurationViewJs = readWebviewScript('configurationView.js', 'configura
 
 /** What the panel needs to read and write a session's configuration. */
 export interface ConfigurationPanelDeps {
-  /** Resolves the target session by id, reports when it goes away, and pings it. */
+  /** Resolves the target session by id and reports when it goes away. */
   sessionManager: SessionManager;
   /** Locates a version's product tree, to read system.conf descriptions. */
   storage: SysadminStorage;
@@ -94,7 +94,6 @@ interface ConfigurationPayload {
 type Inbound =
   | { command: 'ready' }
   | { command: 'loadConfiguration' }
-  | { command: 'ping' }
   | { command: 'copyText'; text: string }
   | {
       command: 'setConfiguration';
@@ -180,35 +179,10 @@ export class ConfigurationPanel {
       case 'setConfiguration':
         this.setConfiguration(msg.scope, msg.key, msg.valueType, msg.value);
         return;
-      case 'ping':
-        this.pingSession();
-        return;
       case 'copyText':
         void vscode.env.clipboard.writeText(msg.text);
         return;
     }
-  }
-
-  /**
-   * Check the session is alive and responsive, reporting the result as a notice
-   * in the panel rather than a transient toast — the Session Configuration page is where a
-   * session's live maintenance happens. A ping is not a settings change, so it
-   * leaves the values on screen untouched.
-   */
-  private pingSession(): void {
-    const session = this.deps.sessionManager.getSession(this.sessionId);
-    if (!session) {
-      this.configurationError('No GemStone session is selected. Log in and try again.');
-      return;
-    }
-    const { success, err } = this.deps.sessionManager.ping(session.id);
-    void this.panel.webview.postMessage({
-      command: 'pingResult',
-      tone: success ? 'ok' : 'warn',
-      message: success
-        ? `Session ${session.id} is active and responsive.`
-        : `Session ${session.id} did not respond — ${err.message || `error ${err.number}`}.`,
-    });
   }
 
   /**
@@ -440,17 +414,6 @@ body {
 .config-panel-title { font-size: 1.08rem; font-weight: 700; }
 .config-panel-sub { font-size: 0.92rem; }
 .config-panel-actions { margin-left: auto; align-self: center; display: inline-flex; align-items: center; gap: 8px; }
-/* The Ping result sits to the left of the Ping button — a compact banner that
-   clears itself after a success and lingers (with Dismiss) after a warning. */
-.ping-result {
-  display: inline-flex; align-items: center; gap: 6px; max-width: 520px;
-  padding: 2px 8px; border-radius: 4px; font-size: 0.9rem;
-}
-.ping-result.ok { background: color-mix(in srgb, var(--gm-ok) 14%, transparent); }
-.ping-result.warn { background: color-mix(in srgb, var(--gm-warn) 14%, transparent); }
-.ping-result.ok .ico { color: var(--gm-ok); }
-.ping-result.warn .ico { color: var(--gm-warn); }
-
 /* ── Buttons ──────────────────────────────────────────────────────────────── */
 .btn {
   display: inline-flex; align-items: center; gap: 5px;

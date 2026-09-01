@@ -31,7 +31,7 @@ If you already have a GemStone server running on another machine (or locally), y
 The first time you log in with a given GemStone version, Jasper needs the native GCI library (`libgcits`) for that version:
 
 - **On Windows**, Jasper will offer to **download the Windows client distribution** automatically. This downloads and extracts the library — no WSL or manual setup required.
-- **On macOS/Linux**, the library is included in the GemStone server distribution. If you have a local installation, Jasper auto-detects it. Otherwise, use the **Versions** section to download the distribution for your platform, or point Jasper to an existing library path via the `gemstone.gciLibraries` setting.
+- **On macOS/Linux**, the library is included in the GemStone server distribution. If you have a local installation, Jasper auto-detects it. Otherwise, use **Install Version…** in the Databases & Versions panel to download the distribution for your platform, or point Jasper to an existing library path via the `gemstone.gciLibraries` setting.
 
 ### Full local setup (macOS, Linux, or Windows with WSL)
 
@@ -40,13 +40,13 @@ To install, manage, and run a GemStone server locally:
 1. Install the extension from the VS Code Marketplace or Open VSX (links above).
 2. Open the **GemStone** sidebar (gem icon in the activity bar).
 3. Check the **OS Configuration** section: on macOS/Linux run the shared-memory setup if it warns; on Windows+WSL Jasper also surfaces WSL networking and services-file configuration here.
-4. Use the **Versions** section to download and extract a GemStone release.
-5. Use the **Databases** section to create a new database.
+4. Click **Manage Databases & Versions** in the **Databases** section title bar to open the panel, and install a GemStone release from its Versions list.
+5. Click **New Database** in the same title bar and fill in the form.
 6. Start the stone and NetLDI from the database tree.
 7. Click **Create Login** on the database to generate a login configuration.
 8. Click **Login** to connect and start developing.
 
-Alternatively, run **Quick Setup** (button in the Versions view) to do all of the above in one step.
+Alternatively, run **Quick Setup** (offered in the Databases section when you have no database yet) to do all of the above in one step.
 
 ## Windows usage
 
@@ -68,23 +68,19 @@ The **OS Configuration** view surfaces every host-level setting GemStone needs, 
 
 ### Version Management
 
-The **Versions** view lists GemStone releases available for your platform (macOS ARM, macOS x86, Linux x86). For each version you can:
+Versions live in the **Databases & Versions** panel, opened with **Manage Databases & Versions** in the **Databases** section title bar. Releases on this machine are listed with their status, size and release date, and each row offers:
 
-- **Download** the release archive from GemTalk Systems
-- **Extract** the archive (automatic DMG mounting on macOS, unzip on Linux)
-- **Open** the extracted directory in Finder/Explorer
-- **Delete** the download or extracted files
+- **Install** — downloads the release archive from GemTalk Systems and unpacks it in one action (automatic DMG mounting on macOS, unzip on Linux). **Remove** takes away everything it put there.
+- **Show in Finder** — open the product directory
+- **Open Terminal** — a terminal with that version's GemStone environment set up
 
-On Windows, the **Download Windows Client** button fetches the native client distribution for connecting to remote GemStone servers.
+The panel header carries **Install Version…**, which lists the releases you do not yet have, and **Register Local…**, which points Jasper at a GemStone tree you built yourself.
+
+On Windows, an **Install Windows Client** row action fetches the native client distribution for connecting to remote GemStone servers.
 
 ### Database Management
 
-The **Databases** view shows all databases under your GemStone root directory (configurable via `gemstone.rootPath`, default `~/Documents/GemStone`). Click the **+** button to create a new database with a multi-step wizard:
-
-1. Select a GemStone version (from extracted versions)
-2. Select a base extent
-3. Enter a stone name
-4. Enter a NetLDI name
+The **Databases** view shows all databases under your GemStone root directory (configurable via `gemstone.rootPath`, default `~/Documents/GemStone`). Click **New Database** in its title bar to open the **Databases & Versions** panel on a form asking for the GemStone release, the base extent, a stone name and a NetLDI name — all on screen at once, with the names already in use listed beside the fields that have to avoid them. Nothing is lost if you leave VS Code to look something up. A database is made by copying an installed release, so on a machine that has none the panel opens on its Versions list instead and says so, with **Install Version…** and **Register Local…** waiting there.
 
 The extension creates the full directory structure (`conf/`, `data/`, `log/`, `stat/`), writes configuration files (`system.conf`, `gem.conf`, stone config), copies the key file and base extent, and writes `database.yaml`.
 
@@ -109,7 +105,7 @@ A stone or NetLDI row shows one of:
 
 - **Running** — Jasper can see it and a connect should succeed.
 - **Stopped** — nothing of it is running.
-- **Running — not responding** — `gslist` lists it but reports it unhealthy; it may be holding a stale lock (see the Processes view).
+- **Running — not responding** — `gslist` lists it but reports it unhealthy; it may be holding a stale lock, which its row in the Databases & Versions panel offers to clear.
 - **Running — not connectable** (stone only) — the stone is healthy, but a login has to come in through its NetLDI and that NetLDI is not usable, so a connect will fail.
 - **Running outside Jasper** — the process is alive on this host but was started outside Jasper's environment. See below.
 
@@ -123,13 +119,13 @@ Jasper cross-checks the host process table against its own `gslist` and marks su
 
 Because two databases can use the same stone name, Jasper stops a server only when it can confirm from the paths that server was started with that it really is the managed database's. When it cannot, it says so and does not offer the restart. If a stop or kill fails, Jasper reports both names, the PIDs, the registration directory, and the `gslist` invocation that will show the servers where they actually are, so the situation can be finished by hand.
 
-### Process List
+### Processes
 
-The **Processes** view shows all running GemStone processes (stones and NetLDIs) detected via `gslist`, including version, PID, and port information.
+A database's own stone and NetLDI are shown on its row in the **Databases & Versions** panel, with version, PID, port and status, and Start/Stop for each.
 
-This view *is* Jasper's `gslist` view, so a server started outside Jasper's environment does not appear here even while it is running — the Databases view is where that shows up, as **Running outside Jasper** (see [Servers started outside Jasper](#servers-started-outside-jasper) above).
+Stale processes — where `gslist` reports a `frozen`, `killed`, or `exe deleted` status — are marked, and a **Delete Stale Lock File** action lets you remove the orphaned `*.LCK` after Jasper confirms the recorded PID is either gone or has been reused by an unrelated process. (On macOS, `gslist -c` can't detect a recycled PID on its own, so this manual step is sometimes necessary; see [docs/mcp-server.md](docs/mcp-server.md#limitations) for context.)
 
-Stale processes — where `gslist` reports a `frozen`, `killed`, or `exe deleted` status — are rendered with a red icon and the status prefixed onto the description. A **Delete Stale Lock File** inline action lets you remove the orphaned `*.LCK` after Jasper confirms the recorded PID is either gone or has been reused by an unrelated process. (On macOS, `gslist -c` can't detect a recycled PID on its own, so this manual step is sometimes necessary; see [docs/mcp-server.md](docs/mcp-server.md#limitations) for context.)
+A server started outside Jasper's environment does not appear in Jasper's own `gslist` at all; it shows on its database's row as **Running outside Jasper** (see [Servers started outside Jasper](#servers-started-outside-jasper) above), which is also where **Restart Under Jasper's Environment** is offered.
 
 ### MCP Server view
 
@@ -151,9 +147,11 @@ Each login is a row in the tree; click **Login** to start a session, which appea
 **Login rows** offer Edit, Duplicate, Delete, and Login. A login **cannot be edited or deleted while it has an active session** — log out first. **Session rows** (the children) offer:
 
 - **Commit** / **Abort** — transaction control
-- **Session Configuration** (gear) — open this session's stone and gem configuration in its own editor tab, where the runtime-settable values can be changed and **Ping** now lives
+- **Session Configuration** (gear) — open this session's stone and gem configuration in its own editor tab, where the runtime-settable values can be changed
 - **Logout** — disconnect
 - **Export** and **Make Active Session** (context menu)
+
+**Open Workspace** is in this view's title bar rather than on a session row: a workspace runs against the *active* session (as Display It and Inspect It do), so it is not something you do "to" one session in particular. **Ping** lives on a session row in the **Databases & Versions** panel, which has the room to show its answer beside the row that asked.
 
 The active session (used for code execution) is highlighted, and the status bar shows which session is active.
 
