@@ -16,18 +16,22 @@ import { QueryExecutor } from '../types';
 const PROBE_CLASS_PREFIX = 'JasperRunLimitProbe';
 
 /** Names of the classes {@link installRunLimitProbeClasses} creates, in order. */
-export function runLimitProbeClassNames(count: number): string[] {
+function runLimitProbeClassNames(count: number): string[] {
   return Array.from({ length: count }, (_, i) => `${PROBE_CLASS_PREFIX}${i + 1}`);
 }
 
 /**
  * Creates `count` trivial TestCase subclasses in UserGlobals, each with one
  * passing and one failing test, and returns their names.
+ *
+ * The names are generated once here and interpolated into the doit, so the
+ * classes created in the stone and the names returned cannot drift apart.
  */
 export function installRunLimitProbeClasses(exec: QueryExecutor, count: number): string[] {
+  const names = runLimitProbeClassNames(count);
   exec(`[| c |
-1 to: ${count} do: [:i |
-  c := TestCase subclass: '${PROBE_CLASS_PREFIX}', i printString
+#(${names.map((n) => `'${n}'`).join(' ')}) do: [:name |
+  c := TestCase subclass: name
     instVarNames: #() classVars: #() classInstVars: #() poolDictionaries: #()
     inDictionary: UserGlobals.
   c compileMethod: 'testPasses  self assert: true'
@@ -35,5 +39,5 @@ export function installRunLimitProbeClasses(exec: QueryExecutor, count: number):
   c compileMethod: 'testFails  self assert: 1 = 2'
     dictionaries: System myUserProfile symbolList category: 'tests'].
 'ok'] value`);
-  return runLimitProbeClassNames(count);
+  return names;
 }
