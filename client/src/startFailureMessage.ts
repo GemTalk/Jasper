@@ -51,7 +51,7 @@ export function explainMissingInstall(version: string, rootPath: string): string
   return (
     `Jasper has no GemStone ${version} install under ${rootPath}. It looks for a ` +
     `"GemStone64Bit${version}…" directory there, and installs elsewhere on this machine are ` +
-    `not visible to it. Download or extract ${version} in the Versions view — or, if it is ` +
+    `not visible to it. Install ${version} from the Databases & Versions panel — or, if it is ` +
     `already installed somewhere else, register that directory as a local version.`
   );
 }

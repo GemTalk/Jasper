@@ -75,6 +75,14 @@ export class SessionManager {
   private _onDidRemoveSession = new vscode.EventEmitter<number>();
   readonly onDidRemoveSession = this._onDidRemoveSession.event;
 
+  // Fires with a session id whenever a session joins the manager. There was no
+  // such signal: onDidChangeSelection is the only thing a new session fired, and
+  // finalizeSession auto-selects only the *first* one — so a second login was
+  // silent, and anything drawing session state (the panel's login rows) went on
+  // showing "Log in" for a login that was already connected.
+  private _onDidAddSession = new vscode.EventEmitter<number>();
+  readonly onDidAddSession = this._onDidAddSession.event;
+
   get selectedId(): number | null {
     return this._selectedId;
   }
@@ -328,6 +336,10 @@ export class SessionManager {
     if (this.sessions.size === 1) {
       this.selectSession(session.id);
     }
+
+    // Announced after any auto-select, so a listener that reads the selection
+    // sees the settled state rather than the moment in between.
+    this._onDidAddSession.fire(session.id);
 
     return session;
   }

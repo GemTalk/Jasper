@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-vi.mock('vscode', () => import('../__mocks__/vscode.js'));
+vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 
 import { DatabaseTreeProvider, DatabaseNode } from '../databaseTreeProvider';
-import { GemStoneDatabase, GemStoneProcess } from '../sysadminTypes';
-import { ExternalServer, ExternalServerFinding, HostServerProcess } from '../externalServerScan';
+import { GemStoneDatabase, GemStoneProcess } from '../../sysadminTypes';
+import { ExternalServer, ExternalServerFinding, HostServerProcess } from '../../externalServerScan';
 
 function makeDatabase(overrides: Partial<GemStoneDatabase> = {}): GemStoneDatabase {
   return {

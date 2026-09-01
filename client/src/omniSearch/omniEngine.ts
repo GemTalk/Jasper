@@ -289,8 +289,14 @@ export interface OmniEngine {
    *  matches the term and its category is in scope); returns null otherwise, leaving the view as-is. */
   applyChange(change: OmniCorpusChange): Promise<OmniViewData | null>;
   /** Drop + rebuild every cached corpus (on a session sync — commit/abort), catching changes from
-   *  outside this UI, then re-run the current term. Returns null while a pivot is showing. */
+   *  outside this UI, then re-run the current term. Returns null while a pivot is showing: a commit is
+   *  not a request to disturb what the user is reading. */
   resync(onError?: (message: string) => void): Promise<OmniViewData | null>;
+  /** The USER asked for fresh state (the ⟳ button / `gemstone.search.refresh`). Rebuilds every cached
+   *  corpus like `resync`, but where `resync` leaves a pivot alone this RE-FETCHES it from the stone —
+   *  a references list is exactly as stale as the corpora, and a refresh that visibly did nothing reads
+   *  as a broken button. Returns null only when a newer call superseded this one. */
+  refresh(onError?: (message: string) => void): Promise<OmniViewData | null>;
   /** Run the search for a raw field value and return the view (or null if superseded by a newer
    *  call). In the pivot, this filters the loaded reference rows client-side instead. */
   search(rawValue: string): Promise<OmniViewData | null>;
@@ -346,6 +352,13 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
   let excludedFromAll = new Set<OmniCategoryId>(config.excludedFromAll);
   // When non-null, the list shows the references/senders of a result (a "pivot"), not a live search.
   let pivot: ReferenceView | null = null;
+  // The row the pivot was taken FROM, kept so an explicit refresh can ask the stone for its references
+  // again. Without it a refresh could only rebuild the corpora and leave the pivot's rows as they were.
+  let pivotSource: OmniResult | null = null;
+  // What is typed in the box while pivoted. In the pivot the field filters the loaded reference rows
+  // rather than searching, so this is NOT `lastRawValue` (which holds the search to restore on the way
+  // out) — and a refresh has to re-apply it, or re-fetching would silently widen the list.
+  let pivotFilter = '';
   // The results backing the CURRENT view, indexed by row id.
   let current: OmniResult[] = [];
   // The reference rows from the last `referencesFor`, indexed by the preview list's row id. Kept
@@ -403,11 +416,26 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
     );
   }
 
+  /** Drop + reload every cached corpus. A provider that throws just keeps the cache it had — a partial
+   *  reload is better than none, and the error is surfaced rather than swallowed. */
+  async function reprimeAll(onError?: (message: string) => void): Promise<void> {
+    await Promise.all(
+      providers.map(async (p) => {
+        try {
+          await (p.reprime ?? p.prime)?.(NEVER_CANCELLED);
+        } catch (e: unknown) {
+          onError?.(e instanceof Error ? e.message : String(e));
+        }
+      }),
+    );
+  }
+
   async function runSearch(rawValue: string): Promise<OmniViewData | null> {
     // In the reference view, typing filters the loaded rows client-side (no provider fan-out); don't
     // touch `lastRawValue` (it holds the search to restore when the pivot is dismissed).
     if (pivot) {
-      current = filterPivot(pivot.results, rawValue.trim());
+      pivotFilter = rawValue.trim();
+      current = filterPivot(pivot.results, pivotFilter);
       return pivotView();
     }
     // A new search supersedes any reference load already in flight: otherwise its rows would land in
@@ -514,18 +542,31 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
       return null;
     },
     async resync(onError) {
-      await Promise.all(
-        providers.map(async (p) => {
-          try {
-            await (p.reprime ?? p.prime)?.(NEVER_CANCELLED);
-          } catch (e: unknown) {
-            onError?.(e instanceof Error ? e.message : String(e));
-          }
-        }),
-      );
+      await reprimeAll(onError);
       // Don't disturb a pivot; otherwise re-run the current term against the rebuilt corpora.
       if (pivot) return null;
       return runSearch(lastRawValue);
+    },
+    async refresh(onError) {
+      await reprimeAll(onError);
+      if (!pivot || !pivotSource || !deps.resolveReferences) return runSearch(lastRawValue);
+      // Re-ask the stone who references the row this pivot was taken from. Superseding in-flight work
+      // the way `pivot` does, and for the same reason: resolving senders of a common selector is slow,
+      // and anything the user does meanwhile must win.
+      const gen = ++generation;
+      const view = await deps.resolveReferences(pivotSource);
+      if (gen !== generation) return null;
+      if (!view) {
+        // The row is no longer referenceable — its method or class was deleted out from under us. Leave
+        // the pivot rather than keep showing a list of senders of something that is gone.
+        pivot = null;
+        pivotSource = null;
+        pivotFilter = '';
+        return runSearch(lastRawValue);
+      }
+      pivot = view;
+      current = filterPivot(view.results, pivotFilter);
+      return pivotView();
     },
     search: (rawValue) => runSearch(rawValue),
     async setScope(newScope) {
@@ -538,6 +579,8 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
       // filter that was never applied — and the scope then took effect invisibly on the way out,
       // narrowing a restored search the user never asked to narrow.
       pivot = null;
+      pivotSource = null;
+      pivotFilter = '';
       return runSearch(lastRawValue);
     },
     async toggleCase() {
@@ -572,12 +615,16 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
       if (gen !== generation) return null; // a newer call superseded this pivot
       if (!view) return null; // not referenceable — leave the current list as-is
       pivot = view;
+      pivotSource = result;
+      pivotFilter = '';
       current = view.results;
       return pivotView();
     },
     async exitPivot() {
       if (!pivot) return null;
       pivot = null;
+      pivotSource = null;
+      pivotFilter = '';
       return runSearch(lastRawValue);
     },
     async setExcludedFromAll(ids) {

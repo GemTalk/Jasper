@@ -61,7 +61,7 @@ describe('explainMissingInstall', () => {
   it('offers both ways out: extract it, or point Jasper at an existing install', () => {
     const message = explainMissingInstall('3.7.5', '/root');
 
-    expect(message).toContain('Versions view');
+    expect(message).toContain('Databases & Versions panel');
     expect(message).toContain('local version');
   });
 });

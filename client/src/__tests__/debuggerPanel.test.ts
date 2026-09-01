@@ -623,9 +623,29 @@ describe('DebuggerPanel', () => {
     // test that populates it doesn't leak into the next.
     (vscode.window.tabGroups.all as unknown as unknown[]).length = 0;
     // Panels stay in the static registry until they're disposed, and most tests
-    // never close theirs. Clear it so a leftover panel can't hand its carved
-    // column pair to the next test's debugger (see liveDebuggerColumns).
-    (DebuggerPanel as unknown as { panels: Map<number, unknown> }).panels.clear();
+    // never close theirs. Every one that opened a companion source editor also
+    // left a layout sampler running — a 2s setInterval calling
+    // `vscode.getEditorLayout`, cleared only in dispose() — so stop those first.
+    // On a host slow enough for the interval to fire mid-test (Windows CI, where
+    // this file takes ~70s rather than ~1s) a leaked sampler lands an extra
+    // getEditorLayout on the shared executeCommand mock and inflates whichever
+    // test is counting those calls. Then clear the registry, so a leftover panel
+    // can't hand its carved column pair to the next test's debugger (see
+    // liveDebuggerColumns).
+    const panelRegistry = (
+      DebuggerPanel as unknown as {
+        panels: Map<number, Set<{ layoutSampler?: ReturnType<typeof setInterval> }>>;
+      }
+    ).panels;
+    for (const sessionPanels of panelRegistry.values()) {
+      for (const panel of sessionPanels) {
+        // clearInterval(undefined) is a no-op, so panels that never started a
+        // sampler need no guard.
+        clearInterval(panel.layoutSampler);
+        panel.layoutSampler = undefined;
+      }
+    }
+    panelRegistry.clear();
     session = makeSession();
   });
 

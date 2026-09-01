@@ -1,5 +1,5 @@
 import { GemStoneDatabase } from './sysadminTypes';
-import { ForceKillResult } from './processManager';
+import { ForceKillResult } from './manager/processManager';
 import {
   ExternalServer,
   ExternalServerFinding,

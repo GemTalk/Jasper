@@ -9,7 +9,8 @@ import * as vscode from 'vscode';
 import { __resetConfig, __setConfig } from '../../__mocks__/vscode';
 import { logWarning } from '../../gciLog';
 import { buildOmniHandlers, registerOmniSearch, revealPanelAfterLogin } from '../omniSearchCommand';
-import { OMNI_VIEW_ID } from '../omniSearchViewProvider';
+import { OMNI_VIEW_ID, OmniSearchViewProvider } from '../omniSearchViewProvider';
+import { OmniSearchPanel } from '../omniSearchPanel';
 
 describe('buildOmniHandlers', () => {
   beforeEach(() => vi.clearAllMocks());
@@ -195,6 +196,55 @@ describe('registerOmniSearch: when a login reveals the panel', () => {
     await select(1);
 
     expect(revealed()).toBe(false);
+    disposable.dispose();
+  });
+});
+
+describe('registerOmniSearch: keeping the search bound to the current session', () => {
+  /** The same stub shape the reveal tests use, minus the reveal plumbing. */
+  const registerWith = () => {
+    let fire: () => void = () => {};
+    const sessionManager = {
+      getSessions: () => [{ id: 1 }, { id: 2 }],
+      getSelectedSession: () => ({ id: 2 }),
+      onDidChangeSelection: (listener: () => void) => {
+        fire = listener;
+        return { dispose: () => {} };
+      },
+    };
+    const disposable = registerOmniSearch(sessionManager as never);
+    return { fire, disposable };
+  };
+
+  beforeEach(() => vi.clearAllMocks());
+  afterEach(() => __resetConfig());
+
+  it('tells BOTH hosts when the user makes another session active', () => {
+    const onView = vi
+      .spyOn(OmniSearchViewProvider.prototype, 'onSessionSelectionChanged')
+      .mockResolvedValue(undefined);
+    const onSpotter = vi
+      .spyOn(OmniSearchPanel, 'onSessionSelectionChanged')
+      .mockImplementation(() => {});
+    const { fire, disposable } = registerWith();
+
+    fire();
+
+    // Either host can be the live one (the `ui` setting decides), and each ignores the call when it has
+    // nothing open — so both are always told rather than branching on the setting here.
+    expect(onView).toHaveBeenCalled();
+    expect(onSpotter).toHaveBeenCalled();
+    onView.mockRestore();
+    onSpotter.mockRestore();
+    disposable.dispose();
+  });
+
+  it('registers the refresh command alongside the open command', () => {
+    const { disposable } = registerWith();
+
+    const registered = vi.mocked(vscode.commands.registerCommand).mock.calls.map((c) => c[0]);
+    // Contributed as the ⟳ in the panel title bar (package.json view/title) and as a palette entry.
+    expect(registered).toContain('gemstone.search.refresh');
     disposable.dispose();
   });
 });

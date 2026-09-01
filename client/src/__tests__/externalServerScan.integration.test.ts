@@ -16,7 +16,7 @@ import {
   parseServerEnvironment,
 } from '../externalServerScan';
 
-import { parseGslist } from '../processManager';
+import { parseGslist } from '../manager/processManager';
 import { posix } from 'path';
 
 /**

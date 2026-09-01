@@ -337,7 +337,7 @@ export function pollNbToCompletion<T>(
 export function runNbCall<T>(
   session: ActiveSession,
   start: () => { success: boolean; err: GciError },
-  onReady: () => T,
+  onReady: () => T | Promise<T>,
   opts: NbRunOptions = {},
 ): Promise<T> {
   // A call we gave up on may still be being collected. Starting now would be
@@ -361,7 +361,7 @@ export function runNbCall<T>(
 function beginNbCall<T>(
   session: ActiveSession,
   start: () => { success: boolean; err: GciError },
-  onReady: () => T,
+  onReady: () => T | Promise<T>,
   opts: NbRunOptions,
 ): Promise<T> {
   const { success, err } = start();
