@@ -391,7 +391,12 @@ describe("opening one of a database's folders", () => {
     const call = vi
       .mocked(vscode.commands.executeCommand)
       .mock.calls.find((c) => c[0] === 'revealFileInOS');
-    expect(String((call?.[1] as { fsPath?: string })?.fsPath)).toBe(`/root/db-1/${expected}`);
+    // Built with path.join, not a literal: the code joins too, and Windows joins
+    // with backslashes. A hardcoded '/root/db-1/log' passes on Linux and fails
+    // every Windows leg of CI.
+    expect(String((call?.[1] as { fsPath?: string })?.fsPath)).toBe(
+      path.join('/root/db-1', expected),
+    );
   });
 });
 
