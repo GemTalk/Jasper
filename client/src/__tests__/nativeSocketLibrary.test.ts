@@ -2,14 +2,13 @@ import { closeSync, openSync } from 'fs';
 import { connect, createServer, Socket } from 'net';
 import { describe, expect, it, afterEach } from 'vitest';
 import { NativeSocketLibrary } from '../nativeSocketLibrary';
-// onSupportedWindowsDescribe is unused here: the real-socket Windows block
-// below is force-skipped rather than platform-gated. See its comment.
-import { onSupportedPosixDescribe } from './platformGates';
+import { onSupportedPosixDescribe, onSupportedWindowsDescribe } from './platformGates';
 import { changeProcessPlatformDuring } from './support/process';
 import {
   openRawReadableSocket,
   openRawLoopbackConnection,
   openRawResetSocket,
+  openRawClosedSocket,
 } from './support/rawWindowsSocket';
 
 /** A `NativeSocketLibrary` whose `poll` returns a fixed, caller-chosen status. */
@@ -190,22 +189,7 @@ describe('Native socket library', () => {
     // Node's `net.Socket` entirely (its `.fd`/`_handle.fd` is documented to
     // return -1 on Windows), so this drives `ws2_32.dll`'s own
     // `socket`/`connect` directly. See `support/rawWindowsSocket.ts`.
-    //
-    // Forced to `.skip` rather than `onSupportedWindowsDescribe`: running
-    // this block reliably crashes the whole vitest worker on windows-latest
-    // CI with an unattributed "Worker exited unexpectedly" (no test
-    // failure, no file attribution, tens of seconds after this block itself
-    // finishes cleanly) — confirmed by bisection, see
-    // project_windows_socket_fixture_gap memory. Re-enable only after
-    // debugging the crash on a real Windows machine (unavailable in every
-    // session so far); don't re-enable blind off another guess.
-    describe.skip('using a real socket and the real native WSAPoll call', () => {
-      // No case here for a genuine WSAPoll() syscall failure (the fake
-      // library's "throws an error when the poll call fails" above):
-      // `isReadable` always polls with a 0ms timeout, so there's no
-      // reliable window to land a syscall-level failure from a legitimate
-      // handle and args. That branch is exercised only by the fake.
-
+    onSupportedWindowsDescribe('using a real socket and the real native WSAPoll call', () => {
       it('reports a Windows socket readable when data is actually waiting on it', async () => {
         const { fd, cleanup } = await openRawReadableSocket('hi');
 
@@ -231,15 +215,31 @@ describe('Native socket library', () => {
       });
 
       // Unlike the POSIX case above, this doesn't self-close the handle
-      // under test: Microsoft's WSAPoll docs only promise POLLNVAL for a
-      // *negative* handle value, so a stale-but-non-negative closed handle
-      // more likely makes WSAPoll return SOCKET_ERROR outright — a
+      // under test: a stale-but-non-negative closed handle makes WSAPoll
+      // return SOCKET_ERROR outright (see the closed-handle test below) — a
       // different code path than the one this test means to exercise.
       // Having the peer reset the connection instead leaves the handle
       // itself open but errored, which reliably clears POLLRDNORM from
       // `revents` without touching the handle's validity.
       it('throws rather than reporting readable when the connection has been reset, not merely unready', async () => {
         const { fd, cleanup } = await openRawResetSocket();
+
+        try {
+          const library = NativeSocketLibrary.forCurrentPlatform();
+
+          expect(() => library.isReadable(fd)).toThrow();
+        } finally {
+          cleanup();
+        }
+      });
+
+      // Unlike the reset case above, this closes the handle itself rather
+      // than merely erroring the connection behind it: WSAPoll reliably
+      // reports SOCKET_ERROR (not just a readiness bit) for an already-closed
+      // handle, so this is the one real-socket way to exercise a genuine
+      // WSAPoll() syscall failure rather than a mere unready/errored result.
+      it('throws rather than reporting readable when the handle has already been closed', async () => {
+        const { fd, cleanup } = await openRawClosedSocket();
 
         try {
           const library = NativeSocketLibrary.forCurrentPlatform();

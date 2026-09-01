@@ -179,3 +179,23 @@ export async function openRawResetSocket(): Promise<{ fd: number; cleanup: () =>
 
   return { fd, cleanup };
 }
+
+/**
+ * Opens a raw loopback connection (see {@link openRawLoopbackConnection})
+ * and immediately closes the client handle, resolving with that now-invalid
+ * handle number once the close has had time to land. Unlike a reset
+ * connection, a closed handle makes `WSAPoll` itself report failure
+ * (returns `SOCKET_ERROR`) rather than merely clearing `POLLRDNORM` from
+ * `revents` on an otherwise-successful call.
+ *
+ * @returns The closed handle. Cleanup is a no-op: {@link openRawLoopbackConnection}'s
+ *   own cleanup already closed the handle and the server.
+ */
+export async function openRawClosedSocket(): Promise<{ fd: number; cleanup: () => void }> {
+  const { fd, cleanup } = await openRawLoopbackConnection();
+
+  cleanup();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  return { fd, cleanup: () => undefined };
+}
