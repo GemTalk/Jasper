@@ -632,15 +632,17 @@ describe('DebuggerPanel', () => {
     // test is counting those calls. Then clear the registry, so a leftover panel
     // can't hand its carved column pair to the next test's debugger (see
     // liveDebuggerColumns).
-    const panelRegistry = (DebuggerPanel as unknown as { panels: Map<number, Set<unknown>> })
-      .panels;
+    const panelRegistry = (
+      DebuggerPanel as unknown as {
+        panels: Map<number, Set<{ layoutSampler?: ReturnType<typeof setInterval> }>>;
+      }
+    ).panels;
     for (const sessionPanels of panelRegistry.values()) {
       for (const panel of sessionPanels) {
-        const sampled = panel as { layoutSampler?: ReturnType<typeof setInterval> };
-        if (sampled.layoutSampler) {
-          clearInterval(sampled.layoutSampler);
-          sampled.layoutSampler = undefined;
-        }
+        // clearInterval(undefined) is a no-op, so panels that never started a
+        // sampler need no guard.
+        clearInterval(panel.layoutSampler);
+        panel.layoutSampler = undefined;
       }
     }
     panelRegistry.clear();
