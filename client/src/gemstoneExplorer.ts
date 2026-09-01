@@ -281,8 +281,9 @@ export class ClassItem extends vscode.TreeItem {
   // of either kind opens to reveal its variable sub-tree; one with none stays flat,
   // because a chevron there would advertise variables the class does not have. Must
   // stay in step with `variableSides`, which decides the rows behind it. A class with
-  // none reaches Add Variable from the "+" on this row instead (#499). Never affects
-  // the stable `id`, so TreeView.reveal still matches regardless.
+  // none reaches Add Variable from the "+" on this row instead (#499) — which is why
+  // it also shows up in `contextValue`. Never affects the stable `id`, so
+  // TreeView.reveal still matches regardless.
   constructor(
     public readonly className: string,
     hasVars = false,
@@ -296,12 +297,17 @@ export class ClassItem extends vscode.TreeItem {
     // The displayed label may carry a `[n]` version tag, but the node's identity
     // (id, click argument, ivar sub-tree) always uses the raw class name.
     this.id = `k:${className}`;
-    // `.commented` gates the comment button to classes that actually have one
-    // (#387 item 11). Every other class action matches BOTH forms — see the
-    // `explorerClass(\.commented)?` clauses in package.json — so the suffix only
-    // ever adds a button, never removes one. Anchored there rather than a bare
+    // Two optional suffixes, each gating one button onto the rows that need it and
+    // matched as optional groups by every other class action's `when` — see the
+    // `explorerClass(\.novars)?(\.commented)?` clauses in package.json — so a suffix
+    // only ever adds a button, never removes one. Anchored there rather than a bare
     // `^explorerClass` prefix, which would also swallow `explorerClassVar`.
-    this.contextValue = hasComment ? 'explorerClass.commented' : 'explorerClass';
+    //
+    // `.novars` gates the class row's "+": that button exists for the class that has
+    // no variable-side rows to host one, so on a class that already has them it would
+    // be a third "+" on screen doing what those rows' own two already do. `.commented`
+    // gates the comment button to classes that actually have a comment.
+    this.contextValue = `explorerClass${hasVars ? '' : '.novars'}${hasComment ? '.commented' : ''}`;
     this.iconPath = new vscode.ThemeIcon('symbol-class');
     // Fires on every click (selection still drives navigation separately); the
     // controller uses the timing to detect a double-click → open definition.
@@ -676,6 +682,14 @@ export function shouldHintKeepMethodsOpen(
   return !alreadyShown && prevKey !== undefined && prevKey !== key;
 }
 
+// What to do about a category that still holds methods. One string, because the same
+// situation is caught in two places — the pane's own count before the round trip, and
+// the doit's re-count during it — and which one gets there first is an accident of
+// timing that must not decide whether the user is told what to do next.
+function stillHoldsAdvice(methodCount: number): string {
+  return `move or delete ${methodCount === 1 ? 'it' : 'them'} first, then remove the category.`;
+}
+
 // Why a method-category removal was refused, in the user's terms. Every branch
 // means nothing was removed.
 function refusalMessage(
@@ -687,7 +701,8 @@ function refusalMessage(
     case 'has-methods':
       return (
         `'${category}' now holds ${result.methodCount} ` +
-        `method${result.methodCount === 1 ? '' : 's'} — nothing was removed.`
+        `method${result.methodCount === 1 ? '' : 's'} — nothing was removed; ` +
+        stillHoldsAdvice(result.methodCount)
       );
     case 'no-category':
       return `${className} no longer has a method category '${category}'.`;
@@ -695,6 +710,14 @@ function refusalMessage(
       return `Couldn't resolve ${className} to remove the method category '${category}'.`;
     case 'not-removed':
       return `GemStone kept the method category '${category}' on ${className}.`;
+    case 'unrecognized':
+      // We could not read the stone's reply, so we do not know what it did — say
+      // that, and carry the raw text, rather than reporting the removal as refused
+      // and claiming knowledge of GemStone's behaviour we do not have.
+      return (
+        `Couldn't understand GemStone's answer while removing the method category ` +
+        `'${category}' from ${className}, so it may or may not be gone: ${result.raw}`
+      );
   }
 }
 
@@ -2161,9 +2184,17 @@ export class ExplorerController {
 
   // "+" on the instance variable-side node, or right-click on a class row: prompt for
   // a name and add it as an instance variable of that class.
+  //
+  // The engine check lives HERE, not on the menu clauses, so it is the single answer
+  // to "do you have the engine?" for every route in: the side row's "+", the class
+  // row's context menu, the class row's "+" quick pick, and the palette. Gating the
+  // menus instead made the empty instance-variables row a dead end on a stone without
+  // the engine — a row whose only reason to exist is hosting that "+" — while the
+  // class row one line above offered the same add and routed it to the install prompt.
   async addInstVarOnClass(className: string): Promise<void> {
     const session = this.session();
     if (!session) return;
+    if (!(await this.ensureRbSupport('Adding an instance variable'))) return;
     const entered = await vscode.window.showInputBox({
       title: 'Add Instance Variable',
       prompt: `Add an instance variable to ${className}.`,
@@ -2252,7 +2283,8 @@ export class ExplorerController {
   // Both kinds are always offered. Adding an instance variable needs the refactoring
   // engine (it reshapes the class) while adding a class variable does not, but hiding
   // the instance entry on a stone without the engine would leave the user guessing;
-  // choosing it goes through the same install-or-decline prompt as the refactorings.
+  // choosing it goes through the same install-or-decline prompt as the refactorings —
+  // asked by `addInstVarOnClass` itself, so this dispatch doesn't repeat the question.
   async addVariableOnClass(className: string): Promise<void> {
     if (!this.session()) return;
     const INSTANCE = 'Instance variable';
@@ -2272,7 +2304,6 @@ export class ExplorerController {
     );
     if (pick === undefined) return;
     if (pick.label === INSTANCE) {
-      if (!(await this.ensureRbSupport('Adding an instance variable'))) return;
       await this.addInstVarOnClass(className);
       return;
     }
@@ -3065,7 +3096,9 @@ export class ExplorerController {
   // Ensure the refactoring engine is loaded, offering to install it if not.
   // Returns true when it is (now) available — re-checks rbSupportAvailable AFTER the
   // install command so a failed/declined install cleanly returns false. The single
-  // gate for every rename refactoring (ivar, method, class, class-var) + class history.
+  // gate for every rename refactoring (ivar, method, class, class-var), class history,
+  // and adding an instance variable — which, unlike the others, is NOT also gated by
+  // its `when` clauses, because the row hosting its "+" exists only to host it.
   private async ensureRbSupport(action: string): Promise<boolean> {
     const session = this.session();
     if (!session) return false;
@@ -5094,7 +5127,7 @@ export class ExplorerController {
     if (methodCount > 0) {
       void vscode.window.showWarningMessage(
         `'${category}' still holds ${methodCount} method${methodCount === 1 ? '' : 's'} — ` +
-          `move or delete ${methodCount === 1 ? 'it' : 'them'} first, then remove the category.`,
+          stillHoldsAdvice(methodCount),
       );
       return;
     }
@@ -5105,7 +5138,16 @@ export class ExplorerController {
       let result: RemoveCategoryResult;
       try {
         result = parseRemoveCategoryResult(
-          queries.removeCategory(session, className, item.isMeta, category, dictIndex),
+          queries.removeCategory(
+            session,
+            className,
+            item.isMeta,
+            category,
+            dictIndex,
+            // The same environment range the pane's own count above swept, so the
+            // server-side guard can't be narrower than the client-side one it backstops.
+            this.maxEnv(),
+          ),
         );
       } catch (e) {
         void vscode.window.showErrorMessage(

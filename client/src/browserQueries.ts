@@ -2201,6 +2201,9 @@ export function removeCategory(
   isMeta: boolean,
   category: string,
   dict?: number | string,
+  // Highest method environment to sweep — see the query. Defaults to environment 0
+  // alone, which is what every caller that does not browse higher environments wants.
+  maxEnv = 0,
 ): string {
   return sharedRemoveCategory(
     defaultQueryExecutorUsing(session),
@@ -2208,6 +2211,7 @@ export function removeCategory(
     isMeta,
     category,
     dict,
+    maxEnv,
   );
 }
 

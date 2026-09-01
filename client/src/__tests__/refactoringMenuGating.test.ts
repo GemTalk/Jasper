@@ -13,6 +13,9 @@ import * as path from 'path';
 // Three Explorer commands are deliberately NOT engine-gated: deleting a method,
 // recategorizing a method, and removing a class variable are plain image operations
 // that work without the engine.
+//
+// One command needs the engine but is gated in CODE rather than by its `when` —
+// see ENGINE_GATED_IN_CODE below.
 
 interface MenuItem {
   command?: string;
@@ -31,7 +34,6 @@ const ENGINE_DEPENDENT = [
   'gemstone.explorer.moveUpInstVar',
   'gemstone.explorer.moveDownInstVar',
   'gemstone.explorer.removeInstVar',
-  'gemstone.explorer.addInstVar',
   'gemstone.explorer.renameClassVariable',
   'gemstone.explorer.renameMethod',
   'gemstone.explorer.moveMethodToClass',
@@ -44,6 +46,16 @@ const ENGINE_DEPENDENT = [
   'gemstone.explorer.insertSuperclass',
   'gemstone.explorer.extractSuperclass',
 ] as const;
+
+// Adding an instance variable DOES reshape the class and so does need the engine,
+// but hiding it is the wrong way to say so: the empty "instance variables" row
+// exists for no other reason than to host that "+", so a `when` gate turns the row
+// into a visible dead end — one line under a class row whose own "+" offers the very
+// same add and routes it to the install prompt. The gate lives in
+// `addInstVarOnClass` instead, as `ensureRbSupport`, which every route in goes
+// through and which offers to install rather than failing on click.
+// Pinned behaviourally in explorerAddVariableFromClassRow.test.ts.
+const ENGINE_GATED_IN_CODE = ['gemstone.explorer.addInstVar'] as const;
 
 // Engine-independent Explorer commands that must stay available without it.
 const ENGINE_INDEPENDENT = [
@@ -65,6 +77,17 @@ describe('Explorer refactoring menu gating', () => {
     it(`gates every ${command} entry on the refactoring engine being available`, () => {
       for (const entry of entries) {
         expect(entry.when ?? '').toContain('gemstone.rbSupportAvailable');
+      }
+    });
+  }
+
+  for (const command of ENGINE_GATED_IN_CODE) {
+    it(`leaves ${command} on the menu and asks about the engine when clicked`, () => {
+      // A menu gate here would take the button off the row that exists to carry it.
+      const entries = itemContext.filter((m) => m.command === command);
+      expect(entries.length).toBeGreaterThan(0);
+      for (const entry of entries) {
+        expect(entry.when ?? '').not.toContain('gemstone.rbSupportAvailable');
       }
     });
   }
