@@ -70,6 +70,9 @@ const RELEASE: GemStoneVersion = {
 
 /** The disk, as the version list reports it. Tests drive it between commands. */
 let onDisk: GemStoneVersion[];
+/** What DatabaseManager reports about NFS, and the create it performs. */
+let nfsRisk: { rootPath: string; fsType: string } | undefined;
+let createDatabaseDirect: ReturnType<typeof vi.fn>;
 /** Databases the storage reports; empty unless a test makes one on disk. */
 let databases: { dirName: string; path: string; config: Record<string, string> }[];
 let deleteDownload: ReturnType<typeof vi.fn>;
@@ -97,7 +100,7 @@ function makeDeps() {
       isNetldiRunning: () => false,
       getExternalServers: () => ({}),
     },
-    databaseManager: { nfsRiskForNextDatabase: () => undefined },
+    databaseManager: { nfsRiskForNextDatabase: () => nfsRisk, createDatabaseDirect },
     getLogins: () => [],
     saveLogin: vi.fn(async () => {}),
     refreshAdminViews: vi.fn(),
@@ -120,10 +123,24 @@ beforeEach(() => {
   vi.mocked(vscode.commands.executeCommand).mockClear();
   onDisk = [{ ...RELEASE }];
   databases = [];
+  nfsRisk = undefined;
+  createDatabaseDirect = vi.fn(async () => ({
+    dirName: 'db-1',
+    path: '/root/db-1',
+    config: {
+      version: '3.7.6',
+      stoneName: 'demoStone',
+      ldiName: 'demoLdi',
+      baseExtent: 'extent0.dbf',
+    },
+  }));
 });
 
 /** The last state the panel posted, which is what the view would have drawn. */
-function lastState(): { databases: { logFiles: { name: string }[] }[] } {
+function lastState(): {
+  databases: { logFiles: { name: string }[] }[];
+  create: { nfsWarning: boolean; rootPath: string; ldiNames: string[] };
+} {
   const posted = vi.mocked(lastPanel().webview.postMessage).mock.calls;
   const states = posted.filter(
     (c) => (c[0] as { command?: string } | undefined)?.command === 'state',
@@ -182,6 +199,199 @@ describe('session commands', () => {
       'workbench.action.closeWindow',
       expect.anything(),
     );
+  });
+});
+
+describe('creating a database that the form asked for', () => {
+  const FORM = {
+    command: 'createDatabase',
+    version: '3.7.6',
+    extent: 'extent0',
+    stoneName: 'demoStone',
+    ldiName: 'demoLdi',
+    allowNfs: false,
+  };
+
+  it('passes every answer through, in order', async () => {
+    await openPanel();
+    await sendMessage(FORM);
+
+    expect(createDatabaseDirect).toHaveBeenCalledTimes(1);
+    const [version, extent, stoneName, ldiName, , parentDir, allowNfs] =
+      createDatabaseDirect.mock.calls[0];
+    expect([version, extent, stoneName, ldiName]).toEqual([
+      '3.7.6',
+      'extent0',
+      'demoStone',
+      'demoLdi',
+    ]);
+    expect(parentDir).toBeUndefined();
+    expect(allowNfs).toBe(false);
+  });
+
+  // The same thing the command path does, so a database made here is not subtly
+  // different from one made anywhere else.
+  it('adds the stone its DataCurator login, and refreshes the sidebar', async () => {
+    const deps = makeDeps() as unknown as {
+      saveLogin: ReturnType<typeof vi.fn>;
+      refreshAdminViews: ReturnType<typeof vi.fn>;
+    };
+    DatabasesPanel.show(deps as never);
+    await sendMessage({ command: 'ready' });
+
+    await sendMessage(FORM);
+
+    expect(deps.saveLogin).toHaveBeenCalledTimes(1);
+    expect(deps.refreshAdminViews).toHaveBeenCalled();
+  });
+
+  it('carries the NFS override through when the form set it', async () => {
+    nfsRisk = { rootPath: '/root', fsType: 'nfs4' };
+    await openPanel();
+
+    await sendMessage({ ...FORM, allowNfs: true });
+
+    expect(createDatabaseDirect.mock.calls[0][6]).toBe(true);
+  });
+
+  it('refuses a stone name that is already taken, without creating anything', async () => {
+    databases = [
+      {
+        dirName: 'db-9',
+        path: '/root/db-9',
+        config: {
+          version: '3.7.6',
+          stoneName: 'demoStone',
+          ldiName: 'other',
+          baseExtent: 'extent0.dbf',
+        },
+      },
+    ];
+    await openPanel();
+
+    await sendMessage(FORM);
+
+    expect(createDatabaseDirect).not.toHaveBeenCalled();
+    expect(vscode.window.showErrorMessage).toHaveBeenCalled();
+  });
+});
+
+describe('what the New Database form is offered', () => {
+  it('warns about network storage only when the root is on it', async () => {
+    await openPanel();
+    expect(lastState().create.nfsWarning).toBe(false);
+
+    nfsRisk = { rootPath: '/root', fsType: 'nfs4' };
+    DatabasesPanel.close();
+    await openPanel();
+    expect(lastState().create.nfsWarning).toBe(true);
+    expect(lastState().create.rootPath).toBe('/root');
+  });
+
+  // The name has to be free on the machine, not just among databases Jasper
+  // made — a NetLDI someone started by hand holds it just as well.
+  it('lists NetLDI names in use by anything, not only by its own databases', async () => {
+    const deps = makeDeps() as unknown as {
+      processManager: { getProcesses: () => unknown[] };
+      storage: { getDatabases: () => unknown[] };
+    };
+    deps.processManager.getProcesses = () => [
+      { type: 'netldi', name: 'handStartedLdi', pid: 1, status: 'OK', responding: true },
+    ];
+    DatabasesPanel.show(deps as never);
+    await sendMessage({ command: 'ready' });
+
+    expect(lastState().create.ldiNames).toContain('handStartedLdi');
+  });
+});
+
+describe('opening straight into the New Database form', () => {
+  // It used to be posted the instant the panel object was made — before the
+  // webview had loaded its script, let alone registered a message listener, and
+  // init() resets the form state when it does. The message was lost twice over.
+  it('waits until the webview says it is listening', async () => {
+    DatabasesPanel.show(makeDeps(), false, true);
+    const posted = () =>
+      vi
+        .mocked(lastPanel().webview.postMessage)
+        .mock.calls.filter((c) => (c[0] as { command?: string })?.command === 'beginCreate');
+
+    expect(posted()).toHaveLength(0);
+
+    await sendMessage({ command: 'ready' });
+
+    expect(posted()).toHaveLength(1);
+  });
+
+  it('does not send it when the panel was opened on the lists', async () => {
+    DatabasesPanel.show(makeDeps());
+    await sendMessage({ command: 'ready' });
+    expect(
+      vi
+        .mocked(lastPanel().webview.postMessage)
+        .mock.calls.filter((c) => (c[0] as { command?: string })?.command === 'beginCreate'),
+    ).toHaveLength(0);
+  });
+});
+
+describe('creating a database from a message', () => {
+  // This path writes a database directory and a database.yaml describing it. A
+  // message missing a field is a bug in whatever sent it, not a user mistake —
+  // half-honouring it left a database whose recorded version was "undefined".
+  it.each(['version', 'extent', 'stoneName', 'ldiName'])(
+    'refuses outright when %s is missing',
+    async (missing) => {
+      await openPanel();
+      const full: Record<string, unknown> = {
+        command: 'createDatabase',
+        version: '3.7.6',
+        extent: 'extent0',
+        stoneName: 'demoStone',
+        ldiName: 'demoLdi',
+        allowNfs: false,
+      };
+      delete full[missing];
+
+      await sendMessage(full);
+
+      expect(createDatabaseDirect).not.toHaveBeenCalled();
+      expect(vscode.window.showErrorMessage).toHaveBeenCalled();
+    },
+  );
+});
+
+describe("opening one of a database's folders", () => {
+  // `folder` arrives from the webview, so it is whitelisted rather than joined
+  // blindly — and the Extent backups root sends a nested path, which fell
+  // through the old whitelist and opened the log directory instead.
+  it.each([
+    ['log', 'log'],
+    ['conf', 'conf'],
+    ['backups', 'backups'],
+    ['backups/extents', 'backups/extents'],
+    ['../../etc', 'log'],
+  ])('opens %s as %s', async (asked, expected) => {
+    databases = [
+      {
+        dirName: 'db-1',
+        path: '/root/db-1',
+        config: {
+          version: '3.7.6',
+          stoneName: 'gs64stone',
+          ldiName: 'gs64ldi',
+          baseExtent: 'extent0.dbf',
+        },
+      },
+    ];
+    await openPanel();
+    vi.mocked(vscode.commands.executeCommand).mockClear();
+
+    await sendMessage({ command: 'openDbSubfolder', dirName: 'db-1', folder: asked });
+
+    const call = vi
+      .mocked(vscode.commands.executeCommand)
+      .mock.calls.find((c) => c[0] === 'revealFileInOS');
+    expect(String((call?.[1] as { fsPath?: string })?.fsPath)).toBe(`/root/db-1/${expected}`);
   });
 });
 
@@ -292,7 +502,10 @@ describe('Install and Remove are inverses', () => {
     });
     await openPanel();
 
-    await sendMessage({ command: 'installVersion', version: '3.7.6' });
+    // Through the button the panel actually has: Install Version… fetches the
+    // catalogue, offers what is not installed, and installs what was picked.
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValue({ label: '3.7.6' });
+    await sendMessage({ command: 'installNewVersion' });
 
     expect(deleteDownload).toHaveBeenCalledWith(
       expect.objectContaining({ version: '3.7.6', fileName: RELEASE.fileName }),
@@ -307,7 +520,10 @@ describe('Install and Remove are inverses', () => {
     });
     await openPanel();
 
-    await sendMessage({ command: 'installVersion', version: '3.7.6' });
+    // Through the button the panel actually has: Install Version… fetches the
+    // catalogue, offers what is not installed, and installs what was picked.
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValue({ label: '3.7.6' });
+    await sendMessage({ command: 'installNewVersion' });
 
     expect(deleteDownload).not.toHaveBeenCalled();
   });

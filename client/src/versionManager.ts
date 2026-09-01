@@ -161,12 +161,16 @@ export class VersionManager {
     // loop is the only place a downloaded row is otherwise produced, so without
     // this the version, and its no-network "Install (extract)" action, silently
     // vanish offline. Extracted versions are already covered by the loops above.
+    const archiveSuffix = `${this.storage.getPlatformSuffix()}.${this.storage.getDownloadExtension()}`;
     for (const [version, size] of downloaded) {
       if (catalogVersions.has(version)) continue;
       if (extractedMap.has(version)) continue;
       versions.push({
         version,
-        fileName: '',
+        // Rebuilt rather than left empty: this is the exact name
+        // getDownloadedFiles matched to find the file, and Install and Remove
+        // both need it to reach the archive on disk.
+        fileName: `GemStone64Bit${version}${archiveSuffix}`,
         url: '',
         size,
         date: '',

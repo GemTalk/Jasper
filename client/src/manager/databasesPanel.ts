@@ -217,8 +217,6 @@ interface PanelState {
 type Inbound =
   | { command: 'ready' }
   | { command: 'refresh' }
-  | { command: 'downloadVersion'; version: string }
-  | { command: 'installVersion'; version: string }
   | { command: 'extractVersion'; version: string }
   | { command: 'deleteDownload'; version: string }
   | { command: 'uninstallVersion'; version: string }
@@ -239,8 +237,6 @@ type Inbound =
       allowNfs: boolean;
     }
   | { command: 'chooseRoot' }
-  | { command: 'createDatabaseDefaults' }
-  | { command: 'createDefaultLogin'; dirName: string }
   | { command: 'deleteDatabase'; dirName: string }
   | { command: 'startDatabase'; dirName: string }
   | { command: 'stopDatabase'; dirName: string }
@@ -252,7 +248,6 @@ type Inbound =
   | { command: 'backupDatabase'; dirName: string }
   | { command: 'restartExternalServers'; dirName: string }
   | { command: 'offlineExtentBackup'; dirName: string }
-  | { command: 'installServerSupport'; dirName: string }
   | { command: 'restoreBackup'; dirName: string; path: string }
   | { command: 'openDbTerminal'; dirName: string }
   | { command: 'openDbInFinder'; dirName: string }
@@ -267,10 +262,6 @@ type Inbound =
   | { command: 'copyText'; text: string }
   | { command: 'showSessionConfiguration'; sessionId: number }
   | { command: 'editLogin'; login: string }
-  | { command: 'deleteLogin'; login: string }
-  | { command: 'duplicateLogin'; login: string }
-  | { command: 'createLogin' }
-  | { command: 'openSettings' }
   | { command: 'copyNetldiHost'; dirName: string; name: string }
   | { command: 'deleteStaleLock'; dirName: string; name: string }
   | { command: 'closePanel' };
@@ -321,6 +312,8 @@ export class DatabasesPanel {
   // rather than each starting their own.
   private catalogFetch: Promise<CatalogEntry[]> | undefined;
   private coalesceTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Open straight into the New Database form, once the webview is listening. */
+  private openOnCreateForm = false;
   private rebuilding = false;
   private rebuildAgain = false;
   private staleWhileHidden = false;
@@ -328,7 +321,6 @@ export class DatabasesPanel {
   // change under a running stone, so it is read and parsed once per version and
   // kept (an unreadable file caches as an empty map, so a remote stone whose
   // product tree is not on this machine is not re-probed on every load).
-  private configDescCache = new Map<string, Map<string, string>>();
 
   /**
    * Publishes whether a panel is open, so the Dictionaries title bar can offer
@@ -382,9 +374,10 @@ export class DatabasesPanel {
     );
     DatabasesPanel.current = new DatabasesPanel(panel, deps);
     DatabasesPanel.setOpenContext(true);
-    // Queued behind the first state, which the constructor asks for: the view
-    // needs something to draw the form over.
-    if (startCreating) void panel.webview.postMessage({ command: 'beginCreate' });
+    // Held until the webview says `ready`. Posting it here would be shouting at a
+    // frame that has not loaded its script yet — and init() resets the form state
+    // when it does, so the message would be lost twice over.
+    DatabasesPanel.current.openOnCreateForm = startCreating;
   }
 
   private constructor(
@@ -542,6 +535,11 @@ export class DatabasesPanel {
     switch (msg.command) {
       case 'ready':
         await this.postState();
+        // Now the view is listening and has a state to draw the form over.
+        if (this.openOnCreateForm) {
+          this.openOnCreateForm = false;
+          void this.panel.webview.postMessage({ command: 'beginCreate' });
+        }
         return;
       case 'refresh':
         // Refresh is the one place that asks the network again: everything the
@@ -551,7 +549,6 @@ export class DatabasesPanel {
         // Drop the per-version system.conf descriptions too, so a version whose
         // product tree was not present at first read (an as-yet-uninstalled
         // version) picks up its tooltips once it is installed and refreshed.
-        this.configDescCache.clear();
         // The WSL answers are cached, and the OS checklist reads them — so a
         // refresh has to forget them, or a machine stays "WSL not reachable"
         // after the user has made it reachable.
@@ -565,12 +562,6 @@ export class DatabasesPanel {
 
       // Versions — reuse the existing commands, passing a synthetic VersionItem
       // ({ version }) since those handlers only read `item.version`.
-      case 'downloadVersion':
-        await this.runVersionCommand('gemstone.downloadVersion', msg.version);
-        return;
-      case 'installVersion':
-        await this.installVersion(msg.version);
-        return;
       case 'extractVersion':
         await this.runVersionCommand('gemstone.extractVersion', msg.version);
         return;
@@ -618,23 +609,6 @@ export class DatabasesPanel {
       case 'createDatabase':
         await this.createDatabase(msg);
         return;
-      case 'createDatabaseDefaults':
-        try {
-          await vscode.commands.executeCommand('gemstone.createDatabaseDefaults');
-        } catch (e) {
-          // Told before the redraw, deliberately. The panel refreshes either way
-          // — the database really was created — and a coach step that ticks over
-          // on a redraw would read a failed start as progress.
-          this.actionFailed(e);
-        }
-        await this.postState();
-        return;
-      case 'createDefaultLogin':
-        await vscode.commands.executeCommand('gemstone.createDefaultLogin', {
-          dirName: msg.dirName,
-        });
-        await this.postState();
-        return;
       case 'deleteDatabase':
         await this.runDbCommand('gemstone.deleteDatabase', msg.dirName, 'database');
         return;
@@ -669,18 +643,14 @@ export class DatabasesPanel {
         await this.runDbCommand('gemstone.stopNetldi', msg.dirName, 'netldi');
         return;
       case 'replaceExtent':
-        // Carry the extent the user picked in the dropdown through to the guarded
-        // replace flow, so its confirmation starts on that extent rather than
-        // forgetting the choice and reopening on the current one.
-        await this.runDbCommand('gemstone.replaceExtent', msg.dirName, 'stone', true, {
-          preselect: msg.extent,
-        });
-        return;
-      case 'installServerSupport':
-        // The command resolves the session it needs and says so when there is
-        // none, so the panel offers it per database without second-guessing.
-        await vscode.commands.executeCommand('gemstone.installServerSupport');
-        await this.postState();
+        // The dropdown is the way in, not the answer: gemstone.replaceExtent runs
+        // its own guarded pick (which also offers browsing for an extent from
+        // elsewhere) and confirms destructively before touching anything. The
+        // chosen value is deliberately not carried over — the command pre-picks
+        // the database's current extent, and quietly re-pointing that at a value
+        // this panel supplied would make the confirmation describe something the
+        // user had not seen in the command's own list.
+        await this.runDbCommand('gemstone.replaceExtent', msg.dirName, 'stone');
         return;
       case 'backupDatabase':
         // The command resolves the live session itself and says so when there
@@ -715,20 +685,6 @@ export class DatabasesPanel {
         return;
       case 'editLogin':
         await this.loginCommand('gemstone.editLogin', msg.login);
-        return;
-      case 'deleteLogin':
-        await this.loginCommand('gemstone.deleteLogin', msg.login);
-        return;
-      case 'duplicateLogin':
-        await this.loginCommand('gemstone.duplicateLogin', msg.login);
-        return;
-      case 'openSettings':
-        // Extensions link to Settings rather than reimplementing it.
-        await vscode.commands.executeCommand('workbench.action.openSettings', 'gemstone.rootPath');
-        return;
-      case 'createLogin':
-        await vscode.commands.executeCommand('gemstone.addLogin');
-        await this.postState();
         return;
       case 'chooseRoot':
         await this.chooseRootPath();
@@ -1096,6 +1052,21 @@ export class DatabasesPanel {
     ldiName: string;
     allowNfs: boolean;
   }): Promise<void> {
+    // A create message with a field missing is not a user mistake — it is a bug
+    // in whatever sent it. Refused outright rather than half-honoured, because
+    // this path writes a database directory and a database.yaml describing it.
+    for (const [field, value] of Object.entries({
+      version: msg.version,
+      extent: msg.extent,
+      stoneName: msg.stoneName,
+      ldiName: msg.ldiName,
+    })) {
+      if (typeof value !== 'string' || value.length === 0) {
+        this.failed('create the database', new Error(`No ${field} was given.`));
+        return;
+      }
+    }
+
     // The form disables Create while an answer is unusable, but a refresh can
     // land between that check and the click — so the names are checked again
     // here, where the answer is acted on.
@@ -1199,7 +1170,9 @@ export class DatabasesPanel {
   private async openDbSubfolder(dirName: string, folder: string): Promise<void> {
     const db = this.lastDatabases.find((d) => d.dirName === dirName);
     if (!db) return;
-    const sub = folder === 'conf' || folder === 'backups' ? folder : 'log';
+    // Whitelisted rather than joined blindly: `folder` arrives from the webview.
+    const ALLOWED = ['conf', 'backups', 'backups/extents', 'log'];
+    const sub = ALLOWED.includes(folder) ? folder : 'log';
     await vscode.commands.executeCommand(
       'revealFileInOS',
       vscode.Uri.file(path.join(db.path, sub)),

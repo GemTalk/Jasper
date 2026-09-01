@@ -832,3 +832,74 @@ describe('pinging a session', () => {
     expect(rows[1].querySelector('.ping-result')).not.toBeNull();
   });
 });
+
+describe('every way into the New Database form', () => {
+  // All three openings must show the form. Two of them used to post a bare
+  // `createDatabase` message, which the host reads as a filled-in form — every
+  // field arrived undefined and a database directory was written describing a
+  // version of "undefined".
+  it.each([
+    ['the panel header', () => mount(state({ databases: [database()] }))],
+    ['the Databases section header', () => mount(state({ databases: [database()] }))],
+    ['the empty state', () => mount(state({ databases: [] }))],
+  ])('opens the form and asks the host for nothing — %s', (_where, setup) => {
+    setup();
+    const buttons = root.querySelectorAll<HTMLElement>('[data-action="beginCreate"]');
+    expect(buttons.length).toBeGreaterThan(0);
+    buttons[buttons.length - 1].click();
+    expect(root.querySelector('[data-cf-field="stoneName"]')).not.toBeNull();
+    expect(host.postMessage).not.toHaveBeenCalled();
+  });
+
+  // With nothing installed there is no version to pick, so the way out is
+  // Install — which the Versions section leads with in exactly that case.
+  it('is not offered at all when no release is installed', () => {
+    mount(
+      state({
+        versions: [],
+        databases: [],
+        create: { ...(state().create as object), versions: [] },
+      }),
+    );
+    expect(root.querySelector('[data-action="beginCreate"]')).toBeNull();
+    const databases = root.querySelector('details.section[data-section="databases"] .empty');
+    expect(databases?.textContent).toContain('install a GemStone release first');
+  });
+
+  it('has no button left that posts a create without the answers', () => {
+    mount(state({ databases: [database()] }));
+    expect(root.querySelector('[data-action="createDatabase"]')).toBeNull();
+    mount(state({ databases: [] }));
+    expect(root.querySelector('[data-action="createDatabase"]')).toBeNull();
+  });
+});
+
+describe('a Windows machine with no WSL', () => {
+  // There is no local server there, so nothing is ever extracted, downloaded or
+  // local — but a release can still have its Windows *client* installed. The
+  // table was permanently empty, and the client actions, which only exist on a
+  // rendered row, were unreachable.
+  const CLIENT_ONLY = {
+    version: '3.7.5',
+    fileName: '',
+    url: '',
+    size: 0,
+    date: '2026-03-24',
+    downloaded: false,
+    extracted: false,
+    clientExtracted: true,
+  };
+
+  it('still lists a release whose Windows client is installed', () => {
+    mount(state({ windows: true, versions: [CLIENT_ONLY] }));
+    const row = root.querySelector('.versions-table tbody tr');
+    expect(row).not.toBeNull();
+    expect(row?.textContent).toContain('3.7.5');
+  });
+
+  it('reaches the Windows client actions, which only exist on a row', () => {
+    mount(state({ windows: true, versions: [CLIENT_ONLY] }));
+    expect(root.querySelector('[data-action="openWindowsClientFolder"]')).not.toBeNull();
+    expect(root.querySelector('[data-action="deleteWindowsClient"]')).not.toBeNull();
+  });
+});

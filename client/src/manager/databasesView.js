@@ -339,7 +339,9 @@
   }
 
   function renderVersions(versions, open) {
-    const onDisk = versions.filter((v) => v.extracted || v.downloaded || v.local);
+    const onDisk = versions.filter(
+      (v) => v.extracted || v.downloaded || v.local || v.clientExtracted,
+    );
     const installed = versionsInstalledCount(versions);
     // The two ways to get a release carry their words. They were icon-only, which
     // read as decoration: three unlabelled glyphs in a header is not an answer to
@@ -795,7 +797,10 @@
     </details>`;
   }
 
-  function renderDatabases(databases, open, currentDir) {
+  // `canCreate` is false when no release is installed: a form whose only choice
+  // is empty cannot be completed, so the way out is Install, which the Versions
+  // section leads with in exactly that case.
+  function renderDatabases(databases, open, currentDir, canCreate) {
     // The database the current session works in leads the column; the others
     // follow as a list, so the pair of top columns read the same way.
     const lead = currentDir ? databases.find((d) => d.dirName === currentDir) : undefined;
@@ -805,16 +810,18 @@
         (rest.length
           ? `<div class="col-rest">${rest.map((d) => renderDbItem(d, false)).join('')}</div>`
           : '')
-      : `<div class="empty">No databases yet.<div>${btn('createDatabase', 'New Database…', 'plus', 'btn-secondary')}</div></div>`;
+      : canCreate
+        ? `<div class="empty">No databases yet.<div>${btn('beginCreate', 'New Database…', 'plus', 'btn-primary')}</div></div>`
+        : `<div class="empty">No databases yet — install a GemStone release first.</div>`;
     return section(
       {
         key: 'databases',
         title: 'Databases',
         desc: lead ? `${lead.stoneName} · ${lead.dirName}` : undefined,
         count: databases.length,
-        actions: btn('createDatabase', 'New Database…', 'plus', 'btn-secondary', {
-          iconOnly: true,
-        }),
+        actions: canCreate
+          ? btn('beginCreate', 'New Database…', 'plus', 'btn-secondary', { iconOnly: true })
+          : '',
         open,
       },
       body,
@@ -851,7 +858,7 @@
     // a release leads. Once something is installed the databases lead instead and
     // versions sit below, where you go back for a new release.
     if (nothingInstalled) out.push({ html: renderVersions(state.versions, true) });
-    out.push({ html: renderDatabases(state.databases, true, currentDir) });
+    out.push({ html: renderDatabases(state.databases, true, currentDir, !nothingInstalled) });
     if (!nothingInstalled) out.push({ html: renderVersions(state.versions, true) });
     return out;
   }

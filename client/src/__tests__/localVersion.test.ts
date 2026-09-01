@@ -212,6 +212,35 @@ describe('VersionManager.deleteDownload', () => {
   });
 });
 
+describe('VersionManager: a downloaded archive the catalogue does not list', () => {
+  // Every downloaded archive lands here when the download site is unreachable —
+  // the catalogue is empty, so the loop that normally produces a "downloaded"
+  // row never runs. Such rows used to carry no file name at all, which broke
+  // both actions on exactly the row the loop exists to preserve: Install
+  // resolved to the root directory, and Remove read the empty name as "never
+  // downloaded" and silently did nothing.
+  onSupportedPosixIt('names the archive, so Install and Remove can reach it', async () => {
+    const storage = new SysadminStorage();
+    const manager = new VersionManager(storage);
+
+    const suffix = storage.getPlatformSuffix();
+    const ext = storage.getDownloadExtension();
+    const archive = `GemStone64Bit3.7.6${suffix}.${ext}`;
+    fs.writeFileSync(path.join(tmpDir, archive), 'not really an archive');
+
+    // Offline: the catalogue answers nothing.
+    vi.spyOn(manager as unknown as FetchUrlHost, 'fetchUrl').mockResolvedValue('');
+
+    const versions = await manager.fetchAvailableVersions();
+    const row = versions.find((v) => v.version === '3.7.6');
+
+    expect(row).toBeDefined();
+    expect(row!.downloaded).toBe(true);
+    expect(row!.extracted).toBe(false);
+    expect(row!.fileName).toBe(archive);
+  });
+});
+
 describe('VersionManager.fetchAvailableVersions', () => {
   onSupportedPosixIt('includes local symlinked versions in the list', async () => {
     const storage = new SysadminStorage();
