@@ -1,6 +1,6 @@
 import { posix } from 'path';
 import { GemStoneProcess } from './sysadminTypes';
-import { versionsMatch } from './versionMatch';
+import { versionsMatch } from './manager/versionMatch';
 
 /**
  * A `stoned` / `netldid` process found by scanning the host's process table,

@@ -145,12 +145,12 @@ export const NEVER_CANCELLED: OmniCancel = { isCancelled: false };
  * A provider's report that its OWN fetch ceiling — not the display cap — bounded the results, so the
  * row count is a floor rather than a total.
  *
- * Only providers with a server-side scan bound have one (today: methods, whose scan short-circuits at
- * `maxServerScan`); the rest scan exhaustively and cap client-side, so they never report. The
+ * Only providers with a server-side scan bound have one (today: methods, whose scan hands back at most
+ * `maxServerScan` rows); the rest scan exhaustively and cap client-side, so they never report. The
  * engine cannot infer this: the display cap is its own number, and a count below the ceiling proves
  * nothing once the client-side re-filter has dropped rows. Without the report the footer claims an
  * exact total at the very moment the results were cut off, and the UI says nothing about the wall the
- * user just hit (triage #14).
+ * user just hit.
  *
  * It carries the scope and the number so the UI can name both ("Methods stopped after 200") rather
  * than show an anonymous warning — and so any provider that gains a ceiling later is covered without
@@ -205,8 +205,9 @@ export interface OmniProvider {
   /** Optional one-time load when the picker opens (load-once providers cache their corpus here). */
   prime?(token: OmniCancel): Promise<void> | void;
   /** Rebuild a cached corpus from scratch (drop + reload). No-op for per-query providers; used on a
-   *  session sync (commit/abort) when changes from outside this UI — including other sessions — may
-   *  have landed. Defaults to `prime` when a provider doesn't override it. */
+   *  session sync (commit/abort) and on an explicit user refresh, when changes from outside this UI —
+   *  including other sessions, and anything done by executing code — may have landed. Defaults to
+   *  `prime` when a provider doesn't override it. */
   reprime?(token: OmniCancel): Promise<void> | void;
   /** Fold a single known local change into the cached corpus without a full reload. Returns true if
    *  the corpus actually changed (a new or removed name), so the caller can decide whether to

@@ -1,5 +1,10 @@
 import { vi } from 'vitest';
-import { URI as Uri } from 'vscode-uri';
+import { URI as Uri, Utils as UriUtils } from 'vscode-uri';
+
+// Real `vscode.Uri` carries a static `joinPath`; `vscode-uri` puts the same
+// function on `Utils` instead. Bridged here so a panel that builds its webview's
+// localResourceRoots can be constructed under test at all.
+(Uri as unknown as { joinPath: typeof UriUtils.joinPath }).joinPath = UriUtils.joinPath;
 
 export { Uri };
 
@@ -62,6 +67,7 @@ export class TreeItem {
   contextValue?: string;
   command?: unknown;
   collapsibleState?: number;
+  checkboxState?: number;
 
   constructor(label: string, collapsibleState?: number) {
     this.label = label;
@@ -73,6 +79,11 @@ export const TreeItemCollapsibleState = {
   None: 0,
   Collapsed: 1,
   Expanded: 2,
+};
+
+export const TreeItemCheckboxState = {
+  Unchecked: 0,
+  Checked: 1,
 };
 
 // ── ThemeIcon mock ─────────────────────────────────────────
@@ -185,6 +196,12 @@ function createMockWebview() {
     html: '',
     postMessage: vi.fn(),
     onDidReceiveMessage: vi.fn((_handler: unknown) => ({ dispose: () => {} })),
+    // A panel that ships its own assets (a font, an image) rewrites their paths
+    // through this before writing its HTML. The real one returns a
+    // `vscode-webview://` URL; the identity here is enough for a test asserting
+    // on behaviour rather than on the exact scheme.
+    asWebviewUri: vi.fn((uri: Uri) => uri),
+    cspSource: 'vscode-webview:',
   };
 }
 
@@ -313,6 +330,8 @@ export const window = {
   showWarningMessage: vi.fn(),
   createTreeView: vi.fn(() => ({
     onDidChangeVisibility: new EventEmitter<{ visible: boolean }>().event,
+    onDidChangeCheckboxState: new EventEmitter<{ items: [unknown, number][] }>().event,
+    reveal: vi.fn(),
     dispose: () => {},
   })),
   registerFileDecorationProvider: vi.fn(() => ({ dispose: () => {} })),
@@ -395,12 +414,15 @@ export const window = {
   // Controllable low-level InputBox, same shape and lifecycle rules as
   // createQuickPick above. Fire the registered handlers from a test with
   // `__type(text)` (a keystroke — sets `value` and fires onDidChangeValue),
-  // `__accept()` (Enter) and `__hide()` (Escape). Grab the created instance with
+  // `__accept()` (Enter), `__hide()` (Escape) and `__clickAway()` (focus moves
+  // to something else in the window). Grab the created instance with
   // `vi.mocked(vscode.window.createInputBox).mock.results.at(-1).value`.
   //
   // The Enter/Escape distinction is the point: real VS Code fires onDidHide for
   // BOTH, and onDidAccept only for Enter — so a caller that wants to tell an
-  // accepted edit from an abandoned one has to track that itself.
+  // accepted edit from an abandoned one has to track that itself. Losing focus
+  // hides the box too — a third way to reach the same onDidHide — unless the box
+  // sets `ignoreFocusOut`, which is what `__clickAway()` honours.
   createInputBox: vi.fn(() => {
     let onChange: ((value: string) => void) | undefined;
     let onAccept: (() => void | Promise<void>) | undefined;
@@ -443,6 +465,9 @@ export const window = {
         await onAccept?.();
       },
       __hide: () => fireHide(),
+      __clickAway: () => {
+        if (!box.ignoreFocusOut) fireHide();
+      },
     };
     return box;
   }),
@@ -663,10 +688,18 @@ export class Selection extends Range {
 }
 
 export class Location {
+  public readonly range: Range;
+  // The real API normalizes a Position into an empty Range, and callers rely on
+  // `location.range.start` always being there — so the mock must too.
   constructor(
     public readonly uri: Uri,
-    public readonly range: Position | Range,
-  ) {}
+    rangeOrPosition: Position | Range,
+  ) {
+    this.range =
+      rangeOrPosition instanceof Range
+        ? rangeOrPosition
+        : new Range(rangeOrPosition, rangeOrPosition);
+  }
 }
 
 export class CodeActionKind {
@@ -747,6 +780,7 @@ export const languages = {
   registerHoverProvider: vi.fn(() => ({ dispose: () => {} })),
   registerCompletionItemProvider: vi.fn(() => ({ dispose: () => {} })),
   registerCodeLensProvider: vi.fn(() => ({ dispose: () => {} })),
+  registerInlayHintsProvider: vi.fn(() => ({ dispose: () => {} })),
   setTextDocumentLanguage: vi.fn(),
   createDiagnosticCollection: vi.fn((_name?: string) => createMockDiagnosticCollection()),
   getDiagnostics: vi.fn((_uri?: unknown) => [] as Diagnostic[]),
@@ -835,7 +869,28 @@ export const CompletionItemKind = {
 
 export const debug = {
   breakpoints: [] as unknown[],
-  onDidChangeBreakpoints: vi.fn(() => ({ dispose: () => {} })),
+  activeDebugSession: undefined as unknown,
+  // Declares its listener parameter so a test can recover the registered handler
+  // from mock.calls and drive the manager the way VS Code does.
+  onDidChangeBreakpoints: vi.fn(
+    (
+      _listener: (e: {
+        added: readonly unknown[];
+        removed: readonly unknown[];
+        changed: readonly unknown[];
+      }) => void,
+    ) => ({ dispose: () => {} }),
+  ),
+  onDidStartDebugSession: vi.fn(() => ({ dispose: () => {} })),
+  onDidTerminateDebugSession: vi.fn(() => ({ dispose: () => {} })),
+  // Mirror the real API's side effect on `debug.breakpoints`, so a test can
+  // drive the manager the way VS Code does and then read the list back.
+  addBreakpoints: vi.fn((bps: unknown[]) => {
+    debug.breakpoints = [...debug.breakpoints, ...bps];
+  }),
+  removeBreakpoints: vi.fn((bps: unknown[]) => {
+    debug.breakpoints = debug.breakpoints.filter((bp) => !bps.includes(bp));
+  }),
   startDebugging: vi.fn(),
   registerDebugAdapterDescriptorFactory: vi.fn(() => ({ dispose: () => {} })),
   registerDebugConfigurationProvider: vi.fn(() => ({ dispose: () => {} })),
@@ -853,10 +908,51 @@ export class SourceBreakpoint extends Breakpoint {
   constructor(
     public location: Location,
     enabled = true,
+    condition?: string,
+    hitCondition?: string,
+    logMessage?: string,
+  ) {
+    super();
+    this.enabled = enabled;
+    this.condition = condition;
+    this.hitCondition = hitCondition;
+    this.logMessage = logMessage;
+  }
+}
+
+// A breakpoint named rather than located — what the Breakpoints panel's `+`
+// button creates. Jasper only implements SourceBreakpoint, so it warns on these.
+export class FunctionBreakpoint extends Breakpoint {
+  constructor(
+    public functionName: string,
+    enabled = true,
   ) {
     super();
     this.enabled = enabled;
   }
+}
+
+// ── Inlay hint mock ──────────────────────────────────────
+
+export const InlayHintKind = {
+  Type: 1,
+  Parameter: 2,
+};
+
+export class InlayHintLabelPart {
+  tooltip?: unknown;
+  command?: unknown;
+  constructor(public value: string) {}
+}
+
+export class InlayHint {
+  paddingLeft?: boolean;
+  paddingRight?: boolean;
+  constructor(
+    public position: Position,
+    public label: string | InlayHintLabelPart[],
+    public kind?: number,
+  ) {}
 }
 
 // ── Test API mock ────────────────────────────────────────

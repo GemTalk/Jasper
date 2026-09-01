@@ -2,11 +2,11 @@ import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as vscode from 'vscode';
-import { SysadminStorage } from './sysadminStorage';
-import { GemStoneDatabase, GemStoneProcess } from './sysadminTypes';
-import { DEFAULT_GS_PW } from './loginTypes';
-import { appendSysadmin, showSysadmin } from './sysadminChannel';
-import { needsWsl, windowsPathToWsl, wslSpawn, wslExecSync } from './wslBridge';
+import { SysadminStorage } from '../sysadminStorage';
+import { GemStoneDatabase, GemStoneProcess } from '../sysadminTypes';
+import { DEFAULT_GS_PW } from '../loginTypes';
+import { appendSysadmin, showSysadmin } from '../sysadminChannel';
+import { needsWsl, windowsPathToWsl, wslSpawn, wslExecSync } from '../wslBridge';
 import { versionsMatch } from './versionMatch';
 import {
   ExternalServer,
@@ -18,8 +18,8 @@ import {
   parseServerEnvironment,
   pickExternalServer,
   withServerEnvironment,
-} from './externalServerScan';
-import { explainMissingInstall, explainStartFailure } from './startFailureMessage';
+} from '../externalServerScan';
+import { explainMissingInstall, explainStartFailure } from '../startFailureMessage';
 
 /** Ceiling on the `ps` calls the external-server scan makes. They run
  *  synchronously from the Databases tree's getChildren, on the extension host's

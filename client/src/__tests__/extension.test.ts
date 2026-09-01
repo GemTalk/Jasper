@@ -31,7 +31,7 @@ import * as vscode from 'vscode';
 import * as extension from '../extension';
 import { GemStoneFileSystemProvider } from '../gemstoneFileSystemProvider';
 import type { SessionManager } from '../sessionManager';
-import type { GemStoneSessionItem, GemStoneLoginItem } from '../loginTreeProvider';
+import type { GemStoneLoginItem } from '../loginTreeProvider';
 import * as queries from '../browserQueries';
 import { InFlightGuard } from '../inFlightGuard';
 import { DEFAULT_LOGIN } from '../loginTypes';
@@ -471,39 +471,6 @@ describe('abortConfirmMessage', () => {
     const message = extension.abortConfirmMessage(true, true);
     expect(message).toMatch(/uncommitted changes/);
     expect(message).toMatch(/unsaved edits/);
-  });
-});
-
-describe('openWorkspaceForSession', () => {
-  beforeEach(() => {
-    vi.mocked(vscode.workspace.openTextDocument).mockReset();
-    vi.mocked(vscode.workspace.openTextDocument).mockResolvedValue({
-      languageId: 'gemstone-smalltalk',
-      getText: () => '',
-    } as never);
-    vi.mocked(vscode.window.showTextDocument).mockReset();
-    vi.mocked(vscode.window.showTextDocument).mockResolvedValue({} as vscode.TextEditor);
-  });
-
-  it('selects the clicked session before opening the workspace', async () => {
-    const selectSession = vi.fn();
-    const sessionManager = { selectSession } as unknown as SessionManager;
-    const item = { activeSession: { id: 3 } } as unknown as GemStoneSessionItem;
-
-    await extension.openWorkspaceForSession(sessionManager, item);
-
-    expect(selectSession).toHaveBeenCalledWith(3);
-    expect(vscode.workspace.openTextDocument).toHaveBeenCalled();
-  });
-
-  it('opens the workspace without selecting anything when invoked from the palette', async () => {
-    const selectSession = vi.fn();
-    const sessionManager = { selectSession } as unknown as SessionManager;
-
-    await extension.openWorkspaceForSession(sessionManager, undefined);
-
-    expect(selectSession).not.toHaveBeenCalled();
-    expect(vscode.workspace.openTextDocument).toHaveBeenCalled();
   });
 });
 

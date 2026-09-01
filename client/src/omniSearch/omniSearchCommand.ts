@@ -42,7 +42,7 @@ import { createLiteralsProvider } from './providers/literalsProvider';
 import { createCategoriesProvider } from './providers/categoriesProvider';
 import { ReferenceView } from './omniEngine';
 import { referenceRequestFor, methodRowsToResults } from './references';
-import { OmniSearchPanel } from './omniSearchPanel';
+import { OmniSearchPanel, OmniPanelDeps } from './omniSearchPanel';
 import { OmniSearchViewProvider, OmniViewContext, OMNI_VIEW_ID } from './omniSearchViewProvider';
 
 /** Where a result should open. The docked panel view passes nothing (open in the active group — the
@@ -219,9 +219,7 @@ export function buildViewContextResolver(
   sessionManager: SessionManager,
 ): () => Promise<OmniViewContext | null> {
   return async () => {
-    const sessions = sessionManager.getSessions();
-    const session =
-      sessionManager.getSelectedSession() ?? (sessions.length === 1 ? sessions[0] : undefined);
+    const session = currentSession(sessionManager);
     if (!session) return null;
     const config = readOmniConfig(vscode.workspace.getConfiguration('gemstone.omniSearch'));
     return {
@@ -248,6 +246,43 @@ export function buildViewContextResolver(
   };
 }
 
+/** The editor-tab Spotter's session-bound deps. Built both when the Spotter is opened and when the
+ *  selected session changes under an open one, so the two paths cannot drift. */
+export function buildSpotterDeps(session: ActiveSession): OmniPanelDeps {
+  const config = readOmniConfig(vscode.workspace.getConfiguration('gemstone.omniSearch'));
+  return {
+    sessionId: session.id,
+    providers: buildProviders(session, config.enabledCategories),
+    config,
+    resolveReferences: resolveReferencesUsing(session),
+    // When pinned the Spotter stays open, so results open BESIDE it as a regular (non-preview)
+    // source editor (preserveFocus keeps you in the field for Ctrl+Enter); unpinned it behaves like
+    // the dialog and opens in the active group (a preview tab is fine — the dialog dismisses).
+    activate: (result, opts) =>
+      runOmniAction(
+        result.action,
+        buildOmniHandlers(
+          opts.beside
+            ? {
+                viewColumn: vscode.ViewColumn.Beside,
+                preserveFocus: opts.preserveFocus,
+                preview: false,
+              }
+            : undefined,
+        ),
+      ),
+    previewSource: buildPreviewSource(session),
+    onError: (message) => vscode.window.showErrorMessage(`GemStone Search: ${message}`),
+  };
+}
+
+/** The session both hosts search: the selected one, or the sole session when nothing is selected yet.
+ *  Never prompts — it answers what IS current, for code reacting to a change rather than opening a UI. */
+function currentSession(sessionManager: SessionManager): ActiveSession | undefined {
+  const sessions = sessionManager.getSessions();
+  return sessionManager.getSelectedSession() ?? (sessions.length === 1 ? sessions[0] : undefined);
+}
+
 export async function runOmniSearch(
   sessionManager: SessionManager,
   viewProvider?: OmniSearchViewProvider,
@@ -258,34 +293,7 @@ export async function runOmniSearch(
   if (ui === 'spotter') {
     const session = await sessionManager.resolveSession();
     if (!session) return;
-
-    const config = readOmniConfig(vscode.workspace.getConfiguration('gemstone.omniSearch'));
-    const providers = buildProviders(session, config.enabledCategories);
-
-    OmniSearchPanel.show({
-      sessionId: session.id,
-      providers,
-      config,
-      resolveReferences: resolveReferencesUsing(session),
-      // When pinned the Spotter stays open, so results open BESIDE it as a regular (non-preview)
-      // source editor (preserveFocus keeps you in the field for Ctrl+Enter); unpinned it behaves like
-      // the dialog and opens in the active group (a preview tab is fine — the dialog dismisses).
-      activate: (result, opts) =>
-        runOmniAction(
-          result.action,
-          buildOmniHandlers(
-            opts.beside
-              ? {
-                  viewColumn: vscode.ViewColumn.Beside,
-                  preserveFocus: opts.preserveFocus,
-                  preview: false,
-                }
-              : undefined,
-          ),
-        ),
-      previewSource: buildPreviewSource(session),
-      onError: (message) => vscode.window.showErrorMessage(`GemStone Search: ${message}`),
-    });
+    OmniSearchPanel.show(buildSpotterDeps(session));
     return;
   }
 
@@ -388,6 +396,15 @@ export function registerOmniSearch(
     const nowActive = sessionManager.getSessions().length > 0;
     syncStatus();
     maybeTip();
+    // Both hosts hold an engine bound to ONE session, and a webview full of that session's results.
+    // Re-point (or, with nothing left to search, blank) them so a search never answers out of the
+    // session the user just left (issue #517). The panel view resolves its own session; the Spotter
+    // is handed a thunk so nothing is built when no Spotter is open.
+    void viewProvider.onSessionSelectionChanged();
+    OmniSearchPanel.onSessionSelectionChanged(() => {
+      const session = currentSession(sessionManager);
+      return session ? buildSpotterDeps(session) : null;
+    });
     if (nowActive && !hadSession) {
       const ui = vscode.workspace
         .getConfiguration('gemstone.omniSearch')
@@ -418,6 +435,12 @@ export function registerOmniSearch(
     vscode.commands.registerCommand('gemstone.search', () =>
       runOmniSearch(sessionManager, viewProvider),
     ),
+    // The ⟳ in the panel title bar, and a palette entry. Sent to BOTH hosts: only one is in use for a
+    // given `ui` setting, and each no-ops when it has nothing open, so there is nothing to branch on.
+    vscode.commands.registerCommand('gemstone.search.refresh', async () => {
+      await viewProvider.refresh();
+      OmniSearchPanel.refresh();
+    }),
   );
 
   // Both class hooks fold the same way — re-fetch just that class name and reconcile the corpus.

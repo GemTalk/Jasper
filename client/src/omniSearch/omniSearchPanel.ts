@@ -19,6 +19,7 @@ import { revealTestForResult } from './omniActions';
 import {
   configMessage,
   dispatchEngineMessage,
+  NO_SESSION_MESSAGE,
   renderOmniHtml,
   resultsMessage,
 } from './omniSearchShared';
@@ -56,12 +57,17 @@ type OmniInbound =
   | { command: 'openReference'; refId: number }
   | { command: 'back' }
   | { command: 'preview'; id: number }
+  | { command: 'refresh' }
   | { command: 'close' };
 
 export class OmniSearchPanel {
   private static current: OmniSearchPanel | undefined;
   private readonly panel: vscode.WebviewPanel;
-  private readonly engine: ReturnType<typeof createOmniEngine>;
+  // Not readonly, and not always there: `rebindTo` replaces it when the Spotter is pointed at another
+  // session, and `clearSession` drops it when the last session logs out. Undefined IS the gate that
+  // stops `onMessage` answering out of a session that no longer exists — the Spotter's equivalent of
+  // the docked provider's `ensureEngine` check.
+  private engine: ReturnType<typeof createOmniEngine> | undefined;
   private disposables: vscode.Disposable[] = [];
   // Dialog vs. pinned. Unpinned (default) makes the Spotter behave like the Phase-1 QuickPick: it
   // closes on focus-out and on picking a result. Pinned keeps it open and switches activation to
@@ -73,22 +79,20 @@ export class OmniSearchPanel {
   private hasBeenActive = false;
 
   /** Open (or reveal) the Spotter. Only one exists at a time. A second invocation for the SAME
-   *  session just refocuses it; one for a DIFFERENT session replaces it, because a Spotter is bound
-   *  to its session (see below) and can't be re-pointed in place. */
+   *  session just refocuses it; one for a DIFFERENT session re-points it at that session's deps. */
   static show(deps: OmniPanelDeps): void {
     const existing = OmniSearchPanel.current;
     if (existing) {
-      if (existing.deps.sessionId === deps.sessionId) {
-        // Same session: bring the open Spotter forward and refocus its field.
-        existing.panel.reveal(existing.panel.viewColumn);
-        existing.panel.webview.postMessage({ command: 'focusInput' });
-        return;
+      if (existing.deps.sessionId !== deps.sessionId) {
+        // Different session: the open Spotter's engine — and the providers, activation and preview
+        // inside it — came from the OLD session's `deps`, so a bare reveal would keep searching and
+        // opening against the previous session with no sign anything is wrong (the reported
+        // two-session bug). Re-point it, which also clears the old session's results off the screen.
+        existing.rebindTo(deps);
       }
-      // Different session: the open Spotter's engine (and its providers, activation and preview) was
-      // built once from the OLD session's `deps` in the constructor and can't be re-pointed here, so a
-      // bare reveal would keep searching and opening against the previous session with no sign
-      // anything is wrong. Replace it with a Spotter bound to the new session's deps.
-      existing.dispose();
+      existing.panel.reveal(existing.panel.viewColumn);
+      existing.panel.webview.postMessage({ command: 'focusInput' });
+      return;
     }
     const panel = vscode.window.createWebviewPanel(
       'gemstoneOmniSearch',
@@ -104,7 +108,7 @@ export class OmniSearchPanel {
    *  pinned one — an unpinned Spotter has already closed on focus-out by the time you compile). */
   static onClassCompiled(sessionId: number, className: string, dictName?: string): void {
     const panel = OmniSearchPanel.current;
-    if (!panel || panel.deps.sessionId !== sessionId) return;
+    if (!panel?.engine || panel.deps.sessionId !== sessionId) return;
     void panel.engine
       .applyChange({ kind: 'class', className, dictName })
       .then((view) => view && panel.postView(view));
@@ -113,8 +117,42 @@ export class OmniSearchPanel {
   /** Rebuild the open Spotter's cached corpora on a session sync (commit/abort), then redraw. */
   static onSessionSynced(sessionId: number): void {
     const panel = OmniSearchPanel.current;
-    if (!panel || panel.deps.sessionId !== sessionId) return;
+    if (!panel?.engine || panel.deps.sessionId !== sessionId) return;
     void panel.engine.resync(panel.deps.onError).then((view) => view && panel.postView(view));
+  }
+
+  /** The user made a different session active. An open Spotter is bound to ONE session — its
+   *  providers, activation and preview all close over it — so it has to be re-pointed at the new one,
+   *  and everything on screen (results, query, pivot, preview) has to go with it: those rows were read
+   *  out of the session just left, yet activating one would open a document against the session that is
+   *  now current (issue #517).
+   *
+   *  `resolveDeps` is a thunk so nothing is built when no Spotter is open. It answering null means
+   *  there is nothing left to search (the last session logged out). Reaching that branch at all means a
+   *  PINNED Spotter: an unpinned one is a dialog that disposes on focus-out, so clicking away to log out
+   *  closes it first and `current` is already undefined. A pinned tab is one the user asked to keep, so
+   *  it stays — but it is cleared right down to its engine, rather than showing a departed session's
+   *  results. */
+  static onSessionSelectionChanged(resolveDeps: () => OmniPanelDeps | null): void {
+    const panel = OmniSearchPanel.current;
+    if (!panel) return; // nothing open — don't build providers for a Spotter that isn't there
+    const deps = resolveDeps();
+    if (!deps) {
+      panel.clearSession();
+      return;
+    }
+    // The engine, not just the id: a logout drops the engine, and logging back in can hand back the
+    // SAME session id — comparing ids alone would call that a no-op and leave the Spotter engine-less
+    // for good.
+    if (panel.engine && panel.deps.sessionId === deps.sessionId) return;
+    panel.rebindTo(deps);
+  }
+
+  /** The user asked for a refresh (⟳ in the panel / `gemstone.search.refresh`): rebuild every cached
+   *  corpus from the stone and re-run the current search, so code created or removed by EXECUTING it
+   *  (a workspace doit, a `compileMethod:`) is picked up without waiting for a commit or abort. */
+  static refresh(): void {
+    void OmniSearchPanel.current?.refresh();
   }
 
   private constructor(
@@ -171,8 +209,61 @@ export class OmniSearchPanel {
     this.panel.webview.postMessage({ command: 'pinned', pinned: this.pinned });
   }
 
+  /** Point this Spotter at another session: a new engine over the new deps, a cleared webview, and a
+   *  fresh prime. Everything else about the panel — the tab, its pin, the loaded HTML and the message
+   *  wiring — is session-independent and stays, so the user keeps the tab they opened. */
+  private rebindTo(deps: OmniPanelDeps): void {
+    this.deps = deps;
+    this.engine = createOmniEngine(deps);
+    this.reset();
+    this.panel.webview.postMessage(configMessage(deps.config, this.pinned));
+    void this.engine.prime(deps.onError);
+  }
+
+  /** Clear the webview back to an empty search (no query, no results, no pivot, no preview). */
+  private reset(): void {
+    this.panel.webview.postMessage({ command: 'reset' });
+  }
+
+  /** The last session went away, with a pinned Spotter still on screen (see onSessionSelectionChanged
+   *  for why it must be pinned to get here). Wiping the screen is not enough: the engine still holds that
+   *  session's primed corpora, and `deps.activate` still closes over its GCI handle, so anything the user
+   *  typed next would answer with rows out of a session that is gone and open documents against it — the
+   *  very failure this hook exists to prevent, just reached through a logout instead of a switch. So the
+   *  engine goes too, and `onMessage` shows the notice until a login rebinds us. */
+  private clearSession(): void {
+    this.engine = undefined;
+    this.reset();
+    this.panel.webview.postMessage({ command: 'error', message: NO_SESSION_MESSAGE });
+  }
+
+  /** Reload every cached corpus and re-run the current term. See the static `refresh` for why. */
+  private async refresh(): Promise<void> {
+    const engine = this.engine;
+    if (!engine) return; // logged out: nothing to reload, and the notice is already up
+    this.panel.webview.postMessage({ command: 'busy', on: true });
+    let view: OmniViewData | null = null;
+    try {
+      // `refresh`, not `resync`: an open references list is as stale as the corpora, so it is re-fetched
+      // rather than left alone the way a commit leaves it.
+      view = await engine.refresh(this.deps.onError);
+    } catch (e: unknown) {
+      // The palette command and the title-bar ⟳ reach `refresh()` with no catch of their own (see the
+      // static `refresh`), so without this a rejection — `resolveReferences` against a busy session, say
+      // — would go unhandled and strand the panel faded forever.
+      const message = e instanceof Error ? e.message : String(e);
+      this.deps.onError?.(message);
+      this.panel.webview.postMessage({ command: 'error', message });
+    }
+    // A view takes the spinner off by replacing the results. Without one — superseded by a newer call,
+    // or the throw above — it has to come off explicitly, or the panel stays faded for good.
+    if (view) this.postView(view);
+    else this.panel.webview.postMessage({ command: 'busy', on: false });
+  }
+
   /** Send a fresh view to the webview, decorated with the current chrome state. */
   private postView(view: OmniViewData): void {
+    if (!this.engine) return;
     const st = this.engine.state();
     this.panel.webview.postMessage(
       resultsMessage(view, {
@@ -187,8 +278,16 @@ export class OmniSearchPanel {
   }
 
   private async onMessage(m: OmniInbound): Promise<void> {
+    const engine = this.engine;
+    if (!engine) {
+      // Logged out (see clearSession), but the tab is still here, so keystrokes still arrive. Answer
+      // with the notice rather than searching a departed session's corpora. `close` still means close.
+      if (m.command === 'close') this.panel.dispose();
+      else this.panel.webview.postMessage({ command: 'error', message: NO_SESSION_MESSAGE });
+      return;
+    }
     try {
-      const engineOp = dispatchEngineMessage(this.engine, m);
+      const engineOp = dispatchEngineMessage(engine, m);
       if (engineOp) {
         await this.run(() => engineOp);
         return;
@@ -196,7 +295,7 @@ export class OmniSearchPanel {
       switch (m.command) {
         case 'ready': {
           this.panel.webview.postMessage(configMessage(this.deps.config, this.pinned));
-          await this.engine.prime(this.deps.onError);
+          await engine.prime(this.deps.onError);
           return;
         }
         case 'togglePin':
@@ -208,7 +307,7 @@ export class OmniSearchPanel {
           );
           return;
         case 'activate': {
-          const result = this.engine.resultFor(m.id);
+          const result = engine.resultFor(m.id);
           if (!result) return;
           // Unpinned = dialog: open in the active group and dismiss the Spotter (Phase-1 feel).
           // Pinned = persistent: open BESIDE, and Ctrl+Enter (side) keeps focus in the field.
@@ -222,12 +321,12 @@ export class OmniSearchPanel {
         case 'revealTest': {
           // Shift+Enter: go to the result in the Testing view instead of opening it.
           // The Spotter stays put — you are moving to another view, not dismissing this one.
-          const result = this.engine.resultFor(m.id);
+          const result = engine.resultFor(m.id);
           if (result) await revealTestForResult(result);
           return;
         }
         case 'preview': {
-          const result = this.engine.resultFor(m.id);
+          const result = engine.resultFor(m.id);
           if (!result) return;
           let source = '';
           try {
@@ -246,7 +345,7 @@ export class OmniSearchPanel {
         case 'referencesInline': {
           // Load a row's senders/references into the sticky preview-pane list (leaves the search list
           // and its state untouched). `forId` lets the webview drop a stale reply if the row moved on.
-          const preview = await this.engine.referencesFor(m.id);
+          const preview = await engine.referencesFor(m.id);
           if (preview) {
             this.panel.webview.postMessage({
               command: 'refPreview',
@@ -260,7 +359,7 @@ export class OmniSearchPanel {
         }
         case 'previewReference': {
           // Source of a single reference row, for the inline (EI Meta-tab style) expand in the list.
-          const result = this.engine.referenceResultFor(m.refId);
+          const result = engine.referenceResultFor(m.refId);
           let source = '';
           if (result) {
             try {
@@ -273,13 +372,16 @@ export class OmniSearchPanel {
           return;
         }
         case 'openReference': {
-          const result = this.engine.referenceResultFor(m.refId);
+          const result = engine.referenceResultFor(m.refId);
           if (!result) return;
           // Opening source from the refs list must NOT dismiss the Spotter — open beside it and keep
           // focus in the field so the sticky list stays put for the next pick.
           await this.deps.activate(result, { beside: true, preserveFocus: true });
           return;
         }
+        case 'refresh':
+          await this.refresh();
+          return;
         case 'close':
           this.panel.dispose();
           return;

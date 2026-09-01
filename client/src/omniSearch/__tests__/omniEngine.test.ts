@@ -933,3 +933,110 @@ describe('createOmniEngine — out-of-order reference and pivot results', () => 
     expect(engine.resultFor(retyped!.rows[0].id)!.label).toBe('Foo');
   });
 });
+
+describe('createOmniEngine — an explicit refresh vs an automatic resync', () => {
+  /** A provider that reloads on `reprime`, answering a different pool each time it is asked. */
+  function reloadingProvider(pools: OmniResult[][]) {
+    let round = 0;
+    let pool = pools[0];
+    const p: OmniProvider = {
+      category: CATEGORY_BY_ID.classes,
+      prime: () => {
+        pool = pools[Math.min(round, pools.length - 1)];
+      },
+      reprime: () => {
+        round += 1;
+        pool = pools[Math.min(round, pools.length - 1)];
+      },
+      search: (_q: string, c: OmniConfig) => pool.slice(0, c.maxResultsPerCategory),
+    };
+    return p;
+  }
+
+  it('reloads the corpora and re-runs the term when nothing is pivoted', async () => {
+    // Round 2 is what a class created by a workspace doit looks like: the same query, a bigger image.
+    const provider = reloadingProvider([
+      [classResult('Foo')],
+      [classResult('Foo'), classResult('Foo2')],
+    ]);
+    const engine = createOmniEngine({ providers: [provider], config: cfg() });
+    await engine.prime();
+    const before = await engine.search('foo');
+    expect(before!.rows.map((r) => r.label)).toEqual(['Foo']);
+
+    const after = await engine.refresh();
+
+    expect(after!.rows.map((r) => r.label)).toEqual(['Foo', 'Foo2']);
+  });
+
+  it('re-fetches an open references list, instead of looking like a dead button', async () => {
+    // The bug this pins: `resync` deliberately leaves a pivot alone, so wiring the ⟳ to it made the
+    // button do nothing visible for anyone reading a senders list — the corpora reloaded silently and
+    // the stale senders stayed on screen.
+    const classes = fakeProvider('classes', [classResult('Foo')]);
+    let senders = [methodResult('A>>useFoo', 'useFoo')];
+    const engine = createOmniEngine({
+      providers: [classes],
+      config: cfg(),
+      resolveReferences: () => ({ title: 'References to Foo', results: senders }),
+    });
+    const search = await engine.search('foo');
+    const pivot = await engine.pivot(search!.rows[0].id);
+    expect(pivot!.rows.map((r) => r.label)).toEqual(['A>>useFoo']);
+
+    // Someone (this session or another) compiles a second sender.
+    senders = [methodResult('A>>useFoo', 'useFoo'), methodResult('B>>alsoFoo', 'alsoFoo')];
+
+    const resynced = await engine.resync();
+    expect(resynced).toBeNull(); // a commit must not disturb what the user is reading
+
+    const refreshed = await engine.refresh();
+
+    expect(refreshed!.pivot).toBe(true);
+    expect(refreshed!.pivotTitle).toBe('References to Foo');
+    expect(refreshed!.rows.map((r) => r.label)).toEqual(['A>>useFoo', 'B>>alsoFoo']);
+  });
+
+  it('keeps the filter typed into a pivot when it re-fetches', async () => {
+    const classes = fakeProvider('classes', [classResult('Foo')]);
+    let senders = [methodResult('A>>useFoo', 'useFoo'), methodResult('B>>alsoFoo', 'alsoFoo')];
+    const engine = createOmniEngine({
+      providers: [classes],
+      config: cfg(),
+      resolveReferences: () => ({ title: 'References to Foo', results: senders }),
+    });
+    const search = await engine.search('foo');
+    await engine.pivot(search!.rows[0].id);
+    const filtered = await engine.search('also');
+    expect(filtered!.rows.map((r) => r.label)).toEqual(['B>>alsoFoo']);
+
+    senders = [...senders, methodResult('C>>alsoFooToo', 'alsoFooToo')];
+    const refreshed = await engine.refresh();
+
+    // Re-fetching must not silently widen the list back to every sender — the box still says "also".
+    expect(refreshed!.rows.map((r) => r.label)).toEqual(['B>>alsoFoo', 'C>>alsoFooToo']);
+  });
+
+  it('leaves the pivot when its target is gone, rather than showing senders of nothing', async () => {
+    const classes = fakeProvider('classes', [classResult('Foo')]);
+    let refView: ReferenceView | null = {
+      title: 'References to Foo',
+      results: [methodResult('A>>useFoo', 'useFoo')],
+    };
+    const engine = createOmniEngine({
+      providers: [classes],
+      config: cfg(),
+      resolveReferences: () => refView,
+    });
+    const search = await engine.search('foo');
+    await engine.pivot(search!.rows[0].id);
+
+    refView = null; // the class or method was deleted out from under the pivot
+
+    const refreshed = await engine.refresh();
+
+    expect(refreshed!.pivot).toBe(false);
+    expect(engine.state().pivot).toBe(false);
+    expect(refreshed!.rows.map((r) => r.label)).toEqual(['Foo']); // the search is back
+  });
+});

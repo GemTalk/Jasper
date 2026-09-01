@@ -27,11 +27,11 @@ export const OMNI_DEFAULTS: OmniConfig = {
   // methods to promote); 1-char selector scans across the whole image are too heavy, so they stay
   // off. Raise this via settings if per-keystroke method search feels slow on a large stone.
   methodMinQueryLength: 2,
-  // How many matches a scope's server-side scan collects before it gives up. The Methods scan walks
-  // every selector of every class in the symbol list, so it stops early to keep a per-keystroke search
-  // fast — 200 is a working-set size, not a total. It bounds the RESULTS too: no display cap, Load-all
-  // included, can reach past it, which is why the footer says so out loud when a scan stops here
-  // (triage #14). Raise it to see more of a broad term at the cost of a slower search.
+  // The most rows a scope's server-side scan hands back. The Methods scan walks every selector of every
+  // class in the symbol list and keeps the best matches by tier, so 200 is a working-set size, not a
+  // total. It bounds the RESULTS: no display cap, Load-all included, can reach past it, which is why
+  // the footer says so out loud when a scan is cut off here. Raise it to see more of a broad term at
+  // the cost of a bigger fetch.
   maxServerScan: 200,
   // Try the sticky preview-pane references list by default; flip off to restore the classic pivot.
   referencesInPreview: true,
