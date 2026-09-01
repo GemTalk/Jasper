@@ -323,6 +323,22 @@ describe('opening straight into the New Database form', () => {
     expect(posted()).toHaveLength(1);
   });
 
+  // Ahead of the state, not behind it. postState ends by asking the download
+  // site for the catalogue, and waiting for that put a whole network round trip
+  // between the button and the form: the panel opened on the lists, sat there,
+  // and only then swapped over.
+  it('sends it before the first state, so the form is what gets drawn', async () => {
+    DatabasesPanel.show(makeDeps(), false, true);
+    await sendMessage({ command: 'ready' });
+
+    const commands = vi
+      .mocked(lastPanel().webview.postMessage)
+      .mock.calls.map((c) => (c[0] as { command?: string })?.command);
+
+    expect(commands.indexOf('beginCreate')).toBeGreaterThanOrEqual(0);
+    expect(commands.indexOf('beginCreate')).toBeLessThan(commands.indexOf('state'));
+  });
+
   it('does not send it when the panel was opened on the lists', async () => {
     DatabasesPanel.show(makeDeps());
     await sendMessage({ command: 'ready' });

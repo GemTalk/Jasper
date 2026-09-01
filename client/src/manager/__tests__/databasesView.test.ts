@@ -487,7 +487,7 @@ describe('a login row', () => {
     const row = root.querySelector('.db-session-current');
     expect(row).not.toBeNull();
     expect(row?.querySelector('.session-current-mark')).not.toBeNull();
-    expect(row?.getAttribute('title')).toContain('Display It');
+    expect(row?.getAttribute('data-tip')).toContain('Display It');
   });
 
   it('leaves the login row offering Log in, so another session can be opened', () => {
@@ -901,5 +901,197 @@ describe('a Windows machine with no WSL', () => {
     mount(state({ windows: true, versions: [CLIENT_ONLY] }));
     expect(root.querySelector('[data-action="openWindowsClientFolder"]')).not.toBeNull();
     expect(root.querySelector('[data-action="deleteWindowsClient"]')).not.toBeNull();
+  });
+});
+
+describe('the form the host opens the panel into', () => {
+  /** A panel whose script has loaded but which the host has not sent a state to yet. */
+  function mountBare(): void {
+    document.body.innerHTML = '<div id="root"></div>';
+    root = document.getElementById('root') as HTMLElement;
+    host = { postMessage: vi.fn() };
+    api().init({ root }, host);
+  }
+
+  // The host posts `beginCreate` ahead of the first state now, so the form is not
+  // held behind a call to the download site. Arriving first, it has nothing to
+  // draw from — and a form built out of no state is a release dropdown with no
+  // releases in it, briefly, before the real one replaces it.
+  it('waits for a state rather than drawing itself out of nothing', () => {
+    mountBare();
+    window.dispatchEvent(new MessageEvent('message', { data: { command: 'beginCreate' } }));
+    expect(root.querySelector('.create-form')).toBeNull();
+    expect(root.querySelector('.skeleton')).not.toBeNull();
+  });
+
+  it('is the first thing drawn when that state arrives — the lists never show', () => {
+    mountBare();
+    window.dispatchEvent(new MessageEvent('message', { data: { command: 'beginCreate' } }));
+    api().render(state({ databases: [database()] }));
+    expect(root.querySelector('[data-cf-field="stoneName"]')).not.toBeNull();
+    expect(root.querySelector('details.section[data-section="databases"]')).toBeNull();
+  });
+});
+
+describe('asking for a database on a machine with no release', () => {
+  /** A fresh install: nothing downloaded, nothing unpacked, nothing to copy. */
+  function nothingInstalled(): Record<string, unknown> {
+    return state({
+      versions: [],
+      databases: [],
+      create: { ...(state().create as object), versions: [] },
+    });
+  }
+
+  function openFormOnEmptyMachine(): void {
+    mount(nothingInstalled());
+    window.dispatchEvent(new MessageEvent('message', { data: { command: 'beginCreate' } }));
+  }
+
+  // The sidebar's + and its New Database… command do not know what is installed,
+  // so they can ask for a form that has nothing to offer: an empty release
+  // dropdown, an empty extent dropdown, a Create that can never be pressed, and
+  // Cancel as the only way back to the panel that would have explained it.
+  it('shows the lists and says why, instead of a form that cannot be filled in', () => {
+    openFormOnEmptyMachine();
+    expect(root.querySelector('.create-form')).toBeNull();
+    expect(root.querySelector('details.section[data-section="versions"]')).not.toBeNull();
+    expect(root.querySelector('.gm-blocked')?.textContent).toContain(
+      'New Database needs a GemStone release to copy from',
+    );
+  });
+
+  // The message is the sentence only. Versions is the very next thing on screen
+  // in this state and leads with both buttons, so a copy in the message made
+  // three Install Version… — and, with the pair the section header also carried,
+  // two of everything.
+  it('offers each way of getting a release exactly once', () => {
+    openFormOnEmptyMachine();
+    expect(root.querySelectorAll('[data-action="installNewVersion"]')).toHaveLength(1);
+    expect(root.querySelectorAll('[data-action="registerLocalVersion"]')).toHaveLength(1);
+  });
+
+  it('puts that one pair beside the sentence explaining them', () => {
+    openFormOnEmptyMachine();
+    const install = root.querySelector<HTMLElement>(
+      'details.section[data-section="versions"] .empty-acts [data-action="installNewVersion"]',
+    );
+    expect(install).not.toBeNull();
+    install?.click();
+    expect(host.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'installNewVersion' }),
+    );
+  });
+
+  it('takes the message away once a release is installed', () => {
+    openFormOnEmptyMachine();
+    api().render(state());
+    expect(root.querySelector('.gm-blocked')).toBeNull();
+  });
+
+  // Cancel used to be the only way out, and on a panel opened only for the form
+  // it closes the panel outright — so the machine that most needed the Versions
+  // list was the one that could not get to it. There is no form to cancel now.
+  it('needs no Cancel, because there is no form to escape from', () => {
+    openFormOnEmptyMachine();
+    expect(root.querySelector('[data-action="cancelCreate"]')).toBeNull();
+    expect(host.postMessage).not.toHaveBeenCalledWith({ command: 'closePanel' });
+  });
+});
+
+describe('what a server button looks like', () => {
+  const RUNNING = database({
+    stoneRunning: true,
+    processes: [{ type: 'stone', name: 'gs64stone', pid: 111, status: 'OK', responding: true }],
+  });
+
+  // Red stops, green starts — the same colouring the database's own power button
+  // carries. Beside a coloured button, an uncoloured pair of glyphs reads as
+  // decoration rather than the two controls that actually run the servers.
+  it('colours Stop the way the database power button is coloured', () => {
+    mount(state({ databases: [RUNNING] }));
+    const stop = root.querySelector('[data-action="stopStone"]');
+    expect(stop?.className).toContain('power-stop');
+  });
+
+  it('colours Start the same way', () => {
+    mount(state({ databases: [database()] }));
+    const start = root.querySelector('[data-action="startStone"]');
+    expect(start?.className).toContain('power-start');
+  });
+});
+
+describe('hover explanations', () => {
+  function hover(el: Element): void {
+    el.dispatchEvent(new Event('pointerover', { bubbles: true }));
+  }
+
+  const withDatabase = () => mount(state({ databases: [database()] }));
+
+  // The browser's own tooltip waits about a second and a half. On the pair of
+  // unlabelled icons beside the Extent dropdown that reads as no tooltip at all,
+  // so the panel carries its text in data-tip and draws the bubble itself.
+  it('leaves no button explaining itself through a native title', () => {
+    withDatabase();
+    root.querySelector('details.db-item')?.setAttribute('open', '');
+    expect(root.querySelector('[title]')).toBeNull();
+    expect(
+      root
+        .querySelector('.db-toolbar-tools [data-action="openDbTerminal"]')
+        ?.getAttribute('data-tip'),
+    ).toBe('Open a terminal for this database');
+  });
+
+  it('draws its own bubble after a short beat', () => {
+    vi.useFakeTimers();
+    try {
+      withDatabase();
+      const button = root.querySelector('[data-action="refresh"]') as HTMLElement;
+      hover(button);
+      expect(document.querySelector('.gm-tip')).toBeNull();
+      vi.advanceTimersByTime(200);
+      expect(document.querySelector('.gm-tip')?.textContent).toContain('Read this machine again');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('takes it away when the pointer moves off', () => {
+    vi.useFakeTimers();
+    try {
+      withDatabase();
+      hover(root.querySelector('[data-action="refresh"]') as HTMLElement);
+      vi.advanceTimersByTime(200);
+      expect(document.querySelector('.gm-tip')).not.toBeNull();
+      root.dispatchEvent(new Event('pointerleave'));
+      expect(document.querySelector('.gm-tip')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // A redraw replaces the element the bubble was measured against, so a bubble
+  // left behind would point at nothing.
+  it('takes it away when the panel redraws', () => {
+    vi.useFakeTimers();
+    try {
+      withDatabase();
+      hover(root.querySelector('[data-action="refresh"]') as HTMLElement);
+      vi.advanceTimersByTime(200);
+      api().render(state({ databases: [database()] }));
+      expect(document.querySelector('.gm-tip')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // Keyboard focus has already waited; there is no pointer drifting across rows
+  // to protect the reader from.
+  it('shows at once for a reader who tabbed to the button', () => {
+    withDatabase();
+    (root.querySelector('[data-action="refresh"]') as HTMLElement).dispatchEvent(
+      new Event('focusin', { bubbles: true }),
+    );
+    expect(document.querySelector('.gm-tip')).not.toBeNull();
   });
 });

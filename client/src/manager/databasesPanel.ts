@@ -534,12 +534,17 @@ export class DatabasesPanel {
   private async handleMessage(msg: Inbound): Promise<void> {
     switch (msg.command) {
       case 'ready':
-        await this.postState();
-        // Now the view is listening and has a state to draw the form over.
+        // Before the state, not after. postState ends by asking the download
+        // site for the catalogue, and waiting for that put the whole network
+        // round trip between the sidebar's New Database button and the form:
+        // the panel opened on the lists, sat there, and only then swapped. The
+        // view holds this as a flag and draws the form with the first state
+        // that arrives, so the form is the first thing rendered.
         if (this.openOnCreateForm) {
           this.openOnCreateForm = false;
           void this.panel.webview.postMessage({ command: 'beginCreate' });
         }
+        await this.postState();
         return;
       case 'refresh':
         // Refresh is the one place that asks the network again: everything the
@@ -1494,7 +1499,6 @@ body {
 details[open] > .section-head > .section-twist,
 details[open] > .db-head > .section-twist,
 details[open] > .db-group-head > .section-twist,
-details[open] > .config-group-head > .section-twist,
 details[open] > .file-root-head > .section-twist { transform: rotate(90deg); }
 
 .col-lead { margin-bottom: 4px; }
@@ -1816,92 +1820,29 @@ th.v-num { text-align: right; }
 .note .codicon { color: var(--gm-warn); }
 .skeleton { color: var(--vscode-descriptionForeground, #9d9d9d); padding: 30px 12px; text-align: center; }
 
-/* ── Configuration section (issue #232) ───────────────────────────────────── */
-.badge-runtime { background: color-mix(in srgb, var(--vscode-charts-blue, #4daafc) 26%, transparent); color: var(--vscode-foreground); }
-.badge-readonly { background: transparent; color: var(--vscode-descriptionForeground, #9d9d9d); border: 1px solid var(--gm-line); }
-.config-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 12px; }
-.config-filter-wrap { position: relative; display: flex; flex: 1 1 220px; min-width: 160px; align-items: center; }
-.config-filter {
-  flex: 1 1 auto; min-width: 0; padding: 3px 26px 3px 8px;
-  background: var(--vscode-input-background); color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border, var(--gm-line)); border-radius: 4px;
-}
-.config-filter:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
-.config-filter-clear {
-  position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
-  display: inline-flex; align-items: center; justify-content: center;
-  background: none; border: 0; padding: 2px; border-radius: 3px; line-height: 1;
-  color: var(--vscode-descriptionForeground, #9d9d9d); cursor: pointer; opacity: .7;
-}
-.config-filter-clear:hover { opacity: 1; background: var(--vscode-toolbar-hoverBackground, rgba(128,128,128,.15)); }
-.config-filter-clear:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; opacity: 1; }
-.config-filter-clear[hidden] { display: none; }
-.config-legend { font-size: 0.85rem; color: var(--vscode-descriptionForeground, #9d9d9d); display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.config-loading { color: var(--vscode-descriptionForeground, #9d9d9d); padding: 16px 4px; }
-.config-error {
-  margin: 0 0 10px; padding: 6px 10px; font-size: 0.92rem; border-radius: 4px;
-  background: color-mix(in srgb, var(--gm-warn) 12%, transparent);
-  border: 1px solid color-mix(in srgb, var(--gm-warn) 40%, transparent);
-}
-/* The result of a set: a plain confirmation, or a warning that the stone
-   accepted the value but did not actually apply it. */
-.config-notice { margin: 0 0 10px; padding: 6px 10px; font-size: 0.92rem; border-radius: 4px; }
-.config-notice.ok {
-  background: color-mix(in srgb, var(--gm-ok) 12%, transparent);
-  border: 1px solid color-mix(in srgb, var(--gm-ok) 40%, transparent);
-}
-.config-notice.warn {
-  background: color-mix(in srgb, var(--gm-warn) 12%, transparent);
-  border: 1px solid color-mix(in srgb, var(--gm-warn) 40%, transparent);
-}
-.config-group { margin: 0 0 16px; }
-.config-group-head {
-  list-style: none; cursor: pointer; user-select: none;
-  font-weight: 600; margin: 0 0 6px; padding: 3px 4px; border-radius: 4px;
-  display: flex; align-items: center; gap: 8px;
-}
-.config-group-head::-webkit-details-marker { display: none; }
-.config-group-head:hover { background: var(--vscode-list-hoverBackground, rgba(128,128,128,.08)); }
-.config-group-head:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
-.config-group .section-twist { font-size: 1.08rem; }
-.config-note { font-size: 0.85rem; font-weight: 400; color: var(--vscode-descriptionForeground, #9d9d9d); }
-.config-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
-.config-table td { padding: 3px 8px; border-bottom: 1px solid var(--gm-line); vertical-align: top; }
-.config-key { white-space: nowrap; font-family: var(--vscode-editor-font-family, monospace); font-size: 0.92rem; }
-.config-info { font: inherit; font-size: 0.92rem; line-height: 1; background: none; border: 0; padding: 0; color: var(--vscode-descriptionForeground, #9d9d9d); cursor: pointer; margin-left: 5px; vertical-align: -1px; opacity: .6; }
-.config-item:hover .config-info, .config-info:hover { opacity: 1; }
-.config-info:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; opacity: 1; }
-/* The ⓘ tooltip pinned on screen after a click, so a long description can be
-   read without holding the pointer still. Positioned in the viewport by script. */
-.config-info-pop {
+/* ── Tooltips ─────────────────────────────────────────────────────────────── */
+/* The panel's own hover explanation, drawn instead of a title attribute: the
+   browser's own tooltip waits about a second and a half, which on a row of
+   unlabelled icons reads as nothing at all. Fixed to the viewport and parented
+   to <body>, so the overflow rule that gives every section its rounded corners
+   cannot clip it; the script places it and pulls it back inside the edges. */
+.gm-tip {
   position: fixed; z-index: 40; max-width: 340px; white-space: pre-line;
-  padding: 8px 10px; font-size: 0.92rem; line-height: 1.4;
+  padding: 4px 8px; font-size: 0.9rem; line-height: 1.4;
   background: var(--vscode-editorHoverWidget-background, var(--vscode-editorWidget-background));
   color: var(--vscode-editorHoverWidget-foreground, var(--vscode-foreground));
   border: 1px solid var(--vscode-editorHoverWidget-border, var(--gm-line));
   border-radius: 4px; box-shadow: 0 2px 8px rgba(0, 0, 0, .35);
+  pointer-events: none;
 }
-.config-val { width: 100%; }
-.config-value { font-family: var(--vscode-editor-font-family, monospace); font-size: 0.92rem; word-break: break-all; }
-/* An editable value is a subtle button carrying a persistent pencil, so which
-   rows can be changed is visible without hovering each one. */
-.config-value-btn {
-  display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
-  padding: 1px 6px; margin: -1px -6px; text-align: left; cursor: pointer;
-  background: transparent; border: 1px solid transparent; border-radius: 4px;
-  color: inherit; font: inherit;
+
+/* Why the New Database form is not on screen, on a machine with no release to
+   make one from. It sits above the lists, with Versions right below it. */
+.gm-blocked {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  margin: 0 0 18px; padding: 10px 12px; border-radius: 4px;
+  border: 1px solid var(--vscode-inputValidation-warningBorder, #b89500);
+  background: var(--vscode-inputValidation-warningBackground, rgba(184,149,0,.1));
 }
-.config-value-btn:hover { background: color-mix(in srgb, var(--vscode-foreground) 7%, transparent); border-color: var(--gm-line); }
-.config-value-btn:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 0; }
-.config-pencil { flex: none; color: var(--vscode-descriptionForeground, #9d9d9d); opacity: .55; vertical-align: -1px; }
-.config-value-btn:hover .config-pencil, .config-value-btn:focus-visible .config-pencil { opacity: 1; color: var(--vscode-charts-blue, #4daafc); }
-.config-tag { text-align: right; white-space: nowrap; }
-.config-edit { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.config-input {
-  padding: 2px 6px; min-width: 120px;
-  background: var(--vscode-input-background); color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border, var(--gm-line)); border-radius: 4px;
-  font-family: var(--vscode-editor-font-family, monospace); font-size: 0.92rem;
-}
-.config-input:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+.gm-blocked .note { flex: 1 1 320px; color: var(--vscode-foreground); }
 `;

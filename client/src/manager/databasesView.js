@@ -21,8 +21,12 @@
   // Windows with WSL: gates the actions that only mean anything there.
   let windowsHost = false;
   // The last state drawn, so a click that only changes what is on screen can
-  // redraw without the host having to post the state again.
-  let lastState = {};
+  // redraw without the host having to post the state again. Null until the host
+  // has sent one: every redraw is guarded on it, so a message that arrives
+  // before the first state (the host posts `beginCreate` ahead of it, to get the
+  // form on screen without waiting for the download catalogue) sets its flag and
+  // leaves the loading line up, rather than drawing a form out of nothing.
+  let lastState = null;
 
   // Whether the New Database form is showing instead of the lists, and the
   // answers held in it. They live here rather than in the host so a refresh
@@ -33,6 +37,10 @@
   // host opens it straight into the form, cleared once the user has seen the
   // lists behind it.
   let openedForCreate = false;
+  // The form was asked for on a machine with no release installed, so the lists
+  // are showing instead and owe the reader an explanation. Cleared by installing
+  // one.
+  let needsVersionFirst = false;
   // Ping answers per session id, so a result appears beside the row that asked
   // rather than floating loose. A success clears itself; a warning stays until
   // dismissed, because the stone's words are worth reading and copying.
@@ -128,7 +136,16 @@
 
   /** A codicon used as a state mark, tinted by class rather than drawn by hand. */
   function mark(name, tone, title) {
-    return `<i class="codicon codicon-${name} mark ${tone}" title="${esc(title)}" aria-hidden="true"></i>`;
+    return `<i class="codicon codicon-${name} mark ${tone}"${tipAttr(title)} aria-hidden="true"></i>`;
+  }
+
+  // Every hover explanation in this panel is a `data-tip`, never a `title`: the
+  // browser's own tooltip waits about a second and a half before it appears,
+  // which on a row of unlabelled icons reads as "no tooltip at all". The panel
+  // draws its own after a short beat instead (see showTip).
+  function tipAttr(text) {
+    const t = String(text == null ? '' : text);
+    return t ? ` data-tip="${esc(t)}"` : '';
   }
 
   function esc(s) {
@@ -160,6 +177,8 @@
   // filled treatment; every other value (there is only `'btn-secondary'`) renders
   // as the default quiet button, which is the base `.btn` style itself. There is
   // deliberately no separate "ghost" variant, so don't invent a class name for one.
+  // `extraClass` is for the few buttons that carry meaning in their colour — the
+  // start/stop pair — and nothing else; it is not a way to invent new variants.
   function btn(action, label, iconKey, cls, attrs) {
     const a = attrs || {};
     const data =
@@ -170,15 +189,20 @@
       (a.name ? ` data-name="${esc(a.name)}"` : '') +
       (a.session !== undefined ? ` data-session="${esc(String(a.session))}"` : '') +
       (a.cmd ? ` data-cmd="${esc(a.cmd)}"` : '');
-    const title = ` title="${esc(a.title || label)}"`;
+    const tip = tipAttr(a.title || label);
     const off = a.disabled ? ' disabled' : '';
+    const extra = a.extraClass ? ` ${a.extraClass}` : '';
 
     if (a.iconOnly) {
-      return `<button type="button" class="icon-btn" data-action="${action}"${data}${title}${off} aria-label="${esc(label)}">${icon(iconKey)}</button>`;
+      // An icon-only button has no visible words, so the tip is the only full
+      // sentence about it — it is the accessible name too, rather than the
+      // shorter label the tip expands on.
+      const name = a.title || label;
+      return `<button type="button" class="icon-btn${extra}" data-action="${action}"${data}${tip}${off} aria-label="${esc(name)}">${icon(iconKey)}</button>`;
     }
     const variant = cls === 'btn-primary' ? ' btn-primary' : '';
     const glyph = iconKey ? `${icon(iconKey)}` : '';
-    return `<button type="button" class="btn${variant}" data-action="${action}"${data}${title}${off}>${glyph}<span>${esc(label)}</span></button>`;
+    return `<button type="button" class="btn${variant}${extra}" data-action="${action}"${data}${tip}${off}>${glyph}<span>${esc(label)}</span></button>`;
   }
 
   /** A pill counter/label, styled off --vscode-badge-*. */
@@ -359,10 +383,12 @@
 
     if (!onDisk.length) {
       // Nothing installed is the one state where this section is the whole job,
-      // so the buttons are repeated in the body rather than left in the header
-      // where a reader looking at the sentence has to go hunting for them.
+      // so the buttons move down beside the sentence that explains them rather
+      // than sitting in the header, where a reader looking at the sentence has to
+      // go hunting for them. Moved, not repeated: the header keeps none of them,
+      // or the same two buttons appear twice within one section.
       return section(
-        { key: 'versions', title: 'Versions', count: `${installed} installed`, actions, open },
+        { key: 'versions', title: 'Versions', count: `${installed} installed`, actions: '', open },
         `<div class="empty">
           <div>No GemStone release on this machine yet. Install one from the download site,
           or point Jasper at a build you compiled.</div>
@@ -408,8 +434,8 @@
   // running-vs-stopped: red stops a running database, green starts a stopped one.
   function powerControl(db) {
     return db.stoneRunning
-      ? `<button type="button" class="btn power power-stop" data-action="stopDatabase" data-dir="${esc(db.dirName)}" title="Stop ${esc(db.stoneName)}">${ICONS.stop}<span>Stop</span></button>`
-      : `<button type="button" class="btn power power-start" data-action="startDatabase" data-dir="${esc(db.dirName)}" title="Start ${esc(db.stoneName)}">${ICONS.play}<span>Start</span></button>`;
+      ? `<button type="button" class="btn power power-stop" data-action="stopDatabase" data-dir="${esc(db.dirName)}"${tipAttr(`Stop ${db.stoneName}`)}>${ICONS.stop}<span>Stop</span></button>`
+      : `<button type="button" class="btn power power-start" data-action="startDatabase" data-dir="${esc(db.dirName)}"${tipAttr(`Start ${db.stoneName}`)}>${ICONS.play}<span>Start</span></button>`;
   }
 
   /** What the row says about liveness: how long it has been up, when it is. */
@@ -521,7 +547,7 @@
     const tip = session.current
       ? 'The session Display It, Inspect It and the Explorer are working in'
       : `An open session on ${db.stoneName}`;
-    return `<div class="db-line db-session${session.current ? ' db-session-current' : ''}" title="${esc(tip)}">
+    return `<div class="db-line db-session${session.current ? ' db-session-current' : ''}"${tipAttr(tip)}>
         <span class="db-line-name">${mark}<span class="session-name">${esc(login.user)}</span><span class="dim session-id">session ${esc(String(session.id))}</span></span>
         <span class="db-line-actions">${sessionActions(session)}</span>
       </div>`;
@@ -556,7 +582,7 @@
           })
           .join('')
       : `<div class="db-empty">No logins yet.</div>`;
-    const add = `<button type="button" class="icon-btn" data-action="createLoginFromDb" data-dir="${esc(db.dirName)}" title="New login" aria-label="New login">${ICONS.plus}</button>`;
+    const add = `<button type="button" class="icon-btn" data-action="createLoginFromDb" data-dir="${esc(db.dirName)}" data-tip="New login" aria-label="New login">${ICONS.plus}</button>`;
     return group({ title: 'Logins', actions: add, open: true }, rows);
   }
 
@@ -630,11 +656,16 @@
         ? btn(isStone ? 'stopStone' : 'stopNetldi', 'Stop', 'stop', 'btn-secondary', {
             dir: db.dirName,
             iconOnly: true,
+            // Same red-stops / green-starts colouring as the database's own power
+            // control above them: these two do the same thing to one server, and
+            // an uncoloured pair of glyphs read as decoration beside a coloured one.
+            extraClass: 'power-stop',
             title: `Stop ${label}`,
           })
         : btn(isStone ? 'startStone' : 'startNetldi', 'Start', 'play', 'btn-secondary', {
             dir: db.dirName,
             iconOnly: true,
+            extraClass: 'power-start',
             title: `Start ${label}`,
           });
 
@@ -676,17 +707,17 @@
   function fileRoot(db, label, iconKey, folder, files, action, emptyText, rowAction) {
     const extra = (f) =>
       rowAction
-        ? `<button type="button" class="icon-btn" data-action="${rowAction.action}" data-path="${esc(f.path)}" data-dir="${esc(db.dirName)}" title="${esc(rowAction.label)} ${esc(f.name)}" aria-label="${esc(rowAction.label)} ${esc(f.name)}">${icon(rowAction.iconKey)}</button>`
+        ? `<button type="button" class="icon-btn" data-action="${rowAction.action}" data-path="${esc(f.path)}" data-dir="${esc(db.dirName)}"${tipAttr(`${rowAction.label} ${f.name}`)} aria-label="${esc(rowAction.label)} ${esc(f.name)}">${icon(rowAction.iconKey)}</button>`
         : '';
     const rows = files.length
       ? files
           .map(
             (f) =>
-              `<li class="file-line"><button type="button" class="file-row" data-action="${action}" data-path="${esc(f.path)}" data-dir="${esc(db.dirName)}" title="${esc(f.name)}"><span class="file-name">${esc(f.name)}</span><span class="file-when">${esc(whenWritten(f.modifiedMs))}</span></button>${extra(f)}</li>`,
+              `<li class="file-line"><button type="button" class="file-row" data-action="${action}" data-path="${esc(f.path)}" data-dir="${esc(db.dirName)}"${tipAttr(f.name)}><span class="file-name">${esc(f.name)}</span><span class="file-when">${esc(whenWritten(f.modifiedMs))}</span></button>${extra(f)}</li>`,
           )
           .join('')
       : `<li class="file-empty">${esc(emptyText)}</li>`;
-    const reveal = `<button type="button" class="icon-btn" data-action="openDbSubfolder" data-dir="${esc(db.dirName)}" data-folder="${esc(folder)}" aria-label="Show ${esc(label)} folder in Finder" title="Open the ${esc(label)} folder">${ICONS.folder}</button>`;
+    const reveal = `<button type="button" class="icon-btn" data-action="openDbSubfolder" data-dir="${esc(db.dirName)}" data-folder="${esc(folder)}" aria-label="Show ${esc(label)} folder in Finder"${tipAttr(`Open the ${label} folder`)}>${ICONS.folder}</button>`;
     return `<details class="file-root">
       <summary class="file-root-head">
         <i class="codicon codicon-chevron-right section-twist" aria-hidden="true"></i>
@@ -700,7 +731,7 @@
   }
 
   function renderFiles(db, open) {
-    const reveal = `<button type="button" class="icon-btn" data-action="openDbInFinder" data-dir="${esc(db.dirName)}" title="Open ${esc(db.path)}" aria-label="Open database folder">${ICONS.folder}</button>`;
+    const reveal = `<button type="button" class="icon-btn" data-action="openDbInFinder" data-dir="${esc(db.dirName)}"${tipAttr(`Open ${db.path}`)} aria-label="Open database folder">${ICONS.folder}</button>`;
     const body = `<div class="file-tree">
       ${fileRoot(db, 'Logs', 'output', 'log', db.logFiles || [], 'openDbFile', 'No logs yet.')}
       ${fileRoot(db, 'Config', 'gear', 'conf', db.confFiles || [], 'openDbFile', 'No config files.')}
@@ -761,7 +792,7 @@
     const title = locked
       ? 'Stop the stone to replace its base extent'
       : 'Base extent — choosing another replaces the database';
-    return `<label class="extent" title="${esc(title)}">
+    return `<label class="extent"${tipAttr(title)}>
       <span class="extent-label">Extent</span>
       <select class="extent-select" data-select="replaceExtent" data-dir="${esc(db.dirName)}"${locked ? ' disabled' : ''}>${options}</select>
     </label>`;
@@ -904,6 +935,26 @@
     </div>`;
   }
 
+  /**
+   * Whether the New Database form has anything to work with. Its first question
+   * is which installed release to copy; with none installed, every answer under
+   * it is empty, Create can never be pressed, and Cancel is the only way out —
+   * which is where the sidebar's + landed on a machine with no release yet.
+   */
+  function canCreateFrom(state) {
+    return (((state || {}).create || {}).versions || []).length > 0;
+  }
+
+  // Said instead of that form: why the click did not open it. Deliberately just
+  // the sentence — the Versions section is the very next thing on screen in this
+  // state, and it leads with the two buttons that fix it. A third copy up here
+  // put three Install Version… on one screen.
+  function renderVersionFirst() {
+    return `<div class="gm-blocked">
+      <span class="note">${ICONS.warn}<span>New Database needs a GemStone release to copy from — install one below first.</span></span>
+    </div>`;
+  }
+
   function renderCreate(state) {
     const c = state.create || {};
     const chosen = createVersion(c);
@@ -963,8 +1014,20 @@
   function render(state) {
     windowsHost = !!state.windows;
     lastState = state;
-    // The redraw replaces the row the pinned ⓘ was anchored to, so drop the bubble.
-    closeInfoPopover();
+    // The redraw replaces the element a tip is anchored to, so drop the tip.
+    hideTip();
+
+    // Asked for the form with nothing to make a database from. Show the lists —
+    // Versions leads them in exactly this case — and say why, rather than a form
+    // whose every answer is blank and whose Create can never be pressed.
+    if (creating && !canCreateFrom(state)) {
+      creating = false;
+      openedForCreate = false;
+      createForm.seeded = false;
+      needsVersionFirst = true;
+    } else if (canCreateFrom(state)) {
+      needsVersionFirst = false;
+    }
 
     // Opening the form seeds it from what this machine already has, so the common
     // case is press Create. Seeding happens once per opening, not per redraw, or
@@ -985,7 +1048,8 @@
       renderHeader(state) +
       (creating
         ? renderCreate(state)
-        : orderedSections(state)
+        : (needsVersionFirst ? renderVersionFirst() : '') +
+          orderedSections(state)
             .map((s) => s.html)
             .join(''));
 
@@ -1177,16 +1241,9 @@
   }
 
   function onClick(e) {
-    // Clicking an ⓘ pins its tooltip on screen (the hover title is untouched);
-    // clicking the same ⓘ again closes it. A click anywhere else that is not in
-    // the pinned bubble dismisses it (see also the capture-phase away-click).
-    const info = e.target.closest('[data-config-info]');
-    if (info) {
-      e.preventDefault();
-      toggleInfoPopover(info);
-      return;
-    }
-    if (!e.target.closest('.config-info-pop')) closeInfoPopover();
+    // Whatever the click does, the tip belongs to the element under the pointer
+    // a moment ago — and most clicks here redraw, which takes that element away.
+    hideTip();
     const el = e.target.closest('[data-action]');
     if (!el) return;
     // Prevent an action button inside a <summary> from also toggling the section.
@@ -1218,63 +1275,88 @@
     refreshCreateProblems();
   }
 
-  // The ⓘ tooltip, pinned: the same text the hover title carries, kept on screen
-  // so a long description can be read without holding the pointer still. The
-  // native title is left in place, so hover still works exactly as before. A
-  // redraw, Escape, a second click on the ⓘ, or a click away all close it.
-  let infoPopover = null;
-  let infoAnchor = null;
-  function closeInfoPopover() {
-    if (infoPopover) infoPopover.remove();
-    infoPopover = null;
-    infoAnchor = null;
-    window.removeEventListener('scroll', closeInfoPopover, true);
-    window.removeEventListener('resize', closeInfoPopover);
-  }
-  function toggleInfoPopover(anchor) {
-    if (infoAnchor === anchor) {
-      closeInfoPopover();
-      return;
-    }
-    closeInfoPopover();
-    const pop = document.createElement('div');
-    pop.className = 'config-info-pop';
-    pop.setAttribute('role', 'tooltip');
-    // textContent (not innerHTML) — the tip is plain text with newlines that
-    // `white-space: pre-line` renders as line breaks; nothing here is markup.
-    pop.textContent = anchor.dataset.tip || anchor.getAttribute('title') || '';
-    document.body.appendChild(pop);
-    // Anchor under the ⓘ, pulled back inside the viewport if it would overflow.
-    const r = anchor.getBoundingClientRect();
-    const left = Math.max(6, Math.min(r.left, window.innerWidth - pop.offsetWidth - 6));
-    pop.style.left = `${left}px`;
-    pop.style.top = `${r.bottom + 4}px`;
-    infoPopover = pop;
-    infoAnchor = anchor;
-    // The bubble is fixed-positioned from the ⓘ's current viewport spot, so a
-    // scroll or resize would leave it stranded — close it, matching "a redraw
-    // closes it". Capture phase catches scrolls on any inner scroller too.
-    window.addEventListener('scroll', closeInfoPopover, true);
-    window.addEventListener('resize', closeInfoPopover);
-  }
-  // A click anywhere outside the ⓘ and its bubble dismisses the bubble. Capture
-  // phase so it runs even for clicks the panel handles and stops; it ignores the
-  // ⓘ itself (the bubble's own toggle in onClick owns that) and clicks inside
-  // the bubble.
-  function onAwayClick(e) {
-    if (!infoPopover) return;
-    if (e.target.closest('[data-config-info]') || e.target.closest('.config-info-pop')) return;
-    closeInfoPopover();
+  // ── Tooltips ────────────────────────────────────────────────────────────────
+  // The panel draws its own rather than leaving the explanations in `title`.
+  // A native tooltip waits roughly a second and a half, which on a toolbar of
+  // unlabelled icons — the pair beside the Extent dropdown especially — reads as
+  // no tooltip at all; and it cannot be styled to match the editor. This one
+  // appears after a short beat, is a plain fixed-position div on document.body,
+  // and so is not clipped by the `overflow: hidden` every section carries.
+  const TIP_DELAY_MS = 150;
+  let tipEl = null;
+  let tipAnchor = null;
+  let tipTimer = null;
+
+  function hideTip() {
+    if (tipTimer) clearTimeout(tipTimer);
+    tipTimer = null;
+    if (tipEl) tipEl.remove();
+    tipEl = null;
+    tipAnchor = null;
+    window.removeEventListener('scroll', hideTip, true);
+    window.removeEventListener('resize', hideTip);
   }
 
-  // Escape closes a pinned ⓘ first, then abandons the New Database form — the
+  function showTip(anchor) {
+    const text = anchor.dataset.tip || '';
+    if (!text) return;
+    const tip = document.createElement('div');
+    tip.className = 'gm-tip';
+    tip.setAttribute('role', 'tooltip');
+    // textContent (not innerHTML) — the tip is plain text, and some of it is a
+    // file system path the user chose the name of.
+    tip.textContent = text;
+    document.body.appendChild(tip);
+    const r = anchor.getBoundingClientRect();
+    // Centred under the anchor, then pulled back inside the viewport; a tip near
+    // the bottom flips above rather than hanging off the edge.
+    const left = Math.max(
+      6,
+      Math.min(r.left + r.width / 2 - tip.offsetWidth / 2, window.innerWidth - tip.offsetWidth - 6),
+    );
+    const below = r.bottom + 6;
+    const top =
+      below + tip.offsetHeight > window.innerHeight - 6 ? r.top - tip.offsetHeight - 6 : below;
+    tip.style.left = `${left}px`;
+    tip.style.top = `${Math.max(6, top)}px`;
+    tipEl = tip;
+    tipAnchor = anchor;
+    // Fixed-positioned from where the anchor is right now, so a scroll or a
+    // resize would strand it. Capture phase catches inner scrollers too.
+    window.addEventListener('scroll', hideTip, true);
+    window.addEventListener('resize', hideTip);
+  }
+
+  // Hover arms the beat; moving onto something else (or nothing) drops it. The
+  // guard on the same anchor keeps a tip steady while the pointer travels across
+  // the glyph inside the button it is already showing for.
+  function onPointerOver(e) {
+    const anchor = e.target.closest && e.target.closest('[data-tip]');
+    if (anchor && anchor === tipAnchor) return;
+    hideTip();
+    if (!anchor) return;
+    tipAnchor = anchor;
+    tipTimer = setTimeout(() => {
+      tipTimer = null;
+      const target = tipAnchor;
+      tipAnchor = null;
+      if (target && target.isConnected) showTip(target);
+    }, TIP_DELAY_MS);
+  }
+
+  // Keyboard focus shows the tip at once: a reader who tabbed here has already
+  // waited, and there is no pointer drifting across rows to protect them from.
+  function onFocusIn(e) {
+    const anchor = e.target.closest && e.target.closest('[data-tip]');
+    hideTip();
+    if (anchor) showTip(anchor);
+  }
+
+  // Escape drops a tip that is up, then abandons the New Database form — the
   // keyboard equivalent of its Cancel button.
   function onKeydown(e) {
     if (e.key !== 'Escape') return;
-    if (infoPopover) {
-      closeInfoPopover();
-      return;
-    }
+    hideTip();
     if (creating) {
       e.preventDefault();
       const cancel = els.root.querySelector('[data-action="cancelCreate"]');
@@ -1308,7 +1390,10 @@
     // panel (and each test that inits a new one) starts clean.
     creating = false;
     openedForCreate = false;
+    needsVersionFirst = false;
     createForm.seeded = false;
+    // Nothing has been drawn yet, so nothing may be redrawn from memory.
+    lastState = null;
     // VS Code offers a webview the browser's Cut/Copy/Paste menu on right-click.
     // On a panel of buttons and rows that menu is noise — it appears over a login
     // name and offers to paste into it, which does nothing. It is left alone on
@@ -1318,9 +1403,13 @@
     els.root.addEventListener('change', onChange);
     els.root.addEventListener('input', onInput);
     els.root.addEventListener('keydown', onKeydown);
-    // A pinned ⓘ bubble lives on document.body, outside the panel root, so its
-    // dismiss-on-click-away has to watch the document, not just the root.
-    document.addEventListener('click', onAwayClick, true);
+    // The panel's own tooltips: armed on hover, shown at once on keyboard focus,
+    // and dropped when the pointer leaves the panel altogether (no `pointerover`
+    // fires for the space outside it).
+    els.root.addEventListener('pointerover', onPointerOver);
+    els.root.addEventListener('pointerleave', hideTip);
+    els.root.addEventListener('focusin', onFocusIn);
+    els.root.addEventListener('focusout', hideTip);
     els.root.innerHTML = '<div class="skeleton">Loading GemStone environment…</div>';
     window.addEventListener('message', onHostMessage);
   }
@@ -1372,6 +1461,7 @@
     renderHeader,
     versionState,
     versionActions,
+    canCreateFrom,
     createProblems,
     formatBytes,
   };
