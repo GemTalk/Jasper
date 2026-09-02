@@ -280,7 +280,7 @@
               "Always number step points in GemStone method source."
             ],
             "default": "debugging",
-            "markdownDescription": "When to number step points in GemStone method source, drawn as inlay hints. Each number is clickable and toggles a breakpoint at that step point. Whatever this is set to, hovering a step point always reports its number, and `#gemstone.breakpoints.toggleStepPoints#` flips the numbers on or off. Use the editor's own `#editor.inlayHints.enabled#` to restyle or suppress inlay hints everywhere."
+            "markdownDescription": "When to number step points in GemStone method source, drawn as inlay hints. Each number is clickable and toggles a breakpoint at that step point. Whatever this is set to, hovering a step point always reports its number; hovering a NUMBER also offers a link that hides them again, and `#gemstone.breakpoints.toggleStepPoints#` flips them on or off from the editor's right-click menu or the command palette. Use the editor's own `#editor.inlayHints.enabled#` to restyle or suppress inlay hints everywhere."
           },
           "gemstone.gciLibraries": {
             "type": "object",
@@ -542,6 +542,7 @@
         {
           "id": "gemstoneOmniSearchView",
           "name": "GemStone Search",
+          "contextualTitle": "GemStone Search",
           "type": "webview",
           "when": "gemstone.hasActiveSession"
         }
@@ -550,6 +551,7 @@
         {
           "id": "gemstoneExplorerDicts",
           "name": "Dictionaries",
+          "contextualTitle": "GemStone Dictionaries",
           "type": "tree",
           "icon": "$(symbol-namespace)",
           "when": "gemstone.explorerActive",
@@ -558,6 +560,7 @@
         {
           "id": "gemstoneExplorerCategories",
           "name": "Class Categories",
+          "contextualTitle": "GemStone Class Categories",
           "type": "tree",
           "icon": "$(symbol-folder)",
           "when": "gemstone.explorerActive",
@@ -566,6 +569,7 @@
         {
           "id": "gemstoneExplorerClasses",
           "name": "Classes",
+          "contextualTitle": "GemStone Classes",
           "type": "tree",
           "icon": "$(symbol-class)",
           "when": "gemstone.explorerActive",
@@ -574,6 +578,7 @@
         {
           "id": "gemstoneExplorerClassHierarchy",
           "name": "Hierarchy",
+          "contextualTitle": "GemStone Class Hierarchy",
           "type": "tree",
           "icon": "$(type-hierarchy)",
           "when": "gemstone.explorerActive",
@@ -583,6 +588,7 @@
         {
           "id": "gemstoneExplorerMethods",
           "name": "Methods",
+          "contextualTitle": "GemStone Methods",
           "type": "tree",
           "icon": "$(symbol-method)",
           "when": "gemstone.explorerActive",
@@ -593,6 +599,7 @@
         {
           "id": "gemstoneSharedMemory",
           "name": "Configure OS",
+          "contextualTitle": "GemStone Configure OS",
           "type": "tree",
           "icon": "$(memory)",
           "when": "gemstone.isWindows",
@@ -601,24 +608,28 @@
         {
           "id": "gemstoneDatabases",
           "name": "Databases",
+          "contextualTitle": "GemStone Databases",
           "type": "tree",
           "icon": "$(database)"
         },
         {
           "id": "gemstoneLogins",
           "name": "Logins & Sessions",
+          "contextualTitle": "GemStone Logins & Sessions",
           "type": "tree",
           "icon": "$(key)"
         },
         {
           "id": "gemstoneRowan",
           "name": "Rowan",
+          "contextualTitle": "GemStone Rowan",
           "type": "tree",
           "icon": "$(package)"
         },
         {
           "id": "jasperMcpServer",
           "name": "MCP Server",
+          "contextualTitle": "Jasper MCP Server",
           "type": "tree",
           "icon": "$(remote-explorer)",
           "visibility": "collapsed"
@@ -626,12 +637,14 @@
         {
           "id": "gemstoneBreakpoints",
           "name": "Breakpoints",
+          "contextualTitle": "GemStone Breakpoints",
           "icon": "$(debug-breakpoint)",
           "type": "tree"
         },
         {
           "id": "gemstoneInspector",
           "name": "Inspector",
+          "contextualTitle": "GemStone Inspector",
           "type": "tree",
           "icon": "$(eye)"
         }
@@ -639,7 +652,8 @@
       "explorer": [
         {
           "id": "gemstoneRowanProject",
-          "name": "Rowan",
+          "name": "GemStone Rowan",
+          "contextualTitle": "GemStone Rowan",
           "type": "tree",
           "icon": "$(package)",
           "when": "gemstone.workspaceIsRowanProject"
