@@ -5,6 +5,12 @@ import eslintComments from '@eslint-community/eslint-plugin-eslint-comments';
 import eslintConfigPrettier from 'eslint-config-prettier';
 import gitignore from 'eslint-config-flat-gitignore';
 import vitest from '@vitest/eslint-plugin';
+// The gated set of the GCI optionality rule below, read from the registry
+// itself rather than restated here -- the drift that registry exists to end.
+// Imported as `.ts` on purpose: Node strips the types, so the config reads the
+// same module `gciLibrary.ts` does. Keep that file free of non-erasable syntax
+// (`enum`, `namespace`), which would break lint while still compiling.
+import { GCI_OPTIONAL_FUNCTIONS } from './client/src/gciLibrary/optionalFunctions.ts';
 
 // `vitest/no-restricted-matchers` matches the *whole* modifier chain, and for a
 // plain matcher name it compares by exact equality — so a `toBeTruthy` key does
@@ -63,6 +69,41 @@ const PASSWORD_NAMES = '/^(VITE_GEMSTONE_PASSWORD|gsPassword|GS_PASSWORD)$/';
 const RAW_LOGIN_NAMES = '/^GciTsN?b?Login(_|Finished)?$/';
 const FORKED_GEM =
   'Prefer running the expression on the test context session. A forked gem runs in a session of its own that the harness never armed, and it outlives the test.';
+
+// Production code must not call a `GciTs*` binding that may be absent from the
+// loaded library. Those bind through `optionalFunc`, so Jasper still *loads*
+// against a library missing them -- it's the call that throws, and neither a
+// 3.7.5 dev image nor a macOS/Linux dev machine ever shows you that. Every
+// entry of the registry is gated, on all three of its axes.
+//
+// Selectors generated from the registry rather than a custom rule, so the
+// gated names live in the *rule options*: `eslint`'s result cache keys each
+// file on a hash of its resolved config (`lint-result-cache.js`), which sees
+// options but not data a rule closed over -- so a rule reading the registry
+// internally would leave a cached file green after a new entry lands.
+//
+// Background: `docs/explanation/gci-version-compatibility.md`.
+const OPTIONAL_GCI_CALL = Object.entries(GCI_OPTIONAL_FUNCTIONS).flatMap(([name, reason]) => {
+  // One clause per axis the registry records, so a two-axis entry
+  // (`GciTsNbLogin_`) names both hazards rather than the first one found.
+  const hazard = [
+    reason.addedIn && `absent before ${reason.addedIn} -- throws on the 3.6.2 and 3.6.8 cells`,
+    reason.absentOn === 'win32' &&
+      'absent from the Windows client library -- throws on every `windows-latest` cell and every Windows install',
+    reason.removedIn && `removed in ${reason.removedIn}`,
+  ]
+    .filter(Boolean)
+    .join('; ');
+  const message = `${name} may be absent from the loaded library (${hazard}). Put the cross-version conditional inside client/src/gciLibrary/ and call a helper from there, so this call site doesn't have to know about optionality.`;
+  // Matched by `.name` and `.value` both, as the password selectors below are:
+  // in `gci['GciTsNbPoll'](...)` the property is a `Literal`, which carries
+  // `.value` and no `.name`. Shaped as a call, not a bare member access -- a
+  // call is the thing that reaches the native library.
+  return [
+    { selector: `CallExpression[callee.property.name='${name}']`, message },
+    { selector: `CallExpression[callee.property.value='${name}']`, message },
+  ];
+});
 
 export default tseslint.config(
   // Keep lint ignores in sync with every `.gitignore` in the repo, instead of
@@ -224,6 +265,18 @@ export default tseslint.config(
     // not fixed in place.
     files: ['client/src/__tests__/gci/**/*.test.ts'],
     rules: { 'vitest/no-conditional-expect': 'off' },
+  },
+  {
+    // The GCI optionality gate (see OPTIONAL_GCI_CALL above). Scoped to the
+    // three workspaces' production sources; tests and mocks are exempt because
+    // an absent-world test's whole job is to call the symbol and watch it
+    // throw. `gciLibrary.ts` is exempt because the bindings *are* its subject:
+    // it holds every `this._optional.GciTsX(...)` call there is. Once a
+    // cross-version helper lives under `client/src/gciLibrary/`, this exemption
+    // widens to that directory -- and belongs to the commit that puts one there.
+    files: ['client/src/**/*.ts', 'server/src/**/*.ts', 'mcp-server/src/**/*.ts'],
+    ignores: ['**/__tests__/**', '**/__mocks__/**', '**/gciLibrary.ts'],
+    rules: { 'no-restricted-syntax': ['error', ...OPTIONAL_GCI_CALL] },
   },
   {
     // Confines every test to the harness's session (see the message constants
