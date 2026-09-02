@@ -70,6 +70,12 @@ client/src/**
 !client/src/methodListView.js
 !client/src/debuggerView.js
 !client/src/configuration/configurationView.js
+!client/src/manager/databasesView.js
+
+# The Databases & Versions panel draws its glyphs with the codicon webfont, so the
+# font and its stylesheet have to survive the node_modules exclusion above.
+!node_modules/@vscode/codicons/dist/codicon.css
+!node_modules/@vscode/codicons/dist/codicon.ttf
 !client/src/browserColumnResize.js
 !client/src/enhancedInspector/enhancedInspectorColumns.js
 !client/src/refactoring/renameInstVarPanelView.js

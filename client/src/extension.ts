@@ -17,7 +17,6 @@ import {
   DEFAULT_GS_PW,
   GemStoneLogin,
   buildDataCuratorLogin,
-  dataCuratorLoginToCreate,
   loginLabel,
   loginTargetKey,
   sameLoginTarget,
@@ -138,16 +137,17 @@ import * as queries from './browserQueries';
 import { dedupeMethodResults } from './queries/methodSearch';
 import { SysadminStorage } from './sysadminStorage';
 import { appendSysadmin, getSysadminChannel } from './sysadminChannel';
-import { VersionManager } from './versionManager';
-import { VersionTreeProvider, VersionItem } from './versionTreeProvider';
-import { DatabaseManager } from './databaseManager';
-import { DatabaseTreeProvider, DatabaseNode } from './databaseTreeProvider';
+import { VersionManager } from './manager/versionManager';
+import { VersionTarget, ProcessTarget } from './sysadminTypes';
+import { DatabasesPanel } from './manager/databasesPanel';
+import { DatabaseManager } from './manager/databaseManager';
+import { DatabaseTreeProvider, DatabaseNode } from './manager/databaseTreeProvider';
 import { runLogicalBackup } from './backupManager';
-import { runOnlineExtentBackup, resolveExtentBackupSession } from './extentBackupManager';
+import { runOnlineExtentBackup, resolveExtentBackupSession } from './manager/extentBackupManager';
 import { runLogicalRestore, RestoreSession } from './restoreManager';
 import { hasFileControlPrivilege, serverBackupFilePaths } from './queries/backup';
 import { backupFolderInServer } from './queries/extentBackup';
-import { ProcessManager } from './processManager';
+import { ProcessManager } from './manager/processManager';
 import { openMcpInspector } from './openMcpInspector';
 import { McpSocketServer, writeClaudeDesktopMcpConfig } from './mcpSocketServer';
 import { writeClaudeCodeUserMcpConfig } from './claudeCodeUserMcpConfig';
@@ -156,7 +156,7 @@ import { McpServerTreeProvider } from './mcpServerTreeProvider';
 import { DEFAULT_MCP_HTTP_PORT, McpHttpServer } from './mcpHttpServer';
 import { readMcpSetting } from './mcpSettings';
 import { ensureSelfSignedCert, trustCertCommand } from './tlsCert';
-import { ProcessTreeProvider, ProcessItem } from './processTreeProvider';
+import { ProcessWatcher } from './manager/processWatcher';
 import { OsConfigTreeProvider } from './sharedMemoryTreeProvider';
 import { ensureStonePreconditions } from './stonePreconditions';
 import { isLocalHost } from './databaseForLogin';
@@ -308,21 +308,6 @@ export async function handleClassDefinitionCompiled(event: ClassDefinitionCompil
   if (event.previousUriIsTemplate) {
     await closeTextEditorOn(event.previousUri);
   }
-}
-
-/**
- * Open a scratch Workspace targeting a specific session (the inline action on a
- * session in the Sessions view). The Workspace is a session-agnostic buffer that
- * runs against the *selected* session, so select the clicked session first —
- * otherwise, with several sessions open, Execute It would target whichever
- * session happened to already be active.
- */
-export async function openWorkspaceForSession(
-  sessionManager: SessionManager,
-  item?: GemStoneSessionItem,
-): Promise<void> {
-  if (item) sessionManager.selectSession(item.activeSession.id);
-  await openWorkspace();
 }
 
 // Getting Started onboarding. The walkthrough auto-opens once per machine the
@@ -1109,7 +1094,10 @@ export function activate(context: vscode.ExtensionContext) {
   function flashConnected(stone: string): void {
     lastLoginError = undefined;
     connectStatusItem.hide();
-    void vscode.commands.executeCommand('workbench.view.extension.gemstoneExplorer');
+    // Deliberately does not switch the sidebar to the Explorer. Logging in is
+    // not a statement about what you want to look at next — it threw away
+    // whatever you were reading, and a user logging in from the Databases
+    // section watched the section they were working in disappear.
     explorer.showConnectedBanner(stone);
     startHereStatusBar.showForConnection();
   }
@@ -1699,8 +1687,7 @@ export function activate(context: vscode.ExtensionContext) {
               if (gciPath) {
                 await storage.setGciLibraryPath(login.version, gciPath);
               }
-              // eslint-disable-next-line @typescript-eslint/no-floating-promises -- FIXME: unhandled floating promise; needs investigation to decide await vs. void vs. .catch before this rule is enabled repo-wide
-              versionProvider.loadVersions();
+              refreshVersions();
             } catch (e) {
               vscode.window.showErrorMessage(
                 `Windows client install failed: ${e instanceof Error ? e.message : e}`,
@@ -1971,10 +1958,6 @@ export function activate(context: vscode.ExtensionContext) {
       if (!session) return;
       SystemBrowser.show(session, exportManager);
     }),
-
-    vscode.commands.registerCommand('gemstone.sessionOpenWorkspace', (item?: GemStoneSessionItem) =>
-      openWorkspaceForSession(sessionManager, item),
-    ),
 
     // Open the standalone Session Configuration panel for a session. Registered on
     // session rows, because configuration is session-scoped and only a session row
@@ -2843,7 +2826,7 @@ export function activate(context: vscode.ExtensionContext) {
   // a false negative that sticks for the whole session. If the first probe
   // reports unavailable, we wait briefly and retry once before concluding WSL
   // is genuinely missing. The "install WSL" warning is deferred until that
-  // second probe also fails, and a subsequent refresh of the Versions view
+  // second probe also fails, and a subsequent refresh of the version list
   // will re-probe — giving the user a recovery path without reloading.
   if (isWindows()) {
     vscode.commands.executeCommand('setContext', 'gemstone.isWindows', true);
@@ -3170,13 +3153,14 @@ export function activate(context: vscode.ExtensionContext) {
     osConfigProvider.registerCommands(context);
   }
 
-  // Versions
-  const versionProvider = new VersionTreeProvider(versionManager);
-  context.subscriptions.push(
-    vscode.window.createTreeView('gemstoneVersions', {
-      treeDataProvider: versionProvider,
-    }),
-  );
+  // Versions no longer have a sidebar section of their own — they are a section
+  // of the Databases & Versions panel. The version commands still exist and still
+  // change what is on disk, so they announce it here and the panel redraws.
+  const onVersionsChanged = new vscode.EventEmitter<void>();
+  context.subscriptions.push(onVersionsChanged);
+  function refreshVersions() {
+    onVersionsChanged.fire();
+  }
 
   // Databases
   const databaseProvider = new DatabaseTreeProvider(sysadminStorage, processManager);
@@ -3187,13 +3171,12 @@ export function activate(context: vscode.ExtensionContext) {
     }),
   );
 
-  // Processes
-  const processProvider = new ProcessTreeProvider(processManager);
-  context.subscriptions.push(
-    vscode.window.createTreeView('gemstoneProcesses', {
-      treeDataProvider: processProvider,
-    }),
-  );
+  // Processes have no sidebar section of their own any more — a database's own
+  // stone and NetLDI are shown on its row in the Databases & Versions panel. The
+  // provider stays because it is more than a tree: refreshing it re-reads gslist
+  // and re-probes the WSL network address, and its change event is what tells the
+  // panel to redraw.
+  const processWatcher = new ProcessWatcher(processManager);
 
   // Rowan: tracked repositories (registry persists in globalState — stones are
   // disposable, the registry isn't) + package-manager operations.
@@ -3643,7 +3626,29 @@ export function activate(context: vscode.ExtensionContext) {
   function refreshAdminViews() {
     processManager.refreshProcesses();
     databaseProvider.refresh();
-    processProvider.refresh();
+    processWatcher.refresh();
+  }
+
+  // Composed here so the panel module never imports a tree provider: it only
+  // ever sees "something changed" events, whoever owns them.
+  function databasesPanelDeps() {
+    return {
+      storage: sysadminStorage,
+      versionManager,
+      processManager,
+      databaseManager,
+      getLogins: () => storage.getLogins(),
+      saveLogin: (login: GemStoneLogin) => storage.saveLogin(login),
+      refreshAdminViews,
+      sessionManager,
+      onAdminChange: [
+        databaseProvider.onDidChangeTreeData,
+        processWatcher.onDidChange,
+        treeProvider.onDidChangeTreeData,
+        onVersionsChanged.event,
+      ],
+      extensionUri: context.extensionUri,
+    };
   }
 
   // ── Quick Setup ──────────────────────────────────────────
@@ -3656,7 +3661,7 @@ export function activate(context: vscode.ExtensionContext) {
         processManager,
         loginStorage: storage,
         refreshAdminViews,
-        refreshVersions: () => versionProvider.loadVersions(),
+        refreshVersions,
         refreshLogins: () => treeProvider.refresh(),
       }),
     ),
@@ -3670,11 +3675,15 @@ export function activate(context: vscode.ExtensionContext) {
         const wslInfo = await getWslInfoAsync();
         vscode.commands.executeCommand('setContext', 'gemstone.wslAvailable', wslInfo.available);
       }
-      // eslint-disable-next-line @typescript-eslint/no-floating-promises -- FIXME: unhandled floating promise; needs investigation to decide await vs. void vs. .catch before this rule is enabled repo-wide
-      versionProvider.loadVersions();
+      refreshVersions();
     }),
 
-    vscode.commands.registerCommand('gemstone.downloadVersion', async (item: VersionItem) => {
+    // The version commands below are registered but deliberately NOT declared in
+    // `contributes.commands`, so they stay out of the Command Palette. Each one
+    // reads `item.version` from the row it was invoked on, and the Versions rows
+    // now live in the Databases & Versions panel — typed into the palette they
+    // arrive with no argument and throw. The panel invokes them by name.
+    vscode.commands.registerCommand('gemstone.downloadVersion', async (item: VersionTarget) => {
       const version = item.version;
       await vscode.window.withProgress(
         {
@@ -3687,11 +3696,10 @@ export function activate(context: vscode.ExtensionContext) {
         },
       );
       vscode.window.showInformationMessage(`GemStone ${version.version} downloaded.`);
-      // eslint-disable-next-line @typescript-eslint/no-floating-promises -- FIXME: unhandled floating promise; needs investigation to decide await vs. void vs. .catch before this rule is enabled repo-wide
-      versionProvider.loadVersions();
+      refreshVersions();
     }),
 
-    vscode.commands.registerCommand('gemstone.deleteDownload', async (item: VersionItem) => {
+    vscode.commands.registerCommand('gemstone.deleteDownload', async (item: VersionTarget) => {
       const confirmed = await vscode.window.showWarningMessage(
         `Delete download of GemStone ${item.version.version}?`,
         { modal: true },
@@ -3699,11 +3707,10 @@ export function activate(context: vscode.ExtensionContext) {
       );
       if (confirmed !== 'Delete') return;
       await versionManager.deleteDownload(item.version);
-      // eslint-disable-next-line @typescript-eslint/no-floating-promises -- FIXME: unhandled floating promise; needs investigation to decide await vs. void vs. .catch before this rule is enabled repo-wide
-      versionProvider.loadVersions();
+      refreshVersions();
     }),
 
-    vscode.commands.registerCommand('gemstone.extractVersion', async (item: VersionItem) => {
+    vscode.commands.registerCommand('gemstone.extractVersion', async (item: VersionTarget) => {
       await vscode.window.withProgress(
         {
           location: vscode.ProgressLocation.Notification,
@@ -3714,11 +3721,10 @@ export function activate(context: vscode.ExtensionContext) {
         },
       );
       vscode.window.showInformationMessage(`GemStone ${item.version.version} extracted.`);
-      // eslint-disable-next-line @typescript-eslint/no-floating-promises -- FIXME: unhandled floating promise; needs investigation to decide await vs. void vs. .catch before this rule is enabled repo-wide
-      versionProvider.loadVersions();
+      refreshVersions();
     }),
 
-    vscode.commands.registerCommand('gemstone.deleteExtracted', async (item: VersionItem) => {
+    vscode.commands.registerCommand('gemstone.deleteExtracted', async (item: VersionTarget) => {
       const confirmed = await vscode.window.showWarningMessage(
         `Delete extracted GemStone ${item.version.version}? This cannot be undone.`,
         { modal: true },
@@ -3726,8 +3732,7 @@ export function activate(context: vscode.ExtensionContext) {
       );
       if (confirmed !== 'Delete') return;
       await versionManager.deleteExtracted(item.version);
-      // eslint-disable-next-line @typescript-eslint/no-floating-promises -- FIXME: unhandled floating promise; needs investigation to decide await vs. void vs. .catch before this rule is enabled repo-wide
-      versionProvider.loadVersions();
+      refreshVersions();
     }),
 
     vscode.commands.registerCommand('gemstone.registerLocalVersion', async () => {
@@ -3759,7 +3764,7 @@ export function activate(context: vscode.ExtensionContext) {
           vscode.window.showInformationMessage(
             `GemStone ${info.version} is already present in ${sysadminStorage.getRootPath()}.`,
           );
-          void versionProvider.loadVersions();
+          refreshVersions();
           return;
         }
         vscode.window.showErrorMessage(
@@ -3774,13 +3779,12 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.window.showInformationMessage(
         `Registered local GemStone ${info.version} (${info.description || 'local build'}).`,
       );
-      // eslint-disable-next-line @typescript-eslint/no-floating-promises -- FIXME: unhandled floating promise; needs investigation to decide await vs. void vs. .catch before this rule is enabled repo-wide
-      versionProvider.loadVersions();
+      refreshVersions();
     }),
 
     vscode.commands.registerCommand(
       'gemstone.unregisterLocalVersion',
-      async (item: VersionItem) => {
+      async (item: VersionTarget) => {
         const confirmed = await vscode.window.showWarningMessage(
           `Unregister local GemStone ${item.version.version}? This only removes the symlink, not the product directory.`,
           { modal: true },
@@ -3788,19 +3792,20 @@ export function activate(context: vscode.ExtensionContext) {
         );
         if (confirmed !== 'Unregister') return;
         await versionManager.deleteExtracted(item.version);
-        // eslint-disable-next-line @typescript-eslint/no-floating-promises -- FIXME: unhandled floating promise; needs investigation to decide await vs. void vs. .catch before this rule is enabled repo-wide
-        versionProvider.loadVersions();
+        refreshVersions();
       },
     ),
 
-    vscode.commands.registerCommand('gemstone.openVersionFolder', (item: VersionItem) => {
+    // Opens the product directory itself — see gemstone.openDbInFinder, which
+    // does the same for a database. The two must not drift apart.
+    vscode.commands.registerCommand('gemstone.openVersionFolder', (item: VersionTarget) => {
       const gsPath = sysadminStorage.getGemstonePath(item.version.version);
       if (gsPath) {
-        vscode.env.openExternal(vscode.Uri.file(gsPath));
+        void vscode.env.openExternal(vscode.Uri.file(gsPath));
       }
     }),
 
-    vscode.commands.registerCommand('gemstone.openVersionTerminal', (item: VersionItem) => {
+    vscode.commands.registerCommand('gemstone.openVersionTerminal', (item: VersionTarget) => {
       try {
         processManager.openVersionTerminal(item.version.version);
       } catch (e) {
@@ -3808,40 +3813,41 @@ export function activate(context: vscode.ExtensionContext) {
       }
     }),
 
-    vscode.commands.registerCommand('gemstone.downloadWindowsClient', async (item: VersionItem) => {
-      const version = item.version.version;
-      try {
-        await vscode.window.withProgress(
-          {
-            location: vscode.ProgressLocation.Notification,
-            title: `Installing Windows client ${version}...`,
-            cancellable: true,
-          },
-          (progress, token) =>
-            versionManager.downloadAndExtractWindowsClient(version, progress, token),
-        );
-      } catch (e) {
-        vscode.window.showErrorMessage(
-          `Windows client install failed: ${e instanceof Error ? e.message : e}`,
-        );
-        // eslint-disable-next-line @typescript-eslint/no-floating-promises -- FIXME: unhandled floating promise; needs investigation to decide await vs. void vs. .catch before this rule is enabled repo-wide
-        versionProvider.loadVersions();
-        return;
-      }
+    vscode.commands.registerCommand(
+      'gemstone.downloadWindowsClient',
+      async (item: VersionTarget) => {
+        const version = item.version.version;
+        try {
+          await vscode.window.withProgress(
+            {
+              location: vscode.ProgressLocation.Notification,
+              title: `Installing Windows client ${version}...`,
+              cancellable: true,
+            },
+            (progress, token) =>
+              versionManager.downloadAndExtractWindowsClient(version, progress, token),
+          );
+        } catch (e) {
+          vscode.window.showErrorMessage(
+            `Windows client install failed: ${e instanceof Error ? e.message : e}`,
+          );
+          refreshVersions();
+          return;
+        }
 
-      // Auto-register GCI library path
-      const gciPath = sysadminStorage.getWindowsClientGciPath(version);
-      if (gciPath) {
-        await storage.setGciLibraryPath(version, gciPath);
-      }
-      // eslint-disable-next-line @typescript-eslint/no-floating-promises -- FIXME: unhandled floating promise; needs investigation to decide await vs. void vs. .catch before this rule is enabled repo-wide
-      versionProvider.loadVersions();
-      vscode.window.showInformationMessage(
-        `Windows client for GemStone ${version} is ready.${gciPath ? ' GCI library registered.' : ''}`,
-      );
-    }),
+        // Auto-register GCI library path
+        const gciPath = sysadminStorage.getWindowsClientGciPath(version);
+        if (gciPath) {
+          await storage.setGciLibraryPath(version, gciPath);
+        }
+        refreshVersions();
+        vscode.window.showInformationMessage(
+          `Windows client for GemStone ${version} is ready.${gciPath ? ' GCI library registered.' : ''}`,
+        );
+      },
+    ),
 
-    vscode.commands.registerCommand('gemstone.openWindowsClientFolder', (item: VersionItem) => {
+    vscode.commands.registerCommand('gemstone.openWindowsClientFolder', (item: VersionTarget) => {
       const clientPath = sysadminStorage.getWindowsClientPath(item.version.version);
       if (clientPath) {
         vscode.env.openExternal(vscode.Uri.file(clientPath));
@@ -3850,7 +3856,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     vscode.commands.registerCommand(
       'gemstone.deleteWindowsClientExtracted',
-      async (item: VersionItem) => {
+      async (item: VersionTarget) => {
         const confirmed = await vscode.window.showWarningMessage(
           `Delete the Windows client distribution for GemStone ${item.version.version}?`,
           { modal: true },
@@ -3858,25 +3864,20 @@ export function activate(context: vscode.ExtensionContext) {
         );
         if (confirmed !== 'Delete') return;
         await versionManager.deleteWindowsClientExtracted(item.version);
-        // eslint-disable-next-line @typescript-eslint/no-floating-promises -- FIXME: unhandled floating promise; needs investigation to decide await vs. void vs. .catch before this rule is enabled repo-wide
-        versionProvider.loadVersions();
+        refreshVersions();
       },
     ),
 
-    vscode.commands.registerCommand('gemstone.createDatabase', async () => {
-      const db = await databaseManager.createDatabase();
-      if (db) {
-        // Auto-create the stone's DataCurator login (unless one already targets
-        // it) so it can be connected to — and cleanly stopped — right away.
-        const newLogin = dataCuratorLoginToCreate(storage.getLogins(), db.config);
-        if (newLogin) {
-          await storage.saveLogin(newLogin);
-          treeProvider.refresh();
-        }
-        refreshAdminViews();
-        vscode.window.showInformationMessage(`Database "${db.dirName}" created.`);
-      }
-    }),
+    // ── The Databases & Versions panel ────────────────────────────────────
+    // Two doors into one panel: Manage… lands on the lists, New Database lands
+    // in the form. Both are the same tab — a second one would mean two places
+    // showing the same databases.
+    vscode.commands.registerCommand('gemstone.showDatabasesPanel', () =>
+      DatabasesPanel.show(databasesPanelDeps()),
+    ),
+    vscode.commands.registerCommand('gemstone.newDatabase', () =>
+      DatabasesPanel.show(databasesPanelDeps(), false, true),
+    ),
 
     vscode.commands.registerCommand('gemstone.deleteDatabase', async (node: DatabaseNode) => {
       if (node?.kind !== 'database') return;
@@ -4074,9 +4075,24 @@ export function activate(context: vscode.ExtensionContext) {
       });
     }),
 
+    // Opens the folder, rather than selecting it inside its parent as
+    // `revealFileInOS` does — the same thing Open in File Manager does for a
+    // version, and what someone asking for a database's folder means. Sharing
+    // one mechanism also means both land the same way relative to the editor
+    // window; they used to differ, one arriving in front and one behind.
     vscode.commands.registerCommand('gemstone.openDbInFinder', (node: DatabaseNode) => {
       if (!node || node.kind !== 'database') return;
-      vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(node.db.path));
+      void vscode.env.openExternal(vscode.Uri.file(node.db.path));
+    }),
+
+    // The one backup that needs no session: copy a stopped database's extents
+    // into its own backups folder. The other two (logical, and the online extent
+    // snapshot) both run through a live session, so neither can be taken of a
+    // database that is simply sitting there stopped.
+    vscode.commands.registerCommand('gemstone.offlineExtentBackup', async (node: DatabaseNode) => {
+      if (!node || node.kind !== 'database') return;
+      await databaseManager.offlineExtentBackup(node.db);
+      refreshAdminViews();
     }),
 
     vscode.commands.registerCommand('gemstone.openDbTerminal', (node: DatabaseNode) => {
@@ -4106,10 +4122,10 @@ export function activate(context: vscode.ExtensionContext) {
     }),
 
     vscode.commands.registerCommand('gemstone.refreshProcesses', () => {
-      processProvider.refresh();
+      processWatcher.refresh();
     }),
 
-    vscode.commands.registerCommand('gemstone.deleteStaleLock', async (item: ProcessItem) => {
+    vscode.commands.registerCommand('gemstone.deleteStaleLock', async (item: ProcessTarget) => {
       if (!item || item.process.responding) return;
       const report = processManager.inspectStaleLock(item.process);
       if (!report.safe) {
@@ -4124,7 +4140,7 @@ export function activate(context: vscode.ExtensionContext) {
       if (confirm !== 'Delete Lock') return;
       if (processManager.deleteStaleLock(report.lockPath)) {
         vscode.window.showInformationMessage(`Removed stale lock for ${item.process.name}.`);
-        processProvider.refresh();
+        processWatcher.refresh();
       } else {
         vscode.window.showErrorMessage(
           `Failed to remove ${report.lockPath}. Check filesystem permissions.`,
@@ -4132,7 +4148,7 @@ export function activate(context: vscode.ExtensionContext) {
       }
     }),
 
-    vscode.commands.registerCommand('gemstone.copyNetldiHost', async (item: ProcessItem) => {
+    vscode.commands.registerCommand('gemstone.copyNetldiHost', async (item: ProcessTarget) => {
       // Only NetLDI items surface this command (package.json menu filter),
       // but guard anyway since commands can be invoked programmatically.
       if (!item || item.process.type !== 'netldi') return;

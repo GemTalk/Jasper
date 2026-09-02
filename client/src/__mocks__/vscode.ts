@@ -1,5 +1,10 @@
 import { vi } from 'vitest';
-import { URI as Uri } from 'vscode-uri';
+import { URI as Uri, Utils as UriUtils } from 'vscode-uri';
+
+// Real `vscode.Uri` carries a static `joinPath`; `vscode-uri` puts the same
+// function on `Utils` instead. Bridged here so a panel that builds its webview's
+// localResourceRoots can be constructed under test at all.
+(Uri as unknown as { joinPath: typeof UriUtils.joinPath }).joinPath = UriUtils.joinPath;
 
 export { Uri };
 
@@ -191,6 +196,12 @@ function createMockWebview() {
     html: '',
     postMessage: vi.fn(),
     onDidReceiveMessage: vi.fn((_handler: unknown) => ({ dispose: () => {} })),
+    // A panel that ships its own assets (a font, an image) rewrites their paths
+    // through this before writing its HTML. The real one returns a
+    // `vscode-webview://` URL; the identity here is enough for a test asserting
+    // on behaviour rather than on the exact scheme.
+    asWebviewUri: vi.fn((uri: Uri) => uri),
+    cspSource: 'vscode-webview:',
   };
 }
 
@@ -403,12 +414,15 @@ export const window = {
   // Controllable low-level InputBox, same shape and lifecycle rules as
   // createQuickPick above. Fire the registered handlers from a test with
   // `__type(text)` (a keystroke — sets `value` and fires onDidChangeValue),
-  // `__accept()` (Enter) and `__hide()` (Escape). Grab the created instance with
+  // `__accept()` (Enter), `__hide()` (Escape) and `__clickAway()` (focus moves
+  // to something else in the window). Grab the created instance with
   // `vi.mocked(vscode.window.createInputBox).mock.results.at(-1).value`.
   //
   // The Enter/Escape distinction is the point: real VS Code fires onDidHide for
   // BOTH, and onDidAccept only for Enter — so a caller that wants to tell an
-  // accepted edit from an abandoned one has to track that itself.
+  // accepted edit from an abandoned one has to track that itself. Losing focus
+  // hides the box too — a third way to reach the same onDidHide — unless the box
+  // sets `ignoreFocusOut`, which is what `__clickAway()` honours.
   createInputBox: vi.fn(() => {
     let onChange: ((value: string) => void) | undefined;
     let onAccept: (() => void | Promise<void>) | undefined;
@@ -451,6 +465,9 @@ export const window = {
         await onAccept?.();
       },
       __hide: () => fireHide(),
+      __clickAway: () => {
+        if (!box.ignoreFocusOut) fireHide();
+      },
     };
     return box;
   }),

@@ -102,6 +102,7 @@ import {
   parseRevertResult,
   parseRemoveResult,
 } from './refactoring/classHistoryModel';
+import { parseRemoveCategoryResult, type RemoveCategoryResult } from './queries/removeCategory';
 import { showClassHistoryPanel } from './refactoring/classHistoryPanel';
 import { moveMethod } from './refactoring/moveMethodCommand';
 
@@ -274,29 +275,43 @@ export class ClassCategoryItem extends vscode.TreeItem {
   }
 }
 
+// Exported for the unit tests that pin the class row's expansion chevron, and for the
+// Classes pane's drag controller, which carries only real class rows.
 export class ClassItem extends vscode.TreeItem {
-  // `hasIvars` drives the expansion caret: a class with locally-defined instance
-  // variables opens to reveal its ivar sub-tree; one without stays flat. It never
-  // affects the stable `id`, so TreeView.reveal still matches regardless.
+  // `hasVars` drives the expansion chevron: a class with locally-defined variables
+  // of either kind opens to reveal its variable sub-tree; one with none stays flat,
+  // because a chevron there would advertise variables the class does not have. Must
+  // stay in step with `variableSides`, which decides the rows behind it. A class with
+  // none reaches Add Variable from the "+" on this row instead (#499) — which is why
+  // it also shows up in `contextValue`. Never affects the stable `id`, so
+  // TreeView.reveal still matches regardless.
   constructor(
     public readonly className: string,
-    hasIvars = false,
+    hasVars = false,
     versionTag?: string,
     hasComment = false,
   ) {
     super(
       versionTag === undefined ? className : `${className}[${versionTag}]`,
-      hasIvars ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None,
+      hasVars ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None,
     );
     // The displayed label may carry a `[n]` version tag, but the node's identity
     // (id, click argument, ivar sub-tree) always uses the raw class name.
     this.id = `k:${className}`;
-    // `.commented` gates the comment button to classes that actually have one
-    // (#387 item 11). Every other class action matches BOTH forms — see the
-    // `explorerClass(\.commented)?` clauses in package.json — so the suffix only
-    // ever adds a button, never removes one. Anchored there rather than a bare
+    // Two optional suffixes, each gating one button onto the rows that need it and
+    // matched as optional groups by every other class action's `when` — see the
+    // `explorerClass(\.novars)?(\.commented)?` clauses in package.json — so a suffix
+    // only ever adds a button, never removes one. Anchored there rather than a bare
     // `^explorerClass` prefix, which would also swallow `explorerClassVar`.
-    this.contextValue = hasComment ? 'explorerClass.commented' : 'explorerClass';
+    //
+    // `.novars` gates the class row's "+": that button exists for the class that has
+    // no variable-side rows to host one, so on a class that already has them it would
+    // be a third "+" on screen doing what those rows' own two already do.
+    // `.commented` gates the comment button to classes that actually have a comment
+    // (#387). Its clause must match `.novars` too — it was an exact `==` test, so
+    // adding a second suffix silently took the button off a commented class with no
+    // variables.
+    this.contextValue = `explorerClass${hasVars ? '' : '.novars'}${hasComment ? '.commented' : ''}`;
     this.iconPath = new vscode.ThemeIcon('symbol-class');
     // Fires on every click (selection still drives navigation separately); the
     // controller uses the timing to detect a double-click → open definition.
@@ -347,26 +362,34 @@ class ClassVarItem extends vscode.TreeItem {
 // The "instance" / "class" grouping node under a ClassItem that separates instance
 // variables from class variables — mirroring the Methods pane's instance/class
 // sides. isMeta=false holds the IvarItem rows; isMeta=true holds the ClassVarItem
-// rows. A side node is only created when that side has at least one variable.
-class VarSideItem extends vscode.TreeItem {
+// rows. A class with variables of either kind shows BOTH rows, so the inline "+" is
+// reachable for the side that is still empty (#499); a class with none shows neither.
+// Exported for the unit tests that pin the empty-side rendering.
+export class VarSideItem extends vscode.TreeItem {
   constructor(
     public readonly className: string,
     public readonly isMeta: boolean,
+    // A side with no variables renders as an empty state: no expansion caret
+    // (there is nothing to open) and a dimmed "(none)" after the label. Defaults
+    // to false because the reveal call sites build a node purely to address an
+    // existing row by `id`, which does not encode emptiness.
+    isEmpty = false,
   ) {
-    // A side node exists only when that side has variables (#387 item 12), so it is
-    // always expandable and never needs an empty/grayed rendering.
     super(
       isMeta ? 'class variables' : 'instance variables',
-      vscode.TreeItemCollapsibleState.Expanded,
+      isEmpty ? vscode.TreeItemCollapsibleState.None : vscode.TreeItemCollapsibleState.Expanded,
     );
     this.id = `k:${className}/vside:${isMeta}`;
     // Split by side so the inline "+" (Add Instance Variable) targets only the
-    // instance side; the class side keeps the base token.
+    // instance side; the class side keeps the base token. Empty and populated
+    // sides share the token: the "+" is what the row is there for when it is empty.
     this.contextValue = isMeta ? 'explorerVarSide.class' : 'explorerVarSide.instance';
     this.iconPath = new vscode.ThemeIcon('symbol-class');
-    this.tooltip = isMeta
-      ? `Class variables of ${className}`
-      : `Instance variables of ${className}`;
+    if (isEmpty) this.description = '(none)';
+    const kind = isMeta ? 'Class variables' : 'Instance variables';
+    this.tooltip = isEmpty
+      ? `No ${kind.toLowerCase()} defined in ${className}`
+      : `${kind} of ${className}`;
   }
 }
 
@@ -380,7 +403,7 @@ export class MethodCategoryItem extends vscode.TreeItem {
     public readonly category: string,
     public readonly computed: boolean,
     // Open the node up front. Categories do this while a filter is active, so matches
-    // show without expanding every folder by hand. (Before #387 item 10 the ALL METHODS
+    // show without expanding every folder by hand. (Before #387 the ALL METHODS
     // row also forced itself open as the landing view; that row is gone, so nothing is
     // expanded by default any more and the real categories start at the top.)
     forceExpanded = false,
@@ -488,13 +511,13 @@ export class MethodItem extends vscode.TreeItem {
 
 // A "filter chip" root row shown while a pane's filter is active: a funnel icon,
 // the label "Filter:", and the pattern in grey description text — visually
-// distinct from method/selector rows. Clicking it re-opens the filter editor;
-// its inline ✕ clears the filter. Carries the owning view id so one clear
-// command serves every pane.
+// distinct from method/selector rows. Clicking it re-runs the pane's filter
+// button; its inline ✕ clears the filter. Carries the owning view id so one
+// clear command serves every pane.
 //
 // The label keeps its colon: seeing the pattern is easy, but NOTICING that a
 // filter is on at all is the hard part, and "Filter: foo*" reads as a statement
-// about the pane where a bare "Filter foo*" reads like a button (#387 item 4).
+// about the pane where a bare "Filter foo*" reads like a button (#387).
 export class FilterChipItem extends vscode.TreeItem {
   constructor(
     public readonly viewId: string,
@@ -505,7 +528,14 @@ export class FilterChipItem extends vscode.TreeItem {
     this.description = pattern;
     this.iconPath = new vscode.ThemeIcon('filter-filled');
     this.contextValue = 'explorerFilterChip';
-    this.tooltip = `Active filter: ${pattern} — click to edit, ✕ to clear`;
+    // The Methods pane has no filter editor to re-open — its button opens VS Code's own
+    // find box, which narrows the rows this filter has already selected rather than editing
+    // the filter itself. A Methods filter therefore comes from an instance-variable row's
+    // context menu, and ✕ (or re-running that menu item) is how it changes.
+    this.tooltip =
+      viewId === VIEW_METHODS
+        ? `Active filter: ${pattern} — click to search within it, ✕ to clear`
+        : `Active filter: ${pattern} — click to edit, ✕ to clear`;
     this.command = { command: `${viewId}.filter`, title: '' };
   }
 }
@@ -673,6 +703,45 @@ export function shouldHintKeepMethodsOpen(
   return !alreadyShown && prevKey !== undefined && prevKey !== key;
 }
 
+// What to do about a category that still holds methods. One string, because the same
+// situation is caught in two places — the pane's own count before the round trip, and
+// the doit's re-count during it — and which one gets there first is an accident of
+// timing that must not decide whether the user is told what to do next.
+function stillHoldsAdvice(methodCount: number): string {
+  return `move or delete ${methodCount === 1 ? 'it' : 'them'} first, then remove the category.`;
+}
+
+// Why a method-category removal was refused, in the user's terms. Every branch
+// means nothing was removed.
+function refusalMessage(
+  result: Extract<RemoveCategoryResult, { removed: false }>,
+  className: string,
+  category: string,
+): string {
+  switch (result.reason) {
+    case 'has-methods':
+      return (
+        `'${category}' now holds ${result.methodCount} ` +
+        `method${result.methodCount === 1 ? '' : 's'} — nothing was removed; ` +
+        stillHoldsAdvice(result.methodCount)
+      );
+    case 'no-category':
+      return `${className} no longer has a method category '${category}'.`;
+    case 'no-class':
+      return `Couldn't resolve ${className} to remove the method category '${category}'.`;
+    case 'not-removed':
+      return `GemStone kept the method category '${category}' on ${className}.`;
+    case 'unrecognized':
+      // We could not read the stone's reply, so we do not know what it did — say
+      // that, and carry the raw text, rather than reporting the removal as refused
+      // and claiming knowledge of GemStone's behaviour we do not have.
+      return (
+        `Couldn't understand GemStone's answer while removing the method category ` +
+        `'${category}' from ${className}, so it may or may not be gone: ${result.raw}`
+      );
+  }
+}
+
 // ── Controller ───────────────────────────────────────────────────────────────
 
 /** The last-known outcome of one test class or test method, as the Explorer needs it. */
@@ -770,7 +839,7 @@ export class ExplorerController {
   }
   // className → count of locally-defined instance variables, for the current
   // dictionary; fetched once per dict so class rows know whether to show an
-  // expansion caret. Names are fetched lazily on expand and memoized here.
+  // expansion chevron. Names are fetched lazily on expand and memoized here.
   private definedIvarCounts = new Map<string, number>();
   private readonly definedIvarNamesCache = new Map<string, string[]>();
   // className → {superclass, subclasses} from the class hierarchy, memoized so ivar rows
@@ -807,6 +876,9 @@ export class ExplorerController {
   // The pane whose filter input is currently open (so its header shows the
   // live "Filter: …" label while typing, even if a method is already selected).
   private filteringView?: string;
+  // The open filter input, if any, and the way to close it as ACCEPTED. Set by
+  // beginFilter, used by commitFilterInput when a row click ends the filtering.
+  private openFilterBox?: { commit: () => void };
   // Freshly-created (via the + button) class categories that have no class yet,
   // so they still appear in the Class Categories pane. Cleared on dict change.
   private readonly newClassCategories = new Set<string>();
@@ -1056,8 +1128,32 @@ export class ExplorerController {
     for (const id of viewIds) this.setFilterState(id, undefined);
   }
 
+  // Narrow the Methods pane with VS Code's own find box — the one that opens inside the
+  // tree, at its top right, with the toggles for filtering (hiding non-matching rows)
+  // rather than highlighting. It is a better fit than our quick-input box for the reason
+  // that box kept going wrong: a floating input has to guess what a click somewhere else
+  // means, while the built-in box lives in the pane, keeps the narrowing while you click a
+  // result, and leaves VS Code — not us — mapping a clicked row back to its element.
+  //
+  // There is no API for it: `list.find` acts on whichever list was focused last, so focus
+  // the pane first and let the command find it. Nothing about the widget is readable from
+  // here afterwards — its query, its mode, whether it is even open — which is why the
+  // reads:/writes:/accesses: filters stay on our own state (see setFilterState): they are
+  // seeded from an instance-variable row's menu, and no built-in text search could run the
+  // GemStone query behind them. The two compose: ours picks the rows, VS Code's box then
+  // searches within them.
+  async openPaneFindWidget(viewId: string): Promise<void> {
+    // A box left open over another pane would sit on top of the widget we are about to open.
+    this.commitFilterInput();
+    await vscode.commands.executeCommand(`${viewId}.focus`);
+    await vscode.commands.executeCommand('list.find');
+  }
+
   // Open a live filter input for a pane: prefix match, '*' wildcard. Typing
   // filters the pane immediately; an empty value clears the filter.
+  //
+  // The Methods pane is the exception: its button opens VS Code's find box instead
+  // (openPaneFindWidget). The other three panes are still to follow (#523).
   //
   // Because filtering is live, every keystroke has already changed the pane by the time the
   // box closes — so cancelling has to be undone explicitly. VS Code fires onDidHide for BOTH
@@ -1065,21 +1161,51 @@ export class ExplorerController {
   // apart. On cancel we restore the filter captured when the box opened, which is the
   // previously accepted filter when the user was editing an existing one (the box is seeded
   // from it) rather than simply clearing.
-  beginFilter(viewId: string): void {
+  //
+  // A click away from the box is neither: `ignoreFocusOut` keeps the box open through it, and
+  // the click's own handler commits the box instead (commitFilterInput) — see the note there.
+  //
+  // Async only for the Methods pane's two commands: the returned promise goes back to VS Code
+  // from the command handler, so a `${viewId}.focus` or `list.find` that fails (a command id
+  // changed underneath us, the pane not registered yet) is reported instead of leaving the
+  // Filter button looking like it did nothing. The other panes' work is all synchronous and the
+  // promise they return is already resolved.
+  async beginFilter(viewId: string): Promise<void> {
+    if (viewId === VIEW_METHODS) {
+      return this.openPaneFindWidget(viewId);
+    }
+    // A box already open (another pane's funnel, say) no longer closes itself when focus moves
+    // here, so put it away first — and as an accept, since opening a second filter box is not a
+    // way of saying the first one was a mistake. Doing it here rather than leaving it to VS
+    // Code (which hides a displaced input box) keeps the order deterministic: the old box's
+    // onDidHide has finished before this one records itself as the open box.
+    this.commitFilterInput();
     const box = vscode.window.createInputBox();
     const filterBeforeEdit = this.filters.get(viewId);
     // What this box last wrote, so the cancel path can tell its own edit from someone else's.
     let lastAppliedByBox = filterBeforeEdit;
     let accepted = false;
     box.title = 'Filter';
+    // Keep the box open when focus leaves it. VS Code otherwise hides it on any click
+    // elsewhere, and hiding is the cancel path: the pre-edit filter goes back, the pane
+    // re-expands to the full list — under the pointer, before the click that dismissed the box
+    // resolves — and the click lands on whichever row has moved into that spot. Clicking a
+    // result is exactly what a filter is for, so the box must survive the click. With focus-out
+    // ignored, the box closes only on Escape (cancel), Enter (accept), or commitFilterInput
+    // (accept), so a dismissal is no longer ambiguous between the three.
+    box.ignoreFocusOut = true;
     box.placeholder = 'starts with… (use * as a wildcard)';
     // Set an explicit prompt. Left unset, VS Code fills the prompt line with its own
     // "press Enter to confirm / Escape to cancel" hint, which tells the user nothing
     // filters until Enter — but this box filters on every keystroke
     // (onDidChangeValue -> setFilterState). The live behaviour is the one worth
-    // keeping, so correct the message instead (#387 item 5). Escape still cancels and
-    // restores the previous filter, which is why it stays in the text.
-    box.prompt = 'Filters as you type — Escape to cancel';
+    // keeping, so correct the message instead. Escape still cancels and restores the
+    // previous filter, which is why it stays in the text. The box now also survives
+    // the click on a result and keeps the filter (see ignoreFocusOut above), so the
+    // prompt says so — deliberately without naming Enter, which would put back the
+    // very "nothing happens until you confirm" reading the explicit prompt exists to
+    // displace (there is a test on that; Enter does still accept and close the box).
+    box.prompt = 'Filters as you type — click a result to keep it, Escape to cancel';
     box.value = filterBeforeEdit ?? '';
     this.filteringView = viewId;
     this.syncTitles();
@@ -1087,18 +1213,23 @@ export class ExplorerController {
       lastAppliedByBox = value.trim() || undefined;
       this.setFilterState(viewId, lastAppliedByBox);
     });
-    box.onDidAccept(() => {
+    const accept = () => {
       accepted = true;
       box.hide();
-    });
+    };
+    box.onDidAccept(accept);
+    const entry = { commit: accept };
+    this.openFilterBox = entry;
     box.onDidHide(() => {
       // Undo ONLY this box's own edit, and only when there is something to undo.
       //
-      // Restoring unconditionally was wrong: selecting a class clears the Methods filter
-      // (`selectClass` -> `clearFilters(VIEW_METHODS)`), and that same click is what dismisses an
-      // open filter box — so the restore could re-apply a filter the user typed for the PREVIOUS
-      // class onto the newly selected one. If the live value is no longer what this box set,
-      // someone else owns it now; leave it alone.
+      // Restoring unconditionally was wrong: plenty of things clear a pane's filter while the
+      // box is open — selecting a class clears the Methods filter (`selectClass` ->
+      // `clearFilters(VIEW_METHODS)`), as do the clear-filter command and a session change — and
+      // an unconditional restore would put the abandoned text back on top of whatever they left.
+      // If the live value is no longer what this box set, someone else owns it now; leave it
+      // alone. (A row click reaches here already accepted, via commitFilterInput, so it never
+      // restores; this guards the paths that don't go through a click.)
       //
       // The second guard keeps the common "open the box and press Escape without typing" case a
       // no-op rather than a needless refresh() + syncTitles() + refreshIvarHighlights() round.
@@ -1110,10 +1241,24 @@ export class ExplorerController {
         this.setFilterState(viewId, filterBeforeEdit);
       }
       this.filteringView = undefined;
+      // Deregister this box only. beginFilter commits an open box before creating the next, so
+      // there is normally just one — but the check costs nothing and means a hide delivered
+      // late (after another box has opened) can't leave that newer box with no way to commit.
+      if (this.openFilterBox === entry) this.openFilterBox = undefined;
       this.syncTitles();
       box.dispose();
     });
     box.show();
+  }
+
+  // Close an open filter input, keeping what was typed. Clicking a row in a pane is a USE of
+  // the filter, not a cancellation of it, so the pane's selection handlers call this: the box
+  // no longer closes itself on focus-out (see beginFilter), and left open it would hang over
+  // the panes until Escape — which would then undo a filter the user had already acted on.
+  // beginFilter calls it too, to put away a box left open over another pane. A no-op when no
+  // box is open, which is every path but a click (or a second funnel) during filtering.
+  commitFilterInput(): void {
+    this.openFilterBox?.commit();
   }
 
   // From an instance-variable row's context menu: filter the Methods pane to the
@@ -1197,7 +1342,14 @@ export class ExplorerController {
     const item = new DictItem(names[i], i + 1);
     this.selectDict(item);
     const views = this.views;
-    if (views) views.dict.reveal(item, { select: true }).then(undefined, () => {});
+    // Reveal only when the pane is already on screen. `TreeView.reveal` makes
+    // VS Code *show* the view it belongs to, which drags the whole GemStone
+    // Explorer container to the front — so logging in from the Databases section
+    // (or anywhere else) yanked the sidebar away from what the user was doing.
+    // Selecting the dictionary above is what populates the panes; the reveal only
+    // scrolls the row into sight, which is worth nothing to someone not looking
+    // at it.
+    if (views?.dict.visible) views.dict.reveal(item, { select: true }).then(undefined, () => {});
   }
 
   // Re-fetch everything for the CURRENT selection WITHOUT clearing it — the
@@ -1254,7 +1406,7 @@ export class ExplorerController {
     } catch {
       /* keep stale on failure */
     }
-    this.loadDefinedIvarCounts();
+    this.loadClassRowMetadata();
     if (className !== undefined) {
       try {
         this.envLines = queries.getClassEnvironments(
@@ -1355,7 +1507,7 @@ export class ExplorerController {
     this.classCategoryEntries = session
       ? queries.getClassesWithCategory(session, item.dictIndex)
       : [];
-    this.loadDefinedIvarCounts();
+    this.loadClassRowMetadata();
     this.categoryProvider.refresh();
     this.classProvider.refresh();
     this.hierarchyProvider.refresh();
@@ -1641,7 +1793,7 @@ export class ExplorerController {
   // or Classes-pane toolbar. Opens to the side so the comment sits alongside
   // whatever the developer is reading, and as a PREVIEW tab rather than a pinned
   // one: reading a comment is usually a peek, and a preview tab is reused by the
-  // next one and dismissed with a single click instead of two (#387 item 11).
+  // next one and dismissed with a single click instead of two (#387).
   // Double-clicking the tab still promotes it to a permanent one. `item` comes
   // from the inline button; falls back to the selected class for the toolbar /
   // palette.
@@ -1991,11 +2143,11 @@ export class ExplorerController {
   // ── Instance-variable sub-tree (Classes pane) ────────────────────────────────
 
   // Reload the per-class Classes-pane row metadata for the current dictionary
-  // (defined-ivar counts and version numbers, one round trip each) and drop any
+  // (defined-variable counts and version numbers, one round trip each) and drop any
   // memoized name lists. Called wherever the class listing itself is (re)loaded.
-  // A failed probe leaves the maps empty rather than breaking navigation —
-  // classes just render flat and untagged.
-  private loadDefinedIvarCounts(): void {
+  // A failed probe leaves the maps empty rather than breaking navigation — classes
+  // just render flat and untagged.
+  private loadClassRowMetadata(): void {
     const session = this.session();
     this.definedIvarNamesCache.clear();
     this.hierNeighborsCache.clear();
@@ -2023,13 +2175,14 @@ export class ExplorerController {
     }
   }
 
-  // Whether a class has locally-defined instance variables (drives the caret).
+  // Whether a class has locally-defined instance variables.
   classHasDefinedIvars(className: string): boolean {
     return (this.definedIvarCounts.get(className) ?? 0) > 0;
   }
 
   // Whether a class has locally-defined variables of EITHER kind — the class row
-  // shows an expansion caret when it has instance OR class variables to reveal.
+  // shows an expansion chevron when it has instance OR class variables to reveal,
+  // and `variableSides` builds rows on exactly the same condition.
   classHasDefinedVars(className: string): boolean {
     return (
       this.classHasDefinedIvars(className) || (this.definedClassVarCounts.get(className) ?? 0) > 0
@@ -2037,7 +2190,7 @@ export class ExplorerController {
   }
 
   // Whether a class carries a real comment — drives whether the row offers the
-  // comment button at all (#387 item 11), so the button never promises a document
+  // comment button at all (#387), so the button never promises a document
   // that turns out to be GemStone's synthesised "No class-specific documentation
   // for …" placeholder. Answered from the set derived from the class list already
   // fetched for this dictionary, so asking costs no extra query and no scan. A class
@@ -2140,9 +2293,17 @@ export class ExplorerController {
 
   // "+" on the instance variable-side node, or right-click on a class row: prompt for
   // a name and add it as an instance variable of that class.
+  //
+  // The engine check lives HERE, not on the menu clauses, so it is the single answer
+  // to "do you have the engine?" for every route in: the side row's "+", the class
+  // row's context menu, the class row's "+" quick pick, and the palette. Gating the
+  // menus instead made the empty instance-variables row a dead end on a stone without
+  // the engine — a row whose only reason to exist is hosting that "+" — while the
+  // class row one line above offered the same add and routed it to the install prompt.
   async addInstVarOnClass(className: string): Promise<void> {
     const session = this.session();
     if (!session) return;
+    if (!(await this.ensureRbSupport('Adding an instance variable'))) return;
     const entered = await vscode.window.showInputBox({
       title: 'Add Instance Variable',
       prompt: `Add an instance variable to ${className}.`,
@@ -2219,6 +2380,43 @@ export class ExplorerController {
   async addClassVarFromSide(item: VarSideItem): Promise<void> {
     if (!item.isMeta) return; // the instance side is handled by addInstVar
     await this.addClassVarOnClass(item.className);
+  }
+
+  // "+" inline on a CLASS row: add a variable to it, asking which kind. The two
+  // kind-specific commands already exist and are also on this row's context menu;
+  // this is the visible one-click route, and the only route on a class that has no
+  // variables yet — such a class has no variable-side rows to host their "+", and it
+  // cannot be given any, because a tree row can only carry children by declaring a
+  // collapsible state and any collapsible state draws an expansion chevron (#499).
+  //
+  // Both kinds are always offered. Adding an instance variable needs the refactoring
+  // engine (it reshapes the class) while adding a class variable does not, but hiding
+  // the instance entry on a stone without the engine would leave the user guessing;
+  // choosing it goes through the same install-or-decline prompt as the refactorings —
+  // asked by `addInstVarOnClass` itself, so this dispatch doesn't repeat the question.
+  async addVariableOnClass(className: string): Promise<void> {
+    if (!this.session()) return;
+    const INSTANCE = 'Instance variable';
+    const CLASS = 'Class variable';
+    const pick = await vscode.window.showQuickPick(
+      [
+        {
+          label: INSTANCE,
+          detail: `Add an instance variable to ${className} — reshapes the class, so it needs the refactoring engine.`,
+        },
+        {
+          label: CLASS,
+          detail: `Add a class variable to ${className} — a shared binding, no reshape.`,
+        },
+      ],
+      { title: `Add Variable to ${className}`, placeHolder: 'Which kind of variable?' },
+    );
+    if (pick === undefined) return;
+    if (pick.label === INSTANCE) {
+      await this.addInstVarOnClass(className);
+      return;
+    }
+    await this.addClassVarOnClass(className);
   }
 
   // Add a class variable to a class. Unlike adding an instance variable this does NOT
@@ -2472,8 +2670,9 @@ export class ExplorerController {
     // Removing a class variable does NOT reshape the class (no new version); this is just
     // the general "class members changed" pane refresh, reused despite its name.
     await this.refreshAfterClassReshape(className);
-    // The variable's row is gone, so land the selection on the class-variable side node —
-    // the parent row — falling back to the class itself when that side is now empty.
+    // The variable's row is gone, so land the selection on the class-variable side
+    // node — the parent row, which stays put while the class still has variables of
+    // either kind — falling back to the class itself when that was the last one.
     try {
       await this.views?.klass.reveal(new VarSideItem(className, true), {
         select: true,
@@ -2754,7 +2953,7 @@ export class ExplorerController {
     // DEFINING class: it re-fetches the environment and re-selects that class (not a
     // subclass) via revealClass, so the method pane shows the carried-forward methods
     // of the right class rather than re-rendering stale data.
-    this.loadDefinedIvarCounts();
+    this.loadClassRowMetadata();
     await this.refreshAfterClassReshape(className);
     // Land on the renamed variable's row on the defining class. Best-effort: reveal
     // rejects if the row isn't in the rebuilt tree, which we ignore.
@@ -3006,7 +3205,9 @@ export class ExplorerController {
   // Ensure the refactoring engine is loaded, offering to install it if not.
   // Returns true when it is (now) available — re-checks rbSupportAvailable AFTER the
   // install command so a failed/declined install cleanly returns false. The single
-  // gate for every rename refactoring (ivar, method, class, class-var) + class history.
+  // gate for every rename refactoring (ivar, method, class, class-var), class history,
+  // and adding an instance variable — which, unlike the others, is NOT also gated by
+  // its `when` clauses, because the row hosting its "+" exists only to host it.
   private async ensureRbSupport(action: string): Promise<boolean> {
     const session = this.session();
     if (!session) return false;
@@ -3061,7 +3262,7 @@ export class ExplorerController {
       return;
     }
     this.classCategoryEntries = entries;
-    this.loadDefinedIvarCounts();
+    this.loadClassRowMetadata();
     this.loadHierarchy();
     this.categoryProvider.refresh();
     this.classProvider.refresh();
@@ -3474,7 +3675,7 @@ export class ExplorerController {
     // With a filter set and categories visible, keep the category structure but
     // drop categories with no matching selector, and expand what remains so the
     // matches are visible without hand-expanding each folder.
-    // A category survives the filter when its OWN name matches (#387 item 7) or when
+    // A category survives the filter when its OWN name matches (#387) or when
     // any selector inside it matches. Name-matching first: it is a cached-parse
     // lookup plus a string compare (parseFilter re-parses only when the raw filter
     // string changes), where the selector scan can pull in the ivar-access map.
@@ -3487,7 +3688,7 @@ export class ExplorerController {
     const expanded = filter !== undefined;
     if (filter !== undefined) combined = combined.filter(hasMatch);
     const items: MethodCategoryItem[] = [];
-    // No ALL METHODS pseudo-category row (#387 item 10). It duplicated what the real
+    // No ALL METHODS pseudo-category row (#387). It duplicated what the real
     // categories already show — for an uncategorized class it listed exactly what "as
     // yet unclassified" lists — and being first AND expanded by default it pushed the
     // real categories below the fold, so switching classes meant scrolling before any
@@ -3519,7 +3720,7 @@ export class ExplorerController {
         (info) =>
           filter === undefined ||
           this.methodMatchesFilter(isMeta, info.selector, filter) ||
-          // A category-name match keeps that category's methods here too (#387 item 7).
+          // A category-name match keeps that category's methods here too (#387).
           // Without this, filtering 'accessing' listed the category in grouped mode and
           // then emptied the pane the moment the user turned grouping off, even though
           // the filter had not changed. Ivar-token filters are excluded for free --
@@ -3582,7 +3783,7 @@ export class ExplorerController {
     return matchesMethodFilter(filter, selector, access);
   }
 
-  // Whether a method CATEGORY's own name passes the active filter (#387 item 7).
+  // Whether a method CATEGORY's own name passes the active filter (#387).
   // The browser offers category quick-filters, so typing 'acc' in the Methods pane
   // should surface the 'accessing' category, not just selectors starting with 'acc'.
   //
@@ -4278,7 +4479,7 @@ export class ExplorerController {
     this.state.dictName = dictName;
     this.state.dictIndex = dictIndex;
     this.classCategoryEntries = entries;
-    this.loadDefinedIvarCounts();
+    this.loadClassRowMetadata();
     const catEntry = this.classCategoryEntries.find((e) => e.className === className);
     // Only pin the category pane when the class has a non-empty one; otherwise
     // leave it on "all classes" so the target row is guaranteed visible.
@@ -4819,7 +5020,7 @@ export class ExplorerController {
     }
     if (this.state.dictIndex !== undefined) {
       this.classCategoryEntries = queries.getClassesWithCategory(session, this.state.dictIndex);
-      this.loadDefinedIvarCounts();
+      this.loadClassRowMetadata();
     }
     this.categoryProvider.refresh();
     this.classProvider.refresh();
@@ -5000,6 +5201,97 @@ export class ExplorerController {
         focus: true,
       })
       .then(undefined, () => {});
+  }
+
+  // Remove a real (non-computed) method category via the row's trash can, so a
+  // category left behind by a rename, a file-in, or a move that emptied it can be
+  // cleared out. Nothing is committed, like the Explorer's other edits.
+  //
+  // A category that still holds methods is REFUSED, naming the count. GemStone's own
+  // `Behavior>>removeCategory:` removes the category and every method filed under it,
+  // and tidying a stray category away should never be the thing that deletes code;
+  // recategorize or delete the methods first. The refusal is enforced server-side too
+  // (see the query), so a method filed in from elsewhere between the click and the
+  // remove can't be caught by it.
+  //
+  // A still-empty category the user just created lives only in the client-side
+  // overlay, never on the server, so that one is removed from the overlay alone —
+  // calling the server would answer 'no-category' (the mirror of the rename split).
+  async removeMethodCategory(item: MethodCategoryItem): Promise<void> {
+    const session = this.session();
+    if (!session || item.computed) return;
+    if (this.state.className === undefined || this.state.dictIndex === undefined) {
+      void vscode.window.showWarningMessage('Select a class first.');
+      return;
+    }
+    const className = this.state.className;
+    const dictIndex = this.state.dictIndex;
+    const category = item.category;
+    const sideLines = this.envLines.filter(
+      (l) => l.isMeta === item.isMeta && l.category === category,
+    );
+    // Every environment's copy of the category counts: a method in a non-zero
+    // environment is still a method that would be deleted along with it.
+    const methodCount = sideLines.reduce((n, l) => n + l.selectors.length, 0);
+    if (methodCount > 0) {
+      void vscode.window.showWarningMessage(
+        `'${category}' still holds ${methodCount} method${methodCount === 1 ? '' : 's'} — ` +
+          stillHoldsAdvice(methodCount),
+      );
+      return;
+    }
+
+    // An empty category is on the server iff the method list reported it at all.
+    const existsOnServer = sideLines.length > 0;
+    if (existsOnServer) {
+      let result: RemoveCategoryResult;
+      try {
+        result = parseRemoveCategoryResult(
+          queries.removeCategory(
+            session,
+            className,
+            item.isMeta,
+            category,
+            dictIndex,
+            // The same environment range the pane's own count above swept, so the
+            // server-side guard can't be narrower than the client-side one it backstops.
+            this.maxEnv(),
+          ),
+        );
+      } catch (e) {
+        void vscode.window.showErrorMessage(
+          `Remove category failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
+        return;
+      }
+      if (!result.removed) {
+        void vscode.window.showWarningMessage(refusalMessage(result, className, category));
+        // The pane is out of date in every one of these cases — a method appeared,
+        // the category is already gone, the class moved — so refetch rather than
+        // leaving the stale row.
+        this.reloadIfCurrent(className, dictIndex);
+        return;
+      }
+    }
+
+    // Drop a just-created (still-empty) category from the overlay too, so an
+    // overlay-only removal actually takes the row away and a server-side one can't
+    // leave a ghost behind.
+    this.newMethodCategories[item.isMeta ? 'meta' : 'instance'].delete(category);
+    if (
+      this.state.selectedIsMeta === item.isMeta &&
+      this.state.selectedMethodCategory === category
+    ) {
+      this.state.selectedMethodCategory = undefined;
+    }
+    // A server removal changed the class's categories, so refetch; an overlay-only
+    // one just needs the tree redrawn.
+    if (existsOnServer) {
+      this.reloadIfCurrent(className, dictIndex);
+    } else {
+      this.methodProvider.refresh();
+      this.syncTitles();
+    }
   }
 
   // New Method, invoked from a category row → files into THAT category (including
@@ -5586,7 +5878,7 @@ export class ExplorerController {
     const session = this.session();
     if (!session || session.id !== sessionId || this.state.dictIndex === undefined) return;
     this.classCategoryEntries = queries.getClassesWithCategory(session, this.state.dictIndex);
-    this.loadDefinedIvarCounts();
+    this.loadClassRowMetadata();
     this.categoryProvider.refresh();
     this.classProvider.refresh();
     // If the compiled class lives in the current dictionary, select it so the
@@ -5710,13 +6002,15 @@ class ClassProvider extends RefreshableProvider<ClassNode | FilterChipItem> {
       });
       return withFilterChip(VIEW_CLASSES, this.ctl, rows);
     }
-    // A class expands to an "instance" and/or "class" variable-side node (like the
-    // Methods pane's sides), each shown only when that side has variables.
+    // A class with variables of either kind expands to BOTH the "instance variables"
+    // and "class variables" side nodes (like the Methods pane's sides), the empty one
+    // as an empty state that still hosts its inline "+" (#499). A class with none has
+    // no chevron and so is never asked for children.
     if (element instanceof ClassItem) {
       return variableSides(
         this.ctl.definedIvarNames(element.className),
         this.ctl.definedClassVarNames(element.className),
-      ).map((side) => new VarSideItem(element.className, side.isMeta));
+      ).map((side) => new VarSideItem(element.className, side.isMeta, side.names.length === 0));
     }
     // A side node expands to its variable rows (each with an inline rename pencil).
     if (element instanceof VarSideItem) {
@@ -5787,7 +6081,7 @@ class MethodProvider extends RefreshableProvider<MethodNode> {
     if (element instanceof MethodCategoryItem) {
       const filter = this.ctl.getFilter(VIEW_METHODS);
       // When the CATEGORY NAME is what matched the filter, show everything inside it
-      // (#387 item 7). Filtering the selectors too would render the category the user
+      // (#387). Filtering the selectors too would render the category the user
       // just searched for as an empty folder, since its methods generally do not start
       // with their category's name.
       const nameMatched =
@@ -5924,6 +6218,38 @@ export class CategoryDropController implements vscode.TreeDragAndDropController<
 
 // ── Registration ──────────────────────────────────────────────────────────────
 
+// A pane, as far as committing a filter edit is concerned. Structural rather than
+// vscode.TreeView<T> because the five panes are TreeViews of five different node types
+// and this cares about none of them — and so a test can drive it with a plain fake.
+interface SelectableView {
+  onDidChangeSelection(listener: (e: { selection: readonly unknown[] }) => void): unknown;
+}
+
+// Selecting a row in any pane commits an open filter input instead of cancelling it: the box
+// stays open through the click (beginFilter sets ignoreFocusOut, so the pane can't re-expand
+// under the pointer and hand the click to a different row), and this is what then puts it away
+// with the filter intact. Exported so the wiring — every pane, not just the filtered one — can
+// be tested; a selection in an unfiltered pane matters too, since e.g. picking a class clears
+// the Methods filter and a box left open over it would be editing something that's gone.
+export function commitFilterOnRowSelection(
+  ctl: Pick<ExplorerController, 'commitFilterInput'>,
+  ...views: SelectableView[]
+): void {
+  for (const view of views) {
+    view.onDidChangeSelection((e) => {
+      const node = e.selection[0];
+      // Two selections are not the click this is about. An EMPTY one isn't a click at all —
+      // typing in the box can narrow the selected row out of the pane, and that must not close
+      // the box mid-word. And the filter row's click is the one that OPENS the box (its command
+      // is the pane's filter command), so committing on it would race the very edit it asked
+      // for — whether VS Code fires the selection before or after the row's command is its
+      // business, not ours; skipping the row settles it either way.
+      if (node === undefined || node instanceof FilterChipItem) return;
+      ctl.commitFilterInput();
+    });
+  }
+}
+
 // Handle returned to the extension so it can forward file-system compile events
 // (method / class Save) and session lifecycle events (abort) to the controller
 // for a live panel refresh.
@@ -6040,6 +6366,11 @@ export function registerGemStoneExplorer(
     method: methodView,
   });
 
+  // Clicking a row anywhere in the Explorer ends an open filter edit, keeping the filter (see
+  // ExplorerController.commitFilterInput). Registered ahead of the per-pane handlers below,
+  // though the order doesn't change the outcome — committing never restores anything.
+  commitFilterOnRowSelection(ctl, dictView, categoryView, classView, hierarchyView, methodView);
+
   dictView.onDidChangeSelection((e) => {
     const node = e.selection[0];
     if (node instanceof DictItem) ctl.selectDict(node);
@@ -6088,9 +6419,12 @@ export function registerGemStoneExplorer(
       'gemstone.explorer.refresh',
       () => void ctl.refreshRetainingSelection(),
     ),
-    // Per-pane filter buttons: open a live filter input (prefix match, '*'
-    // wildcard) that filters the pane in place — works regardless of where
-    // focus currently sits (e.g. the editor).
+    // Per-pane filter buttons. Dictionaries, Class Categories and Classes open a live
+    // filter input (prefix match, '*' wildcard) that filters the pane in place, from
+    // wherever focus currently sits (e.g. the editor); Methods opens VS Code's own find
+    // box inside the pane. Both go through beginFilter, which picks the pane's entry point.
+    // Its promise is returned rather than dropped, so a failure inside the Methods pane's
+    // focus/find commands surfaces as a failed command instead of a button that does nothing.
     ...EXPLORER_VIEWS.map((viewId) =>
       vscode.commands.registerCommand(`${viewId}.filter`, () => ctl.beginFilter(viewId)),
     ),
@@ -6314,6 +6648,16 @@ export function registerGemStoneExplorer(
       if (item instanceof VarSideItem) void ctl.addClassVarFromSide(item);
       else if (item instanceof ClassItem) void ctl.addClassVarOnClass(item.className);
     }),
+
+    // "+" on a class row — asks which kind, then dispatches to the same two adds.
+    // The one route on a class with no variables yet (no side rows to host a "+").
+    vscode.commands.registerCommand('gemstone.explorer.addVariable', (item?: ClassItem) => {
+      if (!(item instanceof ClassItem)) return;
+      void ctl.addVariableOnClass(item.className).catch((e: unknown) => {
+        const msg = e instanceof Error ? e.message : String(e);
+        void vscode.window.showErrorMessage(`Add variable failed: ${msg}`);
+      });
+    }),
     // Generate getter/setter accessors for the variable at the row: instance-side for
     // an instance variable, class-side for a class variable. Skips ones that exist.
     vscode.commands.registerCommand('gemstone.explorer.addAccessors', (item?: unknown) => {
@@ -6343,7 +6687,7 @@ export function registerGemStoneExplorer(
     }),
     // The single "Rename…" entry: figure out what the cursor is on (selector,
     // temporary, instance variable, or class variable) and dispatch to the specific
-    // rename below. Consolidates the four rename actions (#328 item 2).
+    // rename below. Consolidates the four rename actions (#328).
     vscode.commands.registerCommand('gemstone.rename', (position?: unknown) => {
       void renameAtCursorCommand(
         sessionManager,
@@ -6431,6 +6775,18 @@ export function registerGemStoneExplorer(
         void ctl.renameMethodCategory(item).catch((e: unknown) => {
           const msg = e instanceof Error ? e.message : String(e);
           void vscode.window.showErrorMessage(`Rename category failed: ${msg}`);
+        });
+      },
+    ),
+    // Remove a method category (trash can on the category row). Refuses one that
+    // still holds methods — see removeMethodCategory.
+    vscode.commands.registerCommand(
+      'gemstone.explorer.removeMethodCategory',
+      (item?: MethodCategoryItem) => {
+        if (!(item instanceof MethodCategoryItem)) return;
+        void ctl.removeMethodCategory(item).catch((e: unknown) => {
+          const msg = e instanceof Error ? e.message : String(e);
+          void vscode.window.showErrorMessage(`Remove category failed: ${msg}`);
         });
       },
     ),

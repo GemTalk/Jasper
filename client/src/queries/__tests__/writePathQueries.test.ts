@@ -9,6 +9,7 @@ import { recategorizeMethod } from '../recategorizeMethod';
 import { recategorizeClass } from '../recategorizeClass';
 import { copyMethodToClass } from '../copyMethodToClass';
 import { renameCategory } from '../renameCategory';
+import { removeCategory, parseRemoveCategoryResult } from '../removeCategory';
 import { deleteClass } from '../deleteClass';
 import { moveClass } from '../moveClass';
 import { addDictionary } from '../addDictionary';
@@ -144,6 +145,149 @@ describe('renameCategory', () => {
     renameCategory(execute, 'Array', false, 'old', 'new');
     const code = execute.mock.calls[0][0];
     expect(code).toContain("renameCategory: 'old' to: 'new'");
+  });
+});
+
+describe('removeCategory', () => {
+  it('removes the category only once it is known to be empty', () => {
+    const execute = vi.fn<QueryExecutor>(() => 'ok');
+    removeCategory(execute, 'Array', false, 'accessing');
+    const code = execute.mock.calls[0][0];
+    // GemStone's removeCategory: takes every method in the category with it, so the
+    // emptiness test has to sit in the SAME doit as the removal — a check on the
+    // client can be overtaken by a method filed in from elsewhere.
+    expect(code).toContain("Symbol _existingWithAll: 'accessing'");
+    expect(code).toContain('(recv _unifiedCategorys: env) at: cat otherwise: nil');
+    expect(code).toContain("recv removeCategory: 'accessing' environmentId: env");
+    // The removal must sit in the EMPTY branch; swapping the arms would delete the
+    // methods the refusal exists to protect.
+    expect(code).toMatch(
+      /count > 0\s*\n\s*ifTrue: \['has-methods:', count printString\]\s*\n\s*ifFalse: \[\s*\n\s*found do:/,
+    );
+  });
+
+  it('sweeps every environment the Methods pane does, not just environment 0', () => {
+    // `includesCategory:`, `selectorsIn:` and `removeCategory:` are env-0 shorthands,
+    // while the row the user clicked was built by getClassEnvironments iterating
+    // `_unifiedCategorys: env` over `0 to: maxEnv`. Reading fewer environments than
+    // the pane made the guard narrower than the thing it backstops.
+    const execute = vi.fn<QueryExecutor>(() => 'ok');
+    removeCategory(execute, 'Array', false, 'accessing', 1, 3);
+    const code = execute.mock.calls[0][0];
+    expect(code).toContain('envs := 3.');
+    expect(code).toContain('0 to: envs do:');
+    expect(code).not.toContain('includesCategory:');
+    expect(code).not.toContain('selectorsIn:');
+    // ...and the removal itself is per-environment, not the env-0 shorthand.
+    expect(code).not.toMatch(/removeCategory: '[^']*'\./);
+  });
+
+  it('counts methods across environments before refusing', () => {
+    const execute = vi.fn<QueryExecutor>(() => 'ok');
+    removeCategory(execute, 'Array', false, 'accessing', 1, 2);
+    const code = execute.mock.calls[0][0];
+    // One running total over the whole sweep — a per-environment test would let a
+    // category empty in environment 0 be removed with a method still in environment 1.
+    expect(code).toContain('count := count + sels size');
+    expect(code).toContain("'has-methods:', count printString");
+  });
+
+  it('sweeps environment 0 alone when no higher environment is configured', () => {
+    const execute = vi.fn<QueryExecutor>(() => 'ok');
+    removeCategory(execute, 'Array', false, 'accessing');
+    expect(execute.mock.calls[0][0]).toContain('envs := 0.');
+  });
+
+  it('reports no-category only when NO environment in range has it', () => {
+    // A category that exists only in a non-zero environment still has a row on
+    // screen; telling the user the class "no longer has" it would be false.
+    const execute = vi.fn<QueryExecutor>(() => 'ok');
+    removeCategory(execute, 'Array', false, 'accessing', 1, 1);
+    expect(execute.mock.calls[0][0]).toMatch(/found isEmpty\s*\n\s*ifTrue: \['no-category'\]/);
+  });
+
+  it('addresses the metaclass for the class side', () => {
+    const execute = vi.fn<QueryExecutor>(() => 'ok');
+    removeCategory(execute, 'Array', true, 'printing', 1);
+    const code = execute.mock.calls[0][0];
+    expect(code).toContain('symbolList at: 1');
+    expect(code).toContain(' class.');
+  });
+
+  it('escapes a quote in the category name', () => {
+    const execute = vi.fn<QueryExecutor>(() => 'ok');
+    removeCategory(execute, 'Array', false, "it's odd");
+    const code = execute.mock.calls[0][0];
+    expect(code).toContain("Symbol _existingWithAll: 'it''s odd'");
+    expect(code).toContain("recv removeCategory: 'it''s odd' environmentId: env");
+  });
+
+  it('reports the removal only once the category is actually gone', () => {
+    // removeCategory:environmentId: runs a write-privilege check that answers nil
+    // rather than raising if it ever declines quietly, so having SENT it is not
+    // evidence — and with several environments in play, one that kept the category
+    // is enough to make the whole removal a failure.
+    const execute = vi.fn<QueryExecutor>(() => 'ok');
+    removeCategory(execute, 'Array', false, 'accessing', 1, 1);
+    const code = execute.mock.calls[0][0];
+    expect(code).toMatch(
+      /found detect: \[:env \| \(\(recv _unifiedCategorys: env\) at: cat otherwise: nil\) notNil\]/,
+    );
+    expect(code).toMatch(/ifTrue: \['ok'\]\s*\n\s*ifFalse: \['not-removed'\]/);
+  });
+
+  it('answers no-class rather than raising when the class does not resolve', () => {
+    const execute = vi.fn<QueryExecutor>(() => 'no-class');
+    removeCategory(execute, 'Array', false, 'accessing', 1);
+    expect(execute.mock.calls[0][0]).toContain("recv isNil\n  ifTrue: ['no-class']");
+  });
+
+  it('reads the removal sentinels', () => {
+    expect(parseRemoveCategoryResult('ok')).toEqual({ removed: true });
+    expect(parseRemoveCategoryResult(' ok\n')).toEqual({ removed: true });
+    expect(parseRemoveCategoryResult('no-category')).toEqual({
+      removed: false,
+      reason: 'no-category',
+    });
+    expect(parseRemoveCategoryResult('has-methods:3')).toEqual({
+      removed: false,
+      reason: 'has-methods',
+      methodCount: 3,
+    });
+  });
+
+  it('reads the class-missing and kept-anyway sentinels', () => {
+    expect(parseRemoveCategoryResult('no-class')).toEqual({
+      removed: false,
+      reason: 'no-class',
+    });
+    expect(parseRemoveCategoryResult('not-removed')).toEqual({
+      removed: false,
+      reason: 'not-removed',
+    });
+  });
+
+  it('treats an answer it does not recognize as a failure, not a success', () => {
+    // Anything else means the doit did not reach its 'ok' — reporting a removal that
+    // did not happen would leave the pane claiming a category is gone.
+    expect(parseRemoveCategoryResult('a GsProcess').removed).toBe(false);
+    expect(parseRemoveCategoryResult('has-methods:').removed).toBe(false);
+  });
+
+  it('keeps an unreadable answer apart from GemStone saying it kept the category', () => {
+    // 'not-removed' is the stone telling us what it did; this is us being unable to
+    // read its reply at all. Reporting the first for the second states as known
+    // something we could not read — and loses the text a bug report would need.
+    expect(parseRemoveCategoryResult('a GsProcess')).toEqual({
+      removed: false,
+      reason: 'unrecognized',
+      raw: 'a GsProcess',
+    });
+    expect(parseRemoveCategoryResult('  has-methods:\n')).toEqual({
+      removed: false,
+      reason: 'unrecognized',
+      raw: 'has-methods:',
+    });
   });
 });
 
