@@ -4,7 +4,13 @@ import { SysadminStorage } from '../sysadminStorage';
 import { ProcessManager, versionsMatch } from './processManager';
 import { GemStoneDatabase } from '../sysadminTypes';
 import { wslExistsSync, wslReaddirSync, wslIsFile } from '../wslFs';
-import { ServerStatus, databaseStatus, inspectDatabaseProcesses } from '../databaseServerStatus';
+import {
+  ServerStatus,
+  DatabaseAction,
+  databaseAction,
+  databaseStatus,
+  inspectDatabaseProcesses,
+} from '../databaseServerStatus';
 import { ExternalServer, ExternalServerFinding } from '../externalServerScan';
 
 export type DatabaseNode =
@@ -77,7 +83,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseNod
           vscode.TreeItemCollapsibleState.Collapsed,
         );
         item.description = `${node.db.config.stoneName} (${node.db.config.version})`;
-        item.contextValue = 'gemstoneDb';
+        item.contextValue = `gemstoneDb${this.databaseContext(node.db)}`;
         item.iconPath = new vscode.ThemeIcon('database');
         item.tooltip = `Path: ${node.db.path}\nStone: ${node.db.config.stoneName}\nNetLDI: ${node.db.config.ldiName}\nVersion: ${node.db.config.version}\nBase extent: ${node.db.config.baseExtent}`;
         return item;
@@ -129,6 +135,31 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseNod
         return item;
       }
     }
+  }
+
+  /** Which whole-database action the row offers, as a context-value suffix.
+   *
+   *  The reading itself is `databaseAction`, shared with the Command Palette's
+   *  picker so the two cannot disagree. External gets neither action here; the
+   *  child rows offer the restart-under-Jasper action for that case. */
+  private databaseContext(db: GemStoneDatabase): DatabaseAction {
+    return databaseAction(this.inspect(db).status);
+  }
+
+  /** One reading of a database's two servers. The database row's context value
+   *  and the child rows beneath it both come from this, so a row cannot offer
+   *  Stop while the stone under it reads Stopped.
+   *
+   *  It is the same inspection the login-failure recovery uses, so the tree
+   *  cannot contradict what a connect will actually do either. */
+  private inspect(db: GemStoneDatabase) {
+    const external: ExternalServerFinding = this.processManager.getExternalServers(db);
+    return {
+      external,
+      status: databaseStatus(
+        inspectDatabaseProcesses(db, this.processManager.getProcesses(), external),
+      ),
+    };
   }
 
   /** Apply a status's text, icon, and context value to a stone or NetLDI row,
@@ -190,12 +221,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseNod
       return this.storage.getDatabases().map((db) => ({ kind: 'database' as const, db }));
     }
     if (node.kind === 'database') {
-      // The status comes from the same inspection the login-failure recovery
-      // uses, so the tree cannot contradict what a connect will actually do.
-      const external: ExternalServerFinding = this.processManager.getExternalServers(node.db);
-      const status = databaseStatus(
-        inspectDatabaseProcesses(node.db, this.processManager.getProcesses(), external),
-      );
+      const { external, status } = this.inspect(node.db);
       return [
         { kind: 'stone', db: node.db, status: status.stone, external: external.stone },
         { kind: 'netldi', db: node.db, status: status.netldi, external: external.netldi },
