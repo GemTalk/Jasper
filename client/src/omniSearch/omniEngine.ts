@@ -27,6 +27,7 @@ import {
   changeCategoryId,
 } from './omniTypes';
 import { match, compareMatches, MatchMode } from './omniMatch';
+import { compareMethodRows } from './rank';
 import { referenceRequestFor } from './references';
 
 /** A provider's truncation report plus the human scope name, so the webview can say WHICH scope was
@@ -203,29 +204,6 @@ function isNameLike(categoryId: OmniCategoryId): boolean {
   );
 }
 
-/** Ordering key for a method-like row: the class it lives on, which side of it, and its selector.
- *  Non-method rows (there are none in the method-like bucket today) fall back to their label, so the
- *  key is total whatever lands here. */
-function methodSortKey(r: OmniResult): [string, number, string] {
-  return r.action.kind === 'openMethod'
-    ? [r.action.className, r.action.isMeta ? 1 : 0, r.action.selector]
-    : [r.label, 0, ''];
-}
-
-/** Total order over method-like rows: matcher score first (Source/Literals rows all tie at 0), then
- *  the method key above, then the label as a last resort so two rows are never merely "equal". */
-function compareMethodRows(a: OmniResult, b: OmniResult): number {
-  if (a.score !== b.score) return b.score - a.score;
-  const [aClass, aSide, aSel] = methodSortKey(a);
-  const [bClass, bSide, bSel] = methodSortKey(b);
-  const byClass = aClass.localeCompare(bClass);
-  if (byClass !== 0) return byClass;
-  if (aSide !== bSide) return aSide - bSide;
-  const bySelector = aSel.localeCompare(bSel);
-  if (bySelector !== 0) return bySelector;
-  return a.label.localeCompare(b.label);
-}
-
 /**
  * Global cross-category ranking for the flat list, layering two of Eric's rules on top of the
  * matcher score:
@@ -237,9 +215,9 @@ function compareMethodRows(a: OmniResult, b: OmniResult): number {
  *    "si", method prefixes lead; with "Si", class/global prefixes lead.
  *
  * Prefix (F) dominates the kind preference (E), which dominates the matcher score. Below that the
- * two kinds break ties differently: method-like rows by class/side/selector (`compareMethodRows`),
- * name-like rows by the shorter-then-alphabetical label order. `q` is the trimmed, lower-cased
- * query.
+ * two kinds break ties differently: method-like rows by score, then class/side/selector
+ * (`compareMethodRows`, shared with the Methods provider); name-like rows by the matcher's
+ * shorter-then-alphabetical label order. `q` is the trimmed, lower-cased query.
  */
 function omniRank(a: OmniResult, b: OmniResult, q: string, upperFirst: boolean): number {
   const aPrefix = primaryName(a).toLowerCase().startsWith(q) ? 0 : 1;
@@ -251,12 +229,13 @@ function omniRank(a: OmniResult, b: OmniResult, q: string, upperFirst: boolean):
   const bKind = isNameLike(b.categoryId) === upperFirst ? 0 : 1;
   if (aKind !== bKind) return aKind - bKind;
 
-  // Within the method-like bucket, order by the METHOD, not by the label text: equal score, then
-  // class A→Z, then instance side before class side, then selector. This is the same key the
-  // Methods provider caps its own page with, so a row's place doesn't shift when the engine re-ranks
-  // it, and it gives Source/Literals rows — which all carry score 0, having matched a method BODY
-  // rather than their label — a recognizable order of their own instead of the stone's traversal
-  // order (issue #532).
+  // Within the method-like bucket, order by the METHOD, not by the label text: score first, then
+  // class A→Z, then instance side before class side, then selector. `compareMethodRows` is the one
+  // key the Methods provider also caps its own page with, so a row's place doesn't shift when the
+  // engine re-ranks it, and it gives Source/Literals rows — which all carry score 0, having matched
+  // a method BODY rather than their label — a recognizable order of their own instead of the stone's
+  // traversal order (issue #532). Score leads, so for Methods rows the class A→Z step only breaks a
+  // tie below the match quality.
   //
   // It must be a key, not a conditional override of compareMatches: comparing only SAME-selector
   // pairs by class name and everything else by label length made the comparator non-transitive

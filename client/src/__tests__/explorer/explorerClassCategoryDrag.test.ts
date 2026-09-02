@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import * as fs from 'fs';
+import * as path from 'path';
 
 vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
 // The controller pulls in browserQueries; stub only what this flow touches.
@@ -47,12 +49,13 @@ function makeController(entries: ClassCategoryEntry[] = []) {
     notifyDocumentChanged,
   );
   ctl.setViews(makeViews() as unknown as Parameters<ExplorerController['setViews']>[0]);
-  ctl.state.dictName = 'UserGlobals';
-  ctl.state.dictIndex = 3;
-  // The classes pane's own view of which class sits in which category.
-  (
-    ctl as unknown as { classCategoryEntriesStore: ClassCategoryEntry[] }
-  ).classCategoryEntriesStore = entries;
+  // Seed the pane's own view of which class sits in which category through the read that
+  // really populates it, and go in through selectDict — the same call a dictionary click
+  // makes. Writing the private backing field instead would be invisible to TypeScript on a
+  // rename AND would bypass the accessor's derivation, and it fails QUIETLY: every
+  // `categoryOfClass` lookup would just return undefined, which only one test below can see.
+  vi.mocked(queries.getClassesWithCategory).mockReturnValue(entries);
+  ctl.selectDict({ dictName: 'UserGlobals', dictIndex: 3 });
   return ctl;
 }
 
@@ -267,6 +270,22 @@ describe('the Class Categories drop target', () => {
 
     expect(controller.dragMimeTypes).toEqual([]);
     expect([...transfer]).toEqual([]);
+  });
+});
+
+// Several classes travelling together is only reachable if the Classes pane allows a
+// multi-row selection — without it VS Code hands `handleDrag` exactly one row and the
+// plural confirmation, the per-class failure accumulation, and the tests below would all
+// describe a shape no user can produce. Read from the source because the pane options are
+// passed to `createTreeView` at activation, which these unit tests do not run.
+describe('the Classes pane allows a multi-row drag', () => {
+  it('creates the pane with canSelectMany, so more than one class can be picked up', () => {
+    const src = fs.readFileSync(
+      path.resolve(__dirname, '..', '..', 'gemstoneExplorer.ts'),
+      'utf-8',
+    );
+    const options = src.slice(src.indexOf("createTreeView('gemstoneExplorerClasses'"));
+    expect(options.slice(0, options.indexOf('});'))).toContain('canSelectMany: true');
   });
 });
 

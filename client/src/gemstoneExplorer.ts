@@ -4992,7 +4992,15 @@ export class ExplorerController {
       blockers: descendants.map((d) => d.className),
       blockerLead: `Subclass${descendants.length === 1 ? '' : 'es'} removed with it (all or none)`,
       note: 'Nothing is committed until you commit the session.',
-      confirmLabel: descendants.length > 0 ? 'Remove All' : undefined,
+      // Name what the button REMOVES, never "all". The Classes pane allows a multi-row
+      // selection, so "Remove All" beside a dialog titled after ONE class read as "remove
+      // every row I have selected" — and then only that one class and its subtree went.
+      // The inline trash is a row control: VS Code hands it its own row and nothing else,
+      // so the subtree under that single class is the whole of what this can remove.
+      confirmLabel:
+        descendants.length > 0
+          ? `Remove With Subclass${descendants.length === 1 ? '' : 'es'}`
+          : undefined,
     };
 
     const decision = await decideSafeDelete(session.id, target);
@@ -6343,9 +6351,13 @@ export function registerGemStoneExplorer(
   });
   const classView = vscode.window.createTreeView('gemstoneExplorerClasses', {
     treeDataProvider: ctl.classProvider,
-    // No canSelectMany here: every class action (remove, rename, comment…) is written
-    // for the one selected row, so a drag carries whatever VS Code hands it — today a
-    // single class — rather than the pane growing multi-select as a side effect.
+    // Multi-select so several class rows can be dragged onto a class category together —
+    // refiling a handful of classes at once is the ordinary shape of that gesture, and
+    // without this a drag could only ever carry the one row VS Code handed it. The
+    // single-row class actions (remove, rename, comment…) are unaffected: VS Code passes
+    // the CLICKED row as the command argument, so each still acts on that row, the same
+    // way the Methods pane has long combined multi-select drag with per-row commands.
+    canSelectMany: true,
     dragAndDropController: new ClassDragAndDrop(ctl),
   });
   const hierarchyView = vscode.window.createTreeView('gemstoneExplorerClassHierarchy', {

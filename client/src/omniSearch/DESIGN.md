@@ -147,7 +147,8 @@ Global "search anything browsable" for the GemStone IDE — the Jasper answer to
    with modes `fuzzy` (subsequence, default) | `substring` | `prefix`, plus case-sensitivity — read
    from settings (`gemstone.omniSearch.matchMode`, `…caseSensitive`). It returns match **ranges**,
    which the webview renders as `<mark>` highlights. `rank.ts` is the shared per-provider helper: match
-   every candidate, drop non-matches, sort by the matcher's total order, cap to `maxResultsPerCategory`.
+   every candidate, drop non-matches, sort by the matcher's total order, cap to `maxResultsPerCategory`
+   — plus `compareMethodRows`, the method-row order the Methods provider and the engine share.
 
 5. **Trigger.** VS Code cannot bind _double-tap-Shift_ (keybindings are chords, not double-taps), so we
    ship a command `gemstone.search` + a default keybinding **`ctrl+shift+a`** (`cmd+shift+a` on
@@ -236,7 +237,7 @@ Global "search anything browsable" for the GemStone IDE — the Jasper answer to
 | `omniTypes.ts`               | `OmniProvider`, `OmniResult`, `OmniCategory`, config types            | no        | —                      |
 | `omniConfig.ts`              | read `gemstone.omniSearch.*` → typed `OmniConfig`                     | no        | ✅                     |
 | `omniMatch.ts`               | pure matcher/ranker (modes, score, ranges)                           | no        | ✅                     |
-| `rank.ts`                    | shared provider helper: match → sort → cap                           | no        | ✅ (via providers)     |
+| `rank.ts`                    | shared provider helpers: match → sort → cap; method-row order        | no        | ✅ (via providers)     |
 | `omniActions.ts`             | dispatch an `OmniAction` to injected handlers (open / reveal)        | no        | ✅                     |
 | `references.ts`              | pure glue: `OmniResult` → reference/senders query request           | no        | ✅                     |
 | `omniEngine.ts`              | the search engine: scope, case, load-more/all, count, ref pivot → `OmniViewData` | no | ✅            |
@@ -288,13 +289,17 @@ Behaviour decisions (Eric's review of the first webview cut):
   closest "foo" first regardless of kind, so `buildView` ranks every result together by match score.
   Each row wears a small **category tag** (Class / Method / Global / …) so you still see what it is.
 - **Ties break by kind.** Below the prefix and first-letter-case rules, method rows (Methods / Source /
-  Literals) order by class A→Z, then instance side before class side, then selector; everything else
-  orders by the matcher's shorter-then-alphabetical label order. Method rows need their own key
-  because Source and Literals hits match a method BODY, so every one of them scores 0 and there is no
-  label match left to rank on — without it they came back in the stone's traversal order
+  Literals) order by **match score first**, then class A→Z, then instance side before class side, then
+  selector; everything else orders by the matcher's shorter-then-alphabetical label order. Score leads,
+  so for Methods rows — where scores differ — the class/side/selector steps only break a tie beneath
+  the match quality. Method rows need their own key because Source and Literals hits match a method
+  BODY, so every one of them scores 0 and there is no label match left to rank on; for those the whole
+  order IS class/side/selector, and without it they came back in the stone's traversal order
   ([#532](https://github.com/GemTalk/Jasper/issues/532)). One key per kind, never a conditional
   override of the other: a comparator that only reorders SOME pairs is not transitive, and a cyclic
-  comparator makes `Array.prototype.sort` return anything it likes.
+  comparator makes `Array.prototype.sort` return anything it likes. The key (`compareMethodRows`,
+  in `rank.ts`) is shared with the Methods provider, which caps its own page with it — a provider
+  ordering its own rows differently would drop rows by one key and display the survivors by another.
 - **Scroll resets to the top** on a fresh query / clear / scope / case change, but NOT on Load-more.
 - **The result cap resets** to the base `maxResultsPerCategory` on a genuine term change (and on clear),
   so a raised "Load all" cap never silently persists into the next search.
