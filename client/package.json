@@ -13,7 +13,7 @@
     "dotenv": "^17.4.2",
     "jsdom": "^27.4.0",
     "vitest": "^4.1.11",
-    "vscode-uri": "^3.1.0"
+    "vscode-uri": "^3.2.0"
   },
   "scripts": {
     "//test": "Runs only the 'default' vitest project (see vitest.config.ts). The 'gci' project is on-demand (needs a live stone) and is excluded here on purpose; run it with `npm run test:gci`. Without --project, vitest would run both projects.",

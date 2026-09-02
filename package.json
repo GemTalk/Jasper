@@ -3273,7 +3273,7 @@
     "@vscode/test-electron": "^3.1.0",
     "@vscode/vsce": "^3.7.1",
     "esbuild": "^0.28.2",
-    "eslint": "^10.8.1",
+    "eslint": "^10.9.1",
     "eslint-config-flat-gitignore": "^2.3.0",
     "eslint-config-prettier": "^10.1.8",
     "globals": "^17.11.0",
@@ -3284,7 +3284,7 @@
     "prettier": "^3.9.6",
     "tsx": "^4.23.12",
     "typescript": "^5.7.2",
-    "typescript-eslint": "^8.67.0",
+    "typescript-eslint": "^8.68.0",
     "vscode-oniguruma": "^2.0.1",
     "vscode-textmate": "^9.3.2"
   },
