@@ -114,7 +114,7 @@ const BUTTONS: ToolbarButton[] = [
     mode: 'selectors',
   },
   {
-    command: 'gemstone.sessionOpenWorkspace',
+    command: 'gemstone.openWorkspace',
     label: 'Open Workspace',
     // A sheet with a few lines of text: the scratch buffer you type expressions
     // into. Frame drawn as a ring so it reads as an outline, not a solid block.

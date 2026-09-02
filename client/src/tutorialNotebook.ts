@@ -299,7 +299,7 @@ Run these read-only cells to look around. (This lesson changes nothing permanent
     body: `That's the tour. You've run Smalltalk expressions; met numbers, strings, symbols, arrays, and blocks; learned message precedence and cascades; iterated over collections; used reflection; and seen what GemStone's persistent, shared, transactional repository adds on top of the language.
 
 **Where to go next:**
-- Open a **Workspace** (command: *GemStone: Open Getting Started Workspace*) for free-form experimenting with *Display It*, *Inspect It*, and *Debug It*.
+- Open a **Workspace** (command: *GemStone: Open Workspace*) for free-form experimenting with *Display It*, *Inspect It*, and *Debug It*.
 - Browse and edit the image in the **GemStone Explorer** (its own icon in the activity bar, the far-left strip), and inspect globals in the **Globals Browser**.
 - Re-run this tutorial any time from the command *GemStone: Open Tutorial Notebook*.
 
