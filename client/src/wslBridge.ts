@@ -1,10 +1,11 @@
-import { execSync, spawn, ChildProcess, exec } from 'child_process';
+import { execSync, spawn, ChildProcess, exec, execFile } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { promisify } from 'util';
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 export interface WslInfo {
   available: boolean;
@@ -575,7 +576,13 @@ export async function wslExec(
         .map(([k, v]) => `${k}='${v}'`)
         .join(' ') + ' '
     : '';
-  const { stdout } = await execAsync(`wsl.exe -e sh -c "${envPrefix}${cmd.replace(/"/g, '\\"')}"`, {
+  // The script goes to wsl.exe as one argv element rather than inside a quoted
+  // stretch of a command line, so there is no outer `"` for the command to have
+  // to be escaped against. `wslExecSync` still builds the quoted form and hand-
+  // escapes `"` in it, which CodeQL flags as incomplete — it does not escape
+  // backslashes. Passing argv sidesteps the question instead of answering it,
+  // and skips the local cmd.exe that would otherwise get a turn at the string.
+  const { stdout } = await execFileAsync('wsl.exe', ['-e', 'sh', '-c', `${envPrefix}${cmd}`], {
     encoding: 'utf-8',
     timeout: options?.timeout,
   });
