@@ -24,6 +24,7 @@ describe('editor/context menu', () => {
     expect(commands).toEqual([
       'gemstone.displayIt',
       'gemstone.inspectIt',
+      'gemstone.showObjectGraph',
       'gemstone.executeIt',
       'gemstone.debugIt',
       'gemstone.runInNewGem',
@@ -54,6 +55,12 @@ describe('editor/context menu', () => {
 
   it('shows "Inspect It" in gemstone documents when code execution is available', () => {
     expect(getMenuItem('gemstone.inspectIt')?.when).toBe(
+      `editorTextFocus && resourceLangId == gemstone-smalltalk && !gemstone.executing`,
+    );
+  });
+
+  it('shows "Show Object Graph" in gemstone documents when code execution is available', () => {
+    expect(getMenuItem('gemstone.showObjectGraph')?.when).toBe(
       `editorTextFocus && resourceLangId == gemstone-smalltalk && !gemstone.executing`,
     );
   });

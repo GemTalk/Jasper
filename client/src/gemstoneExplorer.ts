@@ -4353,6 +4353,24 @@ export class ExplorerController {
   // Reveal+select a dictionary row by name in the Dictionaries pane (used by GemStone
   // Search). Resolves the 1-based symbol-list index from the live list, cascades
   // the panes to that dictionary, and highlights its row. Warns on an unknown name.
+  /** Reveal+select a class by name, resolving its home dictionary first.
+   *
+   *  The public door onto `revealClass`, which needs a dictionary index the caller of
+   *  "show me class Foo" does not have. `resolveClassDict` with no dictionary hint falls
+   *  back to a full class-name lookup, so a class reachable in any of the user's symbol
+   *  dictionaries resolves. Used by the object-graph panel, where a `Foo class` referrer
+   *  row means the referrer IS the class Foo and the useful move is to open it here.
+   *
+   *  Warns rather than throwing when the name does not resolve: the caller is a click. */
+  async revealClassByName(className: string): Promise<void> {
+    const resolved = this.resolveClassDict(className);
+    if (!resolved) {
+      void vscode.window.showWarningMessage(`Can't locate class ${className}.`);
+      return;
+    }
+    await this.revealClass(resolved.dictName, resolved.dictIndex, className);
+  }
+
   async revealDictionaryByName(name: string, sessionId?: number): Promise<void> {
     const session = await this.resolveSessionFor(sessionId);
     if (!session) return;
@@ -6101,6 +6119,9 @@ export interface ExplorerHandle {
   /** Navigate the panes to `uri`'s class/method — the explicit Reveal action a
    *  Testing-view row offers, since a plain click deliberately does not. */
   revealDocument(uri: vscode.Uri): Promise<void>;
+  /** Navigate the panes to a class by name, resolving its home dictionary. Used by the
+   *  object-graph panel, where a `Foo class` referrer row means the referrer IS class Foo. */
+  revealClassByName(className: string): Promise<void>;
 }
 
 export function registerGemStoneExplorer(
@@ -6827,5 +6848,6 @@ export function registerGemStoneExplorer(
     markAttributedOpen: (uri) => ctl.markAttributedOpen(uri),
     clearAttributedOpen: (uri) => ctl.clearAttributedOpen(uri),
     revealDocument: (uri) => ctl.revealDocument(uri),
+    revealClassByName: (className) => ctl.revealClassByName(className),
   };
 }

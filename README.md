@@ -233,6 +233,54 @@ The **Inspector** sidebar view displays GemStone objects with drill-down into na
 
 With the optional server-side support installed (GemStone 3.7.5+), **Inspect It** opens the **Enhanced Inspector** instead: a miller-column panel with rich, per-class object views in the style of Glamorous Toolkit. On stones without the support — or older GemStone versions — Jasper falls back to the classic sidebar inspector. When you connect to a stone that lacks the support, Jasper offers to install it (together with the refactoring engine); the `gemstone.serverSupport.autoInstall` setting (`ask` / `always` / `never`) controls that prompt.
 
+### Object Graph
+
+**Show Object Graph** in the editor context menu evaluates the selection (or the cursor's line) and shows what points at the result: every class holding a reference to that object, with a count per class, drawn as a diagram and listed in full beneath it. The references are real pointers found by scanning the repository — including ones nobody declared, ones from inside collections, and ones through untyped slots. This is what a relational database cannot answer about a row.
+
+The panel is a navigator, not a report. Click a referrer class to list the individual objects of it that point here, then click one of those objects to **walk to it**. Each step opens a **new tab**, so the graph you stepped from is still there to go back to, and the new tab's breadcrumb shows the whole path — clicking an earlier crumb re-centres that tab, which is what a back control is for. A walk down three hops looks like this:
+
+```
+AllUsers
+  ← SymbolAssociation ×1        #'AllUsers'->anUserProfileSet( … )
+      ← GsNMethod ×42           GsNMethod AbstractUserProfileSet>>removeAll:
+          ← GsMethodDictionary ×1
+```
+
+Arrows follow the convention of an object graph: the head sits on the **referent**, so an arrow means "this class holds a pointer to that object", and the number on an edge is how many such references it holds. Edge thickness is logarithmic in that count.
+
+Each hop is a fresh scan (~20 ms on 3.6.2, ~40 ms on 3.7.5), and nothing is cached — a reference graph is live, and a remembered picture of it could be showing something no longer true.
+
+**One graph, grown a layer at a time.** The picture has two kinds of box, drawn so they cannot be confused. A **stacked, dashed** box summarises all the referrers of one class — it is not the class object, just the group — and its edge number is how many references they hold between them. A **solid** box is one object, and its edge is labelled with the slot the reference sits in (`order`, `product`, `[2]` for an array slot); that edge runs straight to the object it references, never through the group box. A group that has been listed reports how many of its objects are already on the graph, and disappears once they all are, so a box never implies there is more behind it than there is.
+
+Click a class box to list its objects in the table below, then `+ graph` to put one on the picture — it appears as the next layer out, beyond the class box it came from. Click any object box to ask what points at *that* object, and its own class boxes grow the layer after. Everything already drawn stays put, so following "what points at this, and at that, and at that" builds one connected picture rather than losing your place:
+
+```
+Product(Widget) ←[GraphDemoLineItem 40]← LineItem(SO-1197: 39 x Widget) ←[Array 1]← anArray( … )
+                ←[Array 1]             ← anArray( Product(Widget), … )
+                ←[Association 1]
+```
+
+`✓ on graph` toggles an object back off, `×` on a box does the same, and *Reset to one object* strips it back to whatever is centred. A **dashed** edge runs against the general flow, which means it closes a cycle — routine here, since an order holds its line items and each line item holds its order.
+
+Object-to-object edges are read from the objects' own slots rather than scanned for, so a redraw costs milliseconds (5 ms for six objects) and works even on a session with uncommitted changes. They are recomputed from the whole node set on every change, so the picture always shows **every** reference among the objects on it — not only the ones you clicked along.
+
+Alongside walking, each row offers:
+
+Alongside walking, each row offers:
+
+- **Inspect all** on a class row — gathers every referrer of that class into one collection and opens an inspector on it, for paging through the whole set rather than stepping through it.
+- **Inspect** on an individual object.
+- **Explorer** on a `Foo class` row, or on any referrer that is itself a class — opens that class in the GemStone Explorer. A metaclass has exactly one instance, the class itself, so the class is a better destination than a one-element collection.
+- Clicking the object on the left inspects the object you are currently looking at.
+
+The Enhanced Inspector's title bar carries **Show Object Graph** too, acting on the object that inspector was opened on. (Not on whichever row you have drilled into — drilling opens further miller columns without moving the panel's own target.)
+
+The object has to be **committed**: a repository-wide reference scan aborts the session, so GemStone will not run one while uncommitted changes are pending. Rather than dead-ending, Jasper asks whether to **Commit** or **Abort** and then retries — an abort keeps its usual confirmation listing what is at stake. Note that selecting something which *creates* an object (`Foo new`) dirties the session for this reason, and a brand-new object has no referrers anyway. Immediates — a SmallInteger, Character, Boolean or nil — have no identity to scan for.
+
+The collections **Inspect all** builds are transient: they are never committed, and creating one does not dirty the session, so looking through referrers never blocks the next scan or hop.
+
+The same scans are available to AI agents through the MCP server as `referrers_of`, `reference_edges` and `class_census` (see [docs/mcp-server.md](docs/mcp-server.md)).
+
 ### Search and Navigation
 
 - **Senders Of** — find all methods sending a selector (editor context menu or browser)

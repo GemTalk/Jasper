@@ -86,6 +86,7 @@ client/src/**
 !client/src/refactoring/changeSignatureEditorView.js
 !client/src/refactoring/instVarRefactorPanelView.js
 !client/src/omniSearch/omniSearchView.js
+!client/src/objectGraph/objectGraphView.js
 server/src/**
 mcp-server/src/**
 

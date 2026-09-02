@@ -191,6 +191,7 @@ The full tool list lives in [`client/src/mcpTools.ts`](../client/src/mcpTools.ts
 - **Class & method browsing** — `list_classes`, `describe_class`, `get_method_source`, `find_implementors`, `find_senders`, `find_references_to`, `search_method_source`, `get_class_definition`, `get_class_hierarchy`, `export_class_source`.
 - **Code execution** — `execute_code`, `eval_python`, `compile_method`, `compile_python`, `compile_class_definition`, `delete_method`, `delete_class`.
 - **Session control** — `commit`, `abort`, `refresh`, `status`.
+- **Live object graph** — `referrers_of`, `reference_edges`, `class_census`. Real pointer scans, not source searches: `referrers_of` answers which classes hold a reference to a given object, `reference_edges` the class-to-class reference graph among named classes, `class_census` the instance count per class. Each refuses on a session with uncommitted changes, because a repository-wide scan aborts the session.
 - **Dictionaries** — `list_dictionaries`, `list_dictionary_entries`, `add_dictionary`, `remove_dictionary`, `list_all_classes`.
 - **Testing** — `list_test_classes`, `list_failing_tests`, `run_test_class`, `run_test_method`, `describe_test_failure`.
 - **Misc** — `set_class_comment`, `list_methods`, `search_method_source`.

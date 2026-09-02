@@ -11,12 +11,26 @@ import { logError, logInfo } from './gciLog';
 import { InspectorTreeProvider } from './inspectorTreeProvider';
 import { routeInspect } from './inspectRouter';
 import { DebuggerPanel } from './debuggerPanel';
-import { clearStack, getObjectPrintString } from './debugQueries';
+import {
+  clearStack,
+  getObjectPrintString,
+  getObjectClassName,
+  isSpecialOop,
+  saveObjs,
+  releaseObjs,
+} from './debugQueries';
+import { ObjectGraphPanel } from './objectGraph/objectGraphPanel';
+import { ObjectGraphWalk } from './objectGraph/objectGraphWalk';
+import { WalkStep } from './objectGraph/objectGraphHtml';
 import { appendTranscript, appendTranscriptOutput, showTranscript } from './transcriptChannel';
 import { setTranscriptLive, drainTranscript, settleNbResult } from './transcriptSink';
 import { pollNbToCompletion, NbCancelledError } from './nbRunner';
 
 const MAX_RESULT_SIZE = 64 * 1024;
+
+// How much of the target's printString the object-graph panel header shows. The
+// panel identifies an object, it does not display it — the Inspector is for that.
+const OBJECT_GRAPH_PRINT_LIMIT = 512;
 
 // Decoration type for Display It results.
 // Uses color + italic so it's visible even while text is selected
@@ -82,6 +96,24 @@ function toBigInt(value: number | bigint): bigint {
   return typeof value === 'bigint' ? value : BigInt(value);
 }
 
+/** What the object-graph feature needs from the rest of the extension.
+ *
+ *  Injected rather than imported so committing goes through extension.ts's own
+ *  `commitSession` / `abortSession` — which also warn about unsaved .gs edits, refresh
+ *  the export mirror and rebuild GemStone Search's corpora. A second commit path here
+ *  would silently skip all of that. */
+/** A scan result with the `needsCommit` case removed — what {@link CodeExecutor.withCleanSession}
+ *  hands back once it has resolved the dirty-session question, so callers narrow to the
+ *  outcomes they actually have to handle. */
+type Clean<T> = Exclude<T, { kind: 'needsCommit' }>;
+
+export interface ObjectGraphDeps {
+  inspectorProvider: InspectorTreeProvider;
+  commit: (session: ActiveSession) => Promise<void>;
+  abort: (session: ActiveSession) => Promise<void>;
+  revealClass: (className: string) => Promise<void>;
+}
+
 export class CodeExecutor {
   private executing = new Set<number>();
   private diagnostics: vscode.DiagnosticCollection;
@@ -96,6 +128,10 @@ export class CodeExecutor {
   // The selection the overlay was anchored on, i.e. where Enter inserts the
   // full result if the user chooses to materialize it in place.
   private overlaySelection: vscode.Selection | undefined;
+  // Objects pinned for open object-graph tabs, per session: oop -> how many tabs hold it.
+  // Several tabs legitimately hold the same object, and the GCI pin/release pair is not
+  // reference-counted, so the count lives here.
+  private graphPins = new Map<number, Map<string, number>>();
 
   constructor(private sessionManager: SessionManager) {
     this.diagnostics = vscode.languages.createDiagnosticCollection('gemstone-execute');
@@ -810,6 +846,226 @@ export class CodeExecutor {
     label: string,
     inspectorProvider: InspectorTreeProvider,
   ): Promise<void> {
+    await this.executeForResultOop(session, code, (oop) => {
+      routeInspect(session, oop, label, inspectorProvider);
+    });
+  }
+
+  // ── Object graph ─────────────────────────────────────────────────────
+
+  /** Evaluate the selection (or the cursor's line) and show what points at the
+   *  result — every class holding a reference to it, with counts.
+   *
+   *  Shares Inspect It's selection handling deliberately: the question "what points
+   *  at this?" is asked about the same thing Inspect It would open. */
+  async showObjectGraphIt(deps: ObjectGraphDeps): Promise<void> {
+    const session = await this.sessionManager.resolveSession();
+    if (!session) return;
+
+    if (this.executing.has(session.id)) {
+      vscode.window.showWarningMessage(
+        'A GemStone execution is already in progress on this session.',
+      );
+      return;
+    }
+
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+      vscode.window.showErrorMessage('No active text editor.');
+      return;
+    }
+
+    let selection = editor.selection;
+    if (selection.isEmpty) {
+      const line = editor.document.lineAt(selection.active.line);
+      selection = new vscode.Selection(line.range.start, line.range.end);
+    }
+
+    const code = editor.document.getText(selection);
+    if (!code.trim()) {
+      vscode.window.showWarningMessage('No code to execute.');
+      return;
+    }
+
+    await this.executeForResultOop(session, code, (oop) =>
+      this.presentObjectGraph(session, oop, deps),
+    );
+  }
+
+  /** Run a scan that requires a clean session, prompting when it isn't.
+   *
+   *  Every repository-wide scan aborts the session, so GemStone refuses to run one while
+   *  uncommitted work is present — it raises before doing anything rather than discarding
+   *  edits. Rather than dead-ending there, ask which the user wants and retry once.
+   *  Commit and abort both go through the extension's own handlers, so the abort keeps its
+   *  existing confirmation listing what is at stake.
+   *
+   *  Returns undefined when the user declines, so callers stay silent instead of
+   *  reporting a failure the user chose. */
+  private async withCleanSession<T extends { kind: string }>(
+    session: ActiveSession,
+    deps: ObjectGraphDeps,
+    run: () => T,
+  ): Promise<Clean<T> | undefined> {
+    const first = run();
+    if (first.kind !== 'needsCommit') return first as Clean<T>;
+
+    const COMMIT = 'Commit';
+    const ABORT = 'Abort';
+    const choice = await vscode.window.showWarningMessage(
+      'This session has uncommitted changes, and scanning the repository for references ' +
+        'aborts the session — so GemStone will not run the scan while they are pending. ' +
+        'Commit them, or abort and discard them?',
+      { modal: true },
+      COMMIT,
+      ABORT,
+    );
+    if (choice === COMMIT) {
+      await deps.commit(session);
+    } else if (choice === ABORT) {
+      await deps.abort(session);
+    } else {
+      return undefined;
+    }
+
+    // The handlers can themselves decline (unsaved .gs edits, an abort confirmation the
+    // user cancels, a commit that conflicts), so re-check rather than assuming we are now
+    // clean: a second needsCommit is the user's answer, not an error to report.
+    const second = run();
+    return second.kind === 'needsCommit' ? undefined : (second as Clean<T>);
+  }
+
+  /** Scan for `oop`'s referrers and show them, or explain why we can't.
+   *
+   *  The object is pinned into the session's export set for the duration. The scan
+   *  aborts the session, and an abort can scavenge an unreferenced object and reuse
+   *  its OOP number — without the pin, a result the user is still looking at could be
+   *  reclaimed mid-question and the panel would describe a different object.
+   *
+   *  Immediates are screened out here rather than in the query: a SmallInteger has no
+   *  identity to scan for and the kernel answers "argument is not a Pom oop", which is
+   *  true but unhelpful. */
+  /** Show what points at `oop`, and let the user walk the graph from there.
+   *
+   *  The walk itself — the breadcrumb, the expanded class, the hops — belongs to
+   *  ObjectGraphWalk. This method's job is to screen out what cannot be scanned and then
+   *  open the first walk; each step into a referrer opens another one in its own tab. */
+  async presentObjectGraph(
+    session: ActiveSession,
+    oop: bigint,
+    deps: ObjectGraphDeps,
+  ): Promise<void> {
+    if (oop === OOP_NIL || isSpecialOop(session, oop)) {
+      vscode.window.showInformationMessage(
+        'GemStone tracks references to objects, not to immediate values. ' +
+          'A SmallInteger, Character, Boolean or nil has no identity to scan for — ' +
+          'select something that evaluates to a real object.',
+      );
+      return;
+    }
+    await this.openObjectGraphWalk(session, oop, [], deps);
+  }
+
+  /** Open one graph tab and start a walk in it.
+   *
+   *  Recursive by design: the walk's `openWalk` dep comes back here, so stepping into a
+   *  referrer opens a sibling tab with its own walk and its own panel rather than
+   *  overwriting this one. */
+  private async openObjectGraphWalk(
+    session: ActiveSession,
+    oop: bigint,
+    inherited: WalkStep[],
+    deps: ObjectGraphDeps,
+  ): Promise<void> {
+    let panel: ObjectGraphPanel | undefined;
+    const walk = new ObjectGraphWalk(session, {
+      describe: (target) => ({
+        className: getObjectClassName(session, target),
+        printString: getObjectPrintString(session, target, OBJECT_GRAPH_PRINT_LIMIT),
+      }),
+      inspect: (target, label) => routeInspect(session, target, label, deps.inspectorProvider),
+      revealClass: (className) => deps.revealClass(className),
+      withCleanSession: (run) => this.withCleanSession(session, deps, run),
+      pin: (target) => this.pinGraphObject(session, target),
+      unpin: (target) => this.unpinGraphObject(session, target),
+      openWalk: (target, trail) => this.openObjectGraphWalk(session, target, trail, deps),
+      render: (view, actions) => {
+        // The panel is created on the FIRST render, not up front: a walk whose opening
+        // scan is refused or declined should leave no empty tab behind.
+        panel ??= new ObjectGraphPanel(() => walk.releaseAll());
+        panel.render(view, actions);
+      },
+    });
+
+    try {
+      await walk.start(oop, inherited);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      logError(session.id, msg);
+      vscode.window.showErrorMessage(`Object graph failed: ${msg}`);
+      walk.releaseAll();
+      panel?.dispose();
+    }
+  }
+
+  /** Pin an object for a graph tab, reference-counted per session.
+   *
+   *  Several tabs can hold the same object — a walk seeds its breadcrumb from the tab it
+   *  was opened from, so every inherited step is pinned twice over. `GciTsSaveObjs` and
+   *  `GciTsReleaseObjs` are not reference-counted themselves, so one tab closing would
+   *  otherwise unpin an object its siblings still navigate back to, and an abort could
+   *  then scavenge it and reuse its OOP number. The count keeps the release honest. */
+  private pinGraphObject(session: ActiveSession, oop: bigint): void {
+    let counts = this.graphPins.get(session.id);
+    if (!counts) {
+      counts = new Map<string, number>();
+      this.graphPins.set(session.id, counts);
+    }
+    const key = oop.toString();
+    const held = counts.get(key) ?? 0;
+    if (held === 0) {
+      try {
+        saveObjs(session, [oop]);
+      } catch (e: unknown) {
+        logError(session.id, `Object graph: couldn't pin oop ${oop}: ${String(e)}`);
+        return;
+      }
+    }
+    counts.set(key, held + 1);
+  }
+
+  /** Drop one reference to a pinned graph object, releasing it at zero. */
+  private unpinGraphObject(session: ActiveSession, oop: bigint): void {
+    const counts = this.graphPins.get(session.id);
+    if (!counts) return;
+    const key = oop.toString();
+    const held = counts.get(key) ?? 0;
+    if (held === 0) return;
+    if (held > 1) {
+      counts.set(key, held - 1);
+      return;
+    }
+    counts.delete(key);
+    if (counts.size === 0) this.graphPins.delete(session.id);
+    try {
+      releaseObjs(session, [oop]);
+    } catch {
+      // Session gone; nothing to release into.
+    }
+  }
+
+  /** Evaluate `code` and hand the result's OOP to `onResult`.
+   *
+   *  The shared body of Inspect It and Show Object Graph: start the execution
+   *  non-blocking so a halt is steppable in the debugger, dim the selection while it
+   *  runs, poll to completion, and route the result. If it halts and the user resumes
+   *  to completion, `onResult` still fires — a debugged execution should end up where
+   *  an undebugged one would. */
+  private async executeForResultOop(
+    session: ActiveSession,
+    code: string,
+    onResult: (oop: bigint) => void | Promise<void>,
+  ): Promise<void> {
     const oopClassString = this.resolveUtf8ClassOopUsing(session);
 
     // Dim the selected code in the active editor while executing
@@ -841,18 +1097,18 @@ export class CodeExecutor {
 
       const oop = await this.pollForResultOop(session);
 
-      routeInspect(session, oop, label, inspectorProvider);
+      await onResult(oop);
     } catch (e: unknown) {
       if (e instanceof NbCancelledError) return;
       const msg = e instanceof Error ? e.message : String(e);
       logError(session.id, msg);
 
       if (e instanceof DebuggableError) {
-        // If it halts, resuming/stepping to completion should still inspect the
+        // If it halts, resuming/stepping to completion should still route the
         // result — mirroring the success path above.
         await this.promptDebuggableError(session, e.context, msg, (resultOop: bigint) => {
           appendTranscriptOutput(drainTranscript(session));
-          routeInspect(session, resultOop, label, inspectorProvider);
+          void onResult(resultOop);
         });
       } else {
         vscode.window.showErrorMessage(`GemStone execution error: ${msg}`);

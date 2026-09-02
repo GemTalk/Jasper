@@ -32,6 +32,20 @@ import { getAllClassNames as sharedGetAllClassNames } from './queries/getAllClas
 import { getClassHierarchy as sharedGetClassHierarchy } from './queries/getClassHierarchy';
 import { fileOutClass as sharedFileOutClass } from './queries/fileOutClass';
 import { describeClass as sharedDescribeClass } from './queries/describeClass';
+import {
+  referrersOf as sharedReferrersOf,
+  classCensus as sharedClassCensus,
+  referenceEdges as sharedReferenceEdges,
+  referrerCollectionOf as sharedReferrerCollectionOf,
+  referrerObjectsOf as sharedReferrerObjectsOf,
+  slotEdgesAmong as sharedSlotEdgesAmong,
+  ReferrersResult,
+  ClassCensusResult,
+  ReferenceEdgesResult,
+  ReferrerCollectionResult,
+  ReferrerObjectsResult,
+  SlotEdgesResult,
+} from './queries/objectGraph';
 import { getInstVarNames as sharedGetInstVarNames } from './queries/getInstVarNames';
 import { getDefinedInstVarNames as sharedGetDefinedInstVarNames } from './queries/getDefinedInstVarNames';
 import {
@@ -2375,4 +2389,53 @@ export function breakpointByOop(
   stepPoint: number,
 ): string {
   return sharedBreakpointByOop(defaultQueryExecutorUsing(session), methodOop, op, stepPoint);
+}
+
+// Result types re-exported so MCP tools and the panel can name them without
+// deep-importing the query module.
+export type { ReferrersResult, ClassCensusResult, ReferenceEdgesResult, ReferrerCollectionResult };
+
+// ── Live object graph ─────────────────────────────────────────────────────
+//
+// Blocking, like every other shared query: `QueryExecutor` is synchronous, so
+// these freeze the extension host for the duration of the scan. That is a
+// deliberate trade at the measured costs — tens of milliseconds for a whole-extent
+// pass, 21 ms for the 284 referrer classes of `Object` on 3.6.2 — but it is the
+// reason none of them is wired to anything that fires automatically. They run when
+// the user asks.
+
+export function referrersOf(session: ActiveSession, oop: bigint): ReferrersResult {
+  return sharedReferrersOf(defaultQueryExecutorUsing(session), oop);
+}
+
+export function classCensus(session: ActiveSession, dictionary?: string): ClassCensusResult {
+  return sharedClassCensus(defaultQueryExecutorUsing(session), dictionary);
+}
+
+export function referenceEdges(session: ActiveSession, classNames: string[]): ReferenceEdgesResult {
+  return sharedReferenceEdges(defaultQueryExecutorUsing(session), classNames);
+}
+
+export function referrerCollectionOf(
+  session: ActiveSession,
+  targetOop: bigint,
+  referrerClassOop: bigint,
+): ReferrerCollectionResult {
+  return sharedReferrerCollectionOf(
+    defaultQueryExecutorUsing(session),
+    targetOop,
+    referrerClassOop,
+  );
+}
+
+export function referrerObjectsOf(
+  session: ActiveSession,
+  targetOop: bigint,
+  referrerClassOop: bigint,
+): ReferrerObjectsResult {
+  return sharedReferrerObjectsOf(defaultQueryExecutorUsing(session), targetOop, referrerClassOop);
+}
+
+export function slotEdgesAmong(session: ActiveSession, oops: string[]): SlotEdgesResult {
+  return sharedSlotEdgesAmong(defaultQueryExecutorUsing(session), oops);
 }

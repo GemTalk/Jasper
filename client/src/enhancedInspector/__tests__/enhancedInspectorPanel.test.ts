@@ -70,6 +70,11 @@ function makeMockPanel() {
       title = v;
     },
     onDidDispose: vi.fn(() => ({ dispose: vi.fn() })),
+    // Subscribed to in the constructor so the focused inspector can be tracked for the
+    // panel title-bar's Show Object Graph action. Never fired here; `active` exists so a
+    // test that does fire it sees a well-formed panel.
+    onDidChangeViewState: vi.fn(() => ({ dispose: vi.fn() })),
+    active: true,
     dispose: vi.fn(),
   };
 

@@ -1016,6 +1016,18 @@
         "icon": "$(eye)"
       },
       {
+        "command": "gemstone.showObjectGraph",
+        "title": "Show Object Graph",
+        "category": "GemStone",
+        "icon": "$(type-hierarchy)"
+      },
+      {
+        "command": "gemstone.showObjectGraphForInspected",
+        "title": "Show Object Graph",
+        "category": "GemStone",
+        "icon": "$(type-hierarchy)"
+      },
+      {
         "command": "gemstone.showTranscript",
         "title": "Show Transcript",
         "category": "GemStone",
@@ -1997,6 +2009,10 @@
     ],
     "menus": {
       "commandPalette": [
+        {
+          "command": "gemstone.showObjectGraphForInspected",
+          "when": "false"
+        },
         {
           "command": "gemstone.breakpoints.toggleAtStepPoint",
           "when": "false"
@@ -3001,6 +3017,11 @@
       ],
       "editor/title": [
         {
+          "command": "gemstone.showObjectGraphForInspected",
+          "when": "activeWebviewPanelId == gemstoneEnhancedInspector",
+          "group": "navigation@0"
+        },
+        {
           "command": "gemstone.navigateBack",
           "when": "resourceScheme == gemstone",
           "group": "navigation@1"
@@ -3021,6 +3042,11 @@
           "command": "gemstone.inspectIt",
           "when": "editorTextFocus && resourceLangId == gemstone-smalltalk && !gemstone.executing",
           "group": "1_gemstone@1"
+        },
+        {
+          "command": "gemstone.showObjectGraph",
+          "when": "editorTextFocus && resourceLangId == gemstone-smalltalk && !gemstone.executing",
+          "group": "1_gemstone@2"
         },
         {
           "command": "gemstone.executeIt",

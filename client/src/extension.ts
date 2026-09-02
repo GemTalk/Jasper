@@ -42,7 +42,7 @@ import {
   RESET_LABEL,
   COPY_LABEL,
 } from './enhancedInspector/enhancedInspectorPerfTracker';
-import { CodeExecutor } from './codeExecutor';
+import { CodeExecutor, ObjectGraphDeps } from './codeExecutor';
 import { SystemBrowser } from './systemBrowser';
 import { showMethodResults as showMethodResultsFor } from './methodResultsPicker';
 import { registerOmniSearch, OmniSearchRegistration } from './omniSearch/omniSearchCommand';
@@ -1330,6 +1330,17 @@ export function activate(context: vscode.ExtensionContext) {
     }
   };
 
+  // What the object-graph panel needs to act on a click: an inspector to open, the
+  // Explorer to navigate, and the session's own commit/abort — reusing commitSession /
+  // abortSession below rather than a second commit path, so the .gs-unsaved warning,
+  // export refresh and GemStone Search corpus rebuild all still happen.
+  const objectGraphDeps: ObjectGraphDeps = {
+    inspectorProvider,
+    commit: (session) => commitSession(session),
+    abort: (session) => abortSession(session),
+    revealClass: (className) => explorer.revealClassByName(className),
+  };
+
   const abortSession = async (session: ActiveSession): Promise<void> => {
     const message = abortConfirmMessage(
       queries.sessionNeedsCommit(session),
@@ -2310,6 +2321,22 @@ export function activate(context: vscode.ExtensionContext) {
 
     vscode.commands.registerCommand('gemstone.inspectIt', async () => {
       await codeExecutor.inspectIt(inspectorProvider);
+    }),
+
+    vscode.commands.registerCommand('gemstone.showObjectGraph', async () => {
+      await codeExecutor.showObjectGraphIt(objectGraphDeps);
+    }),
+
+    // Acts on the focused Enhanced Inspector's object rather than an editor selection, so
+    // it is a panel title-bar action and is withheld from the Command Palette (where
+    // there would be no inspector to read).
+    vscode.commands.registerCommand('gemstone.showObjectGraphForInspected', async () => {
+      const target = EnhancedInspector.activeTarget();
+      if (!target) {
+        vscode.window.showInformationMessage('No Enhanced Inspector is focused.');
+        return;
+      }
+      await codeExecutor.presentObjectGraph(target.session, target.oop, objectGraphDeps);
     }),
 
     vscode.commands.registerCommand('gemstone.showTranscript', () => {

@@ -112,6 +112,10 @@ interface ColumnPayload {
 
 export class EnhancedInspector {
   private static panels = new Map<number, Set<EnhancedInspector>>();
+  /** The most recently focused Enhanced Inspector, so a panel title-bar action can act on
+   *  "the object being inspected" without the command needing a handle on the panel.
+   *  Cleared on dispose so a closed panel can never be acted upon. */
+  private static active: EnhancedInspector | undefined;
   private readonly panel: vscode.WebviewPanel;
   private readonly sessionId: number;
   private disposables: vscode.Disposable[] = [];
@@ -165,11 +169,36 @@ export class EnhancedInspector {
     this.currentLabel = label;
     this.panel.webview.html = this.getHtml();
     this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
+    EnhancedInspector.active = this;
+    this.panel.onDidChangeViewState(
+      () => {
+        if (this.panel.active) EnhancedInspector.active = this;
+      },
+      null,
+      this.disposables,
+    );
     this.panel.webview.onDidReceiveMessage(
       (msg: InspectorMessage) => this.handleMessage(msg),
       null,
       this.disposables,
     );
+  }
+
+  /** The object the focused Enhanced Inspector was opened on, for commands that act on
+   *  "what I am inspecting".
+   *
+   *  This is the panel's ROOT object, not whatever row is selected in a miller column:
+   *  drilling opens further columns addressed by per-row OOPs in the webview protocol and
+   *  deliberately does not move the panel's own target. A per-row action would need a new
+   *  message in that protocol. */
+  static activeTarget(): { session: ActiveSession; oop: bigint; label: string } | undefined {
+    const inspector = EnhancedInspector.active;
+    if (!inspector) return undefined;
+    return {
+      session: inspector.session,
+      oop: inspector.currentOop,
+      label: inspector.currentLabel,
+    };
   }
 
   /** Fetch everything a column needs to render an object: title, class, view specs, meta. */
@@ -443,6 +472,7 @@ export class EnhancedInspector {
 
   private dispose(): void {
     EnhancedInspector.panels.get(this.sessionId)?.delete(this);
+    if (EnhancedInspector.active === this) EnhancedInspector.active = undefined;
     for (const d of this.disposables) d.dispose();
     this.disposables = [];
   }

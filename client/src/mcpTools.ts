@@ -164,6 +164,91 @@ export function registerMcpTools(
     };
   }
 
+  // ── Live object graph formatting ──────────────────────────────────────
+  //
+  // The three object-graph scans answer discriminated results rather than throwing,
+  // because "you have uncommitted changes" is a normal outcome, not an error: a
+  // repository-wide reference scan aborts the session, so GemStone declines to run
+  // one while the session is dirty. These render each outcome as text the caller can
+  // act on.
+
+  const NEEDS_COMMIT_TEXT =
+    'The object has to be committed before its references can be scanned. A ' +
+    'repository-wide reference scan aborts the session, so GemStone will not run one ' +
+    'while this session holds uncommitted changes. Commit or abort, then retry.';
+
+  // How many rows a census or edge list renders before truncating. Whatever is cut is
+  // stated in the output — a silently truncated list reads as a complete one.
+  const MAX_ROWS = 200;
+
+  function formatReferrers(result: queries.ReferrersResult): string {
+    if (result.kind === 'needsCommit') return NEEDS_COMMIT_TEXT;
+    if (result.kind === 'unavailable') return `Unavailable: ${result.reason}`;
+    if (result.groups.length === 0) {
+      return (
+        'Nothing in the repository holds a reference to this object. It is reachable ' +
+        'only from outside the object graph — a session temporary or a stack frame.'
+      );
+    }
+    const total = result.groups.reduce((sum, g) => sum + g.count, 0);
+    const shown = result.groups.slice(0, MAX_ROWS);
+    // Objects, not references: the kernel answers a set of referring objects, so one
+    // object holding three references to the target is counted once (measured).
+    const head =
+      `${total} object(s) from ${result.groups.length} class(es) point at this, ` +
+      `scanned in ${result.scanMillis}ms`;
+    const rows = shown.map((g) => `  ${g.referrerClass}\t${g.count}`).join('\n');
+    const cut =
+      result.groups.length > shown.length
+        ? `\n  … ${result.groups.length - shown.length} more class(es) not listed`
+        : '';
+    return `${head}\n${rows}${cut}`;
+  }
+
+  function formatCensus(result: queries.ClassCensusResult): string {
+    if (result.kind === 'needsCommit') return NEEDS_COMMIT_TEXT;
+    if (result.kind === 'unavailable') return `Unavailable: ${result.reason}`;
+    if (result.classes.length === 0) return 'No classes found.';
+    const shown = result.classes.slice(0, MAX_ROWS);
+    const rows = shown
+      .map((c) => `  ${c.className}\t[${c.dictionary}]\t${c.instanceCount}`)
+      .join('\n');
+    const cut =
+      result.classes.length > shown.length
+        ? `\n  … ${result.classes.length - shown.length} more class(es) not listed`
+        : '';
+    return (
+      `${result.classes.length} class(es), scanned in ${result.scanMillis}ms ` +
+      `(class\tdictionary\tinstances, most populous first)\n${rows}${cut}`
+    );
+  }
+
+  function formatEdges(result: queries.ReferenceEdgesResult): string {
+    if (result.kind === 'needsCommit') return NEEDS_COMMIT_TEXT;
+    if (result.kind === 'unavailable') return `Unavailable: ${result.reason}`;
+    if (result.edges.length === 0 && result.unattributed.length === 0) {
+      return 'No references found among the named classes.';
+    }
+    const shown = result.edges.slice(0, MAX_ROWS);
+    const rows = shown.map((e) => `  ${e.from} --> ${e.to}\t${e.count}`).join('\n');
+    const cut =
+      result.edges.length > shown.length
+        ? `\n  … ${result.edges.length - shown.length} more edge(s) not listed`
+        : '';
+    // The remainder is reported, not dropped: an ERD that shows only the edges among
+    // the requested classes is not the whole inbound picture, and saying so is the
+    // difference between a diagram and a claim.
+    const other =
+      result.unattributed.length === 0
+        ? ''
+        : '\nInbound references from classes outside the requested set:\n' +
+          result.unattributed.map((u) => `  (elsewhere) --> ${u.to}\t${u.count}`).join('\n');
+    return (
+      `${result.edges.length} edge(s) among the named classes, ` +
+      `scanned in ${result.scanMillis}ms\n${rows}${cut}${other}`
+    );
+  }
+
   // Tools are registered alphabetically.
 
   server.tool(
@@ -185,6 +270,24 @@ export function registerMcpTools(
       wrap<typeof args>((session, a) => {
         return queries.addDictionary(session, a.dictionaryName);
       })(args),
+  );
+
+  server.tool(
+    'class_census',
+    'Population per class across the whole repository — how many instances of each class ' +
+      "exist, exact and unsampled. Walks the user's whole symbol list, so user classes are " +
+      'included, not just Globals. Pass dictionaryName to scope it to one SymbolDictionary. ' +
+      'Requires a session with no uncommitted changes (the scan aborts the session).',
+    {
+      dictionaryName: z
+        .string()
+        .optional()
+        .describe('Limit the census to one SymbolDictionary, e.g. "UserGlobals". Omit for all.'),
+    },
+    async (args) =>
+      wrap<typeof args>((session, a) =>
+        formatCensus(queries.classCensus(session, a.dictionaryName)),
+      )(args),
   );
 
   server.tool(
@@ -633,6 +736,57 @@ export function registerMcpTools(
         if (classes.length === 0) return 'No TestCase subclasses found.';
         return classes.map((c) => `${c.dictName}\t${c.className}`).join('\n');
       })({}),
+  );
+
+  server.tool(
+    'reference_edges',
+    'The class-to-class reference graph among the named classes — an ERD assembled from ' +
+      'real pointers, with true edge counts (instances of A hold N references to instances ' +
+      'of B). GemStone has no declared schema, so this is the only account of the shape ' +
+      'that exists. Both endpoints are restricted to the classes you name, which is what ' +
+      'keeps the result legible; inbound references from classes outside the set are ' +
+      'reported separately rather than dropped. Name USER classes — kernel classes such as ' +
+      'Array have referrers spanning a thousand classes. Requires a session with no ' +
+      'uncommitted changes (the scan aborts the session).',
+    {
+      classNames: z
+        .array(z.string())
+        .describe('The classes to include on both ends of the edges, e.g. ["Customer", "Order"]'),
+    },
+    async (args) =>
+      wrap<typeof args>((session, a) => formatEdges(queries.referenceEdges(session, a.classNames)))(
+        args,
+      ),
+  );
+
+  server.tool(
+    'referrers_of',
+    'Live object graph: every class whose instances hold a reference to the object that ' +
+      '`expression` evaluates to, with a count of how many such OBJECTS each class ' +
+      'contributes (not how many references — one object holding several counts once). This walks real pointers in the ' +
+      'repository and is NOT a source search — use find_references_to for "which methods ' +
+      'mention this global", and this for "what objects point at this object". Finds ' +
+      'references nobody declared, references from inside collections, and references ' +
+      'through untyped slots. Direct referrers only, one level. The expression must resolve ' +
+      'an already-committed object: one that CREATES an object dirties the session, and a ' +
+      'repository-wide scan will not run against a dirty session (nor would a brand-new ' +
+      'object have any referrers). Not meaningful for immediates — SmallInteger, Character, ' +
+      'Boolean, nil.',
+    {
+      expression: z
+        .string()
+        .describe(
+          'Smalltalk expression resolving the object, e.g. "AllUsers" or "Globals at: #Foo"',
+        ),
+    },
+    async (args) =>
+      wrap<typeof args>((session, a) => {
+        const oopText = queries
+          .executeFetchString(session, `(${a.expression}) asOop printString`)
+          .trim();
+        const oop = BigInt(oopText);
+        return formatReferrers(queries.referrersOf(session, oop));
+      })(args),
   );
 
   server.tool(
