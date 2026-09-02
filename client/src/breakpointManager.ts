@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { SessionManager, ActiveSession } from './sessionManager';
 import { parseMethodUri } from './gemstoneFileSystemProvider';
+import { SMALLTALK_LANGUAGES, isMethodSourceUri } from './languageIds';
 import * as queries from './browserQueries';
 import { GemStoneBreakpoint } from './browserQueries';
 import { FunctionBreakpointResolver } from './functionBreakpoints';
@@ -395,10 +396,16 @@ export class BreakpointManager {
    * Take back a breakpoint set somewhere a breakpoint cannot mean anything.
    *
    * A GemStone breakpoint is a step point in a compiled method, so only a
-   * `gemstone://` method editor can carry one — but VS Code offers the gutter
-   * anywhere the gemstone-smalltalk language is, which includes a workspace and
-   * a `.gst` file. Those breakpoints were previously dropped on the floor: the
-   * dot stayed in the gutter, armed nothing, and said nothing, which is
+   * `gemstone://` method editor can carry one. The gutter is no longer *offered*
+   * anywhere else — `contributes.breakpoints` names gemstone-method alone, and
+   * only a compiled method's source is given that language (see
+   * client/src/languageIds.ts) — so in VS Code this is now a backstop rather
+   * than the everyday path. It still has work to do: `allowBreakpointsEverywhere`
+   * puts the gutter back on every document, and a DAP client that is not VS Code
+   * never consulted the contribution in the first place.
+   *
+   * Whatever the route, such a breakpoint would otherwise be dropped on the
+   * floor: the dot stays in the gutter, arms nothing, and says nothing, which is
    * indistinguishable from a breakpoint that simply never gets hit.
    */
   private refuseOutsideMethodSource(added: readonly vscode.Breakpoint[]): void {
@@ -1100,27 +1107,34 @@ const NOT_A_METHOD_REFUSAL =
   'This editor is not one — open the method and set the breakpoint there.';
 
 /**
- * Whether VS Code offered a breakpoint here only because of *our* language
- * contribution, on a document that cannot hold one.
+ * Whether this is a breakpoint on one of *our* documents that cannot hold one.
  *
- * `contributes.breakpoints` names a language, and VS Code gives no way to narrow
- * it by URI scheme — so the gutter is offered wherever gemstone-smalltalk is:
- * a workspace, a `.gst` file on disk, as well as the `gemstone://` method
- * editors that are the only documents a breakpoint means anything in.
+ * Two things have to be true. The document must be Jasper's — which is what
+ * keeps this honest, and is the guard that matters most: `onDidChangeBreakpoints`
+ * reports every extension's breakpoints, so a rule of "not a compiled method"
+ * alone would also match a Python file's, and taking those out of the
+ * developer's Breakpoints panel would be a far worse bug than the one being
+ * fixed. And the document must not be a compiled method's source, the one place
+ * `applyToUri` can arm anything (see isMethodSourceUri, which this shares with
+ * the rule that decides which documents are offered a gutter at all).
  *
- * The language test is what keeps this honest. `onDidChangeBreakpoints` reports
- * every extension's breakpoints, so "not a gemstone:// URI" would also match a
- * Python file's — and taking those out of the developer's Breakpoints panel
- * would be a far worse bug than the one being fixed. A document that is not open
- * has no language to read, so it falls back to the extension VS Code would have
- * used itself; anything else is left alone.
+ * "Ours" is read from the language (see SMALLTALK_LANGUAGES), so it covers a
+ * workspace, a `.gst` file, a notebook cell and the debugger's read-only source
+ * alike, and it covers the `gemstone://` documents that are Smalltalk but have
+ * no compiled method behind them — a class definition, an uncompiled
+ * `new-method` template, an override diff view. It also still catches a
+ * breakpoint VS Code restores from before the language split, when the gutter
+ * was offered in all of those. A Topaz `.gs` or Tonel `.st` file is a GemStone
+ * document but was never offered a gutter, so a breakpoint there is not ours to
+ * take. A document that is not open has no language to read, so it falls back to
+ * the extension VS Code would have used itself; anything else is left alone.
  */
 function inviteWeCannotHonour(uri: vscode.Uri): boolean {
-  if (uri.scheme === 'gemstone') return false;
+  if (isMethodSourceUri(uri)) return false;
 
   const uriStr = uri.toString();
   const open = vscode.workspace.textDocuments.find((d) => d.uri.toString() === uriStr);
-  if (open) return open.languageId === 'gemstone-smalltalk';
+  if (open) return (SMALLTALK_LANGUAGES as readonly string[]).includes(open.languageId);
 
   // Restored across a restart, before its editor is opened.
   return uri.path.endsWith('.gst');

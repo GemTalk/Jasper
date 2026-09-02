@@ -276,9 +276,11 @@ the thing it was set in goes away:
   the only place one can be set. Not a workspace, not a `.gst` file, and not an
   **Executed Code** (doit) frame in the call stack — a doit's method is compiled
   for that one execution and gone afterwards, so a breakpoint on it could never
-  be hit again. VS Code offers its gutter per *language*, which is the same for
-  all four, so a breakpoint set in the wrong one is taken back out with a message
-  saying where it belongs
+  be hit again. The gutter is simply not offered in those, so there is nothing to
+  click and nothing to refuse. (Turning on VS Code's own
+  `debug.allowBreakpointsEverywhere` puts the gutter back everywhere; a
+  breakpoint set that way is taken back out with a message saying where it
+  belongs.)
 - **Unsaved edits hold a method's breakpoints as they are.** Step point numbers
   come from the compiled method, and VS Code moves its breakpoints as you type,
   so while an editor is dirty the two describe different code. No new breakpoint

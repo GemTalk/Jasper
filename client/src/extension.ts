@@ -101,8 +101,8 @@ import {
   closeGemstoneTabsForSession,
   installStaleGemstoneTabReaper,
   parseMethodUri,
-  parseUri,
 } from './gemstoneFileSystemProvider';
+import { METHOD_LANGUAGE, SMALLTALK_LANGUAGE, gemstoneDocumentLanguage } from './languageIds';
 import { openWorkspace } from './workspace';
 import { registerStartHere, StartHereStatusBar, resetStartHere } from './startHere';
 import { openTutorialNotebook } from './tutorialNotebook';
@@ -642,7 +642,8 @@ export function activate(context: vscode.ExtensionContext) {
     documentSelector: [
       { scheme: 'file', language: 'gemstone-topaz' },
       { scheme: 'file', language: 'gemstone-tonel' },
-      { scheme: 'gemstone', language: 'gemstone-smalltalk' },
+      { scheme: 'gemstone', language: SMALLTALK_LANGUAGE },
+      { scheme: 'gemstone', language: METHOD_LANGUAGE },
     ],
     synchronize: {
       configurationSection: 'gemstoneSmalltalk',
@@ -805,19 +806,12 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.workspace.onDidOpenTextDocument((doc) => {
       if (doc.uri.scheme !== 'gemstone') return;
-      // A class comment is prose, not code: give it its own language so it word-
-      // wraps (see configurationDefaults) and isn't syntax-highlighted as Smalltalk.
-      // Everything else gemstone:// is source.
-      let isComment = false;
-      try {
-        isComment = parseUri(doc.uri).kind === 'comment';
-      } catch {
-        /* unrecognized URI — treat as source */
-      }
-      vscode.languages.setTextDocumentLanguage(
-        doc,
-        isComment ? 'gemstone-class-comment' : 'gemstone-smalltalk',
-      );
+      // Three languages behind one scheme: a class comment is prose, so it gets
+      // gemstone-class-comment and word-wraps (see configurationDefaults); the
+      // source of a compiled method gets gemstone-method, the one language
+      // `contributes.breakpoints` names; everything else is plain Smalltalk
+      // source. See gemstoneDocumentLanguage for the rule and why it exists.
+      vscode.languages.setTextDocumentLanguage(doc, gemstoneDocumentLanguage(doc.uri));
     }),
   );
 
@@ -840,9 +834,10 @@ export function activate(context: vscode.ExtensionContext) {
 
   // ── GCI-backed providers (Definition + Hover + Completion) ─
   const providerSelectors: vscode.DocumentFilter[] = [
-    { scheme: 'gemstone', language: 'gemstone-smalltalk' },
-    { scheme: 'untitled', language: 'gemstone-smalltalk' },
-    { scheme: 'file', language: 'gemstone-smalltalk' },
+    { scheme: 'gemstone', language: SMALLTALK_LANGUAGE },
+    { scheme: 'gemstone', language: METHOD_LANGUAGE },
+    { scheme: 'untitled', language: SMALLTALK_LANGUAGE },
+    { scheme: 'file', language: SMALLTALK_LANGUAGE },
     { scheme: 'file', language: 'gemstone-topaz' },
     { scheme: 'file', language: 'gemstone-tonel' },
   ];
@@ -859,15 +854,15 @@ export function activate(context: vscode.ExtensionContext) {
   const codeLensProvider = new GemStoneCodeLensProvider(sessionManager);
   // The senders/implementors CodeLens must attach on a gemstone:// method the
   // instant it opens. A gemstone doc's language is assigned asynchronously
-  // (onDidOpenTextDocument → setTextDocumentLanguage), so gating the lens on
-  // `language: gemstone-smalltalk` (as providerSelectors does) delays it past the
-  // first paint on a document's first open — the lens then pops in and shoves the
-  // code down. Match on scheme alone so it's present from the first render;
+  // (onDidOpenTextDocument → setTextDocumentLanguage), so gating the lens on the
+  // language (as providerSelectors does) delays it past the first paint on a
+  // document's first open — the lens then pops in and shoves the code down.
+  // Match on scheme alone so it's present from the first render;
   // provideCodeLenses returns nothing for non-method gemstone docs anyway.
   const codeLensSelectors: vscode.DocumentFilter[] = [
     { scheme: 'gemstone' },
-    { scheme: 'untitled', language: 'gemstone-smalltalk' },
-    { scheme: 'file', language: 'gemstone-smalltalk' },
+    { scheme: 'untitled', language: SMALLTALK_LANGUAGE },
+    { scheme: 'file', language: SMALLTALK_LANGUAGE },
     { scheme: 'file', language: 'gemstone-topaz' },
     { scheme: 'file', language: 'gemstone-tonel' },
   ];
@@ -880,7 +875,7 @@ export function activate(context: vscode.ExtensionContext) {
     // Hosts "Rename Temporary/Argument…" under the native "Refactor…" menu in a
     // saved (scheme:gemstone) method editor.
     vscode.languages.registerCodeActionsProvider(
-      { scheme: 'gemstone', language: 'gemstone-smalltalk' },
+      { scheme: 'gemstone', language: METHOD_LANGUAGE },
       new RefactorCodeActionProvider(
         () => sessionManager.getSelectedSession()?.rbSupportAvailable === true,
       ),

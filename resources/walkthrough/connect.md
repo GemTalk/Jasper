@@ -30,4 +30,5 @@ right) shows the active session. If the connection fails, the status bar turns r
 — click it to see why.
 
 Once connected, the editor commands (Display It, Execute It, Inspect It) become
-available in any `gemstone-smalltalk` document.
+available in any GemStone Smalltalk document — a workspace, a `.gst` file, or a
+method editor.

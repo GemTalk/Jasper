@@ -325,10 +325,11 @@ describe('BreakpointManager', () => {
     });
   });
 
-  // VS Code offers the breakpoint gutter wherever the gemstone-smalltalk language
-  // is — a workspace and a .gst file as well as a gemstone:// method editor —
-  // because `contributes.breakpoints` names a language and cannot be narrowed by
-  // URI scheme. Only the method editor can carry a breakpoint.
+  // The gutter is offered in a compiled method's editor alone —
+  // `contributes.breakpoints` names gemstone-method, and that is the only
+  // document given the language. This refusal is what backstops the routes that
+  // bypass the contribution: `allowBreakpointsEverywhere`, and DAP clients that
+  // are not VS Code.
   describe('a breakpoint set outside a method editor', () => {
     function fireAdded(added: unknown[]): void {
       const manager = makeManager();
@@ -423,10 +424,91 @@ describe('BreakpointManager', () => {
       expect(vi.mocked(debug.removeBreakpoints)).not.toHaveBeenCalled();
     });
 
+    it('takes back one on a gemstone:// class definition, which has no method to arm', () => {
+      // Smalltalk source behind our own scheme, but there is no compiled method
+      // under a class definition, so `applyToUri` can do nothing with it. It is
+      // offered no gutter now (its language is gemstone-smalltalk); reachable
+      // via allowBreakpointsEverywhere, and previously dropped on the floor.
+      const uri = 'gemstone://1/Globals/Array/definition';
+      const stray = bpOn(uri);
+      workspace.textDocuments = [
+        { uri: Uri.parse(uri), languageId: 'gemstone-smalltalk', isDirty: false },
+      ];
+      debug.breakpoints = [stray];
+
+      fireAdded([stray]);
+
+      expect(vi.mocked(debug.removeBreakpoints)).toHaveBeenCalledWith([stray]);
+      expect(mockSetBreakAtStepPoint).not.toHaveBeenCalled();
+    });
+
+    it('takes back one on an override diff view, where a line names two methods', () => {
+      // The diff shows the base and the session override side by side, so a line
+      // in it does not identify one compiled method — `applyToUri` refuses it for
+      // the same reason, and this stops the dot being left behind saying nothing.
+      const uri = 'gemstone://1/Globals/Array/instance/accessing/at%3A%20(base)';
+      const stray = bpOn(uri);
+      workspace.textDocuments = [
+        { uri: Uri.parse(uri), languageId: 'gemstone-smalltalk', isDirty: false },
+      ];
+      debug.breakpoints = [stray];
+
+      fireAdded([stray]);
+
+      expect(vi.mocked(debug.removeBreakpoints)).toHaveBeenCalledWith([stray]);
+    });
+
+    it('leaves a class comment alone — prose, and not a document of ours to police', () => {
+      // gemstone-class-comment is not a Smalltalk source language and is offered
+      // no gutter, so a breakpoint here did not come from our contribution.
+      const uri = 'gemstone://1/Globals/Array/comment';
+      const stray = bpOn(uri);
+      workspace.textDocuments = [
+        { uri: Uri.parse(uri), languageId: 'gemstone-class-comment', isDirty: false },
+      ];
+      debug.breakpoints = [stray];
+
+      fireAdded([stray]);
+
+      expect(vi.mocked(debug.removeBreakpoints)).not.toHaveBeenCalled();
+    });
+
+    it('takes back one in a notebook cell, which is Smalltalk with nothing compiled', () => {
+      const uri = 'vscode-notebook-cell:/tmp/nb.ipynb#W0';
+      const stray = bpOn(uri);
+      workspace.textDocuments = [
+        { uri: Uri.parse(uri), languageId: 'gemstone-smalltalk', isDirty: false },
+      ];
+      debug.breakpoints = [stray];
+
+      fireAdded([stray]);
+
+      expect(vi.mocked(debug.removeBreakpoints)).toHaveBeenCalledWith([stray]);
+    });
+
+    // Which editors are OURS to police, told apart by language. The Smalltalk
+    // ids are Jasper's own and get the refusal; a Topaz or Tonel file is a
+    // GemStone document too but was never offered a gutter and is not ours to
+    // take a breakpoint from; another extension's file is untouchable.
+    it.each([
+      ['a Topaz .gs file', 'file:///tmp/script.gs', 'gemstone-topaz'],
+      ['a Tonel .st file', 'file:///tmp/MyClass.class.st', 'gemstone-tonel'],
+      ["another extension's TypeScript", 'file:///tmp/app.ts', 'typescript'],
+    ])('leaves %s alone', (_what, uri, languageId) => {
+      const foreign = bpOn(uri);
+      workspace.textDocuments = [{ uri: Uri.parse(uri), languageId, isDirty: false }];
+      debug.breakpoints = [foreign];
+
+      fireAdded([foreign]);
+
+      expect(vi.mocked(debug.removeBreakpoints)).not.toHaveBeenCalled();
+      expect(vi.mocked(window.showWarningMessage)).not.toHaveBeenCalled();
+    });
+
     it('leaves a real method editor alone', () => {
       const real = bpOn(METHOD_URI);
       workspace.textDocuments = [
-        { uri: Uri.parse(METHOD_URI), languageId: 'gemstone-smalltalk', isDirty: false },
+        { uri: Uri.parse(METHOD_URI), languageId: 'gemstone-method', isDirty: false },
       ];
       debug.breakpoints = [real];
 
@@ -1122,7 +1204,7 @@ describe('BreakpointManager', () => {
       mockGetMethodSource.mockReturnValue('at: index\n^ self basicAt: index');
       mockGetSourceOffsets.mockReturnValue([1, 13]);
       workspace.textDocuments = [
-        { uri: Uri.parse(METHOD_URI), languageId: 'gemstone-smalltalk', isDirty: false },
+        { uri: Uri.parse(METHOD_URI), languageId: 'gemstone-method', isDirty: false },
       ];
     });
 
@@ -1158,7 +1240,7 @@ describe('BreakpointManager', () => {
       );
       debug.breakpoints = [dead];
       workspace.textDocuments = [
-        { uri: dead.location.uri, languageId: 'gemstone-smalltalk', isDirty: false },
+        { uri: dead.location.uri, languageId: 'gemstone-method', isDirty: false },
       ];
 
       managerOverTwo();

@@ -16,6 +16,7 @@ import {
   tabInputUri,
 } from './gemstoneFileSystemProvider';
 import type { ParsedUri } from './gemstoneFileSystemProvider';
+import { gemstoneDocumentLanguage } from './languageIds';
 import { filterMatches } from './explorerFilter';
 import {
   parseMethodFilter,
@@ -4073,8 +4074,13 @@ export class ExplorerController {
     // and that post-show flip re-tokenizes and re-queries CodeLens, which makes the
     // senders/implementors lens pop in and shove the source down on each new
     // method. Setting it up front keeps the doc stable when it's shown.
-    if (doc.languageId !== 'gemstone-smalltalk') {
-      await vscode.languages.setTextDocumentLanguage(doc, 'gemstone-smalltalk');
+    //
+    // Asking gemstoneDocumentLanguage rather than naming a language outright is
+    // what makes this safe: it is the same rule onDidOpenTextDocument applies, so
+    // the two cannot disagree and re-flip the document between them.
+    const language = gemstoneDocumentLanguage(uri);
+    if (doc.languageId !== language) {
+      await vscode.languages.setTextDocumentLanguage(doc, language);
     }
     // Single-click opens a preview tab and a double-click promotes it to a
     // permanent one (focus stays in the tree so type-to-filter / arrow-nav keep

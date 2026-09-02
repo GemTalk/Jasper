@@ -139,13 +139,13 @@ describe('ExplorerController.openMethod', () => {
     );
   });
 
-  it('tags the doc as gemstone-smalltalk before showing it (so CodeLens does not pop in)', async () => {
+  it('tags the doc as gemstone-method before showing it (so CodeLens does not pop in)', async () => {
     const ctl = makeController();
     const setLang = languages.setTextDocumentLanguage as ReturnType<typeof vi.fn>;
 
     await ctl.openMethod(methodItem(), 'preview');
 
-    expect(setLang).toHaveBeenCalledWith(expect.anything(), 'gemstone-smalltalk');
+    expect(setLang).toHaveBeenCalledWith(expect.anything(), 'gemstone-method');
     // Language is set before the doc is shown in the (reused) preview editor.
     expect(setLang.mock.invocationCallOrder[0]).toBeLessThan(
       showTextDocument.mock.invocationCallOrder[0],

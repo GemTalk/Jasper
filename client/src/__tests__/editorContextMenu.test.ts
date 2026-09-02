@@ -46,39 +46,43 @@ describe('editor/context menu', () => {
     expect(commands).not.toContain('gemstone.explorer.inlineTemporary');
   });
 
+  // Each clause names BOTH Smalltalk language ids. Method editors were split
+  // onto gemstone-method so `contributes.breakpoints` could name them alone (see
+  // client/src/languageIds.ts); the editor commands are not part of that split
+  // and must keep working in a workspace, a .gst file and a method alike.
   it('shows "Display It" in gemstone documents when code execution is available', () => {
     expect(getMenuItem('gemstone.displayIt')?.when).toBe(
-      `editorTextFocus && resourceLangId == gemstone-smalltalk && !gemstone.executing`,
+      `editorTextFocus && (resourceLangId == gemstone-smalltalk || resourceLangId == gemstone-method) && !gemstone.executing`,
     );
   });
 
   it('shows "Inspect It" in gemstone documents when code execution is available', () => {
     expect(getMenuItem('gemstone.inspectIt')?.when).toBe(
-      `editorTextFocus && resourceLangId == gemstone-smalltalk && !gemstone.executing`,
+      `editorTextFocus && (resourceLangId == gemstone-smalltalk || resourceLangId == gemstone-method) && !gemstone.executing`,
     );
   });
 
   it('shows "Execute It" in gemstone documents when code execution is available', () => {
     expect(getMenuItem('gemstone.executeIt')?.when).toBe(
-      `editorTextFocus && resourceLangId == gemstone-smalltalk && !gemstone.executing`,
+      `editorTextFocus && (resourceLangId == gemstone-smalltalk || resourceLangId == gemstone-method) && !gemstone.executing`,
     );
   });
 
   it('shows "Debug It" in gemstone documents when code execution is available', () => {
     expect(getMenuItem('gemstone.debugIt')?.when).toBe(
-      `editorTextFocus && resourceLangId == gemstone-smalltalk && !gemstone.executing`,
+      `editorTextFocus && (resourceLangId == gemstone-smalltalk || resourceLangId == gemstone-method) && !gemstone.executing`,
     );
   });
 
   it('shows "Senders Of..." in gemstone documents', () => {
     expect(getMenuItem('gemstone.sendersOf')?.when).toBe(
-      `editorTextFocus && resourceLangId == gemstone-smalltalk`,
+      `editorTextFocus && (resourceLangId == gemstone-smalltalk || resourceLangId == gemstone-method)`,
     );
   });
 
   it('shows "Implementors Of..." in gemstone documents', () => {
     expect(getMenuItem('gemstone.implementorsOf')?.when).toBe(
-      `editorTextFocus && resourceLangId == gemstone-smalltalk`,
+      `editorTextFocus && (resourceLangId == gemstone-smalltalk || resourceLangId == gemstone-method)`,
     );
   });
 
@@ -93,7 +97,10 @@ describe('editor/context menu', () => {
     // Compared as a map so a mismatch names the offending command itself.
     expect(Object.fromEntries(commands.map((c) => [c, getMenuItem(c)?.when]))).toEqual(
       Object.fromEntries(
-        commands.map((c) => [c, `editorTextFocus && resourceLangId == gemstone-smalltalk`]),
+        commands.map((c) => [
+          c,
+          `editorTextFocus && (resourceLangId == gemstone-smalltalk || resourceLangId == gemstone-method)`,
+        ]),
       ),
     );
   });
