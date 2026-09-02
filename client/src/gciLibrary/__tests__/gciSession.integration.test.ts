@@ -66,7 +66,7 @@ describe('GCI session lifecycle (integration)', () => {
   // 1 -> abort -> 1 -> begin -> 1). The rollback each performs is the only
   // observable effect that is stable across GemStone releases.
   describe('GciTsAbort / GciTsBegin', () => {
-    it('abort discards uncommitted changes and opens a fresh transaction', () => {
+    it('abort discards uncommitted changes', () => {
       const key = gci.storeInUniqueUserGlobalsKey(session, '42');
 
       const { success } = gci.GciTsAbort(session);
@@ -75,7 +75,7 @@ describe('GCI session lifecycle (integration)', () => {
       expect(gci.isIncludedInUserGlobals(session, key)).toBe(false);
     });
 
-    it('begin discards uncommitted changes and opens a fresh transaction', () => {
+    it('begin discards uncommitted changes', () => {
       const key = gci.storeInUniqueUserGlobalsKey(session, '42');
 
       const { success } = gci.GciTsBegin(session);
