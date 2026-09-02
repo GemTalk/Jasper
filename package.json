@@ -556,6 +556,7 @@
         {
           "id": "gemstoneExplorerNavigation",
           "name": "Actions & Navigation",
+          "contextualTitle": "GemStone Actions & Navigation",
           "type": "webview",
           "icon": "$(history)",
           "when": "gemstone.explorerActive",
