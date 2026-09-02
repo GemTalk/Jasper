@@ -1039,10 +1039,9 @@ export function activate(context: vscode.ExtensionContext) {
   // where the user's eyes already are during a connect. It is separate from the
   // right-hand Active Session item, which stays the calm persistent state.
   //   • connecting: a spinner while the attempt (which may start the stone) runs.
-  //   • success: the spinner is cleared, the GemStone Explorer is revealed, and a
-  //     green ✅ banner flashes at the top of it for a few seconds (see the
-  //     explorer's showConnectedBanner). The status bar cannot render green, and a
-  //     webview flash was far too large — the banner is unobtrusive and theme-safe.
+  //   • success: the spinner is simply cleared. The connected stone is already
+  //     named in the right-hand Active Session item, so a second, temporary
+  //     announcement of the same fact was noise.
   //   • failure: the item turns red and becomes a click-through to the failure
   //     reason, since the toast that first reported it may already be gone. It
   //     persists until the next attempt.
@@ -1072,14 +1071,14 @@ export function activate(context: vscode.ExtensionContext) {
     connectStatusItem.show();
   }
 
-  function flashConnected(stone: string): void {
+  function onConnected(): void {
     lastLoginError = undefined;
     connectStatusItem.hide();
-    // Deliberately does not switch the sidebar to the Explorer. Logging in is
-    // not a statement about what you want to look at next — it threw away
-    // whatever you were reading, and a user logging in from the Databases
-    // section watched the section they were working in disappear.
-    explorer.showConnectedBanner(stone);
+    // Deliberately does not switch the sidebar to the Explorer, or announce the
+    // connection anywhere of its own. Logging in is not a statement about what
+    // you want to look at next — it threw away whatever you were reading, and a
+    // user logging in from the Databases section watched the section they were
+    // working in disappear. The Active Session item already names the stone.
     startHereStatusBar.showForConnection();
   }
 
@@ -1809,7 +1808,7 @@ export function activate(context: vscode.ExtensionContext) {
         } finally {
           treeProvider.setConnecting(item.login, false);
           // The connect-status item is not cleared here: the outcome code below
-          // (flashConnected / showLoginError) sets its final connected/failed state.
+          // (onConnected / showLoginError) sets its final connected/failed state.
         }
 
         // Undefined when the login failed and the recovery flow could not (or
@@ -1827,7 +1826,7 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showInformationMessage(
           `Connected to ${login.stone} (${session.stoneVersion}) on ${login.gem_host} as ${login.gs_user}`,
         );
-        flashConnected(login.stone);
+        onConnected();
         // eslint-disable-next-line @typescript-eslint/no-floating-promises -- FIXME: unhandled floating promise; needs investigation to decide await vs. void vs. .catch before this rule is enabled repo-wide
         exportManager.exportSession(session, true);
         // We no longer auto-open a workspace on every connect (it left a dirty,
@@ -1837,7 +1836,7 @@ export function activate(context: vscode.ExtensionContext) {
         // user connects rather than after. The workspace stays available via the
         // gemstone.openWorkspace command and the Logins & Sessions welcome view.
 
-        // The "Start Here" status-bar button (shown from flashConnected above) points
+        // The "Start Here" status-bar button (shown from onConnected above) points
         // a new user at the basics; see StartHereStatusBar (issue #468, item 10).
 
         // Offer the optional server-side supports this stone lacks (Enhanced
