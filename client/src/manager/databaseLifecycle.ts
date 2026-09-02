@@ -83,8 +83,10 @@ export async function takeDownDatabase(
 export interface SessionClearDeps {
   /** Log out Jasper's sessions on the database; returns how many there were. */
   reapSessions(): number;
-  /** Processes holding the extents, excluding the stone's own. */
-  attachedHolders(): ExtentHolder[];
+  /** Processes holding the extents, excluding the stone's own. Asynchronous
+   *  because the probe shells out, and the extension host must stay responsive
+   *  while it does. */
+  attachedHolders(): Promise<ExtentHolder[]>;
   wait(ms: number): Promise<void>;
   now(): number;
 }
@@ -93,9 +95,9 @@ export interface SessionClearDeps {
  * Log a database's sessions out and wait for their gems to actually go, then
  * report whatever is still attached.
  *
- * Two things keep this quick, both learned the slow way — the probe is a
- * synchronous shell-out on the extension host, so every millisecond spent here
- * is a millisecond the whole UI is frozen.
+ * Two things keep this quick, both learned the slow way — each probe is a
+ * shell-out costing up to a second and a half, and the user is watching a
+ * progress notification for the whole of it.
  *
  * Nothing logged out means nothing is on its way out: whatever holds the
  * extents now is foreign and will still be foreign in ten seconds, so there is
@@ -108,17 +110,26 @@ export async function clearSessionsForStop(
   deps: SessionClearDeps,
   opts: { timeoutMs: number; pollMs: number },
 ): Promise<ExtentHolder[]> {
-  if (deps.reapSessions() === 0) return deps.attachedHolders();
+  if (deps.reapSessions() === 0) return await deps.attachedHolders();
 
   const deadline = deps.now() + opts.timeoutMs;
-  let holders = deps.attachedHolders();
+  let holders = await deps.attachedHolders();
   while (holders.length > 0 && deps.now() < deadline) {
     await deps.wait(opts.pollMs);
-    const next = deps.attachedHolders();
-    const settled =
-      next.length === holders.length && next.every((h, i) => h.pid === holders[i].pid);
+    const next = await deps.attachedHolders();
+    const settled = samePids(holders, next);
     holders = next;
     if (settled) break;
   }
   return holders;
+}
+
+/** Whether two probes found the same holders, compared as sets: neither `fuser`
+ *  nor `lsof -t` promises an order, so the same processes coming back shuffled
+ *  is not a change, and treating it as one buys another poll — and another
+ *  shell-out — for nothing. */
+function samePids(a: ExtentHolder[], b: ExtentHolder[]): boolean {
+  if (a.length !== b.length) return false;
+  const seen = new Set(a.map((h) => h.pid));
+  return b.every((h) => seen.has(h.pid));
 }

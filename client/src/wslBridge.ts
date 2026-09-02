@@ -540,3 +540,44 @@ export function wslExecSync(
     timeout: options?.timeout,
   });
 }
+
+/**
+ * Execute a command without blocking the extension host, routing through
+ * wsl.exe on Windows exactly as `wslExecSync` does.
+ *
+ * The sync variant stops the host's event loop for the whole run, which stalls
+ * every other extension as well as Jasper's own rendering. That is tolerable
+ * for a `gslist` measured in milliseconds; it is not for a probe that can take
+ * a second and a half and may be repeated while waiting for gems to exit. Use
+ * this wherever the command's duration is not known to be trivial.
+ *
+ * Rejects the way `execSync` throws — on a non-zero exit or a missing command —
+ * so callers can keep the same error handling.
+ */
+export async function wslExec(
+  cmd: string,
+  env?: Record<string, string>,
+  options?: { timeout?: number },
+): Promise<string> {
+  if (!needsWsl()) {
+    // BASH_ENV: '' for the same reason wslExecSync blanks it — exec runs
+    // through /bin/sh, which is bash on many distros, so a BASH_ENV startup
+    // file is free to `unset GEMSTONE` out from under gslist and friends.
+    const { stdout } = await execAsync(cmd, {
+      encoding: 'utf-8',
+      env: { ...process.env, ...env, BASH_ENV: '' },
+      timeout: options?.timeout,
+    });
+    return stdout;
+  }
+  const envPrefix = env
+    ? Object.entries(env)
+        .map(([k, v]) => `${k}='${v}'`)
+        .join(' ') + ' '
+    : '';
+  const { stdout } = await execAsync(`wsl.exe -e sh -c "${envPrefix}${cmd.replace(/"/g, '\\"')}"`, {
+    encoding: 'utf-8',
+    timeout: options?.timeout,
+  });
+  return stdout;
+}

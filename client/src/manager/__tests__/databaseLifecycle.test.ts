@@ -153,7 +153,7 @@ describe('clearSessionsForStop', () => {
       clock: () => clock,
       waits: [] as number[],
       reapSessions: vi.fn(() => reaped),
-      attachedHolders: vi.fn(() => probes[Math.min(i++, probes.length - 1)]),
+      attachedHolders: vi.fn(async () => probes[Math.min(i++, probes.length - 1)]),
       wait: vi.fn(async (ms: number) => {
         clock += ms;
       }),
@@ -186,12 +186,27 @@ describe('clearSessionsForStop', () => {
 
   it('stops once the holder list settles, rather than running to the deadline', async () => {
     // A foreign session never leaves. Polling for it until the deadline is what
-    // froze the extension host — the probe is a synchronous shell-out.
+    // made the dialog appear to hang — every poll is another shell-out.
     const d = deps(1, [[holder(111)], [holder(111)]]);
 
     const holders = await clearSessionsForStop(d, OPTS);
 
     expect(holders.map((h) => h.pid)).toEqual([111]);
+    expect(d.wait).toHaveBeenCalledTimes(1);
+  });
+
+  it('treats the same holders in a different order as settled', async () => {
+    // Neither `fuser` nor `lsof -t` promises an order. Comparing pid-by-index
+    // would read a shuffle as a change and buy another poll — another shell-out
+    // — for a list that had not moved.
+    const d = deps(1, [
+      [holder(111), holder(222)],
+      [holder(222), holder(111)],
+    ]);
+
+    const holders = await clearSessionsForStop(d, OPTS);
+
+    expect(holders.map((h) => h.pid).sort()).toEqual([111, 222]);
     expect(d.wait).toHaveBeenCalledTimes(1);
   });
 
@@ -210,7 +225,7 @@ describe('clearSessionsForStop', () => {
     let pid = 1000;
     const d = {
       reapSessions: vi.fn(() => 1),
-      attachedHolders: vi.fn(() => [holder(pid++)]),
+      attachedHolders: vi.fn(async () => [holder(pid++)]),
       wait: vi.fn(async () => {}),
       now: vi.fn(),
     };
@@ -234,7 +249,7 @@ describe('clearSessionsForStop', () => {
         order.push('reap');
         return 0;
       }),
-      attachedHolders: vi.fn(() => {
+      attachedHolders: vi.fn(async () => {
         order.push('probe');
         return [];
       }),

@@ -8,13 +8,15 @@ vi.mock('child_process');
 vi.mock('../../sysadminChannel', () => ({ appendSysadmin: vi.fn(), showSysadmin: vi.fn() }));
 vi.mock('../../wslBridge', async () => {
   // Keep wslSpawn / windowsPathToWsl real so the existing startStone tests
-  // continue to drive the child_process mock; only override wslExecSync and
-  // needsWsl, which the new stale-lock tests need to control.
+  // continue to drive the child_process mock; only override the two exec
+  // entry points and needsWsl, which the stale-lock and extent-holder tests
+  // need to control.
   const actual = await vi.importActual<typeof import('../../wslBridge')>('../../wslBridge');
   return {
     ...actual,
     needsWsl: vi.fn(() => false),
     wslExecSync: vi.fn(),
+    wslExec: vi.fn(async () => ''),
   };
 });
 
@@ -1687,7 +1689,7 @@ describe('ProcessManager', () => {
     beforeEach(() => {
       setPlatform('linux');
       vi.mocked(wslBridge.needsWsl).mockReturnValue(false);
-      vi.mocked(wslBridge.wslExecSync).mockReset();
+      vi.mocked(wslBridge.wslExec).mockReset();
       dbDir = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'jasper-locked-'));
       fs.mkdirSync(nodePath.join(dbDir, 'data'));
       fs.writeFileSync(nodePath.join(dbDir, 'data', 'extent0.dbf'), '');
@@ -1711,7 +1713,7 @@ describe('ProcessManager', () => {
     }
 
     it('names the processes holding the extent', async () => {
-      vi.mocked(wslBridge.wslExecSync).mockImplementation((cmd: string) => {
+      vi.mocked(wslBridge.wslExec).mockImplementation(async (cmd: string) => {
         if (cmd.startsWith('fuser')) return ' 589418';
         if (cmd.startsWith('ps -o pid=')) {
           return '589418 ewinger  Tue Sep  1 17:26:25 2026 /gs/sys/gem TCP 5';
@@ -1728,7 +1730,7 @@ describe('ProcessManager', () => {
     });
 
     it('says how to look when it cannot name them', async () => {
-      vi.mocked(wslBridge.wslExecSync).mockReturnValue('');
+      vi.mocked(wslBridge.wslExec).mockResolvedValue('');
 
       const error = await failedStart();
 
@@ -1739,7 +1741,7 @@ describe('ProcessManager', () => {
     it('leaves an unrelated start failure exactly as GemStone reported it', async () => {
       // Shared memory is the other common start failure and needs a completely
       // different fix; dressing it up as a locked extent sends the user astray.
-      vi.mocked(wslBridge.wslExecSync).mockReturnValue('');
+      vi.mocked(wslBridge.wslExec).mockResolvedValue('');
       const proc = makeChildProcess(1);
       mockSpawnReturn(proc);
       const promise = new ProcessManager(makeStorage()).startStone(makeDatabase({ path: dbDir }));
@@ -1754,13 +1756,12 @@ describe('ProcessManager', () => {
   });
 
   describe('findExtentHolders', () => {
-    // A real directory, so the extent scan runs against real readdir rather
-    // than a stub that would agree with whatever the code happened to do.
     let dbDir: string;
 
     beforeEach(() => {
+      setPlatform('linux');
       vi.mocked(wslBridge.needsWsl).mockReturnValue(false);
-      vi.mocked(wslBridge.wslExecSync).mockReset();
+      vi.mocked(wslBridge.wslExec).mockReset();
       dbDir = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'jasper-extents-'));
       fs.mkdirSync(nodePath.join(dbDir, 'data'));
       fs.writeFileSync(nodePath.join(dbDir, 'data', 'extent0.dbf'), '');
@@ -1770,10 +1771,16 @@ describe('ProcessManager', () => {
 
     const db = () => makeDatabase({ path: dbDir });
 
-    it('asks fuser before lsof, and stops once fuser answers', () => {
+    /** The probe shells out through the async bridge, never the synchronous
+     *  one: a second and a half on the extension host's event loop stalls every
+     *  other extension, not just Jasper. */
+    const probe = (impl: (cmd: string) => string) =>
+      vi.mocked(wslBridge.wslExec).mockImplementation(async (cmd: string) => impl(cmd));
+
+    it('asks fuser before lsof, and stops once fuser answers', async () => {
       // fuser interrogates one file; lsof walks every process on the host. The
       // order is a measured 7x, so it is worth pinning.
-      vi.mocked(wslBridge.wslExecSync).mockImplementation((cmd: string) => {
+      probe((cmd) => {
         if (cmd.startsWith('fuser')) return ' 111 222';
         if (cmd.startsWith('ps -o pid=')) {
           return [
@@ -1784,16 +1791,56 @@ describe('ProcessManager', () => {
         return '';
       });
 
-      const holders = new ProcessManager(makeStorage()).findExtentHolders(db());
+      const holders = await new ProcessManager(makeStorage()).findExtentHolders(db());
 
       expect(holders.map((h) => h.pid)).toEqual([111, 222]);
-      const commands = vi.mocked(wslBridge.wslExecSync).mock.calls.map((c) => c[0]);
+      const commands = vi.mocked(wslBridge.wslExec).mock.calls.map((c) => c[0]);
       expect(commands.some((c) => c.startsWith('fuser'))).toBe(true);
       expect(commands.some((c) => c.startsWith('lsof'))).toBe(false);
     });
 
-    it('falls back to lsof when fuser is not installed', () => {
-      vi.mocked(wslBridge.wslExecSync).mockImplementation((cmd: string) => {
+    it('bounds every probe with a timeout', async () => {
+      // Being asynchronous is what makes this necessary. A wedged `lsof` used
+      // to freeze the window, which nobody could miss; awaited, it would leave
+      // the progress notification up for ever with the editor working normally
+      // around it, and the stop would just never happen.
+      probe((cmd) => (cmd.startsWith('fuser') ? '111' : ''));
+
+      await new ProcessManager(makeStorage()).findExtentHolders(db());
+
+      const calls = vi.mocked(wslBridge.wslExec).mock.calls;
+      expect(calls.length).toBeGreaterThan(0);
+      for (const call of calls) expect(call[2]?.timeout).toBeGreaterThan(0);
+    });
+
+    it('falls through to the next probe when one times out', async () => {
+      // A timeout rejects, and must read as "this tool did not answer" rather
+      // than as "nothing holds the extents".
+      probe((cmd) => {
+        if (cmd.startsWith('fuser')) throw new Error('ETIMEDOUT');
+        if (cmd.startsWith('lsof')) return '777';
+        return '';
+      });
+
+      const holders = await new ProcessManager(makeStorage()).findExtentHolders(db());
+
+      expect(holders).toEqual([{ pid: 777, command: '' }]);
+    });
+
+    it('never blocks the extension host with a synchronous shell-out', async () => {
+      // The probe can take a second and a half, and the stop path repeats it
+      // while waiting for gems to exit. Run synchronously that freezes every
+      // extension in the window, which VS Code's guidelines rule out.
+      probe(() => '');
+
+      await new ProcessManager(makeStorage()).findExtentHolders(db());
+
+      expect(wslBridge.wslExecSync).not.toHaveBeenCalled();
+      expect(wslBridge.wslExec).toHaveBeenCalled();
+    });
+
+    it('falls back to lsof when fuser is not installed', async () => {
+      probe((cmd) => {
         if (cmd.startsWith('fuser')) throw new Error('fuser: not found');
         if (cmd.startsWith('lsof')) return '333\n';
         if (cmd.startsWith('ps -o pid=')) {
@@ -1802,53 +1849,66 @@ describe('ProcessManager', () => {
         return '';
       });
 
-      const holders = new ProcessManager(makeStorage()).findExtentHolders(db());
+      const holders = await new ProcessManager(makeStorage()).findExtentHolders(db());
 
       expect(holders.map((h) => h.pid)).toEqual([333]);
     });
 
-    it('never uses lsof -b, which reports nothing on a real extent', () => {
+    it('never uses lsof -b, which reports nothing on a real extent', async () => {
       // Fifteen times faster and completely wrong: it skips the kernel calls
       // that would find the holders. A probe that answers "nobody" for a
       // database with live gems would have Jasper stop a stone on top of them.
-      vi.mocked(wslBridge.wslExecSync).mockReturnValue('');
+      probe(() => '');
 
-      new ProcessManager(makeStorage()).findExtentHolders(db());
+      await new ProcessManager(makeStorage()).findExtentHolders(db());
 
-      const commands = vi.mocked(wslBridge.wslExecSync).mock.calls.map((c) => c[0]);
+      const commands = vi.mocked(wslBridge.wslExec).mock.calls.map((c) => c[0]);
       expect(commands.some((c) => /\blsof\b.*\s-\w*b/.test(c))).toBe(false);
     });
 
-    it('reports nothing when neither tool is available, rather than throwing', () => {
-      vi.mocked(wslBridge.wslExecSync).mockImplementation(() => {
+    it('reports nothing when neither tool is available, rather than throwing', async () => {
+      probe(() => {
         throw new Error('command not found');
       });
 
-      expect(new ProcessManager(makeStorage()).findExtentHolders(db())).toEqual([]);
+      expect(await new ProcessManager(makeStorage()).findExtentHolders(db())).toEqual([]);
     });
 
-    it('finds nothing when nothing holds the extents', () => {
-      vi.mocked(wslBridge.wslExecSync).mockReturnValue('');
+    it('finds nothing when nothing holds the extents', async () => {
+      probe(() => '');
 
-      expect(new ProcessManager(makeStorage()).findExtentHolders(db())).toEqual([]);
+      expect(await new ProcessManager(makeStorage()).findExtentHolders(db())).toEqual([]);
     });
 
-    it('still names the PIDs when ps says nothing about them', () => {
-      vi.mocked(wslBridge.wslExecSync).mockImplementation((cmd: string) =>
-        cmd.startsWith('fuser') ? '444' : '',
-      );
+    it('still names the PIDs when ps says nothing about them', async () => {
+      // A process that exits between the probe and the `ps` call leaves `ps`
+      // printing nothing and exiting 0. The PID is still the useful answer:
+      // dropping it turns "held by PID 444" into "Jasper could not determine
+      // which process holds it", which the user cannot act on.
+      probe((cmd) => (cmd.startsWith('fuser') ? '444' : ''));
 
-      const holders = new ProcessManager(makeStorage()).findExtentHolders(db());
+      const holders = await new ProcessManager(makeStorage()).findExtentHolders(db());
 
-      expect(holders).toEqual([]);
+      expect(holders).toEqual([{ pid: 444, command: '' }]);
     });
 
-    it('does not probe a database with no extents', () => {
+    it('still names the PIDs when the ps call itself fails', async () => {
+      probe((cmd) => {
+        if (cmd.startsWith('fuser')) return '555';
+        throw new Error('sh: cannot fork');
+      });
+
+      const holders = await new ProcessManager(makeStorage()).findExtentHolders(db());
+
+      expect(holders).toEqual([{ pid: 555, command: '' }]);
+    });
+
+    it('does not probe a database with no extents', async () => {
       fs.rmSync(nodePath.join(dbDir, 'data', 'extent0.dbf'));
-      vi.mocked(wslBridge.wslExecSync).mockReturnValue('');
+      probe(() => '');
 
-      expect(new ProcessManager(makeStorage()).findExtentHolders(db())).toEqual([]);
-      expect(wslBridge.wslExecSync).not.toHaveBeenCalled();
+      expect(await new ProcessManager(makeStorage()).findExtentHolders(db())).toEqual([]);
+      expect(wslBridge.wslExec).not.toHaveBeenCalled();
     });
   });
 

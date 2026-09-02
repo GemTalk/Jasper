@@ -148,6 +148,12 @@ import {
   clearSessionsForStop,
   ServerTarget,
 } from './manager/databaseLifecycle';
+import {
+  DatabaseAction,
+  databaseAction,
+  databaseStatus,
+  inspectDatabaseProcesses,
+} from './databaseServerStatus';
 import { runLogicalBackup } from './backupManager';
 import { runOnlineExtentBackup, resolveExtentBackupSession } from './manager/extentBackupManager';
 import { runLogicalRestore, RestoreSession } from './restoreManager';
@@ -3634,7 +3640,11 @@ export function activate(context: vscode.ExtensionContext) {
   /** Ceiling on waiting for a database's gems to exit after their sessions are
    *  logged out. Only reached when a gem is genuinely slow to go: the wait ends
    *  as soon as the set of holders stops changing, so the ordinary case costs
-   *  two probes rather than the whole span. */
+   *  two probes rather than the whole span.
+   *
+   *  The wait is asynchronous end to end — the probe included — so this is a
+   *  ceiling on how long the user watches a progress notification, not on how
+   *  long the extension host is unavailable to anything else. */
   const SESSION_EXIT_TIMEOUT_MS = 10_000;
   const SESSION_EXIT_POLL_MS = 200;
 
@@ -3659,6 +3669,15 @@ export function activate(context: vscode.ExtensionContext) {
     // Under a progress notification: probing the extents shells out to lsof and
     // ps, and on a database with sessions to log out this takes long enough
     // that a silent pause reads as a click that did nothing.
+    //
+    // The probing and the wait around it are awaited, not blocking, so the
+    // editor stays usable for the part that can run to ten seconds. The one
+    // exception is the logout itself: `GciTsLogout` is a synchronous FFI call
+    // on the extension host, once per session on this database. Against a
+    // healthy stone that is milliseconds; against an unresponsive one it
+    // blocks, and there is no non-blocking logout in the GciTs API to use
+    // instead. Moving it off the main thread is a session-lifecycle change
+    // well beyond this path, so it is left as it is and named here.
     return await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
@@ -3675,8 +3694,8 @@ export function activate(context: vscode.ExtensionContext) {
         // The stone's own processes are filtered out: a running stone and its
         // housekeeping gems hold its extents by definition, and reporting those
         // would put a question on every stop of a perfectly healthy database.
-        attachedHolders: () =>
-          sessionHolders(processManager.findExtentHolders(db), db.config.stoneName),
+        attachedHolders: async () =>
+          sessionHolders(await processManager.findExtentHolders(db), db.config.stoneName),
         wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
         now: () => Date.now(),
       },
@@ -3773,16 +3792,60 @@ export function activate(context: vscode.ExtensionContext) {
     };
   }
 
-  /** The database a whole-database command acts on when it was invoked without
-   *  a row — from the Command Palette, where there is nothing selected. */
-  async function pickDatabase(placeHolder: string): Promise<GemStoneDatabase | undefined> {
+  /** A database's whole-database state, read the same way the sidebar row and
+   *  the panel's power button read it. */
+  function actionFor(db: GemStoneDatabase): DatabaseAction {
+    const external = processManager.getExternalServers(db);
+    return databaseAction(
+      databaseStatus(inspectDatabaseProcesses(db, processManager.getProcesses(), external)),
+    );
+  }
+
+  /**
+   * The database a whole-database command acts on when it was invoked without
+   * a row — from the Command Palette, where there is nothing selected.
+   *
+   * Only the databases the action can actually be carried out on are offered.
+   * The sidebar withholds Start/Stop through its `when` clauses and the panel
+   * withholds its power button, so a palette listing everything would be the
+   * one surface happy to run Stop on a database whose stone is already down —
+   * or on one whose servers were started outside Jasper, which Jasper cannot
+   * stop at all. It would also pay for that: the stop path probes the extents
+   * and can put the holders question up before discovering there is nothing to
+   * do.
+   *
+   * When nothing qualifies, say which of the two reasons it is rather than
+   * showing an empty picker.
+   */
+  async function pickDatabase(
+    placeHolder: string,
+    wanted: DatabaseAction,
+  ): Promise<GemStoneDatabase | undefined> {
     const databases = sysadminStorage.getDatabases();
     if (databases.length === 0) {
       vscode.window.showInformationMessage('No databases yet — create one from GemStone Admin.');
       return undefined;
     }
+    const actions = new Map(databases.map((db) => [db, actionFor(db)]));
+    const eligible = databases.filter((db) => actions.get(db) === wanted);
+    if (eligible.length === 0) {
+      const external = databases.filter((db) => actions.get(db) === 'External').length;
+      const verb = wanted === 'Stopped' ? 'start' : 'stop';
+      vscode.window.showInformationMessage(
+        external === databases.length
+          ? `No database to ${verb}: every one has servers running outside Jasper's ` +
+              `environment, which Jasper cannot ${verb}. The Databases view offers to restart ` +
+              `those under Jasper.`
+          : `No database to ${verb}: every database is already ` +
+              `${wanted === 'Stopped' ? 'running' : 'stopped'}` +
+              (external > 0
+                ? `, apart from ${external} running outside Jasper's environment.`
+                : '.'),
+      );
+      return undefined;
+    }
     const picked = await vscode.window.showQuickPick(
-      databases.map((db) => ({
+      eligible.map((db) => ({
         label: db.config.stoneName,
         description: `${db.dirName} (${db.config.version})`,
         db,
@@ -4062,14 +4125,18 @@ export function activate(context: vscode.ExtensionContext) {
     // their preconditions, password prompts and messages.
 
     vscode.commands.registerCommand('gemstone.startDatabase', async (node?: DatabaseNode) => {
-      const db = node?.kind === 'database' ? node.db : await pickDatabase('Start which database?');
+      const db =
+        node?.kind === 'database'
+          ? node.db
+          : await pickDatabase('Start which database?', 'Stopped');
       if (!db) return;
       await bringUpDatabase(db, databaseLifecycleDeps());
       refreshAdminViews();
     }),
 
     vscode.commands.registerCommand('gemstone.stopDatabase', async (node?: DatabaseNode) => {
-      const db = node?.kind === 'database' ? node.db : await pickDatabase('Stop which database?');
+      const db =
+        node?.kind === 'database' ? node.db : await pickDatabase('Stop which database?', 'Running');
       if (!db) return;
       // Before either server goes: get Jasper's own sessions out and confirm
       // their gems have exited, so nothing is left holding the extents when the
@@ -4093,7 +4160,7 @@ export function activate(context: vscode.ExtensionContext) {
         // notification would clip it to its first line — and a terminal on
         // those PIDs is the next thing the user wants either way.
         if (isExtentLocked(msg)) {
-          const holders = processManager.findExtentHolders(node.db);
+          const holders = await processManager.findExtentHolders(node.db);
           const pick = await vscode.window.showErrorMessage(
             msg,
             { modal: true },
@@ -4109,7 +4176,10 @@ export function activate(context: vscode.ExtensionContext) {
 
     vscode.commands.registerCommand(
       'gemstone.stopStone',
-      async (node: DatabaseNode & { sessionsCleared?: boolean }) => {
+      // `ServerTarget` is what the whole-database stop passes, and it is where
+      // `sessionsCleared` is declared and explained. Widening to it here keeps
+      // the flag's one declaration doing the work rather than restating it.
+      async (node: DatabaseNode | ServerTarget) => {
         if (node?.kind !== 'stone') return;
         const db = node.db;
         const stoneName = db.config.stoneName;
@@ -4117,8 +4187,9 @@ export function activate(context: vscode.ExtensionContext) {
         // Sessions go before the stone does. A stone stopped out from under a live
         // gem leaves that gem holding the extent, and the database then refuses to
         // start again — so this is the one step that must not be skipped. The
-        // whole-database stop has already done it when it says so.
-        if (!node.sessionsCleared) {
+        // whole-database stop has already done it when it says so; a tree row
+        // carries no such promise, so the `in` guard reads as "not cleared".
+        if (!('sessionsCleared' in node && node.sessionsCleared)) {
           const attached = await clearSessionsBeforeStop(db);
           if (attached.length > 0 && !(await confirmStopWithHolders(db, attached))) return;
         }

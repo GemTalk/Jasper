@@ -6,7 +6,7 @@ import { SysadminStorage } from '../sysadminStorage';
 import { GemStoneDatabase, GemStoneProcess } from '../sysadminTypes';
 import { DEFAULT_GS_PW } from '../loginTypes';
 import { appendSysadmin, showSysadmin } from '../sysadminChannel';
-import { needsWsl, windowsPathToWsl, wslSpawn, wslExecSync } from '../wslBridge';
+import { needsWsl, windowsPathToWsl, wslSpawn, wslExecSync, wslExec } from '../wslBridge';
 import {
   ExtentHolder,
   parseHolderPids,
@@ -656,7 +656,7 @@ export class ProcessManager {
       const explained = explainExtentLocked(
         db.config.stoneName,
         output,
-        this.findExtentHolders(db),
+        await this.findExtentHolders(db),
       );
       throw explained ? new Error(explained) : e;
     }
@@ -688,9 +688,20 @@ export class ProcessManager {
    * `fuser` first, `lsof -t` second: both print bare PIDs on stdout and both
    * report the same holders, but `fuser` interrogates one file while `lsof`
    * walks every process on the host — measured at 0.2s against 1.5s on a
-   * developer machine, which is the difference between a prompt appearing at
-   * once and appearing to hang. Neither being available is not an error; it
-   * means Jasper cannot name the holder and says so.
+   * developer machine. Neither being available is not an error; it means
+   * Jasper cannot name the holder and says so.
+   *
+   * Asynchronous throughout: even the fast path is slow enough that running it
+   * on the extension host's event loop would stall every other extension, and
+   * the stop path can repeat it while waiting for gems to exit.
+   *
+   * Every probe carries a timeout, and being asynchronous is exactly why it
+   * has to. `lsof` can wedge on an unresponsive mount; run synchronously that
+   * froze the window, which was at least unmistakable. Awaited, a probe that
+   * never returns leaves the progress notification up for ever with the editor
+   * working normally around it — the stop simply never happens and nothing
+   * says so. A timed-out probe falls through to the next one, or to the bare
+   * PIDs, the same as a missing tool.
    *
    * `lsof -b` is not used, though it is fifteen times faster again: it skips
    * the kernel calls that could block, and on a plain ext4 extent it returns
@@ -698,7 +709,7 @@ export class ProcessManager {
    * four live processes on it would have Jasper stop a stone on top of its own
    * gems — the exact failure this exists to prevent.
    */
-  findExtentHolders(db: GemStoneDatabase): ExtentHolder[] {
+  async findExtentHolders(db: GemStoneDatabase): Promise<ExtentHolder[]> {
     const dataDir = path.join(db.path, 'data');
     let extents: string[];
     try {
@@ -714,10 +725,12 @@ export class ProcessManager {
     let pids: number[] = [];
     for (const probe of [`fuser ${quoted}`, `lsof -n -P -w -t -- ${quoted}`]) {
       try {
-        // Both exit non-zero when nothing holds the file, which execSync throws
+        // Both exit non-zero when nothing holds the file, which exec rejects
         // on — `|| true` keeps "no holders" from reading as "probe failed", so
         // the fallback only runs when the tool itself is missing.
-        pids = parseHolderPids(wslExecSync(`${probe} 2>/dev/null || true`));
+        pids = parseHolderPids(
+          await wslExec(`${probe} 2>/dev/null || true`, undefined, { timeout: PS_TIMEOUT_MS }),
+        );
       } catch {
         continue;
       }
@@ -725,14 +738,25 @@ export class ProcessManager {
     }
     if (pids.length === 0) return [];
 
+    let detailed: ExtentHolder[] = [];
     try {
-      return parseHolderDetails(
-        wslExecSync(`ps -o pid=,user=,lstart=,args= -p ${pids.join(',')} 2>/dev/null || true`),
+      detailed = parseHolderDetails(
+        await wslExec(
+          `ps -o pid=,user=,lstart=,args= -p ${pids.join(',')} 2>/dev/null || true`,
+          undefined,
+          { timeout: PS_TIMEOUT_MS },
+        ),
       );
     } catch {
-      // The PIDs are still worth reporting even when ps says nothing about them.
-      return pids.map((pid) => ({ pid, command: '' }));
+      // The shell itself failed; fall through to the bare PIDs below.
     }
+    // `ps` printing nothing is the ordinary case for a process that exited
+    // between the probe and this call, and it exits 0 doing it — so an empty
+    // result is not an error and must not be confused with one. Either way the
+    // PIDs are worth reporting: "held by PID 444, and ps no longer knows what
+    // that was" is actionable, "Jasper could not determine which process holds
+    // it" is not.
+    return detailed.length > 0 ? detailed : pids.map((pid) => ({ pid, command: '' }));
   }
 
   /** Force-stop a running stone by signalling its process, for when a clean

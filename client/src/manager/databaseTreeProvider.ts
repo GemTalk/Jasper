@@ -4,7 +4,13 @@ import { SysadminStorage } from '../sysadminStorage';
 import { ProcessManager, versionsMatch } from './processManager';
 import { GemStoneDatabase } from '../sysadminTypes';
 import { wslExistsSync, wslReaddirSync, wslIsFile } from '../wslFs';
-import { ServerStatus, databaseStatus, inspectDatabaseProcesses } from '../databaseServerStatus';
+import {
+  ServerStatus,
+  DatabaseAction,
+  databaseAction,
+  databaseStatus,
+  inspectDatabaseProcesses,
+} from '../databaseServerStatus';
 import { ExternalServer, ExternalServerFinding } from '../externalServerScan';
 
 export type DatabaseNode =
@@ -133,15 +139,11 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseNod
 
   /** Which whole-database action the row offers, as a context-value suffix.
    *
-   *  Running and Stopped follow the stone, the way the Databases & Versions
-   *  panel's power button does — a database is up when its stone is. External
-   *  gets neither: Jasper cannot stop a server started outside its environment,
-   *  and starting the other half beside one would only collide with it. The
+   *  The reading itself is `databaseAction`, shared with the Command Palette's
+   *  picker so the two cannot disagree. External gets neither action here; the
    *  child rows offer the restart-under-Jasper action for that case. */
-  private databaseContext(db: GemStoneDatabase): 'Running' | 'Stopped' | 'External' {
-    const { status } = this.inspect(db);
-    if (status.stone === 'external' || status.netldi === 'external') return 'External';
-    return status.stone === 'stopped' ? 'Stopped' : 'Running';
+  private databaseContext(db: GemStoneDatabase): DatabaseAction {
+    return databaseAction(this.inspect(db).status);
   }
 
   /** One reading of a database's two servers. The database row's context value
