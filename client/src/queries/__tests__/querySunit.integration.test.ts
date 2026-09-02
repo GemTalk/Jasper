@@ -165,6 +165,11 @@ describe('SUnit queries (integration)', () => {
 
     // The blocking-call guard (MAX_RUN_CLASSES). Both directions are asserted with
     // a fixture sized on purpose, so the same assertion runs on every matrix cell.
+    // This used to be parked out of CI: it branched on image size, and CI's bare
+    // vendor extent (7 TestCase subclasses, verified on 3.7.5) put it permanently
+    // on the within-cap branch, running real kernel suites that blow vitest's 5s
+    // default timeout on 3.7.5. Trivial probes remove both problems — at their
+    // measured slope the cap would have to reach ~60,000 to approach that timeout.
     it('refuses a discover-all selection over the cap, without running any suite', () => {
       installRunLimitProbeClasses(exec, MAX_RUN_CLASSES + 1);
 

@@ -7,9 +7,13 @@
 // hundreds). Creating the classes here makes the assertion identical on every
 // matrix cell.
 //
-// One doit for the whole batch, so cost is flat in `count` — ~4ms for 100 on
-// 3.6.2. Installed inside the caller's transaction, so the harness's per-test
-// abort reclaims them; no teardown.
+// One doit for the whole batch, so cost is flat in `count`: installing 100
+// classes measures ~3.3-3.4ms on both 3.6.2 and 3.7.5 (~21us/class), and
+// running all 100 suites through runFailingTests ~4.1ms on 3.7.5 / ~4.5ms on
+// 3.6.2 (~31us/class). These probes are deliberately trivial, so they exercise
+// the guard's counting, not the blocking cost it exists to bound — see
+// MAX_RUN_CLASSES for that. Installed inside the caller's transaction, so the
+// harness's per-test abort reclaims them; no teardown.
 
 import { GciLibrary } from '../../gciLibrary';
 import { QueryExecutor } from '../types';
