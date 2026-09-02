@@ -1,34 +1,5 @@
-import koffi, { KoffiFunction } from 'koffi';
-import { NativeSocketLibraryBase } from './nativeSocketLibraryBase';
-
-// Registered once at module scope, rather than per instance: koffi's struct
-// registry is process-wide, and re-declaring an already-registered name
-// throws — which a second `NativeWindowsSocketLibrary` instance (e.g. after
-// `NativeSocketLibrary.reset()`, as tests do) would hit if these lived
-// inside the constructor.
-koffi.struct('WS2_WsaPollFd', {
-  fd: 'uint64',
-  events: 'int16',
-  revents: 'int16',
-});
-
-// A minimal `sockaddr_in`: 2-byte family, 2-byte port, 4-byte address, 8
-// bytes of zero padding — 16 bytes total, matching the real struct's layout
-// exactly. Port and address are declared as raw byte arrays rather than
-// `uint16`/`uint32` so the network-byte-order bytes written are exactly the
-// bytes koffi puts in memory, regardless of the host's own endianness.
-koffi.struct('WS2_RawSockAddrIn', {
-  family: 'uint16',
-  portBytes: 'uint8[2]',
-  addrBytes: 'uint8[4]',
-  zero: 'uint8[8]',
-});
-
-const AF_INET = 2;
-const SOCK_STREAM = 1;
-const IPPROTO_TCP = 6;
-const INVALID_SOCKET = 0xffffffffffffffffn;
-const SOCKET_ERROR = -1;
+import { NativeSocketLibrary } from './nativeSocketLibrary';
+import { windowsSocket2Library } from './bindings/windowsSocketLibrary';
 
 /**
  * All `ws2_32.dll` bindings the extension needs live here: the `WSAPoll`
@@ -36,38 +7,18 @@ const SOCKET_ERROR = -1;
  * raw `socket`/`connect`/`closesocket` calls test fixtures use to obtain a
  * genuine, `WSAPoll`-able handle (see {@link connectRawSocket}).
  */
-export class NativeWindowsSocketLibrary extends NativeSocketLibraryBase {
-  private readonly POLLRDNORM = 0x0100;
-
-  private readonly WSAPoll: KoffiFunction;
-  private readonly wsaSocket: KoffiFunction;
-  private readonly wsaConnect: KoffiFunction;
-  private readonly wsaCloseSocket: KoffiFunction;
-  private readonly WSAGetLastError: KoffiFunction;
-
+export class NativeWindowsSocketLibrary extends NativeSocketLibrary {
   /** @throws {Error} If the native ws2_32.dll bindings can't be loaded on this machine. */
-  constructor() {
+  constructor(private readonly ws2 = windowsSocket2Library()) {
     super();
-
-    const ws2 = koffi.load('ws2_32.dll');
-
-    this.WSAPoll = ws2.func(
-      'int __stdcall WSAPoll(_Inout_ WS2_WsaPollFd *fdArray, unsigned long fds, int timeout)',
-    );
-    this.wsaSocket = ws2.func('uint64 __stdcall socket(int af, int type, int protocol)');
-    this.wsaConnect = ws2.func(
-      'int __stdcall connect(uint64 s, WS2_RawSockAddrIn *name, int namelen)',
-    );
-    this.wsaCloseSocket = ws2.func('int __stdcall closesocket(uint64 s)');
-    this.WSAGetLastError = ws2.func('int __stdcall WSAGetLastError()');
   }
 
   public pollReadable(fd: number, timeoutMs: number): number {
     // `pollFd` must stay in a variable, not an inline literal: koffi writes
     // WSAPoll's output back into this same object, and we need to read the
     // resulting `revents` below.
-    const pollFd = { fd: BigInt(fd), events: this.POLLRDNORM, revents: 0 };
-    const status = this.WSAPoll(pollFd, 1, timeoutMs);
+    const pollFd = { fd: BigInt(fd), events: this.ws2.POLLRDNORM, revents: 0 };
+    const status = this.ws2.WSAPoll(pollFd, 1, timeoutMs);
 
     // A negative status means WSAPoll itself failed; 0 means it timed out
     // with nothing to report. Neither leaves a meaningful revents to check.
@@ -81,7 +32,7 @@ export class NativeWindowsSocketLibrary extends NativeSocketLibraryBase {
     // POLLRDNORM is actually set; otherwise treat it as a failed check, so
     // the caller falls back to the authoritative result instead of acting on
     // a dead or errored socket.
-    return pollFd.revents & this.POLLRDNORM ? status : -1;
+    return pollFd.revents & this.ws2.POLLRDNORM ? status : -1;
   }
 
   /**
@@ -106,22 +57,26 @@ export class NativeWindowsSocketLibrary extends NativeSocketLibraryBase {
    * @throws {Error} If the native `socket()` or `connect()` call fails.
    */
   public connectRawSocket(port: number): number {
-    const handle = this.wsaSocket(AF_INET, SOCK_STREAM, IPPROTO_TCP) as bigint;
-    if (handle === INVALID_SOCKET) {
-      throw new Error(`socket() failed (WSAGetLastError ${this.WSAGetLastError()})`);
+    const handle = this.ws2.socket(
+      this.ws2.AF_INET,
+      this.ws2.SOCK_STREAM,
+      this.ws2.IPPROTO_TCP,
+    ) as bigint;
+    if (handle === this.ws2.INVALID_SOCKET) {
+      throw new Error(`socket() failed (WSAGetLastError ${this.ws2.WSAGetLastError()})`);
     }
 
     const address = {
-      family: AF_INET,
+      family: this.ws2.AF_INET,
       portBytes: [(port >> 8) & 0xff, port & 0xff],
       addrBytes: [127, 0, 0, 1],
       zero: [0, 0, 0, 0, 0, 0, 0, 0],
     };
 
-    const status = this.wsaConnect(handle, address, 16) as number;
-    if (status === SOCKET_ERROR) {
-      const error = this.WSAGetLastError();
-      this.wsaCloseSocket(handle);
+    const status = this.ws2.connect(handle, address, 16) as number;
+    if (status === this.ws2.SOCKET_ERROR) {
+      const error = this.ws2.WSAGetLastError();
+      this.ws2.closesocket(handle);
       throw new Error(`connect() failed (WSAGetLastError ${error})`);
     }
 
@@ -130,6 +85,6 @@ export class NativeWindowsSocketLibrary extends NativeSocketLibraryBase {
 
   /** Closes a handle previously returned by {@link connectRawSocket}. */
   public closeRawSocket(fd: number): void {
-    this.wsaCloseSocket(BigInt(fd));
+    this.ws2.closesocket(BigInt(fd));
   }
 }

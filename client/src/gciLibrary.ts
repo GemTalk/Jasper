@@ -3,9 +3,10 @@ import * as path from 'path';
 import { setTimeout as sleep } from 'timers/promises';
 import { GCI_LOGIN_QUIET, OOP_FALSE, OOP_ILLEGAL, OOP_NIL, OOP_TRUE } from './gciConstants';
 import { GciLibraryError } from './gciLibraryError';
-import { NativeSocketLibrary } from './nativeSocketLibrary';
+import { NativeSocketLibrary } from './sockets/nativeSocketLibrary';
 import { NotPromise } from './types';
 import { escapeString } from './queries/util';
+import { createNativeSocketLibrary } from './sockets/factory';
 
 // How often to check a pending non-blocking call's socket for readiness.
 // Short enough that a fast call still returns promptly, without busy-spinning.
@@ -365,7 +366,7 @@ export class GciLibrary {
    */
   constructor(
     libraryPath: string,
-    private nativeSocketLibrary: NativeSocketLibrary = NativeSocketLibrary.forCurrentPlatform(),
+    private nativeSocketLibrary: NativeSocketLibrary = createNativeSocketLibrary(),
   ) {
     if (process.platform === 'linux') {
       // libgcits has an undefined reference to HostCreateThread, which is

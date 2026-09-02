@@ -1,6 +1,7 @@
 import { GciLibrary } from '../gciLibrary';
 import { afterAll, afterEach, beforeAll, beforeEach, expect } from 'vitest';
-import { NativeSocketLibrary } from '../nativeSocketLibrary';
+import { NativeSocketLibrary } from '../sockets/nativeSocketLibrary';
+import { createNativeSocketLibrary } from '../sockets/factory';
 
 /** The live GCI state handed to a `useIntegrationTest` callback on every login. */
 export type GciTestContext = {
@@ -122,7 +123,7 @@ export function useIntegrationTest(
     configureGemstoneGlobalDir();
 
     handleIntegrationTestSetupErrorDuring(() => {
-      nativeSocketLibrary = NativeSocketLibrary.forCurrentPlatform();
+      nativeSocketLibrary = createNativeSocketLibrary();
       gciLibrary = new GciLibrary(process.env.VITE_GEMSTONE_GCI_LIBRARY_PATH!, nativeSocketLibrary);
       login();
     });
