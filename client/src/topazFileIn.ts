@@ -1,9 +1,17 @@
 /**
- * Parses a Topaz file-out and compiles each piece back into GemStone.
+ * Reading Topaz file-out text: splitting it into chunks, and turning those chunks
+ * into work.
  *
- * Copied from server/src/topaz/topazParser.ts (parseTopazDocument only)
- * because the server and client have separate tsconfig roots and
- * cannot share imports without build configuration changes.
+ * Two consumers, with different reach. `fileInClass` / `fileInChangedRegions` serve
+ * the `.gemstone` class mirror, where a file is known to hold one class and saving it
+ * recompiles that class. `parseTopazScript` serves the File In command (issue #539),
+ * where the file is whatever the user picked and every directive in it has to be
+ * accounted for — so it reads the class comment, `removeAllMethods`, the compile
+ * environment and `input` as well, and reports anything it will not run.
+ *
+ * `parseTopazDocument` (the chunk splitter both build on) is copied from
+ * server/src/topaz/topazParser.ts because the server and client have separate
+ * tsconfig roots and cannot share imports without build configuration changes.
  */
 import { ActiveSession } from './sessionManager';
 import * as queries from './browserQueries';
@@ -256,6 +264,225 @@ export function fileInClass(
     compiledClassDef,
     deletedMethods: 0,
   };
+}
+
+// ── Topaz script steps (File In) ───────────────────────────────
+
+/**
+ * One thing filing a `.gs` file in has to do, in the order the file says to do it.
+ *
+ * This is the whole-file counterpart of {@link fileInClass}, which only ever looked
+ * for a class definition and its methods. A GemStone file-out carries more than that
+ * — a class comment in its own `doit`, `removeAllMethods` before the methods are
+ * replaced, the compile environment, and (for a dictionary filed out as many files)
+ * `input` lines naming the rest — and skipping any of it files the code in wrong
+ * rather than not at all.
+ */
+export type FileInStep =
+  /** A `run` / `doit` chunk: class definitions, comments, arbitrary setup. */
+  | { kind: 'execute'; code: string; line: number }
+  /** A `method:` / `classmethod:` chunk, with the category and compile environment
+   *  the directives above it had established. */
+  | {
+      kind: 'method';
+      className: string;
+      isMeta: boolean;
+      category: string;
+      environmentId: number;
+      source: string;
+      line: number;
+    }
+  /** `removeAllMethods X` / `removeAllClassMethods X` — a file-out emits these ahead
+   *  of a class's methods so filing it in REPLACES them rather than merging into
+   *  whatever the class already had. */
+  | { kind: 'removeAllMethods'; className: string; isMeta: boolean; line: number }
+  /** `input other.gs` — read that file (relative to this one) and file it in here. */
+  | { kind: 'input'; file: string; line: number }
+  /** A Topaz command that drives the *topaz program* rather than the image — logging
+   *  in, setting the output level, committing. Recognised and deliberately not run
+   *  (Jasper is already connected, and never commits on the user's behalf), but
+   *  reported, because a `commit` the file expected and did not get changes what the
+   *  file means. */
+  | { kind: 'sessionCommand'; directive: string; line: number; transaction: boolean }
+  /** `exit` / `quit` — Topaz stops reading here, so this does too. */
+  | { kind: 'stop'; directive: string; line: number }
+  /** A directive Jasper does not recognise at all. Reported rather than silently
+   *  dropped: it may have been the point of the file. */
+  | { kind: 'unsupported'; directive: string; line: number };
+
+// Directives a GemStone/Jadeite file-out writes that genuinely have nothing to do on
+// the way in. `fileformat` describes the encoding, which VS Code has already decoded;
+// the `expect*` family are Topaz's own assertions about the next chunk's result.
+const IGNORED_DIRECTIVES = /^(fileformat|expectvalue|expecterror|expectbug)\b/i;
+
+/**
+ * Topaz commands that address the topaz program, not the image — so a `.tpz` script
+ * written to be run by topaz can be filed in here without every line of its preamble
+ * being reported as something Jasper failed to understand.
+ *
+ * None of them are run. The connection ones would be wrong to honour (Jasper files in
+ * over the session the user picked, not one the file names); the rest govern topaz's
+ * own output and debugging, which has no counterpart here.
+ *
+ * Abbreviations are NOT expanded. Topaz lets most commands be shortened, but guessing
+ * which prefix meant which command is a good way to run the wrong one, and an
+ * unrecognised line is reported rather than dropped — so a shortened command shows up
+ * as something to look at instead of something silently mistaken.
+ */
+const SESSION_COMMANDS = new Set([
+  // Connection and session
+  'login',
+  'logout',
+  'spawngem',
+  'disconnect',
+  'sessionid',
+  'solo',
+  // Transaction
+  'commit',
+  'abort',
+  'begin',
+  // Output, error handling and debugging
+  'display',
+  'omit',
+  'output',
+  'level',
+  'limit',
+  'iferror',
+  'errorcount',
+  'time',
+  'pause',
+  'echo',
+  'status',
+  'version',
+  'help',
+  'send',
+  'object',
+  'obj',
+  'list',
+  'listw',
+  'stack',
+  'stk',
+  'where',
+  'frame',
+  'step',
+  'continue',
+]);
+
+/** Of those, the ones whose not being run changes what the file DOES, rather than
+ *  only how topaz would have reported it. Worth saying out loud in the summary. */
+const TRANSACTION_COMMANDS = new Set(['commit', 'abort', 'begin']);
+
+/** Topaz stops reading the script here. */
+const STOP_COMMANDS = new Set(['exit', 'quit']);
+
+/** The method category a chunk lands in when the file never said. Matches what
+ *  GemStone itself uses for an unclassified method. */
+const DEFAULT_CATEGORY = 'as yet unclassified';
+
+/**
+ * Read a Topaz file into the ordered steps that file it in.
+ *
+ * Pure — it touches neither GemStone nor the filesystem, so the whole of what a file
+ * will do can be asserted without either. `category:` and `set compile_env:` are
+ * *state*, not steps: each applies to the method chunks that follow it, so they are
+ * folded into those chunks here and cannot go out of step with them later.
+ *
+ * Handles a hand-written `.tpz` script as well as a file-out: its `login` / `output` /
+ * `commit` preamble is recognised as topaz's own (a `sessionCommand`, reported but not
+ * run), and `exit` ends the parse where topaz would stop reading.
+ */
+export function parseTopazScript(text: string): FileInStep[] {
+  const steps: FileInStep[] = [];
+  let category = DEFAULT_CATEGORY;
+  let environmentId = 0;
+
+  for (const region of parseTopazDocument(text)) {
+    if (region.kind === 'topaz') {
+      region.text.split('\n').forEach((raw, offset) => {
+        const line = region.startLine + offset;
+        const trimmed = raw.trim();
+        // Blank lines and `!` comments carry the file's provenance banner and its
+        // section headings — nothing to run.
+        if (trimmed.length === 0 || trimmed.startsWith('!')) return;
+
+        const cat = trimmed.match(/^category:\s*'(.*)'\s*$/i);
+        if (cat) {
+          category = cat[1].replace(/''/g, "'");
+          return;
+        }
+        const env = trimmed.match(/^set\s+compile_env:\s*(\d+)/i);
+        if (env) {
+          environmentId = parseInt(env[1], 10);
+          return;
+        }
+        const removeAll = trimmed.match(/^removeall(class)?methods\s+(\S+)/i);
+        if (removeAll) {
+          steps.push({
+            kind: 'removeAllMethods',
+            className: removeAll[2],
+            isMeta: removeAll[1] !== undefined,
+            line,
+          });
+          return;
+        }
+        const input = trimmed.match(/^input\s+(.+)$/i);
+        if (input) {
+          steps.push({ kind: 'input', file: input[1].trim(), line });
+          return;
+        }
+        if (IGNORED_DIRECTIVES.test(trimmed)) return;
+
+        const word = (trimmed.match(/^([A-Za-z_]+)/)?.[1] ?? '').toLowerCase();
+        if (STOP_COMMANDS.has(word)) {
+          steps.push({ kind: 'stop', directive: trimmed, line });
+          return;
+        }
+        // A bare `set <something>` is topaz's environment; `set compile_env:` was
+        // already taken above, and it is the only one that reaches the image.
+        if (SESSION_COMMANDS.has(word) || word === 'set') {
+          steps.push({
+            kind: 'sessionCommand',
+            directive: trimmed,
+            line,
+            transaction: TRANSACTION_COMMANDS.has(word),
+          });
+          return;
+        }
+
+        steps.push({ kind: 'unsupported', directive: trimmed, line });
+      });
+      continue;
+    }
+
+    if (region.kind === 'smalltalk-code') {
+      if (region.text.trim().length > 0) {
+        steps.push({ kind: 'execute', code: region.text, line: region.startLine });
+      }
+      continue;
+    }
+
+    if (region.kind === 'smalltalk-method') {
+      if (region.className === undefined) {
+        steps.push({
+          kind: 'unsupported',
+          directive: `${region.command ?? 'method'} (no class named)`,
+          line: region.startLine,
+        });
+        continue;
+      }
+      steps.push({
+        kind: 'method',
+        className: region.className,
+        isMeta: region.command === 'classmethod',
+        category,
+        environmentId,
+        source: region.text,
+        line: region.startLine,
+      });
+    }
+  }
+
+  return steps;
 }
 
 // ── Differential File-In ──────────────────────────────────

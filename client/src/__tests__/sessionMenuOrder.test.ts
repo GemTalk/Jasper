@@ -36,6 +36,10 @@ describe('session row inline button order', () => {
   it('leads with the most-used safe actions and trails with Logout, without the rare backup actions', () => {
     const order = inlineOrderFor('viewItem == gemstoneSession');
 
+    // File In reads a Topaz `.gs` into THIS session and leads the row: it is safe,
+    // it is the hardest of these to reach any other way, and the row is what
+    // answers "which session?" for it.
+    //
     // Session Configuration opens the session's settings page — placed just
     // before the session-ending Logout, which stays last.
     //
@@ -47,6 +51,7 @@ describe('session row inline button order', () => {
     // Ping is absent too — it lives on a session row in the Databases & Versions
     // panel, which has the room to show its answer beside the row that asked.
     expect(order).toEqual([
+      'gemstone.fileIn',
       'gemstone.sessionCommit',
       'gemstone.sessionAbort',
       'gemstone.showSessionConfiguration',
