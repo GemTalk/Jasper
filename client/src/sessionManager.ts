@@ -245,6 +245,7 @@ export class SessionManager {
     gemNrs: string,
     login: GemStoneLogin,
   ): Promise<unknown> {
+    // eslint-disable-next-line no-restricted-syntax -- only reached via supportsNonBlockingLogin(); Windows falls back to the blocking GciTsLogin in login()
     const { session } = gci.GciTsNbLogin(
       stoneNrs,
       login.host_user || null,
@@ -261,6 +262,7 @@ export class SessionManager {
     }
 
     for (;;) {
+      // eslint-disable-next-line no-restricted-syntax -- same guard as the GciTsNbLogin call above; only reached on the non-blocking path
       const { result, err } = gci.GciTsNbLoginFinished(session);
       if (result === 1) {
         return session;

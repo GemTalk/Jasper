@@ -45,6 +45,7 @@ export class NbCancelledError extends Error {
  */
 export function pollNbResultReady(session: ActiveSession): { result: number; err: GciError } {
   if (session.gci.isAvailable('GciTsNbPoll')) {
+    // eslint-disable-next-line no-restricted-syntax -- guarded by isAvailable above; the else branch below is the 3.6.x path (GciTsSocket + a native poll)
     return session.gci.GciTsNbPoll(session.handle, 0);
   }
   const { fd, err } = session.gci.GciTsSocket(session.handle);

@@ -6,7 +6,10 @@ pre-commit:
   jobs:
     - name: eslint
       glob: '*.{ts,mts,cts,js,mjs,cjs}'
-      run: npx eslint {staged_files}
+      # NODE_OPTIONS matches the `lint` script: the config imports the GCI
+      # optionality registry as `.ts`, and Node warns about the type-stripped
+      # import because client/package.json declares no module type.
+      run: NODE_OPTIONS=--disable-warning=MODULE_TYPELESS_PACKAGE_JSON npx eslint {staged_files}
     - name: prettier
       glob: '*.{ts,mts,cts,js,mjs,cjs}'
       run: npx prettier --check {staged_files}
