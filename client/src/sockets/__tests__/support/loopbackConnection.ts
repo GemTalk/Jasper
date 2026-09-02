@@ -117,7 +117,7 @@ function connectWindowsLoopbackClient(port: number): LoopbackClient {
  * for this — `_handle.fd` is an internal Node property — but it's exactly
  * the kind of fd `GciLibrary.socketFor` hands to `NativeSocketLibrary` in
  * production, so it's the only way to test the real poll/WSAPoll call
- * against a genuine socket rather than a fake `pollReadable`.
+ * against a genuine socket rather than a fake `hasDataReady`.
  */
 function rawFdOf(socket: Socket): number {
   return (socket as unknown as { _handle: { fd: number } })._handle.fd;

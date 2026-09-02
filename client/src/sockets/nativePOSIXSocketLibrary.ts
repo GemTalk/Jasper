@@ -1,3 +1,4 @@
+import koffi from 'koffi';
 import { PosixSocketLibrary, posixSocketLibrary } from './bindings/posixSocketLibrary';
 import { NativeSocketLibrary } from './nativeSocketLibrary';
 
@@ -28,17 +29,24 @@ export class NativePOSIXSocketLibrary extends NativeSocketLibrary {
     super();
   }
 
-  public pollReadable(fd: number, timeoutMs: number): number {
+  public hasDataReady(fd: number): boolean {
     // `pollFd` must stay in a variable, not an inline literal: koffi writes
     // poll()'s output back into this same object, and we need to read the
     // resulting `revents` below.
     const pollFd = { fd, events: this.posixSocketLibrary.POLLIN, revents: 0 };
-    const status = this.posixSocketLibrary.poll(pollFd, 1, timeoutMs);
+    const status = this.posixSocketLibrary.poll(pollFd, 1, 0);
 
-    // A negative status means poll() itself failed; 0 means it timed out
-    // with nothing to report. Neither leaves a meaningful revents to check.
-    if (status <= 0) {
-      return status;
+    // A negative status means poll() itself failed. Capture the reason
+    // immediately, via koffi.errno(), before any other native call can
+    // overwrite it.
+    if (status < 0) {
+      throw new Error(this.pollSyscallFailedErrorMessage(fd, `errno ${koffi.errno()}`));
+    }
+
+    // 0 means it timed out with nothing to report; there's no meaningful
+    // revents to check.
+    if (status === 0) {
+      return false;
     }
 
     // POSIX counts the fd as having an event (status > 0) for POLLERR/
@@ -47,6 +55,10 @@ export class NativePOSIXSocketLibrary extends NativeSocketLibrary {
     // is actually set; otherwise treat it as a failed check, so the caller
     // falls back to the authoritative result instead of acting on a dead or
     // errored socket.
-    return pollFd.revents & this.posixSocketLibrary.POLLIN ? status : -1;
+    if (!(pollFd.revents & this.posixSocketLibrary.POLLIN)) {
+      throw new Error(this.socketUnusableErrorMessage(fd, pollFd.revents));
+    }
+
+    return true;
   }
 }

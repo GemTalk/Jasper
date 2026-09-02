@@ -3,7 +3,7 @@ import { windowsSocket2Library } from './bindings/windowsSocketLibrary';
 
 /**
  * All `ws2_32.dll` bindings the extension needs live here: the `WSAPoll`
- * primitive {@link pollReadable} polls production sockets through, plus the
+ * primitive {@link hasDataReady} polls production sockets through, plus the
  * raw `socket`/`connect`/`closesocket` calls test fixtures use to obtain a
  * genuine, `WSAPoll`-able handle (see {@link connectRawSocket}).
  */
@@ -13,17 +13,26 @@ export class NativeWindowsSocketLibrary extends NativeSocketLibrary {
     super();
   }
 
-  public pollReadable(fd: number, timeoutMs: number): number {
+  public hasDataReady(fd: number): boolean {
     // `pollFd` must stay in a variable, not an inline literal: koffi writes
     // WSAPoll's output back into this same object, and we need to read the
     // resulting `revents` below.
     const pollFd = { fd: BigInt(fd), events: this.ws2.POLLRDNORM, revents: 0 };
-    const status = this.ws2.WSAPoll(pollFd, 1, timeoutMs);
+    const status = this.ws2.WSAPoll(pollFd, 1, 0);
 
-    // A negative status means WSAPoll itself failed; 0 means it timed out
-    // with nothing to report. Neither leaves a meaningful revents to check.
-    if (status <= 0) {
-      return status;
+    // A negative status means WSAPoll itself failed. Capture the reason
+    // immediately, via WSAGetLastError(), before any other ws2_32.dll call
+    // can overwrite it.
+    if (status < 0) {
+      throw new Error(
+        this.pollSyscallFailedErrorMessage(fd, `WSAGetLastError ${this.ws2.WSAGetLastError()}`),
+      );
+    }
+
+    // 0 means it timed out with nothing to report; there's no meaningful
+    // revents to check.
+    if (status === 0) {
+      return false;
     }
 
     // WSAPoll counts the fd as having an event (status > 0) for POLLERR/
@@ -32,7 +41,11 @@ export class NativeWindowsSocketLibrary extends NativeSocketLibrary {
     // POLLRDNORM is actually set; otherwise treat it as a failed check, so
     // the caller falls back to the authoritative result instead of acting on
     // a dead or errored socket.
-    return pollFd.revents & this.ws2.POLLRDNORM ? status : -1;
+    if (!(pollFd.revents & this.ws2.POLLRDNORM)) {
+      throw new Error(this.socketUnusableErrorMessage(fd, pollFd.revents));
+    }
+
+    return true;
   }
 
   /**
@@ -43,7 +56,7 @@ export class NativeWindowsSocketLibrary extends NativeSocketLibrary {
    * Windows: Node's `net.Socket` doesn't expose one — `.fd`/`_handle.fd` is
    * documented to return `-1` there, since Windows sockets aren't in the same
    * handle namespace as POSIX fds/CRT descriptors — so a `net.Socket` can't
-   * stand in for the kind of handle `pollReadable` actually polls in
+   * stand in for the kind of handle `hasDataReady` actually polls in
    * production (see `GciLibrary.socketFor`). Production code never opens its
    * own sockets through this method; it exists for test fixtures that need
    * such a handle.

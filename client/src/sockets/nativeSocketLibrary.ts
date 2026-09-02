@@ -20,13 +20,7 @@ export abstract class NativeSocketLibrary {
   public isReadable(fd: number): boolean {
     this.assertIsValidFileDescriptor(fd);
 
-    const status = this.pollReadable(fd, 0);
-
-    if (status < 0) {
-      throw new Error(this.checkingReadableStatusFailedErrorMessage(fd, status));
-    }
-
-    return status > 0;
+    return this.hasDataReady(fd);
   }
 
   private assertIsValidFileDescriptor(fd: number) {
@@ -47,26 +41,39 @@ export abstract class NativeSocketLibrary {
   }
 
   /**
-   * Builds the message reported when checking a socket's readiness fails.
+   * Builds the message reported when the underlying poll syscall itself
+   * fails, as opposed to succeeding but reporting the socket unusable (see
+   * {@link socketUnusableErrorMessage}).
    *
    * @param fd - OS-level file descriptor the check was performed on.
-   * @param status - The failing status code the readiness check produced.
+   * @param diagnostic - platform-specific detail about the failure, e.g. an
+   *   errno or a `WSAGetLastError` code.
    * @returns The error message text.
    */
-  public checkingReadableStatusFailedErrorMessage(fd: number, status: number) {
-    return `Checking whether socket ${fd} is readable failed (native poll returned ${status}).`;
+  public pollSyscallFailedErrorMessage(fd: number, diagnostic: string) {
+    return `Checking whether socket ${fd} is readable failed: the poll syscall itself failed (${diagnostic}).`;
   }
 
   /**
-   * Polls the given socket for read-readiness, waiting up to `timeoutMs`
-   * milliseconds.
+   * Builds the message reported when polling succeeds but reports the
+   * socket as errored, hung up, or otherwise unusable rather than readable.
+   *
+   * @param fd - OS-level file descriptor the check was performed on.
+   * @param revents - the `revents` bitmask the poll call reported.
+   * @returns The error message text.
+   */
+  public socketUnusableErrorMessage(fd: number, revents: number) {
+    return `Checking whether socket ${fd} is readable failed: the socket is in an unusable state (revents=0x${revents.toString(16).padStart(4, '0')}).`;
+  }
+
+  /**
+   * Polls the given socket for read-readiness, without waiting.
    *
    * @param fd - OS-level file descriptor for an open socket.
-   * @param timeoutMs - how long to wait for data before giving up, in
-   *   milliseconds; 0 polls without waiting.
-   * @returns A positive value if the socket is readable, 0 if the timeout
-   *   elapsed with nothing ready, or a negative value if the check itself
-   *   failed.
+   * @returns `true` if the socket is currently readable, `false` if the
+   *   check found nothing ready.
+   * @throws {Error} If the poll syscall itself fails, or if it succeeds but
+   *   reports the socket as errored, hung up, or otherwise unusable.
    */
-  protected abstract pollReadable(fd: number, timeoutMs: number): number;
+  protected abstract hasDataReady(fd: number): boolean;
 }
