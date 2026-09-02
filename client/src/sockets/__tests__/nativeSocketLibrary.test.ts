@@ -9,7 +9,7 @@ import {
   onSupportedPosixDescribe,
   onSupportedWindowsDescribe,
 } from '../../__tests__/platformGates';
-import { LoopbackConnection, openLoopbackConnection2 } from './support/loopbackConnection';
+import { LoopbackConnection, openLoopbackConnection } from './support/loopbackConnection';
 
 describe('Native socket library', () => {
   describe('Creating instances', () => {
@@ -26,7 +26,7 @@ describe('Native socket library', () => {
     let library: NativeSocketLibrary;
 
     beforeEach(async () => {
-      loopbackConnection = await openLoopbackConnection2();
+      loopbackConnection = await openLoopbackConnection();
       fd = loopbackConnection.fd;
       library = createNativeSocketLibrary();
     });
@@ -49,7 +49,7 @@ describe('Native socket library', () => {
       expect(library.isReadable(fd)).toBe(false);
     });
 
-    onSupportedWindowsDescribe('On Windows', () => {
+    onSupportedWindowsDescribe('Error handling on Windows', () => {
       // A stale-but-non-negative closed handle makes WSAPoll return
       // SOCKET_ERROR outright (see the "cannot be polled" test below) — a
       // different code path than the one this test means to exercise.
@@ -82,7 +82,7 @@ describe('Native socket library', () => {
       });
     });
 
-    onSupportedPosixDescribe('On POSIX', () => {
+    onSupportedPosixDescribe('Error handling on POSIX', () => {
       // Closing the handle doesn't fail poll() itself — POLLNVAL comes back
       // through revents on an otherwise-successful call, same as the
       // Windows reset case reports POLLHUP/POLLERR.

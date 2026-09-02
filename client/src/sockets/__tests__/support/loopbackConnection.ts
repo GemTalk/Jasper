@@ -1,6 +1,16 @@
 import { connect, createServer, Socket } from 'net';
 import { createNativeWindowsSocketLibrary } from '../../factory';
 
+/** Opens a real TCP loopback connection, picking the current platform's client-connect strategy. */
+export async function openLoopbackConnection() {
+  switch (process.platform) {
+    case 'win32':
+      return await openLoopbackConnectionWith(connectLoopbackClientOnWindows);
+    default:
+      return await openLoopbackConnectionWith(connectLoopbackClientOnPosix);
+  }
+}
+
 export type LoopbackConnection = {
   fd: number;
   write: (data: string) => Promise<void>;
@@ -23,13 +33,13 @@ export type ConnectLoopbackClient = (port: number) => LoopbackClient | Promise<L
 /**
  * Opens a real TCP loopback connection and resolves with the client's raw
  * fd/handle (obtained from `connectClient`, which supplies the
- * platform-specific way to get one — see `nativeSocketLibrary.test.ts` for
- * the POSIX client and `rawWindowsSocket.ts` for the Windows one), a `write`
- * callback to send bytes from the server side, a `reset` callback to have
- * the server side reset the connection, and a `close` callback to close both
- * ends. The client side is never read from, so any bytes sent stay at the OS
- * level rather than being drained — leaving the handle's readiness exactly
- * as a real `poll`/`WSAPoll` caller would see it.
+ * platform-specific way to get one — see `connectLoopbackClientOnPosix` and
+ * `connectLoopbackClientOnWindows` below), a `write` callback to send bytes
+ * from the server side, a `reset` callback to have the server side reset the
+ * connection, and a `close` callback to close both ends. The client side is
+ * never read from, so any bytes sent stay at the OS level rather than being
+ * drained — leaving the handle's readiness exactly as a real `poll`/`WSAPoll`
+ * caller would see it.
  *
  * `write`, `reset`, and `close` resolve once their effect has actually
  * happened at the OS level (the write has flushed; the reset/closed socket
@@ -37,7 +47,7 @@ export type ConnectLoopbackClient = (port: number) => LoopbackClient | Promise<L
  * wire transfer, so by the time the local op completes, the client side has
  * already seen it.
  */
-export async function openLoopbackConnection(
+export async function openLoopbackConnectionWith(
   connectClient: ConnectLoopbackClient,
 ): Promise<LoopbackConnection> {
   return new Promise((resolve, reject) => {
@@ -105,26 +115,15 @@ export async function openLoopbackConnection(
  * via `NativeWindowsSocketLibrary.connectRawSocket`, bypassing Node's `net`
  * module entirely (see that method's doc for why).
  */
-function connectWindowsLoopbackClient(port: number): LoopbackClient {
+function connectLoopbackClientOnWindows(port: number): LoopbackClient {
   const windowsSocketLibrary = createNativeWindowsSocketLibrary();
   const fd = windowsSocketLibrary.connectRawSocket(port);
 
   return { fd, disconnect: () => windowsSocketLibrary.closeRawSocket(fd) };
 }
 
-/**
- * Returns `socket`'s underlying OS file descriptor. There's no public API
- * for this — `_handle.fd` is an internal Node property — but it's exactly
- * the kind of fd `GciLibrary.socketFor` hands to `NativeSocketLibrary` in
- * production, so it's the only way to test the real poll/WSAPoll call
- * against a genuine socket rather than a fake `hasDataReady`.
- */
-function rawFdOf(socket: Socket): number {
-  return (socket as unknown as { _handle: { fd: number } })._handle.fd;
-}
-
 /** The POSIX side of {@link ConnectLoopbackClient}: a real `net.Socket`, whose fd is read via {@link rawFdOf}. */
-function connectPosixLoopbackClient(port: number): Promise<LoopbackClient> {
+function connectLoopbackClientOnPosix(port: number): Promise<LoopbackClient> {
   return new Promise((resolve) => {
     const clientSocket = connect(port, '127.0.0.1');
     // The client under test is never read from, so a peer reset (used to
@@ -138,11 +137,13 @@ function connectPosixLoopbackClient(port: number): Promise<LoopbackClient> {
   });
 }
 
-export async function openLoopbackConnection2() {
-  switch (process.platform) {
-    case 'win32':
-      return await openLoopbackConnection(connectWindowsLoopbackClient);
-    default:
-      return await openLoopbackConnection(connectPosixLoopbackClient);
-  }
+/**
+ * Returns `socket`'s underlying OS file descriptor. There's no public API
+ * for this — `_handle.fd` is an internal Node property — but it's exactly
+ * the kind of fd `GciLibrary.socketFor` hands to `NativeSocketLibrary` in
+ * production, so it's the only way to test the real poll/WSAPoll call
+ * against a genuine socket rather than a fake `hasDataReady`.
+ */
+function rawFdOf(socket: Socket): number {
+  return (socket as unknown as { _handle: { fd: number } })._handle.fd;
 }
