@@ -229,25 +229,28 @@ export default tseslint.config(
     // Confines every test to the harness's session (see the message constants
     // above for why).
     //
-    // Three exemptions, for two different reasons:
+    // Four exemptions, for two different reasons:
     //
     // `client/src/__tests__/gci/**` is being deleted, not fixed. Every file
     // there logs in for itself, so the rule would only collect disables that
     // leave with the files.
     //
-    // The other two are the unit tests *of* the login bindings, and they are
-    // exempt as whole files because naming those bindings is the whole point of
-    // each: `gciLoginQuiet` calls all four raw wrappers to assert the quiet bit
-    // reaches the native layer, and `missingGciFunctions` calls the ones an
-    // older library lacks to assert each throws. Both mock `koffi`, so a call
-    // reaches a `vi.fn()` and never a stone -- there is no session to arm, and
-    // so nothing for this rule to protect. Matched by basename rather than
-    // path, so moving either file keeps its exemption.
+    // The other three are the unit tests *of* the bindings themselves, and they
+    // are exempt as whole files because constructing a `GciLibrary` is the whole
+    // point of each: `gciLoginQuiet` calls all four raw wrappers to assert the
+    // quiet bit reaches the native layer, `missingGciFunctions` calls the ones
+    // an older library lacks to assert each throws, and `optionalFuncSignature`
+    // constructs one to prove `optionalFunc` rejects an entry whose signature
+    // declares a different symbol. All three mock `koffi`, so a call reaches a
+    // `vi.fn()` and never a stone -- there is no session to arm, and so nothing
+    // for this rule to protect. Matched by basename rather than path, so moving
+    // any of them keeps its exemption.
     files: ['**/*.test.ts', '**/*.spec.ts', '**/*.test.tsx'],
     ignores: [
       'client/src/__tests__/gci/**',
       '**/gciLoginQuiet.test.ts',
       '**/missingGciFunctions.test.ts',
+      '**/optionalFuncSignature.test.ts',
     ],
     rules: {
       'no-restricted-syntax': [
