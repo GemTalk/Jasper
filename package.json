@@ -3284,11 +3284,11 @@
     "js-yaml": "^4.3.1"
   },
   "allowScripts": {
-    "koffi@2.16.2": true,
     "@vscode/vsce-sign@2.0.9": true,
     "lefthook@2.1.10": true,
     "keytar@7.9.0": true,
     "fsevents": false,
-    "esbuild@0.28.2": true
+    "esbuild@0.28.2": true,
+    "koffi@2.16.3": true
   }
 }
