@@ -77,7 +77,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseNod
           vscode.TreeItemCollapsibleState.Collapsed,
         );
         item.description = `${node.db.config.stoneName} (${node.db.config.version})`;
-        item.contextValue = 'gemstoneDb';
+        item.contextValue = `gemstoneDb${this.databaseContext(node.db)}`;
         item.iconPath = new vscode.ThemeIcon('database');
         item.tooltip = `Path: ${node.db.path}\nStone: ${node.db.config.stoneName}\nNetLDI: ${node.db.config.ldiName}\nVersion: ${node.db.config.version}\nBase extent: ${node.db.config.baseExtent}`;
         return item;
@@ -129,6 +129,35 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseNod
         return item;
       }
     }
+  }
+
+  /** Which whole-database action the row offers, as a context-value suffix.
+   *
+   *  Running and Stopped follow the stone, the way the Databases & Versions
+   *  panel's power button does — a database is up when its stone is. External
+   *  gets neither: Jasper cannot stop a server started outside its environment,
+   *  and starting the other half beside one would only collide with it. The
+   *  child rows offer the restart-under-Jasper action for that case. */
+  private databaseContext(db: GemStoneDatabase): 'Running' | 'Stopped' | 'External' {
+    const { status } = this.inspect(db);
+    if (status.stone === 'external' || status.netldi === 'external') return 'External';
+    return status.stone === 'stopped' ? 'Stopped' : 'Running';
+  }
+
+  /** One reading of a database's two servers. The database row's context value
+   *  and the child rows beneath it both come from this, so a row cannot offer
+   *  Stop while the stone under it reads Stopped.
+   *
+   *  It is the same inspection the login-failure recovery uses, so the tree
+   *  cannot contradict what a connect will actually do either. */
+  private inspect(db: GemStoneDatabase) {
+    const external: ExternalServerFinding = this.processManager.getExternalServers(db);
+    return {
+      external,
+      status: databaseStatus(
+        inspectDatabaseProcesses(db, this.processManager.getProcesses(), external),
+      ),
+    };
   }
 
   /** Apply a status's text, icon, and context value to a stone or NetLDI row,
@@ -190,12 +219,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseNod
       return this.storage.getDatabases().map((db) => ({ kind: 'database' as const, db }));
     }
     if (node.kind === 'database') {
-      // The status comes from the same inspection the login-failure recovery
-      // uses, so the tree cannot contradict what a connect will actually do.
-      const external: ExternalServerFinding = this.processManager.getExternalServers(node.db);
-      const status = databaseStatus(
-        inspectDatabaseProcesses(node.db, this.processManager.getProcesses(), external),
-      );
+      const { external, status } = this.inspect(node.db);
       return [
         { kind: 'stone', db: node.db, status: status.stone, external: external.stone },
         { kind: 'netldi', db: node.db, status: status.netldi, external: external.netldi },

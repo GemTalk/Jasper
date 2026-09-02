@@ -1672,6 +1672,231 @@ describe('ProcessManager', () => {
     });
   });
 
+  describe('startStone when the extent is already open', () => {
+    // The failure that leaves a database unstartable after a force-stop. Every
+    // route into starting a stone goes through here, so the explanation belongs
+    // here rather than on the one command that happens to have a button.
+    const LOCKED = [
+      '    GemStone is unable to open the file /db-1/data/extent0.dbf',
+      '       reason = exclusive open:  File is open by another process.',
+      '    An error occurred opening the repository for exclusive access.',
+    ].join('\n');
+
+    let dbDir: string;
+
+    beforeEach(() => {
+      setPlatform('linux');
+      vi.mocked(wslBridge.needsWsl).mockReturnValue(false);
+      vi.mocked(wslBridge.wslExecSync).mockReset();
+      dbDir = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'jasper-locked-'));
+      fs.mkdirSync(nodePath.join(dbDir, 'data'));
+      fs.writeFileSync(nodePath.join(dbDir, 'data', 'extent0.dbf'), '');
+      fs.mkdirSync(nodePath.join(dbDir, 'log'), { recursive: true });
+    });
+
+    afterEach(() => fs.rmSync(dbDir, { recursive: true, force: true }));
+
+    async function failedStart(): Promise<Error> {
+      const proc = makeChildProcess(1);
+      mockSpawnReturn(proc);
+      const promise = new ProcessManager(makeStorage()).startStone(makeDatabase({ path: dbDir }));
+      proc.emitStderr(LOCKED);
+      proc.finish();
+      return await promise.then(
+        () => {
+          throw new Error('expected the start to fail');
+        },
+        (e) => e as Error,
+      );
+    }
+
+    it('names the processes holding the extent', async () => {
+      vi.mocked(wslBridge.wslExecSync).mockImplementation((cmd: string) => {
+        if (cmd.startsWith('fuser')) return ' 589418';
+        if (cmd.startsWith('ps -o pid=')) {
+          return '589418 ewinger  Tue Sep  1 17:26:25 2026 /gs/sys/gem TCP 5';
+        }
+        return '';
+      });
+
+      const error = await failedStart();
+
+      expect(error.message).toContain('589418');
+      expect(error.message).toContain('/gs/sys/gem TCP 5');
+      // GemStone's own words are never dropped.
+      expect(error.message).toContain('open by another process');
+    });
+
+    it('says how to look when it cannot name them', async () => {
+      vi.mocked(wslBridge.wslExecSync).mockReturnValue('');
+
+      const error = await failedStart();
+
+      expect(error.message).toContain('lsof');
+      expect(error.message).toContain('open by another process');
+    });
+
+    it('leaves an unrelated start failure exactly as GemStone reported it', async () => {
+      // Shared memory is the other common start failure and needs a completely
+      // different fix; dressing it up as a locked extent sends the user astray.
+      vi.mocked(wslBridge.wslExecSync).mockReturnValue('');
+      const proc = makeChildProcess(1);
+      mockSpawnReturn(proc);
+      const promise = new ProcessManager(makeStorage()).startStone(makeDatabase({ path: dbDir }));
+      proc.emitStderr('Unable to allocate a shared memory segment');
+      proc.finish();
+
+      const error = (await promise.catch((e: Error) => e)) as Error;
+
+      expect(error.message).toContain('shared memory');
+      expect(error.message).not.toContain('Held by');
+    });
+  });
+
+  describe('findExtentHolders', () => {
+    // A real directory, so the extent scan runs against real readdir rather
+    // than a stub that would agree with whatever the code happened to do.
+    let dbDir: string;
+
+    beforeEach(() => {
+      vi.mocked(wslBridge.needsWsl).mockReturnValue(false);
+      vi.mocked(wslBridge.wslExecSync).mockReset();
+      dbDir = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'jasper-extents-'));
+      fs.mkdirSync(nodePath.join(dbDir, 'data'));
+      fs.writeFileSync(nodePath.join(dbDir, 'data', 'extent0.dbf'), '');
+    });
+
+    afterEach(() => fs.rmSync(dbDir, { recursive: true, force: true }));
+
+    const db = () => makeDatabase({ path: dbDir });
+
+    it('asks fuser before lsof, and stops once fuser answers', () => {
+      // fuser interrogates one file; lsof walks every process on the host. The
+      // order is a measured 7x, so it is worth pinning.
+      vi.mocked(wslBridge.wslExecSync).mockImplementation((cmd: string) => {
+        if (cmd.startsWith('fuser')) return ' 111 222';
+        if (cmd.startsWith('ps -o pid=')) {
+          return [
+            '111 ewinger  Tue Sep  1 17:26:25 2026 /gs/sys/gem TCP 5',
+            '222 ewinger  Tue Sep  1 17:30:01 2026 /gs/sys/gem TCP 5',
+          ].join('\n');
+        }
+        return '';
+      });
+
+      const holders = new ProcessManager(makeStorage()).findExtentHolders(db());
+
+      expect(holders.map((h) => h.pid)).toEqual([111, 222]);
+      const commands = vi.mocked(wslBridge.wslExecSync).mock.calls.map((c) => c[0]);
+      expect(commands.some((c) => c.startsWith('fuser'))).toBe(true);
+      expect(commands.some((c) => c.startsWith('lsof'))).toBe(false);
+    });
+
+    it('falls back to lsof when fuser is not installed', () => {
+      vi.mocked(wslBridge.wslExecSync).mockImplementation((cmd: string) => {
+        if (cmd.startsWith('fuser')) throw new Error('fuser: not found');
+        if (cmd.startsWith('lsof')) return '333\n';
+        if (cmd.startsWith('ps -o pid=')) {
+          return '333 ewinger  Tue Sep  1 17:26:25 2026 /gs/sys/gem TCP 5';
+        }
+        return '';
+      });
+
+      const holders = new ProcessManager(makeStorage()).findExtentHolders(db());
+
+      expect(holders.map((h) => h.pid)).toEqual([333]);
+    });
+
+    it('never uses lsof -b, which reports nothing on a real extent', () => {
+      // Fifteen times faster and completely wrong: it skips the kernel calls
+      // that would find the holders. A probe that answers "nobody" for a
+      // database with live gems would have Jasper stop a stone on top of them.
+      vi.mocked(wslBridge.wslExecSync).mockReturnValue('');
+
+      new ProcessManager(makeStorage()).findExtentHolders(db());
+
+      const commands = vi.mocked(wslBridge.wslExecSync).mock.calls.map((c) => c[0]);
+      expect(commands.some((c) => /\blsof\b.*\s-\w*b/.test(c))).toBe(false);
+    });
+
+    it('reports nothing when neither tool is available, rather than throwing', () => {
+      vi.mocked(wslBridge.wslExecSync).mockImplementation(() => {
+        throw new Error('command not found');
+      });
+
+      expect(new ProcessManager(makeStorage()).findExtentHolders(db())).toEqual([]);
+    });
+
+    it('finds nothing when nothing holds the extents', () => {
+      vi.mocked(wslBridge.wslExecSync).mockReturnValue('');
+
+      expect(new ProcessManager(makeStorage()).findExtentHolders(db())).toEqual([]);
+    });
+
+    it('still names the PIDs when ps says nothing about them', () => {
+      vi.mocked(wslBridge.wslExecSync).mockImplementation((cmd: string) =>
+        cmd.startsWith('fuser') ? '444' : '',
+      );
+
+      const holders = new ProcessManager(makeStorage()).findExtentHolders(db());
+
+      expect(holders).toEqual([]);
+    });
+
+    it('does not probe a database with no extents', () => {
+      fs.rmSync(nodePath.join(dbDir, 'data', 'extent0.dbf'));
+      vi.mocked(wslBridge.wslExecSync).mockReturnValue('');
+
+      expect(new ProcessManager(makeStorage()).findExtentHolders(db())).toEqual([]);
+      expect(wslBridge.wslExecSync).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('openTerminal with a prepared command', () => {
+    beforeEach(() => {
+      vi.mocked(vscode.window.createTerminal).mockClear();
+      vi.mocked(wslBridge.needsWsl).mockReturnValue(false);
+    });
+
+    it('types the command at the prompt without running it', () => {
+      // Typed, not run — and `ps`, not `kill`. Jasper does not know what is
+      // inside a process it did not start, so it shows and lets the user decide.
+      setPlatform('linux');
+      const manager = new ProcessManager(makeStorage('/gs/3.7.4'));
+
+      manager.openTerminal(makeDatabase(), 'ps -o pid,user,lstart,args -p 111,222');
+
+      const terminal = vi.mocked(vscode.window.createTerminal).mock.results[0].value;
+      const sends = vi.mocked(terminal.sendText).mock.calls;
+      const prepared = sends[sends.length - 1];
+      expect(prepared[0]).toBe('ps -o pid,user,lstart,args -p 111,222');
+      expect(prepared[1]).toBe(false);
+    });
+
+    it('types it in the WSL terminal too, where a Windows host runs its servers', () => {
+      setPlatform('win32');
+      vi.mocked(wslBridge.needsWsl).mockReturnValue(true);
+      const manager = new ProcessManager(makeWslStorage('/gs/3.7.4'));
+
+      manager.openTerminal(makeDatabase(), 'ps -o pid,args -p 111');
+
+      const terminal = vi.mocked(vscode.window.createTerminal).mock.results[0].value;
+      const sends = vi.mocked(terminal.sendText).mock.calls;
+      expect(sends[sends.length - 1]).toEqual(['ps -o pid,args -p 111', false]);
+    });
+
+    it('sends nothing extra when no command was prepared', () => {
+      setPlatform('linux');
+      const manager = new ProcessManager(makeStorage('/gs/3.7.4'));
+
+      manager.openTerminal(makeDatabase());
+
+      const terminal = vi.mocked(vscode.window.createTerminal).mock.results[0].value;
+      const sends = vi.mocked(terminal.sendText).mock.calls;
+      expect(sends.every((c: unknown[]) => c[1] !== false)).toBe(true);
+    });
+  });
+
   describe('gem temp-object cache self-heal (via startNetldi)', () => {
     function dbWithGemConf(cacheLine: string | null): {
       db: ReturnType<typeof makeDatabase>;

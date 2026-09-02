@@ -1893,6 +1893,18 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "gemstone.startDatabase",
+        "title": "Start Database",
+        "category": "GemStone Admin",
+        "icon": "$(debug-start)"
+      },
+      {
+        "command": "gemstone.stopDatabase",
+        "title": "Stop Database",
+        "category": "GemStone Admin",
+        "icon": "$(debug-stop)"
+      },
+      {
         "command": "gemstone.startStone",
         "title": "Start Stone",
         "category": "GemStone Admin",
@@ -2980,23 +2992,33 @@
           "group": "navigation@1"
         },
         {
+          "command": "gemstone.startDatabase",
+          "when": "view == gemstoneDatabases && viewItem == gemstoneDbStopped",
+          "group": "inline@1"
+        },
+        {
+          "command": "gemstone.stopDatabase",
+          "when": "view == gemstoneDatabases && viewItem == gemstoneDbRunning",
+          "group": "inline@1"
+        },
+        {
           "command": "gemstone.openDbInFinder",
-          "when": "view == gemstoneDatabases && viewItem == gemstoneDb",
+          "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDb(Running|Stopped|External)$/",
           "group": "inline@2"
         },
         {
           "command": "gemstone.openDbTerminal",
-          "when": "view == gemstoneDatabases && viewItem == gemstoneDb",
+          "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDb(Running|Stopped|External)$/",
           "group": "inline@3"
         },
         {
           "command": "gemstone.createLoginFromDb",
-          "when": "view == gemstoneDatabases && viewItem == gemstoneDb",
+          "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDb(Running|Stopped|External)$/",
           "group": "inline@4"
         },
         {
           "command": "gemstone.deleteDatabase",
-          "when": "view == gemstoneDatabases && viewItem == gemstoneDb"
+          "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDb(Running|Stopped|External)$/"
         }
       ],
       "editor/title": [
