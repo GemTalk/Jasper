@@ -132,7 +132,7 @@ import { ExportManager } from './exportManager';
 import { FileInManager } from './fileInManager';
 import { showTranscript, getTranscriptChannel } from './transcriptChannel';
 import { getGciLog } from './gciLog';
-import { GemStoneCodeLensProvider } from './gemstoneCodeLensProvider';
+import { CODE_LENS_SELECTORS, GemStoneCodeLensProvider } from './gemstoneCodeLensProvider';
 import * as queries from './browserQueries';
 import { dedupeMethodResults } from './queries/methodSearch';
 import { SysadminStorage } from './sysadminStorage';
@@ -852,25 +852,11 @@ export function activate(context: vscode.ExtensionContext) {
   const hoverProvider = new GemStoneHoverProvider(sessionManager, selectorResolver);
   const completionProvider = new GemStoneCompletionProvider(sessionManager);
   const codeLensProvider = new GemStoneCodeLensProvider(sessionManager);
-  // The senders/implementors CodeLens must attach on a gemstone:// method the
-  // instant it opens. A gemstone doc's language is assigned asynchronously
-  // (onDidOpenTextDocument → setTextDocumentLanguage), so gating the lens on the
-  // language (as providerSelectors does) delays it past the first paint on a
-  // document's first open — the lens then pops in and shoves the code down.
-  // Match on scheme alone so it's present from the first render;
-  // provideCodeLenses returns nothing for non-method gemstone docs anyway.
-  const codeLensSelectors: vscode.DocumentFilter[] = [
-    { scheme: 'gemstone' },
-    { scheme: 'untitled', language: SMALLTALK_LANGUAGE },
-    { scheme: 'file', language: SMALLTALK_LANGUAGE },
-    { scheme: 'file', language: 'gemstone-topaz' },
-    { scheme: 'file', language: 'gemstone-tonel' },
-  ];
   context.subscriptions.push(
     vscode.languages.registerDefinitionProvider(providerSelectors, definitionProvider),
     vscode.languages.registerHoverProvider(providerSelectors, hoverProvider),
     vscode.languages.registerCompletionItemProvider(providerSelectors, completionProvider),
-    vscode.languages.registerCodeLensProvider(codeLensSelectors, codeLensProvider),
+    vscode.languages.registerCodeLensProvider(CODE_LENS_SELECTORS, codeLensProvider),
     codeLensProvider, // dispose() cancels pending count lookups + releases the emitter
     // Hosts "Rename Temporary/Argument…" under the native "Refactor…" menu in a
     // saved (scheme:gemstone) method editor.

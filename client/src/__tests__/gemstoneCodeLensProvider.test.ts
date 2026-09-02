@@ -9,7 +9,7 @@ vi.mock('../browserQueries', () => ({
 
 import { Uri } from 'vscode';
 import type { TextDocument, CodeLens } from 'vscode';
-import { GemStoneCodeLensProvider } from '../gemstoneCodeLensProvider';
+import { CODE_LENS_SELECTORS, GemStoneCodeLensProvider } from '../gemstoneCodeLensProvider';
 import { SessionManager, ActiveSession } from '../sessionManager';
 import * as queries from '../browserQueries';
 
@@ -126,6 +126,52 @@ true
 %`);
       const lenses = provider.provideCodeLenses(doc);
       expect(lenses).toHaveLength(0);
+    });
+
+    it('returns no lenses for a workspace, which evaluates code rather than defining it', () => {
+      // A workspace is a scratch pad of expressions. There is no method
+      // definition for a lens to sit above, so none is drawn.
+      const doc = createMockDocument('| x |\nx := Array new: 3.\nx size', 'untitled');
+      expect(provider.provideCodeLenses(doc)).toHaveLength(0);
+    });
+
+    it('returns no lenses for Tonel source, which this parser does not read', () => {
+      // Only a Topaz `method:`/`classmethod:` block yields a lens. Tonel states
+      // its methods in a different syntax, so nothing is found — worth pinning,
+      // since the provider IS registered for .st files and silently finds none.
+      const doc = createMockDocument('Object subclass: #MyClass\n\nMyClass >> name [\n  ^ name\n]');
+      expect(provider.provideCodeLenses(doc)).toHaveLength(0);
+    });
+  });
+
+  // Where the provider is attached at all. Registering it on a document it can
+  // never draw in means every class comment and class definition asks it for
+  // lenses just to be told there are none.
+  describe('CODE_LENS_SELECTORS', () => {
+    it('is not registered for the gemstone:// scheme', () => {
+      // Its counts live in the selector hover instead, which is out of the
+      // document flow and so cannot shove the source down.
+      expect(CODE_LENS_SELECTORS.some((f) => f.scheme === 'gemstone')).toBe(false);
+    });
+
+    it('names a language in every filter, never a scheme on its own', () => {
+      // A scheme-only filter matches every document behind that scheme —
+      // including the class comments and class definitions that hold no method.
+      expect(CODE_LENS_SELECTORS.filter((f) => f.language === undefined)).toEqual([]);
+    });
+
+    it('covers the Topaz files the lens actually appears in', () => {
+      expect(CODE_LENS_SELECTORS).toEqual(
+        expect.arrayContaining([{ scheme: 'file', language: 'gemstone-topaz' }]),
+      );
+    });
+
+    it('attaches only to editors holding GemStone source', () => {
+      const SOURCE_LANGUAGES = ['gemstone-smalltalk', 'gemstone-topaz', 'gemstone-tonel'];
+      const offenders = CODE_LENS_SELECTORS.filter(
+        (f) => !SOURCE_LANGUAGES.includes(f.language as string),
+      );
+      expect(offenders).toEqual([]);
     });
   });
 
