@@ -18,8 +18,9 @@ const executeCommand = commands.executeCommand as ReturnType<typeof vi.fn>;
 
 function manifest(): {
   contributes: {
-    commands: { command: string }[];
-    views: Record<string, { id: string; type?: string }[]>;
+    commands: { command: string; icon?: string }[];
+    views: Record<string, { id: string; type?: string; size?: number; visibility?: string }[]>;
+    keybindings: { command: string; key: string; when: string }[];
   };
 } {
   return JSON.parse(
@@ -60,6 +61,7 @@ const trail = (count: number): NavigationViewState['trail'] =>
 const state = (over: Partial<NavigationViewState> = {}): NavigationViewState => ({
   back: true,
   forward: false,
+  clear: true,
   mode: 'full',
   trail: trail(2),
   ...over,
@@ -77,11 +79,12 @@ describe('the Actions & Navigation pane', () => {
     }
   });
 
-  it('offers Back, Forward, the history list, refresh, commit, abort, the label toggle and a workspace', () => {
+  it('offers Back, Forward, the history list and its clear, refresh, commit, abort, the label toggle and a workspace', () => {
     expect(toolbarCommands()).toEqual([
       'gemstone.navigateBack',
       'gemstone.navigateForward',
       'gemstone.explorer.showHistory',
+      'gemstone.explorer.clearHistory',
       'gemstone.explorer.refresh',
       'gemstone.explorer.commit',
       'gemstone.explorer.abort',
@@ -149,10 +152,102 @@ describe('the Actions & Navigation pane', () => {
     expect(views[0].id).toBe(NAVIGATION_VIEW_ID);
   });
 
-  it('starts Back and Forward greyed out, and leaves the rest live', () => {
+  it('keeps the Back/Forward keys alive after the last GemStone tab is closed', () => {
+    // The keys stopped working the moment the preview tab went away and came back
+    // only after clicking in the pane: `resourceScheme == gemstone` needs an ACTIVE
+    // EDITOR, and closing the last one leaves none — while focus lands in the empty
+    // editor group rather than a view, so the focusedView arm missed too. The third
+    // arm covers exactly that gap: the GemStone Explorer is the sidebar you are in,
+    // and nothing in the editor area has focus to claim the key.
+    const keys = manifest().contributes.keybindings.filter((k) =>
+      ['gemstone.navigateBack', 'gemstone.navigateForward'].includes(k.command),
+    );
+    expect(keys).toHaveLength(2);
+    for (const binding of keys) {
+      expect(binding.when).toContain('resourceScheme == gemstone');
+      expect(binding.when).toContain('focusedView =~ /^gemstoneExplorer/');
+      expect(binding.when).toContain(
+        "activeViewlet == 'workbench.view.extension.gemstoneExplorer' && !editorFocus",
+      );
+    }
+    // Both directions have to agree, or Back and Forward stop working in different
+    // places and the pair reads as broken.
+    expect(keys[0].when).toBe(keys[1].when);
+  });
+
+  it('leaves the keys to VS Code while a non-GemStone editor has focus', () => {
+    // The new arm is guarded by !editorFocus for this reason: editing a .ts file
+    // with the GemStone Explorer open in the sidebar must still get VS Code's own
+    // Go Back, not a jump into the stone.
+    const binding = manifest().contributes.keybindings.find(
+      (k) => k.command === 'gemstone.navigateBack',
+    );
+    expect(binding?.when).not.toMatch(/activeViewlet == '[^']+'\)/);
+    expect(binding?.when).toContain('!editorFocus');
+  });
+
+  it('leaves the Explorer container enough slack for its sashes to work', () => {
+    // VS Code stops drawing sashes at all once every pane is pinned at its
+    // minimum — there is nothing left to redistribute — and then NO pane can be
+    // resized, this one included. An expanded extension pane costs a 22px header
+    // plus a 120px body floor; a collapsed one costs the header alone. Adding this
+    // pane took the container from five panes to six, which is what pushed it over
+    // and froze the sidebar. Keep the total inside what an ordinary screen gives.
+    const HEADER = 22;
+    const MIN_BODY = 120;
+    const BUDGET = 620;
+    const minimum = manifest().contributes.views.gemstoneExplorer.reduce(
+      (total, view) => total + HEADER + (view.visibility === 'collapsed' ? 0 : MIN_BODY),
+      0,
+    );
+    expect(minimum).toBeLessThanOrEqual(BUDGET);
+  });
+
+  it('gives the trail a bigger share than the smallest pane', () => {
+    // At size 1 it was the smallest of the six, so every relayout squeezed the
+    // trail back to a couple of rows.
+    const views = manifest().contributes.views.gemstoneExplorer;
+    const navigation = views.find((v) => v.id === NAVIGATION_VIEW_ID);
+    expect(navigation?.size).toBeGreaterThan(1);
+  });
+
+  it('starts Back, Forward and Clear greyed out, and leaves the rest live', () => {
     const html = renderNavigationViewHtml('test-nonce');
     const disabled = [...html.matchAll(/data-cmd="([^"]+)"[^>]*?\sdisabled/g)].map((m) => m[1]);
-    expect(disabled).toEqual(['gemstone.navigateBack', 'gemstone.navigateForward']);
+    expect(disabled).toEqual([
+      'gemstone.navigateBack',
+      'gemstone.navigateForward',
+      'gemstone.explorer.clearHistory',
+    ]);
+  });
+
+  it('re-gates Clear along with Back and Forward on every state push', () => {
+    const html = renderNavigationViewHtml('test-nonce');
+    expect(html).toContain("setEnabled('gemstone.explorer.clearHistory', state.clear)");
+  });
+
+  it('wears the same glyph for Open Workspace as the manifest gives the command', () => {
+    // The Logins pane's Open Workspace button is $(notebook); a hand-drawn sheet
+    // beside it read as a different action. Same command, same picture.
+    const html = renderNavigationViewHtml('test-nonce');
+    const notebook = 'M4.75 3C4.33579 3 4 3.33579 4 3.75V5.25C4 5.66421 4.33579 6 4.75 6H10.25';
+    expect(html).toContain(notebook);
+    const contributed = manifest().contributes.commands;
+    expect(contributed.find((c) => c.command === 'gemstone.openWorkspace')?.icon).toBe(
+      '$(notebook)',
+    );
+  });
+
+  it('pins a current-location line above the trail, drawn from text', () => {
+    // Dictionaries, class categories and classes are not rows of their own; this
+    // one replaceable line is where they show.
+    const html = renderNavigationViewHtml('test-nonce');
+    expect(html).toContain('id="location"');
+    expect(html).toContain('where.textContent = location');
+    expect(html).toContain('drawLocation(state.location)');
+    // Hidden until there is somewhere to name.
+    expect(html).toMatch(/\.location \{[^}]*display: none/);
+    expect(html).toContain('.location.shown { display: block; }');
   });
 
   it('gives the trail its own scrolling region under the fixed button row', () => {
@@ -227,6 +322,7 @@ describe('the Actions & Navigation pane', () => {
 
     send({ kind: 'goto', index: 2 });
     send({ kind: 'goto', index: -1 });
+    send({ kind: 'goto', index: 99 });
     send({ kind: 'goto', index: 0.5 });
     send({ kind: 'goto', index: '1' });
     send({ kind: 'goto' });
@@ -234,15 +330,32 @@ describe('the Actions & Navigation pane', () => {
   });
 
   it('reads only the three things the pane is allowed to say', () => {
-    expect(parseViewMessage({ kind: 'ready' }, 0)).toEqual({ kind: 'ready' });
-    expect(parseViewMessage({ kind: 'run', command: 'gemstone.navigateBack' }, 0)).toEqual({
+    const none = new Set<number>();
+    expect(parseViewMessage({ kind: 'ready' }, none)).toEqual({ kind: 'ready' });
+    expect(parseViewMessage({ kind: 'run', command: 'gemstone.navigateBack' }, none)).toEqual({
       kind: 'run',
       command: 'gemstone.navigateBack',
     });
-    expect(parseViewMessage({ kind: 'goto', index: 0 }, 1)).toEqual({ kind: 'goto', index: 0 });
-    expect(parseViewMessage({ kind: 'goto', index: 0 }, 0)).toBeUndefined();
-    expect(parseViewMessage({ kind: 'nope' }, 0)).toBeUndefined();
-    expect(parseViewMessage(undefined, 0)).toBeUndefined();
+    expect(parseViewMessage({ kind: 'goto', index: 0 }, new Set([0]))).toEqual({
+      kind: 'goto',
+      index: 0,
+    });
+    expect(parseViewMessage({ kind: 'goto', index: 0 }, none)).toBeUndefined();
+    expect(parseViewMessage({ kind: 'nope' }, none)).toBeUndefined();
+    expect(parseViewMessage(undefined, none)).toBeUndefined();
+  });
+
+  it('accepts a row whose index sits past the end of the trail', () => {
+    // A row's index is its place in the VISITED list, and the trail leaves the
+    // dictionary and class landings out of that list — so the indices it draws have
+    // gaps, and the furthest row's index routinely exceeds the number of rows. A
+    // count-based bound silently refused to jump to the oldest methods.
+    expect(parseViewMessage({ kind: 'goto', index: 7 }, new Set([2, 7]))).toEqual({
+      kind: 'goto',
+      index: 7,
+    });
+    // Still refuses an index nothing drew.
+    expect(parseViewMessage({ kind: 'goto', index: 3 }, new Set([2, 7]))).toBeUndefined();
   });
 
   it('pushes the whole state at once, and re-pushes it to a rebuilt webview', () => {
@@ -270,7 +383,7 @@ describe('the Actions & Navigation pane', () => {
 
     send({ kind: 'ready' });
     expect(posted).toEqual([
-      { kind: 'state', back: true, forward: true, mode: 'full', trail: trail(1) },
+      { kind: 'state', back: true, forward: true, clear: true, mode: 'full', trail: trail(1) },
     ]);
     expect(executeCommand).not.toHaveBeenCalled();
   });

@@ -4,10 +4,11 @@ import { TrailLabelMode } from './explorerNavigationHistory';
 
 /**
  * The GemStone Explorer's Actions & Navigation pane: a row of the controls you
- * reach for while developing, over the trail of everywhere the Explorer has taken
- * you. Named for both halves, because Refresh, Commit and Abort are not
- * navigation — and a pane title that covered only one half would imply the other
- * half's buttons act on the thing it names.
+ * reach for while developing, over a line naming where the Explorer is standing
+ * now and, under it, the trail of the methods it has been through. Named for both
+ * halves, because Refresh, Commit and Abort are not navigation — and a pane title
+ * that covered only one half would imply the other half's buttons act on the
+ * thing it names.
  *
  * It is a WEBVIEW rather than a tree with title-bar actions, and that is the whole
  * point of it. VS Code renders a view's title actions only while the pane is
@@ -46,11 +47,14 @@ interface ToolbarButton {
  * and nothing loaded from outside the page, so the strict CSP holds.
  * `fill="currentColor"` lets each button's colour drive its glyph.
  *
- * `check`, `discard` and `refresh` are the exact VS Code codicon paths (copied
- * from the Session Configuration panel, which already carries them); CHEVRON is
- * the codicon chevron-right, mirrored in place for Back and given a shaft so the
- * pair reads as arrows, matching the `$(arrow-left)`/`$(arrow-right)` the same two
- * commands wear in the editor title bar and the Command Palette.
+ * Every glyph here is the exact VS Code codicon path for the icon the command
+ * declares in the manifest, so the button and the same command's Command Palette
+ * / title-bar entry are the one picture — `notebook` for Open Workspace (the icon
+ * the Logins pane's Open Workspace button already wears), `history` for Recent
+ * Locations, `clear-all` for Clear History, `check` / `discard` / `refresh` for
+ * Commit, Abort and Refresh. CHEVRON is the codicon chevron-right, mirrored in
+ * place for Back and given a shaft so the pair reads as arrows, matching the
+ * `$(arrow-left)`/`$(arrow-right)` those two commands wear elsewhere.
  */
 const CHEVRON =
   'M6.14601 3.14579C5.95101 3.34079 5.95101 3.65779 6.14601 3.85279L10.292 7.99879L6.14601 12.1448C5.95101 12.3398 5.95101 12.6568 6.14601 12.8518C6.34101 13.0468 6.65801 13.0468 6.85301 12.8518L11.353 8.35179C11.548 8.15679 11.548 7.83979 11.353 7.64478L6.85301 3.14479C6.65801 2.94979 6.34101 2.95079 6.14601 3.14579Z';
@@ -69,13 +73,26 @@ const BUTTONS: ToolbarButton[] = [
     glyph: `<path d="${CHEVRON}"/><path d="M2.7 7.5H10v1H2.7z"/>`,
   },
   {
+    // The one place the whole chain is on show — including the dictionary, class
+    // category and class landings that Back and Forward step over and the trail
+    // below leaves out.
     command: 'gemstone.explorer.showHistory',
     label: 'Recent Locations…',
-    // A clock: a ring (outer and inner circles wound in opposite directions, so
-    // the nonzero fill rule leaves the middle open) with two hands.
     glyph:
-      '<path d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13zm0 1.3a5.2 5.2 0 1 1 0 10.4 5.2 5.2 0 0 1 0-10.4z"/>' +
-      '<path d="M7.45 4.3h1.1v3.95l2.85 1.68-.56 1.03-3.39-2z"/>',
+      '<path d="M7.99909 3C10.7605 3 12.9991 5.23858 12.9991 8C12.9991 10.7614 10.7605 13 7.99909 13C5.39117 13 3.2491 11.003 3.0195 8.45512C2.99471 8.1801 2.75167 7.97723 2.47664 8.00202C2.20161 8.0268 1.99875 8.26985 2.02353 8.54488C2.29916 11.6035 4.86898 14 7.99909 14C11.3128 14 13.9991 11.3137 13.9991 8C13.9991 4.68629 11.3128 2 7.99909 2C6.20656 2 4.59815 2.78613 3.49909 4.03138V2.5C3.49909 2.22386 3.27524 2 2.99909 2C2.72295 2 2.49909 2.22386 2.49909 2.5V5.5C2.49909 5.77614 2.72295 6 2.99909 6H3.08812C3.09498 6.00014 3.10184 6.00014 3.10868 6H5.99909C6.27524 6 6.49909 5.77614 6.49909 5.5C6.49909 5.22386 6.27524 5 5.99909 5H3.99863C4.91128 3.78495 6.36382 3 7.99909 3ZM7.99909 5.5C7.99909 5.22386 7.77524 5 7.49909 5C7.22295 5 6.99909 5.22386 6.99909 5.5V8.5C6.99909 8.77614 7.22295 9 7.49909 9H9.49909C9.77524 9 9.99909 8.77614 9.99909 8.5C9.99909 8.22386 9.77524 8 9.49909 8H7.99909V5.5Z"/>',
+  },
+  {
+    // Greyed out on an empty chain, so the row says whether there is anything to
+    // clear without the user having to press it to find out.
+    command: 'gemstone.explorer.clearHistory',
+    label: 'Clear Navigation History',
+    gated: true,
+    glyph:
+      '<path d="M13.5004 12.0004C13.7762 12.0006 14.0004 12.2245 14.0004 12.5004C14.0002 12.7761 13.7761 13.0002 13.5004 13.0004H2.50037C2.22449 13.0004 2.00056 12.7762 2.00037 12.5004C2.00037 12.2244 2.22437 12.0004 2.50037 12.0004H13.5004Z"/>' +
+      '<path d="M13.5004 9.00037C13.7762 9.00056 14.0004 9.22449 14.0004 9.50037C14.0002 9.77608 13.7761 10.0002 13.5004 10.0004H2.50037C2.22449 10.0004 2.00056 9.7762 2.00037 9.50037C2.00037 9.22437 2.22437 9.00037 2.50037 9.00037H13.5004Z"/>' +
+      '<path d="M13.5004 6.00037C13.7762 6.00056 14.0004 6.22449 14.0004 6.50037C14.0002 6.77608 13.7761 7.00017 13.5004 7.00037H7.50037C7.22449 7.00037 7.00056 6.7762 7.00037 6.50037C7.00037 6.22437 7.22437 6.00037 7.50037 6.00037H13.5004Z"/>' +
+      '<path d="M5.50037 0.999023C5.63295 0.999115 5.76009 1.05179 5.85388 1.14551C5.94777 1.23939 6.00037 1.36722 6.00037 1.5C6.00027 1.63265 5.94769 1.75971 5.85388 1.85352L3.7074 4L5.85388 6.14551C5.94777 6.23939 6.00037 6.36722 6.00037 6.5C6.00027 6.63265 5.94769 6.75971 5.85388 6.85352C5.76008 6.94732 5.63302 6.99991 5.50037 7C5.36759 7 5.23976 6.9474 5.14587 6.85352L3.00037 4.70703L0.853882 6.85352C0.760077 6.94732 0.633017 6.99991 0.500366 7C0.36759 7 0.239761 6.9474 0.145874 6.85352C0.0521583 6.75972 -0.000519052 6.63258 -0.000610352 6.5C-0.000610354 6.36722 0.0519875 6.23939 0.145874 6.14551L2.29333 4L0.145874 1.85352C0.0521583 1.75972 -0.000519119 1.63258 -0.000610352 1.5C-0.000610351 1.36722 0.0519874 1.23939 0.145874 1.14551C0.239761 1.05162 0.36759 0.999023 0.500366 0.999023C0.63295 0.999115 0.76009 1.05179 0.853882 1.14551L3.00037 3.29297L5.14587 1.14551C5.23976 1.05162 5.36759 0.999023 5.50037 0.999023Z"/>' +
+      '<path d="M13.5004 3.00037C13.7762 3.00056 14.0004 3.22449 14.0004 3.50037C14.0002 3.77608 13.7761 4.00017 13.5004 4.00037H7.50037C7.22449 4.00037 7.00056 3.7762 7.00037 3.50037C7.00037 3.22437 7.22437 3.00037 7.50037 3.00037H13.5004Z"/>',
   },
   {
     command: 'gemstone.explorer.refresh',
@@ -116,11 +133,8 @@ const BUTTONS: ToolbarButton[] = [
   {
     command: 'gemstone.openWorkspace',
     label: 'Open Workspace',
-    // A sheet with a few lines of text: the scratch buffer you type expressions
-    // into. Frame drawn as a ring so it reads as an outline, not a solid block.
     glyph:
-      '<path d="M1.5 2h13l.5.5v11l-.5.5h-13l-.5-.5v-11zm.5 11h12V3H2z"/>' +
-      '<path d="M3.6 5.2h8.8v1H3.6zm0 2.6h8.8v1H3.6zm0 2.6h5.6v1H3.6z"/>',
+      '<path d="M4.75 3C4.33579 3 4 3.33579 4 3.75V5.25C4 5.66421 4.33579 6 4.75 6H10.25C10.6642 6 11 5.66421 11 5.25V3.75C11 3.33579 10.6642 3 10.25 3H4.75ZM5 5V4H10V5H5ZM2 2.75C2 1.7835 2.7835 1 3.75 1H11.25C12.2165 1 13 1.7835 13 2.75V13.25C13 14.2165 12.2165 15 11.25 15H3.75C2.7835 15 2 14.2165 2 13.25V2.75ZM3.75 2C3.33579 2 3 2.33579 3 2.75V13.25C3 13.6642 3.33579 14 3.75 14H11.25C11.6642 14 12 13.6642 12 13.25V2.75C12 2.33579 11.6642 2 11.25 2H3.75ZM14.625 4H14V6H14.625C14.8321 6 15 5.83211 15 5.625V4.375C15 4.16789 14.8321 4 14.625 4ZM14 7H14.625C14.8321 7 15 7.16789 15 7.375V8.625C15 8.83211 14.8321 9 14.625 9H14V7ZM14.625 10H14V12H14.625C14.8321 12 15 11.8321 15 11.625V10.375C15 10.1679 14.8321 10 14.625 10Z"/>',
   },
 ];
 
@@ -136,9 +150,17 @@ export type ViewMessage =
  * This is the trust boundary, and it is deliberately a whitelist: a webview can
  * post any object at all, so dispatching a `command` string straight into
  * `executeCommand` would hand the page the entire workbench command registry, and
- * taking `index` on faith would index off the end of the chain.
+ * taking `index` on faith would index somewhere nobody drew.
+ *
+ * `rows` is the set of indices the trail actually drew, NOT a count. A row's index
+ * is its position in the visited list, and the trail leaves out the dictionary and
+ * class landings in that list — so the indices it draws have gaps, and a bound of
+ * "less than the number of rows" would reject the very rows furthest down.
  */
-export function parseViewMessage(message: unknown, landingCount: number): ViewMessage | undefined {
+export function parseViewMessage(
+  message: unknown,
+  rows: ReadonlySet<number>,
+): ViewMessage | undefined {
   if (typeof message !== 'object' || message === null) return undefined;
   const { kind, command, index } = message as {
     kind?: unknown;
@@ -152,10 +174,7 @@ export function parseViewMessage(message: unknown, landingCount: number): ViewMe
       : undefined;
   }
   if (kind === 'goto') {
-    return typeof index === 'number' &&
-      Number.isInteger(index) &&
-      index >= 0 &&
-      index < landingCount
+    return typeof index === 'number' && Number.isInteger(index) && rows.has(index)
       ? { kind: 'goto', index }
       : undefined;
   }
@@ -166,7 +185,7 @@ export function parseViewMessage(message: unknown, landingCount: number): ViewMe
 export interface TrailRow {
   /** Position in the history chain — what a click jumps to. */
   index: number;
-  /** `Array class>>new`, `Globals · Collections`, … */
+  /** `Array class>>new`, or just `new` under the selectors-only label mode. */
   label: string;
   /** The context the label leaves out — the dictionary, or the class when the
    *  label has been shortened to a bare selector. Shown dimmed after the label. */
@@ -180,9 +199,20 @@ export interface TrailRow {
 export interface NavigationViewState {
   back: boolean;
   forward: boolean;
+  /** Whether there is any history to clear. */
+  clear: boolean;
   /** Which of the two label-mode buttons the row shows, and how the labels read. */
   mode: TrailLabelMode;
-  /** Newest last; the pane draws them newest first. */
+  /**
+   * Where the Explorer is standing right now, spelled out in full — `Globals ·
+   * Collections · Array class>>new`. Pinned above the trail and replaced on every
+   * landing, which is the only place a dictionary, class category or class click
+   * shows: those are navigation you passed through, not places worth a row each,
+   * and flipping between two dictionaries would otherwise fill the trail with
+   * them. Undefined before the Explorer has landed anywhere.
+   */
+  location?: string;
+  /** The method landings only, newest last; the pane draws them newest first. */
   trail: TrailRow[];
 }
 
@@ -262,6 +292,19 @@ export function renderNavigationViewHtml(nonce = crypto.randomBytes(16).toString
     .toolbar[data-mode='selectors'] > button[data-mode='selectors'] { display: flex; }
     .toolbar[data-mode='full'] > span.sep[data-mode='full'],
     .toolbar[data-mode='selectors'] > span.sep[data-mode='selectors'] { display: block; }
+    /* Where you are now, pinned above the trail. Not a button: it is a statement
+       of position, and a row you can click that takes you nowhere reads as broken. */
+    .location {
+      flex: 0 0 auto;
+      display: none;
+      padding: 1px 6px 2px 8px; line-height: 18px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      border-bottom: 1px solid var(--vscode-panel-border, transparent);
+      color: var(--vscode-descriptionForeground);
+      font-size: 0.9em;
+    }
+    .location.shown { display: block; }
+    .location .where { color: var(--vscode-foreground); }
     .trail { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; }
     .row {
       display: flex; align-items: baseline; gap: 6px; width: 100%;
@@ -286,7 +329,8 @@ export function renderNavigationViewHtml(nonce = crypto.randomBytes(16).toString
   <div class="toolbar" role="toolbar" aria-label="GemStone Explorer actions">
     ${BUTTONS.map(renderButton).join('\n    ')}
   </div>
-  <div class="trail" id="trail" role="list" aria-label="Recent locations"></div>
+  <div class="location" id="location" aria-live="polite"></div>
+  <div class="trail" id="trail" role="list" aria-label="Methods visited"></div>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
 
@@ -310,13 +354,29 @@ export function renderNavigationViewHtml(nonce = crypto.randomBytes(16).toString
     // Rows are built with textContent, never innerHTML: the labels are class and
     // selector names read out of the stone, and a stone is not a place to trust
     // markup from.
+    // The pinned "you are here" line. Built with textContent for the same reason
+    // the rows are: these names come out of a stone.
+    function drawLocation(location) {
+      const host = document.getElementById('location');
+      host.textContent = '';
+      host.className = location ? 'location shown' : 'location';
+      if (!location) return;
+      const lead = document.createElement('span');
+      lead.textContent = 'In ';
+      const where = document.createElement('span');
+      where.className = 'where';
+      where.textContent = location;
+      host.title = location;
+      host.append(lead, where);
+    }
+
     function drawTrail(trail) {
       const host = document.getElementById('trail');
       host.textContent = '';
       if (trail.length === 0) {
         const empty = document.createElement('div');
         empty.className = 'empty';
-        empty.textContent = 'Places you visit are listed here.';
+        empty.textContent = 'Methods you open are listed here.';
         host.append(empty);
         return;
       }
@@ -345,7 +405,9 @@ export function renderNavigationViewHtml(nonce = crypto.randomBytes(16).toString
       if (!state || state.kind !== 'state') return;
       setEnabled('gemstone.navigateBack', state.back);
       setEnabled('gemstone.navigateForward', state.forward);
+      setEnabled('gemstone.explorer.clearHistory', state.clear);
       document.querySelector('.toolbar').dataset.mode = state.mode;
+      drawLocation(state.location);
       drawTrail(state.trail);
     });
 
@@ -369,9 +431,16 @@ export function renderNavigationViewHtml(nonce = crypto.randomBytes(16).toString
  */
 export class NavigationViewProvider implements vscode.WebviewViewProvider {
   private view: vscode.WebviewView | undefined;
-  private state: NavigationViewState = { back: false, forward: false, mode: 'full', trail: [] };
+  private state: NavigationViewState = {
+    back: false,
+    forward: false,
+    clear: false,
+    mode: 'full',
+    trail: [],
+  };
 
-  /** Jump to a trail row the user clicked. Wired up at registration. */
+  /** Go to the place a trail row names — its index in the visited list. Wired up
+   *  at registration. */
   constructor(private readonly goToIndex: (index: number) => void) {}
 
   resolveWebviewView(view: vscode.WebviewView): void {
@@ -379,7 +448,7 @@ export class NavigationViewProvider implements vscode.WebviewViewProvider {
     view.webview.options = { enableScripts: true, localResourceRoots: [] };
     view.webview.html = renderNavigationViewHtml();
     view.webview.onDidReceiveMessage((raw: unknown) => {
-      const message = parseViewMessage(raw, this.state.trail.length);
+      const message = parseViewMessage(raw, new Set(this.state.trail.map((row) => row.index)));
       if (!message) return;
       if (message.kind === 'ready') this.push();
       else if (message.kind === 'run') void vscode.commands.executeCommand(message.command);

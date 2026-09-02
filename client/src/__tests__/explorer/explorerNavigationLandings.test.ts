@@ -35,12 +35,14 @@ vi.mock('../../gciLog', () => ({
 }));
 
 import * as vscode from 'vscode';
+import { __resetConfig } from '../../__mocks__/vscode';
 import { ExplorerController, MethodItem, registerGemStoneExplorer } from '../../gemstoneExplorer';
 import {
   getClassesWithCategory,
   getClassEnvironments,
   getDictionaryNames,
 } from '../../browserQueries';
+import type { NavigationViewState } from '../../explorerNavigationView';
 import type { SessionManager, ActiveSession } from '../../sessionManager';
 
 const classesInDict = getClassesWithCategory as ReturnType<typeof vi.fn>;
@@ -99,6 +101,7 @@ function makeController() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  __resetConfig();
   classesInDict.mockReturnValue([{ className: CLASS, category: 'Kernel', hasComment: false }]);
   classEnvs.mockReturnValue(envLine(['balance', 'deposit:']));
   dictNames.mockReturnValue([DICT]);
@@ -312,8 +315,12 @@ describe('Recent Locations lists the trail', () => {
 
     await ctl.showHistory();
 
+    // Picking a row walks the chain to it, the way Back does — it does not add an
+    // entry, so the one ahead is still there to go Forward to.
     expect(ctl.history.currentIndex()).toBe(0);
     expect(ctl.history.current()).toMatchObject({ selector: 'balance' });
+    expect(ctl.history.entries().map((l) => l.selector)).toEqual(['balance', 'deposit:']);
+    expect(ctl.history.canGoForward()).toBe(true);
   });
 });
 
@@ -326,9 +333,17 @@ describe('the navigation commands are actually registered, not just contributed'
     'gemstone.navigateBack',
     'gemstone.navigateForward',
     'gemstone.explorer.showHistory',
+    'gemstone.explorer.clearHistory',
   ];
 
+  /** The session events the registration subscribes to, captured as they arrive. */
+  let sessionListeners: {
+    selection: ((id: number | null) => void)[];
+    removal: ((id: number) => void)[];
+  };
+
   function register() {
+    sessionListeners = { selection: [], removal: [] };
     // The shared vscode mock's TreeView stub has no onDidChangeSelection, which
     // registerGemStoneExplorer subscribes to for the filter-commit-on-click wiring.
     vi.mocked(vscode.window.createTreeView).mockImplementation(
@@ -349,27 +364,335 @@ describe('the navigation commands are actually registered, not just contributed'
     const sessionManager = {
       getSelectedSession: () => ({ id: 1 }) as ActiveSession,
       resolveSession: () => Promise.resolve({ id: 1 } as ActiveSession),
-      onDidChangeSelection: vi.fn(() => ({ dispose: vi.fn() })),
+      onDidChangeSelection: vi.fn((listener: (id: number | null) => void) => {
+        sessionListeners.selection.push(listener);
+        return { dispose: vi.fn() };
+      }),
+      onDidRemoveSession: vi.fn((listener: (id: number) => void) => {
+        sessionListeners.removal.push(listener);
+        return { dispose: vi.fn() };
+      }),
     } as unknown as SessionManager;
-    registerGemStoneExplorer(context, sessionManager);
+    const handle = registerGemStoneExplorer(context, sessionManager);
     const handlers = new Map<string, (...a: unknown[]) => unknown>();
     for (const call of vi.mocked(vscode.commands.registerCommand).mock.calls) {
       handlers.set(call[0], call[1] as (...a: unknown[]) => unknown);
     }
-    return handlers;
+    return { handlers, handle };
   }
 
   it('registers a handler for each one', () => {
-    const handlers = register();
+    const { handlers } = register();
     for (const command of NAV_COMMANDS) {
       expect(handlers.has(command), `${command} has no handler`).toBe(true);
     }
   });
 
   it('runs them without throwing on an empty chain, so the palette entries are real', async () => {
-    const handlers = register();
+    const { handlers } = register();
     for (const command of NAV_COMMANDS) {
-      await expect(handlers.get(command)!()).resolves.not.toThrow();
+      await expect(Promise.resolve(handlers.get(command)!())).resolves.not.toThrow();
     }
+  });
+
+  it('subscribes the chain to the session being switched and to a session logging out', () => {
+    register();
+    expect(sessionListeners.selection).toHaveLength(1);
+    expect(sessionListeners.removal).toHaveLength(1);
+  });
+});
+
+describe('the pane draws methods; the dictionaries and classes stay on one pinned line', () => {
+  /** A stand-in for the Actions & Navigation pane, to read what the controller pushes. */
+  function watchPane(ctl: ExplorerController) {
+    const states: NavigationViewState[] = [];
+    ctl.setNavigationView({ setState: (s: NavigationViewState) => states.push(s) } as never);
+    return { latest: () => states[states.length - 1] };
+  }
+
+  it('leaves a dictionary out of the trail and names it on the pinned line', () => {
+    const { ctl, clickDict } = makeController();
+    const pane = watchPane(ctl);
+
+    clickDict();
+
+    expect(pane.latest().trail).toEqual([]);
+    expect(pane.latest().location).toBe(DICT);
+  });
+
+  it('puts the class on the pinned line, still with no row of its own', () => {
+    const { ctl, clickDict, clickClass } = makeController();
+    const pane = watchPane(ctl);
+
+    clickDict();
+    clickClass();
+
+    expect(pane.latest().trail).toEqual([]);
+    expect(pane.latest().location).toBe(`${DICT} · ${CLASS}`);
+  });
+
+  it('gives a method a row, and moves the pinned line onto it', async () => {
+    const { ctl, clickDict, clickClass, openMethod } = makeController();
+    const pane = watchPane(ctl);
+
+    clickDict();
+    clickClass();
+    await openMethod('balance');
+
+    expect(pane.latest().trail).toEqual([
+      { index: 0, label: `${CLASS}>>balance`, context: DICT, current: true },
+    ]);
+    expect(pane.latest().location).toBe(`${DICT} · ${CLASS}>>balance`);
+  });
+
+  it('drops the dictionary click off the trail while keeping it in the chain', async () => {
+    const { ctl, clickDict, clickClass, openMethod } = makeController();
+    const pane = watchPane(ctl);
+
+    clickDict();
+    clickClass();
+    await openMethod('balance');
+    await openMethod('deposit:');
+    dictNames.mockReturnValue([DICT, 'Globals']);
+    ctl.selectDict({ dictName: 'Globals', dictIndex: 2 });
+
+    // Three landings in the chain — Recent Locations lists all three — but only the
+    // two methods get a row, and none of them is current, because the place we are
+    // standing is the dictionary named on the pinned line.
+    expect(ctl.history.entries()).toHaveLength(3);
+    const trail = pane.latest().trail;
+    expect(trail.map((r) => r.label)).toEqual([`${CLASS}>>balance`, `${CLASS}>>deposit:`]);
+    // Indices are places in the CHAIN — [balance, deposit:, Globals] — so a row
+    // carries the index a click has to name, not its position among the rows.
+    expect(trail.map((r) => r.index)).toEqual([0, 1]);
+    expect(trail.some((r) => r.current)).toBe(false);
+    expect(pane.latest().location).toBe('Globals');
+  });
+
+  it('flips between two dictionaries without stacking a row each', () => {
+    const { ctl, clickDict } = makeController();
+    const pane = watchPane(ctl);
+
+    clickDict();
+    dictNames.mockReturnValue([DICT, 'Globals']);
+    ctl.selectDict({ dictName: 'Globals', dictIndex: 2 });
+    ctl.selectDict({ dictName: DICT, dictIndex: 1 });
+
+    expect(ctl.history.entries()).toHaveLength(1);
+    expect(pane.latest().location).toBe(DICT);
+    expect(pane.latest().trail).toEqual([]);
+  });
+
+  it('offers Clear only once something has been recorded', async () => {
+    const { ctl, clickDict, clickClass, openMethod } = makeController();
+    const pane = watchPane(ctl);
+    expect(pane.latest().clear).toBe(false);
+
+    clickDict();
+    clickClass();
+    await openMethod('balance');
+    expect(pane.latest().clear).toBe(true);
+
+    ctl.clearHistory();
+    expect(pane.latest().clear).toBe(false);
+    expect(pane.latest().trail).toEqual([]);
+    expect(pane.latest().location).toBeUndefined();
+  });
+
+  it('empties the trail when the session it belongs to logs out', async () => {
+    const { ctl, clickDict, clickClass, openMethod } = makeController();
+    const pane = watchPane(ctl);
+    clickDict();
+    clickClass();
+    await openMethod('balance');
+
+    ctl.history.dropSession(1);
+
+    expect(pane.latest().trail).toEqual([]);
+    expect(ctl.history.entries()).toEqual([]);
+  });
+
+  it('swaps the trail when the selected session changes', async () => {
+    const { ctl, holder, clickDict, clickClass, openMethod } = makeController();
+    const pane = watchPane(ctl);
+    clickDict();
+    clickClass();
+    await openMethod('balance');
+
+    holder.session = { id: 2 } as ActiveSession;
+    ctl.history.setActiveSession(2);
+    expect(pane.latest().trail).toEqual([]);
+
+    ctl.history.setActiveSession(1);
+    expect(pane.latest().trail.map((r) => r.label)).toEqual([`${CLASS}>>balance`]);
+  });
+});
+
+describe('Go Back and the editor', () => {
+  it('reopens the method’s tab, so walking back shows the source again', async () => {
+    const { ctl, clickDict, clickClass, openMethod } = makeController();
+    clickDict();
+    clickClass();
+    await openMethod('balance');
+    await openMethod('deposit:');
+    vi.mocked(vscode.workspace.openTextDocument).mockClear();
+
+    await ctl.history.back();
+
+    const opened = vi
+      .mocked(vscode.workspace.openTextDocument)
+      .mock.calls.map((c) => String((c[0] as { path?: string })?.path ?? c[0]));
+    expect(opened.some((uri) => uri.includes('balance'))).toBe(true);
+  });
+
+  it('follows VS Code’s Back onto an earlier method instead of appending it again', async () => {
+    const { ctl, clickDict, clickClass, openMethod } = makeController();
+    const opened = vi.mocked(vscode.workspace.openTextDocument);
+    clickDict();
+    clickClass();
+    await openMethod('balance');
+    const balanceUri = opened.mock.calls.at(-1)![0] as vscode.Uri;
+    // Each open fires the editor-change event that clears its own self-open mark.
+    await ctl.syncToEditor(balanceUri);
+    await openMethod('deposit:');
+    await ctl.syncToEditor(opened.mock.calls.at(-1)![0] as vscode.Uri);
+    expect(ctl.history.currentIndex()).toBe(1);
+
+    // VS Code's Go Back reopened the earlier tab. That is the same step our own
+    // Back would have taken, so it moves the cursor rather than making a third
+    // entry — otherwise the two histories drift apart with every press.
+    await ctl.syncToEditor(balanceUri);
+
+    expect(ctl.history.entries().map((l) => l.selector)).toEqual(['balance', 'deposit:']);
+    expect(ctl.history.currentIndex()).toBe(0);
+  });
+
+  it('hands a press with nowhere of ours to go to VS Code’s own history', async () => {
+    const { ctl, clickDict, clickClass, openMethod } = makeController();
+    clickDict();
+    clickClass();
+    await openMethod('balance');
+    vi.mocked(vscode.commands.executeCommand).mockClear();
+
+    await ctl.history.back();
+
+    // Our commands take over ctrl+alt+- wherever the Explorer or a gemstone://
+    // editor has focus, so swallowing the press would strand the user.
+    expect(vi.mocked(vscode.commands.executeCommand)).toHaveBeenCalledWith(
+      'workbench.action.navigateBack',
+    );
+  });
+});
+
+describe('Recent Locations lists what the trail leaves out', () => {
+  it('includes the dictionary and class landings, each spelled out in full', async () => {
+    const { ctl, clickDict, clickClass, openMethod } = makeController();
+    clickDict();
+    clickClass();
+    await openMethod('balance');
+    dictNames.mockReturnValue([DICT, 'Globals']);
+    ctl.selectDict({ dictName: 'Globals', dictIndex: 2 });
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValue(undefined);
+
+    await ctl.showHistory();
+
+    const items = vi.mocked(vscode.window.showQuickPick).mock.calls[0][0] as unknown as {
+      label: string;
+      description: string;
+    }[];
+    expect(items.map((i) => i.label)).toEqual(['Globals', `${CLASS}>>balance`]);
+    expect(items[1].description).toBe(`${DICT} · ${CLASS}>>balance`);
+  });
+});
+
+describe('the trail label mode is a setting, not just a button', () => {
+  /** A stand-in for the Actions & Navigation pane, to read what the controller pushes. */
+  function watchPane(ctl: ExplorerController) {
+    const states: NavigationViewState[] = [];
+    ctl.setNavigationView({ setState: (s: NavigationViewState) => states.push(s) } as never);
+    return { latest: () => states[states.length - 1] };
+  }
+
+  async function readTwoMethods() {
+    const h = makeController();
+    h.clickDict();
+    h.clickClass();
+    await h.openMethod('balance');
+    await h.openMethod('deposit:');
+    return h;
+  }
+
+  it('spells the class out in each row by default', async () => {
+    const { ctl } = await readTwoMethods();
+    const pane = watchPane(ctl);
+    ctl.syncNavigationState();
+
+    expect(pane.latest().mode).toBe('full');
+    expect(pane.latest().trail.map((r) => r.label)).toEqual([
+      `${CLASS}>>balance`,
+      `${CLASS}>>deposit:`,
+    ]);
+    expect(pane.latest().trail.map((r) => r.context)).toEqual([DICT, DICT]);
+  });
+
+  it('drops the class to the dimmed column when the setting is on', async () => {
+    // Working inside one class, the repeated class name crowds out the selector,
+    // which is the only part that differs.
+    vscode.workspace.getConfiguration('gemstone').update('explorer.navigationSelectorsOnly', true);
+    const { ctl } = await readTwoMethods();
+    const pane = watchPane(ctl);
+    ctl.syncNavigationState();
+
+    expect(pane.latest().mode).toBe('selectors');
+    expect(pane.latest().trail.map((r) => r.label)).toEqual(['balance', 'deposit:']);
+    expect(pane.latest().trail.map((r) => r.context)).toEqual([CLASS, CLASS]);
+  });
+
+  it('writes the setting rather than keeping the mode in memory', async () => {
+    // It has to survive a reload and be findable in Settings, not only on the button.
+    const { ctl } = makeController();
+    await ctl.setTrailLabelMode('selectors');
+    expect(
+      vscode.workspace
+        .getConfiguration('gemstone')
+        .get<boolean>('explorer.navigationSelectorsOnly'),
+    ).toBe(true);
+    expect(ctl.trailLabelMode()).toBe('selectors');
+
+    await ctl.setTrailLabelMode('full');
+    expect(
+      vscode.workspace
+        .getConfiguration('gemstone')
+        .get<boolean>('explorer.navigationSelectorsOnly'),
+    ).toBe(false);
+    expect(ctl.trailLabelMode()).toBe('full');
+  });
+});
+
+describe('Go Back gives up on a class the stone no longer has', () => {
+  it('reports failure and drops the landing when the reveal cannot place the class', async () => {
+    const { ctl, clickDict, clickClass, openMethod } = makeController();
+    classesInDict.mockReturnValue([
+      { className: CLASS, category: 'Kernel', hasComment: false },
+      { className: 'Ledger', category: 'Kernel', hasComment: false },
+    ]);
+    clickDict();
+    clickClass();
+    await openMethod('balance');
+    clickClass('Ledger');
+    await openMethod('balance');
+
+    // The class cannot be resolved in that dictionary any more. revealClass fetches
+    // before it commits, so it warns and leaves the panes on Ledger rather than
+    // half-updating — and the walk has to notice it never arrived.
+    classEnvs.mockImplementation(() => {
+      throw new Error('class not found in dictionary');
+    });
+
+    await ctl.history.back();
+
+    // Without the guard the walk would report success, leaving the trail pointing
+    // at a class the panes never reached.
+    expect(ctl.history.entries().map((l) => l.className)).toEqual(['Ledger']);
   });
 });

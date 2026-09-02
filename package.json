@@ -297,11 +297,11 @@
             "description": "Maximum method dictionary environment to show when listing methods (0 = standard Smalltalk only, 2 = show environments 0–2). Applies wherever methods are listed — the GemStone Explorer, the System Browser, and hover, CodeLens, and Go to Definition."
           },
           "gemstone.explorer.navigationSelectorsOnly": {
-          "type": "boolean",
-          "default": false,
-          "description": "List the GemStone Explorer's navigation trail by selector alone, dropping the class from each method's label — the class moves to the dimmed column beside it. Useful while working inside one class, where the repeated class name crowds out the part that differs. Toggle quickly from the Actions & Navigation pane's button row."
-        },
-        "gemstone.explorer.groupMethodsByCategory": {
+            "type": "boolean",
+            "default": false,
+            "description": "List the GemStone Explorer's navigation trail by selector alone, dropping the class from each method's label — the class moves to the dimmed column beside it. Useful while working inside one class, where the repeated class name crowds out the part that differs. Toggle quickly from the Actions & Navigation pane's button row."
+          },
+          "gemstone.explorer.groupMethodsByCategory": {
             "type": "boolean",
             "default": true,
             "description": "Group methods in the GemStone Explorer's Methods pane under their categories. Turn off to list a class's methods flat, without the category level. Toggle quickly from the Methods pane title bar."
@@ -558,7 +558,7 @@
           "type": "webview",
           "icon": "$(history)",
           "when": "gemstone.explorerActive",
-          "size": 1
+          "size": 2
         },
         {
           "id": "gemstoneExplorerDicts",
@@ -574,7 +574,8 @@
           "type": "tree",
           "icon": "$(symbol-folder)",
           "when": "gemstone.explorerActive",
-          "size": 1
+          "size": 1,
+          "visibility": "collapsed"
         },
         {
           "id": "gemstoneExplorerClasses",
@@ -1195,21 +1196,26 @@
         "command": "gemstone.navigateBack",
         "title": "Go Back",
         "category": "GemStone",
-        "icon": "$(arrow-left)",
-        "enablement": "gemstone.canNavigateBack"
+        "icon": "$(arrow-left)"
       },
       {
         "command": "gemstone.navigateForward",
         "title": "Go Forward",
         "category": "GemStone",
-        "icon": "$(arrow-right)",
-        "enablement": "gemstone.canNavigateForward"
+        "icon": "$(arrow-right)"
       },
       {
         "command": "gemstone.explorer.showHistory",
         "title": "Recent Locations…",
         "category": "GemStone",
         "icon": "$(history)"
+      },
+      {
+        "command": "gemstone.explorer.clearHistory",
+        "title": "Clear Navigation History",
+        "category": "GemStone",
+        "icon": "$(clear-all)",
+        "enablement": "gemstone.hasNavigationHistory"
       },
       {
         "command": "gemstone.explorer.showNavigationSelectorsOnly",
@@ -2088,6 +2094,10 @@
         },
         {
           "command": "gemstone.explorer.showHistory",
+          "when": "gemstone.hasActiveSession"
+        },
+        {
+          "command": "gemstone.explorer.clearHistory",
           "when": "gemstone.hasActiveSession"
         },
         {
@@ -3227,13 +3237,13 @@
         "command": "gemstone.navigateBack",
         "key": "ctrl+alt+-",
         "mac": "ctrl+-",
-        "when": "gemstone.hasActiveSession && (resourceScheme == gemstone || focusedView =~ /^gemstoneExplorer/)"
+        "when": "gemstone.hasActiveSession && (resourceScheme == gemstone || focusedView =~ /^gemstoneExplorer/ || (activeViewlet == 'workbench.view.extension.gemstoneExplorer' && !editorFocus))"
       },
       {
         "command": "gemstone.navigateForward",
         "key": "ctrl+shift+-",
         "mac": "ctrl+shift+-",
-        "when": "gemstone.hasActiveSession && (resourceScheme == gemstone || focusedView =~ /^gemstoneExplorer/)"
+        "when": "gemstone.hasActiveSession && (resourceScheme == gemstone || focusedView =~ /^gemstoneExplorer/ || (activeViewlet == 'workbench.view.extension.gemstoneExplorer' && !editorFocus))"
       }
     ]
   },
