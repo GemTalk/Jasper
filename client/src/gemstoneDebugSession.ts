@@ -15,11 +15,14 @@ import type * as vscode from 'vscode';
 import { SessionManager, ActiveSession } from './sessionManager';
 import { OOP_NIL } from './gciConstants';
 import * as debug from './debugQueries';
-import { BreakpointManager, buildLineOffsets, mapLineToStepPoint } from './breakpointManager';
-import * as queries from './browserQueries';
+import { BreakpointManager } from './breakpointManager';
 import { logInfo, logError } from './gciLog';
 
 const THREAD_ID = 1;
+/** Why a breakpoint on a frame with no method source of its own is refused. */
+const UNBREAKABLE_SOURCE =
+  'Breakpoints can only be set in the source of a compiled method. ' +
+  'Ad-hoc executed code cannot be broken at — set the breakpoint in the method instead.';
 const MAX_PRINT_STRING = 1024;
 
 // Variable reference kinds
@@ -156,6 +159,10 @@ export class GemStoneDebugSession extends DebugSession {
     }
 
     const requestedLines = args.breakpoints.map((bp) => bp.line);
+    // DAP carries an optional column for an inline breakpoint; forwarding it is what
+    // lets a breakpoint mid-line resolve to the step point the developer clicked
+    // rather than the leftmost one on the line.
+    const requestedColumns = args.breakpoints.map((bp) => bp.column);
 
     // Try to resolve from source path (gemstone:// URI) if available
     if (args.source.path && this.breakpointManager) {
@@ -178,12 +185,18 @@ export class GemStoneDebugSession extends DebugSession {
             this.session,
             actualUri,
             requestedLines,
+            requestedColumns,
           );
           for (let i = 0; i < results.length; i++) {
             breakpoints.push({
               verified: results[i].verified,
               line: results[i].actualLine,
               id: i + 1,
+              // Set when the manager refused rather than merely failed to
+              // resolve — the developer can act on the reason.
+              ...(results[i].message
+                ? { reason: 'failed' as const, message: results[i].message }
+                : {}),
             });
           }
           response.body = { breakpoints };
@@ -195,60 +208,26 @@ export class GemStoneDebugSession extends DebugSession {
       }
     }
 
-    // Try source reference → method OOP
+    // No gemstone:// path means the frame is not a saved, compiled method the
+    // developer can point at: either an ad-hoc execution ('Executed Code') or a
+    // method whose class is not bound in the symbol list. Neither has anything
+    // durable to arm — a doit's compiled method is gone once the execution ends,
+    // so a breakpoint here could never be hit again. Refuse it out loud rather
+    // than report a verified breakpoint that silently never fires.
+    //
+    // `sourceRequest` withholds the mime type that used to resolve this document
+    // to the gemstone-smalltalk language, so VS Code no longer offers the gutter
+    // here. This stays as the backstop for the ways a request can still arrive —
+    // `debug.allowBreakpointsEverywhere`, or a client that is not VS Code.
     if (args.source.sourceReference && args.source.sourceReference > 0) {
-      const methodOop = this.sourceRefMap.get(args.source.sourceReference);
-      if (methodOop) {
-        try {
-          const source = debug.getMethodSource(this.session, methodOop);
-          const lineOffsets = buildLineOffsets(source);
-
-          // Get method info to resolve the class/selector
-          const methodInfo = debug.getMethodInfo(this.session, methodOop);
-          const isMeta = methodInfo.className.endsWith(' class');
-          const className = isMeta
-            ? methodInfo.className.replace(/ class$/, '')
-            : methodInfo.className;
-
-          const sourceOffsets = queries.getSourceOffsets(
-            this.session,
-            className,
-            isMeta,
-            methodInfo.selector,
-          );
-
-          // Clear existing breakpoints on this method
-          try {
-            queries.clearAllBreaks(this.session, className, isMeta, methodInfo.selector);
-          } catch {
-            /* ignore */
-          }
-
-          for (let i = 0; i < requestedLines.length; i++) {
-            const result = mapLineToStepPoint(requestedLines[i], lineOffsets, sourceOffsets);
-            if (result) {
-              try {
-                queries.setBreakAtStepPoint(
-                  this.session,
-                  className,
-                  isMeta,
-                  methodInfo.selector,
-                  result.stepPoint,
-                );
-                breakpoints.push({ verified: true, line: result.actualLine, id: i + 1 });
-              } catch {
-                breakpoints.push({ verified: false, line: requestedLines[i], id: i + 1 });
-              }
-            } else {
-              breakpoints.push({ verified: false, line: requestedLines[i], id: i + 1 });
-            }
-          }
-        } catch (e) {
-          logError(this.session.id, `setBreakpoints sourceRef error: ${e}`);
-          for (let i = 0; i < requestedLines.length; i++) {
-            breakpoints.push({ verified: false, line: requestedLines[i], id: i + 1 });
-          }
-        }
+      for (let i = 0; i < requestedLines.length; i++) {
+        breakpoints.push({
+          verified: false,
+          reason: 'failed',
+          line: requestedLines[i],
+          id: i + 1,
+          message: UNBREAKABLE_SOURCE,
+        });
       }
     }
 
@@ -360,7 +339,14 @@ export class GemStoneDebugSession extends DebugSession {
 
     try {
       const source = debug.getMethodSource(this.session, methodOop);
-      response.body = { content: source, mimeType: 'text/x-gemstone-smalltalk' };
+      // Deliberately no `mimeType`. Returning 'text/x-gemstone-smalltalk' resolved
+      // this document to the gemstone-smalltalk language (the language declares
+      // that mime type in package.json), and `contributes.breakpoints` names that
+      // language — so VS Code offered the breakpoint gutter on a frame that cannot
+      // hold a breakpoint. Withholding it costs syntax highlighting in this
+      // read-only view, which the debugger panel's own source pane provides
+      // anyway, and buys a gutter that never invites a breakpoint it must refuse.
+      response.body = { content: source };
     } catch (e) {
       response.body = { content: `// Error fetching source: ${e}` };
     }

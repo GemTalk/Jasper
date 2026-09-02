@@ -12,13 +12,16 @@
  * The cached engine also captures the `gemstone.omniSearch` settings that were live when it was built,
  * so the command layer calls `onConfigChanged()` (from an `onDidChangeConfiguration` listener) to drop
  * the engine when those settings change — otherwise a settings edit made while the panel is open would
- * be silently ignored until the session changed or the window reloaded. (Rebinding on a live SESSION
- * switch — the `sessionMode: "multiple"` case — is deferred to #437.)
+ * be silently ignored until the session changed or the window reloaded. Switching the SELECTED session
+ * calls `onSessionSelectionChanged()` for the same reason, and additionally wipes the webview: the
+ * engine is rebuilt lazily either way, but until it is, everything on screen — query, results, pivot,
+ * preview — belongs to a session the user has left (issue #517).
  *
- * Both catch-ups are gated on the view being VISIBLE, because the engine outlives a hidden panel and
+ * Every catch-up is gated on the view being VISIBLE, because the engine outlives a hidden panel and
  * reloading its corpora costs image-wide synchronous GCI executes. A hidden panel therefore only notes
- * that it is out of date (a dropped engine for config, `syncPending` for a commit/abort) and pays for
- * it on the next reveal or webview message — never on the hidden path itself.
+ * that it is out of date — a dropped engine for config, `syncPending` for a commit/abort,
+ * `refreshPending` for an explicit refresh — and pays for it on the next reveal or webview message,
+ * never on the hidden path itself.
  */
 import * as vscode from 'vscode';
 import { createOmniEngine, OmniEngine, OmniViewData } from './omniEngine';
@@ -28,6 +31,7 @@ import {
   CommonInbound,
   configMessage,
   dispatchEngineMessage,
+  NO_SESSION_MESSAGE,
   renderOmniHtml,
   resultsMessage,
 } from './omniSearchShared';
@@ -61,6 +65,18 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
   // reloaded them yet (see onSessionSynced). Cleared by flushPendingSync, and whenever the engine is
   // dropped or rebuilt — a fresh engine primes its corpora, so there is nothing left to catch up on.
   private syncPending = false;
+  // A `gemstone.search.refresh` that arrived while the panel was collapsed. Same bargain as syncPending
+  // — don't pay three image-wide GCI executes to redraw a view nobody can see — but a refresh is the
+  // stronger debt: it also re-fetches an open references list, so when both are outstanding this one
+  // wins. Cleared by the flush, and whenever the engine is dropped or rebuilt (a fresh engine primes
+  // every corpus, which is the reload this flag was owed).
+  private refreshPending = false;
+  // A newly resolved webview starts with none of the chrome state — no scope tabs, no case flag, no
+  // debounce. `ensureEngine` pushes the config when it BUILDS an engine, which covers the first open
+  // but not a reopen: collapsing the panel disposes the view, and the engine that outlives it still
+  // matches the session, so ensureEngine short-circuits and the fresh webview is never told anything.
+  // This flag makes the `ready` handler responsible for the push when the engine did not do it.
+  private webviewNeedsConfig = false;
   // Fires when the workbench has actually instantiated the view. `focus()` waits on this rather than
   // inspecting `this.view`, which only reports whether the view has EVER been built (it is set once in
   // `resolveWebviewView` and never cleared) and so cannot tell a landed reveal from a lost one.
@@ -70,6 +86,7 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
 
   resolveWebviewView(view: vscode.WebviewView): void {
     this.view = view;
+    this.webviewNeedsConfig = true; // brand-new webview, whether this is the first open or a reopen
     view.webview.options = { enableScripts: true, localResourceRoots: [] };
     view.webview.html = renderOmniHtml({ showPin: false });
     view.webview.onDidReceiveMessage((m: PanelInbound) => void this.onMessage(m));
@@ -89,7 +106,90 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
     this.deps = undefined;
     this.builtForSession = undefined;
     this.syncPending = false; // the replacement engine primes from scratch
+    this.refreshPending = false;
     if (this.view?.visible) void this.ensureEngine();
+  }
+
+  /** The user made a different session active (`SessionManager.onDidChangeSelection`). The engine is
+   *  bound to a session, so it has to go — but unlike a config change this also invalidates everything
+   *  the webview is showing: the results, the query that produced them, any references pivot and the
+   *  previewed source were all read out of the session just left. Leaving them on screen is worse than
+   *  showing nothing, because the rows still look live and activating one opens a document against the
+   *  session that is now current. So the webview is reset as well as the engine.
+   *
+   *  Logging out of the last session lands here too (there is no context to resolve): the panel resets
+   *  and, when visible, says to log in — rather than keeping the departed session's results.
+   *
+   *  A no-op when the selection lands back on the session we already built for — re-priming three
+   *  image-wide GCI executes to arrive where we already are is exactly what `builtForSession` exists to
+   *  avoid. */
+  async onSessionSelectionChanged(): Promise<void> {
+    const ctx = await this.resolveContext();
+    if (this.engine && this.builtForSession !== ctx?.sessionId) {
+      this.engine = undefined;
+      this.deps = undefined;
+      this.builtForSession = undefined;
+      this.syncPending = false; // a replacement engine primes from scratch
+      this.refreshPending = false;
+      this.post({ command: 'reset' });
+    }
+    // Hidden: the next reveal or webview message builds the engine for the now-current session.
+    if (this.view?.visible) await this.ensureEngine();
+  }
+
+  /** The user asked for a refresh (the panel's ⟳ button / `gemstone.search.refresh`): reload every
+   *  cached corpus from the stone and re-run the current search.
+   *
+   *  This is the only way to pick up work done by EXECUTING code — a class created or removed from a
+   *  workspace, a method compiled by evaluating `compileMethod:`, a new global. Those changes announce
+   *  nothing the panel can listen for, so short of a commit or abort (which do trigger a resync) the
+   *  cached corpora stay stale, and the staleness window has no upper bound. An explicit refresh closes
+   *  it on demand (issue #517).
+   *
+   *  It clears any pending hidden sync, since a full reload is strictly more than that sync owed. And it
+   *  calls the engine's `refresh` rather than its `resync`, which is what makes it re-fetch an open
+   *  references list instead of leaving it stale (see the engine). */
+  async refresh(): Promise<void> {
+    // Never instantiated: there is nothing on screen to refresh, and building an engine here would pay
+    // three image-wide GCI executes for a panel the user has not opened (the `gemstone.search.refresh`
+    // command reaches both hosts, so this fires even when the Spotter is the chosen UI).
+    if (!this.view) return;
+    // Collapsed: the view is disposed, so the reload would pay those same three executes to post its
+    // results to a webview nobody is looking at — the cost every other catch-up path in this file gates
+    // on `visible` to avoid. The request is not dropped, though: note it and pay on the next reveal, so
+    // the panel the user comes back to is the fresh one they asked for.
+    if (!this.view.visible) {
+      this.refreshPending = true;
+      return;
+    }
+    await this.reload();
+  }
+
+  /** The reload itself, with no visibility gate. Reached from `refresh()` once the panel is known to be
+   *  on screen, from the flush when a collapsed panel reopens, and from the webview's own ⟳ button —
+   *  which is proof enough on its own that someone is looking. */
+  private async reload(): Promise<void> {
+    if (!(await this.ensureEngine())) return;
+    this.syncPending = false;
+    this.refreshPending = false;
+    this.post({ command: 'busy', on: true });
+    let view: OmniViewData | null = null;
+    try {
+      // `refresh`, not `resync`: a references list is exactly as stale as the corpora, so an explicit
+      // refresh re-fetches it rather than leaving it alone the way a commit does.
+      view = await this.engine!.refresh(this.deps?.onError);
+    } catch (e: unknown) {
+      // `refresh()` is called as a bare `void` from the palette command and the title-bar button, so
+      // without this a rejection — `resolveReferences` against a busy session, say — would go unhandled
+      // and strand the panel faded.
+      const message = e instanceof Error ? e.message : String(e);
+      this.deps?.onError?.(message);
+      this.post({ command: 'error', message });
+    }
+    // A view takes the spinner off by replacing the results. Without one — superseded by a newer call,
+    // or the throw above — it has to come off explicitly, or the panel stays faded for good.
+    if (view) this.postView(view);
+    else this.post({ command: 'busy', on: false });
   }
 
   /** A class was compiled locally in `sessionId`: fold it into the live engine's cache (a cheap
@@ -116,10 +216,22 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
     if (this.view?.visible) await this.flushPendingSync();
   }
 
-  /** Reveal-time catch-up: make sure the engine matches the current session, then pay for any sync we
+  /** Reveal-time catch-up: make sure the engine matches the current session, then pay for whatever we
    *  skipped while hidden. */
   private async onShown(): Promise<void> {
-    if (await this.ensureEngine()) await this.flushPendingSync();
+    if (await this.ensureEngine()) await this.flushDeferred();
+  }
+
+  /** Pay for whatever a hidden panel deferred. A pending refresh subsumes a pending sync — it rebuilds
+   *  every corpus and re-fetches the references list on top — so it wins and the sync is dropped, rather
+   *  than the two paying for the same image-wide walk twice. */
+  private async flushDeferred(): Promise<void> {
+    if (this.refreshPending) {
+      this.syncPending = false;
+      await this.reload();
+      return;
+    }
+    await this.flushPendingSync();
   }
 
   /** Rebuild the corpora a hidden sync left stale, then redraw the current search. No-op when nothing
@@ -187,7 +299,8 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
       this.deps = undefined;
       this.builtForSession = undefined;
       this.syncPending = false;
-      this.post({ command: 'error', message: 'Log in to a GemStone session to search.' });
+      this.refreshPending = false;
+      this.post({ command: 'error', message: NO_SESSION_MESSAGE });
       return false;
     }
     if (this.engine && this.builtForSession === ctx.sessionId) return true;
@@ -197,6 +310,7 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
     this.syncPending = false; // a brand-new engine primes below, so there is no stale corpus to catch up
     this.post({ command: 'error', message: '' }); // clear any prior "log in" notice
     this.post(configMessage(ctx.deps.config, false));
+    this.webviewNeedsConfig = false; // just pushed it
     await this.engine.prime(ctx.deps.onError);
     return true;
   }
@@ -220,11 +334,24 @@ export class OmniSearchViewProvider implements vscode.WebviewViewProvider {
     try {
       if (m.command === 'ready') {
         await this.ensureEngine();
-        await this.flushPendingSync();
+        // A reopen reaches here with an engine that ensureEngine had no reason to rebuild, so the
+        // config it would have pushed never went out. Push it now, or the fresh webview runs with an
+        // empty tab row and a zero debounce until the first search happens to refill them.
+        if (this.webviewNeedsConfig && this.deps) {
+          this.webviewNeedsConfig = false;
+          this.post(configMessage(this.deps.config, false));
+        }
+        await this.flushDeferred();
         this.deliverFocus(); // a focus() that raced the webview load lands the cursor now
         return;
       }
       if (!this.engine && !(await this.ensureEngine())) return;
+      // Handled BEFORE the deferred-sync flush: a refresh already rebuilds every corpus, so letting the
+      // flush run first would pay for two full re-primes back to back.
+      if (m.command === 'refresh') {
+        await this.reload();
+        return;
+      }
       // Searching stale corpora would show deleted classes / miss new ones: pay the deferred rebuild.
       await this.flushPendingSync();
       const engine = this.engine!;

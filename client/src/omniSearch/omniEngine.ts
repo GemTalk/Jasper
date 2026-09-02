@@ -27,6 +27,7 @@ import {
   changeCategoryId,
 } from './omniTypes';
 import { match, compareMatches, MatchMode } from './omniMatch';
+import { compareMethodRows } from './rank';
 import { referenceRequestFor } from './references';
 
 /** A provider's truncation report plus the human scope name, so the webview can say WHICH scope was
@@ -213,8 +214,10 @@ function isNameLike(categoryId: OmniCategoryId): boolean {
  *    NAME (class/global), a lowercase one means a METHOD — so that kind wins ties. With lowercase
  *    "si", method prefixes lead; with "Si", class/global prefixes lead.
  *
- * Prefix (F) dominates the kind preference (E), which dominates the matcher score, which falls back
- * to the shorter-then-alphabetical order. `q` is the trimmed, lower-cased query.
+ * Prefix (F) dominates the kind preference (E), which dominates the matcher score. Below that the
+ * two kinds break ties differently: method-like rows by score, then class/side/selector
+ * (`compareMethodRows`, shared with the Methods provider); name-like rows by the matcher's
+ * shorter-then-alphabetical label order. `q` is the trimmed, lower-cased query.
  */
 function omniRank(a: OmniResult, b: OmniResult, q: string, upperFirst: boolean): number {
   const aPrefix = primaryName(a).toLowerCase().startsWith(q) ? 0 : 1;
@@ -226,17 +229,19 @@ function omniRank(a: OmniResult, b: OmniResult, q: string, upperFirst: boolean):
   const bKind = isNameLike(b.categoryId) === upperFirst ? 0 : 1;
   if (aKind !== bKind) return aKind - bKind;
 
-  // Two implementors of the SAME selector (e.g. every `withAll:`) sort alphabetically by class name,
-  // not by the label-length tiebreak compareMatches would otherwise apply (which buries a long class
-  // name below a short one). Keeps a wall of same-selector hits in a predictable A→Z order.
-  if (
-    a.action.kind === 'openMethod' &&
-    b.action.kind === 'openMethod' &&
-    a.action.selector === b.action.selector
-  ) {
-    const byClass = a.action.className.localeCompare(b.action.className);
-    if (byClass !== 0) return byClass;
-  }
+  // Within the method-like bucket, order by the METHOD, not by the label text: score first, then
+  // class A→Z, then instance side before class side, then selector. `compareMethodRows` is the one
+  // key the Methods provider also caps its own page with, so a row's place doesn't shift when the
+  // engine re-ranks it, and it gives Source/Literals rows — which all carry score 0, having matched
+  // a method BODY rather than their label — a recognizable order of their own instead of the stone's
+  // traversal order (issue #532). Score leads, so for Methods rows the class A→Z step only breaks a
+  // tie below the match quality.
+  //
+  // It must be a key, not a conditional override of compareMatches: comparing only SAME-selector
+  // pairs by class name and everything else by label length made the comparator non-transitive
+  // (A before B by length, B before C by class, C before A by length), and a cyclic comparator lets
+  // Array.prototype.sort return anything at all.
+  if (!isNameLike(a.categoryId) && !isNameLike(b.categoryId)) return compareMethodRows(a, b);
 
   return compareMatches({ score: a.score, label: a.label }, { score: b.score, label: b.label });
 }
@@ -289,8 +294,14 @@ export interface OmniEngine {
    *  matches the term and its category is in scope); returns null otherwise, leaving the view as-is. */
   applyChange(change: OmniCorpusChange): Promise<OmniViewData | null>;
   /** Drop + rebuild every cached corpus (on a session sync — commit/abort), catching changes from
-   *  outside this UI, then re-run the current term. Returns null while a pivot is showing. */
+   *  outside this UI, then re-run the current term. Returns null while a pivot is showing: a commit is
+   *  not a request to disturb what the user is reading. */
   resync(onError?: (message: string) => void): Promise<OmniViewData | null>;
+  /** The USER asked for fresh state (the ⟳ button / `gemstone.search.refresh`). Rebuilds every cached
+   *  corpus like `resync`, but where `resync` leaves a pivot alone this RE-FETCHES it from the stone —
+   *  a references list is exactly as stale as the corpora, and a refresh that visibly did nothing reads
+   *  as a broken button. Returns null only when a newer call superseded this one. */
+  refresh(onError?: (message: string) => void): Promise<OmniViewData | null>;
   /** Run the search for a raw field value and return the view (or null if superseded by a newer
    *  call). In the pivot, this filters the loaded reference rows client-side instead. */
   search(rawValue: string): Promise<OmniViewData | null>;
@@ -346,6 +357,13 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
   let excludedFromAll = new Set<OmniCategoryId>(config.excludedFromAll);
   // When non-null, the list shows the references/senders of a result (a "pivot"), not a live search.
   let pivot: ReferenceView | null = null;
+  // The row the pivot was taken FROM, kept so an explicit refresh can ask the stone for its references
+  // again. Without it a refresh could only rebuild the corpora and leave the pivot's rows as they were.
+  let pivotSource: OmniResult | null = null;
+  // What is typed in the box while pivoted. In the pivot the field filters the loaded reference rows
+  // rather than searching, so this is NOT `lastRawValue` (which holds the search to restore on the way
+  // out) — and a refresh has to re-apply it, or re-fetching would silently widen the list.
+  let pivotFilter = '';
   // The results backing the CURRENT view, indexed by row id.
   let current: OmniResult[] = [];
   // The reference rows from the last `referencesFor`, indexed by the preview list's row id. Kept
@@ -403,11 +421,26 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
     );
   }
 
+  /** Drop + reload every cached corpus. A provider that throws just keeps the cache it had — a partial
+   *  reload is better than none, and the error is surfaced rather than swallowed. */
+  async function reprimeAll(onError?: (message: string) => void): Promise<void> {
+    await Promise.all(
+      providers.map(async (p) => {
+        try {
+          await (p.reprime ?? p.prime)?.(NEVER_CANCELLED);
+        } catch (e: unknown) {
+          onError?.(e instanceof Error ? e.message : String(e));
+        }
+      }),
+    );
+  }
+
   async function runSearch(rawValue: string): Promise<OmniViewData | null> {
     // In the reference view, typing filters the loaded rows client-side (no provider fan-out); don't
     // touch `lastRawValue` (it holds the search to restore when the pivot is dismissed).
     if (pivot) {
-      current = filterPivot(pivot.results, rawValue.trim());
+      pivotFilter = rawValue.trim();
+      current = filterPivot(pivot.results, pivotFilter);
       return pivotView();
     }
     // A new search supersedes any reference load already in flight: otherwise its rows would land in
@@ -514,18 +547,31 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
       return null;
     },
     async resync(onError) {
-      await Promise.all(
-        providers.map(async (p) => {
-          try {
-            await (p.reprime ?? p.prime)?.(NEVER_CANCELLED);
-          } catch (e: unknown) {
-            onError?.(e instanceof Error ? e.message : String(e));
-          }
-        }),
-      );
+      await reprimeAll(onError);
       // Don't disturb a pivot; otherwise re-run the current term against the rebuilt corpora.
       if (pivot) return null;
       return runSearch(lastRawValue);
+    },
+    async refresh(onError) {
+      await reprimeAll(onError);
+      if (!pivot || !pivotSource || !deps.resolveReferences) return runSearch(lastRawValue);
+      // Re-ask the stone who references the row this pivot was taken from. Superseding in-flight work
+      // the way `pivot` does, and for the same reason: resolving senders of a common selector is slow,
+      // and anything the user does meanwhile must win.
+      const gen = ++generation;
+      const view = await deps.resolveReferences(pivotSource);
+      if (gen !== generation) return null;
+      if (!view) {
+        // The row is no longer referenceable — its method or class was deleted out from under us. Leave
+        // the pivot rather than keep showing a list of senders of something that is gone.
+        pivot = null;
+        pivotSource = null;
+        pivotFilter = '';
+        return runSearch(lastRawValue);
+      }
+      pivot = view;
+      current = filterPivot(view.results, pivotFilter);
+      return pivotView();
     },
     search: (rawValue) => runSearch(rawValue),
     async setScope(newScope) {
@@ -538,6 +584,8 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
       // filter that was never applied — and the scope then took effect invisibly on the way out,
       // narrowing a restored search the user never asked to narrow.
       pivot = null;
+      pivotSource = null;
+      pivotFilter = '';
       return runSearch(lastRawValue);
     },
     async toggleCase() {
@@ -572,12 +620,16 @@ export function createOmniEngine(deps: OmniEngineDeps): OmniEngine {
       if (gen !== generation) return null; // a newer call superseded this pivot
       if (!view) return null; // not referenceable — leave the current list as-is
       pivot = view;
+      pivotSource = result;
+      pivotFilter = '';
       current = view.results;
       return pivotView();
     },
     async exitPivot() {
       if (!pivot) return null;
       pivot = null;
+      pivotSource = null;
+      pivotFilter = '';
       return runSearch(lastRawValue);
     },
     async setExcludedFromAll(ids) {

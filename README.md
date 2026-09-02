@@ -24,14 +24,14 @@ If you already have a GemStone server running on another machine (or locally), y
 
 1. Install the extension from the VS Code Marketplace or Open VSX (links above).
 2. Open the **GemStone** sidebar (gem icon in the activity bar).
-3. Click the **+** button in the **Logins** section to create a new login.
-4. Fill in the connection details: GemStone version, host, stone name, NetLDI, and credentials.
-5. Click **Login** to connect.
+3. In **Logins & Sessions**, click **Add a Login** to open the login editor.
+4. Fill in the connection details, top to bottom: GemStone version, gem host, stone name, NetLDI (service name or port), and your GemStone user/password. **Host User** and **Host Password** are optional — supply them only when the remote NetLDI requires host authentication; leave them blank for a local stone or a guest-mode NetLDI. (Stuck? Click **Help me login** in the login editor for per-field guidance.)
+5. Click **Save**, then click the saved login to connect. A "Connecting…" notification reports success or failure, and the status bar (bottom right) shows the active session — or turns red, click-to-explain, if the connection fails.
 
 The first time you log in with a given GemStone version, Jasper needs the native GCI library (`libgcits`) for that version:
 
 - **On Windows**, Jasper will offer to **download the Windows client distribution** automatically. This downloads and extracts the library — no WSL or manual setup required.
-- **On macOS/Linux**, the library is included in the GemStone server distribution. If you have a local installation, Jasper auto-detects it. Otherwise, use the **Versions** section to download the distribution for your platform, or point Jasper to an existing library path via the `gemstone.gciLibraries` setting.
+- **On macOS/Linux**, the library is included in the GemStone server distribution. If you have a local installation, Jasper auto-detects it. Otherwise, use **Install Version…** in the Databases & Versions panel to download the distribution for your platform, or point Jasper to an existing library path via the `gemstone.gciLibraries` setting.
 
 ### Full local setup (macOS, Linux, or Windows with WSL)
 
@@ -40,13 +40,13 @@ To install, manage, and run a GemStone server locally:
 1. Install the extension from the VS Code Marketplace or Open VSX (links above).
 2. Open the **GemStone** sidebar (gem icon in the activity bar).
 3. Check the **OS Configuration** section: on macOS/Linux run the shared-memory setup if it warns; on Windows+WSL Jasper also surfaces WSL networking and services-file configuration here.
-4. Use the **Versions** section to download and extract a GemStone release.
-5. Use the **Databases** section to create a new database.
+4. Click **Manage Databases & Versions** in the **Databases** section title bar to open the panel, and install a GemStone release from its Versions list.
+5. Click **New Database** in the same title bar and fill in the form.
 6. Start the stone and NetLDI from the database tree.
 7. Click **Create Login** on the database to generate a login configuration.
 8. Click **Login** to connect and start developing.
 
-Alternatively, run **Quick Setup** (button in the Versions view) to do all of the above in one step.
+Alternatively, run **Quick Setup** (offered in the Databases section when you have no database yet) to do all of the above in one step.
 
 ## Windows usage
 
@@ -68,23 +68,19 @@ The **OS Configuration** view surfaces every host-level setting GemStone needs, 
 
 ### Version Management
 
-The **Versions** view lists GemStone releases available for your platform (macOS ARM, macOS x86, Linux x86). For each version you can:
+Versions live in the **Databases & Versions** panel, opened with **Manage Databases & Versions** in the **Databases** section title bar. Releases on this machine are listed with their status, size and release date, and each row offers:
 
-- **Download** the release archive from GemTalk Systems
-- **Extract** the archive (automatic DMG mounting on macOS, unzip on Linux)
-- **Open** the extracted directory in Finder/Explorer
-- **Delete** the download or extracted files
+- **Install** — downloads the release archive from GemTalk Systems and unpacks it in one action (automatic DMG mounting on macOS, unzip on Linux). **Remove** takes away everything it put there.
+- **Show in Finder** — open the product directory
+- **Open Terminal** — a terminal with that version's GemStone environment set up
 
-On Windows, the **Download Windows Client** button fetches the native client distribution for connecting to remote GemStone servers.
+The panel header carries **Install Version…**, which lists the releases you do not yet have, and **Register Local…**, which points Jasper at a GemStone tree you built yourself.
+
+On Windows, an **Install Windows Client** row action fetches the native client distribution for connecting to remote GemStone servers.
 
 ### Database Management
 
-The **Databases** view shows all databases under your GemStone root directory (configurable via `gemstone.rootPath`, default `~/Documents/GemStone`). Click the **+** button to create a new database with a multi-step wizard:
-
-1. Select a GemStone version (from extracted versions)
-2. Select a base extent
-3. Enter a stone name
-4. Enter a NetLDI name
+The **Databases** view shows all databases under your GemStone root directory (configurable via `gemstone.rootPath`, default `~/Documents/GemStone`). Click **New Database** in its title bar to open the **Databases & Versions** panel on a form asking for the GemStone release, the base extent, a stone name and a NetLDI name — all on screen at once, with the names already in use listed beside the fields that have to avoid them. Nothing is lost if you leave VS Code to look something up. A database is made by copying an installed release, so on a machine that has none the panel opens on its Versions list instead and says so, with **Install Version…** and **Register Local…** waiting there.
 
 The extension creates the full directory structure (`conf/`, `data/`, `log/`, `stat/`), writes configuration files (`system.conf`, `gem.conf`, stone config), copies the key file and base extent, and writes `database.yaml`.
 
@@ -109,7 +105,7 @@ A stone or NetLDI row shows one of:
 
 - **Running** — Jasper can see it and a connect should succeed.
 - **Stopped** — nothing of it is running.
-- **Running — not responding** — `gslist` lists it but reports it unhealthy; it may be holding a stale lock (see the Processes view).
+- **Running — not responding** — `gslist` lists it but reports it unhealthy; it may be holding a stale lock, which its row in the Databases & Versions panel offers to clear.
 - **Running — not connectable** (stone only) — the stone is healthy, but a login has to come in through its NetLDI and that NetLDI is not usable, so a connect will fail.
 - **Running outside Jasper** — the process is alive on this host but was started outside Jasper's environment. See below.
 
@@ -123,13 +119,13 @@ Jasper cross-checks the host process table against its own `gslist` and marks su
 
 Because two databases can use the same stone name, Jasper stops a server only when it can confirm from the paths that server was started with that it really is the managed database's. When it cannot, it says so and does not offer the restart. If a stop or kill fails, Jasper reports both names, the PIDs, the registration directory, and the `gslist` invocation that will show the servers where they actually are, so the situation can be finished by hand.
 
-### Process List
+### Processes
 
-The **Processes** view shows all running GemStone processes (stones and NetLDIs) detected via `gslist`, including version, PID, and port information.
+A database's own stone and NetLDI are shown on its row in the **Databases & Versions** panel, with version, PID, port and status, and Start/Stop for each.
 
-This view *is* Jasper's `gslist` view, so a server started outside Jasper's environment does not appear here even while it is running — the Databases view is where that shows up, as **Running outside Jasper** (see [Servers started outside Jasper](#servers-started-outside-jasper) above).
+Stale processes — where `gslist` reports a `frozen`, `killed`, or `exe deleted` status — are marked, and a **Delete Stale Lock File** action lets you remove the orphaned `*.LCK` after Jasper confirms the recorded PID is either gone or has been reused by an unrelated process. (On macOS, `gslist -c` can't detect a recycled PID on its own, so this manual step is sometimes necessary; see [docs/mcp-server.md](docs/mcp-server.md#limitations) for context.)
 
-Stale processes — where `gslist` reports a `frozen`, `killed`, or `exe deleted` status — are rendered with a red icon and the status prefixed onto the description. A **Delete Stale Lock File** inline action lets you remove the orphaned `*.LCK` after Jasper confirms the recorded PID is either gone or has been reused by an unrelated process. (On macOS, `gslist -c` can't detect a recycled PID on its own, so this manual step is sometimes necessary; see [docs/mcp-server.md](docs/mcp-server.md#limitations) for context.)
+A server started outside Jasper's environment does not appear in Jasper's own `gslist` at all; it shows on its database's row as **Running outside Jasper** (see [Servers started outside Jasper](#servers-started-outside-jasper) above), which is also where **Restart Under Jasper's Environment** is offered.
 
 ### MCP Server view
 
@@ -151,9 +147,11 @@ Each login is a row in the tree; click **Login** to start a session, which appea
 **Login rows** offer Edit, Duplicate, Delete, and Login. A login **cannot be edited or deleted while it has an active session** — log out first. **Session rows** (the children) offer:
 
 - **Commit** / **Abort** — transaction control
-- **Ping** — confirm the session is still active and responsive
+- **Session Configuration** (gear) — open this session's stone and gem configuration in its own editor tab, where the runtime-settable values can be changed
 - **Logout** — disconnect
 - **Export** and **Make Active Session** (context menu)
+
+**Open Workspace** is in this view's title bar rather than on a session row: a workspace runs against the *active* session (as Display It and Inspect It do), so it is not something you do "to" one session in particular. **Ping** lives on a session row in the **Databases & Versions** panel, which has the room to show its answer beside the row that asked.
 
 The active session (used for code execution) is highlighted, and the status bar shows which session is active.
 
@@ -172,6 +170,8 @@ The only difference is cardinality: a login may now have several session childre
 
 > **Note:** In multiple-session mode, an open workspace/editor stays bound to the session that opened it even after you switch the active session, so the active session, the Explorer, and an open editor can point at different sessions at once. If you use a custom `gemstone.exportPath`, include the `{session}` variable so concurrent sessions don't overwrite each other's exported files.
 
+> **Breakpoints follow the editor, not the active session.** Because an editor stays bound to the session that opened it, a breakpoint set in that editor is armed in that session's gem — so it stops the code you are looking at rather than the session that happens to be selected. **Enable All**, **Disable All** and **Remove All Breakpoints** go the other way and sweep *every* logged-in session, because VS Code keeps a single breakpoint list for the whole window. See [Breakpoints](#breakpoints).
+
 ### Code Execution
 
 With an active session, execute Smalltalk code from any editor:
@@ -188,19 +188,19 @@ Long-running expressions show a progress notification with soft-break and hard-b
 
 ### GemStone Explorer
 
-The **GemStone Explorer** is the primary way to browse and edit code, and the view to reach for first. It lives in its own activity-bar container as a set of linked panes — **Dictionaries**, **Class Categories**, **Classes**, **Hierarchy**, and **Methods** — plus **Open Editors** for what you have open.
+The **GemStone Explorer** is the primary way to browse and edit code, and the view to reach for first. It lives in its own activity-bar container as a set of linked panes — **Dictionaries**, **Class Categories**, **Classes**, **Hierarchy**, and **Methods**. Your open editors appear as ordinary editor tabs; a status-bar button tallies them and closes them all at once (**GemStone: Close All GemStone Editors**).
 
-Selecting down the panes narrows what the next one shows. Click a method to open its source; **Cmd+S** (Ctrl+S) compiles it back to GemStone. Class definitions and comments are editable the same way.
+Selecting down the panes narrows what the next one shows. Click a method to open its source; **Cmd+S** (Ctrl+S) compiles it back to GemStone. Class definitions and comments are editable the same way. A single click previews a method in one reusable tab, so clicking another replaces it — double-click a method (or use **Keep Method Open**) to keep it open while you browse others.
 
 Beyond browsing, the Explorer is where the code-changing operations live:
 
-- Filter any pane by name, with `*` as a wildcard, plus `reads:`/`writes:`/`accesses:` in the Methods pane to find the methods touching an instance variable
+- Filter the Dictionaries, Class Categories and Classes panes by name, with `*` as a wildcard; the Methods pane's Filter button opens VS Code's own find box inside the pane, whose toggle hides the rows that don't match, and an instance variable's context menu filters the pane to the methods that read, write or reference it
 - Group methods by category, or list them flat
-- Add, rename, and delete dictionaries, class categories, classes, methods, instance variables, and class variables
+- Add, rename, and delete dictionaries, class categories, classes, method categories, methods, instance variables, and class variables
 - Deleting first looks for what still references the target: nothing does, and it just goes (and says so); something does, and you are shown the methods before you decide
 - The refactorings — rename, extract/inline method and temporary, change signature, move/push up/push down method, instance-variable structure changes, extract superclass, split class — each previewed before it is applied
 - Browse senders, implementors, references, and the class hierarchy
-- Drag and drop methods between categories, and classes between dictionaries
+- Drag and drop methods between categories, classes onto a class category to refile them, and classes between dictionaries
 
 ### System Browser
 
@@ -256,8 +256,101 @@ When code execution hits an error, a **Debug** button opens the VS Code debugger
 
 ### Breakpoints
 
-- **Line breakpoints** — click the editor gutter in a `gemstone://` method to set/clear breakpoints mapped to GemStone step points
-- **Selector breakpoints** — right-click a selector and choose **Toggle Selector Breakpoint** to break whenever that selector is sent; breakpointed selectors are highlighted with a red border
+Breakpoints live in VS Code's own breakpoint list, so the familiar gutter,
+checkbox and Enable/Disable/Remove All controls all drive GemStone. Each one is
+applied to the session as a step-point break.
+
+**A GemStone breakpoint is tied to the compiled method it was set in.** It lives
+in the gem, not the repository — no `commit` persists it — so it goes away when
+the thing it was set in goes away:
+
+- **logging out** clears it, from VS Code's list as well as the gem, so no marker
+  is left for something that no longer exists. Unlike a breakpoint on a file, it
+  does not come back when you reopen the window;
+- **recompiling the method** clears it too. The recompile replaces the method, and
+  after an edit the same step point may be a different expression — so the
+  breakpoint is dropped rather than quietly moved somewhere you didn't put it.
+
+- **Only in a method editor.** A breakpoint names a step point in a method that
+  lives in the gem, so a `gemstone://` method editor with no unsaved edits is
+  the only place one can be set. Not a workspace, not a `.gst` file, and not an
+  **Executed Code** (doit) frame in the call stack — a doit's method is compiled
+  for that one execution and gone afterwards, so a breakpoint on it could never
+  be hit again. VS Code offers its gutter per *language*, which is the same for
+  all four, so a breakpoint set in the wrong one is taken back out with a message
+  saying where it belongs
+- **Unsaved edits hold a method's breakpoints as they are.** Step point numbers
+  come from the compiled method, and VS Code moves its breakpoints as you type,
+  so while an editor is dirty the two describe different code. No new breakpoint
+  is accepted — it is taken back out of the list, with a message naming the two
+  ways on: save the method, or **File: Revert File** to drop the edits. What is
+  already set is left alone rather than re-applied against positions that have
+  moved, so it is still there, on the same step points, once the editor is clean
+- **Line breakpoints** — click the editor gutter in a `gemstone://` method. A
+  gutter click means "this line", and lands on the leftmost step point on it
+- **Step-point breakpoints** — a Smalltalk line usually holds several step
+  points. **Toggle Breakpoint at Cursor** (`Shift+F9`) breaks at the step point
+  under the caret, not the first one on the line, and the token that will
+  actually break is outlined
+- **Enable / disable** — per breakpoint from the Breakpoints view checkbox or
+  **Enable/Disable Breakpoint at Cursor**. A disabled breakpoint stays set in the
+  gem so re-arming it is instant; its token marker turns grey and faded, matching
+  the grey the gutter dot goes
+- **A breakpoint belongs to the session its method came from.** A method editor
+  stays bound to the session that opened it, so a breakpoint set in it is armed
+  in *that* session's gem — not in whichever session happens to be active. With
+  one session live there is no difference; with several, this is what makes the
+  breakpoint stop the code you were looking at. A row in the **GemStone
+  Breakpoints** view can likewise only act on a method from the session the view
+  is reading
+- **All at once** — **Enable All**, **Disable All** and **Remove All
+  Breakpoints** act on every GemStone breakpoint in **every logged-in session**,
+  including any set outside Jasper by topaz or a `halt` left in the code. VS Code
+  keeps one breakpoint list for the window, so "all" means all of it: sweeping
+  only the active session would leave rows reading *disabled* over breakpoints
+  that still stop execution. If one session's gem refuses, the others are still
+  swept and the message names the one that failed
+- **Clear All Breakpoints in Method** drops every breakpoint in the method you
+  are in
+- **Not honoured: conditions, hit counts and log messages.** VS Code's *Edit
+  Breakpoint* accepts all three; GemStone breakpoints stop every time the step
+  point is reached, so Jasper warns when you set one rather than quietly ignoring
+  it. Conditional breakpoints are tracked under
+  [#277](https://github.com/GemTalk/Jasper/issues/277)
+- **Avoid VS Code's own "Deactivate Breakpoints"** button (the filled-dot icon in
+  the Breakpoints panel header). It greys the breakpoints out in the panel, but
+  the VS Code API exposes no way for an extension to observe that state — so
+  Jasper never hears about it and GemStone keeps stopping on them. Use
+  **Disable All Breakpoints** instead, which disarms them in the gem
+- **Break on entry by name** — the `+` button in VS Code's Breakpoints panel
+  takes a method name instead of a location. Type a selector (`balance`) and
+  Jasper finds the implementors, asking which class you meant when there is more
+  than one; or qualify it yourself (`Account>>balance`, `Account class>>new`).
+  The name is then replaced by an ordinary breakpoint on the method's first step
+  point, so it gets a real location, a red dot, and everything else breakpoints
+  do — handy for stopping in a method without going to find it first
+
+#### Step points
+
+- **Numbered inline** — step point numbers are drawn as inlay hints, and each is
+  clickable to toggle a breakpoint there. `gemstone.stepPoints.display` controls
+  when: `debugging` (the default — visible while a debug session runs, out of the
+  way otherwise), `always`, or `off`. **Toggle Step Point Numbers** flips them
+  without leaving the editor — it's the `123` button in the editor title bar, and
+  on the right-click menu
+- **On hover** — hovering a step point always reports its number and breakpoint
+  state, with links to set, clear, enable or disable it, whatever the numbering
+  is set to
+- Numbers are suppressed while a buffer has unsaved edits, since the stone's
+  offsets no longer line up with what you are looking at
+
+#### Breakpoint manager
+
+The **Breakpoints** view in the GemStone sidebar lists what the current session's
+gem actually holds, grouped by class and method with the step point each
+breakpoint resolved to. It shows breakpoints Jasper never set, which are
+otherwise invisible until execution stops on one. Rows carry an enable checkbox;
+clicking one opens the method with the caret on the step point.
 
 ### SUnit Test Runner
 

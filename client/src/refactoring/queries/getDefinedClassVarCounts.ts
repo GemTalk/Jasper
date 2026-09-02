@@ -2,11 +2,10 @@ import { QueryExecutor } from '../../queries/types';
 import { splitLines, dictLookupExpr } from '../../queries/util';
 
 // className → number of class variables DEFINED in that class (not inherited),
-// for every class in a dictionary, in a single round trip. The GemStone Explorer
-// uses this up front to decide whether a class row shows an expansion caret for
-// its class-variable sub-tree, so classes with no locally-defined class variables
-// stay flat. Accepts a dictionary by 1-based index (canonical for Jasper) or by
-// name.
+// for every class in a dictionary, in a single round trip. The mirror of
+// getDefinedInstVarCounts: the two together decide whether a class row shows an
+// expansion chevron for its variable sub-tree. Accepts a dictionary by 1-based index
+// (canonical for Jasper) or by name.
 export function getDefinedClassVarCounts(
   execute: QueryExecutor,
   dict: number | string,

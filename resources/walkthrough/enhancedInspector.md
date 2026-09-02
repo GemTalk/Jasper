@@ -1,6 +1,6 @@
-# Install optional server support
+# Install recommended server support
 
-Jasper has two optional server-side supports that aren't part of a stock GemStone
+Jasper has two recommended server-side supports that aren't part of a stock GemStone
 image, so each is installed once per stone:
 
 - **Enhanced Inspector** — replaces the plain list of instance variables with
@@ -12,8 +12,8 @@ image, so each is installed once per stone:
 They install together as one bundle. When you connect to a stone that is missing
 them, Jasper's behavior follows the `gemstone.serverSupport.autoInstall` setting:
 
-- **Ask on connect** — offer to install with one Install / Always / Never prompt
-  (the default).
+- **Ask on connect** — offer to install with one Install / Not Now / Always / Never
+  prompt (the default).
 - **Always** — install automatically on connect.
 - **Never** — do nothing.
 

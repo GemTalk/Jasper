@@ -47,7 +47,7 @@ Use `withTransientSession` when a test needs a second, independent session (e.g.
 
 Every session the harness creates — the shared one and any `withTransientSession` one — is armed with GemStone's own commit guard before it is handed to a test. A commit attempted by a test, or by the production code it exercises, fails at the commit site with `TransactionError 2249`, naming the harness in the error. There is currently **no opt-out** for those sessions: a test cannot commit on a session the harness handed it.
 
-The guard is session-scoped, so it binds only the sessions the harness creates. Anything that reaches the stone through a session of its own is unarmed and _can_ commit to the shared stone. A test that spawns one owns the cleanup itself; the harness's transaction-abort cannot reach it.
+The guard is session-scoped, so it binds only the sessions the harness creates. Anything that reaches the stone through a session of its own is unarmed and _can_ commit to the shared stone. This is enforced using linter rules, but in case a test that spawns one is required, it owns the cleanup itself; the harness's transaction-abort cannot reach it.
 
 Arming must be the harness's own doing. GemStone reports whether the call was the one that disabled commits, and the harness treats "they were already disabled" as a hard failure — by that point the invariant technically holds, but for a reason the harness did not establish (a `UserProfile` with `disableCommits`, a stone mid-restore). That is intentional: a whole matrix pass running under a guard the harness didn't arm is worse than a loud stop that makes the environment explain itself.
 

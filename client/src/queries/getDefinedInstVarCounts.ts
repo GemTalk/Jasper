@@ -3,9 +3,9 @@ import { splitLines, dictLookupExpr } from './util';
 
 // className → number of instance variables DEFINED in that class (not inherited),
 // for every class in a dictionary, in a single round trip. The GemStone Explorer
-// uses this up front to decide whether a class row shows an expansion caret for
-// its ivar sub-tree, so classes with no locally-defined ivars stay flat. Accepts
-// a dictionary by 1-based index (canonical for Jasper) or by name.
+// uses this up front to decide whether a class row shows an expansion chevron for
+// its variable sub-tree, so classes with no locally-defined variables stay flat.
+// Accepts a dictionary by 1-based index (canonical for Jasper) or by name.
 export function getDefinedInstVarCounts(
   execute: QueryExecutor,
   dict: number | string,

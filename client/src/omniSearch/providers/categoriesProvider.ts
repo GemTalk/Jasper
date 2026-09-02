@@ -8,7 +8,8 @@
  * `gemstone.explorer.revealCategory`) — a precise category reveal, not just landing in the dictionary.
  *
  * Staleness: the category set is derived from classes, so a class compile can introduce a brand-new
- * category. Both `reprime` (session sync) and `applyChange` (a class compile) just drop the lazy
+ * category. Both `reprime` (a session sync or an explicit refresh) and `applyChange` (a class
+ * compile) just drop the lazy
  * cache, so the next Categories search re-scans — cheap, since the scan only reruns when that scope
  * is actually used again.
  */

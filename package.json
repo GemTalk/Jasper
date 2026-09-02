@@ -19,8 +19,16 @@
     "node": ">=22.15.1"
   },
   "devEngines": {
-    "packageManager": { "name": "npm", "version": ">=11.16.0", "onFail": "error" },
-    "runtime": { "name": "node", "version": ">=22.15.1", "onFail": "error" }
+    "packageManager": {
+      "name": "npm",
+      "version": ">=11.16.0",
+      "onFail": "error"
+    },
+    "runtime": {
+      "name": "node",
+      "version": ">=22.15.1",
+      "onFail": "error"
+    }
   },
   "icon": "resources/gemstone-icon.png",
   "categories": [
@@ -137,7 +145,10 @@
         "properties": {
           "gemstone.omniSearch.ui": {
             "type": "string",
-            "enum": ["spotter", "panel"],
+            "enum": [
+              "spotter",
+              "panel"
+            ],
             "enumDescriptions": [
               "Editor-tab Spotter: a webview in an editor tab with labeled scope tabs, a source-preview pane, own match highlighting, and an always-on case indicator.",
               "Bottom-panel view (default): the same webview docked in the panel strip (next to Terminal/Output). Stays out of the way; results open in the editor area above it."
@@ -147,7 +158,11 @@
           },
           "gemstone.omniSearch.matchMode": {
             "type": "string",
-            "enum": ["fuzzy", "substring", "prefix"],
+            "enum": [
+              "fuzzy",
+              "substring",
+              "prefix"
+            ],
             "enumDescriptions": [
               "Subsequence match: the typed characters appear in order (the Quick-Open feel).",
               "The typed text appears as a contiguous run.",
@@ -221,7 +236,7 @@
             "default": 200,
             "minimum": 20,
             "maximum": 20000,
-            "markdownDescription": "How many matches the **Methods** search collects from the stone before it stops looking.\n\nThat search walks every selector of every class in your symbol list, so it gives up early to keep searching-as-you-type fast. This is a limit on the *results*, not just on the time: when a search stops here, no amount of **Load more** or **Load all** can reach the matches beyond it — the footer says `Methods scan capped at 200` when that happens.\n\nRaise it to cast a wider net on broad terms (`add`, `at:`), at the cost of a slower search on every keystroke. Narrowing your search term is usually faster than raising this."
+            "markdownDescription": "How many matching methods the **Methods** search brings back from the stone.\n\nThat search walks every selector of every class in your symbol list and keeps the best matches — an exact selector first, then ones starting with your term, then ones merely containing it — so what this limit cuts off is the least relevant tail. It is a limit on the *results*: when a search is cut off here, no amount of **Load more** or **Load all** can reach the matches beyond it — the footer says `Methods scan capped at 200` when that happens.\n\nRaise it to cast a wider net on broad terms (`add`, `at:`), at the cost of a bigger fetch on every keystroke. Narrowing your search term is usually faster than raising this."
           },
           "gemstone.omniSearch.referencesInPreview": {
             "type": "boolean",
@@ -237,7 +252,12 @@
             "type": "array",
             "items": {
               "type": "string",
-              "enum": ["classes", "methods", "dictionaries", "globals"]
+              "enum": [
+                "classes",
+                "methods",
+                "dictionaries",
+                "globals"
+              ]
             },
             "default": [],
             "markdownDescription": "Scopes to leave out of the **All** search while keeping their own tab, so you can still search them on purpose. Useful for **methods**, which queries the stone on every keystroke. This is different from `#gemstone.omniSearch.categories#`, which removes a scope altogether (no tab, no search). Source, Literals and Class Categories are always outside All and so cannot be listed here. This is the value the panel **starts** with; the **Scopes** button in the panel changes it for the current session without changing this setting."
@@ -247,6 +267,21 @@
       {
         "title": "GemStone",
         "properties": {
+          "gemstone.stepPoints.display": {
+            "type": "string",
+            "enum": [
+              "off",
+              "debugging",
+              "always"
+            ],
+            "enumDescriptions": [
+              "Never number step points.",
+              "Number step points while a debug session is running (default) — they are what you want when reasoning about where execution is, and clutter the rest of the time.",
+              "Always number step points in GemStone method source."
+            ],
+            "default": "debugging",
+            "markdownDescription": "When to number step points in GemStone method source, drawn as inlay hints. Each number is clickable and toggles a breakpoint at that step point. Whatever this is set to, hovering a step point always reports its number; hovering a NUMBER also offers a link that hides them again, and `#gemstone.breakpoints.toggleStepPoints#` flips them on or off from the editor's right-click menu or the command palette. Use the editor's own `#editor.inlayHints.enabled#` to restyle or suppress inlay hints everywhere."
+          },
           "gemstone.gciLibraries": {
             "type": "object",
             "default": {},
@@ -406,12 +441,12 @@
               "never"
             ],
             "enumDescriptions": [
-              "When a stone lacks the optional support, show one Install / Always / Never prompt on connect.",
-              "Install the optional support automatically on connect (uses the SystemUser default password; a notification explains if it must be entered).",
-              "Never offer or install the optional support."
+              "When a stone lacks the recommended support, show one Install / Not Now / Always / Never prompt on connect.",
+              "Install the recommended support automatically on connect (uses the SystemUser default password; a notification explains if it must be entered).",
+              "Never offer or install the recommended support."
             ],
             "default": "ask",
-            "markdownDescription": "What Jasper does when you connect to a stone missing the optional server-side support — the **Enhanced Inspector** (GemStone 3.7.5+) and the **refactoring engine** (all releases), installed together: `ask` shows one Install / Always / Never prompt, `always` installs silently, `never` does nothing. Installing needs a SystemUser login and commits the supporting classes to the database.\n\n▶ [Install GemStone support now](command:gemstone.installServerSupport)\n\n▶ [Uninstall GemStone support](command:gemstone.uninstallServerSupport) — removes both from the stone (does nothing if neither is installed; also needs a SystemUser login and commits the removal)"
+            "markdownDescription": "What Jasper does when you connect to a stone missing the recommended server-side support — the **Enhanced Inspector** (GemStone 3.7.5+) and the **refactoring engine** (all releases), installed together: `ask` shows one Install / Not Now / Always / Never prompt, `always` installs silently, `never` does nothing. Installing needs a SystemUser login and commits the supporting classes to the database.\n\n▶ [Install GemStone support now](command:gemstone.installServerSupport)\n\n▶ [Uninstall GemStone support](command:gemstone.uninstallServerSupport) — removes both from the stone (does nothing if neither is installed; also needs a SystemUser login and commits the removal)"
           }
         }
       },
@@ -507,22 +542,16 @@
         {
           "id": "gemstoneOmniSearchView",
           "name": "GemStone Search",
+          "contextualTitle": "GemStone Search",
           "type": "webview",
           "when": "gemstone.hasActiveSession"
         }
       ],
       "gemstoneExplorer": [
         {
-          "id": "gemstoneExplorerOpenEditors",
-          "name": "Open Editors",
-          "type": "tree",
-          "icon": "$(go-to-file)",
-          "when": "gemstone.explorerActive && gemstone.explorerHasOpenEditors",
-          "size": 1
-        },
-        {
           "id": "gemstoneExplorerDicts",
           "name": "Dictionaries",
+          "contextualTitle": "GemStone Dictionaries",
           "type": "tree",
           "icon": "$(symbol-namespace)",
           "when": "gemstone.explorerActive",
@@ -531,6 +560,7 @@
         {
           "id": "gemstoneExplorerCategories",
           "name": "Class Categories",
+          "contextualTitle": "GemStone Class Categories",
           "type": "tree",
           "icon": "$(symbol-folder)",
           "when": "gemstone.explorerActive",
@@ -539,6 +569,7 @@
         {
           "id": "gemstoneExplorerClasses",
           "name": "Classes",
+          "contextualTitle": "GemStone Classes",
           "type": "tree",
           "icon": "$(symbol-class)",
           "when": "gemstone.explorerActive",
@@ -547,6 +578,7 @@
         {
           "id": "gemstoneExplorerClassHierarchy",
           "name": "Hierarchy",
+          "contextualTitle": "GemStone Class Hierarchy",
           "type": "tree",
           "icon": "$(type-hierarchy)",
           "when": "gemstone.explorerActive",
@@ -556,6 +588,7 @@
         {
           "id": "gemstoneExplorerMethods",
           "name": "Methods",
+          "contextualTitle": "GemStone Methods",
           "type": "tree",
           "icon": "$(symbol-method)",
           "when": "gemstone.explorerActive",
@@ -566,51 +599,52 @@
         {
           "id": "gemstoneSharedMemory",
           "name": "Configure OS",
+          "contextualTitle": "GemStone Configure OS",
           "type": "tree",
           "icon": "$(memory)",
           "when": "gemstone.isWindows",
           "visibility": "collapsed"
         },
         {
-          "id": "gemstoneVersions",
-          "name": "Versions",
-          "type": "tree",
-          "icon": "$(versions)"
-        },
-        {
           "id": "gemstoneDatabases",
           "name": "Databases",
+          "contextualTitle": "GemStone Databases",
           "type": "tree",
           "icon": "$(database)"
         },
         {
-          "id": "gemstoneProcesses",
-          "name": "Processes",
-          "type": "tree",
-          "icon": "$(server-process)"
-        },
-        {
           "id": "gemstoneLogins",
           "name": "Logins & Sessions",
+          "contextualTitle": "GemStone Logins & Sessions",
           "type": "tree",
           "icon": "$(key)"
         },
         {
           "id": "gemstoneRowan",
           "name": "Rowan",
+          "contextualTitle": "GemStone Rowan",
           "type": "tree",
           "icon": "$(package)"
         },
         {
           "id": "jasperMcpServer",
           "name": "MCP Server",
+          "contextualTitle": "Jasper MCP Server",
           "type": "tree",
           "icon": "$(remote-explorer)",
           "visibility": "collapsed"
         },
         {
+          "id": "gemstoneBreakpoints",
+          "name": "Breakpoints",
+          "contextualTitle": "GemStone Breakpoints",
+          "icon": "$(debug-breakpoint)",
+          "type": "tree"
+        },
+        {
           "id": "gemstoneInspector",
           "name": "Inspector",
+          "contextualTitle": "GemStone Inspector",
           "type": "tree",
           "icon": "$(eye)"
         }
@@ -618,7 +652,8 @@
       "explorer": [
         {
           "id": "gemstoneRowanProject",
-          "name": "Rowan",
+          "name": "GemStone Rowan",
+          "contextualTitle": "GemStone Rowan",
           "type": "tree",
           "icon": "$(package)",
           "when": "gemstone.workspaceIsRowanProject"
@@ -628,7 +663,7 @@
     "viewsWelcome": [
       {
         "view": "gemstoneLogins",
-        "contents": "Add a login to connect to a stone.\n[Add a Login](command:gemstone.addLogin)\nNo database yet? Create one from the Databases view."
+        "contents": "Add a login to connect to a stone.\n[Add a Login](command:gemstone.addLogin)\nNo database yet? [Create one](command:gemstone.newDatabase)."
       },
       {
         "view": "gemstoneRowan",
@@ -656,27 +691,13 @@
         "when": "!isMac"
       },
       {
-        "view": "gemstoneVersions",
-        "contents": "Loading versions...\n[Refresh](command:gemstone.refreshVersions)"
-      },
-      {
         "view": "gemstoneDatabases",
         "contents": "GemStone system administration requires Windows Subsystem for Linux (WSL2).\n[Install WSL](https://learn.microsoft.com/en-us/windows/wsl/install)",
         "when": "gemstone.isWindows && !gemstone.wslAvailable"
       },
       {
         "view": "gemstoneDatabases",
-        "contents": "No databases yet.\nSet one up in one step — Quick Setup downloads a version, creates a database, starts the stone, and adds a login.\n[Quick Setup](command:gemstone.quickSetup)\nOr create one from a version you've already installed.\n[Create Database](command:gemstone.createDatabase)",
-        "when": "!gemstone.isWindows || gemstone.wslAvailable"
-      },
-      {
-        "view": "gemstoneProcesses",
-        "contents": "GemStone system administration requires Windows Subsystem for Linux (WSL2).\n[Install WSL](https://learn.microsoft.com/en-us/windows/wsl/install)",
-        "when": "gemstone.isWindows && !gemstone.wslAvailable"
-      },
-      {
-        "view": "gemstoneProcesses",
-        "contents": "No running GemStone processes.\n[Refresh](command:gemstone.refreshProcesses)",
+        "contents": "No databases yet.\nSet one up in one step — Quick Setup downloads a version, creates a database, starts the stone, and adds a login.\n[Quick Setup](command:gemstone.quickSetup)\nOr choose the pieces yourself, in one form.\n[New Database...](command:gemstone.newDatabase)",
         "when": "!gemstone.isWindows || gemstone.wslAvailable"
       }
     ],
@@ -742,9 +763,31 @@
             ]
           },
           {
+            "id": "browseClasses",
+            "title": "Browse classes",
+            "description": "Open the GemStone Explorer and click a class — its methods appear in the Methods pane below. Or jump straight to any class by name.\n[Find Class…](command:gemstone.findClass)",
+            "media": {
+              "markdown": "resources/walkthrough/browseClasses.md"
+            },
+            "completionEvents": [
+              "onCommand:gemstone.findClass"
+            ]
+          },
+          {
+            "id": "search",
+            "title": "Search your code",
+            "description": "One box searches across classes, methods, and method source — the fastest way to find something when you don't know where it lives.\n[GemStone Search…](command:gemstone.search)",
+            "media": {
+              "markdown": "resources/walkthrough/search.md"
+            },
+            "completionEvents": [
+              "onCommand:gemstone.search"
+            ]
+          },
+          {
             "id": "serverSupport",
-            "title": "Install optional server support",
-            "description": "Jasper can install two optional server-side supports: the Enhanced Inspector (rich object views, GemStone 3.7.5+) and the refactoring engine (rename instance variable, and more). On connect it offers to install whatever a stone is missing; the `gemstone.serverSupport.autoInstall` setting (ask / always / never) controls that.\n[Install GemStone Support…](command:gemstone.installServerSupport)\n\n[Uninstall GemStone Support…](command:gemstone.uninstallServerSupport) removes both from the stone (does nothing if neither is installed).",
+            "title": "Install recommended server support",
+            "description": "Jasper can install two recommended server-side supports: the Enhanced Inspector (rich object views, GemStone 3.7.5+) and the refactoring engine (rename instance variable, and more). On connect it offers to install whatever a stone is missing; the `gemstone.serverSupport.autoInstall` setting (ask / always / never) controls that.\n[Install GemStone Support…](command:gemstone.installServerSupport)\n\n[Uninstall GemStone Support…](command:gemstone.uninstallServerSupport) removes both from the stone (does nothing if neither is installed).",
             "media": {
               "markdown": "resources/walkthrough/enhancedInspector.md"
             },
@@ -878,15 +921,15 @@
       },
       {
         "command": "gemstone.openWorkspace",
-        "title": "Open Getting Started Workspace",
+        "title": "Open Workspace",
         "category": "GemStone",
         "icon": "$(notebook)"
       },
       {
-        "command": "gemstone.sessionOpenWorkspace",
-        "title": "Open Workspace",
+        "command": "gemstone.showSessionConfiguration",
+        "title": "Session Configuration",
         "category": "GemStone",
-        "icon": "$(notebook)"
+        "icon": "$(settings-gear)"
       },
       {
         "command": "gemstone.openTutorial",
@@ -916,8 +959,13 @@
         "icon": "$(mortar-board)"
       },
       {
+        "command": "gemstone.startHere",
+        "title": "Start Here",
+        "category": "GemStone"
+      },
+      {
         "command": "gemstone.resetGettingStarted",
-        "title": "Reset Getting Started (Show Walkthrough on Next Startup)",
+        "title": "Reset Getting Started (Walkthrough + Start Here Button)",
         "category": "GemStone"
       },
       {
@@ -1133,16 +1181,132 @@
         "icon": "$(search-fuzzy)"
       },
       {
+        "command": "gemstone.search.refresh",
+        "title": "Refresh GemStone Search",
+        "category": "GemStone",
+        "icon": "$(refresh)"
+      },
+      {
         "command": "gemstone.findMethodInClass",
         "title": "Find Method in Class…",
         "category": "GemStone",
         "icon": "$(search)"
       },
       {
-        "command": "gemstone.toggleSelectorBreakpoint",
-        "title": "Toggle Selector Breakpoint",
+        "command": "gemstone.navigateBack",
+        "title": "GemStone Go Back",
+        "category": "GemStone",
+        "icon": "$(arrow-left)"
+      },
+      {
+        "command": "gemstone.navigateForward",
+        "title": "GemStone Go Forward",
+        "category": "GemStone",
+        "icon": "$(arrow-right)"
+      },
+      {
+        "command": "gemstone.breakpoints.toggleAtCursor",
+        "title": "Toggle Breakpoint at Cursor",
         "category": "GemStone",
         "icon": "$(debug-breakpoint)"
+      },
+      {
+        "command": "gemstone.breakpoints.enableAtCursor",
+        "title": "Enable Breakpoint at Cursor",
+        "category": "GemStone",
+        "icon": "$(debug-breakpoint)"
+      },
+      {
+        "command": "gemstone.breakpoints.disableAtCursor",
+        "title": "Disable Breakpoint at Cursor",
+        "category": "GemStone",
+        "icon": "$(debug-breakpoint-disabled)"
+      },
+      {
+        "command": "gemstone.breakpoints.clearMethod",
+        "title": "Clear All Breakpoints in Method",
+        "category": "GemStone",
+        "icon": "$(debug-breakpoint-unsupported)"
+      },
+      {
+        "command": "gemstone.breakpoints.enableAll",
+        "title": "Enable All Breakpoints",
+        "category": "GemStone",
+        "icon": "$(debug-breakpoint)"
+      },
+      {
+        "command": "gemstone.breakpoints.disableAll",
+        "title": "Disable All Breakpoints",
+        "category": "GemStone",
+        "icon": "$(debug-breakpoint-disabled)"
+      },
+      {
+        "command": "gemstone.breakpoints.removeAll",
+        "title": "Remove All Breakpoints",
+        "category": "GemStone",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "gemstone.breakpoints.refresh",
+        "title": "Refresh Breakpoints",
+        "category": "GemStone",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "gemstone.breakpoints.toggleStepPoints",
+        "title": "Toggle Step Point Numbers",
+        "category": "GemStone",
+        "icon": "$(symbol-numeric)"
+      },
+      {
+        "command": "gemstone.breakpoints.reveal",
+        "title": "Reveal Breakpoint in Source",
+        "category": "GemStone",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "gemstone.breakpoints.remove",
+        "title": "Remove Breakpoint",
+        "category": "GemStone",
+        "icon": "$(close)"
+      },
+      {
+        "command": "gemstone.breakpoints.enable",
+        "title": "Enable Breakpoint",
+        "category": "GemStone",
+        "icon": "$(debug-breakpoint)"
+      },
+      {
+        "command": "gemstone.breakpoints.disable",
+        "title": "Disable Breakpoint",
+        "category": "GemStone",
+        "icon": "$(debug-breakpoint-disabled)"
+      },
+      {
+        "command": "gemstone.breakpoints.clearClass",
+        "title": "Clear Breakpoints in Class",
+        "category": "GemStone",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "gemstone.breakpoints.toggleAtStepPoint",
+        "title": "Toggle Breakpoint at Step Point",
+        "category": "GemStone"
+      },
+      {
+        "command": "gemstone.breakpoints.enableAtStepPoint",
+        "title": "Enable Breakpoint at Step Point",
+        "category": "GemStone"
+      },
+      {
+        "command": "gemstone.breakpoints.disableAtStepPoint",
+        "title": "Disable Breakpoint at Step Point",
+        "category": "GemStone"
+      },
+      {
+        "command": "gemstone.breakpoints.clearAtStepPoint",
+        "title": "Clear Breakpoint at Step Point",
+        "category": "GemStone"
       },
       {
         "command": "gemstone.refreshVersions",
@@ -1169,17 +1333,6 @@
         "icon": "$(discard)"
       },
       {
-        "command": "gemstone.explorer.revealOpenEditor",
-        "title": "Reveal Open Editor",
-        "category": "GemStone"
-      },
-      {
-        "command": "gemstone.explorer.closeOpenEditor",
-        "title": "Close Editor",
-        "category": "GemStone",
-        "icon": "$(close)"
-      },
-      {
         "command": "gemstone.explorer.closeAllOpenEditors",
         "title": "Close All GemStone Editors",
         "category": "GemStone",
@@ -1187,12 +1340,12 @@
       },
       {
         "command": "gemstone.explorer.openSelectedMethodToSide",
-        "title": "Pin Method",
+        "title": "Keep Method Open (Pin)",
         "category": "GemStone"
       },
       {
         "command": "gemstone.explorer.openMethodToSide",
-        "title": "Pin Method",
+        "title": "Keep Method Open (Pin)",
         "category": "GemStone",
         "icon": "$(pin)"
       },
@@ -1400,6 +1553,18 @@
         "title": "Rename Method Category…",
         "category": "GemStone",
         "icon": "$(edit)"
+      },
+      {
+        "command": "gemstone.explorer.removeMethodCategory",
+        "title": "Remove Method Category",
+        "category": "GemStone",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "gemstone.explorer.addVariable",
+        "title": "Add Variable…",
+        "category": "GemStone",
+        "icon": "$(add)"
       },
       {
         "command": "gemstone.explorer.newMethod",
@@ -1665,70 +1830,10 @@
         "icon": "$(split-horizontal)"
       },
       {
-        "command": "gemstone.downloadVersion",
-        "title": "Download",
-        "category": "GemStone Admin",
-        "icon": "$(cloud-download)"
-      },
-      {
-        "command": "gemstone.deleteDownload",
-        "title": "Delete Download",
-        "category": "GemStone Admin",
-        "icon": "$(trash)"
-      },
-      {
-        "command": "gemstone.extractVersion",
-        "title": "Extract",
-        "category": "GemStone Admin",
-        "icon": "$(package)"
-      },
-      {
-        "command": "gemstone.deleteExtracted",
-        "title": "Delete Extracted Version",
-        "category": "GemStone Admin",
-        "icon": "$(trash)"
-      },
-      {
         "command": "gemstone.registerLocalVersion",
         "title": "Register Local Version…",
         "category": "GemStone Admin",
         "icon": "$(add)"
-      },
-      {
-        "command": "gemstone.unregisterLocalVersion",
-        "title": "Unregister Local Version",
-        "category": "GemStone Admin",
-        "icon": "$(trash)"
-      },
-      {
-        "command": "gemstone.openVersionFolder",
-        "title": "Open in File Manager",
-        "category": "GemStone Admin",
-        "icon": "$(folder-opened)"
-      },
-      {
-        "command": "gemstone.openVersionTerminal",
-        "title": "Open Terminal",
-        "category": "GemStone Admin",
-        "icon": "$(terminal)"
-      },
-      {
-        "command": "gemstone.downloadWindowsClient",
-        "title": "Install Windows Client",
-        "category": "GemStone Admin",
-        "icon": "$(desktop-download)"
-      },
-      {
-        "command": "gemstone.openWindowsClientFolder",
-        "title": "Open Windows Client Folder",
-        "category": "GemStone Admin",
-        "icon": "$(folder-opened)"
-      },
-      {
-        "command": "gemstone.deleteWindowsClientExtracted",
-        "title": "Delete Windows Client",
-        "category": "GemStone Admin",
-        "icon": "$(trash)"
       },
       {
         "command": "gemstone.quickSetup",
@@ -1778,9 +1883,15 @@
         "icon": "$(trash)"
       },
       {
-        "command": "gemstone.createDatabase",
-        "title": "Create Database",
-        "category": "GemStone Admin",
+        "command": "gemstone.showDatabasesPanel",
+        "title": "Manage Databases & Versions",
+        "category": "GemStone",
+        "icon": "$(tools)"
+      },
+      {
+        "command": "gemstone.newDatabase",
+        "title": "New Database...",
+        "category": "GemStone",
         "icon": "$(add)"
       },
       {
@@ -1827,7 +1938,7 @@
       },
       {
         "command": "gemstone.openDbInFinder",
-        "title": "Reveal in Finder",
+        "title": "Show in Finder",
         "category": "GemStone Admin",
         "icon": "$(folder-opened)"
       },
@@ -1874,6 +1985,12 @@
         "icon": "$(save-all)"
       },
       {
+        "command": "gemstone.offlineExtentBackup",
+        "title": "Back Up Extents (Stone Stopped)",
+        "category": "GemStone",
+        "icon": "$(archive)"
+      },
+      {
         "command": "jasper.openMcpInspector",
         "title": "Open MCP Inspector",
         "category": "GemStone",
@@ -1895,7 +2012,59 @@
     "menus": {
       "commandPalette": [
         {
+          "command": "gemstone.breakpoints.toggleAtStepPoint",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.breakpoints.enableAtStepPoint",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.breakpoints.disableAtStepPoint",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.breakpoints.clearAtStepPoint",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.breakpoints.reveal",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.breakpoints.remove",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.breakpoints.enable",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.breakpoints.disable",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.breakpoints.clearClass",
+          "when": "false"
+        },
+        {
           "command": "gemstone.explorer.classClicked",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.removeMethodCategory",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.addVariable",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.navigateBack",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.navigateForward",
           "when": "false"
         },
         {
@@ -2011,14 +2180,6 @@
           "when": "false"
         },
         {
-          "command": "gemstone.explorer.revealOpenEditor",
-          "when": "false"
-        },
-        {
-          "command": "gemstone.explorer.closeOpenEditor",
-          "when": "false"
-        },
-        {
           "command": "gemstone.explorer.openSelectedMethodToSide",
           "when": "false"
         },
@@ -2117,6 +2278,31 @@
       ],
       "view/title": [
         {
+          "command": "gemstone.search.refresh",
+          "when": "view == gemstoneOmniSearchView",
+          "group": "navigation@0"
+        },
+        {
+          "command": "gemstone.breakpoints.enableAll",
+          "when": "view == gemstoneBreakpoints",
+          "group": "navigation@0"
+        },
+        {
+          "command": "gemstone.breakpoints.disableAll",
+          "when": "view == gemstoneBreakpoints",
+          "group": "navigation@1"
+        },
+        {
+          "command": "gemstone.breakpoints.removeAll",
+          "when": "view == gemstoneBreakpoints",
+          "group": "navigation@2"
+        },
+        {
+          "command": "gemstone.breakpoints.refresh",
+          "when": "view == gemstoneBreakpoints",
+          "group": "navigation@3"
+        },
+        {
           "command": "gemstone.clearTestResults",
           "when": "view == gemstoneExplorerClasses"
         },
@@ -2142,11 +2328,6 @@
           "command": "gemstone.explorer.abort",
           "when": "view == gemstoneExplorerDicts",
           "group": "navigation@5"
-        },
-        {
-          "command": "gemstone.explorer.closeAllOpenEditors",
-          "when": "view == gemstoneExplorerOpenEditors",
-          "group": "navigation"
         },
         {
           "command": "gemstoneExplorerDicts.filter",
@@ -2244,11 +2425,6 @@
           "group": "navigation@4"
         },
         {
-          "command": "gemstone.openWalkthrough",
-          "when": "view == gemstoneVersions",
-          "group": "navigation@0"
-        },
-        {
           "command": "gemstone.rowanNewProject",
           "when": "view == gemstoneRowan",
           "group": "navigation@0"
@@ -2274,37 +2450,57 @@
           "group": "navigation@1"
         },
         {
+          "command": "gemstone.openWorkspace",
+          "when": "view == gemstoneLogins && gemstone.hasActiveSession",
+          "group": "navigation@2"
+        },
+        {
           "command": "gemstone.clearInspector",
           "when": "view == gemstoneInspector",
           "group": "navigation"
         },
         {
-          "command": "gemstone.registerLocalVersion",
-          "when": "view == gemstoneVersions && (!gemstone.isWindows || gemstone.wslAvailable)",
-          "group": "navigation@2"
-        },
-        {
-          "command": "gemstone.refreshVersions",
-          "when": "view == gemstoneVersions",
-          "group": "navigation@3"
-        },
-        {
-          "command": "gemstone.createDatabase",
+          "command": "gemstone.newDatabase",
           "when": "view == gemstoneDatabases",
           "group": "navigation@1"
         },
         {
-          "command": "gemstone.refreshDatabases",
+          "command": "gemstone.showDatabasesPanel",
           "when": "view == gemstoneDatabases",
           "group": "navigation@2"
         },
         {
-          "command": "gemstone.refreshProcesses",
-          "when": "view == gemstoneProcesses",
-          "group": "navigation"
+          "command": "gemstone.refreshDatabases",
+          "when": "view == gemstoneDatabases",
+          "group": "navigation@3"
         }
       ],
       "view/item/context": [
+        {
+          "command": "gemstone.breakpoints.reveal",
+          "when": "view == gemstoneBreakpoints && viewItem == gemstoneBreakpoint",
+          "group": "inline@0"
+        },
+        {
+          "command": "gemstone.breakpoints.remove",
+          "when": "view == gemstoneBreakpoints && viewItem =~ /^gemstoneBreakpoint(Doit)?$/",
+          "group": "inline@1"
+        },
+        {
+          "command": "gemstone.breakpoints.enable",
+          "when": "view == gemstoneBreakpoints && viewItem =~ /^gemstoneBreakpoint(Doit)?$/",
+          "group": "1_state@0"
+        },
+        {
+          "command": "gemstone.breakpoints.disable",
+          "when": "view == gemstoneBreakpoints && viewItem =~ /^gemstoneBreakpoint(Doit)?$/",
+          "group": "1_state@1"
+        },
+        {
+          "command": "gemstone.breakpoints.clearClass",
+          "when": "view == gemstoneBreakpoints && viewItem == gemstoneBreakpointClass",
+          "group": "inline@0"
+        },
         {
           "command": "gemstone.explorer.renameClassCategory",
           "when": "view == gemstoneExplorerCategories && viewItem == explorerCategory",
@@ -2401,11 +2597,6 @@
           "group": "1_browse@0"
         },
         {
-          "command": "gemstone.explorer.closeOpenEditor",
-          "when": "view == gemstoneExplorerOpenEditors && viewItem == explorerOpenEditorItem",
-          "group": "inline@0"
-        },
-        {
           "command": "gemstone.explorer.implementorsOf",
           "when": "view == gemstoneExplorerMethods && viewItem =~ /^explorerMethod/",
           "group": "1_browse@1"
@@ -2427,12 +2618,12 @@
         },
         {
           "command": "gemstone.explorer.openDefinitionToSide",
-          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.novars)?(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/",
           "group": "inline@1"
         },
         {
           "command": "gemstone.explorer.openComment",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerClass.commented",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.novars)?\\.commented(\\.test(\\.running|\\.debugging)?)?$/",
           "group": "inline@2"
         },
         {
@@ -2482,7 +2673,7 @@
         },
         {
           "command": "gemstone.explorer.addInstVar",
-          "when": "view == gemstoneExplorerClasses && viewItem == explorerVarSide.instance && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClasses && viewItem == explorerVarSide.instance",
           "group": "inline"
         },
         {
@@ -2491,13 +2682,18 @@
           "group": "inline"
         },
         {
+          "command": "gemstone.explorer.addVariable",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass\\.novars(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/",
+          "group": "inline@4"
+        },
+        {
           "command": "gemstone.explorer.addInstVar",
-          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/ && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.novars)?(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/",
           "group": "2_generate@2"
         },
         {
           "command": "gemstone.explorer.addClassVar",
-          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.novars)?(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/",
           "group": "2_generate@3"
         },
         {
@@ -2541,6 +2737,16 @@
           "group": "inline@2"
         },
         {
+          "command": "gemstone.explorer.removeMethodCategory",
+          "when": "view == gemstoneExplorerMethods && viewItem == explorerProtocol",
+          "group": "inline@3"
+        },
+        {
+          "command": "gemstone.explorer.removeMethodCategory",
+          "when": "view == gemstoneExplorerMethods && viewItem == explorerProtocol",
+          "group": "2_category@1"
+        },
+        {
           "command": "gemstone.explorer.moveMethodToClass",
           "when": "view == gemstoneExplorerMethods && viewItem =~ /explorerMethod/ && gemstone.rbSupportAvailable",
           "group": "3_refactor@1"
@@ -2572,27 +2778,27 @@
         },
         {
           "command": "gemstone.explorer.renameClass",
-          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/ && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.novars)?(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/ && gemstone.rbSupportAvailable",
           "group": "inline@3"
         },
         {
           "command": "gemstone.explorer.classHistory",
-          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/ && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.novars)?(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/ && gemstone.rbSupportAvailable",
           "group": "3_refactor@1"
         },
         {
           "command": "gemstone.explorer.insertSuperclass",
-          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/ && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.novars)?(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/ && gemstone.rbSupportAvailable",
           "group": "3_refactor@2"
         },
         {
           "command": "gemstone.explorer.extractSuperclass",
-          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/ && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.novars)?(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/ && gemstone.rbSupportAvailable",
           "group": "3_refactor@3"
         },
         {
           "command": "gemstone.explorer.splitClass",
-          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/ && gemstone.rbSupportAvailable",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.novars)?(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/ && gemstone.rbSupportAvailable",
           "group": "3_refactor@4"
         },
         {
@@ -2632,7 +2838,7 @@
         },
         {
           "command": "gemstone.generateGrailStub",
-          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.novars)?(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/",
           "group": "2_generate@1"
         },
         {
@@ -2642,7 +2848,7 @@
         },
         {
           "command": "gemstone.explorer.removeClass",
-          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.novars)?(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/",
           "group": "inline@9"
         },
         {
@@ -2686,16 +2892,6 @@
           "group": "rowan@2"
         },
         {
-          "command": "gemstone.copyNetldiHost",
-          "when": "view == gemstoneProcesses && viewItem == gemstoneProcessNetldi && gemstone.isWindows && gemstone.wslAvailable",
-          "group": "inline@1"
-        },
-        {
-          "command": "gemstone.deleteStaleLock",
-          "when": "view == gemstoneProcesses && (viewItem == gemstoneProcessStoneStale || viewItem == gemstoneProcessNetldiStale)",
-          "group": "inline@1"
-        },
-        {
           "command": "gemstone.login",
           "when": "view == gemstoneLogins && (viewItem == gemstoneLogin || (viewItem == gemstoneLoginConnected && gemstone.multipleSessions))",
           "group": "inline@1"
@@ -2715,11 +2911,6 @@
           "when": "view == gemstoneLogins && (viewItem == gemstoneLogin || viewItem == gemstoneLoginConnected)"
         },
         {
-          "command": "gemstone.sessionOpenWorkspace",
-          "when": "view == gemstoneLogins && viewItem == gemstoneSession",
-          "group": "inline@1"
-        },
-        {
           "command": "gemstone.sessionCommit",
           "when": "view == gemstoneLogins && viewItem == gemstoneSession",
           "group": "inline@2"
@@ -2730,7 +2921,7 @@
           "group": "inline@3"
         },
         {
-          "command": "gemstone.sessionPing",
+          "command": "gemstone.showSessionConfiguration",
           "when": "view == gemstoneLogins && viewItem == gemstoneSession",
           "group": "inline@4"
         },
@@ -2761,62 +2952,6 @@
           "command": "gemstone.removeInspectorItem",
           "when": "view == gemstoneInspector && viewItem == gemstoneInspectorRoot",
           "group": "inline@1"
-        },
-        {
-          "command": "gemstone.downloadVersion",
-          "when": "view == gemstoneVersions && viewItem =~ /^gemstoneVersion(ClientExtracted)?$/ && (!gemstone.isWindows || gemstone.wslAvailable)",
-          "group": "inline@1"
-        },
-        {
-          "command": "gemstone.extractVersion",
-          "when": "view == gemstoneVersions && viewItem =~ /ServerDownloaded/",
-          "group": "inline@2"
-        },
-        {
-          "command": "gemstone.openVersionFolder",
-          "when": "view == gemstoneVersions && viewItem =~ /ServerExtracted/",
-          "group": "inline@3"
-        },
-        {
-          "command": "gemstone.openVersionTerminal",
-          "when": "view == gemstoneVersions && viewItem =~ /ServerExtracted/",
-          "group": "inline@6"
-        },
-        {
-          "command": "gemstone.openVersionFolder",
-          "when": "view == gemstoneVersions && viewItem == gemstoneVersionLocal",
-          "group": "inline@1"
-        },
-        {
-          "command": "gemstone.openVersionTerminal",
-          "when": "view == gemstoneVersions && viewItem == gemstoneVersionLocal",
-          "group": "inline@2"
-        },
-        {
-          "command": "gemstone.downloadWindowsClient",
-          "when": "view == gemstoneVersions && gemstone.isWindows && viewItem =~ /^gemstoneVersion(ServerDownloaded)?(ServerExtracted)?$/",
-          "group": "inline@4"
-        },
-        {
-          "command": "gemstone.openWindowsClientFolder",
-          "when": "view == gemstoneVersions && gemstone.isWindows && viewItem =~ /ClientExtracted/",
-          "group": "inline@5"
-        },
-        {
-          "command": "gemstone.deleteDownload",
-          "when": "view == gemstoneVersions && viewItem =~ /ServerDownloaded/"
-        },
-        {
-          "command": "gemstone.deleteExtracted",
-          "when": "view == gemstoneVersions && viewItem =~ /ServerExtracted/ && viewItem != gemstoneVersionLocal"
-        },
-        {
-          "command": "gemstone.deleteWindowsClientExtracted",
-          "when": "view == gemstoneVersions && gemstone.isWindows && viewItem =~ /ClientExtracted/"
-        },
-        {
-          "command": "gemstone.unregisterLocalVersion",
-          "when": "view == gemstoneVersions && viewItem == gemstoneVersionLocal"
         },
         {
           "command": "gemstone.replaceExtent",
@@ -2878,6 +3013,18 @@
           "when": "view == gemstoneDatabases && viewItem == gemstoneDb"
         }
       ],
+      "editor/title": [
+        {
+          "command": "gemstone.navigateBack",
+          "when": "resourceScheme == gemstone",
+          "group": "navigation@1"
+        },
+        {
+          "command": "gemstone.navigateForward",
+          "when": "resourceScheme == gemstone",
+          "group": "navigation@2"
+        }
+      ],
       "editor/context": [
         {
           "command": "gemstone.displayIt",
@@ -2915,9 +3062,29 @@
           "group": "2_navigation@1"
         },
         {
-          "command": "gemstone.toggleSelectorBreakpoint",
+          "command": "gemstone.breakpoints.toggleAtCursor",
           "when": "editorTextFocus && resourceLangId == gemstone-smalltalk",
           "group": "3_gemstoneBreakpoints@0"
+        },
+        {
+          "command": "gemstone.breakpoints.enableAtCursor",
+          "when": "editorTextFocus && resourceLangId == gemstone-smalltalk",
+          "group": "3_gemstoneBreakpoints@1"
+        },
+        {
+          "command": "gemstone.breakpoints.disableAtCursor",
+          "when": "editorTextFocus && resourceLangId == gemstone-smalltalk",
+          "group": "3_gemstoneBreakpoints@2"
+        },
+        {
+          "command": "gemstone.breakpoints.clearMethod",
+          "when": "editorTextFocus && resourceLangId == gemstone-smalltalk",
+          "group": "3_gemstoneBreakpoints@3"
+        },
+        {
+          "command": "gemstone.breakpoints.toggleStepPoints",
+          "when": "editorTextFocus && resourceLangId == gemstone-smalltalk",
+          "group": "3_gemstoneBreakpoints@4"
         }
       ]
     },
@@ -2960,6 +3127,11 @@
       }
     ],
     "keybindings": [
+      {
+        "command": "gemstone.breakpoints.toggleAtCursor",
+        "key": "shift+f9",
+        "when": "editorTextFocus && resourceScheme == gemstone && gemstone.hasActiveSession"
+      },
       {
         "command": "gemstone.explorer.openSelectedMethodToSide",
         "key": "ctrl+enter",
@@ -3096,12 +3268,12 @@
     "@eslint-community/eslint-plugin-eslint-comments": "^4.7.2",
     "@eslint/js": "^9.19.0",
     "@playwright/test": "^1.62.1",
-    "@types/node": "^22.15",
+    "@types/node": "~22.15",
     "@vitest/eslint-plugin": "^1.6.27",
     "@vscode/test-electron": "^3.1.0",
     "@vscode/vsce": "^3.7.1",
-    "esbuild": "^0.28.1",
-    "eslint": "^10.8.1",
+    "esbuild": "^0.28.2",
+    "eslint": "^10.9.1",
     "eslint-config-flat-gitignore": "^2.3.0",
     "eslint-config-prettier": "^10.1.8",
     "globals": "^17.11.0",
@@ -3112,24 +3284,25 @@
     "prettier": "^3.9.6",
     "tsx": "^4.23.12",
     "typescript": "^5.7.2",
-    "typescript-eslint": "^8.67.0",
+    "typescript-eslint": "^8.68.0",
     "vscode-oniguruma": "^2.0.1",
     "vscode-textmate": "^9.3.2"
   },
   "dependencies": {
+    "@vscode/codicons": "^0.0.45",
     "@vscode/debugadapter": "^1.68.0",
-    "koffi": "^2.15.1"
+    "koffi": "^2.16.3"
   },
   "overrides": {
-    "fast-uri": "^3.1.5",
+    "fast-uri": "^3.1.7",
     "js-yaml": "^4.3.1"
   },
   "allowScripts": {
-    "esbuild@0.28.1": true,
-    "koffi@2.16.2": true,
     "@vscode/vsce-sign@2.0.9": true,
     "lefthook@2.1.10": true,
     "keytar@7.9.0": true,
-    "fsevents": false
+    "fsevents": false,
+    "esbuild@0.28.2": true,
+    "koffi@2.16.3": true
   }
 }

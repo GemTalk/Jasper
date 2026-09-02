@@ -36,11 +36,20 @@ describe('session row inline button order', () => {
   it('leads with the most-used safe actions and trails with Logout, without the rare backup actions', () => {
     const order = inlineOrderFor('viewItem == gemstoneSession');
 
+    // Session Configuration opens the session's settings page — placed just
+    // before the session-ending Logout, which stays last.
+    //
+    // Open Workspace is deliberately absent: Display It, Inspect It and the
+    // Explorer all work in the *active* session, so opening a workspace "on"
+    // some other session promised something Jasper does not do. The workspace
+    // button is now in this view's title bar, where the active session is shown.
+    //
+    // Ping is absent too — it lives on a session row in the Databases & Versions
+    // panel, which has the room to show its answer beside the row that asked.
     expect(order).toEqual([
-      'gemstone.sessionOpenWorkspace',
       'gemstone.sessionCommit',
       'gemstone.sessionAbort',
-      'gemstone.sessionPing',
+      'gemstone.showSessionConfiguration',
       'gemstone.sessionLogout',
     ]);
   });

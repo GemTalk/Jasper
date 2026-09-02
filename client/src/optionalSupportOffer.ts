@@ -7,9 +7,10 @@
  * On connect (`maybeOfferServerSupport`), per that setting:
  *  - `never`  → do nothing.
  *  - `always` → install whatever is missing, silently.
- *  - `ask`    → show one modal (Install / Always / Never / dismiss) that installs
+ *  - `ask`    → show one modal (Install / Not Now / Always / Never) that installs
  *               the missing supports, or none. "Always"/"Never" remember the
- *               choice; dismiss asks again next connect.
+ *               choice; "Not Now" (also Escape / the window-close control) asks
+ *               again next connect.
  * The Command Palette entry (`runInstallServerSupport`) installs/reinstalls every
  * support applicable to the stone's version.
  *
@@ -189,15 +190,21 @@ export async function maybeOfferServerSupport(
     return;
   }
 
-  const INSTALL = 'Install';
-  const ALWAYS = 'Always';
-  const NEVER = 'Never';
+  const INSTALL: vscode.MessageItem = { title: 'Install' };
+  const ALWAYS: vscode.MessageItem = { title: 'Always' };
+  const NEVER: vscode.MessageItem = { title: 'Never' };
+  // "Not Now" IS the modal's close affordance (isCloseAffordance) — Escape and the
+  // window-close control resolve to it — so declining reads as an explicit, labeled
+  // choice instead of a generic "Cancel" that looks like it aborts the login. It
+  // declines this connect only: the setting stays at "ask", so the offer returns
+  // next time (that is why it is "Not Now" and not "Never").
+  const NOT_NOW: vscode.MessageItem = { title: 'Not Now', isCloseAffordance: true };
   const names = missing.map((f) => f.label).join(' and ');
   // Modal (not a toast): a one-time setup decision that is too easily missed as a
-  // notification. Buttons mirror the original Enhanced Inspector offer:
-  // Install / Always / Never, plus the modal's implicit Cancel ("not now").
+  // notification. Order mirrors the choices' permanence: install once, decline once,
+  // then the two sticky "remember this" options.
   const choice = await vscode.window.showInformationMessage(
-    `Install optional GemStone support on "${base.login.stone}"?`,
+    `Install recommended GemStone support on "${base.login.stone}"?`,
     {
       modal: true,
       detail:
@@ -207,6 +214,7 @@ export async function maybeOfferServerSupport(
         'Choose "Always" or "Never" to remember your choice for stones without it.',
     },
     INSTALL,
+    NOT_NOW,
     ALWAYS,
     NEVER,
   );
@@ -220,7 +228,7 @@ export async function maybeOfferServerSupport(
   if (choice === INSTALL || choice === ALWAYS) {
     await installFeatures(base, sessionManager, extensionPath, true, missing);
   }
-  // Cancelled/dismissed: leave the setting at "ask" and do nothing.
+  // "Not Now" / dismissed: leave the setting at "ask" and do nothing.
 }
 
 /**
@@ -240,7 +248,7 @@ export async function runInstallServerSupport(
   const applicable = SERVER_SUPPORT_FEATURES.filter((f) => f.isApplicable(base));
   if (applicable.length === 0) {
     vscode.window.showInformationMessage(
-      `No optional GemStone support applies to ${base.stoneVersion}.`,
+      `No recommended GemStone support applies to ${base.stoneVersion}.`,
     );
     return;
   }
@@ -283,7 +291,7 @@ export async function runUninstallServerSupport(sessionManager: SessionManager):
   const installed = installedFeatures(base, SERVER_SUPPORT_FEATURES);
   if (installed.length === 0) {
     vscode.window.showInformationMessage(
-      `No optional GemStone support is installed on "${base.login.stone}".`,
+      `No recommended GemStone support is installed on "${base.login.stone}".`,
     );
     return;
   }
@@ -293,7 +301,7 @@ export async function runUninstallServerSupport(sessionManager: SessionManager):
   // Modal (not a toast): a destructive, committed change the user must confirm.
   // Text mirrors the install offer so the two are recognizably a pair.
   const choice = await vscode.window.showWarningMessage(
-    `Uninstall optional GemStone support from "${base.login.stone}"?`,
+    `Uninstall recommended GemStone support from "${base.login.stone}"?`,
     {
       modal: true,
       detail:

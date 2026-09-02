@@ -322,11 +322,11 @@ describe('safe delete with something other than a method in the way', () => {
   });
 
   it('uses the confirmation label the caller asked for', async () => {
-    warn.mockResolvedValue('Remove All');
+    warn.mockResolvedValue('Remove With Subclass');
 
     const decision = await decideSafeDelete(
       1,
-      target({ kind: 'class', blockers: ['Sub1'], confirmLabel: 'Remove All' }),
+      target({ kind: 'class', blockers: ['Sub1'], confirmLabel: 'Remove With Subclass' }),
     );
 
     expect(decision).toBe('confirmed');

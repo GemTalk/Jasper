@@ -2420,9 +2420,19 @@ export class SystemBrowser {
       background-color: var(--vscode-list-hoverBackground);
     }
 
+    /* Selection has to stay clearly visible in every theme, including High
+       Contrast. This is a webview, so it does NOT get VS Code's automatic
+       focused/unfocused list treatment or its High-Contrast selection outline, and
+       the activeSelection background alone reads faint (or empty) there — which is
+       why the selected class/method were nearly invisible on High Contrast. Draw a
+       full outline around the selected row in the focus color (which High-Contrast
+       themes render as a bold, high-contrast color) so selection always shows a
+       visible box in every theme, on top of the theme selection background. */
     .column-list .item.selected {
-      background-color: var(--vscode-list-activeSelectionBackground);
+      background-color: var(--vscode-list-activeSelectionBackground, var(--vscode-list-inactiveSelectionBackground));
       color: var(--vscode-list-activeSelectionForeground);
+      outline: 1px solid var(--vscode-focusBorder, var(--vscode-list-focusOutline, #007acc));
+      outline-offset: -1px;
     }
 
     .column-list .item.virtual {

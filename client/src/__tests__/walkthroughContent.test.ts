@@ -29,9 +29,9 @@ describe('Getting Started walkthrough content', () => {
     pkg.contributes?.viewsWelcome ?? [];
   const loginsWelcome = viewsWelcome.find((v) => v.view === 'gemstoneLogins');
   // The Databases view has two welcome variants (the WSL-missing prompt and the
-  // normal one); the normal one is the entry that offers Create Database.
+  // normal one); the normal one is the entry that offers a new database.
   const databasesWelcome = viewsWelcome.find(
-    (v) => v.view === 'gemstoneDatabases' && v.contents.includes('command:gemstone.createDatabase'),
+    (v) => v.view === 'gemstoneDatabases' && v.contents.includes('command:gemstone.newDatabase'),
   );
 
   const commands: Array<{ command: string; title: string }> = pkg.contributes?.commands ?? [];
@@ -87,17 +87,19 @@ describe('Getting Started walkthrough content', () => {
 
   // Quick Setup is the one-step "I have no stone yet" path, so it belongs where a
   // missing database is surfaced — the Databases view — alongside the manual
-  // Create Database.
-  it('offers Quick Setup and Create Database from the Databases view welcome', () => {
+  // path, which now opens the Databases & Versions panel on its form rather than
+  // starting a chain of Quick Picks.
+  it('offers Quick Setup and a new database from the Databases view welcome', () => {
     expect(databasesWelcome?.contents).toContain('command:gemstone.quickSetup');
-    expect(databasesWelcome?.contents).toContain('command:gemstone.createDatabase');
+    expect(databasesWelcome?.contents).toContain('command:gemstone.newDatabase');
   });
 
-  // The walkthrough auto-opens on activation (startup), not on connecting or on
-  // revealing a view — so the Reset command's title must describe the real
-  // trigger rather than the stale "on Next Connect".
-  it('describes the reset command by its real trigger (startup)', () => {
-    expect(resetCommand?.title.toLowerCase()).toContain('startup');
-    expect(resetCommand?.title.toLowerCase()).not.toContain('connect');
+  // Reset re-arms two first-run surfaces: the walkthrough (auto-opens on startup)
+  // and the Start Here status-bar button (shows on connect). The title names both
+  // so the user knows what comes back, rather than describing a single trigger.
+  it('names both surfaces the reset command restores', () => {
+    const title = resetCommand?.title.toLowerCase();
+    expect(title).toContain('walkthrough');
+    expect(title).toContain('start here');
   });
 });

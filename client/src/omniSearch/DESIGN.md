@@ -77,12 +77,43 @@ Global "search anything browsable" for the GemStone IDE — the Jasper answer to
      | A class removed (Explorer → Remove Class) | `notifyClassRemoved` → `applyChange`, fired **once per class** because the delete takes the subtree | re-fetch per name; the lookup comes back empty and the entry drops |
      | Dictionary add / remove / rename | `onSymbolListChanged` → `notifySessionSynced` | full `resync` |
      | Commit / abort / file-in | `notifySessionSynced` | full `resync`, deferred while hidden |
+     | The user presses ⟳ / runs `gemstone.search.refresh` | `refresh` | full reload + the references list; deferred only while the docked panel is collapsed |
 
-     Everything else — a global created by evaluating code, a class removed by another session — is
-     only picked up by the next commit/abort `resync`. That is the by-design staleness window.
+     Everything else — a global created by evaluating code, a class or method compiled by a workspace
+     doit, a class removed by another session — announces nothing this panel can listen for, so short of
+     a commit or abort it is not picked up at all. That staleness window is by design but it has no
+     upper bound, which is why the **⟳ refresh** exists: it is the user's way to close it on demand,
+     without inventing a polling scheme or making every doit fire a corpus reload
+     ([#517](https://github.com/GemTalk/Jasper/issues/517)). It clears any deferred sync rather than
+     paying for both. Pressing ⟳ in the chrome is never deferred — the click proves someone is looking —
+     but running the command while the docked panel is COLLAPSED is: its view is disposed, so the reload
+     would pay three image-wide executes to post results to nobody. That request is remembered
+     (`refreshPending`) and paid on the next reveal, so the panel you come back to is the fresh one you
+     asked for. The control lives in the webview chrome (so both surfaces have it) AND in the view's
+     title bar (so it is discoverable where VS Code users look for a refresh).
+
+     It is a SEPARATE engine call from `resync`, not the same one wired to a button, and the difference
+     is the pivot. `resync` deliberately leaves a references list alone — a commit is not a request to
+     disturb what you are reading — but that made the ⟳ look like a dead button for anyone who happened
+     to have one open: the corpora reloaded silently and the stale senders stayed on screen. So
+     `refresh` re-asks the stone who references the row the pivot was taken from (keeping whatever
+     filter is typed into it), and if that row is gone — its method or class deleted — it leaves the
+     pivot rather than keep showing senders of nothing.
    - _Methods_: the selector space is too large to preload, so this provider queries the stone
      **per search term** (debounced, min query length `methodMinQueryLength`), reusing the
-     `searchSelectors` machinery.
+     `searchSelectors` machinery. That scan is **bounded and ranked**: it walks every selector of every
+     class in the symbol list, sorting matches into three tiers — the selector IS the term, STARTS WITH
+     it, merely CONTAINS it — and returns them in that order, capped per tier. Ranking has to happen on
+     the SERVER because the cut-off does: the walk visits dictionaries in hash order, so a scan that
+     stopped at the first `limit` matches answered whichever classes it reached first, and a term as
+     common as `at:` filled its slice with `instVarAt:put:` and friends while `Array>>at:` — the row the
+     user wanted — was never sent
+     ([#517](https://github.com/GemTalk/Jasper/issues/517)). The client re-ranks what it receives with
+     the configured matcher, but it can only order rows it was given. The walk no longer short-circuits
+     on a match count (a better-tier hit can be anywhere in the image); the one early exit left is a
+     FULL exact tier, where nothing later can displace a row. Cost on a 3.6.2 base image: ~27 ms for
+     `at:`, against ~2 ms for the old early exit — and a full walk was already the price of every
+     precise term, which never reached the old cutoff at all.
    - **Explicit-only** categories (`OmniCategory.explicitOnly`) are **excluded from the all-scope
      fan-out** — they run only when the user scopes to them, so heavyweight work never fires on a plain
      search:
@@ -116,7 +147,8 @@ Global "search anything browsable" for the GemStone IDE — the Jasper answer to
    with modes `fuzzy` (subsequence, default) | `substring` | `prefix`, plus case-sensitivity — read
    from settings (`gemstone.omniSearch.matchMode`, `…caseSensitive`). It returns match **ranges**,
    which the webview renders as `<mark>` highlights. `rank.ts` is the shared per-provider helper: match
-   every candidate, drop non-matches, sort by the matcher's total order, cap to `maxResultsPerCategory`.
+   every candidate, drop non-matches, sort by the matcher's total order, cap to `maxResultsPerCategory`
+   — plus `compareMethodRows`, the method-row order the Methods provider and the engine share.
 
 5. **Trigger.** VS Code cannot bind _double-tap-Shift_ (keybindings are chords, not double-taps), so we
    ship a command `gemstone.search` + a default keybinding **`ctrl+shift+a`** (`cmd+shift+a` on
@@ -166,6 +198,38 @@ Global "search anything browsable" for the GemStone IDE — the Jasper answer to
    the current term. (The origin QuickPick could only express scope with cramped icon title buttons +
    the title text — the webview tabs are the intended affordance.)
 
+8. **A search belongs to one session, and says so when that changes.** Both hosts hold an engine built
+   from ONE session's deps — its providers, its activation and its source preview all close over that
+   session — plus a webview full of rows read out of it. Nothing used to react when the user made
+   another session active: the docked panel rebuilt its engine only when something else happened to ask
+   it to (a reveal, a settings change, the next keystroke), and an open Spotter never rebuilt at all.
+   Until then the panel kept answering, and opening rows, out of a session the user had left
+   ([#517](https://github.com/GemTalk/Jasper/issues/517)).
+
+   `SessionManager.onDidChangeSelection` now reaches both hosts. Two decisions worth recording:
+
+   - **The webview is wiped, not just the engine.** Dropping the engine is enough for a settings change,
+     because the rows on screen are still true. Here they are not: they came from the old session, yet
+     they still look live, and activating one would open a document against the session that is now
+     current — a wrong answer presented as a right one. So the query, the results, any references pivot
+     and the preview all go, and the scope returns to All (where the replacement engine starts).
+   - **The wipe is NOT deferred while hidden, though the rebuild still is.** The `visible` gate exists to
+     avoid paying for image-wide GCI executes on a background path, and that reasoning still holds for
+     re-priming. It does not hold for clearing the screen: a reveal cannot un-show stale rows
+     retroactively, so the cheap part happens immediately and only the expensive part waits.
+
+   The Spotter is **re-pointed in place** rather than closed and reopened: it is an editor tab the user
+   put there (possibly pinned), and the tab, its pin and its loaded HTML are all session-independent.
+   `show()` for a different session takes the same path, which removed its old dispose-and-recreate
+   branch. Logging out of the last session is the same event with nothing to bind to: both hosts reset
+   and say "Log in to a GemStone session to search" instead of leaving the departed session's rows up —
+   and both DROP THE ENGINE as well. (The docked panel is always still there to see this; an UNPINNED
+   Spotter has already disposed itself on focus-out by the time you reach the logout, so only a pinned
+   one takes this path.) Clearing the screen alone would leave the departed session's primed
+   corpora (and an `activate` closed over its GCI handle) one keystroke away: the docked host's
+   `ensureEngine` gate already refused to answer without one, and the Spotter now refuses the same way,
+   showing the notice instead of searching. A later login rebinds both.
+
 ## Module map (`client/src/omniSearch/`)
 
 | File                         | Responsibility                                                        | Stone?    | Tested                 |
@@ -173,7 +237,7 @@ Global "search anything browsable" for the GemStone IDE — the Jasper answer to
 | `omniTypes.ts`               | `OmniProvider`, `OmniResult`, `OmniCategory`, config types            | no        | —                      |
 | `omniConfig.ts`              | read `gemstone.omniSearch.*` → typed `OmniConfig`                     | no        | ✅                     |
 | `omniMatch.ts`               | pure matcher/ranker (modes, score, ranges)                           | no        | ✅                     |
-| `rank.ts`                    | shared provider helper: match → sort → cap                           | no        | ✅ (via providers)     |
+| `rank.ts`                    | shared provider helpers: match → sort → cap; method-row order        | no        | ✅ (via providers)     |
 | `omniActions.ts`             | dispatch an `OmniAction` to injected handlers (open / reveal)        | no        | ✅                     |
 | `references.ts`              | pure glue: `OmniResult` → reference/senders query request           | no        | ✅                     |
 | `omniEngine.ts`              | the search engine: scope, case, load-more/all, count, ref pivot → `OmniViewData` | no | ✅            |
@@ -200,8 +264,8 @@ New shared query (if needed) lives under `client/src/queries/` per repo conventi
 - `categories`: which providers are enabled (default: all seven —
   `classes, methods, dictionaries, globals, source, literals, categories`).
 - `maxResultsPerCategory`: number (default `20`) — how many rows are **shown** per scope.
-- `maxServerScan`: number (default `200`, clamped 20–20 000) — how many matches a scope's
-  **server-side scan** collects before it stops. A different bound from `maxResultsPerCategory`; see
+- `maxServerScan`: number (default `200`, clamped 20–20 000) — the most matches a scope's
+  **server-side scan** hands back. A different bound from `maxResultsPerCategory`; see
   "Two different limits bound a result set" below.
 - `debounceMs`: number (default `120`).
 - `methodMinQueryLength`: number (default `2`) — min chars before the Methods provider queries the stone.
@@ -224,6 +288,18 @@ Behaviour decisions (Eric's review of the first webview cut):
 - **Flat, globally relevance-ranked results — no category grouping.** Typing "foo" should surface the
   closest "foo" first regardless of kind, so `buildView` ranks every result together by match score.
   Each row wears a small **category tag** (Class / Method / Global / …) so you still see what it is.
+- **Ties break by kind.** Below the prefix and first-letter-case rules, method rows (Methods / Source /
+  Literals) order by **match score first**, then class A→Z, then instance side before class side, then
+  selector; everything else orders by the matcher's shorter-then-alphabetical label order. Score leads,
+  so for Methods rows — where scores differ — the class/side/selector steps only break a tie beneath
+  the match quality. Method rows need their own key because Source and Literals hits match a method
+  BODY, so every one of them scores 0 and there is no label match left to rank on; for those the whole
+  order IS class/side/selector, and without it they came back in the stone's traversal order
+  ([#532](https://github.com/GemTalk/Jasper/issues/532)). One key per kind, never a conditional
+  override of the other: a comparator that only reorders SOME pairs is not transitive, and a cyclic
+  comparator makes `Array.prototype.sort` return anything it likes. The key (`compareMethodRows`,
+  in `rank.ts`) is shared with the Methods provider, which caps its own page with it — a provider
+  ordering its own rows differently would drop rows by one key and display the survivors by another.
 - **Scroll resets to the top** on a fresh query / clear / scope / case change, but NOT on Load-more.
 - **The result cap resets** to the base `maxResultsPerCategory` on a genuine term change (and on clear),
   so a raised "Load all" cap never silently persists into the next search.
@@ -241,11 +317,15 @@ Behaviour decisions (Eric's review of the first webview cut):
 ## Two different limits bound a result set
 
 The display cap (`maxResultsPerCategory`, raised by Load-more/Load-all) is not the only bound — the
-**Methods** scope also has a server-side one. `searchSelectors` short-circuits the moment it has
-`limit` matches, and `methodsProvider` clamps that limit to `maxServerScan` (default 200) however high
-the display cap goes. So with the default a broad selector term can never yield more than 200 rows,
-Load-all included. That ceiling is a **setting** rather than a constant precisely because the honest
-answer to "I want more than 200" is "raise the scan, and accept a slower search".
+**Methods** scope also has a server-side one. `searchSelectors` yields at most `limit` rows, and
+`methodsProvider` clamps that limit to `maxServerScan` (default 200) however high the display cap goes.
+So with the default a broad selector term can never yield more than 200 rows, Load-all included. That
+ceiling is a **setting** rather than a constant precisely because the honest answer to "I want more than
+200" is "raise the scan, and accept a slower search".
+
+What the ceiling drops is the least relevant tail, not an arbitrary slice: the scan ranks by match tier
+before it truncates (decision 3), so the exact and prefix hits survive a cut-off that would once have
+discarded them unseen.
 
 The two bounds mean different things to the user, so a provider reports when its OWN ceiling was the
 one that bound it (`OmniTruncationSink`, an optional 4th argument to `OmniProvider.search`, carrying
