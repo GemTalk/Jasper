@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 
 // A first-time user who just connected lands in the raw kernel with no signpost to
-// the basics — browse a class, open a workspace, search (issue #468, item 10). This
+// the basics — browse a class, open a workspace, search (issue #468). This
 // module surfaces those without getting in a power user's way:
 //
 //   • a left status-bar "Start Here" button, shown on connect, that opens a quick

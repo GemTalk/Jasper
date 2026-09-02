@@ -93,6 +93,7 @@ Each database node expands to show:
 
 Inline buttons on each database provide:
 
+- **Start** / **Stop** — bring the database's Stone and NetLDI up or down together, in one click; a running database offers Stop and a stopped one Start. It leaves alone whichever of the two is already in the state you asked for, so it can also finish a half-started database, and it stops if the stone does not change state — cancelling the stone's password prompt cancels the whole thing rather than taking the NetLDI down anyway. Not offered when one of the servers is **Running outside Jasper** (see below) — Jasper cannot stop that server, and starting the other half beside it would only collide with it. Also in the Command Palette as **GemStone Admin: Start Database** / **Stop Database**, which asks which database.
 - **Reveal in Finder** — open the database directory
 - **Open Terminal** — launch a terminal with all GemStone environment variables pre-configured
 - **Create Login** — generate a login pre-filled with the database's connection details
@@ -202,7 +203,7 @@ Beyond browsing, the Explorer is where the code-changing operations live:
 - Browse senders, implementors, references, and the class hierarchy
 - Retrace your steps: **Go Back** / **Go Forward** (`Ctrl+Alt+-` / `Ctrl+Shift+-`) walk method by method through what you have been reading, reopening each tab; the dictionaries, classes and categories you passed through name the pinned line above the trail rather than taking steps of their own, and **Recent Locations…** lists everywhere you have been including them. A method is listed once, at its most recent visit, so returning to one moves its row instead of repeating it. The trail is per session — switching sessions switches it, logging out clears it, and **Clear Navigation History** empties it by hand. A press with nothing of Jasper's left that way falls through to VS Code's own Go Back / Go Forward
 - Working inside one class makes every trail row read `TheClass>>…`; the pane's list toggle drops the class from each label, leaving the selectors, and moves the class to the dimmed column beside them (`gemstone.explorer.navigationSelectorsOnly`)
-- Drag and drop methods between categories, and classes between dictionaries
+- Drag and drop methods between categories, classes onto a class category to refile them, and classes between dictionaries
 
 ### System Browser
 
