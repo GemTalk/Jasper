@@ -144,4 +144,24 @@ describe('a method editor is still GemStone Smalltalk in every other respect', (
     expect(bp.filter((i) => i.when.includes(SMALLTALK))).toEqual([]);
     expect(bp.filter((i) => !i.when.includes(`resourceLangId == ${METHOD}`))).toEqual([]);
   });
+
+  it('gates the keyboard route to those actions the same way', () => {
+    // The menu and the keybinding are two doors to one command, and they were
+    // gated differently — Shift+F9 went by URI scheme, which also let it fire in
+    // a class comment and a class definition. Deriving the command set from the
+    // menu ties the two together, so a keybinding added for one of these later
+    // cannot quietly reopen the door the menu just closed.
+    const items: { command: string; when: string }[] = pkg.contributes.menus['editor/context'];
+    const editorBreakpointCommands = new Set(
+      items.filter((i) => i.command.startsWith('gemstone.breakpoints.')).map((i) => i.command),
+    );
+    const bindings: { command: string; when?: string }[] = pkg.contributes.keybindings;
+    const bound = bindings.filter((k) => editorBreakpointCommands.has(k.command));
+
+    expect(bound.length).toBeGreaterThan(0);
+    const wrong = bound
+      .filter((k) => !(k.when ?? '').includes(`resourceLangId == ${METHOD}`))
+      .map((k) => k.command);
+    expect(wrong).toEqual([]);
+  });
 });
