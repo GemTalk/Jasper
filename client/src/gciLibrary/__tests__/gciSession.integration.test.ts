@@ -14,6 +14,11 @@ import { GciTestContext, useIntegrationTest } from '../../__tests__/useIntegrati
  * Do not add a budget here.
  */
 describe('GCI session lifecycle (integration)', () => {
+  // RT_ERR_NO_PROCESS_TO_CONTINUE in gcierr.ht -- same value in every vendored
+  // release from 3.6.2 through 3.7.5. GemStone's message is "The Process nil to
+  // continue from is invalid,'argument is not a GsProcess'".
+  const RT_ERR_NO_PROCESS_TO_CONTINUE = 2092;
+
   let gci: GciLibrary;
   let session: unknown;
   let login: GciTestContext['login'];
@@ -81,11 +86,13 @@ describe('GCI session lifecycle (integration)', () => {
   });
 
   describe('GciTsContinueWith', () => {
-    it('reports an error when there is no suspended process to resume', () => {
+    it('rejects a gsProcess argument that is not a GsProcess', () => {
+      // OOP_ILLEGAL as replaceTopOfStack is the documented "leave TopOfStack
+      // unchanged" value, so the only thing wrong with this call is gsProcess.
       const { result, err } = gci.GciTsContinueWith(session, OOP_NIL, OOP_ILLEGAL, null, 0);
 
       expect(result).toBe(OOP_ILLEGAL);
-      expect(err.number).not.toBe(0);
+      expect(err.number).toBe(RT_ERR_NO_PROCESS_TO_CONTINUE);
     });
   });
 });
