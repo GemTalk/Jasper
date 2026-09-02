@@ -3078,27 +3078,27 @@
         },
         {
           "command": "gemstone.breakpoints.toggleAtCursor",
-          "when": "editorTextFocus && (resourceLangId == gemstone-smalltalk || resourceLangId == gemstone-method)",
+          "when": "editorTextFocus && resourceLangId == gemstone-method",
           "group": "3_gemstoneBreakpoints@0"
         },
         {
           "command": "gemstone.breakpoints.enableAtCursor",
-          "when": "editorTextFocus && (resourceLangId == gemstone-smalltalk || resourceLangId == gemstone-method)",
+          "when": "editorTextFocus && resourceLangId == gemstone-method",
           "group": "3_gemstoneBreakpoints@1"
         },
         {
           "command": "gemstone.breakpoints.disableAtCursor",
-          "when": "editorTextFocus && (resourceLangId == gemstone-smalltalk || resourceLangId == gemstone-method)",
+          "when": "editorTextFocus && resourceLangId == gemstone-method",
           "group": "3_gemstoneBreakpoints@2"
         },
         {
           "command": "gemstone.breakpoints.clearMethod",
-          "when": "editorTextFocus && (resourceLangId == gemstone-smalltalk || resourceLangId == gemstone-method)",
+          "when": "editorTextFocus && resourceLangId == gemstone-method",
           "group": "3_gemstoneBreakpoints@3"
         },
         {
           "command": "gemstone.breakpoints.toggleStepPoints",
-          "when": "editorTextFocus && (resourceLangId == gemstone-smalltalk || resourceLangId == gemstone-method)",
+          "when": "editorTextFocus && resourceLangId == gemstone-method",
           "group": "3_gemstoneBreakpoints@4"
         }
       ]
@@ -3146,7 +3146,7 @@
       {
         "command": "gemstone.breakpoints.toggleAtCursor",
         "key": "shift+f9",
-        "when": "editorTextFocus && resourceScheme == gemstone && gemstone.hasActiveSession"
+        "when": "editorTextFocus && resourceLangId == gemstone-method && gemstone.hasActiveSession"
       },
       {
         "command": "gemstone.explorer.openSelectedMethodToSide",

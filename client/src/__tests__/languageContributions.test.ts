@@ -122,11 +122,26 @@ describe('a method editor is still GemStone Smalltalk in every other respect', (
   });
 
   it('keeps those commands working in a workspace and a .gst file too', () => {
+    // Everything EXCEPT the breakpoint actions, which are method-only (below).
     const items: { command: string; when: string }[] = pkg.contributes.menus['editor/context'];
     const missing = items
       .filter((i) => i.when.includes('resourceLangId'))
+      .filter((i) => !i.command.startsWith('gemstone.breakpoints.'))
       .filter((i) => !i.when.includes(`resourceLangId == ${SMALLTALK}`))
       .map((i) => i.command);
     expect(missing).toEqual([]);
+  });
+
+  it('offers no breakpoint action outside a method editor', () => {
+    // The menu half of the same rule `contributes.breakpoints` enforces for the
+    // gutter: a breakpoint is a step point in a compiled method, so a workspace,
+    // a .gst file and the debugger's read-only panes must not be offered one by
+    // any route — gutter, context menu or keybinding.
+    const items: { command: string; when: string }[] = pkg.contributes.menus['editor/context'];
+    const bp = items.filter((i) => i.command.startsWith('gemstone.breakpoints.'));
+
+    expect(bp.length).toBeGreaterThan(0);
+    expect(bp.filter((i) => i.when.includes(SMALLTALK))).toEqual([]);
+    expect(bp.filter((i) => !i.when.includes(`resourceLangId == ${METHOD}`))).toEqual([]);
   });
 });
