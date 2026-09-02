@@ -6,7 +6,14 @@ pre-commit:
   jobs:
     - name: eslint
       glob: '*.{ts,mts,cts,js,mjs,cjs}'
-      run: npx eslint {staged_files}
+      # NODE_OPTIONS matches the `lint` script: the config imports the GCI
+      # optionality registry as `.ts`, and Node warns about the type-stripped
+      # import because client/package.json declares no module type. Set through
+      # `cross-env` because a bare `VAR=value cmd` prefix is Unix shell syntax,
+      # and this hook has to run under `cmd.exe` for a Windows contributor. The
+      # value re-expands $NODE_OPTIONS so a contributor's own flags survive; the
+      # double quotes are required, as cmd.exe does not quote with single ones.
+      run: npx cross-env "NODE_OPTIONS=$NODE_OPTIONS --disable-warning=MODULE_TYPELESS_PACKAGE_JSON" eslint {staged_files}
     - name: prettier
       glob: '*.{ts,mts,cts,js,mjs,cjs}'
       run: npx prettier --check {staged_files}
