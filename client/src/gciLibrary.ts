@@ -321,6 +321,22 @@ export class GciLibrary {
     name: N,
     signature: string,
   ): OptionalBinding<N> {
+    // The symbol is written twice per entry — as `name` and again inside
+    // `signature` — and nothing in the type system ties them together: the
+    // `__gciOptional` brand only relates the registry key to `name`. A
+    // copy-pasted entry naming a neighbouring symbol would bind the wrong
+    // native function while `_missing` and `isAvailable` reported this one,
+    // and the catch below would hide it. Compare the declared symbol exactly
+    // rather than by substring: `GciTsNbLogin` is a prefix of both
+    // `GciTsNbLogin_` and `GciTsNbLoginFinished`. Outside the try, so the
+    // catch cannot swallow it.
+    const declared = /(\w+)\s*\(/.exec(signature)?.[1];
+    if (declared !== name) {
+      throw new Error(
+        `optionalFunc('${name}') was given a signature declaring '${declared}': ${signature}`,
+      );
+    }
+
     try {
       return this.lib.func(signature);
     } catch {
