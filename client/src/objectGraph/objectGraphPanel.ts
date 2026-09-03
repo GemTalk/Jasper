@@ -32,13 +32,16 @@ type ViewMessage =
   | { command: 'goTo'; index: number }
   | { command: 'inspectObject'; oop: string }
   | { command: 'inspectCollection'; classOop: string; className: string }
-  | { command: 'inspectTarget' }
   | { command: 'revealClass'; className: string }
   | { command: 'revealClassByOop'; oop: string }
   | { command: 'addToCanvas'; oop: string }
   | { command: 'removeFromCanvas'; oop: string }
   | { command: 'clearCanvas' }
-  | { command: 'focusNode'; oop: string };
+  | { command: 'focusNode'; oop: string }
+  | { command: 'moveBox'; boxId: string; x: number; y: number }
+  | { command: 'resetLayout' }
+  | { command: 'removeGroup'; ownerOop: string; className: string }
+  | { command: 'restoreRemoved' };
 
 /** Route one view message to the matching handler. Split out so the protocol reads as a
  *  single table: every message the view can send appears here exactly once, and a message
@@ -67,9 +70,6 @@ async function route(message: ViewMessage, handlers: ObjectGraphActions): Promis
         await handlers.inspectCollection(message.classOop, message.className);
       }
       return;
-    case 'inspectTarget':
-      await handlers.inspectTarget();
-      return;
     case 'revealClass':
       if (isName(message.className)) await handlers.revealClass(message.className);
       return;
@@ -87,6 +87,30 @@ async function route(message: ViewMessage, handlers: ObjectGraphActions): Promis
       return;
     case 'focusNode':
       if (isOop(message.oop)) await handlers.focusNode(message.oop);
+      return;
+    case 'moveBox':
+      // Coordinates come from a drag in the webview, so they are checked rather than
+      // trusted: a NaN would place a box nowhere and take its edges with it.
+      if (
+        isName(message.boxId) &&
+        Number.isFinite(message.x) &&
+        Number.isFinite(message.y) &&
+        message.x >= 0 &&
+        message.y >= 0
+      ) {
+        await handlers.moveBox(message.boxId, Math.round(message.x), Math.round(message.y));
+      }
+      return;
+    case 'resetLayout':
+      await handlers.resetLayout();
+      return;
+    case 'restoreRemoved':
+      await handlers.restoreRemoved();
+      return;
+    case 'removeGroup':
+      if (isOop(message.ownerOop) && isName(message.className)) {
+        await handlers.removeGroup(message.ownerOop, message.className);
+      }
       return;
   }
 }

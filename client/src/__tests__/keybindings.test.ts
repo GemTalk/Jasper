@@ -50,6 +50,7 @@ describe('keybindings', () => {
       b: 'gemstone.openBrowser',
       c: 'gemstone.findClass',
       m: 'gemstone.findMethodInClass',
+      g: 'gemstone.showObjectGraph',
     };
 
     for (const kb of chordBindings) {
@@ -93,6 +94,7 @@ describe('keybindings', () => {
       'gemstone.executeIt',
       'gemstone.debugIt',
       'gemstone.inspectIt',
+      'gemstone.showObjectGraph',
     ];
     const matches = keybindings.filter((kb) => editorCommands.includes(kb.command));
     expect(matches.length).toBeGreaterThan(0);

@@ -905,9 +905,9 @@ export class CodeExecutor {
   private async withCleanSession<T extends { kind: string }>(
     session: ActiveSession,
     deps: ObjectGraphDeps,
-    run: () => T,
+    run: () => Promise<T>,
   ): Promise<Clean<T> | undefined> {
-    const first = run();
+    const first = await run();
     if (first.kind !== 'needsCommit') return first as Clean<T>;
 
     const COMMIT = 'Commit';
@@ -931,7 +931,7 @@ export class CodeExecutor {
     // The handlers can themselves decline (unsaved .gs edits, an abort confirmation the
     // user cancels, a commit that conflicts), so re-check rather than assuming we are now
     // clean: a second needsCommit is the user's answer, not an error to report.
-    const second = run();
+    const second = await run();
     return second.kind === 'needsCommit' ? undefined : (second as Clean<T>);
   }
 
@@ -986,6 +986,16 @@ export class CodeExecutor {
       inspect: (target, label) => routeInspect(session, target, label, deps.inspectorProvider),
       revealClass: (className) => deps.revealClass(className),
       withCleanSession: (run) => this.withCleanSession(session, deps, run),
+      // Window location, not Notification: a scan is ~150 ms on a large stone, and a
+      // notification that appears and vanishes that fast is worse than none. This shows
+      // in the status bar with a spinner for as long as the work takes, however brief.
+      // vscode.window.withProgress answers a Thenable, which is not a Promise, so it is
+      // adapted rather than returned straight through.
+      withProgress: async (title, work) =>
+        vscode.window.withProgress(
+          { location: vscode.ProgressLocation.Window, title: `GemStone: ${title}` },
+          () => work(),
+        ),
       pin: (target) => this.pinGraphObject(session, target),
       unpin: (target) => this.unpinGraphObject(session, target),
       openWalk: (target, trail) => this.openObjectGraphWalk(session, target, trail, deps),

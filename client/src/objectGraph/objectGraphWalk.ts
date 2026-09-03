@@ -36,12 +36,16 @@ export interface ObjectGraphWalkDeps {
   /** Run a scan that needs a clean session, resolving the dirty-session question by
    *  asking the user. Answers undefined when the user declines. */
   withCleanSession: <T extends { kind: string }>(
-    run: () => T,
+    run: () => Promise<T>,
   ) => Promise<Exclude<T, { kind: 'needsCommit' }> | undefined>;
   /** Pin an OOP in the session's export set for as long as the panel can act on it. */
   pin: (oop: bigint) => void;
   /** Release a previously pinned OOP. */
   unpin: (oop: bigint) => void;
+  /** Run `work` behind a progress indicator. The nb runner only raises its own
+   *  notification past a couple of seconds, and a scan is nearer 150 ms, so without this
+   *  a hop gave no sign that anything was happening. */
+  withProgress: <T>(title: string, work: () => Promise<T>) => Promise<T>;
   /** Hand a finished view to this walk's own panel. */
   render: (view: ObjectGraphWalkView, handlers: ObjectGraphActions) => void;
   /** Start a SEPARATE walk in its own tab, seeded with `trail` so the new tab's breadcrumb
@@ -64,6 +68,8 @@ export interface ObjectGraphWalkView {
   scanMillis: number;
   expanded?: ExpandedClass;
   canvas: CanvasGraph;
+  positions: Record<string, { x: number; y: number }>;
+  removedCount: number;
 }
 
 /** The intents the view can send, in the host's vocabulary. */
@@ -73,7 +79,6 @@ export interface ObjectGraphActions {
   goTo: (index: number) => Promise<void>;
   inspectObject: (oop: string) => Promise<void>;
   inspectCollection: (classOop: string, className: string) => Promise<void>;
-  inspectTarget: () => Promise<void>;
   revealClass: (className: string) => Promise<void>;
   revealClassByOop: (oop: string) => Promise<void>;
   addToCanvas: (oop: string) => Promise<void>;
@@ -81,6 +86,13 @@ export interface ObjectGraphActions {
   focusNode: (oop: string) => Promise<void>;
   removeFromCanvas: (oop: string) => Promise<void>;
   clearCanvas: () => Promise<void>;
+  /** Pin a box at a hand-chosen position, or clear every such override. */
+  moveBox: (boxId: string, x: number, y: number) => Promise<void>;
+  resetLayout: () => Promise<void>;
+  /** Take a whole class box off the graph, with anything shown under it. */
+  removeGroup: (ownerOop: string, className: string) => Promise<void>;
+  /** Put every removed box back. */
+  restoreRemoved: () => Promise<void>;
 }
 
 /** One visited object, with everything needed to re-render it without another describe. */
@@ -114,6 +126,23 @@ export class ObjectGraphWalk {
    *  without paying for the scan again. */
   private groupsByOop = new Map<string, ReferrerGroup[]>();
   private scanMillis = 0;
+  /** Boxes the user has dragged. Kept here, not in the webview, because the panel is
+   *  re-rendered whole on every action and a drag has to outlive that. Survives hops and
+   *  expansions; only Reset layout clears it. */
+  private positions = new Map<string, { x: number; y: number }>();
+  /** Objects the user has taken off the graph.
+   *
+   *  Remembered because a single-object group is promoted automatically on every scan, so
+   *  removing one and then re-centring — which removing the centre does by design — put it
+   *  straight back, with only whatever hung beneath it actually gone. A removal is an
+   *  explicit "not this box", and it outranks the convenience of drawing a group of one as
+   *  its object. Putting it back by hand clears the mark. */
+  private dismissed = new Set<string>();
+  /** Class boxes the user has taken off, keyed `ownerOop|className`. Groups come from a
+   *  scan rather than from anything the user added, so this is the only way to say "not
+   *  that class" — and without it a class box was the one thing on the picture with no way
+   *  off it. */
+  private dismissedGroups = new Set<string>();
 
   constructor(
     private readonly session: ActiveSession,
@@ -127,6 +156,8 @@ export class ObjectGraphWalk {
    *  jumping back to one re-centres THIS tab rather than opening yet another. */
   async start(oop: bigint, inherited: WalkStep[] = []): Promise<void> {
     this.trail = [];
+    this.dismissed.clear();
+    this.dismissedGroups.clear();
     for (const step of inherited) {
       const stepOop = BigInt(step.oop);
       this.deps.pin(stepOop);
@@ -158,7 +189,11 @@ export class ObjectGraphWalk {
     // OOP number. Without the pin a breadcrumb could quietly point at a different object.
     this.deps.pin(oop);
 
-    const result = await this.deps.withCleanSession(() => queries.referrersOf(this.session, oop));
+    const result = await this.deps.withCleanSession(() =>
+      this.deps.withProgress(`Scanning references to ${described.className}…`, () =>
+        queries.referrersOfNb(this.session, oop),
+      ),
+    );
     if (!result) {
       // The user declined to commit or abort. Leave the walk exactly as it was — and drop
       // the pin we just took, since this object never joined the trail.
@@ -203,6 +238,7 @@ export class ObjectGraphWalk {
     for (const group of result.groups) {
       if (promoted >= SOLE_AUTO_LIMIT) break;
       if (!group.soleOop) continue;
+      if (this.dismissed.has(group.soleOop)) continue;
       if (this.canvasNodes.some((n) => n.oop === group.soleOop)) continue;
       this.deps.pin(BigInt(group.soleOop));
       this.canvasNodes = [
@@ -238,13 +274,30 @@ export class ObjectGraphWalk {
         targetLabel: centre.printString,
         targetClass: centre.className,
         targetOop: centre.oop.toString(),
-        groups: this.groupsByOop.get(centre.oop.toString()) ?? [],
-        groupsByOop: Object.fromEntries(this.groupsByOop),
+        groups: this.visibleGroups(centre.oop.toString()),
+        groupsByOop: Object.fromEntries(
+          [...this.groupsByOop.keys()].map((oop) => [oop, this.visibleGroups(oop)]),
+        ),
         scanMillis: this.scanMillis,
         expanded: this.expanded,
         canvas: { nodes: this.canvasNodes, edges: this.canvasEdges },
+        positions: Object.fromEntries(this.positions),
+        removedCount: this.dismissed.size + this.dismissedGroups.size,
       },
       this.actions(),
+    );
+  }
+
+  /** The referrer groups of `oop` that should still be drawn.
+   *
+   *  Two kinds are withheld. One the user removed outright. And one holding a single
+   *  object that the user removed — the box stands for nothing else, so leaving it up
+   *  reads as though the removal did not take, which is exactly how it looked. */
+  private visibleGroups(oop: string): ReferrerGroup[] {
+    return (this.groupsByOop.get(oop) ?? []).filter(
+      (g) =>
+        !this.dismissedGroups.has(`${oop}|${g.referrerClass}`) &&
+        !(g.count === 1 && g.soleOop && this.dismissed.has(g.soleOop)),
     );
   }
 
@@ -255,13 +308,22 @@ export class ObjectGraphWalk {
       goTo: (index) => this.goTo(index),
       inspectObject: async (oop) => this.inspectObject(oop),
       inspectCollection: (classOop, className) => this.inspectCollection(classOop, className),
-      inspectTarget: async () => this.inspectTarget(),
       revealClass: (className) => this.deps.revealClass(className),
       revealClassByOop: (oop) => this.revealClassByOop(oop),
       addToCanvas: (oop) => this.addToCanvas(oop),
       focusNode: (oop) => this.focusNode(oop),
       removeFromCanvas: (oop) => this.removeFromCanvas(oop),
       clearCanvas: () => this.clearCanvas(),
+      moveBox: async (boxId, x, y) => {
+        this.positions.set(boxId, { x, y });
+        this.render();
+      },
+      removeGroup: (ownerOop, className) => this.removeGroup(ownerOop, className),
+      restoreRemoved: () => this.restoreRemoved(),
+      resetLayout: async () => {
+        this.positions.clear();
+        this.render();
+      },
     };
   }
 
@@ -286,7 +348,9 @@ export class ObjectGraphWalk {
     if (!centre) return;
 
     const result = await this.deps.withCleanSession(() =>
-      queries.referrerObjectsOf(this.session, centre.oop, BigInt(classOop)),
+      this.deps.withProgress(`Listing ${className} referrers…`, () =>
+        queries.referrerObjectsOfNb(this.session, centre.oop, BigInt(classOop)),
+      ),
     );
     if (!result) return;
     if (result.kind === 'unavailable') {
@@ -339,24 +403,34 @@ export class ObjectGraphWalk {
    *  and a parentless object is drawn as a second root: it appeared beside the original
    *  object, in its own column, connected to nothing. */
   private async focusNode(oop: string): Promise<void> {
-    if (!this.canvasNodes.some((n) => n.oop === oop)) {
-      await this.addToCanvas(oop);
-    }
+    // Attached WITHOUT rendering or recomputing edges: centreOn does both a moment later,
+    // and doing them twice per click was half the cost of a hop for no visible benefit.
+    if (!this.canvasNodes.some((n) => n.oop === oop)) this.attach(oop);
+    // Asking about an object is a request for its references IN FULL, so anything
+    // previously removed from around it comes back. Without this a removal silently
+    // suppressed part of the answer to a later question, with nothing to say so — which
+    // is not what "what points at this?" should ever return.
+    this.undismissAround(oop);
     await this.centreOn(BigInt(oop));
   }
 
-  /** Put an object on the canvas beside whatever is already there, then recompute every
-   *  reference among the whole set. */
-  private async addToCanvas(oop: string): Promise<void> {
+  /** Forget removals that would hide part of `oop`'s answer. */
+  private undismissAround(oop: string): void {
+    for (const key of [...this.dismissedGroups]) {
+      if (key.startsWith(`${oop}|`)) this.dismissedGroups.delete(key);
+    }
+    for (const g of this.groupsByOop.get(oop) ?? []) {
+      if (g.soleOop) this.dismissed.delete(g.soleOop);
+    }
+  }
+
+  /** Put an object on the graph, recording where it was found, without redrawing. */
+  private attach(oop: string): void {
     if (this.canvasNodes.some((n) => n.oop === oop)) return;
+    this.dismissed.delete(oop);
     const described = this.deps.describe(BigInt(oop));
-    // Pinned like any node the panel can act on: the canvas survives across scans, and a
-    // scan aborts the session.
-    this.deps.pin(BigInt(oop));
-    // Record WHERE it came from: found among the referrers of the current centre, under
-    // the class row that is open. Without that the layered graph has nowhere to put it and
-    // it would float free of the thing it points at.
     const centre = this.current();
+    this.deps.pin(BigInt(oop));
     this.canvasNodes = [
       ...this.canvasNodes,
       {
@@ -367,25 +441,103 @@ export class ObjectGraphWalk {
         viaClass: this.expanded?.className,
       },
     ];
+  }
+
+  /** Put an object on the canvas beside whatever is already there, then recompute every
+   *  reference among the whole set. */
+  private async addToCanvas(oop: string): Promise<void> {
+    if (this.canvasNodes.some((n) => n.oop === oop)) return;
+    this.attach(oop);
     await this.recomputeCanvasEdges();
     this.render();
   }
 
   private async removeFromCanvas(oop: string): Promise<void> {
-    // The centre stays: it is what the panel is about, and the referrer table below
-    // describes it. Removing it would leave a canvas with no subject.
-    if (oop === this.current()?.oop.toString()) {
+    const node = this.canvasNodes.find((n) => n.oop === oop);
+    if (!node) return;
+
+    // Everything that arrived UNDER this object goes with it. Those boxes are on the graph
+    // because of it — they were found among its referrers — so re-parenting them onto its
+    // parent left the picture holding objects for a reason that no longer applied, and
+    // pretending they referenced something they were never listed under.
+    const doomed = new Set([oop]);
+    for (let grew = true; grew;) {
+      grew = false;
+      for (const n of this.canvasNodes) {
+        if (n.parentOop && doomed.has(n.parentOop) && !doomed.has(n.oop)) {
+          doomed.add(n.oop);
+          grew = true;
+        }
+      }
+    }
+
+    if (doomed.size >= this.canvasNodes.length) {
       void vscode.window.showInformationMessage(
-        'That is the object this panel is centred on — it stays on the canvas. ' +
-          'Walk to another object to centre on it instead.',
+        doomed.size === 1
+          ? 'That is the only object on the graph — removing it would leave nothing to ' +
+              'show. Run Show Object Graph on something else instead.'
+          : `That would take the whole graph with it (${doomed.size} objects). Use ` +
+              '"Remove all but the focused object" if that is what you want.',
       );
       return;
     }
-    if (!this.canvasNodes.some((n) => n.oop === oop)) return;
-    this.canvasNodes = this.canvasNodes.filter((n) => n.oop !== oop);
-    this.deps.unpin(BigInt(oop));
+
+    const centreWentToo = doomed.has(this.current()?.oop.toString() ?? '');
+    this.canvasNodes = this.canvasNodes.filter((n) => !doomed.has(n.oop));
+    for (const gone of doomed) {
+      // Its referrer groups go too: a group box whose owner is gone points at nothing.
+      this.groupsByOop.delete(gone);
+      // And any hand placement, which described a box that no longer exists.
+      this.positions.delete(`o:${gone}`);
+      for (const key of [...this.positions.keys()]) {
+        if (key.startsWith(`g:${gone}:`)) this.positions.delete(key);
+      }
+      this.deps.unpin(BigInt(gone));
+      this.dismissed.add(gone);
+    }
+    this.trail = this.trail.filter((step) => !doomed.has(step.oop.toString()));
+    if (this.expanded && doomed.has(this.expanded.ownerOop)) this.expanded = undefined;
+
+    if (doomed.size > 1) {
+      void vscode.window.showInformationMessage(
+        `Removed ${doomed.size} objects: ${node.label} and the ${doomed.size - 1} found ` +
+          'under it.',
+      );
+    }
+
+    if (centreWentToo) {
+      // Re-centre on what the removed object hung off, so the listing below always
+      // describes something that is actually on the picture.
+      const replacement = node.parentOop ?? this.canvasNodes[0]?.oop;
+      if (replacement) {
+        await this.centreOn(BigInt(replacement));
+        return;
+      }
+    }
     await this.recomputeCanvasEdges();
     this.render();
+  }
+
+  /** Take a class box off the graph, along with any of its objects that are shown. */
+  private async removeGroup(ownerOop: string, className: string): Promise<void> {
+    this.dismissedGroups.add(`${ownerOop}|${className}`);
+    const members = this.canvasNodes.filter(
+      (n) => n.parentOop === ownerOop && n.viaClass === className,
+    );
+    // Its members go the same way a removed object's subtree does — they are on the graph
+    // because of this group.
+    for (const m of members) await this.removeFromCanvas(m.oop);
+    if (members.length === 0) this.render();
+  }
+
+  /** Put every removed box back, and re-ask about the current object so single-object
+   *  groups are promoted again. */
+  private async restoreRemoved(): Promise<void> {
+    this.dismissed.clear();
+    this.dismissedGroups.clear();
+    const centre = this.current();
+    if (centre) await this.centreOn(centre.oop);
+    else this.render();
   }
 
   private async clearCanvas(): Promise<void> {
@@ -399,6 +551,11 @@ export class ObjectGraphWalk {
     }
     this.canvasNodes = this.canvasNodes.filter((n) => n.oop === keep);
     this.canvasEdges = [];
+    // Hand placements refer to boxes that mostly no longer exist; keeping them would pin
+    // survivors to positions chosen for a different picture.
+    this.positions.clear();
+    this.dismissed.clear();
+    this.dismissedGroups.clear();
     this.render();
   }
 
@@ -415,7 +572,7 @@ export class ObjectGraphWalk {
       this.canvasEdges = [];
       return;
     }
-    const result = queries.slotEdgesAmong(
+    const result = await queries.slotEdgesAmongNb(
       this.session,
       this.canvasNodes.map((n) => n.oop),
     );
@@ -434,12 +591,6 @@ export class ObjectGraphWalk {
     this.deps.inspect(target, className);
   }
 
-  private inspectTarget(): void {
-    const centre = this.current();
-    if (!centre) return;
-    this.deps.inspect(centre.oop, centre.className);
-  }
-
   /** Inspect every referrer of one class at once, as a collection.
    *
    *  Separate from {@link expand}, which lists a page of them for walking: this gathers
@@ -451,7 +602,9 @@ export class ObjectGraphWalk {
     if (!centre) return;
 
     const result = await this.deps.withCleanSession(() =>
-      queries.referrerCollectionOf(this.session, centre.oop, BigInt(classOop)),
+      this.deps.withProgress(`Collecting ${className} referrers…`, () =>
+        queries.referrerCollectionOfNb(this.session, centre.oop, BigInt(classOop)),
+      ),
     );
     if (!result) return;
     if (result.kind === 'unavailable') {

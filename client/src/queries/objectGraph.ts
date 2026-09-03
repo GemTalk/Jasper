@@ -61,7 +61,7 @@ export type ReferrersResult =
  *  and a `GsBitmap` is a server-side object that cannot cross GCI, so the bitmaps are
  *  reduced to `size` before anything is returned. Never widen this to return the
  *  objects themselves. */
-export function referrersOf(execute: QueryExecutor, oop: bigint): ReferrersResult {
+export function buildReferrersOf(oop: bigint): string {
   // `oop` is numeric, so it interpolates without escaping.
   //
   // Status arrives as the first line and the payload follows, rather than everything
@@ -108,7 +108,18 @@ pairs do: [:pair |
   ws lf].
 ws contents`;
 
-  const parsed = splitStatus(execute(code));
+  return code;
+}
+
+/** Parse a {@link buildReferrersOf} reply.
+ *
+ *  Split from the builder so the panel can run the scan through the NON-BLOCKING GCI
+ *  executor while the MCP tools keep the synchronous one. The scans are repository-wide,
+ *  and a synchronous GCI call freezes the whole extension host for their duration — which
+ *  is why nothing could paint a progress indicator over them, and why a hop felt slow
+ *  even at 150 ms. */
+export function parseReferrersOf(raw: string): ReferrersResult {
+  const parsed = splitStatus(raw);
   if (parsed.kind !== 'ok') return parsed;
 
   const groups: ReferrerGroup[] = [];
@@ -132,6 +143,11 @@ ws contents`;
   // picture's centre of gravity stable when the layout takes the first N.
   groups.sort((a, b) => b.count - a.count);
   return { kind: 'ok', groups, scanMillis: parsed.millis };
+}
+
+/** Synchronous form, for callers outside the panel (the MCP tools). */
+export function referrersOf(execute: QueryExecutor, oop: bigint): ReferrersResult {
+  return parseReferrersOf(execute(buildReferrersOf(oop)));
 }
 
 /** One class and how many instances of it the whole extent holds. */
@@ -419,12 +435,11 @@ export type ReferrerCollectionResult =
  *  *persistent* objects set `needsCommit`), so a drill-down does not block the next scan.
  *  The caller should still pin the returned OOP with `saveObjs` for the inspector's
  *  lifetime; the `SessionTemps` anchor covers the gap until then. */
-export function referrerCollectionOf(
-  execute: QueryExecutor,
+export function buildReferrerCollectionOf(
   targetOop: bigint,
   referrerClassOop: bigint,
   limit: number = REFERRER_COLLECTION_LIMIT,
-): ReferrerCollectionResult {
+): string {
   const code = `| obj cls pairs bm total out cursor chunk guard ms coll |
 System needsCommit ifTrue: [^ 'needsCommit'].
 obj := [Object objectForOop: ${targetOop}]
@@ -458,7 +473,12 @@ SessionTemps current at: #'${REFERRER_TEMP_KEY}' put: coll.
   coll size printString, (String with: Character tab),
   coll asOop printString`;
 
-  const parsed = splitStatus(execute(code));
+  return code;
+}
+
+/** Parse a {@link buildReferrerCollectionOf} reply. */
+export function parseReferrerCollectionOf(raw: string): ReferrerCollectionResult {
+  const parsed = splitStatus(raw);
   if (parsed.kind !== 'ok') return parsed;
 
   const [total, returned, oop] = parsed.body.trim().split('\t');
@@ -472,6 +492,18 @@ SessionTemps current at: #'${REFERRER_TEMP_KEY}' put: coll.
     returned: Number(returned) || 0,
     scanMillis: parsed.millis,
   };
+}
+
+/** Synchronous form, for callers outside the panel. */
+export function referrerCollectionOf(
+  execute: QueryExecutor,
+  targetOop: bigint,
+  referrerClassOop: bigint,
+  limit: number = REFERRER_COLLECTION_LIMIT,
+): ReferrerCollectionResult {
+  return parseReferrerCollectionOf(
+    execute(buildReferrerCollectionOf(targetOop, referrerClassOop, limit)),
+  );
 }
 
 /** One actual referrer object, identified well enough to recognise and to step to. */
@@ -512,12 +544,11 @@ export const REFERRER_PAGE_SIZE = 100;
  *  instances are large collections is the expensive case, and the limit is what keeps a
  *  hop interactive. `total` always reports the true count so a caller can say what it is
  *  not showing. */
-export function referrerObjectsOf(
-  execute: QueryExecutor,
+export function buildReferrerObjectsOf(
   targetOop: bigint,
   referrerClassOop: bigint,
   limit: number = REFERRER_PAGE_SIZE,
-): ReferrerObjectsResult {
+): string {
   const code = `| ws obj cls pairs bm total out cursor chunk guard ms |
 System needsCommit ifTrue: [^ 'needsCommit'].
 obj := [Object objectForOop: ${targetOop}]
@@ -560,7 +591,12 @@ out do: [:o |
   ws lf].
 ws contents`;
 
-  const parsed = splitStatus(execute(code));
+  return code;
+}
+
+/** Parse a {@link buildReferrerObjectsOf} reply. */
+export function parseReferrerObjectsOf(raw: string): ReferrerObjectsResult {
+  const parsed = splitStatus(raw);
   if (parsed.kind !== 'ok') return parsed;
 
   // First body line is the true total; the rest are `oop<TAB>isClass<TAB>printString`.
@@ -582,6 +618,18 @@ ws contents`;
     });
   }
   return { kind: 'ok', objects, total, scanMillis: parsed.millis };
+}
+
+/** Synchronous form, for callers outside the panel. */
+export function referrerObjectsOf(
+  execute: QueryExecutor,
+  targetOop: bigint,
+  referrerClassOop: bigint,
+  limit: number = REFERRER_PAGE_SIZE,
+): ReferrerObjectsResult {
+  return parseReferrerObjectsOf(
+    execute(buildReferrerObjectsOf(targetOop, referrerClassOop, limit)),
+  );
 }
 
 /** One reference between two objects on the canvas, and the slot it lives in. */
@@ -620,10 +668,9 @@ const SLOT_SCAN_LIMIT = 20000;
  *  Dictionary's internal table — 85 raw slots for 20 entries), and unordered
  *  collections, whose elements live outside the object body and are only reachable by
  *  enumeration (`isNsc` / `do:`). */
-export function slotEdgesAmong(execute: QueryExecutor, oops: string[]): SlotEdgesResult {
-  if (oops.length < 2) return { kind: 'ok', edges: [] };
+export function buildSlotEdgesAmong(oops: string[]): string | undefined {
   const literals = oops.map((o) => o.trim()).filter((o) => /^\d+$/.test(o));
-  if (literals.length < 2) return { kind: 'ok', edges: [] };
+  if (literals.length < 2) return undefined;
 
   const code = `| ws oops want objs |
 oops := #( ${literals.join(' ')} ).
@@ -662,7 +709,12 @@ objs do: [:o |
              value: '[', i printString, ']']]].
 ws contents`;
 
-  const parsed = splitStatus(execute(code));
+  return code;
+}
+
+/** Parse a {@link buildSlotEdgesAmong} reply. */
+export function parseSlotEdgesAmong(raw: string): SlotEdgesResult {
+  const parsed = splitStatus(raw);
   if (parsed.kind === 'needsCommit') {
     // Not reachable: nothing here aborts. Mapped rather than left to fall through, so a
     // future change that does introduce a scan cannot silently answer an empty graph.
@@ -678,4 +730,11 @@ ws contents`;
     edges.push({ fromOop: f[0], toOop: f[1], via: f[2] });
   }
   return { kind: 'ok', edges };
+}
+
+/** Synchronous form, for callers outside the panel. */
+export function slotEdgesAmong(execute: QueryExecutor, oops: string[]): SlotEdgesResult {
+  const code = buildSlotEdgesAmong(oops);
+  if (!code) return { kind: 'ok', edges: [] };
+  return parseSlotEdgesAmong(execute(code));
 }

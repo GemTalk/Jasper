@@ -181,6 +181,7 @@ With an active session, execute Smalltalk code from any editor:
 | Display It | Cmd+K D | Ctrl+K D | Evaluate selection and show the result inline |
 | Execute It | Cmd+K E | Ctrl+K E | Evaluate selection silently |
 | Inspect It | Cmd+K I | Ctrl+K I | Evaluate selection and show result in Inspector |
+| Show Object Graph | Cmd+K G | Ctrl+K G | Evaluate selection and show what points at the result |
 
 By default, **Display It** shows its result as a non-destructive inline overlay — an annotation that is not part of the document, so the file is never modified. Hover the result for **Copy** and **Expand** actions; **Enter** inserts the full result into the document, **Backspace** or **Escape** dismisses it. Set `gemstone.displayItMode` to `"insert"` for the classic behavior of inserting the result as editable text.
 
@@ -235,9 +236,9 @@ With the optional server-side support installed (GemStone 3.7.5+), **Inspect It*
 
 ### Object Graph
 
-**Show Object Graph** in the editor context menu evaluates the selection (or the cursor's line) and shows what points at the result: every class holding a reference to that object, with a count per class, drawn as a diagram and listed in full beneath it. The references are real pointers found by scanning the repository — including ones nobody declared, ones from inside collections, and ones through untyped slots. This is what a relational database cannot answer about a row.
+**Show Object Graph** (`Ctrl+K G` / `Cmd+K G`, or the editor context menu) evaluates the selection (or the cursor's line) and shows what points at the result: every class holding a reference to that object, with a count per class, drawn as a diagram and listed in full beneath it. The references are real pointers found by scanning the repository — including ones nobody declared, ones from inside collections, and ones through untyped slots. This is what a relational database cannot answer about a row.
 
-The panel is a navigator, not a report. Click a referrer class to list the individual objects of it that point here, then click one of those objects to **walk to it**. Each step opens a **new tab**, so the graph you stepped from is still there to go back to, and the new tab's breadcrumb shows the whole path — clicking an earlier crumb re-centres that tab, which is what a back control is for. A walk down three hops looks like this:
+The panel is a navigator, not a report. Click a referrer class to list the individual objects of it that point here, then click one of those objects to **walk to it**. The step re-aims this same panel and extends its breadcrumb, so the graph you built is still on screen — clicking an earlier crumb re-centres back on it, which is what a back control is for. A walk down three hops looks like this:
 
 ```
 AllUsers
@@ -246,13 +247,13 @@ AllUsers
           ← GsMethodDictionary ×1
 ```
 
-Arrows follow the convention of an object graph: the head sits on the **referent**, so an arrow means "this class holds a pointer to that object", and the number on an edge is how many such references it holds. Edge thickness is logarithmic in that count.
+Arrows follow the convention of an object graph: the head sits on the **referent**, so an arrow means "this class holds a pointer to that object", and the number on an edge is how many of its **objects** do — not how many references they hold. The kernel answers a set of referring objects, so an Array holding the same object three times counts once (measured, not assumed). Every edge is drawn at the same weight: scaling it by the count drew a 5.5px line beside the number 40, which the label already said.
 
-Each hop is a fresh scan (~20 ms on 3.6.2, ~40 ms on 3.7.5), and nothing is cached — a reference graph is live, and a remembered picture of it could be showing something no longer true.
+Scans run on GemStone's non-blocking interface, so the editor stays responsive while one is in flight, and each shows a status-bar progress indicator naming what it is doing — `GemStone: Scanning references to DemoEmployee…`. A scan that really does run long also gets the nb runner's own cancellable notification. Each hop is a fresh scan (~20 ms on 3.6.2, ~150 ms on a large 3.7.5 stone), and nothing is cached — a reference graph is live, and a remembered picture of it could be showing something no longer true.
 
-**One graph, grown a layer at a time.** The picture has two kinds of box, drawn so they cannot be confused. A **stacked, dashed** box summarises all the referrers of one class — it is not the class object, just the group — and its edge number is how many references they hold between them. A **solid** box is one object, and its edge is labelled with the slot the reference sits in (`order`, `product`, `[2]` for an array slot); that edge runs straight to the object it references, never through the group box. A group that has been listed reports how many of its objects are already on the graph, and disappears once they all are, so a box never implies there is more behind it than there is.
+**One graph, grown a layer at a time.** The picture has two kinds of box, drawn so they cannot be confused. A **stacked, dashed** box summarises all the referrers of one class — it is not the class object, just the group — and its edge number is how many of its objects point there. A **solid** box is one object, and its edge is labelled with the slot the reference sits in (`order`, `product`, `[2]` for an array slot); that edge runs straight to the object it references, never through the group box. A group that has been listed reports how many of its objects are already on the graph, and disappears once they all are, so a box never implies there is more behind it than there is.
 
-Click a class box to list its objects in the table below. Clicking one there asks what points at it **in this same graph** — nothing jumps to another tab — while `+ graph` puts it on the picture instead. `↗ tab` is the only control that opens a second tab, for when you want to keep the current graph and start another beside it. It appears **inside** that class box, indented under its header, with the slot its reference occupies beside it — the containment is what says it is one of that class's referrers, so nothing has to run a line back past the box. A class holding exactly one object skips the box and is drawn as the object. Click any object, nested or standalone, to ask what points at *that* one, and its own class boxes form the next layer out. Every edge therefore spans a single column and never disappears behind a box. Everything already drawn stays put, so following "what points at this, and at that, and at that" builds one connected picture rather than losing your place:
+Click a class box to list its objects in the table below. Clicking one there asks what points at it **in this same graph** — nothing jumps to another tab — while `+ graph` puts it on the picture instead. `↗ tab` is the only control that opens a second tab, for when you want to keep the current graph and start another beside it. It appears **inside** that class box, indented under its header, with the slot its reference occupies beside it — the containment is what says it is one of that class's referrers, so nothing has to run a line back past the box. A class holding exactly one object skips the box and is drawn as the object — unless you have taken that object off the graph, in which case it stays off until you ask for it back, rather than being promoted again on the next scan. Click any object, nested or standalone, to ask what points at *that* one, and its own class boxes form the next layer out. Every edge therefore spans a single column and never disappears behind a box. Everything already drawn stays put, so following "what points at this, and at that, and at that" builds one connected picture rather than losing your place:
 
 ```
 Product(Widget) ←[GraphDemoLineItem 40]← LineItem(SO-1197: 39 x Widget) ←[Array 1]← anArray( … )
@@ -260,18 +261,21 @@ Product(Widget) ←[GraphDemoLineItem 40]← LineItem(SO-1197: 39 x Widget) ←[
                 ←[Association 1]
 ```
 
-`✓ on graph` toggles an object back off, `×` on a box does the same, and *Reset to one object* strips it back to whatever is centred. A **dashed** edge runs against the general flow, which means it closes a cycle — routine here, since an order holds its line items and each line item holds its order.
+Every object box carries **◉** to inspect it and `×` to take it off the graph — the centre included — and a class box has its own `×` too, which takes the class off along with anything shown under it. An object you remove stays removed for as long as you are looking at the same thing — but **asking about an object again shows its references in full**, since that question should never return a partial answer. A count and a **Restore removed boxes** button appear while anything is off the drawing, so nothing is a dead end; every box is re-derivable from a scan. Removing an object takes **everything found under it** with it — those boxes are on the graph because of it — along with their groups and their pins; you are told how many went. Removing the centre re-centres on whatever it hung off. A removal that would take the whole graph is refused, with a pointer to *Remove all but the focused object* if that is what you meant. `✓ on graph` in the listing toggles one off too, and *Remove all but the focused object* strips the picture back to whatever is centred. A **dashed** edge runs against the general flow, which means it closes a cycle — routine here, since a manager holds their reports and each report holds the manager.
+
+**Click any edge to follow it.** The selected edge goes solid and bold while the rest fade back, which is the only practical way to trace a dotted cross-reference across a wide picture. Click it again, or click anywhere off a line, to let go. A selected edge also offers an `×` to hide it when the picture gets crowded — a count and a **Restore them** button appear while anything is hidden, and any change to the graph redraws it and brings them all back. An edge is a fact about the repository, so hiding trims the drawing and never the graph.
+
+Selecting and hiding are handled in the webview, not the extension: they decorate the drawing rather than change the walk, so they cost no scan and no redraw.
+
+**Boxes can be dragged** by the six-dot grip at their top-left — the one place that shows a grab cursor is the one place that grabs, which also keeps a class box draggable when its header and rows are both controls. Drag it to place the box by hand; the position survives hops, expansions and everything else, and a **Reset layout** button appears while anything has been moved. The drag itself is local, and the position is sent to the extension only on release — so the edges are re-routed by the one layout that already knows how, rather than by a second copy of that logic in the webview. They hold still during the drag and snap when it ends. Hand placements are dropped when the graph is reset to a single object, since they were chosen for a picture that no longer exists.
 
 Object-to-object edges are read from the objects' own slots rather than scanned for, so a redraw costs milliseconds (5 ms for six objects) and works even on a session with uncommitted changes. They are recomputed from the whole node set on every change and **all of them are drawn** — a reference between two objects on the picture that the layout does not already express appears as a dotted edge, routed through a clear lane above the boxes so it never disappears behind one it merely passes. So the graph shows every reference among the objects on it, not only the ones you followed; a line item pointing at both a product and that product's order shows both once both are there.
-
-Alongside walking, each row offers:
 
 Alongside walking, each row offers:
 
 - **Inspect all** on a class row — gathers every referrer of that class into one collection and opens an inspector on it, for paging through the whole set rather than stepping through it.
 - **Inspect** on an individual object.
 - **Explorer** on a `Foo class` row, or on any referrer that is itself a class — opens that class in the GemStone Explorer. A metaclass has exactly one instance, the class itself, so the class is a better destination than a one-element collection.
-- Clicking the object on the left inspects the object you are currently looking at.
 
 The Enhanced Inspector's title bar carries **Show Object Graph** too, acting on the object that inspector was opened on. (Not on whichever row you have drilled into — drilling opens further miller columns without moving the panel's own target.)
 

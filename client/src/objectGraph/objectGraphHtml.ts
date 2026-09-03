@@ -87,6 +87,14 @@ export interface ObjectGraphView {
   /** The accumulated canvas. Always holds at least the centre object; once a second
    *  object is added the diagram switches from the referrer-class fan to this. */
   canvas: CanvasGraph;
+  /** Boxes the user has dragged, keyed by box id. Held by the walk rather than the webview
+   *  because a drag has to survive the next redraw, and the host re-renders the whole
+   *  document on every action. */
+  positions: Record<string, { x: number; y: number }>;
+  /** How many objects and class boxes have been removed from the drawing, so the way back
+   *  can be offered. Nothing removed here is lost — every box is re-derivable from a
+   *  scan — but that is only true if there is a control that says so. */
+  removedCount: number;
   /** CSP nonce for the injected view script. */
   nonce: string;
   /** Contents of objectGraphView.js, injected under the nonce. */
@@ -292,6 +300,9 @@ function layoutBoxes(view: ObjectGraphView): Box[] {
 
   const boxes: Box[] = [];
   const layerOfObject = new Map<string, number>();
+  /** Objects that have somewhere to appear — a box of their own, or a row inside a group.
+   *  Anything left over at the end is drawn anyway; see the sweep below. */
+  const drawn = new Set<string>();
 
   // Laid out from the graph's ROOTS — the objects that arrived without a parent — not from
   // whatever is currently centred. Rooting at the centre meant that focusing an object with
@@ -304,6 +315,7 @@ function layoutBoxes(view: ObjectGraphView): Box[] {
   for (const rootOop of startFrom) {
     const node = view.canvas.nodes.find((n) => n.oop === rootOop);
     layerOfObject.set(rootOop, 0);
+    drawn.add(rootOop);
     boxes.push({
       id: `o:${rootOop}`,
       kind: 'object',
@@ -336,6 +348,7 @@ function layoutBoxes(view: ObjectGraphView): Box[] {
       if (g.count === 1 && members.length === 1) {
         const m = members[0];
         layerOfObject.set(m.oop, ownerLayer + 1);
+        drawn.add(m.oop);
         boxes.push({
           id: `o:${m.oop}`,
           kind: 'object',
@@ -351,7 +364,10 @@ function layoutBoxes(view: ObjectGraphView): Box[] {
         continue;
       }
 
-      for (const m of members) layerOfObject.set(m.oop, ownerLayer + 1);
+      for (const m of members) {
+        layerOfObject.set(m.oop, ownerLayer + 1);
+        drawn.add(m.oop);
+      }
       boxes.push({
         id: `g:${ownerOop}:${g.referrerClass}`,
         kind: 'group',
@@ -373,7 +389,68 @@ function layoutBoxes(view: ObjectGraphView): Box[] {
       for (const m of members) queue.push(m.oop);
     }
   }
+
+  // Anything on the graph that the group walk could not place gets a box of its own.
+  //
+  // A node is normally drawn because its (parent, class) pair matches one of the parent's
+  // referrer groups. Re-parenting breaks that: remove a box in the middle and its children
+  // are attached to a grandparent that has no group of that class, so there was nowhere to
+  // draw them — they disappeared from the picture while remaining in the model, and it
+  // looked as though the wrong object had been removed. Rendering is now total: every
+  // node on the graph appears, and no removal can make a bystander vanish.
+  for (const n of view.canvas.nodes) {
+    if (drawn.has(n.oop)) continue;
+    const parentLayer = n.parentOop ? layerOfObject.get(n.parentOop) : undefined;
+    const layer = parentLayer === undefined ? 0 : parentLayer + 1;
+    layerOfObject.set(n.oop, layer);
+    drawn.add(n.oop);
+    boxes.push({
+      id: `o:${n.oop}`,
+      kind: 'object',
+      title: n.label,
+      sub: n.className,
+      layer,
+      oop: n.oop,
+      isCentre: n.oop === view.targetOop,
+      towardOop: n.parentOop && layerOfObject.has(n.parentOop) ? n.parentOop : undefined,
+      via: n.parentOop ? slotOf(n.oop, n.parentOop) : undefined,
+    });
+  }
   return boxes;
+}
+
+/** The drag handle: a six-dot grip at a box's top-left.
+ *
+ *  Dragging used to mean "press anywhere that is not a control", which left a group box
+ *  with nowhere to grab at all — its header fills the top and its rows fill the rest, and
+ *  both are controls. A dedicated handle is also the more honest affordance: the one place
+ *  that shows a grab cursor is the one place that grabs. */
+function dragHandle(x: number, y: number): string {
+  const dots: string[] = [];
+  for (let col = 0; col < 2; col += 1) {
+    for (let row = 0; row < 3; row += 1) {
+      dots.push(`<circle cx="${x + 4 + col * 4}" cy="${y + 5 + row * 4}" r="0.9"/>`);
+    }
+  }
+  return `<g class="grip" data-drag-handle="1">
+      <title>Drag to place this box by hand</title>
+      <rect x="${x}" y="${y}" width="12" height="16"/>
+      ${dots.join('')}
+    </g>`;
+}
+
+/** The dismiss control on an edge, parked beside its label.
+ *
+ *  Only visible on the edge currently selected — an × on every edge would be exactly the
+ *  clutter it exists to relieve. Hiding is view-local, like the highlight: the edge is a
+ *  fact about the repository, so this trims the drawing rather than the graph, and any
+ *  redraw brings it back. */
+function edgeDismiss(x: number, y: number): string {
+  return `<g class="edgedrop" role="button" tabindex="0" data-edge-hide="1">
+      <title>Hide this line (it comes back on the next redraw)</title>
+      <rect x="${x + 10}" y="${y - 9}" width="12" height="12" rx="2"/>
+      <text x="${x + 13}" y="${y + 1}">\u00d7</text>
+    </g>`;
 }
 
 /** Render the single layered graph. */
@@ -413,7 +490,7 @@ function renderGraph(view: ObjectGraphView): string {
 
   const height = lane + TOP * 2 + Math.max(...[...perLayer.values()].map(layerHeight));
   const maxLayer = Math.max(...boxes.map((b) => b.layer));
-  const width = 32 + (maxLayer + 1) * LAYER_W;
+  const autoWidth = 32 + (maxLayer + 1) * LAYER_W;
 
   // Place every box, and record where each OBJECT sits — the centre and lone objects at
   // their box, a group member at its row — so an edge can aim at the object itself.
@@ -440,6 +517,32 @@ function renderGraph(view: ObjectGraphView): string {
     }
   }
 
+  // A hand-placed box wins over its computed slot. Applied after the automatic pass, so
+  // the layout stays the single source of truth for everything untouched and one click of
+  // Reset layout puts it all back.
+  let width = autoWidth;
+  let canvasHeight = height;
+  for (const b of boxes) {
+    const moved = view.positions[b.id];
+    if (moved) pos.set(b.id, { x: moved.x, y: moved.y });
+    const at = pos.get(b.id);
+    if (!at) continue;
+    width = Math.max(width, at.x + BOX_W + 16);
+    canvasHeight = Math.max(canvasHeight, at.y + boxHeight(b) + 16);
+    if (!moved) continue;
+    // Anchors must follow the box, or its edges keep pointing at where it used to be.
+    if (b.kind === 'object' && b.oop) {
+      anchor.set(b.oop, { left: at.x, right: at.x + BOX_W, y: at.y + OBJECT_H / 2 });
+    }
+    b.rows?.forEach((r, i) => {
+      anchor.set(r.oop, {
+        left: at.x + 8,
+        right: at.x + BOX_W - 8,
+        y: at.y + HEADER_H + i * ROW_H + ROW_H / 2,
+      });
+    });
+  }
+
   const edges = boxes
     .map((b) => {
       if (!b.towardOop) return '';
@@ -449,13 +552,19 @@ function renderGraph(view: ObjectGraphView): string {
       const sy = from.y + (b.kind === 'group' ? HEADER_H / 2 : OBJECT_H / 2);
       const tx = to.right + ARROW_GAP;
       const midX = (from.x + tx) / 2;
+      const path = `M ${from.x} ${sy} C ${midX} ${sy}, ${midX} ${to.y}, ${tx} ${to.y}`;
+      // Each edge is wrapped with a fat transparent twin. A 1.4px line is close to
+      // unclickable, and following a long one across the picture is what needed help.
       return (
-        `<path class="edge" marker-end="url(#ref-arrow)" stroke-width="1.4" ` +
-        `d="M ${from.x} ${sy} C ${midX} ${sy}, ${midX} ${to.y}, ${tx} ${to.y}"/>` +
+        `<g class="edgewrap" data-edge="s${b.id}">` +
+        `<path class="edgehit" d="${path}"/>` +
+        `<path class="edge" marker-end="url(#ref-arrow)" stroke-width="1.4" d="${path}"/>` +
         (b.via
           ? `<text class="count" x="${midX}" y="${(sy + to.y) / 2 - 4}" text-anchor="middle">` +
-            `${escapeHtml(b.via)}</text>`
-          : '')
+            `${escapeHtml(b.via)}</text>` +
+            edgeDismiss(midX, (sy + to.y) / 2 - 4)
+          : '') +
+        `</g>`
       );
     })
     .join('\n    ');
@@ -482,34 +591,57 @@ function renderGraph(view: ObjectGraphView): string {
       const cx2 = goingRight ? to.left - 12 - ARROW_GAP : to.right + 12 + ARROW_GAP;
       const tx = goingRight ? to.left - ARROW_GAP : to.right + ARROW_GAP;
       const midX = (cx1 + cx2) / 2;
+      const path =
+        `M ${sx} ${from.y} L ${cx1} ${from.y} L ${cx1} ${CROSS_LANE_Y} ` +
+        `L ${cx2} ${CROSS_LANE_Y} L ${cx2} ${to.y} L ${tx} ${to.y}`;
       return (
-        `<path class="edge cross" marker-end="url(#ref-arrow)" stroke-width="1.2" ` +
-        `d="M ${sx} ${from.y} L ${cx1} ${from.y} L ${cx1} ${CROSS_LANE_Y} ` +
-        `L ${cx2} ${CROSS_LANE_Y} L ${cx2} ${to.y} L ${tx} ${to.y}"/>` +
+        `<g class="edgewrap" data-edge="x${e.fromOop}-${e.toOop}">` +
+        `<path class="edgehit" d="${path}"/>` +
+        `<path class="edge cross" marker-end="url(#ref-arrow)" stroke-width="1.2" d="${path}"/>` +
         `<text class="count cross" x="${midX}" y="${CROSS_LANE_Y - 4}" ` +
-        `text-anchor="middle">${escapeHtml(e.via)}</text>`
+        `text-anchor="middle">${escapeHtml(e.via)}</text>` +
+        edgeDismiss(midX, CROSS_LANE_Y - 4) +
+        `</g>`
       );
     })
     .join('\n    ');
 
   const objectBox = (b: Box, p: { x: number; y: number }) => {
-    const drop = b.isCentre
-      ? ''
-      : `<g class="drop" role="button" tabindex="0" data-remove-oop="${escapeHtml(b.oop ?? '')}">
+    // Every object on the graph can be inspected, the centre included — it had no control
+    // at all before, only a tooltip, so the object the whole picture was about was the one
+    // thing you could not open. The × sits outermost; inspect tucks in beside it, and takes
+    // its place on the centre, which has no ×.
+    const dropX = p.x + BOX_W - 17;
+    const inspectX = p.x + BOX_W - 34;
+    // The centre keeps its × like every other box. Withholding it meant the control
+    // vanished the moment you focused an object, which reads as a bug rather than a rule;
+    // removing the centre now re-centres on what it hangs off instead of being refused.
+    const drop = `<g class="drop" role="button" tabindex="0" data-remove-oop="${escapeHtml(b.oop ?? '')}">
         <title>Take this object off the graph: ${escapeHtml(b.title)}</title>
-        <rect x="${p.x + BOX_W - 17}" y="${p.y + 3}" width="14" height="14" rx="3"/>
-        <text x="${p.x + BOX_W - 13}" y="${p.y + 14}">\u00d7</text>
+        <rect x="${dropX}" y="${p.y + 3}" width="14" height="14" rx="3"/>
+        <text x="${dropX + 4}" y="${p.y + 14}">\u00d7</text>
+      </g>`;
+    const inspect = `<g class="drop insp" role="button" tabindex="0"
+              data-inspect-oop="${escapeHtml(b.oop ?? '')}">
+        <title>Inspect this object: ${escapeHtml(b.title)}</title>
+        <rect x="${inspectX}" y="${p.y + 3}" width="14" height="14" rx="3"/>
+        <circle class="lens" cx="${inspectX + 6}" cy="${p.y + 9}" r="3.4"/>
+        <line class="lens" x1="${inspectX + 8.6}" y1="${p.y + 11.6}"
+              x2="${inspectX + 11.5}" y2="${p.y + 14.5}"/>
       </g>`;
     return `<g class="cnode${b.isCentre ? ' centre' : ''}" role="button" tabindex="0"
+              data-box="${escapeHtml(b.id)}" data-bx="${p.x}" data-by="${p.y}"
               ${b.isCentre ? '' : `data-focus-oop="${escapeHtml(b.oop ?? '')}"`}>
       <title>${
         b.isCentre
-          ? 'The object this graph is centred on'
+          ? `The object this graph is centred on. \u25c9 inspects it: ${escapeHtml(b.title)}`
           : `Ask what points at this object, keeping everything already drawn: ${escapeHtml(b.title)}`
       }</title>
       <rect x="${p.x}" y="${p.y}" width="${BOX_W}" height="${OBJECT_H}" rx="4"/>
-      <text x="${p.x + 8}" y="${p.y + 16}">${escapeHtml(truncate(b.title, 22))}</text>
-      <text class="sub" x="${p.x + 8}" y="${p.y + 29}">${escapeHtml(truncate(b.sub, 24))}</text>
+      <text x="${p.x + 20}" y="${p.y + 16}">${escapeHtml(truncate(b.title, 17))}</text>
+      <text class="sub" x="${p.x + 20}" y="${p.y + 29}">${escapeHtml(truncate(b.sub, 21))}</text>
+      ${dragHandle(p.x + 3, p.y + 3)}
+      ${inspect}
       ${drop}
     </g>`;
   };
@@ -545,17 +677,25 @@ function renderGraph(view: ObjectGraphView): string {
         ? `<text class="sub" x="${p.x + 16}" y="${p.y + h - 4}">+${b.remaining} not shown</text>`
         : '';
     const meta = isMetaclassName(b.title) ? ' meta' : '';
-    return `<g class="gnode${meta}${b.rows?.length ? ' open' : ''}">
+    return `<g class="gnode${meta}${b.rows?.length ? ' open' : ''}"
+              data-box="${escapeHtml(b.id)}" data-bx="${p.x}" data-by="${p.y}">
       <rect class="stack2" x="${p.x + 7}" y="${p.y + 7}" width="${BOX_W}" height="${h}"/>
       <rect class="stack1" x="${p.x + 4}" y="${p.y + 4}" width="${BOX_W}" height="${h}"/>
       <rect class="front" x="${p.x}" y="${p.y}" width="${BOX_W}" height="${h}"/>
+      <g class="drop" role="button" tabindex="0"
+         data-remove-group="${escapeHtml(`${b.oop ?? ''}|${b.title}`)}">
+        <title>Take this class off the graph, with anything shown under it: ${escapeHtml(b.title)}</title>
+        <rect x="${p.x + BOX_W - 17}" y="${p.y + 3}" width="14" height="14" rx="3"/>
+        <text x="${p.x + BOX_W - 13}" y="${p.y + 14}">\u00d7</text>
+      </g>
       <g class="ghead" role="button" tabindex="0" data-expand="${escapeHtml(b.classOop ?? '')}"
          data-class-name="${escapeHtml(b.title)}" data-expand-of="${escapeHtml(b.oop ?? '')}">
         <title>List the objects of class ${escapeHtml(b.title)} that point here — ${escapeHtml(b.sub)}</title>
-        <rect class="hit" x="${p.x}" y="${p.y}" width="${BOX_W}" height="${HEADER_H}"/>
-        <text x="${p.x + 8}" y="${p.y + 15}">${escapeHtml(truncate(b.title, 21))}</text>
-        <text class="sub" x="${p.x + 8}" y="${p.y + 28}">${escapeHtml(truncate(b.sub, 24))}</text>
+        <rect class="hit" x="${p.x}" y="${p.y}" width="${BOX_W - 20}" height="${HEADER_H}"/>
+        <text x="${p.x + 20}" y="${p.y + 15}">${escapeHtml(truncate(b.title, 17))}</text>
+        <text class="sub" x="${p.x + 20}" y="${p.y + 28}">${escapeHtml(truncate(b.sub, 22))}</text>
       </g>
+      ${dragHandle(p.x + 3, p.y + 3)}
       ${rows}
       ${more}
     </g>`;
@@ -568,12 +708,16 @@ function renderGraph(view: ObjectGraphView): string {
     })
     .join('\n    ');
 
-  return `<svg viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" role="img"
+  return `<svg viewBox="0 0 ${width} ${canvasHeight}" width="${width}" height="${canvasHeight}" role="img"
      aria-label="Object graph centred on ${escapeHtml(view.targetLabel)}">
     <defs>
       <marker id="ref-arrow" viewBox="0 0 10 8" refX="9" refY="4"
               markerWidth="9" markerHeight="7" markerUnits="userSpaceOnUse" orient="auto">
         <path d="M 0 0 L 10 4 L 0 8 z" class="arrowhead"/>
+      </marker>
+      <marker id="ref-arrow-hl" viewBox="0 0 10 8" refX="9" refY="4"
+              markerWidth="10" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto">
+        <path d="M 0 0 L 10 4 L 0 8 z" class="arrowhead hl"/>
       </marker>
     </defs>
     ${edges}
@@ -635,9 +779,11 @@ export function renderObjectGraphHtml(view: ObjectGraphView): string {
          referrers, so no line has to run back past the box. A
          <strong>solid</strong> box is a single object, its edge labelled with the slot the
          reference sits in; click one to ask what points at <em>it</em>, keeping everything
-         already drawn. A <strong>dotted</strong> edge is a further reference between two
+         already drawn. Each box has a <strong>grip</strong> at its top-left — drag it to
+         place the box by hand. A <strong>dotted</strong> edge is a further reference between two
          objects already on the picture — every reference among them is drawn, not only the
-         ones you followed.</p>`;
+         ones you followed. <strong>Click any edge</strong> to follow it: it goes solid and
+         the rest fade back; click it again to restore them.</p>`;
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -681,6 +827,18 @@ export function renderObjectGraphHtml(view: ObjectGraphView): string {
     .summary, .note, .empty, .hint { margin: 6px 0 10px; }
     .note, .empty, .hint { color: var(--vscode-descriptionForeground); }
     .canvasbar { margin: 0 0 12px; color: var(--vscode-descriptionForeground); }
+    .edgebar { margin: 0 0 10px; color: var(--vscode-descriptionForeground); }
+    .layoutbar { margin: 0 0 10px; color: var(--vscode-descriptionForeground); }
+    /* Only the grip drags. Everything else in a box keeps its own action. */
+    .grip { cursor: grab; }
+    g[data-box].dragging .grip { cursor: grabbing; }
+    .grip rect { fill: transparent; stroke: transparent; }
+    .grip circle { fill: var(--vscode-descriptionForeground); opacity: 0.5; }
+    .grip:hover circle { opacity: 1; }
+    g[data-box].dragging .front, g[data-box].dragging > rect {
+      stroke: var(--vscode-focusBorder, #4f9cf9);
+    }
+    .edgebar[hidden] { display: none; }
     .cnode[data-focus-oop] { cursor: pointer; }
     .cnode[data-focus-oop]:hover rect { stroke: var(--vscode-focusBorder, #4f9cf9); }
     .cnode:focus-visible rect { stroke: var(--vscode-focusBorder, #4f9cf9); }
@@ -689,6 +847,32 @@ export function renderObjectGraphHtml(view: ObjectGraphView): string {
        Dotted and dimmer so the structure still reads first, but present, because a
        reference left undrawn makes the picture wrong. */
     .edge.cross { stroke-dasharray: 2 3; opacity: 0.7; }
+    /* Click an edge to follow it. The dotted cross-references in particular are hard to
+       trace across the picture, so the selected one goes solid and bold while every other
+       edge fades right back. */
+    .edgehit { fill: none; stroke: transparent; stroke-width: 14; pointer-events: stroke; cursor: pointer; }
+    .edgewrap.hl .edge {
+      stroke: var(--vscode-charts-orange, #d18616);
+      stroke-width: 2.6;
+      stroke-dasharray: none;
+      opacity: 1;
+      marker-end: url(#ref-arrow-hl);
+    }
+    .edgewrap.hl .count {
+      fill: var(--vscode-charts-orange, #d18616);
+      font-style: normal;
+      font-weight: 600;
+      opacity: 1;
+    }
+    .arrowhead.hl { fill: var(--vscode-charts-orange, #d18616); opacity: 1; }
+    svg.dim .edgewrap:not(.hl) .edge { opacity: 0.12; }
+    svg.dim .edgewrap:not(.hl) .count { opacity: 0.25; }
+    .edgewrap.hidden { display: none; }
+    .edgedrop { display: none; cursor: pointer; }
+    .edgewrap.hl .edgedrop { display: inline; }
+    .edgedrop rect { fill: var(--vscode-editor-background); stroke: var(--vscode-panel-border, rgba(127,127,127,0.5)); }
+    .edgedrop text { font-size: 11px; fill: var(--vscode-descriptionForeground); }
+    .edgedrop:hover text { fill: var(--vscode-foreground); }
     .count.cross { font-style: italic; opacity: 0.85; }
     .cnode rect {
       fill: var(--vscode-editor-background);
@@ -706,6 +890,13 @@ export function renderObjectGraphHtml(view: ObjectGraphView): string {
     .cnode .drop { cursor: pointer; }
     .cnode .drop rect { fill: transparent; stroke: transparent; }
     .cnode .drop text { font-size: 12px; fill: var(--vscode-descriptionForeground); }
+    .cnode .drop.insp .lens {
+      fill: none;
+      stroke: var(--vscode-descriptionForeground);
+      stroke-width: 1.3;
+      stroke-linecap: round;
+    }
+    .cnode .drop.insp:hover .lens { stroke: var(--vscode-foreground); }
     .cnode .drop:hover rect { fill: var(--vscode-toolbar-hoverBackground, rgba(127,127,127,0.3)); }
     .cnode .drop:hover text { fill: var(--vscode-foreground); }
     /* Members drawn INSIDE a group box. Containment is what says "these are the referrers
@@ -807,6 +998,10 @@ export function renderObjectGraphHtml(view: ObjectGraphView): string {
     g.gnode { cursor: pointer; }
     g.gnode:hover rect.front { stroke: var(--vscode-focusBorder, #4f9cf9); }
     .gnode .sub { font-size: 9.5px; fill: var(--vscode-descriptionForeground); }
+    .gnode .drop rect { fill: transparent; stroke: transparent; }
+    .gnode .drop text { font-size: 12px; fill: var(--vscode-descriptionForeground); }
+    .gnode .drop:hover rect { fill: var(--vscode-toolbar-hoverBackground, rgba(127,127,127,0.3)); }
+    .gnode .drop:hover text { fill: var(--vscode-foreground); }
     .disclose:focus-visible, .dive:focus-visible, .act:focus-visible, .crumb:focus-visible,
     g.gnode:focus-visible rect.front, g.cnode:focus-visible rect {
       outline: 1px solid var(--vscode-focusBorder, #4f9cf9);
@@ -821,6 +1016,22 @@ export function renderObjectGraphHtml(view: ObjectGraphView): string {
   ${hint}
   ${truncated}
   ${classCount === 0 && view.canvas.nodes.length < 2 ? '' : `<div class="graphwrap">${renderGraph(view)}</div>`}
+  ${
+    view.removedCount === 0
+      ? ''
+      : `<p class="layoutbar"><strong>${view.removedCount}</strong> box(es) removed from the
+         drawing. <button class="act" data-restore-removed="1"
+         title="Put every removed object and class box back">Restore removed boxes</button></p>`
+  }
+  ${
+    Object.keys(view.positions).length === 0
+      ? ''
+      : `<p class="layoutbar"><strong>${Object.keys(view.positions).length}</strong> box(es)
+         placed by hand. <button class="act" data-reset-layout="1"
+         title="Put every box back where the automatic layout wants it">Reset layout</button></p>`
+  }
+  <p class="edgebar" id="edgebar" hidden><span id="edgecount">0</span> line(s) hidden from the
+     drawing. <button class="act" id="restoreedges">Restore them</button></p>
   ${canvasBar}
   ${renderTable(view)}
   <script nonce="${view.nonce}">${view.script}</script>

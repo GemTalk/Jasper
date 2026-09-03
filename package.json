@@ -3196,6 +3196,12 @@
         "when": "editorTextFocus && gemstone.hasActiveSession && !gemstone.executing"
       },
       {
+        "command": "gemstone.showObjectGraph",
+        "key": "ctrl+k g",
+        "mac": "cmd+k g",
+        "when": "editorTextFocus && gemstone.hasActiveSession && !gemstone.executing"
+      },
+      {
         "command": "gemstone.openBrowser",
         "key": "ctrl+k b",
         "mac": "cmd+k b",

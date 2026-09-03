@@ -39,6 +39,14 @@ import {
   referrerCollectionOf as sharedReferrerCollectionOf,
   referrerObjectsOf as sharedReferrerObjectsOf,
   slotEdgesAmong as sharedSlotEdgesAmong,
+  buildReferrersOf,
+  parseReferrersOf,
+  buildReferrerObjectsOf,
+  parseReferrerObjectsOf,
+  buildReferrerCollectionOf,
+  parseReferrerCollectionOf,
+  buildSlotEdgesAmong,
+  parseSlotEdgesAmong,
   ReferrersResult,
   ClassCensusResult,
   ReferenceEdgesResult,
@@ -2438,4 +2446,65 @@ export function referrerObjectsOf(
 
 export function slotEdgesAmong(session: ActiveSession, oops: string[]): SlotEdgesResult {
   return sharedSlotEdgesAmong(defaultQueryExecutorUsing(session), oops);
+}
+
+// ── Object graph, non-blocking ────────────────────────────────────────────
+//
+// The panel runs its scans through executeFetchStringNb rather than the synchronous
+// executor above. A repository-wide scan takes 20 ms on a small stone and 150 ms on a
+// large one, and a synchronous GCI call freezes the whole extension host for that long —
+// which is why no progress indicator could ever paint over one, and why several hops in a
+// row felt sluggish even though each was fast. The nb runner keeps VS Code responsive and
+// puts up a cancellable progress notification if a scan really does run long.
+
+export async function referrersOfNb(session: ActiveSession, oop: bigint): Promise<ReferrersResult> {
+  return parseReferrersOf(
+    await executeFetchStringNb(
+      session,
+      'objectGraph',
+      buildReferrersOf(oop),
+      'Scanning references…',
+    ),
+  );
+}
+
+export async function referrerObjectsOfNb(
+  session: ActiveSession,
+  targetOop: bigint,
+  referrerClassOop: bigint,
+): Promise<ReferrerObjectsResult> {
+  return parseReferrerObjectsOf(
+    await executeFetchStringNb(
+      session,
+      'objectGraph',
+      buildReferrerObjectsOf(targetOop, referrerClassOop),
+      'Listing referrers…',
+    ),
+  );
+}
+
+export async function referrerCollectionOfNb(
+  session: ActiveSession,
+  targetOop: bigint,
+  referrerClassOop: bigint,
+): Promise<ReferrerCollectionResult> {
+  return parseReferrerCollectionOf(
+    await executeFetchStringNb(
+      session,
+      'objectGraph',
+      buildReferrerCollectionOf(targetOop, referrerClassOop),
+      'Collecting referrers…',
+    ),
+  );
+}
+
+export async function slotEdgesAmongNb(
+  session: ActiveSession,
+  oops: string[],
+): Promise<SlotEdgesResult> {
+  const code = buildSlotEdgesAmong(oops);
+  if (!code) return { kind: 'ok', edges: [] };
+  return parseSlotEdgesAmong(
+    await executeFetchStringNb(session, 'objectGraph', code, 'Working out the edges…'),
+  );
 }
