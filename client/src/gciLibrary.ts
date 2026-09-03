@@ -3,7 +3,7 @@ import * as path from 'path';
 import { GCI_LOGIN_QUIET, OOP_FALSE, OOP_ILLEGAL, OOP_NIL, OOP_TRUE } from './gciConstants';
 import { GciLibraryError } from './gciLibraryError';
 import { escapeString } from './queries/util';
-import type { NotPromise } from './types';
+import type { NotPromise } from './syncTypes';
 
 // OopType is uint64_t in C; koffi maps this to BigInt in JS
 const OopType = 'uint64';
