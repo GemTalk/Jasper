@@ -56,10 +56,13 @@ jobs:
       VERSION: ${{ inputs.version }}
       REF: ${{ inputs.ref }}
     steps:
-      # Every check that can be made over the API runs BEFORE any checkout, so
-      # no unverified code is ever placed on this privileged runner. Only once
-      # the ref is known to be an ancestor of main -- i.e. reviewed, merged
-      # code -- is it checked out and read.
+      # This job checks nothing out. Every check is made over the API, and the
+      # two files it inspects are treated as data, so no code from a
+      # dispatch-time ref ever reaches this runner -- which is what keeps a
+      # workflow running in the default branch's context, with its cache and
+      # its token, from executing a ref chosen by whoever dispatched it. The
+      # ancestry check below is the gate for the publish job, which does check
+      # the commit out, behind the `release` environment's approval.
       - name: Validate the version string
         run: |
           if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
@@ -124,19 +127,18 @@ jobs:
             exit 1
           fi
           echo "ci-complete passed on $SHA."
-      # Only now, with the commit established as merged main history, is its
-      # content fetched and read.
-      # zizmor(unpinned-uses): actions must be pinned to a commit SHA, not
-      # a mutable tag like @v6
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ steps.resolve.outputs.sha }}
-          # zizmor(artipacked): checkout must not persist the token past
-          # this job
-          persist-credentials: false
+      # Both files are read through the API and treated strictly as data --
+      # grep and jq, never executed. Pre-flight therefore never checks
+      # anything out: no dispatch-time ref reaches this runner's filesystem,
+      # so there is no untrusted code here to execute at all. Reading the
+      # content of a commit is safe; running it is not.
       - name: Require package.json to be at the requested version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ steps.resolve.outputs.sha }}
         run: |
-          actual=$(node -p 'require("./package.json").version')
+          actual=$(gh api "repos/${GITHUB_REPOSITORY}/contents/package.json?ref=${SHA}" \
+            -H "Accept: application/vnd.github.raw" | jq -r .version)
           if [ "$actual" != "$VERSION" ]; then
             echo "error: package.json is at $actual, but $VERSION was requested." >&2
             echo "Either publish $actual, or merge the bump to $VERSION first." >&2
@@ -144,9 +146,24 @@ jobs:
           fi
       # An entry still under `## [Unreleased]` means the changelog was never
       # promoted; publishing it would ship a version whose own changelog calls
-      # it unreleased. This is also the text used for the release notes below.
+      # it unreleased. This only checks that the dated heading exists -- the
+      # publish job runs scripts/changelog-section.sh for the notes themselves,
+      # and that script fails if the section turns out to be empty.
       - name: Require a dated changelog section
-        run: bash scripts/changelog-section.sh "$VERSION" > /dev/null
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ steps.resolve.outputs.sha }}
+        run: |
+          # Dots are regex metacharacters, and the version reaches here as a
+          # literal; escape them so 1.8.1 cannot match 1_8_1.
+          esc=$(printf '%s' "$VERSION" | sed 's/\./\\./g')
+          if ! gh api "repos/${GITHUB_REPOSITORY}/contents/CHANGELOG.md?ref=${SHA}" \
+              -H "Accept: application/vnd.github.raw" |
+              grep -Eq "^## \[$esc\] - [0-9]{4}-[0-9]{2}-[0-9]{2}"; then
+            echo "error: CHANGELOG.md has no dated '## [$VERSION] - <date>' section at $SHA." >&2
+            echo "Promote the [Unreleased] section and merge that before releasing." >&2
+            exit 1
+          fi
 
   publish:
     name: Publish to both registries
