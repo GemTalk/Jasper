@@ -17,7 +17,7 @@ import { useIntegrationTest } from '../../__tests__/useIntegrationTest';
 import { GciLibrary } from '../../gciLibrary';
 import * as q from '../../browserQueries';
 import type { ActiveSession } from '../../sessionManager';
-import { NbCancelledError } from '../../nbRunner';
+import { MIN_HARD_BREAK_GAP_MS, NbCancelledError } from '../../nbRunner';
 import { runTestClassNb, runTestMethodNb } from '../../sunitQueries';
 import { discoverTestClasses } from '../discoverTestClasses';
 import { discoverTestMethods } from '../discoverTestMethods';
@@ -32,7 +32,8 @@ import {
 
 // Long enough that a stop has something to interrupt, short enough that a test
 // which fails to stop still ends this file rather than hanging it. Sends a
-// message every iteration, so the gem reaches a safe point and a soft break lands.
+// message every iteration, so the gem keeps reaching safe points and a soft break
+// does land — though how long it takes to is the gem's business, not the test's.
 const SLOW_SELECTOR = 'testRunsLongEnoughToStop';
 const SLOW_SOURCE = `${SLOW_SELECTOR}
   | n |
@@ -60,22 +61,6 @@ describe('SUnit non-blocking runs (integration)', () => {
     installSunitProbeFixture(exec);
   });
 
-  /**
-   * Wait until the session has no GCI call outstanding.
-   *
-   * A break abandons the call, and its result is collected in the background.
-   * The harness aborts the transaction after every test, on a blocking call —
-   * so a test that ends while the drain is still going hands back a session
-   * that refuses the abort, and every later test in the file is skipped.
-   */
-  async function waitUntilIdle(): Promise<void> {
-    for (let i = 0; i < 200; i++) {
-      if (gci.GciTsCallInProgress(handle).result === 0) return;
-      await new Promise((r) => setTimeout(r, 50));
-    }
-    throw new Error('The session still had a call in progress 10s after the break.');
-  }
-
   function installSlowTest(): void {
     exec(
       `(UserGlobals at: #'${SUNIT_PROBE_TEST_CLASS}')
@@ -84,6 +69,69 @@ describe('SUnit non-blocking runs (integration)', () => {
          category: 'tests'. 'ok'`,
     );
   }
+
+  /**
+   * Start the slow test and hand back its promise plus the canceller, ready to
+   * be pressed.
+   *
+   * Two waits are folded in here because both are about the run having actually
+   * begun, and neither is a guess about how the gem will service a break:
+   *
+   * - `vi.waitFor` on the canceller, because a run that follows a break waits for
+   *   the abandoned call to be drained before it starts, so `onStart` is not
+   *   always synchronous.
+   * - the short sleep, because a break that arrives before the gem has picked the
+   *   call up is documented as ignored. 250ms is far more than it needs: the gem
+   *   reports its own elapsed time as ~250ms when a break lands right after this
+   *   wait, i.e. it started executing essentially at once.
+   */
+  async function startSlowRun(): Promise<{
+    run: ReturnType<typeof runTestMethodNb>;
+    cancel: () => void;
+  }> {
+    let cancel: (() => void) | undefined;
+    const run = runTestMethodNb(
+      session(),
+      SUNIT_PROBE_TEST_CLASS,
+      SLOW_SELECTOR,
+      undefined,
+      (c) => {
+        cancel = c;
+      },
+    );
+    // Claimed here rather than at the assertion: a hard break rejects inside a
+    // timer tick, and an unclaimed rejection that early is reported as unhandled.
+    run.catch(() => {});
+    await vi.waitFor(() => expect(cancel).toBeDefined());
+    await new Promise((r) => setTimeout(r, 250));
+    return { run, cancel: cancel! };
+  }
+
+  /**
+   * How a stopped run settled, as one of two legal endings: `'stopped'` when the
+   * hard break abandoned the call and the run rejected, or whatever verdict the
+   * gem answered when it trapped the break instead. Which of the two happens
+   * depends on the gem's break-delivery mode and is not the test's business.
+   *
+   * Only `NbCancelledError` is read as a stop. Every other rejection is rethrown
+   * so it surfaces as itself: a poll failure, a session that went away, or a
+   * follow-up call refused as busy are all bugs, and mapping them to 'stopped'
+   * would let the exact failures these tests exist to catch read as a clean stop.
+   */
+  async function settledStatus(run: ReturnType<typeof runTestMethodNb>): Promise<string> {
+    try {
+      return (await run).status;
+    } catch (e) {
+      if (e instanceof NbCancelledError) return 'stopped';
+      throw e;
+    }
+  }
+
+  /**
+   * The endings a stopped run may legally have — asserted as a set rather than
+   * as "anything but passed", so a surprise verdict is a failure too.
+   */
+  const STOPPED_ENDINGS = ['stopped', 'error'];
 
   it('reports a passing, a failing and an erroring test the same way the blocking query does', async () => {
     await expect(
@@ -133,67 +181,71 @@ describe('SUnit non-blocking runs (integration)', () => {
     // which reads as the run silently doing nothing.
     installSlowTest();
 
-    let cancel: (() => void) | undefined;
-    const run = runTestMethodNb(
-      session(),
-      SUNIT_PROBE_TEST_CLASS,
-      SLOW_SELECTOR,
-      undefined,
-      (c) => {
-        cancel = c;
-      },
-    );
-    // Let the call get going before breaking it.
-    await new Promise((r) => setTimeout(r, 250));
-    expect(cancel).toBeDefined();
-    cancel!(); // soft — this test reaches safe points, so it should land
-    const outcome = await run.then(
-      (r) => r,
-      (e: unknown) => e,
-    );
+    const { run, cancel } = await startSlowRun();
+    cancel(); // one press — soft break
 
-    // A soft break surfaces either as a rejection or as a non-passing verdict,
-    // depending on where in the test the gem reached its safe point. What must
-    // never happen is the interrupted test being reported as having passed.
-    const settledAs = outcome instanceof Error ? 'stopped' : (outcome as { status: string }).status;
-    expect(settledAs).not.toBe('passed');
+    // A stopped test must report as stopped or errored — never as passed, and
+    // never as something else that happens not to be 'passed'.
+    expect(STOPPED_ENDINGS).toContain(await settledStatus(run));
 
-    // The session is the real assertion: another run must work, without the
-    // caller having to know a break just happened.
+    // The session is the real assertion, and its own synchronisation: the next run
+    // waits for the abandoned call to be drained before it starts, so if this
+    // resolves at all, the session came back without the caller knowing a break
+    // happened.
     await expect(
       runTestMethodNb(session(), SUNIT_PROBE_TEST_CLASS, SUNIT_PROBE_PASSING_SELECTOR),
     ).resolves.toMatchObject({ status: 'passed' });
-    await waitUntilIdle();
   }, 120_000);
 
-  it('escalates to a hard break when the run ignores a soft one', async () => {
+  it('takes a second press without sending the two breaks back-to-back', async () => {
+    // Pressing stop twice in a row is the gesture that once faulted the client
+    // process outright, because the hard break went out on the heels of the soft
+    // one. The runner defers it instead, and only a live GCI can show that the
+    // deferral holds — a stubbed one cannot fault.
+    //
+    // Deliberately NOT asserted here: that a hard break is sent at all. Whether
+    // it is depends on whether the gem services the soft break within the gap
+    // (~80ms) or after it (~1.9s), which is not something the client controls.
     installSlowTest();
 
-    let cancel: (() => void) | undefined;
-    const run = runTestMethodNb(
-      session(),
-      SUNIT_PROBE_TEST_CLASS,
-      SLOW_SELECTOR,
-      undefined,
-      (c) => {
-        cancel = c;
-      },
-    );
-    await new Promise((r) => setTimeout(r, 250));
-    cancel!();
-    // The second call is the hard break. The runner refuses to send it back-to-back
-    // with the soft one — that crashes the client process outright — so wait past
-    // its safety gap before asking again, the way a user pressing twice would.
-    await new Promise((r) => setTimeout(r, 500));
-    cancel!();
+    // Time each break as it goes out, and still let the real one through — the
+    // point is the gap between them on a live library, so this must not stub.
+    const sent: { hard: boolean; at: number }[] = [];
+    const realBreak = gci.GciTsBreak.bind(gci);
+    const breaks = vi.spyOn(gci, 'GciTsBreak').mockImplementation((h, hard) => {
+      sent.push({ hard, at: Date.now() });
+      return realBreak(h, hard);
+    });
 
-    await expect(run).rejects.toBeInstanceOf(NbCancelledError);
+    try {
+      const { run, cancel } = await startSlowRun();
+      cancel(); // soft
+      cancel(); // hard, deferred internally past the safety gap — never slept for here
 
-    // And the session recovers, which is what the drain is for.
-    await expect(
-      runTestMethodNb(session(), SUNIT_PROBE_TEST_CLASS, SUNIT_PROBE_PASSING_SELECTOR),
-    ).resolves.toMatchObject({ status: 'passed' });
-    await waitUntilIdle();
+      expect(STOPPED_ENDINGS).toContain(await settledStatus(run));
+
+      // The sequence as one string, so both legal endings can be named without
+      // asserting inside a conditional: either the gem serviced the soft break
+      // before the deferred hard one came due, or it did not and the hard break
+      // went out — a full gap later. A `hard-too-soon` here is the client-faulting
+      // sequence this test exists to catch.
+      const shape = sent
+        .map((brk, i) => {
+          const soonEnough = i > 0 && brk.at - sent[i - 1].at < MIN_HARD_BREAK_GAP_MS;
+          return `${brk.hard ? 'hard' : 'soft'}${soonEnough ? '-too-soon' : ''}`;
+        })
+        .join(',');
+      expect(['soft', 'soft,hard']).toContain(shape);
+
+      // And the session recovers, which is what the drain is for.
+      await expect(
+        runTestMethodNb(session(), SUNIT_PROBE_TEST_CLASS, SUNIT_PROBE_PASSING_SELECTOR),
+      ).resolves.toMatchObject({ status: 'passed' });
+    } finally {
+      // Restored even on failure: the spy is on the shared library object, so a
+      // leaked one would follow every later test in the file.
+      breaks.mockRestore();
+    }
   }, 120_000);
 
   it('discovers the probe class, and its methods carry the category the URI needs', () => {

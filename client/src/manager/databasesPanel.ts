@@ -734,32 +734,6 @@ export class DatabasesPanel {
   }
 
   /**
-   * Start whichever of a database's servers is not already up. Both are checked
-   * first, so starting a database whose NetLDI is already running does not try
-   * to start it a second time.
-   */
-  private async bringUp(db: GemStoneDatabase): Promise<void> {
-    const cfg = db.config;
-    if (!this.deps.processManager.isStoneRunning(cfg.stoneName, cfg.version)) {
-      await vscode.commands.executeCommand('gemstone.startStone', { kind: 'stone', db });
-    }
-    if (!this.deps.processManager.isNetldiRunning(cfg.ldiName, cfg.version)) {
-      await vscode.commands.executeCommand('gemstone.startNetldi', { kind: 'netldi', db });
-    }
-  }
-
-  /** Stop whichever of a database's processes is up, for the same reason. */
-  private async takeDown(db: GemStoneDatabase): Promise<void> {
-    const cfg = db.config;
-    if (this.deps.processManager.isStoneRunning(cfg.stoneName, cfg.version)) {
-      await vscode.commands.executeCommand('gemstone.stopStone', { kind: 'stone', db });
-    }
-    if (this.deps.processManager.isNetldiRunning(cfg.ldiName, cfg.version)) {
-      await vscode.commands.executeCommand('gemstone.stopNetldi', { kind: 'netldi', db });
-    }
-  }
-
-  /**
    * Connect as a specific login. Rows are identified by their display label, the
    * same string `buildDatabases` puts on the wire, so the panel never has to ship
    * credentials to the webview. Delegates to `gemstone.login`, inheriting its
@@ -907,11 +881,19 @@ export class DatabasesPanel {
     if (refresh) await this.postState();
   }
 
+  /**
+   * The power button: bring a database's Stone and NetLDI up or down together.
+   * The work lives in `gemstone.startDatabase` / `gemstone.stopDatabase` so the
+   * Databases sidebar's rows and the Command Palette act on a database the same
+   * way this panel does.
+   */
   private async startStopDatabase(dirName: string, start: boolean): Promise<void> {
     const db = this.lastDatabases.find((d) => d.dirName === dirName);
     if (!db) return;
-    if (start) await this.bringUp(db);
-    else await this.takeDown(db);
+    await vscode.commands.executeCommand(
+      start ? 'gemstone.startDatabase' : 'gemstone.stopDatabase',
+      { kind: 'database', db },
+    );
     await this.postState();
   }
 

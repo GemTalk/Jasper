@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   DatabaseProcessState,
   ProcessHealth,
+  databaseAction,
   databaseStatus,
   isConnectable,
 } from '../databaseServerStatus';
@@ -109,5 +110,50 @@ describe('isConnectable', () => {
       const status = databaseStatus(s);
       expect(status.stone === 'running' && status.netldi === 'running').toBe(expected);
     }
+  });
+});
+
+describe('databaseAction', () => {
+  const actionFor = (s: DatabaseProcessState) => databaseAction(databaseStatus(s));
+
+  it('follows the stone for Running and Stopped', () => {
+    // A database is up when its stone is — the same reading the panel's power
+    // button has always used.
+    expect(actionFor(state())).toBe('Running');
+    expect(actionFor(state(DOWN, {}))).toBe('Stopped');
+    expect(actionFor(state(WEDGED, {}))).toBe('Running');
+  });
+
+  it('offers Running even when the stone is up but unreachable', () => {
+    // A stone with no usable NetLDI reads as `unreachable`, which is still not
+    // stopped: Stop is the action that applies to it.
+    expect(databaseStatus(state({}, DOWN)).stone).toBe('unreachable');
+    expect(actionFor(state({}, DOWN))).toBe('Running');
+  });
+
+  it('offers neither action for a server started outside Jasper', () => {
+    // Jasper cannot stop what it did not start, and raising the other half
+    // beside it would only collide. Either server being external is enough.
+    expect(actionFor(state(OUTSIDE, {}))).toBe('External');
+    expect(actionFor(state({}, OUTSIDE))).toBe('External');
+  });
+
+  it('gives the sidebar, the panel and the palette one answer to share', () => {
+    // The palette picker has no row to read, so before this it was the one
+    // surface happy to run Stop on an already-stopped database. Pinning the
+    // whole table here is what keeps the three from drifting apart.
+    const cases: [DatabaseProcessState, string][] = [
+      [state(), 'Running'],
+      [state(DOWN, {}), 'Stopped'],
+      [state(DOWN, DOWN), 'Stopped'],
+      [state({}, DOWN), 'Running'],
+      [state(WEDGED, {}), 'Running'],
+      [state({}, WEDGED), 'Running'],
+      [state(OUTSIDE, {}), 'External'],
+      [state({}, OUTSIDE), 'External'],
+      [state(OUTSIDE, OUTSIDE), 'External'],
+    ];
+
+    for (const [s, expected] of cases) expect(actionFor(s)).toBe(expected);
   });
 });
