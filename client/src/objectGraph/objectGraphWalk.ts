@@ -259,7 +259,7 @@ export class ObjectGraphWalk {
       revealClass: (className) => this.deps.revealClass(className),
       revealClassByOop: (oop) => this.revealClassByOop(oop),
       addToCanvas: (oop) => this.addToCanvas(oop),
-      focusNode: (oop) => this.centreOn(BigInt(oop)),
+      focusNode: (oop) => this.focusNode(oop),
       removeFromCanvas: (oop) => this.removeFromCanvas(oop),
       clearCanvas: () => this.clearCanvas(),
     };
@@ -329,6 +329,20 @@ export class ObjectGraphWalk {
     const target = this.trail[index];
     this.trail = this.trail.slice(0, index);
     await this.centreOn(target.oop);
+  }
+
+  /** Ask what points at an object, keeping the graph.
+   *
+   *  If the object is not on the graph yet — the usual case when it is clicked in the
+   *  listing below rather than on the picture — it is attached FIRST, so it arrives joined
+   *  to the object it was found under. Centring alone would have added it with no parent,
+   *  and a parentless object is drawn as a second root: it appeared beside the original
+   *  object, in its own column, connected to nothing. */
+  private async focusNode(oop: string): Promise<void> {
+    if (!this.canvasNodes.some((n) => n.oop === oop)) {
+      await this.addToCanvas(oop);
+    }
+    await this.centreOn(BigInt(oop));
   }
 
   /** Put an object on the canvas beside whatever is already there, then recompute every

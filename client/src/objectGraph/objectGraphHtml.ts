@@ -126,15 +126,6 @@ function escapeHtml(s: string): string {
     .replace(/"/g, '&quot;');
 }
 
-/** Edge thickness by reference count. Logarithmic because counts span four orders of
- *  magnitude in practice (1 to 13,688 on a real model) and a linear scale renders
- *  everything below the largest as a hairline. */
-function strokeWidth(count: number, max: number): number {
-  if (max <= 1) return 1.4;
-  const t = Math.log(count) / Math.log(max);
-  return 1 + t * 4.5;
-}
-
 function truncate(s: string, max: number): string {
   return s.length <= max ? s : `${s.slice(0, max - 1)}…`;
 }
@@ -167,8 +158,9 @@ function renderObjectRows(expanded: ExpandedClass, canvasOops: Set<string>): str
       const onCanvas = canvasOops.has(o.oop);
       return `<tr class="objrow">
       <td class="obj" colspan="2">
-        <button class="dive" data-dive="${escapeHtml(o.oop)}"
-                title="Open what points at this object in a new tab">${escapeHtml(o.printString)}</button>
+        <button class="dive" data-focus-oop="${escapeHtml(o.oop)}"
+                title="Ask what points at this object, keeping everything already drawn: ${escapeHtml(o.printString)}"
+        >${escapeHtml(o.printString)}</button>
       </td>
       <td class="acts">
         <button class="act${onCanvas ? ' on' : ''}"
@@ -180,6 +172,9 @@ function renderObjectRows(expanded: ExpandedClass, canvasOops: Set<string>): str
                 }"
         >${onCanvas ? '✓ on graph' : '+ graph'}</button>
         <button class="act" data-inspect-oop="${escapeHtml(o.oop)}" title="Inspect this object">Inspect</button>
+        <button class="act" data-dive="${escapeHtml(o.oop)}"
+                title="Open this object's graph in a NEW tab, leaving this one as it is: ${escapeHtml(o.printString)}"
+        >↗ tab</button>
         ${explorer}
       </td>
     </tr>`;
@@ -232,224 +227,344 @@ function renderTable(view: ObjectGraphView): string {
   </table>`;
 }
 
-/** One box in the layered graph: either an object, or the class-group standing for
- *  "N instances of this class point at the object to my left". */
-interface LayoutNode {
+/** A box on the graph.
+ *
+ *  Either a lone object, or a GROUP containing the objects of one class that have been
+ *  promoted onto the picture. Containment is what expresses "these objects are the
+ *  referrers of that class": the group draws one edge to the object it points at, and its
+ *  members sit indented inside it rather than each running its own long edge back past the
+ *  group box — which is what used to send lines behind other boxes and made an object look
+ *  as though it referenced the class `Array` itself. */
+interface Box {
   id: string;
   kind: 'object' | 'group';
-  /** Primary line: an object's printString, or a group's class name. */
+  /** Header line: the object's printString, or the group's class name. */
   title: string;
-  /** Second line: an object's class, or a group's reference count. */
+  /** Second line: the object's class, or the group's object count. */
   sub: string;
   layer: number;
-  /** The box this one points AT — immediately to its left. */
-  toward?: string;
-  /** Edge label: the slot for an object, the reference count for a group. */
+  /** The object this box points at — always in the layer immediately to its left, so an
+   *  edge never has to cross a column. */
+  towardOop?: string;
+  /** Edge label toward the owner: the reference count for a group, the slot for an object. */
   via?: string;
   oop?: string;
   classOop?: string;
   isCentre?: boolean;
-  isOpen?: boolean;
+  /** Members drawn inside a group box. */
+  rows?: { oop: string; label: string; className: string; via?: string }[];
+  /** Objects the group holds that are NOT drawn inside it yet. */
+  remaining?: number;
 }
 
-/** Layer pitch and box size. Tight enough that a five-layer walk fits a normal editor
- *  width without scrolling — the gap between layers only has to hold an edge label. */
-const LAYER_W = 208;
-const NODE_W = 176;
-const NODE_H = 38;
-const NODE_GAP = 12;
+const LAYER_W = 230;
+const BOX_W = 196;
+const OBJECT_H = 38;
+const HEADER_H = 34;
+const ROW_H = 24;
+const BOX_PAD = 6;
+const BOX_GAP = 14;
+/** Headroom reserved above the boxes for cross-reference edges, and the height they run
+ *  at within it. A cross edge can span several layers, and drawn as a direct curve it went
+ *  straight THROUGH whatever boxes lay between — 40 of 91 sampled points of one `order`
+ *  edge fell inside an unrelated box, taking its label with them, so the line read as
+ *  belonging to the box it crossed and its arrowhead was hidden behind it. Routed over the
+ *  top, it belongs to nothing it passes and arrives in the open. */
+const CROSS_LANE_H = 34;
+const CROSS_LANE_Y = 14;
 
-/** Lay the whole picture out as ONE graph, layered outward from the centre.
+function boxHeight(b: Box): number {
+  if (b.kind === 'object') return OBJECT_H;
+  return HEADER_H + (b.rows?.length ?? 0) * ROW_H + ((b.rows?.length ?? 0) ? BOX_PAD : 0);
+}
+
+/** Build the picture as one layered graph of boxes.
  *
- *  Layer 0 is the object being asked about. Layer 1 holds a class-group per referrer class
- *  — the "40 GraphDemoLineItems point here" summary. An object promoted onto the graph
- *  from one of those groups lands in layer 2, beyond the group it came from, and asking
- *  about THAT object grows layers 3 and 4 the same way. So an object is always two layers
- *  beyond its parent, with the group that classifies it in between.
- *
- *  There is deliberately no second diagram. Objects and class-groups are two kinds of box
- *  in one picture, rather than two pictures with two different node vocabularies — which
- *  is what made the split version unreadable, since the same object showed as
- *  `GraphDemoProduct` in one and `Product(Widget)` in the other. */
-function layoutNodes(view: ObjectGraphView): LayoutNode[] {
-  const nodes: LayoutNode[] = [];
-  const objectLayer = new Map<string, number>();
-  const byOop = new Map(view.canvas.nodes.map((n) => [n.oop, n]));
+ *  Layer 0 is the object being asked about. Every later layer holds the boxes for one more
+ *  hop outward: a class with several referrers becomes a group box containing the ones
+ *  promoted onto the graph, and a class with exactly one becomes that object on its own,
+ *  since a box around a single thing is just an extra box. */
+function layoutBoxes(view: ObjectGraphView): Box[] {
+  const promotedOf = (ownerOop: string, className: string) =>
+    view.canvas.nodes.filter((n) => n.parentOop === ownerOop && n.viaClass === className);
+  const slotOf = (fromOop: string, toOop: string) =>
+    view.canvas.edges.find((e) => e.fromOop === fromOop && e.toOop === toOop)?.via;
 
-  const layerOf = (oop: string, seen: Set<string>): number => {
-    const known = objectLayer.get(oop);
-    if (known !== undefined) return known;
-    const node = byOop.get(oop);
-    if (!node?.parentOop || seen.has(oop)) return 0;
-    seen.add(oop);
-    const depth = layerOf(node.parentOop, seen) + 2;
-    objectLayer.set(oop, depth);
-    return depth;
-  };
-  for (const n of view.canvas.nodes) layerOf(n.oop, new Set());
+  const boxes: Box[] = [];
+  const layerOfObject = new Map<string, number>();
 
-  for (const n of view.canvas.nodes) {
-    const parent = n.parentOop;
-    nodes.push({
-      id: `o:${n.oop}`,
+  // Laid out from the graph's ROOTS — the objects that arrived without a parent — not from
+  // whatever is currently centred. Rooting at the centre meant that focusing an object with
+  // no referrers of its own emptied the picture, because nothing else descends from it:
+  // three boxes vanished while the counter still read "4 objects on the graph". Centring
+  // re-aims the question; it does not re-root the drawing.
+  const roots = view.canvas.nodes.filter((n) => !n.parentOop).map((n) => n.oop);
+  const startFrom = roots.length ? roots : [view.targetOop];
+
+  for (const rootOop of startFrom) {
+    const node = view.canvas.nodes.find((n) => n.oop === rootOop);
+    layerOfObject.set(rootOop, 0);
+    boxes.push({
+      id: `o:${rootOop}`,
       kind: 'object',
-      title: n.label,
-      sub: n.className,
-      layer: objectLayer.get(n.oop) ?? 0,
-      oop: n.oop,
-      isCentre: n.oop === view.targetOop,
-      // Straight to the object it actually references. Routing this through the class box
-      // put the slot label on the segment between the object and that box, which reads as
-      // "this array's slot [1] points at the class Array" — it does not; slot 1 holds the
-      // referent. The class box summarises a group; it is not a waypoint on a reference.
-      // It also meant the edge vanished entirely once the group box was removed.
-      toward: parent ? `o:${parent}` : undefined,
-      via: view.canvas.edges.find((e) => e.fromOop === n.oop && e.toOop === parent)?.via,
+      title: node?.label ?? view.targetLabel,
+      sub: node?.className ?? view.targetClass,
+      layer: 0,
+      oop: rootOop,
+      isCentre: rootOop === view.targetOop,
     });
   }
 
-  for (const [oop, groups] of Object.entries(view.groupsByOop)) {
-    const parentLayer = objectLayer.get(oop) ?? 0;
+  // Breadth-first outward, so an owner always has a layer before its groups are placed.
+  const queue: string[] = [...startFrom];
+  const done = new Set<string>();
+  while (queue.length) {
+    const ownerOop = queue.shift()!;
+    if (done.has(ownerOop)) continue;
+    done.add(ownerOop);
+    const ownerLayer = layerOfObject.get(ownerOop) ?? 0;
+    const groups = view.groupsByOop[ownerOop] ?? [];
+
     for (const g of groups) {
-      const promoted = view.canvas.nodes.filter(
-        (n) => n.parentOop === oop && n.viaClass === g.referrerClass,
-      ).length;
-      // How many objects a group actually holds is only known once it has been listed —
-      // `count` counts REFERENCES, and one object can hold several. So the box only claims
-      // to be exhausted when the listing says so, and otherwise reports what is shown.
-      // A single-object group is drawn as that object instead — the box would add an
-      // indirection with nothing behind it. Only skipped once the object is actually on
-      // the graph, so a group whose promotion was bounded away still shows.
-      if (
-        g.count === 1 &&
-        view.canvas.nodes.some((n) => n.parentOop === oop && n.viaClass === g.referrerClass)
-      ) {
-        continue;
-      }
+      const members = promotedOf(ownerOop, g.referrerClass);
       const listed =
-        view.expanded?.ownerOop === oop && view.expanded.classOop === g.referrerClassOop
+        view.expanded?.ownerOop === ownerOop && view.expanded.classOop === g.referrerClassOop
           ? view.expanded.total
           : undefined;
-      if (listed !== undefined && promoted >= listed) {
-        // Every object behind this group is already drawn, each with its own edge to the
-        // referent. Keeping the box would imply there is still something behind it.
+
+      // One object behind the class: draw the object, not a box around it.
+      if (g.count === 1 && members.length === 1) {
+        const m = members[0];
+        layerOfObject.set(m.oop, ownerLayer + 1);
+        boxes.push({
+          id: `o:${m.oop}`,
+          kind: 'object',
+          title: m.label,
+          sub: m.className,
+          layer: ownerLayer + 1,
+          oop: m.oop,
+          isCentre: m.oop === view.targetOop,
+          towardOop: ownerOop,
+          via: slotOf(m.oop, ownerOop),
+        });
+        queue.push(m.oop);
         continue;
       }
-      const shown = promoted > 0 ? ` \u00b7 ${promoted} on the graph` : '';
-      nodes.push({
-        id: `g:${oop}:${g.referrerClass}`,
+
+      for (const m of members) layerOfObject.set(m.oop, ownerLayer + 1);
+      boxes.push({
+        id: `g:${ownerOop}:${g.referrerClass}`,
         kind: 'group',
         title: g.referrerClass,
-        sub: `${g.count} object${g.count === 1 ? '' : 's'}${shown}`,
-        layer: parentLayer + 1,
-        toward: `o:${oop}`,
+        sub: `${g.count} object${g.count === 1 ? '' : 's'}`,
+        layer: ownerLayer + 1,
+        towardOop: ownerOop,
         via: String(g.count),
         classOop: g.referrerClassOop,
-        oop,
-        isOpen: listed !== undefined,
+        oop: ownerOop,
+        rows: members.map((m) => ({
+          oop: m.oop,
+          label: m.label,
+          className: m.className,
+          via: slotOf(m.oop, ownerOop),
+        })),
+        remaining: listed !== undefined ? Math.max(0, listed - members.length) : undefined,
       });
+      for (const m of members) queue.push(m.oop);
     }
   }
-  return nodes;
+  return boxes;
 }
 
 /** Render the single layered graph. */
 function renderGraph(view: ObjectGraphView): string {
-  const nodes = layoutNodes(view);
-  if (nodes.length === 0) return '';
+  const boxes = layoutBoxes(view);
+  if (boxes.length === 0) return '';
 
-  const maxLayer = Math.max(...nodes.map((n) => n.layer));
-  const perLayer = new Map<number, LayoutNode[]>();
-  for (const n of nodes) {
-    const list = perLayer.get(n.layer) ?? [];
-    list.push(n);
-    perLayer.set(n.layer, list);
+  const perLayer = new Map<number, Box[]>();
+  for (const b of boxes) {
+    perLayer.set(b.layer, [...(perLayer.get(b.layer) ?? []), b]);
   }
+  const layerHeight = (list: Box[]) =>
+    list.reduce((sum, b) => sum + boxHeight(b) + BOX_GAP, 0) - BOX_GAP;
 
-  const rows = Math.max(...[...perLayer.values()].map((l) => l.length));
-  const height = TOP * 2 + rows * (NODE_H + NODE_GAP);
-  const pos = new Map<string, { x: number; y: number }>();
-  for (const [layer, list] of perLayer) {
-    // Each layer is centred vertically against the tallest one, so a lone node sits level
-    // with the middle of the fan pointing at it rather than at the top of the picture.
-    const span = list.length * (NODE_H + NODE_GAP) - NODE_GAP;
-    const top = (height - span) / 2;
-    list.forEach((n, i) => {
-      pos.set(n.id, { x: 16 + layer * LAYER_W, y: top + i * (NODE_H + NODE_GAP) });
-    });
+  // Which references the layout already expresses; anything else is a cross edge that has
+  // to be routed over the top, so the headroom must be known before the boxes are placed.
+  const structural = new Set<string>();
+  const drawnOops = new Set<string>();
+  for (const b of boxes) {
+    if (b.kind === 'object' && b.oop) {
+      drawnOops.add(b.oop);
+      if (b.towardOop) structural.add(`${b.oop}->${b.towardOop}`);
+    }
+    for (const r of b.rows ?? []) {
+      drawnOops.add(r.oop);
+      if (b.oop) structural.add(`${r.oop}->${b.oop}`);
+    }
   }
+  const crossRefs = view.canvas.edges.filter(
+    (e) =>
+      e.fromOop !== e.toOop &&
+      drawnOops.has(e.fromOop) &&
+      drawnOops.has(e.toOop) &&
+      !structural.has(`${e.fromOop}->${e.toOop}`),
+  );
+  const lane = crossRefs.length ? CROSS_LANE_H : 0;
+
+  const height = lane + TOP * 2 + Math.max(...[...perLayer.values()].map(layerHeight));
+  const maxLayer = Math.max(...boxes.map((b) => b.layer));
   const width = 32 + (maxLayer + 1) * LAYER_W;
 
-  const counts = nodes.filter((n) => n.kind === 'group').map((n) => Number(n.via) || 1);
-  const maxCount = counts.length ? Math.max(...counts) : 1;
+  // Place every box, and record where each OBJECT sits — the centre and lone objects at
+  // their box, a group member at its row — so an edge can aim at the object itself.
+  const pos = new Map<string, { x: number; y: number }>();
+  // Both sides of every drawn object, because a cross-reference can run in either
+  // direction across the picture and has to leave from the correct edge.
+  const anchor = new Map<string, { left: number; right: number; y: number }>();
+  for (const [layer, list] of perLayer) {
+    let y = lane + TOP + (height - lane - TOP * 2 - layerHeight(list)) / 2;
+    for (const b of list) {
+      const x = 16 + layer * LAYER_W;
+      pos.set(b.id, { x, y });
+      if (b.kind === 'object' && b.oop) {
+        anchor.set(b.oop, { left: x, right: x + BOX_W, y: y + OBJECT_H / 2 });
+      }
+      b.rows?.forEach((r, i) => {
+        anchor.set(r.oop, {
+          left: x + 8,
+          right: x + BOX_W - 8,
+          y: y + HEADER_H + i * ROW_H + ROW_H / 2,
+        });
+      });
+      y += boxHeight(b) + BOX_GAP;
+    }
+  }
 
-  const edges = nodes
-    .map((n) => {
-      if (!n.toward) return '';
-      const a = pos.get(n.id);
-      const b = pos.get(n.toward);
-      if (!a || !b) return '';
-      const sx = a.x;
-      const sy = a.y + NODE_H / 2;
-      const tx = b.x + NODE_W + ARROW_GAP;
-      const ty = b.y + NODE_H / 2;
-      const midX = (sx + tx) / 2;
-      const w = n.kind === 'group' ? strokeWidth(Number(n.via) || 1, maxCount) : 1.4;
-      // A back-edge: this box sits left of what it points at, unavoidable once the graph
-      // has a cycle — an order holds its line items and each line item holds its order.
-      // Dashed, so an arrow against the flow reads as closing a cycle, not as a bug.
-      const back = a.x <= b.x ? ' back' : '';
+  const edges = boxes
+    .map((b) => {
+      if (!b.towardOop) return '';
+      const from = pos.get(b.id);
+      const to = anchor.get(b.towardOop);
+      if (!from || !to) return '';
+      const sy = from.y + (b.kind === 'group' ? HEADER_H / 2 : OBJECT_H / 2);
+      const tx = to.right + ARROW_GAP;
+      const midX = (from.x + tx) / 2;
       return (
-        `<path class="edge${back}" marker-end="url(#ref-arrow)" stroke-width="${w.toFixed(2)}" ` +
-        `d="M ${sx} ${sy} C ${midX} ${sy}, ${midX} ${ty}, ${tx} ${ty}"/>` +
-        (n.via
-          ? `<text class="count" x="${midX}" y="${(sy + ty) / 2 - 4}" text-anchor="middle">` +
-            `${escapeHtml(n.via)}</text>`
+        `<path class="edge" marker-end="url(#ref-arrow)" stroke-width="1.4" ` +
+        `d="M ${from.x} ${sy} C ${midX} ${sy}, ${midX} ${to.y}, ${tx} ${to.y}"/>` +
+        (b.via
+          ? `<text class="count" x="${midX}" y="${(sy + to.y) / 2 - 4}" text-anchor="middle">` +
+            `${escapeHtml(b.via)}</text>`
           : '')
       );
     })
     .join('\n    ');
 
-  const boxes = nodes
-    .map((n) => {
-      const p = pos.get(n.id)!;
-      if (n.kind === 'group') {
-        const meta = isMetaclassName(n.title) ? ' meta' : '';
-        // Drawn as a STACK — two offset rectangles behind the front one — because this box
-        // stands for many objects rather than one. That, plus the dashed outline, is what
-        // tells the two kinds of box apart at a glance; the word "class" would be wrong,
-        // since the box is not the class object but the referrers that happen to be of it
-        // (and a metaclass group would then read "Foo class class").
-        return `<g class="gnode${meta}${n.isOpen ? ' open' : ''}" role="button" tabindex="0"
-              data-expand="${escapeHtml(n.classOop ?? '')}" data-class-name="${escapeHtml(n.title)}"
-              data-expand-of="${escapeHtml(n.oop ?? '')}">
-      <title>${n.isOpen ? 'Hide' : 'List'} the objects behind this group — ${escapeHtml(n.sub)} of class ${escapeHtml(n.title)}</title>
-      <rect class="stack2" x="${p.x + 7}" y="${p.y + 7}" width="${NODE_W}" height="${NODE_H}"/>
-      <rect class="stack1" x="${p.x + 4}" y="${p.y + 4}" width="${NODE_W}" height="${NODE_H}"/>
-      <rect class="front" x="${p.x}" y="${p.y}" width="${NODE_W}" height="${NODE_H}"/>
-      <text x="${p.x + 8}" y="${p.y + 16}">${escapeHtml(truncate(n.title, 20))}</text>
-      <text class="sub" x="${p.x + 8}" y="${p.y + 29}">${escapeHtml(truncate(n.sub, 24))}</text>
-    </g>`;
-      }
-      const drop = n.isCentre
-        ? ''
-        : `<g class="drop" role="button" tabindex="0" data-remove-oop="${escapeHtml(n.oop ?? '')}">
-        <title>Take this object off the graph: ${escapeHtml(n.title)}</title>
-        <rect x="${p.x + NODE_W - 17}" y="${p.y + 3}" width="14" height="14" rx="3"/>
-        <text x="${p.x + NODE_W - 13}" y="${p.y + 14}">\u00d7</text>
+  // Every OTHER reference between two objects on the picture.
+  //
+  // The structural edges above only draw a box's own placement — a group to the object it
+  // points at, a lone object to its parent — and containment stands in for a member's
+  // reference to its group's owner. Anything else is a real reference between two things
+  // on screen that nothing would otherwise show: a line item pointing at both a product
+  // and that product's order, once both are drawn. Leaving those out does not simplify the
+  // picture, it makes it wrong, so they are drawn as thinner dotted links.
+  const crossEdges = crossRefs
+    .map((e) => {
+      const from = anchor.get(e.fromOop);
+      const to = anchor.get(e.toOop);
+      if (!from || !to) return '';
+      // Up out of the source, across the lane, down onto the target. Orthogonal rather than
+      // a curve so the vertical runs sit in the gaps BETWEEN layers, where no box lives:
+      // that is what keeps the line, its label and its arrowhead all in the open.
+      const goingRight = to.left > from.right;
+      const sx = goingRight ? from.right : from.left;
+      const cx1 = goingRight ? from.right + 12 : from.left - 12;
+      const cx2 = goingRight ? to.left - 12 - ARROW_GAP : to.right + 12 + ARROW_GAP;
+      const tx = goingRight ? to.left - ARROW_GAP : to.right + ARROW_GAP;
+      const midX = (cx1 + cx2) / 2;
+      return (
+        `<path class="edge cross" marker-end="url(#ref-arrow)" stroke-width="1.2" ` +
+        `d="M ${sx} ${from.y} L ${cx1} ${from.y} L ${cx1} ${CROSS_LANE_Y} ` +
+        `L ${cx2} ${CROSS_LANE_Y} L ${cx2} ${to.y} L ${tx} ${to.y}"/>` +
+        `<text class="count cross" x="${midX}" y="${CROSS_LANE_Y - 4}" ` +
+        `text-anchor="middle">${escapeHtml(e.via)}</text>`
+      );
+    })
+    .join('\n    ');
+
+  const objectBox = (b: Box, p: { x: number; y: number }) => {
+    const drop = b.isCentre
+      ? ''
+      : `<g class="drop" role="button" tabindex="0" data-remove-oop="${escapeHtml(b.oop ?? '')}">
+        <title>Take this object off the graph: ${escapeHtml(b.title)}</title>
+        <rect x="${p.x + BOX_W - 17}" y="${p.y + 3}" width="14" height="14" rx="3"/>
+        <text x="${p.x + BOX_W - 13}" y="${p.y + 14}">\u00d7</text>
       </g>`;
-      return `<g class="cnode${n.isCentre ? ' centre' : ''}" role="button" tabindex="0"
-              ${n.isCentre ? '' : `data-focus-oop="${escapeHtml(n.oop ?? '')}"`}>
+    return `<g class="cnode${b.isCentre ? ' centre' : ''}" role="button" tabindex="0"
+              ${b.isCentre ? '' : `data-focus-oop="${escapeHtml(b.oop ?? '')}"`}>
       <title>${
-        n.isCentre
+        b.isCentre
           ? 'The object this graph is centred on'
-          : `Ask what points at this object, keeping everything already drawn: ${escapeHtml(n.title)}`
+          : `Ask what points at this object, keeping everything already drawn: ${escapeHtml(b.title)}`
       }</title>
-      <rect x="${p.x}" y="${p.y}" width="${NODE_W}" height="${NODE_H}" rx="4"/>
-      <text x="${p.x + 8}" y="${p.y + 16}">${escapeHtml(truncate(n.title, 21))}</text>
-      <text class="sub" x="${p.x + 8}" y="${p.y + 29}">${escapeHtml(truncate(n.sub, 21))}</text>
+      <rect x="${p.x}" y="${p.y}" width="${BOX_W}" height="${OBJECT_H}" rx="4"/>
+      <text x="${p.x + 8}" y="${p.y + 16}">${escapeHtml(truncate(b.title, 22))}</text>
+      <text class="sub" x="${p.x + 8}" y="${p.y + 29}">${escapeHtml(truncate(b.sub, 24))}</text>
       ${drop}
     </g>`;
+  };
+
+  const groupBox = (b: Box, p: { x: number; y: number }) => {
+    const h = boxHeight(b);
+    const rows = (b.rows ?? [])
+      .map((r, i) => {
+        const ry = p.y + HEADER_H + i * ROW_H;
+        // The label has to give way to whatever sits beside it. A fixed truncation ran the
+        // printString straight under the slot name — "LineItem(SO-1197:" and "product"
+        // printed on top of each other. Budget: ~20 characters of row, less the slot text
+        // and the room the × takes.
+        const slotText = r.via ? truncate(r.via, 8) : '';
+        const labelRoom = Math.max(6, 20 - slotText.length - 2);
+        return `<g class="grow" role="button" tabindex="0" data-focus-oop="${escapeHtml(r.oop)}">
+        <title>Ask what points at this object, keeping everything already drawn: ${escapeHtml(r.label)}</title>
+        <rect x="${p.x + 8}" y="${ry}" width="${BOX_W - 16}" height="${ROW_H - 3}" rx="2"/>
+        <text x="${p.x + 16}" y="${ry + 14}">${escapeHtml(truncate(r.label, labelRoom))}</text>
+        ${slotText ? `<text class="slot" x="${p.x + BOX_W - 28}" y="${ry + 14}" text-anchor="end">${escapeHtml(slotText)}</text>` : ''}
+        <g class="drop" role="button" tabindex="0" data-remove-oop="${escapeHtml(r.oop)}">
+          <title>Take this object off the graph: ${escapeHtml(r.label)}</title>
+          <rect x="${p.x + BOX_W - 24}" y="${ry + 2}" width="13" height="13" rx="2"/>
+          <text x="${p.x + BOX_W - 20}" y="${ry + 12}">\u00d7</text>
+        </g>
+      </g>`;
+      })
+      .join('\n      ');
+    // Only meaningful once some members ARE drawn; with an empty group the header's own
+    // "N objects" already says it, and the line collided with it.
+    const more =
+      b.rows?.length && b.remaining !== undefined && b.remaining > 0
+        ? `<text class="sub" x="${p.x + 16}" y="${p.y + h - 4}">+${b.remaining} not shown</text>`
+        : '';
+    const meta = isMetaclassName(b.title) ? ' meta' : '';
+    return `<g class="gnode${meta}${b.rows?.length ? ' open' : ''}">
+      <rect class="stack2" x="${p.x + 7}" y="${p.y + 7}" width="${BOX_W}" height="${h}"/>
+      <rect class="stack1" x="${p.x + 4}" y="${p.y + 4}" width="${BOX_W}" height="${h}"/>
+      <rect class="front" x="${p.x}" y="${p.y}" width="${BOX_W}" height="${h}"/>
+      <g class="ghead" role="button" tabindex="0" data-expand="${escapeHtml(b.classOop ?? '')}"
+         data-class-name="${escapeHtml(b.title)}" data-expand-of="${escapeHtml(b.oop ?? '')}">
+        <title>List the objects of class ${escapeHtml(b.title)} that point here — ${escapeHtml(b.sub)}</title>
+        <rect class="hit" x="${p.x}" y="${p.y}" width="${BOX_W}" height="${HEADER_H}"/>
+        <text x="${p.x + 8}" y="${p.y + 15}">${escapeHtml(truncate(b.title, 21))}</text>
+        <text class="sub" x="${p.x + 8}" y="${p.y + 28}">${escapeHtml(truncate(b.sub, 24))}</text>
+      </g>
+      ${rows}
+      ${more}
+    </g>`;
+  };
+
+  const drawn = boxes
+    .map((b) => {
+      const p = pos.get(b.id)!;
+      return b.kind === 'group' ? groupBox(b, p) : objectBox(b, p);
     })
     .join('\n    ');
 
@@ -462,7 +577,8 @@ function renderGraph(view: ObjectGraphView): string {
       </marker>
     </defs>
     ${edges}
-    ${boxes}
+    ${crossEdges}
+    ${drawn}
   </svg>`;
 }
 
@@ -474,12 +590,16 @@ export function renderObjectGraphHtml(view: ObjectGraphView): string {
   // An object nothing points at is a real, informative answer — not an error and not an
   // empty screen. Most often it is reachable only from a session temp or a stack frame,
   // neither of which is a repository reference. The breadcrumb still lets you back out.
-  const empty =
+  // Kept to ONE line and rendered in the same slot as the summary, so the picture does not
+  // shift when the centre turns out to have no referrers. A taller notice above the graph
+  // pushed every box down and read as though the drawing had changed when it had not.
+  const summaryLine =
     classCount === 0
-      ? `<p class="empty">Nothing in the repository holds a reference to this object.
-       It is reachable only from something outside the object graph — a session temporary
-       or a stack frame.</p>`
-      : '';
+      ? `<p class="summary empty">Nothing in the repository points at this object — it is
+         reachable only from a session temporary or a stack frame.</p>`
+      : `<p class="summary"><strong>${total.toLocaleString()}</strong> object(s) from
+         <strong>${classCount}</strong> class(es) point at this · scanned in
+         ${view.scanMillis} ms</p>`;
 
   // Say what the picture leaves out. A diagram that quietly draws the top 20 of 284 reads
   // as the whole story.
@@ -489,13 +609,6 @@ export function renderObjectGraphHtml(view: ObjectGraphView): string {
          All ${classCount} are listed below.</p>`
       : '';
 
-  const summary =
-    classCount === 0
-      ? ''
-      : `<p class="summary"><strong>${total.toLocaleString()}</strong> object(s) from
-         <strong>${classCount}</strong> class(es) point at this · scanned in
-         ${view.scanMillis} ms</p>`;
-
   // The canvas takes over the diagram once it holds more than the centre object. Below
   // that there is nothing to accumulate, so the referrer-class fan stays — it answers the
   // question the panel was opened with.
@@ -504,7 +617,8 @@ export function renderObjectGraphHtml(view: ObjectGraphView): string {
     ? `<p class="canvasbar"><strong>${view.canvas.nodes.length}</strong> objects on the graph,
        <strong>${view.canvas.edges.length}</strong> reference(s) between them.
        <button class="act" data-clear-canvas="1"
-       title="Drop every object except the one the graph is centred on">Reset to one object</button></p>`
+       title="Removes every box from the picture except the one in focus. The graph is not
+              saved anywhere, so this cannot be undone.">Remove all but the focused object</button></p>`
     : '';
 
   const hint =
@@ -512,12 +626,18 @@ export function renderObjectGraphHtml(view: ObjectGraphView): string {
       ? ''
       : `<p class="hint">Arrows run the way the reference goes: a box points at the box on
          its left. A <strong>stacked dashed</strong> box summarises the objects of one class
-         that point there, and its edge number is how many such objects there are — click it
-         to list them below, then <em>+ graph</em> to put one on the picture. A group holding
-         a single object is drawn as that object straight away. A
+         that point there, and the number on its edge is how many such objects there are — click it
+         to list them below. Clicking one there asks what points at it right here, in this
+         graph; <em>+ graph</em> puts it on the picture instead, and <em>↗ tab</em> is the
+         only thing that opens a second tab. A group holding
+         a single object is drawn as that object straight away, and objects you promote from
+         a group sit <em>inside</em> it — that containment is what says they are its
+         referrers, so no line has to run back past the box. A
          <strong>solid</strong> box is a single object, its edge labelled with the slot the
          reference sits in; click one to ask what points at <em>it</em>, keeping everything
-         already drawn.</p>`;
+         already drawn. A <strong>dotted</strong> edge is a further reference between two
+         objects already on the picture — every reference among them is drawn, not only the
+         ones you followed.</p>`;
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -565,6 +685,11 @@ export function renderObjectGraphHtml(view: ObjectGraphView): string {
     .cnode[data-focus-oop]:hover rect { stroke: var(--vscode-focusBorder, #4f9cf9); }
     .cnode:focus-visible rect { stroke: var(--vscode-focusBorder, #4f9cf9); }
     .edge.back { stroke-dasharray: 4 3; opacity: 0.7; }
+    /* A reference between two drawn objects that the layout does not already express.
+       Dotted and dimmer so the structure still reads first, but present, because a
+       reference left undrawn makes the picture wrong. */
+    .edge.cross { stroke-dasharray: 2 3; opacity: 0.7; }
+    .count.cross { font-style: italic; opacity: 0.85; }
     .cnode rect {
       fill: var(--vscode-editor-background);
       stroke: var(--vscode-foreground);
@@ -583,6 +708,30 @@ export function renderObjectGraphHtml(view: ObjectGraphView): string {
     .cnode .drop text { font-size: 12px; fill: var(--vscode-descriptionForeground); }
     .cnode .drop:hover rect { fill: var(--vscode-toolbar-hoverBackground, rgba(127,127,127,0.3)); }
     .cnode .drop:hover text { fill: var(--vscode-foreground); }
+    /* Members drawn INSIDE a group box. Containment is what says "these are the referrers
+       of that class", so a row needs to read as part of its box, not as a box of its own. */
+    .grow { cursor: pointer; }
+    .grow rect {
+      fill: var(--vscode-editor-background);
+      stroke: var(--vscode-panel-border, rgba(127,127,127,0.35));
+      stroke-dasharray: none;
+    }
+    .grow:hover rect { stroke: var(--vscode-focusBorder, #4f9cf9); }
+    .grow text {
+      font-size: 10.5px;
+      fill: var(--vscode-foreground);
+      font-family: var(--vscode-editor-font-family, monospace);
+    }
+    .grow .slot { font-size: 9px; fill: var(--vscode-descriptionForeground); }
+    .grow .drop rect { fill: transparent; stroke: transparent; }
+    .grow .drop text { font-size: 11px; fill: var(--vscode-descriptionForeground); }
+    .grow .drop:hover rect { fill: var(--vscode-toolbar-hoverBackground, rgba(127,127,127,0.3)); }
+    .grow .drop:hover text { fill: var(--vscode-foreground); }
+    /* The header is the only part of a group box that expands it; a transparent hit rect
+       gives it a target without painting over the stacked panels behind. */
+    .ghead { cursor: pointer; }
+    .ghead rect.hit { fill: transparent; stroke: transparent; }
+    .ghead:hover text { fill: var(--vscode-textLink-foreground); }
     .act.on { opacity: 0.65; }
     /* The graph keeps its natural size and the WRAPPER scrolls. Letting the svg scale to
        max-width:100% shrank every label as the graph widened — five layers rendered the
@@ -668,8 +817,7 @@ export function renderObjectGraphHtml(view: ObjectGraphView): string {
   ${renderBreadcrumb(view.trail)}
   <h2>What points at this ${escapeHtml(view.targetClass)}</h2>
   <code class="target-print">${escapeHtml(view.targetLabel)}</code>
-  ${summary}
-  ${empty}
+  ${summaryLine}
   ${hint}
   ${truncated}
   ${classCount === 0 && view.canvas.nodes.length < 2 ? '' : `<div class="graphwrap">${renderGraph(view)}</div>`}

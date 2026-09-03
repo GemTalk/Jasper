@@ -30,8 +30,12 @@
  * (new Function(source)()) can reach `wire`.
  */
 (function () {
-  // Ordered most-specific first: a control carrying data-expand also sits inside a row, so
-  // the first match wins and a nested control never fires two intents.
+  // Ordered INNERMOST-CONTROL FIRST, and the order is load-bearing: dispatch walks this
+  // list and the first `closest` hit wins, so a control nested inside a larger click
+  // target has to appear above it. data-remove-oop is the × inside an object box that
+  // also carries data-focus-oop — listing focus first matched the box, turned every
+  // remove into a re-centre, and re-centring auto-promotes that object's single-object
+  // groups, so "take this off the graph" visibly ADDED to it.
   var ROUTES = [
     {
       attr: 'data-add-oop',
@@ -40,15 +44,15 @@
       },
     },
     {
-      attr: 'data-focus-oop',
-      build: function (el) {
-        return { command: 'focusNode', oop: el.getAttribute('data-focus-oop') };
-      },
-    },
-    {
       attr: 'data-remove-oop',
       build: function (el) {
         return { command: 'removeFromCanvas', oop: el.getAttribute('data-remove-oop') };
+      },
+    },
+    {
+      attr: 'data-focus-oop',
+      build: function (el) {
+        return { command: 'focusNode', oop: el.getAttribute('data-focus-oop') };
       },
     },
     {
