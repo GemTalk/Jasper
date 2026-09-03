@@ -23,7 +23,9 @@ npx ovsx verify-pat gemtalksystems
 3. Commit the version + changelog changes (e.g. `Release X.Y.Z: <one-line summary>`).
 4. `git tag -a vX.Y.Z -m "Release X.Y.Z"` — annotated tag, on the release commit.
 5. `npm run package` — runs `vsce package`, producing `gemstone-ide-X.Y.Z.vsix` in the repo root. The previous version's `.vsix` is gitignored but stays on disk; delete it to keep the root tidy. Note this file is **not** what gets uploaded: both commands in step 6 repackage into their own temp `.vsix`. It is for local inspection and archival.
-6. `npm run publish` — runs `vsce publish` then `ovsx publish` for the VS Code Marketplace and Open VSX. If `vsce publish` times out on the Azure DevOps Gallery API (it happens), re-run just that half with `npm run publish:vsce` rather than `npm run publish`, so the ovsx half doesn't run twice. If it does run twice it is harmless — `ovsx` refuses a duplicate rather than publishing one — but re-running the whole script obscures which half actually succeeded.
+6. `npm run publish` — the two registries, in sequence. **The script is `publish:vsce && publish:ovsx`, so the halves are not independent:** if `vsce publish` exits non-zero, `ovsx publish` never runs at all, and the release is live on the Marketplace and absent from Open VSX.
+
+   `vsce publish` does time out on the Azure DevOps Gallery API, and a timeout tells you nothing about whether the upload landed. So don't reason about which halves ran — ask the registries, and publish whatever is missing with `npm run publish:vsce` or `npm run publish:ovsx`. **A release is not done until both registries report the new version.** See [A success message is not a live release](#a-success-message-is-not-a-live-release) below for how to tell a missing publish from one that is merely still propagating; the two look identical from the outside and the difference decides whether you publish again or wait.
 7. `git push origin main && git push origin vX.Y.Z` — push the commit and the tag (the tag does not piggyback on the branch push).
 
 ## A success message is not a live release
@@ -42,6 +44,13 @@ curl -s https://open-vsx.org/api/gemtalksystems/gemstone-ide | jq -r .version
 # VS Code Marketplace
 npx @vscode/vsce show gemtalksystems.gemstone-ide
 ```
+
+**A registry that doesn't show the version is not proof the upload failed** — and this cuts both ways, so establish which case you are in before acting:
+
+- **The publish command reported success.** The upload landed; this is propagation. Wait. Re-publishing is not the fix.
+- **The publish command never ran, or exited non-zero.** Nothing is propagating. Publish that half — `npm run publish:vsce` or `npm run publish:ovsx`.
+
+`npm run publish`'s `&&` makes the second case easy to hit: a failed `vsce publish` means `ovsx publish` was never reached, so Open VSX's `Extension not found` means *not published*, not *not yet visible*. If you are unsure which happened, re-running a publish is safe enough to settle it: `vsce` reports `already exists` and `ovsx` reports `already published, but currently isn't active and therefore not visible` rather than creating a duplicate — and either message is itself proof the upload had landed.
 
 ## Credentials
 
