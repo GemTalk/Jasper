@@ -174,6 +174,37 @@ true
 
       expect(fileInLenses(provider.provideCodeLenses(doc as TextDocument))).toEqual([]);
     });
+
+    it('comes back from resolveCodeLens exactly as it went in', () => {
+      // This lens carries its own command and is deliberately absent from
+      // codeLensData, so resolve returns it by the `!data` path. Nothing else pins
+      // that: drop the guard and the lens silently resolves to the senders/
+      // implementors treatment — "No session" here — while every other test passes.
+      const lens = fileInLenses(provider.provideCodeLenses(createMockDocument('run\ntrue\n%')))[0];
+      const before = { ...lens.command };
+
+      const after = provider.resolveCodeLens(lens);
+
+      expect(after.command).toEqual(before);
+      expect(after.command?.command).toBe('gemstone.fileInFile');
+    });
+
+    it('never shares a line with a method lens, even in the tightest file', () => {
+      // The worst case for collision: a file whose very first line opens a method
+      // chunk. Even then the method lens anchors on the SELECTOR, which the
+      // `method:` directive must precede — so it lands on line 1 at the earliest
+      // and the File In lens keeps line 0 to itself. Ordering is therefore
+      // positional, and does not rely on VS Code preserving insertion order
+      // within a range.
+      const doc = createMockDocument('method: MyClass\nfoo\n  ^ 42\n%');
+
+      const lenses = provider.provideCodeLenses(doc);
+
+      expect(isFileIn(lenses[0])).toBe(true);
+      expect(lenses[0].range.start.line).toBe(0);
+      expect(methodLenses(lenses).length).toBeGreaterThan(0);
+      for (const m of methodLenses(lenses)) expect(m.range.start.line).toBeGreaterThan(0);
+    });
   });
 
   describe('resolveCodeLens', () => {
