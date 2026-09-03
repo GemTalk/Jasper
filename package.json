@@ -280,7 +280,7 @@
               "Always number step points in GemStone method source."
             ],
             "default": "debugging",
-            "markdownDescription": "When to number step points in GemStone method source, drawn as inlay hints. Each number is clickable and toggles a breakpoint at that step point. Whatever this is set to, hovering a step point always reports its number, and `#gemstone.breakpoints.toggleStepPoints#` flips the numbers on or off. Use the editor's own `#editor.inlayHints.enabled#` to restyle or suppress inlay hints everywhere."
+            "markdownDescription": "When to number step points in GemStone method source, drawn as inlay hints. Each number is clickable and toggles a breakpoint at that step point. Whatever this is set to, hovering a step point always reports its number; hovering a NUMBER also offers a link that hides them again, and `#gemstone.breakpoints.toggleStepPoints#` flips them on or off from the editor's right-click menu or the command palette. Use the editor's own `#editor.inlayHints.enabled#` to restyle or suppress inlay hints everywhere."
           },
           "gemstone.gciLibraries": {
             "type": "object",
@@ -542,6 +542,7 @@
         {
           "id": "gemstoneOmniSearchView",
           "name": "GemStone Search",
+          "contextualTitle": "GemStone Search",
           "type": "webview",
           "when": "gemstone.hasActiveSession"
         }
@@ -550,6 +551,7 @@
         {
           "id": "gemstoneExplorerDicts",
           "name": "Dictionaries",
+          "contextualTitle": "GemStone Dictionaries",
           "type": "tree",
           "icon": "$(symbol-namespace)",
           "when": "gemstone.explorerActive",
@@ -558,6 +560,7 @@
         {
           "id": "gemstoneExplorerCategories",
           "name": "Class Categories",
+          "contextualTitle": "GemStone Class Categories",
           "type": "tree",
           "icon": "$(symbol-folder)",
           "when": "gemstone.explorerActive",
@@ -566,6 +569,7 @@
         {
           "id": "gemstoneExplorerClasses",
           "name": "Classes",
+          "contextualTitle": "GemStone Classes",
           "type": "tree",
           "icon": "$(symbol-class)",
           "when": "gemstone.explorerActive",
@@ -574,6 +578,7 @@
         {
           "id": "gemstoneExplorerClassHierarchy",
           "name": "Hierarchy",
+          "contextualTitle": "GemStone Class Hierarchy",
           "type": "tree",
           "icon": "$(type-hierarchy)",
           "when": "gemstone.explorerActive",
@@ -583,6 +588,7 @@
         {
           "id": "gemstoneExplorerMethods",
           "name": "Methods",
+          "contextualTitle": "GemStone Methods",
           "type": "tree",
           "icon": "$(symbol-method)",
           "when": "gemstone.explorerActive",
@@ -593,6 +599,7 @@
         {
           "id": "gemstoneSharedMemory",
           "name": "Configure OS",
+          "contextualTitle": "GemStone Configure OS",
           "type": "tree",
           "icon": "$(memory)",
           "when": "gemstone.isWindows",
@@ -601,24 +608,28 @@
         {
           "id": "gemstoneDatabases",
           "name": "Databases",
+          "contextualTitle": "GemStone Databases",
           "type": "tree",
           "icon": "$(database)"
         },
         {
           "id": "gemstoneLogins",
           "name": "Logins & Sessions",
+          "contextualTitle": "GemStone Logins & Sessions",
           "type": "tree",
           "icon": "$(key)"
         },
         {
           "id": "gemstoneRowan",
           "name": "Rowan",
+          "contextualTitle": "GemStone Rowan",
           "type": "tree",
           "icon": "$(package)"
         },
         {
           "id": "jasperMcpServer",
           "name": "MCP Server",
+          "contextualTitle": "Jasper MCP Server",
           "type": "tree",
           "icon": "$(remote-explorer)",
           "visibility": "collapsed"
@@ -626,12 +637,14 @@
         {
           "id": "gemstoneBreakpoints",
           "name": "Breakpoints",
+          "contextualTitle": "GemStone Breakpoints",
           "icon": "$(debug-breakpoint)",
           "type": "tree"
         },
         {
           "id": "gemstoneInspector",
           "name": "Inspector",
+          "contextualTitle": "GemStone Inspector",
           "type": "tree",
           "icon": "$(eye)"
         }
@@ -639,7 +652,8 @@
       "explorer": [
         {
           "id": "gemstoneRowanProject",
-          "name": "Rowan",
+          "name": "GemStone Rowan",
+          "contextualTitle": "GemStone Rowan",
           "type": "tree",
           "icon": "$(package)",
           "when": "gemstone.workspaceIsRowanProject"
@@ -1893,6 +1907,18 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "gemstone.startDatabase",
+        "title": "Start Database",
+        "category": "GemStone Admin",
+        "icon": "$(debug-start)"
+      },
+      {
+        "command": "gemstone.stopDatabase",
+        "title": "Stop Database",
+        "category": "GemStone Admin",
+        "icon": "$(debug-stop)"
+      },
+      {
         "command": "gemstone.startStone",
         "title": "Start Stone",
         "category": "GemStone Admin",
@@ -2980,23 +3006,33 @@
           "group": "navigation@1"
         },
         {
+          "command": "gemstone.startDatabase",
+          "when": "view == gemstoneDatabases && viewItem == gemstoneDbStopped",
+          "group": "inline@1"
+        },
+        {
+          "command": "gemstone.stopDatabase",
+          "when": "view == gemstoneDatabases && viewItem == gemstoneDbRunning",
+          "group": "inline@1"
+        },
+        {
           "command": "gemstone.openDbInFinder",
-          "when": "view == gemstoneDatabases && viewItem == gemstoneDb",
+          "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDb(Running|Stopped|External)$/",
           "group": "inline@2"
         },
         {
           "command": "gemstone.openDbTerminal",
-          "when": "view == gemstoneDatabases && viewItem == gemstoneDb",
+          "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDb(Running|Stopped|External)$/",
           "group": "inline@3"
         },
         {
           "command": "gemstone.createLoginFromDb",
-          "when": "view == gemstoneDatabases && viewItem == gemstoneDb",
+          "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDb(Running|Stopped|External)$/",
           "group": "inline@4"
         },
         {
           "command": "gemstone.deleteDatabase",
-          "when": "view == gemstoneDatabases && viewItem == gemstoneDb"
+          "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDb(Running|Stopped|External)$/"
         }
       ],
       "editor/title": [
@@ -3259,36 +3295,36 @@
     "@vscode/test-electron": "^3.1.0",
     "@vscode/vsce": "^3.7.1",
     "esbuild": "^0.28.2",
-    "eslint": "^10.8.1",
+    "eslint": "^10.9.1",
     "eslint-config-flat-gitignore": "^2.3.0",
     "eslint-config-prettier": "^10.1.8",
     "globals": "^17.11.0",
     "lefthook": "^2.1.10",
     "lockfile-lint": "^5.0.1",
-    "ovsx": "^0.10.5",
+    "ovsx": "^1.1.1",
     "playwright-bdd": "^9.2.0",
     "prettier": "^3.9.6",
     "tsx": "^4.23.12",
     "typescript": "^5.7.2",
-    "typescript-eslint": "^8.67.0",
+    "typescript-eslint": "^8.68.0",
     "vscode-oniguruma": "^2.0.1",
     "vscode-textmate": "^9.3.2"
   },
   "dependencies": {
     "@vscode/codicons": "^0.0.45",
     "@vscode/debugadapter": "^1.68.0",
-    "koffi": "^2.15.1"
+    "koffi": "^2.16.3"
   },
   "overrides": {
-    "fast-uri": "^3.1.5",
+    "fast-uri": "^3.1.7",
     "js-yaml": "^4.3.1"
   },
   "allowScripts": {
-    "koffi@2.16.2": true,
     "@vscode/vsce-sign@2.0.9": true,
     "lefthook@2.1.10": true,
     "keytar@7.9.0": true,
     "fsevents": false,
-    "esbuild@0.28.2": true
+    "esbuild@0.28.2": true,
+    "koffi@2.16.3": true
   }
 }

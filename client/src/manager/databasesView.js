@@ -432,7 +432,14 @@
   // ── Databases section ───────────────────────────────────────────────────────
   // The combined running-status + whole-database power control. Colour carries
   // running-vs-stopped: red stops a running database, green starts a stopped one.
+  //
+  // A database with a server running outside Jasper's environment gets nothing:
+  // Jasper cannot stop that server, and starting the other half beside it would
+  // only collide with it. The per-server rows below offer the one action that
+  // helps — restarting it under Jasper — and withhold their own toggles for the
+  // same reason.
   function powerControl(db) {
+    if ((db.external || []).length) return '';
     return db.stoneRunning
       ? `<button type="button" class="btn power power-stop" data-action="stopDatabase" data-dir="${esc(db.dirName)}"${tipAttr(`Stop ${db.stoneName}`)}>${ICONS.stop}<span>Stop</span></button>`
       : `<button type="button" class="btn power power-start" data-action="startDatabase" data-dir="${esc(db.dirName)}"${tipAttr(`Start ${db.stoneName}`)}>${ICONS.play}<span>Start</span></button>`;

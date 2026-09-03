@@ -145,6 +145,19 @@ describe('StepPointHintsProvider', () => {
     expect(parts[1].command?.arguments).toEqual([{ uri: METHOD_URI, stepPoint: 2 }]);
   });
 
+  it('offers a way back out of the numbered view in the hover', () => {
+    const hints = makeProvider('always').provideInlayHints(makeDocument(), WHOLE);
+    const tooltip = (hints![0].label as { tooltip: { value: string; isTrusted: unknown } }[])[0]
+      .tooltip;
+    expect(tooltip.value).toContain('Step point **1** of 2');
+    expect(tooltip.value).toContain('(command:gemstone.breakpoints.toggleStepPoints');
+    // A `command:` link is inert in an untrusted MarkdownString, and the trust is scoped to the one
+    // command the tooltip offers.
+    expect(tooltip.isTrusted).toEqual({
+      enabledCommands: ['gemstone.breakpoints.toggleStepPoints'],
+    });
+  });
+
   it('only draws the step points inside the requested range', () => {
     // Offsets 0..12 covers the '^' step point (10) but not 'basicAt:' (16).
     const narrow = range(0, 0, 1, 2);
