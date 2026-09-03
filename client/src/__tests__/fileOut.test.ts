@@ -60,6 +60,16 @@ describe('composeFileOut', () => {
   });
 });
 
+/**
+ * A path in the shape `Uri.fsPath` reports it.
+ *
+ * vscode-uri lowercases a Windows drive letter (`uriToFsPath`) while `os.homedir()`
+ * and `path.resolve` leave the system's own case, so comparing one against the other
+ * fails on Windows and nowhere else. Only paths that can carry a drive need this;
+ * a rooted literal like `/out/A.gs` has none and matches `path.normalize` as-is.
+ */
+const at = (p: string): string => vscode.Uri.file(p).fsPath;
+
 describe('saveFileOut', () => {
   const memento = {
     get: vi.fn(),
@@ -151,7 +161,7 @@ describe('saveFileOut', () => {
     await saveFileOut({ title: 't', defaultFileName: 'Animal.gs', label: 'a', build: () => '' });
 
     const options = vi.mocked(vscode.window.showSaveDialog).mock.calls[0][0];
-    expect(options?.defaultUri?.fsPath).toBe(path.join(os.homedir(), 'Animal.gs'));
+    expect(options?.defaultUri?.fsPath).toBe(at(path.join(os.homedir(), 'Animal.gs')));
   });
 
   it('reports a failed build and writes nothing', async () => {

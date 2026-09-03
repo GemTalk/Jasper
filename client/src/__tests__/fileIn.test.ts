@@ -388,9 +388,11 @@ describe('the File In command', () => {
   it('remembers the folder it filed in from, so the next file-out lands there', async () => {
     await fileInUris(sessionManager(SESSION), [vscode.Uri.file(A_GS)], memento);
 
+    // The folder of the file that went in — derived from the fixture rather than
+    // restated, so it carries the same drive-letter shape `at` produces.
     expect(memento.update).toHaveBeenCalledWith(
       'gemstone.fileInOut.lastDirectory',
-      path.normalize('/src'),
+      path.dirname(A_GS),
     );
   });
 
