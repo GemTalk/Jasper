@@ -38,10 +38,22 @@ function withFiles(files: Record<string, string>): void {
   }) as unknown as typeof fs.readFileSync);
 }
 
-const A_GS = path.resolve('/src/Animal.gs');
-const D_GS = path.resolve('/src/Dog.gs');
-const LOADER = path.resolve('/src/Animals.gs');
-const TPZ = path.resolve('/src/script.tpz');
+/**
+ * An absolute path in the exact shape the code under test will see it.
+ *
+ * On Windows these two disagree: `path.resolve('/src/x.gs')` takes the cwd's drive
+ * letter as-is (`D:\src\x.gs`), while `Uri.fsPath` lowercases it (`d:\src\x.gs` —
+ * vscode-uri's `uriToFsPath`). The mock filesystem below is a plain object, so a
+ * fixture keyed the first way is simply invisible to a file-in that arrived through
+ * a `Uri`, and every Uri-driven test fails while the ones passing a raw path pass.
+ * Routing both through `Uri.file` puts them on one key. A no-op off Windows.
+ */
+const at = (p: string): string => vscode.Uri.file(path.resolve(p)).fsPath;
+
+const A_GS = at('/src/Animal.gs');
+const D_GS = at('/src/Dog.gs');
+const LOADER = at('/src/Animals.gs');
+const TPZ = at('/src/script.tpz');
 
 const CLASS_FILE = [
   'fileformat utf8',
@@ -163,7 +175,7 @@ describe('fileInFile', () => {
 
     expect(outcome.errors).toHaveLength(1);
     expect(outcome.errors[0].message).toContain('Could not read');
-    expect(outcome.errors[0].file).toBe(path.resolve('/src/Missing.gs'));
+    expect(outcome.errors[0].file).toBe(at('/src/Missing.gs'));
   });
 
   it('reports a directive it does not recognise, and runs the rest of the file', () => {
