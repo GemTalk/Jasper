@@ -14529,19 +14529,19 @@ deserialize: viewProxyData
 
 !		Instance methods for 'AbstractDictionary'
 
-category: '*GToolkit-RemotePhlow-InspectorExtensions-GemStone'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-InspectorExtensions-GemStone'
 method: AbstractDictionary
 asGPhlowAssociationsIterator
 	^ GtRemotePhlowDictionaryAssociationsIterator forCollection: self
 %
 
-category: '*GToolkit-RemotePhlow-InspectorExtensions-GemStone'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-InspectorExtensions-GemStone'
 method: AbstractDictionary
 asGPhlowKeysIterator
 	^ GtRemotePhlowDictionaryKeysIterator forCollection: self
 %
 
-category: '*GToolkit-RemotePhlow-InspectorExtensions-GemStone'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-InspectorExtensions-GemStone'
 method: AbstractDictionary
 gtItemsFor: aView
 	^ aView columnedList
@@ -14553,7 +14553,7 @@ gtItemsFor: aView
 		send: [ :assoc | assoc value ]
 %
 
-category: '*GToolkit-RemotePhlow-InspectorExtensions-GemStone'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-InspectorExtensions-GemStone'
 method: AbstractDictionary
 gtRemoteKeysFor: aView
 	<gtView>
@@ -14567,7 +14567,7 @@ gtRemoteKeysFor: aView
 
 !		Instance methods for 'AbstractFileReference'
 
-category: '*GToolkit-RemotePhlow-GemStone'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-GemStone'
 method: AbstractFileReference
 gtChildren
 	self isDirectory ifFalse: [ ^ Array new ].
@@ -14576,7 +14576,7 @@ gtChildren
 		(self files sort: [:a :b | a basename < b basename ]).
 %
 
-category: '*GToolkit-RemotePhlow-GemStone'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-GemStone'
 method: AbstractFileReference
 gtChildrenWithParent
 	| aChildrenCollection |
@@ -14591,7 +14591,7 @@ gtChildrenWithParent
 	^ aChildrenCollection
 %
 
-category: '*GToolkit-RemotePhlow-GemStone'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-GemStone'
 method: AbstractFileReference
 gtContentsFor: aView
 	<gtView>
@@ -14604,7 +14604,7 @@ gtContentsFor: aView
 		text: [ self contents ]
 %
 
-category: '*GToolkit-RemotePhlow-GemStone'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-GemStone'
 method: AbstractFileReference
 gtDetails
 	| details |
@@ -14646,7 +14646,7 @@ gtDetails
 	^ details
 %
 
-category: '*GToolkit-RemotePhlow-GemStone'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-GemStone'
 method: AbstractFileReference
 gtDetailsFor: composite
 	<gtView>
@@ -14660,7 +14660,7 @@ gtDetailsFor: composite
 		send: [ :each | each last ]
 %
 
-category: '*GToolkit-RemotePhlow-GemStone'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-GemStone'
 method: AbstractFileReference
 gtItemsFor: aView
 	<gtView>
@@ -14701,7 +14701,7 @@ gtItemsFor: aView
 			width: 150
 %
 
-category: '*GToolkit-RemotePhlow-GemStone'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-GemStone'
 method: AbstractFileReference
 gtPathFor: aView
 	<gtView>
@@ -14725,7 +14725,7 @@ gtPathFor: aView
 			aPath asFileReference ]
 %
 
-category: '*GToolkit-RemotePhlow-GemStone'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-GemStone'
 method: AbstractFileReference
 gtTreeFor: aView
 	<gtView>
@@ -14766,7 +14766,7 @@ gtTreeFor: aView
 			width: 150
 %
 
-category: '*GToolkit-RemotePhlow-GemStone'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-GemStone'
 method: AbstractFileReference
 humanReadableSize
 
@@ -14777,7 +14777,7 @@ humanReadableSize
 
 !		Instance methods for 'Behavior'
 
-category: '*GToolkit-RemotePhlow-Gemstone'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-Gemstone'
 method: Behavior
 gtMethodsListRemoteFor: aView
 	<gtView>
@@ -14789,7 +14789,7 @@ gtMethodsListRemoteFor: aView
 		itemText: [ :method | method selector ]
 %
 
-category: '*GToolkit-RemotePhlow-Gemstone'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-Gemstone'
 method: Behavior
 gtSubclasses
 	"A hack to figure out all subclasses since Metaclass3>>_subclasses always answers nil"
@@ -14802,7 +14802,7 @@ gtSubclasses
 	^ result
 %
 
-category: '*GToolkit-RemotePhlow-Gemstone'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-Gemstone'
 method: Behavior
 gtSubclassesFor: aView
 	<gtView>
@@ -14815,7 +14815,7 @@ gtSubclassesFor: aView
 		children: [ :cls | cls gtSubclasses ]
 %
 
-category: '*GToolkit-RemotePhlow-Gemstone'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-Gemstone'
 method: Behavior
 gtSuperclassesFor: aView
 	<gtView>
@@ -14831,7 +14831,7 @@ gtSuperclassesFor: aView
 
 !		Class methods for 'Collection'
 
-category: '*GToolkit-RemotePhlow-GemStone'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-GemStone'
 classmethod: Collection
 gtGsInspectorIconName
 	^ #collectionIcon
@@ -14839,13 +14839,13 @@ gtGsInspectorIconName
 
 !		Instance methods for 'Collection'
 
-category: '*GToolkit-RemotePhlow-PhlowViews'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-PhlowViews'
 method: Collection
 asGPhlowItemsIterator
 	^ GtRemotePhlowGenericCollectionIterator forCollection: self
 %
 
-category: '*GToolkit-RemotePhlow-InspectorExtensions-Remote'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-InspectorExtensions-Remote'
 method: Collection
 gtItemsFor: aView
 	<gtView>
@@ -14860,7 +14860,7 @@ gtItemsFor: aView
 
 !		Instance methods for 'Dictionary'
 
-category: '*GToolkit-RemotePhlow-GemStone'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-GemStone'
 method: Dictionary
 gtDisplayOn: aStream
 
@@ -14873,7 +14873,7 @@ gtDisplayOn: aStream
 
 !		Instance methods for 'GtPhlowColor'
 
-category: '*GToolkit-RemotePhlow-GemStone'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-GemStone'
 method: GtPhlowColor
 asColor
 	^ self
@@ -14883,7 +14883,7 @@ asColor
 
 !		Class methods for 'GtPhlowViewSpecification'
 
-category: '*GToolkit-RemotePhlow-GemStone'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-GemStone'
 classmethod: GtPhlowViewSpecification
 globalsDictionary
 
@@ -14891,14 +14891,14 @@ globalsDictionary
 	^ GsCurrentSession currentSession symbolList
 %
 
-category: '*GToolkit-RemotePhlow-GemStone'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-GemStone'
 classmethod: GtPhlowViewSpecification
 new
 
 	^ super new initialize
 %
 
-category: '*GToolkit-RemotePhlow-GemStone'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-GemStone'
 classmethod: GtPhlowViewSpecification
 readJsonString: aString
 
@@ -14908,7 +14908,7 @@ readJsonString: aString
 
 !		Instance methods for 'GtPhlowViewSpecification'
 
-category: '*GToolkit-RemotePhlow-GemStone'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-GemStone'
 method: GtPhlowViewSpecification
 writeJsonString: aJsonObject
 
@@ -14919,7 +14919,7 @@ writeJsonString: aJsonObject
 
 !		Class methods for 'GtRemotePhlowDeclarativeTestForCustomProxyInspectable'
 
-category: '*GToolkit-RemotePhlow-GemStone'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-GemStone'
 classmethod: GtRemotePhlowDeclarativeTestForCustomProxyInspectable
 new
 
@@ -14930,7 +14930,7 @@ new
 
 !		Class methods for 'GtRemotePhlowDeclarativeTestInspectable'
 
-category: '*GToolkit-RemotePhlow-GemStone'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-GemStone'
 classmethod: GtRemotePhlowDeclarativeTestInspectable
 new
 
@@ -14941,7 +14941,7 @@ new
 
 !		Class methods for 'GtRemotePhlowViewedObject'
 
-category: '*GToolkit-RemotePhlow-Gemstone'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-Gemstone'
 classmethod: GtRemotePhlowViewedObject
 new
 
@@ -14950,14 +14950,14 @@ new
 
 !		Instance methods for 'GtRemotePhlowViewedObject'
 
-category: '*GToolkit-RemotePhlow-GemStone'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-GemStone'
 method: GtRemotePhlowViewedObject
 addRawSelfNodeTo: variableNodes
 
 	^ self "TBS"
 %
 
-category: '*GToolkit-RemotePhlow-GemStone'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-GemStone'
 method: GtRemotePhlowViewedObject
 rawViewData
 	"Answer the data for the raw view"
@@ -14982,7 +14982,7 @@ rawViewData
 
 !		Instance methods for 'Integer'
 
-category: '*GToolkit-RemotePhlow-GemStone'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-GemStone'
 method: Integer
 humanReadableSISizeOn: aStream
 	"Print a SI representation of myself on the argument. See humanReadableSIByteSize for better comment."
@@ -14999,7 +14999,7 @@ humanReadableSISizeOn: aStream
 		nextPut: $B
 %
 
-category: '*GToolkit-RemotePhlow-GemStone'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-GemStone'
 method: Integer
 humanReadableSISizeString
 	"Return the receiver as a string with SI binary (International System of Units) file size, e.g. '50 KB'. It means that it takes 1000 and not 1024 as unit as humanReadableByteSizeString does."
@@ -15017,7 +15017,7 @@ humanReadableSISizeString
 
 !		Class methods for 'Magnitude'
 
-category: '*GToolkit-RemotePhlow-GemStone'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-GemStone'
 classmethod: Magnitude
 gtGsInspectorIconName
 	^ #magnitudeIcon
@@ -15027,13 +15027,13 @@ gtGsInspectorIconName
 
 !		Instance methods for 'Object'
 
-category: '*GToolkit-RemotePhlow-GemStone'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-GemStone'
 method: Object
 asRopedText
 	^ GtPhlowText forString: self asString
 %
 
-category: '*GToolkit-RemotePhlow-InspectorExtensions-Remote'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-InspectorExtensions-Remote'
 method: Object
 gtActionBrowseFor: anAction
 	<gtAction>
@@ -15048,7 +15048,7 @@ gtActionBrowseFor: anAction
 				spawnObject: self class ]
 %
 
-category: '*GToolkit-RemotePhlow-InspectorExtensions-Remote'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-InspectorExtensions-Remote'
 method: Object
 gtActionInspectFor: anAction
 	<gtAction>
@@ -15063,7 +15063,7 @@ gtActionInspectFor: anAction
 				spawnObject: self ]
 %
 
-category: '*GToolkit-RemotePhlow-Remote'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-Remote'
 method: Object
 gtActionsInCurrentContext
 	"Answer a collection of the object's declarative actions"
@@ -15081,7 +15081,7 @@ gtActionsInCurrentContext
 		phlowAction ]
 %
 
-category: '*GToolkit-RemotePhlow-Remote'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-Remote'
 method: Object
 gtDeclarativeActionPragmas
 	"Answer a collection of the object's declarative view selectors"
@@ -15092,7 +15092,7 @@ gtDeclarativeActionPragmas
 		to: Object
 %
 
-category: '*GToolkit-RemotePhlow-InspectorCore'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-InspectorCore'
 method: Object
 gtDeclarativePhlowActions
 	"Answer a collection of the object's declarative phlow actions"
@@ -15101,7 +15101,7 @@ gtDeclarativePhlowActions
 		select: [ :aPhlowAction | aPhlowAction canBeGtDeclarativeAction ]
 %
 
-category: '*GToolkit-RemotePhlow-InspectorCore'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-InspectorCore'
 method: Object
 gtDeclarativePhlowViews
 	"Answer a collection of the object's declarative phlow view"
@@ -15110,7 +15110,7 @@ gtDeclarativePhlowViews
 		select: [ :aPhlowView | aPhlowView canBeGtDeclarativeView ]
 %
 
-category: '*GToolkit-RemotePhlow-Remote'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-Remote'
 method: Object
 gtDeclarativeViewPragmas
 	"Answer a collection of the object's declarative view selectors"
@@ -15121,7 +15121,7 @@ gtDeclarativeViewPragmas
 		to: Object
 %
 
-category: '*GToolkit-RemotePhlow-Remote'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-Remote'
 method: Object
 gtDeclarativeViewPragms
 	"Answer a collection of the object's declarative view selectors"
@@ -15129,7 +15129,7 @@ gtDeclarativeViewPragms
 	^ self gtDeclarativeViewPragmas
 %
 
-category: '*GToolkit-RemotePhlow-GemStone'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-GemStone'
 method: Object
 gtDeclarativeViewSelectors
 	"Answer a collection of the object's declarative view selectors"
@@ -15140,13 +15140,13 @@ gtDeclarativeViewSelectors
 		to: Object) collect: [ :each | each method selector ]) asSet asArray
 %
 
-category: '*GToolkit-RemotePhlow-GemStone'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-GemStone'
 method: Object
 gtDisplayOn: writeStream
 	self printOn: writeStream
 %
 
-category: '*GToolkit-RemotePhlow-GemStone'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-GemStone'
 method: Object
 gtDisplayString
   | ws contents |
@@ -15162,7 +15162,7 @@ gtDisplayString
     ifFalse: [ contents ]
 %
 
-category: '*GToolkit-RemotePhlow-GemStone'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-GemStone'
 method: Object
 gtDisplayText
 	^ [ self gtDisplayString asRopedText ]
@@ -15171,13 +15171,13 @@ gtDisplayText
 			foreground: (GtPhlowColor named: #red) ]
 %
 
-category: '*GToolkit-RemotePhlow-GemStone'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-GemStone'
 method: Object
 gtGsInspectorIconName
 	^ #classIcon
 %
 
-category: '*GToolkit-RemotePhlow-InspectorExtensions-Remote'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-InspectorExtensions-Remote'
 method: Object
 gtPrintFor: aView
 	<gtView>
@@ -15187,7 +15187,7 @@ gtPrintFor: aView
 		text: [ self printString ]
 %
 
-category: '*GToolkit-RemotePhlow-InspectorExtensions-Remote'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-InspectorExtensions-Remote'
 method: Object
 gtRawFor: aView
 	<gtView>
@@ -15203,7 +15203,7 @@ gtRawFor: aView
 		send: [ :anAssociation | anAssociation value ]
 %
 
-category: '*GToolkit-RemotePhlow-GemStone'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-GemStone'
 method: Object
 gtRemoteVariableValuePairsWithSelfIf: aBoolean
 	| instVarNames bindings instanceVariables indexedVarsSize |
@@ -15227,13 +15227,13 @@ gtRemoteVariableValuePairsWithSelfIf: aBoolean
 	^ bindings
 %
 
-category: '*GToolkit-RemotePhlow-GemStone'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-GemStone'
 method: Object
 gtSystemIconName
 	^ self gtGsInspectorIconName
 %
 
-category: '*GToolkit-RemotePhlow-Remote'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-Remote'
 method: Object
 gtViewsInCurrentContext
 	"Answer a collection of the object's declarative views"
@@ -15255,7 +15255,7 @@ gtViewsInCurrentContext
 
 !		Instance methods for 'OrderedCollection'
 
-category: '*GToolkit-RemotePhlow-GemStone'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-GemStone'
 method: OrderedCollection
 gtDisplayOn: aStream
 
@@ -15268,7 +15268,7 @@ gtDisplayOn: aStream
 
 !		Instance methods for 'PrintStream'
 
-category: '*GToolkit-RemotePhlow-GemStone'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-GemStone'
 method: PrintStream
 parenthesize: aBlock
 	self nextPut: $(.
@@ -15279,7 +15279,7 @@ parenthesize: aBlock
 
 !		Instance methods for 'Semaphore'
 
-category: '*GToolkit-RemotePhlow-GemStone'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-GemStone'
 method: Semaphore
 gtDisplayOn: aStream
 	"Reuse the printOn: implementation"
@@ -15290,13 +15290,13 @@ gtDisplayOn: aStream
 
 !		Instance methods for 'SequenceableCollection'
 
-category: '*GToolkit-RemotePhlow-PhlowViews'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-PhlowViews'
 method: SequenceableCollection
 asGPhlowItemsIterator
 	^ GtRemotePhlowSequenceableCollectionIterator forCollection: self
 %
 
-category: '*GToolkit-RemotePhlow-InspectorExtensions-Remote'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-InspectorExtensions-Remote'
 method: SequenceableCollection
 gtItemsFor: aView
 	^ aView columnedList
@@ -15314,7 +15314,7 @@ gtItemsFor: aView
 
 !		Class methods for 'String'
 
-category: '*GToolkit-RemotePhlow-GemStone'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-GemStone'
 classmethod: String
 gtGsInspectorIconName
 	^ #stringIcon
@@ -15322,19 +15322,19 @@ gtGsInspectorIconName
 
 !		Instance methods for 'String'
 
-category: '*GToolkit-RemotePhlow-GemStone'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-GemStone'
 method: String
 asRopedText
 	^ GtPhlowText forString: self
 %
 
-category: '*GToolkit-RemotePhlow-GemStone'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-GemStone'
 method: String
 gtDisplayOn: writeStream
 	writeStream nextPutAll: self
 %
 
-category: '*GToolkit-RemotePhlow-InspectorExtensions-Remote'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-InspectorExtensions-Remote'
 method: String
 gtStringFor: aView
 	<gtView>
@@ -15349,7 +15349,7 @@ gtStringFor: aView
 
 !		Instance methods for 'WriteStream'
 
-category: '*GToolkit-RemotePhlow-Remote'
+category: 'GsEnhancedInspector-GToolkit-RemotePhlow-Remote'
 method: WriteStream
 parenthesize: aBlock
 	self nextPut: $(.
