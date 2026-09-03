@@ -17,7 +17,7 @@ import { useIntegrationTest } from '../../__tests__/useIntegrationTest';
 import { GciLibrary } from '../../gciLibrary';
 import * as q from '../../browserQueries';
 import type { ActiveSession } from '../../sessionManager';
-import { MIN_HARD_BREAK_GAP_MS } from '../../nbRunner';
+import { MIN_HARD_BREAK_GAP_MS, NbCancelledError } from '../../nbRunner';
 import { runTestClassNb, runTestMethodNb } from '../../sunitQueries';
 import { discoverTestClasses } from '../discoverTestClasses';
 import { discoverTestMethods } from '../discoverTestMethods';
@@ -85,7 +85,10 @@ describe('SUnit non-blocking runs (integration)', () => {
    *   reports its own elapsed time as ~250ms when a break lands right after this
    *   wait, i.e. it started executing essentially at once.
    */
-  async function startSlowRun(): Promise<{ run: Promise<unknown>; cancel: () => void }> {
+  async function startSlowRun(): Promise<{
+    run: ReturnType<typeof runTestMethodNb>;
+    cancel: () => void;
+  }> {
     let cancel: (() => void) | undefined;
     const run = runTestMethodNb(
       session(),
@@ -105,18 +108,30 @@ describe('SUnit non-blocking runs (integration)', () => {
   }
 
   /**
-   * How a stopped run settled. A break surfaces either as a rejection or as a
-   * non-passing verdict, depending on which of the gem's two break-delivery
-   * modes serviced it — both are correct, and which one happens is not the
-   * test's business.
+   * How a stopped run settled, as one of two legal endings: `'stopped'` when the
+   * hard break abandoned the call and the run rejected, or whatever verdict the
+   * gem answered when it trapped the break instead. Which of the two happens
+   * depends on the gem's break-delivery mode and is not the test's business.
+   *
+   * Only `NbCancelledError` is read as a stop. Every other rejection is rethrown
+   * so it surfaces as itself: a poll failure, a session that went away, or a
+   * follow-up call refused as busy are all bugs, and mapping them to 'stopped'
+   * would let the exact failures these tests exist to catch read as a clean stop.
    */
-  async function settledStatus(run: Promise<unknown>): Promise<string> {
-    const outcome = await run.then(
-      (r) => r,
-      (e: unknown) => e,
-    );
-    return outcome instanceof Error ? 'stopped' : (outcome as { status: string }).status;
+  async function settledStatus(run: ReturnType<typeof runTestMethodNb>): Promise<string> {
+    try {
+      return (await run).status;
+    } catch (e) {
+      if (e instanceof NbCancelledError) return 'stopped';
+      throw e;
+    }
   }
+
+  /**
+   * The endings a stopped run may legally have — asserted as a set rather than
+   * as "anything but passed", so a surprise verdict is a failure too.
+   */
+  const STOPPED_ENDINGS = ['stopped', 'error'];
 
   it('reports a passing, a failing and an erroring test the same way the blocking query does', async () => {
     await expect(
@@ -169,8 +184,9 @@ describe('SUnit non-blocking runs (integration)', () => {
     const { run, cancel } = await startSlowRun();
     cancel(); // one press — soft break
 
-    // What must never happen is the interrupted test being reported as passed.
-    expect(await settledStatus(run)).not.toBe('passed');
+    // A stopped test must report as stopped or errored — never as passed, and
+    // never as something else that happens not to be 'passed'.
+    expect(STOPPED_ENDINGS).toContain(await settledStatus(run));
 
     // The session is the real assertion, and its own synchronisation: the next run
     // waits for the abandoned call to be drained before it starts, so if this
@@ -206,7 +222,7 @@ describe('SUnit non-blocking runs (integration)', () => {
       cancel(); // soft
       cancel(); // hard, deferred internally past the safety gap — never slept for here
 
-      expect(await settledStatus(run)).not.toBe('passed');
+      expect(STOPPED_ENDINGS).toContain(await settledStatus(run));
 
       // The sequence as one string, so both legal endings can be named without
       // asserting inside a conditional: either the gem serviced the soft break

@@ -17,6 +17,12 @@ const noErr = { number: 0 } as const;
 const PAST_HARD_BREAK_GAP_MS = MIN_HARD_BREAK_GAP_MS + 100;
 
 /**
+ * Fake time that stops just short of the deferred hard break, so a test can
+ * assert it is still being withheld before letting it through.
+ */
+const BEFORE_HARD_BREAK_GAP_MS = MIN_HARD_BREAK_GAP_MS - 50;
+
+/**
  * Fake session whose gci returns a scripted sequence of poll results. Each
  * pollNbResultReady consumes the next entry (1 = ready, 0 = pending, -1 = error).
  */
@@ -158,6 +164,14 @@ describe('runNbCall — cancellation', () => {
       );
 
       cancelHandler!(); // second cancel → hard break, once the safety gap has passed
+
+      // The withholding itself, not just its eventual effect: a hard break sent
+      // on the heels of the soft one faults the client process, and an assertion
+      // that only looks *past* the gap passes just as happily if the deferral is
+      // dropped and the break goes out at once.
+      await vi.advanceTimersByTimeAsync(BEFORE_HARD_BREAK_GAP_MS);
+      expect(session.gci.GciTsBreak).not.toHaveBeenCalledWith(session.handle, true);
+
       await vi.advanceTimersByTimeAsync(PAST_HARD_BREAK_GAP_MS);
       expect(session.gci.GciTsBreak).toHaveBeenCalledWith(session.handle, true);
       await expect(p).rejects.toBeInstanceOf(NbCancelledError);
@@ -198,6 +212,12 @@ describe('runNbCall — cancellation', () => {
       expect(session.gci.GciTsBreak).toHaveBeenCalledWith(session.handle, false);
 
       cancel!(); // second → hard break, sent once the safety gap has passed
+
+      // Withheld until the gap has elapsed — checked on this path too, because
+      // the external canceller is wired separately from the notification's.
+      await vi.advanceTimersByTimeAsync(BEFORE_HARD_BREAK_GAP_MS);
+      expect(session.gci.GciTsBreak).not.toHaveBeenCalledWith(session.handle, true);
+
       await vi.advanceTimersByTimeAsync(PAST_HARD_BREAK_GAP_MS);
       expect(session.gci.GciTsBreak).toHaveBeenCalledWith(session.handle, true);
       await expect(p).rejects.toBeInstanceOf(NbCancelledError);
