@@ -3,6 +3,7 @@ import * as path from 'path';
 import { GCI_LOGIN_QUIET, OOP_FALSE, OOP_ILLEGAL, OOP_NIL, OOP_TRUE } from './gciConstants';
 import { GciLibraryError } from './gciLibraryError';
 import { escapeString } from './queries/util';
+import type { NotPromise } from './types';
 
 // OopType is uint64_t in C; koffi maps this to BigInt in JS
 const OopType = 'uint64';
@@ -159,10 +160,6 @@ function toBigInt(value: number | bigint): bigint {
 function quietedLoginFlags(loginFlags: number): number {
   return loginFlags | GCI_LOGIN_QUIET;
 }
-
-// Rejects a Promise-returning (async) callback at the type level -- see
-// GciLibrary.executeAndRelease's doc comment for why that matters.
-type NotPromise<T> = T extends Promise<unknown> ? never : T;
 
 /**
  * FFI bindings to GemStone's native `libgcits` shared library, loaded via koffi.
