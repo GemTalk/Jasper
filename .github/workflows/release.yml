@@ -1,0 +1,262 @@
+name: Release
+
+# Manual publish pipeline. It deliberately does NOT bump the version or write
+# the changelog: promoting `[Unreleased]` to a dated `[X.Y.Z]` section, and
+# sweeping `main` for changes that never wrote an entry, are editorial calls.
+# Those land as an ordinary release PR through the merge queue, and this
+# workflow then publishes a commit that is already on main and already green.
+#
+# See docs/how-to/publishing-a-release.md for the whole procedure, including
+# how the two registry tokens are obtained.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish, e.g. 1.8.15. Must match package.json on the ref below.'
+        required: true
+        type: string
+      ref:
+        description: 'Commit or branch to publish. Must already be on main.'
+        required: false
+        default: main
+        type: string
+      dry-run:
+        description: 'Run every check and build the .vsix, but do not tag, publish, or create a release.'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+# Never let two releases interleave: they would race on the same tag and the
+# same marketplace version. Queue instead of cancelling — a cancelled run that
+# had already uploaded to one registry is worse than a delayed one.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  # Everything that can be checked without a registry credential, so an
+  # obvious mistake fails before the environment's reviewer is asked to
+  # approve anything.
+  preflight:
+    name: Pre-flight checks
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: read
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+    # zizmor(template-injection): bind the dispatch inputs to env vars instead
+    # of interpolating ${{ }} directly into a run script
+    env:
+      VERSION: ${{ inputs.version }}
+      REF: ${{ inputs.ref }}
+    steps:
+      - name: Validate the version string
+        run: |
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "error: version must be X.Y.Z (got '$VERSION')." >&2
+            exit 1
+          fi
+      # zizmor(unpinned-uses): actions must be pinned to a commit SHA, not
+      # a mutable tag like @v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          # Ancestry against origin/main and the tag check below both need
+          # real history, not the default depth-1 clone.
+          fetch-depth: 0
+          # zizmor(artipacked): checkout must not persist the token past
+          # this job
+          persist-credentials: false
+      - name: Resolve the ref, and require it to be on main
+        id: resolve
+        run: |
+          sha=$(git rev-parse HEAD)
+          echo "Releasing $REF -> $sha"
+          # fetch-depth: 0 above fetches every branch, so this should exist;
+          # fail loudly rather than letting merge-base report something opaque.
+          if ! git rev-parse --verify -q refs/remotes/origin/main >/dev/null; then
+            echo "error: refs/remotes/origin/main is missing; cannot verify this commit is on main." >&2
+            exit 1
+          fi
+          # A ref that is not an ancestor of main has not been through the
+          # merge queue, so nothing guarantees it was ever reviewed or green.
+          if ! git merge-base --is-ancestor "$sha" origin/main; then
+            echo "error: $sha is not an ancestor of origin/main." >&2
+            echo "Merge the release PR first; this workflow only publishes commits already on main." >&2
+            exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - name: Require package.json to be at the requested version
+        run: |
+          actual=$(node -p 'require("./package.json").version')
+          if [ "$actual" != "$VERSION" ]; then
+            echo "error: package.json is at $actual, but $VERSION was requested." >&2
+            echo "Either publish $actual, or merge the bump to $VERSION first." >&2
+            exit 1
+          fi
+      # An entry still under `## [Unreleased]` means the changelog was never
+      # promoted; publishing it would ship a version whose own changelog calls
+      # it unreleased. This is also the text used for the release notes below.
+      - name: Require a dated changelog section
+        run: bash scripts/changelog-section.sh "$VERSION" > /dev/null
+      - name: Require the tag to be free
+        run: |
+          if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then
+            echo "error: tag v$VERSION already exists — $VERSION looks released." >&2
+            exit 1
+          fi
+      # The release does not re-run lint/compile/test: the merge queue already
+      # ran them on this commit, across both platforms and every supported
+      # GemStone version, which is a stronger gate than any single run here
+      # could be. What matters is that it actually passed.
+      - name: Require ci-complete to have passed on this commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ steps.resolve.outputs.sha }}
+        run: |
+          # A commit can carry several ci-complete runs, because a failed run
+          # can be retried. Order is not guaranteed, so sort by start time and
+          # read the newest: taking an arbitrary one risks reading a stale
+          # success for a commit whose latest run failed.
+          conclusion=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${SHA}/check-runs" \
+            --paginate --jq '.check_runs[] | select(.name == "ci-complete") | [.started_at, .conclusion] | @tsv' |
+            sort -r | head -1 | cut -f2)
+          if [ -z "$conclusion" ]; then
+            echo "error: no ci-complete check run found for $SHA." >&2
+            echo "Health Check may still be running, or this commit never went through it." >&2
+            exit 1
+          fi
+          if [ "$conclusion" != "success" ]; then
+            echo "error: ci-complete concluded '$conclusion' for $SHA, not success." >&2
+            exit 1
+          fi
+          echo "ci-complete passed on $SHA."
+
+  publish:
+    name: Publish to both registries
+    needs: preflight
+    timeout-minutes: 45
+    runs-on: ubuntu-latest
+    # The two registry tokens live on this environment, not on the repo, so
+    # they are unreachable from any other workflow. Add required reviewers to
+    # it in repo settings: that approval gate, and its audit trail of who
+    # released what, is the point of splitting this job out.
+    environment: release
+    permissions:
+      # Creating the tag and the GitHub Release.
+      contents: write
+    env:
+      VERSION: ${{ inputs.version }}
+      SHA: ${{ needs.preflight.outputs.sha }}
+    steps:
+      # zizmor(unpinned-uses): actions must be pinned to a commit SHA, not
+      # a mutable tag like @v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The exact commit pre-flight vetted, not the branch tip, which
+          # could have moved while the approval was pending.
+          ref: ${{ needs.preflight.outputs.sha }}
+          # zizmor(artipacked): checkout must not persist the token past
+          # this job. The tag is created through the API instead of pushed.
+          persist-credentials: false
+      - name: Setup Node.js
+        # zizmor(unpinned-uses): actions must be pinned to a commit SHA,
+        # not a mutable tag like @v6
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+      - name: Install dependencies
+        run: npm ci
+      # Before building anything: an expired PAT is the failure that has
+      # actually stalled a release, and it reads like a bad token rather than
+      # an expired one. Runs here rather than in pre-flight because the tokens
+      # are scoped to this environment.
+      - name: Verify both registry tokens
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          npx --no-install @vscode/vsce verify-pat gemtalksystems
+          npx --no-install ovsx verify-pat gemtalksystems
+      - name: Package
+        run: |
+          npm run package
+          vsix="gemstone-ide-${VERSION}.vsix"
+          if [ ! -f "$vsix" ]; then
+            echo "error: expected $vsix, but packaging produced:" >&2
+            printf '%s\n' ./*.vsix >&2
+            exit 1
+          fi
+          echo "Built $vsix ($(du -h "$vsix" | cut -f1))."
+      # Kept whatever happens next, including on a dry run: it is the artifact
+      # under discussion if a publish goes wrong.
+      - name: Upload the .vsix
+        # zizmor(unpinned-uses): actions must be pinned to a commit SHA,
+        # not a mutable tag like @v6
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v5.0.0
+        with:
+          name: gemstone-ide-${{ inputs.version }}-vsix
+          path: gemstone-ide-${{ inputs.version }}.vsix
+          if-no-files-found: error
+      - name: Stop here (dry run)
+        if: inputs.dry-run
+        run: |
+          echo "Dry run: every check passed and the .vsix built."
+          echo "Nothing was tagged, published, or released."
+      # Publishing the file just built, rather than letting each CLI repackage
+      # from source, is the one thing a pipeline can do that the manual
+      # process could not: the artifact inspected above, the two uploaded to
+      # the registries, and the one attached to the GitHub Release are all the
+      # same bytes. `--skip-duplicate` makes a re-run after a partial failure
+      # safe instead of an "already exists" error.
+      - name: Publish to the VS Code Marketplace
+        if: '!inputs.dry-run'
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: npx --no-install @vscode/vsce publish --packagePath "gemstone-ide-${VERSION}.vsix" --skip-duplicate
+      - name: Publish to Open VSX
+        if: '!inputs.dry-run'
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: npx --no-install ovsx publish --packagePath "gemstone-ide-${VERSION}.vsix" --skip-duplicate
+      - name: Wait for both registries to serve the version
+        if: '!inputs.dry-run'
+        run: bash scripts/await-published-version.sh "$VERSION"
+      # Tagged only once both registries are actually serving the version, so
+      # a failed or half-finished publish leaves no tag to clean up and the
+      # run can simply be repeated. The tag still points at the vetted commit.
+      - name: Tag the release
+        if: '!inputs.dry-run'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Annotated, matching the tags every previous release carries: the
+          # API needs the tag object created before the ref that points to it.
+          tag_sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/tags" \
+            -f tag="v${VERSION}" \
+            -f message="Release ${VERSION}" \
+            -f object="${SHA}" \
+            -f type=commit \
+            --jq .sha)
+          gh api "repos/${GITHUB_REPOSITORY}/git/refs" \
+            -f ref="refs/tags/v${VERSION}" \
+            -f sha="${tag_sha}" > /dev/null
+          echo "Tagged v${VERSION} at ${SHA}."
+      - name: Create the GitHub Release
+        if: '!inputs.dry-run'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          bash scripts/changelog-section.sh "$VERSION" > release-notes.md
+          gh release create "v${VERSION}" \
+            --title "${VERSION}" \
+            --notes-file release-notes.md \
+            --verify-tag \
+            "gemstone-ide-${VERSION}.vsix"
