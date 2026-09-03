@@ -16,6 +16,25 @@ interface CodeLensData {
   kind: 'senders' | 'implementors';
 }
 
+/** Files `gemstone.fileInFile` can act on — the same pair of terms its editor menus
+ *  are gated on, so the lens and the title-bar button appear on exactly the files. A
+ *  `gemstone://` method is not a file on disk; a `.gst`/`.st` is not Topaz. */
+function isFileInTarget(document: vscode.TextDocument): boolean {
+  return document.uri.scheme === 'file' && document.languageId === 'gemstone-topaz';
+}
+
+/** The "file this in" link, at the very top of the document. Names its own document
+ *  rather than letting the command fall back to the active editor, so the lens files
+ *  in the file it is sitting on however focus happens to be arranged. */
+function fileInLens(document: vscode.TextDocument): vscode.CodeLens {
+  const top = new vscode.Range(new vscode.Position(0, 0), new vscode.Position(0, 0));
+  return new vscode.CodeLens(top, {
+    title: '$(desktop-download) File In to GemStone',
+    command: 'gemstone.fileInFile',
+    arguments: [document.uri],
+  });
+}
+
 export class GemStoneCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposable {
   private _onDidChangeCodeLenses = new vscode.EventEmitter<void>();
   readonly onDidChangeCodeLenses = this._onDidChangeCodeLenses.event;
@@ -69,6 +88,19 @@ export class GemStoneCodeLensProvider implements vscode.CodeLensProvider, vscode
 
     // Topaz file — parse regions
     const text = document.getText();
+
+    // A `.gs`/`.tpz` on disk is the one thing File In reads, and a user looking at one
+    // has nowhere obvious to go: the command is an icon in the title bar, an entry in
+    // a right-click menu, or palette wording they have to already know (#539). One
+    // lens at the top says it in words, in the document itself.
+    //
+    // Built with its command already set rather than filled in by resolveCodeLens: a
+    // lens that arrives late shoves the source down after first paint, which is the
+    // jiggle #432 took the senders/implementors lenses off `gemstone://` methods for.
+    if (isFileInTarget(document) && text.trim().length > 0) {
+      lenses.push(fileInLens(document));
+    }
+
     const regions = parseTopazDocument(text);
 
     for (const region of regions) {

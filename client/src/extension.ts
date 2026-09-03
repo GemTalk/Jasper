@@ -2241,10 +2241,12 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Read a Topaz `.gs` file on this machine back into the session (issue #539).
     // The palette entry picks the file; the resource entry takes the one(s) already
-    // selected in VS Code's Explorer, or the file in the active editor.
-    // Also the ⤓ on a session row in Logins & Sessions, which is where it is easiest
-    // to find: that row names the session, so it files straight into that one instead
-    // of asking. From the palette (no row) the usual "which session?" applies.
+    // selected in VS Code's Explorer, the file in the active editor, or the one whose
+    // "File In to GemStone" lens was clicked (gemstoneCodeLensProvider).
+    // Also the ⤓ on a session row in Logins & Sessions, and the one on the GemStone
+    // Explorer's Dictionaries pane (gemstone.explorer.fileIn): both already name a
+    // session, so they file straight into it instead of asking. From the palette
+    // (no row) the usual "which session?" applies.
     vscode.commands.registerCommand('gemstone.fileIn', async (item?: GemStoneSessionItem) => {
       await fileInCommand(sessionManager, context.globalState, item?.activeSession);
     }),

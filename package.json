@@ -1535,6 +1535,12 @@
         "icon": "$(export)"
       },
       {
+        "command": "gemstone.explorer.fileIn",
+        "title": "File In...",
+        "category": "GemStone",
+        "icon": "$(desktop-download)"
+      },
+      {
         "command": "gemstone.explorer.renameDictionary",
         "title": "Rename Dictionary",
         "category": "GemStone",
@@ -2155,6 +2161,10 @@
           "when": "false"
         },
         {
+          "command": "gemstone.explorer.fileIn",
+          "when": "false"
+        },
+        {
           "command": "gemstone.explorer.renameDictionary",
           "when": "false"
         },
@@ -2464,6 +2474,11 @@
           "group": "navigation@6"
         },
         {
+          "command": "gemstone.explorer.fileIn",
+          "when": "view == gemstoneExplorerDicts",
+          "group": "navigation@7"
+        },
+        {
           "command": "gemstone.explorer.newClassCategory",
           "when": "view == gemstoneExplorerCategories",
           "group": "navigation@2"
@@ -2589,6 +2604,11 @@
           "command": "gemstone.explorer.fileOutDictionary",
           "when": "view == gemstoneExplorerDicts && viewItem == explorerDict",
           "group": "4_fileout@0"
+        },
+        {
+          "command": "gemstone.explorer.fileIn",
+          "when": "view == gemstoneExplorerDicts && viewItem == explorerDict",
+          "group": "5_filein@0"
         },
         {
           "command": "gemstone.explorer.fileOutClassCategory",

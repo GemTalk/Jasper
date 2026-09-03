@@ -208,9 +208,9 @@ const firstLine = (source: string): string => source.split('\n')[0]?.trim() ?? '
 export async function fileInCommand(
   sessionManager: SessionManager,
   store?: vscode.Memento,
-  // The session to file into, when the command was invoked from a row that names one
-  // (the File In button on a session in Logins & Sessions). Without it the user is
-  // asked, as any other write is.
+  // The session to file into, when the caller already knows one — the File In button
+  // on a session row in Logins & Sessions, or the GemStone Explorer, which is showing
+  // exactly one session. Without it the user is asked, as any other write is.
   session?: ActiveSession,
 ): Promise<void> {
   const uris = await vscode.window.showOpenDialog({
@@ -232,14 +232,13 @@ export async function fileInUris(
   sessionManager: SessionManager,
   uris: vscode.Uri[],
   store?: vscode.Memento,
-  // See {@link fileInCommand}: a session the caller already knows, from a row that
-  // names one.
+  // See {@link fileInCommand}: a session the caller already knows.
   target?: ActiveSession,
 ): Promise<void> {
   if (uris.length === 0) return;
   // resolveSession, not getSelectedSession: filing in is a write, and with several
-  // sessions open the user is asked which one it lands in — unless the command came
-  // from a session row, which has already answered that.
+  // sessions open the user is asked which one it lands in — unless the caller has
+  // already answered that (a session row, or the Explorer's current session).
   const session = target ?? (await sessionManager.resolveSession());
   if (!session) return;
 

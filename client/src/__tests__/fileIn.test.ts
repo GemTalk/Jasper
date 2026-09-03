@@ -311,9 +311,10 @@ describe('the File In command', () => {
     expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
   });
 
-  it('files into the session a row named, without asking which', async () => {
-    // The ⤓ on a session row in Logins & Sessions knows its session, so the usual
-    // "which session?" prompt would be a question already answered.
+  it('files into the session the caller named, without asking which', async () => {
+    // The ⤓ on a session row in Logins & Sessions, and the one on the GemStone
+    // Explorer, both know their session — so the usual "which session?" prompt would
+    // be a question already answered.
     const named = { id: 7 } as ActiveSession;
 
     await fileInUris(wouldAsk(), [vscode.Uri.file(A_GS)], memento, named);
@@ -321,7 +322,7 @@ describe('the File In command', () => {
     expect(queries.fileInChunk).toHaveBeenCalledWith(named, expect.stringContaining('subclass:'));
   });
 
-  it('passes the row s session through the file picker to the file-in', async () => {
+  it('passes the caller s session through the file picker to the file-in', async () => {
     const named = { id: 7 } as ActiveSession;
     vi.mocked(vscode.window.showOpenDialog).mockResolvedValue([vscode.Uri.file(A_GS)]);
 

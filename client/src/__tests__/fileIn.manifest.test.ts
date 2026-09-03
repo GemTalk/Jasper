@@ -40,26 +40,32 @@ const entriesIn = (menu: string, id: string): MenuEntry[] =>
 
 const PICK = 'gemstone.fileIn';
 const RESOURCE = 'gemstone.fileInFile';
+const EXPLORER = 'gemstone.explorer.fileIn';
 
 describe('File In command declarations', () => {
-  it('declares both, under the GemStone category', () => {
-    for (const id of [PICK, RESOURCE]) {
+  it('declares all three, under the GemStone category', () => {
+    for (const id of [PICK, RESOURCE, EXPLORER]) {
       expect(command(id), `no such command contributed: ${id}`).toBeDefined();
       expect(command(id)?.category).toBe('GemStone');
     }
   });
 
-  it('marks only the picker with an ellipsis — the resource one asks nothing', () => {
+  it('marks the pickers with an ellipsis — the resource one asks nothing', () => {
     expect(command(PICK)?.title).toBe('File In...');
+    expect(command(EXPLORER)?.title).toBe('File In...');
     expect(command(RESOURCE)?.title).toBe('File In to GemStone');
   });
 
   it('registers a handler for each', () => {
     const src = fs.readFileSync(path.resolve(__dirname, '..', 'extension.ts'), 'utf-8');
-
-    const unregistered = [PICK, RESOURCE].filter(
-      (id) => !new RegExp(String.raw`registerCommand\(\s*'${id}'`).test(src),
+    const explorerSrc = fs.readFileSync(
+      path.resolve(__dirname, '..', 'gemstoneExplorer.ts'),
+      'utf-8',
     );
+
+    const registered = (id: string) =>
+      new RegExp(String.raw`registerCommand\(\s*'${id}'`).test(id === EXPLORER ? explorerSrc : src);
+    const unregistered = [PICK, RESOURCE, EXPLORER].filter((id) => !registered(id));
 
     expect(unregistered).toEqual([]);
   });
@@ -115,6 +121,49 @@ describe('where File In is offered', () => {
       'editor/title: resourceLangId == gemstone-topaz && resourceScheme == file',
       'editor/context: resourceLangId == gemstone-topaz && resourceScheme == file',
     ]);
+  });
+
+  it('offers it in the GemStone Explorer, where File Out is', () => {
+    // File Out lives on Explorer rows and File In did not live in that view at all, so
+    // the way back in was in another view entirely. A pane button (always visible) and
+    // a dictionary-row entry (where the right-click habit already goes).
+    const title = entriesIn('view/title', EXPLORER);
+    const row = entriesIn('view/item/context', EXPLORER);
+
+    expect(title.map((e) => e.when)).toEqual(['view == gemstoneExplorerDicts']);
+    expect(title[0]?.group).toMatch(/^navigation@/);
+    expect(row.map((e) => e.when)).toEqual([
+      'view == gemstoneExplorerDicts && viewItem == explorerDict',
+    ]);
+  });
+
+  it('keeps the row entry OUT of the file-out group — a file-in is not scoped to the row', () => {
+    // "File Out Dictionary…" acts on the dictionary that was right-clicked; File In
+    // does not — a file names its own dictionaries. Its own group renders a separator
+    // above it, so the two do not read as a matched pair on the same target.
+    const fileOutGroup = entriesIn('view/item/context', 'gemstone.explorer.fileOutDictionary')[0]
+      ?.group;
+    const fileInGroup = entriesIn('view/item/context', EXPLORER)[0]?.group;
+
+    expect(fileOutGroup).toBeDefined();
+    expect(fileInGroup).toBeDefined();
+    expect(fileInGroup?.split('@')[0]).not.toBe(fileOutGroup?.split('@')[0]);
+    // Below it, not above: File Out is what the user came to this menu for.
+    expect(fileInGroup! > fileOutGroup!).toBe(true);
+  });
+
+  it('keeps the Explorer one out of the palette — it would duplicate the picker', () => {
+    // Same dialog, same title. Two "GemStone: File In..." rows in the palette differ
+    // only in which session they assume, which the palette gives no way to tell.
+    const entry = (pkg.contributes.menus['commandPalette'] ?? []).find(
+      (e) => e.command === EXPLORER,
+    );
+
+    expect(entry?.when).toBe('false');
+  });
+
+  it('gives the Explorer entries an icon, since the pane button is icon-only', () => {
+    expect(command(EXPLORER)?.icon).toBe(command(PICK)?.icon);
   });
 
   it('gates on the language id that .gs and .tpz actually map to', () => {

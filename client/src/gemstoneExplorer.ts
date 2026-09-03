@@ -30,6 +30,7 @@ import { registerOpenEditorsStatusBar } from './openEditorsStatusBar';
 import { SourceEditorPlacement } from './sourceEditorPlacement';
 import { generateAndSaveGrailStub } from './grailStubGenerator';
 import { composeFileOut, fileOutFileName, saveFileOut } from './fileOut';
+import { fileInCommand } from './fileIn';
 import { isClassNotFound } from './queries/fileOutClass';
 import {
   RenamePreview,
@@ -948,7 +949,8 @@ export class ExplorerController {
     /** Called once per class removed by Remove Class, so views holding a cached class corpus (GemStone
      *  Search) can drop it. Per class, not per command: the delete takes the whole subtree. */
     private readonly onClassRemoved?: (sessionId: number, className: string) => void,
-    /** Extension global storage, used only to fire the one-time "how to keep methods open" hint. */
+    /** Extension global storage: the one-time "how to keep methods open" hint, and the
+     *  directory File Out and File In remember between them. */
     private readonly globalState?: vscode.Memento,
     /** Test affordances on class/method rows. Absent in tests that don't exercise them,
      *  and before the SUnit controller exists. */
@@ -5463,6 +5465,26 @@ export class ExplorerController {
     });
   }
 
+  // ── File in ─────────────────────────────────────────────────────────────────
+
+  /**
+   * Read a Topaz file back in — the return trip for the File Out entries above.
+   *
+   * Offered from the Dictionaries pane's toolbar and from a dictionary row, because
+   * that is where the user just filed out from; the alternative was hunting for the
+   * button on a session row in another view, or knowing the palette wording (#539).
+   *
+   * Session-scoped, not row-scoped, however it was reached: a file names its own
+   * dictionaries, so filing in from the Animals row does not put anything in Animals.
+   * Hence the row entry sitting in a group of its own below "File Out Dictionary…"
+   * rather than beside it. The Explorer is already showing exactly one session, so
+   * that is the one it files into and there is no "which session?" prompt — and with
+   * nothing connected the target is undefined, which asks, as any other write does.
+   */
+  async fileIn(): Promise<void> {
+    await fileInCommand(this.sessionManager, this.globalState, this.session());
+  }
+
   // New Method, invoked from a category row → files into THAT category (including
   // a still-empty one, which the compile then creates on the server, so overlay
   // categories become real once they hold a method). With no argument (palette)
@@ -6943,6 +6965,11 @@ export function registerGemStoneExplorer(
         if (rows.length > 0) void ctl.fileOutMethods(rows);
       },
     ),
+    // The return trip, from the Dictionaries pane's toolbar or a dictionary row.
+    // Takes no row: a file-in lands where the file says, not on what was clicked.
+    vscode.commands.registerCommand('gemstone.explorer.fileIn', () => {
+      void ctl.fileIn();
+    }),
     vscode.commands.registerCommand('gemstone.explorer.removeDictionary', (node?: unknown) => {
       if (node instanceof DictItem) void ctl.removeDictionary(node);
     }),

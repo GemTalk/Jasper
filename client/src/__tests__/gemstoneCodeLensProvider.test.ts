@@ -62,6 +62,10 @@ describe('GemStoneCodeLensProvider', () => {
     vi.useRealTimers();
   });
 
+  const isFileIn = (lens: CodeLens) => lens.command?.command === 'gemstone.fileInFile';
+  const fileInLenses = (lenses: CodeLens[]) => lenses.filter(isFileIn);
+  const methodLenses = (lenses: CodeLens[]) => lenses.filter((l) => !isFileIn(l));
+
   // The count is computed off the resolve path (so a spinner can paint first),
   // so resolving twice with the deferred work flushed in between yields the count.
   function resolveCount(lens: CodeLens): CodeLens {
@@ -87,7 +91,9 @@ name: aString
   name := aString
 %`);
       const lenses = provider.provideCodeLenses(doc);
-      expect(lenses).toHaveLength(4); // 2 methods × 2 lenses
+      // 2 methods × 2 lenses, behind the File In link the file itself carries.
+      expect(lenses).toHaveLength(5);
+      expect(methodLenses(lenses)).toHaveLength(4);
     });
 
     it('returns no lenses for gemstone:// method URIs (#432: the selector hover owns those)', () => {
@@ -120,12 +126,53 @@ name: aString
       expect(lenses).toHaveLength(0);
     });
 
-    it('returns no lenses for doit-only files', () => {
+    it('returns no method lenses for doit-only files', () => {
       const doc = createMockDocument(`run
 true
 %`);
       const lenses = provider.provideCodeLenses(doc);
-      expect(lenses).toHaveLength(0);
+      // Nothing to count senders of — but the file is still one File In can read.
+      expect(methodLenses(lenses)).toHaveLength(0);
+    });
+  });
+
+  // A user holding a `.gs` had only an icon in the title bar, an entry in a
+  // right-click menu, or the palette wording to already know (#539).
+  describe('the File In link on a Topaz file', () => {
+    it('puts one at the top of the document, naming that file', () => {
+      const doc = createMockDocument('run\ntrue\n%');
+
+      const lens = fileInLenses(provider.provideCodeLenses(doc))[0];
+
+      expect(lens?.range.start.line).toBe(0);
+      expect(lens?.command?.title).toContain('File In');
+      expect(lens?.command?.arguments).toEqual([doc.uri]);
+    });
+
+    it('arrives already resolved, so it cannot shove the source down later', () => {
+      // The jiggle #432 took the senders/implementors lenses off gemstone:// methods
+      // for: a lens whose title lands after first paint moves every line below it.
+      const lens = fileInLenses(provider.provideCodeLenses(createMockDocument('run\ntrue\n%')))[0];
+
+      expect(lens?.isResolved).toBe(true);
+    });
+
+    it('offers nothing on an empty file — there is nothing to file in', () => {
+      expect(fileInLenses(provider.provideCodeLenses(createMockDocument('   \n')))).toEqual([]);
+    });
+
+    it('stays off a gemstone:// method, which is not a file on disk', () => {
+      const doc = createMockDocument('name\n  ^ name', 'gemstone');
+
+      expect(fileInLenses(provider.provideCodeLenses(doc))).toEqual([]);
+    });
+
+    it('stays off a file whose language is not Topaz', () => {
+      // The provider also runs on `.gst`/`.st` files, which File In does not read —
+      // its editor menus name gemstone-topaz, and the lens must match them.
+      const doc = { ...createMockDocument('run\ntrue\n%'), languageId: 'gemstone-tonel' };
+
+      expect(fileInLenses(provider.provideCodeLenses(doc as TextDocument))).toEqual([]);
     });
   });
 
@@ -139,7 +186,7 @@ true
 foo
   ^ 42
 %`);
-      const lenses = provider.provideCodeLenses(doc);
+      const lenses = methodLenses(provider.provideCodeLenses(doc));
       const loading = provider.resolveCodeLens(lenses[0]); // before the deferred lookup runs
 
       expect(loading.command?.title).toContain('$(loading~spin)');
@@ -156,7 +203,7 @@ foo
 foo
   ^ 42
 %`);
-      const lens = provider.provideCodeLenses(doc)[0];
+      const lens = methodLenses(provider.provideCodeLenses(doc))[0];
 
       expect(provider.resolveCodeLens(lens).command?.title).toContain('$(loading~spin)');
       vi.runAllTimers(); // the deferred lookup runs and caches the count
@@ -168,7 +215,7 @@ foo
 foo
   ^ 42
 %`);
-      const lenses = provider.provideCodeLenses(doc);
+      const lenses = methodLenses(provider.provideCodeLenses(doc));
       expect(lenses).toHaveLength(2);
 
       // Both lenses report no session — neither computes a count when
@@ -195,7 +242,7 @@ foo
 foo
   ^ 42
 %`);
-      const lenses = provider.provideCodeLenses(doc);
+      const lenses = methodLenses(provider.provideCodeLenses(doc));
       const sendersLens = resolveCount(lenses[0]);
 
       expect(sendersLens.command?.title).toBe('2 senders');
@@ -219,7 +266,7 @@ foo
 foo
   ^ 42
 %`);
-      const lenses = provider.provideCodeLenses(doc);
+      const lenses = methodLenses(provider.provideCodeLenses(doc));
       const implementorsLens = resolveCount(lenses[1]);
 
       expect(implementorsLens.command?.title).toBe('1 implementor');
@@ -243,7 +290,7 @@ foo
 foo
   ^ 42
 %`);
-      const lenses = provider.provideCodeLenses(doc);
+      const lenses = methodLenses(provider.provideCodeLenses(doc));
       resolveCount(lenses[0]); // senders lens
 
       expect(queries.sendersOf).toHaveBeenCalled();
@@ -260,7 +307,7 @@ foo
 foo
   ^ 42
 %`);
-      const lenses = provider.provideCodeLenses(doc);
+      const lenses = methodLenses(provider.provideCodeLenses(doc));
       resolveCount(lenses[1]); // implementors lens
 
       expect(queries.implementorsOf).toHaveBeenCalled();
@@ -282,7 +329,7 @@ foo
 foo
   ^ 42
 %`);
-      const lenses = provider.provideCodeLenses(doc);
+      const lenses = methodLenses(provider.provideCodeLenses(doc));
       expect(resolveCount(lenses[0]).command?.title).toBe('1 sender');
       expect(resolveCount(lenses[1]).command?.title).toBe('1 implementor');
     });
@@ -299,11 +346,11 @@ foo
 foo
   ^ 42
 %`);
-      const lenses = provider.provideCodeLenses(doc);
+      const lenses = methodLenses(provider.provideCodeLenses(doc));
       expect(resolveCount(lenses[0]).command?.title).toBe('3 senders');
       // Re-provide + re-resolve (fresh lens objects, as VS Code does on a refresh):
       // the count comes from cache, so no second server lookup.
-      const again = provider.provideCodeLenses(doc);
+      const again = methodLenses(provider.provideCodeLenses(doc));
       expect(provider.resolveCodeLens(again[0]).command?.title).toBe('3 senders');
       expect(queries.sendersOf as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
     });
@@ -316,7 +363,7 @@ foo
 foo
   ^ 42
 %`);
-      provider.resolveCodeLens(provider.provideCodeLenses(doc)[0]); // schedules the lookup
+      provider.resolveCodeLens(methodLenses(provider.provideCodeLenses(doc))[0]); // schedules the lookup
 
       provider.dispose();
       vi.runAllTimers(); // a still-pending timer would fire here
@@ -333,9 +380,9 @@ foo
 foo
   ^ 42
 %`);
-      resolveCount(provider.provideCodeLenses(doc)[0]);
+      resolveCount(methodLenses(provider.provideCodeLenses(doc))[0]);
       provider.refresh();
-      resolveCount(provider.provideCodeLenses(doc)[0]);
+      resolveCount(methodLenses(provider.provideCodeLenses(doc))[0]);
       expect(queries.sendersOf as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(2);
     });
   });
