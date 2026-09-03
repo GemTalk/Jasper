@@ -56,58 +56,45 @@ jobs:
       VERSION: ${{ inputs.version }}
       REF: ${{ inputs.ref }}
     steps:
+      # Every check that can be made over the API runs BEFORE any checkout, so
+      # no unverified code is ever placed on this privileged runner. Only once
+      # the ref is known to be an ancestor of main -- i.e. reviewed, merged
+      # code -- is it checked out and read.
       - name: Validate the version string
         run: |
           if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
             echo "error: version must be X.Y.Z (got '$VERSION')." >&2
             exit 1
           fi
-      # zizmor(unpinned-uses): actions must be pinned to a commit SHA, not
-      # a mutable tag like @v6
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ inputs.ref }}
-          # Ancestry against origin/main and the tag check below both need
-          # real history, not the default depth-1 clone.
-          fetch-depth: 0
-          # zizmor(artipacked): checkout must not persist the token past
-          # this job
-          persist-credentials: false
       - name: Resolve the ref, and require it to be on main
         id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          sha=$(git rev-parse HEAD)
+          if ! sha=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${REF}" --jq .sha 2>/dev/null); then
+            echo "error: '$REF' does not resolve to a commit in this repository." >&2
+            exit 1
+          fi
           echo "Releasing $REF -> $sha"
-          # fetch-depth: 0 above fetches every branch, so this should exist;
-          # fail loudly rather than letting merge-base report something opaque.
-          if ! git rev-parse --verify -q refs/remotes/origin/main >/dev/null; then
-            echo "error: refs/remotes/origin/main is missing; cannot verify this commit is on main." >&2
-            exit 1
-          fi
-          # A ref that is not an ancestor of main has not been through the
-          # merge queue, so nothing guarantees it was ever reviewed or green.
-          if ! git merge-base --is-ancestor "$sha" origin/main; then
-            echo "error: $sha is not an ancestor of origin/main." >&2
-            echo "Merge the release PR first; this workflow only publishes commits already on main." >&2
-            exit 1
-          fi
+          # compare main...sha reports how sha relates to main: 'identical' or
+          # 'behind' mean it is main's tip or an ancestor of it, so it went
+          # through the merge queue. 'ahead' or 'diverged' mean it did not, and
+          # nothing guarantees it was ever reviewed or green.
+          status=$(gh api "repos/${GITHUB_REPOSITORY}/compare/main...${sha}" --jq .status)
+          case "$status" in
+            identical | behind) ;;
+            *)
+              echo "error: $sha is not on main (compare status: $status)." >&2
+              echo "Merge the release PR first; this workflow only publishes commits already on main." >&2
+              exit 1
+              ;;
+          esac
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
-      - name: Require package.json to be at the requested version
-        run: |
-          actual=$(node -p 'require("./package.json").version')
-          if [ "$actual" != "$VERSION" ]; then
-            echo "error: package.json is at $actual, but $VERSION was requested." >&2
-            echo "Either publish $actual, or merge the bump to $VERSION first." >&2
-            exit 1
-          fi
-      # An entry still under `## [Unreleased]` means the changelog was never
-      # promoted; publishing it would ship a version whose own changelog calls
-      # it unreleased. This is also the text used for the release notes below.
-      - name: Require a dated changelog section
-        run: bash scripts/changelog-section.sh "$VERSION" > /dev/null
       - name: Require the tag to be free
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/v${VERSION}" >/dev/null 2>&1; then
             echo "error: tag v$VERSION already exists — $VERSION looks released." >&2
             exit 1
           fi
@@ -137,6 +124,29 @@ jobs:
             exit 1
           fi
           echo "ci-complete passed on $SHA."
+      # Only now, with the commit established as merged main history, is its
+      # content fetched and read.
+      # zizmor(unpinned-uses): actions must be pinned to a commit SHA, not
+      # a mutable tag like @v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.resolve.outputs.sha }}
+          # zizmor(artipacked): checkout must not persist the token past
+          # this job
+          persist-credentials: false
+      - name: Require package.json to be at the requested version
+        run: |
+          actual=$(node -p 'require("./package.json").version')
+          if [ "$actual" != "$VERSION" ]; then
+            echo "error: package.json is at $actual, but $VERSION was requested." >&2
+            echo "Either publish $actual, or merge the bump to $VERSION first." >&2
+            exit 1
+          fi
+      # An entry still under `## [Unreleased]` means the changelog was never
+      # promoted; publishing it would ship a version whose own changelog calls
+      # it unreleased. This is also the text used for the release notes below.
+      - name: Require a dated changelog section
+        run: bash scripts/changelog-section.sh "$VERSION" > /dev/null
 
   publish:
     name: Publish to both registries
@@ -171,7 +181,11 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: '.nvmrc'
-          cache: 'npm'
+          # Deliberately no `cache: 'npm'`. A cache write from a job that
+          # checks out a ref chosen at dispatch time is a cache-poisoning
+          # vector against the default branch's own builds, and a release
+          # runs a few times a month — the saved minute is not worth the
+          # extra surface on the one job holding publish credentials.
       - name: Install dependencies
         run: npm ci
       # Before building anything: an expired PAT is the failure that has
