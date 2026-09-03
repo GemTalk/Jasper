@@ -419,6 +419,35 @@ describe('LoginEditorPanel', () => {
     });
   });
 
+  describe('what Save does with the panel', () => {
+    it('closes it, because a Save/Cancel form ends its editing session on Save', async () => {
+      // The toast used to be the only sign the work had landed: the form stayed
+      // up, submitted, and had to be closed by hand.
+      vi.spyOn(storage, 'saveLogin').mockResolvedValue();
+      await LoginEditorPanel.show(storage, secretsArg, treeProvider, makeLogin());
+      const panel = window.createWebviewPanel.mock.results[0].value;
+      const handler = panel.webview.onDidReceiveMessage.mock.calls[0][0];
+
+      await handler({
+        command: 'save',
+        data: makeLogin({ stone: 'edited' }),
+        originalLabel: 'Test',
+      });
+
+      expect(panel.dispose).toHaveBeenCalled();
+    });
+
+    it('leaves it open when the save was refused as read-only', async () => {
+      await LoginEditorPanel.show(storage, secretsArg, treeProvider, makeLogin(), undefined, true);
+      const panel = window.createWebviewPanel.mock.results[0].value;
+      const handler = panel.webview.onDidReceiveMessage.mock.calls[0][0];
+
+      await handler({ command: 'save', data: makeLogin(), originalLabel: 'Test' });
+
+      expect(panel.dispose).not.toHaveBeenCalled();
+    });
+  });
+
   describe('save with keychain checkbox', () => {
     async function simulateSave(
       existingLogin: GemStoneLogin | undefined,

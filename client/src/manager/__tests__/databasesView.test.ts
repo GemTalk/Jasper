@@ -110,6 +110,36 @@ function typeInto(field: string, value: string): void {
   el.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
+function typeIntoRegister(field: string, value: string): void {
+  const el = root.querySelector<HTMLInputElement>(`[data-register-field="${field}"]`);
+  if (!el) throw new Error(`no ${field} field on screen`);
+  el.value = value;
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+/** A message from the host, as VS Code relays it into the webview. */
+function fromHost(msg: Record<string, unknown>): void {
+  window.dispatchEvent(new MessageEvent('message', { data: msg }));
+}
+
+/** A database registered from an installation Jasper did not create. */
+function registeredDatabase(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return database({
+    dirName: 'db-2',
+    stoneName: 'theirstone',
+    ldiName: 'theirldi',
+    baseExtent: undefined,
+    availableExtents: [],
+    registered: true,
+    registeredReason:
+      'Jasper did not create this database \u2014 it was registered from an existing ' +
+      'installation, so Jasper does not modify its files.',
+    productPath: '/opt/theirs/product',
+    netldiPort: 46717,
+    ...overrides,
+  });
+}
+
 beforeEach(() => {
   document.body.innerHTML = '';
 });
@@ -1164,5 +1194,240 @@ describe('names with an ampersand in them', () => {
 
     const remove = root.querySelector('[data-action="deleteStaleLock"]');
     expect(remove?.getAttribute('data-tip')).toBe('Remove the stale lock file for A&B');
+  });
+});
+
+// ── Registering an existing database ──────────────────────────────────────
+// The other way a database gets onto the panel: it was already here. What these
+// pin is the difference the user has to be able to see — and the actions that
+// difference rules out.
+
+describe('the Register Existing form', () => {
+  it('cannot be submitted before a product directory has been chosen', () => {
+    mount();
+    click('beginRegister');
+    const submit = root.querySelector<HTMLButtonElement>('[data-action="submitRegister"]');
+    expect(submit?.disabled).toBe(true);
+    // And it says which answer is missing, rather than a dead button.
+    expect(root.textContent).toContain('Choose the GemStone product directory');
+  });
+
+  it('asks the host for the directory, since a webview cannot open one', () => {
+    mount();
+    click('beginRegister');
+    click('pickProduct');
+    expect(host.postMessage).toHaveBeenCalledWith({ command: 'pickProductDirectory' });
+  });
+
+  it('shows the version the host read from the tree, and never offers to type one', () => {
+    mount();
+    click('beginRegister');
+    fromHost({
+      command: 'productPicked',
+      productPath: '/opt/theirs/product',
+      version: '3.7.5.1',
+      description: 'branch 3.7.5.1',
+      servers: [],
+    });
+    expect(root.textContent).toContain('3.7.5.1');
+    expect(root.querySelector('[data-register-field="version"]')).toBeNull();
+    // Nothing of it is running, which the form says is still registerable.
+    expect(root.textContent).toContain('Nothing of this installation is running');
+  });
+
+  it('fills the names, port and directories in from a server already running there', () => {
+    mount();
+    click('beginRegister');
+    fromHost({
+      command: 'productPicked',
+      productPath: '/opt/theirs/product',
+      version: '3.7.5.1',
+      servers: [
+        {
+          type: 'stone',
+          name: 'theirstone',
+          pid: 2818260,
+          globalDir: '/opt/gemstone',
+          confPath: '/opt/theirs/product/data/system.conf',
+        },
+        { type: 'netldi', name: 'theirldi', pid: 2818359, port: 46717 },
+      ],
+    });
+
+    expect(root.querySelector<HTMLInputElement>('[data-register-field="stoneName"]')?.value).toBe(
+      'theirstone',
+    );
+    expect(root.querySelector<HTMLInputElement>('[data-register-field="ldiName"]')?.value).toBe(
+      'theirldi',
+    );
+    expect(root.querySelector<HTMLInputElement>('[data-register-field="netldiPort"]')?.value).toBe(
+      '46717',
+    );
+    expect(root.textContent).toContain('pid 2818260');
+
+    click('submitRegister');
+    // The directories go with it: they are what let Jasper stop the stone it
+    // has just adopted, and only a running server could tell us them.
+    expect(host.postMessage).toHaveBeenCalledWith({
+      command: 'registerDatabase',
+      productPath: '/opt/theirs/product',
+      stoneName: 'theirstone',
+      ldiName: 'theirldi',
+      netldiPort: 46717,
+      confPath: '/opt/theirs/product/data/system.conf',
+      globalDir: '/opt/gemstone',
+    });
+  });
+
+  it('relays the host\u2019s complaint about a folder that is not a product tree', () => {
+    mount();
+    click('beginRegister');
+    fromHost({
+      command: 'productPicked',
+      productPath: '/home/me/Documents',
+      problem: 'That folder is not a GemStone product directory.',
+    });
+    expect(root.textContent).toContain('not a GemStone product directory');
+    expect(root.querySelector<HTMLButtonElement>('[data-action="submitRegister"]')?.disabled).toBe(
+      true,
+    );
+  });
+
+  it('rejects a port that is not a number, and keeps it optional', () => {
+    mount();
+    click('beginRegister');
+    fromHost({
+      command: 'productPicked',
+      productPath: '/opt/theirs/product',
+      version: '3.7.5.1',
+      servers: [],
+    });
+    typeIntoRegister('stoneName', 'theirstone');
+    typeIntoRegister('ldiName', 'theirldi');
+    typeIntoRegister('netldiPort', 'forty-six');
+    expect(root.querySelector<HTMLButtonElement>('[data-action="submitRegister"]')?.disabled).toBe(
+      true,
+    );
+
+    typeIntoRegister('netldiPort', '');
+    expect(root.querySelector<HTMLButtonElement>('[data-action="submitRegister"]')?.disabled).toBe(
+      false,
+    );
+  });
+});
+
+describe('a registered database on the list', () => {
+  it('is marked as registered and says where it came from', () => {
+    mount(state({ databases: [registeredDatabase()] }));
+    const row = root.querySelector('.db-item');
+    expect(row?.textContent).toContain('registered');
+    expect(row?.textContent).toContain('/opt/theirs/product');
+    expect(row?.textContent).toContain('NetLDI port 46717');
+  });
+
+  it('shows Delete greyed out with the reason on hover, rather than hiding it', () => {
+    mount(state({ databases: [registeredDatabase()] }));
+    const del = root.querySelector<HTMLButtonElement>('[data-action="deleteDatabase"]');
+    expect(del).not.toBeNull();
+    expect(del?.disabled).toBe(true);
+    // A disabled button receives no hover of its own, so the reason hangs on
+    // the wrapper — which is what the tooltip layer reads.
+    const wrap = del?.closest('.db-disabled-wrap');
+    expect(wrap?.getAttribute('data-tip')).toContain('Jasper did not create this database');
+  });
+
+  it('offers Unregister instead, which drops only the record', () => {
+    mount(state({ databases: [registeredDatabase()] }));
+    click('unregisterDatabase');
+    expect(host.postMessage).toHaveBeenCalledWith({
+      command: 'unregisterDatabase',
+      dirName: 'db-2',
+      login: undefined,
+      name: undefined,
+      version: undefined,
+      folder: undefined,
+      path: undefined,
+      sessionId: undefined,
+      action: undefined,
+    });
+  });
+
+  it('offers no extent chooser: the extent is the installation\u2019s own file', () => {
+    mount(state({ databases: [registeredDatabase()] }));
+    expect(root.querySelector('[data-select="replaceExtent"]')).toBeNull();
+    // ...while a database Jasper created still has one.
+    mount(state({ databases: [database()] }));
+    expect(root.querySelector('[data-select="replaceExtent"]')).not.toBeNull();
+  });
+
+  it('offers no extent backup, which would copy files Jasper does not own', () => {
+    mount(state({ databases: [registeredDatabase()] }));
+    expect(root.querySelector('[data-action="offlineExtentBackup"]')).toBeNull();
+    mount(state({ databases: [database()] }));
+    expect(root.querySelector('[data-action="offlineExtentBackup"]')).not.toBeNull();
+  });
+
+  it('replaces the power button with the reason when another version holds the name', () => {
+    mount(
+      state({
+        databases: [
+          registeredDatabase({
+            versionMismatch:
+              'The stone running under this name is GemStone 3.6.2, but this database is registered as 3.7.5.',
+          }),
+        ],
+      }),
+    );
+    expect(root.querySelector('[data-action="startDatabase"]')).toBeNull();
+    expect(root.querySelector('[data-action="stopDatabase"]')).toBeNull();
+    expect(root.textContent).toContain('version mismatch');
+    expect(root.querySelector('[data-tip*="GemStone 3.6.2"]')).not.toBeNull();
+  });
+});
+
+describe('a login row in the panel', () => {
+  function mountLogin(): void {
+    mount(
+      state({
+        databases: [
+          database({
+            logins: [
+              {
+                label: 'DataCurator on gs64stone',
+                user: 'DataCurator',
+                stone: 'gs64stone',
+                host: 'localhost',
+                sessions: [],
+              },
+            ],
+          }),
+        ],
+      }),
+    );
+  }
+
+  it('offers removal beside the edit, the way the rest of the panel does', () => {
+    // The panel could create logins and not delete them: the only route to
+    // deleting one was the Logins & Sessions tree.
+    mountLogin();
+    const row = root.querySelector('.db-login')!;
+    const actions = Array.from(row.querySelectorAll('[data-action]')).map((b) =>
+      b.getAttribute('data-action'),
+    );
+    expect(actions).toEqual(['editLogin', 'deleteLogin', 'connectLogin']);
+  });
+
+  it('says Delete Login, the same words the command uses', () => {
+    mountLogin();
+    const del = root.querySelector('[data-action="deleteLogin"]');
+    expect(del?.getAttribute('data-tip')).toBe('Delete Login');
+  });
+
+  it('names the login it is deleting, since the host looks it up by label', () => {
+    mountLogin();
+    click('deleteLogin');
+    expect(host.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'deleteLogin', login: 'DataCurator on gs64stone' }),
+    );
   });
 });

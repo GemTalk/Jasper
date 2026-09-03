@@ -28,7 +28,8 @@ import * as path from 'path';
 import { SysadminStorage } from '../sysadminStorage';
 import { DatabaseManager } from './databaseManager';
 import { VersionManager, CatalogEntry } from './versionManager';
-import { ProcessManager, versionsMatch } from './processManager';
+import { DiscoveredServer, ProcessManager, versionsMatch } from './processManager';
+import { REGISTERED_REASON, isRegisteredDatabase, registeredPaths } from './registeredDatabase';
 import {
   needsWsl,
   getWslInfoAsync,
@@ -134,8 +135,21 @@ interface DatabaseRow {
   version: string;
   stoneName: string;
   ldiName: string;
-  baseExtent: string;
+  /** Absent for a registered database, which was copied from no extent. */
+  baseExtent?: string;
   path: string;
+  /** Registered from an existing installation rather than created by Jasper,
+   *  so its files are not Jasper's to change. `registeredReason` is the one
+   *  sentence every disabled control explains itself with. */
+  registered?: boolean;
+  registeredReason?: string;
+  /** The installation a registered database runs from, shown on its row. */
+  productPath?: string;
+  /** The NetLDI port, when one was recorded — what a login must address. */
+  netldiPort?: number;
+  /** Why this database cannot be started or stopped: a server is running under
+   *  its name at a different GemStone version. */
+  versionMismatch?: string;
   stoneRunning: boolean;
   netldiRunning: boolean;
   processes: ProcInfo[];
@@ -238,6 +252,17 @@ type Inbound =
     }
   | { command: 'chooseRoot' }
   | { command: 'deleteDatabase'; dirName: string }
+  | { command: 'unregisterDatabase'; dirName: string }
+  | { command: 'pickProductDirectory' }
+  | {
+      command: 'registerDatabase';
+      productPath: string;
+      stoneName: string;
+      ldiName: string;
+      netldiPort?: number;
+      confPath?: string;
+      globalDir?: string;
+    }
   | { command: 'startDatabase'; dirName: string }
   | { command: 'stopDatabase'; dirName: string }
   | { command: 'startStone'; dirName: string }
@@ -262,6 +287,7 @@ type Inbound =
   | { command: 'copyText'; text: string }
   | { command: 'showSessionConfiguration'; sessionId: number }
   | { command: 'editLogin'; login: string }
+  | { command: 'deleteLogin'; login: string }
   | { command: 'copyNetldiHost'; dirName: string; name: string }
   | { command: 'deleteStaleLock'; dirName: string; name: string }
   | { command: 'closePanel' };
@@ -618,6 +644,15 @@ export class DatabasesPanel {
       case 'deleteDatabase':
         await this.runDbCommand('gemstone.deleteDatabase', msg.dirName, 'database');
         return;
+      case 'unregisterDatabase':
+        await this.runDbCommand('gemstone.unregisterDatabase', msg.dirName, 'database');
+        return;
+      case 'pickProductDirectory':
+        await this.pickProductDirectory();
+        return;
+      case 'registerDatabase':
+        await this.registerDatabase(msg);
+        return;
 
       // Whole-database start/stop: brings the Stone and NetLDI up/down together.
       case 'startDatabase':
@@ -692,6 +727,12 @@ export class DatabasesPanel {
       case 'editLogin':
         await this.loginCommand('gemstone.editLogin', msg.login);
         return;
+      case 'deleteLogin':
+        // Through the command, not `storage.deleteLogin`: the command is what
+        // refuses a login with a live session and confirms before removing, and
+        // what clears the keychain entry a bare storage delete would orphan.
+        await this.loginCommand('gemstone.deleteLogin', msg.login);
+        return;
       case 'chooseRoot':
         await this.chooseRootPath();
         return;
@@ -750,6 +791,16 @@ export class DatabasesPanel {
    * off the tree item it is handed but its `login`, so that is the shape the
    * panel supplies — and it inherits their own rules, like refusing to delete a
    * login that has a session open.
+   */
+  /**
+   * Run one of the login commands against the login a row names.
+   *
+   * `command` is a parameter, but never a value from the webview: each `case`
+   * above passes a literal, and the message only carries which login. That is
+   * why this needs no allow-list of its own, unlike `sessionCommand` — see the
+   * note above `SESSION_COMMANDS`, where the command name *does* come off the
+   * wire. Keep it that way: routing a name from a message through here would
+   * make anything reachable by name runnable with a login handed to it.
    */
   private async loginCommand(command: string, label: string): Promise<void> {
     const login = this.deps.getLogins().find((l) => loginLabel(l) === label);
@@ -1036,6 +1087,109 @@ export class DatabasesPanel {
    * stone's DataCurator login is added unless one already targets it, so a
    * database made here is not subtly different from one made anywhere else.
    */
+  /**
+   * The Register Existing form's first question, answered by the host: which
+   * product directory. The panel cannot open a folder dialog itself, and the
+   * answer is worth more than the path — a product tree can say which version
+   * it is, and a running server out of it can say where it registers and what
+   * configuration it runs on. All of it goes back to the form, which is why
+   * this posts a message rather than returning a path.
+   */
+  private async pickProductDirectory(): Promise<void> {
+    const uris = await vscode.window.showOpenDialog({
+      canSelectFiles: false,
+      canSelectFolders: true,
+      canSelectMany: false,
+      openLabel: 'Select GemStone Product Directory',
+    });
+    if (!uris || uris.length === 0) return;
+    const productPath = uris[0].fsPath.replace(/\/+$/, '');
+    const info = SysadminStorage.readVersionTxt(productPath);
+    if (!info) {
+      void this.panel.webview.postMessage({
+        command: 'productPicked',
+        productPath,
+        problem:
+          'That folder is not a GemStone product directory — it has no readable version.txt. ' +
+          'Choose the directory that contains bin/, sys/ and version.txt.',
+      });
+      return;
+    }
+    // Reads the host; never the installation. Empty when nothing of it is
+    // running, which is a perfectly registerable state.
+    let servers: DiscoveredServer[] = [];
+    try {
+      servers = this.deps.processManager.discoverServersUnder(productPath);
+    } catch {
+      servers = [];
+    }
+    void this.panel.webview.postMessage({
+      command: 'productPicked',
+      productPath,
+      version: info.version,
+      description: info.description,
+      servers,
+    });
+  }
+
+  /**
+   * Register an installation that already exists as a database Jasper manages.
+   *
+   * Deliberately parallel to `createDatabase` below — the same re-check of the
+   * names against live state, because the form's own check can be overtaken by
+   * a refresh — and deliberately without its progress notification: registering
+   * writes one small file, so there is nothing to watch.
+   */
+  private async registerDatabase(msg: {
+    productPath: string;
+    stoneName: string;
+    ldiName: string;
+    netldiPort?: number;
+    confPath?: string;
+    globalDir?: string;
+  }): Promise<void> {
+    for (const [field, value] of Object.entries({
+      productPath: msg.productPath,
+      stoneName: msg.stoneName,
+      ldiName: msg.ldiName,
+    })) {
+      if (typeof value !== 'string' || value.length === 0) {
+        this.failed('register the database', new Error(`No ${field} was given.`));
+        return;
+      }
+    }
+
+    const taken = this.deps.storage.getDatabases().map((d) => d.config);
+    if (taken.some((c) => c.stoneName === msg.stoneName)) {
+      this.failed(
+        'register the database',
+        new Error(`A stone called "${msg.stoneName}" is already registered.`),
+      );
+      await this.postState();
+      return;
+    }
+
+    try {
+      // Named explicitly rather than forwarding the message: the wire object
+      // also carries its `command`, and a record is not the place for it.
+      const db = await this.deps.databaseManager.registerExistingDatabase({
+        productPath: msg.productPath,
+        stoneName: msg.stoneName,
+        ldiName: msg.ldiName,
+        ...(msg.netldiPort !== undefined ? { netldiPort: msg.netldiPort } : {}),
+        ...(msg.confPath !== undefined ? { confPath: msg.confPath } : {}),
+        ...(msg.globalDir !== undefined ? { globalDir: msg.globalDir } : {}),
+      });
+      vscode.window.showInformationMessage(
+        `Registered "${db.config.stoneName}" (GemStone ${db.config.version}) as ${db.dirName}.`,
+      );
+      this.deps.refreshAdminViews();
+    } catch (e) {
+      this.actionFailed(e);
+    }
+    await this.postState();
+  }
+
   private async createDatabase(msg: {
     version: string;
     extent: string;
@@ -1236,6 +1390,23 @@ export class DatabasesPanel {
               .map((sess) => ({ id: sess.id, current: sess.id === selectedSessionId })),
           };
         });
+      // A registered database's files are the installation's. Jasper lists its
+      // configuration (reading is not touching) and its own log directory, and
+      // offers no backups: it neither made them nor may write them there.
+      const registered = registeredPaths(cfg);
+      // Read once: the check reads the process table, and the row needs it both
+      // to explain itself and to hide the controls it rules out.
+      const versionMismatch = this.deps.processManager.versionMismatchRefusal(db);
+      // What the NetLDI is listening on now beats what was written down when
+      // the database was registered: restarted outside Jasper, it takes a fresh
+      // ephemeral port, and a login built from the stale number fails with a
+      // connection abort that says nothing about ports. Observing it updates
+      // the record, so the next start can ask for the same port back.
+      const livePort = registered ? this.deps.processManager.netldiPortFor(db) : undefined;
+      const netldiPort =
+        livePort !== undefined
+          ? this.deps.databaseManager.recordNetldiPort(db, livePort).netldiPort
+          : cfg.netldiPort;
       return {
         dirName: db.dirName,
         version: cfg.version,
@@ -1243,11 +1414,20 @@ export class DatabasesPanel {
         ldiName: cfg.ldiName,
         baseExtent: cfg.baseExtent,
         path: db.path,
+        ...(isRegisteredDatabase(db)
+          ? {
+              registered: true,
+              registeredReason: REGISTERED_REASON,
+              productPath: cfg.productPath,
+              ...(netldiPort ? { netldiPort } : {}),
+            }
+          : {}),
+        ...(versionMismatch ? { versionMismatch } : {}),
         stoneRunning: this.deps.processManager.isStoneRunning(cfg.stoneName, cfg.version),
         netldiRunning: this.deps.processManager.isNetldiRunning(cfg.ldiName, cfg.version),
         processes: dbProcs,
         logins: dbLogins,
-        availableExtents: this.deps.storage.getAvailableExtents(cfg.version),
+        availableExtents: registered ? [] : this.deps.storage.getAvailableExtents(cfg.version),
         external: (['stone', 'netldi'] as const).flatMap((type) => {
           const found = this.deps.processManager.getExternalServers(db)[type];
           return found ? [{ type, pid: found.process.pid }] : [];
@@ -1256,9 +1436,13 @@ export class DatabasesPanel {
           procs.find((p) => p.type === 'stone' && belongsTo(p))?.startTime,
         ),
         logFiles: this.listFiles(path.join(db.path, 'log')),
-        confFiles: this.listFiles(path.join(db.path, 'conf')),
-        backupFiles: this.listBackups(db.path),
-        extentBackupFiles: this.listFiles(DatabaseManager.extentBackupDir(db.path)),
+        confFiles: registered
+          ? this.listFiles(registered.confDir)
+          : this.listFiles(path.join(db.path, 'conf')),
+        backupFiles: registered ? [] : this.listBackups(db.path),
+        extentBackupFiles: registered
+          ? []
+          : this.listFiles(DatabaseManager.extentBackupDir(db.path)),
       };
     });
 
@@ -1642,7 +1826,11 @@ th.v-num { text-align: right; }
 .db-group-body { padding: 2px 0 4px 20px; }
 .db-files { grid-column: 1 / -1; }
 .db-files .db-group-body { padding-left: 20px; }
-.db-footer { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 0; }
+.db-footer { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 0; align-items: center; }
+/* A disabled button receives no hover of its own, so the wrapper is what
+   carries the tip explaining why it is disabled. */
+.db-disabled-wrap { display: inline-flex; }
+.db-registered-note { margin-right: auto; font-size: 0.9rem; }
 .db-empty { font-size: 0.92rem; color: var(--vscode-descriptionForeground, #9d9d9d); padding: 4px 2px; }
 
 /* Rows shared by Logins and Processes. */

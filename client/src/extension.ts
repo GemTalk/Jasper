@@ -18,6 +18,7 @@ import {
   GemStoneLogin,
   buildDataCuratorLogin,
   loginLabel,
+  loginNetldiTarget,
   loginTargetKey,
   sameLoginTarget,
 } from './loginTypes';
@@ -141,6 +142,7 @@ import { VersionManager } from './manager/versionManager';
 import { VersionTarget, ProcessTarget, GemStoneDatabase } from './sysadminTypes';
 import { DatabasesPanel } from './manager/databasesPanel';
 import { DatabaseManager } from './manager/databaseManager';
+import { registeredPaths } from './manager/registeredDatabase';
 import { DatabaseTreeProvider, DatabaseNode } from './manager/databaseTreeProvider';
 import {
   bringUpDatabase,
@@ -3785,6 +3787,24 @@ export function activate(context: vscode.ExtensionContext) {
   /** What a whole-database start or stop reads and calls. The per-server
    *  commands do the work, so this is only the running-state lookup and a way
    *  to invoke one of them. */
+  /**
+   * Refuse a start or stop when the server running under this database's name
+   * is a different GemStone version than the database records — and say which
+   * two versions those are.
+   *
+   * Placed on the commands rather than in each view, so the panel's power
+   * button, the Databases sidebar's rows and the Command Palette all decline
+   * for the same reason with the same words. Starting would collide with a live
+   * stone; stopping would aim one version's binaries at another version's live
+   * extent.
+   */
+  function refusedForVersionMismatch(db: GemStoneDatabase, type: 'stone' | 'netldi'): boolean {
+    const refusal = processManager.versionMismatchRefusal(db, type);
+    if (!refusal) return false;
+    vscode.window.showErrorMessage(refusal);
+    return true;
+  }
+
   function databaseLifecycleDeps() {
     return {
       isStoneRunning: (name: string, version: string) =>
@@ -4118,6 +4138,16 @@ export function activate(context: vscode.ExtensionContext) {
       }
     }),
 
+    // The counterpart of Delete for a registered database: there is nothing of
+    // Jasper's to delete but the record, and nothing of the installation's that
+    // Jasper should. Delete itself refuses a registered database and points here.
+    vscode.commands.registerCommand('gemstone.unregisterDatabase', async (node: DatabaseNode) => {
+      if (node?.kind !== 'database') return;
+      if (await databaseManager.unregisterDatabase(node.db)) {
+        refreshAdminViews();
+      }
+    }),
+
     vscode.commands.registerCommand('gemstone.refreshDatabases', () => {
       refreshAdminViews();
     }),
@@ -4154,6 +4184,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     vscode.commands.registerCommand('gemstone.startStone', async (node: DatabaseNode) => {
       if (node?.kind !== 'stone') return;
+      if (refusedForVersionMismatch(node.db, 'stone')) return;
       if (!(await ensureStonePreconditions())) return;
       try {
         await processManager.startStone(node.db);
@@ -4186,6 +4217,7 @@ export function activate(context: vscode.ExtensionContext) {
       // the flag's one declaration doing the work rather than restating it.
       async (node: DatabaseNode | ServerTarget) => {
         if (node?.kind !== 'stone') return;
+        if (refusedForVersionMismatch(node.db, 'stone')) return;
         const db = node.db;
         const stoneName = db.config.stoneName;
 
@@ -4205,7 +4237,10 @@ export function activate(context: vscode.ExtensionContext) {
           gem_host: 'localhost',
           stone: stoneName,
           gs_user: 'DataCurator',
-          netldi: db.config.ldiName,
+          // The same NetLDI spelling `buildDataCuratorLogin` uses, so the login
+          // Jasper created for this database is the one found here — a
+          // registered database's login addresses its NetLDI by port.
+          netldi: loginNetldiTarget(db.config),
         };
         const adminLogin = storage.getLogins().find((l) => sameLoginTarget(l, target));
 
@@ -4277,6 +4312,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     vscode.commands.registerCommand('gemstone.startNetldi', async (node: DatabaseNode) => {
       if (node?.kind !== 'netldi') return;
+      if (refusedForVersionMismatch(node.db, 'netldi')) return;
       try {
         await processManager.startNetldi(node.db);
         vscode.window.showInformationMessage(`NetLDI "${node.db.config.ldiName}" started.`);
@@ -4289,6 +4325,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     vscode.commands.registerCommand('gemstone.stopNetldi', async (node: DatabaseNode) => {
       if (node?.kind !== 'netldi') return;
+      if (refusedForVersionMismatch(node.db, 'netldi')) return;
       try {
         await processManager.stopNetldi(node.db);
         vscode.window.showInformationMessage(`NetLDI "${node.db.config.ldiName}" stopped.`);
@@ -4408,12 +4445,27 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('gemstone.createLoginFromDb', async (node: DatabaseNode) => {
       if (!node || node.kind !== 'database') return;
       const db = node.db;
-      const login = buildDataCuratorLogin(db.config);
+      // A registered database's NetLDI port is read live rather than taken from
+      // the record: it changes every time that NetLDI is restarted without one
+      // being asked for, and a login carrying yesterday's port fails with a
+      // bare connection abort. Observing it also corrects the record, so the
+      // next start can pin the same port. A no-op for a created database, whose
+      // logins address their NetLDI by name.
+      processManager.refreshProcesses();
+      const livePort = processManager.netldiPortFor(db);
+      const config =
+        livePort !== undefined ? databaseManager.recordNetldiPort(db, livePort) : db.config;
+      const login = buildDataCuratorLogin(config);
       // Auto-detect GCI library path
       // On Windows, the sysadmin install is Linux (in WSL) and only has .so files.
       // The Windows .dll must be provided separately via the login editor.
       if (!isWindows()) {
-        const gsPath = sysadminStorage.getGemstonePath(db.config.version);
+        // A registered database's own product tree, before any tree Jasper
+        // happens to have installed under the same version number: the client
+        // library has to come from the installation the stone actually runs.
+        const gsPath =
+          registeredPaths(db.config)?.productPath ??
+          sysadminStorage.getGemstonePath(db.config.version);
         if (gsPath) {
           const ext = process.platform === 'darwin' ? 'dylib' : 'so';
           const libPath = path.join(gsPath, 'lib', `libgcits-${db.config.version}-64.${ext}`);

@@ -51,11 +51,34 @@ function makeDatabase(overrides: Partial<GemStoneDatabase> = {}): GemStoneDataba
   };
 }
 
+/** A database registered from an installation Jasper did not create. */
+function makeRegisteredDatabase(overrides: Partial<GemStoneDatabase['config']> = {}) {
+  return makeDatabase({
+    dirName: 'db-2',
+    path: '/home/user/gemstone/db-2',
+    config: {
+      version: '3.7.5',
+      stoneName: 'theirstone',
+      ldiName: 'theirldi',
+      registered: true,
+      productPath: '/opt/theirs/product',
+      confPath: '/opt/theirs/product/data',
+      globalDir: '/opt/gemstone',
+      netldiPort: 46717,
+      ...overrides,
+    },
+  });
+}
+
 function rawStorage(gsPath = '/gs/3.7.4') {
   return {
     getRootPath: vi.fn(() => '/home/user/gemstone'),
     getGemstonePath: vi.fn(() => gsPath),
     getExtractedVersions: vi.fn(() => ['3.7.4']),
+    // Read by refreshProcesses, which asks each REGISTERED database's own
+    // registration directory for its servers. No registered databases is the
+    // default here; the registered-database block below supplies its own.
+    getDatabases: vi.fn(() => []),
   };
 }
 
@@ -404,6 +427,240 @@ describe('ProcessManager', () => {
   });
 
   // ── isStoneRunning / isNetldiRunning (version-aware) ──────
+
+  // ── Registered databases ──────────────────────────────────
+  // An installation Jasper did not create: its own product tree, its own
+  // configuration, and its own registration directory. See registeredDatabase.ts.
+
+  describe('registered databases', () => {
+    beforeEach(() => {
+      vi.mocked(wslBridge.wslExecSync).mockReset();
+      vi.mocked(wslBridge.needsWsl).mockReturnValue(false);
+    });
+
+    it('starts the stone with the installation\u2019s product tree, conf and registration directory', async () => {
+      setPlatform('linux');
+      const proc = makeChildProcess(0);
+      mockSpawnReturn(proc);
+      const manager = new ProcessManager(makeStorage('/gs/3.7.4'));
+
+      const promise = manager.startStone(makeRegisteredDatabase());
+      proc.finish();
+      await promise;
+
+      const options = vi.mocked(spawn).mock.calls[0][2];
+      const env = options.env as Record<string, string>;
+      // The recorded tree wins over any install Jasper has under that version:
+      // two installations can report the same version, and only one runs this
+      // database.
+      expect(env.GEMSTONE).toBe('/opt/theirs/product');
+      expect(env.GEMSTONE_SYS_CONF).toBe('/opt/theirs/product/data');
+      // The gem's own configuration is left to the installation — Jasper has no
+      // business inventing one for a process it does not own.
+      expect(env.GEMSTONE_EXE_CONF).toBeUndefined();
+      expect(env.GEMSTONE_GLOBAL_DIR).toBe('/opt/gemstone');
+      // Composing one would point gems the installation spawns at Jasper's
+      // directories — writing into a setup Jasper is only supposed to read.
+      expect(env.GEMSTONE_NRS_ALL).toBe('');
+    });
+
+    it('writes the log of what it started on Jasper\u2019s side, not into the installation', async () => {
+      setPlatform('linux');
+      const proc = makeChildProcess(0);
+      mockSpawnReturn(proc);
+      const manager = new ProcessManager(makeStorage('/gs/3.7.4'));
+
+      const promise = manager.startStone(makeRegisteredDatabase());
+      proc.finish();
+      await promise;
+
+      const { args } = spawnedCommand();
+      expect(args).toContain('/home/user/gemstone/db-2/log/theirstone.log');
+      expect(args.join(' ')).not.toContain('/opt/theirs/product/log');
+    });
+
+    it("sees the servers by reading the database's own registration directory", () => {
+      // Jasper's own gslist cannot see them — that is what makes the database
+      // registered rather than created — so a second read is what keeps the row
+      // from saying Stopped about a stone that is plainly up.
+      const theirs = [
+        'OK     3.7.5     ewinger      2818260 43925 Sep 03 11:34 Stone       theirstone',
+        'OK     3.7.5     ewinger      2818359 46717 Sep 03 11:35 Netldi      theirldi',
+      ].join('\n');
+      const storage = {
+        ...rawStorage('/gs/3.7.4'),
+        getDatabases: vi.fn(() => [makeRegisteredDatabase()]),
+      } as unknown as SysadminStorage;
+      vi.mocked(wslBridge.wslExecSync).mockImplementation((cmd: string) =>
+        cmd.startsWith('"/opt/theirs/product/bin/gslist"') ? theirs : '',
+      );
+
+      const manager = new ProcessManager(storage);
+      manager.refreshProcesses();
+
+      expect(manager.isStoneRunning('theirstone', '3.7.5')).toBe(true);
+      expect(manager.isNetldiRunning('theirldi', '3.7.5')).toBe(true);
+      // Tagged with where it was found, so a stale-lock check looks in the
+      // directory the process actually registered in.
+      const stone = manager.getProcesses().find((p) => p.name === 'theirstone');
+      expect(stone?.globalDir).toBe('/opt/gemstone');
+      // The NetLDI's port is the one gslist records (parseGslist keeps it only
+      // for NetLDIs) — and the one a login for this database has to address.
+      const netldi = manager.getProcesses().find((p) => p.name === 'theirldi');
+      expect(netldi?.port).toBe(46717);
+      expect(netldi?.globalDir).toBe('/opt/gemstone');
+    });
+
+    it('does not list the same server twice when Jasper\u2019s own gslist already saw it', () => {
+      const row = 'OK     3.7.5     ewinger      2818260 43925 Sep 03 11:34 Stone       theirstone';
+      const storage = {
+        ...rawStorage('/gs/3.7.4'),
+        getDatabases: vi.fn(() => [makeRegisteredDatabase()]),
+      } as unknown as SysadminStorage;
+      // Both readings answer the same process — the same PID under the same name.
+      vi.mocked(wslBridge.wslExecSync).mockReturnValue(row);
+
+      const manager = new ProcessManager(storage);
+      manager.refreshProcesses();
+
+      expect(manager.getProcesses().filter((p) => p.name === 'theirstone')).toHaveLength(1);
+    });
+
+    it('asks for the recorded NetLDI port back, so a restart does not move it', async () => {
+      // The bug this prevents: register while the NetLDI is up (recording its
+      // port), then restart it through Jasper. Without -P it comes back on a
+      // fresh ephemeral port, and every login built from the record — including
+      // the one Jasper generated — dials a port nothing is listening on, which
+      // surfaces as ECONNABORTED rather than anything about ports.
+      setPlatform('linux');
+      const proc = makeChildProcess(0);
+      mockSpawnReturn(proc);
+      const manager = new ProcessManager(makeStorage('/gs/3.7.4'));
+
+      const promise = manager.startNetldi(makeRegisteredDatabase());
+      proc.finish();
+      await promise;
+
+      const { cmd, args } = spawnedCommand();
+      expect(cmd).toContain('startnetldi');
+      expect(args).toContain('-P');
+      expect(args[args.indexOf('-P') + 1]).toBe('46717');
+      // The name still comes last, where startnetldi expects it.
+      expect(args[args.length - 1]).toBe('theirldi');
+    });
+
+    it('asks for no particular port for a database Jasper created', async () => {
+      setPlatform('linux');
+      const proc = makeChildProcess(0);
+      mockSpawnReturn(proc);
+      const manager = new ProcessManager(makeStorage('/gs/3.7.4'));
+
+      const promise = manager.startNetldi(makeDatabase());
+      proc.finish();
+      await promise;
+
+      // Their logins address the NetLDI by name, so pinning a port would be
+      // constraining the machine for no one's benefit.
+      expect(spawnedCommand().args).not.toContain('-P');
+    });
+
+    it('answers the port the NetLDI is listening on now, not the one recorded', () => {
+      // Restarted outside Jasper, a NetLDI takes a fresh port; the record still
+      // says 46717, and what a login has to dial is what gslist reports.
+      const theirs = [
+        'OK     3.7.5     ewinger      3009540 33883 Sep 03 12:51 Stone       theirstone',
+        'OK     3.7.5     ewinger      3009602 34199 Sep 03 12:51 Netldi      theirldi',
+      ].join('\n');
+      const storage = {
+        ...rawStorage('/gs/3.7.4'),
+        getDatabases: vi.fn(() => [makeRegisteredDatabase()]),
+      } as unknown as SysadminStorage;
+      vi.mocked(wslBridge.wslExecSync).mockImplementation((cmd: string) =>
+        cmd.startsWith('"/opt/theirs/product/bin/gslist"') ? theirs : '',
+      );
+
+      const manager = new ProcessManager(storage);
+      manager.refreshProcesses();
+
+      expect(manager.netldiPortFor(makeRegisteredDatabase())).toBe(34199);
+    });
+
+    it('answers no port when the NetLDI is not running', () => {
+      const storage = {
+        ...rawStorage('/gs/3.7.4'),
+        getDatabases: vi.fn(() => [makeRegisteredDatabase()]),
+      } as unknown as SysadminStorage;
+      vi.mocked(wslBridge.wslExecSync).mockReturnValue('');
+
+      const manager = new ProcessManager(storage);
+      manager.refreshProcesses();
+
+      expect(manager.netldiPortFor(makeRegisteredDatabase())).toBeUndefined();
+    });
+
+    it('reports a server running at a different version instead of calling it absent', () => {
+      // The case that matters: someone started this stone name from another
+      // product tree. Matching on name AND version would report nothing running
+      // and offer a Start that collides with a live stone.
+      const theirs =
+        'OK     3.6.2     ewinger      2818260 43925 Sep 03 11:34 Stone       theirstone';
+      const storage = {
+        ...rawStorage('/gs/3.7.4'),
+        getDatabases: vi.fn(() => [makeRegisteredDatabase()]),
+      } as unknown as SysadminStorage;
+      vi.mocked(wslBridge.wslExecSync).mockImplementation((cmd: string) =>
+        cmd.startsWith('"/opt/theirs/product/bin/gslist"') ? theirs : '',
+      );
+
+      const manager = new ProcessManager(storage);
+      manager.refreshProcesses();
+      const db = makeRegisteredDatabase();
+
+      expect(manager.getVersionMismatch(db).stone).toBe('3.6.2');
+      const refusal = manager.versionMismatchRefusal(db, 'stone');
+      expect(refusal).toContain('3.6.2');
+      expect(refusal).toContain('3.7.5');
+      // The NetLDI is not running at all, so it has nothing to disagree about.
+      expect(manager.versionMismatchRefusal(db, 'netldi')).toBeUndefined();
+    });
+
+    it('has no refusal while the running version is the recorded one', () => {
+      const theirs =
+        'OK     3.7.5     ewinger      2818260 43925 Sep 03 11:34 Stone       theirstone';
+      const storage = {
+        ...rawStorage('/gs/3.7.4'),
+        getDatabases: vi.fn(() => [makeRegisteredDatabase()]),
+      } as unknown as SysadminStorage;
+      vi.mocked(wslBridge.wslExecSync).mockImplementation((cmd: string) =>
+        cmd.startsWith('"/opt/theirs/product/bin/gslist"') ? theirs : '',
+      );
+
+      const manager = new ProcessManager(storage);
+      manager.refreshProcesses();
+
+      expect(manager.versionMismatchRefusal(makeRegisteredDatabase())).toBeUndefined();
+    });
+
+    it('survives an installation whose registration directory cannot be read', () => {
+      const storage = {
+        ...rawStorage('/gs/3.7.4'),
+        getDatabases: vi.fn(() => [makeRegisteredDatabase()]),
+      } as unknown as SysadminStorage;
+      vi.mocked(wslBridge.wslExecSync).mockImplementation((cmd: string) => {
+        if (cmd.startsWith('"/opt/theirs/product/bin/gslist"'))
+          throw new Error('no such directory');
+        return 'OK     3.7.4     me      1 2 Sep 03 11:34 Stone       gs64stone';
+      });
+
+      const manager = new ProcessManager(storage);
+      manager.refreshProcesses();
+
+      // Jasper's own reading still stands: one unreadable installation must not
+      // cost the refresh everything else it saw.
+      expect(manager.isStoneRunning('gs64stone', '3.7.4')).toBe(true);
+      expect(manager.isStoneRunning('theirstone', '3.7.5')).toBe(false);
+    });
+  });
 
   describe('isStoneRunning / isNetldiRunning', () => {
     // Two installed versions share the same stone and netldi names; only 3.7.5 is running.

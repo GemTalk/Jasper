@@ -1,5 +1,6 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { isRegisteredDatabase } from './registeredDatabase';
 import { SysadminStorage } from '../sysadminStorage';
 import { ProcessManager, versionsMatch } from './processManager';
 import { GemStoneDatabase } from '../sysadminTypes';
@@ -85,7 +86,18 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseNod
         item.description = `${node.db.config.stoneName} (${node.db.config.version})`;
         item.contextValue = `gemstoneDb${this.databaseContext(node.db)}`;
         item.iconPath = new vscode.ThemeIcon('database');
-        item.tooltip = `Path: ${node.db.path}\nStone: ${node.db.config.stoneName}\nNetLDI: ${node.db.config.ldiName}\nVersion: ${node.db.config.version}\nBase extent: ${node.db.config.baseExtent}`;
+        // A registered database has no base extent to report and an
+        // installation directory that a created one does not — so each kind's
+        // tooltip says what is true of it rather than printing the other's
+        // field as undefined.
+        const provenance = isRegisteredDatabase(node.db)
+          ? `\nRegistered from: ${node.db.config.productPath}` +
+            (node.db.config.netldiPort ? `\nNetLDI port: ${node.db.config.netldiPort}` : '')
+          : `\nBase extent: ${node.db.config.baseExtent}`;
+        item.tooltip =
+          `Path: ${node.db.path}\nStone: ${node.db.config.stoneName}` +
+          `\nNetLDI: ${node.db.config.ldiName}\nVersion: ${node.db.config.version}` +
+          provenance;
         return item;
       }
       case 'stone': {

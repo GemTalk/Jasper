@@ -84,6 +84,8 @@ The **Databases** view shows all databases under your GemStone root directory (c
 
 The extension creates the full directory structure (`conf/`, `data/`, `log/`, `stat/`), writes configuration files (`system.conf`, `gem.conf`, stone config), copies the key file and base extent, and writes `database.yaml`.
 
+A database that already exists — someone else's stone, or one from another checkout — is added with **Register Existing…** in the same panel instead. It asks for the installation's product directory, reads the GemStone release from that tree's own `version.txt`, and takes the stone and NetLDI names its servers were started under (plus the NetLDI's port, which is what a login for it addresses: a NetLDI name only resolves through `/etc/services`). A registered database lists, starts, stops and gets a login like any other, but Jasper writes nothing inside the installation — only a `database.yaml` in its own directory — so **Delete Database** is disabled on it and **Unregister Database** removes just Jasper's record.
+
 Each database node expands to show:
 
 - **Stone** — status with start/stop buttons

@@ -1901,6 +1901,12 @@
         "icon": "$(trash)"
       },
       {
+        "command": "gemstone.unregisterDatabase",
+        "title": "Unregister Database",
+        "category": "GemStone Admin",
+        "icon": "$(circle-slash)"
+      },
+      {
         "command": "gemstone.refreshDatabases",
         "title": "Refresh Databases",
         "category": "GemStone Admin",
@@ -3032,6 +3038,10 @@
         },
         {
           "command": "gemstone.deleteDatabase",
+          "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDb(Running|Stopped|External)$/"
+        },
+        {
+          "command": "gemstone.unregisterDatabase",
           "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDb(Running|Stopped|External)$/"
         }
       ],

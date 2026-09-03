@@ -14,6 +14,8 @@ import {
   wslUnlinkSync,
   wslChmodSync,
   wslWriteFileSync,
+  wslMkdirSync,
+  wslRmSync,
 } from '../../wslFs';
 import { DatabaseManager } from '../databaseManager';
 import { GemStoneDatabase } from '../../sysadminTypes';
@@ -46,6 +48,10 @@ function makeManager(overrides?: {
   const storage = {
     getAvailableExtents: vi.fn(() => ['extent0']),
     getGemstonePath: vi.fn(() => '/gs'),
+    ensureRootPath: vi.fn(),
+    getRootPath: vi.fn(() => '/root'),
+    getNextDbNumber: vi.fn(() => 2),
+    getDatabases: vi.fn(() => []),
     ...overrides?.storage,
   } as unknown as SysadminStorage;
   const processManager = {
@@ -298,5 +304,201 @@ describe('DatabaseManager.createDatabaseDirect', () => {
       path.join('/root', 'db-1', 'conf', 'default.conf'),
     );
     expect(db.dirName).toBe('db-1');
+  });
+});
+
+// ── Registering an existing installation ──────────────────────────────────
+// The database Jasper did not create. The rule under every test here is the one
+// in registeredDatabase.ts: Jasper writes nothing inside the installation.
+
+describe('DatabaseManager.registerExistingDatabase', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(wslExistsSync).mockReturnValue(true);
+    // The version comes from the product tree itself, so the test stands in for
+    // the tree rather than for the reader.
+    vi.spyOn(SysadminStorage, 'readVersionTxt').mockReturnValue({
+      version: '3.7.5.1',
+      date: '2026-06-25',
+      description: 'branch 3.7.5.1',
+    });
+  });
+
+  it('records the version it read from the installation, not one it was told', async () => {
+    const manager = makeManager();
+    const db = await manager.registerExistingDatabase({
+      productPath: '/opt/theirs/product',
+      stoneName: 'theirstone',
+      ldiName: 'theirldi',
+      netldiPort: 46717,
+    });
+
+    expect(db.config.version).toBe('3.7.5.1');
+    expect(db.config.registered).toBe(true);
+    expect(db.config.netldiPort).toBe(46717);
+    expect(db.dirName).toBe('db-2');
+  });
+
+  it('writes one record in Jasper\u2019s root and nothing inside the installation', async () => {
+    const manager = makeManager();
+    await manager.registerExistingDatabase({
+      productPath: '/opt/theirs/product',
+      stoneName: 'theirstone',
+      ldiName: 'theirldi',
+      confPath: '/opt/theirs/product/data',
+      globalDir: '/opt/gemstone',
+    });
+
+    const written = vi.mocked(wslWriteFileSync).mock.calls.map(([target]) => target);
+    expect(written).toEqual([path.join('/root/db-2', 'database.yaml')]);
+    const yaml = vi.mocked(wslWriteFileSync).mock.calls[0][1];
+    expect(yaml).toContain('registered: true');
+    expect(yaml).toContain('productPath: "/opt/theirs/product"');
+    expect(yaml).toContain('confPath: "/opt/theirs/product/data"');
+    expect(yaml).toContain('globalDir: "/opt/gemstone"');
+    // No extent copy, no key file, no default.conf: all of them would write
+    // into a tree Jasper was only given to read.
+    expect(wslCopyFileSync).not.toHaveBeenCalled();
+    // The only directories made are Jasper's own record and the log it writes.
+    const made = vi.mocked(wslMkdirSync).mock.calls.map(([dir]) => dir);
+    expect(made).toEqual(['/root/db-2', path.join('/root/db-2', 'log')]);
+  });
+
+  it('falls back to GemStone\u2019s own conventions when nothing was discovered', async () => {
+    const manager = makeManager();
+    await manager.registerExistingDatabase({
+      productPath: '/opt/theirs/product/',
+      stoneName: 'theirstone',
+      ldiName: 'theirldi',
+    });
+
+    const yaml = vi.mocked(wslWriteFileSync).mock.calls[0][1];
+    expect(yaml).toContain('confPath: "/opt/theirs/product/data"');
+    expect(yaml).toContain('globalDir: "/opt/gemstone"');
+    // A trailing slash on the chosen folder must not double in the joined paths.
+    expect(yaml).not.toContain('//');
+  });
+
+  it('refuses a directory that is not a GemStone product tree', async () => {
+    vi.spyOn(SysadminStorage, 'readVersionTxt').mockReturnValue(undefined);
+    const manager = makeManager();
+
+    await expect(
+      manager.registerExistingDatabase({
+        productPath: '/home/me/Documents',
+        stoneName: 'theirstone',
+        ldiName: 'theirldi',
+      }),
+    ).rejects.toThrow(/version.txt/);
+    expect(wslWriteFileSync).not.toHaveBeenCalled();
+  });
+});
+
+describe('deleting versus unregistering', () => {
+  const registeredDb = (): GemStoneDatabase => ({
+    dirName: 'db-2',
+    path: '/root/db-2',
+    config: {
+      version: '3.7.5',
+      stoneName: 'theirstone',
+      ldiName: 'theirldi',
+      registered: true,
+      productPath: '/opt/theirs/product',
+    },
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(wslExistsSync).mockReturnValue(true);
+  });
+
+  it('refuses to delete a registered database, and says what to use instead', async () => {
+    const manager = makeManager();
+
+    expect(await manager.deleteDatabase(registeredDb())).toBe(false);
+    const [message] = vi.mocked(vscode.window.showErrorMessage).mock.calls[0];
+    expect(message).toContain('Jasper did not create this database');
+    expect(message).toContain('Unregister Database');
+    // Refused before anything is even read about the running state.
+    expect(wslRmSync).not.toHaveBeenCalled();
+  });
+
+  it('unregisters by removing only Jasper\u2019s record', async () => {
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(
+      'Unregister' as unknown as vscode.MessageItem,
+    );
+    const manager = makeManager();
+
+    expect(await manager.unregisterDatabase(registeredDb())).toBe(true);
+    expect(wslRmSync).toHaveBeenCalledExactlyOnceWith('/root/db-2');
+  });
+
+  it('does nothing when the unregister confirmation is declined', async () => {
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(undefined);
+    const manager = makeManager();
+
+    expect(await manager.unregisterDatabase(registeredDb())).toBe(false);
+    expect(wslRmSync).not.toHaveBeenCalled();
+  });
+
+  it('will not unregister a database Jasper created — that is Delete\u2019s job', async () => {
+    const manager = makeManager();
+
+    expect(await manager.unregisterDatabase(makeDb())).toBe(false);
+    expect(vi.mocked(vscode.window.showErrorMessage).mock.calls[0][0]).toContain('Delete Database');
+    expect(wslRmSync).not.toHaveBeenCalled();
+  });
+});
+
+describe('DatabaseManager.recordNetldiPort', () => {
+  const registeredDb = (netldiPort?: number): GemStoneDatabase => ({
+    dirName: 'db-4',
+    path: '/root/db-4',
+    config: {
+      version: '3.7.5',
+      stoneName: 'theirstone',
+      ldiName: 'theirldi',
+      registered: true,
+      productPath: '/opt/theirs/product',
+      confPath: '/opt/theirs/product/data/system.conf',
+      globalDir: '/opt/gemstone',
+      ...(netldiPort ? { netldiPort } : {}),
+    },
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('replaces a port that has moved, keeping the rest of the record', () => {
+    // A NetLDI restarted outside Jasper takes a fresh ephemeral port. Leaving
+    // the old one written down breaks both the logins built from it and the
+    // `-P` a later start asks for.
+    const updated = makeManager().recordNetldiPort(registeredDb(46717), 34199);
+
+    expect(updated.netldiPort).toBe(34199);
+    const [target, yaml] = vi.mocked(wslWriteFileSync).mock.calls[0];
+    expect(target).toBe(path.join('/root/db-4', 'database.yaml'));
+    expect(yaml).toContain('netldiPort: 34199');
+    expect(yaml).toContain('productPath: "/opt/theirs/product"');
+    expect(yaml).toContain('confPath: "/opt/theirs/product/data/system.conf"');
+    expect(yaml).toContain('globalDir: "/opt/gemstone"');
+  });
+
+  it('writes nothing when the recorded port is already the live one', () => {
+    makeManager().recordNetldiPort(registeredDb(34199), 34199);
+    expect(wslWriteFileSync).not.toHaveBeenCalled();
+  });
+
+  it('records a port for a database registered while its NetLDI was down', () => {
+    const updated = makeManager().recordNetldiPort(registeredDb(), 34199);
+    expect(updated.netldiPort).toBe(34199);
+    expect(wslWriteFileSync).toHaveBeenCalledOnce();
+  });
+
+  it('leaves a database Jasper created alone — its logins use the NetLDI name', () => {
+    const updated = makeManager().recordNetldiPort(makeDb(), 34199);
+    expect(updated.netldiPort).toBeUndefined();
+    expect(wslWriteFileSync).not.toHaveBeenCalled();
   });
 });

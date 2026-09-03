@@ -188,8 +188,15 @@ export class LoginEditorPanel {
     await this.storage.saveLogin(data, originalLabel);
     this.treeProvider.refresh();
     this.login = data;
+    // Retitled and re-pointed before closing, not instead of it: `show` reveals
+    // and reloads an already-open panel when a different login is opened for
+    // editing, and that branch reads both.
     this.panel.title = `Edit: ${data.label}`;
     vscode.window.showInformationMessage(`Login "${data.label}" saved.`);
+    // A Save/Cancel form ends its editing session on Save. Leaving the panel up
+    // said nothing about whether the work had landed — the toast was the only
+    // signal, and the form still had to be closed by hand.
+    this.dispose();
   }
 
   private update(login: GemStoneLogin): void {

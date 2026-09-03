@@ -147,6 +147,22 @@ export interface ManagedStoneConfig {
   version: string;
   stoneName: string;
   ldiName: string;
+  /** The NetLDI's port, when the database recorded one. See `loginNetldiTarget`. */
+  netldiPort?: number;
+}
+
+/**
+ * What a login must put in its NetLDI field to reach a database: the port when
+ * one is known, and the name otherwise.
+ *
+ * A NetLDI *name* is resolved through `/etc/services`, and a database Jasper
+ * registered rather than created routinely uses a name nobody added there — the
+ * login then fails to resolve the service, which reads as a broken stone rather
+ * than as an unresolvable name. GemStone's NRS accepts a port in the same
+ * position, so a recorded port is both correct and more robust.
+ */
+export function loginNetldiTarget(config: ManagedStoneConfig): string {
+  return config.netldiPort ? String(config.netldiPort) : config.ldiName;
 }
 
 /**
@@ -164,7 +180,7 @@ export function buildDataCuratorLogin(config: ManagedStoneConfig): GemStoneLogin
     stone: config.stoneName,
     gs_user: 'DataCurator',
     gs_password: DEFAULT_GS_PW,
-    netldi: config.ldiName,
+    netldi: loginNetldiTarget(config),
     host_user: '',
     host_password: '',
   };
