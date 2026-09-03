@@ -240,7 +240,6 @@ type Inbound =
   | { command: 'installWindowsClient'; version: string }
   | { command: 'openWindowsClientFolder'; version: string }
   | { command: 'deleteWindowsClient'; version: string }
-  | { command: 'registerLocalVersion' }
   | { command: 'installNewVersion' }
   | {
       command: 'createDatabase';
@@ -629,10 +628,6 @@ export class DatabasesPanel {
         return;
       case 'installNewVersion':
         await this.installNewVersion();
-        return;
-      case 'registerLocalVersion':
-        await vscode.commands.executeCommand('gemstone.registerLocalVersion');
-        await this.postState();
         return;
 
       // Databases — reuse the existing commands with a synthetic DatabaseNode.

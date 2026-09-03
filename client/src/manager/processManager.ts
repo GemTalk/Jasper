@@ -107,6 +107,25 @@ export function classifyPidOwnership(psOutput: string): {
   return { pidGone: false, isGemStoneServer: looksLikeServer, command };
 }
 
+/**
+ * Whether a failed `gslist` run failed only by finding nothing.
+ *
+ * `gslist -cvl` exits 1 and prints "No GemStone servers." for a directory nothing
+ * has registered in, which `execSync` surfaces as a thrown error indistinguishable
+ * from a real one — a missing binary, an unreadable lock directory. The message is
+ * the only thing that separates them, and it can arrive on either stream depending
+ * on the release, so both are searched.
+ *
+ * Exported for testing.
+ */
+export function saysNoServers(error: unknown): boolean {
+  const streams = error as { stdout?: unknown; stderr?: unknown; message?: unknown };
+  const text = [streams?.stdout, streams?.stderr, streams?.message]
+    .map((part) => (part === undefined || part === null ? '' : String(part)))
+    .join('\n');
+  return /no\s+gemstone\s+servers/i.test(text);
+}
+
 /** Parse `gslist -cvl` output into structured process records.
  *  Exported for testing. Lines that don't match the data-row format
  *  (header, separator, info lines, blanks) are silently skipped. */
@@ -195,20 +214,39 @@ export class ProcessManager {
       this.cachedProcesses = [];
       return [];
     }
-    try {
-      const gsPath = gslistPath.replace(/\/bin\/gslist$/, '');
-      const rootPath = needsWsl() ? this.storage.getWslRootPath() : this.storage.getRootPath();
-      const env = this.versionEnvironment(gsPath, rootPath);
-      const output = wslExecSync(`"${gslistPath}" -cvl`, env);
-      const own = parseGslist(output);
-      // Reaching here at all is the signal that the read happened, so an empty
-      // parse is a real "nothing registered" rather than a failure to look.
-      this.gslistReadable = true;
-      this.cachedProcesses = [...own, ...this.registeredProcesses(own)];
-    } catch {
-      this.cachedProcesses = [];
-    }
+    const gsPath = gslistPath.replace(/\/bin\/gslist$/, '');
+    const rootPath = needsWsl() ? this.storage.getWslRootPath() : this.storage.getRootPath();
+    const own = this.readGslist(gsPath, rootPath);
+    // An answer, empty or not, is the signal that the read happened; only an
+    // unreadable listing leaves this false.
+    if (own !== undefined) this.gslistReadable = true;
+    // The registered databases are read whether or not Jasper's own listing came
+    // back. They register in someone else's directory, so their servers are there
+    // to be found even when Jasper's own root has nothing to say — and a failure
+    // here used to take them down with it, reporting every registered stone as
+    // Stopped while it was plainly running.
+    this.cachedProcesses = [...(own ?? []), ...this.registeredProcesses(own ?? [])];
     return this.cachedProcesses;
+  }
+
+  /**
+   * One `gslist -cvl` reading of a directory, or undefined when it could not be
+   * read at all.
+   *
+   * `gslist` exits non-zero when it finds nothing — "No GemStone servers." for a
+   * directory nothing has registered in — and `execSync` raises a non-zero exit as
+   * an error. That is an answer, and a completely ordinary one: a machine whose
+   * databases are all registered from elsewhere has nothing in Jasper's own root
+   * by definition. Reading it as a failure is what made every registered database
+   * read Stopped there.
+   */
+  private readGslist(gsPath: string, globalDir: string): GemStoneProcess[] | undefined {
+    try {
+      const env = this.versionEnvironment(gsPath, globalDir);
+      return parseGslist(wslExecSync(`"${gsPath}/bin/gslist" -cvl`, env));
+    } catch (e) {
+      return saysNoServers(e) ? [] : undefined;
+    }
   }
 
   /**
@@ -242,19 +280,18 @@ export class ProcessManager {
       if (read.has(globalDir)) continue;
       read.add(globalDir);
       const gsPath = needsWsl() ? windowsPathToWsl(registered.productPath) : registered.productPath;
-      try {
-        const env = this.versionEnvironment(gsPath, globalDir);
-        const output = wslExecSync(`"${gsPath}/bin/gslist" -cvl`, env);
-        for (const proc of parseGslist(output)) {
-          const seen = own.some(
-            (p) => p.type === proc.type && p.name === proc.name && p.pid === proc.pid,
-          );
-          if (!seen) rows.push({ ...proc, globalDir });
-        }
-      } catch {
+      const found = this.readGslist(gsPath, globalDir);
+      if (found === undefined) {
         appendSysadmin(
           `Could not list servers for registered database ${db.dirName} in ${globalDir}`,
         );
+        continue;
+      }
+      for (const proc of found) {
+        const seen = own.some(
+          (p) => p.type === proc.type && p.name === proc.name && p.pid === proc.pid,
+        );
+        if (!seen) rows.push({ ...proc, globalDir });
       }
     }
     return rows;
@@ -305,19 +342,15 @@ export class ProcessManager {
     // One gslist per directory the discovered servers register in, to put a
     // port (and the version GemStone itself reports) on each row.
     for (const globalDir of new Set(found.map((f) => f.globalDir).filter(isDefined))) {
-      try {
-        const env = this.versionEnvironment(tree, globalDir);
-        for (const row of parseGslist(wslExecSync(`"${tree}/bin/gslist" -cvl`, env))) {
-          for (const entry of found) {
-            if (entry.type !== row.type || entry.name !== row.name) continue;
-            entry.port = row.port;
-            entry.status = row.status;
-            entry.version = row.version || entry.version;
-          }
+      // No gslist reading for this directory leaves each row with what the process
+      // table gave it, which is enough to register with.
+      for (const row of this.readGslist(tree, globalDir) ?? []) {
+        for (const entry of found) {
+          if (entry.type !== row.type || entry.name !== row.name) continue;
+          entry.port = row.port;
+          entry.status = row.status;
+          entry.version = row.version || entry.version;
         }
-      } catch {
-        // No gslist reading for this directory: the row keeps what the process
-        // table gave it, which is enough to register with.
       }
     }
     return found;

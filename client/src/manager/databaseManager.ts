@@ -262,7 +262,9 @@ export class DatabaseManager {
    *
    * The counterpart of Delete, which registered databases do not get: there is
    * nothing of Jasper's to delete but the record, and nothing of the user's
-   * that Jasper should. Only the `db-N` directory Jasper wrote goes.
+   * that Jasper should. Only the `db-N` directory Jasper wrote goes — and it goes
+   * whole: registering makes a `log/` inside it, so a non-recursive remove fails
+   * on its own subdirectory with EISDIR and the record can never be dropped.
    */
   async unregisterDatabase(db: GemStoneDatabase): Promise<boolean> {
     if (!isRegisteredDatabase(db)) {
@@ -282,7 +284,7 @@ export class DatabaseManager {
       'Unregister',
     );
     if (confirmed !== 'Unregister') return false;
-    wslRmSync(db.path);
+    wslRmSync(db.path, { recursive: true, force: true });
     appendSysadmin(`Unregistered database ${db.dirName} (${db.config.stoneName})`);
     return true;
   }

@@ -1830,12 +1830,6 @@
         "icon": "$(split-horizontal)"
       },
       {
-        "command": "gemstone.registerLocalVersion",
-        "title": "Register Local Version…",
-        "category": "GemStone Admin",
-        "icon": "$(add)"
-      },
-      {
         "command": "gemstone.quickSetup",
         "title": "Quick Setup",
         "category": "GemStone"

@@ -185,7 +185,6 @@ import {
 } from './wslBridge';
 import {
   wslExistsSync,
-  wslSymlinkSync,
   wslMkdirSync,
   wslImportFileSync,
   wslReaddirSync,
@@ -3983,53 +3982,6 @@ export function activate(context: vscode.ExtensionContext) {
       );
       if (confirmed !== 'Delete') return;
       await versionManager.deleteExtracted(item.version);
-      refreshVersions();
-    }),
-
-    vscode.commands.registerCommand('gemstone.registerLocalVersion', async () => {
-      const uris = await vscode.window.showOpenDialog({
-        canSelectFiles: false,
-        canSelectFolders: true,
-        canSelectMany: false,
-        openLabel: 'Select GemStone Product Directory',
-      });
-      if (!uris || uris.length === 0) return;
-      const productPath = uris[0].fsPath;
-      const info = SysadminStorage.readVersionTxt(productPath);
-      if (!info) {
-        vscode.window.showErrorMessage('No valid version.txt found in the selected directory.');
-        return;
-      }
-      const suffix = sysadminStorage.getPlatformSuffix();
-      const linkName = `GemStone64Bit${info.version}${suffix}`;
-      const linkPath = path.join(sysadminStorage.getRootPath(), linkName);
-      if (wslExistsSync(linkPath)) {
-        // Something already occupies the target location. If it's already a
-        // valid GemStone product tree — a real directory the user dropped in,
-        // or a prior symlink — there's nothing to do: it's recognized on its
-        // own, so report success rather than failing to create a symlink over
-        // it.
-        if (SysadminStorage.readVersionTxt(linkPath)) {
-          sysadminStorage.invalidateExtractedCache();
-          appendSysadmin(`Local version already present: ${info.version} → ${linkPath}`);
-          vscode.window.showInformationMessage(
-            `GemStone ${info.version} is already present in ${sysadminStorage.getRootPath()}.`,
-          );
-          refreshVersions();
-          return;
-        }
-        vscode.window.showErrorMessage(
-          `Version ${info.version} already exists in ${sysadminStorage.getRootPath()}.`,
-        );
-        return;
-      }
-      sysadminStorage.ensureRootPath();
-      wslSymlinkSync(productPath, linkPath);
-      sysadminStorage.invalidateExtractedCache();
-      appendSysadmin(`Registered local version: ${info.version} → ${productPath}`);
-      vscode.window.showInformationMessage(
-        `Registered local GemStone ${info.version} (${info.description || 'local build'}).`,
-      );
       refreshVersions();
     }),
 

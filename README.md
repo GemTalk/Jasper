@@ -74,13 +74,13 @@ Versions live in the **Databases & Versions** panel, opened with **Manage Databa
 - **Show in Finder** — open the product directory
 - **Open Terminal** — a terminal with that version's GemStone environment set up
 
-The panel header carries **Install Version…**, which lists the releases you do not yet have, and **Register Local…**, which points Jasper at a GemStone tree you built yourself.
+The panel header carries **Install Version…**, which lists the releases you do not yet have. A release you already have elsewhere needs no button: put the product tree (or a symlink to it) in your GemStone root and it is listed like any other, and a stone that already runs from such a tree is brought in with **Register Existing…** instead, which records where it really lives.
 
 On Windows, an **Install Windows Client** row action fetches the native client distribution for connecting to remote GemStone servers.
 
 ### Database Management
 
-The **Databases** view shows all databases under your GemStone root directory (configurable via `gemstone.rootPath`, default `~/Documents/GemStone`). Click **New Database** in its title bar to open the **Databases & Versions** panel on a form asking for the GemStone release, the base extent, a stone name and a NetLDI name — all on screen at once, with the names already in use listed beside the fields that have to avoid them. Nothing is lost if you leave VS Code to look something up. A database is made by copying an installed release, so on a machine that has none the panel opens on its Versions list instead and says so, with **Install Version…** and **Register Local…** waiting there.
+The **Databases** view shows all databases under your GemStone root directory (configurable via `gemstone.rootPath`, default `~/Documents/GemStone`). Click **New Database** in its title bar to open the **Databases & Versions** panel on a form asking for the GemStone release, the base extent, a stone name and a NetLDI name — all on screen at once, with the names already in use listed beside the fields that have to avoid them. Nothing is lost if you leave VS Code to look something up. A database is made by copying an installed release, so on a machine that has none the panel opens on the lists instead and says so, with **Install Version…** waiting in the Versions section below. You do not need one to adopt a database that already exists: **Register Existing…** in the panel header works on a machine with nothing installed.
 
 The extension creates the full directory structure (`conf/`, `data/`, `log/`, `stat/`), writes configuration files (`system.conf`, `gem.conf`, stone config), copies the key file and base extent, and writes `database.yaml`.
 

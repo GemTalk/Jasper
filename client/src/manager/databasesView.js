@@ -66,6 +66,10 @@
   // and `netldiPort` are filled in the same way from a server already running
   // out of that tree — the only authority on where it registers.
   let registering = false;
+  // What the host last told us went wrong. Kept until dismissed: the state post
+  // that follows a failure is the unchanged state, so clearing it on the next
+  // render would blank the message before it could be read.
+  let lastFailure = '';
   const registerForm = {
     productPath: '',
     version: '',
@@ -408,31 +412,33 @@
       (v) => v.extracted || v.downloaded || v.local || v.clientExtracted,
     );
     const installed = versionsInstalledCount(versions);
-    // The two ways to get a release carry their words. They were icon-only, which
-    // read as decoration: three unlabelled glyphs in a header is not an answer to
-    // "how do I get a new version?". The walkthrough stays a glyph — it is a
-    // pointer to reading, not a thing you do to this machine — and it is the only
-    // home that button has now that the Versions tree is gone.
-    const getActions =
-      btn('installNewVersion', 'Install Version…', 'plus', 'btn-secondary', {
-        title: 'Choose a release from the download site, then download and unpack it',
-      }) +
-      btn('registerLocalVersion', 'Register Local…', 'folderOpen', 'btn-secondary', {
-        title: 'Point Jasper at a GemStone tree you built yourself',
-      });
+    // The way to get a release carries its words. It was icon-only, which read as
+    // decoration: an unlabelled glyph in a header is not an answer to "how do I
+    // get a new version?". The walkthrough stays a glyph — it is a pointer to
+    // reading, not a thing you do to this machine — and it is the only home that
+    // button has now that the Versions tree is gone.
+    //
+    // There is no Register Local… beside it. A tree built or unpacked elsewhere
+    // is recognised by putting it in the versions folder, symlink or directory
+    // alike, and a stone that already runs from such a tree is adopted by
+    // Register Existing Database — which records where it really lives instead
+    // of needing a link in Jasper's root at all.
+    const getActions = btn('installNewVersion', 'Install Version…', 'plus', 'btn-secondary', {
+      title: 'Choose a release from the download site, then download and unpack it',
+    });
     const actions = getActions;
 
     if (!onDisk.length) {
       // Nothing installed is the one state where this section is the whole job,
-      // so the buttons move down beside the sentence that explains them rather
+      // so the button moves down beside the sentence that explains it rather
       // than sitting in the header, where a reader looking at the sentence has to
-      // go hunting for them. Moved, not repeated: the header keeps none of them,
-      // or the same two buttons appear twice within one section.
+      // go hunting for it. Moved, not repeated: the header keeps none of it, or
+      // the same button appears twice within one section.
       return section(
         { key: 'versions', title: 'Versions', count: `${installed} installed`, actions: '', open },
         `<div class="empty">
           <div>No GemStone release on this machine yet. Install one from the download site,
-          or point Jasper at a build you compiled.</div>
+          or put a build you already have in ${esc((lastState && lastState.rootPath) || 'the versions folder')}.</div>
           <div class="empty-acts">${getActions}</div>
         </div>`,
       );
@@ -933,9 +939,11 @@
     </details>`;
   }
 
-  // `canCreate` is false when no release is installed: a form whose only choice
-  // is empty cannot be completed, so the way out is Install, which the Versions
-  // section leads with in exactly that case.
+  // `canCreate` is false when no release is installed: a form whose only choice is
+  // empty cannot be completed, so New Database… is withheld. Making one is not the
+  // only way to get a database, though — Register Existing… in the panel header
+  // adopts an installation from anywhere and needs nothing installed here — so the
+  // empty text names both ways rather than only Install.
   function renderDatabases(databases, open, currentDir, canCreate) {
     // The database the current session works in leads the column; the others
     // follow as a list, so the pair of top columns read the same way.
@@ -948,7 +956,8 @@
           : '')
       : canCreate
         ? `<div class="empty">No databases yet.<div>${btn('beginCreate', 'New Database…', 'plus', 'btn-primary')}</div></div>`
-        : `<div class="empty">No databases yet — install a GemStone release first.</div>`;
+        : `<div class="empty">No databases yet — install a GemStone release to make one, or
+            use Register Existing… above to adopt one this machine already runs.</div>`;
     return section(
       {
         key: 'databases',
@@ -969,11 +978,16 @@
   function renderHeader(state) {
     const dbs = (state.databases || []).length;
     const installed = versionsInstalledCount(state.versions || []);
-    const lead = !installed
-      ? 'No GemStone release on this machine yet — install one to make a database.'
-      : dbs
+    // A registered database runs from an installation outside Jasper's root, so
+    // "nothing installed" is not "nothing here": the count leads whenever there
+    // are databases, or the header denied the very rows beneath it.
+    const lead = dbs
+      ? installed
         ? `${dbs} database${dbs === 1 ? '' : 's'} · ${installed} version${installed === 1 ? '' : 's'} installed`
-        : 'No databases yet — make one from a release you have installed.';
+        : `${dbs} database${dbs === 1 ? '' : 's'} · no release installed here`
+      : installed
+        ? 'No databases yet — make one from a release you have installed.'
+        : 'No GemStone release on this machine yet — install one to make a database, or register a database that already exists.';
     // Creating needs something to create from, so the button waits for a release.
     const create = installed ? btn('beginCreate', 'New Database\u2026', 'plus', 'btn-primary') : '';
     // Registering does not: the installation it adopts brings its own release,
@@ -993,14 +1007,16 @@
     const nothingInstalled = versionsInstalledCount(state.versions) === 0;
     const currentDir = (state.logins || []).find((l) => l.current)?.dirName;
 
-    const out = [];
-    // With nothing installed there is no database to make yet, so the way to get
-    // a release leads. Once something is installed the databases lead instead and
-    // versions sit below, where you go back for a new release.
-    if (nothingInstalled) out.push({ html: renderVersions(state.versions, true) });
-    out.push({ html: renderDatabases(state.databases, true, currentDir, !nothingInstalled) });
-    if (!nothingInstalled) out.push({ html: renderVersions(state.versions, true) });
-    return out;
+    // Databases lead, always: they are what this panel is about, and versions sit
+    // below, where you go back for a new release. Versions used to lead a machine
+    // with nothing installed, on the reasoning that there was no database to make
+    // yet — but Register Existing… adopts an installation from anywhere, so such a
+    // machine can hold databases and no installed release at once, and burying
+    // them under Versions read as the registration never having landed.
+    return [
+      { html: renderDatabases(state.databases, true, currentDir, !nothingInstalled) },
+      { html: renderVersions(state.versions, true) },
+    ];
   }
 
   // ── Creating a database ─────────────────────────────────────────────────────
@@ -1055,9 +1071,20 @@
   }
 
   // Said instead of that form: why the click did not open it. Deliberately just
-  // the sentence — the Versions section is the very next thing on screen in this
-  // state, and it leads with the two buttons that fix it. A third copy up here
-  // put three Install Version… on one screen.
+  // the sentence — the Versions section is on screen below, leading with the
+  // button that fixes it, so a copy up here only put two Install Version… on one
+  // screen (three, with the one its section header used to carry).
+  // What the host reported it could not do. Its `actionFailed` message used to be
+  // dropped on arrival — the panel only stopped looking busy — so an action that
+  // failed was indistinguishable from one that did nothing, which is how a
+  // registration refused for an unwritable root read as "nothing happened".
+  function renderFailure() {
+    return `<div class="gm-blocked">
+      <span class="note">${ICONS.warn}<span>${esc(lastFailure)}</span></span>
+      ${btn('dismissFailure', 'Dismiss', 'close', 'btn-secondary')}
+    </div>`;
+  }
+
   function renderVersionFirst() {
     return `<div class="gm-blocked">
       <span class="note">${ICONS.warn}<span>New Database needs a GemStone release to copy from — install one below first.</span></span>
@@ -1256,6 +1283,7 @@
 
     els.root.innerHTML =
       renderHeader(state) +
+      (lastFailure ? renderFailure() : '') +
       (registering
         ? renderRegister(state)
         : creating
@@ -1540,6 +1568,11 @@
     if (!el) return;
     // Prevent an action button inside a <summary> from also toggling the section.
     e.preventDefault();
+    if (el.dataset.action === 'dismissFailure') {
+      lastFailure = '';
+      if (lastState) render(lastState);
+      return;
+    }
     if (onNoticeClick(el)) return;
     if (onRegisterClick(el)) return;
     if (onCreateClick(el)) return;
@@ -1695,6 +1728,7 @@
     // panel (and each test that inits a new one) starts clean.
     creating = false;
     registering = false;
+    lastFailure = '';
     resetRegisterForm();
     openedForCreate = false;
     needsVersionFirst = false;
@@ -1734,9 +1768,13 @@
     if (msg.command === 'loading') {
       els.root.setAttribute('aria-busy', 'true');
     } else if (msg.command === 'actionFailed') {
-      // The host reports its own failures; the panel only has to stop looking
-      // busy, because the state that follows will not have changed.
+      // Shown, not merely absorbed. The state that follows is the unchanged one,
+      // so without this the panel answered a failed action by redrawing exactly
+      // what was already there — the action's own error never reaching the
+      // screen the host had written it for.
       els.root.setAttribute('aria-busy', 'false');
+      lastFailure = String(msg.message || '');
+      if (lastState) render(lastState);
     } else if (msg.command === 'pingResult') {
       setPingNotice(
         Number(msg.sessionId),

@@ -419,7 +419,7 @@ describe('LoginEditorPanel', () => {
     });
   });
 
-  describe('what Save does with the panel', () => {
+  describe('what Save and Cancel do with the panel', () => {
     it('closes it, because a Save/Cancel form ends its editing session on Save', async () => {
       // The toast used to be the only sign the work had landed: the form stayed
       // up, submitted, and had to be closed by hand.
@@ -435,6 +435,34 @@ describe('LoginEditorPanel', () => {
       });
 
       expect(panel.dispose).toHaveBeenCalled();
+    });
+
+    it('closes it on Cancel too, so the pair agrees about what finishes', async () => {
+      // Cancel used to post `requestData`, which reverted the form in place and
+      // left the panel up — one button that finished the editing session and one
+      // that did not.
+      await LoginEditorPanel.show(storage, secretsArg, treeProvider, makeLogin());
+      const panel = window.createWebviewPanel.mock.results[0].value;
+      const handler = panel.webview.onDidReceiveMessage.mock.calls[0][0];
+
+      await handler({ command: 'cancel' });
+
+      expect(panel.dispose).toHaveBeenCalled();
+    });
+
+    it('still answers requestData without closing, since the form loads with it', async () => {
+      // The webview asks for its data on load; only the Cancel button was
+      // rerouted, so this must stay a plain reply.
+      await LoginEditorPanel.show(storage, secretsArg, treeProvider, makeLogin());
+      const panel = window.createWebviewPanel.mock.results[0].value;
+      const handler = panel.webview.onDidReceiveMessage.mock.calls[0][0];
+
+      await handler({ command: 'requestData' });
+
+      expect(panel.dispose).not.toHaveBeenCalled();
+      expect(panel.webview.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ command: 'loadData' }),
+      );
     });
 
     it('leaves it open when the save was refused as read-only', async () => {

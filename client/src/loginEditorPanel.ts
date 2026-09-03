@@ -137,6 +137,13 @@ export class LoginEditorPanel {
           case 'save':
             await this.handleSave(message.data, message.originalLabel);
             break;
+          case 'cancel':
+            // Ends the editing session, the way Save does. Cancel used to ask
+            // for the stored login back, which reverted the form in place and
+            // left the panel up — so the pair disagreed about what pressing
+            // either one finishes, and neither closed the editor.
+            this.dispose();
+            break;
           case 'requestData':
             this.panel.webview.postMessage({
               command: 'loadData',
@@ -193,9 +200,10 @@ export class LoginEditorPanel {
     // editing, and that branch reads both.
     this.panel.title = `Edit: ${data.label}`;
     vscode.window.showInformationMessage(`Login "${data.label}" saved.`);
-    // A Save/Cancel form ends its editing session on Save. Leaving the panel up
-    // said nothing about whether the work had landed — the toast was the only
-    // signal, and the form still had to be closed by hand.
+    // A Save/Cancel form ends its editing session on either — see the `cancel`
+    // case above. Leaving the panel up said nothing about whether the work had
+    // landed: the toast was the only signal, and the form still had to be
+    // closed by hand.
     this.dispose();
   }
 
@@ -508,7 +516,7 @@ export class LoginEditorPanel {
     });
 
     document.getElementById('cancelBtn').addEventListener('click', () => {
-      vscode.postMessage({ command: 'requestData' });
+      vscode.postMessage({ command: 'cancel' });
     });
   </script>
 </body>

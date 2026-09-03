@@ -430,7 +430,12 @@ describe('deleting versus unregistering', () => {
     const manager = makeManager();
 
     expect(await manager.unregisterDatabase(registeredDb())).toBe(true);
-    expect(wslRmSync).toHaveBeenCalledExactlyOnceWith('/root/db-2');
+    // Recursively: registering makes a log/ inside db-N, so a plain remove dies
+    // on its own subdirectory with EISDIR and the record can never be dropped.
+    expect(wslRmSync).toHaveBeenCalledExactlyOnceWith('/root/db-2', {
+      recursive: true,
+      force: true,
+    });
   });
 
   it('does nothing when the unregister confirmation is declined', async () => {

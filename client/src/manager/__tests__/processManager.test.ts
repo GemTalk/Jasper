@@ -25,6 +25,7 @@ import { spawn, type SpawnOptions } from 'child_process';
 import {
   ProcessManager,
   parseGslist,
+  saysNoServers,
   classifyPidOwnership,
   versionsMatch,
   exportCommand,
@@ -431,6 +432,136 @@ describe('ProcessManager', () => {
   // ── Registered databases ──────────────────────────────────
   // An installation Jasper did not create: its own product tree, its own
   // configuration, and its own registration directory. See registeredDatabase.ts.
+
+  // ── An empty root is an answer, not a failure ────────────────────────────
+  //
+  // `gslist -cvl` exits 1 with "No GemStone servers." when nothing is registered
+  // in the directory it was pointed at, and execSync raises any non-zero exit as
+  // a throw. Treating that as a failed read meant Jasper's own empty root aborted
+  // the whole refresh -- taking the registered-database scan with it, so every
+  // registered stone read Stopped while it was plainly running.
+
+  describe('telling an empty listing from an unreadable one', () => {
+    /** The error execSync actually throws for gslist's empty-directory exit:
+     *  status 1, the message on stdout, nothing on stderr. */
+    function noServersError(): Error {
+      return Object.assign(new Error('Command failed: gslist -cvl'), {
+        status: 1,
+        stdout: 'gslist[Info]: No GemStone servers.\n',
+        stderr: '',
+      });
+    }
+
+    it('recognises the empty-directory exit', () => {
+      expect(saysNoServers(noServersError())).toBe(true);
+    });
+
+    it('recognises it on stderr too, since releases differ about the stream', () => {
+      expect(
+        saysNoServers(
+          Object.assign(new Error('Command failed'), {
+            status: 1,
+            stdout: '',
+            stderr: 'gslist[Info]: No GemStone servers.\n',
+          }),
+        ),
+      ).toBe(true);
+    });
+
+    it('does not mistake a real failure for an empty directory', () => {
+      expect(
+        saysNoServers(
+          Object.assign(new Error('Command failed: gslist'), {
+            status: 127,
+            stdout: '',
+            stderr: 'gslist: command not found\n',
+          }),
+        ),
+      ).toBe(false);
+    });
+
+    it('survives an error carrying no streams at all', () => {
+      expect(saysNoServers(new Error('boom'))).toBe(false);
+      expect(saysNoServers(undefined)).toBe(false);
+    });
+  });
+
+  describe('finding a registered database\u2019s servers', () => {
+    const RUNNING =
+      'Status        Version    Owner       Pid   Port   Started     Type       Name\n' +
+      '-------      --------- --------- -------- ----- ------------ ------      ----\n' +
+      'OK           3.7.5.1   ewinger    3133853 39047 Sep 03 13:59 Stone       theirstone\n' +
+      'OK           3.7.5.1   ewinger    3133932 46521 Sep 03 13:59 Netldi      theirldi\n';
+
+    function storageWithRegistered(): SysadminStorage {
+      return {
+        ...rawStorage('/gs/3.7.4'),
+        getDatabases: vi.fn(() => [makeRegisteredDatabase()]),
+      } as unknown as SysadminStorage;
+    }
+
+    beforeEach(() => {
+      vi.mocked(wslBridge.wslExecSync).mockReset();
+      vi.mocked(wslBridge.needsWsl).mockReturnValue(false);
+    });
+
+    it('reads them even though Jasper\u2019s own root has no servers of its own', () => {
+      // The exact shape of this machine: everything is registered from elsewhere,
+      // so Jasper's own registration directory is empty and gslist exits 1 on it.
+      vi.mocked(wslBridge.wslExecSync).mockImplementation(
+        (cmd: string, env?: Record<string, string>) => {
+          if (cmd.startsWith('test -x')) return '';
+          if (env?.GEMSTONE_GLOBAL_DIR === '/opt/gemstone') return RUNNING;
+          throw Object.assign(new Error('Command failed'), {
+            status: 1,
+            stdout: 'gslist[Info]: No GemStone servers.\n',
+            stderr: '',
+          });
+        },
+      );
+      const manager = new ProcessManager(storageWithRegistered());
+
+      const procs = manager.refreshProcesses();
+
+      expect(procs.map((p) => p.name).sort()).toEqual(['theirldi', 'theirstone']);
+      expect(manager.isStoneRunning('theirstone', '3.7.5.1')).toBe(true);
+    });
+
+    it('reads them even when Jasper\u2019s own listing genuinely cannot be read', () => {
+      vi.mocked(wslBridge.wslExecSync).mockImplementation(
+        (cmd: string, env?: Record<string, string>) => {
+          if (cmd.startsWith('test -x')) return '';
+          if (env?.GEMSTONE_GLOBAL_DIR === '/opt/gemstone') return RUNNING;
+          throw Object.assign(new Error('Command failed'), { status: 127, stderr: 'not found' });
+        },
+      );
+      const manager = new ProcessManager(storageWithRegistered());
+
+      expect(
+        manager
+          .refreshProcesses()
+          .map((p) => p.name)
+          .sort(),
+      ).toEqual(['theirldi', 'theirstone']);
+    });
+
+    it('reports the empty root as read, rather than as a failure to look', () => {
+      vi.mocked(wslBridge.wslExecSync).mockImplementation((cmd: string) => {
+        if (cmd.startsWith('test -x')) return '';
+        throw Object.assign(new Error('Command failed'), {
+          status: 1,
+          stdout: 'gslist[Info]: No GemStone servers.\n',
+          stderr: '',
+        });
+      });
+      const manager = new ProcessManager(makeStorage('/gs/3.7.4'));
+
+      expect(manager.refreshProcesses()).toEqual([]);
+      expect(appendSysadmin).not.toHaveBeenCalledWith(
+        expect.stringContaining('Could not list servers'),
+      );
+    });
+  });
 
   describe('registered databases', () => {
     beforeEach(() => {

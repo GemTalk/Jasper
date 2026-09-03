@@ -145,20 +145,107 @@ beforeEach(() => {
 });
 
 describe('what leads the panel', () => {
-  it('puts versions first when nothing is installed, because there is nothing to make a database from', () => {
-    mount(state({ versions: [], create: { ...(state().create as object), versions: [] } }));
-    const sections = Array.from(root.querySelectorAll('details.section')).map(
+  function sectionOrder(): (string | undefined)[] {
+    return Array.from(root.querySelectorAll('details.section')).map(
       (d) => (d as HTMLElement).dataset.section,
     );
-    expect(sections.indexOf('versions')).toBeLessThan(sections.indexOf('databases'));
-  });
+  }
 
   it('puts databases first once something is installed', () => {
     mount(state({ databases: [database()] }));
-    const sections = Array.from(root.querySelectorAll('details.section')).map(
-      (d) => (d as HTMLElement).dataset.section,
-    );
+    const sections = sectionOrder();
     expect(sections.indexOf('databases')).toBeLessThan(sections.indexOf('versions'));
+  });
+
+  // Versions used to lead here, on the reasoning that a machine with nothing
+  // installed had no database to make yet. Register Existing… adopts an
+  // installation from anywhere, so this machine can hold databases and no
+  // installed release at once.
+  it('puts databases first when nothing is installed too', () => {
+    mount(state({ versions: [], create: { ...(state().create as object), versions: [] } }));
+    const sections = sectionOrder();
+    expect(sections.indexOf('databases')).toBeLessThan(sections.indexOf('versions'));
+  });
+
+  it('leads with a registered database rather than burying it under Versions', () => {
+    mount(
+      state({
+        versions: [],
+        databases: [registeredDatabase()],
+        create: { ...(state().create as object), versions: [] },
+      }),
+    );
+    expect(sectionOrder()[0]).toBe('databases');
+    expect(root.querySelector('details.db-item[data-db]')).not.toBeNull();
+  });
+});
+
+describe('when the host says an action failed', () => {
+  // The message was posted and dropped: the panel cleared its busy flag and
+  // redrew the unchanged state, so a refused action looked like one that had
+  // simply done nothing at all.
+  it('shows the reason rather than absorbing it', () => {
+    mount();
+    fromHost({ command: 'actionFailed', message: "EACCES: permission denied, mkdir '/nope'" });
+    expect(root.querySelector('.gm-blocked')?.textContent).toContain('permission denied');
+  });
+
+  it('keeps it through the unchanged state that follows', () => {
+    mount();
+    fromHost({ command: 'actionFailed', message: 'could not register' });
+    // The host always posts state after a failure; it is the same state as before.
+    api().render(state());
+    expect(root.textContent).toContain('could not register');
+  });
+
+  it('lets it be dismissed', () => {
+    mount();
+    fromHost({ command: 'actionFailed', message: 'could not register' });
+    click('dismissFailure');
+    expect(root.querySelector('.gm-blocked')).toBeNull();
+  });
+});
+
+describe('what the header says this machine has', () => {
+  // The header said "No GemStone release on this machine yet" whenever nothing
+  // was installed — denying the registered database listed directly beneath it,
+  // which read as the registration not having landed.
+  it('counts registered databases even with no release installed here', () => {
+    mount(
+      state({
+        versions: [],
+        databases: [registeredDatabase()],
+        create: { ...(state().create as object), versions: [] },
+      }),
+    );
+    const lead = root.querySelector('.gm-head-lead')?.textContent;
+    expect(lead).toContain('1 database');
+    expect(lead).not.toContain('No GemStone release on this machine yet');
+  });
+
+  it('still says the machine is bare when it holds nothing at all', () => {
+    mount(
+      state({
+        versions: [],
+        databases: [],
+        create: { ...(state().create as object), versions: [] },
+      }),
+    );
+    const lead = root.querySelector('.gm-head-lead')?.textContent;
+    expect(lead).toContain('No GemStone release on this machine yet');
+    // ...and names registering as a way forward, not only installing.
+    expect(lead).toContain('register a database that already exists');
+  });
+
+  it('offers Register Existing with nothing installed, since it needs nothing installed', () => {
+    mount(
+      state({
+        versions: [],
+        databases: [],
+        create: { ...(state().create as object), versions: [] },
+      }),
+    );
+    expect(root.querySelector('[data-action="beginRegister"]')).not.toBeNull();
   });
 });
 
@@ -207,19 +294,23 @@ describe('getting a release in the first place', () => {
     expect(root.querySelector('[data-action="openWalkthrough"]')).toBeNull();
   });
 
-  it('offers a labelled way to register a build you compiled', () => {
+  // Registering a link to a tree you built has gone. A tree put in the versions
+  // folder is recognised on its own, and a stone already running from one is
+  // adopted by Register Existing Database, which records where it really lives.
+  it('does not offer to register a local build', () => {
     mount();
-    expect(root.querySelector('[data-action="registerLocalVersion"]')?.textContent).toContain(
-      'Register Local',
-    );
+    expect(root.querySelector('[data-action="registerLocalVersion"]')).toBeNull();
   });
 
-  it('puts both buttons in the body when nothing is installed, beside the sentence saying so', () => {
+  it('puts the install button in the body when nothing is installed, beside the sentence saying so', () => {
     mount(state({ versions: [], create: { ...(state().create as object), versions: [] } }));
-    const empty = root.querySelector('.empty');
+    // Scoped to Versions: Databases leads the panel now, so its own empty block
+    // is the first `.empty` on screen.
+    const empty = root.querySelector('details.section[data-section="versions"] .empty');
     expect(empty?.textContent).toContain('No GemStone release on this machine yet');
     expect(empty?.querySelector('[data-action="installNewVersion"]')).not.toBeNull();
-    expect(empty?.querySelector('[data-action="registerLocalVersion"]')).not.toBeNull();
+    // ...and says where to put one you already have, since no button does that now.
+    expect(empty?.textContent).toContain('/root');
   });
 
   it('asks the host to install when the button is pressed', () => {
@@ -881,8 +972,8 @@ describe('every way into the New Database form', () => {
     expect(host.postMessage).not.toHaveBeenCalled();
   });
 
-  // With nothing installed there is no version to pick, so the way out is
-  // Install — which the Versions section leads with in exactly that case.
+  // With nothing installed there is no version to pick, so New Database… is
+  // withheld and the empty text names the two ways out instead.
   it('is not offered at all when no release is installed', () => {
     mount(
       state({
@@ -893,7 +984,9 @@ describe('every way into the New Database form', () => {
     );
     expect(root.querySelector('[data-action="beginCreate"]')).toBeNull();
     const databases = root.querySelector('details.section[data-section="databases"] .empty');
-    expect(databases?.textContent).toContain('install a GemStone release first');
+    expect(databases?.textContent).toContain('install a GemStone release to make one');
+    // Registering needs nothing installed, so it is named here as the other way in.
+    expect(databases?.textContent).toContain('Register Existing');
   });
 
   it('has no button left that posts a create without the answers', () => {
@@ -991,14 +1084,12 @@ describe('asking for a database on a machine with no release', () => {
     );
   });
 
-  // The message is the sentence only. Versions is the very next thing on screen
-  // in this state and leads with both buttons, so a copy in the message made
-  // three Install Version… — and, with the pair the section header also carried,
-  // two of everything.
-  it('offers each way of getting a release exactly once', () => {
+  // The message is the sentence only. The Versions section is on screen below and
+  // leads with the install button, so a copy in the message made two Install
+  // Version… — three, with the one the section header also carried.
+  it('offers the way of getting a release exactly once', () => {
     openFormOnEmptyMachine();
     expect(root.querySelectorAll('[data-action="installNewVersion"]')).toHaveLength(1);
-    expect(root.querySelectorAll('[data-action="registerLocalVersion"]')).toHaveLength(1);
   });
 
   it('puts that one pair beside the sentence explaining them', () => {
