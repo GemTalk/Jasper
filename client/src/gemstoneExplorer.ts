@@ -29,6 +29,9 @@ import { categoryChildNodes, categoryParentPath, categoryMatches } from './explo
 import { registerOpenEditorsStatusBar } from './openEditorsStatusBar';
 import { SourceEditorPlacement } from './sourceEditorPlacement';
 import { generateAndSaveGrailStub } from './grailStubGenerator';
+import { composeFileOut, fileOutFileName, saveFileOut } from './fileOut';
+import { fileInCommand } from './fileIn';
+import { isClassNotFound } from './queries/fileOutClass';
 import {
   RenamePreview,
   RenameApplyResult,
@@ -957,7 +960,8 @@ export class ExplorerController {
     /** Called once per class removed by Remove Class, so views holding a cached class corpus (GemStone
      *  Search) can drop it. Per class, not per command: the delete takes the whole subtree. */
     private readonly onClassRemoved?: (sessionId: number, className: string) => void,
-    /** Extension global storage, used only to fire the one-time "how to keep methods open" hint. */
+    /** Extension global storage: the one-time "how to keep methods open" hint, and the
+     *  directory File Out and File In remember between them. */
     private readonly globalState?: vscode.Memento,
     /** Test affordances on class/method rows. Absent in tests that don't exercise them,
      *  and before the SUnit controller exists. */
@@ -5302,6 +5306,209 @@ export class ExplorerController {
     }
   }
 
+  // ── File out ────────────────────────────────────────────────────────────────
+  //
+  // Every Explorer level the issue asks for writes a Topaz `.gs` file, the same
+  // artifact Jadeite's "File Out …" menu items produce, to a directory the user
+  // picks on their OWN machine (#539). The pieces are shared: one header per file
+  // (see fileOut.ts), then one or more bodies from the file-out queries.
+  //
+  // Each command asks for the destination first and only then runs the queries, so
+  // cancelling the dialog costs no round trips — filing out a dictionary is a single
+  // large query, but a class category is one query per class.
+
+  /** The session these commands act in, or a warning when nothing is connected. */
+  private fileOutSession(): ActiveSession | undefined {
+    const session = this.session();
+    if (!session) void vscode.window.showWarningMessage('Connect to a GemStone session first.');
+    return session;
+  }
+
+  /** saveFileOut with this window's globalState attached, so every file-out shares
+   *  one remembered destination directory. */
+  private runFileOut(options: Omit<Parameters<typeof saveFileOut>[0], 'store'>): Promise<unknown> {
+    return saveFileOut({ ...options, store: this.globalState });
+  }
+
+  /** File out every class in a dictionary — definitions, comments and methods, in
+   *  superclass-first order (the organizer's own ordering), behind a preamble that
+   *  recreates the dictionary itself on a stone that lacks it. */
+  async fileOutDictionary(node: DictItem): Promise<void> {
+    const session = this.fileOutSession();
+    if (!session) return;
+    await this.runFileOut({
+      title: `File Out ${node.dictName}`,
+      defaultFileName: fileOutFileName(node.dictName),
+      label: node.dictName,
+      build: () =>
+        composeFileOut(queries.fileOutHeader(session), [
+          queries.fileOutDictionary(session, node.dictIndex),
+        ]),
+    });
+  }
+
+  /**
+   * File out the classes of one class category — and of its sub-categories, matching
+   * what the Classes pane shows for that row.
+   *
+   * Ordered superclass-first through the dictionary's file-out order, so a subclass
+   * never precedes a superclass that shares the category. A superclass in the same
+   * dictionary but a DIFFERENT category is not pulled in: the row names a category,
+   * and silently exporting classes the user did not select would be a surprise. Such
+   * a file needs its superclasses filed in first, exactly as a Jadeite package
+   * file-out does.
+   */
+  async fileOutClassCategory(node: ClassCategoryItem): Promise<void> {
+    const session = this.fileOutSession();
+    if (!session) return;
+    const dictIndex = this.state.dictIndex;
+    if (dictIndex === undefined) {
+      void vscode.window.showWarningMessage('Select a dictionary first.');
+      return;
+    }
+    const inCategory = new Set(
+      this.classCategoryEntries
+        .filter((e) => categoryMatches(e.category, node.fullPath))
+        .map((e) => e.className),
+    );
+    if (inCategory.size === 0) {
+      void vscode.window.showWarningMessage(`"${node.fullPath}" has no classes to file out.`);
+      return;
+    }
+    await this.runFileOut({
+      title: `File Out ${node.fullPath}`,
+      defaultFileName: fileOutFileName(node.fullPath),
+      label: node.fullPath,
+      build: () => {
+        const ordered = queries
+          .getDictionaryClassFileOutOrder(session, dictIndex)
+          .filter((name) => inCategory.has(name));
+        return composeFileOut(
+          queries.fileOutHeader(session),
+          ordered.map((name) => this.classFileOutBody(session, name, dictIndex)),
+        );
+      },
+    });
+  }
+
+  /** File out one class — its definition, comment and every method. Reached from the
+   *  Classes pane and from the Class Hierarchy pane, which carries its own dictionary
+   *  (a superclass usually lives somewhere else). */
+  async fileOutClass(node: ClassItem | HierarchyItem): Promise<void> {
+    const session = this.fileOutSession();
+    if (!session) return;
+    const dict = node instanceof HierarchyItem ? node.dictName : this.state.dictIndex;
+    await this.runFileOut({
+      title: `File Out ${node.className}`,
+      defaultFileName: fileOutFileName(node.className),
+      label: node.className,
+      build: () =>
+        composeFileOut(queries.fileOutHeader(session), [
+          this.classFileOutBody(session, node.className, dict),
+        ]),
+    });
+  }
+
+  /** One class's file-out body, turning `fileOutClass`'s not-found sentinel into a
+   *  raise — the caller is writing a file, and a `.gs` whose whole contents are
+   *  "Class not found: X" is worse than a reported failure. */
+  private classFileOutBody(
+    session: ActiveSession,
+    className: string,
+    dict?: number | string,
+  ): string {
+    const source = queries.fileOutClass(session, className, dict);
+    if (isClassNotFound(source)) throw new Error(source);
+    return source;
+  }
+
+  /** File out every method in one method category (protocol) of the selected class. */
+  async fileOutMethodCategory(node: MethodCategoryItem): Promise<void> {
+    const session = this.fileOutSession();
+    if (!session) return;
+    const { className, dictIndex } = this.state;
+    if (className === undefined || dictIndex === undefined) {
+      void vscode.window.showWarningMessage('Select a class first.');
+      return;
+    }
+    // The computed ALL METHODS / SESSION METHODS rows are not categories the image
+    // knows, so `fileOutCategory:` has nothing to look up. The menu keeps this
+    // command off those rows; the guard covers the palette route.
+    if (node.computed) {
+      void vscode.window.showWarningMessage('That row is not a method category.');
+      return;
+    }
+    const label = `${className} ${node.isMeta ? 'class' : 'instance'} ▸ ${node.category}`;
+    await this.runFileOut({
+      title: `File Out ${node.category}`,
+      defaultFileName: fileOutFileName(`${className}-${node.category}`),
+      label,
+      build: () =>
+        composeFileOut(queries.fileOutHeader(session), [
+          queries.fileOutMethodCategory(session, className, node.isMeta, node.category, dictIndex),
+        ]),
+    });
+  }
+
+  /**
+   * File out the selected method rows — the Methods pane is multi-select, so this
+   * takes a list, and Jadeite's equivalent files out the whole selection into one
+   * file too.
+   *
+   * Methods only: no class definition goes into the file, so it reads back into a
+   * stone that already has the class. That is the point of a method-level file-out —
+   * shipping one fix without redefining the class (which would drop every method it
+   * has, see the class-redefinition behaviour).
+   */
+  async fileOutMethods(nodes: MethodItem[]): Promise<void> {
+    const session = this.fileOutSession();
+    if (!session) return;
+    if (nodes.length === 0) return;
+    const { className, dictIndex } = this.state;
+    if (className === undefined || dictIndex === undefined) {
+      void vscode.window.showWarningMessage('Select a class first.');
+      return;
+    }
+    const single = nodes.length === 1 ? nodes[0] : undefined;
+    const label = single
+      ? `${className}>>${single.info.selector}`
+      : `${nodes.length} methods of ${className}`;
+    await this.runFileOut({
+      title: single ? `File Out ${single.info.selector}` : `File Out ${nodes.length} Methods`,
+      defaultFileName: fileOutFileName(
+        single ? `${className}-${single.info.selector}` : `${className}-methods`,
+      ),
+      label,
+      build: () =>
+        composeFileOut(
+          queries.fileOutHeader(session),
+          nodes.map((n) =>
+            queries.fileOutMethod(session, className, n.isMeta, n.info.selector, dictIndex),
+          ),
+        ),
+    });
+  }
+
+  // ── File in ─────────────────────────────────────────────────────────────────
+
+  /**
+   * Read a Topaz file back in — the return trip for the File Out entries above.
+   *
+   * Offered from the Dictionaries pane's toolbar and from a dictionary row, because
+   * that is where the user just filed out from; the alternative was hunting for the
+   * button on a session row in another view, or knowing the palette wording (#539).
+   *
+   * Session-scoped, not row-scoped, however it was reached: a file names its own
+   * dictionaries, so filing in from the Animals row does not put anything in Animals.
+   * Hence the row entry sitting in a group of its own below "File Out Dictionary…"
+   * rather than beside it. The Explorer is already showing exactly one session, so
+   * that is the one it files into and there is no "which session?" prompt — and with
+   * nothing connected the target is undefined, which asks, as any other write does.
+   */
+  async fileIn(): Promise<void> {
+    await fileInCommand(this.sessionManager, this.globalState, this.session());
+  }
+
   // New Method, invoked from a category row → files into THAT category (including
   // a still-empty one, which the compile then creates on the server, so overlay
   // categories become real once they hold a method). With no argument (palette)
@@ -6917,6 +7124,40 @@ export function registerGemStoneExplorer(
         });
       },
     ),
+    // ── File out (Topaz .gs) ──────────────────────────────────────────────────
+    // One per Explorer level. Each takes the row it was invoked on; the method one
+    // also honours the Methods pane's multi-selection, so a right-click with several
+    // rows highlighted files out all of them into one file.
+    vscode.commands.registerCommand('gemstone.explorer.fileOutDictionary', (node?: unknown) => {
+      if (node instanceof DictItem) void ctl.fileOutDictionary(node);
+    }),
+    vscode.commands.registerCommand('gemstone.explorer.fileOutClassCategory', (node?: unknown) => {
+      if (node instanceof ClassCategoryItem) void ctl.fileOutClassCategory(node);
+    }),
+    vscode.commands.registerCommand('gemstone.explorer.fileOutClass', (node?: unknown) => {
+      if (node instanceof ClassItem || node instanceof HierarchyItem) void ctl.fileOutClass(node);
+    }),
+    vscode.commands.registerCommand('gemstone.explorer.fileOutProtocol', (node?: unknown) => {
+      if (node instanceof MethodCategoryItem) void ctl.fileOutMethodCategory(node);
+    }),
+    vscode.commands.registerCommand(
+      'gemstone.explorer.fileOutMethods',
+      (node?: unknown, selection?: unknown[]) => {
+        // A multi-select tree view hands a context-menu command the clicked row AND
+        // the whole selection. The selection is what the user means when several rows
+        // are highlighted; the clicked row is the fallback for the palette-shaped call
+        // that passes only one argument.
+        const rows = (Array.isArray(selection) ? selection : [node]).filter(
+          (n): n is MethodItem => n instanceof MethodItem,
+        );
+        if (rows.length > 0) void ctl.fileOutMethods(rows);
+      },
+    ),
+    // The return trip, from the Dictionaries pane's toolbar or a dictionary row.
+    // Takes no row: a file-in lands where the file says, not on what was clicked.
+    vscode.commands.registerCommand('gemstone.explorer.fileIn', () => {
+      void ctl.fileIn();
+    }),
     vscode.commands.registerCommand('gemstone.explorer.removeDictionary', (node?: unknown) => {
       if (node instanceof DictItem) void ctl.removeDictionary(node);
     }),

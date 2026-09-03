@@ -174,6 +174,7 @@ import { ensureStonePreconditions } from './stonePreconditions';
 import { isLocalHost, sessionsOnDatabase } from './databaseForLogin';
 import { describeHolder, isExtentLocked, sessionHolders, ExtentHolder } from './extentHolders';
 import { runQuickSetup } from './quickSetup';
+import { fileInCommand, fileInUris } from './fileIn';
 import {
   isWindows,
   getWslInfoAsync,
@@ -2255,6 +2256,41 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('gemstone.refreshTests', () => {
       sunitTestController.refresh();
     }),
+
+    // Read a Topaz `.gs` file on this machine back into the session (issue #539).
+    // The palette entry picks the file; the resource entry takes the one(s) already
+    // selected in VS Code's Explorer, the file in the active editor, or the one whose
+    // "File In to GemStone" lens was clicked (gemstoneCodeLensProvider).
+    // Also the ⤓ on a session row in Logins & Sessions, and the one on the GemStone
+    // Explorer's Dictionaries pane (gemstone.explorer.fileIn): both already name a
+    // session, so they file straight into it instead of asking. From the palette
+    // (no row) the usual "which session?" applies.
+    vscode.commands.registerCommand('gemstone.fileIn', async (item?: GemStoneSessionItem) => {
+      await fileInCommand(sessionManager, context.globalState, item?.activeSession);
+    }),
+
+    vscode.commands.registerCommand(
+      'gemstone.fileInFile',
+      async (uri?: vscode.Uri, selected?: vscode.Uri[]) => {
+        // VS Code hands an Explorer context command the clicked resource AND the whole
+        // selection; the editor title bar passes only the one resource. Falling back to
+        // the active editor covers the palette-shaped call with no argument at all.
+        const active = vscode.window.activeTextEditor?.document.uri;
+        const uris =
+          selected && selected.length > 0
+            ? selected
+            : uri
+              ? [uri]
+              : active?.scheme === 'file'
+                ? [active]
+                : [];
+        if (uris.length === 0) {
+          void vscode.window.showWarningMessage('Open or select a .gs file to file in.');
+          return;
+        }
+        await fileInUris(sessionManager, uris, context.globalState);
+      },
+    ),
 
     vscode.commands.registerCommand('gemstone.displayIt', async () => {
       await codeExecutor.displayIt();

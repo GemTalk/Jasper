@@ -1507,6 +1507,54 @@
         "icon": "$(trash)"
       },
       {
+        "command": "gemstone.fileIn",
+        "title": "File In...",
+        "category": "GemStone",
+        "icon": "$(desktop-download)"
+      },
+      {
+        "command": "gemstone.fileInFile",
+        "title": "File In to GemStone",
+        "category": "GemStone",
+        "icon": "$(desktop-download)"
+      },
+      {
+        "command": "gemstone.explorer.fileOutDictionary",
+        "title": "File Out Dictionary...",
+        "category": "GemStone",
+        "icon": "$(export)"
+      },
+      {
+        "command": "gemstone.explorer.fileOutClassCategory",
+        "title": "File Out Class Category...",
+        "category": "GemStone",
+        "icon": "$(export)"
+      },
+      {
+        "command": "gemstone.explorer.fileOutClass",
+        "title": "File Out Class...",
+        "category": "GemStone",
+        "icon": "$(export)"
+      },
+      {
+        "command": "gemstone.explorer.fileOutProtocol",
+        "title": "File Out Method Category...",
+        "category": "GemStone",
+        "icon": "$(export)"
+      },
+      {
+        "command": "gemstone.explorer.fileOutMethods",
+        "title": "File Out Method(s)...",
+        "category": "GemStone",
+        "icon": "$(export)"
+      },
+      {
+        "command": "gemstone.explorer.fileIn",
+        "title": "File In...",
+        "category": "GemStone",
+        "icon": "$(desktop-download)"
+      },
+      {
         "command": "gemstone.explorer.renameDictionary",
         "title": "Rename Dictionary",
         "category": "GemStone",
@@ -2022,6 +2070,13 @@
       }
     ],
     "menus": {
+      "explorer/context": [
+        {
+          "command": "gemstone.fileInFile",
+          "when": "resourceExtname == .gs || resourceExtname == .tpz",
+          "group": "gemstone@0"
+        }
+      ],
       "commandPalette": [
         {
           "command": "gemstone.breakpoints.toggleAtStepPoint",
@@ -2105,6 +2160,34 @@
         },
         {
           "command": "gemstone.explorer.removeDictionary",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.fileInFile",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.fileOutDictionary",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.fileOutClassCategory",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.fileOutClass",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.fileOutProtocol",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.fileOutMethods",
+          "when": "false"
+        },
+        {
+          "command": "gemstone.explorer.fileIn",
           "when": "false"
         },
         {
@@ -2417,6 +2500,11 @@
           "group": "navigation@6"
         },
         {
+          "command": "gemstone.explorer.fileIn",
+          "when": "view == gemstoneExplorerDicts",
+          "group": "navigation@7"
+        },
+        {
           "command": "gemstone.explorer.newClassCategory",
           "when": "view == gemstoneExplorerCategories",
           "group": "navigation@2"
@@ -2537,6 +2625,41 @@
           "command": "gemstone.explorer.removeDictionary",
           "when": "view == gemstoneExplorerDicts && viewItem == explorerDict",
           "group": "inline@1"
+        },
+        {
+          "command": "gemstone.explorer.fileOutDictionary",
+          "when": "view == gemstoneExplorerDicts && viewItem == explorerDict",
+          "group": "4_fileout@0"
+        },
+        {
+          "command": "gemstone.explorer.fileIn",
+          "when": "view == gemstoneExplorerDicts && viewItem == explorerDict",
+          "group": "5_filein@0"
+        },
+        {
+          "command": "gemstone.explorer.fileOutClassCategory",
+          "when": "view == gemstoneExplorerCategories && viewItem == explorerCategory",
+          "group": "4_fileout@0"
+        },
+        {
+          "command": "gemstone.explorer.fileOutClass",
+          "when": "view == gemstoneExplorerClasses && viewItem =~ /^explorerClass(\\.novars)?(\\.commented)?(\\.test(\\.running|\\.debugging)?)?$/",
+          "group": "4_fileout@0"
+        },
+        {
+          "command": "gemstone.explorer.fileOutClass",
+          "when": "view == gemstoneExplorerClassHierarchy && viewItem =~ /^explorerHierClass/",
+          "group": "4_fileout@0"
+        },
+        {
+          "command": "gemstone.explorer.fileOutProtocol",
+          "when": "view == gemstoneExplorerMethods && viewItem == explorerProtocol",
+          "group": "4_fileout@0"
+        },
+        {
+          "command": "gemstone.explorer.fileOutMethods",
+          "when": "view == gemstoneExplorerMethods && viewItem =~ /^explorerMethod/",
+          "group": "4_fileout@0"
         },
         {
           "command": "gemstone.explorer.openMethodToSide",
@@ -2923,6 +3046,16 @@
           "when": "view == gemstoneLogins && (viewItem == gemstoneLogin || viewItem == gemstoneLoginConnected)"
         },
         {
+          "command": "gemstone.fileIn",
+          "when": "view == gemstoneLogins && viewItem == gemstoneSession",
+          "group": "inline@1"
+        },
+        {
+          "command": "gemstone.fileIn",
+          "when": "view == gemstoneLogins && viewItem == gemstoneSession",
+          "group": "2_transfer@0"
+        },
+        {
           "command": "gemstone.sessionCommit",
           "when": "view == gemstoneLogins && viewItem == gemstoneSession",
           "group": "inline@2"
@@ -3037,6 +3170,11 @@
       ],
       "editor/title": [
         {
+          "command": "gemstone.fileInFile",
+          "when": "resourceLangId == gemstone-topaz && resourceScheme == file",
+          "group": "navigation@0"
+        },
+        {
           "command": "gemstone.navigateBack",
           "when": "resourceScheme == gemstone",
           "group": "navigation@1"
@@ -3107,6 +3245,11 @@
           "command": "gemstone.breakpoints.toggleStepPoints",
           "when": "editorTextFocus && resourceLangId == gemstone-smalltalk",
           "group": "3_gemstoneBreakpoints@4"
+        },
+        {
+          "command": "gemstone.fileInFile",
+          "when": "resourceLangId == gemstone-topaz && resourceScheme == file",
+          "group": "1_gemstone@6"
         }
       ]
     },
