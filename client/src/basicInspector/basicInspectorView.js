@@ -80,6 +80,33 @@
     );
   }
 
+  /**
+   * How the Slots tab is ordered, for the whole panel rather than one column —
+   * it is a reading preference, not a fact about an object, so it should not
+   * have to be set again after every dive.
+   *
+   * Alphabetical by default: the stone answers `allInstVarNames`, which is
+   * superclass-first then definition order, and on a class of any size that is
+   * an order you cannot search by eye. Definition order stays one click away
+   * because it is the order the class is written in, which is the one that
+   * matters when you are reading the class rather than a value. Nothing is lost
+   * by sorting: each row carries the `instVarAt:` index it was read at, so
+   * writes are unaffected and definition order is just that index ascending.
+   */
+  var slotSort = 'name';
+
+  function sortSlots(rows) {
+    return rows.sort(
+      slotSort === 'name'
+        ? function (a, b) {
+            return String(a.label).localeCompare(String(b.label));
+          }
+        : function (a, b) {
+            return a.index - b.index;
+          },
+    );
+  }
+
   /** The write-kind for rows on a tab; null when the tab isn't editable. */
   function slotKindFor(tab) {
     if (tab === 'slots') return 'instvar';
@@ -146,18 +173,25 @@
     col.header = msg.header || null;
     col.label = msg.label || '';
     col.className = col.header ? col.header.className : '';
-    col.title = col.className + (col.label ? ' › ' + col.label : '');
+    // The editor tab is named for the OBJECT, exactly as the Enhanced
+    // Inspector names it — its printString, capped. The label is whatever
+    // opened this column, and after an Inspect It in a workspace that is the
+    // whole expression you selected, which makes for a tab you cannot read and
+    // cannot tell apart from the next one. It still has a home: the column
+    // header, where "what produced this" is the useful thing to know.
+    col.title = titleFor(col);
     col.activeTab = null;
     col.tabData = {};
     col.loadedRows = {};
     col.evalText = '';
     col.evalOut = null;
-    col.metaSide = 'instance';
-    col.metaRenderedSide = null;
+    col.metaSubTab = 'instanceMethods';
+    col.metaRenderedSubTab = null;
     col.openSelector = null;
     col.methodSource = {};
     col.bytesRadix = 16;
     col.chordArmed = false;
+    col.evalVarsRequested = false;
     col.editing = null;
     col.editError = null;
 
@@ -176,6 +210,27 @@
       })
       .join('');
     activateTab(col, tabs[0].id);
+  }
+
+  /**
+   * What the editor tab is called while this column has focus.
+   *
+   * Jadeite's own inspector caption is `'Jadeite Inspector on ', <class name>`,
+   * plus `(N characters)` for a String and `(N bytes)` for a ByteArray — the
+   * class, not the printString. That is the better answer for an editor tab:
+   * a printString is as long as the object feels like being, is often nearly
+   * identical between two objects of the same class, and after an Inspect It in
+   * a workspace it is the least recognisable thing on the tab strip. The class
+   * name is short, stable, and the thing you are actually looking for when
+   * picking one of six open inspectors out of the strip.
+   *
+   * The size suffix follows Jadeite exactly, for the two classes where the size
+   * is the fact you want without opening anything.
+   */
+  function titleFor(col) {
+    var name = col.className || '';
+    if (!col.header || !col.header.sizeUnit) return name;
+    return name + ' (' + col.header.itemCount + ' ' + col.header.sizeUnit + ')';
   }
 
   function renderNav(col) {
@@ -257,6 +312,9 @@
     var total = totalFor(col, tab);
     var html = '';
 
+    // Sorting in place keeps `data-row` pointing at the same row the user sees;
+    // every action on a row goes through this array.
+    if (tab === 'slots') sortSlots(rows);
     if (total > rows.length) {
       html +=
         '<div class="toolbar"><span class="toolbar-label">Showing ' +
@@ -268,9 +326,18 @@
         '</div>';
     }
     html += '<div class="table-wrap"><table class="rows"><thead><tr>';
+    // On Slots the Name header is the sort control, the way a table's header
+    // usually is — no separate row of buttons above the table to spend space on.
     html +=
-      '<th class="cell-label">' +
+      '<th class="cell-label' +
+      (tab === 'slots'
+        ? ' sortable" data-slot-sort="1" title="Sort by name, or by the order the classes declare them'
+        : '') +
+      '">' +
       labelHead +
+      (tab === 'slots'
+        ? '<span class="sort-mark">' + (slotSort === 'name' ? '\u25B4' : '\u2261') + '</span>'
+        : '') +
       '</th><th>Value</th><th class="cell-class">Class</th></tr></thead><tbody>';
 
     for (var i = 0; i < rows.length; i++) {
@@ -333,10 +400,17 @@
     input.select();
     input.addEventListener('keydown', function (ev) {
       if (ev.key === 'Enter') {
+        // Stop here. `commitEdit` clears `col.editing`, so by the time this
+        // Enter reached the strip's own handler that guard would be down and
+        // the keystroke would be read as "dive into the selected row" — editing
+        // a Character of a String would commit the write and then replace the
+        // column with an inspector on the Character.
         ev.preventDefault();
+        ev.stopPropagation();
         commitEdit(col, input.value);
       } else if (ev.key === 'Escape') {
         ev.preventDefault();
+        ev.stopPropagation();
         cancelEdit(col);
       }
     });
@@ -460,30 +534,87 @@
 
   // ── Meta ──────────────────────────────────
 
+  /**
+   * The Meta tab, laid out as the Enhanced Inspector lays its own out, so the
+   * two do not present the same facts in two different shapes: the class name,
+   * an info bar carrying superclass, package and OOP, and then a sub-tab bar
+   * over the one thing you asked to see.
+   *
+   * Definition and Comment are sub-tabs there rather than sections stacked
+   * above the selectors, which is what this used to be — and stacking them cost
+   * the selector list its screen: a class with a real comment pushed every
+   * method below the fold. Category is the "Package" field of the info bar, not
+   * a section, for the same reason.
+   */
   function renderMeta(col, pane, meta) {
     if (!meta) {
       pane.innerHTML = '<div class="placeholder">Class metadata unavailable.</div>';
       return;
     }
-    var selectors = col.metaSide === 'instance' ? meta.instanceSelectors : meta.classSelectors;
-    var html = '<div class="meta">';
-    html += '<h4>Definition</h4><pre>' + esc(meta.definition) + '</pre>';
-    if (meta.category) html += '<h4>Category</h4><pre>' + esc(meta.category) + '</pre>';
-    if (meta.comment) html += '<h4>Comment</h4><pre>' + esc(meta.comment) + '</pre>';
-    html +=
-      '<div class="meta-sub-bar">' +
-      '<button class="btn' +
-      (col.metaSide === 'instance' ? ' active' : '') +
-      '" data-side="instance">Instance (' +
-      meta.instanceSelectors.length +
-      ')</button>' +
-      '<button class="btn' +
-      (col.metaSide === 'class' ? ' active' : '') +
-      '" data-side="class">Class (' +
-      meta.classSelectors.length +
-      ')</button>' +
-      '</div>';
-    html += '<div class="method-list">';
+    var html =
+      '<div class="meta">' +
+      '<div class="meta-head">' +
+      '<div class="meta-head-label">Class</div>' +
+      '<div class="meta-class-name">' +
+      esc(meta.className) +
+      '</div>' +
+      '</div>' +
+      '<div class="meta-info-bar">' +
+      metaFact('Superclass', meta.superclassName) +
+      metaFact('Package', meta.category) +
+      metaFact('OOP', col.oop) +
+      '</div>' +
+      '<div class="meta-sub-bar">';
+    var subTabs = metaSubTabs(meta);
+    for (var t = 0; t < subTabs.length; t++) {
+      html +=
+        '<div class="tab' +
+        (col.metaSubTab === subTabs[t].id ? ' active' : '') +
+        '" data-metatab="' +
+        subTabs[t].id +
+        '">' +
+        esc(subTabs[t].label) +
+        '</div>';
+    }
+    html += '</div><div class="meta-sub-content">' + renderMetaSubTab(col, meta) + '</div></div>';
+    withMetaScrollKept(col, pane, html);
+  }
+
+  /** One `Label: value` cell of the info bar; an em dash when the stone had none. */
+  function metaFact(label, value) {
+    return '<span>' + esc(label) + ': <strong>' + esc(value || '\u2014') + '</strong></span>';
+  }
+
+  /**
+   * The sub-tabs, in the Enhanced Inspector's order. The two method lists carry
+   * their counts, because the number of selectors is the thing you most often
+   * want from this tab without opening it.
+   */
+  function metaSubTabs(meta) {
+    return [
+      {
+        id: 'instanceMethods',
+        label: 'Instance Methods (' + meta.instanceSelectors.length + ')',
+      },
+      { id: 'classMethods', label: 'Class Methods (' + meta.classSelectors.length + ')' },
+      { id: 'definition', label: 'Definition' },
+      { id: 'comment', label: 'Comment' },
+    ];
+  }
+
+  function renderMetaSubTab(col, meta) {
+    if (col.metaSubTab === 'definition') {
+      return '<pre class="meta-pre">' + esc(meta.definition || '') + '</pre>';
+    }
+    if (col.metaSubTab === 'comment') {
+      return meta.comment
+        ? '<pre class="meta-pre meta-comment">' + esc(meta.comment) + '</pre>'
+        : '<div class="placeholder">No comment.</div>';
+    }
+    var isClassSide = col.metaSubTab === 'classMethods';
+    var selectors = isClassSide ? meta.classSelectors : meta.instanceSelectors;
+    if (!selectors.length) return '<div class="placeholder">No methods.</div>';
+    var html = '<div class="method-list">';
     for (var i = 0; i < selectors.length; i++) {
       var sel = selectors[i];
       var open = col.openSelector === sel;
@@ -496,15 +627,19 @@
         esc(sel) +
         '</div>';
       if (open) {
-        var key = col.metaSide + ':' + sel;
+        var key = metaSourceKey(col, sel);
         html +=
           '<div class="method-source-box">' +
           esc(col.methodSource[key] === undefined ? 'Loading…' : col.methodSource[key]) +
           '</div>';
       }
     }
-    html += '</div></div>';
-    withMetaScrollKept(col, pane, html);
+    return html + '</div>';
+  }
+
+  /** Which side a fetched source belongs to; a selector can exist on both. */
+  function metaSourceKey(col, selector) {
+    return (col.metaSubTab === 'classMethods' ? 'class' : 'instance') + ':' + selector;
   }
 
   /**
@@ -518,11 +653,13 @@
    * and Class is a different list, and starts at the top as it should.
    */
   function withMetaScrollKept(col, pane, html) {
-    var prev = pane.querySelector('.meta');
-    var keepTop = prev && col.metaRenderedSide === col.metaSide ? prev.scrollTop : 0;
+    // `.meta-sub-content` is the element that scrolls — `.meta` is the flex
+    // column holding the fixed heading above it.
+    var prev = pane.querySelector('.meta-sub-content');
+    var keepTop = prev && col.metaRenderedSubTab === col.metaSubTab ? prev.scrollTop : 0;
     pane.innerHTML = html;
-    col.metaRenderedSide = col.metaSide;
-    var next = pane.querySelector('.meta');
+    col.metaRenderedSubTab = col.metaSubTab;
+    var next = pane.querySelector('.meta-sub-content');
     if (next && keepTop) next.scrollTop = keepTop;
   }
 
@@ -556,6 +693,105 @@
     return platform.indexOf('Mac') === 0 ? 'Cmd+K' : 'Ctrl+K';
   }
 
+  /**
+   * The names the pane will type for you, grouped by the class that declares
+   * them.
+   *
+   * Every one of these is in scope: `allInstVarNames` is the whole chain, so an
+   * inherited instance variable is as writable here as one the class declares
+   * itself — grouping under the declaring class is what makes that visible
+   * rather than something you have to already know. The receiver comes first,
+   * on its own, because `self` is the one name that is always there.
+   *
+   * Each row carries the class of the value currently in the slot, which is the
+   * other half of what you need before sending it anything.
+   */
+  function evalVariableGroups(col) {
+    var groups = [{ owner: 'Receiver', vars: [{ name: 'self', className: selfSummary(col) }] }];
+    var rows = col.tabData.slots;
+    if (!rows) return groups;
+    // Declaration order, root class first, so the groups read down the chain
+    // however the Slots tab itself happens to be sorted.
+    var ordered = rows.slice().sort(function (a, b) {
+      return a.index - b.index;
+    });
+    for (var i = 0; i < ordered.length; i++) {
+      var owner = ordered[i].definingClass || col.className || '';
+      var group = groups[groups.length - 1];
+      if (group.owner !== owner) {
+        group = { owner: owner, vars: [] };
+        groups.push(group);
+      }
+      group.vars.push({ name: ordered[i].label, className: ordered[i].className });
+    }
+    return groups;
+  }
+
+  /**
+   * How the receiver is described beside `self`: its class, and how much of it
+   * there is.
+   *
+   * An Array or a String has no named instance variables at all, so the list
+   * would otherwise be one row saying `self` and nothing else. The size is the
+   * fact that makes the pane useful for those objects — it is what tells you
+   * that `self at: 12` is a question you can ask, and what the answer to
+   * `self size` is going to be before you ask it.
+   */
+  function selfSummary(col) {
+    var name = col.className || '';
+    var h = col.header;
+    if (!h) return name;
+    if (h.sizeUnit) return name + ' (' + countOf(h.itemCount, h.sizeUnit) + ')';
+    if (h.isDictionary && h.entryCount) return name + ' (' + countOf(h.entryCount, 'entries') + ')';
+    if (h.itemCount) return name + ' (' + countOf(h.itemCount, 'items') + ')';
+    return name;
+  }
+
+  /** `1 item` rather than `1 items`; the plural forms all just lose the s. */
+  function countOf(n, plural) {
+    return n + ' ' + (n === 1 ? plural.replace(/s$/, '') : plural);
+  }
+
+  /**
+   * Ask for the slot names the variables list is built from, once per column.
+   * Only worth doing for an object that has named instance variables.
+   */
+  function ensureEvalVariables(col) {
+    if (col.tabData.slots !== undefined) return;
+    if (!col.header || !col.header.namedSize) return;
+    if (col.evalVarsRequested) return;
+    col.evalVarsRequested = true;
+    post({ command: 'fetchTab', columnId: col.id, oop: col.oop, tab: 'slots', from: 1 });
+  }
+
+  function renderEvalVariables(col) {
+    var groups = evalVariableGroups(col);
+    var html = '<div class="eval-vars"><div class="eval-vars-list">';
+    for (var g = 0; g < groups.length; g++) {
+      html += '<div class="eval-var-owner">' + esc(groups[g].owner) + '</div>';
+      for (var v = 0; v < groups[g].vars.length; v++) {
+        var item = groups[g].vars[v];
+        html +=
+          '<div class="eval-var" data-var="' +
+          esc(item.name) +
+          '" title="' +
+          esc(item.name + (item.className ? ' \u2014 ' + item.className : '')) +
+          '. Click to insert into the expression.">' +
+          '<span class="eval-var-name">' +
+          esc(item.name) +
+          '</span>' +
+          '<span class="eval-var-class">' +
+          esc(item.className) +
+          '</span>' +
+          '<button class="eval-var-copy" data-copy-var="' +
+          esc(item.name) +
+          '" title="Copy this name">&#128203;</button>' +
+          '</div>';
+      }
+    }
+    return html + '</div></div>';
+  }
+
   function renderEval(col) {
     var pane = col.el.contentPane;
     var mod = chordLabel();
@@ -576,19 +812,33 @@
       ' I">Inspect It</button>' +
       '<span class="eval-hint">' +
       mod +
-      ' D &#183; E &#183; I &#8195; <code>self</code> is this object</span>' +
+      ' D &#183; E &#183; I</span>' +
       '</div>' +
+      '<div class="eval-body">' +
+      '<div class="eval-editor">' +
+      // The clear button sits inside the box's own top-right corner and appears
+      // only once there is something to clear — the affordance the debugger's
+      // eval bar and the list filters already use.
+      '<div class="eval-input-wrap">' +
       '<textarea class="eval-input" spellcheck="false"></textarea>' +
+      '<button class="clear-btn" data-eval-clear="1" tabindex="-1" title="Clear">&#10005;</button>' +
+      '</div>' +
       '<div class="eval-out' +
       (col.evalOut && !col.evalOut.ok ? ' error' : '') +
       '">' +
       esc(col.evalOut ? col.evalOut.text : '') +
       '</div>' +
+      '</div>' +
+      renderEvalVariables(col) +
+      '</div>' +
       '</div>';
+    ensureEvalVariables(col);
     var input = pane.querySelector('.eval-input');
     input.value = col.evalText;
+    showClearWhenTyped(col);
     input.addEventListener('input', function () {
       col.evalText = input.value;
+      showClearWhenTyped(col);
     });
     pane.querySelector('.eval').addEventListener('keydown', function (ev) {
       evalKeydown(col, ev);
@@ -641,10 +891,7 @@
   function disarmChord(col) {
     if (!col.chordArmed) return;
     col.chordArmed = false;
-    setChordHint(
-      col,
-      chordLabel() + ' D &#183; E &#183; I &#8195; <code>self</code> is this object',
-    );
+    setChordHint(col, chordLabel() + ' D &#183; E &#183; I');
   }
 
   function setChordHint(col, html) {
@@ -652,6 +899,49 @@
     if (!hint) return;
     hint.innerHTML = html;
     hint.classList.toggle('armed', !!col.chordArmed);
+  }
+
+  /**
+   * Drop a name into the expression at the caret, and keep the caret after it.
+   * Typing is the point of the list, so focus goes back to the textarea rather
+   * than staying on the name that was clicked.
+   */
+  function insertVariable(col, name) {
+    var input = col.el.contentPane.querySelector('.eval-input');
+    if (!input) return;
+    var at = input.selectionStart === null ? input.value.length : input.selectionStart;
+    var to = input.selectionEnd === null ? at : input.selectionEnd;
+    input.value = input.value.slice(0, at) + name + input.value.slice(to);
+    col.evalText = input.value;
+    var caret = at + name.length;
+    input.focus();
+    input.setSelectionRange(caret, caret);
+  }
+
+  /**
+   * Redraw only the variables list. The rest of the pane is left alone on
+   * purpose: rebuilding it would swap out the textarea under a user who may be
+   * mid-expression, taking their caret and focus with it.
+   */
+  function refreshEvalVariables(col) {
+    var vars = col.el.contentPane.querySelector('.eval-vars');
+    if (!vars) return;
+    vars.outerHTML = renderEvalVariables(col);
+  }
+
+  /** The clear button is offered only when there is an expression to clear. */
+  function showClearWhenTyped(col) {
+    var wrap = col.el.contentPane.querySelector('.eval-input-wrap');
+    if (wrap) wrap.classList.toggle('has-text', col.evalText.length > 0);
+  }
+
+  /** Empty the expression and whatever the last one answered. */
+  function clearEval(col) {
+    col.evalText = '';
+    col.evalOut = null;
+    renderEval(col);
+    var input = col.el.contentPane.querySelector('.eval-input');
+    if (input) input.focus();
   }
 
   function runEval(col, mode) {
@@ -739,8 +1029,10 @@
         navigate(col, 1);
         return;
       }
+      // Only the column's own tab bar — the Meta tab's sub-tabs are styled with
+      // the same class and would otherwise be caught here and activate nothing.
       var tab = ev.target.closest('.tab');
-      if (tab) {
+      if (tab && tab.parentElement === col.el.tabBar) {
         activateTab(col, tab.dataset.tab);
         return;
       }
@@ -773,15 +1065,20 @@
         });
         return;
       }
+      if (ev.target.closest('[data-slot-sort]')) {
+        slotSort = slotSort === 'name' ? 'definition' : 'name';
+        renderTab(col);
+        return;
+      }
       var radix = ev.target.closest('[data-radix]');
       if (radix) {
         col.bytesRadix = Number(radix.dataset.radix);
         renderTab(col);
         return;
       }
-      var side = ev.target.closest('[data-side]');
-      if (side) {
-        col.metaSide = side.dataset.side;
+      var metaTab = ev.target.closest('[data-metatab]');
+      if (metaTab) {
+        col.metaSubTab = metaTab.dataset.metatab;
         col.openSelector = null;
         renderTab(col);
         return;
@@ -789,6 +1086,20 @@
       var method = ev.target.closest('.method-item');
       if (method) {
         toggleMethod(col, method.dataset.selector);
+        return;
+      }
+      var copyVar = ev.target.closest('[data-copy-var]');
+      if (copyVar) {
+        post({ command: 'copyText', text: copyVar.dataset.copyVar, what: 'Variable name' });
+        return;
+      }
+      var useVar = ev.target.closest('[data-var]');
+      if (useVar) {
+        insertVariable(col, useVar.dataset.var);
+        return;
+      }
+      if (ev.target.closest('[data-eval-clear]')) {
+        clearEval(col);
         return;
       }
       var evalBtn = ev.target.closest('[data-eval]');
@@ -838,6 +1149,9 @@
     // double-click that opens a new column.
     document.addEventListener('keydown', function (ev) {
       if (ev.key !== 'Enter') return;
+      // Enter inside any field belongs to that field, not to the row behind it.
+      var tag = ev.target && ev.target.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
       var col = Columns.get(Columns.focusedId());
       if (!col || col.editing) return;
       var tr = col.el.contentPane.querySelector('tr.selected[data-row]');
@@ -865,7 +1179,8 @@
       return;
     }
     col.openSelector = selector;
-    var key = col.metaSide + ':' + selector;
+    var key = metaSourceKey(col, selector);
+    var isClassSide = col.metaSubTab === 'classMethods';
     renderTab(col);
     if (col.methodSource[key] === undefined) {
       post({
@@ -873,7 +1188,7 @@
         columnId: col.id,
         oop: col.oop,
         selector: selector,
-        isClassSide: col.metaSide === 'class',
+        isClassSide: isClassSide,
       });
     }
   }
@@ -940,11 +1255,17 @@
       col.loadedRows[msg.tab] = rows.length;
     }
     if (col.activeTab === msg.tab) renderTab(col);
+    // The evaluation pane builds its variables list out of the Slots rows, so
+    // a page that lands while it is open fills that list in.
+    else if (col.activeTab === 'eval' && msg.tab === 'slots') refreshEvalVariables(col);
   }
 
   // ── Init ──────────────────────────────────
 
   function init(opts) {
+    // Panel-wide display state starts at its default for each new panel. The
+    // module is loaded once per webview, so this is the panel's own slate.
+    slotSort = 'name';
     strip = opts.strip;
     ctxMenu = opts.ctxMenu;
     vscode = opts.vscode;
@@ -967,12 +1288,13 @@
           historyIndex: -1,
           evalText: '',
           evalOut: null,
-          metaSide: 'instance',
-          metaRenderedSide: null,
+          metaSubTab: 'instanceMethods',
+          metaRenderedSubTab: null,
           openSelector: null,
           methodSource: {},
           bytesRadix: 16,
           chordArmed: false,
+          evalVarsRequested: false,
           editing: null,
           editError: null,
         };

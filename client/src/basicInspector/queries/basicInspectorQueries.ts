@@ -79,6 +79,13 @@ export interface ObjectHeader {
   isDictionary: boolean;
   /** printString, capped. The full text lives on the Print tab. */
   printString: string;
+  /**
+   * What {@link itemCount} counts, for the two classes where the count is the
+   * headline fact about the object: `'characters'`, `'bytes'`, or `''`. Jadeite
+   * puts exactly this in its inspector caption, and the tabbed Inspector's
+   * editor-tab title follows it.
+   */
+  sizeUnit: string;
 }
 
 /**
@@ -97,7 +104,7 @@ const IS_DICTIONARY = `(dictCls isNil
  * the old tree's "expandable only when it has slots" rule.
  */
 export function fetchObjectHeader(execute: QueryExecutor, oop: bigint): ObjectHeader | null {
-  const code = `| obj cls dictCls out ${DUMP_PAYLOAD_TEMPS} isDict named items entries bytes |
+  const code = `| obj cls dictCls out ${DUMP_PAYLOAD_TEMPS} isDict named items entries bytes unit |
 obj := Object _objectForOop: ${oop}.
 cls := obj class.
 dictCls := Globals at: #AbstractDictionary otherwise: nil.
@@ -111,6 +118,10 @@ items := isDict
       ifTrue: [obj size]
       ifFalse: [obj _basicSize]] on: Error do: [:e | [obj _basicSize] on: Error do: [:e2 | 0]]].
 bytes := [cls isBytes] on: Error do: [:e | false].
+unit := [(obj isKindOf: CharacterCollection)
+  ifTrue: ['characters']
+  ifFalse: [(obj isKindOf: ByteArray) ifTrue: ['bytes'] ifFalse: ['']]]
+    on: Error do: [:e | ''].
 out nextPutAll: (esc value: cls name asString); nextPutAll: tab;
     nextPutAll: (esc value: (cls superclass ifNil: [''] ifNotNil: [:s | s name asString])); nextPutAll: tab;
     nextPutAll: named printString; nextPutAll: tab;
@@ -118,7 +129,8 @@ out nextPutAll: (esc value: cls name asString); nextPutAll: tab;
     nextPutAll: entries printString; nextPutAll: tab;
     nextPutAll: bytes printString; nextPutAll: tab;
     nextPutAll: isDict printString; nextPutAll: tab;
-    nextPutAll: (psOf value: obj).
+    nextPutAll: (psOf value: obj); nextPutAll: tab;
+    nextPutAll: unit.
 out contents`;
   const data = inspectorExecute(execute, code);
   if (data === null) return null;
@@ -127,7 +139,7 @@ out contents`;
 
 /** Exported for unit testing. */
 export function parseObjectHeader(data: string): ObjectHeader | null {
-  const [f] = splitDumpRows(data, 8);
+  const [f] = splitDumpRows(data, 9);
   if (!f) return null;
   return {
     className: unescapeDumpField(f[0]),
@@ -138,6 +150,7 @@ export function parseObjectHeader(data: string): ObjectHeader | null {
     isBytes: f[5] === 'true',
     isDictionary: f[6] === 'true',
     printString: unescapeDumpField(f[7]),
+    sizeUnit: f[8] === 'characters' || f[8] === 'bytes' ? f[8] : '',
   };
 }
 
@@ -166,6 +179,11 @@ export interface InspectorRow {
   /** A dictionary key's OOP, for `at:put:` on an Entries row. Absent otherwise. */
   keyOop?: string;
   /**
+   * For a Slots row, the class that declares this instance variable — which is
+   * a superclass for most of them on any real class. Absent on other tabs.
+   */
+  definingClass?: string;
+  /**
    * The user has edited this slot and its original value is still recorded, so
    * the row offers a revert. Stamped by the panel on the way out, not by the
    * query — the stone knows nothing about the edit history.
@@ -181,6 +199,52 @@ const ROW_BLOCK = `row := [:lbl :obj2 :idx |
       nextPutAll: (esc value: ([obj2 class name asString] on: Error do: [:e | '?'])); nextPutAll: tab;
       nextPutAll: idx printString; nextPut: Character lf].
 `;
+
+/**
+ * A Slots row: the shared five fields plus the class that declares the slot.
+ */
+const SLOT_ROW_BLOCK = `row := [:lbl :obj2 :idx :owner |
+  out nextPutAll: (esc value: lbl); nextPutAll: tab;
+      nextPutAll: (psOf value: obj2); nextPutAll: tab;
+      nextPutAll: obj2 asOop printString; nextPutAll: tab;
+      nextPutAll: (esc value: ([obj2 class name asString] on: Error do: [:e | '?'])); nextPutAll: tab;
+      nextPutAll: idx printString; nextPutAll: tab;
+      nextPutAll: (esc value: owner); nextPut: Character lf].
+`;
+
+/**
+ * Which class declares each instance variable, positionally.
+ *
+ * `allInstVarNames` is the root of the hierarchy first, then each subclass's
+ * own in turn — exactly the order produced by walking the chain from `Object`
+ * down and taking each class's `instVarNames`. So consuming the chain in that
+ * order assigns every name its declaring class without asking the stone
+ * anything further. The bounds check is there because a class reshaped while
+ * this runs would otherwise walk off the end.
+ */
+const SLOT_OWNERS = `owners := Array new: names size.
+1 to: names size do: [:j | owners at: j put: ''].
+chain := OrderedCollection new.
+k := [obj class] on: Error do: [:e | nil].
+[k notNil] whileTrue: [chain addFirst: k. k := [k superclass] on: Error do: [:e | nil]].
+i := 1.
+chain do: [:c |
+  ([c instVarNames] on: Error do: [:e | #()]) do: [:n |
+    i <= names size ifTrue: [owners at: i put: ([c name asString] on: Error do: [:e | '']).
+      i := i + 1]]].
+`;
+
+/** Exported for unit testing. */
+export function parseSlotRows(data: string): InspectorRow[] {
+  return splitDumpRows(data, 6).map((f) => ({
+    label: unescapeDumpField(f[0]),
+    value: unescapeDumpField(f[1]),
+    oop: f[2],
+    className: unescapeDumpField(f[3]),
+    index: parseInt(f[4], 10) || 0,
+    definingClass: unescapeDumpField(f[5]),
+  }));
+}
 
 /** Exported for unit testing. */
 export function parseRows(data: string): InspectorRow[] {
@@ -198,17 +262,18 @@ export function parseRows(data: string): InspectorRow[] {
  * than fit in one payload doesn't exist in practice.
  */
 export function fetchSlots(execute: QueryExecutor, oop: bigint): InspectorRow[] {
-  const code = `| obj out ${DUMP_PAYLOAD_TEMPS} row names |
+  const code = `| obj out ${DUMP_PAYLOAD_TEMPS} row names owners chain k i |
 obj := Object _objectForOop: ${oop}.
 out := WriteStream on: String new.
-${dumpPayloadPrelude()}${ROW_BLOCK}names := [obj class allInstVarNames] on: Error do: [:e | #()].
-1 to: names size do: [:i |
-  row value: (names at: i) asString
-      value: ([obj instVarAt: i] on: Error do: [:e | nil])
-      value: i].
+${dumpPayloadPrelude()}${SLOT_ROW_BLOCK}names := [obj class allInstVarNames] on: Error do: [:e | #()].
+${SLOT_OWNERS}1 to: names size do: [:j |
+  row value: (names at: j) asString
+      value: ([obj instVarAt: j] on: Error do: [:e | nil])
+      value: j
+      value: (owners at: j)].
 out contents`;
   const data = inspectorExecute(execute, code);
-  return data === null ? [] : parseRows(data);
+  return data === null ? [] : parseSlotRows(data);
 }
 
 /**

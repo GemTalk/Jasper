@@ -117,6 +117,7 @@ const HEADER = {
   isBytes: false,
   isDictionary: false,
   printString: 'an Account',
+  sizeUnit: '',
 };
 
 beforeEach(() => {

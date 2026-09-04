@@ -715,6 +715,9 @@ export class BasicInspector {
     table.rows tr:hover td { background: var(--vscode-list-hoverBackground); }
     table.rows tr.selected td { background: var(--vscode-list-inactiveSelectionBackground); }
     .cell-label { font-family: var(--vscode-editor-font-family); width: 30%; }
+    th.sortable { cursor: pointer; user-select: none; }
+    th.sortable:hover { color: var(--vscode-textLink-foreground); }
+    .sort-mark { margin-left: 4px; font-size: 0.85em; color: var(--vscode-descriptionForeground); }
     .cell-class { color: var(--vscode-descriptionForeground); width: 22%; }
     .cell-edited { color: var(--vscode-gitDecoration-modifiedResourceForeground, var(--vscode-charts-yellow)); }
     .revert-btn {
@@ -745,14 +748,35 @@ export class BasicInspector {
     .bytes .off { color: var(--vscode-descriptionForeground); }
     .bytes .txt { color: var(--vscode-textLink-foreground); }
     /* ── Meta ────────────────────────────────── */
-    .meta { overflow: auto; flex: 1; padding: 8px 10px; }
-    .meta h4 { font-size: 0.85em; text-transform: uppercase; letter-spacing: 0.04em; color: var(--vscode-descriptionForeground); margin: 10px 0 3px; }
-    .meta h4:first-child { margin-top: 0; }
-    .meta pre {
-      font-family: var(--vscode-editor-font-family); font-size: var(--vscode-editor-font-size);
-      white-space: pre-wrap; word-break: break-word; user-select: text;
+    /* Laid out like the Enhanced Inspector's Meta tab: a class heading, an info
+       bar of one-line facts, then sub-tabs over a single scrolling pane. Only
+       .meta-sub-content scrolls, so the heading and sub-tab bar stay put. */
+    .meta { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+    .meta-head { padding: 8px 12px 4px; flex-shrink: 0; }
+    .meta-head-label {
+      font-size: 0.75em; color: var(--vscode-descriptionForeground); margin-bottom: 2px;
     }
-    .meta-sub-bar { display: flex; gap: 4px; margin: 10px 0 4px; }
+    .meta-class-name {
+      font-family: var(--vscode-editor-font-family); font-size: 1.15em;
+      font-weight: 600; word-break: break-all;
+    }
+    .meta-info-bar {
+      padding: 2px 12px 6px; flex-shrink: 0; font-size: 0.82em;
+      color: var(--vscode-descriptionForeground);
+      border-bottom: 1px solid var(--vscode-panel-border);
+      display: flex; gap: 12px; flex-wrap: wrap; user-select: text;
+    }
+    .meta-info-bar strong { color: var(--vscode-foreground); font-weight: 600; }
+    .meta-sub-bar {
+      display: flex; flex-shrink: 0; overflow-x: auto; scrollbar-width: thin;
+      border-bottom: 1px solid var(--vscode-panel-border);
+    }
+    .meta-sub-content { flex: 1; min-height: 0; overflow: auto; padding: 6px 10px; }
+    .meta-pre {
+      font-family: var(--vscode-editor-font-family); font-size: var(--vscode-editor-font-size);
+      white-space: pre-wrap; word-break: break-word; user-select: text; margin: 0;
+    }
+    .meta-comment { font-family: var(--vscode-font-family); line-height: 1.5; }
     /* A selector list is a list of clickable rows, not a paragraph of words:
        each one gets a rule under it and a disclosure caret, so where one ends
        and the next begins is not something the eye has to work out. */
@@ -785,6 +809,58 @@ export class BasicInspector {
       border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
       padding: 4px 6px; resize: vertical; min-height: 60px;
     }
+    .eval-body { display: flex; flex: 1; min-height: 0; gap: 8px; }
+    .eval-editor { display: flex; flex-direction: column; flex: 1; min-width: 0; gap: 6px; }
+    /* The clear button sits inside the expression box's top-right corner and is
+       revealed only when there is text — matching the debugger's eval bar. */
+    .eval-input-wrap { position: relative; display: flex; flex-shrink: 0; }
+    /* Sole flex item of the wrap, so it has to be told to fill it — a bare
+       textarea would otherwise fall back to its default column width. */
+    .eval-input-wrap textarea { flex: 1; min-width: 0; padding-right: 1.6rem; }
+    .clear-btn {
+      position: absolute; right: 6px; top: 6px;
+      visibility: hidden; background: none; border: none; padding: 0 2px;
+      cursor: pointer; line-height: 1; font-size: 12px;
+      color: var(--vscode-descriptionForeground);
+    }
+    .clear-btn:hover { color: var(--vscode-foreground); }
+    .eval-input-wrap.has-text .clear-btn { visibility: visible; }
+    /* The names list fills what was dead space to the right of the expression.
+       Sized in ch so it holds a realistic identifier without crowding the
+       editor, and it gives way first when the column is narrow. */
+    .eval-vars {
+      width: 26ch; min-width: 14ch; flex-shrink: 1; display: flex; flex-direction: column;
+      border-left: 1px solid var(--vscode-panel-border); padding-left: 8px; min-height: 0;
+    }
+    .eval-vars-list { overflow: auto; flex: 1; min-height: 0; }
+    /* The declaring class of the names under it — an inherited instance
+       variable is as much in scope here as one the class declares itself, and
+       this is what says so. */
+    .eval-var-owner {
+      font-size: 0.75em; color: var(--vscode-descriptionForeground);
+      border-bottom: 1px solid var(--vscode-panel-border);
+      padding: 4px 3px 1px; margin-bottom: 2px; position: sticky; top: 0;
+      background: var(--vscode-editor-background);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .eval-var-owner:first-child { padding-top: 0; }
+    .eval-var {
+      display: flex; align-items: baseline; gap: 6px; cursor: pointer;
+      padding: 1px 3px; border-radius: 2px;
+      font-family: var(--vscode-editor-font-family); font-size: var(--vscode-editor-font-size);
+    }
+    .eval-var:hover { background: var(--vscode-list-hoverBackground); }
+    .eval-var-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .eval-var-class {
+      margin-left: auto; font-size: 0.85em; color: var(--vscode-descriptionForeground);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 1;
+    }
+    .eval-var-copy {
+      background: none; border: none; cursor: pointer; color: inherit;
+      opacity: 0; padding: 0 2px; font-size: 0.85em; flex-shrink: 0;
+    }
+    .eval-var:hover .eval-var-copy { opacity: 0.7; }
+    .eval-var-copy:hover { opacity: 1; }
     .eval-hint { font-size: 0.8em; color: var(--vscode-descriptionForeground); }
     .eval-hint.armed { color: var(--vscode-textLink-foreground); }
     .eval-out {
@@ -862,5 +938,6 @@ function unreadableHeader(): ObjectHeader {
     isBytes: false,
     isDictionary: false,
     printString: '<could not read this object>',
+    sizeUnit: '',
   };
 }

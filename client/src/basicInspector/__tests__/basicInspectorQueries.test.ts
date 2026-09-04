@@ -17,7 +17,7 @@ function executorAnswering(payload: string) {
   return vi.fn((_code: string) => payload);
 }
 
-const HEADER = ['Account', 'Object', '3', '0', '0', 'false', 'false', 'an Account'].join('\t');
+const HEADER = ['Account', 'Object', '3', '0', '0', 'false', 'false', 'an Account', ''].join('\t');
 
 describe('object header', () => {
   it('reads the class, slot counts and format flags of an object', () => {
@@ -32,14 +32,23 @@ describe('object header', () => {
       isBytes: false,
       isDictionary: false,
       printString: 'an Account',
+      sizeUnit: '',
     });
   });
 
   it('reads a dictionary as a dictionary, with its entry count', () => {
     const header = bi.parseObjectHeader(
-      ['SymbolDictionary', 'AbstractDictionary', '2', '0', '412', 'false', 'true', 'a Sym'].join(
-        '\t',
-      ),
+      [
+        'SymbolDictionary',
+        'AbstractDictionary',
+        '2',
+        '0',
+        '412',
+        'false',
+        'true',
+        'a Sym',
+        '',
+      ].join('\t'),
     );
 
     expect(header!.isDictionary).toBe(true);
@@ -53,7 +62,7 @@ describe('object header', () => {
 
   it('treats an unreadable count as zero rather than a broken tab', () => {
     const header = bi.parseObjectHeader(
-      ['Account', 'Object', 'nope', '-4', '', 'false', 'false', 'an Account'].join('\t'),
+      ['Account', 'Object', 'nope', '-4', '', 'false', 'false', 'an Account', ''].join('\t'),
     );
 
     expect(header!.namedSize).toBe(0);
@@ -63,10 +72,35 @@ describe('object header', () => {
 
   it('restores a printString that contained tabs and newlines', () => {
     const header = bi.parseObjectHeader(
-      ['Account', 'Object', '0', '0', '0', 'false', 'false', 'a\\tb\\nc\\\\d'].join('\t'),
+      ['Account', 'Object', '0', '0', '0', 'false', 'false', 'a\\tb\\nc\\\\d', ''].join('\t'),
     );
 
     expect(header!.printString).toBe('a\tb\nc\\d');
+  });
+
+  it('records what a size counts, for the classes where the count is the point', () => {
+    const str = [
+      'String',
+      'CharacterCollection',
+      '0',
+      '17',
+      '0',
+      'true',
+      'false',
+      "'hi'",
+      'characters',
+    ];
+    const bytes = ['ByteArray', 'Object', '0', '32', '0', 'true', 'false', 'a ByteArray', 'bytes'];
+
+    expect(bi.parseObjectHeader(str.join('\t'))!.sizeUnit).toBe('characters');
+    expect(bi.parseObjectHeader(bytes.join('\t'))!.sizeUnit).toBe('bytes');
+    expect(bi.parseObjectHeader(HEADER)!.sizeUnit).toBe('');
+  });
+
+  it('ignores a size unit it does not know', () => {
+    const odd = ['Account', 'Object', '0', '0', '0', 'false', 'false', 'an Account', 'furlongs'];
+
+    expect(bi.parseObjectHeader(odd.join('\t'))!.sizeUnit).toBe('');
   });
 
   it('degrades to no header when the stone refuses the query', () => {
@@ -79,6 +113,29 @@ describe('object header', () => {
 });
 
 describe('row payloads', () => {
+  it('reads a slot row with the class that declares it', () => {
+    const rows = bi.parseSlotRows('balance\t42\t1234\tSmallInteger\t2\tAccount\n');
+
+    expect(rows).toEqual([
+      {
+        label: 'balance',
+        value: '42',
+        oop: '1234',
+        className: 'SmallInteger',
+        index: 2,
+        definingClass: 'Account',
+      },
+    ]);
+  });
+
+  it('keeps an inherited slot pointing at the superclass that declares it', () => {
+    const rows = bi.parseSlotRows(
+      ['name\tx\t1\tString\t1\tObject', 'balance\t42\t2\tSmallInteger\t2\tAccount', ''].join('\n'),
+    );
+
+    expect(rows.map((r) => r.definingClass)).toEqual(['Object', 'Account']);
+  });
+
   it('reads a slot row as label, value, oop, class and write index', () => {
     const rows = bi.parseRows('balance\t42\t1234\tSmallInteger\t2\n');
 
@@ -170,6 +227,28 @@ describe('class metadata', () => {
     'meta\tnew',
     '',
   ].join('\n');
+
+  it('reads the class metadata for an object in one round trip', () => {
+    const execute = executorAnswering(META);
+
+    const meta = bi.fetchObjectMeta(execute, 100n);
+
+    expect(meta).toMatchObject({
+      className: 'Account',
+      instanceSelectors: ['balance', 'deposit:'],
+    });
+    // One doit, naming the object it is about.
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute.mock.calls[0][0]).toContain('Object _objectForOop: 100');
+  });
+
+  it('degrades to no metadata when the stone refuses the query', () => {
+    const failing = vi.fn(() => {
+      throw new Error('stone said no');
+    });
+
+    expect(bi.fetchObjectMeta(failing, 100n)).toBeNull();
+  });
 
   it('collects the class facts and both selector lists', () => {
     const meta = bi.parseObjectMeta(META);
