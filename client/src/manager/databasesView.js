@@ -619,7 +619,7 @@
           .map((l) => {
             const open = l.sessions || [];
             const head = `<div class="db-line db-login">
-                <span class="db-line-name"><span class="session-mark"></span><span class="db-login-user">${esc(l.user)}</span></span>
+                <span class="db-line-name"><span class="session-mark"></span><span class="db-login-user">${esc(l.label)}</span></span>
                 <span class="db-line-actions">${btn('editLogin', 'Edit login', 'edit', null, {
                   login: l.label,
                   iconOnly: true,
@@ -944,6 +944,58 @@
   // only way to get a database, though — Register Existing… in the panel header
   // adopts an installation from anywhere and needs nothing installed here — so the
   // empty text names both ways rather than only Install.
+  /**
+   * The logins this machine has that no database row can show.
+   *
+   * A login is drawn under the database it targets, matched by stone name — so a
+   * login to a stone Jasper has no database for (one on another host, or a stone
+   * that was never registered here) matched no row and appeared nowhere at all.
+   * It saved, it was in the settings, and the panel simply had no place to draw
+   * it, which reads as the login not having been added. Each row says what makes
+   * it different — its stone, its host and the NetLDI that reaches it — because
+   * without a database above it, the user name alone identifies nothing.
+   */
+  function renderOtherLogins(logins, open) {
+    const rows = logins
+      .map((l) => {
+        // The label names the user, stone and host, the way every login row does.
+        // The NetLDI and release follow it dimmed: with no database row above to
+        // supply them, they are all that separates two logins to the same stone.
+        const extra = [l.netldi ? `via ${l.netldi}` : '', l.version]
+          .filter((part) => part)
+          .join(' · ');
+        return `<div class="db-line db-login">
+            <span class="db-line-name"><span class="session-mark"></span><span class="db-login-user">${esc(l.label)}</span><span class="dim session-id">${esc(extra)}</span></span>
+            <span class="db-line-actions">${btn('editLogin', 'Edit login', 'edit', null, {
+              login: l.label,
+              iconOnly: true,
+            })}${btn('deleteLogin', 'Delete Login', 'trash', null, {
+              login: l.label,
+              iconOnly: true,
+              title: 'Delete Login',
+            })}${btn('connectLogin', 'Log in', null, 'btn-secondary', {
+              login: l.label,
+              title: `Log in to ${l.stone} as ${l.user}`,
+            })}</span>
+          </div>`;
+      })
+      .join('');
+    // Its own +, because the per-database one prefills from the database it sits
+    // under and there is none here — that is what puts a login in this section.
+    const add = `<button type="button" class="icon-btn" data-action="addLogin" data-tip="New login" aria-label="New login">${ICONS.plus}</button>`;
+    return section(
+      {
+        key: 'otherLogins',
+        title: 'Other Logins',
+        desc: 'not tied to a database on this machine',
+        count: logins.length,
+        actions: add,
+        open,
+      },
+      rows,
+    );
+  }
+
   function renderDatabases(databases, open, currentDir, canCreate) {
     // The database the current session works in leads the column; the others
     // follow as a list, so the pair of top columns read the same way.
@@ -1013,8 +1065,12 @@
     // yet — but Register Existing… adopts an installation from anywhere, so such a
     // machine can hold databases and no installed release at once, and burying
     // them under Versions read as the registration never having landed.
+    // A login with no local database to sit under gets its own section rather
+    // than being dropped: it is on this machine's list, so it belongs on screen.
+    const unattached = (state.logins || []).filter((l) => !l.dirName);
     return [
       { html: renderDatabases(state.databases, true, currentDir, !nothingInstalled) },
+      ...(unattached.length ? [{ html: renderOtherLogins(unattached, true) }] : []),
       { html: renderVersions(state.versions, true) },
     ];
   }

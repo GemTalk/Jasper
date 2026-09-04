@@ -503,6 +503,9 @@ describe('ProcessManager', () => {
     beforeEach(() => {
       vi.mocked(wslBridge.wslExecSync).mockReset();
       vi.mocked(wslBridge.needsWsl).mockReturnValue(false);
+      // Tests run in a shuffled order and this suite asserts on what was NOT
+      // logged, so a sibling's call must not be left lying around.
+      vi.mocked(appendSysadmin).mockClear();
     });
 
     it('reads them even though Jasper\u2019s own root has no servers of its own', () => {

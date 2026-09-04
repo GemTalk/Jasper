@@ -14,7 +14,7 @@ import { bundledWindowsClientVersions, bundledGciArchSupported } from '../bundle
 import { LoginStorage } from '../loginStorage';
 import { LoginTreeProvider } from '../loginTreeProvider';
 import { SysadminStorage } from '../sysadminStorage';
-import { DEFAULT_LOGIN, GemStoneLogin } from '../loginTypes';
+import { DEFAULT_LOGIN, GemStoneLogin, loginLabel } from '../loginTypes';
 
 function makeLogin(overrides: Partial<GemStoneLogin> = {}): GemStoneLogin {
   return { ...DEFAULT_LOGIN, label: 'Test', ...overrides };
@@ -416,6 +416,64 @@ describe('LoginEditorPanel', () => {
       });
 
       expect(saveSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  // Pressing New Login on a database that already has its DataCurator login
+  // prefills the form from that database, so every answer matches the login
+  // already stored. Saving that used to overwrite the existing login with itself:
+  // no row appeared, nothing changed, and the panel looked untouched.
+  describe('saving a new login whose identity already exists', () => {
+    it('refuses it and says why, rather than overwriting the existing one', async () => {
+      const existing = makeLogin();
+      storage.getLogins = vi.fn(() => [existing]);
+      storage.saveLogin = vi.fn(async () => {});
+      await LoginEditorPanel.show(storage, secretsArg, treeProvider, existing);
+      const panel = window.createWebviewPanel.mock.results[0].value;
+      const handler = panel.webview.onDidReceiveMessage.mock.calls[0][0];
+
+      // No originalLabel: this is the "new login" path, not an edit.
+      await handler({ command: 'save', data: { ...existing } });
+
+      expect(storage.saveLogin).not.toHaveBeenCalled();
+      expect(window.showErrorMessage).toHaveBeenCalledWith(
+        expect.stringContaining('already exists'),
+      );
+    });
+
+    it('leaves the form open on the answer that has to change', async () => {
+      const existing = makeLogin();
+      storage.getLogins = vi.fn(() => [existing]);
+      storage.saveLogin = vi.fn(async () => {});
+      await LoginEditorPanel.show(storage, secretsArg, treeProvider, existing);
+      const panel = window.createWebviewPanel.mock.results[0].value;
+      const handler = panel.webview.onDidReceiveMessage.mock.calls[0][0];
+
+      await handler({ command: 'save', data: { ...existing } });
+
+      expect(panel.dispose).not.toHaveBeenCalled();
+    });
+
+    it('still saves a new login that differs, and one being edited', async () => {
+      const existing = makeLogin();
+      storage.getLogins = vi.fn(() => [existing]);
+      storage.saveLogin = vi.fn(async () => {});
+      await LoginEditorPanel.show(storage, secretsArg, treeProvider, existing);
+      const panel = window.createWebviewPanel.mock.results[0].value;
+      const handler = panel.webview.onDidReceiveMessage.mock.calls[0][0];
+
+      // A different user is a different login.
+      await handler({ command: 'save', data: { ...existing, gs_user: 'SystemUser' } });
+      expect(storage.saveLogin).toHaveBeenCalled();
+
+      // ...and an edit carries the original label, so the clash is itself.
+      vi.mocked(storage.saveLogin).mockClear();
+      await handler({
+        command: 'save',
+        data: { ...existing },
+        originalLabel: loginLabel(existing),
+      });
+      expect(storage.saveLogin).toHaveBeenCalled();
     });
   });
 

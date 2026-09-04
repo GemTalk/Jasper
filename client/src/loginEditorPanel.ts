@@ -177,6 +177,26 @@ export class LoginEditorPanel {
 
     data.label = loginLabel(data);
 
+    // A login is identified by its user, stone and host, so a *new* one whose
+    // label already exists is that same login again. `saveLogin` reads a matching
+    // label as the row being edited and replaces it — which for a new login means
+    // the existing one is silently overwritten, no row is added, and the panel
+    // looks exactly as it did before the Save. That is what pressing New Login on
+    // a database that already has its DataCurator login did every time: the form
+    // is prefilled from the database, so its answers match the login already
+    // there unless something is changed by hand. Refused with the reason, and the
+    // form left open on the answer that has to change.
+    if (!originalLabel) {
+      const clash = this.storage.getLogins().find((l) => loginLabel(l) === data.label);
+      if (clash) {
+        vscode.window.showErrorMessage(
+          `A login "${data.label}" already exists. Change the GemStone user, stone or host to ` +
+            `add a different login, or edit the existing one.`,
+        );
+        return;
+      }
+    }
+
     if (data.password_in_keychain) {
       // Store the password in SecretStorage and strip it from the settings
       // object before we persist.

@@ -176,6 +176,10 @@ interface LoginTarget {
   user: string;
   stone: string;
   version: string;
+  /** Where the stone is, and the NetLDI that reaches it. Shown for a login with
+   *  no local database, which has no row of its own to say either. */
+  host: string;
+  netldi: string;
   /** The local database this login targets, when there is one. */
   dirName?: string;
   /** Whether that database's stone is up — a login to a stopped stone will fail. */
@@ -279,6 +283,7 @@ type Inbound =
   | { command: 'openDbFile'; dirName: string; path: string }
   | { command: 'revealDbFile'; dirName: string; path: string }
   | { command: 'createLoginFromDb'; dirName: string }
+  | { command: 'addLogin' }
   | { command: 'connectLogin'; login: string }
   | { command: 'logoutSession'; sessionId: number }
   | { command: 'sessionAction'; sessionId: number; action: string }
@@ -715,6 +720,12 @@ export class DatabasesPanel {
         return;
       case 'createLoginFromDb':
         await this.runDbCommand('gemstone.createLoginFromDb', msg.dirName, 'database', false);
+        return;
+      // The Other Logins section's own +. Not `createLoginFromDb`: there is no
+      // database to prefill from — that is what puts a login in this section —
+      // so it opens the same blank editor the Logins & Sessions tree does.
+      case 'addLogin':
+        await vscode.commands.executeCommand('gemstone.addLogin');
         return;
       case 'connectLogin':
         await this.connectLogin(msg.login);
@@ -1478,6 +1489,8 @@ export class DatabasesPanel {
         user: l.gs_user,
         stone: l.stone,
         version: l.version,
+        host: l.gem_host,
+        netldi: l.netldi,
         dirName: db?.dirName,
         // A login can name a stone this machine did not make here — one built by
         // hand, or the stone a container brought up. Whether it is up is the

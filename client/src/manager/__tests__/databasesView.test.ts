@@ -206,6 +206,67 @@ describe('when the host says an action failed', () => {
   });
 });
 
+describe('a login with no database of its own', () => {
+  // Logins are drawn under the database they target, matched by stone name, so a
+  // login to a stone this machine has no database for matched no row and was
+  // shown nowhere — it had saved, it was in the settings, and the panel simply
+  // had no place to put it.
+  function remoteLogin(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      label: 'DataCurator on gs64stone (berlin)',
+      user: 'DataCurator',
+      stone: 'gs64stone',
+      version: '3.7.5.1',
+      host: 'berlin',
+      netldi: '50377',
+      running: false,
+      connected: false,
+      current: false,
+      ...overrides,
+    };
+  }
+
+  it('is shown, rather than dropped for want of a row to sit under', () => {
+    mount(state({ databases: [database()], logins: [remoteLogin()] }));
+    const other = root.querySelector('details.section[data-section="otherLogins"]');
+    expect(other).not.toBeNull();
+    expect(other?.textContent).toContain('DataCurator');
+  });
+
+  it('says what makes it different, since no database above it does', () => {
+    mount(state({ databases: [database()], logins: [remoteLogin()] }));
+    const text = root.querySelector('details.section[data-section="otherLogins"]')?.textContent;
+    // The label carries user, stone and host; the NetLDI and release follow it,
+    // because no database row above supplies them here.
+    expect(text).toContain('DataCurator on gs64stone (berlin)');
+    expect(text).toContain('50377');
+    expect(text).toContain('3.7.5.1');
+  });
+
+  it('offers the same actions the per-database rows do', () => {
+    mount(state({ databases: [database()], logins: [remoteLogin()] }));
+    const other = root.querySelector('details.section[data-section="otherLogins"]');
+    for (const action of ['editLogin', 'deleteLogin', 'connectLogin']) {
+      expect(other?.querySelector(`[data-action="${action}"]`)).not.toBeNull();
+    }
+  });
+
+  it('offers its own New Login, since the per-database one prefills from a database', () => {
+    mount(state({ databases: [database()], logins: [remoteLogin()] }));
+    const add = root.querySelector(
+      'details.section[data-section="otherLogins"] [data-action="addLogin"]',
+    );
+    expect(add).not.toBeNull();
+    add?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(host.postMessage).toHaveBeenCalledWith(expect.objectContaining({ command: 'addLogin' }));
+  });
+
+  it('stays absent when every login already has a database', () => {
+    mount(state({ databases: [database()], logins: [remoteLogin({ dirName: 'db-1' })] }));
+    expect(root.querySelector('details.section[data-section="otherLogins"]')).toBeNull();
+  });
+});
+
 describe('what the header says this machine has', () => {
   // The header said "No GemStone release on this machine yet" whenever nothing
   // was installed — denying the registered database listed directly beneath it,
@@ -563,7 +624,7 @@ describe('a login row', () => {
         database({
           logins: [
             {
-              label: 'DataCurator on gs64stone',
+              label: 'DataCurator on gs64stone (localhost)',
               user: 'DataCurator',
               stone: 'gs64stone',
               host: 'localhost',
@@ -575,6 +636,14 @@ describe('a login row', () => {
       ],
     });
   }
+
+  // The row used to print the GemStone user alone, which says nothing about which
+  // login it is once a database has more than one, and nothing at all in a list.
+  it('is named by its full label — user, stone and host', () => {
+    mount(withLogin({}));
+    const row = root.querySelector('.db-login .db-login-user');
+    expect(row?.textContent).toBe('DataCurator on gs64stone (localhost)');
+  });
 
   it('offers Log in and shows no session row while none is open', () => {
     mount(withLogin({}));
