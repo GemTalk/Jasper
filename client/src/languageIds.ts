@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { parseMethodUri, parseUri } from './gemstoneFileSystemProvider';
+import { MethodUriRef, parseMethodUri, parseUri } from './gemstoneFileSystemProvider';
 
 /**
  * The language ids Jasper assigns to the documents it opens, and the rule that
@@ -25,6 +25,10 @@ import { parseMethodUri, parseUri } from './gemstoneFileSystemProvider';
  * grammar, the `editor/context` `when` clauses, the language client's document
  * selector and the per-language editor defaults all name the pair. The split is
  * about where a breakpoint may be offered, and nothing else.
+ *
+ * One other registration does follow it, because it wanted this line all along:
+ * the Refactor… code actions, which every RB command refuses outside a compiled
+ * method anyway (see the registration in client/src/extension.ts).
  */
 
 /** Smalltalk that is not the source of a compiled method: a workspace, a `.gst` file, the debugger's read-only source. */
@@ -37,37 +41,48 @@ export const METHOD_LANGUAGE = 'gemstone-method';
 export const CLASS_COMMENT_LANGUAGE = 'gemstone-class-comment';
 
 /**
- * The two halves of the breakpoint split: the languages Jasper's *own* editors —
- * a method, a workspace, a `.gst` file, a notebook cell, the debugger's
- * read-only source — are given.
+ * The languages Jasper has ever contributed a breakpoint gutter for: the two
+ * halves of the split, `gemstone-smalltalk` and `gemstone-method`.
  *
- * Not every GemStone document: a Topaz `.gs` file and a Tonel `.st` file are
- * GemStone Smalltalk source too, and are deliberately out. This set exists to
- * answer "did a breakpoint here come from an offer of ours?", and the gutter has
- * only ever been contributed for the ids listed here — so those are the only
- * ones there is anything of ours to take back. A breakpoint on a Topaz or Tonel
- * file came from somewhere else and is left where it is.
+ * Not "the Smalltalk languages", and deliberately not every GemStone document: a
+ * Topaz `.gs` file and a Tonel `.st` file are GemStone Smalltalk source too, and
+ * are out. The question this answers is narrower than the family — "did a
+ * breakpoint here come from an offer of *ours*?" — and only the ids listed here
+ * have ever been offered one, so those are the only ones there is anything of
+ * ours to take back. A breakpoint on a Topaz or Tonel file came from somewhere
+ * else and is left where it is.
+ *
+ * `gemstone-smalltalk` stays on the list after the split because the gutter was
+ * offered for it until this release, so a breakpoint VS Code restores from
+ * before it is still ours to withdraw.
  */
-export const SMALLTALK_LANGUAGES = [SMALLTALK_LANGUAGE, METHOD_LANGUAGE] as const;
+export const BREAKPOINT_GUTTER_LANGUAGES = [SMALLTALK_LANGUAGE, METHOD_LANGUAGE] as const;
 
 /**
- * Whether `uri` is the source of a compiled method — the one document a GemStone
- * breakpoint can be armed on.
+ * The source of a compiled method behind `uri` — the one document a GemStone
+ * breakpoint can be armed on — or null for anything else.
  *
- * Deliberately the same test `BreakpointManager.applyToUri` makes before it
- * touches the gem: a saved, compiled method (`parseUri` kind `method`) that is
- * not an override *diff view*. Everything else behind the scheme has no compiled
- * method to hold a step point — a class definition, a `new-method` template that
- * has never been compiled, a `new-class` template — and the read-only diff view
- * shows two versions of a method at once, so a line in it does not name one.
+ * A saved, compiled method (`parseUri` kind `method`) that is not an override
+ * *diff view*. Everything else behind the scheme has no compiled method to hold
+ * a step point — a class definition, a `new-method` template that has never been
+ * compiled, a `new-class` template — and the read-only diff view shows two
+ * versions of a method at once, so a line in it does not name one.
  *
- * Both the language a document is given and the refusal that backstops it are
- * derived from this, so the gutter is offered exactly where a breakpoint can be
- * armed and the two can't drift apart.
+ * This is the single statement of that rule. Both the language a document is
+ * given and `BreakpointManager.applyToUri`, the refusal that backstops it, are
+ * derived from this one function — `applyToUri` needs the parsed method itself,
+ * which is why the rule answers with it rather than a boolean — so the gutter is
+ * offered exactly where a breakpoint can be armed, and there is no second copy
+ * of the predicate to drift from this one.
  */
-export function isMethodSourceUri(uri: vscode.Uri): boolean {
+export function methodSourceRef(uri: vscode.Uri): MethodUriRef | null {
   const method = parseMethodUri(uri); // null unless scheme is gemstone and kind is 'method'
-  return method !== null && !method.diffView;
+  return method !== null && !method.diffView ? method : null;
+}
+
+/** Whether `uri` is the source of a compiled method (see methodSourceRef). */
+export function isMethodSourceUri(uri: vscode.Uri): boolean {
+  return methodSourceRef(uri) !== null;
 }
 
 /**

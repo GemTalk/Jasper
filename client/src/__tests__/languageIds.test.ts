@@ -4,12 +4,13 @@ vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
 import { Uri } from '../__mocks__/vscode';
 import {
+  BREAKPOINT_GUTTER_LANGUAGES,
   CLASS_COMMENT_LANGUAGE,
   METHOD_LANGUAGE,
   SMALLTALK_LANGUAGE,
-  SMALLTALK_LANGUAGES,
   gemstoneDocumentLanguage,
   isMethodSourceUri,
+  methodSourceRef,
 } from '../languageIds';
 
 const METHOD = 'gemstone://1/Globals/Array/instance/accessing/at%3A';
@@ -85,11 +86,55 @@ describe('isMethodSourceUri', () => {
   });
 });
 
-describe('SMALLTALK_LANGUAGES', () => {
+// The ids are a published contract, not an internal name: package.json's
+// `contributes.breakpoints`, its language and grammar contributions, the
+// `editor/context` `when` clauses and the keybindings all spell them out
+// literally, and a user's own settings.json can scope to them. This is the one
+// place the literal is written on the code's side — everywhere else, in source
+// and in tests alike, uses the constants, so a rename that forgot the manifest
+// fails here rather than shipping an id nothing is declared for.
+describe('the ids themselves', () => {
+  it("are the strings the manifest and users' settings name", () => {
+    expect({
+      smalltalk: SMALLTALK_LANGUAGE,
+      method: METHOD_LANGUAGE,
+      comment: CLASS_COMMENT_LANGUAGE,
+    }).toEqual({
+      smalltalk: 'gemstone-smalltalk',
+      method: 'gemstone-method',
+      comment: 'gemstone-class-comment',
+    });
+  });
+});
+
+describe('methodSourceRef', () => {
+  it('answers the parsed method, which is what applyToUri needs of it', () => {
+    // isMethodSourceUri is this same rule read as a yes/no. It answers with the
+    // method so `BreakpointManager.applyToUri` — which needs the class, selector
+    // and environment right after asking — can share the predicate instead of
+    // open-coding a second copy that is free to drift from it.
+    expect(methodSourceRef(Uri.parse(METHOD))).toMatchObject({
+      className: 'Array',
+      selector: 'at:',
+      isMeta: false,
+    });
+  });
+
+  it.each([
+    ['a read-only override diff view', DIFF_VIEW],
+    ['a class definition', DEFINITION],
+    ['an uncompiled new-method template', NEW_METHOD],
+    ['a workspace', 'untitled:Workspace'],
+  ])('answers null for %s, so applyToUri and the gutter refuse it alike', (_what, uri) => {
+    expect(methodSourceRef(Uri.parse(uri))).toBeNull();
+  });
+});
+
+describe('BREAKPOINT_GUTTER_LANGUAGES', () => {
   it('is exactly the two ids the breakpoint gutter has ever been offered for', () => {
     // Used to decide whether a stray breakpoint came from an offer of OURS, so it
     // must cover both halves of the split and nothing else.
-    expect([...SMALLTALK_LANGUAGES]).toEqual([SMALLTALK_LANGUAGE, METHOD_LANGUAGE]);
+    expect([...BREAKPOINT_GUTTER_LANGUAGES]).toEqual([SMALLTALK_LANGUAGE, METHOD_LANGUAGE]);
   });
 
   it('leaves out the GemStone languages that were never offered a gutter', () => {
@@ -97,8 +142,8 @@ describe('SMALLTALK_LANGUAGES', () => {
     // GemStone Smalltalk source, but no gutter was ever contributed for them, so
     // a breakpoint on one did not come from Jasper and must not be taken back.
     const others = [CLASS_COMMENT_LANGUAGE, 'gemstone-topaz', 'gemstone-tonel'];
-    expect(others.filter((id) => (SMALLTALK_LANGUAGES as readonly string[]).includes(id))).toEqual(
-      [],
-    );
+    expect(
+      others.filter((id) => (BREAKPOINT_GUTTER_LANGUAGES as readonly string[]).includes(id)),
+    ).toEqual([]);
   });
 });

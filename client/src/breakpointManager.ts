@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { SessionManager, ActiveSession } from './sessionManager';
 import { parseMethodUri } from './gemstoneFileSystemProvider';
-import { SMALLTALK_LANGUAGES, isMethodSourceUri } from './languageIds';
+import { BREAKPOINT_GUTTER_LANGUAGES, isMethodSourceUri, methodSourceRef } from './languageIds';
 import * as queries from './browserQueries';
 import { GemStoneBreakpoint } from './browserQueries';
 import { FunctionBreakpointResolver } from './functionBreakpoints';
@@ -183,8 +183,12 @@ export class BreakpointManager {
     uri: vscode.Uri,
     requests?: { line: number; character?: number; enabled: boolean }[],
   ): VerifiedBreakpoint[] {
-    const method = parseMethodUri(uri);
-    if (!method || method.diffView) {
+    // The one statement of "a breakpoint can be armed here" (see
+    // client/src/languageIds.ts), shared with the rule that decides which
+    // documents are given the language the gutter is offered for — so the offer
+    // and what can honour it cannot disagree.
+    const method = methodSourceRef(uri);
+    if (!method) {
       return (requests ?? []).map(() => ({ stepPoint: 0, actualLine: 0, verified: false }));
     }
 
@@ -1118,11 +1122,11 @@ const NOT_A_METHOD_REFUSAL =
  * `applyToUri` can arm anything (see isMethodSourceUri, which this shares with
  * the rule that decides which documents are offered a gutter at all).
  *
- * "Ours" is read from the language (see SMALLTALK_LANGUAGES), so it covers a
- * workspace, a `.gst` file, a notebook cell and the debugger's read-only source
- * alike, and it covers the `gemstone://` documents that are Smalltalk but have
- * no compiled method behind them — a class definition, an uncompiled
- * `new-method` template, an override diff view. It also still catches a
+ * "Ours" is read from the language (see BREAKPOINT_GUTTER_LANGUAGES), so it
+ * covers a workspace, a `.gst` file, a notebook cell and the debugger's
+ * read-only source alike, and it covers the `gemstone://` documents that are
+ * Smalltalk but have no compiled method behind them — a class definition, an
+ * uncompiled `new-method` template, an override diff view. It also still catches a
  * breakpoint VS Code restores from before the language split, when the gutter
  * was offered in all of those. A Topaz `.gs` or Tonel `.st` file is a GemStone
  * document but was never offered a gutter, so a breakpoint there is not ours to
@@ -1134,7 +1138,7 @@ function inviteWeCannotHonour(uri: vscode.Uri): boolean {
 
   const uriStr = uri.toString();
   const open = vscode.workspace.textDocuments.find((d) => d.uri.toString() === uriStr);
-  if (open) return (SMALLTALK_LANGUAGES as readonly string[]).includes(open.languageId);
+  if (open) return (BREAKPOINT_GUTTER_LANGUAGES as readonly string[]).includes(open.languageId);
 
   // Restored across a restart, before its editor is opened.
   return uri.path.endsWith('.gst');
