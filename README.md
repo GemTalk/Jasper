@@ -74,15 +74,17 @@ Versions live in the **Databases & Versions** panel, opened with **Manage Databa
 - **Show in Finder** — open the product directory
 - **Open Terminal** — a terminal with that version's GemStone environment set up
 
-The panel header carries **Install Version…**, which lists the releases you do not yet have, and **Register Local…**, which points Jasper at a GemStone tree you built yourself.
+The panel header carries **Install Version…**, which lists the releases you do not yet have. A release you already have elsewhere needs no button: put the product tree (or a symlink to it) in your GemStone root and it is listed like any other, and a stone that already runs from such a tree is brought in with **Register Existing…** instead, which records where it really lives.
 
 On Windows, an **Install Windows Client** row action fetches the native client distribution for connecting to remote GemStone servers.
 
 ### Database Management
 
-The **Databases** view shows all databases under your GemStone root directory (configurable via `gemstone.rootPath`, default `~/Documents/GemStone`). Click **New Database** in its title bar to open the **Databases & Versions** panel on a form asking for the GemStone release, the base extent, a stone name and a NetLDI name — all on screen at once, with the names already in use listed beside the fields that have to avoid them. Nothing is lost if you leave VS Code to look something up. A database is made by copying an installed release, so on a machine that has none the panel opens on its Versions list instead and says so, with **Install Version…** and **Register Local…** waiting there.
+The **Databases** view shows all databases under your GemStone root directory (configurable via `gemstone.rootPath`, default `~/Documents/GemStone`). Click **New Database** in its title bar to open the **Databases & Versions** panel on a form asking for the GemStone release, the base extent, a stone name and a NetLDI name — all on screen at once, with the names already in use listed beside the fields that have to avoid them. Nothing is lost if you leave VS Code to look something up. A database is made by copying an installed release, so on a machine that has none the panel opens on the lists instead and says so, with **Install Version…** waiting in the Versions section below. You do not need one to adopt a database that already exists: **Register Existing…** in the panel header works on a machine with nothing installed.
 
 The extension creates the full directory structure (`conf/`, `data/`, `log/`, `stat/`), writes configuration files (`system.conf`, `gem.conf`, stone config), copies the key file and base extent, and writes `database.yaml`.
+
+A database that already exists — someone else's stone, or one from another checkout — is added with **Register Existing…** in the same panel instead. It asks for the installation's product directory, reads the GemStone release from that tree's own `version.txt`, and takes the stone and NetLDI names its servers were started under (plus the NetLDI's port, which is what a login for it addresses: a NetLDI name only resolves through `/etc/services`). A registered database lists, starts, stops and gets a login like any other, but Jasper writes nothing inside the installation — only a `database.yaml` in its own directory — so **Delete Database** is disabled on it and **Unregister Database** removes just Jasper's record. The same distinction holds in the sidebar, where a registered row offers Unregister rather than Delete, and neither **Replace Extent** nor the extent backups, which reach for files the installation owns. On Windows the product directory has to be one inside WSL (a `\\wsl$\<distro>\…` path in the folder dialog) — GemStone has no Windows build, so a tree on the Windows side is refused with that reason.
 
 Each database node expands to show:
 
@@ -277,9 +279,11 @@ the thing it was set in goes away:
   the only place one can be set. Not a workspace, not a `.gst` file, and not an
   **Executed Code** (doit) frame in the call stack — a doit's method is compiled
   for that one execution and gone afterwards, so a breakpoint on it could never
-  be hit again. VS Code offers its gutter per *language*, which is the same for
-  all four, so a breakpoint set in the wrong one is taken back out with a message
-  saying where it belongs
+  be hit again. The gutter is simply not offered in those, so there is nothing to
+  click and nothing to refuse. (Turning on VS Code's own
+  `debug.allowBreakpointsEverywhere` puts the gutter back everywhere; a
+  breakpoint set that way is taken back out with a message saying where it
+  belongs.)
 - **Unsaved edits hold a method's breakpoints as they are.** Step point numbers
   come from the compiled method, and VS Code moves its breakpoints as you type,
   so while an editor is dirty the two describe different code. No new breakpoint

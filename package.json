@@ -57,6 +57,9 @@
       "[gemstone-smalltalk]": {
         "editor.minimap.enabled": false
       },
+      "[gemstone-method]": {
+        "editor.minimap.enabled": false
+      },
       "[gemstone-class-comment]": {
         "editor.wordWrap": "on",
         "editor.minimap.enabled": false
@@ -101,6 +104,13 @@
         "configuration": "./language-configuration.json"
       },
       {
+        "id": "gemstone-method",
+        "aliases": [
+          "GemStone Method"
+        ],
+        "configuration": "./language-configuration.json"
+      },
+      {
         "id": "gemstone-class-comment",
         "aliases": [
           "GemStone Class Comment"
@@ -132,6 +142,11 @@
         "language": "gemstone-smalltalk",
         "scopeName": "source.gemstone-smalltalk",
         "path": "./syntaxes/gemstone-smalltalk.tmLanguage.json"
+      },
+      {
+        "language": "gemstone-method",
+        "scopeName": "source.gemstone-method",
+        "path": "./syntaxes/gemstone-method.tmLanguage.json"
       },
       {
         "language": "ston",
@@ -1182,7 +1197,7 @@
       },
       {
         "command": "gemstone.search.refresh",
-        "title": "Refresh GemStone Search",
+        "title": "Refresh GemStone Search from the Stone",
         "category": "GemStone",
         "icon": "$(refresh)"
       },
@@ -1830,12 +1845,6 @@
         "icon": "$(split-horizontal)"
       },
       {
-        "command": "gemstone.registerLocalVersion",
-        "title": "Register Local Version…",
-        "category": "GemStone Admin",
-        "icon": "$(add)"
-      },
-      {
         "command": "gemstone.quickSetup",
         "title": "Quick Setup",
         "category": "GemStone"
@@ -1899,6 +1908,12 @@
         "title": "Delete Database",
         "category": "GemStone Admin",
         "icon": "$(trash)"
+      },
+      {
+        "command": "gemstone.unregisterDatabase",
+        "title": "Unregister Database",
+        "category": "GemStone Admin",
+        "icon": "$(circle-slash)"
       },
       {
         "command": "gemstone.refreshDatabases",
@@ -2972,7 +2987,7 @@
         },
         {
           "command": "gemstone.startStone",
-          "when": "view == gemstoneDatabases && viewItem == gemstoneDbStoneStopped",
+          "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDbStoneStopped(Registered)?$/",
           "group": "inline@2"
         },
         {
@@ -2982,57 +2997,61 @@
         },
         {
           "command": "gemstone.stopStone",
-          "when": "view == gemstoneDatabases && viewItem == gemstoneDbStoneRunning",
+          "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDbStoneRunning(Registered)?$/",
           "group": "inline@2"
         },
         {
           "command": "gemstone.startNetldi",
-          "when": "view == gemstoneDatabases && viewItem == gemstoneDbNetldiStopped",
+          "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDbNetldiStopped(Registered)?$/",
           "group": "inline@1"
         },
         {
           "command": "gemstone.stopNetldi",
-          "when": "view == gemstoneDatabases && viewItem == gemstoneDbNetldiRunning",
+          "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDbNetldiRunning(Registered)?$/",
           "group": "inline@1"
         },
         {
           "command": "gemstone.restartExternalServers",
-          "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDb(Stone|Netldi)External$/",
+          "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDb(Stone|Netldi)External(Registered)?$/",
           "group": "inline@1"
         },
         {
           "command": "gemstone.restartExternalServers",
-          "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDb(Stone|Netldi)External$/",
+          "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDb(Stone|Netldi)External(Registered)?$/",
           "group": "navigation@1"
         },
         {
           "command": "gemstone.startDatabase",
-          "when": "view == gemstoneDatabases && viewItem == gemstoneDbStopped",
+          "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDbStopped(Registered)?$/",
           "group": "inline@1"
         },
         {
           "command": "gemstone.stopDatabase",
-          "when": "view == gemstoneDatabases && viewItem == gemstoneDbRunning",
+          "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDbRunning(Registered)?$/",
           "group": "inline@1"
         },
         {
           "command": "gemstone.openDbInFinder",
-          "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDb(Running|Stopped|External)$/",
+          "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDb(Running|Stopped|External)(Registered)?$/",
           "group": "inline@2"
         },
         {
           "command": "gemstone.openDbTerminal",
-          "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDb(Running|Stopped|External)$/",
+          "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDb(Running|Stopped|External)(Registered)?$/",
           "group": "inline@3"
         },
         {
           "command": "gemstone.createLoginFromDb",
-          "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDb(Running|Stopped|External)$/",
+          "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDb(Running|Stopped|External)(Registered)?$/",
           "group": "inline@4"
         },
         {
           "command": "gemstone.deleteDatabase",
           "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDb(Running|Stopped|External)$/"
+        },
+        {
+          "command": "gemstone.unregisterDatabase",
+          "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDb(Running|Stopped|External)Registered$/"
         }
       ],
       "editor/title": [
@@ -3050,62 +3069,62 @@
       "editor/context": [
         {
           "command": "gemstone.displayIt",
-          "when": "editorTextFocus && resourceLangId == gemstone-smalltalk && !gemstone.executing",
+          "when": "editorTextFocus && (resourceLangId == gemstone-smalltalk || resourceLangId == gemstone-method) && !gemstone.executing",
           "group": "1_gemstone@0"
         },
         {
           "command": "gemstone.inspectIt",
-          "when": "editorTextFocus && resourceLangId == gemstone-smalltalk && !gemstone.executing",
+          "when": "editorTextFocus && (resourceLangId == gemstone-smalltalk || resourceLangId == gemstone-method) && !gemstone.executing",
           "group": "1_gemstone@1"
         },
         {
           "command": "gemstone.executeIt",
-          "when": "editorTextFocus && resourceLangId == gemstone-smalltalk && !gemstone.executing",
+          "when": "editorTextFocus && (resourceLangId == gemstone-smalltalk || resourceLangId == gemstone-method) && !gemstone.executing",
           "group": "1_gemstone@3"
         },
         {
           "command": "gemstone.debugIt",
-          "when": "editorTextFocus && resourceLangId == gemstone-smalltalk && !gemstone.executing",
+          "when": "editorTextFocus && (resourceLangId == gemstone-smalltalk || resourceLangId == gemstone-method) && !gemstone.executing",
           "group": "1_gemstone@4"
         },
         {
           "command": "gemstone.runInNewGem",
-          "when": "editorTextFocus && resourceLangId == gemstone-smalltalk && !gemstone.executing",
+          "when": "editorTextFocus && (resourceLangId == gemstone-smalltalk || resourceLangId == gemstone-method) && !gemstone.executing",
           "group": "1_gemstone@5"
         },
         {
           "command": "gemstone.sendersOf",
-          "when": "editorTextFocus && resourceLangId == gemstone-smalltalk",
+          "when": "editorTextFocus && (resourceLangId == gemstone-smalltalk || resourceLangId == gemstone-method)",
           "group": "2_navigation@0"
         },
         {
           "command": "gemstone.implementorsOf",
-          "when": "editorTextFocus && resourceLangId == gemstone-smalltalk",
+          "when": "editorTextFocus && (resourceLangId == gemstone-smalltalk || resourceLangId == gemstone-method)",
           "group": "2_navigation@1"
         },
         {
           "command": "gemstone.breakpoints.toggleAtCursor",
-          "when": "editorTextFocus && resourceLangId == gemstone-smalltalk",
+          "when": "editorTextFocus && resourceLangId == gemstone-method",
           "group": "3_gemstoneBreakpoints@0"
         },
         {
           "command": "gemstone.breakpoints.enableAtCursor",
-          "when": "editorTextFocus && resourceLangId == gemstone-smalltalk",
+          "when": "editorTextFocus && resourceLangId == gemstone-method",
           "group": "3_gemstoneBreakpoints@1"
         },
         {
           "command": "gemstone.breakpoints.disableAtCursor",
-          "when": "editorTextFocus && resourceLangId == gemstone-smalltalk",
+          "when": "editorTextFocus && resourceLangId == gemstone-method",
           "group": "3_gemstoneBreakpoints@2"
         },
         {
           "command": "gemstone.breakpoints.clearMethod",
-          "when": "editorTextFocus && resourceLangId == gemstone-smalltalk",
+          "when": "editorTextFocus && resourceLangId == gemstone-method",
           "group": "3_gemstoneBreakpoints@3"
         },
         {
           "command": "gemstone.breakpoints.toggleStepPoints",
-          "when": "editorTextFocus && resourceLangId == gemstone-smalltalk",
+          "when": "editorTextFocus && resourceLangId == gemstone-method",
           "group": "3_gemstoneBreakpoints@4"
         }
       ]
@@ -3116,6 +3135,7 @@
         "label": "GemStone",
         "languages": [
           "gemstone-smalltalk",
+          "gemstone-method",
           "gemstone-topaz",
           "gemstone-tonel"
         ],
@@ -3145,14 +3165,14 @@
     ],
     "breakpoints": [
       {
-        "language": "gemstone-smalltalk"
+        "language": "gemstone-method"
       }
     ],
     "keybindings": [
       {
         "command": "gemstone.breakpoints.toggleAtCursor",
         "key": "shift+f9",
-        "when": "editorTextFocus && resourceScheme == gemstone && gemstone.hasActiveSession"
+        "when": "editorTextFocus && resourceLangId == gemstone-method && gemstone.hasActiveSession"
       },
       {
         "command": "gemstone.explorer.openSelectedMethodToSide",
