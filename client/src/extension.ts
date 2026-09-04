@@ -102,8 +102,8 @@ import {
   closeGemstoneTabsForSession,
   installStaleGemstoneTabReaper,
   parseMethodUri,
-  parseUri,
 } from './gemstoneFileSystemProvider';
+import { METHOD_LANGUAGE, SMALLTALK_LANGUAGE, gemstoneDocumentLanguage } from './languageIds';
 import { openWorkspace } from './workspace';
 import { registerStartHere, StartHereStatusBar, resetStartHere } from './startHere';
 import { openTutorialNotebook } from './tutorialNotebook';
@@ -116,7 +116,10 @@ import { extractMethodCommand } from './refactoring/extractMethodCommand';
 import { inlineMethodCommand } from './refactoring/inlineMethodCommand';
 import { extractTemporaryCommand } from './refactoring/extractTemporaryCommand';
 import { inlineTemporaryCommand } from './refactoring/inlineTemporaryCommand';
-import { RefactorCodeActionProvider } from './refactoring/renameRefactorCodeActions';
+import {
+  REFACTOR_CODE_ACTION_SELECTOR,
+  RefactorCodeActionProvider,
+} from './refactoring/renameRefactorCodeActions';
 import { GemStoneWorkspaceSymbolProvider } from './gemstoneSymbolProvider';
 import { GemStoneDefinitionProvider } from './gemstoneDefinitionProvider';
 import { GemStoneHoverProvider } from './gemstoneHoverProvider';
@@ -133,7 +136,7 @@ import { ExportManager } from './exportManager';
 import { FileInManager } from './fileInManager';
 import { showTranscript, getTranscriptChannel } from './transcriptChannel';
 import { getGciLog } from './gciLog';
-import { GemStoneCodeLensProvider } from './gemstoneCodeLensProvider';
+import { CODE_LENS_SELECTORS, GemStoneCodeLensProvider } from './gemstoneCodeLensProvider';
 import * as queries from './browserQueries';
 import { dedupeMethodResults } from './queries/methodSearch';
 import { SysadminStorage } from './sysadminStorage';
@@ -656,7 +659,8 @@ export function activate(context: vscode.ExtensionContext) {
     documentSelector: [
       { scheme: 'file', language: 'gemstone-topaz' },
       { scheme: 'file', language: 'gemstone-tonel' },
-      { scheme: 'gemstone', language: 'gemstone-smalltalk' },
+      { scheme: 'gemstone', language: SMALLTALK_LANGUAGE },
+      { scheme: 'gemstone', language: METHOD_LANGUAGE },
     ],
     synchronize: {
       configurationSection: 'gemstoneSmalltalk',
@@ -819,19 +823,12 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.workspace.onDidOpenTextDocument((doc) => {
       if (doc.uri.scheme !== 'gemstone') return;
-      // A class comment is prose, not code: give it its own language so it word-
-      // wraps (see configurationDefaults) and isn't syntax-highlighted as Smalltalk.
-      // Everything else gemstone:// is source.
-      let isComment = false;
-      try {
-        isComment = parseUri(doc.uri).kind === 'comment';
-      } catch {
-        /* unrecognized URI — treat as source */
-      }
-      vscode.languages.setTextDocumentLanguage(
-        doc,
-        isComment ? 'gemstone-class-comment' : 'gemstone-smalltalk',
-      );
+      // Three languages behind one scheme: a class comment is prose, so it gets
+      // gemstone-class-comment and word-wraps (see configurationDefaults); the
+      // source of a compiled method gets gemstone-method, the one language
+      // `contributes.breakpoints` names; everything else is plain Smalltalk
+      // source. See gemstoneDocumentLanguage for the rule and why it exists.
+      vscode.languages.setTextDocumentLanguage(doc, gemstoneDocumentLanguage(doc.uri));
     }),
   );
 
@@ -854,9 +851,10 @@ export function activate(context: vscode.ExtensionContext) {
 
   // ── GCI-backed providers (Definition + Hover + Completion) ─
   const providerSelectors: vscode.DocumentFilter[] = [
-    { scheme: 'gemstone', language: 'gemstone-smalltalk' },
-    { scheme: 'untitled', language: 'gemstone-smalltalk' },
-    { scheme: 'file', language: 'gemstone-smalltalk' },
+    { scheme: 'gemstone', language: SMALLTALK_LANGUAGE },
+    { scheme: 'gemstone', language: METHOD_LANGUAGE },
+    { scheme: 'untitled', language: SMALLTALK_LANGUAGE },
+    { scheme: 'file', language: SMALLTALK_LANGUAGE },
     { scheme: 'file', language: 'gemstone-topaz' },
     { scheme: 'file', language: 'gemstone-tonel' },
   ];
@@ -871,30 +869,17 @@ export function activate(context: vscode.ExtensionContext) {
   const hoverProvider = new GemStoneHoverProvider(sessionManager, selectorResolver);
   const completionProvider = new GemStoneCompletionProvider(sessionManager);
   const codeLensProvider = new GemStoneCodeLensProvider(sessionManager);
-  // The senders/implementors CodeLens must attach on a gemstone:// method the
-  // instant it opens. A gemstone doc's language is assigned asynchronously
-  // (onDidOpenTextDocument → setTextDocumentLanguage), so gating the lens on
-  // `language: gemstone-smalltalk` (as providerSelectors does) delays it past the
-  // first paint on a document's first open — the lens then pops in and shoves the
-  // code down. Match on scheme alone so it's present from the first render;
-  // provideCodeLenses returns nothing for non-method gemstone docs anyway.
-  const codeLensSelectors: vscode.DocumentFilter[] = [
-    { scheme: 'gemstone' },
-    { scheme: 'untitled', language: 'gemstone-smalltalk' },
-    { scheme: 'file', language: 'gemstone-smalltalk' },
-    { scheme: 'file', language: 'gemstone-topaz' },
-    { scheme: 'file', language: 'gemstone-tonel' },
-  ];
   context.subscriptions.push(
     vscode.languages.registerDefinitionProvider(providerSelectors, definitionProvider),
     vscode.languages.registerHoverProvider(providerSelectors, hoverProvider),
     vscode.languages.registerCompletionItemProvider(providerSelectors, completionProvider),
-    vscode.languages.registerCodeLensProvider(codeLensSelectors, codeLensProvider),
+    vscode.languages.registerCodeLensProvider(CODE_LENS_SELECTORS, codeLensProvider),
     codeLensProvider, // dispose() cancels pending count lookups + releases the emitter
-    // Hosts "Rename Temporary/Argument…" under the native "Refactor…" menu in a
-    // saved (scheme:gemstone) method editor.
+    // Hosts the RB family under the native "Refactor…" menu in a saved
+    // (scheme:gemstone) method editor — and there alone; see
+    // REFACTOR_CODE_ACTION_SELECTOR for why that is narrower than it was.
     vscode.languages.registerCodeActionsProvider(
-      { scheme: 'gemstone', language: 'gemstone-smalltalk' },
+      REFACTOR_CODE_ACTION_SELECTOR,
       new RefactorCodeActionProvider(
         () => sessionManager.getSelectedSession()?.rbSupportAvailable === true,
       ),
@@ -1072,10 +1057,9 @@ export function activate(context: vscode.ExtensionContext) {
   // where the user's eyes already are during a connect. It is separate from the
   // right-hand Active Session item, which stays the calm persistent state.
   //   • connecting: a spinner while the attempt (which may start the stone) runs.
-  //   • success: the spinner is cleared, the GemStone Explorer is revealed, and a
-  //     green ✅ banner flashes at the top of it for a few seconds (see the
-  //     explorer's showConnectedBanner). The status bar cannot render green, and a
-  //     webview flash was far too large — the banner is unobtrusive and theme-safe.
+  //   • success: the spinner is simply cleared. The connected stone is already
+  //     named in the right-hand Active Session item, so a second, temporary
+  //     announcement of the same fact was noise.
   //   • failure: the item turns red and becomes a click-through to the failure
   //     reason, since the toast that first reported it may already be gone. It
   //     persists until the next attempt.
@@ -1105,14 +1089,14 @@ export function activate(context: vscode.ExtensionContext) {
     connectStatusItem.show();
   }
 
-  function flashConnected(stone: string): void {
+  function onConnected(): void {
     lastLoginError = undefined;
     connectStatusItem.hide();
-    // Deliberately does not switch the sidebar to the Explorer. Logging in is
-    // not a statement about what you want to look at next — it threw away
-    // whatever you were reading, and a user logging in from the Databases
-    // section watched the section they were working in disappear.
-    explorer.showConnectedBanner(stone);
+    // Deliberately does not switch the sidebar to the Explorer, or announce the
+    // connection anywhere of its own. Logging in is not a statement about what
+    // you want to look at next — it threw away whatever you were reading, and a
+    // user logging in from the Databases section watched the section they were
+    // working in disappear. The Active Session item already names the stone.
     startHereStatusBar.showForConnection();
   }
 
@@ -1842,7 +1826,7 @@ export function activate(context: vscode.ExtensionContext) {
         } finally {
           treeProvider.setConnecting(item.login, false);
           // The connect-status item is not cleared here: the outcome code below
-          // (flashConnected / showLoginError) sets its final connected/failed state.
+          // (onConnected / showLoginError) sets its final connected/failed state.
         }
 
         // Undefined when the login failed and the recovery flow could not (or
@@ -1860,7 +1844,7 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showInformationMessage(
           `Connected to ${login.stone} (${session.stoneVersion}) on ${login.gem_host} as ${login.gs_user}`,
         );
-        flashConnected(login.stone);
+        onConnected();
         // eslint-disable-next-line @typescript-eslint/no-floating-promises -- FIXME: unhandled floating promise; needs investigation to decide await vs. void vs. .catch before this rule is enabled repo-wide
         exportManager.exportSession(session, true);
         // We no longer auto-open a workspace on every connect (it left a dirty,
@@ -1870,7 +1854,7 @@ export function activate(context: vscode.ExtensionContext) {
         // user connects rather than after. The workspace stays available via the
         // gemstone.openWorkspace command and the Logins & Sessions welcome view.
 
-        // The "Start Here" status-bar button (shown from flashConnected above) points
+        // The "Start Here" status-bar button (shown from onConnected above) points
         // a new user at the basics; see StartHereStatusBar (issue #468).
 
         // Offer the optional server-side supports this stone lacks (Enhanced

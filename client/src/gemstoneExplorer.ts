@@ -16,6 +16,7 @@ import {
   tabInputUri,
 } from './gemstoneFileSystemProvider';
 import type { ParsedUri } from './gemstoneFileSystemProvider';
+import { gemstoneDocumentLanguage } from './languageIds';
 import { filterMatches } from './explorerFilter';
 import {
   parseMethodFilter,
@@ -4073,8 +4074,13 @@ export class ExplorerController {
     // and that post-show flip re-tokenizes and re-queries CodeLens, which makes the
     // senders/implementors lens pop in and shove the source down on each new
     // method. Setting it up front keeps the doc stable when it's shown.
-    if (doc.languageId !== 'gemstone-smalltalk') {
-      await vscode.languages.setTextDocumentLanguage(doc, 'gemstone-smalltalk');
+    //
+    // Asking gemstoneDocumentLanguage rather than naming a language outright is
+    // what makes this safe: it is the same rule onDidOpenTextDocument applies, so
+    // the two cannot disagree and re-flip the document between them.
+    const language = gemstoneDocumentLanguage(uri);
+    if (doc.languageId !== language) {
+      await vscode.languages.setTextDocumentLanguage(doc, language);
     }
     // Single-click opens a preview tab and a double-click promotes it to a
     // permanent one (focus stays in the tree so type-to-filter / arrow-nav keep
@@ -6265,9 +6271,6 @@ export interface ExplorerHandle {
   onMethodCompiled(sessionId: number, className: string): void;
   onClassCompiled(sessionId: number, className: string, dictName?: string): void;
   onSessionAborted(sessionId: number): void;
-  /** Flash a green ✅ connection-success banner atop the Dictionaries view for a
-   * few seconds (called after a successful login). */
-  showConnectedBanner(stone: string): void;
   /** Claim an about-to-happen open so it navigates the panes; see
    *  ExplorerController.markAttributedOpen. */
   markAttributedOpen(uri: vscode.Uri): void;
@@ -6988,30 +6991,11 @@ export function registerGemStoneExplorer(
     ivarHighlightDecoration,
   );
 
-  // A green connection-success banner at the top of the Dictionaries view, shown
-  // briefly after a login. The ✅ emoji renders green in every theme (including
-  // High Contrast), and TreeView.message sits above the tree without stealing space
-  // or focus — unlike a status-bar color (which can't be green) or a webview panel
-  // (which is far too large for a transient flash).
-  const CONNECTED_BANNER_MS = 5000;
-  let connectedBannerTimer: ReturnType<typeof setTimeout> | undefined;
-  function showConnectedBanner(stone: string): void {
-    if (connectedBannerTimer) clearTimeout(connectedBannerTimer);
-    const message = `✅ Connected to ${stone}`;
-    dictView.message = message;
-    connectedBannerTimer = setTimeout(() => {
-      connectedBannerTimer = undefined;
-      // Only clear our own banner — a newer message (or another connect) wins.
-      if (dictView.message === message) dictView.message = undefined;
-    }, CONNECTED_BANNER_MS);
-  }
-
   return {
     onMethodCompiled: (sessionId, className) => ctl.onExternalMethodCompiled(sessionId, className),
     onClassCompiled: (sessionId, className, dictName) =>
       ctl.onExternalClassCompiled(sessionId, className, dictName),
     onSessionAborted: (sessionId) => ctl.onSessionAborted(sessionId),
-    showConnectedBanner,
     markAttributedOpen: (uri) => ctl.markAttributedOpen(uri),
     clearAttributedOpen: (uri) => ctl.clearAttributedOpen(uri),
     revealDocument: (uri) => ctl.revealDocument(uri),
