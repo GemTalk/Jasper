@@ -8,6 +8,9 @@ vi.mock('child_process', () => ({
   execSync: vi.fn(),
   spawn: vi.fn(),
   exec: vi.fn(),
+  // `wslExec` passes its script to wsl.exe as argv rather than inside a quoted
+  // command line, so the module promisifies execFile as well as exec.
+  execFile: vi.fn(),
 }));
 
 import * as fs from 'fs';

@@ -93,6 +93,7 @@ Each database node expands to show:
 
 Inline buttons on each database provide:
 
+- **Start** / **Stop** — bring the database's Stone and NetLDI up or down together, in one click; a running database offers Stop and a stopped one Start. It leaves alone whichever of the two is already in the state you asked for, so it can also finish a half-started database, and it stops if the stone does not change state — cancelling the stone's password prompt cancels the whole thing rather than taking the NetLDI down anyway. Not offered when one of the servers is **Running outside Jasper** (see below) — Jasper cannot stop that server, and starting the other half beside it would only collide with it. Also in the Command Palette as **GemStone Admin: Start Database** / **Stop Database**, which asks which database.
 - **Reveal in Finder** — open the database directory
 - **Open Terminal** — launch a terminal with all GemStone environment variables pre-configured
 - **Create Login** — generate a login pre-filled with the database's connection details

@@ -56,3 +56,72 @@ describe('running stone row inline button order', () => {
     expect(onRunningStone).toBe(true);
   });
 });
+
+describe('database row whole-database action', () => {
+  // The Databases & Versions panel puts one Start/Stop on a database's summary
+  // row; the sidebar's database rows offer the same thing. Which of the two a
+  // row gets comes entirely from its context value, so pin both directions and
+  // the case that gets neither.
+  const whenFor = (command: string) =>
+    itemContext.filter((m) => m.command === command).map((m) => m.when ?? '');
+
+  // What a database row with this context value actually shows: its `when`
+  // clauses name the value either outright or through a regex, and a row sees
+  // both kinds at once.
+  function inlineOrderForViewItem(viewItem: string): string[] {
+    const applies = (when: string) => {
+      const literal = /viewItem == ([A-Za-z]+)/.exec(when);
+      if (literal) return literal[1] === viewItem;
+      const pattern = /viewItem =~ \/(.+?)\//.exec(when);
+      return pattern ? new RegExp(pattern[1]).test(viewItem) : false;
+    };
+    return itemContext
+      .filter((m) => m.group?.startsWith('inline') && applies(m.when ?? ''))
+      .sort((a, b) => inlineRank(a.group!) - inlineRank(b.group!))
+      .map((m) => m.command);
+  }
+
+  it('offers Start on a stopped database and Stop on a running one', () => {
+    expect(whenFor('gemstone.startDatabase')).toEqual([
+      'view == gemstoneDatabases && viewItem == gemstoneDbStopped',
+    ]);
+    expect(whenFor('gemstone.stopDatabase')).toEqual([
+      'view == gemstoneDatabases && viewItem == gemstoneDbRunning',
+    ]);
+  });
+
+  it('leads the database row, ahead of the tools that only open things', () => {
+    expect(inlineOrderForViewItem('gemstoneDbStopped')).toEqual([
+      'gemstone.startDatabase',
+      'gemstone.openDbInFinder',
+      'gemstone.openDbTerminal',
+      'gemstone.createLoginFromDb',
+    ]);
+    expect(inlineOrderForViewItem('gemstoneDbRunning')).toEqual([
+      'gemstone.stopDatabase',
+      'gemstone.openDbInFinder',
+      'gemstone.openDbTerminal',
+      'gemstone.createLoginFromDb',
+    ]);
+  });
+
+  it('withholds both from a database running outside Jasper', () => {
+    // Jasper cannot control those servers — but the row keeps everything that
+    // does not try to.
+    expect(inlineOrderForViewItem('gemstoneDbExternal')).toEqual([
+      'gemstone.openDbInFinder',
+      'gemstone.openDbTerminal',
+      'gemstone.createLoginFromDb',
+    ]);
+  });
+
+  it('keeps the per-server actions on the Stone and NetLDI rows', () => {
+    // The whole-database control adds to those rows, it does not replace them.
+    expect(inlineOrderFor('viewItem == gemstoneDbStoneStopped')).toEqual([
+      'gemstone.replaceExtent',
+      'gemstone.startStone',
+    ]);
+    expect(inlineOrderFor('viewItem == gemstoneDbNetldiStopped')).toEqual(['gemstone.startNetldi']);
+    expect(inlineOrderFor('viewItem == gemstoneDbNetldiRunning')).toEqual(['gemstone.stopNetldi']);
+  });
+});

@@ -1021,6 +1021,33 @@ describe('what a server button looks like', () => {
   });
 });
 
+describe('the whole-database power control', () => {
+  it('offers Start on a stopped database and Stop on a running one', () => {
+    mount(state({ databases: [database()] }));
+    expect(root.querySelector('[data-action="startDatabase"]')).not.toBeNull();
+    expect(root.querySelector('[data-action="stopDatabase"]')).toBeNull();
+
+    mount(state({ databases: [database({ stoneRunning: true })] }));
+    expect(root.querySelector('[data-action="stopDatabase"]')).not.toBeNull();
+    expect(root.querySelector('[data-action="startDatabase"]')).toBeNull();
+  });
+
+  it('withholds it from a database with a server started outside Jasper', () => {
+    // Jasper cannot stop that server, and starting the other half beside it
+    // would only collide with it — the same reason the per-server rows withhold
+    // their own toggles, so the two must not disagree.
+    mount(
+      state({
+        databases: [database({ external: [{ type: 'stone', pid: 9001 }] })],
+      }),
+    );
+
+    expect(root.querySelector('[data-action="startDatabase"]')).toBeNull();
+    expect(root.querySelector('[data-action="stopDatabase"]')).toBeNull();
+    expect(root.querySelector('[data-action="startStone"]')).toBeNull();
+  });
+});
+
 describe('hover explanations', () => {
   function hover(el: Element): void {
     el.dispatchEvent(new Event('pointerover', { bubbles: true }));
