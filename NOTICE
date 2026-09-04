@@ -11,5 +11,19 @@ This product includes vendored third-party software:
   License: https://github.com/pharo-project/pharo/blob/v12.0.0/LICENSE
   Location in this repo: gs-src/refactoring/vendor/rowanv3-ast/.
 
+- The Enhanced Inspector server-side payload -- feenk's GToolkit remote
+  inspector (GT4GemStone, RemotePhlow, wire encoding) plus the libraries it
+  needs on the stone (RemoteServiceReplication, Announcements, STON). MIT
+  License, across six upstream repositories:
+  Copyright (c) 2021 feenk -- https://github.com/feenkcom/gt4gemstone
+  Copyright (c) 2019 Juraj Kubelka -- https://github.com/feenkcom/gtoolkit-remote
+  Copyright (c) 2024 feenk -- https://github.com/feenkcom/gtoolkit-wireencoding
+  Copyright (c) 2017-2024 GemTalk Systems -- https://github.com/GemTalk/RemoteServiceReplication
+  Copyright (c) 2020-2021 GemTalk Systems -- https://github.com/GemTalk/Announcements
+  Copyright (C) 2012 Sven Van Caekenberghe -- https://github.com/svenvc/ston
+  Copyright (c) 2018 Dale Henrichs -- https://github.com/GemTalk/Rowan
+    (the GemStone port of STON, platforms/gemstone/projects/STON/)
+  Location in this repo: resources/enhancedInspector/*.gs.
+
 See THIRD-PARTY.md for full attribution, license texts, and the list of
 modifications.

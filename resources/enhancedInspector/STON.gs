@@ -1,8 +1,12 @@
 ! Jasper Enhanced Inspector vendored source
 ! ----------------------------------------------------------------------------
-! Origin : https://github.com/feenkcom/gt4gemstone
-! Source : src-gs/STON.gs
-! License: MIT - Copyright (c) feenk gmbh. See LICENSE in the origin repository.
+! Origin  : https://github.com/feenkcom/gt4gemstone
+! Source  : src-gs/STON.gs
+! Upstream: https://github.com/svenvc/ston (GemStone port: GemTalk/Rowan)
+! License : MIT - Copyright (C) 2012 Sven Van Caekenberghe
+!           MIT - Copyright (c) 2018 Dale Henrichs (Rowan port)
+!           Full MIT notice and permission text: THIRD-PARTY.md and
+!           NOTICE at the root of https://github.com/GemTalk/Jasper
 !
 ! Vendored into Jasper and filed into the stone by the Enhanced Inspector
 ! installer. DO NOT EDIT BY HAND - regenerated from upstream by

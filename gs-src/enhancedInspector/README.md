@@ -21,6 +21,12 @@ re-applies Jasper's post-processing (attribution headers, class placement into
 [`resources/enhancedInspector/`](../../resources/enhancedInspector/) — commit the regenerated
 `.gs` files there alongside any upstream bump.
 
+Because all seven payload files are third-party source, `apply_jasper_transforms.sh` also owns
+their attribution headers: it regenerates each header from the table at the bottom of that script,
+replacing any header a previous run wrote. Keep that table, the repo-root
+[`THIRD-PARTY.md`](../../THIRD-PARTY.md) section, and [`NOTICE`](../../NOTICE) in agreement — the
+copyright lines in all three are quoted from each upstream project's own `LICENSE`.
+
 ## Regenerating
 
 ```sh
