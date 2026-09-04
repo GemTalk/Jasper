@@ -332,7 +332,7 @@ describe('tools', () => {
       });
 
       const code = vi.mocked(session.executeFetchString).mock.calls[0][0];
-      expect(code).toBe("(Object subclass: 'Foo' inDictionary: 'Globals') name");
+      expect(code).toContain("(Object subclass: 'Foo' inDictionary: 'Globals')");
       expect(result.content[0].text).toBe('Class: Foo');
     });
   });

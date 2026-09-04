@@ -69,11 +69,23 @@ describe('compileMethod', () => {
 });
 
 describe('compileClassDefinition', () => {
-  it('wraps source in `(source) name` so the result is the class name as a String', () => {
+  it('answers the class name as a String, since the result must be a byte object', () => {
     const execute = vi.fn<QueryExecutor>(() => 'Foo');
     const result = compileClassDefinition(execute, "Object subclass: 'Foo'");
     expect(result).toBe('Foo');
-    expect(execute.mock.calls[0][0]).toBe("(Object subclass: 'Foo') name");
+    const code = execute.mock.calls[0][0];
+    expect(code).toContain("(Object subclass: 'Foo')");
+    expect(code.trimEnd().endsWith('cls name')).toBe(true);
+  });
+
+  it('drops the cached ClassOrganizer in the same doit, since the class set changed', () => {
+    // A reused organizer captured its class list when it was built, so it cannot
+    // see a class added afterwards. Clearing here rather than from the caller keeps
+    // the invalidation attached to the mutation.
+    const execute = vi.fn<QueryExecutor>(() => 'Foo');
+    compileClassDefinition(execute, "Object subclass: 'Foo'");
+    expect(execute.mock.calls[0][0]).toContain('JasperClassOrganizer_');
+    expect(execute).toHaveBeenCalledTimes(1);
   });
 });
 

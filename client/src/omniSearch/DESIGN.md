@@ -77,7 +77,7 @@ Global "search anything browsable" for the GemStone IDE — the Jasper answer to
      | A class removed (Explorer → Remove Class) | `notifyClassRemoved` → `applyChange`, fired **once per class** because the delete takes the subtree | re-fetch per name; the lookup comes back empty and the entry drops |
      | Dictionary add / remove / rename | `onSymbolListChanged` → `notifySessionSynced` | full `resync` |
      | Commit / abort / file-in | `notifySessionSynced` | full `resync`, deferred while hidden |
-     | The user presses ⟳ / runs `gemstone.search.refresh` | `refresh` | full reload + the references list; deferred only while the docked panel is collapsed |
+     | The user presses ⟳ / runs `gemstone.search.refresh` | `refresh` | the session's cached `ClassOrganizer` is dropped first, then a full reload + the references list; deferred only while the docked panel is collapsed |
 
      Everything else — a global created by evaluating code, a class or method compiled by a workspace
      doit, a class removed by another session — announces nothing this panel can listen for, so short of
@@ -85,7 +85,11 @@ Global "search anything browsable" for the GemStone IDE — the Jasper answer to
      upper bound, which is why the **⟳ refresh** exists: it is the user's way to close it on demand,
      without inventing a polling scheme or making every doit fire a corpus reload
      ([#517](https://github.com/GemTalk/Jasper/issues/517)). It clears any deferred sync rather than
-     paying for both. Pressing ⟳ in the chrome is never deferred — the click proves someone is looking —
+     paying for both, and it drops the session's cached `ClassOrganizer` (see
+     `queries/classOrganizer.ts`) before reloading anything: Source, Literals and the
+     senders/references pivot all run through that organizer, whose class list is a snapshot taken
+     once per session. Commit, abort and Jasper's own class compile drop it too; a class created by
+     executing `subclass:` in a workspace does neither, which is exactly the gap the ⟳ closes. Pressing ⟳ in the chrome is never deferred — the click proves someone is looking —
      but running the command while the docked panel is COLLAPSED is: its view is disposed, so the reload
      would pay three image-wide executes to post results to nobody. That request is remembered
      (`refreshPending`) and paid on the next reveal, so the panel you come back to is the fresh one you
@@ -443,7 +447,11 @@ Revisit only if the corpus grows by an order of magnitude AND the matcher shows 
   removals fold per class, dictionary changes and commit/abort re-scan), so a class created after the
   UI opened DOES appear now. Still stale until the next commit/abort `resync`: a **global created by
   evaluating code** (nothing announces a new global), a **brand-new class category** when the
-  Class Categories scope is already loaded, and anything changed by **another session**.
+  Class Categories scope is already loaded, and anything changed by **another session**. Clearing on
+  every workspace execution is deliberately NOT the answer — most doits create nothing searchable, and
+  paying a corpus reload plus a `ClassOrganizer` rebuild for all of them gives back exactly what the
+  per-session organizer bought. The ⟳ is the answer, and its tooltip now names this case so a stale
+  search reads as "press the button", not as "the search is broken".
 - Extra providers / scopes: **dedicated Symbols scope**, **method-categories scope**,
   senders/implementors, commands, settings.
 - **Double-tap-Shift** trigger.

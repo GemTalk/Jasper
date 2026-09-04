@@ -18,6 +18,7 @@ import {
   GemStoneLogin,
   buildDataCuratorLogin,
   loginLabel,
+  loginNetldiTarget,
   loginTargetKey,
   sameLoginTarget,
 } from './loginTypes';
@@ -138,12 +139,18 @@ import { getGciLog } from './gciLog';
 import { CODE_LENS_SELECTORS, GemStoneCodeLensProvider } from './gemstoneCodeLensProvider';
 import * as queries from './browserQueries';
 import { dedupeMethodResults } from './queries/methodSearch';
+import { clearClassOrganizerCode } from './queries/classOrganizer';
 import { SysadminStorage } from './sysadminStorage';
 import { appendSysadmin, getSysadminChannel } from './sysadminChannel';
 import { VersionManager } from './manager/versionManager';
 import { VersionTarget, ProcessTarget, GemStoneDatabase } from './sysadminTypes';
 import { DatabasesPanel } from './manager/databasesPanel';
 import { DatabaseManager } from './manager/databaseManager';
+import {
+  isRegisteredDatabase,
+  registeredPaths,
+  registeredRefusal,
+} from './manager/registeredDatabase';
 import { DatabaseTreeProvider, DatabaseNode } from './manager/databaseTreeProvider';
 import {
   bringUpDatabase,
@@ -186,7 +193,6 @@ import {
 } from './wslBridge';
 import {
   wslExistsSync,
-  wslSymlinkSync,
   wslMkdirSync,
   wslImportFileSync,
   wslReaddirSync,
@@ -1300,6 +1306,26 @@ export function activate(context: vscode.ExtensionContext) {
     return showMethodResultsFor(session.id, results, title);
   }
 
+  /**
+   * Drop the session's cached `ClassOrganizer` after a commit or abort.
+   *
+   * The organizer captures the image's class list once and is then reused for
+   * the life of the session (see `classOrganizer.ts`), which is what keeps
+   * Search, senders, implementors and references off a per-query image-wide
+   * rebuild. A sync is where a class list can change without Jasper having
+   * compiled anything — another session added or removed a class and committed
+   * — so the snapshot is dropped here rather than left to answer about an image
+   * that no longer exists. Best effort: it costs one removeKey, and a session
+   * that cannot run it has bigger problems than a stale search.
+   */
+  const clearClassOrganizer = (session: ActiveSession): void => {
+    try {
+      queries.executeFetchString(session, clearClassOrganizerCode());
+    } catch {
+      // Nothing to report: the next query simply reuses the organizer it had.
+    }
+  };
+
   // Commit / Abort a session, with the same confirmations and post-action
   // refreshes whether invoked from the Sessions tree (a session item) or the
   // GemStone Explorer toolbar (the currently selected session).
@@ -1319,7 +1345,10 @@ export function activate(context: vscode.ExtensionContext) {
         await exportManager.refreshSession(session);
         SystemBrowser.refresh(session.id);
         // A sync can surface classes/globals/dicts added elsewhere (incl. other sessions) — rebuild
-        // an open GemStone Search's cached corpora so they show up.
+        // an open GemStone Search's cached corpora so they show up, and drop the
+        // cached ClassOrganizer whose class list they would otherwise be searched
+        // against.
+        clearClassOrganizer(session);
         omniSearch?.notifySessionSynced(session.id);
       } else {
         vscode.window.showErrorMessage(
@@ -1352,7 +1381,9 @@ export function activate(context: vscode.ExtensionContext) {
         await exportManager.refreshSession(session);
         SystemBrowser.refresh(session.id);
         // An abort can pull in classes/globals/dicts from other sessions — rebuild an open GemStone
-        // Search's cached corpora so they show up.
+        // Search's cached corpora so they show up, and drop the cached
+        // ClassOrganizer for the same reason the commit does.
+        clearClassOrganizer(session);
         omniSearch?.notifySessionSynced(session.id);
         explorer.onSessionAborted(session.id);
       } else {
@@ -3769,6 +3800,24 @@ export function activate(context: vscode.ExtensionContext) {
   /** What a whole-database start or stop reads and calls. The per-server
    *  commands do the work, so this is only the running-state lookup and a way
    *  to invoke one of them. */
+  /**
+   * Refuse a start or stop when the server running under this database's name
+   * is a different GemStone version than the database records — and say which
+   * two versions those are.
+   *
+   * Placed on the commands rather than in each view, so the panel's power
+   * button, the Databases sidebar's rows and the Command Palette all decline
+   * for the same reason with the same words. Starting would collide with a live
+   * stone; stopping would aim one version's binaries at another version's live
+   * extent.
+   */
+  function refusedForVersionMismatch(db: GemStoneDatabase, type: 'stone' | 'netldi'): boolean {
+    const refusal = processManager.versionMismatchRefusal(db, type);
+    if (!refusal) return false;
+    vscode.window.showErrorMessage(refusal);
+    return true;
+  }
+
   function databaseLifecycleDeps() {
     return {
       isStoneRunning: (name: string, version: string) =>
@@ -3950,53 +3999,6 @@ export function activate(context: vscode.ExtensionContext) {
       refreshVersions();
     }),
 
-    vscode.commands.registerCommand('gemstone.registerLocalVersion', async () => {
-      const uris = await vscode.window.showOpenDialog({
-        canSelectFiles: false,
-        canSelectFolders: true,
-        canSelectMany: false,
-        openLabel: 'Select GemStone Product Directory',
-      });
-      if (!uris || uris.length === 0) return;
-      const productPath = uris[0].fsPath;
-      const info = SysadminStorage.readVersionTxt(productPath);
-      if (!info) {
-        vscode.window.showErrorMessage('No valid version.txt found in the selected directory.');
-        return;
-      }
-      const suffix = sysadminStorage.getPlatformSuffix();
-      const linkName = `GemStone64Bit${info.version}${suffix}`;
-      const linkPath = path.join(sysadminStorage.getRootPath(), linkName);
-      if (wslExistsSync(linkPath)) {
-        // Something already occupies the target location. If it's already a
-        // valid GemStone product tree — a real directory the user dropped in,
-        // or a prior symlink — there's nothing to do: it's recognized on its
-        // own, so report success rather than failing to create a symlink over
-        // it.
-        if (SysadminStorage.readVersionTxt(linkPath)) {
-          sysadminStorage.invalidateExtractedCache();
-          appendSysadmin(`Local version already present: ${info.version} → ${linkPath}`);
-          vscode.window.showInformationMessage(
-            `GemStone ${info.version} is already present in ${sysadminStorage.getRootPath()}.`,
-          );
-          refreshVersions();
-          return;
-        }
-        vscode.window.showErrorMessage(
-          `Version ${info.version} already exists in ${sysadminStorage.getRootPath()}.`,
-        );
-        return;
-      }
-      sysadminStorage.ensureRootPath();
-      wslSymlinkSync(productPath, linkPath);
-      sysadminStorage.invalidateExtractedCache();
-      appendSysadmin(`Registered local version: ${info.version} → ${productPath}`);
-      vscode.window.showInformationMessage(
-        `Registered local GemStone ${info.version} (${info.description || 'local build'}).`,
-      );
-      refreshVersions();
-    }),
-
     vscode.commands.registerCommand(
       'gemstone.unregisterLocalVersion',
       async (item: VersionTarget) => {
@@ -4102,6 +4104,16 @@ export function activate(context: vscode.ExtensionContext) {
       }
     }),
 
+    // The counterpart of Delete for a registered database: there is nothing of
+    // Jasper's to delete but the record, and nothing of the installation's that
+    // Jasper should. Delete itself refuses a registered database and points here.
+    vscode.commands.registerCommand('gemstone.unregisterDatabase', async (node: DatabaseNode) => {
+      if (node?.kind !== 'database') return;
+      if (await databaseManager.unregisterDatabase(node.db)) {
+        refreshAdminViews();
+      }
+    }),
+
     vscode.commands.registerCommand('gemstone.refreshDatabases', () => {
       refreshAdminViews();
     }),
@@ -4138,6 +4150,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     vscode.commands.registerCommand('gemstone.startStone', async (node: DatabaseNode) => {
       if (node?.kind !== 'stone') return;
+      if (refusedForVersionMismatch(node.db, 'stone')) return;
       if (!(await ensureStonePreconditions())) return;
       try {
         await processManager.startStone(node.db);
@@ -4170,6 +4183,7 @@ export function activate(context: vscode.ExtensionContext) {
       // the flag's one declaration doing the work rather than restating it.
       async (node: DatabaseNode | ServerTarget) => {
         if (node?.kind !== 'stone') return;
+        if (refusedForVersionMismatch(node.db, 'stone')) return;
         const db = node.db;
         const stoneName = db.config.stoneName;
 
@@ -4189,7 +4203,10 @@ export function activate(context: vscode.ExtensionContext) {
           gem_host: 'localhost',
           stone: stoneName,
           gs_user: 'DataCurator',
-          netldi: db.config.ldiName,
+          // The same NetLDI spelling `buildDataCuratorLogin` uses, so the login
+          // Jasper created for this database is the one found here — a
+          // registered database's login addresses its NetLDI by port.
+          netldi: loginNetldiTarget(db.config),
         };
         const adminLogin = storage.getLogins().find((l) => sameLoginTarget(l, target));
 
@@ -4261,6 +4278,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     vscode.commands.registerCommand('gemstone.startNetldi', async (node: DatabaseNode) => {
       if (node?.kind !== 'netldi') return;
+      if (refusedForVersionMismatch(node.db, 'netldi')) return;
       try {
         await processManager.startNetldi(node.db);
         vscode.window.showInformationMessage(`NetLDI "${node.db.config.ldiName}" started.`);
@@ -4273,6 +4291,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     vscode.commands.registerCommand('gemstone.stopNetldi', async (node: DatabaseNode) => {
       if (node?.kind !== 'netldi') return;
+      if (refusedForVersionMismatch(node.db, 'netldi')) return;
       try {
         await processManager.stopNetldi(node.db);
         vscode.window.showInformationMessage(`NetLDI "${node.db.config.ldiName}" stopped.`);
@@ -4392,12 +4411,27 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('gemstone.createLoginFromDb', async (node: DatabaseNode) => {
       if (!node || node.kind !== 'database') return;
       const db = node.db;
-      const login = buildDataCuratorLogin(db.config);
+      // A registered database's NetLDI port is read live rather than taken from
+      // the record: it changes every time that NetLDI is restarted without one
+      // being asked for, and a login carrying yesterday's port fails with a
+      // bare connection abort. Observing it also corrects the record, so the
+      // next start can pin the same port. A no-op for a created database, whose
+      // logins address their NetLDI by name.
+      processManager.refreshProcesses();
+      const livePort = processManager.netldiPortFor(db);
+      const config =
+        livePort !== undefined ? databaseManager.recordNetldiPort(db, livePort) : db.config;
+      const login = buildDataCuratorLogin(config);
       // Auto-detect GCI library path
       // On Windows, the sysadmin install is Linux (in WSL) and only has .so files.
       // The Windows .dll must be provided separately via the login editor.
       if (!isWindows()) {
-        const gsPath = sysadminStorage.getGemstonePath(db.config.version);
+        // A registered database's own product tree, before any tree Jasper
+        // happens to have installed under the same version number: the client
+        // library has to come from the installation the stone actually runs.
+        const gsPath =
+          registeredPaths(db.config)?.productPath ??
+          sysadminStorage.getGemstonePath(db.config.version);
         if (gsPath) {
           const ext = process.platform === 'darwin' ? 'dylib' : 'so';
           const libPath = path.join(gsPath, 'lib', `libgcits-${db.config.version}-64.${ext}`);
@@ -4525,6 +4559,21 @@ export function activate(context: vscode.ExtensionContext) {
           vscode.window.showErrorMessage(
             `Online extent backup needs a Jasper-managed local stone (to reach its extent files). ` +
               `Stone "${session.login.stone}" isn't managed here — use Full Logical Backup instead.`,
+            { modal: true },
+          );
+          return;
+        }
+        // A registered database's extents are the installation's, under a data
+        // directory Jasper's record has no copy of — `db.path/data` does not
+        // exist for one. Refused with the same reason the offline copy gives,
+        // rather than run against a directory that is not there and report an
+        // empty backup as a successful one. Making it work needs the extent list
+        // read off the running stone or the recorded conf file:
+        // https://github.com/GemTalk/Jasper/issues/562
+        if (isRegisteredDatabase(db)) {
+          vscode.window.showErrorMessage(
+            `${registeredRefusal('back up the extents of', db.config.stoneName)} ` +
+              `Use Full Logical Backup instead.`,
             { modal: true },
           );
           return;
