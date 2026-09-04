@@ -3,6 +3,7 @@ import * as path from 'path';
 import { GCI_LOGIN_QUIET, OOP_FALSE, OOP_ILLEGAL, OOP_NIL, OOP_TRUE } from './gciConstants';
 import { GciLibraryError } from './gciLibraryError';
 import { escapeString } from './queries/util';
+import type { GciOptionalFunctionName } from './gciLibrary/optionalFunctions';
 
 // OopType is uint64_t in C; koffi maps this to BigInt in JS
 const OopType = 'uint64';
@@ -165,6 +166,16 @@ function quietedLoginFlags(loginFlags: number): number {
 type NotPromise<T> = T extends Promise<unknown> ? never : T;
 
 /**
+ * A binding for an optional GCI function. The phantom `__gciOptional` brand
+ * carries the name it was bound under, so binding a symbol under the wrong
+ * registry key fails to compile instead of silently reporting the wrong name
+ * as missing.
+ */
+type OptionalBinding<N extends GciOptionalFunctionName> = koffi.KoffiFunction & {
+  readonly __gciOptional?: N;
+};
+
+/**
  * FFI bindings to GemStone's native `libgcits` shared library, loaded via koffi.
  * All GemStone VM calls go through this class.
  *
@@ -202,6 +213,12 @@ type NotPromise<T> = T extends Promise<unknown> ? never : T;
 export class GciLibrary {
   private lib: koffi.IKoffiLib;
   private _netldiLib: koffi.IKoffiLib | undefined;
+  /**
+   * The bindings that may be absent from the loaded library, keyed by
+   * {@link GciOptionalFunctionName} so that omitting one, keeping a stale one,
+   * or binding one under the wrong name are all compile errors.
+   */
+  private _optional: { [N in GciOptionalFunctionName]: OptionalBinding<N> };
   private _GciTsVersion: koffi.KoffiFunction;
   private _GciTsOopIsSpecial: koffi.KoffiFunction;
   private _GciTsFetchSpecialClass: koffi.KoffiFunction;
@@ -214,16 +231,8 @@ export class GciLibrary {
   private _GciNextUtf8Character: koffi.KoffiFunction;
   private _GciTsLogin: koffi.KoffiFunction;
   private _GciTsLogout: koffi.KoffiFunction;
-  // GciTsLogin_ (login with explicit netldiName) was added after 3.6.2. The
-  // login path uses GciTsLogin and folds the netldi into the NRS string, so
-  // this is bound optionally and only throws if it is ever actually called.
-  private _GciTsLogin_: koffi.KoffiFunction;
-  private _GciTsNbLogin: koffi.KoffiFunction | null = null;
-  private _GciTsNbLogin_: koffi.KoffiFunction;
-  private _GciTsNbLoginFinished: koffi.KoffiFunction | null = null;
   private _GciTsNbLogout: koffi.KoffiFunction;
   private _GciTsSessionIsRemote: koffi.KoffiFunction;
-  private _GciTsEncrypt: koffi.KoffiFunction;
   private _GciTsAbort: koffi.KoffiFunction;
   private _GciTsBegin: koffi.KoffiFunction;
   private _GciTsCommit: koffi.KoffiFunction;
@@ -263,11 +272,7 @@ export class GciLibrary {
   private _GciTsFetchUtf8Bytes: koffi.KoffiFunction;
   private _GciTsStoreBytes: koffi.KoffiFunction;
   private _GciTsFetchOops: koffi.KoffiFunction;
-  private _GciTsFetchNamedOops: koffi.KoffiFunction;
-  private _GciTsFetchVaryingOops: koffi.KoffiFunction;
   private _GciTsStoreOops: koffi.KoffiFunction;
-  private _GciTsStoreNamedOops: koffi.KoffiFunction;
-  private _GciTsStoreIdxOops: koffi.KoffiFunction;
   private _GciTsCompileMethod: koffi.KoffiFunction;
   private _GciTsClassRemoveAllMethods: koffi.KoffiFunction;
   private _GciTsProtectMethods: koffi.KoffiFunction;
@@ -278,17 +283,12 @@ export class GciLibrary {
   private _GciTsNbExecute: koffi.KoffiFunction;
   private _GciTsNbPerform: koffi.KoffiFunction;
   private _GciTsNbResult: koffi.KoffiFunction;
-  private _GciTsNbPoll: koffi.KoffiFunction;
   private _GciTsSocket: koffi.KoffiFunction;
   private _GciTsGetFreeOops: koffi.KoffiFunction;
   private _GciTsSaveObjs: koffi.KoffiFunction;
   private _GciTsReleaseObjs: koffi.KoffiFunction;
   private _GciTsReleaseAllObjs: koffi.KoffiFunction;
-  private _GciTsAddOopsToNsc: koffi.KoffiFunction;
   private _GciTsRemoveOopsFromNsc: koffi.KoffiFunction;
-  private _GciTsPerformFetchOops: koffi.KoffiFunction;
-  private _GciTsFetchGbjInfo: koffi.KoffiFunction;
-  private _GciTsNewStringFromUtf16: koffi.KoffiFunction;
   private _GciTsDirtyObjsInit: koffi.KoffiFunction;
   private _GciTsFetchTraversal: koffi.KoffiFunction;
   private _GciTsStoreTrav: koffi.KoffiFunction;
@@ -296,11 +296,6 @@ export class GciLibrary {
   private _GciTsStoreTravDoTravRefs: koffi.KoffiFunction;
   private _GciTsWaitForEvent: koffi.KoffiFunction;
   private _GciTsCancelWaitForEvent: koffi.KoffiFunction;
-  private _GciTsDirtyExportedObjs: koffi.KoffiFunction;
-  private _GciTsKeepAliveCount: koffi.KoffiFunction;
-  private _GciTsKeyfilePermissions: koffi.KoffiFunction;
-  private _GciTsDebugConnectToGem: koffi.KoffiFunction;
-  private _GciTsDebugStartDebugService: koffi.KoffiFunction;
   private _GciShutdown: koffi.KoffiFunction;
   private _GciMalloc: koffi.KoffiFunction;
   private _GciFree: koffi.KoffiFunction;
@@ -309,23 +304,46 @@ export class GciLibrary {
   private _GciHostMilliSleep: koffi.KoffiFunction;
   private _GciTimeStampMsStr: koffi.KoffiFunction;
 
-  /**
-   * Bind a GCI function that may be absent in older libraries (e.g. functions
-   * added after 3.6.2). If the symbol is missing, returns a stub that throws a
-   * descriptive error only if it is actually called — so loading an older
-   * library never fails at construction over a function we may never use.
-   */
   /** Names of optional functions not exported by the loaded library. */
-  private _missing = new Set<string>();
+  private _missing = new Set<GciOptionalFunctionName>();
 
-  private optionalFunc(name: string, signature: string): koffi.KoffiFunction {
+  /**
+   * Bind a GCI function that may be absent from the loaded library. If the
+   * symbol is missing, returns a stub that throws a descriptive error only if
+   * it is actually called — so loading a library that lacks it never fails at
+   * construction over a function we may never use.
+   *
+   * Only for synchronous bindings: no optional binding has an `.async` call
+   * site today (`_GciTsContinueWith` is the only one, and it is required), so
+   * the throwing stub deliberately has no `.async` property.
+   */
+  private optionalFunc<N extends GciOptionalFunctionName>(
+    name: N,
+    signature: string,
+  ): OptionalBinding<N> {
+    // The symbol is written twice per entry — as `name` and again inside
+    // `signature` — and nothing in the type system ties them together: the
+    // `__gciOptional` brand only relates the registry key to `name`. A
+    // copy-pasted entry naming a neighbouring symbol would bind the wrong
+    // native function while `_missing` and `isAvailable` reported this one,
+    // and the catch below would hide it. Compare the declared symbol exactly
+    // rather than by substring: `GciTsNbLogin` is a prefix of both
+    // `GciTsNbLogin_` and `GciTsNbLoginFinished`. Outside the try, so the
+    // catch cannot swallow it.
+    const declared = /(\w+)\s*\(/.exec(signature)?.[1];
+    if (declared !== name) {
+      throw new Error(
+        `optionalFunc('${name}') was given a signature declaring '${declared}': ${signature}`,
+      );
+    }
+
     try {
       return this.lib.func(signature);
     } catch {
       this._missing.add(name);
       return (() => {
         throw new Error(`${name} is not available in this GCI library`);
-      }) as unknown as koffi.KoffiFunction;
+      }) as unknown as OptionalBinding<N>;
     }
   }
 
@@ -333,19 +351,21 @@ export class GciLibrary {
    * Whether a (possibly version-gated) GCI function is exported by the loaded
    * library. Use this to choose a fallback path instead of calling a function
    * that would throw "not available" — e.g. GciTsNbPoll is absent in 3.6.2.
+   * Only the names registered in `gciLibrary/optionalFunctions.ts` can be
+   * absent, so anything else is a typo and is rejected at compile time.
    */
-  isAvailable(name: string): boolean {
+  isAvailable(name: GciOptionalFunctionName): boolean {
     return !this._missing.has(name);
   }
 
   /**
    * Whether this library supports the non-blocking login path
    * (GciTsNbLogin + GciTsNbLoginFinished). False on Windows client
-   * distributions (the symbols are not exported there) and on libraries that
-   * predate them, so callers can fall back to the blocking GciTsLogin.
+   * distributions (the symbols are not exported there), so callers can fall
+   * back to the blocking GciTsLogin.
    */
   supportsNonBlockingLogin(): boolean {
-    return this._GciTsNbLogin !== null && this._GciTsNbLoginFinished !== null;
+    return this.isAvailable('GciTsNbLogin') && this.isAvailable('GciTsNbLoginFinished');
   }
 
   constructor(libraryPath: string) {
@@ -373,11 +393,8 @@ export class GciLibrary {
     this._GciTsDoubleToSmallDouble = this.lib.func(
       `${OopType} GciTsDoubleToSmallDouble(double aFloat)`,
     );
-    // Optional: not exported by older libraries (e.g. 3.4.5). No production
-    // code path calls these; they are bound optionally so loading an older
-    // library never fails at construction over a function we never use.
-    this._GciI32ToOop = this.optionalFunc('GciI32ToOop', `${OopType} GciI32ToOop(int arg)`);
-    this._GciTsI32ToOop = this.optionalFunc('GciTsI32ToOop', `${OopType} GciTsI32ToOop(int arg)`);
+    this._GciI32ToOop = this.lib.func(`${OopType} GciI32ToOop(int arg)`);
+    this._GciTsI32ToOop = this.lib.func(`${OopType} GciTsI32ToOop(int arg)`);
     this._GciUtf8To8bit = this.lib.func(
       `int GciUtf8To8bit(const char *src, _Out_ char *dest, intptr destSize)`,
     );
@@ -397,39 +414,8 @@ export class GciLibrary {
       `GciSessionPtr GciTsLogin(const char *, const char *, const char *, int, const char *, const char *, const char *, unsigned int, int, _Out_ int *, _Out_ GciErrSType *)`,
     );
     this._GciTsLogout = this.lib.func(`int GciTsLogout(GciSessionPtr, _Out_ GciErrSType *)`);
-    // Optional: not exported by 3.6.2 and earlier. The login path uses GciTsLogin.
-    this._GciTsLogin_ = this.optionalFunc(
-      'GciTsLogin_',
-      `GciSessionPtr GciTsLogin_(const char *, const char *, const char *, int, const char *, const char *, const char *, const char *, unsigned int, int, _Out_ int *, _Out_ GciErrSType *)`,
-    );
-    // Non-blocking login functions are not available in the Windows client DLL.
-    // (These two DO exist in 3.6.2 — only GciTsNbLogin_ below is post-3.6.2.)
-    try {
-      this._GciTsNbLogin = this.lib.func(
-        `GciSessionPtr GciTsNbLogin(const char *, const char *, const char *, int, const char *, const char *, const char *, unsigned int, int, _Out_ int *)`,
-      );
-      this._GciTsNbLoginFinished = this.lib.func(
-        `int GciTsNbLoginFinished(GciSessionPtr, _Out_ int *, _Out_ GciErrSType *)`,
-      );
-    } catch {
-      /* optional: not present in Windows client distributions */
-    }
-    this._GciTsNbLogin_ = this.optionalFunc(
-      'GciTsNbLogin_',
-      `GciSessionPtr GciTsNbLogin_(const char *, const char *, const char *, int, const char *, const char *, const char *, const char *, unsigned int, int, _Out_ int *)`,
-    );
     this._GciTsNbLogout = this.lib.func(`int GciTsNbLogout(GciSessionPtr, _Out_ GciErrSType *)`);
     this._GciTsSessionIsRemote = this.lib.func(`int GciTsSessionIsRemote(GciSessionPtr)`);
-    // Optional: not exported by some libraries (e.g. GemStone 4.0). Jasper's
-    // login path passes the password in the clear (GciTsLogin without
-    // GCI_LOGIN_PW_ENCRYPTED), so GciTsEncrypt is never called during connect —
-    // binding it eagerly would abort library load for a library that lacks it.
-    // Only the ergonomic GciTsEncrypt() wrapper (used by tests) would throw if
-    // it were absent.
-    this._GciTsEncrypt = this.optionalFunc(
-      'GciTsEncrypt',
-      `char* GciTsEncrypt(const char *, _Out_ char *, size_t)`,
-    );
     this._GciTsAbort = this.lib.func(`int GciTsAbort(GciSessionPtr, _Out_ GciErrSType *)`);
     this._GciTsBegin = this.lib.func(`int GciTsBegin(GciSessionPtr, _Out_ GciErrSType *)`);
     this._GciTsCommit = this.lib.func(`int GciTsCommit(GciSessionPtr, _Out_ GciErrSType *)`);
@@ -539,24 +525,8 @@ export class GciLibrary {
     this._GciTsFetchOops = this.lib.func(
       `int GciTsFetchOops(GciSessionPtr, ${OopType}, int64, _Out_ ${OopType} *, int, _Out_ GciErrSType *)`,
     );
-    this._GciTsFetchNamedOops = this.optionalFunc(
-      'GciTsFetchNamedOops',
-      `int GciTsFetchNamedOops(GciSessionPtr, ${OopType}, int64, _Out_ ${OopType} *, int, _Out_ GciErrSType *)`,
-    );
-    this._GciTsFetchVaryingOops = this.optionalFunc(
-      'GciTsFetchVaryingOops',
-      `int GciTsFetchVaryingOops(GciSessionPtr, ${OopType}, int64, _Out_ ${OopType} *, int, _Out_ GciErrSType *)`,
-    );
     this._GciTsStoreOops = this.lib.func(
       `int GciTsStoreOops(GciSessionPtr, ${OopType}, int64, const ${OopType} *, int, _Out_ GciErrSType *, int)`,
-    );
-    this._GciTsStoreNamedOops = this.optionalFunc(
-      'GciTsStoreNamedOops',
-      `int GciTsStoreNamedOops(GciSessionPtr, ${OopType}, int64, const ${OopType} *, int, _Out_ GciErrSType *, int)`,
-    );
-    this._GciTsStoreIdxOops = this.optionalFunc(
-      'GciTsStoreIdxOops',
-      `int GciTsStoreIdxOops(GciSessionPtr, ${OopType}, int64, const ${OopType} *, int, _Out_ GciErrSType *)`,
     );
     this._GciTsCompileMethod = this.lib.func(
       `${OopType} GciTsCompileMethod(GciSessionPtr, ${OopType}, ${OopType}, ${OopType}, ${OopType}, ${OopType}, int, ushort, _Out_ GciErrSType *)`,
@@ -586,10 +556,6 @@ export class GciLibrary {
     this._GciTsNbResult = this.lib.func(
       `${OopType} GciTsNbResult(GciSessionPtr, _Out_ GciErrSType *)`,
     );
-    this._GciTsNbPoll = this.optionalFunc(
-      'GciTsNbPoll',
-      `int GciTsNbPoll(GciSessionPtr, int, _Out_ GciErrSType *)`,
-    );
     this._GciTsSocket = this.lib.func(`int GciTsSocket(GciSessionPtr, _Out_ GciErrSType *)`);
     this._GciTsGetFreeOops = this.lib.func(
       `int GciTsGetFreeOops(GciSessionPtr, _Out_ ${OopType} *, int, _Out_ GciErrSType *)`,
@@ -603,24 +569,8 @@ export class GciLibrary {
     this._GciTsReleaseAllObjs = this.lib.func(
       `int GciTsReleaseAllObjs(GciSessionPtr, _Out_ GciErrSType *)`,
     );
-    this._GciTsAddOopsToNsc = this.optionalFunc(
-      'GciTsAddOopsToNsc',
-      `int GciTsAddOopsToNsc(GciSessionPtr, ${OopType}, const ${OopType} *, int, _Out_ GciErrSType *)`,
-    );
     this._GciTsRemoveOopsFromNsc = this.lib.func(
       `int GciTsRemoveOopsFromNsc(GciSessionPtr, ${OopType}, const ${OopType} *, int, _Out_ GciErrSType *)`,
-    );
-    this._GciTsPerformFetchOops = this.optionalFunc(
-      'GciTsPerformFetchOops',
-      `int GciTsPerformFetchOops(GciSessionPtr, ${OopType}, const char *, const ${OopType} *, int, _Out_ ${OopType} *, int, _Out_ GciErrSType *)`,
-    );
-    this._GciTsFetchGbjInfo = this.optionalFunc(
-      'GciTsFetchGbjInfo',
-      `int64 GciTsFetchGbjInfo(GciSessionPtr, ${OopType}, int, _Out_ GciTsGbjInfo *, _Out_ uchar *, size_t, _Out_ GciErrSType *)`,
-    );
-    this._GciTsNewStringFromUtf16 = this.optionalFunc(
-      'GciTsNewStringFromUtf16',
-      `${OopType} GciTsNewStringFromUtf16(GciSessionPtr, const ushort *, int64, int, _Out_ GciErrSType *)`,
     );
     this._GciTsDirtyObjsInit = this.lib.func(
       `int GciTsDirtyObjsInit(GciSessionPtr, _Out_ GciErrSType *)`,
@@ -630,27 +580,6 @@ export class GciLibrary {
     );
     this._GciTsCancelWaitForEvent = this.lib.func(
       `int GciTsCancelWaitForEvent(GciSessionPtr, _Out_ GciErrSType *)`,
-    );
-    this._GciTsDirtyExportedObjs = this.optionalFunc(
-      'GciTsDirtyExportedObjs',
-      `int GciTsDirtyExportedObjs(GciSessionPtr, _Out_ ${OopType} *, _Inout_ int *, _Out_ GciErrSType *)`,
-    );
-    this._GciTsKeepAliveCount = this.optionalFunc(
-      'GciTsKeepAliveCount',
-      `int64 GciTsKeepAliveCount(GciSessionPtr, _Out_ GciErrSType *)`,
-    );
-    this._GciTsKeyfilePermissions = this.optionalFunc(
-      'GciTsKeyfilePermissions',
-      `int64 GciTsKeyfilePermissions(GciSessionPtr, _Out_ GciErrSType *)`,
-    );
-    // Debug functions are post-3.6.2 and also absent from the Windows client DLL.
-    this._GciTsDebugConnectToGem = this.optionalFunc(
-      'GciTsDebugConnectToGem',
-      `GciSessionPtr GciTsDebugConnectToGem(int, _Out_ GciErrSType *)`,
-    );
-    this._GciTsDebugStartDebugService = this.optionalFunc(
-      'GciTsDebugStartDebugService',
-      `int GciTsDebugStartDebugService(GciSessionPtr, uint64, _Out_ GciErrSType *)`,
     );
     this._GciTsFetchTraversal = this.lib.func(
       `int GciTsFetchTraversal(GciSessionPtr, const ${OopType} *, int, _Inout_ GciClampedTravArgsSType *, _Out_ GciErrSType *)`,
@@ -664,6 +593,93 @@ export class GciLibrary {
     this._GciTsStoreTravDoTravRefs = this.lib.func(
       `int GciTsStoreTravDoTravRefs(GciSessionPtr, const ${OopType} *, int, const ${OopType} *, int, _Inout_ GciStoreTravDoArgsSType *, _Inout_ GciClampedTravArgsSType *, _Out_ GciErrSType *)`,
     );
+    // Bindings that may be absent from the loaded library. Why each one can be
+    // missing — version floor, platform, removal — lives in
+    // client/src/gciLibrary/optionalFunctions.ts, which is verified against
+    // vendor/gci-headers/. This literal is keyed by that registry, so adding an
+    // optionalFunc binding without registering it does not compile.
+    this._optional = {
+      GciTsNbPoll: this.optionalFunc(
+        'GciTsNbPoll',
+        `int GciTsNbPoll(GciSessionPtr, int, _Out_ GciErrSType *)`,
+      ),
+      GciTsDebugConnectToGem: this.optionalFunc(
+        'GciTsDebugConnectToGem',
+        `GciSessionPtr GciTsDebugConnectToGem(int, _Out_ GciErrSType *)`,
+      ),
+      GciTsDebugStartDebugService: this.optionalFunc(
+        'GciTsDebugStartDebugService',
+        `int GciTsDebugStartDebugService(GciSessionPtr, uint64, _Out_ GciErrSType *)`,
+      ),
+      GciTsFetchNamedOops: this.optionalFunc(
+        'GciTsFetchNamedOops',
+        `int GciTsFetchNamedOops(GciSessionPtr, ${OopType}, int64, _Out_ ${OopType} *, int, _Out_ GciErrSType *)`,
+      ),
+      GciTsFetchVaryingOops: this.optionalFunc(
+        'GciTsFetchVaryingOops',
+        `int GciTsFetchVaryingOops(GciSessionPtr, ${OopType}, int64, _Out_ ${OopType} *, int, _Out_ GciErrSType *)`,
+      ),
+      GciTsStoreNamedOops: this.optionalFunc(
+        'GciTsStoreNamedOops',
+        `int GciTsStoreNamedOops(GciSessionPtr, ${OopType}, int64, const ${OopType} *, int, _Out_ GciErrSType *, int)`,
+      ),
+      GciTsStoreIdxOops: this.optionalFunc(
+        'GciTsStoreIdxOops',
+        `int GciTsStoreIdxOops(GciSessionPtr, ${OopType}, int64, const ${OopType} *, int, _Out_ GciErrSType *)`,
+      ),
+      GciTsAddOopsToNsc: this.optionalFunc(
+        'GciTsAddOopsToNsc',
+        `int GciTsAddOopsToNsc(GciSessionPtr, ${OopType}, const ${OopType} *, int, _Out_ GciErrSType *)`,
+      ),
+      GciTsPerformFetchOops: this.optionalFunc(
+        'GciTsPerformFetchOops',
+        `int GciTsPerformFetchOops(GciSessionPtr, ${OopType}, const char *, const ${OopType} *, int, _Out_ ${OopType} *, int, _Out_ GciErrSType *)`,
+      ),
+      GciTsFetchGbjInfo: this.optionalFunc(
+        'GciTsFetchGbjInfo',
+        `int64 GciTsFetchGbjInfo(GciSessionPtr, ${OopType}, int, _Out_ GciTsGbjInfo *, _Out_ uchar *, size_t, _Out_ GciErrSType *)`,
+      ),
+      GciTsNewStringFromUtf16: this.optionalFunc(
+        'GciTsNewStringFromUtf16',
+        `${OopType} GciTsNewStringFromUtf16(GciSessionPtr, const ushort *, int64, int, _Out_ GciErrSType *)`,
+      ),
+      GciTsDirtyExportedObjs: this.optionalFunc(
+        'GciTsDirtyExportedObjs',
+        `int GciTsDirtyExportedObjs(GciSessionPtr, _Out_ ${OopType} *, _Inout_ int *, _Out_ GciErrSType *)`,
+      ),
+      GciTsKeepAliveCount: this.optionalFunc(
+        'GciTsKeepAliveCount',
+        `int64 GciTsKeepAliveCount(GciSessionPtr, _Out_ GciErrSType *)`,
+      ),
+      GciTsKeyfilePermissions: this.optionalFunc(
+        'GciTsKeyfilePermissions',
+        `int64 GciTsKeyfilePermissions(GciSessionPtr, _Out_ GciErrSType *)`,
+      ),
+      GciTsLogin_: this.optionalFunc(
+        'GciTsLogin_',
+        `GciSessionPtr GciTsLogin_(const char *, const char *, const char *, int, const char *, const char *, const char *, const char *, unsigned int, int, _Out_ int *, _Out_ GciErrSType *)`,
+      ),
+      GciTsNbLogin_: this.optionalFunc(
+        'GciTsNbLogin_',
+        `GciSessionPtr GciTsNbLogin_(const char *, const char *, const char *, int, const char *, const char *, const char *, const char *, unsigned int, int, _Out_ int *)`,
+      ),
+      GciTsNbLogin: this.optionalFunc(
+        'GciTsNbLogin',
+        `GciSessionPtr GciTsNbLogin(const char *, const char *, const char *, int, const char *, const char *, const char *, unsigned int, int, _Out_ int *)`,
+      ),
+      GciTsNbLoginFinished: this.optionalFunc(
+        'GciTsNbLoginFinished',
+        `int GciTsNbLoginFinished(GciSessionPtr, _Out_ int *, _Out_ GciErrSType *)`,
+      ),
+      // Jasper's login path passes the password in the clear (GciTsLogin
+      // without GCI_LOGIN_PW_ENCRYPTED), so GciTsEncrypt is never called during
+      // connect; only the ergonomic GciTsEncrypt() wrapper (used by tests)
+      // would throw were it absent.
+      GciTsEncrypt: this.optionalFunc(
+        'GciTsEncrypt',
+        `char* GciTsEncrypt(const char *, _Out_ char *, size_t)`,
+      ),
+    };
   }
 
   GciTsVersion(): { product: number; version: string } {
@@ -694,18 +710,17 @@ export class GciLibrary {
   }
 
   /**
-   * Encode a 32-bit integer as a SmallInteger OOP. Optional: absent in older
-   * libraries (e.g. 3.4.5); guard with `isAvailable('GciI32ToOop')`.
-   * @throws {Error} if the loaded library does not export GciI32ToOop.
+   * Encode a 32-bit integer as a SmallInteger OOP. Declared in every vendored
+   * revision (3.6.2 onwards), so it is bound as a required function.
    */
   GciI32ToOop(arg: number): bigint {
     return toBigInt(this._GciI32ToOop(arg));
   }
 
   /**
-   * Encode a 32-bit integer as a SmallInteger OOP. Optional: absent in older
-   * libraries (e.g. 3.4.5); guard with `isAvailable('GciTsI32ToOop')`.
-   * @throws {Error} if the loaded library does not export GciTsI32ToOop.
+   * Encode a 32-bit integer as a SmallInteger OOP (session-threaded variant).
+   * Declared in every vendored revision (3.6.2 onwards), so it is bound as a
+   * required function.
    */
   GciTsI32ToOop(arg: number): bigint {
     return toBigInt(this._GciTsI32ToOop(arg));
@@ -808,7 +823,7 @@ export class GciLibrary {
   ): { session: unknown; executedSessionInit: boolean; err: GciError } {
     const executedSessionInit = [0];
     const err: Record<string, unknown> = {};
-    const session = this._GciTsLogin_(
+    const session = this._optional.GciTsLogin_(
       stoneNrs,
       hostUserId,
       hostPassword,
@@ -840,9 +855,8 @@ export class GciLibrary {
     loginFlags: number,
     haltOnErrNum: number,
   ): { session: unknown; loginPollSocket: number } {
-    if (!this._GciTsNbLogin) throw new Error('GciTsNbLogin is not available in this GCI library');
     const loginPollSocket = [0];
-    const session = this._GciTsNbLogin(
+    const session = this._optional.GciTsNbLogin(
       stoneNrs,
       hostUserId,
       hostPassword,
@@ -870,7 +884,7 @@ export class GciLibrary {
     haltOnErrNum: number,
   ): { session: unknown; loginPollSocket: number } {
     const loginPollSocket = [0];
-    const session = this._GciTsNbLogin_(
+    const session = this._optional.GciTsNbLogin_(
       stoneNrs,
       hostUserId,
       hostPassword,
@@ -891,11 +905,9 @@ export class GciLibrary {
     executedSessionInit: boolean;
     err: GciError;
   } {
-    if (!this._GciTsNbLoginFinished)
-      throw new Error('GciTsNbLoginFinished is not available in this GCI library');
     const executedSessionInit = [0];
     const err: Record<string, unknown> = {};
-    const result = this._GciTsNbLoginFinished(session, executedSessionInit, err);
+    const result = this._optional.GciTsNbLoginFinished(session, executedSessionInit, err);
     return {
       result,
       executedSessionInit: executedSessionInit[0] !== 0,
@@ -917,7 +929,7 @@ export class GciLibrary {
 
   GciTsEncrypt(password: string): string | null {
     const outBuf = Buffer.alloc(1024);
-    const result = this._GciTsEncrypt(password, outBuf, outBuf.length);
+    const result = this._optional.GciTsEncrypt(password, outBuf, outBuf.length);
     if (result === null) {
       return null;
     }
@@ -1502,7 +1514,14 @@ export class GciLibrary {
   ): { result: number; oops: bigint[]; err: GciError } {
     const oopsBuf = new Array<bigint>(numOops).fill(0n);
     const err: Record<string, unknown> = {};
-    const result = this._GciTsFetchNamedOops(session, theObject, startIndex, oopsBuf, numOops, err);
+    const result = this._optional.GciTsFetchNamedOops(
+      session,
+      theObject,
+      startIndex,
+      oopsBuf,
+      numOops,
+      err,
+    );
     const oops = result >= 0 ? oopsBuf.slice(0, result).map((v) => toBigInt(v)) : [];
     return { result, oops, err: err as unknown as GciError };
   }
@@ -1515,7 +1534,7 @@ export class GciLibrary {
   ): { result: number; oops: bigint[]; err: GciError } {
     const oopsBuf = new Array<bigint>(numOops).fill(0n);
     const err: Record<string, unknown> = {};
-    const result = this._GciTsFetchVaryingOops(
+    const result = this._optional.GciTsFetchVaryingOops(
       session,
       theObject,
       startIndex,
@@ -1555,7 +1574,7 @@ export class GciLibrary {
     overlay: boolean = false,
   ): { success: boolean; err: GciError } {
     const err: Record<string, unknown> = {};
-    const result = this._GciTsStoreNamedOops(
+    const result = this._optional.GciTsStoreNamedOops(
       session,
       theObject,
       startIndex,
@@ -1574,7 +1593,7 @@ export class GciLibrary {
     theOops: bigint[],
   ): { success: boolean; err: GciError } {
     const err: Record<string, unknown> = {};
-    const result = this._GciTsStoreIdxOops(
+    const result = this._optional.GciTsStoreIdxOops(
       session,
       theObject,
       startIndex,
@@ -1705,7 +1724,7 @@ export class GciLibrary {
 
   GciTsNbPoll(session: unknown, timeoutMs: number): { result: number; err: GciError } {
     const err: Record<string, unknown> = {};
-    const result = this._GciTsNbPoll(session, timeoutMs, err);
+    const result = this._optional.GciTsNbPoll(session, timeoutMs, err);
     return { result, err: err as unknown as GciError };
   }
 
@@ -1750,7 +1769,13 @@ export class GciLibrary {
     theOops: bigint[],
   ): { success: boolean; err: GciError } {
     const err: Record<string, unknown> = {};
-    const result = this._GciTsAddOopsToNsc(session, theObject, theOops, theOops.length, err);
+    const result = this._optional.GciTsAddOopsToNsc(
+      session,
+      theObject,
+      theOops,
+      theOops.length,
+      err,
+    );
     return { success: result !== 0, err: err as unknown as GciError };
   }
 
@@ -1773,7 +1798,7 @@ export class GciLibrary {
   ): { result: number; oops: bigint[]; err: GciError } {
     const buf = new Array<bigint>(maxResultSize).fill(0n);
     const err: Record<string, unknown> = {};
-    const result = this._GciTsPerformFetchOops(
+    const result = this._optional.GciTsPerformFetchOops(
       session,
       receiver,
       selectorStr,
@@ -1796,7 +1821,7 @@ export class GciLibrary {
     const info: Record<string, unknown> = {};
     const buffer = Buffer.alloc(bufSize);
     const err: Record<string, unknown> = {};
-    const raw = this._GciTsFetchGbjInfo(
+    const raw = this._optional.GciTsFetchGbjInfo(
       session,
       objId,
       addToExportSet ? 1 : 0,
@@ -1826,7 +1851,7 @@ export class GciLibrary {
     unicodeKind: number,
   ): { result: bigint; err: GciError } {
     const err: Record<string, unknown> = {};
-    const raw = this._GciTsNewStringFromUtf16(
+    const raw = this._optional.GciTsNewStringFromUtf16(
       session,
       words,
       BigInt(words.length),
@@ -2038,26 +2063,26 @@ export class GciLibrary {
     const buf = new Array<bigint>(maxOops).fill(0n);
     const numOops = [maxOops];
     const err: Record<string, unknown> = {};
-    const result = this._GciTsDirtyExportedObjs(session, buf, numOops, err);
+    const result = this._optional.GciTsDirtyExportedObjs(session, buf, numOops, err);
     const oops = numOops[0] > 0 ? buf.slice(0, numOops[0]).map((v) => toBigInt(v)) : [];
     return { success: result !== 0, oops, err: err as unknown as GciError };
   }
 
   GciTsKeepAliveCount(session: unknown): { result: bigint; err: GciError } {
     const err: Record<string, unknown> = {};
-    const raw = this._GciTsKeepAliveCount(session, err);
+    const raw = this._optional.GciTsKeepAliveCount(session, err);
     return { result: toBigInt(raw), err: err as unknown as GciError };
   }
 
   GciTsKeyfilePermissions(session: unknown): { result: bigint; err: GciError } {
     const err: Record<string, unknown> = {};
-    const raw = this._GciTsKeyfilePermissions(session, err);
+    const raw = this._optional.GciTsKeyfilePermissions(session, err);
     return { result: toBigInt(raw), err: err as unknown as GciError };
   }
 
   GciTsDebugConnectToGem(gemPid: number): { session: unknown; err: GciError } {
     const err: Record<string, unknown> = {};
-    const session = this._GciTsDebugConnectToGem(gemPid, err);
+    const session = this._optional.GciTsDebugConnectToGem(gemPid, err);
     return { session, err: err as unknown as GciError };
   }
 
@@ -2066,7 +2091,7 @@ export class GciLibrary {
     token: bigint,
   ): { success: boolean; err: GciError } {
     const err: Record<string, unknown> = {};
-    const result = this._GciTsDebugStartDebugService(session, token, err);
+    const result = this._optional.GciTsDebugStartDebugService(session, token, err);
     return { success: result !== 0, err: err as unknown as GciError };
   }
 

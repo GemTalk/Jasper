@@ -1,54 +1,54 @@
 import { describe, it, expect } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
+import { GCI_OPTIONAL_FUNCTIONS } from '../gciLibrary/optionalFunctions';
 
 /**
- * Build-time gate for GemStone 3.6.2 compatibility.
+ * Fails when production code calls a GCI function that GemStone 3.6.2 doesn't
+ * export, unless the symbol is consciously opted into via ALLOWED_POST_362.
  *
- * Some GCI functions were added after 3.6.2 (see the gcits.hf diff of 3.6.2 vs
- * 3.7.5). gciLibrary.ts binds those through `optionalFunc(...)`, which tolerates
- * their absence so Jasper still loads and logs in against 3.6.2 — but calling
- * one on a 3.6.2 server throws "<name> is not available in this GCI library".
+ * The gated set is every `addedIn` entry in `gciLibrary/optionalFunctions.ts`.
+ * Those bind through `optionalFunc`, so Jasper still *loads* against 3.6.2 —
+ * it's the call that throws, and a 3.7.5 dev image never shows you that.
+ * Background: `docs/explanation/gci-version-compatibility.md`.
  *
- * Against a 3.7.5 dev image those bindings succeed silently, so it's easy to
- * introduce a dependency on a post-3.6.2 function without noticing. This test
- * makes that a CONSCIOUS decision: if production code calls one of the gated
- * functions and it isn't in ALLOWED_POST_362 below, the test fails and tells
- * you to opt in explicitly (which is then a reviewable diff).
+ * A test rather than a lint rule because the gated set is imported from the
+ * registry, and `eslint.config.mjs` can't import TypeScript: a selector-based
+ * rule would have to restate those names, which is the drift the registry
+ * exists to end. Worth revisiting if the config ever moves to TS.
  */
 
 const repoRoot = path.resolve(__dirname, '..', '..', '..');
-const gciLibrarySource = fs.readFileSync(
-  path.join(repoRoot, 'client', 'src', 'gciLibrary.ts'),
-  'utf-8',
+
+/**
+ * Gated symbol -> the release that first exports it. `absentOn`/`removedIn`-only
+ * entries (`GciTsNbLogin`, `GciTsEncrypt`) do ship in 3.6.2 — they're gated on
+ * platform or removal, which this test says nothing about.
+ */
+const GATED_FLOORS = new Map(
+  Object.entries(GCI_OPTIONAL_FUNCTIONS).flatMap(([name, reason]) =>
+    'addedIn' in reason ? [[name, reason.addedIn] as const] : [],
+  ),
 );
 
-/** Source of truth: every function bound via optionalFunc() is version-gated. */
 function gatedFunctions(): string[] {
-  const names = new Set<string>();
-  const re = /optionalFunc\(\s*'([^']+)'/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(gciLibrarySource)) !== null) names.add(m[1]);
-  return [...names].sort();
+  return [...GATED_FLOORS.keys()].sort();
 }
 
 /**
- * Functions the codebase is CONSCIOUSLY allowed to use despite being absent in
- * 3.6.2. Keep this empty to stay fully 3.6.2-compatible. To opt in, add the
- * function name here — that line is the explicit "I accept this needs 3.7+"
- * decision, and any path using it will throw on a 3.6.2 server.
+ * Symbols the codebase consciously depends on despite the 3.6.2 floor. Adding a
+ * name here is the "I accept this path needs 3.7+" decision, and it is the
+ * reviewable diff that makes it one; keep it empty to stay fully compatible.
  */
 const ALLOWED_POST_362: string[] = [
-  // codeExecutor.ts polls with GciTsNbPoll, which doesn't exist before 3.7 —
-  // but the call is guarded by gci.isAvailable('GciTsNbPoll') with a
-  // GciTsSocket + native poll fallback (pollNbResultReady / socketPoll.ts), so
-  // code execution works on 3.6.2 too. Allowlisted because the symbol is still
-  // referenced (on the 3.7+ branch).
+  // codeExecutor.ts polls with it (3.7.0), but behind gci.isAvailable, with a
+  // GciTsSocket + native poll fallback (pollNbResultReady / socketPoll.ts).
+  // Listed because the symbol is still referenced on the 3.7+ branch.
   'GciTsNbPoll',
 
-  // NOTE: the debugger's named/indexed instVar fetch (debugQueries.ts) used to
-  // require GciTsFetchNamedOops / GciTsFetchVaryingOops, but now uses absolute
-  // GciTsFetchOops (present in 3.6.2), so those are no longer allowlisted.
+  // Why no FetchNamedOops/FetchVaryingOops (3.7.1): debugQueries.ts fetches
+  // instVars with absolute GciTsFetchOops instead, deliberately. Switching back
+  // to the named/indexed variants would mean allowlisting both.
 ];
 
 /** Production source roots to scan (tests/mocks and the bindings file excluded). */
@@ -67,7 +67,11 @@ function tsFilesUnder(root: string): string[] {
     .map((f) => path.join(abs, f));
 }
 
-/** Map of gated function name -> list of "relativePath:line" call sites. */
+/**
+ * Map of gated function name -> list of "relativePath:line" call sites. Matched
+ * syntactically, on `.<name>(`, so an aliased or dynamically dispatched call
+ * slips through — the same blind spot a lint selector would have.
+ */
 function gatedUsages(gated: string[]): Record<string, string[]> {
   const usages: Record<string, string[]> = {};
   const patterns = gated.map((name) => ({ name, re: new RegExp(`\\.${name}\\s*\\(`) }));
@@ -87,12 +91,6 @@ function gatedUsages(gated: string[]): Record<string, string[]> {
 }
 
 describe('GemStone 3.6.2 compatibility gate', () => {
-  it('derives a non-empty set of version-gated functions from gciLibrary.ts', () => {
-    // Guards against the regex silently breaking (which would disable the gate).
-    expect(gatedFunctions().length).toBeGreaterThanOrEqual(16);
-    expect(gatedFunctions()).toContain('GciTsLogin_');
-  });
-
   it('keeps the allowlist a subset of the gated functions (no stale entries)', () => {
     const gated = gatedFunctions();
     const stale = ALLOWED_POST_362.filter((name) => !gated.includes(name));
@@ -107,7 +105,7 @@ describe('GemStone 3.6.2 compatibility gate', () => {
     const offenders = Object.keys(usages).filter((name) => !ALLOWED_POST_362.includes(name));
 
     const detail = offenders
-      .map((name) => `  - ${name} (added after 3.6.2): ${usages[name].join(', ')}`)
+      .map((name) => `  - ${name} (needs ${GATED_FLOORS.get(name)}+): ${usages[name].join(', ')}`)
       .join('\n');
 
     expect(

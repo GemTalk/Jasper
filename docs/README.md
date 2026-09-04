@@ -15,6 +15,7 @@ New docs are organized by [Diátaxis](https://diataxis.fr/) category — `how-to
 - [Why there are two browsers, and which one gets the work](explanation/system-browser-and-explorer.md) — the System Browser is frozen, the Explorer is where new features land; why "frozen" rather than deprecated or maintained, and the one gap still browser-only.
 - [The four kinds of tests](explanation/test-tiers.md) — unit, integration, GCI, and acceptance: what each proves, what it needs, and the names that mislead.
 - [Integration test isolation](explanation/integration-test-isolation.md) — why transaction-abort is the isolation mechanism for `useIntegrationTest`, and why the commit guard is armed per-session and irreversible.
+- [GCI cross-version compatibility](explanation/gci-version-compatibility.md) — how Jasper stays loadable across every supported GemStone release and platform: the vendored headers, the optional-function registry, and which tool catches which mistake.
 
 ## Reference
 

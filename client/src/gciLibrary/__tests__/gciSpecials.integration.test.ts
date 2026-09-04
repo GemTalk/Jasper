@@ -10,7 +10,10 @@ import {
   OOP_FALSE,
   OOP_ILLEGAL,
   OOP_NIL,
+  OOP_One,
+  OOP_Three,
   OOP_TRUE,
+  OOP_Two,
   OOP_Zero,
 } from '../../gciConstants';
 import { useIntegrationTest } from '../../__tests__/useIntegrationTest';
@@ -99,6 +102,37 @@ describe('GCI special OOPs (integration)', () => {
   describe('supportsNonBlockingLogin', () => {
     it('reports non-blocking login as supported everywhere except Windows', () => {
       expect(gci.supportsNonBlockingLogin()).toBe(process.platform !== 'win32');
+    });
+  });
+
+  describe('GciI32ToOop / GciTsI32ToOop', () => {
+    it('encodes 0 as OOP_Zero', () => {
+      expect(gci.GciI32ToOop(0)).toBe(OOP_Zero);
+    });
+
+    it('encodes 1 as OOP_One', () => {
+      expect(gci.GciI32ToOop(1)).toBe(OOP_One);
+    });
+
+    it('encodes 2 as OOP_Two', () => {
+      expect(gci.GciI32ToOop(2)).toBe(OOP_Two);
+    });
+
+    it('encodes 3 as OOP_Three', () => {
+      expect(gci.GciI32ToOop(3)).toBe(OOP_Three);
+    });
+
+    it('GciI32ToOop and GciTsI32ToOop return the same result', () => {
+      for (const n of [0, 1, -1, 42, -100, 2147483647, -2147483648]) {
+        expect(gci.GciI32ToOop(n)).toBe(gci.GciTsI32ToOop(n));
+      }
+    });
+
+    it('result is always a SmallInteger special', () => {
+      for (const n of [0, 1, -1, 42, 1000]) {
+        expect(gci.GciTsOopIsSpecial(gci.GciI32ToOop(n))).toBe(true);
+        expect(gci.GciTsFetchSpecialClass(gci.GciI32ToOop(n))).toBe(OOP_CLASS_SMALL_INTEGER);
+      }
     });
   });
 });
