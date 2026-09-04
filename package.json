@@ -57,6 +57,9 @@
       "[gemstone-smalltalk]": {
         "editor.minimap.enabled": false
       },
+      "[gemstone-method]": {
+        "editor.minimap.enabled": false
+      },
       "[gemstone-class-comment]": {
         "editor.wordWrap": "on",
         "editor.minimap.enabled": false
@@ -101,6 +104,13 @@
         "configuration": "./language-configuration.json"
       },
       {
+        "id": "gemstone-method",
+        "aliases": [
+          "GemStone Method"
+        ],
+        "configuration": "./language-configuration.json"
+      },
+      {
         "id": "gemstone-class-comment",
         "aliases": [
           "GemStone Class Comment"
@@ -132,6 +142,11 @@
         "language": "gemstone-smalltalk",
         "scopeName": "source.gemstone-smalltalk",
         "path": "./syntaxes/gemstone-smalltalk.tmLanguage.json"
+      },
+      {
+        "language": "gemstone-method",
+        "scopeName": "source.gemstone-method",
+        "path": "./syntaxes/gemstone-method.tmLanguage.json"
       },
       {
         "language": "ston",
@@ -3050,62 +3065,62 @@
       "editor/context": [
         {
           "command": "gemstone.displayIt",
-          "when": "editorTextFocus && resourceLangId == gemstone-smalltalk && !gemstone.executing",
+          "when": "editorTextFocus && (resourceLangId == gemstone-smalltalk || resourceLangId == gemstone-method) && !gemstone.executing",
           "group": "1_gemstone@0"
         },
         {
           "command": "gemstone.inspectIt",
-          "when": "editorTextFocus && resourceLangId == gemstone-smalltalk && !gemstone.executing",
+          "when": "editorTextFocus && (resourceLangId == gemstone-smalltalk || resourceLangId == gemstone-method) && !gemstone.executing",
           "group": "1_gemstone@1"
         },
         {
           "command": "gemstone.executeIt",
-          "when": "editorTextFocus && resourceLangId == gemstone-smalltalk && !gemstone.executing",
+          "when": "editorTextFocus && (resourceLangId == gemstone-smalltalk || resourceLangId == gemstone-method) && !gemstone.executing",
           "group": "1_gemstone@3"
         },
         {
           "command": "gemstone.debugIt",
-          "when": "editorTextFocus && resourceLangId == gemstone-smalltalk && !gemstone.executing",
+          "when": "editorTextFocus && (resourceLangId == gemstone-smalltalk || resourceLangId == gemstone-method) && !gemstone.executing",
           "group": "1_gemstone@4"
         },
         {
           "command": "gemstone.runInNewGem",
-          "when": "editorTextFocus && resourceLangId == gemstone-smalltalk && !gemstone.executing",
+          "when": "editorTextFocus && (resourceLangId == gemstone-smalltalk || resourceLangId == gemstone-method) && !gemstone.executing",
           "group": "1_gemstone@5"
         },
         {
           "command": "gemstone.sendersOf",
-          "when": "editorTextFocus && resourceLangId == gemstone-smalltalk",
+          "when": "editorTextFocus && (resourceLangId == gemstone-smalltalk || resourceLangId == gemstone-method)",
           "group": "2_navigation@0"
         },
         {
           "command": "gemstone.implementorsOf",
-          "when": "editorTextFocus && resourceLangId == gemstone-smalltalk",
+          "when": "editorTextFocus && (resourceLangId == gemstone-smalltalk || resourceLangId == gemstone-method)",
           "group": "2_navigation@1"
         },
         {
           "command": "gemstone.breakpoints.toggleAtCursor",
-          "when": "editorTextFocus && resourceLangId == gemstone-smalltalk",
+          "when": "editorTextFocus && resourceLangId == gemstone-method",
           "group": "3_gemstoneBreakpoints@0"
         },
         {
           "command": "gemstone.breakpoints.enableAtCursor",
-          "when": "editorTextFocus && resourceLangId == gemstone-smalltalk",
+          "when": "editorTextFocus && resourceLangId == gemstone-method",
           "group": "3_gemstoneBreakpoints@1"
         },
         {
           "command": "gemstone.breakpoints.disableAtCursor",
-          "when": "editorTextFocus && resourceLangId == gemstone-smalltalk",
+          "when": "editorTextFocus && resourceLangId == gemstone-method",
           "group": "3_gemstoneBreakpoints@2"
         },
         {
           "command": "gemstone.breakpoints.clearMethod",
-          "when": "editorTextFocus && resourceLangId == gemstone-smalltalk",
+          "when": "editorTextFocus && resourceLangId == gemstone-method",
           "group": "3_gemstoneBreakpoints@3"
         },
         {
           "command": "gemstone.breakpoints.toggleStepPoints",
-          "when": "editorTextFocus && resourceLangId == gemstone-smalltalk",
+          "when": "editorTextFocus && resourceLangId == gemstone-method",
           "group": "3_gemstoneBreakpoints@4"
         }
       ]
@@ -3116,6 +3131,7 @@
         "label": "GemStone",
         "languages": [
           "gemstone-smalltalk",
+          "gemstone-method",
           "gemstone-topaz",
           "gemstone-tonel"
         ],
@@ -3145,14 +3161,14 @@
     ],
     "breakpoints": [
       {
-        "language": "gemstone-smalltalk"
+        "language": "gemstone-method"
       }
     ],
     "keybindings": [
       {
         "command": "gemstone.breakpoints.toggleAtCursor",
         "key": "shift+f9",
-        "when": "editorTextFocus && resourceScheme == gemstone && gemstone.hasActiveSession"
+        "when": "editorTextFocus && resourceLangId == gemstone-method && gemstone.hasActiveSession"
       },
       {
         "command": "gemstone.explorer.openSelectedMethodToSide",
