@@ -1,6 +1,13 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
+
+vi.mock('vscode', () => import('../__mocks__/vscode.js'));
+
+// The ids come from the code that hands them out, so a `when` clause and the
+// document it is meant to match cannot drift apart. languageIds.test.ts pins the
+// literal strings.
+import { METHOD_LANGUAGE, SMALLTALK_LANGUAGE } from '../languageIds';
 
 const pkgPath = path.resolve(__dirname, '..', '..', '..', 'package.json');
 const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
@@ -52,37 +59,37 @@ describe('editor/context menu', () => {
   // and must keep working in a workspace, a .gst file and a method alike.
   it('shows "Display It" in gemstone documents when code execution is available', () => {
     expect(getMenuItem('gemstone.displayIt')?.when).toBe(
-      `editorTextFocus && (resourceLangId == gemstone-smalltalk || resourceLangId == gemstone-method) && !gemstone.executing`,
+      `editorTextFocus && (resourceLangId == ${SMALLTALK_LANGUAGE} || resourceLangId == ${METHOD_LANGUAGE}) && !gemstone.executing`,
     );
   });
 
   it('shows "Inspect It" in gemstone documents when code execution is available', () => {
     expect(getMenuItem('gemstone.inspectIt')?.when).toBe(
-      `editorTextFocus && (resourceLangId == gemstone-smalltalk || resourceLangId == gemstone-method) && !gemstone.executing`,
+      `editorTextFocus && (resourceLangId == ${SMALLTALK_LANGUAGE} || resourceLangId == ${METHOD_LANGUAGE}) && !gemstone.executing`,
     );
   });
 
   it('shows "Execute It" in gemstone documents when code execution is available', () => {
     expect(getMenuItem('gemstone.executeIt')?.when).toBe(
-      `editorTextFocus && (resourceLangId == gemstone-smalltalk || resourceLangId == gemstone-method) && !gemstone.executing`,
+      `editorTextFocus && (resourceLangId == ${SMALLTALK_LANGUAGE} || resourceLangId == ${METHOD_LANGUAGE}) && !gemstone.executing`,
     );
   });
 
   it('shows "Debug It" in gemstone documents when code execution is available', () => {
     expect(getMenuItem('gemstone.debugIt')?.when).toBe(
-      `editorTextFocus && (resourceLangId == gemstone-smalltalk || resourceLangId == gemstone-method) && !gemstone.executing`,
+      `editorTextFocus && (resourceLangId == ${SMALLTALK_LANGUAGE} || resourceLangId == ${METHOD_LANGUAGE}) && !gemstone.executing`,
     );
   });
 
   it('shows "Senders Of..." in gemstone documents', () => {
     expect(getMenuItem('gemstone.sendersOf')?.when).toBe(
-      `editorTextFocus && (resourceLangId == gemstone-smalltalk || resourceLangId == gemstone-method)`,
+      `editorTextFocus && (resourceLangId == ${SMALLTALK_LANGUAGE} || resourceLangId == ${METHOD_LANGUAGE})`,
     );
   });
 
   it('shows "Implementors Of..." in gemstone documents', () => {
     expect(getMenuItem('gemstone.implementorsOf')?.when).toBe(
-      `editorTextFocus && (resourceLangId == gemstone-smalltalk || resourceLangId == gemstone-method)`,
+      `editorTextFocus && (resourceLangId == ${SMALLTALK_LANGUAGE} || resourceLangId == ${METHOD_LANGUAGE})`,
     );
   });
 
@@ -101,7 +108,7 @@ describe('editor/context menu', () => {
     // Compared as a map so a mismatch names the offending command itself.
     expect(Object.fromEntries(commands.map((c) => [c, getMenuItem(c)?.when]))).toEqual(
       Object.fromEntries(
-        commands.map((c) => [c, `editorTextFocus && resourceLangId == gemstone-method`]),
+        commands.map((c) => [c, `editorTextFocus && resourceLangId == ${METHOD_LANGUAGE}`]),
       ),
     );
   });
@@ -115,7 +122,7 @@ describe('editor/context menu', () => {
 
     expect(binding.key).toBe('shift+f9');
     expect(binding.when).toBe(
-      'editorTextFocus && resourceLangId == gemstone-method && gemstone.hasActiveSession',
+      `editorTextFocus && resourceLangId == ${METHOD_LANGUAGE} && gemstone.hasActiveSession`,
     );
   });
 });

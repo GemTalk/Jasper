@@ -171,6 +171,7 @@ import { EnhancedInspector } from '../enhancedInspector/enhancedInspector';
 import { SystemBrowser } from '../systemBrowser';
 import { ActiveSession } from '../sessionManager';
 import { GemStoneLogin } from '../loginTypes';
+import { SMALLTALK_LANGUAGE } from '../languageIds';
 
 const GS_PROCESS = 0x123n;
 const ERROR_MSG = 'a UndefinedObject does not understand #foo';
@@ -1425,7 +1426,7 @@ describe('DebuggerPanel', () => {
       expect(openUri.scheme).toBe('gemstone-debug');
       expect(vscode.languages.setTextDocumentLanguage).toHaveBeenCalledWith(
         expect.anything(),
-        'gemstone-smalltalk',
+        SMALLTALK_LANGUAGE,
       );
     });
 
@@ -1598,7 +1599,7 @@ describe('DebuggerPanel', () => {
     function columnedEditor(viewColumn: number) {
       return {
         document: {
-          languageId: 'gemstone-smalltalk',
+          languageId: SMALLTALK_LANGUAGE,
           positionAt: (o: number) => new vscode.Position(0, o),
           getWordRangeAtPosition: () => undefined,
           lineAt: () => ({ firstNonWhitespaceCharacterIndex: 0 }),

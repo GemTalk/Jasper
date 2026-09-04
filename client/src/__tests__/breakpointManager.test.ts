@@ -42,6 +42,7 @@ import {
 } from '../__mocks__/vscode';
 import type * as vscodeApi from 'vscode';
 import { BreakpointManager } from '../breakpointManager';
+import { METHOD_LANGUAGE, SMALLTALK_LANGUAGE } from '../languageIds';
 import { SessionManager } from '../sessionManager';
 import { StepPointModel, buildLineStarts } from '../stepPointModel';
 import {
@@ -354,7 +355,7 @@ describe('BreakpointManager', () => {
     it('takes back a breakpoint set in a workspace, and says where it belongs', () => {
       const stray = bpOn('untitled:Workspace');
       workspace.textDocuments = [
-        { uri: Uri.parse('untitled:Workspace'), languageId: 'gemstone-smalltalk' },
+        { uri: Uri.parse('untitled:Workspace'), languageId: SMALLTALK_LANGUAGE },
       ];
       debug.breakpoints = [stray];
 
@@ -384,7 +385,7 @@ describe('BreakpointManager', () => {
       // saying nothing.
       const stray = bpOn('untitled:Workspace');
       workspace.textDocuments = [
-        { uri: Uri.parse('untitled:Workspace'), languageId: 'gemstone-smalltalk' },
+        { uri: Uri.parse('untitled:Workspace'), languageId: SMALLTALK_LANGUAGE },
       ];
       debug.breakpoints = [stray];
 
@@ -432,7 +433,7 @@ describe('BreakpointManager', () => {
       const uri = 'gemstone://1/Globals/Array/definition';
       const stray = bpOn(uri);
       workspace.textDocuments = [
-        { uri: Uri.parse(uri), languageId: 'gemstone-smalltalk', isDirty: false },
+        { uri: Uri.parse(uri), languageId: SMALLTALK_LANGUAGE, isDirty: false },
       ];
       debug.breakpoints = [stray];
 
@@ -449,7 +450,7 @@ describe('BreakpointManager', () => {
       const uri = 'gemstone://1/Globals/Array/instance/accessing/at%3A%20(base)';
       const stray = bpOn(uri);
       workspace.textDocuments = [
-        { uri: Uri.parse(uri), languageId: 'gemstone-smalltalk', isDirty: false },
+        { uri: Uri.parse(uri), languageId: SMALLTALK_LANGUAGE, isDirty: false },
       ];
       debug.breakpoints = [stray];
 
@@ -477,7 +478,7 @@ describe('BreakpointManager', () => {
       const uri = 'vscode-notebook-cell:/tmp/nb.ipynb#W0';
       const stray = bpOn(uri);
       workspace.textDocuments = [
-        { uri: Uri.parse(uri), languageId: 'gemstone-smalltalk', isDirty: false },
+        { uri: Uri.parse(uri), languageId: SMALLTALK_LANGUAGE, isDirty: false },
       ];
       debug.breakpoints = [stray];
 
@@ -508,7 +509,7 @@ describe('BreakpointManager', () => {
     it('leaves a real method editor alone', () => {
       const real = bpOn(METHOD_URI);
       workspace.textDocuments = [
-        { uri: Uri.parse(METHOD_URI), languageId: 'gemstone-method', isDirty: false },
+        { uri: Uri.parse(METHOD_URI), languageId: METHOD_LANGUAGE, isDirty: false },
       ];
       debug.breakpoints = [real];
 
@@ -1204,7 +1205,7 @@ describe('BreakpointManager', () => {
       mockGetMethodSource.mockReturnValue('at: index\n^ self basicAt: index');
       mockGetSourceOffsets.mockReturnValue([1, 13]);
       workspace.textDocuments = [
-        { uri: Uri.parse(METHOD_URI), languageId: 'gemstone-method', isDirty: false },
+        { uri: Uri.parse(METHOD_URI), languageId: METHOD_LANGUAGE, isDirty: false },
       ];
     });
 
@@ -1240,7 +1241,7 @@ describe('BreakpointManager', () => {
       );
       debug.breakpoints = [dead];
       workspace.textDocuments = [
-        { uri: dead.location.uri, languageId: 'gemstone-method', isDirty: false },
+        { uri: dead.location.uri, languageId: METHOD_LANGUAGE, isDirty: false },
       ];
 
       managerOverTwo();

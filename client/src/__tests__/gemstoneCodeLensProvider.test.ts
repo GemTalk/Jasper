@@ -12,6 +12,7 @@ import type { TextDocument, CodeLens } from 'vscode';
 import { CODE_LENS_SELECTORS, GemStoneCodeLensProvider } from '../gemstoneCodeLensProvider';
 import { SessionManager, ActiveSession } from '../sessionManager';
 import * as queries from '../browserQueries';
+import { SMALLTALK_LANGUAGE } from '../languageIds';
 
 function createMockSession(): ActiveSession {
   return {
@@ -41,7 +42,7 @@ function createMockDocument(text: string, scheme = 'file'): TextDocument {
         ? Uri.parse('gemstone://1/UserGlobals/MyClass/instance/accessing/name')
         : Uri.file('/test.gs'),
     getText: () => text,
-    languageId: scheme === 'gemstone' ? 'gemstone-smalltalk' : 'gemstone-topaz',
+    languageId: scheme === 'gemstone' ? SMALLTALK_LANGUAGE : 'gemstone-topaz',
     lineAt: vi.fn(),
     lineCount: text.split('\n').length,
   } as unknown as TextDocument;
@@ -104,7 +105,7 @@ name: aString
       const doc = {
         uri: Uri.parse('gemstone://1/UserGlobals/MyClass/instance/accessing/new-method'),
         getText: () => 'messageSelector\n  ^ self',
-        languageId: 'gemstone-smalltalk',
+        languageId: SMALLTALK_LANGUAGE,
         lineAt: vi.fn(),
         lineCount: 2,
       } as unknown as TextDocument;
@@ -167,7 +168,7 @@ true
     });
 
     it('attaches only to editors holding GemStone source', () => {
-      const SOURCE_LANGUAGES = ['gemstone-smalltalk', 'gemstone-topaz', 'gemstone-tonel'];
+      const SOURCE_LANGUAGES = [SMALLTALK_LANGUAGE, 'gemstone-topaz', 'gemstone-tonel'];
       const offenders = CODE_LENS_SELECTORS.filter(
         (f) => !SOURCE_LANGUAGES.includes(f.language as string),
       );

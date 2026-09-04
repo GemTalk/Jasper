@@ -1,12 +1,17 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 
+vi.mock('vscode', () => import('../__mocks__/vscode.js'));
+
+// The ids come from the code that hands them out, not from a copy written here:
+// these tests then assert that the manifest declares what a document is actually
+// tagged with. (languageIds.test.ts pins the literal strings themselves, since
+// the manifest and a user's settings.json spell them out.)
+import { METHOD_LANGUAGE as METHOD, SMALLTALK_LANGUAGE as SMALLTALK } from '../languageIds';
+
 const root = path.resolve(__dirname, '..', '..', '..');
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf-8'));
-
-const SMALLTALK = 'gemstone-smalltalk';
-const METHOD = 'gemstone-method';
 
 interface LanguageContribution {
   id: string;

@@ -10,6 +10,7 @@ import { ExplorerController, MethodItem, shouldHintKeepMethodsOpen } from '../..
 import type { ExplorerTestResult } from '../../gemstoneExplorer';
 import { Uri, window, commands, workspace, languages } from '../../__mocks__/vscode';
 import type { SessionManager, ActiveSession } from '../../sessionManager';
+import { METHOD_LANGUAGE } from '../../languageIds';
 
 // Structural mirror of the (unexported) SelectorInfo the tree items carry.
 type SelectorInfo = {
@@ -145,7 +146,7 @@ describe('ExplorerController.openMethod', () => {
 
     await ctl.openMethod(methodItem(), 'preview');
 
-    expect(setLang).toHaveBeenCalledWith(expect.anything(), 'gemstone-method');
+    expect(setLang).toHaveBeenCalledWith(expect.anything(), METHOD_LANGUAGE);
     // Language is set before the doc is shown in the (reused) preview editor.
     expect(setLang.mock.invocationCallOrder[0]).toBeLessThan(
       showTextDocument.mock.invocationCallOrder[0],
