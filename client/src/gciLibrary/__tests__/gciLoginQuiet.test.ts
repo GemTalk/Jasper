@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { GCI_LOGIN_PW_ENCRYPTED, GCI_LOGIN_QUIET } from '../../gciConstants';
 import { mockKoffiModule } from '../../__mocks__/koffi';
+import { fakeNativeSocketLibrary } from '../../__tests__/support/fakeNativeSocketLibrary';
 
 // One stub per native function, so each login binding's arguments can be
 // inspected independently. Keyed by the function name parsed out of the koffi
@@ -138,7 +139,7 @@ describe('login wrappers force GCI_LOGIN_QUIET', () => {
 
   beforeEach(() => {
     nativeStubs.clear();
-    gci = new GciLibrary('/fake/libgcits.dylib');
+    gci = new GciLibrary('/fake/libgcits.dylib', fakeNativeSocketLibrary());
   });
 
   describe.each(WRAPPERS)('$name', ({ name, netldiArg, outParams, invoke }) => {

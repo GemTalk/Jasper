@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { mockKoffiModule } from '../__mocks__/koffi';
+import { fakeNativeSocketLibrary } from './support/fakeNativeSocketLibrary';
 
 // Functions that older / client GCI libraries do NOT export.
 // The GciTs* functions below (per a gcits.hf diff of 3.6.2 vs 3.7.5) were added
@@ -51,7 +52,7 @@ describe('GciLibrary with Windows client DLL (missing optional functions)', () =
 
   beforeEach(() => {
     // Constructor should succeed even though 5 functions are missing
-    gci = new GciLibrary('C:\\fake\\libgcits-3.7.5-64.dll');
+    gci = new GciLibrary('C:\\fake\\libgcits-3.7.5-64.dll', fakeNativeSocketLibrary());
   });
 
   it('constructs successfully when optional functions are missing', () => {
