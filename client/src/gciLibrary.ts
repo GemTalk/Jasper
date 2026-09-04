@@ -2333,8 +2333,7 @@ export class GciLibrary {
    * are rare. So it's worth the (rare, one-off) risk of blocking the event
    * loop to still return a legitimate result when the failure turns out to
    * be transient, rather than taking on the complexity of telling the two
-   * apart just to fail slightly faster in the fatal case. See
-   * {@link isNbResultReady}.
+   * apart just to fail slightly faster in the fatal case.
    *
    * @param session - The GemStone session to operate in.
    * @param code - Smalltalk source to evaluate.
@@ -2377,25 +2376,20 @@ export class GciLibrary {
    * non-blocking GCI call is ready to fetch, polling its socket for
    * readiness rather than waiting on GemStone directly.
    *
-   * Looks up `session`'s socket once, up front, rather than on every poll
-   * tick: the fd identifies `session`'s connection, not the individual
-   * in-flight call, and stays valid for as long as this call can possibly
-   * still be in flight (per `GciTsSocket`'s doc comment, it's meant to be
-   * fetched once and handed to repeated `poll`s). Re-deriving it on every
-   * tick would just be a redundant native round-trip each time.
-   *
-   * Never throws for a readiness check that fails once polling is under
-   * way: {@link isNbResultReady} treats that as "ready" so the caller falls
-   * back to a blocking fetch instead. See {@link executeAndFetchOop}'s doc
-   * comment for why that's the right trade-off here. A session that's
-   * already invalid before polling even starts, though, has no socket to
-   * poll at all — that failure, from looking up the fd itself, is not
-   * swallowed.
+   * If a readiness check itself fails after polling has started, this
+   * treats the call as ready rather than throwing, so the caller can fall
+   * back to fetching the result with a single blocking read instead. A
+   * session that's already invalid before polling even starts, though, has
+   * no socket to poll at all — that failure, from identifying the socket
+   * itself, is not swallowed.
    *
    * @param session - The GemStone session to operate in.
    * @throws {GciLibraryError} If `session`'s socket can't be identified.
    */
   private async waitForNbResult(session: unknown) {
+    // Looked up once, up front: the fd identifies the session's connection
+    // rather than this specific in-flight call, so it stays valid for the
+    // whole poll loop and doesn't need re-deriving on every tick.
     const fd = this.socketFor(session);
 
     while (!this.isNbResultReady(fd)) {
@@ -2407,20 +2401,15 @@ export class GciLibrary {
    * Whether the in-flight non-blocking GCI call on the connection
    * identified by `fd` has a result ready to fetch.
    *
-   * Reports "ready" (rather than propagating the error) if the check itself
-   * fails, whatever the reason — a transient hiccup (e.g. an interrupted
-   * poll syscall) and a genuinely dead socket are both treated the same
-   * way, deliberately: this method doesn't try to tell them apart. The
-   * caller then falls back to a single blocking fetch, which either still
-   * recovers a legitimate result (the transient case) or fails with its
-   * own, possibly less specific, error (the fatal case). That's judged an
-   * acceptable trade-off only because a readiness check is expected to fail
-   * rarely; see {@link executeAndFetchOop}'s doc comment.
+   * Reports "ready" instead of propagating an error if the check itself
+   * fails, for any reason — a transient hiccup and a genuinely dead socket
+   * are treated the same way, deliberately, so the caller falls back to a
+   * single blocking fetch rather than failing the call outright.
    *
-   * @param fd - The file descriptor of the session's socket, from {@link socketFor}.
-   * @returns `true` if the call is ready to fetch (or the check failed and
-   *   the caller should fall back to a blocking fetch), `false` if it
-   *   checked successfully and isn't ready yet.
+   * @param fd - the file descriptor of the session's socket.
+   * @returns `true` if the call is ready to fetch, or if the readiness
+   *   check itself failed; `false` if the check succeeded and the call
+   *   isn't ready yet.
    */
   private isNbResultReady(fd: number) {
     try {
@@ -2458,9 +2447,9 @@ export class GciLibrary {
   /**
    * Returns the file descriptor of `session`'s socket, so a caller can
    * poll it (e.g. via `poll`/`select`) for readiness instead of blocking
-   * while waiting on a non-blocking GCI call. The fd belongs to `libgcits`,
-   * not Node, so it must be checked with {@link NativeSocketLibrary} rather
-   * than wrapped in a `net.Socket`; see that class's doc comment for why.
+   * while waiting on a non-blocking GCI call. The fd is owned by the
+   * native GCI library, not Node, so readiness must be checked with an
+   * OS-level poll wrapper rather than by handing it to a `net.Socket`.
    *
    * @param session - The GemStone session to operate in.
    * @returns The session's socket file descriptor.
