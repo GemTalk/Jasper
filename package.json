@@ -640,13 +640,6 @@
           "contextualTitle": "GemStone Breakpoints",
           "icon": "$(debug-breakpoint)",
           "type": "tree"
-        },
-        {
-          "id": "gemstoneInspector",
-          "name": "Inspector",
-          "contextualTitle": "GemStone Inspector",
-          "type": "tree",
-          "icon": "$(eye)"
         }
       ],
       "explorer": [
@@ -679,16 +672,6 @@
         "view": "gemstoneRowan",
         "contents": "Open a folder to work with Rowan.\n[New Rowan Project…](command:gemstone.rowanNewProject)",
         "when": "workspaceFolderCount == 0"
-      },
-      {
-        "view": "gemstoneInspector",
-        "contents": "No objects inspected yet.\nSelect code and press Cmd+K I to inspect.",
-        "when": "isMac"
-      },
-      {
-        "view": "gemstoneInspector",
-        "contents": "No objects inspected yet.\nSelect code and press Ctrl+K I to inspect.",
-        "when": "!isMac"
       },
       {
         "view": "gemstoneDatabases",
@@ -1034,18 +1017,6 @@
         "title": "Show Transcript",
         "category": "GemStone",
         "icon": "$(output)"
-      },
-      {
-        "command": "gemstone.removeInspectorItem",
-        "title": "Remove",
-        "category": "GemStone",
-        "icon": "$(close)"
-      },
-      {
-        "command": "gemstone.clearInspector",
-        "title": "Clear All",
-        "category": "GemStone",
-        "icon": "$(clear-all)"
       },
       {
         "command": "gemstone.openBrowser",
@@ -2467,11 +2438,6 @@
           "group": "navigation@2"
         },
         {
-          "command": "gemstone.clearInspector",
-          "when": "view == gemstoneInspector",
-          "group": "navigation"
-        },
-        {
           "command": "gemstone.newDatabase",
           "when": "view == gemstoneDatabases",
           "group": "navigation@1"
@@ -2959,11 +2925,6 @@
         {
           "command": "gemstone.selectSession",
           "when": "view == gemstoneLogins && viewItem == gemstoneSession"
-        },
-        {
-          "command": "gemstone.removeInspectorItem",
-          "when": "view == gemstoneInspector && viewItem == gemstoneInspectorRoot",
-          "group": "inline@1"
         },
         {
           "command": "gemstone.replaceExtent",

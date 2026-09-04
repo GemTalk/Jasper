@@ -228,11 +228,11 @@ Context menu operations include:
 
 ### Object Inspector
 
-The **Inspector** sidebar view displays GemStone objects with drill-down into named and indexed instance variables. Pin objects via **Inspect It** or by clicking globals in the Explorer. Large collections are paginated.
+**Inspect It** opens an object in the **Inspector**, an editor tab beside your code. It presents the object as tabs — **Slots** for named instance variables, **Items** or **Entries** for what a collection or dictionary holds (paginated for large ones), the full **Print** string, **Bytes** for byte objects — a dump headed by its columns, showing the index each line starts at, in hex or decimal — **Meta** for the class behind it, and **Evaluate** to run an expression with the object bound to `self`, on the editor's own `Ctrl+K` `D`/`E`/`I` for Display, Execute and Inspect It. A paged tab offers **Load all** beside **Load more**. Double-click a row to open that object in a new column to the right, so the trail you followed stays on screen; a row's context menu also copies its printString or OOP, browses its class, and edits its value in place.
 
 #### Enhanced Inspector
 
-With the optional server-side support installed (GemStone 3.7.5+), **Inspect It** opens the **Enhanced Inspector** instead: a miller-column panel with rich, per-class object views in the style of Glamorous Toolkit. On stones without the support — or older GemStone versions — Jasper falls back to the classic sidebar inspector. When you connect to a stone that lacks the support, Jasper offers to install it (together with the refactoring engine); the `gemstone.serverSupport.autoInstall` setting (`ask` / `always` / `never`) controls that prompt.
+With the optional server-side support installed (GemStone 3.7.5+), **Inspect It** opens the **Enhanced Inspector** instead: the same tabbed, miller-column shell, but with rich per-class object views in the style of Glamorous Toolkit. When you connect to a stone that lacks the support, Jasper offers to install it (together with the refactoring engine); the `gemstone.serverSupport.autoInstall` setting (`ask` / `always` / `never`) controls that prompt. Everything described above works with no server support at all, on GemStone 3.6.2 and later.
 
 ### Search and Navigation
 

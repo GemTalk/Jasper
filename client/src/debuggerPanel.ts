@@ -8,9 +8,7 @@ import * as queries from './browserQueries';
 import { drainTranscript } from './transcriptSink';
 import { appendTranscriptOutput } from './transcriptChannel';
 import { buildLineStarts, stepPointAtOffset, StepPointInfo } from './stepPointModel';
-import { EnhancedInspector } from './enhancedInspector/enhancedInspector';
-import { InspectorTreeProvider } from './inspectorTreeProvider';
-import { routeInspect } from './inspectRouter';
+import { routeInspect, InspectorHandle } from './inspectRouter';
 import { SystemBrowser } from './systemBrowser';
 import { logError, logInfo } from './gciLog';
 import { NbCancelledError, NbRunOptions } from './nbRunner';
@@ -897,15 +895,6 @@ export class DebuggerPanel {
   private static savedStackBasis = '60%';
 
   /**
-   * The classic Inspector tree view, injected once at activation. Used as the
-   * fallback for "Inspect" on a stack variable when the session has no enhanced
-   * inspector installed (else the variable opens in an Enhanced Inspector beside
-   * the debugger). The panel isn't constructed with it — its factory runs deep
-   * inside codeExecutor — so it's a static handle rather than a ctor arg.
-   */
-  static inspectorProvider: InspectorTreeProvider | undefined;
-
-  /**
    * Whether the inline-value overlay (#5) is on. Off by default — it can clutter
    * a large method — and toggled per source pane via the editor-title button.
    * Remembered window-wide (like `savedStackBasis`) so the choice carries from
@@ -1126,10 +1115,11 @@ export class DebuggerPanel {
   /** Low-frequency sampler of the source-group ratio (see savedSourceRatio); cleared on dispose. */
   private layoutSampler: ReturnType<typeof setInterval> | undefined;
   /**
-   * enhanced inspectors opened from this debugger's Variables pane. They're artifacts
-   * of this debugger, so they're closed when it closes (see dispose).
+   * Inspectors opened from this debugger's Variables pane — whichever kind the
+   * session routes to. They're artifacts of this debugger, so they're closed
+   * when it closes (see dispose).
    */
-  private openedInspectors = new Set<EnhancedInspector>();
+  private openedInspectors = new Set<InspectorHandle>();
   /** The editor currently carrying the step-point highlight, if any. */
   private decoratedEditor: vscode.TextEditor | undefined;
   /**
@@ -1543,19 +1533,13 @@ export class DebuggerPanel {
         return;
       }
       case 'inspectVariable': {
-        // Inspect the clicked variable through the shared router: with the
-        // enhanced inspector installed it opens beside the debugger and is
-        // tracked so it closes with the debugger (it's an artifact of it);
-        // otherwise it falls back to the classic Inspector tree view in the
-        // primary sidebar (which persists on its own).
+        // Inspect the clicked variable through the shared router — the Enhanced
+        // Inspector where the session has it, the basic tabbed one otherwise.
+        // Either way it opens beside the debugger and is tracked here so it
+        // closes with the debugger, being an artifact of it.
         try {
-          const inspector = routeInspect(
-            this.session,
-            BigInt(msg.oop),
-            msg.name,
-            DebuggerPanel.inspectorProvider!,
-          );
-          if (inspector) this.openedInspectors.add(inspector);
+          const inspector = routeInspect(this.session, BigInt(msg.oop), msg.name);
+          this.openedInspectors.add(inspector);
         } catch (e: unknown) {
           logError(this.sessionId, e instanceof Error ? e.message : String(e));
         }

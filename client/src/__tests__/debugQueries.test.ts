@@ -588,16 +588,18 @@ describe('debugQueries', () => {
   //   NameError 2404, _framePerform:withArgs:onLevel:, There is no Symbol …
   // because evaluateInFrame called a primitive that does NOT exist on 3.7.x (so
   // GciTsPerform couldn't resolve the selector). The fix evaluates the
-  // expression via String>>evaluateInContext: with self = the frame receiver.
-  // (We can't run real Smalltalk in unit tests — the live image confirms
-  // `'3 + 4' evaluateInContext: nil` => 7 — so the mock supplies the printString
-  // and we assert the *right call* is made, which is what regressed.)
+  // expression via String>>evaluateInContext:symbolList: with self = the frame
+  // receiver. (We can't run real Smalltalk in unit tests, so the mock supplies
+  // the printString and we assert the *right call* is made, which is what
+  // regressed. The live image confirms the send itself.)
   describe('evaluateInFrame ("3 + 4" regression)', () => {
     const GS_PROCESS = 9000n;
     const FRAME_ARRAY = 0xf0n;
     const FRAME_RECEIVER = 0x77n; // becomes `self` for the evaluation
     const EXPR_STRING = 0xe0n;
     const EVAL_RESULT = 0x07n; // the oop the evaluation returned
+    const SYSTEM_CLASS = 0xd3n;
+    const SESSION_SYMBOL_LIST = 0xddan; // System myUserProfile symbolList
 
     function evalSession() {
       const gci = {
@@ -610,9 +612,13 @@ describe('debugQueries', () => {
           oops: [1n, 2n, 0n, 0n, 0n, 0n, 0n, 0n, 0x14n /* OOP_NIL names */, FRAME_RECEIVER],
           err: { ...noErr },
         })),
+        resolveSymbol: vi.fn(() => SYSTEM_CLASS),
         GciTsPerform: vi.fn((_h: unknown, _r: bigint, _sOop: bigint, sel: string | null) => {
           if (sel === '_frameContentsAt:') return { result: FRAME_ARRAY, err: { ...noErr } };
-          if (sel === 'evaluateInContext:') return { result: EVAL_RESULT, err: { ...noErr } };
+          if (sel === 'myUserProfile') return { result: 0xdddn, err: { ...noErr } };
+          if (sel === 'symbolList') return { result: SESSION_SYMBOL_LIST, err: { ...noErr } };
+          if (sel === 'evaluateInContext:symbolList:')
+            return { result: EVAL_RESULT, err: { ...noErr } };
           return { result: 0n, err: { ...noErr } };
         }),
         // printString of the evaluation result (the EVAL_RESULT oop) is "7".
@@ -636,16 +642,31 @@ describe('debugQueries', () => {
       expect(debug.evaluateInFrame(session, GS_PROCESS, '3 + 4', 3)).toBe('7');
     });
 
-    it('evaluates via String>>evaluateInContext: with self = the frame receiver', () => {
+    it('evaluates the expression string with self bound to the frame receiver', () => {
       const session = evalSession();
       debug.evaluateInFrame(session, GS_PROCESS, '3 + 4', 3);
 
       expect(session.gci.GciTsNewString).toHaveBeenCalledWith({}, '3 + 4');
       const performCalls = (session.gci.GciTsPerform as ReturnType<typeof vi.fn>).mock.calls;
-      const evalCall = performCalls.find((c: unknown[]) => c[3] === 'evaluateInContext:');
+      const evalCall = performCalls.find(
+        (c: unknown[]) => c[3] === 'evaluateInContext:symbolList:',
+      );
       expect(evalCall).toBeDefined();
-      expect(evalCall![1]).toBe(EXPR_STRING); // receiver of evaluateInContext: is the expr String
-      expect(evalCall![4]).toEqual([FRAME_RECEIVER]); // arg is the frame's receiver (self)
+      expect(evalCall![1]).toBe(EXPR_STRING); // the receiver of the send is the expression String
+      expect(evalCall![4]).toEqual([FRAME_RECEIVER, SESSION_SYMBOL_LIST]);
+    });
+
+    // The one-argument String>>evaluateInContext: does not exist before GemStone
+    // 3.7, where the perform fails with NameError 2404. A frame with nothing extra
+    // to bind must still go through the two-argument form.
+    it('never sends the one-argument form, which older stones do not implement', () => {
+      const session = evalSession();
+      debug.evaluateInFrame(session, GS_PROCESS, '3 + 4', 3);
+
+      const sels = (session.gci.GciTsPerform as ReturnType<typeof vi.fn>).mock.calls.map(
+        (c: unknown[]) => c[3],
+      );
+      expect(sels).not.toContain('evaluateInContext:');
     });
 
     it('never sends the removed _framePerform:withArgs:onLevel: primitive (the original bug)', () => {
@@ -736,6 +757,16 @@ describe('debugQueries', () => {
       expect(sels).not.toContain('evaluateInContext:');
     });
 
+    it('prepends the temp dictionary to the user symbol list', () => {
+      const session = tempSession();
+      debug.evaluateInFrame(session, GS_PROCESS, 'amount * 2', 3);
+
+      const evalCall = (session.gci.GciTsPerform as ReturnType<typeof vi.fn>).mock.calls.find(
+        (c: unknown[]) => c[3] === 'evaluateInContext:symbolList:',
+      );
+      expect(evalCall![4]).toEqual([FRAME_RECEIVER, 0xddcn]);
+    });
+
     it('interns each temp name and stores its value in the dictionary', () => {
       const session = tempSession();
       debug.evaluateInFrame(session, GS_PROCESS, 'amount * 2', 3);
@@ -748,23 +779,24 @@ describe('debugQueries', () => {
       expect(atPut![4]).toEqual([AMOUNT_SYMBOL, AMOUNT_VALUE]); // dict at: #amount put: value
     });
 
-    it('degrades to self-only evaluateInContext: when a required global will not resolve', () => {
+    it('falls back to the plain session symbol list when the temps cannot be bound', () => {
       const session = tempSession();
       // SymbolDictionary fails to resolve → no temp dictionary can be built, so
-      // buildFrameSymbolList returns null and the eval falls back to self-only.
+      // the eval runs against the user's own symbol list instead. `amount` will
+      // not resolve, but self, instVars and globals still do.
       (session.gci.resolveSymbol as ReturnType<typeof vi.fn>).mockImplementation(
         (_h: unknown, name: string) => {
           if (name === 'SymbolDictionary') throw new Error('not resolved');
           return 0xd2n;
         },
       );
+
       debug.evaluateInFrame(session, GS_PROCESS, 'amount * 2', 3);
 
-      const sels = (session.gci.GciTsPerform as ReturnType<typeof vi.fn>).mock.calls.map(
-        (c: unknown[]) => c[3],
+      const evalCall = (session.gci.GciTsPerform as ReturnType<typeof vi.fn>).mock.calls.find(
+        (c: unknown[]) => c[3] === 'evaluateInContext:symbolList:',
       );
-      expect(sels).toContain('evaluateInContext:');
-      expect(sels).not.toContain('evaluateInContext:symbolList:');
+      expect(evalCall![4]).toEqual([FRAME_RECEIVER, 0xddan]); // the user symbol list, unwrapped
     });
   });
 
@@ -778,9 +810,10 @@ describe('debugQueries', () => {
     const FRAME_RECEIVER = 0x77n;
     const EXPR_STRING = 0xe0n;
     const EVAL_RESULT = 0x07n;
+    const NB_SESSION_SYMBOL_LIST = 0xddan;
 
-    // Self-only frame (no named temps → evaluateInContext:), with the non-blocking
-    // calls wired to report "ready immediately" and hand back EVAL_RESULT.
+    // A frame with no named temps to bind, with the non-blocking calls wired to
+    // report "ready immediately" and hand back EVAL_RESULT.
     function nbEvalSession() {
       const gci = {
         GciTsI64ToOop: vi.fn(() => ({ result: 0xaan, err: { ...noErr } })),
@@ -791,11 +824,13 @@ describe('debugQueries', () => {
           oops: [1n, 2n, 0n, 0n, 0n, 0n, 0n, 0n, 0x14n /* OOP_NIL names */, FRAME_RECEIVER],
           err: { ...noErr },
         })),
-        GciTsPerform: vi.fn((_h: unknown, _r: bigint, _s: bigint, sel: string | null) =>
-          sel === '_frameContentsAt:'
-            ? { result: FRAME_ARRAY, err: { ...noErr } }
-            : { result: 0n, err: { ...noErr } },
-        ),
+        resolveSymbol: vi.fn(() => 0xd3n),
+        GciTsPerform: vi.fn((_h: unknown, _r: bigint, _s: bigint, sel: string | null) => {
+          if (sel === '_frameContentsAt:') return { result: FRAME_ARRAY, err: { ...noErr } };
+          if (sel === 'myUserProfile') return { result: 0xdddn, err: { ...noErr } };
+          if (sel === 'symbolList') return { result: NB_SESSION_SYMBOL_LIST, err: { ...noErr } };
+          return { result: 0n, err: { ...noErr } };
+        }),
         // printString of the evaluation result is "7".
         GciTsPerformFetchBytes: vi.fn((_h: unknown, oop: bigint) =>
           oop === EVAL_RESULT
@@ -821,15 +856,15 @@ describe('debugQueries', () => {
       await expect(debug.evaluateInFrameNb(session, GS_PROCESS, '3 + 4', 3)).resolves.toBe('7');
     });
 
-    it('issues the evaluation via GciTsNbPerform (evaluateInContext:) on the expression string', async () => {
+    it('issues the evaluation on the expression string, without blocking', async () => {
       const session = nbEvalSession();
       await debug.evaluateInFrameNb(session, GS_PROCESS, '3 + 4', 3);
 
       const nbCalls = (session.gci.GciTsNbPerform as ReturnType<typeof vi.fn>).mock.calls;
       expect(nbCalls).toHaveLength(1);
       expect(nbCalls[0][1]).toBe(EXPR_STRING); // receiver = the expression String
-      expect(nbCalls[0][3]).toBe('evaluateInContext:'); // self-only selector (no named temps)
-      expect(nbCalls[0][4]).toEqual([FRAME_RECEIVER]); // arg = the frame's receiver (self)
+      expect(nbCalls[0][3]).toBe('evaluateInContext:symbolList:');
+      expect(nbCalls[0][4]).toEqual([FRAME_RECEIVER, NB_SESSION_SYMBOL_LIST]);
     });
 
     it('rejects when the expression string cannot be created', async () => {

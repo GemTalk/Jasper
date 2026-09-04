@@ -83,6 +83,7 @@ import { loadClassPickItems } from './commands/classPicker';
 import { GlobalsBrowser } from './globalsBrowser';
 import { CommentBrowser } from './commentBrowser';
 import { EnhancedInspector } from './enhancedInspector/enhancedInspector';
+import { BasicInspector } from './basicInspector/basicInspector';
 import {
   maybeOfferServerSupport,
   runInstallServerSupport,
@@ -107,7 +108,6 @@ import { openWorkspace } from './workspace';
 import { registerStartHere, StartHereStatusBar, resetStartHere } from './startHere';
 import { openTutorialNotebook } from './tutorialNotebook';
 import { GemStoneDebugSession } from './gemstoneDebugSession';
-import { InspectorTreeProvider, InspectorNode } from './inspectorTreeProvider';
 import { registerGemStoneExplorer } from './gemstoneExplorer';
 import { renameTemporaryCommand } from './refactoring/renameTemporaryCommand';
 import { convertTempToInstVarCommand } from './refactoring/instVarStructureCommand';
@@ -742,20 +742,6 @@ export function activate(context: vscode.ExtensionContext) {
   SystemBrowser.setExportManager(exportManager);
   fileInManager = new FileInManager(sessionManager, exportManager);
   fileInManager.register(context);
-
-  // ── Object Inspector ──────────────────────────────────────
-  const inspectorProvider = new InspectorTreeProvider(sessionManager);
-  // The debugger's "Inspect" falls back to this tree view when the session has
-  // no enhanced inspector; give the panel a handle to it (it isn't constructed
-  // with one — its factory is called from deep in codeExecutor).
-  DebuggerPanel.inspectorProvider = inspectorProvider;
-
-  const inspectorView = vscode.window.createTreeView('gemstoneInspector', {
-    treeDataProvider: inspectorProvider,
-    showCollapseAll: true,
-  });
-  inspectorProvider.setView(inspectorView);
-  context.subscriptions.push(inspectorView, inspectorProvider);
 
   // ── GemStone Explorer (cascading navigation panes) ───────────
   // The selector-at-position resolver lets the editor-triggered Rename Method
@@ -2189,12 +2175,12 @@ export function activate(context: vscode.ExtensionContext) {
         // tabs are already closed when the browser is disposed above.
         void closeGemstoneTabsForSession(session.id);
         EnhancedInspector.disposeForSession(session.id);
+        BasicInspector.disposeForSession(session.id);
         // Dispose before logout so each panel's dispose() can still release its
         // suspended GsProcess against a live handle.
         DebuggerPanel.disposeForSession(session.id);
         sessionManager.logout(session.id);
         treeProvider.refresh();
-        inspectorProvider.removeSessionItems(session.id);
         breakpointManager.clearAllForSession(session.id);
         stepPointHints.refresh();
         vscode.window.showInformationMessage(`Session ${session.id}: Logged out.`);
@@ -2327,7 +2313,7 @@ export function activate(context: vscode.ExtensionContext) {
     }),
 
     vscode.commands.registerCommand('gemstone.inspectIt', async () => {
-      await codeExecutor.inspectIt(inspectorProvider);
+      await codeExecutor.inspectIt();
     }),
 
     vscode.commands.registerCommand('gemstone.showTranscript', () => {
@@ -2411,19 +2397,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand(
       'gemstone.inspectGlobal',
       async (args: { className: string }) => {
-        // The reveal-existing dedup only applies to the classic Inspector tree: when
-        // the session has the Enhanced Inspector, inspectExpression opens a webview
-        // (not a tree root), so findRootByLabel could never match — skip the lookup
-        // and just inspect (a fresh panel, like editor Inspect It).
-        const selected = sessionManager.getSelectedSession();
-        if (!selected?.enhancedInspectorAvailable) {
-          const existing = inspectorProvider.findRootByLabel(args.className);
-          if (existing) {
-            await inspectorView.reveal(existing, { select: true, focus: true });
-            return;
-          }
-        }
-        await codeExecutor.inspectExpression(inspectorProvider, args.className, args.className);
+        await codeExecutor.inspectExpression(args.className, args.className);
       },
     ),
 
@@ -2516,14 +2490,6 @@ export function activate(context: vscode.ExtensionContext) {
         await showMethodResults(session, results, `References to ${args.objectName}`);
       },
     ),
-
-    vscode.commands.registerCommand('gemstone.removeInspectorItem', (node?: InspectorNode) => {
-      if (node) inspectorProvider.removeRoot(node);
-    }),
-
-    vscode.commands.registerCommand('gemstone.clearInspector', () => {
-      inspectorProvider.clearAll();
-    }),
 
     vscode.commands.registerCommand('gemstone.searchMethods', async () => {
       const session = await sessionManager.resolveSession();

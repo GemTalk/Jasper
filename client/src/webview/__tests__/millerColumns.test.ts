@@ -3,15 +3,17 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 
-// Evaluate enhancedInspectorColumns.js in jsdom so it registers the global
-// EnhancedInspectorColumns, exactly as the webview does when it injects the file
+// Evaluate millerColumns.js in jsdom so it registers the global
+// MillerColumns, exactly as the webview does when it injects the file
 // as a <script> tag. These tests pin the miller-column display/business
 // decisions made for #39: additive drill that inserts immediately to the right
 // of its source, independent per-column close, focus-tracks-title, and width
 // inherit/pin. Rendering (headers/tabs/tables) is out of scope here — the model
-// takes it as injected callbacks — so we stub them minimally.
+// takes it as injected callbacks — so we stub them minimally. The strip is
+// shared by both inspector webviews, so nothing here may assume either one's
+// column shape: the renderer's fields arrive through the `makeState` callback.
 beforeAll(() => {
-  const source = fs.readFileSync(path.resolve(__dirname, '../enhancedInspectorColumns.js'), 'utf8');
+  const source = fs.readFileSync(path.resolve(__dirname, '../millerColumns.js'), 'utf8');
   new Function(source)();
 });
 
@@ -50,9 +52,9 @@ const MIN_WIDTH = 280;
 function api(): { createColumnStrip(opts: unknown): ColumnStrip } {
   return (
     globalThis as unknown as {
-      EnhancedInspectorColumns: { createColumnStrip(o: unknown): ColumnStrip };
+      MillerColumns: { createColumnStrip(o: unknown): ColumnStrip };
     }
-  ).EnhancedInspectorColumns;
+  ).MillerColumns;
 }
 
 // Minimal DOM builder + content populate, standing in for the inline webview's
@@ -297,5 +299,66 @@ describe('width — fill by default, pin on resize', () => {
 
     expect(root.width).toBe(MIN_WIDTH);
     expect(root.el.root.style.flexBasis).toBe(MIN_WIDTH + 'px');
+  });
+});
+
+// The strip serves both inspector webviews, which need different per-column
+// caches. `makeState` is how a renderer gets its own fields onto the descriptor
+// without the model knowing anything about them.
+describe('per-column renderer state', () => {
+  function setupWithState(makeState: () => Record<string, unknown>) {
+    document.body.innerHTML = '<div id="strip"></div>';
+    const strip = document.getElementById('strip')!;
+    return api().createColumnStrip({
+      strip,
+      postMessage: () => {},
+      defaultWidth: DEFAULT_WIDTH,
+      minWidth: MIN_WIDTH,
+      buildColumnDom,
+      populate,
+      makeState,
+    });
+  }
+
+  it('merges the renderer fields into every column it builds', () => {
+    const mgr = setupWithState(() => ({ activeTab: 'slots', cache: {} }));
+
+    const root = mgr.addRoot(rootMsg(0));
+    const child = mgr.addChild(childMsg(1, 0));
+
+    for (const col of [root, child]) {
+      expect((col as unknown as { activeTab: string }).activeTab).toBe('slots');
+      expect((col as unknown as { cache: unknown }).cache).toEqual({});
+    }
+  });
+
+  it('gives each column its own state object, not one shared instance', () => {
+    const mgr = setupWithState(() => ({ cache: {} }));
+
+    const root = mgr.addRoot(rootMsg(0));
+    const child = mgr.addChild(childMsg(1, 0));
+    (root as unknown as { cache: Record<string, string> }).cache.slots = 'root data';
+
+    expect((child as unknown as { cache: Record<string, string> }).cache).toEqual({});
+  });
+
+  it('never lets renderer state overwrite the fields the model owns', () => {
+    const mgr = setupWithState(() => ({ id: 999, oop: 'nonsense', width: 1, el: 'nope' }));
+
+    const root = mgr.addRoot(rootMsg(7));
+
+    expect(root.id).toBe(7);
+    expect(root.oop).toBe('7');
+    expect(root.width).toBe(DEFAULT_WIDTH);
+    expect(root.el.root).toBeInstanceOf(HTMLElement);
+  });
+
+  it('builds a bare column when no makeState is supplied', () => {
+    const { mgr } = setup();
+
+    const root = mgr.addRoot(rootMsg(0));
+
+    expect(root.id).toBe(0);
+    expect(root.width).toBe(DEFAULT_WIDTH);
   });
 });
