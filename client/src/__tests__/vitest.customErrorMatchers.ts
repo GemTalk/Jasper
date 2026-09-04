@@ -74,7 +74,7 @@ expect.extend({
         return {
           pass: false,
           message: () =>
-            `Expected callback to throw a ${ExpectedClass.name} with message '${expectedMessage}', but it did not throw.`,
+            `Expected a ${ExpectedClass.name} with message '${expectedMessage}', but nothing was thrown.`,
         };
       } catch (thrown) {
         error = thrown;
@@ -84,7 +84,7 @@ expect.extend({
     if (!(error instanceof ExpectedClass)) {
       return {
         pass: false,
-        message: () => `Expected callback to throw a ${ExpectedClass.name}, but it threw ${error}.`,
+        message: () => `Expected a ${ExpectedClass.name}, but got ${error}.`,
         actual: error,
         expected: ExpectedClass,
       };
@@ -95,14 +95,14 @@ expect.extend({
       return {
         pass: false,
         message: () =>
-          `Expected callback to throw a ${ExpectedClass.name} with message '${expectedMessage}', but got '${thrownError.message}'.`,
+          `Expected a ${ExpectedClass.name} with message '${expectedMessage}', but got '${thrownError.message}'.`,
       };
     }
 
     return {
       pass: true,
       message: () =>
-        `Expected callback not to throw a ${ExpectedClass.name} with message '${expectedMessage}', but it did.`,
+        `Expected no ${ExpectedClass.name} with message '${expectedMessage}', but got one.`,
     };
   },
 });

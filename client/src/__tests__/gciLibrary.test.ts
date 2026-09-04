@@ -6,6 +6,10 @@ import {
   expectUtf8OopToBeCached,
   expectUtf8OopToResolveViaSymbolLookup,
 } from './support/utf8OopCache';
+import {
+  expectEventLoopToBeBlockedDuringDefault,
+  expectEventLoopToRemainResponsiveDuring,
+} from './support/timers';
 
 describe('GciLibrary', () => {
   let gciLibrary: GciLibrary;
@@ -268,6 +272,60 @@ describe('GciLibrary', () => {
       await expectToBeRejectedWithGciLibraryError(
         gciLibrary.executeAndFetchOop(session, `self error: 'oops'`),
         'a UserDefinedError occurred (error 2318), reason:halt, oops',
+      );
+    });
+
+    it('does not block the event loop while GemStone evaluates the code', async () => {
+      await expectEventLoopToRemainResponsiveDuring(100, 800, () =>
+        gciLibrary.executeAndFetchOop(session, `(Delay forSeconds: 1) wait. true`),
+      );
+    });
+
+    it('does not allow to execute a new operation while another is in progress', async () => {
+      const firstOperation = gciLibrary.executeAndFetchOop(
+        session,
+        `(Delay forSeconds: 1) wait. true`,
+      );
+
+      try {
+        await expectToBeRejectedWithGciLibraryError(
+          gciLibrary.executeAndFetchOop(session, ``),
+          'session has a GciTsNb operation in progress',
+        );
+      } finally {
+        await firstOperation;
+      }
+    });
+
+    it('does not affect the result of an ongoing operation when trying to execute another one', async () => {
+      const firstOperation = gciLibrary.executeAndFetchOop(
+        session,
+        `(Delay forSeconds: 1) wait. true`,
+      );
+
+      await gciLibrary.executeAndFetchOop(session, `false`).catch(() => {});
+
+      expectOopToBeTrue(await firstOperation);
+    });
+
+    /** Makes the next readiness check on the session's socket throw. */
+    function simulatePollFailure() {
+      vi.spyOn(testContext.nativeSocketLibrary, 'isReadable').mockThrowOnce('oops');
+    }
+
+    it('returns the result when polling for it fails', async () => {
+      simulatePollFailure();
+
+      const result = await gciLibrary.executeAndFetchOop(session, `true`);
+
+      expectOopToBeTrue(result);
+    });
+
+    it('returns the result synchronously when polling for it fails', async () => {
+      simulatePollFailure();
+
+      await expectEventLoopToBeBlockedDuringDefault(100, () =>
+        gciLibrary.executeAndFetchOop(session, `(Delay forSeconds: 1) wait. true`),
       );
     });
   });
