@@ -7,12 +7,36 @@
 // options, and the real call raised EISDIR on the `log/` directory registering had
 // just made. These tests use the real thing end to end: what is written is read
 // back by the same storage the panel reads, and what is removed has to actually go.
+//
+// "Real" has to mean the same filesystem the manager writes to, which is not the
+// one this process runs on. GemStone has no Windows build, so on Windows it runs
+// inside WSL and `gemstone.rootPath` names a directory in the guest — the setting
+// holds a Linux path on every platform. `getRootPath` resolves it to a
+// \\wsl$\... UNC there, and `wslFs` runs the operation inside WSL. So the root
+// here is made in the guest on Windows, and every check below goes through the
+// same `wsl*` helpers the manager uses, landing on the side it actually wrote to.
 import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { needsWsl, wslExecSync, wslPathToWindows } from '../../wslBridge';
+import {
+  wslExistsSync,
+  wslMkdirSync,
+  wslReaddirSync,
+  wslRmSync,
+  wslWriteFileSync,
+} from '../../wslFs';
 
-const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'jasper-register-'));
+// The configured setting: a Linux path, as a user's would be.
+const ROOT = needsWsl()
+  ? wslExecSync('mktemp -d /tmp/jasper-register-XXXXXX').trim()
+  : fs.mkdtempSync(path.join(os.tmpdir(), 'jasper-register-'));
+
+// The same directory as this process must address it — a UNC into the guest on
+// Windows, the path itself elsewhere. This is what `getRootPath` answers, and
+// what every path the manager hands back is built from.
+const HOST_ROOT = needsWsl() ? wslPathToWindows(ROOT) : ROOT;
 
 vi.mock('vscode', () => ({
   workspace: {
@@ -33,13 +57,17 @@ import { SysadminStorage } from '../../sysadminStorage';
 import { DatabaseManager } from '../databaseManager';
 import type { ProcessManager } from '../processManager';
 
-afterAll(() => fs.rmSync(ROOT, { recursive: true, force: true }));
+afterAll(() => wslRmSync(HOST_ROOT, { recursive: true, force: true }));
 
-/** A product tree with the version.txt shape `readVersionTxt` parses. */
+/**
+ * A product tree with the version.txt shape `readVersionTxt` parses. Addressed
+ * host-side, which is what a real pick answers: `showOpenDialog` on Windows
+ * hands back a \\wsl$\... path for a tree inside the guest.
+ */
 function productTree(name = 'their-product'): string {
-  const tree = path.join(ROOT, name);
-  fs.mkdirSync(path.join(tree, 'bin'), { recursive: true });
-  fs.writeFileSync(
+  const tree = path.join(HOST_ROOT, name);
+  wslMkdirSync(path.join(tree, 'bin'), { recursive: true });
+  wslWriteFileSync(
     path.join(tree, 'version.txt'),
     'GemStone/S 64 Bit\n3.7.5.1 Build: 2026-06-25T10:00:00-07:00\nbranch 3.7.5.1\n',
   );
@@ -52,21 +80,22 @@ function makeManager(): { storage: SysadminStorage; manager: DatabaseManager } {
   return { storage, manager: new DatabaseManager(storage, processManager) };
 }
 
-// POSIX-only. On Windows `getRootPath` treats the configured rootPath as a path
-// on the WSL side and rewrites it into a \\wsl$\... UNC, which `wslFs` then
-// routes through `wsl.exe` — so a Windows temp directory handed to these mocks
-// is never the directory the manager writes to, and there is no real filesystem
-// left to test end to end. The behaviour these tests pin is the same on every
-// platform; the Linux runners cover it.
-const NOT_POSIX = process.platform === 'win32';
-
-describe.skipIf(NOT_POSIX)('registering and unregistering an existing installation', () => {
+describe('registering and unregistering an existing installation', () => {
   beforeEach(() => {
-    for (const entry of fs.readdirSync(ROOT)) {
+    for (const entry of wslReaddirSync(HOST_ROOT)) {
       if (entry.startsWith('db-')) {
-        fs.rmSync(path.join(ROOT, entry), { recursive: true, force: true });
+        wslRmSync(path.join(HOST_ROOT, entry), { recursive: true, force: true });
       }
     }
+  });
+
+  it('resolves the configured Linux root to the directory it actually writes', () => {
+    // The setting names a place in the guest; the record has to land there and
+    // not somewhere the host invented from it. A root that resolves wrong writes
+    // a real directory to a real place, so nothing throws — only this catches it.
+    const { storage } = makeManager();
+    expect(storage.getRootPath()).toBe(HOST_ROOT);
+    expect(wslExistsSync(HOST_ROOT)).toBe(true);
   });
 
   it('is listed by the storage the panel reads, once registered', async () => {
@@ -90,6 +119,18 @@ describe.skipIf(NOT_POSIX)('registering and unregistering an existing installati
     });
   });
 
+  it('writes the record under the configured root, not beside it', async () => {
+    const { manager } = makeManager();
+    const db = await manager.registerExistingDatabase({
+      productPath: productTree(),
+      stoneName: 'theirstone',
+      ldiName: 'theirldi',
+    });
+
+    expect(db.path).toBe(path.join(HOST_ROOT, db.dirName));
+    expect(wslExistsSync(path.join(db.path, 'database.yaml'))).toBe(true);
+  });
+
   it('removes the whole record directory, log subdirectory and all', async () => {
     const { storage, manager } = makeManager();
     const db = await manager.registerExistingDatabase({
@@ -98,11 +139,11 @@ describe.skipIf(NOT_POSIX)('registering and unregistering an existing installati
       ldiName: 'theirldi',
     });
     // Registering makes this; a non-recursive remove fails on it with EISDIR.
-    expect(fs.existsSync(path.join(db.path, 'log'))).toBe(true);
+    expect(wslExistsSync(path.join(db.path, 'log'))).toBe(true);
 
     await expect(manager.unregisterDatabase(db)).resolves.toBe(true);
 
-    expect(fs.existsSync(db.path)).toBe(false);
+    expect(wslExistsSync(db.path)).toBe(false);
     expect(storage.getDatabases()).toHaveLength(0);
   });
 
@@ -117,7 +158,7 @@ describe.skipIf(NOT_POSIX)('registering and unregistering an existing installati
 
     await manager.unregisterDatabase(db);
 
-    expect(fs.existsSync(path.join(tree, 'version.txt'))).toBe(true);
-    expect(fs.existsSync(path.join(tree, 'bin'))).toBe(true);
+    expect(wslExistsSync(path.join(tree, 'version.txt'))).toBe(true);
+    expect(wslExistsSync(path.join(tree, 'bin'))).toBe(true);
   });
 });
