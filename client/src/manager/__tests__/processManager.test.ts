@@ -566,6 +566,95 @@ describe('ProcessManager', () => {
     });
   });
 
+  // What the Register Existing form is filled in from. The whole point is to
+  // learn the installation's real GEMSTONE_GLOBAL_DIR and configuration off a
+  // running server, so a discovery that comes back empty is not a harmless
+  // "nothing is running" — it silently substitutes GemStone's defaults for an
+  // installation that may use neither, and Jasper then cannot stop the very
+  // stone it adopted.
+  describe('discovering the servers running under a product tree', () => {
+    const PS_OUTPUT =
+      '  3133853 /opt/theirs/product/sys/stoned theirstone\n' +
+      '  3133932 /opt/theirs/product/sys/netldid theirldi\n' +
+      '  3133999 /usr/lib/systemd/systemd --user\n';
+    const GSLIST =
+      'Status        Version    Owner       Pid   Port   Started     Type       Name\n' +
+      '-------      --------- --------- -------- ----- ------------ ------      ----\n' +
+      'OK           3.7.5.1   ewinger    3133853 39047 Sep 03 13:59 Stone       theirstone\n' +
+      'OK           3.7.5.1   ewinger    3133932 46521 Sep 03 13:59 Netldi      theirldi\n';
+
+    /** Answers the guest the way the real host would: a Linux process table, a
+     *  Linux environment, and a gslist that only runs from a Linux gslist path. */
+    function guestAnswers() {
+      return (cmd: string) => {
+        if (cmd.startsWith('ps -Ao')) return PS_OUTPUT;
+        if (cmd.startsWith('ps eww')) {
+          return (
+            '/opt/theirs/product/sys/stoned theirstone ' +
+            'GEMSTONE_GLOBAL_DIR=/var/theirs/locks GEMSTONE_SYS_CONF=/etc/theirs/stone.conf'
+          );
+        }
+        if (cmd.startsWith('"/opt/theirs/product/bin/gslist"')) return GSLIST;
+        throw Object.assign(new Error('Command failed'), { status: 1, stderr: 'no such file' });
+      };
+    }
+
+    beforeEach(() => {
+      vi.mocked(wslBridge.wslExecSync).mockReset();
+      vi.mocked(wslBridge.needsWsl).mockReturnValue(false);
+    });
+
+    it('reads the running stone\u2019s own global and conf directories, not GemStone\u2019s defaults', () => {
+      vi.mocked(wslBridge.wslExecSync).mockImplementation(guestAnswers());
+      const manager = new ProcessManager(makeStorage('/gs/3.7.4'));
+
+      const found = manager.discoverServersUnder('/opt/theirs/product');
+
+      expect(found).toEqual([
+        expect.objectContaining({
+          type: 'stone',
+          name: 'theirstone',
+          pid: 3133853,
+          globalDir: '/var/theirs/locks',
+          confPath: '/etc/theirs/stone.conf',
+          version: '3.7.5.1',
+          status: 'OK',
+        }),
+        // Only the NetLDI row carries a port — `parseGslist` records one for
+        // that type alone, and the port is what a login has to address.
+        expect.objectContaining({ type: 'netldi', name: 'theirldi', pid: 3133932, port: 46521 }),
+      ]);
+    });
+
+    it('finds the same servers on Windows, where the form hands over a UNC path', () => {
+      // `showOpenDialog` answers `\\wsl$\Ubuntu\opt\theirs\product` for a tree
+      // inside the guest, while `ps` reports `/opt/theirs/product/sys/stoned` and
+      // `gslist` has to be run at a path the guest can execute. Comparing the two
+      // without converting matches nothing, and every Windows registration then
+      // reads as "nothing is running there".
+      vi.mocked(wslBridge.needsWsl).mockReturnValue(true);
+      vi.mocked(wslBridge.wslExecSync).mockImplementation(guestAnswers());
+      const manager = new ProcessManager(makeStorage('/gs/3.7.4'));
+
+      const found = manager.discoverServersUnder('\\\\wsl$\\Ubuntu\\opt\\theirs\\product');
+
+      expect(found.map((f) => f.name).sort()).toEqual(['theirldi', 'theirstone']);
+      expect(found.find((f) => f.type === 'stone')).toMatchObject({
+        globalDir: '/var/theirs/locks',
+        confPath: '/etc/theirs/stone.conf',
+        status: 'OK',
+      });
+      expect(found.find((f) => f.type === 'netldi')).toMatchObject({ port: 46521 });
+    });
+
+    it('leaves a tree nothing is running out of empty, rather than throwing', () => {
+      vi.mocked(wslBridge.wslExecSync).mockImplementation(guestAnswers());
+      const manager = new ProcessManager(makeStorage('/gs/3.7.4'));
+
+      expect(manager.discoverServersUnder('/opt/someone-else/product')).toEqual([]);
+    });
+  });
+
   describe('registered databases', () => {
     beforeEach(() => {
       vi.mocked(wslBridge.wslExecSync).mockReset();

@@ -77,6 +77,7 @@ function state(overrides: Record<string, unknown> = {}): Record<string, unknown>
     create: {
       versions: [{ version: '3.7.5', extents: ['extent0', 'extent1'] }],
       stoneNames: [],
+      dbLdiNames: [],
       ldiNames: [],
       nfsWarning: false,
       rootPath: '/root',
@@ -1493,6 +1494,96 @@ describe('the Register Existing form', () => {
     expect(root.querySelector<HTMLButtonElement>('[data-action="submitRegister"]')?.disabled).toBe(
       true,
     );
+  });
+
+  it('refuses a NetLDI name another database already carries, but not a running one', () => {
+    // The NetLDI being adopted is normally up under that very name, so the
+    // running list cannot be the one this checks — only the databases' own.
+    mount(
+      state({
+        create: {
+          ...(state().create as object),
+          dbLdiNames: ['theirldi'],
+          ldiNames: ['theirldi', 'gs64ldi'],
+        },
+      }),
+    );
+    click('beginRegister');
+    fromHost({
+      command: 'productPicked',
+      productPath: '/opt/theirs/product',
+      version: '3.7.5.1',
+      servers: [],
+    });
+    typeIntoRegister('stoneName', 'theirstone');
+    typeIntoRegister('ldiName', 'theirldi');
+    expect(root.textContent).toContain('A NetLDI called "theirldi" is already registered.');
+    expect(root.querySelector<HTMLButtonElement>('[data-action="submitRegister"]')?.disabled).toBe(
+      true,
+    );
+
+    // A name only a running NetLDI holds is exactly what registering adopts.
+    typeIntoRegister('ldiName', 'gs64ldi');
+    expect(root.querySelector<HTMLButtonElement>('[data-action="submitRegister"]')?.disabled).toBe(
+      false,
+    );
+  });
+
+  it('puts the form back, answers and all, when the host refuses the registration', () => {
+    // Resetting the form on submit meant the reason appeared over the lists with
+    // every answer gone — including the product directory, which can only be
+    // re-chosen through the folder dialog.
+    mount();
+    click('beginRegister');
+    fromHost({
+      command: 'productPicked',
+      productPath: '/opt/theirs/product',
+      version: '3.7.5.1',
+      servers: [],
+    });
+    typeIntoRegister('stoneName', 'theirstone');
+    typeIntoRegister('ldiName', 'theirldi');
+    click('submitRegister');
+    // Closed on submit, the way Create closes: the new row is the confirmation.
+    expect(root.querySelector('[data-action="submitRegister"]')).toBeNull();
+
+    fromHost({
+      command: 'actionFailed',
+      message: 'A stone called "theirstone" is already registered.',
+    });
+
+    expect(root.textContent).toContain('already registered');
+    expect(root.querySelector('[data-action="submitRegister"]')).not.toBeNull();
+    expect(root.querySelector<HTMLInputElement>('[data-register-field="stoneName"]')?.value).toBe(
+      'theirstone',
+    );
+    expect(root.querySelector<HTMLInputElement>('[data-register-field="ldiName"]')?.value).toBe(
+      'theirldi',
+    );
+    expect(root.textContent).toContain('/opt/theirs/product');
+  });
+
+  it('starts clean the next time, once a registration has landed', () => {
+    mount();
+    click('beginRegister');
+    fromHost({
+      command: 'productPicked',
+      productPath: '/opt/theirs/product',
+      version: '3.7.5.1',
+      servers: [],
+    });
+    typeIntoRegister('stoneName', 'theirstone');
+    typeIntoRegister('ldiName', 'theirldi');
+    click('submitRegister');
+
+    // No refusal: the host answers with the state carrying the new row.
+    fromHost({ command: 'state', state: state({ databases: [registeredDatabase()] }) });
+
+    click('beginRegister');
+    expect(root.querySelector<HTMLInputElement>('[data-register-field="stoneName"]')?.value).toBe(
+      '',
+    );
+    expect(root.textContent).toContain('Choose the GemStone product directory');
   });
 
   it('rejects a port that is not a number, and keeps it optional', () => {

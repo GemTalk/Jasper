@@ -506,4 +506,33 @@ describe('DatabaseManager.recordNetldiPort', () => {
     expect(updated.netldiPort).toBeUndefined();
     expect(wslWriteFileSync).not.toHaveBeenCalled();
   });
+
+  it('fills in the defaults for a record that only named its product tree', () => {
+    // A record may legitimately hold nothing but `productPath` — the reader
+    // resolves conf and global directories from GemStone's own conventions
+    // (see databaseYaml.test.ts, "is still read when only the product tree was
+    // recorded"). Writing the raw fields back put the literal string
+    // "undefined" on both lines, which is truthy, so the fallback stopped
+    // firing and the next start handed the installation
+    // `GEMSTONE_SYS_CONF=undefined`. Observing a live port must not corrupt the
+    // record it was correcting.
+    const bare: GemStoneDatabase = {
+      dirName: 'db-5',
+      path: '/root/db-5',
+      config: {
+        version: '3.7.5',
+        stoneName: 'theirstone',
+        ldiName: 'theirldi',
+        registered: true,
+        productPath: '/opt/theirs/product',
+      },
+    };
+
+    makeManager().recordNetldiPort(bare, 34199);
+
+    const [, yaml] = vi.mocked(wslWriteFileSync).mock.calls[0];
+    expect(yaml).not.toContain('undefined');
+    expect(yaml).toContain('confPath: "/opt/theirs/product/data"');
+    expect(yaml).toContain('globalDir: "/opt/gemstone"');
+  });
 });

@@ -7,6 +7,7 @@ import {
   DEFAULT_GLOBAL_DIR,
   defaultConfDir,
   isRegisteredDatabase,
+  registeredDatabaseYaml,
   registeredRefusal,
 } from './registeredDatabase';
 import { appendSysadmin } from '../sysadminChannel';
@@ -22,6 +23,12 @@ import {
   wslChmodSync,
   wslReaddirSync,
 } from '../wslFs';
+
+/** Drop a trailing path separator, either kind: an answer from the folder dialog
+ *  is a `\\wsl$\…` UNC on Windows and a POSIX path everywhere else. */
+function trimSeparator(p: string | undefined): string {
+  return (p ?? '').replace(/[/\\]+$/, '');
+}
 
 /** `20260831-153000` — sorts chronologically as text, and is safe in a filename. */
 export function timestampForFileName(when: Date): string {
@@ -166,7 +173,7 @@ export class DatabaseManager {
     confPath?: string;
     globalDir?: string;
   }): Promise<GemStoneDatabase> {
-    const productPath = input.productPath.replace(/\/+$/, '');
+    const productPath = trimSeparator(input.productPath);
     const info = SysadminStorage.readVersionTxt(productPath);
     if (!info) {
       throw new Error(
@@ -179,8 +186,8 @@ export class DatabaseManager {
     const dbNum = this.storage.getNextDbNumber(parent);
     const dbDir = path.join(parent, `db-${dbNum}`);
 
-    const confPath = input.confPath?.replace(/\/+$/, '') || defaultConfDir(productPath);
-    const globalDir = input.globalDir?.replace(/\/+$/, '') || DEFAULT_GLOBAL_DIR;
+    const confPath = trimSeparator(input.confPath) || defaultConfDir(productPath);
+    const globalDir = trimSeparator(input.globalDir) || DEFAULT_GLOBAL_DIR;
 
     wslMkdirSync(dbDir);
     // Jasper's own log directory, not the installation's: a start driven from
@@ -188,17 +195,17 @@ export class DatabaseManager {
     // create lands on Jasper's side of the line.
     wslMkdirSync(path.join(dbDir, 'log'));
 
-    wslWriteFileSync(
-      path.join(dbDir, 'database.yaml'),
-      `---\nregistered: true\n` +
-        `version: "${info.version}"\n` +
-        `stoneName: "${input.stoneName}"\n` +
-        `ldiName: "${input.ldiName}"\n` +
-        (input.netldiPort ? `netldiPort: ${input.netldiPort}\n` : '') +
-        `productPath: "${productPath}"\n` +
-        `confPath: "${confPath}"\n` +
-        `globalDir: "${globalDir}"\n`,
-    );
+    const config: DatabaseYaml = {
+      version: info.version,
+      stoneName: input.stoneName,
+      ldiName: input.ldiName,
+      registered: true,
+      productPath,
+      confPath,
+      globalDir,
+      ...(input.netldiPort ? { netldiPort: input.netldiPort } : {}),
+    };
+    wslWriteFileSync(path.join(dbDir, 'database.yaml'), registeredDatabaseYaml(config));
 
     appendSysadmin(
       `Registered existing database db-${dbNum}: stone "${input.stoneName}", ` +
@@ -206,20 +213,7 @@ export class DatabaseManager {
         `GemStone ${info.version} at ${productPath}`,
     );
 
-    return {
-      dirName: `db-${dbNum}`,
-      path: dbDir,
-      config: {
-        version: info.version,
-        stoneName: input.stoneName,
-        ldiName: input.ldiName,
-        registered: true,
-        productPath,
-        confPath,
-        globalDir,
-        ...(input.netldiPort ? { netldiPort: input.netldiPort } : {}),
-      },
-    };
+    return { dirName: `db-${dbNum}`, path: dbDir, config };
   }
 
   /**
@@ -231,24 +225,17 @@ export class DatabaseManager {
    * wrong the moment someone restarts that NetLDI outside Jasper, since it then
    * takes a fresh ephemeral port — so the observed port replaces the remembered
    * one rather than being merely preferred at the point of use. Only Jasper's
-   * own file is rewritten; the installation is untouched.
+   * own file is rewritten; the installation is untouched — and it is rewritten
+   * through the same serializer registration uses, so a record that recorded
+   * only its product tree keeps working rather than acquiring the literal
+   * `"undefined"` where its resolved defaults belong.
    *
    * Returns the config as it now stands, so a caller need not re-read it.
    */
   recordNetldiPort(db: GemStoneDatabase, port: number): DatabaseYaml {
     if (!isRegisteredDatabase(db) || db.config.netldiPort === port) return db.config;
     const updated: DatabaseYaml = { ...db.config, netldiPort: port };
-    wslWriteFileSync(
-      path.join(db.path, 'database.yaml'),
-      `---\nregistered: true\n` +
-        `version: "${updated.version}"\n` +
-        `stoneName: "${updated.stoneName}"\n` +
-        `ldiName: "${updated.ldiName}"\n` +
-        `netldiPort: ${port}\n` +
-        `productPath: "${updated.productPath}"\n` +
-        `confPath: "${updated.confPath}"\n` +
-        `globalDir: "${updated.globalDir}"\n`,
-    );
+    wslWriteFileSync(path.join(db.path, 'database.yaml'), registeredDatabaseYaml(updated));
     appendSysadmin(
       `NetLDI "${updated.ldiName}" is on port ${port}; updated ${db.dirName}'s record` +
         (db.config.netldiPort ? ` (was ${db.config.netldiPort})` : ''),
@@ -322,7 +309,9 @@ export class DatabaseManager {
   async offlineExtentBackup(db: GemStoneDatabase): Promise<string | undefined> {
     // Copying a registered database's extents means reading the installation's
     // files and writing copies of them; the panel offers no button for it, and
-    // this is the same answer for every other way in.
+    // this is the same answer for every other way in. Worth having, and what it
+    // needs is the extent list, which `db.path` cannot supply for a registered
+    // database: https://github.com/GemTalk/Jasper/issues/562
     if (isRegisteredDatabase(db)) {
       vscode.window.showErrorMessage(
         registeredRefusal('back up the extents of', db.config.stoneName),

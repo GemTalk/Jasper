@@ -139,13 +139,18 @@ import { getGciLog } from './gciLog';
 import { CODE_LENS_SELECTORS, GemStoneCodeLensProvider } from './gemstoneCodeLensProvider';
 import * as queries from './browserQueries';
 import { dedupeMethodResults } from './queries/methodSearch';
+import { clearClassOrganizerCode } from './queries/classOrganizer';
 import { SysadminStorage } from './sysadminStorage';
 import { appendSysadmin, getSysadminChannel } from './sysadminChannel';
 import { VersionManager } from './manager/versionManager';
 import { VersionTarget, ProcessTarget, GemStoneDatabase } from './sysadminTypes';
 import { DatabasesPanel } from './manager/databasesPanel';
 import { DatabaseManager } from './manager/databaseManager';
-import { registeredPaths } from './manager/registeredDatabase';
+import {
+  isRegisteredDatabase,
+  registeredPaths,
+  registeredRefusal,
+} from './manager/registeredDatabase';
 import { DatabaseTreeProvider, DatabaseNode } from './manager/databaseTreeProvider';
 import {
   bringUpDatabase,
@@ -1301,6 +1306,26 @@ export function activate(context: vscode.ExtensionContext) {
     return showMethodResultsFor(session.id, results, title);
   }
 
+  /**
+   * Drop the session's cached `ClassOrganizer` after a commit or abort.
+   *
+   * The organizer captures the image's class list once and is then reused for
+   * the life of the session (see `classOrganizer.ts`), which is what keeps
+   * Search, senders, implementors and references off a per-query image-wide
+   * rebuild. A sync is where a class list can change without Jasper having
+   * compiled anything — another session added or removed a class and committed
+   * — so the snapshot is dropped here rather than left to answer about an image
+   * that no longer exists. Best effort: it costs one removeKey, and a session
+   * that cannot run it has bigger problems than a stale search.
+   */
+  const clearClassOrganizer = (session: ActiveSession): void => {
+    try {
+      queries.executeFetchString(session, clearClassOrganizerCode());
+    } catch {
+      // Nothing to report: the next query simply reuses the organizer it had.
+    }
+  };
+
   // Commit / Abort a session, with the same confirmations and post-action
   // refreshes whether invoked from the Sessions tree (a session item) or the
   // GemStone Explorer toolbar (the currently selected session).
@@ -1320,7 +1345,10 @@ export function activate(context: vscode.ExtensionContext) {
         await exportManager.refreshSession(session);
         SystemBrowser.refresh(session.id);
         // A sync can surface classes/globals/dicts added elsewhere (incl. other sessions) — rebuild
-        // an open GemStone Search's cached corpora so they show up.
+        // an open GemStone Search's cached corpora so they show up, and drop the
+        // cached ClassOrganizer whose class list they would otherwise be searched
+        // against.
+        clearClassOrganizer(session);
         omniSearch?.notifySessionSynced(session.id);
       } else {
         vscode.window.showErrorMessage(
@@ -1353,7 +1381,9 @@ export function activate(context: vscode.ExtensionContext) {
         await exportManager.refreshSession(session);
         SystemBrowser.refresh(session.id);
         // An abort can pull in classes/globals/dicts from other sessions — rebuild an open GemStone
-        // Search's cached corpora so they show up.
+        // Search's cached corpora so they show up, and drop the cached
+        // ClassOrganizer for the same reason the commit does.
+        clearClassOrganizer(session);
         omniSearch?.notifySessionSynced(session.id);
         explorer.onSessionAborted(session.id);
       } else {
@@ -4529,6 +4559,21 @@ export function activate(context: vscode.ExtensionContext) {
           vscode.window.showErrorMessage(
             `Online extent backup needs a Jasper-managed local stone (to reach its extent files). ` +
               `Stone "${session.login.stone}" isn't managed here — use Full Logical Backup instead.`,
+            { modal: true },
+          );
+          return;
+        }
+        // A registered database's extents are the installation's, under a data
+        // directory Jasper's record has no copy of — `db.path/data` does not
+        // exist for one. Refused with the same reason the offline copy gives,
+        // rather than run against a directory that is not there and report an
+        // empty backup as a successful one. Making it work needs the extent list
+        // read off the running stone or the recorded conf file:
+        // https://github.com/GemTalk/Jasper/issues/562
+        if (isRegisteredDatabase(db)) {
+          vscode.window.showErrorMessage(
+            `${registeredRefusal('back up the extents of', db.config.stoneName)} ` +
+              `Use Full Logical Backup instead.`,
             { modal: true },
           );
           return;

@@ -7,7 +7,6 @@ import { GemStoneDatabase } from '../sysadminTypes';
 import { wslExistsSync, wslReaddirSync, wslIsFile } from '../wslFs';
 import {
   ServerStatus,
-  DatabaseAction,
   databaseAction,
   databaseStatus,
   inspectDatabaseProcesses,
@@ -153,9 +152,17 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseNod
    *
    *  The reading itself is `databaseAction`, shared with the Command Palette's
    *  picker so the two cannot disagree. External gets neither action here; the
-   *  child rows offer the restart-under-Jasper action for that case. */
-  private databaseContext(db: GemStoneDatabase): DatabaseAction {
-    return databaseAction(this.inspect(db).status);
+   *  child rows offer the restart-under-Jasper action for that case.
+   *
+   *  A registered database carries a further `Registered` suffix, because
+   *  provenance decides which of Delete and Unregister can succeed at all: one
+   *  removes files Jasper laid out, the other drops a record of files it must
+   *  not touch. Without it the menu offered both on every row and the wrong one
+   *  failed with an error message — the panel greys the impossible one and says
+   *  why, and the sidebar has to agree. The when-clauses that consume it are in
+   *  package.json under `view/item/context`. */
+  private databaseContext(db: GemStoneDatabase): string {
+    return `${databaseAction(this.inspect(db).status)}${isRegisteredDatabase(db) ? 'Registered' : ''}`;
   }
 
   /** One reading of a database's two servers. The database row's context value
@@ -175,7 +182,14 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseNod
   }
 
   /** Apply a status's text, icon, and context value to a stone or NetLDI row,
-   *  and explain in the tooltip anything the one-line description cannot. */
+   *  and explain in the tooltip anything the one-line description cannot.
+   *
+   *  The context value carries the same `Registered` suffix the database row
+   *  does, for the same reason: Replace Extent is refused on an installation
+   *  Jasper did not create, and the panel leaves the control out rather than
+   *  showing one that can only fail. Start, Stop and the external-server restart
+   *  all work on a registered server, so their when-clauses take the suffix as
+   *  optional. */
   private presentServer(
     item: vscode.TreeItem,
     node: ServerNode,
@@ -183,7 +197,9 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseNod
   ): void {
     const look = STATUS_PRESENTATION[node.status];
     item.description = look.label;
-    item.contextValue = `gemstoneDb${contextKind}${look.context}`;
+    item.contextValue =
+      `gemstoneDb${contextKind}${look.context}` +
+      (isRegisteredDatabase(node.db) ? 'Registered' : '');
     item.iconPath = new vscode.ThemeIcon(look.icon, new vscode.ThemeColor(look.color));
     item.tooltip = this.statusTooltip(node);
   }

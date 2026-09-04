@@ -12,6 +12,9 @@ import {
   dedupeMethodResults,
   type MethodSearchResult,
 } from '../methodSearch';
+import { getClassHierarchy } from '../getClassHierarchy';
+import { getSiblingClassNames } from '../../refactoring/queries/getSiblingClassNames';
+import { getClassDescendantNames } from '../../refactoring/queries/getClassDescendantNames';
 
 const row = 'Globals\tArray\t0\tsize\taccessing\n';
 
@@ -161,6 +164,24 @@ describe('referencesToClassInDict', () => {
     expect(code).toContain('SessionTemps current');
     expect(code).toContain('JasperClassOrganizer_0');
     expect(code).not.toMatch(/ClassOrganizer new /);
+  });
+
+  it('shares the organizer with the hierarchy queries', () => {
+    // They ask `subclassesOf:` and `allSuperclassesOf:`, which read the same
+    // snapshot the searches do, and paid the same per-image build for it. Every
+    // refactoring that creates the class they would then ask about compiles it
+    // through `compileClassDefinition`, which drops the cache in the doit that
+    // creates it — so the snapshot they read is never one short.
+    const execute = vi.fn<QueryExecutor>(() => '');
+
+    getClassHierarchy(execute, 'Account');
+    getSiblingClassNames(execute, 'Account');
+    getClassDescendantNames(execute, 'Account');
+
+    for (const [code] of execute.mock.calls) {
+      expect(code).toContain('JasperClassOrganizer_0');
+      expect(code).not.toMatch(/ClassOrganizer new\b/);
+    }
   });
 
   it('reports the environment each row was found in', () => {

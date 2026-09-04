@@ -475,6 +475,50 @@ describe('LoginEditorPanel', () => {
       });
       expect(storage.saveLogin).toHaveBeenCalled();
     });
+
+    it('refuses an EDIT that turns one login into another that already exists', async () => {
+      // The same silent overwrite, reached the other way: changing the user,
+      // stone or host of an existing login into another row's identity makes
+      // `saveLogin` replace that other row, which vanishes from the list.
+      const existing = makeLogin({ gs_user: 'DataCurator' });
+      const other = makeLogin({ gs_user: 'SystemUser' });
+      storage.getLogins = vi.fn(() => [existing, other]);
+      storage.saveLogin = vi.fn(async () => {});
+      await LoginEditorPanel.show(storage, secretsArg, treeProvider, existing);
+      const panel = window.createWebviewPanel.mock.results[0].value;
+      const handler = panel.webview.onDidReceiveMessage.mock.calls[0][0];
+
+      await handler({
+        command: 'save',
+        data: { ...existing, gs_user: 'SystemUser' },
+        originalLabel: loginLabel(existing),
+      });
+
+      expect(storage.saveLogin).not.toHaveBeenCalled();
+      expect(window.showErrorMessage).toHaveBeenCalledWith(
+        expect.stringContaining('already exists'),
+      );
+      expect(panel.dispose).not.toHaveBeenCalled();
+    });
+
+    it('still saves an edit that changes only what does not identify the login', async () => {
+      // Password, tags and NetLDI are not part of the label, so the row being
+      // edited must not be read as a clash with itself.
+      const existing = makeLogin({ gs_user: 'DataCurator' });
+      storage.getLogins = vi.fn(() => [existing]);
+      storage.saveLogin = vi.fn(async () => {});
+      await LoginEditorPanel.show(storage, secretsArg, treeProvider, existing);
+      const panel = window.createWebviewPanel.mock.results[0].value;
+      const handler = panel.webview.onDidReceiveMessage.mock.calls[0][0];
+
+      await handler({
+        command: 'save',
+        data: { ...existing, netldi: 'someotherldi' },
+        originalLabel: loginLabel(existing),
+      });
+
+      expect(storage.saveLogin).toHaveBeenCalled();
+    });
   });
 
   describe('what Save and Cancel do with the panel', () => {

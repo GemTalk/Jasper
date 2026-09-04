@@ -23,7 +23,28 @@
  * `self _substringSearch: aString in: classes ignoreCase:`, walking the class list
  * it captured but reading each class's methods as they are now. What it cannot see
  * is a class *added or removed* after it was built, since that list is a snapshot —
- * so anything that changes the set of classes must call `clearClassOrganizerCode`.
+ * so anything that changes the set of classes has to drop it.
+ *
+ * Four things do. Jasper's own class definition and deletion clear it in the same
+ * doit that changes the class (`clearClassOrganizerStatement`); a commit or abort
+ * clears it, which is how a class another session added arrives; and GemStone
+ * Search's ⟳ clears it, which is the one gesture that covers the case neither of
+ * those can — a class created by *executing* `subclass:` in a workspace, which
+ * announces nothing and needs no commit to be visible to the session that ran it.
+ * The last two go through `clearClassOrganizerCode`.
+ *
+ * That last case is left to the button on purpose. Clearing on every workspace
+ * execution would be correct and would also throw the cache away all day for the
+ * many doits that create no class at all — which is the cost this file exists to
+ * remove. The ⟳ is what the rebuild button was built for, and its tooltip says
+ * so; if searches turn out to read stale often enough to complain about, that is
+ * the trade to revisit.
+ *
+ * The hierarchy queries (`getClassHierarchy`, `getSiblingClassNames`,
+ * `getClassDescendantNames`) share the cache too. They ask `subclassesOf:` and
+ * `allSuperclassesOf:`, which read the snapshot, and every refactoring that
+ * creates the class they would then ask about compiles it through
+ * `compileClassDefinition` — which clears the cache in the doit that creates it.
  *
  * Keyed by environment: an organizer collects its classes under one environment id,
  * so environments cannot share one. `newForEnvironment:` sets that at collection
@@ -54,7 +75,9 @@ export function clearClassOrganizerStatement(): string {
     ifTrue: [SessionTemps current removeKey: k ifAbsent: [nil]]].`;
 }
 
-/** The same, as a whole doit for callers with nothing else to run. */
+/** The same, as a whole doit for callers with nothing else to run — a commit, an
+ *  abort, and GemStone Search's explicit refresh, none of which have a class
+ *  change of their own to append it to. */
 export function clearClassOrganizerCode(): string {
   return `${clearClassOrganizerStatement()}
 true`;

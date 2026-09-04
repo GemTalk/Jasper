@@ -1197,7 +1197,7 @@
       },
       {
         "command": "gemstone.search.refresh",
-        "title": "Refresh GemStone Search",
+        "title": "Refresh GemStone Search from the Stone",
         "category": "GemStone",
         "icon": "$(refresh)"
       },
@@ -2987,7 +2987,7 @@
         },
         {
           "command": "gemstone.startStone",
-          "when": "view == gemstoneDatabases && viewItem == gemstoneDbStoneStopped",
+          "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDbStoneStopped(Registered)?$/",
           "group": "inline@2"
         },
         {
@@ -2997,52 +2997,52 @@
         },
         {
           "command": "gemstone.stopStone",
-          "when": "view == gemstoneDatabases && viewItem == gemstoneDbStoneRunning",
+          "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDbStoneRunning(Registered)?$/",
           "group": "inline@2"
         },
         {
           "command": "gemstone.startNetldi",
-          "when": "view == gemstoneDatabases && viewItem == gemstoneDbNetldiStopped",
+          "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDbNetldiStopped(Registered)?$/",
           "group": "inline@1"
         },
         {
           "command": "gemstone.stopNetldi",
-          "when": "view == gemstoneDatabases && viewItem == gemstoneDbNetldiRunning",
+          "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDbNetldiRunning(Registered)?$/",
           "group": "inline@1"
         },
         {
           "command": "gemstone.restartExternalServers",
-          "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDb(Stone|Netldi)External$/",
+          "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDb(Stone|Netldi)External(Registered)?$/",
           "group": "inline@1"
         },
         {
           "command": "gemstone.restartExternalServers",
-          "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDb(Stone|Netldi)External$/",
+          "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDb(Stone|Netldi)External(Registered)?$/",
           "group": "navigation@1"
         },
         {
           "command": "gemstone.startDatabase",
-          "when": "view == gemstoneDatabases && viewItem == gemstoneDbStopped",
+          "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDbStopped(Registered)?$/",
           "group": "inline@1"
         },
         {
           "command": "gemstone.stopDatabase",
-          "when": "view == gemstoneDatabases && viewItem == gemstoneDbRunning",
+          "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDbRunning(Registered)?$/",
           "group": "inline@1"
         },
         {
           "command": "gemstone.openDbInFinder",
-          "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDb(Running|Stopped|External)$/",
+          "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDb(Running|Stopped|External)(Registered)?$/",
           "group": "inline@2"
         },
         {
           "command": "gemstone.openDbTerminal",
-          "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDb(Running|Stopped|External)$/",
+          "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDb(Running|Stopped|External)(Registered)?$/",
           "group": "inline@3"
         },
         {
           "command": "gemstone.createLoginFromDb",
-          "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDb(Running|Stopped|External)$/",
+          "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDb(Running|Stopped|External)(Registered)?$/",
           "group": "inline@4"
         },
         {
@@ -3051,7 +3051,7 @@
         },
         {
           "command": "gemstone.unregisterDatabase",
-          "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDb(Running|Stopped|External)$/"
+          "when": "view == gemstoneDatabases && viewItem =~ /^gemstoneDb(Running|Stopped|External)Registered$/"
         }
       ],
       "editor/title": [

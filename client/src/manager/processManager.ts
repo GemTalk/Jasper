@@ -313,9 +313,18 @@ export class ProcessManager {
    * `gslist` in it — so a discovered server carries its port and status too.
    * Read-only from end to end, and empty rather than throwing when the host
    * will not answer: a stopped installation can still be registered by hand.
+   *
+   * The tree arrives as the *host* addresses it — on Windows the `\\wsl$\…` UNC
+   * the folder dialog answers — and everything below reads the guest: `ps`
+   * reports Linux command lines and `gslist` runs inside WSL. So it is converted
+   * first, the way every other consumer of a registered product path does.
+   * Without that the filter compares a UNC prefix against `/opt/…/sys/stoned`
+   * and matches nothing, and every Windows registration reads as "nothing is
+   * running there" — falling back to GemStone's default conf and global
+   * directories on an installation that may use neither.
    */
   discoverServersUnder(productPath: string): DiscoveredServer[] {
-    const tree = productPath.replace(/\/+$/, '');
+    const tree = (needsWsl() ? windowsPathToWsl(productPath) : productPath).replace(/[/\\]+$/, '');
     const found: DiscoveredServer[] = [];
     let hosts: HostServerProcess[];
     try {

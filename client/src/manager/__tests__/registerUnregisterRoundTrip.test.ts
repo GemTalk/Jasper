@@ -19,7 +19,7 @@ import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { needsWsl, wslExecSync, wslPathToWindows } from '../../wslBridge';
+import { needsWsl, windowsPathToWsl, wslExecSync, wslPathToWindows } from '../../wslBridge';
 import {
   wslExistsSync,
   wslMkdirSync,
@@ -92,10 +92,26 @@ describe('registering and unregistering an existing installation', () => {
   it('resolves the configured Linux root to the directory it actually writes', () => {
     // The setting names a place in the guest; the record has to land there and
     // not somewhere the host invented from it. A root that resolves wrong writes
-    // a real directory to a real place, so nothing throws — only this catches it.
+    // a real directory to a real place, so nothing throws.
+    //
+    // Deliberately NOT compared against `wslPathToWindows(ROOT)`: HOST_ROOT is
+    // that call over that input, so the two are the same function over the same
+    // argument and agree however wrong the conversion becomes. What is asserted
+    // instead is that the resolved path names the directory `mktemp` just made
+    // in the guest, and that it converts back to the setting.
     const { storage } = makeManager();
-    expect(storage.getRootPath()).toBe(HOST_ROOT);
-    expect(wslExistsSync(HOST_ROOT)).toBe(true);
+    const root = storage.getRootPath();
+
+    expect(wslExistsSync(root)).toBe(true);
+    expect(needsWsl() ? windowsPathToWsl(root) : root).toBe(ROOT);
+  });
+
+  // Only on Windows is there a conversion to get wrong. The shape is pinned
+  // separately from the round trip above so a change to `wslPathToWindows` that
+  // still round-trips — a different distro segment, `wsl.localhost` for `wsl$` —
+  // shows up as this test rather than as a silent behaviour change.
+  it.runIf(needsWsl())('answers that root as a UNC into the guest', () => {
+    expect(makeManager().storage.getRootPath()).toMatch(/^\\\\wsl(?:\$|\.localhost)\\[^\\]+\\/i);
   });
 
   it('is listed by the storage the panel reads, once registered', async () => {

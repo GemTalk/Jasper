@@ -89,6 +89,38 @@ export function registeredPaths(config: DatabaseYaml): RegisteredPaths | undefin
 }
 
 /**
+ * A registered database's `database.yaml`, as text.
+ *
+ * One serializer for both writers — the initial registration and the later
+ * port correction — because two copies of the same template drift, and the
+ * copy that drifted wrote `confPath: "undefined"` into records that only ever
+ * held a product tree. That shape is legal (`registeredPaths` fills the rest in
+ * from GemStone's own defaults), but the literal string is truthy, so the
+ * fallback stops firing and the next start hands the installation
+ * `GEMSTONE_SYS_CONF=undefined`. What goes in is the *resolved* record, so a
+ * rewrite writes down the defaults it was already running on rather than
+ * corrupting the line it left alone.
+ */
+export function registeredDatabaseYaml(config: DatabaseYaml): string {
+  const paths = registeredPaths(config);
+  return (
+    `---\nregistered: true\n` +
+    `version: "${config.version}"\n` +
+    `stoneName: "${config.stoneName}"\n` +
+    `ldiName: "${config.ldiName}"\n` +
+    (config.netldiPort ? `netldiPort: ${config.netldiPort}\n` : '') +
+    // A record with no product tree is not a usable registration — `registeredPaths`
+    // answers undefined for it — so there is nothing to resolve and nothing to
+    // invent: only what was actually given is written back.
+    (paths
+      ? `productPath: "${paths.productPath}"\n` +
+        `confPath: "${paths.confDir}"\n` +
+        `globalDir: "${paths.globalDir}"\n`
+      : '')
+  );
+}
+
+/**
  * How a version mismatch should be described, or undefined when there is none.
  *
  * A registered database records the version of the product tree it was
@@ -111,6 +143,8 @@ export function versionMismatchNote(
   );
 }
 
+/** Both separators: a recorded product path is whatever the folder dialog
+ *  answered, which on Windows is a `\\wsl$\…` UNC ending in a backslash. */
 function trimSlash(p: string): string {
-  return p.replace(/\/+$/, '');
+  return p.replace(/[/\\]+$/, '');
 }

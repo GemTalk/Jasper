@@ -215,6 +215,9 @@ interface CreateOptions {
   versions: { version: string; extents: string[] }[];
   /** Stone names already in use, so a clash is caught before Create is pressed. */
   stoneNames: string[];
+  /** The NetLDI names the databases carry, for Register Existing's clash check.
+   *  Deliberately not `ldiNames` — see `buildCreateOptions`. */
+  dbLdiNames: string[];
   ldiNames: string[];
   /** Set only when the next database would be the first one AND the root is on
    *  NFS — the case the old flow raised a modal for. */
@@ -1112,7 +1115,24 @@ export class DatabasesPanel {
       openLabel: 'Select GemStone Product Directory',
     });
     if (!uris || uris.length === 0) return;
-    const productPath = uris[0].fsPath.replace(/\/+$/, '');
+    // Both separators: the dialog answers a `\\wsl$\…` UNC on Windows.
+    const productPath = uris[0].fsPath.replace(/[/\\]+$/, '');
+    // GemStone has no Windows build, so on Windows the only installation Jasper
+    // can address is one inside WSL — a `\\wsl$\<distro>\…` path. A tree picked
+    // on the Windows side would register happily and then fail on every command,
+    // because each of them runs its binaries in the guest under a path the guest
+    // has never heard of. Refused here, where the folder that has to change is
+    // still on screen.
+    if (needsWsl() && !/^\\\\wsl(?:\$|\.localhost)\\/i.test(productPath)) {
+      void this.panel.webview.postMessage({
+        command: 'productPicked',
+        productPath,
+        problem:
+          'That folder is on Windows, not in WSL. GemStone runs inside WSL, so its product ' +
+          'directory has to be one too — choose it under \\\\wsl$\\<distro>\\… in the dialog.',
+      });
+      return;
+    }
     const info = SysadminStorage.readVersionTxt(productPath);
     if (!info) {
       void this.panel.webview.postMessage({
@@ -1173,6 +1193,22 @@ export class DatabasesPanel {
       this.failed(
         'register the database',
         new Error(`A stone called "${msg.stoneName}" is already registered.`),
+      );
+      await this.postState();
+      return;
+    }
+    // The NetLDI name is checked too, and against the other DATABASES only —
+    // never against the NetLDIs `gslist` reports, the way Create does. A
+    // registered database's NetLDI is normally already up under that very name,
+    // so a running-server clash is the expected case here and refusing it would
+    // refuse every ordinary registration. Two *databases* sharing the name is
+    // still a real collision: both match the same gslist row, so each reports
+    // the other's NetLDI as its own and `netldiPortFor` can hand one database's
+    // port to the other's login.
+    if (taken.some((c) => c.ldiName === msg.ldiName)) {
+      this.failed(
+        'register the database',
+        new Error(`A NetLDI called "${msg.ldiName}" is already registered.`),
       );
       await this.postState();
       return;
@@ -1305,6 +1341,11 @@ export class DatabasesPanel {
     return {
       versions,
       stoneNames: databases.map((d) => d.stoneName),
+      // Only the databases' own NetLDI names — what Register Existing checks
+      // against. Registering adopts a NetLDI that is usually already running
+      // under its name, so the list below (which counts a live NetLDI as taken)
+      // would refuse every ordinary registration.
+      dbLdiNames: databases.map((d) => d.ldiName),
       // Every NetLDI Jasper knows of, not only the ones it made: the name has to
       // be free on the machine, and a hand-started NetLDI holds it just as well.
       ldiNames: Array.from(

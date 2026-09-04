@@ -58,7 +58,8 @@
 
   // Whether the Register Existing form is showing instead of the lists, and what
   // has been answered in it. Held here for the same reason `createForm` is: a
-  // refresh arriving mid-typing must not discard the answers.
+  // refresh arriving mid-typing must not discard the answers — and neither must
+  // a refusal, which is what `registerPending` below is for.
   //
   // `version` is never typed. It is filled in from the product directory's own
   // version.txt when the host answers `productPicked`, because the version has
@@ -66,6 +67,13 @@
   // and `netldiPort` are filled in the same way from a server already running
   // out of that tree — the only authority on where it registers.
   let registering = false;
+  // A register was posted and the host has not yet said what happened. The form
+  // closes on submit — the new row is the confirmation, exactly as Create works —
+  // but its answers are held until then, because a refusal has to be answerable
+  // without re-choosing the product directory through the folder dialog. An
+  // `actionFailed` while this is set reopens the form on those answers; the next
+  // state clears it, and `beginRegister` is what empties the form after that.
+  let registerPending = false;
   // What the host last told us went wrong. Kept until dismissed: the state post
   // that follows a failure is the unchanged state, so clearing it on the next
   // render would blank the message before it could be read.
@@ -677,7 +685,10 @@
       // Backing up live extents suspends checkpoints over a session, so it is
       // offered on a running stone — the same condition the sidebar puts it
       // behind. The offline copy on the database row is the stopped-stone case.
-      (isStone && running && !external
+      // Not for a registered database: its extents live under the installation's
+      // own data directory, which Jasper's record has no copy of, so the command
+      // refuses — the same rule the offline copy on the database row follows.
+      (isStone && running && !external && !db.registered
         ? btn('backupDatabase', 'Online Extent Backup', 'archive', 'btn-secondary', {
             dir: db.dirName,
             iconOnly: true,
@@ -964,7 +975,7 @@
         const extra = [l.netldi ? `via ${l.netldi}` : '', l.version]
           .filter((part) => part)
           .join(' · ');
-        const open = l.sessions || [];
+        const sessions = l.sessions || [];
         const head = `<div class="db-line db-login">
             <span class="db-line-name"><span class="session-mark"></span><span class="db-login-user">${esc(l.label)}</span><span class="dim session-id">${esc(extra)}</span></span>
             <span class="db-line-actions">${btn('editLogin', 'Edit login', 'edit', null, {
@@ -983,12 +994,12 @@
         // on a database's rows. Without this a login here could be connected and
         // show nothing for it — the one place its sessions could appear is the row
         // itself, since there is no database above it carrying them.
-        if (!open.length) return head;
+        if (!sessions.length) return head;
         return (
           head +
           `<div class="session-block">
-            <div class="session-caption">${open.length === 1 ? 'Session' : 'Sessions'}</div>
-            ${open.map((sess) => sessionRow({ stoneName: l.stone }, l, sess)).join('')}
+            <div class="session-caption">${sessions.length === 1 ? 'Session' : 'Sessions'}</div>
+            ${sessions.map((sess) => sessionRow({ stoneName: l.stone }, l, sess)).join('')}
           </div>`
         );
       })
@@ -1244,7 +1255,13 @@
       stoneName: !registerForm.stoneName
         ? 'Enter the name of the stone as it was started.'
         : taken(registerForm.stoneName, names.stoneNames, 'stone'),
-      ldiName: !registerForm.ldiName ? 'Enter the name of its NetLDI.' : '',
+      // Checked against the databases' NetLDI names, not the running ones: the
+      // NetLDI being registered is usually up under that very name, so the
+      // create form's `ldiNames` (which counts a live NetLDI as taken) would
+      // refuse every ordinary registration. See buildCreateOptions.
+      ldiName: !registerForm.ldiName
+        ? 'Enter the name of its NetLDI.'
+        : taken(registerForm.ldiName, names.dbLdiNames, 'NetLDI'),
       netldiPort:
         registerForm.netldiPort && !/^\d{1,5}$/.test(String(registerForm.netldiPort))
           ? 'A port is a number, or leave it empty.'
@@ -1571,8 +1588,13 @@
         ...(registerForm.confPath ? { confPath: registerForm.confPath } : {}),
         ...(registerForm.globalDir ? { globalDir: registerForm.globalDir } : {}),
       });
+      // Closed, but NOT reset — the same bargain Create makes. The host can
+      // still refuse this (a stone name taken between the redraw and the click,
+      // a root it cannot write), and the failure banner it posts arrives over a
+      // form whose answers would otherwise all be gone, product directory
+      // included — which has to be re-chosen through the folder dialog.
       registering = false;
-      resetRegisterForm();
+      registerPending = true;
       if (lastState) render(lastState);
       return true;
     }
@@ -1843,6 +1865,15 @@
       // screen the host had written it for.
       els.root.setAttribute('aria-busy', 'false');
       lastFailure = String(msg.message || '');
+      // A refused registration puts the form back, answers and all, under the
+      // banner saying why — the answer that has to change is one of the ones on
+      // screen, and the product directory behind it took a folder dialog to
+      // choose.
+      if (registerPending) {
+        registerPending = false;
+        registering = true;
+        creating = false;
+      }
       if (lastState) render(lastState);
     } else if (msg.command === 'pingResult') {
       setPingNotice(
@@ -1887,6 +1918,14 @@
     } else if (msg.command === 'state') {
       if (!msg.state || typeof msg.state !== 'object') return;
       els.root.setAttribute('aria-busy', 'false');
+      // A state arriving with no refusal before it means the register landed —
+      // this state carries the new row. Nothing more to hold: `beginRegister`
+      // resets the form, so the answers cannot be seen again by accident, and
+      // the flag is what decides whether the next failure belongs to this form.
+      // Cleared here rather than in `render`, which also runs on the panel's own
+      // redraws — including the one that closes the form on submit, before the
+      // host has answered at all.
+      registerPending = false;
       render(msg.state);
     }
   }

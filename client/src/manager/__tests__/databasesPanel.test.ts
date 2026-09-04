@@ -15,9 +15,13 @@ vi.mock('../../sysadminChannel', () => ({ appendSysadmin: vi.fn() }));
 // and on a real Windows runner that shells out to wsl.exe and takes seconds — long
 // enough that a test driving two refreshes measures the probe rather than the panel.
 // Held to "no WSL here" so every platform exercises the same path.
+// POSIX by default, so every other test takes the ordinary path. The Windows
+// tests flip this — a suite that pins it to false can never see a Windows-only
+// mistake, which is how the product-tree discovery shipped comparing a UNC
+// prefix against a Linux path.
 vi.mock('../../wslBridge', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../wslBridge')>()),
-  needsWsl: () => false,
+  needsWsl: vi.fn(() => false),
 }));
 
 import * as fs from 'fs';
@@ -28,6 +32,7 @@ import { DatabaseManager } from '../databaseManager';
 import { DatabasesPanel } from '../databasesPanel';
 import type { GemStoneVersion } from '../../sysadminTypes';
 import { SysadminStorage } from '../../sysadminStorage';
+import { needsWsl } from '../../wslBridge';
 
 type MockPanel = ReturnType<typeof vscode.window.createWebviewPanel>;
 
@@ -143,6 +148,7 @@ function makeDeps() {
 
 beforeEach(() => {
   DatabasesPanel.close();
+  vi.mocked(needsWsl).mockReturnValue(false);
   vi.mocked(vscode.window.createWebviewPanel).mockClear();
   vi.mocked(vscode.commands.executeCommand).mockClear();
   onDisk = [{ ...RELEASE }];
@@ -189,7 +195,7 @@ function lastState(): {
     backupFiles: unknown[];
     extentBackupFiles: unknown[];
   }[];
-  create: { nfsWarning: boolean; rootPath: string; ldiNames: string[] };
+  create: { nfsWarning: boolean; rootPath: string; ldiNames: string[]; dbLdiNames: string[] };
 } {
   const posted = vi.mocked(lastPanel().webview.postMessage).mock.calls;
   const states = posted.filter(
@@ -828,6 +834,117 @@ describe('registering an existing database', () => {
     });
 
     expect(registerExistingDatabase).not.toHaveBeenCalled();
+  });
+
+  it('refuses a product directory that is on the Windows side, not in WSL', async () => {
+    // GemStone has no Windows build: everything Jasper runs for a database runs
+    // inside the guest, under a path the guest can resolve. A tree picked on the
+    // Windows side would register happily and then fail on every command, so it
+    // is refused while the folder that has to change is still on screen.
+    vi.mocked(needsWsl).mockReturnValue(true);
+    vi.spyOn(SysadminStorage, 'readVersionTxt').mockReturnValue({
+      version: '3.7.5.1',
+      date: '2026-06-25',
+      description: 'branch 3.7.5.1',
+    });
+    vi.mocked(vscode.window.showOpenDialog).mockResolvedValue([
+      { fsPath: 'C:\\gemstone\\product' },
+    ] as never);
+
+    DatabasesPanel.show(makeDeps());
+    await sendMessage({ command: 'ready' });
+    await sendMessage({ command: 'pickProductDirectory' });
+
+    const picked = vi
+      .mocked(lastPanel().webview.postMessage)
+      .mock.calls.map((c) => c[0] as Record<string, unknown>)
+      .find((m) => m.command === 'productPicked');
+    expect(String(picked?.problem)).toContain('WSL');
+    expect(picked?.version).toBeUndefined();
+  });
+
+  it('accepts a product directory inside the guest, addressed as a UNC path', async () => {
+    vi.mocked(needsWsl).mockReturnValue(true);
+    vi.spyOn(SysadminStorage, 'readVersionTxt').mockReturnValue({
+      version: '3.7.5.1',
+      date: '2026-06-25',
+      description: 'branch 3.7.5.1',
+    });
+    vi.mocked(vscode.window.showOpenDialog).mockResolvedValue([
+      { fsPath: '\\\\wsl$\\Ubuntu\\opt\\theirs\\product' },
+    ] as never);
+
+    DatabasesPanel.show(makeDeps());
+    await sendMessage({ command: 'ready' });
+    await sendMessage({ command: 'pickProductDirectory' });
+
+    const picked = vi
+      .mocked(lastPanel().webview.postMessage)
+      .mock.calls.map((c) => c[0] as Record<string, unknown>)
+      .find((m) => m.command === 'productPicked');
+    expect(picked?.problem).toBeUndefined();
+    expect(picked?.version).toBe('3.7.5.1');
+  });
+
+  it('refuses a NetLDI name another database already carries', async () => {
+    // Two databases sharing an ldiName both match the same gslist row
+    // (`isNetldiRunning` matches on name + version), so each reports the other's
+    // NetLDI as its own and `netldiPortFor` can hand one database's port to the
+    // other's login.
+    databases = [
+      {
+        dirName: 'db-1',
+        path: '/root/db-1',
+        config: {
+          version: '3.7.5',
+          stoneName: 'ourstone',
+          ldiName: 'theirldi',
+          baseExtent: 'extent0.dbf',
+        },
+      },
+    ];
+    DatabasesPanel.show(makeDeps());
+    await sendMessage({ command: 'ready' });
+
+    await sendMessage({
+      command: 'registerDatabase',
+      productPath: '/opt/theirs/product',
+      stoneName: 'theirstone',
+      ldiName: 'theirldi',
+    });
+
+    expect(registerExistingDatabase).not.toHaveBeenCalled();
+  });
+
+  it('offers the form the databases\u2019 own NetLDI names, not every one running', async () => {
+    // The name being registered is normally already held by the running NetLDI
+    // being adopted, so the create form's list — which counts a live NetLDI as
+    // taken — would refuse every ordinary registration. The register form checks
+    // the narrower list instead.
+    const deps = makeDeps() as unknown as {
+      processManager: { getProcesses: () => unknown[] };
+    };
+    deps.processManager.getProcesses = () => [
+      { type: 'netldi', name: 'theirldi', pid: 9, version: '3.7.5', status: 'OK' },
+    ];
+    databases = [
+      {
+        dirName: 'db-1',
+        path: '/root/db-1',
+        config: {
+          version: '3.7.5',
+          stoneName: 'ourstone',
+          ldiName: 'gs64ldi',
+          baseExtent: 'extent0.dbf',
+        },
+      },
+    ];
+    DatabasesPanel.show(deps as never);
+    await sendMessage({ command: 'ready' });
+
+    const create = lastState().create;
+    expect(create.dbLdiNames).toEqual(['gs64ldi']);
+    expect(create.ldiNames).toContain('theirldi');
   });
 
   it('draws a registered row as registered, with nothing extent-shaped on it', async () => {

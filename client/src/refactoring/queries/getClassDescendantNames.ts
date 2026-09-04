@@ -1,4 +1,5 @@
 import { QueryExecutor } from '../../queries/types';
+import { classOrganizerExpr } from '../../queries/classOrganizer';
 import { classLookupExpr } from '../../queries/util';
 
 /** A descendant class of some class, with its immediate parent (for display context)
@@ -42,7 +43,7 @@ classDict := IdentityDictionary new.
   d keysAndValuesDo: [:k :v |
     (v isBehavior and: [(classDict includesKey: v) not])
       ifTrue: [classDict at: v put: i]]].
-organizer := ClassOrganizer new.
+organizer := ${classOrganizerExpr()}.
 seen := IdentitySet new.
 frontier := OrderedCollection new.
 frontier addAll: ((organizer subclassesOf: cls) asSortedCollection: [:a :b | a name <= b name]).
