@@ -361,7 +361,7 @@ describe('DatabaseManager.registerExistingDatabase', () => {
     expect(wslCopyFileSync).not.toHaveBeenCalled();
     // The only directories made are Jasper's own record and the log it writes.
     const made = vi.mocked(wslMkdirSync).mock.calls.map(([dir]) => dir);
-    expect(made).toEqual(['/root/db-2', path.join('/root/db-2', 'log')]);
+    expect(made).toEqual([path.join('/root', 'db-2'), path.join('/root', 'db-2', 'log')]);
   });
 
   it('falls back to GemStone\u2019s own conventions when nothing was discovered', async () => {

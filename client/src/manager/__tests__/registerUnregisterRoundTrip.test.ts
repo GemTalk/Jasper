@@ -52,7 +52,15 @@ function makeManager(): { storage: SysadminStorage; manager: DatabaseManager } {
   return { storage, manager: new DatabaseManager(storage, processManager) };
 }
 
-describe('registering and unregistering an existing installation', () => {
+// POSIX-only. On Windows `getRootPath` treats the configured rootPath as a path
+// on the WSL side and rewrites it into a \\wsl$\... UNC, which `wslFs` then
+// routes through `wsl.exe` — so a Windows temp directory handed to these mocks
+// is never the directory the manager writes to, and there is no real filesystem
+// left to test end to end. The behaviour these tests pin is the same on every
+// platform; the Linux runners cover it.
+const NOT_POSIX = process.platform === 'win32';
+
+describe.skipIf(NOT_POSIX)('registering and unregistering an existing installation', () => {
   beforeEach(() => {
     for (const entry of fs.readdirSync(ROOT)) {
       if (entry.startsWith('db-')) {

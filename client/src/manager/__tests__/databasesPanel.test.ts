@@ -739,9 +739,11 @@ describe('registering an existing database', () => {
       date: '2026-06-25',
       description: 'branch 3.7.5.1',
     });
-    vi.mocked(vscode.window.showOpenDialog).mockResolvedValue([
-      vscode.Uri.file('/opt/theirs/product'),
-    ] as never);
+    // Through the Uri, because that is how the pick reaches the panel: on
+    // Windows `fsPath` answers a separator-normalized path, so the literal the
+    // dialog was handed is not the string the panel posts back.
+    const productUri = vscode.Uri.file('/opt/theirs/product');
+    vi.mocked(vscode.window.showOpenDialog).mockResolvedValue([productUri] as never);
 
     DatabasesPanel.show(deps as never);
     await sendMessage({ command: 'ready' });
@@ -752,7 +754,7 @@ describe('registering an existing database', () => {
       .mock.calls.map((c) => c[0] as Record<string, unknown>)
       .find((m) => m.command === 'productPicked');
     expect(picked).toMatchObject({
-      productPath: '/opt/theirs/product',
+      productPath: productUri.fsPath,
       version: '3.7.5.1',
       description: 'branch 3.7.5.1',
     });
