@@ -222,6 +222,7 @@ describe('a login with no database of its own', () => {
       running: false,
       connected: false,
       current: false,
+      sessions: [],
       ...overrides,
     };
   }
@@ -259,6 +260,47 @@ describe('a login with no database of its own', () => {
     expect(add).not.toBeNull();
     add?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(host.postMessage).toHaveBeenCalledWith(expect.objectContaining({ command: 'addLogin' }));
+  });
+
+  // Its sessions can only appear on the row itself: there is no database above it
+  // carrying them, so without this a connected login here showed nothing for it.
+  it('shows the sessions opened from it', () => {
+    mount(
+      state({
+        databases: [database()],
+        logins: [remoteLogin({ connected: true, sessions: [{ id: 7, current: true }] })],
+      }),
+    );
+    const other = root.querySelector('details.section[data-section="otherLogins"]');
+    expect(other?.querySelector('.session-block')).not.toBeNull();
+    expect(other?.textContent).toContain('session 7');
+  });
+
+  it('captions one session and several differently', () => {
+    mount(
+      state({
+        databases: [database()],
+        logins: [
+          remoteLogin({
+            connected: true,
+            sessions: [
+              { id: 7, current: true },
+              { id: 8, current: false },
+            ],
+          }),
+        ],
+      }),
+    );
+    const caption = root.querySelector(
+      'details.section[data-section="otherLogins"] .session-caption',
+    );
+    expect(caption?.textContent).toBe('Sessions');
+  });
+
+  it('shows no session block when nothing is open', () => {
+    mount(state({ databases: [database()], logins: [remoteLogin()] }));
+    const other = root.querySelector('details.section[data-section="otherLogins"]');
+    expect(other?.querySelector('.session-block')).toBeNull();
   });
 
   it('stays absent when every login already has a database', () => {

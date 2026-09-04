@@ -187,6 +187,9 @@ interface LoginTarget {
   /** A session is already open for this login; its id, so it can be selected. */
   connected: boolean;
   sessionId?: number;
+  /** Every session open from this login, so a login with no database row to sit
+   *  under can still show them — the same list a per-database login row gets. */
+  sessions: { id: number; current: boolean }[];
   /** ...and it is the selected one, the session Display It and friends act on. */
   current: boolean;
 }
@@ -1500,6 +1503,9 @@ export class DatabasesPanel {
         running: db ? db.stoneRunning : this.deps.processManager.isStoneRunning(l.stone, l.version),
         connected: open.some((sess) => loginLabel(sess.login) === label),
         sessionId: open.find((sess) => loginLabel(sess.login) === label)?.id,
+        sessions: open
+          .filter((sess) => loginLabel(sess.login) === label)
+          .map((sess) => ({ id: sess.id, current: sess.id === selected?.id })),
         current: label === selectedLabel,
       };
     });

@@ -964,7 +964,8 @@
         const extra = [l.netldi ? `via ${l.netldi}` : '', l.version]
           .filter((part) => part)
           .join(' · ');
-        return `<div class="db-line db-login">
+        const open = l.sessions || [];
+        const head = `<div class="db-line db-login">
             <span class="db-line-name"><span class="session-mark"></span><span class="db-login-user">${esc(l.label)}</span><span class="dim session-id">${esc(extra)}</span></span>
             <span class="db-line-actions">${btn('editLogin', 'Edit login', 'edit', null, {
               login: l.label,
@@ -978,6 +979,18 @@
               title: `Log in to ${l.stone} as ${l.user}`,
             })}</span>
           </div>`;
+        // Sessions belong under the login they were opened from, exactly as they do
+        // on a database's rows. Without this a login here could be connected and
+        // show nothing for it — the one place its sessions could appear is the row
+        // itself, since there is no database above it carrying them.
+        if (!open.length) return head;
+        return (
+          head +
+          `<div class="session-block">
+            <div class="session-caption">${open.length === 1 ? 'Session' : 'Sessions'}</div>
+            ${open.map((sess) => sessionRow({ stoneName: l.stone }, l, sess)).join('')}
+          </div>`
+        );
       })
       .join('');
     // Its own +, because the per-database one prefills from the database it sits
