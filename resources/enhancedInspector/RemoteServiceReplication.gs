@@ -1,8 +1,10 @@
 ! Jasper Enhanced Inspector vendored source
 ! ----------------------------------------------------------------------------
-! Origin : https://github.com/GemTalk/RemoteServiceReplication
-! Source : src-gs/bootstrapRSR.gs
-! License: MIT - Copyright (c) GemTalk Systems, Inc. See LICENSE in the origin repository.
+! Origin  : https://github.com/GemTalk/RemoteServiceReplication
+! Source  : src-gs/bootstrapRSR.gs
+! License : MIT - Copyright (c) 2017-2024 GemTalk Systems
+!           Full MIT notice and permission text: THIRD-PARTY.md and
+!           NOTICE at the root of https://github.com/GemTalk/Jasper
 !
 ! Vendored into Jasper and filed into the stone by the Enhanced Inspector
 ! installer. DO NOT EDIT BY HAND - regenerated from upstream by

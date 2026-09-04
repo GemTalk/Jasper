@@ -35,5 +35,17 @@ Rows above are listed in current dependency order for orientation only.
 sole authority on load order — nothing keeps this table in sync with it, so if the two ever
 disagree, trust the array.
 
+## Attribution
+
+Every file here is third-party MIT-licensed source, from **six** upstream repos with **seven**
+distinct copyright holders — not all of them feenk's. Each file carries a generated attribution
+header naming its origin, its upstream project, and its copyright holder; the full MIT notice and
+permission text is in [`THIRD-PARTY.md`](../../THIRD-PARTY.md) and [`NOTICE`](../../NOTICE) at the
+repo root. Both ship in the VSIX alongside these payloads. The headers are written from the
+attribution table at the bottom of
+[`apply_jasper_transforms.sh`](../../gs-src/enhancedInspector/build/apply_jasper_transforms.sh) —
+correct that table (and `THIRD-PARTY.md`/`NOTICE`), then re-run the script, rather than editing a
+header by hand.
+
 See [`gs-src/enhancedInspector/README.md`](../../gs-src/enhancedInspector/README.md) for the
 regeneration workflow and its macOS warning.
