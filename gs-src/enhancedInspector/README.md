@@ -29,9 +29,8 @@ export ROWAN_PROJECTS_HOME=/path/to/your/checkouts   # gt4gemstone, gtoolkit-rem
 gs-src/enhancedInspector/build/update_enhanced_inspector_support.sh
 ```
 
-> ⚠️ **Known broken on macOS.** Both `sed -i` calls in `apply_jasper_transforms.sh` (lines 49 and 53)
-> use GNU syntax; BSD sed consumes the next argument as a backup suffix. Line 49 silently no-ops the
-> placement rewrite and leaves a stray `<file>.gs-E`; line 53 hard-errors. Because `update_…sh` copies
-> pristine upstream over the payload *before* transforming and has no `set -e`, running it on macOS
-> **destroys the committed payload and still prints `Update complete.`** Run on Linux until this is
-> fixed.
+The transforms run the same on macOS and Linux — they pipe through a temp file rather than using
+`sed -i`, whose argument GNU and BSD sed disagree about (#429). Note that the copy step overwrites
+the payload *before* transforming, so if the transforms do fail the working tree holds
+untransformed upstream, which will not install into a stone; the script says so and exits non-zero,
+and `git checkout -- resources/enhancedInspector` puts it back.

@@ -51,6 +51,16 @@ function filedInFileFrom(code: string): string | undefined {
   return ENHANCED_INSPECTOR_FILES.find((f) => code.includes(f));
 }
 
+// Both dictionary snippets name GsEnhancedInspector, so they are told apart by WHERE each puts it:
+// prepare pins it at the front for the file-in, settle returns it to the end afterwards.
+const isPrepare = (code: string): boolean => code.includes('insertDictionary: dict at: 1');
+const isSettle = (code: string): boolean =>
+  code.includes('insertDictionary: dict at: prof symbolList size + 1');
+
+function codeOfCallMatching(predicate: (code: string) => boolean): string {
+  return String(executeFetchStringMock.mock.calls.find((c) => predicate(String(c[1])))?.[1]);
+}
+
 describe('supportsEnhancedInspector', () => {
   it('accepts the supported minimum version', () => {
     expect(supportsEnhancedInspector(ENHANCED_INSPECTOR_MIN_VERSION)).toBe(true);
@@ -118,8 +128,7 @@ describe('installEnhancedInspectorSupport', () => {
     const { session } = createMockSession();
     const events: string[] = [];
     executeFetchStringMock.mockImplementation((s, code: string) => {
-      if (code.includes('GsEnhancedInspector') && code.includes('insertDictionary'))
-        events.push('prepare');
+      if (isPrepare(code)) events.push('prepare');
       if (code.includes('GsFileIn fromPath')) events.push('file-in');
       return happyPath(s, code);
     });
@@ -131,17 +140,63 @@ describe('installEnhancedInspectorSupport', () => {
     expect(events).toContain('file-in');
   });
 
+  // Regression (Rowan extent): the payload declares ~520 classes, dozens of which a Rowan-enabled
+  // extent already defines. From the END of the symbol list every bareword in the payload binds to
+  // the stone's class instead of the payload's, and the file-in fails after stripping methods off
+  // classes the user depends on. The dictionary has to be FIRST while the payload files in, and a
+  // re-install has to detach the existing copy rather than leave it where it was. `UserProfile`
+  // has no `removeDictionary:` — only the index form — so detaching by object would raise a
+  // doesNotUnderstand on the second install of any stone.
+  it('puts the dictionary first in the symbol list before filing in', async () => {
+    const { session } = createMockSession();
+
+    await installEnhancedInspectorSupport(session, PAYLOAD_DIR);
+
+    const prepareCode = codeOfCallMatching(isPrepare);
+    expect(prepareCode).toContain('insertDictionary: dict at: 1');
+    expect(prepareCode).toContain('removeDictionaryAt:');
+    expect(prepareCode).not.toContain('prof removeDictionary:');
+  });
+
+  // Front placement is a file-in-time arrangement only. Left there it is committed to SystemUser's
+  // profile, where all ~520 payload names shadow the real ones in every later SystemUser session.
+  it('returns the dictionary to the end of the symbol list once the payload is in', async () => {
+    const { session } = createMockSession();
+    const events: string[] = [];
+    executeFetchStringMock.mockImplementation((s, code: string) => {
+      if (isSettle(code)) events.push('settle');
+      if (code.includes('GsFileIn fromPath')) events.push('file-in');
+      return happyPath(s, code);
+    });
+
+    const result = await installEnhancedInspectorSupport(session, PAYLOAD_DIR);
+
+    expect(result.success).toBe(true);
+    expect(events.filter((e) => e === 'settle')).toHaveLength(1);
+    expect(events[events.length - 1]).toBe('settle');
+  });
+
+  it('aborts without committing when the dictionary cannot be settled', async () => {
+    const { session, commit, abort } = createMockSession();
+    executeFetchStringMock.mockImplementation((s, code: string) => {
+      if (isSettle(code)) throw new Error('symbol list is read-only');
+      return happyPath(s, code);
+    });
+
+    const result = await installEnhancedInspectorSupport(session, PAYLOAD_DIR);
+
+    expect(result.success).toBe(false);
+    expect(result.message).toContain('symbol list is read-only');
+    expect(commit).not.toHaveBeenCalled();
+    expect(abort).toHaveBeenCalledTimes(1);
+  });
+
   it('migrates a legacy Published-placed install by sweeping its GToolkit classes while preparing', async () => {
     const { session } = createMockSession();
 
     await installEnhancedInspectorSupport(session, PAYLOAD_DIR);
 
-    const prepareCode = String(
-      executeFetchStringMock.mock.calls.find(
-        (c) =>
-          String(c[1]).includes('GsEnhancedInspector') && String(c[1]).includes('insertDictionary'),
-      )?.[1],
-    );
+    const prepareCode = codeOfCallMatching(isPrepare);
     // Assert the SHAPE of the migration, not its exact wording: it looks at Published, it is
     // GATED on a legacy marker actually being bound there (so a stone that never carried the old
     // placement is never swept), and it removes rather than merely reads.
@@ -158,12 +213,7 @@ describe('installEnhancedInspectorSupport', () => {
 
     await installEnhancedInspectorSupport(session, PAYLOAD_DIR);
 
-    const prepareCode = String(
-      executeFetchStringMock.mock.calls.find(
-        (c) =>
-          String(c[1]).includes('GsEnhancedInspector') && String(c[1]).includes('insertDictionary'),
-      )?.[1],
-    );
+    const prepareCode = codeOfCallMatching(isPrepare);
     const gateAt = prepareCode.indexOf('includesKey: #GtRemotePhlowViewedObject');
     const sweepAt = prepareCode.indexOf('removeKey:');
     expect(gateAt).toBeGreaterThan(-1);
@@ -173,9 +223,7 @@ describe('installEnhancedInspectorSupport', () => {
   it('aborts without committing when the dictionary cannot be prepared', async () => {
     const { session, commit, abort } = createMockSession();
     executeFetchStringMock.mockImplementation((s, code: string) => {
-      if (code.includes('GsEnhancedInspector') && code.includes('insertDictionary')) {
-        throw new Error('insertDictionary failed');
-      }
+      if (isPrepare(code)) throw new Error('insertDictionary failed');
       return happyPath(s, code);
     });
 

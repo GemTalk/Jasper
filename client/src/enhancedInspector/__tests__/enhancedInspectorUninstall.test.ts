@@ -7,6 +7,7 @@ vi.mock('../../browserQueries', () => ({
 import { ActiveSession } from '../../sessionManager';
 import { executeFetchString } from '../../browserQueries';
 import { uninstallEnhancedInspectorSupport } from '../enhancedInspectorUninstall';
+import { ENHANCED_INSPECTOR_CATEGORY_PREFIX } from '../enhancedInspectorInstall';
 
 const executeFetchStringMock = executeFetchString as ReturnType<typeof vi.fn>;
 
@@ -64,6 +65,23 @@ describe('uninstallEnhancedInspectorSupport', () => {
       String(c[1]).includes('GsEnhancedInspector'),
     );
     expect(removalCalls).toHaveLength(1);
+  });
+
+  // Extension methods on kernel classes cannot be dropped with the dictionary, so the sweep finds
+  // them by category. The payload's carry the `GsEnhancedInspector-` prefix, but a stone installed
+  // by an earlier build still carries `*GToolkit`; missing either leaves kernel methods behind.
+  it('sweeps extension methods by both the current and the legacy category prefix', async () => {
+    const { session } = createMockSession();
+
+    await uninstallEnhancedInspectorSupport(session);
+
+    const removal = String(
+      executeFetchStringMock.mock.calls.find((c) =>
+        String(c[1]).includes('categoryOfSelector:'),
+      )?.[1],
+    );
+    expect(removal).toContain(`beginsWith: '${ENHANCED_INSPECTOR_CATEGORY_PREFIX}'`);
+    expect(removal).toContain("beginsWith: '*GToolkit'");
   });
 
   it('rolls back and reports failure when the removal snippet raises', async () => {

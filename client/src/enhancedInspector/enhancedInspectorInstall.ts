@@ -64,6 +64,15 @@ export const ENHANCED_INSPECTOR_MIN_VERSION = '3.7.5';
 export const ENHANCED_INSPECTOR_DICTIONARY = 'GsEnhancedInspector';
 
 /**
+ * The method-category prefix the payload's extension methods carry, put there in
+ * place of upstream's leading `*` by `apply_jasper_transforms.sh` (see its
+ * transform 1b for why Rowan makes that necessary). Those methods land on kernel
+ * classes, which cannot live in `ENHANCED_INSPECTOR_DICTIONARY`, so this prefix —
+ * not the dictionary — is what the uninstall sweep finds them by.
+ */
+export const ENHANCED_INSPECTOR_CATEGORY_PREFIX = `${ENHANCED_INSPECTOR_DICTIONARY}-`;
+
+/**
  * True when `stoneVersion` supports the Enhanced Inspector, i.e. it is
  * `ENHANCED_INSPECTOR_MIN_VERSION` or later. The comparison is semantic
  * (numeric per version segment), so future releases — 3.7.6, 3.7.10, 4.0 — pass
@@ -112,10 +121,23 @@ export const ENHANCED_INSPECTOR_FILES: readonly string[] = [
 /**
  * Server-side snippet run once BEFORE the payload file-in: create the dedicated
  * `GsEnhancedInspector` dictionary (binding its own name so the payload's
- * bareword `inDictionary: GsEnhancedInspector` resolves), position it at the END
- * of the installing user's symbol list (non-shadowing), and share the SAME
- * dictionary object into every user's symbol list — the mirror of
+ * bareword `inDictionary: GsEnhancedInspector` resolves), position it FIRST in
+ * the installing session's symbol list, and share the SAME dictionary object
+ * into every user's symbol list — the mirror of
  * `GsRefactoringLoader>>ensureDictionary` + `shareDictionary:`.
+ *
+ * FIRST, not last, is what lets the payload file in on a Rowan-enabled extent.
+ * The payload declares ~520 classes, dozens of which such an extent already
+ * defines (`Announcement`, `MessageSend`, `STONWriter`, every `Rsr…`). From the
+ * end of the symbol list every bareword in the payload — a superclass
+ * reference, a `method: X` target, the `removeallmethods X` that precedes each
+ * class body — binds to the stone's class instead of the payload's: the file-in
+ * fails, and not before stripping methods off classes the user's own code
+ * depends on. A re-install detaches the existing copy first, so it moves rather
+ * than staying where a previous build put it; `SETTLE_DICTIONARY_SNIPPET` puts it
+ * back at the end once the payload is in.
+ *
+ * @see docs/explanation/enhanced-inspector.md#filing-in-on-a-rowan-extent
  *
  * It also MIGRATES a stone installed by the earlier `Published`-placement
  * build, so nothing stale shadows the fresh classes or survives a later
@@ -127,15 +149,22 @@ export const ENHANCED_INSPECTOR_FILES: readonly string[] = [
  * Ends in a String so `executeFetchString` can fetch the result. Idempotent.
  */
 const PREPARE_DICTIONARY_SNIPPET = `
-| sym prof list dict pub |
+| sym prof list dict idx pub |
 sym := #GsEnhancedInspector.
 prof := System myUserProfile.
 list := prof symbolList.
 dict := list detect: [:d | d name == sym] ifNone: [nil].
-dict isNil ifTrue: [
-	dict := SymbolDictionary new name: sym; yourself.
-	dict at: sym put: dict.
-	prof insertDictionary: dict at: list size + 1 ].
+dict isNil
+	ifTrue: [
+		dict := SymbolDictionary new name: sym; yourself.
+		dict at: sym put: dict ]
+	ifFalse: [
+		"Detach the copy a previous install left, so this one re-inserts it at the
+		 front rather than leaving it wherever that install put it. UserProfile has
+		 no removeDictionary:, only the index form."
+		idx := (1 to: list size) detect: [:i | (list at: i) name == sym] ifNone: [nil].
+		idx notNil ifTrue: [ prof removeDictionaryAt: idx ] ].
+prof insertDictionary: dict at: 1.
 AllUsers do: [:p |
 	(p symbolList detect: [:d | d name == sym] ifNone: [nil]) isNil
 		ifTrue: [ p insertDictionary: dict at: p symbolList size + 1 ] ].
@@ -153,6 +182,43 @@ pub := list detect: [:d | d name == #Published] ifNone: [nil].
 		((v isKindOf: Class)
 			and: [((v category ifNil: ['']) asString beginsWith: 'GToolkit-')])
 				ifTrue: [ pub removeKey: k ] ] ].
+'ok'`;
+
+/**
+ * Server-side snippet run once AFTER the payload files in, undoing the front
+ * placement `PREPARE_DICTIONARY_SNIPPET` needed: move `GsEnhancedInspector` to
+ * the END of the installing user's symbol list, where the other users it was
+ * shared into already have it.
+ *
+ * Front placement is a file-in-time arrangement only. Left there it is committed
+ * to SystemUser's persistent profile, and all ~520 payload class names — among
+ * them `MessageSend`, `Announcement`, `Announcer` and `RsrConnection`, which
+ * exist in `Globals` on any stone — shadow the real ones in every later
+ * SystemUser session.
+ *
+ * Moving it does not disturb the filed-in code: GemStone binds a global to its
+ * association when a method is compiled, not when it runs, so the payload's
+ * methods stay bound to the payload's classes wherever the dictionary sits. The
+ * exception is the payload's handful of NAME-based lookups
+ * (`RsrClassResolver class>>classNamed:ifAbsent:`, STON's `resolveSymbol:`),
+ * which on a Rowan extent then find the stone's `Rsr…`/`STONWriter`/
+ * `Announcement` rather than the payload's. That is the ordering every
+ * non-installing user has always had — those paths serve the remote-GT wire
+ * protocol, not the view rendering Jasper drives over the GCI, and views were
+ * confirmed to come back for every receiver kind with the dictionary at the end.
+ *
+ * Ends in a String so `executeFetchString` can fetch the result. Idempotent.
+ */
+const SETTLE_DICTIONARY_SNIPPET = `
+| sym prof list idx dict |
+sym := #GsEnhancedInspector.
+prof := System myUserProfile.
+list := prof symbolList.
+idx := (1 to: list size) detect: [:i | (list at: i) name == sym] ifNone: [nil].
+idx isNil ifTrue: [ Error signal: 'The GsEnhancedInspector dictionary is no longer in the symbol list' ].
+dict := list at: idx.
+prof removeDictionaryAt: idx.
+prof insertDictionary: dict at: prof symbolList size + 1.
 'ok'`;
 
 export interface InstallResult {
@@ -218,8 +284,8 @@ export async function installEnhancedInspectorSupport(
   const gemPayloadDir = toLocalGemPath(payloadDir);
   const sep = gemPayloadDir.endsWith('/') ? '' : '/';
   const serverPath = (file: string): string => `${gemPayloadDir}${sep}${file}`;
-  // The prepare-dictionary step + 7 files + the commit step.
-  const stepIncrement = 100 / (ENHANCED_INSPECTOR_FILES.length + 2);
+  // The prepare-dictionary step + 7 files + the settle step + the commit step.
+  const stepIncrement = 100 / (ENHANCED_INSPECTOR_FILES.length + 3);
 
   // Fail fast (and clearly) if the gem can't read the payload — e.g. a remote
   // stone whose gem doesn't share this machine's filesystem.
@@ -287,6 +353,23 @@ export async function installEnhancedInspectorSupport(
         message: `File-in of ${file} failed: ${messageOf(e)}. No changes were committed.`,
       };
     }
+  }
+
+  // The payload is in, so the front placement has done its job: put the
+  // dictionary back at the end of the symbol list before anything is committed.
+  onProgress('Settling the GsEnhancedInspector dictionary…', stepIncrement);
+  await yieldToEventLoop();
+  try {
+    executeFetchString(session, SETTLE_DICTIONARY_SNIPPET);
+  } catch (e: unknown) {
+    safeAbort(session);
+    return {
+      success: false,
+      committed: false,
+      verified: false,
+      filedIn,
+      message: `Could not settle the GsEnhancedInspector dictionary: ${messageOf(e)}. No changes were committed.`,
+    };
   }
 
   onProgress('Committing…', stepIncrement);

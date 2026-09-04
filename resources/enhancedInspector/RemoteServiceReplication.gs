@@ -16955,7 +16955,7 @@ testTokenRejected
 
 !		Class methods for 'RsrCharacterArrayReference'
 
-category: '*remoteservicereplication-gemstone'
+category: 'GsEnhancedInspector-remoteservicereplication-gemstone'
 classmethod: RsrCharacterArrayReference
 convertToBytes: aCharacterArray
 
@@ -16964,7 +16964,7 @@ convertToBytes: aCharacterArray
 
 !		Instance methods for 'RsrCharacterArrayReference'
 
-category: '*remoteservicereplication-gemstone'
+category: 'GsEnhancedInspector-remoteservicereplication-gemstone'
 method: RsrCharacterArrayReference
 convertBytes: aByteArray
 
@@ -16975,14 +16975,14 @@ convertBytes: aByteArray
 
 !		Instance methods for 'RsrConnection'
 
-category: '*remoteservicereplication'
+category: 'GsEnhancedInspector-remoteservicereplication'
 method: RsrConnection
 channel
 
 	^channel
 %
 
-category: '*remoteservicereplication'
+category: 'GsEnhancedInspector-remoteservicereplication'
 method: RsrConnection
 channel: aChannel
 
@@ -16990,7 +16990,7 @@ channel: aChannel
 	channel connection: self
 %
 
-category: '*remoteservicereplication'
+category: 'GsEnhancedInspector-remoteservicereplication'
 method: RsrConnection
 channelDisconnected
 
@@ -16998,7 +16998,7 @@ channelDisconnected
 	self close
 %
 
-category: '*remoteservicereplication'
+category: 'GsEnhancedInspector-remoteservicereplication'
 method: RsrConnection
 initialize
 
@@ -17012,14 +17012,14 @@ initialize
 	policy := RsrDefaultPolicy new
 %
 
-category: '*remoteservicereplication'
+category: 'GsEnhancedInspector-remoteservicereplication'
 method: RsrConnection
 log
 
 	^log
 %
 
-category: '*remoteservicereplication'
+category: 'GsEnhancedInspector-remoteservicereplication'
 method: RsrConnection
 mournActionForClientSID: aSID
 
@@ -17027,35 +17027,35 @@ mournActionForClientSID: aSID
 			self _releaseSID: aSID]
 %
 
-category: '*remoteservicereplication'
+category: 'GsEnhancedInspector-remoteservicereplication'
 method: RsrConnection
 mournActionForServerSID: aSID
 
 	^[registry removeKey: aSID]
 %
 
-category: '*remoteservicereplication'
+category: 'GsEnhancedInspector-remoteservicereplication'
 method: RsrConnection
 oidSpigot
 
 	^oidSpigot
 %
 
-category: '*remoteservicereplication'
+category: 'GsEnhancedInspector-remoteservicereplication'
 method: RsrConnection
 oidSpigot: anIntegerSpigot
 
 	oidSpigot := anIntegerSpigot
 %
 
-category: '*remoteservicereplication'
+category: 'GsEnhancedInspector-remoteservicereplication'
 method: RsrConnection
 pendingMessages
 
 	^pendingMessages
 %
 
-category: '*remoteservicereplication-gemstone'
+category: 'GsEnhancedInspector-remoteservicereplication-gemstone'
 method: RsrConnection
 platformSpecificOpeningTasks
 	"Ensure that we are mourning ephemerons asynchronously."
@@ -17063,7 +17063,7 @@ platformSpecificOpeningTasks
 	RsrAsyncMournHandler current ensureStarted
 %
 
-category: '*remoteservicereplication'
+category: 'GsEnhancedInspector-remoteservicereplication'
 method: RsrConnection
 serviceAt: aSID
 
@@ -17072,7 +17072,7 @@ serviceAt: aSID
 		ifAbsent: [RsrUnknownSID signal: aSID printString]
 %
 
-category: '*remoteservicereplication'
+category: 'GsEnhancedInspector-remoteservicereplication'
 method: RsrConnection
 serviceAt: aSID
 ifAbsent: aBlock
@@ -17091,28 +17091,28 @@ ifAbsent: aBlock
 		ifNotNil: [:service | service]
 %
 
-category: '*remoteservicereplication'
+category: 'GsEnhancedInspector-remoteservicereplication'
 method: RsrConnection
 transactionSpigot
 
 	^transactionSpigot
 %
 
-category: '*remoteservicereplication'
+category: 'GsEnhancedInspector-remoteservicereplication'
 method: RsrConnection
 transactionSpigot: anObject
 
 	transactionSpigot := anObject
 %
 
-category: '*remoteservicereplication'
+category: 'GsEnhancedInspector-remoteservicereplication'
 method: RsrConnection
 unknownError: anException
 
 	self close
 %
 
-category: '*remoteservicereplication'
+category: 'GsEnhancedInspector-remoteservicereplication'
 method: RsrConnection
 _ensureRegistered: aService
 	aService _connection == nil
@@ -17124,21 +17124,21 @@ _ensureRegistered: aService
 		ifFalse: [ ^ RsrAlreadyRegistered signalService: aService intendedConnection: self ]
 %
 
-category: '*remoteservicereplication'
+category: 'GsEnhancedInspector-remoteservicereplication'
 method: RsrConnection
 _forwarderClass
 
 	^RsrForwarder
 %
 
-category: '*remoteservicereplication-gemstone-test'
+category: 'GsEnhancedInspector-remoteservicereplication-gemstone-test'
 method: RsrConnection
 _privateRegistryOnlyForTests
 
 	^registry
 %
 
-category: '*remoteservicereplication'
+category: 'GsEnhancedInspector-remoteservicereplication'
 method: RsrConnection
 _receivedCommand: aCommand
 	"Execute the command in the context of the receiving Connection."
@@ -17150,7 +17150,7 @@ _receivedCommand: aCommand
 		named: 'Processing ', aCommand class name
 %
 
-category: '*remoteservicereplication'
+category: 'GsEnhancedInspector-remoteservicereplication'
 method: RsrConnection
 _register: aService
 as: sid
@@ -17170,7 +17170,7 @@ as: sid
 		put: registryEntry
 %
 
-category: '*remoteservicereplication'
+category: 'GsEnhancedInspector-remoteservicereplication'
 method: RsrConnection
 _releaseSID: aSID
 
@@ -17182,7 +17182,7 @@ _releaseSID: aSID
 	self _sendCommand: command
 %
 
-category: '*remoteservicereplication'
+category: 'GsEnhancedInspector-remoteservicereplication'
 method: RsrConnection
 _remoteClientReleased: aSID
 	"Remotely, a Client instance has been garbage collected.
@@ -17195,7 +17195,7 @@ _remoteClientReleased: aSID
 	entry becomeWeak.
 %
 
-category: '*remoteservicereplication'
+category: 'GsEnhancedInspector-remoteservicereplication'
 method: RsrConnection
 _sendCommand: aCommand
 	"Send the provided Command to our peer."
@@ -17203,7 +17203,7 @@ _sendCommand: aCommand
 	channel send: aCommand
 %
 
-category: '*remoteservicereplication'
+category: 'GsEnhancedInspector-remoteservicereplication'
 method: RsrConnection
 _sendMessage: aMessage
 to: aService
@@ -17240,7 +17240,7 @@ to: aService
 	^promise
 %
 
-category: '*remoteservicereplication'
+category: 'GsEnhancedInspector-remoteservicereplication'
 method: RsrConnection
 _stronglyRetain: aServer
 	"Retain the already registered server strongly."
@@ -17256,7 +17256,7 @@ _stronglyRetain: aServer
 
 !		Class methods for 'RsrDateAndTime'
 
-category: '*remoteservicereplication-gemstone'
+category: 'GsEnhancedInspector-remoteservicereplication-gemstone'
 classmethod: RsrDateAndTime
 fromMicroseconds: anInteger
 
@@ -17265,21 +17265,21 @@ fromMicroseconds: anInteger
         offset: Duration zero
 %
 
-category: '*remoteservicereplication-gemstone'
+category: 'GsEnhancedInspector-remoteservicereplication-gemstone'
 classmethod: RsrDateAndTime
 microsecondsSinceEpoch: aDateAndTime
 
 	^((aDateAndTime asSeconds - self posixEpoch asSeconds) * 1000000) rounded
 %
 
-category: '*remoteservicereplication-gemstone'
+category: 'GsEnhancedInspector-remoteservicereplication-gemstone'
 classmethod: RsrDateAndTime
 now
 
 	^DateAndTime now
 %
 
-category: '*remoteservicereplication-gemstone'
+category: 'GsEnhancedInspector-remoteservicereplication-gemstone'
 classmethod: RsrDateAndTime
 posixEpoch
 
@@ -17292,7 +17292,7 @@ posixEpoch
 
 !		Class methods for 'RsrDoubleReference'
 
-category: '*remoteservicereplication-gemstone'
+category: 'GsEnhancedInspector-remoteservicereplication-gemstone'
 classmethod: RsrDoubleReference
 convertToBytes: aFloat
 
@@ -17304,14 +17304,14 @@ convertToBytes: aFloat
 	^bytes
 %
 
-category: '*remoteservicereplication-gemstone'
+category: 'GsEnhancedInspector-remoteservicereplication-gemstone'
 classmethod: RsrDoubleReference
 infinity
 
 	^Float fromString: 'Infinity'
 %
 
-category: '*remoteservicereplication-gemstone'
+category: 'GsEnhancedInspector-remoteservicereplication-gemstone'
 classmethod: RsrDoubleReference
 nan
 
@@ -17320,7 +17320,7 @@ nan
 
 !		Instance methods for 'RsrDoubleReference'
 
-category: '*remoteservicereplication-gemstone'
+category: 'GsEnhancedInspector-remoteservicereplication-gemstone'
 method: RsrDoubleReference
 convertBytes: aByteArray
 
@@ -17331,7 +17331,7 @@ convertBytes: aByteArray
 
 !		Class methods for 'RsrForwarder'
 
-category: '*remoteservicereplication'
+category: 'GsEnhancedInspector-remoteservicereplication'
 classmethod: RsrForwarder
 on: anRsrObject
 
@@ -17343,7 +17343,7 @@ on: anRsrObject
 
 !		Instance methods for 'RsrForwarder'
 
-category: '*remoteservicereplication'
+category: 'GsEnhancedInspector-remoteservicereplication'
 method: RsrForwarder
 doesNotUnderstand: aMessage
 
@@ -17352,7 +17352,7 @@ doesNotUnderstand: aMessage
 		to: _service
 %
 
-category: '*remoteservicereplication'
+category: 'GsEnhancedInspector-remoteservicereplication'
 method: RsrForwarder
 _service: aService
 
@@ -17363,7 +17363,7 @@ _service: aService
 
 !		Class methods for 'RsrObject'
 
-category: '*remoteservicereplication-gemstone'
+category: 'GsEnhancedInspector-remoteservicereplication-gemstone'
 classmethod: RsrObject
 new
 
@@ -17372,7 +17372,7 @@ new
 
 !		Instance methods for 'RsrObject'
 
-category: '*remoteservicereplication-gemstone'
+category: 'GsEnhancedInspector-remoteservicereplication-gemstone'
 method: RsrObject
 initialize
 
@@ -17383,7 +17383,7 @@ initialize
 
 !		Class methods for 'RsrProcessModel'
 
-category: '*remoteservicereplication-gemstone'
+category: 'GsEnhancedInspector-remoteservicereplication-gemstone'
 classmethod: RsrProcessModel
 current
 	^ SessionTemps current
@@ -17391,25 +17391,25 @@ current
 		ifAbsent: [ self resetCurrent ]
 %
 
-category: '*remoteservicereplication-gemstone'
+category: 'GsEnhancedInspector-remoteservicereplication-gemstone'
 classmethod: RsrProcessModel
 current: concurrency
 	^ SessionTemps current at: self keyForCurrent put: concurrency
 %
 
-category: '*remoteservicereplication-gemstone'
+category: 'GsEnhancedInspector-remoteservicereplication-gemstone'
 classmethod: RsrProcessModel
 keyForCurrent
 	^ #'RsrCurrentProcessModel'
 %
 
-category: '*remoteservicereplication-gemstone'
+category: 'GsEnhancedInspector-remoteservicereplication-gemstone'
 classmethod: RsrProcessModel
 resetCurrent
 	^ self current: self new
 %
 
-category: '*remoteservicereplication-gemstone'
+category: 'GsEnhancedInspector-remoteservicereplication-gemstone'
 classmethod: RsrProcessModel
 unhandledExceptionClass
 	"Return the class which signals that an unhandled exception has been signaled."
@@ -17419,7 +17419,7 @@ unhandledExceptionClass
 
 !		Instance methods for 'RsrProcessModel'
 
-category: '*remoteservicereplication-gemstone'
+category: 'GsEnhancedInspector-remoteservicereplication-gemstone'
 method: RsrProcessModel
 configureUnhandleExceptionProtection
 
@@ -17432,7 +17432,7 @@ configureUnhandleExceptionProtection
 				ifFalse: [RsrUnhandledException signal: ex]].
 %
 
-category: '*remoteservicereplication-gemstone'
+category: 'GsEnhancedInspector-remoteservicereplication-gemstone'
 method: RsrProcessModel
 currentStackDump
 
@@ -17443,7 +17443,7 @@ currentStackDump
 
 !		Class methods for 'RsrReference'
 
-category: '*remoteservicereplication-gemstone'
+category: 'GsEnhancedInspector-remoteservicereplication-gemstone'
 classmethod: RsrReference
 initializeReferenceMapping
 	"RsrReference initializeReferenceMapping"
@@ -17515,7 +17515,7 @@ initializeReferenceMapping
 	^referenceMapping
 %
 
-category: '*remoteservicereplication'
+category: 'GsEnhancedInspector-remoteservicereplication'
 classmethod: RsrReference
 referenceClassFor: anObject
 
@@ -17530,7 +17530,7 @@ referenceClassFor: anObject
 
 !		Class methods for 'RsrToken'
 
-category: '*remoteservicereplication-gemstone'
+category: 'GsEnhancedInspector-remoteservicereplication-gemstone'
 classmethod: RsrToken
 newRandom
 	"Create a new Token with random bytes."

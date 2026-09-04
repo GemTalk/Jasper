@@ -17,11 +17,28 @@
  *      Detaching alone would leave the dictionary — still holding the whole class
  *      payload — as an orphan awaiting GC; emptying it unbinds those classes now,
  *      so the availability probe flips false immediately with nothing left resident.
- *   2. Remove the GToolkit extension methods — the payload also adds methods to
- *      kernel classes (e.g. `Object>>gtViewsInCurrentContext`), which cannot
- *      live in a dictionary. They are removed by their `*GToolkit` method-category
- *      fingerprint; the leading `*` marks an extension category, so only Jasper's
- *      own additions match, never a real kernel method.
+ *   2. Remove the payload's extension methods — it also adds methods to kernel
+ *      classes (e.g. `Object>>gtViewsInCurrentContext`), which cannot live in a
+ *      dictionary. They are removed by their method-category fingerprint: the
+ *      `GsEnhancedInspector-` prefix the build transform gives them, or the
+ *      `*GToolkit` a stone installed by an earlier build still carries. Both are
+ *      specific enough that only Jasper's own additions match, never a real
+ *      kernel method.
+ *
+ *      KNOWN LIMITATION, and the one part of the round trip that is not clean:
+ *      the ~65 methods the payload leaves under upstream `*ston-…`/
+ *      `*Announcements-…` categories are NOT swept. Those selectors already
+ *      exist on kernel classes on any supported stone — 64 on a pristine
+ *      `extent0.dbf`, 67 on `extent0.rowan3.dbf` — and the install overwrites
+ *      them in place, keeping no copy of the originals. So sweeping would not
+ *      restore the stone; it would delete its STON and Announcements protocol
+ *      outright, which is strictly worse than leaving the payload's equivalent
+ *      implementations behind. Left alone, STON round-trips and Announcer
+ *      dispatch keep working after an uninstall (verified on both extents).
+ *
+ *      Reporting a count here was tried and removed: the surviving methods
+ *      cannot be told apart from the stone's own without a pre-install snapshot,
+ *      so any number shown would overstate what Jasper actually left.
  *   3. Sweep any legacy `Published`-resident GToolkit classes — a stone installed
  *      by the earlier `Published`-placement build has its classes there instead
  *      of in a dictionary. Removing them by the same GToolkit fingerprint makes
@@ -39,6 +56,7 @@ import { executeFetchString } from '../browserQueries';
 import { messageOf, safeAbort, yieldToEventLoop } from '../serverPlugin/installHelpers';
 import {
   isEnhancedInspectorInstalled,
+  ENHANCED_INSPECTOR_CATEGORY_PREFIX,
   ENHANCED_INSPECTOR_DICTIONARY,
 } from './enhancedInspectorInstall';
 
@@ -58,10 +76,11 @@ export type ProgressReporter = (message: string, increment: number) => void;
 
 /**
  * The removal snippet: drop the `GsEnhancedInspector` dictionary from every
- * user's symbol list, remove the `*GToolkit`-categorized extension methods from
- * surviving classes, and sweep any legacy GToolkit classes still resident in the
- * shared `Published` dictionary. Ends in a String so `executeFetchString` can
- * fetch the result.
+ * user's symbol list, remove the payload's extension methods from surviving
+ * classes by their category prefix (`GsEnhancedInspector-`, or `*GToolkit` from
+ * an earlier build), and sweep any legacy GToolkit classes still resident in the
+ * shared `Published` dictionary.
+ * Ends in a String so `executeFetchString` can fetch the result.
  *
  * Kept as one server-side statement so the whole removal is a single GCI round
  * trip inside the gem, leaving the transaction dirty for the client to commit
@@ -87,8 +106,11 @@ Globals valuesDo: [:v |
 	(v isKindOf: Class) ifTrue: [
 		{ v. v class } do: [:cls |
 			cls selectors asArray do: [:sel |
-				(((cls categoryOfSelector: sel) ifNil: ['']) asString beginsWith: '*GToolkit')
-					ifTrue: [ cls removeSelector: sel ] ] ] ] ].
+				| cat |
+				cat := ((cls categoryOfSelector: sel) ifNil: ['']) asString.
+				((cat beginsWith: '${ENHANCED_INSPECTOR_CATEGORY_PREFIX}')
+					or: [cat beginsWith: '*GToolkit'])
+						ifTrue: [ cls removeSelector: sel ] ] ] ] ].
 (System myUserProfile symbolList detect: [:d | d name == #Published] ifNone: [nil]) ifNotNil: [:pub |
 	pub keys asArray do: [:k |
 		| v |

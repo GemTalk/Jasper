@@ -6941,7 +6941,7 @@ testSimpleScript
 
 !		Instance methods for 'AbstractCollisionBucket'
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: AbstractCollisionBucket
 asGtRsrProxyObjectForConnection: aRsrConnection
 	"Answer the receiver with unsupported objects converted to GtRsrProxyServiceServers.
@@ -6956,7 +6956,7 @@ asGtRsrProxyObjectForConnection: aRsrConnection
 
 !		Instance methods for 'AbstractDictionary'
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: AbstractDictionary
 isDictionary
 	^ true
@@ -6966,7 +6966,7 @@ isDictionary
 
 !		Instance methods for 'Array'
 
-category: '*GToolkit-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone'
 method: Array
 asGtRsrProxyObjectForConnection: aRsrConnection
 	"Answer the receiver with unsupported objects converted to GtRsrProxyServiceServers.
@@ -6979,7 +6979,7 @@ asGtRsrProxyObjectForConnection: aRsrConnection
 
 !		Class methods for 'Association'
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 classmethod: Association
 key: aKey value: aValue
 
@@ -6990,7 +6990,7 @@ key: aKey value: aValue
 
 !		Instance methods for 'ByteArray'
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: ByteArray
 base64Encoded
 	"Encode the receiver using Base64, returning a String.
@@ -7008,14 +7008,14 @@ base64Encoded
 
 !		Class methods for 'Character'
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 classmethod: Character
 null
 
 	^ self value: 0
 %
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 classmethod: Character
 value: aCodePointInteger
 
@@ -7024,7 +7024,7 @@ value: aCodePointInteger
 
 !		Instance methods for 'Character'
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: Character
 join: aSequenceableCollection
 	^ self asString join: aSequenceableCollection
@@ -7034,7 +7034,7 @@ join: aSequenceableCollection
 
 !		Instance methods for 'CharacterCollection'
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: CharacterCollection
 asGtGsArgument
 	"Answer the the local object of the receiver"
@@ -7046,7 +7046,7 @@ asGtGsArgument
 
 !		Instance methods for 'Collection'
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: Collection
 anyOne
 
@@ -7054,7 +7054,7 @@ anyOne
 	self error: 'Receiver is empty'.
 %
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: Collection
 detect: aBlock ifFound: foundBlock ifNone: exceptionBlock
 	self
@@ -7064,7 +7064,7 @@ detect: aBlock ifFound: foundBlock ifNone: exceptionBlock
 	^ exceptionBlock value
 %
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: Collection
 isNotEmpty
 
@@ -7073,7 +7073,7 @@ isNotEmpty
 ^self size ~~ 0
 %
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: Collection
 max
 	"Answer the maximum value of the receiver"
@@ -7081,13 +7081,13 @@ max
 	^ self inject: self anyOne into: [ :max :each | max max: each ]
 %
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: Collection
 select: selectBlock thenCollect: collectBlock
 	^ (self select: selectBlock) collect: collectBlock
 %
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: Collection
 sorted: aBlock
 	^ self sortWithBlock: aBlock
@@ -7097,7 +7097,7 @@ sorted: aBlock
 
 !		Class methods for 'DateAndTime'
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 classmethod: DateAndTime
 fromUnixTime: anInteger
 	^ self posixSeconds: anInteger offset: Duration new
@@ -7107,7 +7107,7 @@ fromUnixTime: anInteger
 
 !		Class methods for 'DateAndTimeANSI'
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 classmethod: DateAndTimeANSI
 readFrom: aStream
 	"Basic compatibility with Pharo DateAndTime>>readFrom:.	
@@ -7120,13 +7120,13 @@ readFrom: aStream
 
 !		Instance methods for 'Dictionary'
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: Dictionary
 , aCollection
 	^self copy addAll: aCollection; yourself
 %
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: Dictionary
 asGtGsArgument
 	"Answer the the local object of the receiver"
@@ -7138,7 +7138,7 @@ asGtGsArgument
 	^ local
 %
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: Dictionary
 asGtRsrProxyObjectForConnection: aRsrConnection
 	"Answer the receiver with unsupported (non-immediate) objects converted to GtRsrProxyServiceServers.
@@ -7157,7 +7157,7 @@ asGtRsrProxyObjectForConnection: aRsrConnection
 	^ proxyDict
 %
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: Dictionary
 associations
 	^Array new: self size streamContents: [ :stream |
@@ -7168,7 +7168,7 @@ associations
 
 !		Class methods for 'Duration'
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 classmethod: Duration
 nanoSeconds: nanoSeconds
 	^ self seconds: nanoSeconds / 1000000000
@@ -7176,13 +7176,13 @@ nanoSeconds: nanoSeconds
 
 !		Instance methods for 'Duration'
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: Duration
 asDelay
 	^ Delay forSeconds: seconds
 %
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: Duration
 wait
 	^ self asDelay wait
@@ -7192,7 +7192,7 @@ wait
 
 !		Instance methods for 'ExecBlock'
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: ExecBlock
 gtSourceFor: aView
 	<gtView>
@@ -7203,14 +7203,14 @@ gtSourceFor: aView
 		text: [ self _sourceString ].
 %
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: ExecBlock
 isClean
 
 	^ self _isCopyingBlock not and: [ self _cost = 1 ]
 %
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: ExecBlock
 timeToRun
 	| start end |
@@ -7225,7 +7225,7 @@ timeToRun
 
 !		Instance methods for 'GsProcess'
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: GsProcess
 gtAllFrames
 
@@ -7237,7 +7237,7 @@ gtAllFrames
 
 !		Instance methods for 'GsStackBuffer'
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: GsStackBuffer
 asGtRsrProxyObjectForConnection: aRsrConnection
 	"Answer the receiver with unsupported objects converted to GtRsrProxyServiceServers.
@@ -7252,7 +7252,7 @@ asGtRsrProxyObjectForConnection: aRsrConnection
 
 !		Instance methods for 'GtGemstoneEvaluationComputedResult'
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: GtGemstoneEvaluationComputedResult
 asDictionaryForExport
 
@@ -7265,7 +7265,7 @@ asDictionaryForExport
 
 !		Instance methods for 'GtGemstoneEvaluationExceptionResult'
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: GtGemstoneEvaluationExceptionResult
 asDictionaryForExport
 
@@ -7278,7 +7278,7 @@ asDictionaryForExport
 
 !		Instance methods for 'GtGemstoneEvaluationInProgressResult'
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: GtGemstoneEvaluationInProgressResult
 asDictionaryForExport
 
@@ -7291,7 +7291,7 @@ asDictionaryForExport
 
 !		Instance methods for 'GtGemstoneEvaluationResult'
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: GtGemstoneEvaluationResult
 asDictionaryForExport
 	^ Dictionary new 
@@ -7303,7 +7303,7 @@ asDictionaryForExport
 
 !		Instance methods for 'GtGemStoneSerializationExamples'
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: GtGemStoneSerializationExamples
 assert: aBoolean description: aString
 
@@ -7311,7 +7311,7 @@ assert: aBoolean description: aString
 		[ TestResult failure signal: aString value ]
 %
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: GtGemStoneSerializationExamples
 assert: actual equals: expected
 
@@ -7324,7 +7324,7 @@ assert: actual equals: expected
 
 !		Instance methods for 'GtRsrLiteralAndProxySerializationStrategy'
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: GtRsrLiteralAndProxySerializationStrategy
 serialize: anObject
 	"Serialize the object to something that RSR can return.
@@ -7343,7 +7343,7 @@ serialize: anObject
 
 !		Instance methods for 'GtRsrProxyOnlySerializationStrategy'
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: GtRsrProxyOnlySerializationStrategy
 serialize: anObject
 	 ^ GtRsrProxyServiceServer object: anObject
@@ -7353,7 +7353,7 @@ serialize: anObject
 
 !		Class methods for 'GtRsrSerializationStrategy'
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 classmethod: GtRsrSerializationStrategy
 serializationStrategies
 	"Answer the session specific dictionary of serialisation strategies"
@@ -7363,7 +7363,7 @@ serializationStrategies
 		ifAbsentPut: [ Dictionary new ].
 %
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 classmethod: GtRsrSerializationStrategy
 serializationStrategyNamed: aSymbol
 	"Answer the session specific strategy, creating it if required"
@@ -7377,7 +7377,7 @@ serializationStrategyNamed: aSymbol
 
 !		Instance methods for 'GtRsrWireTransferService'
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: GtRsrWireTransferService
 serialize: anObject
 
@@ -7388,7 +7388,7 @@ serialize: anObject
 
 !		Instance methods for 'GtWireGemStoneRsrEncoder'
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: GtWireGemStoneRsrEncoder
 encode: anObject with: aGtWireEncoderContext
 	"It is up to the user to ensure that anObject isn't GCd during transfer and decoding
@@ -7414,14 +7414,14 @@ encode: anObject with: aGtWireEncoderContext
 
 !		Instance methods for 'GtWireGemStoneWithRsrEncoder'
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: GtWireGemStoneWithRsrEncoder
 encode: anObject with: aGtWireEncoderContext
 
 	self error: self class name asString, '>>encode:with: should not be reached'
 %
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: GtWireGemStoneWithRsrEncoder
 encode: anObject with: aGtWireEncoderContext objectEncoder: objectEncoder
 	| rsrService |
@@ -7449,7 +7449,7 @@ encode: anObject with: aGtWireEncoderContext objectEncoder: objectEncoder
 
 !		Instance methods for 'Integer'
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: Integer
 isInteger
 
@@ -7460,7 +7460,7 @@ isInteger
 
 !		Instance methods for 'MultiByteString'
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: MultiByteString
 utf8Encoded
 	"Answer a ByteArray of the receiver in UTF8 format"
@@ -7472,13 +7472,13 @@ utf8Encoded
 
 !		Instance methods for 'Number'
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: Number
 nanoSeconds
 	^ Duration nanoSeconds: self
 %
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: Number
 seconds
 	^ Duration seconds: self
@@ -7488,7 +7488,7 @@ seconds
 
 !		Instance methods for 'Object'
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: Object
 asGtGsArgument
 	"Answer the the local object of the receiver"
@@ -7496,7 +7496,7 @@ asGtGsArgument
 	^ self
 %
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: Object
 asGtRsrProxyObjectForConnection: aRsrConnection
 	"Answer the receiver with unsupported objects converted to GtRsrProxyServiceServers.
@@ -7507,7 +7507,7 @@ asGtRsrProxyObjectForConnection: aRsrConnection
 	^ self
 %
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: Object
 gtDo: gtoolkitBlock gemstoneDo: gemstoneBlock
 	"Evaluate the supplied platform specific block"
@@ -7515,7 +7515,7 @@ gtDo: gtoolkitBlock gemstoneDo: gemstoneBlock
 	^ gemstoneBlock value
 %
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: Object
 instVarNamed: instVarName
 	| index |
@@ -7525,7 +7525,7 @@ instVarNamed: instVarName
 	^ self instVarAt: index
 %
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: Object
 instVarNamed: instVarName put: anObject
 	| index |
@@ -7535,27 +7535,27 @@ instVarNamed: instVarName put: anObject
 	self instVarAt: index put: anObject
 %
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: Object
 isDictionary
 	^ false
 %
 
-category: '*GToolkit-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone'
 method: Object
 isGtGemStoneRsrProxy
 
 	^ false
 %
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: Object
 isInteger
 
 	^ false
 %
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: Object
 isNotNil
 	^ self ~~ nil
@@ -7565,7 +7565,7 @@ isNotNil
 
 !		Instance methods for 'OrderedCollection'
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: OrderedCollection
 asGtRsrProxyObjectForConnection: aRsrConnection
 	"Answer the receiver with unsupported objects converted to GtRsrProxyServiceServers.
@@ -7580,7 +7580,7 @@ asGtRsrProxyObjectForConnection: aRsrConnection
 
 !		Instance methods for 'Pragma'
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: Pragma
 methodSelector
 	"Answer the selector of the method containing the pragma."
@@ -7592,7 +7592,7 @@ methodSelector
 
 !		Class methods for 'RsrService'
 
-category: '*GToolkit-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone'
 classmethod: RsrService
 gtClientGsServer
 	"Answer the receiver's client class on GT and server class on GS"
@@ -7606,7 +7606,7 @@ gtClientGsServer
 
 !		Instance methods for 'SequenceableCollection'
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: SequenceableCollection
 allButFirstDo: block
 
@@ -7614,7 +7614,7 @@ allButFirstDo: block
 		[ :index | block value: (self at: index) ]
 %
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: SequenceableCollection
 asGtGsArgument
 	"Answer the the local object of the receiver"
@@ -7622,7 +7622,7 @@ asGtGsArgument
 	^ self collect: [ :each | each asGtGsArgument ]
 %
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: SequenceableCollection
 flatCollect: aBlock
 	"Evaluate aBlock for each of the receiver's elements and answer the
@@ -7645,7 +7645,7 @@ flatCollect: aBlock
 
 !		Instance methods for 'Set'
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: Set
 asGtRsrProxyObjectForConnection: aRsrConnection
 	"Answer the receiver as a proxy object.
@@ -7659,7 +7659,7 @@ asGtRsrProxyObjectForConnection: aRsrConnection
 
 !		Class methods for 'String'
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 classmethod: String
 cr
 	^ self with: Character cr
@@ -7667,19 +7667,19 @@ cr
 
 !		Instance methods for 'String'
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: String
 / anotherString
 	^ self , '/', anotherString
 %
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: String
 asZnUrl
 	^ self
 %
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: String
 repeat: aNumber
 	"Returns a new string concatenated by itself repeated n times"
@@ -7692,7 +7692,7 @@ repeat: aNumber
 			1 to: aNumber do: [ :idx | stringStream nextPutAll: self ] ]
 %
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: String
 utf8Encoded
 	"Answer a ByteArray of the receiver in UTF8 format"
@@ -7704,41 +7704,41 @@ utf8Encoded
 
 !		Instance methods for 'Symbol'
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: Symbol
 asMutator
 	^ self, ':'
 %
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: Symbol
 cull: anObject
 
 	^ anObject perform: self
 %
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: Symbol
 cull: anObject cull: arg2
 
 	^ anObject perform: self
 %
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: Symbol
 cull: anObject cull: arg2 cull: arg3
 
 	^ anObject perform: self
 %
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: Symbol
 cull: anObject cull: arg2 cull: arg3 cull: arg4
 
 	^ anObject perform: self
 %
 
-category: '*GToolkit-GemStone-GemStone'
+category: 'GsEnhancedInspector-GToolkit-GemStone-GemStone'
 method: Symbol
 value: anObject
 

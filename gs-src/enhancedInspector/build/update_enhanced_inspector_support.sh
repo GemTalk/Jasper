@@ -76,24 +76,50 @@ if [ ${#existing[@]} -gt 0 ]; then
     esac
 fi
 
+# Copy one upstream file into the payload, failing loudly. These copies overwrite
+# the committed payload, so a silent failure would leave a half-updated tree that
+# still reports success. (No blanket `set -e`: the `[ -f x ] && arr+=(y)` idioms
+# above return non-zero on their normal "not found" path and would abort the run.)
+copy_one() {
+    if ! cp "$1" "$2"; then
+        echo "" >&2
+        echo "Error: could not copy $1 -> $2." >&2
+        echo "$PAYLOAD_DIR may now be half-updated. Restore it with:" >&2
+        echo "  git -C \"$REPO\" checkout -- resources/enhancedInspector" >&2
+        exit 1
+    fi
+}
+
 # Copy the src-gs files
-cp "$ROWAN_PROJECTS_HOME/gt4gemstone/src-gs/Announcements.gs"        "$PAYLOAD_DIR/"
-cp "$ROWAN_PROJECTS_HOME/RemoteServiceReplication/src-gs/bootstrapRSR.gs"  "$PAYLOAD_DIR/RemoteServiceReplication.gs"
-cp "$ROWAN_PROJECTS_HOME/gt4gemstone/src-gs/STON.gs"                  "$PAYLOAD_DIR/"
-cp "$ROWAN_PROJECTS_HOME/gt4gemstone/src-gs/patch-gemstone.gs"        "$PAYLOAD_DIR/"
-cp "$ROWAN_PROJECTS_HOME/gtoolkit-wireencoding/src-gs/gtoolkit-wireencoding.gs" "$PAYLOAD_DIR/"
-cp "$ROWAN_PROJECTS_HOME/gt4gemstone/src-gs/gt4gemstone.gs"           "$PAYLOAD_DIR/"
-cp "$ROWAN_PROJECTS_HOME/gtoolkit-remote/src-gs/gtoolkit-remote.gs"   "$PAYLOAD_DIR/"
+copy_one "$ROWAN_PROJECTS_HOME/gt4gemstone/src-gs/Announcements.gs"        "$PAYLOAD_DIR/"
+copy_one "$ROWAN_PROJECTS_HOME/RemoteServiceReplication/src-gs/bootstrapRSR.gs"  "$PAYLOAD_DIR/RemoteServiceReplication.gs"
+copy_one "$ROWAN_PROJECTS_HOME/gt4gemstone/src-gs/STON.gs"                  "$PAYLOAD_DIR/"
+copy_one "$ROWAN_PROJECTS_HOME/gt4gemstone/src-gs/patch-gemstone.gs"        "$PAYLOAD_DIR/"
+copy_one "$ROWAN_PROJECTS_HOME/gtoolkit-wireencoding/src-gs/gtoolkit-wireencoding.gs" "$PAYLOAD_DIR/"
+copy_one "$ROWAN_PROJECTS_HOME/gt4gemstone/src-gs/gt4gemstone.gs"           "$PAYLOAD_DIR/"
+copy_one "$ROWAN_PROJECTS_HOME/gtoolkit-remote/src-gs/gtoolkit-remote.gs"   "$PAYLOAD_DIR/"
 
 # Re-apply Jasper's post-processing to the freshly-copied upstream files:
 #   - per-file attribution headers (origin repo + MIT license)
 #   - class placement rewrite from Globals to GsEnhancedInspector
+#   - extension-method categories reprefixed where Rowan would otherwise claim them
 # These transforms are deterministic and idempotent; they MUST run on every
 # update or the refreshed files would revert to pristine upstream (Globals,
-# no headers). See apply_jasper_transforms.sh.
+# no headers, `*`-prefixed categories that break the file-in on a Rowan extent).
+# See apply_jasper_transforms.sh.
+#
+# The copies above have already overwritten the payload, so a failure here leaves
+# untransformed upstream on disk. Say so and exit non-zero rather than printing
+# "Update complete." over a corrupted payload.
 echo ""
-echo "Applying Jasper transforms (attribution headers + Globals->GsEnhancedInspector)..."
-"$BUILD/apply_jasper_transforms.sh" "$PAYLOAD_DIR"
+echo "Applying Jasper transforms (headers + GsEnhancedInspector placement + categories)..."
+if ! "$BUILD/apply_jasper_transforms.sh" "$PAYLOAD_DIR"; then
+    echo "" >&2
+    echo "Error: the Jasper transforms failed. $PAYLOAD_DIR now holds untransformed" >&2
+    echo "upstream files, which will NOT install into a stone. Restore them with:" >&2
+    echo "  git -C \"$REPO\" checkout -- resources/enhancedInspector" >&2
+    exit 1
+fi
 
 echo ""
 echo "Update complete. Files written to $PAYLOAD_DIR"
