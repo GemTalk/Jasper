@@ -373,7 +373,7 @@ export class GemStoneDebugSession extends DebugSession {
       try {
         const info = debug.getFrameInfo(this.session, this.gsProcess, level);
         // Update the receiver ref with the actual OOP
-        this.varRefMap.set(receiverRef, { kind: 'receiver', oop: info.receiverOop });
+        this.varRefMap.set(receiverRef, { kind: 'receiver', oop: info.selfOop });
       } catch {
         // Keep the 0n placeholder
       }

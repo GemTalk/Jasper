@@ -77,10 +77,70 @@ function executeAndFetchString(session: ActiveSession, code: string): string {
 
 // ── Frame info ──────────────────────────────────────────
 
+/**
+ * Smalltalk shared by the frame doits. Defines two blocks, each taking
+ * `(fetchFrame, level, frameContents, depth)` — `fetchFrame` being a one-argument
+ * block answering the contents of a level (or nil), so a caller that has already
+ * read every frame can hand over an in-memory lookup instead of re-sending
+ * `_frameContentsAt:`:
+ *
+ * - `homeFrameOf` — the frame contents of the nearest enclosing activation of a
+ *   block frame's home method, or nil (not a block frame, or the home activation
+ *   has already returned).
+ * - `frameSelfOf` — the frame's `self` by the rules {@link getFrameInfo}
+ *   documents: slot 8 when the kernel filled it (a plain frame, or a block that
+ *   captured `self`), else the home activation's own `self`. It answers **nil**
+ *   rather than falling back to slot 10, because slot 10 in a block frame is the
+ *   ExecBlock and that is exactly the wrong answer; each caller decides what to
+ *   do with nil. The variable panes fall back to slot 10 — a pane showing a
+ *   frame is better off naming the object that is really there than showing
+ *   nothing — while the eval bar refuses to bind `self` at all rather than
+ *   evaluate against a receiver it would only be guessing at (see
+ *   {@link getFrameEvalContext}).
+ *
+ * Four `value:` arguments is the GemStone ExecBlock maximum, so nothing more can
+ * be passed in without wrapping the arguments in an Array.
+ */
+const FRAME_SELF_SMALLTALK = `homeFrameOf := [:fetchFrame :aLvl :arr :depth | | res |
+  (arr at: 7) ifNil: [nil] ifNotNil: [:home |
+    aLvl + 1 to: depth do: [:j |
+      res isNil ifTrue: [ | fj |
+        fj := fetchFrame value: j.
+        (fj notNil and: [(fj at: 1) == home]) ifTrue: [ res := fj ] ] ].
+    res ] ].
+frameSelfOf := [:fetchFrame :aLvl :arr :depth |
+  (arr at: 8) ifNil: [
+    (homeFrameOf value: fetchFrame value: aLvl value: arr value: depth)
+      ifNil: [nil]
+      ifNotNil: [:hArr | (hArr at: 8) ifNil: [hArr at: 10]]
+  ] ifNotNil: [:s | s]].`;
+
 export interface FrameInfo {
   methodOop: bigint;
   ipOffset: number;
-  receiverOop: bigint;
+  /**
+   * The frame's `self` — what an expression typed at this frame must evaluate
+   * against, and the object whose instVars the frame shows. In a *block* frame
+   * this is the HOME method's receiver, not the ExecBlock that slot 10 of the
+   * frame contents holds; see {@link getFrameInfo} for how it is recovered.
+   * `OOP_NIL` for a doit frame, and for a block frame whose home activation has
+   * already returned (see {@link selfIsUnavailable}).
+   */
+  selfOop: bigint;
+  /**
+   * True when this is a block frame whose `self` could NOT be recovered: the
+   * block never captured `self` AND its home activation is no longer on the
+   * stack. `selfOop` is then `OOP_NIL`, and only the block's own arguments and
+   * shared temporaries can be resolved — callers should say so rather than
+   * evaluate against a receiver that is wrong.
+   */
+  selfIsUnavailable: boolean;
+  /**
+   * Oop of the home (enclosing) method when this frame runs a block, `OOP_NIL`
+   * otherwise — straight from slot 7, so it doubles as the "is this a block
+   * frame?" test without a second round trip.
+   */
+  homeMethodOop: bigint;
   argAndTempNames: string[];
   argAndTempOops: bigint[];
 }
@@ -121,14 +181,36 @@ export function getStackDepth(session: ActiveSession, gsProcess: bigint): number
 /**
  * Returns frame details at the given level (1-based, 1 = top).
  *
- * GsProcess>>_frameContentsAt: returns an Array:
+ * `GsProcess>>_frameContentsAt:` (the INSTANCE method — see the warning below)
+ * returns an Array, per its own kernel comment:
  *   [1] method (GsNMethod)
  *   [2] ipOffset (SmallInteger)
- *   [3..7] internal details
+ *   [3] frameOffset — always nil on Gs64 v3
+ *   [4] varContext (a VariableContext, or nil before temps are allocated)
+ *   [5] saveProtectedMode — always nil on v3
+ *   [6] markerOrException — always nil on v3
+ *   [7] homeMethod when [1] is a block's method, nil otherwise
  *   [8] self
- *   [9] argAndTempNames (Array of Strings)
+ *   [9] argAndTempNames (Array of Symbols/Strings; unnamed eval-stack temps
+ *       come through as `.t1`, `.t2`, … appended by the kernel)
  *   [10] receiver
- *   [11..] arg and temp values
+ *   [11..] arg and temp values, positionally matching [9]
+ *
+ * **[8] and [10] are not the same thing in a block frame.** [10] is the frame's
+ * literal receiver, which for a block activation is the *ExecBlock*; [8] is the
+ * home method's receiver, which the kernel derives as `receiver selfValue`. The
+ * compiler only copies `self` into a block that mentions it, so [8] is nil for a
+ * block that never used `self` (the kernel comment says as much: "possibly nil in
+ * a ComplexBlock"). We recover that case by walking out to the home activation —
+ * one extra doit, and only for such a frame. Everything that means `self` (the
+ * eval bar, the Variables pane, instVar reads and writes, browse/implement) must
+ * use {@link FrameInfo.selfOop}, never slot 10.
+ *
+ * Beware the CLASS-side `GsProcess class >> _frameContentsAt:`, which reports the
+ * *running* process: its own comment says slots 4, 8 and 9 are always nil there.
+ * The debugger always holds a suspended process, so it uses the instance method
+ * and gets real values — but a probe written in topaz against the live stack will
+ * see nil `self` in every frame and look like a bug that isn't there.
  */
 export function getFrameInfo(session: ActiveSession, gsProcess: bigint, level: number): FrameInfo {
   const levelOop = intToOop(session, level);
@@ -149,8 +231,23 @@ export function getFrameInfo(session: ActiveSession, gsProcess: bigint, level: n
 
   const methodOop = oops[0]; // [1] method
   const ipOffsetOop = oops[1]; // [2] ipOffset
-  const receiverOop = oops[9]; // [10] receiver (0-indexed: 9)
+  const homeMethodOop = oops[6] ?? OOP_NIL; // [7] homeMethod, nil unless a block frame
+  const frameSelfOop = oops[7] ?? OOP_NIL; // [8] self
+  const receiverOop = oops[9] ?? OOP_NIL; // [10] receiver (the ExecBlock in a block frame)
   const namesArrayOop = oops[8]; // [9] argAndTempNames (0-indexed: 8)
+
+  // Slot 8 already IS the home receiver for a block that captured `self`, and
+  // equals slot 10 for a plain method frame — so only a block frame that came
+  // back with nil needs the walk out to its home activation.
+  const isBlockFrame = homeMethodOop !== OOP_NIL;
+  let selfOop = frameSelfOop;
+  let selfIsUnavailable = false;
+  if (selfOop === OOP_NIL && isBlockFrame) {
+    selfOop = findHomeFrameSelf(session, gsProcess, level);
+    selfIsUnavailable = selfOop === OOP_NIL;
+  } else if (selfOop === OOP_NIL) {
+    selfOop = receiverOop; // defensive: a frame the kernel left slot 8 empty on
+  }
 
   const ipOffset = oopToInt(session, ipOffsetOop);
 
@@ -176,7 +273,53 @@ export function getFrameInfo(session: ActiveSession, gsProcess: bigint, level: n
   // Arg and temp values start at index 10 (0-indexed) = Smalltalk index 11
   const argAndTempOops = oops.slice(10);
 
-  return { methodOop, ipOffset, receiverOop, argAndTempNames, argAndTempOops };
+  return {
+    methodOop,
+    ipOffset,
+    selfOop,
+    selfIsUnavailable,
+    homeMethodOop,
+    argAndTempNames,
+    argAndTempOops,
+  };
+}
+
+/**
+ * Answers a block frame's `self` by walking OUT from `level` (towards older
+ * frames) to the first activation of the block's home method, or `OOP_NIL` when
+ * that activation is no longer on the stack — a block stored somewhere and
+ * evaluated after its home method returned. Only called for a block frame whose
+ * slot 8 came back nil; see {@link FRAME_SELF_SMALLTALK} for the rule itself.
+ *
+ * One doit rather than a `_frameContentsAt:` perform per level, because
+ * `getFrameInfo` is itself called once per frame when the stack is listed and a
+ * per-level walk would make that quadratic in GCI round trips.
+ *
+ * Nearest-activation-wins is a heuristic: under recursion, or when a block is
+ * passed to another activation of its own home method, the innermost enclosing
+ * activation is not provably the block's own. GemStone's frame contents expose
+ * no link from the block frame back to its defining activation, so there is
+ * nothing more exact to use — and for a block that mentions `self`, slot 8
+ * already answered exactly and this never runs.
+ */
+function findHomeFrameSelf(session: ActiveSession, gsProcess: bigint, level: number): bigint {
+  try {
+    const oopString = executeAndFetchString(
+      session,
+      `| proc fetch arr homeFrameOf frameSelfOf |
+proc := Object _objectForOop: ${gsProcess}.
+fetch := [:j | [proc _frameContentsAt: j] on: Error do: [:e | nil]].
+arr := fetch value: ${level}.
+${FRAME_SELF_SMALLTALK}
+(arr isNil
+  ifTrue: [nil]
+  ifFalse: [frameSelfOf value: fetch value: ${level} value: arr value: proc localStackDepth])
+    asOop printString`,
+    );
+    return BigInt(oopString.trim());
+  } catch {
+    return OOP_NIL; // best-effort: caller degrades to block-locals-only
+  }
 }
 
 /**
@@ -684,14 +827,18 @@ export function fetchStackDump(session: ActiveSession, gsProcess: bigint): Stack
   // self of each row is built server-side; names/printStrings are escaped (\\ \t
   // \n \r) so the tab/newline framing is safe, and printStrings are capped so one
   // huge object can't blow the payload. `_frameContentsAt:` layout matches
-  // getFrameInfo: [9]=argAndTempNames, [10]=receiver, [10+i]=ith arg/temp value.
+  // getFrameInfo: [7]=homeMethod-if-block, [8]=self, [9]=argAndTempNames,
+  // [10]=receiver, [10+i]=ith arg/temp value.
   // `row` writes one record: level, group, escaped name, escaped printString,
   // and oop — a 4-arg block (GemStone ExecBlocks cap at 4 value: args, so it
   // takes the object and derives printString+oop rather than passing 5 fields).
   // Frame-contents indexing (at:9 names, at:10 receiver, at:10+i values) matches
   // the kernel's own GsProcess>>stackReportToLevel:… so it's correct on a
   // suspended process (it is NOT indexable on the running process).
-  const code = `| proc out tab esc psOf row depth |
+  // Every frame's contents are read ONCE into `frames` up front: resolving a
+  // block frame's `self` walks out to its home activation, and re-sending
+  // `_frameContentsAt:` inside that walk would make the whole dump quadratic.
+  const code = `| proc out tab esc psOf row depth frames homeFrameOf frameSelfOf |
 proc := Object _objectForOop: ${gsProcess}.
 out := WriteStream on: String new.
 tab := String with: Character tab.
@@ -711,21 +858,26 @@ row := [:lvl :grp :nm :obj |
       nextPutAll: (psOf value: obj); nextPutAll: tab;
       nextPutAll: obj asOop printString; nextPut: Character lf].
 depth := proc localStackDepth.
+frames := Array new: depth.
 1 to: depth do: [:lvl |
-  [ | arr receiver names |
-    arr := proc _frameContentsAt: lvl.
-    receiver := arr at: 10.
+  frames at: lvl put: ([proc _frameContentsAt: lvl] on: Error do: [:e | nil]) ].
+${FRAME_SELF_SMALLTALK}
+1 to: depth do: [:lvl |
+  [ | arr slf names |
+    arr := frames at: lvl.
+    slf := (frameSelfOf value: [:j | frames at: j] value: lvl value: arr value: depth)
+      ifNil: [arr at: 10].
     names := arr at: 9.
-    row value: lvl value: 'receiver' value: 'self' value: receiver.
-    [ receiver class allInstVarNames keysAndValuesDo: [:i :nm |
-        row value: lvl value: 'instvars' value: nm asString value: (receiver instVarAt: i) ]
+    row value: lvl value: 'receiver' value: 'self' value: slf.
+    [ slf class allInstVarNames keysAndValuesDo: [:i :nm |
+        row value: lvl value: 'instvars' value: nm asString value: (slf instVarAt: i) ]
     ] on: Error do: [:e | ].
     names isNil ifFalse: [
       1 to: names size do: [:i | | nm |
         nm := (names at: i) asString.
-        (nm startsWith: '__vsc') ifFalse: [
+        (nm beginsWith: '__vsc') ifFalse: [
           row value: lvl
-              value: ((nm startsWith: '.') ifTrue: ['stacktemps'] ifFalse: ['argtemps'])
+              value: ((nm beginsWith: '.') ifTrue: ['stacktemps'] ifFalse: ['argtemps'])
               value: nm value: (arr at: 10 + i) ] ] ]
   ] on: Error do: [:e | ] ].
 out contents`;
@@ -778,20 +930,30 @@ export function parseFrameVars(data: string): FrameVarRow[] {
 }
 
 /**
- * Fetch ALL of one frame's variables — receiver, instVars, args/temps — in ONE
+ * Fetch ALL of one frame's variables — self, instVars, args/temps — in ONE
  * round trip (a single server doit streams an escaped tab/newline payload),
  * replacing the old per-variable approach (1 getFrameInfo + getInstVarNames +
  * getNamedInstVarOops + N getObjectPrintString → 1 call). Mirrors fetchStackDump
  * but for a single level and additionally emits each editable slot's write index.
  * Best-effort: a frame the server can't introspect returns []. The `row` block
  * takes 4 args (GemStone ExecBlocks cap value: at 4): group, name, object, index.
+ *
+ * The `receiver` row and the instVars under it are the frame's **self**, not slot
+ * 10 — in a block frame those differ, and self (the home method's receiver, with
+ * the home object's instance variables) is what the pane is for. See
+ * {@link FRAME_SELF_SMALLTALK}.
+ *
+ * The name filters test with `beginsWith:`. GemStone has no `String>>startsWith:`
+ * on 3.6.2 or 3.7.5 — sending it raises a MessageNotUnderstood on the FIRST name,
+ * the enclosing `on: Error do: []` swallows it, and the payload ends after the
+ * instVars with every argument and temporary silently missing.
  */
 export function fetchFrameVariables(
   session: ActiveSession,
   gsProcess: bigint,
   serverLevel: number,
 ): FrameVarRow[] {
-  const code = `| proc out tab esc psOf row arr receiver names |
+  const code = `| proc out tab esc psOf row arr slf names depth homeFrameOf frameSelfOf |
 proc := Object _objectForOop: ${gsProcess}.
 out := WriteStream on: String new.
 tab := String with: Character tab.
@@ -810,18 +972,24 @@ row := [:grp :nm :obj :idx |
       nextPutAll: (psOf value: obj); nextPutAll: tab;
       nextPutAll: obj asOop printString; nextPutAll: tab;
       nextPutAll: idx printString; nextPut: Character lf].
-[ arr := proc _frameContentsAt: ${serverLevel}.
-  receiver := arr at: 10.
+${FRAME_SELF_SMALLTALK}
+[ depth := proc localStackDepth.
+  arr := proc _frameContentsAt: ${serverLevel}.
+  slf := (frameSelfOf
+    value: [:j | [proc _frameContentsAt: j] on: Error do: [:e | nil]]
+    value: ${serverLevel}
+    value: arr
+    value: depth) ifNil: [arr at: 10].
   names := arr at: 9.
-  row value: 'receiver' value: 'self' value: receiver value: 0.
-  [ receiver class allInstVarNames keysAndValuesDo: [:i :nm |
-      row value: 'instvars' value: nm asString value: (receiver instVarAt: i) value: i ]
+  row value: 'receiver' value: 'self' value: slf value: 0.
+  [ slf class allInstVarNames keysAndValuesDo: [:i :nm |
+      row value: 'instvars' value: nm asString value: (slf instVarAt: i) value: i ]
   ] on: Error do: [:e | ].
   names isNil ifFalse: [
     1 to: names size do: [:i | | nm |
       nm := (names at: i) asString.
-      (nm startsWith: '__vsc') ifFalse: [
-        row value: ((nm startsWith: '.') ifTrue: ['stacktemps'] ifFalse: ['argtemps'])
+      (nm beginsWith: '__vsc') ifFalse: [
+        row value: ((nm beginsWith: '.') ifTrue: ['stacktemps'] ifFalse: ['argtemps'])
             value: nm value: (arr at: 10 + i) value: i ] ] ]
 ] on: Error do: [:e | ].
 out contents`;
@@ -1231,16 +1399,30 @@ export function trimStackToLevelNb(
  * Evaluates an expression in the context of a stack frame and returns the
  * printString of the result.
  *
- * `self` is always bound to the frame's receiver (so instVars and globals
- * resolve too), via `String>>evaluateInContext:`. When the frame has named
- * arguments/temps, they are *also* bound: a transient `SymbolDictionary`
- * mapping each name → its current value is prepended to the user's symbol list
- * so a bare identifier like `amount` resolves to the frame's temp
- * (`evaluateInContext:symbolList:`). The dictionary shadows globals, while
- * globals still resolve through the appended user list.
+ * `self` is always bound to the frame's `self` — {@link FrameInfo.selfOop}, the
+ * HOME method's receiver in a block frame, never the ExecBlock — via
+ * `String>>evaluateInContext:symbolList:`, so instance variables, class
+ * variables and globals resolve through it exactly as they do in a plain method
+ * frame. The frame's named arguments/temps are bound alongside: a transient
+ * `SymbolDictionary` mapping each name → its current value is prepended to the
+ * user's symbol list so a bare identifier like `amount` resolves to the frame's
+ * temp. The dictionary shadows globals, while globals still resolve through the
+ * appended user list.
+ *
+ * In a block frame the home method's own arguments and temporaries are bound
+ * too, UNDER the block's — so `coll` and `tag` from the enclosing method resolve
+ * even though the block never copied them, while a block argument named the same
+ * as a home temp still wins, matching Smalltalk's own scoping. The home bindings
+ * are read from the home activation on the stack, so they are the live values.
  *
  * Limitation: temps are bound for *reads* only — assigning to a temp in the
  * eval bar writes the transient dictionary, not the live frame.
+ *
+ * Limitation: for a block frame whose home activation has already returned
+ * ({@link FrameInfo.selfIsUnavailable}), nothing beyond the block's own
+ * arguments and shared temporaries can be bound — `self` evaluates as nil rather
+ * than against a receiver we would be guessing at, and a failure that follows
+ * says so (see {@link withSelfUnavailableNote}).
  *
  * (The earlier `_framePerform:withArgs:onLevel:` primitive does NOT exist on
  * GemStone 3.7.x — and it performed a *selector*, not an expression, so it
@@ -1278,16 +1460,20 @@ export function evaluateInFrameNb(
   level: number,
   opts: NbRunOptions = {},
 ): Promise<string> {
-  const { receiverOop, argAndTempNames, argAndTempOops } = getFrameInfo(session, gsProcess, level);
+  const { selfOop, selfIsUnavailable, names, oops } = getFrameEvalContext(
+    session,
+    gsProcess,
+    level,
+  );
 
   const { result: exprOop, err: strErr } = session.gci.GciTsNewString(session.handle, expression);
   if (strErr.number !== 0) {
     return Promise.reject(new Error(strErr.message || 'Cannot create expression string'));
   }
 
-  const symbolListOop = buildFrameSymbolList(session, argAndTempNames, argAndTempOops);
+  const symbolListOop = buildFrameSymbolList(session, names, oops);
   const selector = symbolListOop === null ? 'evaluateInContext:' : 'evaluateInContext:symbolList:';
-  const args = symbolListOop === null ? [receiverOop] : [receiverOop, symbolListOop];
+  const args = symbolListOop === null ? [selfOop] : [selfOop, symbolListOop];
 
   return runNbCall(
     session,
@@ -1295,11 +1481,34 @@ export function evaluateInFrameNb(
     () => {
       const { result, err } = session.gci.GciTsNbResult(session.handle);
       if (err.number !== 0) {
-        throw new Error(err.message || `GCI error ${err.number} in ${selector}`);
+        throw new Error(
+          withSelfUnavailableNote(
+            err.message || `GCI error ${err.number} in ${selector}`,
+            selfIsUnavailable,
+          ),
+        );
       }
       return getObjectPrintString(session, result);
     },
     opts,
+  );
+}
+
+/**
+ * Explains a failed in-frame evaluation when the frame could offer no `self`.
+ * Without it the user gets a bare "undefined symbol limit" and no hint that the
+ * frame, not the expression, is what is missing something — and the condition is
+ * obscure enough (a block outliving its home activation) that nobody would guess.
+ * Appended only to a failure: an expression built from the block's own names
+ * still works, and saying anything then would be noise.
+ */
+function withSelfUnavailableNote(message: string, selfIsUnavailable: boolean): string {
+  if (!selfIsUnavailable) return message;
+  return (
+    `${message}\n\nThis frame runs a block whose home method has already returned, and the ` +
+    'block did not capture `self`, so nothing reached through the receiver — `self`, ' +
+    "instance variables, class variables — can be resolved here. The block's own " +
+    'arguments and the temporaries it shares still can.'
   );
 }
 
@@ -1309,20 +1518,139 @@ export function evaluateInFrameToOop(
   expression: string,
   level: number,
 ): bigint {
-  // The frame's receiver becomes `self` for the evaluation.
-  const { receiverOop, argAndTempNames, argAndTempOops } = getFrameInfo(session, gsProcess, level);
+  // The frame's `self` — the home receiver in a block frame — becomes `self` for
+  // the evaluation.
+  const { selfOop, selfIsUnavailable, names, oops } = getFrameEvalContext(
+    session,
+    gsProcess,
+    level,
+  );
 
   const { result: exprOop, err: strErr } = session.gci.GciTsNewString(session.handle, expression);
   if (strErr.number !== 0) {
     throw new Error(strErr.message || 'Cannot create expression string');
   }
 
-  // Bind the frame's named args/temps when present; otherwise keep the lean
-  // single-arg path (self + instVars + globals via the session's symbol list).
-  const symbolListOop = buildFrameSymbolList(session, argAndTempNames, argAndTempOops);
-  return symbolListOop === null
-    ? gciPerform(session, exprOop, 'evaluateInContext:', [receiverOop])
-    : gciPerform(session, exprOop, 'evaluateInContext:symbolList:', [receiverOop, symbolListOop]);
+  // Bind the frame's named args/temps on top of the user's symbol list. The
+  // single-argument `evaluateInContext:` is only reached when a global we need
+  // won't resolve — it does not exist before 3.7 (see buildFrameSymbolList).
+  const symbolListOop = buildFrameSymbolList(session, names, oops);
+  try {
+    return symbolListOop === null
+      ? gciPerform(session, exprOop, 'evaluateInContext:', [selfOop])
+      : gciPerform(session, exprOop, 'evaluateInContext:symbolList:', [selfOop, symbolListOop]);
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : String(e);
+    throw new Error(withSelfUnavailableNote(message, selfIsUnavailable));
+  }
+}
+
+/** Everything one round trip has to bring back to evaluate in a frame. */
+export interface FrameEvalContext {
+  /** OOP to bind as `self`; `OOP_NIL` when the frame has none to offer. */
+  selfOop: bigint;
+  /** True when this is a block frame whose home activation has already returned. */
+  selfIsUnavailable: boolean;
+  /**
+   * Names to bind, in binding order: the home method's arguments and temporaries
+   * FIRST when the frame runs a block, then the frame's own — so a block name
+   * shadows a home name of the same spelling, as Smalltalk scoping requires.
+   * Unnamed eval-stack `.tN` temps, Jasper's own `__vsc` glue and the copied
+   * `self` slot are left out; `self` is bound as the receiver, not as a variable.
+   */
+  names: string[];
+  /** Values positionally matching {@link names}. */
+  oops: bigint[];
+}
+
+/**
+ * Gathers a frame's evaluation context — `self` plus every name that must
+ * resolve in it — in ONE server round trip.
+ *
+ * A block frame is the reason this is a doit rather than a few `getFrameInfo`
+ * calls: resolving it needs the home activation as well, found by walking out
+ * from this level, and doing that walk over GCI would be a round trip per level.
+ * See {@link getFrameInfo} for the slot layout this reads and why slot 8, not
+ * slot 10, is `self`.
+ *
+ * Note the roundabout `size = 4 and: [… beginsWith: 'self']` test. A doit's
+ * String literals arrive as Unicode strings, and `aString = aUnicodeString`
+ * raises ArgumentError 2718, "Unicode argument disallowed in String comparison"
+ * — which the enclosing best-effort catch would turn into an empty context and a
+ * silently self-less eval bar. `beginsWith:` has no such restriction.
+ */
+export function getFrameEvalContext(
+  session: ActiveSession,
+  gsProcess: bigint,
+  level: number,
+): FrameEvalContext {
+  const code = `| proc lvl depth out tab arr fetch hArr slf emit homeFrameOf frameSelfOf |
+proc := Object _objectForOop: ${gsProcess}.
+lvl := ${level}.
+out := WriteStream on: String new.
+tab := String with: Character tab.
+fetch := [:j | [proc _frameContentsAt: j] on: Error do: [:e | nil]].
+arr := fetch value: lvl.
+${FRAME_SELF_SMALLTALK}
+arr isNil ifTrue: [
+  out nextPutAll: 'self'; nextPutAll: tab; nextPutAll: nil asOop printString;
+      nextPutAll: tab; nextPutAll: '0'; nextPut: Character lf
+] ifFalse: [
+  depth := proc localStackDepth.
+  hArr := homeFrameOf value: fetch value: lvl value: arr value: depth.
+  slf := frameSelfOf value: fetch value: lvl value: arr value: depth.
+  out nextPutAll: 'self'; nextPutAll: tab; nextPutAll: slf asOop printString;
+      nextPutAll: tab;
+      nextPutAll: (((arr at: 7) notNil and: [slf isNil]) ifTrue: ['1'] ifFalse: ['0']);
+      nextPut: Character lf.
+  emit := [:a | | nms |
+    nms := a at: 9.
+    nms isNil ifFalse: [
+      1 to: nms size do: [:i | | nm |
+        nm := (nms at: i) asString.
+        ((nm beginsWith: '.')
+          or: [(nm beginsWith: '__vsc') or: [nm size = 4 and: [nm beginsWith: 'self']]]) ifFalse: [
+          (10 + i) <= a size ifTrue: [
+            out nextPutAll: 'b'; nextPutAll: tab; nextPutAll: nm; nextPutAll: tab;
+                nextPutAll: (a at: 10 + i) asOop printString; nextPut: Character lf ] ] ] ] ].
+  hArr notNil ifTrue: [ emit value: hArr ].
+  emit value: arr ].
+out contents`;
+
+  const fallback: FrameEvalContext = {
+    selfOop: OOP_NIL,
+    selfIsUnavailable: false,
+    names: [],
+    oops: [],
+  };
+  let data: string;
+  try {
+    data = executeAndFetchString(session, code);
+  } catch {
+    return fallback;
+  }
+  return parseFrameEvalContext(data) ?? fallback;
+}
+
+/** Parse {@link getFrameEvalContext}'s payload. Exported for unit testing. */
+export function parseFrameEvalContext(data: string): FrameEvalContext | undefined {
+  const names: string[] = [];
+  const oops: bigint[] = [];
+  let selfOop: bigint | undefined;
+  let selfIsUnavailable = false;
+  for (const line of data.split('\n')) {
+    if (line.length === 0) continue;
+    const f = line.split('\t');
+    if (f[0] === 'self' && f.length >= 3) {
+      selfOop = BigInt(f[1]);
+      selfIsUnavailable = f[2] === '1';
+    } else if (f[0] === 'b' && f.length >= 3) {
+      names.push(f[1]);
+      oops.push(BigInt(f[2]));
+    }
+  }
+  if (selfOop === undefined) return undefined;
+  return { selfOop, selfIsUnavailable, names, oops };
 }
 
 /**
@@ -1401,16 +1729,29 @@ function resolveGlobalOop(session: ActiveSession, name: string): bigint | null {
 }
 
 /**
- * Builds a SymbolList whose first entry is a transient SymbolDictionary mapping
- * each *named* (non-synthetic) arg/temp to its current value, prepended to the
- * user's own symbol list — so bare identifiers like `amount` resolve to the
- * frame's temps while globals still resolve through the appended user list.
- * Returns null when the frame has no bindable named temps (the caller then uses
- * the simpler `evaluateInContext:`), or if any of the required globals can't be
- * resolved (degrade to the self-only eval rather than fail).
+ * Builds the SymbolList to evaluate an expression against: a transient
+ * SymbolDictionary mapping each *named* (non-synthetic) arg/temp to its current
+ * value, prepended to the user's own symbol list — so bare identifiers like
+ * `amount` resolve to the frame's temps while globals still resolve through the
+ * appended user list.
+ *
+ * With no bindable names it answers the user's symbol list on its own rather
+ * than null, so the caller can still use `evaluateInContext:symbolList:`. The
+ * one-argument `evaluateInContext:` looks like the leaner choice for that case
+ * but **does not exist before 3.7** — on 3.6.2 only the two-argument form is
+ * implemented, and performing the missing selector fails with NameError 2404,
+ * "There is no Symbol with the specified value", which reads as a problem with
+ * the user's expression rather than with us. Null is returned only when a global
+ * we need won't resolve, and the caller's one-argument fallback is then a last
+ * resort, not a fast path.
  *
  * The synthetic `.tN` eval-stack temporaries have no source name (and `.t1`
- * isn't a legal identifier), so they are skipped.
+ * isn't a legal identifier), so they are skipped — {@link getFrameEvalContext}
+ * already leaves them out, and this is the belt-and-braces check.
+ *
+ * `names` is in binding order and a later entry overwrites an earlier one of the
+ * same spelling, which is how a block frame's own names come to shadow the home
+ * method names layered underneath them.
  */
 function buildFrameSymbolList(
   session: ActiveSession,
@@ -1424,12 +1765,15 @@ function buildFrameSymbolList(
     if (!name || name.startsWith('.') || oop === undefined) continue;
     bindings.push({ name, oop });
   }
-  if (bindings.length === 0) return null;
 
   const symDictClass = resolveGlobalOop(session, 'SymbolDictionary');
   const symListClass = resolveGlobalOop(session, 'SymbolList');
   const systemClass = resolveGlobalOop(session, 'System');
   if (symDictClass === null || symListClass === null || systemClass === null) return null;
+
+  const profileOop = gciPerform(session, systemClass, 'myUserProfile');
+  const userListOop = gciPerform(session, profileOop, 'symbolList');
+  if (bindings.length === 0) return userListOop;
 
   const dictOop = gciPerform(session, symDictClass, 'new');
   for (const { name, oop } of bindings) {
@@ -1439,8 +1783,6 @@ function buildFrameSymbolList(
   }
 
   // (SymbolList with: dict) , (System myUserProfile symbolList)
-  const profileOop = gciPerform(session, systemClass, 'myUserProfile');
-  const userListOop = gciPerform(session, profileOop, 'symbolList');
   const frontOop = gciPerform(session, symListClass, 'with:', [dictOop]);
   return gciPerform(session, frontOop, ',', [userListOop]);
 }

@@ -1782,18 +1782,20 @@ export class DebuggerPanel {
     const selector = raw?.selector;
     if (!selector) return;
 
-    let receiverOop: bigint;
+    let selfOop: bigint;
     try {
-      receiverOop = debug.getFrameInfo(this.session, this.gsProcess, frame.serverLevel).receiverOop;
+      selfOop = debug.getFrameInfo(this.session, this.gsProcess, frame.serverLevel).selfOop;
     } catch (e: unknown) {
       logError(this.sessionId, e instanceof Error ? e.message : String(e));
       this.errorMessage = `Could not resolve the receiver of ${frame.label}.`;
       this.postInit();
       return;
     }
-    // The receiver's class and every superclass up to Object — each a place the
-    // selector could be implemented, flagged with whether it already is.
-    const chain = debug.getReceiverClassChain(this.session, receiverOop, selector);
+    // The class of the frame's `self` — the HOME receiver in a block frame, so a
+    // block frame resolves the same chain its method frame would — and every
+    // superclass up to Object: each a place the selector could be implemented,
+    // flagged with whether it already is.
+    const chain = debug.getReceiverClassChain(this.session, selfOop, selector);
     if (chain.length === 0) {
       this.errorMessage = `Could not resolve the receiver's class to implement #${selector}.`;
       this.postInit();
@@ -1825,9 +1827,9 @@ export class DebuggerPanel {
       return;
     }
 
-    let receiverOop: bigint;
+    let selfOop: bigint;
     try {
-      receiverOop = debug.getFrameInfo(this.session, this.gsProcess, frame.serverLevel).receiverOop;
+      selfOop = debug.getFrameInfo(this.session, this.gsProcess, frame.serverLevel).selfOop;
     } catch (e: unknown) {
       logError(this.sessionId, e instanceof Error ? e.message : String(e));
       this.errorMessage = `Could not resolve the receiver of ${frame.label}.`;
@@ -1835,7 +1837,7 @@ export class DebuggerPanel {
       return;
     }
 
-    const target = debug.getBrowseTarget(this.session, receiverOop, raw.selector);
+    const target = debug.getBrowseTarget(this.session, selfOop, raw.selector);
     if (!target) {
       this.errorMessage = `Could not locate #${raw.selector} to browse it.`;
       this.postInit();
@@ -1881,20 +1883,16 @@ export class DebuggerPanel {
   private async implementSubclassResponsibility(): Promise<void> {
     const info = this.subclassRespInfo;
     if (!info) return;
-    let receiverOop: bigint;
+    let selfOop: bigint;
     try {
-      receiverOop = debug.getFrameInfo(
-        this.session,
-        this.gsProcess,
-        info.abstractServerLevel,
-      ).receiverOop;
+      selfOop = debug.getFrameInfo(this.session, this.gsProcess, info.abstractServerLevel).selfOop;
     } catch (e: unknown) {
       logError(this.sessionId, e instanceof Error ? e.message : String(e));
       this.errorMessage = `Could not resolve the receiver of #${info.selector}.`;
       this.postInit();
       return;
     }
-    let chain = debug.getReceiverClassChain(this.session, receiverOop, info.selector);
+    let chain = debug.getReceiverClassChain(this.session, selfOop, info.selector);
     // Bound the chain at the abstract method's defining class (inclusive).
     const boundIdx = chain.findIndex((c) => c.className === info.definingClassName);
     if (boundIdx >= 0) chain = chain.slice(0, boundIdx + 1);
@@ -2523,7 +2521,7 @@ export class DebuggerPanel {
       // only), so revert can restore the exact original object.
       this.captureUndoOriginal(serverLevel, kind, index, info);
       if (kind === 'instvar') {
-        debug.setInstVar(this.session, info.receiverOop, index, valueOop);
+        debug.setInstVar(this.session, info.selfOop, index, valueOop);
       } else {
         debug.setFrameTemp(this.session, this.gsProcess, serverLevel, index, valueOop);
       }
@@ -2620,7 +2618,7 @@ export class DebuggerPanel {
     if (this.undoOriginals.has(key)) return; // keep the FIRST original
     const originalOop =
       kind === 'instvar'
-        ? debug.getInstVarOop(this.session, info.receiverOop, index)
+        ? debug.getInstVarOop(this.session, info.selfOop, index)
         : info.argAndTempOops[index - 1];
     if (originalOop === undefined) return; // defensive: nothing to remember
     this.undoOriginals.set(key, originalOop);
@@ -2653,12 +2651,8 @@ export class DebuggerPanel {
     }
     try {
       if (kind === 'instvar') {
-        const receiverOop = debug.getFrameInfo(
-          this.session,
-          this.gsProcess,
-          serverLevel,
-        ).receiverOop;
-        debug.setInstVar(this.session, receiverOop, index, originalOop);
+        const selfOop = debug.getFrameInfo(this.session, this.gsProcess, serverLevel).selfOop;
+        debug.setInstVar(this.session, selfOop, index, originalOop);
       } else {
         debug.setFrameTemp(this.session, this.gsProcess, serverLevel, index, originalOop);
       }
@@ -4027,7 +4021,7 @@ export class DebuggerPanel {
       // inherited methods (non-block frames only — see formatFrameLabel).
       if (!isBlock) {
         try {
-          receiverClass = debug.getObjectClassName(this.session, info.receiverOop);
+          receiverClass = debug.getObjectClassName(this.session, info.selfOop);
         } catch {
           /* best-effort; fall back to defining class only */
         }

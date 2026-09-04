@@ -592,10 +592,38 @@ describe('debugQueries', () => {
   // (We can't run real Smalltalk in unit tests — the live image confirms
   // `'3 + 4' evaluateInContext: nil` => 7 — so the mock supplies the printString
   // and we assert the *right call* is made, which is what regressed.)
+  // The payload getFrameEvalContext brings back in one round trip. The layering
+  // it encodes is the whole point: for a block frame the doit emits the HOME
+  // method's names first and the block's own second, so a same-named block
+  // binding is the one that survives into the symbol dictionary.
+  describe('parseFrameEvalContext', () => {
+    it('reads self, the degraded flag, and the bindings in order', () => {
+      const ctx = debug.parseFrameEvalContext(
+        ['self\t119\t0', 'b\tcoll\t200', 'b\ttag\t201', 'b\teach\t202', ''].join('\n'),
+      );
+      expect(ctx).toEqual({
+        selfOop: 119n,
+        selfIsUnavailable: false,
+        names: ['coll', 'tag', 'each'],
+        oops: [200n, 201n, 202n],
+      });
+    });
+
+    it('reports a block frame whose home activation is gone', () => {
+      const ctx = debug.parseFrameEvalContext('self\t20\t1\nb\teach\t202\n');
+      expect(ctx).toMatchObject({ selfOop: 20n, selfIsUnavailable: true, names: ['each'] });
+    });
+
+    it('answers undefined for a payload with no self record to build on', () => {
+      expect(debug.parseFrameEvalContext('')).toBeUndefined();
+      expect(debug.parseFrameEvalContext('b\teach\t202\n')).toBeUndefined();
+    });
+  });
+
   describe('evaluateInFrame ("3 + 4" regression)', () => {
     const GS_PROCESS = 9000n;
     const FRAME_ARRAY = 0xf0n;
-    const FRAME_RECEIVER = 0x77n; // becomes `self` for the evaluation
+    const FRAME_SELF = 0x77n; // becomes `self` for the evaluation
     const EXPR_STRING = 0xe0n;
     const EVAL_RESULT = 0x07n; // the oop the evaluation returned
 
@@ -604,10 +632,12 @@ describe('debugQueries', () => {
         GciTsI64ToOop: vi.fn(() => ({ result: 0xaan, err: { ...noErr } })),
         oopToInteger: vi.fn(() => 5n),
         GciTsNewString: vi.fn(() => ({ result: EXPR_STRING, err: { ...noErr } })),
+        // getFrameEvalContext's doit payload: `self` and no named bindings.
+        executeAndFetchString: vi.fn(() => `self\t${FRAME_SELF}\t0\n`),
         GciTsFetchSize: vi.fn(() => ({ result: 10n, err: { ...noErr } })),
         // getFrameInfo reads [10]=receiver (0-indexed 9); [9]=names (0-indexed 8) = nil → skip names.
         GciTsFetchOops: vi.fn(() => ({
-          oops: [1n, 2n, 0n, 0n, 0n, 0n, 0n, 0n, 0x14n /* OOP_NIL names */, FRAME_RECEIVER],
+          oops: [1n, 2n, 0n, 0n, 0n, 0n, 0n, 0n, 0x14n /* OOP_NIL names */, FRAME_SELF],
           err: { ...noErr },
         })),
         GciTsPerform: vi.fn((_h: unknown, _r: bigint, _sOop: bigint, sel: string | null) => {
@@ -636,7 +666,7 @@ describe('debugQueries', () => {
       expect(debug.evaluateInFrame(session, GS_PROCESS, '3 + 4', 3)).toBe('7');
     });
 
-    it('evaluates via String>>evaluateInContext: with self = the frame receiver', () => {
+    it("evaluates via String>>evaluateInContext: with self = the frame's self", () => {
       const session = evalSession();
       debug.evaluateInFrame(session, GS_PROCESS, '3 + 4', 3);
 
@@ -645,7 +675,7 @@ describe('debugQueries', () => {
       const evalCall = performCalls.find((c: unknown[]) => c[3] === 'evaluateInContext:');
       expect(evalCall).toBeDefined();
       expect(evalCall![1]).toBe(EXPR_STRING); // receiver of evaluateInContext: is the expr String
-      expect(evalCall![4]).toEqual([FRAME_RECEIVER]); // arg is the frame's receiver (self)
+      expect(evalCall![4]).toEqual([FRAME_SELF]); // arg is the frame's self
     });
 
     it('never sends the removed _framePerform:withArgs:onLevel: primitive (the original bug)', () => {
@@ -667,7 +697,7 @@ describe('debugQueries', () => {
     const GS_PROCESS = 9000n;
     const FRAME_ARRAY = 0xf0n;
     const NAMES_ARRAY = 0xa1n;
-    const FRAME_RECEIVER = 0x77n;
+    const FRAME_SELF = 0x77n;
     const AMOUNT_NAME = 0xb1n; // the name string 'amount' in the names array
     const AMOUNT_VALUE = 0x96n; // oop of the temp's value (75)
     const AMOUNT_SYMBOL = 0xc1n; // interned #amount
@@ -680,6 +710,8 @@ describe('debugQueries', () => {
         oopToInteger: vi.fn(() => 5n),
         GciTsNewString: vi.fn(() => ({ result: EXPR_STRING, err: { ...noErr } })),
         GciTsNewSymbol: vi.fn(() => ({ result: AMOUNT_SYMBOL, err: { ...noErr } })),
+        // getFrameEvalContext's doit payload: `self` plus the one named binding.
+        executeAndFetchString: vi.fn(() => `self\t${FRAME_SELF}\t0\nb\tamount\t${AMOUNT_VALUE}\n`),
         resolveSymbol: vi.fn((_h: unknown, name: string) =>
           name === 'SymbolDictionary' ? 0xd1n : name === 'SymbolList' ? 0xd2n : 0xd3n,
         ),
@@ -693,7 +725,7 @@ describe('debugQueries', () => {
             ? { oops: [AMOUNT_NAME], err: { ...noErr } }
             : {
                 // frame contents: [9]=names (idx8), [10]=receiver (idx9), [11+]=values
-                oops: [1n, 2n, 0n, 0n, 0n, 0n, 0n, 0n, NAMES_ARRAY, FRAME_RECEIVER, AMOUNT_VALUE],
+                oops: [1n, 2n, 0n, 0n, 0n, 0n, 0n, 0n, NAMES_ARRAY, FRAME_SELF, AMOUNT_VALUE],
                 err: { ...noErr },
               },
         ),
@@ -775,7 +807,7 @@ describe('debugQueries', () => {
   describe('evaluateInFrameNb (non-blocking eval)', () => {
     const GS_PROCESS = 9000n;
     const FRAME_ARRAY = 0xf0n;
-    const FRAME_RECEIVER = 0x77n;
+    const FRAME_SELF = 0x77n;
     const EXPR_STRING = 0xe0n;
     const EVAL_RESULT = 0x07n;
 
@@ -786,9 +818,11 @@ describe('debugQueries', () => {
         GciTsI64ToOop: vi.fn(() => ({ result: 0xaan, err: { ...noErr } })),
         oopToInteger: vi.fn(() => 5n),
         GciTsNewString: vi.fn(() => ({ result: EXPR_STRING, err: { ...noErr } })),
+        // getFrameEvalContext's doit payload: `self` and no named bindings.
+        executeAndFetchString: vi.fn(() => `self\t${FRAME_SELF}\t0\n`),
         GciTsFetchSize: vi.fn(() => ({ result: 10n, err: { ...noErr } })),
         GciTsFetchOops: vi.fn(() => ({
-          oops: [1n, 2n, 0n, 0n, 0n, 0n, 0n, 0n, 0x14n /* OOP_NIL names */, FRAME_RECEIVER],
+          oops: [1n, 2n, 0n, 0n, 0n, 0n, 0n, 0n, 0x14n /* OOP_NIL names */, FRAME_SELF],
           err: { ...noErr },
         })),
         GciTsPerform: vi.fn((_h: unknown, _r: bigint, _s: bigint, sel: string | null) =>
@@ -829,7 +863,7 @@ describe('debugQueries', () => {
       expect(nbCalls).toHaveLength(1);
       expect(nbCalls[0][1]).toBe(EXPR_STRING); // receiver = the expression String
       expect(nbCalls[0][3]).toBe('evaluateInContext:'); // self-only selector (no named temps)
-      expect(nbCalls[0][4]).toEqual([FRAME_RECEIVER]); // arg = the frame's receiver (self)
+      expect(nbCalls[0][4]).toEqual([FRAME_SELF]); // arg = the frame's self
     });
 
     it('rejects when the expression string cannot be created', async () => {
@@ -868,6 +902,8 @@ describe('debugQueries', () => {
         oopToInteger: vi.fn(() => 5n),
         GciTsNewString: vi.fn(() => ({ result: EXPR_STRING, err: { ...noErr } })),
         GciTsNewSymbol: vi.fn(() => ({ result: AMOUNT_SYMBOL, err: { ...noErr } })),
+        // getFrameEvalContext's doit payload: `self` plus the one named binding.
+        executeAndFetchString: vi.fn(() => `self\t${FRAME_SELF}\t0\nb\tamount\t${AMOUNT_VALUE}\n`),
         resolveSymbol: vi.fn((_h: unknown, name: string) =>
           name === 'SymbolDictionary' ? 0xd1n : name === 'SymbolList' ? 0xd2n : 0xd3n,
         ),
@@ -879,7 +915,7 @@ describe('debugQueries', () => {
           oop === NAMES_ARRAY
             ? { oops: [AMOUNT_NAME], err: { ...noErr } }
             : {
-                oops: [1n, 2n, 0n, 0n, 0n, 0n, 0n, 0n, NAMES_ARRAY, FRAME_RECEIVER, AMOUNT_VALUE],
+                oops: [1n, 2n, 0n, 0n, 0n, 0n, 0n, 0n, NAMES_ARRAY, FRAME_SELF, AMOUNT_VALUE],
                 err: { ...noErr },
               },
         ),
@@ -919,8 +955,8 @@ describe('debugQueries', () => {
 
       const nbCalls = (session.gci.GciTsNbPerform as ReturnType<typeof vi.fn>).mock.calls;
       expect(nbCalls[0][3]).toBe('evaluateInContext:symbolList:'); // symbol-list selector
-      expect(nbCalls[0][4][0]).toBe(FRAME_RECEIVER); // self
-      expect(nbCalls[0][4]).toHaveLength(2); // [receiver, symbolList]
+      expect(nbCalls[0][4][0]).toBe(FRAME_SELF); // self
+      expect(nbCalls[0][4]).toHaveLength(2); // [self, symbolList]
     });
   });
 
