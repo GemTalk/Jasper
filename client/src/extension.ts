@@ -115,7 +115,10 @@ import { extractMethodCommand } from './refactoring/extractMethodCommand';
 import { inlineMethodCommand } from './refactoring/inlineMethodCommand';
 import { extractTemporaryCommand } from './refactoring/extractTemporaryCommand';
 import { inlineTemporaryCommand } from './refactoring/inlineTemporaryCommand';
-import { RefactorCodeActionProvider } from './refactoring/renameRefactorCodeActions';
+import {
+  REFACTOR_CODE_ACTION_SELECTOR,
+  RefactorCodeActionProvider,
+} from './refactoring/renameRefactorCodeActions';
 import { GemStoneWorkspaceSymbolProvider } from './gemstoneSymbolProvider';
 import { GemStoneDefinitionProvider } from './gemstoneDefinitionProvider';
 import { GemStoneHoverProvider } from './gemstoneHoverProvider';
@@ -858,10 +861,11 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.languages.registerCompletionItemProvider(providerSelectors, completionProvider),
     vscode.languages.registerCodeLensProvider(CODE_LENS_SELECTORS, codeLensProvider),
     codeLensProvider, // dispose() cancels pending count lookups + releases the emitter
-    // Hosts "Rename Temporary/Argument…" under the native "Refactor…" menu in a
-    // saved (scheme:gemstone) method editor.
+    // Hosts the RB family under the native "Refactor…" menu in a saved
+    // (scheme:gemstone) method editor — and there alone; see
+    // REFACTOR_CODE_ACTION_SELECTOR for why that is narrower than it was.
     vscode.languages.registerCodeActionsProvider(
-      { scheme: 'gemstone', language: METHOD_LANGUAGE },
+      REFACTOR_CODE_ACTION_SELECTOR,
       new RefactorCodeActionProvider(
         () => sessionManager.getSelectedSession()?.rbSupportAvailable === true,
       ),
