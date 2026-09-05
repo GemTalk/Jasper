@@ -47,6 +47,7 @@ import {
   languages,
   TabInputText,
   TabInputTextDiff,
+  FileChangeType,
 } from '../__mocks__/vscode';
 import { logInfo } from '../gciLog';
 import {
@@ -87,6 +88,18 @@ describe('GemStoneFileSystemProvider', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     provider = new GemStoneFileSystemProvider(makeSessionManager());
+  });
+
+  describe('notifyChanged', () => {
+    it('announces a document the stone changed, so an open editor re-reads it', () => {
+      const uri = Uri.parse('gemstone://1/UserGlobals/Widget/definition/Widget');
+      const seen: unknown[] = [];
+      provider.onDidChangeFile((events) => seen.push(...events));
+
+      provider.notifyChanged(uri);
+
+      expect(seen).toEqual([{ type: FileChangeType.Changed, uri }]);
+    });
   });
 
   describe('stat', () => {

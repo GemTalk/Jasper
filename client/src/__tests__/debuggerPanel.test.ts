@@ -171,6 +171,7 @@ import { EnhancedInspector } from '../enhancedInspector/enhancedInspector';
 import { SystemBrowser } from '../systemBrowser';
 import { ActiveSession } from '../sessionManager';
 import { GemStoneLogin } from '../loginTypes';
+import { SMALLTALK_LANGUAGE } from '../languageIds';
 
 const GS_PROCESS = 0x123n;
 const ERROR_MSG = 'a UndefinedObject does not understand #foo';
@@ -1390,6 +1391,45 @@ describe('DebuggerPanel', () => {
       expect(provider.provideTextDocumentContent(openUri)).toBe('JasperDebugDemo new run');
     });
 
+    // The companion source pane shows EITHER a gemstone:// method (when the frame
+    // can be edited and continued) or the read-only gemstone-debug:// stash. Only
+    // the latter needs a language set here — and the distinction matters, because
+    // a method editor carries gemstone-method, the one language
+    // `contributes.breakpoints` names. Re-tagging everything would put the
+    // method a developer is most likely to want a breakpoint in back on
+    // gemstone-smalltalk and quietly take its gutter away.
+    it('does NOT re-tag a gemstone:// method, so its breakpoint gutter survives', async () => {
+      const panel = openPanelWithStack();
+      vi.mocked(vscode.languages.setTextDocumentLanguage).mockClear();
+      vi.mocked(debug.getMethodUriInfo).mockReturnValueOnce(URI_INFO); // reveal of frame 3
+      sendMessage(panel, { command: 'selectFrame', level: 3 });
+      await flush();
+
+      const openUri = vi.mocked(vscode.workspace.openTextDocument).mock.calls[0][0] as vscode.Uri;
+      expect(openUri.scheme).toBe('gemstone'); // the editable path
+      expect(vscode.languages.setTextDocumentLanguage).not.toHaveBeenCalled();
+    });
+
+    it('tags the read-only stash as gemstone-smalltalk, so its source is highlighted', async () => {
+      // The read-only scheme has no language of its own, and the highlighting is
+      // the point of this pane. gemstone-smalltalk gives it that and no gutter.
+      const panel = openPanelWithStack();
+      vi.mocked(vscode.languages.setTextDocumentLanguage).mockClear();
+      vi.mocked(debug.getMethodInfo).mockImplementationOnce(() => {
+        throw new Error('doit: nil inClass');
+      });
+      vi.mocked(debug.getMethodSource).mockReturnValueOnce('JasperDebugDemo new run');
+      sendMessage(panel, { command: 'selectFrame', level: 3 });
+      await flush();
+
+      const openUri = vi.mocked(vscode.workspace.openTextDocument).mock.calls[0][0] as vscode.Uri;
+      expect(openUri.scheme).toBe('gemstone-debug');
+      expect(vscode.languages.setTextDocumentLanguage).toHaveBeenCalledWith(
+        expect.anything(),
+        SMALLTALK_LANGUAGE,
+      );
+    });
+
     it('titles a read-only NON-symbol-list method by its method name (C3: never mislabel as Executed Code)', async () => {
       const panel = openPanelWithStack();
       // Frame 3: no dictName (getMethodUriInfo → undefined) but getMethodInfo
@@ -1559,7 +1599,7 @@ describe('DebuggerPanel', () => {
     function columnedEditor(viewColumn: number) {
       return {
         document: {
-          languageId: 'gemstone-smalltalk',
+          languageId: SMALLTALK_LANGUAGE,
           positionAt: (o: number) => new vscode.Position(0, o),
           getWordRangeAtPosition: () => undefined,
           lineAt: () => ({ firstNonWhitespaceCharacterIndex: 0 }),

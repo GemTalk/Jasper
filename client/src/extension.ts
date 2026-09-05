@@ -18,6 +18,7 @@ import {
   GemStoneLogin,
   buildDataCuratorLogin,
   loginLabel,
+  loginNetldiTarget,
   loginTargetKey,
   sameLoginTarget,
 } from './loginTypes';
@@ -101,9 +102,9 @@ import {
   closeGemstoneTabsForSession,
   installStaleGemstoneTabReaper,
   parseMethodUri,
-  parseUri,
   isMethodEditorUri,
 } from './gemstoneFileSystemProvider';
+import { METHOD_LANGUAGE, SMALLTALK_LANGUAGE, gemstoneDocumentLanguage } from './languageIds';
 import { openWorkspace } from './workspace';
 import { registerStartHere, StartHereStatusBar, resetStartHere } from './startHere';
 import { openTutorialNotebook } from './tutorialNotebook';
@@ -117,7 +118,10 @@ import { extractMethodCommand } from './refactoring/extractMethodCommand';
 import { inlineMethodCommand } from './refactoring/inlineMethodCommand';
 import { extractTemporaryCommand } from './refactoring/extractTemporaryCommand';
 import { inlineTemporaryCommand } from './refactoring/inlineTemporaryCommand';
-import { RefactorCodeActionProvider } from './refactoring/renameRefactorCodeActions';
+import {
+  REFACTOR_CODE_ACTION_SELECTOR,
+  RefactorCodeActionProvider,
+} from './refactoring/renameRefactorCodeActions';
 import { GemStoneWorkspaceSymbolProvider } from './gemstoneSymbolProvider';
 import { GemStoneDefinitionProvider } from './gemstoneDefinitionProvider';
 import { GemStoneHoverProvider } from './gemstoneHoverProvider';
@@ -134,16 +138,34 @@ import { ExportManager } from './exportManager';
 import { FileInManager } from './fileInManager';
 import { showTranscript, getTranscriptChannel } from './transcriptChannel';
 import { getGciLog } from './gciLog';
-import { GemStoneCodeLensProvider } from './gemstoneCodeLensProvider';
+import { CODE_LENS_SELECTORS, GemStoneCodeLensProvider } from './gemstoneCodeLensProvider';
 import * as queries from './browserQueries';
 import { dedupeMethodResults } from './queries/methodSearch';
+import { clearClassOrganizerCode } from './queries/classOrganizer';
 import { SysadminStorage } from './sysadminStorage';
 import { appendSysadmin, getSysadminChannel } from './sysadminChannel';
 import { VersionManager } from './manager/versionManager';
-import { VersionTarget, ProcessTarget } from './sysadminTypes';
+import { VersionTarget, ProcessTarget, GemStoneDatabase } from './sysadminTypes';
 import { DatabasesPanel } from './manager/databasesPanel';
 import { DatabaseManager } from './manager/databaseManager';
+import {
+  isRegisteredDatabase,
+  registeredPaths,
+  registeredRefusal,
+} from './manager/registeredDatabase';
 import { DatabaseTreeProvider, DatabaseNode } from './manager/databaseTreeProvider';
+import {
+  bringUpDatabase,
+  takeDownDatabase,
+  clearSessionsForStop,
+  ServerTarget,
+} from './manager/databaseLifecycle';
+import {
+  DatabaseAction,
+  databaseAction,
+  databaseStatus,
+  inspectDatabaseProcesses,
+} from './databaseServerStatus';
 import { runLogicalBackup } from './backupManager';
 import { runOnlineExtentBackup, resolveExtentBackupSession } from './manager/extentBackupManager';
 import { runLogicalRestore, RestoreSession } from './restoreManager';
@@ -161,7 +183,8 @@ import { ensureSelfSignedCert, trustCertCommand } from './tlsCert';
 import { ProcessWatcher } from './manager/processWatcher';
 import { OsConfigTreeProvider } from './sharedMemoryTreeProvider';
 import { ensureStonePreconditions } from './stonePreconditions';
-import { isLocalHost } from './databaseForLogin';
+import { isLocalHost, sessionsOnDatabase } from './databaseForLogin';
+import { describeHolder, isExtentLocked, sessionHolders, ExtentHolder } from './extentHolders';
 import { runQuickSetup } from './quickSetup';
 import {
   isWindows,
@@ -172,7 +195,6 @@ import {
 } from './wslBridge';
 import {
   wslExistsSync,
-  wslSymlinkSync,
   wslMkdirSync,
   wslImportFileSync,
   wslReaddirSync,
@@ -644,7 +666,8 @@ export function activate(context: vscode.ExtensionContext) {
     documentSelector: [
       { scheme: 'file', language: 'gemstone-topaz' },
       { scheme: 'file', language: 'gemstone-tonel' },
-      { scheme: 'gemstone', language: 'gemstone-smalltalk' },
+      { scheme: 'gemstone', language: SMALLTALK_LANGUAGE },
+      { scheme: 'gemstone', language: METHOD_LANGUAGE },
     ],
     synchronize: {
       configurationSection: 'gemstoneSmalltalk',
@@ -783,6 +806,11 @@ export function activate(context: vscode.ExtensionContext) {
       revealInTestExplorer: async (dictName, className, selector) =>
         (await sunitTests?.revealInTestExplorer(dictName, className, selector)) ?? false,
     },
+    // A class the Explorer refiles into another class category has a new category line in
+    // its definition source, so an editor open on that definition is stale — and saving it
+    // would file the class back. The file system is built just below, so this forwards
+    // rather than handing over an object that does not exist yet.
+    (uri) => gemstoneFs.notifyChanged(uri),
   );
 
   // ── GemStone FileSystem Provider ─────────────────────────
@@ -807,19 +835,12 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.workspace.onDidOpenTextDocument((doc) => {
       if (doc.uri.scheme !== 'gemstone') return;
-      // A class comment is prose, not code: give it its own language so it word-
-      // wraps (see configurationDefaults) and isn't syntax-highlighted as Smalltalk.
-      // Everything else gemstone:// is source.
-      let isComment = false;
-      try {
-        isComment = parseUri(doc.uri).kind === 'comment';
-      } catch {
-        /* unrecognized URI — treat as source */
-      }
-      vscode.languages.setTextDocumentLanguage(
-        doc,
-        isComment ? 'gemstone-class-comment' : 'gemstone-smalltalk',
-      );
+      // Three languages behind one scheme: a class comment is prose, so it gets
+      // gemstone-class-comment and word-wraps (see configurationDefaults); the
+      // source of a compiled method gets gemstone-method, the one language
+      // `contributes.breakpoints` names; everything else is plain Smalltalk
+      // source. See gemstoneDocumentLanguage for the rule and why it exists.
+      vscode.languages.setTextDocumentLanguage(doc, gemstoneDocumentLanguage(doc.uri));
     }),
   );
 
@@ -842,9 +863,10 @@ export function activate(context: vscode.ExtensionContext) {
 
   // ── GCI-backed providers (Definition + Hover + Completion) ─
   const providerSelectors: vscode.DocumentFilter[] = [
-    { scheme: 'gemstone', language: 'gemstone-smalltalk' },
-    { scheme: 'untitled', language: 'gemstone-smalltalk' },
-    { scheme: 'file', language: 'gemstone-smalltalk' },
+    { scheme: 'gemstone', language: SMALLTALK_LANGUAGE },
+    { scheme: 'gemstone', language: METHOD_LANGUAGE },
+    { scheme: 'untitled', language: SMALLTALK_LANGUAGE },
+    { scheme: 'file', language: SMALLTALK_LANGUAGE },
     { scheme: 'file', language: 'gemstone-topaz' },
     { scheme: 'file', language: 'gemstone-tonel' },
   ];
@@ -859,30 +881,17 @@ export function activate(context: vscode.ExtensionContext) {
   const hoverProvider = new GemStoneHoverProvider(sessionManager, selectorResolver);
   const completionProvider = new GemStoneCompletionProvider(sessionManager);
   const codeLensProvider = new GemStoneCodeLensProvider(sessionManager);
-  // The senders/implementors CodeLens must attach on a gemstone:// method the
-  // instant it opens. A gemstone doc's language is assigned asynchronously
-  // (onDidOpenTextDocument → setTextDocumentLanguage), so gating the lens on
-  // `language: gemstone-smalltalk` (as providerSelectors does) delays it past the
-  // first paint on a document's first open — the lens then pops in and shoves the
-  // code down. Match on scheme alone so it's present from the first render;
-  // provideCodeLenses returns nothing for non-method gemstone docs anyway.
-  const codeLensSelectors: vscode.DocumentFilter[] = [
-    { scheme: 'gemstone' },
-    { scheme: 'untitled', language: 'gemstone-smalltalk' },
-    { scheme: 'file', language: 'gemstone-smalltalk' },
-    { scheme: 'file', language: 'gemstone-topaz' },
-    { scheme: 'file', language: 'gemstone-tonel' },
-  ];
   context.subscriptions.push(
     vscode.languages.registerDefinitionProvider(providerSelectors, definitionProvider),
     vscode.languages.registerHoverProvider(providerSelectors, hoverProvider),
     vscode.languages.registerCompletionItemProvider(providerSelectors, completionProvider),
-    vscode.languages.registerCodeLensProvider(codeLensSelectors, codeLensProvider),
+    vscode.languages.registerCodeLensProvider(CODE_LENS_SELECTORS, codeLensProvider),
     codeLensProvider, // dispose() cancels pending count lookups + releases the emitter
-    // Hosts "Rename Temporary/Argument…" under the native "Refactor…" menu in a
-    // saved (scheme:gemstone) method editor.
+    // Hosts the RB family under the native "Refactor…" menu in a saved
+    // (scheme:gemstone) method editor — and there alone; see
+    // REFACTOR_CODE_ACTION_SELECTOR for why that is narrower than it was.
     vscode.languages.registerCodeActionsProvider(
-      { scheme: 'gemstone', language: 'gemstone-smalltalk' },
+      REFACTOR_CODE_ACTION_SELECTOR,
       new RefactorCodeActionProvider(
         () => sessionManager.getSelectedSession()?.rbSupportAvailable === true,
       ),
@@ -1085,10 +1094,9 @@ export function activate(context: vscode.ExtensionContext) {
   // where the user's eyes already are during a connect. It is separate from the
   // right-hand Active Session item, which stays the calm persistent state.
   //   • connecting: a spinner while the attempt (which may start the stone) runs.
-  //   • success: the spinner is cleared, the GemStone Explorer is revealed, and a
-  //     green ✅ banner flashes at the top of it for a few seconds (see the
-  //     explorer's showConnectedBanner). The status bar cannot render green, and a
-  //     webview flash was far too large — the banner is unobtrusive and theme-safe.
+  //   • success: the spinner is simply cleared. The connected stone is already
+  //     named in the right-hand Active Session item, so a second, temporary
+  //     announcement of the same fact was noise.
   //   • failure: the item turns red and becomes a click-through to the failure
   //     reason, since the toast that first reported it may already be gone. It
   //     persists until the next attempt.
@@ -1098,7 +1106,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   // A "Start Here" status-bar button pointing a new user at the basics (browse a
   // class, search, open a workspace, take the tour). Shown on connect below; stays
-  // until the user hides it from its own menu (issue #468, item 10).
+  // until the user hides it from its own menu (issue #468).
   const startHereStatusBar = new StartHereStatusBar(context);
   context.subscriptions.push(
     ...startHereStatusBar.register(),
@@ -1118,14 +1126,14 @@ export function activate(context: vscode.ExtensionContext) {
     connectStatusItem.show();
   }
 
-  function flashConnected(stone: string): void {
+  function onConnected(): void {
     lastLoginError = undefined;
     connectStatusItem.hide();
-    // Deliberately does not switch the sidebar to the Explorer. Logging in is
-    // not a statement about what you want to look at next — it threw away
-    // whatever you were reading, and a user logging in from the Databases
-    // section watched the section they were working in disappear.
-    explorer.showConnectedBanner(stone);
+    // Deliberately does not switch the sidebar to the Explorer, or announce the
+    // connection anywhere of its own. Logging in is not a statement about what
+    // you want to look at next — it threw away whatever you were reading, and a
+    // user logging in from the Databases section watched the section they were
+    // working in disappear. The Active Session item already names the stone.
     startHereStatusBar.showForConnection();
   }
 
@@ -1330,6 +1338,26 @@ export function activate(context: vscode.ExtensionContext) {
     return showMethodResultsFor(session.id, results, title);
   }
 
+  /**
+   * Drop the session's cached `ClassOrganizer` after a commit or abort.
+   *
+   * The organizer captures the image's class list once and is then reused for
+   * the life of the session (see `classOrganizer.ts`), which is what keeps
+   * Search, senders, implementors and references off a per-query image-wide
+   * rebuild. A sync is where a class list can change without Jasper having
+   * compiled anything — another session added or removed a class and committed
+   * — so the snapshot is dropped here rather than left to answer about an image
+   * that no longer exists. Best effort: it costs one removeKey, and a session
+   * that cannot run it has bigger problems than a stale search.
+   */
+  const clearClassOrganizer = (session: ActiveSession): void => {
+    try {
+      queries.executeFetchString(session, clearClassOrganizerCode());
+    } catch {
+      // Nothing to report: the next query simply reuses the organizer it had.
+    }
+  };
+
   // Commit / Abort a session, with the same confirmations and post-action
   // refreshes whether invoked from the Sessions tree (a session item) or the
   // GemStone Explorer toolbar (the currently selected session).
@@ -1349,7 +1377,10 @@ export function activate(context: vscode.ExtensionContext) {
         await exportManager.refreshSession(session);
         SystemBrowser.refresh(session.id);
         // A sync can surface classes/globals/dicts added elsewhere (incl. other sessions) — rebuild
-        // an open GemStone Search's cached corpora so they show up.
+        // an open GemStone Search's cached corpora so they show up, and drop the
+        // cached ClassOrganizer whose class list they would otherwise be searched
+        // against.
+        clearClassOrganizer(session);
         omniSearch?.notifySessionSynced(session.id);
       } else {
         vscode.window.showErrorMessage(
@@ -1382,7 +1413,9 @@ export function activate(context: vscode.ExtensionContext) {
         await exportManager.refreshSession(session);
         SystemBrowser.refresh(session.id);
         // An abort can pull in classes/globals/dicts from other sessions — rebuild an open GemStone
-        // Search's cached corpora so they show up.
+        // Search's cached corpora so they show up, and drop the cached
+        // ClassOrganizer for the same reason the commit does.
+        clearClassOrganizer(session);
         omniSearch?.notifySessionSynced(session.id);
         explorer.onSessionAborted(session.id);
       } else {
@@ -1855,7 +1888,7 @@ export function activate(context: vscode.ExtensionContext) {
         } finally {
           treeProvider.setConnecting(item.login, false);
           // The connect-status item is not cleared here: the outcome code below
-          // (flashConnected / showLoginError) sets its final connected/failed state.
+          // (onConnected / showLoginError) sets its final connected/failed state.
         }
 
         // Undefined when the login failed and the recovery flow could not (or
@@ -1873,7 +1906,7 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showInformationMessage(
           `Connected to ${login.stone} (${session.stoneVersion}) on ${login.gem_host} as ${login.gs_user}`,
         );
-        flashConnected(login.stone);
+        onConnected();
         // eslint-disable-next-line @typescript-eslint/no-floating-promises -- FIXME: unhandled floating promise; needs investigation to decide await vs. void vs. .catch before this rule is enabled repo-wide
         exportManager.exportSession(session, true);
         // We no longer auto-open a workspace on every connect (it left a dirty,
@@ -1883,8 +1916,8 @@ export function activate(context: vscode.ExtensionContext) {
         // user connects rather than after. The workspace stays available via the
         // gemstone.openWorkspace command and the Logins & Sessions welcome view.
 
-        // The "Start Here" status-bar button (shown from flashConnected above) points
-        // a new user at the basics; see StartHereStatusBar (issue #468, item 10).
+        // The "Start Here" status-bar button (shown from onConnected above) points
+        // a new user at the basics; see StartHereStatusBar (issue #468).
 
         // Offer the optional server-side supports this stone lacks (Enhanced
         // Inspector + refactoring engine) as one bundle, per
@@ -3656,6 +3689,242 @@ export function activate(context: vscode.ExtensionContext) {
     processWatcher.refresh();
   }
 
+  /** Ceiling on waiting for a database's gems to exit after their sessions are
+   *  logged out. Only reached when a gem is genuinely slow to go: the wait ends
+   *  as soon as the set of holders stops changing, so the ordinary case costs
+   *  two probes rather than the whole span.
+   *
+   *  The wait is asynchronous end to end — the probe included — so this is a
+   *  ceiling on how long the user watches a progress notification, not on how
+   *  long the extension host is unavailable to anything else. */
+  const SESSION_EXIT_TIMEOUT_MS = 10_000;
+  const SESSION_EXIT_POLL_MS = 200;
+
+  /**
+   * Clear a database's sessions before its servers are stopped, and report
+   * anything still attached that Jasper did not open.
+   *
+   * Jasper's own sessions are logged out first, and then the extents are
+   * checked, because a logout is not finished when the call returns — the gem
+   * has to exit, and until it does it holds `extent0.dbf` open. Stopping the
+   * stone on top of a gem that has not gone yet is how a database ends up
+   * unstartable: a force-stopped stone cannot tell its gems to leave, and the
+   * survivors keep the extent locked against every later start.
+   *
+   * Whatever is left after that is not Jasper's, so it is described and left
+   * alone. It could be a topaz session with uncommitted work, or a gem of
+   * another checkout's stone; killing it on a guess is not Jasper's call.
+   *
+   * Returns the holders still attached — empty when the database is clear.
+   */
+  async function clearSessionsBeforeStop(db: GemStoneDatabase): Promise<ExtentHolder[]> {
+    // Under a progress notification: probing the extents shells out to lsof and
+    // ps, and on a database with sessions to log out this takes long enough
+    // that a silent pause reads as a click that did nothing.
+    //
+    // The probing and the wait around it are awaited, not blocking, so the
+    // editor stays usable for the part that can run to ten seconds. The one
+    // exception is the logout itself: `GciTsLogout` is a synchronous FFI call
+    // on the extension host, once per session on this database. Against a
+    // healthy stone that is milliseconds; against an unresponsive one it
+    // blocks, and there is no non-blocking logout in the GciTs API to use
+    // instead. Moving it off the main thread is a session-lifecycle change
+    // well beyond this path, so it is left as it is and named here.
+    return await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: `Checking what is logged into ${db.config.stoneName}...`,
+      },
+      () => clearSessions(db),
+    );
+  }
+
+  async function clearSessions(db: GemStoneDatabase): Promise<ExtentHolder[]> {
+    return clearSessionsForStop(
+      {
+        reapSessions: () => reapSessionsOf(db),
+        // The stone's own processes are filtered out: a running stone and its
+        // housekeeping gems hold its extents by definition, and reporting those
+        // would put a question on every stop of a perfectly healthy database.
+        attachedHolders: async () =>
+          sessionHolders(await processManager.findExtentHolders(db), db.config.stoneName),
+        wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+        now: () => Date.now(),
+      },
+      { timeoutMs: SESSION_EXIT_TIMEOUT_MS, pollMs: SESSION_EXIT_POLL_MS },
+    );
+  }
+
+  /**
+   * Ask before stopping a database something else is still attached to.
+   *
+   * Returns true to go ahead. The processes are named but never signalled, so
+   * the user can go and end their own topaz — or decide the stop is not worth
+   * it — with the PIDs in front of them.
+   */
+  async function confirmStopWithHolders(
+    db: GemStoneDatabase,
+    holders: ExtentHolder[],
+  ): Promise<boolean> {
+    const list = holders.map((h) => `  • ${describeHolder(h)}`).join('\n');
+    const choice = await vscode.window.showWarningMessage(
+      `"${db.config.stoneName}" still has processes attached to its extents, which Jasper did ` +
+        `not open and will not end:\n\n${list}\n\n` +
+        `These are usually a topaz session, or a gem left over from an earlier stone. ` +
+        `Stopping now can leave them holding the extent, and a process still holding it when ` +
+        `the stone is gone will block the next start.`,
+      { modal: true },
+      'Stop Anyway',
+      SHOW_IN_TERMINAL,
+    );
+    if (choice === SHOW_IN_TERMINAL) {
+      openTerminalOnHolders(db, holders);
+      // Not a stop. They have gone to look at the processes; the stop is one
+      // click away again once they have dealt with them.
+      return false;
+    }
+    return choice === 'Stop Anyway';
+  }
+
+  const SHOW_IN_TERMINAL = 'Show In Terminal';
+
+  /**
+   * A terminal on the database, with the command that inspects the holding
+   * processes typed and waiting.
+   *
+   * Typed, not run — and `ps`, not `kill`. Jasper's position is that it does
+   * not know what is inside these processes; pre-running a command, or offering
+   * a kill on a plate, would be that same guess wearing a different hat. The
+   * user gets the environment, the directory and the PIDs, and decides.
+   */
+  function openTerminalOnHolders(db: GemStoneDatabase, holders: ExtentHolder[]): void {
+    const pids = holders.map((h) => h.pid).join(',');
+    processManager.openTerminal(db, `ps -o pid,user,lstart,args -p ${pids}`);
+  }
+
+  /**
+   * Log out the sessions on a database whose stone is going away, and repaint
+   * the views that list them.
+   *
+   * Two things go wrong without this. The visible one: a stone's death is
+   * silent on this side, so the handles stay in the session manager and both
+   * the Logins & Sessions view and the panel keep listing sessions no call can
+   * reach. The damaging one: a gem outliving its stone keeps `extent0.dbf` open
+   * exclusively, and the next `startstone` fails with "File is open by another
+   * process" — the database cannot be started again until those gems are found
+   * and killed by hand. A stone stopped gracefully tells its gems to go; a
+   * force-stopped one cannot, which is why this runs before the signal.
+   *
+   * `SessionManager.logout` already tolerates a handle whose gem is gone, so
+   * this is safe whichever order the two actually die in.
+   */
+  function reapSessionsOf(db: GemStoneDatabase): number {
+    const doomed = sessionsOnDatabase(
+      db,
+      sessionManager.getSessions(),
+      sysadminStorage.getDatabases(),
+    );
+    for (const session of doomed) sessionManager.logout(session.id);
+    if (doomed.length > 0) treeProvider.refresh();
+    return doomed.length;
+  }
+
+  /** What a whole-database start or stop reads and calls. The per-server
+   *  commands do the work, so this is only the running-state lookup and a way
+   *  to invoke one of them. */
+  /**
+   * Refuse a start or stop when the server running under this database's name
+   * is a different GemStone version than the database records — and say which
+   * two versions those are.
+   *
+   * Placed on the commands rather than in each view, so the panel's power
+   * button, the Databases sidebar's rows and the Command Palette all decline
+   * for the same reason with the same words. Starting would collide with a live
+   * stone; stopping would aim one version's binaries at another version's live
+   * extent.
+   */
+  function refusedForVersionMismatch(db: GemStoneDatabase, type: 'stone' | 'netldi'): boolean {
+    const refusal = processManager.versionMismatchRefusal(db, type);
+    if (!refusal) return false;
+    vscode.window.showErrorMessage(refusal);
+    return true;
+  }
+
+  function databaseLifecycleDeps() {
+    return {
+      isStoneRunning: (name: string, version: string) =>
+        processManager.isStoneRunning(name, version),
+      isNetldiRunning: (name: string, version: string) =>
+        processManager.isNetldiRunning(name, version),
+      run: async (command: string, target: ServerTarget) => {
+        await vscode.commands.executeCommand(command, target);
+      },
+    };
+  }
+
+  /** A database's whole-database state, read the same way the sidebar row and
+   *  the panel's power button read it. */
+  function actionFor(db: GemStoneDatabase): DatabaseAction {
+    const external = processManager.getExternalServers(db);
+    return databaseAction(
+      databaseStatus(inspectDatabaseProcesses(db, processManager.getProcesses(), external)),
+    );
+  }
+
+  /**
+   * The database a whole-database command acts on when it was invoked without
+   * a row — from the Command Palette, where there is nothing selected.
+   *
+   * Only the databases the action can actually be carried out on are offered.
+   * The sidebar withholds Start/Stop through its `when` clauses and the panel
+   * withholds its power button, so a palette listing everything would be the
+   * one surface happy to run Stop on a database whose stone is already down —
+   * or on one whose servers were started outside Jasper, which Jasper cannot
+   * stop at all. It would also pay for that: the stop path probes the extents
+   * and can put the holders question up before discovering there is nothing to
+   * do.
+   *
+   * When nothing qualifies, say which of the two reasons it is rather than
+   * showing an empty picker.
+   */
+  async function pickDatabase(
+    placeHolder: string,
+    wanted: DatabaseAction,
+  ): Promise<GemStoneDatabase | undefined> {
+    const databases = sysadminStorage.getDatabases();
+    if (databases.length === 0) {
+      vscode.window.showInformationMessage('No databases yet — create one from GemStone Admin.');
+      return undefined;
+    }
+    const actions = new Map(databases.map((db) => [db, actionFor(db)]));
+    const eligible = databases.filter((db) => actions.get(db) === wanted);
+    if (eligible.length === 0) {
+      const external = databases.filter((db) => actions.get(db) === 'External').length;
+      const verb = wanted === 'Stopped' ? 'start' : 'stop';
+      vscode.window.showInformationMessage(
+        external === databases.length
+          ? `No database to ${verb}: every one has servers running outside Jasper's ` +
+              `environment, which Jasper cannot ${verb}. The Databases view offers to restart ` +
+              `those under Jasper.`
+          : `No database to ${verb}: every database is already ` +
+              `${wanted === 'Stopped' ? 'running' : 'stopped'}` +
+              (external > 0
+                ? `, apart from ${external} running outside Jasper's environment.`
+                : '.'),
+      );
+      return undefined;
+    }
+    const picked = await vscode.window.showQuickPick(
+      eligible.map((db) => ({
+        label: db.config.stoneName,
+        description: `${db.dirName} (${db.config.version})`,
+        db,
+      })),
+      { placeHolder },
+    );
+    return picked?.db;
+  }
+
   // Composed here so the panel module never imports a tree provider: it only
   // ever sees "something changed" events, whoever owns them.
   function databasesPanelDeps() {
@@ -3759,53 +4028,6 @@ export function activate(context: vscode.ExtensionContext) {
       );
       if (confirmed !== 'Delete') return;
       await versionManager.deleteExtracted(item.version);
-      refreshVersions();
-    }),
-
-    vscode.commands.registerCommand('gemstone.registerLocalVersion', async () => {
-      const uris = await vscode.window.showOpenDialog({
-        canSelectFiles: false,
-        canSelectFolders: true,
-        canSelectMany: false,
-        openLabel: 'Select GemStone Product Directory',
-      });
-      if (!uris || uris.length === 0) return;
-      const productPath = uris[0].fsPath;
-      const info = SysadminStorage.readVersionTxt(productPath);
-      if (!info) {
-        vscode.window.showErrorMessage('No valid version.txt found in the selected directory.');
-        return;
-      }
-      const suffix = sysadminStorage.getPlatformSuffix();
-      const linkName = `GemStone64Bit${info.version}${suffix}`;
-      const linkPath = path.join(sysadminStorage.getRootPath(), linkName);
-      if (wslExistsSync(linkPath)) {
-        // Something already occupies the target location. If it's already a
-        // valid GemStone product tree — a real directory the user dropped in,
-        // or a prior symlink — there's nothing to do: it's recognized on its
-        // own, so report success rather than failing to create a symlink over
-        // it.
-        if (SysadminStorage.readVersionTxt(linkPath)) {
-          sysadminStorage.invalidateExtractedCache();
-          appendSysadmin(`Local version already present: ${info.version} → ${linkPath}`);
-          vscode.window.showInformationMessage(
-            `GemStone ${info.version} is already present in ${sysadminStorage.getRootPath()}.`,
-          );
-          refreshVersions();
-          return;
-        }
-        vscode.window.showErrorMessage(
-          `Version ${info.version} already exists in ${sysadminStorage.getRootPath()}.`,
-        );
-        return;
-      }
-      sysadminStorage.ensureRootPath();
-      wslSymlinkSync(productPath, linkPath);
-      sysadminStorage.invalidateExtractedCache();
-      appendSysadmin(`Registered local version: ${info.version} → ${productPath}`);
-      vscode.window.showInformationMessage(
-        `Registered local GemStone ${info.version} (${info.description || 'local build'}).`,
-      );
       refreshVersions();
     }),
 
@@ -3914,91 +4136,181 @@ export function activate(context: vscode.ExtensionContext) {
       }
     }),
 
+    // The counterpart of Delete for a registered database: there is nothing of
+    // Jasper's to delete but the record, and nothing of the installation's that
+    // Jasper should. Delete itself refuses a registered database and points here.
+    vscode.commands.registerCommand('gemstone.unregisterDatabase', async (node: DatabaseNode) => {
+      if (node?.kind !== 'database') return;
+      if (await databaseManager.unregisterDatabase(node.db)) {
+        refreshAdminViews();
+      }
+    }),
+
     vscode.commands.registerCommand('gemstone.refreshDatabases', () => {
+      refreshAdminViews();
+    }),
+
+    // ── Whole-database start/stop ─────────────────────────────────────────
+    // One action for a database's Stone and NetLDI together. Registered rather
+    // than kept inside the Databases & Versions panel so its power button, the
+    // Databases sidebar's database rows and the Command Palette all do the same
+    // thing. The per-server commands below still do the work, so this inherits
+    // their preconditions, password prompts and messages.
+
+    vscode.commands.registerCommand('gemstone.startDatabase', async (node?: DatabaseNode) => {
+      const db =
+        node?.kind === 'database'
+          ? node.db
+          : await pickDatabase('Start which database?', 'Stopped');
+      if (!db) return;
+      await bringUpDatabase(db, databaseLifecycleDeps());
+      refreshAdminViews();
+    }),
+
+    vscode.commands.registerCommand('gemstone.stopDatabase', async (node?: DatabaseNode) => {
+      const db =
+        node?.kind === 'database' ? node.db : await pickDatabase('Stop which database?', 'Running');
+      if (!db) return;
+      // Before either server goes: get Jasper's own sessions out and confirm
+      // their gems have exited, so nothing is left holding the extents when the
+      // stone stops.
+      const holders = await clearSessionsBeforeStop(db);
+      if (holders.length > 0 && !(await confirmStopWithHolders(db, holders))) return;
+      await takeDownDatabase(db, databaseLifecycleDeps(), { sessionsCleared: true });
       refreshAdminViews();
     }),
 
     vscode.commands.registerCommand('gemstone.startStone', async (node: DatabaseNode) => {
       if (node?.kind !== 'stone') return;
+      if (refusedForVersionMismatch(node.db, 'stone')) return;
       if (!(await ensureStonePreconditions())) return;
       try {
         await processManager.startStone(node.db);
         vscode.window.showInformationMessage(`Stone "${node.db.config.stoneName}" started.`);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        vscode.window.showErrorMessage(msg);
-      }
-      refreshAdminViews();
-    }),
-
-    vscode.commands.registerCommand('gemstone.stopStone', async (node: DatabaseNode) => {
-      if (node?.kind !== 'stone') return;
-      const db = node.db;
-      const stoneName = db.config.stoneName;
-
-      // Only DataCurator is guaranteed to have shutdown permission, and stopstone
-      // needs its password. Prefer the stored DataCurator login for this stone.
-      const target = {
-        gem_host: 'localhost',
-        stone: stoneName,
-        gs_user: 'DataCurator',
-        netldi: db.config.ldiName,
-      };
-      const adminLogin = storage.getLogins().find((l) => sameLoginTarget(l, target));
-
-      const outcome = await runStopStone({
-        stoneName,
-        hasAdminLogin: adminLogin !== undefined,
-        storedPassword: async () => {
-          if (!adminLogin) return undefined;
-          if (adminLogin.gs_password) return adminLogin.gs_password;
-          if (adminLogin.password_in_keychain) {
-            return (await getLoginPassword(context.secrets, adminLogin)) || undefined;
-          }
-          return undefined;
-        },
-        stopStone: async (password) => {
-          try {
-            await processManager.stopStone(db, password);
-            return { ok: true, message: '' };
-          } catch (e) {
-            return { ok: false, message: e instanceof Error ? e.message : String(e) };
-          }
-        },
-        promptPassword: async () =>
-          vscode.window.showInputBox({
-            prompt: `DataCurator password to stop "${stoneName}"`,
-            password: true,
-            ignoreFocusOut: true,
-          }),
-        chooseEscalation: async (reason) => {
-          const pick = await vscode.window.showWarningMessage(
-            `${reason}\n\nEnter the DataCurator password, or force-stop the stone (it will recover from the transaction log on next start).`,
+        // ProcessManager has already named the processes holding the extent, if
+        // that is what went wrong. It is a list, so it needs the modal — a
+        // notification would clip it to its first line — and a terminal on
+        // those PIDs is the next thing the user wants either way.
+        if (isExtentLocked(msg)) {
+          const holders = await processManager.findExtentHolders(node.db);
+          const pick = await vscode.window.showErrorMessage(
+            msg,
             { modal: true },
-            'Enter Password',
-            'Force Stop',
+            ...(holders.length > 0 ? [SHOW_IN_TERMINAL] : []),
           );
-          return pick === 'Enter Password' ? 'password' : pick === 'Force Stop' ? 'kill' : 'cancel';
-        },
-        forceKill: async () => {
-          const result = await processManager.forceKillStone(db);
-          if (!result.killed) vscode.window.showErrorMessage(result.reason);
-          return result.killed;
-        },
-      });
-
-      if (outcome === 'stopped') {
-        vscode.window.showInformationMessage(`Stone "${stoneName}" stopped.`);
-      } else if (outcome === 'killed') {
-        vscode.window.showWarningMessage(
-          `Stone "${stoneName}" force-stopped; it will recover from its transaction log on next start.`,
-        );
+          if (pick === SHOW_IN_TERMINAL) openTerminalOnHolders(node.db, holders);
+        } else {
+          vscode.window.showErrorMessage(msg);
+        }
       }
       refreshAdminViews();
     }),
+
+    vscode.commands.registerCommand(
+      'gemstone.stopStone',
+      // `ServerTarget` is what the whole-database stop passes, and it is where
+      // `sessionsCleared` is declared and explained. Widening to it here keeps
+      // the flag's one declaration doing the work rather than restating it.
+      async (node: DatabaseNode | ServerTarget) => {
+        if (node?.kind !== 'stone') return;
+        if (refusedForVersionMismatch(node.db, 'stone')) return;
+        const db = node.db;
+        const stoneName = db.config.stoneName;
+
+        // Sessions go before the stone does. A stone stopped out from under a live
+        // gem leaves that gem holding the extent, and the database then refuses to
+        // start again — so this is the one step that must not be skipped. The
+        // whole-database stop has already done it when it says so; a tree row
+        // carries no such promise, so the `in` guard reads as "not cleared".
+        if (!('sessionsCleared' in node && node.sessionsCleared)) {
+          const attached = await clearSessionsBeforeStop(db);
+          if (attached.length > 0 && !(await confirmStopWithHolders(db, attached))) return;
+        }
+
+        // Only DataCurator is guaranteed to have shutdown permission, and stopstone
+        // needs its password. Prefer the stored DataCurator login for this stone.
+        const target = {
+          gem_host: 'localhost',
+          stone: stoneName,
+          gs_user: 'DataCurator',
+          // The same NetLDI spelling `buildDataCuratorLogin` uses, so the login
+          // Jasper created for this database is the one found here — a
+          // registered database's login addresses its NetLDI by port.
+          netldi: loginNetldiTarget(db.config),
+        };
+        const adminLogin = storage.getLogins().find((l) => sameLoginTarget(l, target));
+
+        const outcome = await runStopStone({
+          stoneName,
+          hasAdminLogin: adminLogin !== undefined,
+          storedPassword: async () => {
+            if (!adminLogin) return undefined;
+            if (adminLogin.gs_password) return adminLogin.gs_password;
+            if (adminLogin.password_in_keychain) {
+              return (await getLoginPassword(context.secrets, adminLogin)) || undefined;
+            }
+            return undefined;
+          },
+          stopStone: async (password) => {
+            try {
+              await processManager.stopStone(db, password);
+              return { ok: true, message: '' };
+            } catch (e) {
+              return { ok: false, message: e instanceof Error ? e.message : String(e) };
+            }
+          },
+          promptPassword: async () =>
+            vscode.window.showInputBox({
+              prompt: `DataCurator password to stop "${stoneName}"`,
+              password: true,
+              ignoreFocusOut: true,
+            }),
+          chooseEscalation: async (reason) => {
+            const pick = await vscode.window.showWarningMessage(
+              `${reason}\n\nEnter the DataCurator password, or force-stop the stone (it will recover from the transaction log on next start).`,
+              { modal: true },
+              'Enter Password',
+              'Force Stop',
+            );
+            return pick === 'Enter Password'
+              ? 'password'
+              : pick === 'Force Stop'
+                ? 'kill'
+                : 'cancel';
+          },
+          forceKill: async () => {
+            // Before the signal, not after: a SIGKILLed stone cannot tell its gems
+            // to exit, and one that outlives it holds the extent open against the
+            // next start. The user has chosen Force Stop by this point, so there
+            // is no cancel left to undo.
+            reapSessionsOf(db);
+            const result = await processManager.forceKillStone(db);
+            if (!result.killed) vscode.window.showErrorMessage(result.reason);
+            return result.killed;
+          },
+        });
+
+        // A graceful stopstone ends the gems on the server side, but says nothing
+        // to this side — so the sessions have to be cleared here too, or the views
+        // go on listing sessions whose stone is gone.
+        if (outcome === 'stopped' || outcome === 'killed') reapSessionsOf(db);
+
+        if (outcome === 'stopped') {
+          vscode.window.showInformationMessage(`Stone "${stoneName}" stopped.`);
+        } else if (outcome === 'killed') {
+          vscode.window.showWarningMessage(
+            `Stone "${stoneName}" force-stopped; it will recover from its transaction log on next start.`,
+          );
+        }
+        refreshAdminViews();
+      },
+    ),
 
     vscode.commands.registerCommand('gemstone.startNetldi', async (node: DatabaseNode) => {
       if (node?.kind !== 'netldi') return;
+      if (refusedForVersionMismatch(node.db, 'netldi')) return;
       try {
         await processManager.startNetldi(node.db);
         vscode.window.showInformationMessage(`NetLDI "${node.db.config.ldiName}" started.`);
@@ -4011,6 +4323,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     vscode.commands.registerCommand('gemstone.stopNetldi', async (node: DatabaseNode) => {
       if (node?.kind !== 'netldi') return;
+      if (refusedForVersionMismatch(node.db, 'netldi')) return;
       try {
         await processManager.stopNetldi(node.db);
         vscode.window.showInformationMessage(`NetLDI "${node.db.config.ldiName}" stopped.`);
@@ -4130,12 +4443,27 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('gemstone.createLoginFromDb', async (node: DatabaseNode) => {
       if (!node || node.kind !== 'database') return;
       const db = node.db;
-      const login = buildDataCuratorLogin(db.config);
+      // A registered database's NetLDI port is read live rather than taken from
+      // the record: it changes every time that NetLDI is restarted without one
+      // being asked for, and a login carrying yesterday's port fails with a
+      // bare connection abort. Observing it also corrects the record, so the
+      // next start can pin the same port. A no-op for a created database, whose
+      // logins address their NetLDI by name.
+      processManager.refreshProcesses();
+      const livePort = processManager.netldiPortFor(db);
+      const config =
+        livePort !== undefined ? databaseManager.recordNetldiPort(db, livePort) : db.config;
+      const login = buildDataCuratorLogin(config);
       // Auto-detect GCI library path
       // On Windows, the sysadmin install is Linux (in WSL) and only has .so files.
       // The Windows .dll must be provided separately via the login editor.
       if (!isWindows()) {
-        const gsPath = sysadminStorage.getGemstonePath(db.config.version);
+        // A registered database's own product tree, before any tree Jasper
+        // happens to have installed under the same version number: the client
+        // library has to come from the installation the stone actually runs.
+        const gsPath =
+          registeredPaths(db.config)?.productPath ??
+          sysadminStorage.getGemstonePath(db.config.version);
         if (gsPath) {
           const ext = process.platform === 'darwin' ? 'dylib' : 'so';
           const libPath = path.join(gsPath, 'lib', `libgcits-${db.config.version}-64.${ext}`);
@@ -4263,6 +4591,21 @@ export function activate(context: vscode.ExtensionContext) {
           vscode.window.showErrorMessage(
             `Online extent backup needs a Jasper-managed local stone (to reach its extent files). ` +
               `Stone "${session.login.stone}" isn't managed here — use Full Logical Backup instead.`,
+            { modal: true },
+          );
+          return;
+        }
+        // A registered database's extents are the installation's, under a data
+        // directory Jasper's record has no copy of — `db.path/data` does not
+        // exist for one. Refused with the same reason the offline copy gives,
+        // rather than run against a directory that is not there and report an
+        // empty backup as a successful one. Making it work needs the extent list
+        // read off the running stone or the recorded conf file:
+        // https://github.com/GemTalk/Jasper/issues/562
+        if (isRegisteredDatabase(db)) {
+          vscode.window.showErrorMessage(
+            `${registeredRefusal('back up the extents of', db.config.stoneName)} ` +
+              `Use Full Logical Backup instead.`,
             { modal: true },
           );
           return;

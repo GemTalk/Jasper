@@ -600,7 +600,13 @@ export function renderOmniHtml(opts: { showPin: boolean }): string {
         <input id="query" type="text" autocomplete="off" spellcheck="false" placeholder="Search…" aria-label="GemStone Search">
         <button id="clear" title="Clear search" aria-label="Clear search" style="display:none">×</button>
       </div>
-      <button id="refresh" title="Reload classes, methods and globals from the stone -- picks up code created or removed by executing it" aria-label="Refresh from the stone">&#10227;</button>
+      <!-- The tooltip names the case this button exists for. A class, global or
+           method created by EXECUTING code announces nothing the panel can listen
+           for (see DESIGN.md §3), so the only way anyone learns that a workspace
+           doit leaves the search stale is by being told here — otherwise the
+           search looks simply wrong. Two lines, split on &#10;, because the first
+           is what the button does and the second is when to reach for it. -->
+      <button id="refresh" title="Rebuild the search lists from the stone&#10;&#10;A class, global or method created by executing code in a workspace announces nothing, so it will not turn up in a search until this is pressed. Changes committed by another session are picked up on your next commit or abort." aria-label="Rebuild the search from the stone">&#10227;</button>
       <button id="case" title="Case sensitivity" aria-pressed="false">Aa</button>
       <button id="previewToggle" title="Show the source preview" aria-label="Show the source preview" aria-pressed="true">&#9707;</button>
       <span id="scopeFilterWrap">

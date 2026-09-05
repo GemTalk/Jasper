@@ -382,13 +382,36 @@ describe('SunitTestController', () => {
       ctrl.dispose();
     });
 
-    it('does not run tests for unknown class names', async () => {
+    it('does not run tests for unknown class names, and says which it looked for', async () => {
       const sm = makeSessionManager(true);
       const ctrl = new SunitTestController(sm);
 
-      await ctrl.runClassesByName('UserGlobals', ['NoSuchTest']);
+      await ctrl.runClassesByName('UserGlobals', ['NoSuchTest', 'AlsoMissing']);
 
       expect(sunit.runTestClassNb).not.toHaveBeenCalled();
+      expect(window.showWarningMessage).toHaveBeenCalledWith(
+        ctrl.noTestsFoundErrorMessage('NoSuchTest, AlsoMissing'),
+      );
+      ctrl.dispose();
+    });
+  });
+
+  describe('the "no tests found" message', () => {
+    it('names what it looked for, so a test that will not run says which one', () => {
+      const sm = makeSessionManager(true);
+      const ctrl = new SunitTestController(sm);
+
+      expect(ctrl.noTestsFoundErrorMessage('MyTestCase>>testAdd')).toBe(
+        'No tests found for MyTestCase>>testAdd',
+      );
+      ctrl.dispose();
+    });
+
+    it('stays bare when nothing named was being looked for', () => {
+      const sm = makeSessionManager(true);
+      const ctrl = new SunitTestController(sm);
+
+      expect(ctrl.noTestsFoundErrorMessage()).toBe('No tests found');
       ctrl.dispose();
     });
   });
@@ -418,6 +441,30 @@ describe('SunitTestController', () => {
       );
     });
 
+    it('runs a test method written after the class was already listed', async () => {
+      // First run lists the class's methods as they stood then.
+      await sunitTestController.runTestsByName('UserGlobals', 'MyTestCase', ['testAdd']);
+      vi.mocked(sunit.runTestMethodNb).mockClear();
+
+      // The user writes another test and presses Run Test on it without refreshing.
+      vi.mocked(sunit.discoverTestMethods).mockReturnValueOnce([
+        { selector: 'testAdd', category: 'unit tests' },
+        { selector: 'testRemove', category: 'unit tests' },
+        { selector: 'testBrandNew', category: 'unit tests' },
+      ]);
+
+      await sunitTestController.runTestsByName('UserGlobals', 'MyTestCase', ['testBrandNew']);
+
+      expect(window.showWarningMessage).not.toHaveBeenCalled();
+      expect(sunit.runTestMethodNb).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 1 }),
+        'MyTestCase',
+        'testBrandNew',
+        'UserGlobals',
+        expect.any(Function),
+      );
+    });
+
     it('does not run tests when a class is not a test class', async () => {
       await sunitTestController.runTestsByName('UserGlobals', 'NoSuchClass', ['']);
 
@@ -430,8 +477,10 @@ describe('SunitTestController', () => {
     it('does not run tests when no tests methods were found', async () => {
       await sunitTestController.runTestsByName('UserGlobals', 'MyTestCase', ['noSuchSelector']);
 
+      // The message names what was looked for — the point of it is telling a user whose new test
+      // won't run WHICH selector the controller went hunting for.
       expect(window.showWarningMessage).toHaveBeenCalledWith(
-        sunitTestController.noTestsFoundErrorMessage(),
+        sunitTestController.noTestsFoundErrorMessage('MyTestCase>>noSuchSelector'),
       );
       expect(sunit.runTestMethodNb).not.toHaveBeenCalled();
     });
@@ -483,7 +532,9 @@ describe('SunitTestController', () => {
     it('does not run tests when no tests methods were found', async () => {
       await ctrl.runMethodCategoryByName('UserGlobals', 'MyTestCase', 'non-existent category');
 
-      expect(window.showWarningMessage).toHaveBeenCalledWith(ctrl.noTestsFoundErrorMessage());
+      expect(window.showWarningMessage).toHaveBeenCalledWith(
+        ctrl.noTestsFoundErrorMessage("MyTestCase category 'non-existent category'"),
+      );
       expect(sunit.runTestMethodNb).not.toHaveBeenCalled();
       ctrl.dispose();
     });

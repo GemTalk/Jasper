@@ -14,6 +14,7 @@ import {
 } from '../smalltalkNotebookController';
 import { GEMSTONE_NOTEBOOK_TYPE } from '../gemstoneNotebookKernel';
 import { SessionManager } from '../sessionManager';
+import { SMALLTALK_LANGUAGE } from '../languageIds';
 
 // Cells run on the non-blocking execute path (live transcript). The mock gci
 // covers that path: NbExecute starts the doit, NbPoll reports ready, NbResult
@@ -53,7 +54,7 @@ function makeSessionManager(session: ReturnType<typeof makeSession> | undefined)
 
 function makeCell(source: string, notebookUri = 'file:///tmp/demo.ipynb') {
   return {
-    document: { getText: () => source, languageId: 'gemstone-smalltalk' },
+    document: { getText: () => source, languageId: SMALLTALK_LANGUAGE },
     notebook: { uri: { toString: () => notebookUri } },
   };
 }
@@ -84,7 +85,7 @@ describe('SmalltalkNotebookController', () => {
       SMALLTALK_CONTROLLER_LABEL,
     );
     const mock = lastController();
-    expect(mock.supportedLanguages).toEqual(['gemstone-smalltalk']);
+    expect(mock.supportedLanguages).toEqual([SMALLTALK_LANGUAGE]);
     expect(mock.supportsExecutionOrder).toBe(true);
     ctrl.dispose();
   });
