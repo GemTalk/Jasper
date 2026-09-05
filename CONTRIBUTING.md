@@ -131,19 +131,4 @@ CI runs on **GitHub Actions**. The [Health Check workflow](.github/workflows/hea
 
 ## Publishing a release
 
-1. `npm version <X.Y.Z> --no-git-tag-version` — bumps `package.json`'s `version` and `package-lock.json`'s two root fields (`version` and `packages."".version`) atomically. Don't hand-edit these or find-and-replace the version string across the lockfile: the version can collide with an unrelated dependency's own version elsewhere in `package-lock.json` (e.g. `1.8.11` matches `typed-rest-client@1.8.11`), corrupting that entry. `--no-git-tag-version` skips npm's own commit/tag, since steps 3-4 below handle that. Then promote the `[Unreleased]` section in `CHANGELOG.md` to a new dated `[X.Y.Z]` heading. Sweep `main` since the last release for merged PRs that didn't add their own changelog entries.
-2. `npm run compile && npm test`
-3. Commit the version + changelog changes (e.g. `Release X.Y.Z: <one-line summary>`).
-4. `git tag -a vX.Y.Z -m "Release X.Y.Z"` — annotated tag, on the release commit.
-5. `npx @vscode/vsce package` — produces `gemstone-ide-X.Y.Z.vsix` in the repo root. The previous version's `.vsix` is gitignored but stays on disk; delete it to keep the root tidy.
-6. `npm run publish` — runs `vsce publish` then `ovsx publish` for the VS Code Marketplace and Open VSX. If `vsce publish` times out on the Azure DevOps Gallery API (it happens), re-run `npx @vscode/vsce publish` directly — don't re-run `npm run publish`, since the ovsx step will then double-publish and fail with "already exists."
-7. `git push origin main && git push origin vX.Y.Z` — push the commit and the tag (the tag does not piggyback on the branch push).
-
-You must be logged in with Personal Access Tokens for both publishers. To set up credentials:
-
-```sh
-npx @vscode/vsce login gemtalksystems   # VS Code Marketplace
-npx ovsx create-namespace gemtalksystems -p <token>   # Open VSX (one-time)
-```
-
-`ovsx publish` reads `OVSX_PAT` from the environment (or a stored token).
+Publishing to the VS Code Marketplace and Open VSX needs a personal access token for the `gemtalksystems` publisher on each registry, so it falls to a maintainer rather than to contributors. The procedure — pre-flight token checks, the version-bump and changelog sweep, packaging, and what the registries do after a publish reports success — is in [docs/how-to/publishing-a-release.md](docs/how-to/publishing-a-release.md).
