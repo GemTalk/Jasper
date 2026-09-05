@@ -1,5 +1,6 @@
 import { QueryExecutor } from './types';
 import { escapeString, dictLookupExpr } from './util';
+import { clearClassOrganizerStatement } from './classOrganizer';
 
 // Destructive. Not committed automatically. Accepts a dict by 1-based index
 // or by name — required because deletion must target a specific dictionary
@@ -15,6 +16,7 @@ export function deleteClass(
 d := ${dictExpr}.
 d ifNil: [^ 'Dictionary not found'].
 removed := d removeKey: #'${esc}' ifAbsent: [nil].
+${clearClassOrganizerStatement()}
 removed ifNil: ['Class not found: ${esc}'] ifNotNil: ['Deleted class: ' , removed name]`;
   return execute(code);
 }

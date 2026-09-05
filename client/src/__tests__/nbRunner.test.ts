@@ -3,10 +3,24 @@ import { describe, it, expect, vi } from 'vitest';
 vi.mock('vscode', () => import('../__mocks__/vscode.js'));
 
 import * as vscode from 'vscode';
-import { runNbCall, pollNbResultReady, NbCancelledError } from '../nbRunner';
+import { runNbCall, pollNbResultReady, NbCancelledError, MIN_HARD_BREAK_GAP_MS } from '../nbRunner';
 import { ActiveSession } from '../sessionManager';
 
 const noErr = { number: 0 } as const;
+
+/**
+ * Enough fake time for a deferred hard break to go out. The runner schedules it
+ * exactly MIN_HARD_BREAK_GAP_MS after the soft one (fake timers freeze the clock,
+ * so no real time has "already been waited"); the margin keeps these tests off
+ * that boundary.
+ */
+const PAST_HARD_BREAK_GAP_MS = MIN_HARD_BREAK_GAP_MS + 100;
+
+/**
+ * Fake time that stops just short of the deferred hard break, so a test can
+ * assert it is still being withheld before letting it through.
+ */
+const BEFORE_HARD_BREAK_GAP_MS = MIN_HARD_BREAK_GAP_MS - 50;
 
 /**
  * Fake session whose gci returns a scripted sequence of poll results. Each
@@ -150,7 +164,15 @@ describe('runNbCall — cancellation', () => {
       );
 
       cancelHandler!(); // second cancel → hard break, once the safety gap has passed
-      await vi.advanceTimersByTimeAsync(400);
+
+      // The withholding itself, not just its eventual effect: a hard break sent
+      // on the heels of the soft one faults the client process, and an assertion
+      // that only looks *past* the gap passes just as happily if the deferral is
+      // dropped and the break goes out at once.
+      await vi.advanceTimersByTimeAsync(BEFORE_HARD_BREAK_GAP_MS);
+      expect(session.gci.GciTsBreak).not.toHaveBeenCalledWith(session.handle, true);
+
+      await vi.advanceTimersByTimeAsync(PAST_HARD_BREAK_GAP_MS);
       expect(session.gci.GciTsBreak).toHaveBeenCalledWith(session.handle, true);
       await expect(p).rejects.toBeInstanceOf(NbCancelledError);
 
@@ -190,7 +212,13 @@ describe('runNbCall — cancellation', () => {
       expect(session.gci.GciTsBreak).toHaveBeenCalledWith(session.handle, false);
 
       cancel!(); // second → hard break, sent once the safety gap has passed
-      await vi.advanceTimersByTimeAsync(400);
+
+      // Withheld until the gap has elapsed — checked on this path too, because
+      // the external canceller is wired separately from the notification's.
+      await vi.advanceTimersByTimeAsync(BEFORE_HARD_BREAK_GAP_MS);
+      expect(session.gci.GciTsBreak).not.toHaveBeenCalledWith(session.handle, true);
+
+      await vi.advanceTimersByTimeAsync(PAST_HARD_BREAK_GAP_MS);
       expect(session.gci.GciTsBreak).toHaveBeenCalledWith(session.handle, true);
       await expect(p).rejects.toBeInstanceOf(NbCancelledError);
 
@@ -282,7 +310,7 @@ describe('after a hard break', () => {
 
       cancel!(); // soft
       cancel!(); // hard — sent once the safety gap has passed
-      await vi.advanceTimersByTimeAsync(400);
+      await vi.advanceTimersByTimeAsync(PAST_HARD_BREAK_GAP_MS);
       await expect(p).rejects.toBeInstanceOf(NbCancelledError);
       expect(session.gci.GciTsNbResult).not.toHaveBeenCalled();
 
@@ -323,7 +351,7 @@ describe('after a hard break', () => {
       p.catch(() => {});
       cancel!();
       cancel!();
-      await vi.advanceTimersByTimeAsync(400);
+      await vi.advanceTimersByTimeAsync(PAST_HARD_BREAK_GAP_MS);
       await expect(p).rejects.toBeInstanceOf(NbCancelledError);
 
       await vi.advanceTimersByTimeAsync(60_000);

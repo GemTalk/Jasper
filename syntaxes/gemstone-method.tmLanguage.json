@@ -1,0 +1,7 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "GemStone Method",
+  "scopeName": "source.gemstone-method",
+  "comment": "A method editor is GemStone Smalltalk; it has its own language id only so contributes.breakpoints can name it alone (see client/src/languageIds.ts). Including source.gemstone-smalltalk gives it that grammar's rules and token names verbatim, so themes and every scope-based rule keep matching.",
+  "patterns": [{ "include": "source.gemstone-smalltalk" }]
+}
