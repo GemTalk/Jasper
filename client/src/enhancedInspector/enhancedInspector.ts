@@ -24,10 +24,8 @@ import { readWebviewScript } from '../webviewAssets';
 
 // Column-strip model, injected into the webview as a <script> tag (read at
 // runtime, not bundled — same pattern as listFilter.js / methodListView.js).
-const enhancedInspectorColumnsJs = readWebviewScript(
-  'enhancedInspectorColumns.js',
-  'enhancedInspector',
-);
+// Shared with the basic tabbed Inspector, which drives its strip the same way.
+const millerColumnsJs = readWebviewScript('millerColumns.js', 'webview');
 
 const PAGE_SIZE = 100;
 // Preferred starting width of a column (its flex-basis). Columns grow past this
@@ -625,7 +623,7 @@ export class EnhancedInspector {
   <div id="rowCtxMenu" class="ctx-menu">
     <div class="ctx-item" id="rowCtxInspect">Inspect</div>
   </div>
-  <script nonce="${nonce}">${enhancedInspectorColumnsJs}</script>
+  <script nonce="${nonce}">${millerColumnsJs}</script>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
     const PAGE_SIZE = ${pageSize};
@@ -648,7 +646,7 @@ export class EnhancedInspector {
 
     // ── Column DOM + content ──────────────────
     // The miller-column MODEL (add/insert-right/close/focus/width) lives in the
-    // injected enhancedInspectorColumns.js (unit-tested in jsdom). Here we only
+    // injected millerColumns.js (unit-tested in jsdom). Here we only
     // build a column's DOM and populate its content; the model calls back into
     // these via buildColumnDom/populate below.
 
@@ -707,16 +705,33 @@ export class EnhancedInspector {
       else activateTab(col, '__meta__');
     }
 
-    // Column-strip model (injected enhancedInspectorColumns.js). Owns column
-    // order, additive insert-right drilling, independent close, focus→title,
-    // and width inherit/pin. Rendering is supplied via the two callbacks.
-    const Columns = EnhancedInspectorColumns.createColumnStrip({
+    // Column-strip model (injected millerColumns.js). Owns column order,
+    // additive insert-right drilling, independent close, focus→title, and width
+    // inherit/pin. Rendering, and the per-column caches it needs, are supplied
+    // via the three callbacks.
+    const Columns = MillerColumns.createColumnStrip({
       strip: strip,
       postMessage: function (m) { vscode.postMessage(m); },
       defaultWidth: DEFAULT_COLUMN_WIDTH,
       minWidth: MIN_COLUMN_WIDTH,
       buildColumnDom: createColumnDom,
       populate: populateColumn,
+      makeState: function () {
+        return {
+          specs: null,
+          metaData: null,
+          activeMethodSelector: null,
+          cachedViewData: {},
+          loadedRowCounts: {},
+          colWidths: {},
+          rangesMode: {},
+          rangeTotals: {},
+          rangeDataCache: {},
+          methodSourceCache: {},
+          metaSubTab: 'instanceMethods',
+          openMethodSel: null,
+        };
+      },
     });
 
     // ── Tab bar ───────────────────────────────
@@ -915,8 +930,7 @@ export class EnhancedInspector {
       if (col.openMethodSel && !(col.openMethodSel in col.methodSourceCache)) {
         vscode.postMessage({ command: 'fetchMethodSource', columnId: col.id, oop: col.oop, methodSelector: sel, isClassSide });
       }
-      const sc = col.el.contentPane.querySelector('.meta-sub-content');
-      if (sc) sc.innerHTML = renderMetaSubTab(col, metaDataOf(col));
+      redrawMetaSubTab(col);
     });
 
     // ── Column resize ─────────────────────────
@@ -1045,8 +1059,7 @@ export class EnhancedInspector {
         const cacheKey = (msg.isClassSide ? 'c:' : 'i:') + msg.methodSelector;
         col.methodSourceCache[cacheKey] = msg.source;
         if (cacheKey === col.openMethodSel && col.activeMethodSelector === '__meta__') {
-          const sc = col.el.contentPane.querySelector('.meta-sub-content');
-          if (sc) sc.innerHTML = renderMetaSubTab(col, metaDataOf(col));
+          redrawMetaSubTab(col);
         }
 
       } else if (msg.command === 'enhancedInspectorTreeChildren') {
@@ -1394,6 +1407,22 @@ export class EnhancedInspector {
         '</div>';
 
       el.innerHTML = html;
+    }
+
+    /**
+     * Redraw the open selector list in place, keeping the reader where they
+     * were. Replacing the scroller's contents collapses its scroll height and
+     * so drops it back to the top — which, on a click that opens a method
+     * halfway down a long list, throws away exactly the position the user was
+     * reading at. The source box opens below the item clicked, so nothing above
+     * it moves and the old offset is still the right one.
+     */
+    function redrawMetaSubTab(col) {
+      const sc = col.el.contentPane.querySelector('.meta-sub-content');
+      if (!sc) return;
+      const keepTop = sc.scrollTop;
+      sc.innerHTML = renderMetaSubTab(col, metaDataOf(col));
+      if (keepTop) sc.scrollTop = keepTop;
     }
 
     function renderMetaSubTab(col, d) {

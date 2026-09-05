@@ -8,6 +8,12 @@ import {
 } from './gciConstants';
 import { logInfo, logError } from './gciLog';
 import { runNbCall, NbRunOptions } from './nbRunner';
+import {
+  DUMP_PAYLOAD_TEMPS,
+  dumpPayloadPrelude,
+  splitDumpRows,
+  unescapeDumpField,
+} from './queries/dumpPayload';
 
 const MAX_RESULT = 256 * 1024;
 
@@ -628,21 +634,6 @@ export interface StackDumpRow {
   oop: string;
 }
 
-// Reverse the server-side escaping (see fetchStackDump's doit): \\ \t \n \r.
-// Single pass so an introduced backslash can't be re-interpreted.
-function unescapeDumpField(s: string): string {
-  let out = '';
-  for (let i = 0; i < s.length; i++) {
-    if (s[i] === '\\' && i + 1 < s.length) {
-      const n = s[++i];
-      out += n === 't' ? '\t' : n === 'n' ? '\n' : n === 'r' ? '\r' : n;
-    } else {
-      out += s[i];
-    }
-  }
-  return out;
-}
-
 /**
  * Parse the tab/newline payload produced by fetchStackDump's doit into rows.
  * One record per line; fields are `level <tab> group <tab> name <tab> value <tab>
@@ -651,11 +642,7 @@ function unescapeDumpField(s: string): string {
  */
 export function parseStackDump(data: string): StackDumpRow[] {
   const rows: StackDumpRow[] = [];
-  if (!data) return rows;
-  for (const line of data.split('\n')) {
-    if (line.length === 0) continue;
-    const f = line.split('\t');
-    if (f.length < 5) continue;
+  for (const f of splitDumpRows(data, 5)) {
     const serverLevel = parseInt(f[0], 10);
     if (Number.isNaN(serverLevel)) continue;
     rows.push({
@@ -691,20 +678,10 @@ export function fetchStackDump(session: ActiveSession, gsProcess: bigint): Stack
   // Frame-contents indexing (at:9 names, at:10 receiver, at:10+i values) matches
   // the kernel's own GsProcess>>stackReportToLevel:… so it's correct on a
   // suspended process (it is NOT indexable on the running process).
-  const code = `| proc out tab esc psOf row depth |
+  const code = `| proc out ${DUMP_PAYLOAD_TEMPS} row depth |
 proc := Object _objectForOop: ${gsProcess}.
 out := WriteStream on: String new.
-tab := String with: Character tab.
-esc := [:str | | s |
-  s := str.
-  s size > 2000 ifTrue: [s := (s copyFrom: 1 to: 2000), '...'].
-  s := s copyReplaceAll: (String with: $\\) with: '\\\\'.
-  s := s copyReplaceAll: tab with: '\\t'.
-  s := s copyReplaceAll: (String with: Character lf) with: '\\n'.
-  s := s copyReplaceAll: (String with: Character cr) with: '\\r'.
-  s].
-psOf := [:obj | esc value: ([obj printString] on: Error do: [:e | '<unprintable>'])].
-row := [:lvl :grp :nm :obj |
+${dumpPayloadPrelude()}row := [:lvl :grp :nm :obj |
   out nextPutAll: lvl printString; nextPutAll: tab;
       nextPutAll: grp; nextPutAll: tab;
       nextPutAll: (esc value: nm); nextPutAll: tab;
@@ -761,11 +738,7 @@ export interface FrameVarRow {
  */
 export function parseFrameVars(data: string): FrameVarRow[] {
   const rows: FrameVarRow[] = [];
-  if (!data) return rows;
-  for (const line of data.split('\n')) {
-    if (line.length === 0) continue;
-    const f = line.split('\t');
-    if (f.length < 5) continue;
+  for (const f of splitDumpRows(data, 5)) {
     rows.push({
       group: f[0] as FrameVarRow['group'],
       name: unescapeDumpField(f[1]),
@@ -791,20 +764,10 @@ export function fetchFrameVariables(
   gsProcess: bigint,
   serverLevel: number,
 ): FrameVarRow[] {
-  const code = `| proc out tab esc psOf row arr receiver names |
+  const code = `| proc out ${DUMP_PAYLOAD_TEMPS} row arr receiver names |
 proc := Object _objectForOop: ${gsProcess}.
 out := WriteStream on: String new.
-tab := String with: Character tab.
-esc := [:str | | s |
-  s := str.
-  s size > 2000 ifTrue: [s := (s copyFrom: 1 to: 2000), '...'].
-  s := s copyReplaceAll: (String with: $\\) with: '\\\\'.
-  s := s copyReplaceAll: tab with: '\\t'.
-  s := s copyReplaceAll: (String with: Character lf) with: '\\n'.
-  s := s copyReplaceAll: (String with: Character cr) with: '\\r'.
-  s].
-psOf := [:obj | esc value: ([obj printString] on: Error do: [:e | '<unprintable>'])].
-row := [:grp :nm :obj :idx |
+${dumpPayloadPrelude()}row := [:grp :nm :obj :idx |
   out nextPutAll: grp; nextPutAll: tab;
       nextPutAll: (esc value: nm); nextPutAll: tab;
       nextPutAll: (psOf value: obj); nextPutAll: tab;
@@ -920,39 +883,6 @@ export function getIndexedOops(
   );
   if (err.number !== 0) return [];
   return oops;
-}
-
-/**
- * Returns sorted key-value entries for a SymbolDictionary.
- */
-export function getDictionaryEntries(
-  session: ActiveSession,
-  oop: bigint,
-): { key: string; valueOop: bigint }[] {
-  const keysOop = gciPerform(session, oop, 'keys');
-  const sortedOop = gciPerform(session, keysOop, 'asSortedCollection');
-  const keyArrayOop = gciPerform(session, sortedOop, 'asArray');
-
-  const { result: sizeRaw, err: sizeErr } = session.gci.GciTsFetchSize(session.handle, keyArrayOop);
-  if (sizeErr.number !== 0) return [];
-  const count = Number(sizeRaw);
-  if (count === 0) return [];
-
-  const { oops: keyOops, err: fetchErr } = session.gci.GciTsFetchOops(
-    session.handle,
-    keyArrayOop,
-    1n,
-    count,
-  );
-  if (fetchErr.number !== 0) return [];
-
-  const entries: { key: string; valueOop: bigint }[] = [];
-  for (const keyOop of keyOops) {
-    const key = gciPerformFetchString(session, keyOop, 'asString');
-    const valueOop = gciPerform(session, oop, 'at:', [keyOop]);
-    entries.push({ key, valueOop });
-  }
-  return entries;
 }
 
 // ── Stepping ────────────────────────────────────────────
@@ -1285,9 +1215,10 @@ export function evaluateInFrameNb(
     return Promise.reject(new Error(strErr.message || 'Cannot create expression string'));
   }
 
-  const symbolListOop = buildFrameSymbolList(session, argAndTempNames, argAndTempOops);
-  const selector = symbolListOop === null ? 'evaluateInContext:' : 'evaluateInContext:symbolList:';
-  const args = symbolListOop === null ? [receiverOop] : [receiverOop, symbolListOop];
+  const symbolListOop =
+    buildFrameSymbolList(session, argAndTempNames, argAndTempOops) ?? sessionSymbolListOop(session);
+  const selector = 'evaluateInContext:symbolList:';
+  const args = [receiverOop, symbolListOop];
 
   return runNbCall(
     session,
@@ -1317,12 +1248,14 @@ export function evaluateInFrameToOop(
     throw new Error(strErr.message || 'Cannot create expression string');
   }
 
-  // Bind the frame's named args/temps when present; otherwise keep the lean
-  // single-arg path (self + instVars + globals via the session's symbol list).
-  const symbolListOop = buildFrameSymbolList(session, argAndTempNames, argAndTempOops);
-  return symbolListOop === null
-    ? gciPerform(session, exprOop, 'evaluateInContext:', [receiverOop])
-    : gciPerform(session, exprOop, 'evaluateInContext:symbolList:', [receiverOop, symbolListOop]);
+  // Bind the frame's named args/temps when present; otherwise just the session's
+  // own symbol list, through which self, instVars and globals already resolve.
+  const symbolListOop =
+    buildFrameSymbolList(session, argAndTempNames, argAndTempOops) ?? sessionSymbolListOop(session);
+  return gciPerform(session, exprOop, 'evaluateInContext:symbolList:', [
+    receiverOop,
+    symbolListOop,
+  ]);
 }
 
 /**
@@ -1366,6 +1299,75 @@ export function getInstVarOop(session: ActiveSession, receiverOop: bigint, index
 }
 
 /**
+ * Evaluates `expression` with `receiverOop` bound as `self`, and answers the
+ * result's OOP. The inspector's evaluation pane and its slot editor both run
+ * through here.
+ *
+ * The receiver arrives as an *argument*, not through `GciTsExecute`'s
+ * `contextObject`: the expression String is the receiver of an
+ * `evaluateInContext:` send, which is a kernel method and so needs no
+ * server-side support installed. `evaluateInFrameToOop` above uses the same
+ * mechanism for a debugger frame; the only difference is where `self` comes
+ * from.
+ */
+export function evaluateWithReceiverToOop(
+  session: ActiveSession,
+  receiverOop: bigint,
+  expression: string,
+): bigint {
+  const { result: exprOop, err } = session.gci.GciTsNewString(session.handle, expression);
+  if (err.number !== 0) {
+    throw new Error(err.message || 'Cannot create expression string');
+  }
+  return gciPerform(session, exprOop, 'evaluateInContext:symbolList:', [
+    receiverOop,
+    sessionSymbolListOop(session),
+  ]);
+}
+
+/**
+ * Writes `valueOop` into the `index`-th (1-based) indexed element of
+ * `receiverOop`, via `at:put:`. The indexed-slot counterpart of
+ * {@link setInstVar}.
+ */
+export function setIndexedVar(
+  session: ActiveSession,
+  receiverOop: bigint,
+  index: number,
+  valueOop: bigint,
+): void {
+  gciPerform(session, receiverOop, 'at:put:', [intToOop(session, index), valueOop]);
+}
+
+/** Reads the OOP of the `index`-th (1-based) indexed element, via `at:`. */
+export function getIndexedVarOop(
+  session: ActiveSession,
+  receiverOop: bigint,
+  index: number,
+): bigint {
+  return gciPerform(session, receiverOop, 'at:', [intToOop(session, index)]);
+}
+
+/** Writes `valueOop` at `keyOop` in a dictionary, via `at:put:`. */
+export function setDictionaryValue(
+  session: ActiveSession,
+  dictionaryOop: bigint,
+  keyOop: bigint,
+  valueOop: bigint,
+): void {
+  gciPerform(session, dictionaryOop, 'at:put:', [keyOop, valueOop]);
+}
+
+/** Reads the OOP stored at `keyOop` in a dictionary, via `at:`. */
+export function getDictionaryValueOop(
+  session: ActiveSession,
+  dictionaryOop: bigint,
+  keyOop: bigint,
+): bigint {
+  return gciPerform(session, dictionaryOop, 'at:', [keyOop]);
+}
+
+/**
  * Pins objects against garbage collection by adding them to the session's export
  * set (`GciTsSaveObjs`). Variable-revert uses this to keep a slot's original
  * value alive after the slot is overwritten — otherwise it could be scavenged
@@ -1398,6 +1400,23 @@ function resolveGlobalOop(session: ActiveSession, name: string): bigint | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * The session's own symbol list — `System myUserProfile symbolList` — so an
+ * evaluation sees the globals the user would see in a workspace.
+ *
+ * Every `evaluateInContext:` send passes one. The single-argument
+ * `String>>evaluateInContext:` looks like the leaner choice for an evaluation
+ * that needs no extra bindings, but it does not exist before GemStone 3.7: on a
+ * 3.6.x stone that perform fails with NameError 2404, "There is no Symbol with
+ * the specified value". The two-argument form is present on every supported
+ * release, so it is the only one used.
+ */
+function sessionSymbolListOop(session: ActiveSession): bigint {
+  const systemClass = resolveGlobalOop(session, 'System');
+  if (systemClass === null) throw new Error('Cannot resolve System to build a symbol list');
+  return gciPerform(session, gciPerform(session, systemClass, 'myUserProfile'), 'symbolList');
 }
 
 /**

@@ -145,8 +145,17 @@ export default tseslint.config(
     // Shared with a Node bin script below — not a webview global consumer.
     ignores: ['client/src/gemStoneVersion.js'],
     // `acquireVsCodeApi` is the VS Code webview host bridge, injected into the
-    // webview global scope — not part of `globals.browser`.
-    languageOptions: { globals: { ...globals.browser, acquireVsCodeApi: 'readonly' } },
+    // webview global scope — not part of `globals.browser`. `MillerColumns` is
+    // the shared column-strip model (webview/millerColumns.js), injected as its
+    // own <script> tag ahead of the scripts that use it, so it is a global to
+    // them in exactly the same way.
+    languageOptions: {
+      globals: {
+        ...globals.browser,
+        acquireVsCodeApi: 'readonly',
+        MillerColumns: 'readonly',
+      },
+    },
   },
   {
     // Config/build scripts and CLI bin scripts, plus gemStoneVersion.js: a plain

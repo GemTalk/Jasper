@@ -1,11 +1,13 @@
 /**
- * Column-strip model for the Enhanced Inspector webview (miller columns).
+ * Column-strip model (miller columns) shared by the inspector webviews — the
+ * Enhanced Inspector and the basic tabbed Inspector both drive their strip
+ * through this.
  *
  * Like methodListView.js / listFilter.js, this is read at runtime via
  * fs.readFileSync and injected into the webview as a <script> tag — it is NOT
- * compiled into the bundle. It lives in its own file so the session's
+ * compiled into the bundle. It lives in its own file so the strip's
  * display/business decisions can be unit-tested in jsdom
- * (see enhancedInspectorColumns.test.ts) instead of being trapped in the inline
+ * (see millerColumns.test.ts) instead of being trapped in the inline
  * webview <script>.
  *
  * The decisions this module owns:
@@ -20,15 +22,21 @@
  *
  * Rendering (headers, tabs, tables, trees, meta) stays in the inline script and
  * is supplied here via the injected `buildColumnDom` and `populate` callbacks,
- * so this model has no dependency on how a column's content is drawn.
+ * so this model has no dependency on how a column's content is drawn. Likewise
+ * the per-column state a renderer needs — caches, active tab, widths — comes
+ * from the injected `makeState` callback, so the two inspectors keep their own
+ * column shapes and neither has to carry the other's fields.
  *
- * Exposed as the global `EnhancedInspectorColumns` so both the webview (classic
- * <script>) and tests (new Function(source)()) can reach it.
+ * Exposed as the global `MillerColumns` so both the webviews (classic <script>)
+ * and tests (new Function(source)()) can reach it.
  */
 (function () {
-  // opts: { strip, postMessage, defaultWidth, minWidth, buildColumnDom, populate }
+  // opts: { strip, postMessage, defaultWidth, minWidth, buildColumnDom, populate,
+  //         makeState }
   //  - buildColumnDom(col) -> rootEl, and sets col.el (at least { root }).
   //  - populate(col, msg)  -> fills the column's content (no-op-able in tests).
+  //  - makeState()         -> the renderer's own per-column fields, merged into
+  //                           the descriptor. Optional; omit for a bare column.
   function createColumnStrip(opts) {
     var strip = opts.strip;
     var postMessage = opts.postMessage;
@@ -36,33 +44,35 @@
     var minWidth = opts.minWidth;
     var buildColumnDom = opts.buildColumnDom;
     var populate = opts.populate;
+    var makeState = opts.makeState;
 
     var columns = []; // ordered array of column descriptors (left→right)
-    var columnsById = {}; // id -> descriptor
+    // Prototype-less: ids reach `get`/`columnOf` from webview messages and from a
+    // DOM dataset, so a plain object would answer `__proto__` with Object.prototype
+    // and every field the renderer then set on that "column" would land on the
+    // prototype of every object in the frame. A null-prototype map answers
+    // undefined instead, which every caller already handles as "no such column".
+    var columnsById = Object.create(null); // id -> descriptor
     var focusedColumnId = null;
 
+    // The fields the MODEL owns. Everything else on a descriptor belongs to the
+    // renderer and arrives via makeState, which cannot overwrite these.
     function makeDescriptor(id, oop, width) {
-      return {
-        id: id,
-        oop: oop,
-        width: width,
-        specs: null,
-        metaData: null,
-        className: '',
-        label: '',
-        title: '',
-        activeMethodSelector: null,
-        cachedViewData: {},
-        loadedRowCounts: {},
-        colWidths: {},
-        rangesMode: {},
-        rangeTotals: {},
-        rangeDataCache: {},
-        methodSourceCache: {},
-        metaSubTab: 'instanceMethods',
-        openMethodSel: null,
-        el: null,
-      };
+      var col = {};
+      if (makeState) {
+        var state = makeState();
+        for (var k in state) {
+          if (Object.prototype.hasOwnProperty.call(state, k)) col[k] = state[k];
+        }
+      }
+      col.id = id;
+      col.oop = oop;
+      col.width = width;
+      col.className = '';
+      col.label = '';
+      col.title = '';
+      col.el = null;
+      return col;
     }
 
     function get(id) {
@@ -175,5 +185,5 @@
   }
 
   var root = typeof globalThis !== 'undefined' ? globalThis : window;
-  root.EnhancedInspectorColumns = { createColumnStrip: createColumnStrip };
+  root.MillerColumns = { createColumnStrip: createColumnStrip };
 })();

@@ -8,7 +8,6 @@ import {
   GCI_PERFORM_FLAG_INTERPRETED,
 } from './gciConstants';
 import { logError, logInfo } from './gciLog';
-import { InspectorTreeProvider } from './inspectorTreeProvider';
 import { routeInspect } from './inspectRouter';
 import { DebuggerPanel } from './debuggerPanel';
 import { clearStack, getObjectPrintString } from './debugQueries';
@@ -753,7 +752,7 @@ export class CodeExecutor {
 
   // ── Inspect ──────────────────────────────────────────
 
-  async inspectIt(inspectorProvider: InspectorTreeProvider): Promise<void> {
+  async inspectIt(): Promise<void> {
     const session = await this.sessionManager.resolveSession();
     if (!session) return;
 
@@ -783,14 +782,10 @@ export class CodeExecutor {
     }
 
     const label = code.trim().split('\n')[0].slice(0, 40);
-    await this.executeAndInspect(session, code, label, inspectorProvider);
+    await this.executeAndInspect(session, code, label);
   }
 
-  async inspectExpression(
-    inspectorProvider: InspectorTreeProvider,
-    code: string,
-    label: string,
-  ): Promise<void> {
+  async inspectExpression(code: string, label: string): Promise<void> {
     const session = await this.sessionManager.resolveSession();
     if (!session) return;
 
@@ -801,14 +796,13 @@ export class CodeExecutor {
       return;
     }
 
-    await this.executeAndInspect(session, code, label, inspectorProvider);
+    await this.executeAndInspect(session, code, label);
   }
 
   private async executeAndInspect(
     session: ActiveSession,
     code: string,
     label: string,
-    inspectorProvider: InspectorTreeProvider,
   ): Promise<void> {
     const oopClassString = this.resolveUtf8ClassOopUsing(session);
 
@@ -841,7 +835,7 @@ export class CodeExecutor {
 
       const oop = await this.pollForResultOop(session);
 
-      routeInspect(session, oop, label, inspectorProvider);
+      routeInspect(session, oop, label);
     } catch (e: unknown) {
       if (e instanceof NbCancelledError) return;
       const msg = e instanceof Error ? e.message : String(e);
@@ -852,7 +846,7 @@ export class CodeExecutor {
         // result — mirroring the success path above.
         await this.promptDebuggableError(session, e.context, msg, (resultOop: bigint) => {
           appendTranscriptOutput(drainTranscript(session));
-          routeInspect(session, resultOop, label, inspectorProvider);
+          routeInspect(session, resultOop, label);
         });
       } else {
         vscode.window.showErrorMessage(`GemStone execution error: ${msg}`);
