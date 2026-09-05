@@ -599,6 +599,32 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
   private _onDidChangeFile = new vscode.EventEmitter<vscode.FileChangeEvent[]>();
   readonly onDidChangeFile = this._onDidChangeFile.event;
 
+  /**
+   * Announce that a `gemstone://` document changed in the STONE rather than in an
+   * editor — so VS Code re-reads it and an open tab stops showing what the class
+   * or method used to be.
+   *
+   * `writeFile` fires this for its own saves; this is the entry point for the
+   * changes nothing here can see, made by a command acting directly on the image.
+   * The Explorer refiling a class is one: without this, an open class definition
+   * keeps the category line the class no longer has — and saving that buffer
+   * would file the class straight back where it came from. An undo is another: it
+   * recompiles a method straight over GCI, never touching the provider, and an
+   * editor left showing the discarded source is how that undo gets silently
+   * re-saved (#434).
+   *
+   * Takes one URI or many; an empty array is a no-op.
+   *
+   * Safe to call for a document nobody has open: VS Code ignores a change event
+   * for a file it is not showing. A DIRTY buffer is left alone, which is VS
+   * Code's own rule for an external edit, not something to work around here.
+   */
+  notifyChanged(uris: vscode.Uri | vscode.Uri[]): void {
+    const list = Array.isArray(uris) ? uris : [uris];
+    if (list.length === 0) return;
+    this._onDidChangeFile.fire(list.map((uri) => ({ type: vscode.FileChangeType.Changed, uri })));
+  }
+
   private _onMethodCompiled = new vscode.EventEmitter<MethodCompiledEvent>();
   readonly onMethodCompiled = this._onMethodCompiled.event;
 
@@ -614,20 +640,6 @@ export class GemStoneFileSystemProvider implements vscode.FileSystemProvider {
 
   watch(): vscode.Disposable {
     return new vscode.Disposable(() => {});
-  }
-
-  /**
-   * Announce that these resources changed underneath VS Code, so a clean editor showing one
-   * of them re-reads it.
-   *
-   * `writeFile` already fires this for a save. This is the entry point for a change made
-   * some OTHER way — an undo recompiles a method straight over GCI, never touching the
-   * provider, and an editor left showing the discarded source is how that undo gets silently
-   * re-saved (#434).
-   */
-  notifyChanged(uris: vscode.Uri[]): void {
-    if (uris.length === 0) return;
-    this._onDidChangeFile.fire(uris.map((uri) => ({ type: vscode.FileChangeType.Changed, uri })));
   }
 
   stat(uri: vscode.Uri): vscode.FileStat {

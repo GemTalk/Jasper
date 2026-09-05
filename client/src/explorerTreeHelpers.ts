@@ -7,7 +7,7 @@
 
 /** One variable-side grouping under a class row: the "instance" side (isMeta
  *  false) holding instance-variable names, or the "class" side (isMeta true)
- *  holding class-variable names. */
+ *  holding class-variable names. Either list may be empty — see `variableSides`. */
 export interface VariableSide {
   isMeta: boolean;
   names: string[];
@@ -15,22 +15,28 @@ export interface VariableSide {
 
 /**
  * The variable-side nodes to show under a class row, mirroring the Methods pane's
- * instance/class split: the "instance" side then the "class" side. A side is shown
- * ONLY when it has variables — a class with instance variables but no class
- * variables shows just the "instance variables" header, and a class with neither
- * shows nothing (#387 item 12).
+ * instance/class split: the "instance" side then the "class" side.
  *
- * This replaced an earlier convention that showed both headers whenever a class had
- * any variables at all, graying the empty one. A header for a section that is
- * definitively empty is noise: it reads as something to open, and opening it is the
- * only way to learn there was nothing there. Omitting it is the convention to apply
- * to any other metadata section that can be empty.
+ * A class with variables of EITHER kind shows BOTH rows — the empty one rendered as
+ * an empty state, since the inline "+" that adds a variable is hosted on the side
+ * row, and omitting the empty side took away the only visible way to add the first
+ * class variable to a class that has instance variables, or vice versa (#499).
+ *
+ * A class with NO variables at all shows neither row, and so keeps a flat row with
+ * no expansion chevron. It has to: a tree row can only carry children by declaring a
+ * collapsible state, and any collapsible state draws the chevron — so child rows
+ * there would advertise variables the class does not have. That class reaches the
+ * same two actions from the "+" on the class row itself.
+ *
+ * This must agree with what gates the class row's chevron (`classHasDefinedVars`),
+ * or a class gets a chevron that opens onto nothing, or rows that cannot be reached.
  */
 export function variableSides(ivarNames: string[], classVarNames: string[]): VariableSide[] {
-  const sides: VariableSide[] = [];
-  if (ivarNames.length > 0) sides.push({ isMeta: false, names: ivarNames });
-  if (classVarNames.length > 0) sides.push({ isMeta: true, names: classVarNames });
-  return sides;
+  if (ivarNames.length === 0 && classVarNames.length === 0) return [];
+  return [
+    { isMeta: false, names: ivarNames },
+    { isMeta: true, names: classVarNames },
+  ];
 }
 
 /**

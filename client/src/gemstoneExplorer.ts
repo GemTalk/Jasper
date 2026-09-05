@@ -35,6 +35,7 @@ import {
   tabInputUri,
 } from './gemstoneFileSystemProvider';
 import type { ParsedUri } from './gemstoneFileSystemProvider';
+import { gemstoneDocumentLanguage } from './languageIds';
 import { filterMatches } from './explorerFilter';
 import {
   parseMethodFilter,
@@ -126,6 +127,7 @@ import {
   parseRevertResult,
   parseRemoveResult,
 } from './refactoring/classHistoryModel';
+import { parseRemoveCategoryResult, type RemoveCategoryResult } from './queries/removeCategory';
 import { showClassHistoryPanel } from './refactoring/classHistoryPanel';
 import { moveMethod } from './refactoring/moveMethodCommand';
 import { notifyRefactoringApplied } from './refactoring/refactoringAppliedToast';
@@ -281,7 +283,7 @@ class DictItem extends vscode.TreeItem {
 // is a child of "Announcements". `fullPath` is the whole dash-joined category;
 // `segment` is just this node's piece. Selecting a node shows the classes in
 // that category AND all of its sub-categories (prefix match).
-class ClassCategoryItem extends vscode.TreeItem {
+export class ClassCategoryItem extends vscode.TreeItem {
   constructor(
     public readonly segment: string,
     public readonly fullPath: string,
@@ -300,29 +302,43 @@ class ClassCategoryItem extends vscode.TreeItem {
   }
 }
 
-class ClassItem extends vscode.TreeItem {
-  // `hasIvars` drives the expansion caret: a class with locally-defined instance
-  // variables opens to reveal its ivar sub-tree; one without stays flat. It never
-  // affects the stable `id`, so TreeView.reveal still matches regardless.
+// Exported for the unit tests that pin the class row's expansion chevron, and for the
+// Classes pane's drag controller, which carries only real class rows.
+export class ClassItem extends vscode.TreeItem {
+  // `hasVars` drives the expansion chevron: a class with locally-defined variables
+  // of either kind opens to reveal its variable sub-tree; one with none stays flat,
+  // because a chevron there would advertise variables the class does not have. Must
+  // stay in step with `variableSides`, which decides the rows behind it. A class with
+  // none reaches Add Variable from the "+" on this row instead (#499) — which is why
+  // it also shows up in `contextValue`. Never affects the stable `id`, so
+  // TreeView.reveal still matches regardless.
   constructor(
     public readonly className: string,
-    hasIvars = false,
+    hasVars = false,
     versionTag?: string,
     hasComment = false,
   ) {
     super(
       versionTag === undefined ? className : `${className}[${versionTag}]`,
-      hasIvars ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None,
+      hasVars ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None,
     );
     // The displayed label may carry a `[n]` version tag, but the node's identity
     // (id, click argument, ivar sub-tree) always uses the raw class name.
     this.id = `k:${className}`;
-    // `.commented` gates the comment button to classes that actually have one
-    // (#387). Every other class action matches BOTH forms — see the
-    // `explorerClass(\.commented)?` clauses in package.json — so the suffix only
-    // ever adds a button, never removes one. Anchored there rather than a bare
+    // Two optional suffixes, each gating one button onto the rows that need it and
+    // matched as optional groups by every other class action's `when` — see the
+    // `explorerClass(\.novars)?(\.commented)?` clauses in package.json — so a suffix
+    // only ever adds a button, never removes one. Anchored there rather than a bare
     // `^explorerClass` prefix, which would also swallow `explorerClassVar`.
-    this.contextValue = hasComment ? 'explorerClass.commented' : 'explorerClass';
+    //
+    // `.novars` gates the class row's "+": that button exists for the class that has
+    // no variable-side rows to host one, so on a class that already has them it would
+    // be a third "+" on screen doing what those rows' own two already do.
+    // `.commented` gates the comment button to classes that actually have a comment
+    // (#387). Its clause must match `.novars` too — it was an exact `==` test, so
+    // adding a second suffix silently took the button off a commented class with no
+    // variables.
+    this.contextValue = `explorerClass${hasVars ? '' : '.novars'}${hasComment ? '.commented' : ''}`;
     this.iconPath = new vscode.ThemeIcon('symbol-class');
     // Fires on every click (selection still drives navigation separately); the
     // controller uses the timing to detect a double-click → open definition.
@@ -373,26 +389,34 @@ class ClassVarItem extends vscode.TreeItem {
 // The "instance" / "class" grouping node under a ClassItem that separates instance
 // variables from class variables — mirroring the Methods pane's instance/class
 // sides. isMeta=false holds the IvarItem rows; isMeta=true holds the ClassVarItem
-// rows. A side node is only created when that side has at least one variable.
-class VarSideItem extends vscode.TreeItem {
+// rows. A class with variables of either kind shows BOTH rows, so the inline "+" is
+// reachable for the side that is still empty (#499); a class with none shows neither.
+// Exported for the unit tests that pin the empty-side rendering.
+export class VarSideItem extends vscode.TreeItem {
   constructor(
     public readonly className: string,
     public readonly isMeta: boolean,
+    // A side with no variables renders as an empty state: no expansion caret
+    // (there is nothing to open) and a dimmed "(none)" after the label. Defaults
+    // to false because the reveal call sites build a node purely to address an
+    // existing row by `id`, which does not encode emptiness.
+    isEmpty = false,
   ) {
-    // A side node exists only when that side has variables (#387), so it is
-    // always expandable and never needs an empty/grayed rendering.
     super(
       isMeta ? 'class variables' : 'instance variables',
-      vscode.TreeItemCollapsibleState.Expanded,
+      isEmpty ? vscode.TreeItemCollapsibleState.None : vscode.TreeItemCollapsibleState.Expanded,
     );
     this.id = `k:${className}/vside:${isMeta}`;
     // Split by side so the inline "+" (Add Instance Variable) targets only the
-    // instance side; the class side keeps the base token.
+    // instance side; the class side keeps the base token. Empty and populated
+    // sides share the token: the "+" is what the row is there for when it is empty.
     this.contextValue = isMeta ? 'explorerVarSide.class' : 'explorerVarSide.instance';
     this.iconPath = new vscode.ThemeIcon('symbol-class');
-    this.tooltip = isMeta
-      ? `Class variables of ${className}`
-      : `Instance variables of ${className}`;
+    if (isEmpty) this.description = '(none)';
+    const kind = isMeta ? 'Class variables' : 'Instance variables';
+    this.tooltip = isEmpty
+      ? `No ${kind.toLowerCase()} defined in ${className}`
+      : `${kind} of ${className}`;
   }
 }
 
@@ -595,6 +619,16 @@ interface MethodDragPayload {
 }
 const METHOD_MIME = 'application/vnd.gemstone.explorermethod';
 
+// A class row being dragged from the Classes pane onto a Class Categories row.
+interface ClassDragPayload {
+  className: string;
+  // The category the class is in RIGHT NOW, so a drop onto that same category is a
+  // no-op rather than a pointless server round-trip.
+  category: string | undefined;
+  dictIndex: number;
+}
+const CLASS_MIME = 'application/vnd.gemstone.explorerclass';
+
 // A class picker that filters by PREFIX on the class name as the user types. VS Code's
 // default showQuickPick does fuzzy SUBSTRING matching — typing "Z" would also surface
 // "AZure" / "BtreeOptimiZed" (a 'z' anywhere) — which reads as random. Here we own the
@@ -696,6 +730,45 @@ export function shouldHintKeepMethodsOpen(
   return !alreadyShown && prevKey !== undefined && prevKey !== key;
 }
 
+// What to do about a category that still holds methods. One string, because the same
+// situation is caught in two places — the pane's own count before the round trip, and
+// the doit's re-count during it — and which one gets there first is an accident of
+// timing that must not decide whether the user is told what to do next.
+function stillHoldsAdvice(methodCount: number): string {
+  return `move or delete ${methodCount === 1 ? 'it' : 'them'} first, then remove the category.`;
+}
+
+// Why a method-category removal was refused, in the user's terms. Every branch
+// means nothing was removed.
+function refusalMessage(
+  result: Extract<RemoveCategoryResult, { removed: false }>,
+  className: string,
+  category: string,
+): string {
+  switch (result.reason) {
+    case 'has-methods':
+      return (
+        `'${category}' now holds ${result.methodCount} ` +
+        `method${result.methodCount === 1 ? '' : 's'} — nothing was removed; ` +
+        stillHoldsAdvice(result.methodCount)
+      );
+    case 'no-category':
+      return `${className} no longer has a method category '${category}'.`;
+    case 'no-class':
+      return `Couldn't resolve ${className} to remove the method category '${category}'.`;
+    case 'not-removed':
+      return `GemStone kept the method category '${category}' on ${className}.`;
+    case 'unrecognized':
+      // We could not read the stone's reply, so we do not know what it did — say
+      // that, and carry the raw text, rather than reporting the removal as refused
+      // and claiming knowledge of GemStone's behaviour we do not have.
+      return (
+        `Couldn't understand GemStone's answer while removing the method category ` +
+        `'${category}' from ${className}, so it may or may not be gone: ${result.raw}`
+      );
+  }
+}
+
 // ── Controller ───────────────────────────────────────────────────────────────
 
 /** The last-known outcome of one test class or test method, as the Explorer needs it. */
@@ -793,7 +866,7 @@ export class ExplorerController {
   }
   // className → count of locally-defined instance variables, for the current
   // dictionary; fetched once per dict so class rows know whether to show an
-  // expansion caret. Names are fetched lazily on expand and memoized here.
+  // expansion chevron. Names are fetched lazily on expand and memoized here.
   private definedIvarCounts = new Map<string, number>();
   private readonly definedIvarNamesCache = new Map<string, string[]>();
   // className → {superclass, subclasses} from the class hierarchy, memoized so ivar rows
@@ -916,6 +989,11 @@ export class ExplorerController {
     /** Test affordances on class/method rows. Absent in tests that don't exercise them,
      *  and before the SUnit controller exists. */
     private readonly sunit?: ExplorerSunitHooks,
+    /** Tell the `gemstone://` file system that a document changed in the STONE, so an open
+     *  editor on it re-reads instead of showing what the class used to be. Needed by the
+     *  commands here that rewrite something an editor can be sitting on without going
+     *  through a save — refiling a class rewrites the category line in its definition. */
+    private readonly notifyDocumentChanged?: (uri: vscode.Uri) => void,
   ) {}
 
   /**
@@ -1355,7 +1433,7 @@ export class ExplorerController {
     } catch {
       /* keep stale on failure */
     }
-    this.loadDefinedIvarCounts();
+    this.loadClassRowMetadata();
     if (className !== undefined) {
       try {
         this.envLines = queries.getClassEnvironments(
@@ -1456,7 +1534,7 @@ export class ExplorerController {
     this.classCategoryEntries = session
       ? queries.getClassesWithCategory(session, item.dictIndex)
       : [];
-    this.loadDefinedIvarCounts();
+    this.loadClassRowMetadata();
     this.categoryProvider.refresh();
     this.classProvider.refresh();
     this.hierarchyProvider.refresh();
@@ -2092,11 +2170,11 @@ export class ExplorerController {
   // ── Instance-variable sub-tree (Classes pane) ────────────────────────────────
 
   // Reload the per-class Classes-pane row metadata for the current dictionary
-  // (defined-ivar counts and version numbers, one round trip each) and drop any
+  // (defined-variable counts and version numbers, one round trip each) and drop any
   // memoized name lists. Called wherever the class listing itself is (re)loaded.
-  // A failed probe leaves the maps empty rather than breaking navigation —
-  // classes just render flat and untagged.
-  private loadDefinedIvarCounts(): void {
+  // A failed probe leaves the maps empty rather than breaking navigation — classes
+  // just render flat and untagged.
+  private loadClassRowMetadata(): void {
     const session = this.session();
     this.definedIvarNamesCache.clear();
     this.hierNeighborsCache.clear();
@@ -2124,13 +2202,14 @@ export class ExplorerController {
     }
   }
 
-  // Whether a class has locally-defined instance variables (drives the caret).
+  // Whether a class has locally-defined instance variables.
   classHasDefinedIvars(className: string): boolean {
     return (this.definedIvarCounts.get(className) ?? 0) > 0;
   }
 
   // Whether a class has locally-defined variables of EITHER kind — the class row
-  // shows an expansion caret when it has instance OR class variables to reveal.
+  // shows an expansion chevron when it has instance OR class variables to reveal,
+  // and `variableSides` builds rows on exactly the same condition.
   classHasDefinedVars(className: string): boolean {
     return (
       this.classHasDefinedIvars(className) || (this.definedClassVarCounts.get(className) ?? 0) > 0
@@ -2241,9 +2320,17 @@ export class ExplorerController {
 
   // "+" on the instance variable-side node, or right-click on a class row: prompt for
   // a name and add it as an instance variable of that class.
+  //
+  // The engine check lives HERE, not on the menu clauses, so it is the single answer
+  // to "do you have the engine?" for every route in: the side row's "+", the class
+  // row's context menu, the class row's "+" quick pick, and the palette. Gating the
+  // menus instead made the empty instance-variables row a dead end on a stone without
+  // the engine — a row whose only reason to exist is hosting that "+" — while the
+  // class row one line above offered the same add and routed it to the install prompt.
   async addInstVarOnClass(className: string): Promise<void> {
     const session = this.session();
     if (!session) return;
+    if (!(await this.ensureRbSupport('Adding an instance variable'))) return;
     const entered = await vscode.window.showInputBox({
       title: 'Add Instance Variable',
       prompt: `Add an instance variable to ${className}.`,
@@ -2320,6 +2407,43 @@ export class ExplorerController {
   async addClassVarFromSide(item: VarSideItem): Promise<void> {
     if (!item.isMeta) return; // the instance side is handled by addInstVar
     await this.addClassVarOnClass(item.className);
+  }
+
+  // "+" inline on a CLASS row: add a variable to it, asking which kind. The two
+  // kind-specific commands already exist and are also on this row's context menu;
+  // this is the visible one-click route, and the only route on a class that has no
+  // variables yet — such a class has no variable-side rows to host their "+", and it
+  // cannot be given any, because a tree row can only carry children by declaring a
+  // collapsible state and any collapsible state draws an expansion chevron (#499).
+  //
+  // Both kinds are always offered. Adding an instance variable needs the refactoring
+  // engine (it reshapes the class) while adding a class variable does not, but hiding
+  // the instance entry on a stone without the engine would leave the user guessing;
+  // choosing it goes through the same install-or-decline prompt as the refactorings —
+  // asked by `addInstVarOnClass` itself, so this dispatch doesn't repeat the question.
+  async addVariableOnClass(className: string): Promise<void> {
+    if (!this.session()) return;
+    const INSTANCE = 'Instance variable';
+    const CLASS = 'Class variable';
+    const pick = await vscode.window.showQuickPick(
+      [
+        {
+          label: INSTANCE,
+          detail: `Add an instance variable to ${className} — reshapes the class, so it needs the refactoring engine.`,
+        },
+        {
+          label: CLASS,
+          detail: `Add a class variable to ${className} — a shared binding, no reshape.`,
+        },
+      ],
+      { title: `Add Variable to ${className}`, placeHolder: 'Which kind of variable?' },
+    );
+    if (pick === undefined) return;
+    if (pick.label === INSTANCE) {
+      await this.addInstVarOnClass(className);
+      return;
+    }
+    await this.addClassVarOnClass(className);
   }
 
   // Add a class variable to a class. Unlike adding an instance variable this does NOT
@@ -2622,8 +2746,9 @@ export class ExplorerController {
     // Removing a class variable does NOT reshape the class (no new version); this is just
     // the general "class members changed" pane refresh, reused despite its name.
     await this.refreshAfterClassReshape(className);
-    // The variable's row is gone, so land the selection on the class-variable side node —
-    // the parent row — falling back to the class itself when that side is now empty.
+    // The variable's row is gone, so land the selection on the class-variable side
+    // node — the parent row, which stays put while the class still has variables of
+    // either kind — falling back to the class itself when that was the last one.
     try {
       await this.views?.klass.reveal(new VarSideItem(className, true), {
         select: true,
@@ -2948,7 +3073,7 @@ export class ExplorerController {
     // DEFINING class: it re-fetches the environment and re-selects that class (not a
     // subclass) via revealClass, so the method pane shows the carried-forward methods
     // of the right class rather than re-rendering stale data.
-    this.loadDefinedIvarCounts();
+    this.loadClassRowMetadata();
     await this.refreshAfterClassReshape(className);
     // Land on the renamed variable's row on the defining class. Best-effort: reveal
     // rejects if the row isn't in the rebuilt tree, which we ignore.
@@ -3220,7 +3345,9 @@ export class ExplorerController {
   // Ensure the refactoring engine is loaded, offering to install it if not.
   // Returns true when it is (now) available — re-checks rbSupportAvailable AFTER the
   // install command so a failed/declined install cleanly returns false. The single
-  // gate for every rename refactoring (ivar, method, class, class-var) + class history.
+  // gate for every rename refactoring (ivar, method, class, class-var), class history,
+  // and adding an instance variable — which, unlike the others, is NOT also gated by
+  // its `when` clauses, because the row hosting its "+" exists only to host it.
   private async ensureRbSupport(action: string): Promise<boolean> {
     const session = this.session();
     if (!session) return false;
@@ -3275,7 +3402,7 @@ export class ExplorerController {
       return;
     }
     this.classCategoryEntries = entries;
-    this.loadDefinedIvarCounts();
+    this.loadClassRowMetadata();
     this.loadHierarchy();
     this.categoryProvider.refresh();
     this.classProvider.refresh();
@@ -4137,8 +4264,13 @@ export class ExplorerController {
     // and that post-show flip re-tokenizes and re-queries CodeLens, which makes the
     // senders/implementors lens pop in and shove the source down on each new
     // method. Setting it up front keeps the doc stable when it's shown.
-    if (doc.languageId !== 'gemstone-smalltalk') {
-      await vscode.languages.setTextDocumentLanguage(doc, 'gemstone-smalltalk');
+    //
+    // Asking gemstoneDocumentLanguage rather than naming a language outright is
+    // what makes this safe: it is the same rule onDidOpenTextDocument applies, so
+    // the two cannot disagree and re-flip the document between them.
+    const language = gemstoneDocumentLanguage(uri);
+    if (doc.languageId !== language) {
+      await vscode.languages.setTextDocumentLanguage(doc, language);
     }
     // Single-click opens a preview tab and a double-click promotes it to a
     // permanent one (focus stays in the tree so type-to-filter / arrow-nav keep
@@ -4583,7 +4715,7 @@ export class ExplorerController {
     this.state.dictName = dictName;
     this.state.dictIndex = dictIndex;
     this.classCategoryEntries = entries;
-    this.loadDefinedIvarCounts();
+    this.loadClassRowMetadata();
     const catEntry = this.classCategoryEntries.find((e) => e.className === className);
     // Do NOT pin the pane to the revealed class's OWN category. That filters the Classes pane down
     // to that category -- often a single class -- so the rest of the dictionary looks like it
@@ -5336,7 +5468,15 @@ export class ExplorerController {
       blockers: descendants.map((d) => d.className),
       blockerLead: `Subclass${descendants.length === 1 ? '' : 'es'} removed with it (all or none)`,
       note: 'Nothing is committed until you commit the session.',
-      confirmLabel: descendants.length > 0 ? 'Remove All' : undefined,
+      // Name what the button REMOVES, never "all". The Classes pane allows a multi-row
+      // selection, so "Remove All" beside a dialog titled after ONE class read as "remove
+      // every row I have selected" — and then only that one class and its subtree went.
+      // The inline trash is a row control: VS Code hands it its own row and nothing else,
+      // so the subtree under that single class is the whole of what this can remove.
+      confirmLabel:
+        descendants.length > 0
+          ? `Remove With Subclass${descendants.length === 1 ? '' : 'es'}`
+          : undefined,
     };
 
     const decision = await decideSafeDelete(session.id, target);
@@ -5373,7 +5513,7 @@ export class ExplorerController {
     }
     if (this.state.dictIndex !== undefined) {
       this.classCategoryEntries = queries.getClassesWithCategory(session, this.state.dictIndex);
-      this.loadDefinedIvarCounts();
+      this.loadClassRowMetadata();
     }
     this.categoryProvider.refresh();
     this.classProvider.refresh();
@@ -5659,6 +5799,97 @@ export class ExplorerController {
     return 'ok';
   }
 
+  // Remove a real (non-computed) method category via the row's trash can, so a
+  // category left behind by a rename, a file-in, or a move that emptied it can be
+  // cleared out. Nothing is committed, like the Explorer's other edits.
+  //
+  // A category that still holds methods is REFUSED, naming the count. GemStone's own
+  // `Behavior>>removeCategory:` removes the category and every method filed under it,
+  // and tidying a stray category away should never be the thing that deletes code;
+  // recategorize or delete the methods first. The refusal is enforced server-side too
+  // (see the query), so a method filed in from elsewhere between the click and the
+  // remove can't be caught by it.
+  //
+  // A still-empty category the user just created lives only in the client-side
+  // overlay, never on the server, so that one is removed from the overlay alone —
+  // calling the server would answer 'no-category' (the mirror of the rename split).
+  async removeMethodCategory(item: MethodCategoryItem): Promise<void> {
+    const session = this.session();
+    if (!session || item.computed) return;
+    if (this.state.className === undefined || this.state.dictIndex === undefined) {
+      void vscode.window.showWarningMessage('Select a class first.');
+      return;
+    }
+    const className = this.state.className;
+    const dictIndex = this.state.dictIndex;
+    const category = item.category;
+    const sideLines = this.envLines.filter(
+      (l) => l.isMeta === item.isMeta && l.category === category,
+    );
+    // Every environment's copy of the category counts: a method in a non-zero
+    // environment is still a method that would be deleted along with it.
+    const methodCount = sideLines.reduce((n, l) => n + l.selectors.length, 0);
+    if (methodCount > 0) {
+      void vscode.window.showWarningMessage(
+        `'${category}' still holds ${methodCount} method${methodCount === 1 ? '' : 's'} — ` +
+          stillHoldsAdvice(methodCount),
+      );
+      return;
+    }
+
+    // An empty category is on the server iff the method list reported it at all.
+    const existsOnServer = sideLines.length > 0;
+    if (existsOnServer) {
+      let result: RemoveCategoryResult;
+      try {
+        result = parseRemoveCategoryResult(
+          queries.removeCategory(
+            session,
+            className,
+            item.isMeta,
+            category,
+            dictIndex,
+            // The same environment range the pane's own count above swept, so the
+            // server-side guard can't be narrower than the client-side one it backstops.
+            this.maxEnv(),
+          ),
+        );
+      } catch (e) {
+        void vscode.window.showErrorMessage(
+          `Remove category failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
+        return;
+      }
+      if (!result.removed) {
+        void vscode.window.showWarningMessage(refusalMessage(result, className, category));
+        // The pane is out of date in every one of these cases — a method appeared,
+        // the category is already gone, the class moved — so refetch rather than
+        // leaving the stale row.
+        this.reloadIfCurrent(className, dictIndex);
+        return;
+      }
+    }
+
+    // Drop a just-created (still-empty) category from the overlay too, so an
+    // overlay-only removal actually takes the row away and a server-side one can't
+    // leave a ghost behind.
+    this.newMethodCategories[item.isMeta ? 'meta' : 'instance'].delete(category);
+    if (
+      this.state.selectedIsMeta === item.isMeta &&
+      this.state.selectedMethodCategory === category
+    ) {
+      this.state.selectedMethodCategory = undefined;
+    }
+    // A server removal changed the class's categories, so refetch; an overlay-only
+    // one just needs the tree redrawn.
+    if (existsOnServer) {
+      this.reloadIfCurrent(className, dictIndex);
+    } else {
+      this.methodProvider.refresh();
+      this.syncTitles();
+    }
+  }
+
   // New Method, invoked from a category row → files into THAT category (including
   // a still-empty one, which the compile then creates on the server, so overlay
   // categories become real once they hold a method — a drop does the same, see
@@ -5688,21 +5919,34 @@ export class ExplorerController {
     // currently showing (the instance/class title toggle) — a new method lands on
     // the side you're looking at.
     const isMeta = this.state.selectedIsMeta ?? this.showClassMethods;
-    const category =
-      this.state.selectedIsMeta === isMeta && this.state.selectedMethodCategory
-        ? this.state.selectedMethodCategory
-        : 'as yet unclassified';
-    await this.createNewMethod(isMeta, category);
+    await this.createNewMethod(isMeta, this.categoryForNewMethod(isMeta));
   }
 
-  // "+" on the instance / class side node adds a method on that side; with no
-  // category chosen it lands in the default one (which then appears in the tree).
+  // The category a new method on `isMeta` should file into: the one the Methods pane
+  // has selected, whether that selection is a category row or a method inside it
+  // (`recordMethodContext` stores both the same way). Only when the selection is on
+  // the OTHER side — or there is none — does it fall back to the default; a category
+  // is per-side, so an instance-side selection says nothing about a class-side method.
+  //
+  // Every new-method entry point asks this one question, so "New Method", "New
+  // Instance Method" and "New Class Method" all read the same selection and file the
+  // same place; they used to disagree, with the side-specific two always defaulting
+  // (issue #532).
+  private categoryForNewMethod(isMeta: boolean): string {
+    return this.state.selectedIsMeta === isMeta && this.state.selectedMethodCategory
+      ? this.state.selectedMethodCategory
+      : 'as yet unclassified';
+  }
+
+  // "New Instance Method" / "New Class Method" pin the side; the category still comes
+  // from the Methods-pane selection when it is on that side, and is the default one
+  // otherwise (which then appears in the tree once the method is compiled).
   async newInstanceMethod(): Promise<void> {
-    await this.createNewMethod(false, 'as yet unclassified');
+    await this.createNewMethod(false, this.categoryForNewMethod(false));
   }
 
   async newClassMethod(): Promise<void> {
-    await this.createNewMethod(true, 'as yet unclassified');
+    await this.createNewMethod(true, this.categoryForNewMethod(true));
   }
 
   // Open a blank method template for the given side + category. The method only
@@ -5807,6 +6051,91 @@ export class ExplorerController {
     return p;
   }
 
+  // The class rows currently being dragged, stashed for the same reason the method
+  // ones are: a DataTransferItem's content doesn't survive the trip between two
+  // different trees, so the mime type is only the signal and this is the payload.
+  private pendingClassDrag: ClassDragPayload[] = [];
+
+  // The payload for dragging class rows out of the Classes pane. Only real class rows
+  // travel — an ivar/classvar child of an expanded class is not a class.
+  classDragPayloads(items: readonly ClassNode[]): ClassDragPayload[] {
+    if (this.state.dictIndex === undefined) return [];
+    const dictIndex = this.state.dictIndex;
+    return items
+      .filter((i): i is ClassItem => i instanceof ClassItem)
+      .map((i) => ({
+        className: i.className,
+        category: this.categoryOfClass(i.className),
+        dictIndex,
+      }));
+  }
+
+  setPendingClassDrag(payloads: ClassDragPayload[]): void {
+    this.pendingClassDrag = payloads;
+  }
+
+  takePendingClassDrag(): ClassDragPayload[] {
+    const p = this.pendingClassDrag;
+    this.pendingClassDrag = [];
+    return p;
+  }
+
+  // Drop class rows on a Class Categories row → file each of them into that category
+  // (`Class>>category:`, uncommitted like every other explorer write). This is the
+  // drag counterpart of the browser's "Move Class to Category" pick list: the same
+  // move, done where the user can already see both ends of it.
+  async dragClassesToCategory(payloads: ClassDragPayload[], category: string): Promise<void> {
+    const session = this.session();
+    if (!session) return;
+    const toMove = payloads.filter((p) => p.category !== category);
+    if (toMove.length === 0) return;
+
+    const moved: string[] = [];
+    const failures: string[] = [];
+    for (const p of toMove) {
+      try {
+        // recategorizeClass reports a soft failure by RETURNING it ('Class not found:
+        // …', 'Not a class: …'), so the answer has to be read, not just awaited.
+        const result = queries.recategorizeClass(session, p.className, category, p.dictIndex);
+        if (result.startsWith('Recategorized:')) moved.push(p.className);
+        else failures.push(`${p.className}: ${result}`);
+      } catch (e: unknown) {
+        failures.push(`${p.className}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+
+    if (moved.length > 0) {
+      // The category now holds a class, so it exists on the server and no longer needs
+      // the client-side overlay that kept an empty one visible.
+      this.newClassCategories.delete(category);
+      if (this.state.dictIndex !== undefined) {
+        this.classCategoryEntries = queries.getClassesWithCategory(session, this.state.dictIndex);
+      }
+      this.categoryProvider.refresh();
+      this.classProvider.refresh();
+      this.syncTitles();
+      // A class definition carries its category as a line of source, so an editor open
+      // on one of these classes is now showing a category the class no longer has —
+      // and saving that buffer would file the class straight back (the definition save
+      // path applies its category line via recategorizeClass). Tell the file system the
+      // documents changed so any open tab re-reads.
+      for (const p of toMove.filter((m) => moved.includes(m.className))) {
+        this.notifyClassDefinitionChanged(session.id, p.className, p.dictIndex);
+      }
+    }
+
+    if (failures.length > 0) {
+      void vscode.window.showErrorMessage(`Move to class category failed — ${failures.join('; ')}`);
+    }
+    if (moved.length > 0) {
+      void vscode.window.showInformationMessage(
+        moved.length === 1
+          ? `Moved ${moved[0]} to class category '${category}'.`
+          : `Moved ${moved.length} classes to class category '${category}'.`,
+      );
+    }
+  }
+
   dragPayload(item: MethodItem): MethodDragPayload | undefined {
     if (
       this.state.className === undefined ||
@@ -5878,6 +6207,24 @@ export class ExplorerController {
         : `Move ${slots.length} methods to '${category}'`;
     const after = recording ? readMethodSlotState(session, slots) : undefined;
     notifyUndoable(message, after && recording ? recording.commit(label, after) : undefined);
+  }
+
+  /** Announce that `className`'s definition source changed in the stone. Best-effort: a
+   *  name the URI builder rejects (one carrying a '/') throws rather than losing the whole
+   *  operation over a document that may not even be open. */
+  private notifyClassDefinitionChanged(
+    sessionId: number,
+    className: string,
+    dictIndex: number,
+  ): void {
+    if (!this.notifyDocumentChanged || this.state.dictName === undefined) return;
+    try {
+      this.notifyDocumentChanged(
+        buildClassDefinitionUri(sessionId, this.state.dictName, className, dictIndex),
+      );
+    } catch {
+      /* an unrepresentable name has no URI to refresh */
+    }
   }
 
   // Drop on a class → ask whether to MOVE (relocate, remove from source, with a
@@ -6152,7 +6499,7 @@ export class ExplorerController {
     const session = this.session();
     if (!session || session.id !== sessionId || this.state.dictIndex === undefined) return;
     this.classCategoryEntries = queries.getClassesWithCategory(session, this.state.dictIndex);
-    this.loadDefinedIvarCounts();
+    this.loadClassRowMetadata();
     this.categoryProvider.refresh();
     this.classProvider.refresh();
     // If the compiled class lives in the current dictionary, select it so the
@@ -6276,13 +6623,15 @@ class ClassProvider extends RefreshableProvider<ClassNode | FilterChipItem> {
       });
       return withFilterChip(VIEW_CLASSES, this.ctl, rows);
     }
-    // A class expands to an "instance" and/or "class" variable-side node (like the
-    // Methods pane's sides), each shown only when that side has variables.
+    // A class with variables of either kind expands to BOTH the "instance variables"
+    // and "class variables" side nodes (like the Methods pane's sides), the empty one
+    // as an empty state that still hosts its inline "+" (#499). A class with none has
+    // no chevron and so is never asked for children.
     if (element instanceof ClassItem) {
       return variableSides(
         this.ctl.definedIvarNames(element.className),
         this.ctl.definedClassVarNames(element.className),
-      ).map((side) => new VarSideItem(element.className, side.isMeta));
+      ).map((side) => new VarSideItem(element.className, side.isMeta, side.names.length === 0));
     }
     // A side node expands to its variable rows (each with an inline rename pencil).
     if (element instanceof VarSideItem) {
@@ -6425,15 +6774,23 @@ class MethodDragAndDrop implements vscode.TreeDragAndDropController<MethodNode> 
   }
 }
 
-// Classes pane: accept dragged method(s) and MOVE or COPY them into the dropped-on
-// class (a QuickPick asks which — the drag/drop API has no modifier-key signal).
-class ClassDropController implements vscode.TreeDragAndDropController<ClassNode> {
-  readonly dragMimeTypes: readonly string[] = [];
+// Classes pane: DRAG class rows out (onto a Class Categories row, to refile them),
+// and accept dragged method(s), MOVING or COPYING them into the dropped-on class (a
+// QuickPick asks which — the drag/drop API has no modifier-key signal).
+export class ClassDragAndDrop implements vscode.TreeDragAndDropController<ClassNode> {
+  readonly dragMimeTypes = [CLASS_MIME];
   readonly dropMimeTypes = [METHOD_MIME];
   constructor(private readonly ctl: ExplorerController) {}
 
-  handleDrag(): void {
-    /* classes aren't draggable */
+  handleDrag(source: readonly ClassNode[], dataTransfer: vscode.DataTransfer): void {
+    // Same hand-off as the method drag: the payload lives on the shared controller
+    // (a DataTransfer value does not survive the trip to another tree) and the mime
+    // is only the signal that tells the Categories drop controller this is ours.
+    const payloads = this.ctl.classDragPayloads(source);
+    this.ctl.setPendingClassDrag(payloads);
+    if (payloads.length > 0) {
+      dataTransfer.set(CLASS_MIME, new vscode.DataTransferItem('gemstone-class-drag'));
+    }
   }
 
   async handleDrop(
@@ -6449,6 +6806,34 @@ class ClassDropController implements vscode.TreeDragAndDropController<ClassNode>
     const payloads = this.ctl.takePendingMethodDrag();
     if (!targetClass || payloads.length === 0) return;
     await this.ctl.dragToClass(payloads, targetClass);
+  }
+}
+
+// Class Categories pane: accept dragged class row(s) and file them into the
+// dropped-on category. Drop-only — categories themselves aren't draggable.
+export class CategoryDropController implements vscode.TreeDragAndDropController<
+  ClassCategoryItem | FilterChipItem
+> {
+  readonly dragMimeTypes: readonly string[] = [];
+  readonly dropMimeTypes = [CLASS_MIME];
+  constructor(private readonly ctl: ExplorerController) {}
+
+  handleDrag(): void {
+    /* class categories aren't draggable */
+  }
+
+  async handleDrop(
+    target: ClassCategoryItem | FilterChipItem | undefined,
+    dataTransfer: vscode.DataTransfer,
+  ): Promise<void> {
+    if (!dataTransfer.get(CLASS_MIME)) return;
+    const payloads = this.ctl.takePendingClassDrag();
+    // The filter chip is a control, not a category, and dropping on empty space has
+    // no category to name — both are ignored rather than guessed at. The FULL dashed
+    // path is the category, not the row's own segment: dropping on "Core" under
+    // "Announcements" files into "Announcements-Core".
+    if (!(target instanceof ClassCategoryItem) || payloads.length === 0) return;
+    await this.ctl.dragClassesToCategory(payloads, target.fullPath);
   }
 }
 
@@ -6493,9 +6878,6 @@ export interface ExplorerHandle {
   onMethodCompiled(sessionId: number, className: string): void;
   onClassCompiled(sessionId: number, className: string, dictName?: string): void;
   onSessionAborted(sessionId: number): void;
-  /** Flash a green ✅ connection-success banner atop the Dictionaries view for a
-   * few seconds (called after a successful login). */
-  showConnectedBanner(stone: string): void;
   /** Claim an about-to-happen open so it navigates the panes; see
    *  ExplorerController.markAttributedOpen. */
   markAttributedOpen(uri: vscode.Uri): void;
@@ -6523,6 +6905,9 @@ export function registerGemStoneExplorer(
   // Test affordances on class/method rows. Late-bound, because the SUnit controller is
   // built after this one.
   sunit?: ExplorerSunitHooks,
+  // Announces a stone-side change to a `gemstone://` document (the FS provider's
+  // `notifyChanged`), so an open editor on it re-reads.
+  notifyDocumentChanged?: (uri: vscode.Uri) => void,
 ): ExplorerHandle {
   const ctl = new ExplorerController(
     sessionManager,
@@ -6530,6 +6915,7 @@ export function registerGemStoneExplorer(
     onClassRemoved,
     context.globalState,
     sunit,
+    notifyDocumentChanged,
   );
 
   // A run starting or finishing changes what these rows should say, so repaint the
@@ -6571,10 +6957,18 @@ export function registerGemStoneExplorer(
   });
   const categoryView = vscode.window.createTreeView('gemstoneExplorerCategories', {
     treeDataProvider: ctl.categoryProvider,
+    dragAndDropController: new CategoryDropController(ctl),
   });
   const classView = vscode.window.createTreeView('gemstoneExplorerClasses', {
     treeDataProvider: ctl.classProvider,
-    dragAndDropController: new ClassDropController(ctl),
+    // Multi-select so several class rows can be dragged onto a class category together —
+    // refiling a handful of classes at once is the ordinary shape of that gesture, and
+    // without this a drag could only ever carry the one row VS Code handed it. The
+    // single-row class actions (remove, rename, comment…) are unaffected: VS Code passes
+    // the CLICKED row as the command argument, so each still acts on that row, the same
+    // way the Methods pane has long combined multi-select drag with per-row commands.
+    canSelectMany: true,
+    dragAndDropController: new ClassDragAndDrop(ctl),
   });
   const hierarchyView = vscode.window.createTreeView('gemstoneExplorerClassHierarchy', {
     treeDataProvider: ctl.hierarchyProvider,
@@ -6912,6 +7306,16 @@ export function registerGemStoneExplorer(
       if (item instanceof VarSideItem) void ctl.addClassVarFromSide(item);
       else if (item instanceof ClassItem) void ctl.addClassVarOnClass(item.className);
     }),
+
+    // "+" on a class row — asks which kind, then dispatches to the same two adds.
+    // The one route on a class with no variables yet (no side rows to host a "+").
+    vscode.commands.registerCommand('gemstone.explorer.addVariable', (item?: ClassItem) => {
+      if (!(item instanceof ClassItem)) return;
+      void ctl.addVariableOnClass(item.className).catch((e: unknown) => {
+        const msg = e instanceof Error ? e.message : String(e);
+        void vscode.window.showErrorMessage(`Add variable failed: ${msg}`);
+      });
+    }),
     // Generate getter/setter accessors for the variable at the row: instance-side for
     // an instance variable, class-side for a class variable. Skips ones that exist.
     vscode.commands.registerCommand('gemstone.explorer.addAccessors', (item?: unknown) => {
@@ -7029,6 +7433,18 @@ export function registerGemStoneExplorer(
         void ctl.renameMethodCategory(item).catch((e: unknown) => {
           const msg = e instanceof Error ? e.message : String(e);
           void vscode.window.showErrorMessage(`Rename category failed: ${msg}`);
+        });
+      },
+    ),
+    // Remove a method category (trash can on the category row). Refuses one that
+    // still holds methods — see removeMethodCategory.
+    vscode.commands.registerCommand(
+      'gemstone.explorer.removeMethodCategory',
+      (item?: MethodCategoryItem) => {
+        if (!(item instanceof MethodCategoryItem)) return;
+        void ctl.removeMethodCategory(item).catch((e: unknown) => {
+          const msg = e instanceof Error ? e.message : String(e);
+          void vscode.window.showErrorMessage(`Remove category failed: ${msg}`);
         });
       },
     ),
@@ -7247,30 +7663,11 @@ export function registerGemStoneExplorer(
     ivarHighlightDecoration,
   );
 
-  // A green connection-success banner at the top of the Dictionaries view, shown
-  // briefly after a login. The ✅ emoji renders green in every theme (including
-  // High Contrast), and TreeView.message sits above the tree without stealing space
-  // or focus — unlike a status-bar color (which can't be green) or a webview panel
-  // (which is far too large for a transient flash).
-  const CONNECTED_BANNER_MS = 5000;
-  let connectedBannerTimer: ReturnType<typeof setTimeout> | undefined;
-  function showConnectedBanner(stone: string): void {
-    if (connectedBannerTimer) clearTimeout(connectedBannerTimer);
-    const message = `✅ Connected to ${stone}`;
-    dictView.message = message;
-    connectedBannerTimer = setTimeout(() => {
-      connectedBannerTimer = undefined;
-      // Only clear our own banner — a newer message (or another connect) wins.
-      if (dictView.message === message) dictView.message = undefined;
-    }, CONNECTED_BANNER_MS);
-  }
-
   return {
     onMethodCompiled: (sessionId, className) => ctl.onExternalMethodCompiled(sessionId, className),
     onClassCompiled: (sessionId, className, dictName) =>
       ctl.onExternalClassCompiled(sessionId, className, dictName),
     onSessionAborted: (sessionId) => ctl.onSessionAborted(sessionId),
-    showConnectedBanner,
     markAttributedOpen: (uri) => ctl.markAttributedOpen(uri),
     clearAttributedOpen: (uri) => ctl.clearAttributedOpen(uri),
     revealDocument: (uri) => ctl.revealDocument(uri),

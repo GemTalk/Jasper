@@ -1,10 +1,16 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { isRegisteredDatabase } from './registeredDatabase';
 import { SysadminStorage } from '../sysadminStorage';
 import { ProcessManager, versionsMatch } from './processManager';
 import { GemStoneDatabase } from '../sysadminTypes';
 import { wslExistsSync, wslReaddirSync, wslIsFile } from '../wslFs';
-import { ServerStatus, databaseStatus, inspectDatabaseProcesses } from '../databaseServerStatus';
+import {
+  ServerStatus,
+  databaseAction,
+  databaseStatus,
+  inspectDatabaseProcesses,
+} from '../databaseServerStatus';
 import { ExternalServer, ExternalServerFinding } from '../externalServerScan';
 
 export type DatabaseNode =
@@ -77,9 +83,20 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseNod
           vscode.TreeItemCollapsibleState.Collapsed,
         );
         item.description = `${node.db.config.stoneName} (${node.db.config.version})`;
-        item.contextValue = 'gemstoneDb';
+        item.contextValue = `gemstoneDb${this.databaseContext(node.db)}`;
         item.iconPath = new vscode.ThemeIcon('database');
-        item.tooltip = `Path: ${node.db.path}\nStone: ${node.db.config.stoneName}\nNetLDI: ${node.db.config.ldiName}\nVersion: ${node.db.config.version}\nBase extent: ${node.db.config.baseExtent}`;
+        // A registered database has no base extent to report and an
+        // installation directory that a created one does not — so each kind's
+        // tooltip says what is true of it rather than printing the other's
+        // field as undefined.
+        const provenance = isRegisteredDatabase(node.db)
+          ? `\nRegistered from: ${node.db.config.productPath}` +
+            (node.db.config.netldiPort ? `\nNetLDI port: ${node.db.config.netldiPort}` : '')
+          : `\nBase extent: ${node.db.config.baseExtent}`;
+        item.tooltip =
+          `Path: ${node.db.path}\nStone: ${node.db.config.stoneName}` +
+          `\nNetLDI: ${node.db.config.ldiName}\nVersion: ${node.db.config.version}` +
+          provenance;
         return item;
       }
       case 'stone': {
@@ -131,8 +148,48 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseNod
     }
   }
 
+  /** Which whole-database action the row offers, as a context-value suffix.
+   *
+   *  The reading itself is `databaseAction`, shared with the Command Palette's
+   *  picker so the two cannot disagree. External gets neither action here; the
+   *  child rows offer the restart-under-Jasper action for that case.
+   *
+   *  A registered database carries a further `Registered` suffix, because
+   *  provenance decides which of Delete and Unregister can succeed at all: one
+   *  removes files Jasper laid out, the other drops a record of files it must
+   *  not touch. Without it the menu offered both on every row and the wrong one
+   *  failed with an error message — the panel greys the impossible one and says
+   *  why, and the sidebar has to agree. The when-clauses that consume it are in
+   *  package.json under `view/item/context`. */
+  private databaseContext(db: GemStoneDatabase): string {
+    return `${databaseAction(this.inspect(db).status)}${isRegisteredDatabase(db) ? 'Registered' : ''}`;
+  }
+
+  /** One reading of a database's two servers. The database row's context value
+   *  and the child rows beneath it both come from this, so a row cannot offer
+   *  Stop while the stone under it reads Stopped.
+   *
+   *  It is the same inspection the login-failure recovery uses, so the tree
+   *  cannot contradict what a connect will actually do either. */
+  private inspect(db: GemStoneDatabase) {
+    const external: ExternalServerFinding = this.processManager.getExternalServers(db);
+    return {
+      external,
+      status: databaseStatus(
+        inspectDatabaseProcesses(db, this.processManager.getProcesses(), external),
+      ),
+    };
+  }
+
   /** Apply a status's text, icon, and context value to a stone or NetLDI row,
-   *  and explain in the tooltip anything the one-line description cannot. */
+   *  and explain in the tooltip anything the one-line description cannot.
+   *
+   *  The context value carries the same `Registered` suffix the database row
+   *  does, for the same reason: Replace Extent is refused on an installation
+   *  Jasper did not create, and the panel leaves the control out rather than
+   *  showing one that can only fail. Start, Stop and the external-server restart
+   *  all work on a registered server, so their when-clauses take the suffix as
+   *  optional. */
   private presentServer(
     item: vscode.TreeItem,
     node: ServerNode,
@@ -140,7 +197,9 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseNod
   ): void {
     const look = STATUS_PRESENTATION[node.status];
     item.description = look.label;
-    item.contextValue = `gemstoneDb${contextKind}${look.context}`;
+    item.contextValue =
+      `gemstoneDb${contextKind}${look.context}` +
+      (isRegisteredDatabase(node.db) ? 'Registered' : '');
     item.iconPath = new vscode.ThemeIcon(look.icon, new vscode.ThemeColor(look.color));
     item.tooltip = this.statusTooltip(node);
   }
@@ -190,12 +249,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseNod
       return this.storage.getDatabases().map((db) => ({ kind: 'database' as const, db }));
     }
     if (node.kind === 'database') {
-      // The status comes from the same inspection the login-failure recovery
-      // uses, so the tree cannot contradict what a connect will actually do.
-      const external: ExternalServerFinding = this.processManager.getExternalServers(node.db);
-      const status = databaseStatus(
-        inspectDatabaseProcesses(node.db, this.processManager.getProcesses(), external),
-      );
+      const { external, status } = this.inspect(node.db);
       return [
         { kind: 'stone', db: node.db, status: status.stone, external: external.stone },
         { kind: 'netldi', db: node.db, status: status.netldi, external: external.netldi },

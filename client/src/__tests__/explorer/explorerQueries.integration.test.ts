@@ -1,0 +1,903 @@
+import { describe, it, expect } from 'vitest';
+
+// Real GCI, but stub the `vscode` module the query layer pulls in via gciLog.
+import { vi } from 'vitest';
+vi.mock('vscode', () => import('../../__mocks__/vscode.js'));
+
+import { useIntegrationTest } from '../useIntegrationTest';
+import { GciLibrary } from '../../gciLibrary';
+import * as q from '../../browserQueries';
+import type { ActiveSession } from '../../sessionManager';
+
+/**
+ * Automatic GCI integration tests for the GemStone Explorer's query layer.
+ *
+ * Every test is fully transient: the useIntegrationTest harness wraps each in a
+ * GciTsBegin/GciTsAbort pair, so even the destructive write-path queries
+ * (recategorize, reclassify, rename, copy, delete, move, add/remove dictionary)
+ * are rolled back and NOTHING is ever committed. Write tests operate on a
+ * throwaway class/dictionary created inside the same transaction, so they never
+ * mutate kernel classes and any GemStone user can run them.
+ *
+ * Runs across the whole `npm run test:server:start` matrix (3.6.2 -> 3.7.5), so
+ * all emitted Smalltalk is ASCII-only (a non-ASCII char in compiled source
+ * trips the 3.6.x ComStrmSetCursor compiler bug). The one assertion that
+ * depends on a non-system user (a kernel class is read-only) skips itself under
+ * a system profile.
+ */
+describe('explorer queries (integration)', () => {
+  let gci: GciLibrary;
+  let handle: unknown;
+  useIntegrationTest((testContext) => {
+    gci = testContext.gciLibrary;
+    handle = testContext.session;
+  });
+
+  const session = (): ActiveSession => ({ id: 1, gci, handle }) as unknown as ActiveSession;
+  const exec = (code: string): string => q.executeFetchString(session(), code);
+
+  const isSystemProfile = (): boolean =>
+    exec('System myUserProfile isSystemProfile printString').trim() === 'true';
+  const dictIndexOf = (name: string): number =>
+    parseInt(
+      exec(
+        `| sl d | sl := System myUserProfile symbolList. ` +
+          `d := sl detect: [:x | x name = #'${name}'] ifNone: [nil]. ` +
+          `(d ifNil: [0] ifNotNil: [sl indexOf: d]) printString`,
+      ),
+      10,
+    );
+  const userIndex = (): number => dictIndexOf('UserGlobals');
+
+  const WIDGET = 'JasperItWidget';
+  const GADGET = 'JasperItGadget';
+
+  // Compile a throwaway class into UserGlobals (writable by any user). Uses the
+  // base-kernel `subclass:...inDictionary:` selector — the `category:options:`
+  // variant only exists in images with certain packages loaded, not the bare
+  // test stone — then tags the class-category in a separate step.
+  const defineClass = (name: string, category = 'JasperIt-Core'): void => {
+    q.compileClassDefinition(
+      session(),
+      `Object subclass: '${name}' instVarNames: #() classVars: #() ` +
+        `classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals`,
+    );
+    exec(`(UserGlobals at: #'${name}') category: '${category}'. 'ok'`);
+  };
+
+  // The standard fixture: WIDGET with one instance method and one class method.
+  const defineWidget = (): void => {
+    defineClass(WIDGET);
+    q.compileMethod(session(), WIDGET, false, 'accessing', 'bar ^42');
+    q.compileMethod(session(), WIDGET, true, 'instance creation', 'make ^self new');
+  };
+
+  const categoryOf = (className: string): string | undefined =>
+    q.getClassesWithCategory(session(), userIndex()).find((e) => e.className === className)
+      ?.category;
+
+  const selectorsIn = (className: string, isMeta: boolean, category: string): string[] =>
+    q
+      .getClassEnvironments(session(), userIndex(), className, 0)
+      .filter((l) => l.isMeta === isMeta && l.category === category)
+      .flatMap((l) => l.selectors);
+
+  describe('getClassHierarchy', () => {
+    it('reports the queried class as the "self" node', () => {
+      const self = q.getClassHierarchy(session(), 'Integer').find((e) => e.kind === 'self');
+
+      expect(self?.className).toBe('Integer');
+    });
+
+    it('includes Object among the superclasses, root-first', () => {
+      const supers = q
+        .getClassHierarchy(session(), 'Integer')
+        .filter((e) => e.kind === 'superclass');
+
+      expect(supers.map((e) => e.className)).toContain('Object');
+    });
+  });
+
+  describe('getGrailStubReflection', () => {
+    const GRAILC = 'JasperItGrailTarget';
+    // A throwaway class with two instVars: `balance` has both an accessor and a
+    // mutator, `owner` has neither — plus a plain method, a binary override, and
+    // a class-side method, so the reflection exercises every branch.
+    const defineGrailTarget = (): void => {
+      q.compileClassDefinition(
+        session(),
+        `Object subclass: '${GRAILC}' instVarNames: #('balance' 'owner') classVars: #() ` +
+          'classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals',
+      );
+      q.compileMethod(session(), GRAILC, false, 'accessing', 'balance ^balance');
+      q.compileMethod(session(), GRAILC, false, 'accessing', 'balance: aValue balance := aValue');
+      q.compileMethod(session(), GRAILC, false, 'ops', 'deposit: n balance := balance + n');
+      q.compileMethod(session(), GRAILC, false, 'comparing', '= other ^self == other');
+      q.compileMethod(session(), GRAILC, true, 'instance creation', 'make ^self new');
+    };
+
+    it('reports own instance variables in order with the accessors the class understands', () => {
+      defineGrailTarget();
+
+      const refl = q.getGrailStubReflection(session(), GRAILC, userIndex());
+
+      expect(refl.found).toBe(true);
+      expect(refl.instVars).toEqual([
+        { name: 'balance', hasGetter: true, hasSetter: true },
+        { name: 'owner', hasGetter: false, hasSetter: false },
+      ]);
+    });
+
+    it('lists own selectors on both sides and names the immediate superclass', () => {
+      defineGrailTarget();
+
+      const refl = q.getGrailStubReflection(session(), GRAILC, userIndex());
+
+      expect(refl.superclass).toBe('Object');
+      expect(refl.methods).toContainEqual({
+        side: 'instance',
+        category: 'ops',
+        selector: 'deposit:',
+      });
+      expect(refl.methods).toContainEqual({
+        side: 'instance',
+        category: 'comparing',
+        selector: '=',
+      });
+      expect(refl.methods).toContainEqual({
+        side: 'class',
+        category: 'instance creation',
+        selector: 'make',
+      });
+    });
+
+    it('reports an unknown class name as not found', () => {
+      const refl = q.getGrailStubReflection(session(), 'JasperItNoSuchClass', userIndex());
+
+      expect(refl.found).toBe(false);
+    });
+  });
+
+  describe('getClassesWithCategory', () => {
+    it('pairs a class in the dictionary with its class-category', () => {
+      defineClass(WIDGET, 'JasperIt-Alpha');
+
+      expect(categoryOf(WIDGET)).toBe('JasperIt-Alpha');
+    });
+
+    // #387 item 11 drives the class row's comment button off this flag, so what
+    // counts as "has a comment" has to be decided against a real class, not a
+    // mocked line of output: `Class>>comment` SYNTHESISES a placeholder when there
+    // is none, and `comment: ''` STORES the empty string rather than dropping the
+    // key. Both are engine behaviours a unit test cannot show.
+    const commentedOf = (className: string): boolean | undefined =>
+      q.getClassesWithCategory(session(), userIndex()).find((e) => e.className === className)
+        ?.hasComment;
+
+    it('reports a class that was never commented as uncommented', () => {
+      defineClass(WIDGET);
+
+      // Guard: the synthesised accessor answers a non-empty string even here, which
+      // is exactly why the flag cannot be read from it.
+      expect(exec(`(UserGlobals at: #'${WIDGET}') comment isEmpty printString`).trim()).toBe(
+        'false',
+      );
+      expect(commentedOf(WIDGET)).toBe(false);
+    });
+
+    it('reports a class with real comment text as commented', () => {
+      defineClass(WIDGET);
+      q.setClassComment(session(), WIDGET, 'A widget.', userIndex());
+
+      expect(commentedOf(WIDGET)).toBe(true);
+    });
+
+    it('reports a comment emptied by the editor as uncommented', () => {
+      defineClass(WIDGET);
+      q.setClassComment(session(), WIDGET, 'A widget.', userIndex());
+      q.setClassComment(session(), WIDGET, '', userIndex());
+
+      // The key survives the emptying — a nil test would still answer "commented".
+      expect(
+        exec(`((UserGlobals at: #'${WIDGET}') _extraDictAt: #comment) notNil printString`).trim(),
+      ).toBe('true');
+      expect(commentedOf(WIDGET)).toBe(false);
+    });
+
+    it('reports a whitespace-only comment as uncommented', () => {
+      defineClass(WIDGET);
+      // What a save can leave behind after the text is deleted (insert-final-newline).
+      q.setClassComment(session(), WIDGET, '\n', userIndex());
+
+      expect(commentedOf(WIDGET)).toBe(false);
+    });
+  });
+
+  describe('canClassBeWritten', () => {
+    it('reports a freshly created user class as writable', () => {
+      defineClass(WIDGET);
+
+      expect(q.canClassBeWritten(session(), WIDGET, userIndex())).toBe(true);
+    });
+
+    it('reports a kernel class as read-only for a non-system user', () => {
+      if (isSystemProfile()) return;
+
+      expect(q.canClassBeWritten(session(), 'Object')).toBe(false);
+    });
+  });
+
+  describe('getClassEnvironments', () => {
+    it("lists a class's own instance and class methods under their categories", () => {
+      defineWidget();
+
+      expect(selectorsIn(WIDGET, false, 'accessing')).toContain('bar');
+      expect(selectorsIn(WIDGET, true, 'instance creation')).toContain('make');
+    });
+  });
+
+  describe('class comment', () => {
+    it('reads back a comment written to a class, scoped to its dictionary', () => {
+      defineWidget();
+
+      q.setClassComment(session(), WIDGET, 'Jasper comment round-trip.', userIndex());
+
+      expect(q.getClassComment(session(), WIDGET, userIndex()).trim()).toBe(
+        'Jasper comment round-trip.',
+      );
+    });
+
+    it('reads a comment by bare class name when no dictionary is given', () => {
+      defineWidget();
+
+      q.setClassComment(session(), WIDGET, 'Bare-name comment.');
+
+      expect(q.getClassComment(session(), WIDGET).trim()).toBe('Bare-name comment.');
+    });
+  });
+
+  describe('recategorizeClass', () => {
+    it('moves a class to a new class-category', () => {
+      defineWidget();
+
+      const result = q.recategorizeClass(session(), WIDGET, 'JasperIt-Moved');
+
+      expect(result).toContain('Recategorized');
+      expect(categoryOf(WIDGET)).toBe('JasperIt-Moved');
+    });
+  });
+
+  describe('getClassCategory', () => {
+    it('returns the class category the definition editor shows on its own line', () => {
+      defineClass(WIDGET, 'JasperIt-Shown');
+
+      expect(q.getClassCategory(session(), WIDGET, userIndex())).toBe('JasperIt-Shown');
+    });
+
+    it('returns empty for a class that cannot be found', () => {
+      expect(q.getClassCategory(session(), 'JasperItNoSuchClass', userIndex())).toBe('');
+    });
+  });
+
+  describe('classExistsInDictionary', () => {
+    it('is true for a class present in the dictionary and false otherwise', () => {
+      defineWidget();
+
+      expect(q.classExistsInDictionary(session(), WIDGET, userIndex())).toBe(true);
+      expect(q.classExistsInDictionary(session(), 'JasperItAbsent', userIndex())).toBe(false);
+    });
+  });
+
+  describe('recategorizeMethod', () => {
+    it('moves a method into another existing category', () => {
+      defineWidget();
+      q.compileMethod(session(), WIDGET, false, 'relocated', 'baz ^0'); // makes the target category exist
+
+      q.recategorizeMethod(session(), WIDGET, false, 'bar', 'relocated');
+
+      expect(selectorsIn(WIDGET, false, 'relocated')).toContain('bar');
+      expect(selectorsIn(WIDGET, false, 'accessing')).not.toContain('bar');
+    });
+
+    it('CREATES a category the class does not have yet, rather than refusing', () => {
+      // The Explorer's "+ new category" leaves the stone untouched until something is
+      // filed there, so dropping a method on one of those rows targets a category that
+      // does not exist yet: bare `moveMethod:toCategory:` answers classErrMethCatNotFound.
+      defineWidget();
+      expect(q.getMethodCategories(session(), WIDGET, false)).not.toContain('fresh-category');
+
+      q.recategorizeMethod(session(), WIDGET, false, 'bar', 'fresh-category');
+
+      expect(selectorsIn(WIDGET, false, 'fresh-category')).toContain('bar');
+      expect(selectorsIn(WIDGET, false, 'accessing')).not.toContain('bar');
+    });
+
+    it('does not fall over on a category that IS already there', () => {
+      // `addCategory:` raises classErrMethCatExists on one that exists, so it is guarded.
+      defineWidget();
+      q.compileMethod(session(), WIDGET, false, 'relocated', 'baz ^0');
+
+      expect(q.recategorizeMethod(session(), WIDGET, false, 'bar', 'relocated').trim()).toBe('ok');
+    });
+
+    it('moves back into a category a RENAME emptied out of existence', () => {
+      // The exact sequence that failed in the Explorer: rename `accessing` away, which
+      // takes its methods AND the category itself with it, then create a fresh `accessing`
+      // with the "+" button (client overlay only) and drag a method into it. The target
+      // category has a familiar name but no server existence at all.
+      defineWidget();
+      q.renameCategory(session(), WIDGET, false, 'accessing', 'accessing-renamed');
+      expect(q.getMethodCategories(session(), WIDGET, false)).not.toContain('accessing');
+
+      q.recategorizeMethod(session(), WIDGET, false, 'bar', 'accessing');
+
+      expect(selectorsIn(WIDGET, false, 'accessing')).toContain('bar');
+      expect(selectorsIn(WIDGET, false, 'accessing-renamed')).not.toContain('bar');
+    });
+
+    it('creates the category on the CLASS side when that is the side being moved', () => {
+      defineWidget();
+      q.compileMethod(session(), WIDGET, true, 'instance creation', 'make ^self new');
+
+      q.recategorizeMethod(session(), WIDGET, true, 'make', 'building');
+
+      expect(selectorsIn(WIDGET, true, 'building')).toContain('make');
+      // The instance side is left alone — the two sides have separate category lists.
+      expect(q.getMethodCategories(session(), WIDGET, false)).not.toContain('building');
+    });
+  });
+
+  describe('removeMethodCategory', () => {
+    it('removes an empty category', () => {
+      defineWidget();
+      // Emptied by moving its one method away — the category itself survives that.
+      q.recategorizeMethod(session(), WIDGET, false, 'bar', 'elsewhere');
+      expect(q.getMethodCategories(session(), WIDGET, false)).toContain('accessing');
+
+      expect(q.removeMethodCategory(session(), WIDGET, false, 'accessing').trim()).toBe('ok');
+
+      expect(q.getMethodCategories(session(), WIDGET, false)).not.toContain('accessing');
+    });
+
+    it('REFUSES a category that holds methods, and leaves them alone', () => {
+      // The fact the guard exists for: GemStone's `removeCategory:` does not refuse a
+      // category with methods in it, it deletes them along with the category. Pinned here so
+      // it cannot change underneath the undo that relies on being told first.
+      defineWidget();
+
+      expect(q.removeMethodCategory(session(), WIDGET, false, 'accessing').trim()).toBe('holds:1');
+
+      expect(q.getMethodCategories(session(), WIDGET, false)).toContain('accessing');
+      expect(selectorsIn(WIDGET, false, 'accessing')).toContain('bar');
+    });
+
+    it('bare removeCategory: really does take the methods with it', () => {
+      // The unguarded behaviour, stated outright so the guard above reads as necessary
+      // rather than defensive.
+      defineWidget();
+
+      exec(`(UserGlobals at: #'${WIDGET}') removeCategory: 'accessing'. 'ok'`);
+
+      expect(
+        exec(`((UserGlobals at: #'${WIDGET}') includesSelector: #bar) printString`).trim(),
+      ).toBe('false');
+    });
+
+    it('answers not-found rather than raising on a category the class does not have', () => {
+      defineWidget();
+
+      expect(q.removeMethodCategory(session(), WIDGET, false, 'no-such-category').trim()).toBe(
+        'not-found',
+      );
+    });
+
+    it('keeps the two sides apart', () => {
+      defineWidget();
+
+      expect(q.removeMethodCategory(session(), WIDGET, true, 'accessing').trim()).toBe('not-found');
+      expect(q.getMethodCategories(session(), WIDGET, false)).toContain('accessing');
+    });
+  });
+
+  describe('renameCategory', () => {
+    it('renames a method category, carrying its methods along', () => {
+      defineWidget();
+
+      q.renameCategory(session(), WIDGET, false, 'accessing', 'renamed-accessing');
+
+      expect(selectorsIn(WIDGET, false, 'renamed-accessing')).toContain('bar');
+      expect(selectorsIn(WIDGET, false, 'accessing')).toEqual([]);
+    });
+
+    // The Explorer's "+ new category" is client-only until a method lands: a
+    // never-populated category was never created on the server, so renaming one
+    // there raises — which is why the controller renames those locally. (A category
+    // that HELD methods and was emptied is different: the server keeps it. See the
+    // removeCategory tests below.)
+    it('raises when renaming a category the class does not have', () => {
+      defineWidget();
+
+      expect(() =>
+        q.renameCategory(session(), WIDGET, false, 'no-such-category', 'whatever'),
+      ).toThrow();
+    });
+  });
+
+  describe('removeCategory', () => {
+    // The leftover this action exists to clear: GemStone keeps a category listed
+    // after its last method moves out, so it lingers in the Methods pane.
+    const emptyAccessing = (): void => {
+      defineWidget();
+      q.compileMethod(session(), WIDGET, false, 'relocated', 'other ^1');
+      q.recategorizeMethod(session(), WIDGET, false, 'bar', 'relocated');
+    };
+
+    it('leaves an emptied category listed until it is removed', () => {
+      emptyAccessing();
+
+      expect(selectorsIn(WIDGET, false, 'accessing')).toEqual([]);
+      expect(q.getMethodCategories(session(), WIDGET, false, userIndex())).toContain('accessing');
+    });
+
+    it('removes the emptied category and nothing else', () => {
+      emptyAccessing();
+
+      expect(q.removeCategory(session(), WIDGET, false, 'accessing', userIndex()).trim()).toBe(
+        'ok',
+      );
+      const categories = q.getMethodCategories(session(), WIDGET, false, userIndex());
+      expect(categories).not.toContain('accessing');
+      expect(categories).toContain('relocated');
+      expect(selectorsIn(WIDGET, false, 'relocated')).toContain('bar');
+    });
+
+    it('refuses a category that still holds methods, and keeps them', () => {
+      defineWidget();
+
+      expect(q.removeCategory(session(), WIDGET, false, 'accessing', userIndex()).trim()).toBe(
+        'has-methods:1',
+      );
+      // The refusal is the point: GemStone's removeCategory: would have taken the
+      // method with it.
+      expect(selectorsIn(WIDGET, false, 'accessing')).toContain('bar');
+    });
+
+    it('removes a class-side category', () => {
+      defineWidget();
+      q.compileMethod(session(), WIDGET, true, 'other', 'zip ^1');
+      q.recategorizeMethod(session(), WIDGET, true, 'make', 'other');
+
+      expect(
+        q.removeCategory(session(), WIDGET, true, 'instance creation', userIndex()).trim(),
+      ).toBe('ok');
+      expect(q.getMethodCategories(session(), WIDGET, true, userIndex())).not.toContain(
+        'instance creation',
+      );
+    });
+
+    it('answers no-category for a category the class does not have', () => {
+      defineWidget();
+
+      expect(
+        q.removeCategory(session(), WIDGET, false, 'no-such-category', userIndex()).trim(),
+      ).toBe('no-category');
+    });
+
+    // `includesCategory:`, `selectorsIn:` and `removeCategory:` all read environment
+    // 0, while the Methods pane is built from `_unifiedCategorys: env` over
+    // `0 to: maxEnvironment` — so a category can be on screen, and hold methods, in a
+    // place the env-0 shorthands cannot see. Only a live stone can prove the sweep.
+    describe('across method environments', () => {
+      // The categories the pane would list for a side, in one environment.
+      const categoriesInEnv = (isMeta: boolean, envId: number): string[] =>
+        q
+          .getClassEnvironments(session(), userIndex(), WIDGET, 1)
+          .filter((l) => l.isMeta === isMeta && l.envId === envId)
+          .map((l) => l.category);
+      const selectorsInEnv = (isMeta: boolean, envId: number, category: string): string[] =>
+        q
+          .getClassEnvironments(session(), userIndex(), WIDGET, 1)
+          .filter((l) => l.isMeta === isMeta && l.envId === envId && l.category === category)
+          .flatMap((l) => l.selectors);
+
+      it('refuses a category emptied in environment 0 that still holds a method in 1', () => {
+        // The dangerous case: env 0 sees an empty 'accessing' and would remove it,
+        // leaving the environment-1 method filed under a category the user was told
+        // had gone.
+        emptyAccessing();
+        q.compileMethod(session(), WIDGET, false, 'accessing', 'toolOnly ^1', 1, userIndex());
+
+        expect(q.removeCategory(session(), WIDGET, false, 'accessing', userIndex(), 1).trim()).toBe(
+          'has-methods:1',
+        );
+        expect(selectorsInEnv(false, 1, 'accessing')).toContain('toolOnly');
+        expect(categoriesInEnv(false, 0)).toContain('accessing');
+      });
+
+      it('removes a category that exists only in a non-zero environment', () => {
+        // Its row is on screen — getClassEnvironments iterates every environment —
+        // but `includesCategory:` answers false for it, so the user used to be told
+        // the class no longer had a category they could see.
+        defineWidget();
+        q.compileMethod(session(), WIDGET, false, 'envonly', 'toolOnly ^1', 1, userIndex());
+        q.compileMethod(session(), WIDGET, false, 'elsewhere', 'other ^1', 1, userIndex());
+        exec(
+          `(UserGlobals at: #'${WIDGET}') moveMethod: #toolOnly toCategory: 'elsewhere' environmentId: 1. 'ok'`,
+        );
+        expect(categoriesInEnv(false, 1)).toContain('envonly');
+
+        expect(q.removeCategory(session(), WIDGET, false, 'envonly', userIndex(), 1).trim()).toBe(
+          'ok',
+        );
+        expect(categoriesInEnv(false, 1)).not.toContain('envonly');
+        expect(selectorsInEnv(false, 1, 'elsewhere')).toContain('toolOnly');
+      });
+
+      it('clears an empty category from every environment that has it', () => {
+        defineWidget();
+        for (const env of [0, 1]) {
+          q.compileMethod(session(), WIDGET, false, 'scratch', `s${env} ^1`, env, userIndex());
+          q.compileMethod(session(), WIDGET, false, 'keeper', `k${env} ^1`, env, userIndex());
+          exec(
+            `(UserGlobals at: #'${WIDGET}') moveMethod: #s${env} toCategory: 'keeper' environmentId: ${env}. 'ok'`,
+          );
+        }
+
+        expect(q.removeCategory(session(), WIDGET, false, 'scratch', userIndex(), 1).trim()).toBe(
+          'ok',
+        );
+        expect(categoriesInEnv(false, 0)).not.toContain('scratch');
+        expect(categoriesInEnv(false, 1)).not.toContain('scratch');
+      });
+
+      it('still answers no-category when no environment in range has it', () => {
+        defineWidget();
+
+        expect(
+          q.removeCategory(session(), WIDGET, false, 'no-such-category', userIndex(), 1).trim(),
+        ).toBe('no-category');
+      });
+    });
+  });
+
+  // The "+ new method" flow relies on the compiler creating the target category on
+  // save — so an Explorer overlay category becomes real once it holds a method.
+  describe('compileMethod into a not-yet-existing category', () => {
+    it('creates an instance-side category and files the method there', () => {
+      defineWidget();
+
+      q.compileMethod(session(), WIDGET, false, 'freshly-made', 'baz ^0');
+
+      expect(selectorsIn(WIDGET, false, 'freshly-made')).toContain('baz');
+      expect(q.getMethodCategories(session(), WIDGET, false, userIndex())).toContain(
+        'freshly-made',
+      );
+    });
+
+    it('creates a class-side category and files the method there', () => {
+      defineWidget();
+
+      q.compileMethod(session(), WIDGET, true, 'class-side cat', 'zot ^0');
+
+      expect(selectorsIn(WIDGET, true, 'class-side cat')).toContain('zot');
+    });
+  });
+
+  describe('copyMethodToClass', () => {
+    it('copies a method into another class, keeping its category', () => {
+      defineWidget();
+      defineClass(GADGET);
+
+      const result = q.copyMethodToClass(session(), WIDGET, GADGET, false, 'bar');
+
+      expect(result).toContain('Copied');
+      expect(selectorsIn(GADGET, false, 'accessing')).toContain('bar');
+    });
+  });
+
+  describe('deleteClass', () => {
+    it('removes a class from its dictionary', () => {
+      defineWidget();
+
+      const result = q.deleteClass(session(), userIndex(), WIDGET);
+
+      expect(result).toContain('Deleted class');
+      expect(categoryOf(WIDGET)).toBeUndefined();
+    });
+  });
+
+  describe('moveClass', () => {
+    it('moves a class from one dictionary to another', () => {
+      defineWidget();
+      q.addDictionary(session(), 'JasperItDest');
+      const dest = dictIndexOf('JasperItDest');
+
+      const result = q.moveClass(session(), userIndex(), dest, WIDGET);
+
+      expect(result).toContain('Moved');
+      expect(
+        q.getClassesWithCategory(session(), userIndex()).find((e) => e.className === WIDGET),
+      ).toBeUndefined();
+      expect(
+        q.getClassesWithCategory(session(), dest).find((e) => e.className === WIDGET),
+      ).toBeDefined();
+    });
+  });
+
+  describe('addDictionary', () => {
+    it('appends a new dictionary to the symbol list', () => {
+      const result = q.addDictionary(session(), 'JasperItNew');
+
+      expect(result).toContain('Added dictionary');
+      expect(dictIndexOf('JasperItNew')).toBeGreaterThan(0);
+    });
+  });
+
+  describe('removeDictionary', () => {
+    it('removes a dictionary from the symbol list', () => {
+      q.addDictionary(session(), 'JasperItDoomed');
+      expect(dictIndexOf('JasperItDoomed')).toBeGreaterThan(0);
+
+      const result = q.removeDictionary(session(), 'JasperItDoomed');
+
+      expect(result).toContain('Removed dictionary');
+      expect(dictIndexOf('JasperItDoomed')).toBe(0);
+    });
+  });
+
+  describe('moveDictionaryUp', () => {
+    it('swaps a dictionary one position earlier', () => {
+      q.addDictionary(session(), 'JasperItLower');
+      q.addDictionary(session(), 'JasperItUpper');
+      expect(dictIndexOf('JasperItLower')).toBeLessThan(dictIndexOf('JasperItUpper'));
+
+      q.moveDictionaryUp(session(), dictIndexOf('JasperItUpper'));
+
+      expect(dictIndexOf('JasperItUpper')).toBeLessThan(dictIndexOf('JasperItLower'));
+    });
+  });
+
+  describe('moveDictionaryDown', () => {
+    it('swaps a dictionary one position later', () => {
+      q.addDictionary(session(), 'JasperItFirst');
+      q.addDictionary(session(), 'JasperItSecond');
+      expect(dictIndexOf('JasperItFirst')).toBeLessThan(dictIndexOf('JasperItSecond'));
+
+      q.moveDictionaryDown(session(), dictIndexOf('JasperItFirst'));
+
+      expect(dictIndexOf('JasperItFirst')).toBeGreaterThan(dictIndexOf('JasperItSecond'));
+    });
+  });
+
+  describe('renameDictionary', () => {
+    it('renames a dictionary in place, keeping its symbol-list position', () => {
+      q.addDictionary(session(), 'JasperItRenameSrc');
+      const before = dictIndexOf('JasperItRenameSrc');
+      expect(before).toBeGreaterThan(0);
+
+      const result = q.renameDictionary(session(), 'JasperItRenameSrc', 'JasperItRenameDst');
+
+      expect(result).toBe('ok');
+      expect(dictIndexOf('JasperItRenameSrc')).toBe(0); // old name gone
+      expect(dictIndexOf('JasperItRenameDst')).toBe(before); // new name, same index
+    });
+
+    it('keeps the classes it holds reachable under the new name', () => {
+      q.addDictionary(session(), 'JasperItRenameSrc');
+      const srcIdx = dictIndexOf('JasperItRenameSrc');
+      expect(srcIdx).toBeGreaterThan(0);
+      // File a class INTO that dictionary (not UserGlobals), so the rename has real
+      // contents to preserve. Only a live stone can confirm the self-entry swap left
+      // them reachable — that's the point of asserting it here rather than in a unit test.
+      q.compileClassDefinition(
+        session(),
+        `Object subclass: 'JasperItHeld' instVarNames: #() classVars: #() ` +
+          `classInstVars: #() poolDictionaries: #() ` +
+          `inDictionary: (System myUserProfile symbolList objectNamed: #'JasperItRenameSrc')`,
+      );
+      expect(q.getClassNames(session(), srcIdx)).toContain('JasperItHeld');
+
+      const result = q.renameDictionary(session(), 'JasperItRenameSrc', 'JasperItRenameDst');
+      expect(result).toBe('ok');
+
+      // The class is still there, now found under the NEW name (both via the query
+      // and by resolving the dictionary itself under the new name).
+      const dstIdx = dictIndexOf('JasperItRenameDst');
+      expect(q.getClassNames(session(), dstIdx)).toContain('JasperItHeld');
+      expect(
+        exec(
+          `((System myUserProfile symbolList objectNamed: #'JasperItRenameDst') ` +
+            `includesKey: #'JasperItHeld') printString`,
+        ).trim(),
+      ).toBe('true');
+    });
+
+    it('declines when the new name is already in use, leaving both dictionaries intact', () => {
+      q.addDictionary(session(), 'JasperItRenameA');
+      q.addDictionary(session(), 'JasperItRenameB');
+
+      const result = q.renameDictionary(session(), 'JasperItRenameA', 'JasperItRenameB');
+
+      expect(result).toContain('already in use');
+      expect(dictIndexOf('JasperItRenameA')).toBeGreaterThan(0);
+      expect(dictIndexOf('JasperItRenameB')).toBeGreaterThan(0);
+    });
+
+    it('refuses to rename a system dictionary (UserGlobals)', () => {
+      const before = userIndex();
+      expect(before).toBeGreaterThan(0);
+
+      const result = q.renameDictionary(session(), before, 'JasperItNotUserGlobals');
+
+      expect(result).toContain('system dictionary');
+      expect(dictIndexOf('UserGlobals')).toBe(before);
+      expect(dictIndexOf('JasperItNotUserGlobals')).toBe(0);
+    });
+
+    it('reports "Dictionary not found" for an out-of-range index', () => {
+      const result = q.renameDictionary(session(), 99999, 'JasperItNope');
+      expect(result).toContain('not found');
+    });
+  });
+
+  describe('renameClassCategory', () => {
+    it('renames a class category and its subtree, leaving unrelated categories alone', () => {
+      defineClass('JasperCatExact', 'JasperIt-Cat');
+      defineClass('JasperCatChild', 'JasperIt-Cat-Sub');
+      defineClass('JasperCatOther', 'JasperIt-Other');
+
+      const result = q.renameClassCategory(session(), userIndex(), 'JasperIt-Cat', 'JasperIt-Evt');
+
+      expect(result).toBe('renamed: 2');
+      expect(categoryOf('JasperCatExact')).toBe('JasperIt-Evt');
+      expect(categoryOf('JasperCatChild')).toBe('JasperIt-Evt-Sub');
+      expect(categoryOf('JasperCatOther')).toBe('JasperIt-Other');
+    });
+
+    it('merges into an existing category name (categories are labels, not bindings)', () => {
+      defineClass('JasperCatMoveMe', 'JasperIt-From');
+      defineClass('JasperCatAlready', 'JasperIt-To');
+
+      const result = q.renameClassCategory(session(), userIndex(), 'JasperIt-From', 'JasperIt-To');
+
+      expect(result).toBe('renamed: 1');
+      expect(categoryOf('JasperCatMoveMe')).toBe('JasperIt-To');
+      expect(categoryOf('JasperCatAlready')).toBe('JasperIt-To');
+    });
+
+    it('renames nothing (count 0) when no class is in the category', () => {
+      const result = q.renameClassCategory(session(), userIndex(), 'JasperIt-Nonexistent', 'X');
+      expect(result).toBe('renamed: 0');
+    });
+  });
+
+  // Shadowed class names — the same name bound in two dictionaries. This session's
+  // Explorer fixes (hierarchy pane, class deletion, and creating a class in a
+  // non-selected dictionary) rely on the query layer resolving by the SELECTED
+  // dictionary index rather than the global first match. These prove that
+  // dict-scoping end-to-end on a live stone.
+  describe('dictionary-scoped resolution for a shadowed class name', () => {
+    const SHADOW = 'JasperItShadowed';
+
+    // Bind SHADOW twice: an Object subclass in UserGlobals and an Array subclass in
+    // a second dictionary. Returns the second dictionary's 1-based index.
+    const defineShadowPair = (): number => {
+      q.compileClassDefinition(
+        session(),
+        `Object subclass: '${SHADOW}' instVarNames: #() classVars: #() ` +
+          `classInstVars: #() poolDictionaries: #() inDictionary: UserGlobals`,
+      );
+      q.addDictionary(session(), 'JasperItShadowDict');
+      const shadowIdx = dictIndexOf('JasperItShadowDict');
+      q.compileClassDefinition(
+        session(),
+        `Array subclass: '${SHADOW}' instVarNames: #() classVars: #() ` +
+          `classInstVars: #() poolDictionaries: #() inDictionary: JasperItShadowDict`,
+      );
+      return shadowIdx;
+    };
+
+    const superclassesOf = (dict: number): string[] =>
+      q
+        .getClassHierarchy(session(), SHADOW, dict)
+        .filter((e) => e.kind === 'superclass')
+        .map((e) => e.className);
+
+    it('getClassHierarchy returns the lineage of the shadow in the given dictionary (G)', () => {
+      const shadowIdx = defineShadowPair();
+
+      // The UserGlobals shadow is a plain Object subclass — no Array in its lineage.
+      expect(superclassesOf(userIndex())).toContain('Object');
+      expect(superclassesOf(userIndex())).not.toContain('Array');
+      // The other dictionary's shadow is an Array subclass — Array is an ancestor.
+      expect(superclassesOf(shadowIdx)).toContain('Array');
+    });
+
+    it('deleteClass removes only the shadow in the targeted dictionary (I)', () => {
+      const shadowIdx = defineShadowPair();
+
+      q.deleteClass(session(), shadowIdx, SHADOW);
+
+      expect(q.classExistsInDictionary(session(), SHADOW, shadowIdx)).toBe(false);
+      expect(q.classExistsInDictionary(session(), SHADOW, userIndex())).toBe(true);
+    });
+
+    it('compileClassDefinition creates the class in the dictionary its inDictionary: names (F)', () => {
+      q.addDictionary(session(), 'JasperItOther');
+      const other = dictIndexOf('JasperItOther');
+
+      q.compileClassDefinition(
+        session(),
+        `Object subclass: '${GADGET}' instVarNames: #() classVars: #() ` +
+          `classInstVars: #() poolDictionaries: #() inDictionary: JasperItOther`,
+      );
+
+      expect(q.classExistsInDictionary(session(), GADGET, other)).toBe(true);
+      expect(q.classExistsInDictionary(session(), GADGET, userIndex())).toBe(false);
+    });
+
+    // Compile `super subclass: 'name' ... inDictionary: <dict>` (base-kernel selector).
+    const defineIn = (superName: string, name: string, dict: string): void => {
+      q.compileClassDefinition(
+        session(),
+        `${superName} subclass: '${name}' instVarNames: #() classVars: #() ` +
+          `classInstVars: #() poolDictionaries: #() inDictionary: ${dict}`,
+      );
+    };
+
+    // getClassDescendantNames / Remove Class must resolve each subclass by CLASS OBJECT
+    // IDENTITY, so a subclass whose name is also bound (as an unrelated class) in another
+    // dictionary reports its OWN dictionary — never the same-named stranger. (Fixes the
+    // show-stopper on PR #397: a name-keyed lookup would delete the wrong class.)
+    const ROOT = 'JasperItRoot';
+    const LEAF = 'JasperItLeaf';
+
+    it('getClassDescendantNames reports a subclass in its own dictionary, not a same-named stranger', () => {
+      q.addDictionary(session(), 'JasperItAlt');
+      const alt = dictIndexOf('JasperItAlt');
+      defineIn('Object', ROOT, 'UserGlobals');
+      defineIn(ROOT, LEAF, 'UserGlobals'); // the real subclass, in UserGlobals
+      defineIn('Object', LEAF, 'JasperItAlt'); // unrelated class, same name, different dictionary
+
+      const descendants = q.getClassDescendantNames(session(), ROOT, userIndex());
+
+      expect(descendants).toHaveLength(1);
+      expect(descendants[0].className).toBe(LEAF);
+      expect(descendants[0].dictIndex).toBe(userIndex());
+      expect(descendants[0].dictIndex).not.toBe(alt);
+    });
+
+    it('getClassDescendantNames reports a subclass that lives in a different dictionary than its root', () => {
+      q.addDictionary(session(), 'JasperItAlt');
+      const alt = dictIndexOf('JasperItAlt');
+      defineIn('Object', ROOT, 'UserGlobals');
+      defineIn(ROOT, 'JasperItChild', 'JasperItAlt'); // subclass bound in another dictionary
+
+      const descendants = q.getClassDescendantNames(session(), ROOT, userIndex());
+
+      expect(descendants).toHaveLength(1);
+      expect(descendants[0].className).toBe('JasperItChild');
+      expect(descendants[0].dictIndex).toBe(alt);
+    });
+
+    it('deleting a subtree by each descendant’s reported dictionary spares a same-named stranger', () => {
+      q.addDictionary(session(), 'JasperItAlt');
+      const alt = dictIndexOf('JasperItAlt');
+      defineIn('Object', ROOT, 'UserGlobals');
+      defineIn(ROOT, LEAF, 'UserGlobals'); // real subclass
+      defineIn('Object', LEAF, 'JasperItAlt'); // unrelated same-named class
+
+      // Delete the subtree the way Remove Class does: each descendant by its OWN
+      // reported dictionary index, then the root.
+      for (const d of q.getClassDescendantNames(session(), ROOT, userIndex())) {
+        q.deleteClass(session(), d.dictIndex, d.className);
+      }
+      q.deleteClass(session(), userIndex(), ROOT);
+
+      // The real subclass and root are gone; the unrelated same-named class survives.
+      expect(q.classExistsInDictionary(session(), LEAF, userIndex())).toBe(false);
+      expect(q.classExistsInDictionary(session(), ROOT, userIndex())).toBe(false);
+      expect(q.classExistsInDictionary(session(), LEAF, alt)).toBe(true);
+    });
+  });
+});

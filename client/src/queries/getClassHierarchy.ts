@@ -1,4 +1,5 @@
 import { QueryExecutor } from './types';
+import { classOrganizerExpr } from './classOrganizer';
 import { classLookupExpr } from './util';
 
 export interface ClassHierarchyEntry {
@@ -23,7 +24,7 @@ export function getClassHierarchy(
    * shadowed across dictionaries — an unscoped lookup could offer the wrong class's lineage.
    */
   const code = `| organizer class supers subs stream classDict sl |
-organizer := ClassOrganizer new.
+organizer := ${classOrganizerExpr()}.
 class := ${classLookupExpr(className, dict)}.
 supers := organizer allSuperclassesOf: class.
 subs := organizer subclassesOf: class.

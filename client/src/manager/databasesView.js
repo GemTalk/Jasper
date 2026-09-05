@@ -56,6 +56,58 @@
     allowNfs: false,
   };
 
+  // Whether the Register Existing form is showing instead of the lists, and what
+  // has been answered in it. Held here for the same reason `createForm` is: a
+  // refresh arriving mid-typing must not discard the answers — and neither must
+  // a refusal, which is what `registerPending` below is for.
+  //
+  // `version` is never typed. It is filled in from the product directory's own
+  // version.txt when the host answers `productPicked`, because the version has
+  // to be the tree's, not the user's recollection of it. `confPath`, `globalDir`
+  // and `netldiPort` are filled in the same way from a server already running
+  // out of that tree — the only authority on where it registers.
+  let registering = false;
+  // A register was posted and the host has not yet said what happened. The form
+  // closes on submit — the new row is the confirmation, exactly as Create works —
+  // but its answers are held until then, because a refusal has to be answerable
+  // without re-choosing the product directory through the folder dialog. An
+  // `actionFailed` while this is set reopens the form on those answers; the next
+  // state clears it, and `beginRegister` is what empties the form after that.
+  let registerPending = false;
+  // What the host last told us went wrong. Kept until dismissed: the state post
+  // that follows a failure is the unchanged state, so clearing it on the next
+  // render would blank the message before it could be read.
+  let lastFailure = '';
+  const registerForm = {
+    productPath: '',
+    version: '',
+    description: '',
+    stoneName: '',
+    ldiName: '',
+    netldiPort: '',
+    confPath: '',
+    globalDir: '',
+    /** Why the chosen folder cannot be used, from the host. */
+    problem: '',
+    /** Servers the host found running out of the chosen tree. */
+    servers: [],
+  };
+
+  function resetRegisterForm() {
+    Object.assign(registerForm, {
+      productPath: '',
+      version: '',
+      description: '',
+      stoneName: '',
+      ldiName: '',
+      netldiPort: '',
+      confPath: '',
+      globalDir: '',
+      problem: '',
+      servers: [],
+    });
+  }
+
   // Internal key -> the real codicon name. This is the single place a key is
   // translated; nothing else invents a glyph.
   const MONTHS = [
@@ -107,6 +159,7 @@
     refresh: 'refresh',
     edit: 'edit',
     pass: 'pass',
+    link: 'link',
   };
 
   /** The codicon name for an internal key (or the name itself, if already one). */
@@ -367,31 +420,33 @@
       (v) => v.extracted || v.downloaded || v.local || v.clientExtracted,
     );
     const installed = versionsInstalledCount(versions);
-    // The two ways to get a release carry their words. They were icon-only, which
-    // read as decoration: three unlabelled glyphs in a header is not an answer to
-    // "how do I get a new version?". The walkthrough stays a glyph — it is a
-    // pointer to reading, not a thing you do to this machine — and it is the only
-    // home that button has now that the Versions tree is gone.
-    const getActions =
-      btn('installNewVersion', 'Install Version…', 'plus', 'btn-secondary', {
-        title: 'Choose a release from the download site, then download and unpack it',
-      }) +
-      btn('registerLocalVersion', 'Register Local…', 'folderOpen', 'btn-secondary', {
-        title: 'Point Jasper at a GemStone tree you built yourself',
-      });
+    // The way to get a release carries its words. It was icon-only, which read as
+    // decoration: an unlabelled glyph in a header is not an answer to "how do I
+    // get a new version?". The walkthrough stays a glyph — it is a pointer to
+    // reading, not a thing you do to this machine — and it is the only home that
+    // button has now that the Versions tree is gone.
+    //
+    // There is no Register Local… beside it. A tree built or unpacked elsewhere
+    // is recognised by putting it in the versions folder, symlink or directory
+    // alike, and a stone that already runs from such a tree is adopted by
+    // Register Existing Database — which records where it really lives instead
+    // of needing a link in Jasper's root at all.
+    const getActions = btn('installNewVersion', 'Install Version…', 'plus', 'btn-secondary', {
+      title: 'Choose a release from the download site, then download and unpack it',
+    });
     const actions = getActions;
 
     if (!onDisk.length) {
       // Nothing installed is the one state where this section is the whole job,
-      // so the buttons move down beside the sentence that explains them rather
+      // so the button moves down beside the sentence that explains it rather
       // than sitting in the header, where a reader looking at the sentence has to
-      // go hunting for them. Moved, not repeated: the header keeps none of them,
-      // or the same two buttons appear twice within one section.
+      // go hunting for it. Moved, not repeated: the header keeps none of it, or
+      // the same button appears twice within one section.
       return section(
         { key: 'versions', title: 'Versions', count: `${installed} installed`, actions: '', open },
         `<div class="empty">
           <div>No GemStone release on this machine yet. Install one from the download site,
-          or point Jasper at a build you compiled.</div>
+          or put a build you already have in ${esc((lastState && lastState.rootPath) || 'the versions folder')}.</div>
           <div class="empty-acts">${getActions}</div>
         </div>`,
       );
@@ -432,7 +487,20 @@
   // ── Databases section ───────────────────────────────────────────────────────
   // The combined running-status + whole-database power control. Colour carries
   // running-vs-stopped: red stops a running database, green starts a stopped one.
+  //
+  // A database with a server running outside Jasper's environment gets nothing:
+  // Jasper cannot stop that server, and starting the other half beside it would
+  // only collide with it. The per-server rows below offer the one action that
+  // helps — restarting it under Jasper — and withhold their own toggles for the
+  // same reason.
   function powerControl(db) {
+    // A server of this name is running at another GemStone version: starting
+    // would collide with it and stopping would drive the wrong binaries, so the
+    // row offers neither and says so where the button would have been.
+    if (db.versionMismatch) {
+      return `<span class="db-state" data-tip="${esc(db.versionMismatch)}">${ICONS.warn}<span>version mismatch</span></span>`;
+    }
+    if ((db.external || []).length) return '';
     return db.stoneRunning
       ? `<button type="button" class="btn power power-stop" data-action="stopDatabase" data-dir="${esc(db.dirName)}"${tipAttr(`Stop ${db.stoneName}`)}>${ICONS.stop}<span>Stop</span></button>`
       : `<button type="button" class="btn power power-start" data-action="startDatabase" data-dir="${esc(db.dirName)}"${tipAttr(`Start ${db.stoneName}`)}>${ICONS.play}<span>Start</span></button>`;
@@ -559,10 +627,16 @@
           .map((l) => {
             const open = l.sessions || [];
             const head = `<div class="db-line db-login">
-                <span class="db-line-name"><span class="session-mark"></span><span class="db-login-user">${esc(l.user)}</span></span>
+                <span class="db-line-name"><span class="session-mark"></span><span class="db-login-user">${esc(l.label)}</span></span>
                 <span class="db-line-actions">${btn('editLogin', 'Edit login', 'edit', null, {
                   login: l.label,
                   iconOnly: true,
+                })}${btn('deleteLogin', 'Delete Login', 'trash', null, {
+                  login: l.label,
+                  iconOnly: true,
+                  // The command's own title, so the row and the Logins &
+                  // Sessions tree read the same for the same action.
+                  title: 'Delete Login',
                 })}${btn('connectLogin', 'Log in', null, 'btn-secondary', {
                   login: l.label,
                   title: `Log in to ${db.stoneName} as ${l.user}`,
@@ -611,7 +685,10 @@
       // Backing up live extents suspends checkpoints over a session, so it is
       // offered on a running stone — the same condition the sidebar puts it
       // behind. The offline copy on the database row is the stopped-stone case.
-      (isStone && running && !external
+      // Not for a registered database: its extents live under the installation's
+      // own data directory, which Jasper's record has no copy of, so the command
+      // refuses — the same rule the offline copy on the database row follows.
+      (isStone && running && !external && !db.registered
         ? btn('backupDatabase', 'Online Extent Backup', 'archive', 'btn-secondary', {
             dir: db.dirName,
             iconOnly: true,
@@ -760,13 +837,14 @@
     // Only while the stone is down: copying a live extent without suspending
     // checkpoints produces a file that looks like a backup and is not one. The
     // command refuses anyway; not offering it is the honest version.
-    const backup = db.stoneRunning
-      ? ''
-      : btn('offlineExtentBackup', 'Back Up Extents', 'archive', 'btn-secondary', {
-          dir: db.dirName,
-          iconOnly: true,
-          title: 'Copy this database\u2019s extents into its backups folder',
-        });
+    const backup =
+      db.stoneRunning || db.registered
+        ? ''
+        : btn('offlineExtentBackup', 'Back Up Extents', 'archive', 'btn-secondary', {
+            dir: db.dirName,
+            iconOnly: true,
+            title: 'Copy this database\u2019s extents into its backups folder',
+          });
     return (
       backup +
       btn('openDbInFinder', 'Show in Finder', 'folder', 'btn-secondary', {
@@ -783,6 +861,11 @@
   }
 
   function extentChooser(db) {
+    // A registered database runs on an extent Jasper never copied and does not
+    // know the name of — and replacing it would overwrite the user's own file.
+    // The control is left out rather than shown dead: the row already says it is
+    // registered, and its footer explains what that rules out.
+    if (db.registered) return '';
     const extents = db.availableExtents || [];
     const current = String(db.baseExtent || '').replace(/\.dbf$/, '');
     const options = (extents.includes(current) ? extents : [current, ...extents])
@@ -798,6 +881,44 @@
     </label>`;
   }
 
+  /**
+   * What a row's footer offers, which is where the two kinds of database differ
+   * most: one Jasper created can be deleted, files and all; one it registered
+   * cannot, because those files are the user's.
+   *
+   * Delete is still drawn for a registered database — greyed, with the reason on
+   * hover — rather than left out. A missing button raises the question; a
+   * disabled one that explains itself answers it. The reason has to hang on a
+   * wrapper, because a disabled button receives no hover of its own.
+   */
+  function dbFooterActions(db) {
+    if (!db.registered) {
+      return btn('deleteDatabase', 'Delete Database', 'trash', 'btn-secondary', {
+        dir: db.dirName,
+      });
+    }
+    const reason = db.registeredReason || '';
+    const disabledDelete = `<span class="db-disabled-wrap"${tipAttr(reason)}>${btn(
+      'deleteDatabase',
+      'Delete Database',
+      'trash',
+      'btn-secondary',
+      { dir: db.dirName, disabled: true, title: reason },
+    )}</span>`;
+    const unregister = btn('unregisterDatabase', 'Unregister Database', 'close', 'btn-secondary', {
+      dir: db.dirName,
+      title:
+        'Remove Jasper\u2019s record of this database. The installation is left untouched, ' +
+        'and a running stone keeps running.',
+    });
+    const where = db.productPath
+      ? `<span class="db-registered-note dim">Registered from <span class="mono">${esc(db.productPath)}</span>${
+          db.netldiPort ? ` · NetLDI port ${esc(String(db.netldiPort))}` : ''
+        }</span>`
+      : '';
+    return `${where}${disabledDelete}${unregister}`;
+  }
+
   function renderDbItem(db, isCurrent) {
     // The database is a native disclosure. The always-visible facts — version,
     // liveness and the power control — ride in the summary, so they read whether
@@ -808,6 +929,7 @@
         <span class="db-name">${esc(db.stoneName)}</span>
         <span class="db-version mono">${esc(db.version)}</span>
         <span class="db-dir mono dim">${esc(db.dirName)}</span>
+        ${db.registered ? badge('registered') : ''}
         ${dbState(db)}
         ${powerControl(db)}
       </summary>
@@ -822,15 +944,82 @@
         </div>
         ${renderFiles(db, expandedFiles.has(db.dirName))}
         <div class="db-footer">
-          ${btn('deleteDatabase', 'Delete Database', 'trash', 'btn-secondary', { dir: db.dirName })}
+          ${dbFooterActions(db)}
         </div>
       </div>
     </details>`;
   }
 
-  // `canCreate` is false when no release is installed: a form whose only choice
-  // is empty cannot be completed, so the way out is Install, which the Versions
-  // section leads with in exactly that case.
+  // `canCreate` is false when no release is installed: a form whose only choice is
+  // empty cannot be completed, so New Database… is withheld. Making one is not the
+  // only way to get a database, though — Register Existing… in the panel header
+  // adopts an installation from anywhere and needs nothing installed here — so the
+  // empty text names both ways rather than only Install.
+  /**
+   * The logins this machine has that no database row can show.
+   *
+   * A login is drawn under the database it targets, matched by stone name — so a
+   * login to a stone Jasper has no database for (one on another host, or a stone
+   * that was never registered here) matched no row and appeared nowhere at all.
+   * It saved, it was in the settings, and the panel simply had no place to draw
+   * it, which reads as the login not having been added. Each row says what makes
+   * it different — its stone, its host and the NetLDI that reaches it — because
+   * without a database above it, the user name alone identifies nothing.
+   */
+  function renderOtherLogins(logins, open) {
+    const rows = logins
+      .map((l) => {
+        // The label names the user, stone and host, the way every login row does.
+        // The NetLDI and release follow it dimmed: with no database row above to
+        // supply them, they are all that separates two logins to the same stone.
+        const extra = [l.netldi ? `via ${l.netldi}` : '', l.version]
+          .filter((part) => part)
+          .join(' · ');
+        const sessions = l.sessions || [];
+        const head = `<div class="db-line db-login">
+            <span class="db-line-name"><span class="session-mark"></span><span class="db-login-user">${esc(l.label)}</span><span class="dim session-id">${esc(extra)}</span></span>
+            <span class="db-line-actions">${btn('editLogin', 'Edit login', 'edit', null, {
+              login: l.label,
+              iconOnly: true,
+            })}${btn('deleteLogin', 'Delete Login', 'trash', null, {
+              login: l.label,
+              iconOnly: true,
+              title: 'Delete Login',
+            })}${btn('connectLogin', 'Log in', null, 'btn-secondary', {
+              login: l.label,
+              title: `Log in to ${l.stone} as ${l.user}`,
+            })}</span>
+          </div>`;
+        // Sessions belong under the login they were opened from, exactly as they do
+        // on a database's rows. Without this a login here could be connected and
+        // show nothing for it — the one place its sessions could appear is the row
+        // itself, since there is no database above it carrying them.
+        if (!sessions.length) return head;
+        return (
+          head +
+          `<div class="session-block">
+            <div class="session-caption">${sessions.length === 1 ? 'Session' : 'Sessions'}</div>
+            ${sessions.map((sess) => sessionRow({ stoneName: l.stone }, l, sess)).join('')}
+          </div>`
+        );
+      })
+      .join('');
+    // Its own +, because the per-database one prefills from the database it sits
+    // under and there is none here — that is what puts a login in this section.
+    const add = `<button type="button" class="icon-btn" data-action="addLogin" data-tip="New login" aria-label="New login">${ICONS.plus}</button>`;
+    return section(
+      {
+        key: 'otherLogins',
+        title: 'Other Logins',
+        desc: 'not tied to a database on this machine',
+        count: logins.length,
+        actions: add,
+        open,
+      },
+      rows,
+    );
+  }
+
   function renderDatabases(databases, open, currentDir, canCreate) {
     // The database the current session works in leads the column; the others
     // follow as a list, so the pair of top columns read the same way.
@@ -843,7 +1032,8 @@
           : '')
       : canCreate
         ? `<div class="empty">No databases yet.<div>${btn('beginCreate', 'New Database…', 'plus', 'btn-primary')}</div></div>`
-        : `<div class="empty">No databases yet — install a GemStone release first.</div>`;
+        : `<div class="empty">No databases yet — install a GemStone release to make one, or
+            use Register Existing… above to adopt one this machine already runs.</div>`;
     return section(
       {
         key: 'databases',
@@ -864,17 +1054,26 @@
   function renderHeader(state) {
     const dbs = (state.databases || []).length;
     const installed = versionsInstalledCount(state.versions || []);
-    const lead = !installed
-      ? 'No GemStone release on this machine yet — install one to make a database.'
-      : dbs
+    // A registered database runs from an installation outside Jasper's root, so
+    // "nothing installed" is not "nothing here": the count leads whenever there
+    // are databases, or the header denied the very rows beneath it.
+    const lead = dbs
+      ? installed
         ? `${dbs} database${dbs === 1 ? '' : 's'} · ${installed} version${installed === 1 ? '' : 's'} installed`
-        : 'No databases yet — make one from a release you have installed.';
+        : `${dbs} database${dbs === 1 ? '' : 's'} · no release installed here`
+      : installed
+        ? 'No databases yet — make one from a release you have installed.'
+        : 'No GemStone release on this machine yet — install one to make a database, or register a database that already exists.';
     // Creating needs something to create from, so the button waits for a release.
     const create = installed ? btn('beginCreate', 'New Database\u2026', 'plus', 'btn-primary') : '';
+    // Registering does not: the installation it adopts brings its own release,
+    // which is the case a machine with nothing installed is most likely in.
+    const register = btn('beginRegister', 'Register Existing\u2026', 'link', 'btn-secondary');
     return `<div class="gm-head">
       <div class="gm-head-text"><span class="gm-head-lead">${esc(lead)}</span></div>
       <div class="gm-head-acts">
         ${create}
+        ${register}
         ${btn('refresh', 'Refresh', 'refresh', null, { iconOnly: true, title: 'Read this machine again, and ask the download catalogue for new releases' })}
       </div>
     </div>`;
@@ -884,14 +1083,20 @@
     const nothingInstalled = versionsInstalledCount(state.versions) === 0;
     const currentDir = (state.logins || []).find((l) => l.current)?.dirName;
 
-    const out = [];
-    // With nothing installed there is no database to make yet, so the way to get
-    // a release leads. Once something is installed the databases lead instead and
-    // versions sit below, where you go back for a new release.
-    if (nothingInstalled) out.push({ html: renderVersions(state.versions, true) });
-    out.push({ html: renderDatabases(state.databases, true, currentDir, !nothingInstalled) });
-    if (!nothingInstalled) out.push({ html: renderVersions(state.versions, true) });
-    return out;
+    // Databases lead, always: they are what this panel is about, and versions sit
+    // below, where you go back for a new release. Versions used to lead a machine
+    // with nothing installed, on the reasoning that there was no database to make
+    // yet — but Register Existing… adopts an installation from anywhere, so such a
+    // machine can hold databases and no installed release at once, and burying
+    // them under Versions read as the registration never having landed.
+    // A login with no local database to sit under gets its own section rather
+    // than being dropped: it is on this machine's list, so it belongs on screen.
+    const unattached = (state.logins || []).filter((l) => !l.dirName);
+    return [
+      { html: renderDatabases(state.databases, true, currentDir, !nothingInstalled) },
+      ...(unattached.length ? [{ html: renderOtherLogins(unattached, true) }] : []),
+      { html: renderVersions(state.versions, true) },
+    ];
   }
 
   // ── Creating a database ─────────────────────────────────────────────────────
@@ -946,9 +1151,20 @@
   }
 
   // Said instead of that form: why the click did not open it. Deliberately just
-  // the sentence — the Versions section is the very next thing on screen in this
-  // state, and it leads with the two buttons that fix it. A third copy up here
-  // put three Install Version… on one screen.
+  // the sentence — the Versions section is on screen below, leading with the
+  // button that fixes it, so a copy up here only put two Install Version… on one
+  // screen (three, with the one its section header used to carry).
+  // What the host reported it could not do. Its `actionFailed` message used to be
+  // dropped on arrival — the panel only stopped looking busy — so an action that
+  // failed was indistinguishable from one that did nothing, which is how a
+  // registration refused for an unwritable root read as "nothing happened".
+  function renderFailure() {
+    return `<div class="gm-blocked">
+      <span class="note">${ICONS.warn}<span>${esc(lastFailure)}</span></span>
+      ${btn('dismissFailure', 'Dismiss', 'close', 'btn-secondary')}
+    </div>`;
+  }
+
   function renderVersionFirst() {
     return `<div class="gm-blocked">
       <span class="note">${ICONS.warn}<span>New Database needs a GemStone release to copy from — install one below first.</span></span>
@@ -1011,6 +1227,109 @@
     return section({ key: 'create', title: 'New Database', open: true }, body);
   }
 
+  // ── Registering an existing database ───────────────────────────────────────
+  // The other half of "where does a database come from": one Jasper made, or one
+  // that was already here. Register asks for the installation and the names its
+  // servers run under, and writes only a record — see registeredDatabase.ts for
+  // why it writes nothing else.
+
+  /** Names of servers of one type the host found running out of the chosen tree. */
+  function discoveredNames(type) {
+    return (registerForm.servers || []).filter((sv) => sv.type === type).map((sv) => sv.name);
+  }
+
+  function registerProblems(c) {
+    const names = c || {};
+    const taken = (name, list, what) =>
+      name && (list || []).includes(name)
+        ? `A ${what} called "${name}" is already registered.`
+        : '';
+    return {
+      productPath: registerForm.problem
+        ? registerForm.problem
+        : !registerForm.productPath
+          ? 'Choose the GemStone product directory this database runs from.'
+          : !registerForm.version
+            ? 'That directory has no readable version.txt.'
+            : '',
+      stoneName: !registerForm.stoneName
+        ? 'Enter the name of the stone as it was started.'
+        : taken(registerForm.stoneName, names.stoneNames, 'stone'),
+      // Checked against the databases' NetLDI names, not the running ones: the
+      // NetLDI being registered is usually up under that very name, so the
+      // create form's `ldiNames` (which counts a live NetLDI as taken) would
+      // refuse every ordinary registration. See buildCreateOptions.
+      ldiName: !registerForm.ldiName
+        ? 'Enter the name of its NetLDI.'
+        : taken(registerForm.ldiName, names.dbLdiNames, 'NetLDI'),
+      netldiPort:
+        registerForm.netldiPort && !/^\d{1,5}$/.test(String(registerForm.netldiPort))
+          ? 'A port is a number, or leave it empty.'
+          : '',
+    };
+  }
+
+  /** A discovered server, said in one line: what it is, its PID, and its port. */
+  function discoveredLine(sv) {
+    const bits = [`${sv.type === 'stone' ? 'Stone' : 'NetLDI'} ${sv.name}`, `pid ${sv.pid}`];
+    if (sv.port) bits.push(`port ${sv.port}`);
+    if (sv.version) bits.push(sv.version);
+    return bits.join(' · ');
+  }
+
+  function renderRegister(state) {
+    const c = state.create || {};
+    const problems = registerProblems(c);
+    const blocked = Object.values(problems).some(Boolean);
+    const chosen = registerForm.productPath
+      ? `<div class="mono">${esc(registerForm.productPath)}</div>`
+      : '<div class="dim">No directory chosen yet.</div>';
+    const found = (registerForm.servers || []).length
+      ? `<div class="cf-note dim">Running out of this installation now:<br>${(
+          registerForm.servers || []
+        )
+          .map((sv) => esc(discoveredLine(sv)))
+          .join('<br>')}</div>`
+      : registerForm.productPath && registerForm.version
+        ? `<div class="cf-note dim">Nothing of this installation is running. It can still be
+            registered — Jasper will use GemStone's default configuration and
+            registration directories, which only a running server can improve on.</div>`
+        : '';
+
+    // The version is shown, never chosen: it is read from the tree's version.txt.
+    const versionLine = registerForm.version
+      ? `<div class="mono">${esc(registerForm.version)}${
+          registerForm.description
+            ? ` <span class="dim">${esc(registerForm.description)}</span>`
+            : ''
+        }</div>`
+      : '<div class="dim">Read from the directory you choose.</div>';
+
+    const stoneHint = discoveredNames('stone').length
+      ? `Running here: ${discoveredNames('stone').join(', ')}`
+      : 'The stone name it was started with — Jasper does not rename it.';
+    const ldiHint = discoveredNames('netldi').length
+      ? `Running here: ${discoveredNames('netldi').join(', ')}`
+      : 'The NetLDI a login talks to on its way to this stone.';
+
+    const body = `<div class="create-form">
+      ${field('productPath', 'Product directory', 'The GemStone installation whose binaries run this database. Jasper reads it and writes nothing inside it.', `${chosen}<div class="cf-actions">${btn('pickProduct', 'Choose Folder\u2026', 'folderOpen', 'btn-secondary')}</div>`, problems.productPath)}
+      ${field('version', 'GemStone release', 'Read from the installation\u2019s own version.txt, so it always matches the tree that runs it.', versionLine, '')}
+      ${field('stoneName', 'Stone name', stoneHint, `<input id="cf-stoneName" class="cf-input" type="text" data-register-field="stoneName" value="${esc(registerForm.stoneName)}" spellcheck="false" autocomplete="off">`, problems.stoneName)}
+      ${field('ldiName', 'NetLDI name', ldiHint, `<input id="cf-ldiName" class="cf-input" type="text" data-register-field="ldiName" value="${esc(registerForm.ldiName)}" spellcheck="false" autocomplete="off">`, problems.ldiName)}
+      ${field('netldiPort', 'NetLDI port (optional)', 'Given, logins address the NetLDI by port. Worth filling in: a NetLDI name only resolves through /etc/services, and an installation Jasper did not set up often uses a name that was never added there.', `<input id="cf-netldiPort" class="cf-input" type="text" inputmode="numeric" data-register-field="netldiPort" value="${esc(String(registerForm.netldiPort || ''))}" spellcheck="false" autocomplete="off">`, problems.netldiPort)}
+      ${found}
+      <div class="cf-actions">
+        ${btn('submitRegister', 'Register Database', 'plus', 'btn-primary', blocked ? { disabled: true } : undefined)}
+        ${btn('cancelRegister', 'Cancel', 'close', 'btn-secondary')}
+      </div>
+      <div class="cf-note dim">Jasper records where this installation lives so it can list, start,
+        stop and log in to it. It never deletes, backs up or re-extents a database it did not create.</div>
+    </div>`;
+
+    return section({ key: 'register', title: 'Register Existing Database', open: true }, body);
+  }
+
   function render(state) {
     windowsHost = !!state.windows;
     lastState = state;
@@ -1039,19 +1358,26 @@
     // body by the time the fresh one exists. Reading it afterwards always misses,
     // and the caret is lost on every redraw arriving mid-type.
     const active = document.activeElement;
+    const focusAttr =
+      active && active.hasAttribute && active.hasAttribute('data-register-field')
+        ? 'data-register-field'
+        : 'data-create-field';
     const focusField =
-      active && active.hasAttribute && active.hasAttribute('data-create-field')
-        ? active.getAttribute('data-create-field')
+      active && active.hasAttribute && active.hasAttribute(focusAttr)
+        ? active.getAttribute(focusAttr)
         : null;
 
     els.root.innerHTML =
       renderHeader(state) +
-      (creating
-        ? renderCreate(state)
-        : (needsVersionFirst ? renderVersionFirst() : '') +
-          orderedSections(state)
-            .map((s) => s.html)
-            .join(''));
+      (lastFailure ? renderFailure() : '') +
+      (registering
+        ? renderRegister(state)
+        : creating
+          ? renderCreate(state)
+          : (needsVersionFirst ? renderVersionFirst() : '') +
+            orderedSections(state)
+              .map((s) => s.html)
+              .join(''));
 
     // Which sections start open follows what needs attention, which is right on
     // arrival and wrong afterwards: the panel redraws itself whenever anything
@@ -1082,7 +1408,7 @@
     // Focus is returned to the field it was in (captured above, before the
     // rebuild) so a refresh arriving mid-type does not steal the cursor.
     if (focusField) {
-      const box = els.root.querySelector(`[data-create-field="${focusField}"]`);
+      const box = els.root.querySelector(`[${focusAttr}="${focusField}"]`);
       if (box) {
         box.focus();
         if (box.setSelectionRange && box.type === 'text') {
@@ -1122,6 +1448,16 @@
   // answers, and nothing is posted until Create is pressed — which is what lets
   // you leave the panel to look something up and come back to a half-filled form.
 
+  /** Store what a Register Existing field now says. Returns false when it is
+   *  not one. Answering clears the host's complaint about the chosen folder,
+   *  which belongs to the folder and not to whatever is being typed now. */
+  function readRegisterField(el) {
+    const key = el.getAttribute && el.getAttribute('data-register-field');
+    if (!key) return false;
+    registerForm[key] = el.value;
+    return true;
+  }
+
   /** Store what a field now says. Returns false when it is not a form field. */
   function readCreateField(el) {
     const key = el.getAttribute && el.getAttribute('data-create-field');
@@ -1139,6 +1475,27 @@
   // Typing re-checks the answers in place rather than redrawing: rebuilding the
   // form would replace the input mid-keystroke and drop the caret to the end,
   // so a name typed in the middle would scramble.
+  /** Swap each Register field's hint for its reason in place, the way
+   *  `refreshCreateProblems` does — a full redraw mid-typing would take the
+   *  caret with it. */
+  function refreshRegisterProblems() {
+    const problems = registerProblems((lastState && lastState.create) || {});
+    els.root.querySelectorAll('[data-cf-field]').forEach((wrap) => {
+      const problem = problems[wrap.dataset.cfField];
+      if (problem === undefined) return;
+      const hint = wrap.querySelector('.cf-hint');
+      const bad = wrap.querySelector('.cf-problem');
+      wrap.classList.toggle('cf-bad', !!problem);
+      if (hint) hint.hidden = !!problem;
+      if (bad) {
+        bad.hidden = !problem;
+        bad.textContent = problem;
+      }
+    });
+    const submit = els.root.querySelector('[data-action="submitRegister"]');
+    if (submit) submit.disabled = Object.values(problems).some(Boolean);
+  }
+
   function refreshCreateProblems() {
     const problems = createProblems((lastState && lastState.create) || {});
     els.root.querySelectorAll('[data-cf-field]').forEach((wrap) => {
@@ -1191,9 +1548,63 @@
     return false;
   }
 
+  /** The Register Existing form's own buttons. Returns true when it consumed
+   *  the click. Separate from onCreateClick so neither form's buttons can be
+   *  mistaken for the other's. */
+  function onRegisterClick(el) {
+    const action = el.dataset.action;
+    if (action === 'beginRegister') {
+      registering = true;
+      creating = false;
+      resetRegisterForm();
+      if (lastState) render(lastState);
+      return true;
+    }
+    if (action === 'cancelRegister') {
+      registering = false;
+      resetRegisterForm();
+      if (lastState) render(lastState);
+      return true;
+    }
+    if (action === 'pickProduct') {
+      // Only the host can open a folder dialog; it answers `productPicked`.
+      post({ command: 'pickProductDirectory' });
+      return true;
+    }
+    if (action === 'submitRegister') {
+      // Re-checked here as well as in the button's disabled state, for the same
+      // reason Create is: a refresh can land between the redraw and the click.
+      if (Object.values(registerProblems((lastState && lastState.create) || {})).some(Boolean)) {
+        if (lastState) render(lastState);
+        return true;
+      }
+      const port = String(registerForm.netldiPort || '').trim();
+      post({
+        command: 'registerDatabase',
+        productPath: registerForm.productPath,
+        stoneName: registerForm.stoneName,
+        ldiName: registerForm.ldiName,
+        ...(port ? { netldiPort: Number(port) } : {}),
+        ...(registerForm.confPath ? { confPath: registerForm.confPath } : {}),
+        ...(registerForm.globalDir ? { globalDir: registerForm.globalDir } : {}),
+      });
+      // Closed, but NOT reset — the same bargain Create makes. The host can
+      // still refuse this (a stone name taken between the redraw and the click,
+      // a root it cannot write), and the failure banner it posts arrives over a
+      // form whose answers would otherwise all be gone, product directory
+      // included — which has to be re-chosen through the folder dialog.
+      registering = false;
+      registerPending = true;
+      if (lastState) render(lastState);
+      return true;
+    }
+    return false;
+  }
+
   function onCreateClick(el) {
     const action = el.dataset.action;
     if (action === 'beginCreate') {
+      registering = false;
       creating = true;
       // Chosen from inside the panel, so the lists are what cancel returns to.
       openedForCreate = false;
@@ -1248,7 +1659,13 @@
     if (!el) return;
     // Prevent an action button inside a <summary> from also toggling the section.
     e.preventDefault();
+    if (el.dataset.action === 'dismissFailure') {
+      lastFailure = '';
+      if (lastState) render(lastState);
+      return;
+    }
     if (onNoticeClick(el)) return;
+    if (onRegisterClick(el)) return;
     if (onCreateClick(el)) return;
     post({
       command: el.dataset.action,
@@ -1269,6 +1686,12 @@
   }
 
   function onInput(e) {
+    const registerField = e.target.closest('[data-register-field]');
+    if (registerField) {
+      readRegisterField(registerField);
+      refreshRegisterProblems();
+      return;
+    }
     const el = e.target.closest('[data-create-field]');
     if (!el) return;
     readCreateField(el);
@@ -1357,6 +1780,12 @@
   function onKeydown(e) {
     if (e.key !== 'Escape') return;
     hideTip();
+    if (registering) {
+      e.preventDefault();
+      const cancel = els.root.querySelector('[data-action="cancelRegister"]');
+      if (cancel) onRegisterClick(cancel);
+      return;
+    }
     if (creating) {
       e.preventDefault();
       const cancel = els.root.querySelector('[data-action="cancelCreate"]');
@@ -1389,6 +1818,9 @@
     // A fresh panel shows the lists, not a half-filled form — so a reopened
     // panel (and each test that inits a new one) starts clean.
     creating = false;
+    registering = false;
+    lastFailure = '';
+    resetRegisterForm();
     openedForCreate = false;
     needsVersionFirst = false;
     createForm.seeded = false;
@@ -1427,25 +1859,73 @@
     if (msg.command === 'loading') {
       els.root.setAttribute('aria-busy', 'true');
     } else if (msg.command === 'actionFailed') {
-      // The host reports its own failures; the panel only has to stop looking
-      // busy, because the state that follows will not have changed.
+      // Shown, not merely absorbed. The state that follows is the unchanged one,
+      // so without this the panel answered a failed action by redrawing exactly
+      // what was already there — the action's own error never reaching the
+      // screen the host had written it for.
       els.root.setAttribute('aria-busy', 'false');
+      lastFailure = String(msg.message || '');
+      // A refused registration puts the form back, answers and all, under the
+      // banner saying why — the answer that has to change is one of the ones on
+      // screen, and the product directory behind it took a folder dialog to
+      // choose.
+      if (registerPending) {
+        registerPending = false;
+        registering = true;
+        creating = false;
+      }
+      if (lastState) render(lastState);
     } else if (msg.command === 'pingResult') {
       setPingNotice(
         Number(msg.sessionId),
         msg.tone === 'warn' ? 'warn' : 'ok',
         String(msg.message || ''),
       );
+    } else if (msg.command === 'productPicked') {
+      // The host has read the chosen directory. Everything it learned lands in
+      // the form: the version (never typed), and — from a server already running
+      // out of that tree — the names, port and directories that make the record
+      // correct rather than merely plausible.
+      registerForm.productPath = String(msg.productPath || '');
+      registerForm.problem = String(msg.problem || '');
+      registerForm.version = String(msg.version || '');
+      registerForm.description = String(msg.description || '');
+      registerForm.servers = Array.isArray(msg.servers) ? msg.servers : [];
+      const stone = registerForm.servers.find((sv) => sv.type === 'stone');
+      const netldi = registerForm.servers.find((sv) => sv.type === 'netldi');
+      // Prefilled, not forced: a typed answer for a stone that is currently down
+      // is exactly what this form is for, so anything already entered stays.
+      if (stone && !registerForm.stoneName) registerForm.stoneName = stone.name;
+      if (netldi && !registerForm.ldiName) registerForm.ldiName = netldi.name;
+      if (netldi && netldi.port && !registerForm.netldiPort) {
+        registerForm.netldiPort = String(netldi.port);
+      }
+      // Where the servers register and what configuration they run on are the
+      // installation's facts, not the user's — so a running server's answer
+      // always wins over anything held here.
+      const source = stone || netldi;
+      if (source && source.globalDir) registerForm.globalDir = source.globalDir;
+      if (stone && stone.confPath) registerForm.confPath = stone.confPath;
+      if (lastState) render(lastState);
     } else if (msg.command === 'beginCreate') {
       // The sidebar's New Database button, arriving as a message because the
       // form is view state the host does not hold.
       creating = true;
+      registering = false;
       openedForCreate = true;
       createForm.seeded = false;
       if (lastState) render(lastState);
     } else if (msg.command === 'state') {
       if (!msg.state || typeof msg.state !== 'object') return;
       els.root.setAttribute('aria-busy', 'false');
+      // A state arriving with no refusal before it means the register landed —
+      // this state carries the new row. Nothing more to hold: `beginRegister`
+      // resets the form, so the answers cannot be seen again by accident, and
+      // the flag is what decides whether the next failure belongs to this form.
+      // Cleared here rather than in `render`, which also runs on the panel's own
+      // redraws — including the one that closes the form on submit, before the
+      // host has answered at all.
+      registerPending = false;
       render(msg.state);
     }
   }

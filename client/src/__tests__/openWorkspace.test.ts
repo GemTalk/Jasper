@@ -5,6 +5,7 @@ vi.mock('../gciLog', () => ({ logInfo: vi.fn() }));
 
 import { workspace, window, languages, Uri } from '../__mocks__/vscode';
 import { openWorkspace, WORKSPACE_TEMPLATE } from '../workspace';
+import { SMALLTALK_LANGUAGE } from '../languageIds';
 
 describe('openWorkspace', () => {
   beforeEach(() => {
@@ -23,7 +24,7 @@ describe('openWorkspace', () => {
     await openWorkspace();
     expect(languages.setTextDocumentLanguage).toHaveBeenCalledWith(
       expect.anything(),
-      'gemstone-smalltalk',
+      SMALLTALK_LANGUAGE,
     );
   });
 
@@ -36,7 +37,7 @@ describe('openWorkspace', () => {
   it('does NOT re-seed a buffer that hot-exit already restored with content', async () => {
     vi.mocked(workspace.openTextDocument).mockResolvedValueOnce({
       uri: Uri.from({ scheme: 'untitled', path: 'Workspace' }),
-      languageId: 'gemstone-smalltalk',
+      languageId: SMALLTALK_LANGUAGE,
       getText: () => WORKSPACE_TEMPLATE, // already has the user's content
     } as never);
 

@@ -6,8 +6,16 @@ import { SysadminStorage } from '../sysadminStorage';
 import { GemStoneDatabase, GemStoneProcess } from '../sysadminTypes';
 import { DEFAULT_GS_PW } from '../loginTypes';
 import { appendSysadmin, showSysadmin } from '../sysadminChannel';
-import { needsWsl, windowsPathToWsl, wslSpawn, wslExecSync } from '../wslBridge';
+import { needsWsl, windowsPathToWsl, wslSpawn, wslExecSync, wslExec } from '../wslBridge';
+import {
+  ExtentHolder,
+  parseHolderPids,
+  parseHolderDetails,
+  explainExtentLocked,
+} from '../extentHolders';
+import { wslReaddirSync } from '../wslFs';
 import { versionsMatch } from './versionMatch';
+import { isRegisteredDatabase, registeredPaths, versionMismatchNote } from './registeredDatabase';
 import {
   ExternalServer,
   ExternalServerFinding,
@@ -27,6 +35,24 @@ import { explainMissingInstall, explainStartFailure } from '../startFailureMessa
  *  freeze the editor with no way out. Generous for a process-table read; the
  *  callers' catch degrades to "saw nothing", which is the safe direction. */
 const PS_TIMEOUT_MS = 5000;
+
+/** A stone or NetLDI found running out of a product tree, with everything
+ *  registering it as a database needs: its name, where it registers, and the
+ *  configuration it was started with. See `discoverServersUnder`. */
+export interface DiscoveredServer {
+  type: 'stone' | 'netldi';
+  name: string;
+  pid: number;
+  version?: string;
+  globalDir?: string;
+  confPath?: string;
+  port?: number;
+  status?: string;
+}
+
+function isDefined<T>(value: T | undefined): value is T {
+  return value !== undefined;
+}
 
 // versionsMatch lives in versionMatch.ts so the process-table scan can share it
 // without importing this module (which would make the two circular). Re-exported
@@ -79,6 +105,25 @@ export function classifyPidOwnership(psOutput: string): {
   const lowered = command.toLowerCase();
   const looksLikeServer = /(?:^|[/\s])(?:stoned|netldid)(?:\s|$)/.test(lowered);
   return { pidGone: false, isGemStoneServer: looksLikeServer, command };
+}
+
+/**
+ * Whether a failed `gslist` run failed only by finding nothing.
+ *
+ * `gslist -cvl` exits 1 and prints "No GemStone servers." for a directory nothing
+ * has registered in, which `execSync` surfaces as a thrown error indistinguishable
+ * from a real one — a missing binary, an unreadable lock directory. The message is
+ * the only thing that separates them, and it can arrive on either stream depending
+ * on the release, so both are searched.
+ *
+ * Exported for testing.
+ */
+export function saysNoServers(error: unknown): boolean {
+  const streams = error as { stdout?: unknown; stderr?: unknown; message?: unknown };
+  const text = [streams?.stdout, streams?.stderr, streams?.message]
+    .map((part) => (part === undefined || part === null ? '' : String(part)))
+    .join('\n');
+  return /no\s+gemstone\s+servers/i.test(text);
 }
 
 /** Parse `gslist -cvl` output into structured process records.
@@ -169,19 +214,233 @@ export class ProcessManager {
       this.cachedProcesses = [];
       return [];
     }
-    try {
-      const gsPath = gslistPath.replace(/\/bin\/gslist$/, '');
-      const rootPath = needsWsl() ? this.storage.getWslRootPath() : this.storage.getRootPath();
-      const env = this.versionEnvironment(gsPath, rootPath);
-      const output = wslExecSync(`"${gslistPath}" -cvl`, env);
-      this.cachedProcesses = parseGslist(output);
-      // Reaching here at all is the signal that the read happened, so an empty
-      // parse is a real "nothing registered" rather than a failure to look.
-      this.gslistReadable = true;
-    } catch {
-      this.cachedProcesses = [];
-    }
+    const gsPath = gslistPath.replace(/\/bin\/gslist$/, '');
+    const rootPath = needsWsl() ? this.storage.getWslRootPath() : this.storage.getRootPath();
+    const own = this.readGslist(gsPath, rootPath);
+    // An answer, empty or not, is the signal that the read happened; only an
+    // unreadable listing leaves this false.
+    if (own !== undefined) this.gslistReadable = true;
+    // The registered databases are read whether or not Jasper's own listing came
+    // back. They register in someone else's directory, so their servers are there
+    // to be found even when Jasper's own root has nothing to say — and a failure
+    // here used to take them down with it, reporting every registered stone as
+    // Stopped while it was plainly running.
+    this.cachedProcesses = [...(own ?? []), ...this.registeredProcesses(own ?? [])];
     return this.cachedProcesses;
+  }
+
+  /**
+   * One `gslist -cvl` reading of a directory, or undefined when it could not be
+   * read at all.
+   *
+   * `gslist` exits non-zero when it finds nothing — "No GemStone servers." for a
+   * directory nothing has registered in — and `execSync` raises a non-zero exit as
+   * an error. That is an answer, and a completely ordinary one: a machine whose
+   * databases are all registered from elsewhere has nothing in Jasper's own root
+   * by definition. Reading it as a failure is what made every registered database
+   * read Stopped there.
+   */
+  private readGslist(gsPath: string, globalDir: string): GemStoneProcess[] | undefined {
+    try {
+      const env = this.versionEnvironment(gsPath, globalDir);
+      return parseGslist(wslExecSync(`"${gsPath}/bin/gslist" -cvl`, env));
+    } catch (e) {
+      return saysNoServers(e) ? [] : undefined;
+    }
+  }
+
+  /**
+   * The servers of the *registered* databases, read where they actually
+   * register rather than where Jasper does.
+   *
+   * A registered database's stone was started by someone else, in someone
+   * else's `GEMSTONE_GLOBAL_DIR` — so Jasper's own `gslist` cannot see it, and
+   * the row would read Stopped while the stone is plainly up. That blind spot
+   * is what `externalServerScan` exists to notice; for a database Jasper has
+   * been *told* about, there is a better answer than noticing: ask `gslist`
+   * about the directory the database records, with the installation's own
+   * `gslist` binary. That gives the same facts as any other row — status, PID,
+   * port and the version actually running — instead of the little a process
+   * table can prove.
+   *
+   * Reading is all this does. One directory is read once even when several
+   * databases share it, rows already seen in Jasper's own listing are not
+   * duplicated, and an installation that cannot be read reports nothing rather
+   * than failing the whole refresh.
+   */
+  private registeredProcesses(own: GemStoneProcess[]): GemStoneProcess[] {
+    const rows: GemStoneProcess[] = [];
+    const read = new Set<string>([
+      needsWsl() ? this.storage.getWslRootPath() : this.storage.getRootPath(),
+    ]);
+    for (const db of this.storage.getDatabases()) {
+      const registered = registeredPaths(db.config);
+      if (!registered) continue;
+      const globalDir = needsWsl() ? windowsPathToWsl(registered.globalDir) : registered.globalDir;
+      if (read.has(globalDir)) continue;
+      read.add(globalDir);
+      const gsPath = needsWsl() ? windowsPathToWsl(registered.productPath) : registered.productPath;
+      const found = this.readGslist(gsPath, globalDir);
+      if (found === undefined) {
+        appendSysadmin(
+          `Could not list servers for registered database ${db.dirName} in ${globalDir}`,
+        );
+        continue;
+      }
+      for (const proc of found) {
+        const seen = own.some(
+          (p) => p.type === proc.type && p.name === proc.name && p.pid === proc.pid,
+        );
+        if (!seen) rows.push({ ...proc, globalDir });
+      }
+    }
+    return rows;
+  }
+
+  /**
+   * What is running right now out of a GemStone product tree — the answer the
+   * Register Existing form needs before it can be filled in correctly.
+   *
+   * Registering an installation means recording where its servers register and
+   * what configuration they run on, and the only authority on both is a running
+   * server: its `GEMSTONE_GLOBAL_DIR` is where `startstone` put its lock, and
+   * its `-e`/`-z` argument is the configuration it was actually started with.
+   * Guessing those from GemStone's defaults works for a stock layout and is
+   * wrong for any other, which would leave Jasper unable to stop the very
+   * stone it just adopted.
+   *
+   * A process-table read plus, for each directory those processes name, one
+   * `gslist` in it — so a discovered server carries its port and status too.
+   * Read-only from end to end, and empty rather than throwing when the host
+   * will not answer: a stopped installation can still be registered by hand.
+   *
+   * The tree arrives as the *host* addresses it — on Windows the `\\wsl$\…` UNC
+   * the folder dialog answers — and everything below reads the guest: `ps`
+   * reports Linux command lines and `gslist` runs inside WSL. So it is converted
+   * first, the way every other consumer of a registered product path does.
+   * Without that the filter compares a UNC prefix against `/opt/…/sys/stoned`
+   * and matches nothing, and every Windows registration reads as "nothing is
+   * running there" — falling back to GemStone's default conf and global
+   * directories on an installation that may use neither.
+   */
+  discoverServersUnder(productPath: string): DiscoveredServer[] {
+    const tree = (needsWsl() ? windowsPathToWsl(productPath) : productPath).replace(/[/\\]+$/, '');
+    const found: DiscoveredServer[] = [];
+    let hosts: HostServerProcess[];
+    try {
+      hosts = this.hostServers().filter((p) => p.command.startsWith(`${tree}/`));
+    } catch {
+      return [];
+    }
+    for (const host of hosts) {
+      const env = this.serverEnvironment(host.pid);
+      found.push({
+        type: host.type,
+        name: host.name,
+        pid: host.pid,
+        version: host.version,
+        globalDir: env.GEMSTONE_GLOBAL_DIR,
+        // The configuration the server was started with, in the order GemStone
+        // itself resolves it: the explicit argument first, its environment
+        // second. Both name a file or a directory; the caller records it as-is
+        // rather than trimming it to a directory, since GemStone accepts either.
+        confPath: host.dbPathHints[0] ?? env.GEMSTONE_SYS_CONF ?? env.GEMSTONE_EXE_CONF,
+      });
+    }
+
+    // One gslist per directory the discovered servers register in, to put a
+    // port (and the version GemStone itself reports) on each row.
+    for (const globalDir of new Set(found.map((f) => f.globalDir).filter(isDefined))) {
+      // No gslist reading for this directory leaves each row with what the process
+      // table gave it, which is enough to register with.
+      for (const row of this.readGslist(tree, globalDir) ?? []) {
+        for (const entry of found) {
+          if (entry.type !== row.type || entry.name !== row.name) continue;
+          entry.port = row.port;
+          entry.status = row.status;
+          entry.version = row.version || entry.version;
+        }
+      }
+    }
+    return found;
+  }
+
+  /**
+   * The versions of servers running under this database's names that are not
+   * the version it is recorded as — one entry per server that disagrees.
+   *
+   * Recorded and running can differ for any database (a stone started from a
+   * different install by hand), but a registered one is where it happens by
+   * ordinary accident: its record names the product tree it was registered
+   * from, and nothing stops someone starting that stone name from another. The
+   * commands refuse to start or stop such a server (see `versionMismatchNote`),
+   * because `startstone` would collide with a live stone and a stop driven by
+   * the wrong product tree is the wrong binaries aimed at a live extent.
+   *
+   * Name alone identifies the server here, deliberately: matching on version
+   * too is what hides a mismatch as an absence.
+   */
+  getVersionMismatch(db: GemStoneDatabase): { stone?: string; netldi?: string } {
+    const recorded = db.config.version;
+    const running = (type: 'stone' | 'netldi', name: string): string | undefined => {
+      const row = this.cachedProcesses.find((p) => p.type === type && p.name === name);
+      if (row) return versionsMatch(row.version, recorded) ? undefined : row.version;
+      // Not in any gslist Jasper reads: the host scan may still have seen it,
+      // and its version — when the product path carries one — is evidence too.
+      const host = this.hostServers().find(
+        (p) => p.type === type && p.name === name && p.version !== undefined,
+      );
+      return host?.version && !versionsMatch(host.version, recorded) ? host.version : undefined;
+    };
+    const stone = running('stone', db.config.stoneName);
+    const netldi = running('netldi', db.config.ldiName);
+    return { ...(stone ? { stone } : {}), ...(netldi ? { netldi } : {}) };
+  }
+
+  /**
+   * Why this database cannot be started or stopped right now, or undefined when
+   * it can: the wording that names both versions, for whichever server
+   * disagrees. Every surface that can act on a server goes through it, so one
+   * rule covers the panel, the sidebar and the palette.
+   */
+  versionMismatchRefusal(db: GemStoneDatabase, type?: 'stone' | 'netldi'): string | undefined {
+    const mismatch = this.getVersionMismatch(db);
+    const stone = versionMismatchNote(db.config.version, mismatch.stone, 'stone');
+    const netldi = versionMismatchNote(db.config.version, mismatch.netldi, 'NetLDI');
+    if (type === 'stone') return stone;
+    if (type === 'netldi') return netldi;
+    return stone ?? netldi;
+  }
+
+  /**
+   * The port this database's NetLDI is listening on right now, from whichever
+   * `gslist` reading saw it — or undefined when it is not running.
+   *
+   * The live answer, not the recorded one. A NetLDI takes a fresh ephemeral port
+   * every time it starts unless it is told which to use, so a port written down
+   * when a database was registered describes only that moment: restart the
+   * NetLDI and every login built from the record dials a port nobody is
+   * listening on, which surfaces as `ECONNABORTED` rather than as anything
+   * mentioning ports. `startNetldi` pins the recorded port precisely so this
+   * stops moving; this is what keeps the record and the logins honest when
+   * something else moved it.
+   */
+  netldiPortFor(db: GemStoneDatabase): number | undefined {
+    return this.cachedProcesses.find(
+      (p) =>
+        p.type === 'netldi' &&
+        p.name === db.config.ldiName &&
+        versionsMatch(p.version, db.config.version),
+    )?.port;
+  }
+
+  /** Which directory identifies this database on a running server's command
+   *  line: its installation for a registered database, its own directory for
+   *  one Jasper laid out. */
+  private identityDirFor(db: GemStoneDatabase): string {
+    const registered = registeredPaths(db.config);
+    const dir = registered ? registered.identityDir : db.path;
+    return needsWsl() ? windowsPathToWsl(dir) : dir;
   }
 
   /** Determine whether the .LCK file for a stale process appears safe to remove.
@@ -189,7 +448,11 @@ export class ProcessManager {
    *  Unsafe = a real stoned/netldid is still running under that PID (a genuinely
    *  hung server that the operator should investigate, not auto-clean). */
   inspectStaleLock(proc: GemStoneProcess): StaleLockReport {
-    const rootPath = needsWsl() ? this.storage.getWslRootPath() : this.storage.getRootPath();
+    // `globalDir` is set on rows that came from a registered database's own
+    // gslist; Jasper's root is right for everything it manages itself. Looking
+    // in the wrong directory finds no lock and reads as a server that vanished.
+    const rootPath =
+      proc.globalDir ?? (needsWsl() ? this.storage.getWslRootPath() : this.storage.getRootPath());
     return this.inspectLockAt(proc.name, proc.pid, rootPath);
   }
 
@@ -328,7 +591,12 @@ export class ProcessManager {
       this.isStoneRunning(db.config.stoneName, db.config.version) &&
       this.isNetldiRunning(db.config.ldiName, db.config.version);
     if (this.gslistReadable && !bothVisible) {
-      const dbPath = needsWsl() ? windowsPathToWsl(db.path) : db.path;
+      // Which directory identifies this database on a server's command line.
+      // For a registered database that is its installation, not Jasper's record
+      // directory — the running server's `-e`/`-z`/`-l` paths have never heard
+      // of the latter, so judging identity by it would call the real server
+      // somebody else's.
+      const dbPath = this.identityDirFor(db);
       const target = { path: dbPath, config: db.config };
       const candidates = findExternalServerCandidates(
         target,
@@ -393,11 +661,12 @@ export class ProcessManager {
    * Rejects if the stop fails, leaving the caller to fall back to
    * `killHostServer`.
    */
-  async stopExternalServer(db: GemStoneDatabase, server: ExternalServer): Promise<string> {
-    const gsPath = needsWsl()
-      ? this.storage.getWslGemstonePath(db.config.version)
-      : this.storage.getGemstonePath(db.config.version);
-    if (!gsPath) throw new Error(this.missingInstallMessage(db.config.version));
+  async stopExternalServer(
+    db: GemStoneDatabase,
+    server: ExternalServer,
+    password: string = DEFAULT_GS_PW,
+  ): Promise<string> {
+    const gsPath = this.productPathFor(db);
     const globalDir =
       server.process.globalDir ??
       (needsWsl() ? this.storage.getWslRootPath() : this.storage.getRootPath());
@@ -413,7 +682,7 @@ export class ProcessManager {
     }
     return this.runCommand(
       `${gsPath}/bin/stopstone`,
-      [server.process.name, 'DataCurator', DEFAULT_GS_PW],
+      [server.process.name, 'DataCurator', password],
       env,
       `Stopping externally started stone ${server.process.name}`,
       { reveal: false },
@@ -609,13 +878,57 @@ export class ProcessManager {
     return explainMissingInstall(version, this.storage.getRootPath());
   }
 
-  private getEnvironment(db: GemStoneDatabase): Record<string, string> {
+  /**
+   * The product tree whose binaries run this database.
+   *
+   * A registered database names its own tree, and that name wins over a lookup
+   * by version: two installations can report the same version, and the one that
+   * matters is the one the database was registered from — not whichever tree
+   * Jasper happens to have installed under that number.
+   */
+  private productPathFor(db: GemStoneDatabase): string {
+    const registered = registeredPaths(db.config);
+    if (registered) {
+      return needsWsl() ? windowsPathToWsl(registered.productPath) : registered.productPath;
+    }
     const gsPath = needsWsl()
       ? this.storage.getWslGemstonePath(db.config.version)
       : this.storage.getGemstonePath(db.config.version);
     if (!gsPath) throw new Error(this.missingInstallMessage(db.config.version));
+    return gsPath;
+  }
+
+  private getEnvironment(db: GemStoneDatabase): Record<string, string> {
+    const gsPath = this.productPathFor(db);
     const dbPath = needsWsl() ? windowsPathToWsl(db.path) : db.path;
     const rootPath = needsWsl() ? this.storage.getWslRootPath() : this.storage.getRootPath();
+    const registered = registeredPaths(db.config);
+    if (registered) {
+      const confDir = needsWsl() ? windowsPathToWsl(registered.confDir) : registered.confDir;
+      const globalDir = needsWsl() ? windowsPathToWsl(registered.globalDir) : registered.globalDir;
+      return {
+        // The installation's own configuration and registration directory —
+        // pointing these at Jasper's would start a stone on default settings
+        // against an extent path it does not own, and register it where the
+        // user's own tools cannot find it.
+        ...this.versionEnvironment(gsPath, globalDir),
+        GEMSTONE_SYS_CONF: confDir,
+        // No GEMSTONE_EXE_CONF: that one steers the *gem's* configuration, and
+        // the installation already has its own answer (whatever its NetLDI
+        // passes, or the product default). Pointing it at the stone's system
+        // configuration would be Jasper inventing a value for a process it does
+        // not own — a created database is where Jasper gets to decide both.
+        // Jasper's own log directory, deliberately: this is the log of what
+        // JASPER started, and the one file its actions create. The stone's own
+        // logging stays wherever the installation's configuration puts it.
+        GEMSTONE_LOG: `${dbPath}/log/${db.config.stoneName}.log`,
+        // Left blank rather than composed: `#dir:` and `#netldi:` would send
+        // gems the installation spawns into Jasper's directories, which is
+        // exactly the writing into someone else's setup this avoids. The
+        // installation's own NetLDI configuration governs instead.
+        GEMSTONE_NRS_ALL: '',
+      };
+    }
     return {
       ...this.versionEnvironment(gsPath, rootPath),
       GEMSTONE_SYS_CONF: `${dbPath}/conf`,
@@ -631,13 +944,28 @@ export class ProcessManager {
     const gsPath = env.GEMSTONE;
     const dbPath = needsWsl() ? windowsPathToWsl(db.path) : db.path;
     const logPath = `${dbPath}/log/${db.config.stoneName}.log`;
-    return this.runCommand(
-      `${gsPath}/bin/startstone`,
-      ['-l', logPath, db.config.stoneName],
-      env,
-      `Starting stone ${db.config.stoneName}`,
-      opts,
-    );
+    try {
+      return await this.runCommand(
+        `${gsPath}/bin/startstone`,
+        ['-l', logPath, db.config.stoneName],
+        env,
+        `Starting stone ${db.config.stoneName}`,
+        opts,
+      );
+    } catch (e) {
+      // "File is open by another process" names no process, and every way into
+      // starting a stone hits it the same way — the tree's button, the panel's,
+      // the offer that follows a failed login, Quick Setup, a restore. Naming
+      // the holder here rather than in one command means none of them are left
+      // relaying an error the user cannot act on.
+      const output = e instanceof Error ? e.message : String(e);
+      const explained = explainExtentLocked(
+        db.config.stoneName,
+        output,
+        await this.findExtentHolders(db),
+      );
+      throw explained ? new Error(explained) : e;
+    }
   }
 
   /** Stop a stone cleanly via `stopstone`, which authenticates as DataCurator.
@@ -652,6 +980,89 @@ export class ProcessManager {
       env,
       `Stopping stone ${db.config.stoneName}`,
     );
+  }
+
+  /**
+   * The processes holding a database's extent files open.
+   *
+   * Used two ways, both read-only: to confirm a database's gems really are gone
+   * before its servers are stopped, and to name the holder when a start fails
+   * because the extent is still open. Jasper never signals what this finds — a
+   * process it did not start, holding a file it cannot see inside, is the
+   * user's to judge.
+   *
+   * `fuser` first, `lsof -t` second: both print bare PIDs on stdout and both
+   * report the same holders, but `fuser` interrogates one file while `lsof`
+   * walks every process on the host — measured at 0.2s against 1.5s on a
+   * developer machine. Neither being available is not an error; it means
+   * Jasper cannot name the holder and says so.
+   *
+   * Asynchronous throughout: even the fast path is slow enough that running it
+   * on the extension host's event loop would stall every other extension, and
+   * the stop path can repeat it while waiting for gems to exit.
+   *
+   * Every probe carries a timeout, and being asynchronous is exactly why it
+   * has to. `lsof` can wedge on an unresponsive mount; run synchronously that
+   * froze the window, which was at least unmistakable. Awaited, a probe that
+   * never returns leaves the progress notification up for ever with the editor
+   * working normally around it — the stop simply never happens and nothing
+   * says so. A timed-out probe falls through to the next one, or to the bare
+   * PIDs, the same as a missing tool.
+   *
+   * `lsof -b` is not used, though it is fifteen times faster again: it skips
+   * the kernel calls that could block, and on a plain ext4 extent it returns
+   * *nothing at all*. A probe that reports an empty list for a database with
+   * four live processes on it would have Jasper stop a stone on top of its own
+   * gems — the exact failure this exists to prevent.
+   */
+  async findExtentHolders(db: GemStoneDatabase): Promise<ExtentHolder[]> {
+    const dataDir = path.join(db.path, 'data');
+    let extents: string[];
+    try {
+      extents = wslReaddirSync(dataDir)
+        .filter((f) => /^extent.*\.dbf$/i.test(f))
+        .map((f) => path.join(dataDir, f));
+    } catch {
+      return [];
+    }
+    if (extents.length === 0) return [];
+
+    const quoted = extents.map((e) => `"${e}"`).join(' ');
+    let pids: number[] = [];
+    for (const probe of [`fuser ${quoted}`, `lsof -n -P -w -t -- ${quoted}`]) {
+      try {
+        // Both exit non-zero when nothing holds the file, which exec rejects
+        // on — `|| true` keeps "no holders" from reading as "probe failed", so
+        // the fallback only runs when the tool itself is missing.
+        pids = parseHolderPids(
+          await wslExec(`${probe} 2>/dev/null || true`, undefined, { timeout: PS_TIMEOUT_MS }),
+        );
+      } catch {
+        continue;
+      }
+      if (pids.length > 0) break;
+    }
+    if (pids.length === 0) return [];
+
+    let detailed: ExtentHolder[] = [];
+    try {
+      detailed = parseHolderDetails(
+        await wslExec(
+          `ps -o pid=,user=,lstart=,args= -p ${pids.join(',')} 2>/dev/null || true`,
+          undefined,
+          { timeout: PS_TIMEOUT_MS },
+        ),
+      );
+    } catch {
+      // The shell itself failed; fall through to the bare PIDs below.
+    }
+    // `ps` printing nothing is the ordinary case for a process that exited
+    // between the probe and this call, and it exits 0 doing it — so an empty
+    // result is not an error and must not be confused with one. Either way the
+    // PIDs are worth reporting: "held by PID 444, and ps no longer knows what
+    // that was" is actionable, "Jasper could not determine which process holds
+    // it" is not.
+    return detailed.length > 0 ? detailed : pids.map((pid) => ({ pid, command: '' }));
   }
 
   /** Force-stop a running stone by signalling its process, for when a clean
@@ -754,6 +1165,12 @@ export class ProcessManager {
   // any failure is swallowed so startup always proceeds.
   private static readonly MIN_GEM_CACHE_KB = 500000;
   private ensureAdequateGemCache(db: GemStoneDatabase): void {
+    // Never for a registered database: its gem configuration is the
+    // installation's file, and raising a value inside it — however well meant —
+    // is editing someone else's setup. (Jasper's own databases get 500 MB
+    // because a small temp-object cache is what a large image runs out of; a
+    // registered one keeps whatever its owner chose.)
+    if (isRegisteredDatabase(db)) return;
     const confFile = path.join(db.path, 'conf', 'gem.conf');
     try {
       if (!fs.existsSync(confFile)) return;
@@ -781,9 +1198,15 @@ export class ProcessManager {
     const dbPath = needsWsl() ? windowsPathToWsl(db.path) : db.path;
     const logPath = `${dbPath}/log/${db.config.ldiName}.log`;
     const user = needsWsl() ? wslExecSync('whoami').trim() : os.userInfo().username;
+    // A registered database's recorded port is asked for by name (`-P`), not
+    // hoped for. Without it a NetLDI comes back on a fresh ephemeral port, and
+    // every login built from the record — including the one Jasper generated —
+    // then dials a port nothing is listening on. Only registered databases
+    // record a port; a created one's logins address their NetLDI by name.
+    const port = registeredPaths(db.config)?.netldiPort;
     return this.runCommand(
       `${gsPath}/bin/startnetldi`,
-      ['-a', user, '-g', '-l', logPath, db.config.ldiName],
+      ['-a', user, '-g', ...(port ? ['-P', String(port)] : []), '-l', logPath, db.config.ldiName],
       env,
       `Starting NetLDI ${db.config.ldiName}`,
       opts,
@@ -836,8 +1259,13 @@ export class ProcessManager {
     }
   }
 
-  /** Open a terminal with GemStone environment */
-  openTerminal(db: GemStoneDatabase): void {
+  /** Open a terminal with GemStone environment.
+   *
+   *  `prepared` is typed at the prompt but not run, for the cases where Jasper
+   *  can say exactly what the user would want to look at — the processes
+   *  holding a database's extents, say — without running it on their behalf.
+   *  They see the command, and press Enter or edit it. */
+  openTerminal(db: GemStoneDatabase, prepared?: string): void {
     const env = this.getEnvironment(db);
     if (needsWsl()) {
       const dbPath = windowsPathToWsl(db.path);
@@ -851,6 +1279,7 @@ export class ProcessManager {
       });
       terminal.show();
       terminal.sendText(`cd '${dbPath}' && ${envExports} && exec bash`);
+      if (prepared) terminal.sendText(prepared, false);
     } else {
       const terminal = vscode.window.createTerminal({
         name: `GemStone: ${db.config.stoneName}`,
@@ -877,6 +1306,7 @@ export class ProcessManager {
         `${exportCommand(gsEnv)}; export PATH=${shellSingleQuote(gsBin)}:"$PATH"`,
         true,
       );
+      if (prepared) terminal.sendText(prepared, false);
     }
   }
 

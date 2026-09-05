@@ -3,6 +3,34 @@ import { SessionManager, ActiveSession } from './sessionManager';
 import { parseTopazDocument } from './topazFileIn';
 import { extractSelector } from './methodPattern';
 import * as queries from './browserQueries';
+import { SMALLTALK_LANGUAGE } from './languageIds';
+
+/**
+ * The documents this provider is registered for: editors that hold GemStone
+ * *source*.
+ *
+ * The senders/implementors lens is drawn above a method definition, so a
+ * document that defines no method has no line for it to sit on — and an editor
+ * showing something other than source should not have counts inserted into it at
+ * all. In practice only a Topaz `method:`/`classmethod:` block yields one (see
+ * provideCodeLenses); the rest are here because they are source a method could
+ * be written in, and the parser is left to decide.
+ *
+ * Every entry names a language deliberately. A scheme-only filter — which this
+ * used while the gemstone:// lens still existed, to beat the asynchronous
+ * language tagging to the first paint — attaches the provider to every document
+ * behind that scheme, class comments and class definitions included, just to be
+ * told there is nothing to draw. gemstone:// is absent for the same reason its
+ * counts moved to the selector hover: out of the document flow, the hover cannot
+ * shove the source down.
+ * See https://github.com/GemTalk/Jasper/issues/432.
+ */
+export const CODE_LENS_SELECTORS: vscode.DocumentFilter[] = [
+  { scheme: 'untitled', language: SMALLTALK_LANGUAGE },
+  { scheme: 'file', language: SMALLTALK_LANGUAGE },
+  { scheme: 'file', language: 'gemstone-topaz' },
+  { scheme: 'file', language: 'gemstone-tonel' },
+];
 
 interface CodeLensData {
   selector: string;

@@ -1,10 +1,11 @@
-import { execSync, spawn, ChildProcess, exec } from 'child_process';
+import { execSync, spawn, ChildProcess, exec, execFile } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { promisify } from 'util';
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 export interface WslInfo {
   available: boolean;
@@ -539,4 +540,51 @@ export function wslExecSync(
     encoding: 'utf-8',
     timeout: options?.timeout,
   });
+}
+
+/**
+ * Execute a command without blocking the extension host, routing through
+ * wsl.exe on Windows exactly as `wslExecSync` does.
+ *
+ * The sync variant stops the host's event loop for the whole run, which stalls
+ * every other extension as well as Jasper's own rendering. That is tolerable
+ * for a `gslist` measured in milliseconds; it is not for a probe that can take
+ * a second and a half and may be repeated while waiting for gems to exit. Use
+ * this wherever the command's duration is not known to be trivial.
+ *
+ * Rejects the way `execSync` throws — on a non-zero exit or a missing command —
+ * so callers can keep the same error handling.
+ */
+export async function wslExec(
+  cmd: string,
+  env?: Record<string, string>,
+  options?: { timeout?: number },
+): Promise<string> {
+  if (!needsWsl()) {
+    // BASH_ENV: '' for the same reason wslExecSync blanks it — exec runs
+    // through /bin/sh, which is bash on many distros, so a BASH_ENV startup
+    // file is free to `unset GEMSTONE` out from under gslist and friends.
+    const { stdout } = await execAsync(cmd, {
+      encoding: 'utf-8',
+      env: { ...process.env, ...env, BASH_ENV: '' },
+      timeout: options?.timeout,
+    });
+    return stdout;
+  }
+  const envPrefix = env
+    ? Object.entries(env)
+        .map(([k, v]) => `${k}='${v}'`)
+        .join(' ') + ' '
+    : '';
+  // The script goes to wsl.exe as one argv element rather than inside a quoted
+  // stretch of a command line, so there is no outer `"` for the command to have
+  // to be escaped against. `wslExecSync` still builds the quoted form and hand-
+  // escapes `"` in it, which CodeQL flags as incomplete — it does not escape
+  // backslashes. Passing argv sidesteps the question instead of answering it,
+  // and skips the local cmd.exe that would otherwise get a turn at the string.
+  const { stdout } = await execFileAsync('wsl.exe', ['-e', 'sh', '-c', `${envPrefix}${cmd}`], {
+    encoding: 'utf-8',
+    timeout: options?.timeout,
+  });
+  return stdout;
 }
